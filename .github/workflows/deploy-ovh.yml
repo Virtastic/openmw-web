@@ -110,10 +110,10 @@ jobs:
         continue-on-error: true
         env:
           CF_PURGE_TOKEN: ${{ secrets.CF_PURGE_TOKEN }}
-          CF_ZONE_ID: ${{ secrets.CF_ZONE_ID }}
+          CF_ZONE_ID: 875c5c671fa7e246307b9f70d56fc6e1   # virtastic.app zone id (not secret)
         run: |
-          if [ -z "$CF_PURGE_TOKEN" ] || [ -z "$CF_ZONE_ID" ]; then
-            echo "CF_PURGE_TOKEN/CF_ZONE_ID not set — skipping edge purge (purge manually on redeploy)."
+          if [ -z "$CF_PURGE_TOKEN" ]; then
+            echo "CF_PURGE_TOKEN not set — skipping edge purge (purge manually on redeploy)."
             exit 0
           fi
           curl -fsS -X POST "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/purge_cache" \
