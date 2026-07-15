@@ -22,11 +22,13 @@ COPY configure-openmw.sh /build/configure-openmw.sh
 # NOTE: the static play/*.html + streamfs.js are copied in the RUNTIME stage (from context), NOT here
 # — editing them must not invalidate this compile layer and trigger a full ~13-min recompile.
 
-# configure → incremental compile → out-of-band link (emits openmw.{js,wasm,data}, preloads fsroot@/)
+# configure → FULL clean compile → out-of-band link (emits openmw.{js,wasm,data}, preloads fsroot@/)
 # → brotli siblings. Mirrors the local build (configure-openmw.sh + wasm-build/{link-openmw.sh,make_br.sh}).
-# build-wasm is a cache mount so cmake configure + ninja objects persist across builds — a re-run
-# (e.g. after a link tweak) is then incremental instead of a full ~13-min recompile.
-RUN --mount=type=cache,target=/build/build-wasm \
+# NOTE: NO build-wasm cache mount — deliberately. Docker COPY preserves source mtimes, so a cache mount
+# holding objects from a prior run made ninja report "no work to do" and LINK STALE OBJECTS into a
+# broken openmw.wasm (null-function crash at runtime) even though the source had changed. A clean
+# compile every build (~13 min) is slower but deterministic and correct — non-negotiable for releases.
+RUN \
     # Hermetic guard: fsroot/gamedata (the ?nomw demo) is gitignored, so a clean actions/checkout
     # omits it and the link would silently bake an EMPTY demo (green build, broken ?nomw). Fail loud
     # instead — the build context must carry the rsynced gamedata.
