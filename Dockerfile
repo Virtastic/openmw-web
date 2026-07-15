@@ -44,12 +44,18 @@ RUN \
 FROM caddy:2-alpine AS runtime
 # Web root: the built engine artifacts (raw + .br — both needed; Range uses raw, full GET uses .br)
 # plus the tracked HTML/JS. The demo dataset is mounted at /srv/data by docker-compose.prod.yml.
-# Static web files straight from the build context (editing them = a fast runtime-only rebuild).
+# Static web files straight from the build context.
 COPY play/index.html play/launcher.html play/streamfs.js /srv/
 # Built engine artifacts from the builder stage (raw + .br).
 COPY --from=builder /build/play/openmw.js      /build/play/openmw.js.br      /srv/
 COPY --from=builder /build/play/openmw.wasm    /build/play/openmw.wasm.br    /srv/
 COPY --from=builder /build/play/openmw.data    /build/play/openmw.data.br    /srv/
+
+# Content-version the engine: move openmw.{js,wasm,data}(+.br) into /srv/e/<hash>/ and stamp that hash
+# into /srv/index.html, so Cloudflare can never serve a mismatched mix of two builds (the null-function
+# crash). Alpine busybox has sh/sed/sha256sum. index.html stays no-cache and points at the current dir.
+COPY wasm-build/version-engine.sh /tmp/version-engine.sh
+RUN PLAY=/srv sh /tmp/version-engine.sh && rm /tmp/version-engine.sh
 
 COPY deploy/Caddyfile /etc/caddy/Caddyfile
 EXPOSE 8080

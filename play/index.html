@@ -672,7 +672,15 @@
  // A guaranteed-playable path for anyone the cooperative video path still trips up: no video
  // is played at all, so New Game drops straight into the prison-ship cell.
  window.__omwSkipIntroFlag = /[?&]skipintro=1/.test(location.search);
+ // --- Content-versioned engine path. The build stamps __ENGINE_VERSION__ with a hash of openmw.wasm
+ // and moves openmw.{js,wasm,data} into e/<hash>/, so every build's engine files live at a UNIQUE
+ // path. Cloudflare therefore can NEVER serve a mismatched mix of two builds' files (the cause of the
+ // "null function" crash). Unstamped (local dev / a raw git checkout) → falls back to flat root paths.
+ var __ENGINE_VER = "__ENGINE_VERSION__";
+ var __ENGINE_DIR = (__ENGINE_VER.charAt(0) === "_") ? "" : ("e/" + __ENGINE_VER + "/");
  var Module = {
+   // openmw.wasm AND openmw.data both resolve through locateFile → load them from the versioned dir.
+   locateFile: function(path){ return __ENGINE_DIR + path; },
    canvas: document.getElementById('canvas'),
    __omwSkipIntro: /[?&]skipintro=1/.test(location.search),
    // ?start=<cell> deep-links straight into a cell as a fresh default character. Dev/QA aid — only
@@ -1381,5 +1389,15 @@
  });
 </script>
 <script src="streamfs.js"></script>
-<script src="openmw.js"></script>
+<script>
+  // Load the version-stamped engine loader from the versioned dir; its wasm/data follow via
+  // Module.locateFile. (streamfs.js above is unversioned + loaded first — StreamFS is used in preRun.)
+  (function(){
+    var s = document.createElement('script');
+    s.src = __ENGINE_DIR + 'openmw.js';
+    s.onerror = function(){ if (typeof fatalOverlay === 'function') fatalOverlay('Engine failed to load',
+      'Could not load the game engine (' + __ENGINE_DIR + 'openmw.js). Reload to try again.'); };
+    document.body.appendChild(s);
+  })();
+</script>
 </body></html>
