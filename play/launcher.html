@@ -89,6 +89,13 @@
    font-weight:600; font-size:23px; letter-spacing:.01em; color:var(--ink)}
  .card p{margin:0 auto; color:var(--muted); font-size:14.5px; line-height:1.55; flex:1; max-width:34ch}
  .card b{color:var(--ink); font-weight:600}
+ /* "Where is it?" guidance. Always visible on purpose — a collapsible <details> would fight the
+    card's own click handler (the whole tile is the button), and this is the #1 thing users ask. */
+ .hint{margin:0 auto; max-width:34ch; font-size:12.5px; line-height:1.65; color:var(--faint)}
+ .hint b{color:var(--muted); font-weight:600}
+ .hint code{font-family:ui-monospace,Menlo,Consolas,monospace; font-size:11.5px; color:var(--muted);
+   background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.07); border-radius:3px;
+   padding:1px 5px; white-space:nowrap}
 
  /* Buttons (used only by the return-visit "Continue" plaque). */
  .btn{display:inline-flex; align-items:center; gap:8px;
@@ -181,8 +188,13 @@
       <p>Point to the <b>Data Files</b> folder from a legal install. Files stream straight from
          your disk on demand, with no multi-gigabyte upload or copy. <b>Tribunal</b>, <b>Bloodmoon</b>
          and any <b>mods</b> (.esp/.esm/.bsa) in the folder are detected and loaded automatically.</p>
+      <p class="hint"><b>Where is it?</b><br>
+         Steam &nbsp;<code>steamapps\common\Morrowind\Data&nbsp;Files</code><br>
+         GOG &nbsp;<code>C:\GOG&nbsp;Games\Morrowind\Data&nbsp;Files</code><br>
+         Picking the <b>Morrowind</b> folder itself works too. Chrome will then ask to see the
+         folder &mdash; choose <b>View files</b>.</p>
       <div class="note" id="local-note"></div>
-      <div class="go">Choose Data Files <span class="arw">▸</span></div>
+      <div class="go" id="local-go">Choose Data Files <span class="arw">▸</span></div>
     </div>
   </div>
 
@@ -236,16 +248,27 @@
  // Returns null if the base game is missing, else the detected content set (expansions are
  // optional — index.html auto-adds Tribunal/Bloodmoon to the load order when present).
  async function scanMorrowind(dir){
-   const files=new Set();
-   for await (const [name,h] of dir.entries()) if (h.kind==='file') files.add(name.toLowerCase());
+   const files=new Set(), dirs=new Set();
+   for await (const [name,h] of dir.entries()){
+     if (h.kind==='file') files.add(name.toLowerCase());
+     else if (h.kind==='directory') dirs.add(name.toLowerCase());
+   }
    if (!(files.has('morrowind.esm') && files.has('morrowind.bsa'))) return null;
+   // Sound/Music/Video are LOOSE folders in a retail install — they are NOT inside Morrowind.bsa.
+   // A trimmed/partial copy still boots but is silently mute with no intro, which is baffling, so
+   // report them and warn before starting rather than letting the player discover it in-game.
    return {
      tribunal:  files.has('tribunal.esm')  && files.has('tribunal.bsa'),
      bloodmoon: files.has('bloodmoon.esm') && files.has('bloodmoon.bsa'),
+     sound: dirs.has('sound'), music: dirs.has('music'), video: dirs.has('video'),
    };
  }
 
+ // Set once the folder is validated + remembered but the player still needs to confirm starting
+ // with missing assets — a second click on the card then starts anyway.
+ let confirmStart = false;
  async function pickLocal(){
+   if (confirmStart){ location.href='index.html?src=local'; return; }   // "Start anyway"
    if (!hasFSA){ note('Your browser has no folder-picker (File System Access API). Use Chrome, Edge or Brave on desktop.','err'); return; }
    try {
      const picked = await window.showDirectoryPicker({ id:'morrowind', mode:'read' });
@@ -253,16 +276,28 @@
      const dir = await resolveDataDir(picked);
      const scan = await scanMorrowind(dir);
      if (!scan){
-       note('That doesn’t look like a Morrowind Data Files folder. It must contain Morrowind.esm and Morrowind.bsa. (Tribunal and Bloodmoon are optional and picked up automatically.)','err');
+       note('That doesn’t look like a Morrowind Data Files folder — it must contain Morrowind.esm and Morrowind.bsa. Pick the folder shown above (Tribunal and Bloodmoon are optional and picked up automatically).','err');
        return;
      }
      // Grant read permission while we still hold the user gesture, then remember the handle.
      if ((await dir.requestPermission({ mode:'read' })) !== 'granted'){
-       note('Read permission was denied.','err'); return;
+       note('Read permission was denied — reopen the picker and choose “View files” to let the game read your copy.','err');
+       return;
      }
      await idbSet(KEY, dir);
      const exps=[scan.tribunal&&'Tribunal', scan.bloodmoon&&'Bloodmoon'].filter(Boolean);
-     note('Found Morrowind'+(exps.length?' + '+exps.join(' + '):' (no expansions detected)')+'. Starting…','ok');
+     const found = 'Found Morrowind'+(exps.length?' + '+exps.join(' + '):' (no expansions detected)');
+     // Warn about missing LOOSE asset folders instead of booting into a silently mute game.
+     const missing=[ !scan.sound&&'Sound', !scan.music&&'Music', !scan.video&&'Video' ].filter(Boolean);
+     if (missing.length){
+       const lacks=[ !scan.sound&&'sound effects and voices', !scan.music&&'music', !scan.video&&'intro videos' ].filter(Boolean);
+       confirmStart = true;
+       $('local-go').innerHTML = 'Start anyway <span class="arw">▸</span>';
+       note(found+', but no '+missing.join('/')+' folder'+(missing.length>1?'s':'')+' — the game will run without '
+            +lacks.join(' or ')+'. Those live loose in Data Files (not inside the .bsa), so this copy looks incomplete. Click again to start anyway.','err');
+       return;
+     }
+     note(found+'. Starting…','ok');
      location.href='index.html?src=local';
    } catch(e){
      if (e && e.name==='AbortError') return; // user cancelled the picker
