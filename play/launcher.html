@@ -87,15 +87,48 @@
  .kicker{font-size:10.5px; letter-spacing:.22em; text-transform:uppercase; font-weight:600; color:var(--faint)}
  .card h2{margin:0; font-family:"Hoefler Text","Baskerville","Palatino Linotype",Palatino,Georgia,serif;
    font-weight:600; font-size:23px; letter-spacing:.01em; color:var(--ink)}
- .card p{margin:0 auto; color:var(--muted); font-size:14.5px; line-height:1.55; flex:1; max-width:34ch}
+ .card p{margin:0 auto; color:var(--muted); font-size:14.5px; line-height:1.55; max-width:34ch}
+ .card p.lead{flex:1}
+ .card .micro{font-size:12px; color:var(--faint); margin-top:-2px}
+ .card .micro b{color:var(--muted)}
  .card b{color:var(--ink); font-weight:600}
- /* "Where is it?" guidance. Always visible on purpose — a collapsible <details> would fight the
-    card's own click handler (the whole tile is the button), and this is the #1 thing users ask. */
- .hint{margin:0 auto; max-width:34ch; font-size:12.5px; line-height:1.65; color:var(--faint)}
- .hint b{color:var(--muted); font-weight:600}
- .hint code{font-family:ui-monospace,Menlo,Consolas,monospace; font-size:11.5px; color:var(--muted);
-   background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.07); border-radius:3px;
-   padding:1px 5px; white-space:nowrap}
+
+ /* Per-card "?" help icon (top-right). Sits above the tile's own click; opens a detail modal. */
+ .help-btn{position:absolute; top:11px; right:11px; z-index:3; width:25px; height:25px;
+   display:flex; align-items:center; justify-content:center; border-radius:50%;
+   border:1px solid var(--bronze); background:rgba(8,6,3,.5); color:var(--bronze-hi);
+   font:600 13px/1 Georgia,"Times New Roman",serif; cursor:pointer;
+   transition:color .16s ease, border-color .16s ease, background .16s ease}
+ .help-btn:hover{color:var(--gold-hi); border-color:var(--gold-hi); background:rgba(211,168,78,.14)}
+ .help-btn:focus-visible{outline:2px solid var(--gold); outline-offset:2px}
+
+ /* Help modal (deep docs per card). */
+ .modal-bd{position:fixed; inset:0; z-index:60; display:none; padding:24px;
+   align-items:flex-start; justify-content:center; overflow-y:auto;
+   background:rgba(6,5,3,.74); -webkit-backdrop-filter:blur(3px); backdrop-filter:blur(3px)}
+ .modal-bd.show{display:flex}
+ .modal{position:relative; max-width:580px; width:100%; margin:auto;
+   background:linear-gradient(160deg,var(--panel-2),var(--panel));
+   border:1px solid rgba(138,104,56,.5); border-radius:9px; padding:36px 38px 32px;
+   box-shadow:0 30px 90px rgba(0,0,0,.62); animation:pop .18s ease}
+ @keyframes pop{from{opacity:0; transform:translateY(8px)} to{opacity:1; transform:none}}
+ .modal .m-kicker{font-size:10.5px; letter-spacing:.22em; text-transform:uppercase; font-weight:600; color:var(--faint)}
+ .modal h3{margin:5px 0 0; font-family:"Hoefler Text","Baskerville",Georgia,serif; font-weight:600;
+   font-size:25px; letter-spacing:.01em; color:var(--ink)}
+ .modal h4{margin:22px 0 7px; font:600 11px/1 "Optima","Gill Sans",-apple-system,sans-serif;
+   letter-spacing:.17em; text-transform:uppercase; color:var(--gold)}
+ .modal p{margin:0 0 10px; color:var(--muted); font-size:14px; line-height:1.64}
+ .modal b{color:var(--ink); font-weight:600}
+ .modal a{color:var(--gold)} .modal a:hover{color:var(--gold-hi)}
+ .modal code{font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px; color:var(--ink);
+   background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.08); border-radius:3px; padding:1px 6px}
+ .modal ul{margin:0 0 10px; padding-left:19px; color:var(--muted); font-size:14px; line-height:1.6}
+ .modal li{margin:4px 0} .modal li b{color:var(--ink)}
+ .modal .m-close{position:absolute; top:12px; right:15px; width:30px; height:30px; border:none;
+   background:none; color:var(--faint); font:300 26px/1 -apple-system,sans-serif; cursor:pointer;
+   transition:color .15s ease}
+ .modal .m-close:hover{color:var(--gold-hi)}
+ .modal .m-hr{height:1px; margin:22px 0 0; background:linear-gradient(90deg,transparent,rgba(138,104,56,.4),transparent)}
 
  /* Buttons (used only by the return-visit "Continue" plaque). */
  .btn{display:inline-flex; align-items:center; gap:8px;
@@ -158,6 +191,7 @@
 
   <div class="cards">
     <div class="card actionable reveal d3" id="card-sample" role="button" tabindex="0">
+      <button class="help-btn" id="help-sample" type="button" aria-label="About the example world">?</button>
       <div class="glyph" aria-hidden="true">
         <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round">
           <circle cx="24" cy="24" r="17"/>
@@ -168,12 +202,14 @@
       </div>
       <div class="kicker">Free sample</div>
       <h2>The example world</h2>
-      <p>A small demo island that ships with OpenMW: a town of NPCs, guards and roaming
+      <p class="lead">A small demo island that ships with OpenMW: a town of NPCs, guards and roaming
          creatures. No copy of Morrowind required.</p>
+      <p class="micro">Free and instant. Tap the <b>?</b> for what to expect.</p>
       <div class="go">Start the demo <span class="arw">▸</span></div>
     </div>
 
     <div class="card actionable reveal d4" id="card-local" role="button" tabindex="0">
+      <button class="help-btn" id="help-local" type="button" aria-label="How to bring your own Morrowind">?</button>
       <div class="glyph" aria-hidden="true">
         <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round">
           <rect x="9" y="12" width="30" height="8" rx="1.5"/>
@@ -185,14 +221,10 @@
       </div>
       <div class="kicker">Your copy</div>
       <h2>Bring your own Morrowind</h2>
-      <p>Point to the <b>Data Files</b> folder from a legal install. Files stream straight from
-         your disk on demand, with no multi-gigabyte upload or copy. <b>Tribunal</b>, <b>Bloodmoon</b>
+      <p class="lead">Point to the <b>Data Files</b> folder from a legal install. Files stream straight
+         from your disk on demand, with no multi-gigabyte upload or copy. <b>Tribunal</b>, <b>Bloodmoon</b>
          and any <b>mods</b> (.esp/.esm/.bsa) in the folder are detected and loaded automatically.</p>
-      <p class="hint"><b>Where is it?</b><br>
-         Steam &nbsp;<code>steamapps\common\Morrowind\Data&nbsp;Files</code><br>
-         GOG &nbsp;<code>C:\GOG&nbsp;Games\Morrowind\Data&nbsp;Files</code><br>
-         Picking the <b>Morrowind</b> folder itself works too. Chrome will then ask to see the
-         folder &mdash; choose <b>View files</b>.</p>
+      <p class="micro">New to this? Tap the <b>?</b> for where to find your files.</p>
       <div class="note" id="local-note"></div>
       <div class="go" id="local-go">Choose Data Files <span class="arw">▸</span></div>
     </div>
@@ -210,10 +242,107 @@
   </footer>
 </div>
 
+<!-- Help modal (populated per card by JS) -->
+<div class="modal-bd" id="modal-bd" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+  <div class="modal">
+    <button class="m-close" id="modal-close" type="button" aria-label="Close">&times;</button>
+    <div id="modal-body"></div>
+  </div>
+</div>
+
 <script>
  'use strict';
  const $ = (id) => document.getElementById(id);
  const hasFSA = typeof window.showDirectoryPicker === 'function';
+
+ // --- Help modals: deep, docs-style detail per card, opened by the "?" icons. ---
+ const HELP = {
+   sample: `
+     <div class="m-kicker">Free sample &middot; no download of the game</div>
+     <h3 id="modal-title">The example world</h3>
+     <h4>What it is</h4>
+     <p>A small, self-contained demo world that ships <b>with the OpenMW engine itself</b> — freely
+        distributable, not Bethesda content. It exists so you can try the engine in your browser
+        <b>without owning Morrowind</b>.</p>
+     <h4>What you'll see</h4>
+     <p>A little island town populated with NPCs, town guards and roaming creatures that actually
+        fight — enough to show off rendering, lighting, physics, AI and combat running live on your
+        machine. It's a tech demo, not a full quest.</p>
+     <h4>Controls (OpenMW defaults)</h4>
+     <ul>
+       <li><b>Move</b> — W A S D &middot; <b>Look</b> — mouse &middot; <b>Jump</b> — Space</li>
+       <li><b>Attack</b> — hold left mouse &middot; <b>Interact / pick up</b> — left click</li>
+       <li><b>Inventory</b> — I &middot; <b>Menu / back</b> — Esc &middot; <b>Console</b> — backtick <code>\`</code></li>
+     </ul>
+     <h4>Privacy &amp; performance</h4>
+     <p>Everything runs locally in your browser — nothing is uploaded. First load fetches the engine
+        (~50&nbsp;MB, cached afterwards). Best on a Chromium browser (Chrome, Edge, Brave) on desktop.</p>
+     <div class="m-hr"></div>
+     <p style="margin-top:16px">Just press <b>Start the demo</b> — no setup needed.</p>`,
+   local: `
+     <div class="m-kicker">Your copy &middot; nothing is uploaded</div>
+     <h3 id="modal-title">Bring your own Morrowind</h3>
+     <p>Own Morrowind? Point the browser at your installed copy and it plays in-engine, streaming
+        files straight from your disk — <b>no upload, no multi-gigabyte copy</b>. Here's the whole flow.</p>
+
+     <h4>1 · Find your Data&nbsp;Files folder</h4>
+     <p>It's inside your Morrowind install:</p>
+     <ul>
+       <li><b>Steam</b> — <code>...\\steamapps\\common\\Morrowind\\Data Files</code><br>
+           (Steam → right-click Morrowind → Manage → Browse local files)</li>
+       <li><b>GOG</b> — <code>C:\\GOG Games\\Morrowind\\Data Files</code></li>
+       <li><b>Disc / other</b> — wherever you installed it, the <code>Data Files</code> subfolder.</li>
+     </ul>
+     <p>Tip: you can also just pick the <b>Morrowind</b> folder itself — it finds <code>Data Files</code> inside.</p>
+
+     <h4>2 · Let the browser read it</h4>
+     <p>Click <b>Choose Data Files</b>, select the folder, and when Chrome asks
+        <i>"Let this site view files?"</i> choose <b>View files</b>. Nothing leaves your machine — this
+        only grants read access so the engine can load your assets on demand.</p>
+
+     <h4>3 · Make sure it's a complete copy</h4>
+     <p>A full install has loose <code>Sound</code>, <code>Music</code> and <code>Video</code> folders
+        <b>inside Data Files</b> (they are <b>not</b> stored in <code>Morrowind.bsa</code>). If they're
+        missing, the game still runs but with <b>no sound, voices, music or intro video</b> — so we
+        check and warn you before starting rather than leaving you confused. A normal Steam/GOG
+        install has them.</p>
+
+     <h4>Expansions &amp; mods</h4>
+     <p><b>Tribunal</b> and <b>Bloodmoon</b> are detected and loaded automatically. Any mod
+        <code>.esp</code>/<code>.esm</code>/<code>.bsa</code> files you've dropped into the folder are
+        picked up too (alphabetical load order).</p>
+
+     <h4>Requirements &amp; privacy</h4>
+     <ul>
+       <li><b>Chromium browser on desktop</b> (Chrome, Edge, Brave) — this uses the File System Access
+           API, which Firefox and Safari don't support.</li>
+       <li><b>Nothing is uploaded.</b> Files stream from your disk as the game needs them. Your pick is
+           remembered for next time as a revocable browser permission — no copy is stored on any server.</li>
+     </ul>
+
+     <h4>If something's off</h4>
+     <ul>
+       <li><b>"Doesn't look like a Data Files folder"</b> — pick the folder that contains
+           <code>Morrowind.esm</code> and <code>Morrowind.bsa</code>.</li>
+       <li><b>No sound / no intro</b> — your copy is missing the loose <code>Sound</code>/<code>Video</code> folders.</li>
+       <li><b>Permission denied</b> — reopen the picker and choose <b>View files</b>.</li>
+     </ul>`
+ };
+ (function(){
+   const bd=$('modal-bd'), body=$('modal-body');
+   function open(key){ body.innerHTML = HELP[key]; bd.classList.add('show'); $('modal-close').focus(); }
+   function close(){ bd.classList.remove('show'); }
+   // The "?" buttons live inside clickable cards — stop the event so the card's start/pick handler
+   // doesn't also fire (on both click and keyboard activation).
+   [['help-sample','sample'],['help-local','local']].forEach(([id,key])=>{
+     const b=$(id); if(!b) return;
+     b.addEventListener('click', e=>{ e.stopPropagation(); open(key); });
+     b.addEventListener('keydown', e=>{ e.stopPropagation(); });
+   });
+   $('modal-close').addEventListener('click', close);
+   bd.addEventListener('click', e=>{ if(e.target===bd) close(); });   // backdrop click
+   document.addEventListener('keydown', e=>{ if(e.key==='Escape' && bd.classList.contains('show')) close(); });
+ })();
 
  // --- tiny IndexedDB handle store (shared shape with index.html?src=local) ---
  const DB='omw-launcher', STORE='handles', KEY='mwdata';
