@@ -1,5 +1,5 @@
 <!doctype html><html lang="en"><head><!-- Copyright (C) 2025-2026 Virtastic - https://virtastic.app | SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-wasm --><meta charset="utf-8">
-<title>openmw-wasm: choose your data</title>
+<title>openmw-web: choose your data</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="icon" href="data:,">
 <style>
@@ -206,7 +206,7 @@
   </nav>
 </header>
 <div class="wrap">
-  <p class="eyebrow reveal d1">openmw-wasm</p>
+  <p class="eyebrow reveal d1">openmw-web</p>
   <h1 class="reveal d1">Morrowind in your browser</h1>
   <p class="deck reveal d2">Run the free sample world, or point the engine at your own copy of
     Morrowind. Everything runs on your machine. Nothing is uploaded.</p>
@@ -261,7 +261,7 @@
 
   <footer class="reveal d5">
     Morrowind game data is not included or distributed here. Supply your own legally-obtained copy.
-    openmw-wasm is based on the <a href="https://openmw.org/" target="_blank" rel="noopener">OpenMW</a>
+    openmw-web is based on the <a href="https://openmw.org/" target="_blank" rel="noopener">OpenMW</a>
     engine, effectively rebuilt in WebAssembly to run in the browser, and is released under the GPLv3.
     Loading your own files needs a Chromium browser (Chrome, Edge or Brave) on desktop.
     <br><br>
@@ -324,10 +324,11 @@
      </ul>
      <p>Tip: you can also just pick the <b>Morrowind</b> folder itself — it finds <code>Data Files</code> inside.</p>
 
-     <h4>2 · Let the browser read it</h4>
-     <p>Click <b>Choose Data Files</b>, select the folder, and when Chrome asks
-        <i>"Let this site view files?"</i> choose <b>View files</b>. Nothing leaves your machine — this
-        only grants read access so the engine can load your assets on demand.</p>
+     <h4>2 · Let the browser open it</h4>
+     <p>Click <b>Choose Data Files</b>, select the folder, and when Chrome asks to <b>edit</b> the
+        folder choose <b>Edit files</b>. Nothing leaves your machine — this lets the engine read your
+        game assets on demand and write your saves back to the folder (see below). Your pick is
+        remembered for next time.</p>
 
      <h4>3 · Make sure it's a complete copy</h4>
      <p>A full install has loose <code>Sound</code>, <code>Music</code> and <code>Video</code> folders
@@ -335,6 +336,12 @@
         missing, the game still runs but with <b>no sound, voices, music or intro video</b> — so we
         check and warn you before starting rather than leaving you confused. A normal Steam/GOG
         install has them.</p>
+
+     <h4>Your saves live on disk</h4>
+     <p>Games you save are written to an <code>openmw-web-saves</code> folder <b>inside the folder you
+        picked</b> — real files on your drive, <b>not</b> in the browser. Clearing your browser history
+        or cache won't touch them, they're there next time you play, and you can back them up or copy
+        them like any other file. (This is why Chrome asks to <b>edit</b> the folder, not just view it.)</p>
 
      <h4>Expansions &amp; mods</h4>
      <p><b>Tribunal</b> and <b>Bloodmoon</b> are detected and loaded automatically. Any mod
@@ -429,7 +436,7 @@
    if (confirmStart){ location.href='index.html?src=local'; return; }   // "Start anyway"
    if (!hasFSA){ note('Your browser has no folder-picker (File System Access API). Use Chrome, Edge or Brave on desktop.','err'); return; }
    try {
-     const picked = await window.showDirectoryPicker({ id:'morrowind', mode:'read' });
+     const picked = await window.showDirectoryPicker({ id:'morrowind', mode:'readwrite' });
      note('Checking folder…');
      const dir = await resolveDataDir(picked);
      const scan = await scanMorrowind(dir);
@@ -438,8 +445,8 @@
        return;
      }
      // Grant read permission while we still hold the user gesture, then remember the handle.
-     if ((await dir.requestPermission({ mode:'read' })) !== 'granted'){
-       note('Read permission was denied — reopen the picker and choose “View files” to let the game read your copy.','err');
+     if ((await dir.requestPermission({ mode:'readwrite' })) !== 'granted'){
+       note('Edit access was declined. It’s needed so your saved games can be written to the folder — reopen the picker and choose “Edit files”.','err');
        return;
      }
      await idbSet(KEY, dir);
@@ -477,13 +484,13 @@
    let handle; try { handle = await idbGet(KEY); } catch(e){ return; }
    if (!handle) return;
    let perm='prompt';
-   try { perm = await handle.queryPermission({ mode:'read' }); } catch(e){ return; }
+   try { perm = await handle.queryPermission({ mode:'readwrite' }); } catch(e){ return; }
    $('continue-name').textContent = handle.name || 'your Data Files';
    $('continue').classList.add('show');
    $('continue-btn').addEventListener('click', async ()=>{
      try {
-       if (perm!=='granted') perm = await handle.requestPermission({ mode:'read' });
-       if (perm!=='granted'){ note('Read permission was denied.','err'); return; }
+       if (perm!=='granted') perm = await handle.requestPermission({ mode:'readwrite' });
+       if (perm!=='granted'){ note('Edit access was declined — it’s needed to save your games to the folder. Choose “Edit files”.','err'); return; }
        location.href='index.html?src=local';
      } catch(e){ note('Could not reopen that folder. Pick it again.','err'); }
    });

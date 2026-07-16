@@ -947,6 +947,65 @@
                       'first load will work but re-downloads on each visit', 'err');
            });
        } catch(e){}
+       // --- Folder-backed saves (?src=local) ---------------------------------------------------
+       // When the player brings their own Morrowind, mirror OpenMW's saves to/from a dedicated
+       // openmw-web-saves subfolder INSIDE their chosen folder, so saves live ON DISK and survive
+       // clearing browser data (like desktop OpenMW). The folder is the authoritative copy; IDBFS is
+       // just a working cache. __idbfsReady lets the mount flow wait until IDBFS has loaded before we
+       // write folder saves into MEMFS (otherwise the IDBFS reconcile could wipe them).
+       window.__idbfsReady = new Promise(function(r){ window.__idbfsReadyResolve = r; });
+       var __folderSaves = null, __mirrored = {}, __mirroring = false, __mirrorAgain = false;
+       var __SAVES_DIR = '/userdata/data-home/openmw/saves';
+       async function setupFolderSaves(dir){
+         var perm='prompt'; try { perm = await dir.queryPermission({mode:'readwrite'}); } catch(e){}
+         if (perm !== 'granted'){
+           append('[saves] your folder is read-only this session — saves use browser storage. Re-pick '
+                + 'your folder and allow editing to store saves on disk (use Backup meanwhile).','err');
+           return;
+         }
+         var sh; try { sh = await dir.getDirectoryHandle('openmw-web-saves', {create:true}); }
+         catch(e){ append('[saves] could not open openmw-web-saves in your folder: '+e,'err'); return; }
+         FS.mkdirTree(__SAVES_DIR);
+         var loaded=0;                                    // mirror IN: folder -> MEMFS (folder wins)
+         try { for await (const [name,h] of sh.entries()){
+           if (h.kind!=='file' || !/\.omwsave$/i.test(name)) continue;
+           try { var buf=new Uint8Array(await (await h.getFile()).arrayBuffer());
+                 FS.writeFile(__SAVES_DIR+'/'+name, buf);
+                 try { __mirrored[name]=FS.stat(__SAVES_DIR+'/'+name).mtime.getTime(); } catch(_){}
+                 loaded++; }
+           catch(e){ append('[saves] loading '+name+' failed: '+e,'err'); }
+         } } catch(e){ append('[saves] could not read your saves folder: '+e,'err'); }
+         __folderSaves = { dir: dir, saves: sh };
+         append('[saves] '+(loaded ? ('loaded '+loaded+' save(s) from') : 'saving to')
+              + ' openmw-web-saves in your folder (on disk, not the browser)');
+         try { window.__omwSyncfs(); } catch(e){}         // also cache the loaded saves in IDBFS
+       }
+       // mirror OUT: MEMFS -> folder. Only files whose mtime changed since last mirror (so unchanged
+       // saves aren't rewritten), plus removes folder saves deleted in-game. Coalesced like syncfs.
+       async function mirrorSavesToFolder(){
+         if (!__folderSaves || __mirroring){ if(__folderSaves) __mirrorAgain=true; return; }
+         __mirroring=true;
+         var sh=__folderSaves.saves, live={};
+         try {
+           var names=[]; try { names=FS.readdir(__SAVES_DIR).filter(function(n){ return /\.omwsave$/i.test(n); }); } catch(e){}
+           for (var i=0;i<names.length;i++){
+             var n=names[i], st; try { st=FS.stat(__SAVES_DIR+'/'+n); } catch(e){ continue; }
+             live[n]=1; var mt=st.mtime.getTime();
+             if (__mirrored[n]===mt) continue;
+             try { var data=FS.readFile(__SAVES_DIR+'/'+n);
+                   var fh=await sh.getFileHandle(n,{create:true});
+                   var w=await fh.createWritable(); await w.write(data); await w.close();
+                   __mirrored[n]=mt; }
+             catch(e){ append('[saves] writing '+n+' to your folder failed: '+e,'err'); }
+           }
+           for (var d in __mirrored){ if(!live[d]){ try { await sh.removeEntry(d); } catch(e){} delete __mirrored[d]; } }
+         } catch(e){ append('[saves] mirror to folder failed: '+e,'err'); }
+         __mirroring=false;
+         if (__mirrorAgain){ __mirrorAgain=false; mirrorSavesToFolder(); }
+       }
+       window.__setupFolderSaves = setupFolderSaves;
+       window.__mirrorSaves = mirrorSavesToFolder;
+
        // Persist saves/config across reloads: mount IndexedDB-backed IDBFS at /userdata
        // and load its contents before the engine starts (via a run dependency so boot waits).
        try {
@@ -984,6 +1043,7 @@
                } catch(e){ append('[cfg override err] '+e,'err'); }
                window.__omwSyncfs();
              } catch(e){ append('[idbfs setup err] '+e,'err'); }
+             try { window.__idbfsReadyResolve(); } catch(e){}   // unblock folder-save mirror-in
              removeRunDependency('idbfs-load');
            });
            // Flush game state back to IndexedDB periodically (lifecycle handlers cover exits).
@@ -992,12 +1052,14 @@
              // CLOSE — without this, changing settings then refreshing loses them), then sync.
              try { if (Module._omw_save_settings && Module.__omwRunning !== undefined) Module._omw_save_settings(); } catch(e){}
              window.__omwSyncfs();
+             try { mirrorSavesToFolder(); } catch(e){}    // push new/changed saves out to disk (?src=local)
            };
            setInterval(window.__omwSync, 15000);
          } else {
            append('[idbfs] not available — saves will NOT persist across reloads','err');
+           try { window.__idbfsReadyResolve(); } catch(e){}
          }
-       } catch(e){ append('[idbfs mount err] '+e,'err'); }
+       } catch(e){ append('[idbfs mount err] '+e,'err'); try { window.__idbfsReadyResolve(); } catch(_){} }
 
        // --- Data source selection ---
        // ?src=local: mount the user's OWN Morrowind Data Files folder (picked in
@@ -1112,6 +1174,13 @@
            if (mods.length) append('[local] + '+mods.length+' mod plugin(s): '+mods.join(', '));
 
            var wantMovies = hasVideoBik && !/[?&]novid\b/.test(location.search);
+
+           // Folder-backed saves: wait for IDBFS to finish loading (so its reconcile can't wipe the
+           // saves we load in), then wire this folder's openmw-web-saves <-> the engine. The game data
+           // mount above only needs READ; saving to disk needs the read-write grant (falls back to
+           // browser storage + a warning if the player only allowed reading).
+           try { await window.__idbfsReady; await setupFolderSaves(dir); }
+           catch(e){ append('[saves] folder-save setup skipped: '+(e&&e.message||e),'err'); }
 
            (function waitCfg(){
              if (FS.analyzePath('/openmw.cfg').exists){
