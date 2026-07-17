@@ -60,28 +60,34 @@ jobs:
       - name: Build engine image
         run: DOCKER_BUILDKIT=1 docker build --network=host -t morrowind:release -f Dockerfile .
 
-      - name: Extract engine artifacts
+      - name: Extract web root
         run: |
           set -e
           rm -rf dist && mkdir -p dist/web
           CID=$(docker create morrowind:release)
           trap 'docker rm -f "$CID" >/dev/null' EXIT
-          for f in openmw.js openmw.wasm openmw.data openmw.js.br openmw.wasm.br openmw.data.br; do
-            docker cp "$CID:/srv/$f" dist/web/
-          done
-          ls -la dist/web
+          # Copy the ENTIRE served web root, not individual files: index.html (content-version
+          # stamped by wasm-build/version-engine.sh), launcher.html, streamfs.js, and the versioned
+          # engine at e/<hash>/openmw.{js,wasm,data}(+.br). The engine is no longer at /srv root.
+          docker cp "$CID:/srv/." dist/web/
+          echo "--- web root ---"; ls -la dist/web
+          echo "--- engine dir ---"; ls -la dist/web/e/*/
 
       - name: Assemble web bundle
         run: |
           set -e
           TAG='${{ steps.tag.outputs.tag }}'
-          cp play/index.html play/launcher.html play/streamfs.js play/server.py play/.env.example dist/web/
+          # index.html / launcher.html / streamfs.js and the versioned engine already came from the
+          # container above. index.html is the STAMPED copy — do NOT overwrite it with the source one.
+          # Add only the files the container doesn't serve: the dev server + its env, and legal/demo docs.
+          cp play/server.py play/.env.example dist/web/
           cp LICENSE NOTICE AUTHORS.md THIRD-PARTY-LICENSES.md SELF_HOSTING.md dist/web/
           cp fsroot/gamedata/CREDITS-DEMO-DATA.txt fsroot/gamedata/ExampleSuiteAuthors.txt fsroot/gamedata/LinksToLicenses.txt dist/web/
-          # No proprietary content may ever appear in a release asset.
-          ! ls dist/web | grep -qiE 'morrowind\.(esm|bsa)|tribunal|bloodmoon|mwdata'
-          # python3 -m zipfile: the runner has no `zip` binary. Run from inside web/
-          # so entries land at the zip root (unzip → serve, no nested dir).
+          # No proprietary content may ever appear in a release asset (recurse — engine is under e/).
+          ! find dist/web -type f | grep -qiE 'morrowind\.(esm|bsa)|tribunal|bloodmoon|mwdata'
+          # python3 -m zipfile: the runner has no `zip` binary. Run from inside web/ so entries land at
+          # the zip root (unzip → serve, no nested dir). '*' recurses into e/ but skips dotfiles, so pass
+          # .env.example explicitly.
           (cd dist/web && python3 -m zipfile -c "../openmw-web-$TAG.zip" * .env.example)
 
       - name: Assemble source tarball (Complete Corresponding Source)
