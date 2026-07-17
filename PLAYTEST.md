@@ -48,6 +48,9 @@ Reload gets the latest build (server sends no-cache). Toggle the dev log with th
 - [ ] **Save**: quicksave (F5), named save, auto-save on rest
 - [ ] **Load**: quickload (F9), load from menu — world/player/inventory restored
 - [ ] Reload the browser tab → saved game still present (IDBFS persistence)
+- [ ] **Bring-your-own on-disk saves**: pick your `Data Files` folder → save in-game → an
+      `openmw-web-saves` folder with the save file appears inside it → clear browser data → reload
+      and re-pick the folder → the save still loads
 - [ ] Rest/wait/sleep (T), fast-forward time; sleeping in a bed
 - [ ] Fast travel: silt strider, boat, Mark/Recall, Divine/Almsivi Intervention, Propylon
 - [ ] Crime: steal/get caught → guards respond, bounty, pay/jail/resist

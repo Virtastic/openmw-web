@@ -198,10 +198,14 @@ Emscripten's virtual filesystem and persisted in browser storage:
 - **Bring your own Morrowind** — the launcher (`play/launcher.html`) can read a legally-owned
   `Data Files` folder straight off the user's disk via the **File System Access API**, streaming
   records on demand with no multi-gigabyte upload.
-- **Saves, settings and keybindings** live in **IDBFS** (backed by IndexedDB) and survive reloads.
-  Settings and Lua storage call `FS.syncfs` immediately on write
+- **Settings, keybindings and (by default) saves** live in **IDBFS** (backed by IndexedDB) and survive
+  reloads. Settings and Lua storage call `FS.syncfs` immediately on write
   (`components/settings/settings.cpp`, `apps/openmw/mwlua/luamanagerimp.cpp`) so a crash or tab close
   right after saving can't lose data — the periodic timer-based sync is only a backstop.
+- **Bring-your-own saves go to disk.** When the player grants read-write access to their `Data Files`
+  folder, `play/index.html` mirrors the save directory to an `openmw-web-saves` subfolder in that folder
+  via the File System Access API, so saves are real files that survive clearing browser data (like
+  desktop OpenMW). If the folder is read-only for the session it transparently falls back to IDBFS.
 
 ---
 

@@ -42,9 +42,13 @@ launcher enabled you get two ways in:
   is no multi-gigabyte upload or copy. The chosen folder is remembered for next
   time.
 
-Saves, settings and keybindings persist in the browser (IndexedDB) and survive
-reloads. A themed loading screen shows real download / mount progress on the way
-in.
+Settings and keybindings persist in the browser (IndexedDB) and survive reloads.
+Saves persist too — and on the **bring-your-own** path they're written to an
+`openmw-web-saves` folder **on disk** inside the folder you picked (real files,
+via the File System Access API), so they outlive clearing browser data and can be
+backed up like any other file; the example-world path keeps saves in browser
+storage (IndexedDB). A themed loading screen shows real download / mount progress
+on the way in.
 
 **Morrowind game data is not included or distributed here.** You must supply your
 own legally-obtained copy to play the full game.
@@ -90,7 +94,7 @@ caches, and build artifacts) are intentionally excluded via
 You don't need to build anything to run your own instance. Every
 [release](https://github.com/Virtastic/openmw-web/releases) ships:
 
-- **`openmw-web-web-<tag>.zip`** — the prebuilt engine (`openmw.js/.wasm/.data`
+- **`openmw-web-<tag>.zip`** — the prebuilt engine (`openmw.js/.wasm/.data`
   + brotli variants), the web front-end, and a ready-to-run dev server. Unzip,
   `python3 server.py`, open Chrome. Done. See
   [`SELF_HOSTING.md`](SELF_HOSTING.md) for production servers.
