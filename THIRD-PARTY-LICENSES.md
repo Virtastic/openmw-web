@@ -1,6 +1,6 @@
 # Third-party licenses
 
-openmw-wasm is licensed under the GNU GPL v3 (see [`LICENSE`](LICENSE)). It builds
+openmw-web is licensed under the GNU GPL v3 (see [`LICENSE`](LICENSE)). It builds
 on a number of third-party projects, each of which keeps its own license. This
 file is an informational summary; the authoritative terms for each component are
 in that project's own source tree / license file. License names below are the

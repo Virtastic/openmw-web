@@ -1,6 +1,6 @@
 # Authors
 
-## OpenMW-WASM (the WebAssembly port)
+## OpenMW-Web (the WebAssembly port)
 
 - **Virtastic** — https://virtastic.app
   All WASM/WebGL2 engine adaptations, cross-compiled dependency stack, build

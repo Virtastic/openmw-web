@@ -1,6 +1,6 @@
 #!/bin/bash
 # Copyright (C) 2025-2026 Virtastic - https://virtastic.app
-# SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-wasm
+# SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
 # Configure OpenMW for WebAssembly against our cross-compiled dep stack.
 set -e
 # ROOT and the emscripten libexec dir are env-overridable so this runs both locally (macOS/Homebrew

@@ -1,9 +1,9 @@
 # Copyright (C) 2025-2026 Virtastic - https://virtastic.app
-# SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-wasm
+# SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
 # syntax=docker/dockerfile:1
 # =============================================================================================
 # Per-push deploy image for morrowind.virtastic.app.
-#  - builder stage: incremental OpenMW→WASM build (fast, FROM the prebaked openmw-builder image).
+#  - builder stage: incremental openmw-web build (fast, FROM the prebaked openmw-builder image).
 #  - runtime stage: caddy:alpine serving the web root with the app's serving contract.
 # Built + tagged `morrowind:ovh` by .github/workflows/deploy-ovh.yml on the Virtastic self-hosted runner.
 # =============================================================================================

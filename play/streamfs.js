@@ -1,9 +1,9 @@
 // Copyright (C) 2025-2026 Virtastic - https://virtastic.app
-// SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-wasm
+// SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Part of openmw-wasm.
+// Part of openmw-web.
 //
-// streamfs.js — synchronous-read streaming files for the OpenMW WASM build.
+// streamfs.js — synchronous-read streaming files for the openmw-web build.
 //
 // Mounts a byte source as a read-only file in the emscripten FS whose bytes are fetched ON
 // DEMAND in chunks by a helper Web Worker. The engine's synchronous main-thread read()

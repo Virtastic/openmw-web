@@ -1,9 +1,9 @@
-OpenMW-WASM
+OpenMW-Web
 ===========
 
 Copyright (C) 2025-2026 Virtastic — https://virtastic.app
 
-OpenMW-WASM is the OpenMW game engine (https://openmw.org) cross-compiled to
+OpenMW-Web is the OpenMW game engine (https://openmw.org) cross-compiled to
 WebAssembly by Virtastic, playable in a browser at
 https://morrowind.virtastic.app.
 

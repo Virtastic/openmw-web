@@ -2,8 +2,8 @@ name: release (grab-and-go bundles)
 
 # Builds the engine exactly like the live deploy and publishes two assets to the
 # GitHub Release for the pushed tag:
-#   openmw-wasm-web-<tag>.zip     — prebuilt engine + web shell + demo: unzip and serve
-#   openmw-wasm-src-<tag>.tar.gz  — the exact source snapshot (GPLv3 Complete Corresponding Source)
+#   openmw-web-<tag>.zip     — prebuilt engine + web shell + demo: unzip and serve
+#   openmw-web-src-<tag>.tar.gz  — the exact source snapshot (GPLv3 Complete Corresponding Source)
 # plus SHA256SUMS.
 on:
   push:
@@ -15,7 +15,7 @@ on:
         required: true
 
 concurrency:
-  group: release-openmw-wasm
+  group: release-openmw-web
   cancel-in-progress: false
 
 permissions:
@@ -25,7 +25,7 @@ jobs:
   release:
     # Public-repo hardening: never run on forks or PR-triggered events — this job
     # executes on the production VPS runner.
-    if: github.repository == 'Virtastic/openmw-wasm' && github.event_name != 'pull_request'
+    if: github.repository == 'Virtastic/openmw-web' && github.event_name != 'pull_request'
     runs-on: [self-hosted, ovh, virtastic]
     steps:
       - uses: actions/checkout@v4
@@ -82,32 +82,32 @@ jobs:
           ! ls dist/web | grep -qiE 'morrowind\.(esm|bsa)|tribunal|bloodmoon|mwdata'
           # python3 -m zipfile: the runner has no `zip` binary. Run from inside web/
           # so entries land at the zip root (unzip → serve, no nested dir).
-          (cd dist/web && python3 -m zipfile -c "../openmw-wasm-web-$TAG.zip" * .env.example)
+          (cd dist/web && python3 -m zipfile -c "../openmw-web-$TAG.zip" * .env.example)
 
       - name: Assemble source tarball (Complete Corresponding Source)
         run: |
           TAG='${{ steps.tag.outputs.tag }}'
           # git archive packs tracked files only — game data, deps caches, and local
           # blobs are gitignored and can never leak through this path.
-          git archive --format=tar.gz --prefix="openmw-wasm-$TAG/" -o "dist/openmw-wasm-src-$TAG.tar.gz" "$TAG"
-          tar tzf "dist/openmw-wasm-src-$TAG.tar.gz" | grep -qiE 'mwdata|\.esm$|\.bsa$' && { echo "FATAL: suspicious file in source tarball" >&2; exit 1; } || true
+          git archive --format=tar.gz --prefix="openmw-web-$TAG/" -o "dist/openmw-web-src-$TAG.tar.gz" "$TAG"
+          tar tzf "dist/openmw-web-src-$TAG.tar.gz" | grep -qiE 'mwdata|\.esm$|\.bsa$' && { echo "FATAL: suspicious file in source tarball" >&2; exit 1; } || true
 
       - name: Checksums
-        run: cd dist && shasum -a 256 openmw-wasm-*.zip openmw-wasm-*.tar.gz > SHA256SUMS
+        run: cd dist && shasum -a 256 openmw-web-*.zip openmw-web-*.tar.gz > SHA256SUMS
 
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
-          name: "OpenMW-WASM ${{ steps.tag.outputs.tag }} — by Virtastic"
+          name: "OpenMW-Web ${{ steps.tag.outputs.tag }} — by Virtastic"
           body: |
-            **Play Morrowind in your browser.** Prebuilt WebAssembly engine — unzip the web bundle, run `python3 server.py`, open desktop Chrome. See [SELF_HOSTING.md](https://github.com/Virtastic/openmw-wasm/blob/${{ steps.tag.outputs.tag }}/SELF_HOSTING.md).
+            **Play Morrowind in your browser.** Prebuilt WebAssembly engine — unzip the web bundle, run `python3 server.py`, open desktop Chrome. See [SELF_HOSTING.md](https://github.com/Virtastic/openmw-web/blob/${{ steps.tag.outputs.tag }}/SELF_HOSTING.md).
 
-            - `openmw-wasm-web-*.zip` — grab-and-go: prebuilt engine + web shell + free demo world
-            - `openmw-wasm-src-*.tar.gz` — the exact source snapshot (GPLv3 Corresponding Source)
+            - `openmw-web-*.zip` — grab-and-go: prebuilt engine + web shell + free demo world
+            - `openmw-web-src-*.tar.gz` — the exact source snapshot (GPLv3 Corresponding Source)
 
             WASM port © 2025–2026 [Virtastic](https://virtastic.app) · GPL-3.0-or-later · No Morrowind game data included.
           files: |
-            dist/openmw-wasm-web-${{ steps.tag.outputs.tag }}.zip
-            dist/openmw-wasm-src-${{ steps.tag.outputs.tag }}.tar.gz
+            dist/openmw-web-${{ steps.tag.outputs.tag }}.zip
+            dist/openmw-web-src-${{ steps.tag.outputs.tag }}.tar.gz
             dist/SHA256SUMS

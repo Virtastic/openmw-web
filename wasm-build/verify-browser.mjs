@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Copyright (C) 2025-2026 Virtastic - https://virtastic.app
-// SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-wasm
-// Headless-Chrome CDP harness for verifying the OpenMW WASM build.
+// SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
+// Headless-Chrome CDP harness for verifying the openmw-web build.
 //
 // Usage:
 //   node wasm-build/verify-browser.mjs <url> [options]

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-# openmw-wasm's slice of the shared box's stack. Drop this service into the box (or merge it
+# openmw-web's slice of the shared box's stack. Drop this service into the box (or merge it
 # into the box's compose project) so it joins the shared reverse-proxy network. The proxy
 # routes Host -> this container:80; the container serves the COOP/COEP headers itself.
 #
@@ -8,7 +8,7 @@
 services:
   openmw:
     # Pull the prebuilt image published by CI (set OWNER to your GitHub org/user, lowercased):
-    image: ghcr.io/OWNER/openmw-wasm:latest
+    image: ghcr.io/OWNER/openmw-web:latest
     # ...or build locally instead of pulling (context is the repo root):
     # build:
     #   context: ..

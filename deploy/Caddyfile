@@ -1,5 +1,5 @@
 # Container-internal Caddy for morrowind.virtastic.app (baked into the runtime image).
-# Serves the OpenMW-WASM web root (/srv) statically. The shared edge Caddy (nl-caddy) reverse-proxies
+# Serves the OpenMW-Web web root (/srv) statically. The shared edge Caddy (nl-caddy) reverse-proxies
 # to this on the `nostalgia` docker network; this process handles the app's serving contract.
 #
 # Contract (see play/server.py, which this replaces): cross-origin isolation (COOP/COEP) for

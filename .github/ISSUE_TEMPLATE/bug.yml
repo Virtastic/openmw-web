@@ -1,11 +1,11 @@
 name: Bug report
-description: Something broke in openmw-wasm
+description: Something broke in openmw-web
 labels: [bug]
 body:
   - type: markdown
     attributes:
       value: |
-        Thanks for the report! Note: openmw-wasm targets **desktop Chrome/Chromium only** —
+        Thanks for the report! Note: openmw-web targets **desktop Chrome/Chromium only** —
         Firefox/Safari/mobile issues will be closed as out of scope.
   - type: input
     id: url

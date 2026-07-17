@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Copyright (C) 2025-2026 Virtastic - https://virtastic.app
-// SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-wasm
+// SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
 // Hang-safe rendering/GUI/gameplay QA sweep (no gear-additem, which currently hangs the build).
 import { spawnSync } from 'node:child_process';
 import { readFileSync, existsSync, mkdirSync } from 'node:fs';

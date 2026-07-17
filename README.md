@@ -1,19 +1,19 @@
-# openmw-wasm
+# openmw-web
 
 **Play Morrowind in your browser** — the OpenMW engine compiled to WebAssembly, by [Virtastic](https://virtastic.app).
 
 <p>
   <a href="https://morrowind.virtastic.app"><b>▶ Play now at morrowind.virtastic.app</b></a> ·
-  <a href="https://github.com/Virtastic/openmw-wasm/releases">Releases (self-host bundle)</a> ·
-  <a href="https://github.com/Virtastic/openmw-wasm/issues">Issues</a> ·
-  <a href="https://github.com/Virtastic/openmw-wasm/discussions">Discussions</a>
+  <a href="https://github.com/Virtastic/openmw-web/releases">Releases (self-host bundle)</a> ·
+  <a href="https://github.com/Virtastic/openmw-web/issues">Issues</a> ·
+  <a href="https://github.com/Virtastic/openmw-web/discussions">Discussions</a>
 </p>
 
 ![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPLv3-blue)
 ![Platform: Chrome desktop](https://img.shields.io/badge/browser-Chrome%20%2F%20Chromium-brightgreen)
-[![Latest release](https://img.shields.io/github/v/release/Virtastic/openmw-wasm)](https://github.com/Virtastic/openmw-wasm/releases)
+[![Latest release](https://img.shields.io/github/v/release/Virtastic/openmw-web)](https://github.com/Virtastic/openmw-web/releases)
 
-openmw-wasm is based on the
+openmw-web is based on the
 [OpenMW](https://openmw.org/) engine (the open-source reimplementation of
 *The Elder Scrolls III: Morrowind*), effectively rebuilt in **WebAssembly** with
 Emscripten so the full engine runs client-side in a desktop browser. No plugins,
@@ -88,13 +88,13 @@ caches, and build artifacts) are intentionally excluded via
 ## Self-hosting (grab and go)
 
 You don't need to build anything to run your own instance. Every
-[release](https://github.com/Virtastic/openmw-wasm/releases) ships:
+[release](https://github.com/Virtastic/openmw-web/releases) ships:
 
-- **`openmw-wasm-web-<tag>.zip`** — the prebuilt engine (`openmw.js/.wasm/.data`
+- **`openmw-web-web-<tag>.zip`** — the prebuilt engine (`openmw.js/.wasm/.data`
   + brotli variants), the web front-end, and a ready-to-run dev server. Unzip,
   `python3 server.py`, open Chrome. Done. See
   [`SELF_HOSTING.md`](SELF_HOSTING.md) for production servers.
-- **`openmw-wasm-src-<tag>.tar.gz`** — the exact source snapshot that built it
+- **`openmw-web-src-<tag>.tar.gz`** — the exact source snapshot that built it
   (the GPLv3 Complete Corresponding Source).
 
 ## Building
@@ -214,7 +214,7 @@ are fast. The in-page HUD shows live per-file download progress.
 
 ## License
 
-openmw-wasm is licensed under the **GNU General Public License, version 3**. It is
+openmw-web is licensed under the **GNU General Public License, version 3**. It is
 a derivative work of OpenMW, which is itself GPLv3, so the combined work is GPLv3.
 The full license text is in [`LICENSE`](LICENSE).
 
@@ -237,14 +237,14 @@ independent, clean-room reimplementation (OpenMW); it ships no Bethesda assets.
 
 ## Community & contributing
 
-- **Bugs / feature requests** → [Issues](https://github.com/Virtastic/openmw-wasm/issues)
-- **Questions, showcase, help** → [Discussions](https://github.com/Virtastic/openmw-wasm/discussions)
+- **Bugs / feature requests** → [Issues](https://github.com/Virtastic/openmw-web/issues)
+- **Questions, showcase, help** → [Discussions](https://github.com/Virtastic/openmw-web/discussions)
 - **Pull requests welcome** — see [`CONTRIBUTING.md`](CONTRIBUTING.md).
   Deployment/CI to our servers is maintainer-only.
 
 ## Support the project
 
-openmw-wasm is built and hosted by [Virtastic](https://virtastic.app). If you
+openmw-web is built and hosted by [Virtastic](https://virtastic.app). If you
 enjoy it, you can [support us on Patreon](https://patreon.com/virtastic) — it
 pays for the servers that keep morrowind.virtastic.app free to play.
 

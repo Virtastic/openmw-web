@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-# openmw-wasm as a self-contained static-site container: nginx + the built site, serving
+# openmw-web as a self-contained static-site container: nginx + the built site, serving
 # the cross-origin-isolation headers itself so it works behind ANY host-routing reverse
 # proxy on the shared box. TLS is terminated upstream (the shared proxy / Cloudflare).
 #

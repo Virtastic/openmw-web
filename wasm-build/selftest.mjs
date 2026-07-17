@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Copyright (C) 2025-2026 Virtastic - https://virtastic.app
-// SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-wasm
-// OpenMW-WASM self-test battery. Drives the game headlessly through a fixed set of scenarios via
+// SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
+// OpenMW-Web self-test battery. Drives the game headlessly through a fixed set of scenarios via
 // verify-browser.mjs (?noopt => OSG per-frame GL error checking ON), captures console logs +
 // screenshots, greps for error classes, and prints a pass/fail matrix. This is the verification
 // gate for every fix phase — run before and after a change; the matrix must not regress.

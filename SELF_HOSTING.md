@@ -1,13 +1,13 @@
-# Self-hosting openmw-wasm
+# Self-hosting openmw-web
 
-Grab `openmw-wasm-web-<tag>.zip` from
-[Releases](https://github.com/Virtastic/openmw-wasm/releases) — it contains the
+Grab `openmw-web-<tag>.zip` from
+[Releases](https://github.com/Virtastic/openmw-web/releases) — it contains the
 prebuilt engine and everything below. No compiler needed.
 
 ## Quick start (local)
 
 ```bash
-unzip openmw-wasm-web-*.zip -d openmw-wasm && cd openmw-wasm
+unzip openmw-web-*.zip -d openmw-web && cd openmw-web
 python3 server.py          # http://localhost:8795 (override with PORT=…)
 ```
 
@@ -42,7 +42,7 @@ Plus:
 ```nginx
 server {
     listen 443 ssl http2;
-    root /srv/openmw-wasm;
+    root /srv/openmw-web;
     types { application/wasm wasm; }
 
     add_header Cross-Origin-Opener-Policy   same-origin   always;
@@ -57,7 +57,7 @@ server {
 
 ```caddy
 example.com {
-    root * /srv/openmw-wasm
+    root * /srv/openmw-web
     header {
         Cross-Origin-Opener-Policy   same-origin
         Cross-Origin-Embedder-Policy require-corp
@@ -82,7 +82,7 @@ supported.
 
 The bundle is GPLv3 (see `LICENSE`, `NOTICE`, `THIRD-PARTY-LICENSES.md`). If
 you host it, link to the source (this repository or the matching
-`openmw-wasm-src-<tag>.tar.gz`) somewhere reasonable — the included pages
+`openmw-web-src-<tag>.tar.gz`) somewhere reasonable — the included pages
 already do this in their footers, so leaving them intact is enough. The demo
 world is freely-licensed content (see `CREDITS-DEMO-DATA.txt`); Morrowind
 game data is **not** included and must never be bundled by hosts either.

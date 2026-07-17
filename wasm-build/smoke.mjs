@@ -1,6 +1,6 @@
 // Copyright (C) 2025-2026 Virtastic - https://virtastic.app
-// SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-wasm
-// Headless-Chrome smoke test for the OpenMW-WASM build.
+// SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
+// Headless-Chrome smoke test for the OpenMW-Web build.
 // Drives Chrome via the DevTools Protocol using node's built-in WebSocket (no puppeteer).
 // Captures console/exception/context-loss, waits for a boot signal, screenshots the page,
 // and asserts a non-black, non-uniform frame. Scoped to a throwaway --user-data-dir so it

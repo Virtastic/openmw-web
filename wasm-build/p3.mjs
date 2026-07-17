@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Copyright (C) 2025-2026 Virtastic - https://virtastic.app
-// SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-wasm
+// SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
 // P3 gameplay sweep: drives combat / save-reload-load / GUI / dialogue / day-night / inventory
 // headlessly and emits a findings matrix. Uses ?start=<cell> (bypass spawn), real F-keys, console
 // commands (--type-at), omw_debug_* exports, and --reload-at (CDP reload). Run after selftest.mjs.

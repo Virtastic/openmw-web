@@ -1,4 +1,4 @@
-# Cloudflare config for morrowind.virtastic.app (the OpenMW-WASM deploy on the shared OVH VPS).
+# Cloudflare config for morrowind.virtastic.app (the OpenMW-Web deploy on the shared OVH VPS).
 # Manages DNS + SSL mode + edge caching declaratively. The Origin Certificate is handled separately
 # (dashboard, or a scoped origin-CA step) since it needs a different credential than the API token.
 #
@@ -31,7 +31,7 @@ resource "cloudflare_record" "morrowind" {
   content = var.origin_ip
   proxied = true
   ttl     = 1 # 1 = automatic (required when proxied)
-  comment = "OpenMW-WASM on the shared OVH VPS (managed by terraform)"
+  comment = "OpenMW-Web on the shared OVH VPS (managed by terraform)"
 }
 
 # NOTE: SSL mode (Full strict) and Rocket Loader (off) are set out-of-band via the Cloudflare API

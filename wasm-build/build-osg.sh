@@ -1,6 +1,6 @@
 #!/bin/bash
 # Copyright (C) 2025-2026 Virtastic - https://virtastic.app
-# SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-wasm
+# SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
 # Build OpenSceneGraph 3.6.5 for WASM (the hardest dependency).
 #
 # Prereqs: OSG source at $ROOT/deps/src/osg (branch OpenSceneGraph-3.6.5) with

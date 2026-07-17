@@ -1,6 +1,6 @@
 #!/bin/bash
 # Copyright (C) 2025-2026 Virtastic - https://virtastic.app
-# SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-wasm
+# SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
 # =============================================================================================
 # build-deps.sh — rebuild the ENTIRE WASM dependency stack from source in deps/src/ into
 # deps/wasm/{lib,include}. This is the end-to-end recipe that previously only existed ad-hoc

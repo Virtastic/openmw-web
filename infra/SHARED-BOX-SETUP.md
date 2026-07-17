@@ -2,7 +2,7 @@
 # Shared box setup (one-time, manual)
 
 This box is a **shared resource** across several sites, so it is **not** managed by any one
-app's IaC — you set it up by hand once, and each site (openmw-wasm included) ships as a
+app's IaC — you set it up by hand once, and each site (openmw-web included) ships as a
 container that plugs into the shared reverse proxy. This doc is the reference for that
 one-time box setup; adapt it to your preferences.
 
@@ -81,7 +81,7 @@ For each domain/subdomain (mix of zones is fine — one zone per registrable dom
 - **Cache rule** on the openmw host: make `.wasm`/`.data`/`.js` eligible for cache with a long
   edge TTL, so origin egress stays inside the free tier. Enable **Tiered Cache**.
 
-## 4. Add openmw-wasm to the box
+## 4. Add openmw-web to the box
 
 Copy `infra/docker-compose.yml` onto the box (set the image `OWNER` and the `Host()` domain),
 then:

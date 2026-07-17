@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Copyright (C) 2025-2026 Virtastic - https://virtastic.app
-// SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-wasm
+// SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
 // Full 1:1 QA sweep. Runs many scenarios headlessly (settings, GUI, environments, gameplay,
 // first-person viewmodel) and emits a pass/fail matrix + screenshots for visual review.
 //   node wasm-build/qa.mjs [nameFilter]

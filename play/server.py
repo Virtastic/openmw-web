@@ -1,7 +1,7 @@
 # Copyright (C) 2025-2026 Virtastic - https://virtastic.app
-# SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-wasm
+# SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Part of openmw-wasm.
+# Part of openmw-web.
 import http.server, socketserver, os, re
 
 # Load play/.env (KEY=VALUE, # comments) WITHOUT clobbering real env vars, so the launcher
@@ -21,7 +21,7 @@ def _load_dotenv(path):
 
 _load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env'))
 
-PORT = int(os.environ.get('PORT', '8795'))
+PORT = 8910
 # When set (e.g. OPENMW_LAUNCHER=1 in env or play/.env), the bare site root serves the
 # data-chooser launcher instead of dropping straight into the game. Off = current behavior.
 LAUNCHER = os.environ.get('OPENMW_LAUNCHER', '').strip().lower() not in ('', '0', 'false', 'no')

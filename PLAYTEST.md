@@ -1,4 +1,4 @@
-# OpenMW-WASM Playtest Checklist
+# OpenMW-Web Playtest Checklist
 
 Goal: verify the in-browser port is 1:1 with desktop OpenMW. Work top-to-bottom; for each item
 note ✅ works / ⚠️ works-with-glitch / ❌ broken + a one-line symptom (and a screenshot for visual

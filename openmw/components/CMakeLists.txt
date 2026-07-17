@@ -1,4 +1,4 @@
-# Modified by Virtastic (https://virtastic.app) for the OpenMW-WASM port, 2025-2026.
+# Modified by Virtastic (https://virtastic.app) for the OpenMW-Web port, 2025-2026.
 # See WASM_ADAPTATIONS.md at the repository root for details of the changes.
 project (Components)
 

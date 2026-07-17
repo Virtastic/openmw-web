@@ -1,6 +1,6 @@
 # Cloudflare Terraform — morrowind.virtastic.app
 
-Declaratively manages the `virtastic.app` Cloudflare config for the OpenMW-WASM deploy:
+Declaratively manages the `virtastic.app` Cloudflare config for the OpenMW-Web deploy:
 DNS record, SSL mode (Full strict), and the edge cache rule.
 
 ## What it does NOT do

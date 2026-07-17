@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
-# Infrastructure — openmw-wasm as a container on a shared box
+# Infrastructure — openmw-web as a container on a shared box
 
-openmw-wasm ships as a **self-contained Docker image** (nginx + the built site) that plugs
+openmw-web ships as a **self-contained Docker image** (nginx + the built site) that plugs
 into a **shared reverse proxy** on a VM you manage separately. The box is a shared resource,
 so it is deliberately **not** provisioned by this repo — one app's IaC must never be able to
 destroy the box other sites live on. This repo owns only the openmw container and how it's
@@ -45,15 +45,15 @@ gh release create build-$(date +%Y%m%d) play/openmw.js play/openmw.wasm play/ope
 ```
 
 Publishing the release triggers **build-openmw-image**, which fetches those artifacts, builds
-`infra/Dockerfile`, and pushes `ghcr.io/<owner>/openmw-wasm:latest` (+ a `sha-…` tag). No box
+`infra/Dockerfile`, and pushes `ghcr.io/<owner>/openmw-web:latest` (+ a `sha-…` tag). No box
 access or long-lived keys are used — just the repo's `GITHUB_TOKEN`.
 
 Build it locally to test:
 
 ```bash
 # from repo root, with play/openmw.{js,wasm,data} present
-docker build -f infra/Dockerfile -t openmw-wasm:test .
-docker run --rm -p 8080:80 openmw-wasm:test
+docker build -f infra/Dockerfile -t openmw-web:test .
+docker run --rm -p 8080:80 openmw-web:test
 # then browse http://localhost:8080  (note: no cross-origin isolation over plain http on a
 # non-localhost host — locally it's fine; in prod Cloudflare/proxy provide HTTPS)
 ```

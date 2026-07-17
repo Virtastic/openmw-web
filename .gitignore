@@ -49,3 +49,4 @@ infra/terraform/*.tfvars
 
 # === OS / editor cruft ===
 .DS_Store
+build-wasm.good/

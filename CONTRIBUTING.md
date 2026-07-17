@@ -1,13 +1,13 @@
 # Contributing
 
-Thanks for your interest in openmw-wasm!
+Thanks for your interest in openmw-web!
 
 ## Bugs & ideas
 
-- **Bug reports** → [Issues](https://github.com/Virtastic/openmw-wasm/issues).
+- **Bug reports** → [Issues](https://github.com/Virtastic/openmw-web/issues).
   Use the bug template — browser, GPU, and the URL/flags you ran with matter a
   lot here (this project is Chrome/Chromium-only by design).
-- **Questions & discussion** → [Discussions](https://github.com/Virtastic/openmw-wasm/discussions).
+- **Questions & discussion** → [Discussions](https://github.com/Virtastic/openmw-web/discussions).
 
 ## Pull requests
 

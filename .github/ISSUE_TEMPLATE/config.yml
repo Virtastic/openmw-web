@@ -1,8 +1,8 @@
 blank_issues_enabled: true
 contact_links:
   - name: Questions & general discussion
-    url: https://github.com/Virtastic/openmw-wasm/discussions
+    url: https://github.com/Virtastic/openmw-web/discussions
     about: Ask questions, share screenshots, get help self-hosting.
   - name: Security issues
-    url: https://github.com/Virtastic/openmw-wasm/security/policy
+    url: https://github.com/Virtastic/openmw-web/security/policy
     about: Please report vulnerabilities privately.

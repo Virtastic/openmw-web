@@ -1,6 +1,6 @@
 name: deploy-ovh (morrowind.virtastic.app)
 
-# Deploys the OpenMW-WASM game to the OVH VPS via the self-hosted runner in the Virtastic org.
+# Deploys the OpenMW-Web game to the OVH VPS via the self-hosted runner in the Virtastic org.
 # The runner executes ON the VPS with docker access, so steps use docker/docker compose directly.
 #
 # Prereqs on the box (one-time): the `openmw-builder:1` image (see Dockerfile.builder), the shared
@@ -21,7 +21,7 @@ jobs:
   deploy:
     # Public-repo hardening: never run on forks or PR-triggered events — this job
     # executes on the production VPS runner.
-    if: github.repository == 'Virtastic/openmw-wasm' && github.event_name != 'pull_request'
+    if: github.repository == 'Virtastic/openmw-web' && github.event_name != 'pull_request'
     runs-on: [self-hosted, ovh, virtastic]
     steps:
       - uses: actions/checkout@v4
