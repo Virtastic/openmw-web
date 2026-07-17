@@ -101,28 +101,26 @@ jobs:
           E -f -o /dev/null "https://morrowind.virtastic.app/index.html?nomw"
           echo "edge health OK"
 
-      # Purge the edge cache for the engine binaries — they keep STABLE names but change every build,
-      # and Cache-Control: immutable does NOT invalidate Cloudflare's edge cache (browser-only). Without
-      # this, returning users keep running stale bytes and an ABI change hard-fails their boot. Best
-      # effort: no-op unless CF_PURGE_TOKEN + CF_ZONE_ID secrets are set. (The real fix is content-hashed
-      # filenames; this purge is the pragmatic interim.)
+      # Refresh the edge cache for the HTML entry point after a deploy. The engine binaries are now
+      # content-versioned (served from /e/<hash>/ with immutable, hash-unique names), so they NEVER need
+      # purging — a new build lands at a new path. The only mutable document is index.html (served
+      # no-cache and re-stamped to point at the current hash each build); purging it just guarantees the
+      # edge hands out the fresh pointer immediately. Best effort: no-op unless CF_PURGE_TOKEN is set.
       - name: Purge Cloudflare cache
         continue-on-error: true
         env:
-          CF_PURGE_TOKEN: ${{ secrets.CF_PURGE_TOKEN }}
+          # Reuses the org-level Cloudflare token (org secret CLOUDFLARE_API_TOKEN, scoped to this repo);
+          # needs the Zone → Cache Purge permission. Missing/unpermitted → this step is a harmless no-op.
+          CF_PURGE_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CF_ZONE_ID: 875c5c671fa7e246307b9f70d56fc6e1   # virtastic.app zone id (not secret)
         run: |
           if [ -z "$CF_PURGE_TOKEN" ]; then
-            echo "CF_PURGE_TOKEN not set — skipping edge purge (purge manually on redeploy)."
+            echo "CLOUDFLARE_API_TOKEN not set — skipping edge purge (content-versioning makes this optional)."
             exit 0
           fi
           curl -fsS -X POST "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/purge_cache" \
             -H "Authorization: Bearer ${CF_PURGE_TOKEN}" -H "Content-Type: application/json" \
             --data '{"files":[
-              "https://morrowind.virtastic.app/openmw.js",
-              "https://morrowind.virtastic.app/openmw.wasm",
-              "https://morrowind.virtastic.app/openmw.data",
-              "https://morrowind.virtastic.app/openmw.js.br",
-              "https://morrowind.virtastic.app/openmw.wasm.br",
-              "https://morrowind.virtastic.app/openmw.data.br"
+              "https://morrowind.virtastic.app/",
+              "https://morrowind.virtastic.app/index.html"
             ]}'
