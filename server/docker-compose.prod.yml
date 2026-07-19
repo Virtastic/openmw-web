@@ -1,0 +1,26 @@
+# Production compose for the openmw-mp multiplayer server on the shared OVH VPS.
+# Deployed by .github/workflows/deploy-mp.yml to /opt/openmw-mp/docker-compose.prod.yml.
+# Same house rules as the morrowind service: joins the shared `nostalgia` network and
+# publishes NO host ports — only the shared edge Caddy reaches it (see deploy/openmw-mp.caddy).
+services:
+  openmw-mp:
+    image: openmw-mp:ovh
+    container_name: openmw-mp
+    restart: unless-stopped
+    networks:
+      - shared
+    volumes:
+      # All persistent state (accounts, players, world, config.toml overrides, logs).
+      # The deploy workflow never touches this dir's contents.
+      - /opt/openmw-mp/data:/data
+    environment:
+      - NODE_ENV=production
+    # Generous on this box (23 GB), but keeps a runaway leak from ever mattering; the
+    # in-process heap cap (256 MB) trips first so flushes still run.
+    mem_limit: 384m
+    # SIGTERM triggers a full persistence flush; give it time before SIGKILL.
+    stop_grace_period: 30s
+networks:
+  shared:
+    external: true
+    name: nostalgia
