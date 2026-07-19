@@ -81,7 +81,7 @@ caches, and build artifacts) are intentionally excluded via
 | `wasm-build/x11_stubs.c` | Signature-exact X11 no-op stubs osgViewer links against |
 | `wasm-build/patches/osg-emscripten.patch` | All OSG source fixes for WebGL2/emscripten |
 | `play/` | Browser front-end: `launcher.html`, `index.html`, `openmw.js` loader, `server.py` dev server |
-| `fsroot/` | Virtual filesystem config + test game data mounted into the WASM runtime |
+| `fsroot/` | Virtual filesystem config + mount layout for the WASM runtime (the demo dataset itself, `fsroot/gamedata/`, is gitignored — see below) |
 
 ### Not included (kept local)
 

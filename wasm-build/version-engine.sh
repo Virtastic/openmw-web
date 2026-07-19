@@ -1,4 +1,7 @@
 #!/bin/sh
+# Copyright (C) 2025-2026 Virtastic - https://virtastic.app
+# SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
+#
 # Content-version the built engine so a CDN can NEVER serve a mismatched mix of two builds' files.
 #
 # The engine is three files loaded as one set: openmw.js (loader) + openmw.wasm (code) + openmw.data

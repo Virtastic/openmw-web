@@ -16,6 +16,9 @@
 		Cross-Origin-Opener-Policy   "same-origin"
 		Cross-Origin-Embedder-Policy "require-corp"
 		Cross-Origin-Resource-Policy "cross-origin"
+		# Defense-in-depth: a standalone game page, never meant to be framed or MIME-sniffed.
+		X-Frame-Options              "DENY"
+		X-Content-Type-Options       "nosniff"
 	}
 
 	# Correct MIME for WebAssembly (both the raw file and, transparently, its .br sibling).

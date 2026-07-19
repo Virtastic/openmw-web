@@ -22,6 +22,10 @@ def _load_dotenv(path):
 _load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env'))
 
 PORT = 8910
+# Bind localhost by default. This is a LOCAL self-host dev server: it serves the current directory
+# with directory listing and no auth, so it should not be exposed on a network. Set OPENMW_HOST=0.0.0.0
+# (and firewall the port) only if you deliberately want it reachable from other machines.
+HOST = os.environ.get('OPENMW_HOST', '127.0.0.1').strip() or '127.0.0.1'
 # When set (e.g. OPENMW_LAUNCHER=1 in env or play/.env), the bare site root serves the
 # data-chooser launcher instead of dropping straight into the game. Off = current behavior.
 LAUNCHER = os.environ.get('OPENMW_LAUNCHER', '').strip().lower() not in ('', '0', 'false', 'no')
@@ -95,7 +99,11 @@ class H(http.server.SimpleHTTPRequestHandler):
         self.send_header('Cross-Origin-Embedder-Policy', 'require-corp')
         self.send_header('Cross-Origin-Resource-Policy', 'cross-origin')
         self.send_header('Cache-Control', 'no-store, no-cache, must-revalidate')
+        self.send_header('X-Content-Type-Options', 'nosniff')
+        self.send_header('X-Frame-Options', 'DENY')
         super().end_headers()
 
 socketserver.TCPServer.allow_reuse_address = True
-socketserver.ThreadingTCPServer(('', PORT), H).serve_forever()
+print(f"openmw-web: serving http://{HOST}:{PORT}/  "
+      f"(local only; set OPENMW_HOST=0.0.0.0 to expose on your network)")
+socketserver.ThreadingTCPServer((HOST, PORT), H).serve_forever()

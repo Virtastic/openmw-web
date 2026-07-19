@@ -50,3 +50,7 @@ infra/terraform/*.tfvars
 # === OS / editor cruft ===
 .DS_Store
 build-wasm.good/
+
+# Python bytecode cache (e.g. from play/server.py)
+__pycache__/
+*.pyc

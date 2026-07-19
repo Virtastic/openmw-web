@@ -1,0 +1,8 @@
+# Copy to terraform.tfvars (gitignored) and fill in. Or export TF_VAR_* / pass -var at apply time.
+# The Cloudflare API token is read from the CLOUDFLARE_API_TOKEN env var, NOT from here.
+
+# zone_name = "virtastic.app"           # override only if the zone differs
+# hostname  = "morrowind.virtastic.app" # override only if the hostname differs
+
+# Origin server IPv4 (the DNS A-record target). Sensitive — keep it in terraform.tfvars, never in git.
+origin_ip = "203.0.113.10"  # <- replace with the real origin IP (RFC 5737 placeholder shown here)

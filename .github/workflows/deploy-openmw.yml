@@ -31,11 +31,16 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Fetch engine artifacts from the release
+        # Pass context through env, never interpolate ${{ }} into the shell body (a crafted release
+        # tag name could otherwise inject commands).
         env:
           GH_TOKEN: ${{ github.token }}
+          INPUT_TAG: ${{ inputs.release_tag }}
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
-          TAG="${{ inputs.release_tag }}"
-          [ -z "$TAG" ] && [ "${{ github.event_name }}" = "release" ] && TAG="${{ github.event.release.tag_name }}"
+          TAG="$INPUT_TAG"
+          [ -z "$TAG" ] && [ "$EVENT_NAME" = "release" ] && TAG="$RELEASE_TAG"
           [ -z "$TAG" ] && TAG=$(gh release view --json tagName -q .tagName)
           gh release download "$TAG" --dir play \
             --pattern 'openmw.js' --pattern 'openmw.wasm' --pattern 'openmw.data'

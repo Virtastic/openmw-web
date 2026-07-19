@@ -91,11 +91,24 @@ jobs:
           done
           E -D /tmp/h -o /dev/null https://morrowind.virtastic.app/
           echo "--- / headers (edge, pre-CF) ---"; cat /tmp/h
-          grep -qi '^cross-origin-opener-policy: same-origin'    /tmp/h
-          grep -qi '^cross-origin-embedder-policy: require-corp'  /tmp/h
-          # engine wasm carries the correct MIME through the edge
-          E -D - -o /dev/null https://morrowind.virtastic.app/openmw.wasm \
-            | tee /tmp/w | grep -qi '^content-type: *application/wasm'
+          # Each isolation header must appear EXACTLY ONCE. A duplicate — e.g. if the out-of-repo edge
+          # `sec_headers` snippet also emits COOP/COEP — silently makes crossOriginIsolated false and
+          # kills SharedArrayBuffer, yet a mere presence check (grep -q) passes on 1 OR 2 occurrences.
+          for hdr in "cross-origin-opener-policy: same-origin" "cross-origin-embedder-policy: require-corp"; do
+            n=$(grep -ci "^$hdr" /tmp/h)
+            test "$n" = 1 || { echo "FATAL: header '$hdr' count=$n (want exactly 1)" >&2; exit 1; }
+          done
+          # Engine wasm is content-versioned under e/<hash>/. A bare /openmw.wasm 404s but STILL gets the
+          # application/wasm stamp (Caddy's @wasm path matcher), so it can't be the probe. Discover the
+          # stamped hash from index.html (fetch with a query so the launcher gate doesn't rewrite it) and
+          # verify the REAL engine file serves 200 + the wasm MIME.
+          E -o /tmp/idx "https://morrowind.virtastic.app/index.html?probe"
+          VER=$(grep -oE '__ENGINE_VER = "[0-9a-f]{12}"' /tmp/idx | grep -oE '[0-9a-f]{12}' | head -1)
+          test -n "$VER" || { echo "FATAL: no stamped engine hash found in index.html" >&2; exit 1; }
+          WURL="https://morrowind.virtastic.app/e/$VER/openmw.wasm"
+          code=$(E -o /dev/null -w '%{http_code}' "$WURL")
+          test "$code" = 200 || { echo "FATAL: engine wasm $WURL returned HTTP $code" >&2; exit 1; }
+          E -D - -o /dev/null "$WURL" | grep -qi '^content-type: *application/wasm'
           # launcher gate: bare / and ?nomw both reachable (200)
           E -f -o /dev/null https://morrowind.virtastic.app/
           E -f -o /dev/null "https://morrowind.virtastic.app/index.html?nomw"

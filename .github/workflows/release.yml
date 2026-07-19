@@ -34,8 +34,14 @@ jobs:
 
       - name: Resolve tag
         id: tag
+        # Pass context through env (never interpolate ${{ }} directly into the shell body — a crafted
+        # ref/tag name could inject commands, and this runs on the production VPS runner).
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          TAG="${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}"
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then TAG="$INPUT_TAG"; else TAG="$REF_NAME"; fi
           git rev-parse -q --verify "refs/tags/$TAG" >/dev/null || { echo "FATAL: tag $TAG not found" >&2; exit 1; }
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
