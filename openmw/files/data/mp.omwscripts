@@ -1,0 +1,7 @@
+# OpenMW-Web multiplayer client (omw-mp/1, M0). Not part of the default content chain:
+# play/index.html appends `content=mp.omwscripts` only when the ?mp= query param is present,
+# so singleplayer is completely unaffected.
+GLOBAL: scripts/mp/global.lua
+PLAYER: scripts/mp/player.lua
+MENU: scripts/mp/menu.lua
+CUSTOM: scripts/mp/puppet.lua

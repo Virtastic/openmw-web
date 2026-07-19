@@ -1,7 +1,11 @@
+// Modified by Virtastic (https://virtastic.app) for the OpenMW-Web port, 2026.
+// See WASM_ADAPTATIONS.md at the repository root for details of the changes.
 #include "luabindings.hpp"
 
 #include <components/lua/asyncpackage.hpp>
 #include <components/lua/utilpackage.hpp>
+
+#include "../mwmp/luabindings.hpp"
 
 #include "../mwbase/environment.hpp"
 #include "../mwbase/world.hpp"
@@ -48,6 +52,7 @@ namespace MWLua
         initCellBindingsForGlobalScripts(context);
         return {
             { "openmw.core", initCorePackage(context) },
+            { "openmw.mp", MWMP::initMPPackage(context) },
             { "openmw.types", initTypesPackage(context) },
             { "openmw.world", initWorldPackage(context) },
         };
@@ -61,6 +66,7 @@ namespace MWLua
         return {
             { "openmw.animation", initAnimationPackage(context) },
             { "openmw.core", initCorePackage(context) },
+            { "openmw.mp", MWMP::initMPPackage(context) },
             { "openmw.types", initTypesPackage(context) },
             { "openmw.nearby", initNearbyPackage(context) },
         };
@@ -83,6 +89,7 @@ namespace MWLua
         return {
             { "openmw.core", initCorePackage(context) },
             { "openmw.ambient", initAmbientPackage(context) },
+            { "openmw.mp", MWMP::initMPPackage(context) },
             { "openmw.ui", initUserInterfacePackage(context) },
             { "openmw.menu", initMenuPackage(context) },
             { "openmw.input", initInputPackage(context) },

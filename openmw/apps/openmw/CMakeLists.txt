@@ -116,6 +116,12 @@ add_openmw_dir (mwbase
     inputmanager windowmanager statemanager luamanager
     )
 
+# Modified by Virtastic (https://virtastic.app) for the OpenMW-Web port, 2026:
+# mwmp = omw-mp/1 multiplayer client transport (WebSocket; native builds compile no-op stubs).
+add_openmw_dir (mwmp
+    websocket netmanager luabindings
+    )
+
 # Main executable
 
 add_library(openmw-lib STATIC

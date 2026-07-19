@@ -738,6 +738,58 @@
        ENV.XDG_DATA_HOME='/userdata/data-home';
        ENV.XDG_CACHE_HOME='/home/web_user/.cache';
        FS.mkdirTree('/home/web_user/.cache/openmw');
+       // --- Multiplayer (M0, server/PROTOCOL.md): ?mp=<ws(s)://…> arms the omw-mp/1 client.
+       // The engine sees it via ENV; the Lua session driver (mp.omwscripts, appended to the
+       // content chain below) does the rest. WITHOUT ?mp= nothing here runs — singleplayer
+       // is byte-for-byte unaffected.
+       try {
+         var mpm = /[?&]mp=([^&]+)/.exec(location.search);
+         if (mpm){
+           var mpUrl = decodeURIComponent(mpm[1]);
+           if (!/^wss?:\/\//.test(mpUrl)){
+             append('[mp] ignored ?mp= — URL must be ws:// or wss://','err');
+           } else {
+             window.__omwMPEnabled = true;
+             ENV.OPENMW_MP_URL = mpUrl;
+             var mpName = (/[?&]name=([^&]+)/.exec(location.search)||[])[1];
+             var mpPass = (/[?&]pass=([^&]+)/.exec(location.search)||[])[1];
+             // Harness mode: &mpauto=1&mpuser=<account> auto-registers/logs in with the
+             // fixed harness password (wasm-build/mp-harness.mjs).
+             if (/[?&]mpauto=1\b/.test(location.search)){
+               var mpUser = (/[?&]mpuser=([^&]+)/.exec(location.search)||[])[1];
+               mpName = mpUser || mpName || 'harness';
+               mpPass = 'harness-pass-1';
+             }
+             if (mpName) ENV.OPENMW_MP_NAME = decodeURIComponent(mpName);
+             if (mpPass) ENV.OPENMW_MP_PASS = decodeURIComponent(mpPass);
+             // SessionHello engineHash: the 12-hex wasm content hash stamped by
+             // version-engine.sh; unstamped local dev sends '' (server may not pin).
+             if (/^[0-9a-f]{12}$/.test(__ENGINE_VER)) ENV.OPENMW_MP_ENGINEHASH = __ENGINE_VER;
+             // &mpvectors=1 (dev): dump LSER golden vectors for the server codec tests.
+             if (/[?&]mpvectors=1\b/.test(location.search)) ENV.OPENMW_MP_VECTORS='1';
+             // Test/automation surface: Lua mirrors {state, playerId, lastChat, players} in
+             // here via mp.testSet; sendChat feeds mp.testPollCommand.
+             window.__omwMP = { state:'boot', sendChat:function(t){ Module.__omwMPCmd='chat:'+t; } };
+             // Content chain: the retail and ?src=local paths rewrite /openmw.cfg and append
+             // content=mp.omwscripts themselves (they strip all content= lines first). The
+             // ?nomw demo boots the BAKED cfg unrewritten, so append to it here — demo mode
+             // only, or this would race the other writers.
+             if ((window.__FORCE_NOMW || /[?&]nomw\b/.test(location.search))
+                 && !/[?&]src=local\b/.test(location.search)){
+               addRunDependency('mp-cfg');
+               (function waitMpCfg(){
+                 if (FS.analyzePath('/openmw.cfg').exists){
+                   var mpCfg = FS.readFile('/openmw.cfg', {encoding:'utf8'});
+                   if (!/^content=mp\.omwscripts$/m.test(mpCfg))
+                     FS.writeFile('/openmw.cfg', mpCfg + '\ncontent=mp.omwscripts');
+                   removeRunDependency('mp-cfg');
+                 } else { setTimeout(waitMpCfg, 25); }
+               })();
+             }
+             append('[mp] multiplayer armed -> '+mpUrl);
+           }
+         }
+       } catch(e){ append('[mp setup err] '+e,'err'); }
        // Performance-tuned settings (merged over defaults). Biggest levers for the WASM build:
        //  - viewing distance: fewer cells/objects culled+drawn (default 7168)
        //  - water reflection detail 0 + small rtt: water no longer re-renders the whole scene
@@ -1191,6 +1243,7 @@
                cfg.push('data=/mwdata', 'config="/userdata/config/openmw"');
                fbarch.forEach(function(a){ cfg.push('fallback-archive='+a); });
                content.forEach(function(c){ cfg.push('content='+c); });
+               if (window.__omwMPEnabled) cfg.push('content=mp.omwscripts'); // ?mp= (M0 multiplayer)
                if (wantMovies)
                  cfg.push('fallback=Movies_Company_Logo,bethesda logo.bik',
                           'fallback=Movies_Morrowind_Logo,mw_logo.bik',
@@ -1357,6 +1410,7 @@
                         'config="/userdata/config/openmw"',
                         'fallback-archive=Morrowind.bsa', 'fallback-archive=Tribunal.bsa', 'fallback-archive=Bloodmoon.bsa',
                         'content=Morrowind.esm', 'content=Tribunal.esm', 'content=Bloodmoon.esm');
+               if (window.__omwMPEnabled) cfg.push('content=mp.omwscripts'); // ?mp= (M0 multiplayer)
                if (!window.__noMovies)
                  cfg.push('fallback=Movies_Company_Logo,bethesda logo.bik',
                           'fallback=Movies_Morrowind_Logo,mw_logo.bik',

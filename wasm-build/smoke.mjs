@@ -216,6 +216,10 @@ let contextLost = false;
   console.log('screenshot:', shotPath);
   console.log('bootSignal:', bootOk, '| abort:', abort, '| frameOk:', frameOk);
   try { writeFileSync('/tmp/omw-' + LABEL + '-alllogs.txt', logs.join('\n')); } catch {}
+  // Golden-vector capture (&mpvectors=1): the MPVECTOR lines print early in the boot log and
+  // would fall out of the 40-line tail below — echo them all for wasm-build/mp-vectors.mjs.
+  const vectorLines = logs.filter((l) => l.includes('MPVECTOR'));
+  if (vectorLines.length) { console.log('--- MPVECTOR lines ---'); console.log(vectorLines.join('\n')); }
   console.log('--- last 40 log lines ---');
   console.log(logs.slice(-40).join('\n'));
   if (errors.length) { console.log('--- errors ---'); console.log(errors.slice(-20).join('\n')); }

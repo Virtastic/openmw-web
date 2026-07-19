@@ -76,6 +76,13 @@ Reload gets the latest build (server sends no-cache). Toggle the dev log with th
 - [ ] Console stays clean (no new error classes appearing over time)
 - [ ] Tab-out / tab-back; close tab and reopen → save intact
 
+## 9. Multiplayer (M0 — needs a human; the harness can't drive SDL keys)
+- [ ] `?nomw&mp=ws://localhost:8080/ws&name=You&pass=x` (server: `cd server && npm run dev`):
+      MOTD chat message appears in-game shortly after load
+- [ ] T opens the chat window; click the input line (no programmatic focus API in 0.52 Lua —
+      known UX gap), type, Enter sends; a second tab (different `name=`) sees it
+- [ ] Without `?mp=` absolutely nothing multiplayer-related appears (boot log, content chain)
+
 ## Known open (already triaged — not bugs to re-report)
 - Some textures skip mipmaps (`glGenerateMipmap` warning) → slight distant shimmer — OSG fix pending
 - No MSAA → jagged edges vs desktop — enhancement, deferred

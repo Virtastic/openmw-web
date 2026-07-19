@@ -86,7 +86,7 @@ ninja apps/openmw/CMakeFiles/openmw.dir/main.cpp.o
   "$LIB/libBulletCollision.a" "$LIB/libLinearMath.a" \
   "$BUILD/x11_stubs.o" \
   -sERROR_ON_UNDEFINED_SYMBOLS=0 \
-  -lidbfs.js -sFORCE_FILESYSTEM=1 \
+  -lidbfs.js -lwebsocket.js -sFORCE_FILESYSTEM=1 \
   -sEXPORTED_RUNTIME_METHODS=['FS','ENV','callMain','Browser','stringToNewUTF8','UTF8ToString'] \
   -sEXPORTED_FUNCTIONS=['_main','_malloc','_free'] \
   --preload-file "$ROOT/fsroot@/"

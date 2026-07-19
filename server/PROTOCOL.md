@@ -52,7 +52,9 @@ Client → server:
 - `{"t":"SessionHello", "proto":1, "engineHash":"<12-hex or empty>", "lserVersion":0,
    "manifest":[{"name":"Morrowind.esm","size":123,"idx":0}, …], "resumeToken":"<opt>"}`
   Manifest = the client's content files in load order (`strict` mode adds `"sha256"`,
-  M0 implements `names` mode: name+size+order).
+  M0 implements `names` mode: name+size+order). Reality check: OpenMW 0.52 Lua exposes
+  content-file NAMES only (`core.contentFiles.list`, lowercased) — sizes are unreachable,
+  so clients always send `size:0` and `names` mode effectively compares name+order.
 - `{"t":"SessionRegister", "account":"name", "password":"…", "serverPassword":"<opt>",
    "inviteCode":"<opt>"}`
 - `{"t":"SessionLoginRequest", "account":"name", "password":"…", "serverPassword":"<opt>"}`

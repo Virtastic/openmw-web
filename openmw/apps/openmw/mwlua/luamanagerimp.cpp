@@ -41,6 +41,8 @@
 #include "../mwworld/scene.hpp"
 #include "../mwworld/worldmodel.hpp"
 
+#include "../mwmp/netmanager.hpp"
+
 #include "luabindings.hpp"
 #include "playerscripts.hpp"
 #include "types/types.hpp"
@@ -271,6 +273,10 @@ namespace MWLua
         for (const LuaUtil::ScriptsContainerWeakPtr& ptr : mActiveLocalScripts)
             asLocal(ptr)->statsNextFrame();
 
+        // Multiplayer (omw-mp/1): inject frames received since last frame as MP_* global events
+        // BEFORE finalizeEventBatch so they are delivered by callEventHandlers this same frame.
+        MWMP::NetManager::instance().pumpInboundToLua(mLuaEvents);
+
         mLuaEvents.finalizeEventBatch();
 
         MWWorld::DateTimeManager& timeManager = *MWBase::Environment::get().getWorld()->getTimeManager();
@@ -302,6 +308,9 @@ namespace MWLua
 
             mScriptTracker.unloadInactiveScripts(lua);
         });
+
+        // Multiplayer: everything queued by openmw.mp during this frame goes out in one batch.
+        MWMP::NetManager::instance().flushOutbound();
     }
 
     void LuaManager::objectTeleported(const MWWorld::Ptr& ptr)
