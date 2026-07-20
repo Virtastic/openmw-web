@@ -62,11 +62,60 @@ local function dumpVectors()
     end
 end
 
+-- Player-visible session notices. State changes can fire before the player object exists
+-- (connection races game start), so buffer and flush from onUpdate once world.players[1]
+-- is there. Chat lines also pop as screen messages (player.lua pushMessage), so these are
+-- visible without the chat window open — that's the whole point for real players.
+local pendingNotices = {}
+
+local function notice(text)
+    pendingNotices[#pendingNotices + 1] = { channel = 'server', text = text }
+end
+
+local function flushNotices()
+    if #pendingNotices == 0 then return end
+    local player = playerScript()
+    if not player then return end
+    for _, n in ipairs(pendingNotices) do
+        player:sendEvent('MP_UiChatMessage', n)
+    end
+    pendingNotices = {}
+end
+
+-- Human-readable reasons for the codes a real player can actually hit.
+local FAIL_TEXT = {
+    AUTH_FAILED = 'wrong password for this account name',
+    BAD_CONTENT = 'your game data does not match the server',
+    BAD_ENGINE = 'your game build does not match the server',
+    BAD_PROTO = 'protocol mismatch — update the game or the server',
+    SERVER_FULL = 'the server is full',
+    BANNED = 'you are banned from this server',
+    KICKED = 'you were kicked',
+    RATE = 'disconnected for flooding',
+    SUPERSEDED = 'this account logged in from somewhere else',
+    SHUTDOWN = 'the server shut down',
+    UNREACHABLE = 'could not reach the server',
+}
+
+local wasJoined = false
+
 local function start()
     if not mp.isEnabled() then return end
     if mp.vectorsEnabled() then dumpVectors() end
     net.onStateChanged = function(state)
         print('[mp] session state: ' .. state)
+        if state == 'Joined' then
+            wasJoined = true
+            notice('Connected to ' .. tostring(net.serverName or 'server')
+                .. ' as ' .. tostring(mp.getName() or '?'))
+        elseif state == 'Failed' then
+            local why = FAIL_TEXT[net.lastError] or net.lastError or 'connection failed'
+            local detail = net.lastErrorDetail
+            notice('Multiplayer: ' .. why .. (detail and detail ~= '' and (' (' .. detail .. ')') or '')
+                .. ' — reload the page to retry')
+        elseif state == 'Offline' and wasJoined then
+            notice('Multiplayer: connection lost — reload the page to retry')
+        end
         if state ~= 'Joined' then
             roster = {}
             mirrorRoster()
@@ -127,7 +176,10 @@ return {
     engineHandlers = {
         onInit = start,
         onLoad = start,
-        onUpdate = function() net.tick() end,
+        onUpdate = function()
+            net.tick()
+            flushNotices()
+        end,
     },
     eventHandlers = eventHandlers,
 }

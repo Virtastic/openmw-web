@@ -56,6 +56,7 @@ function net.start()
     triedLogin = false
     authMode = 'register'
     net.lastError = nil
+    net.lastErrorDetail = nil
     if mp.connect(mp.getUrl()) then
         setState('Connecting')
     else
@@ -89,7 +90,18 @@ function net.onClose()
         end
     end
     if net.state ~= 'Failed' then
-        setState(net.lastError and 'Failed' or 'Offline')
+        if net.state == 'Joined' or net.state == 'Offline' then
+            -- Clean close after joining (server restart, network drop): global.lua turns
+            -- this into a "connection lost" notice via its wasJoined flag.
+            setState('Offline')
+        else
+            -- Closed before ever joining (server down/unreachable, refused upgrade):
+            -- a real player must see a failure, not silence.
+            net.lastError = net.lastError or 'UNREACHABLE'
+            net.lastErrorDetail = net.lastErrorDetail or 'could not reach the server'
+            mp.testSet('lastError', tostring(net.lastError) .. ' ' .. tostring(net.lastErrorDetail))
+            setState('Failed')
+        end
     end
 end
 
@@ -97,6 +109,7 @@ local dispatch = {}
 
 dispatch.SessionHelloOk = function(msg)
     net.serverName = msg.serverName
+    mp.testSet('serverName', tostring(msg.serverName or ''))
     local auth = {
         t = (authMode == 'register') and 'SessionRegister' or 'SessionLoginRequest',
         account = mp.getName(),
@@ -122,7 +135,9 @@ end
 
 dispatch.SessionDisconnect = function(msg)
     net.lastError = msg.code
+    net.lastErrorDetail = msg.detail
     print('[mp] server disconnect: ' .. tostring(msg.code) .. ' (' .. tostring(msg.detail) .. ')')
+    mp.testSet('lastError', tostring(msg.code) .. ' ' .. tostring(msg.detail or ''))
     if msg.code ~= 'AUTH_FAILED' then
         setState('Failed')
     end

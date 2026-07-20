@@ -33,6 +33,12 @@ BUILD="$ROOT/build-wasm"
 
 cd "$BUILD"
 
+# The multiplayer Lua package is authored in openmw/files/data but packed from the fsroot
+# preload mirror — sync it here so the two can never drift (the rest of resources/vfs is a
+# deliberately-divergent manual mirror; mp/ is exact by construction).
+rsync -a --delete "$ROOT/openmw/files/data/scripts/mp/" "$ROOT/fsroot/resources/vfs/scripts/mp/"
+cp "$ROOT/openmw/files/data/mp.omwscripts" "$ROOT/fsroot/resources/vfs/mp.omwscripts"
+
 # Make sure the objects on the explicit link line are fresh.
 ninja apps/openmw/CMakeFiles/openmw.dir/main.cpp.o
 

@@ -770,6 +770,28 @@
              // Test/automation surface: Lua mirrors {state, playerId, lastChat, players} in
              // here via mp.testSet; sendChat feeds mp.testPollCommand.
              window.__omwMP = { state:'boot', sendChat:function(t){ Module.__omwMPCmd='chat:'+t; } };
+             // Failure banner (DOM, not game UI): session failures must be visible to a real
+             // player even if the in-game chat/notice layer never got a chance to render
+             // (e.g. refused during load). Lua mirrors state/lastError via mp.testSet.
+             (function(){
+               var el = null;
+               setInterval(function(){
+                 var s = window.__omwMP && window.__omwMP.state;
+                 if (s === 'Failed' && !el){
+                   el = document.createElement('div');
+                   el.id = 'mp-banner';
+                   el.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;'
+                     + 'background:#7a1f1f;color:#fff;font:14px/1.4 system-ui,sans-serif;'
+                     + 'padding:8px 12px;text-align:center';
+                   el.textContent = 'Multiplayer connection failed'
+                     + (window.__omwMP.lastError ? ': ' + window.__omwMP.lastError : '')
+                     + ' — reload the page to retry.';
+                   document.body.appendChild(el);
+                 } else if (s === 'Joined' && el){
+                   el.remove(); el = null;
+                 }
+               }, 2000);
+             })();
              // Content chain: the retail and ?src=local paths rewrite /openmw.cfg and append
              // content=mp.omwscripts themselves (they strip all content= lines first). The
              // ?nomw demo boots the BAKED cfg unrewritten, so append to it here — demo mode

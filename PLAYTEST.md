@@ -82,6 +82,10 @@ Reload gets the latest build (server sends no-cache). Toggle the dev log with th
 - [ ] T opens the chat window; click the input line (no programmatic focus API in 0.52 Lua —
       known UX gap), type, Enter sends; a second tab (different `name=`) sees it
 - [ ] Without `?mp=` absolutely nothing multiplayer-related appears (boot log, content chain)
+- [ ] Error paths look human: server not running → red top banner "could not reach the server";
+      wrong `pass=` for an existing name → banner names the auth failure; kill the server while
+      playing → in-game "connection lost — reload the page to retry" message (no banner)
+- [ ] "Connected to <server> as <name>" pops shortly after the world loads
 
 ## Known open (already triaged — not bugs to re-report)
 - Some textures skip mipmaps (`glGenerateMipmap` warning) → slight distant shimmer — OSG fix pending
