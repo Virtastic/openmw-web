@@ -6,9 +6,11 @@
 
 import type { Plugin, PluginApi, PluginPlayer } from './api';
 import { motd } from './builtin/motd';
+import { respawn } from './builtin/respawn';
+import { deathPenalty } from './builtin/death-penalty';
 import { log } from '../log';
 
-const BUILTINS: Record<string, Plugin> = { motd };
+const BUILTINS: Record<string, Plugin> = { motd, respawn, 'death-penalty': deathPenalty };
 
 export class HookBus {
   private plugins: Plugin[] = [];
@@ -54,6 +56,9 @@ export class HookBus {
   }
   playerDisconnect(player: PluginPlayer): void {
     this.run('onPlayerDisconnect', (p) => void p.onPlayerDisconnect?.(this.api, player));
+  }
+  playerDeath(player: PluginPlayer): void {
+    this.run('onPlayerDeath', (p) => void p.onPlayerDeath?.(this.api, player));
   }
   // false = vetoed.
   chat(player: PluginPlayer, text: string): boolean {

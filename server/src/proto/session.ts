@@ -151,14 +151,20 @@ export function helloOk(serverName: string, contentPolicy: 'names' | 'strict' | 
   return JSON.stringify({ t: 'SessionHelloOk', serverName, contentPolicy });
 }
 
-export function welcome(playerId: number, sessionToken: string, motd: string, serverSeq: number): string {
+export function welcome(
+  playerId: number,
+  sessionToken: string,
+  motd: string,
+  serverSeq: number,
+  playerRecord: unknown = null, // M2: stored snapshot doc, or null for fresh chargen
+): string {
   return JSON.stringify({
     t: 'SessionWelcome',
     playerId,
     sessionToken,
     motd,
     flags: {},
-    playerRecord: null, // M2: non-null restores a persisted character
+    playerRecord: playerRecord ?? null,
     serverSeq,
   });
 }

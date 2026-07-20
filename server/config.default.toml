@@ -2,9 +2,9 @@
 # <dataDir>/config.toml and are deep-merged over these defaults (scalars and arrays
 # replace, tables merge key-by-key).
 
-# Built-in plugins to load, in order. Available: "motd".
+# Built-in plugins to load, in order. Available: "motd", "respawn", "death-penalty".
 # (Top-level key: in an override file it must appear before any [table] header.)
-plugins = ["motd"]
+plugins = ["motd", "respawn", "death-penalty"]
 
 [server]
 name = "openmw-mp"                # shown in SessionHelloOk and /status
@@ -27,6 +27,17 @@ enforce = "names"
 # engineHash check against the first player's hash (adopt-first, like content):
 # "warn" logs mismatches, "refuse" disconnects with BAD_ENGINE, "off" skips.
 enforce = "warn"
+
+[rules]
+# Where the respawn plugin sends the dead (M2). Placeholder coords for the demo
+# Village — operators override per content set.
+respawnCellKey = "village"
+respawnX = 0.0
+respawnY = 0.0
+respawnZ = 0.0
+# Death penalty applied by the death-penalty plugin: "none" (M2 default; hook is a
+# documented no-op seed for operators/plugins to extend).
+deathPenalty = "none"
 
 [limits]
 msgsPerSec = 60                   # per-session message token bucket (burst = rate)

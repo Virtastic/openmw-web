@@ -7,6 +7,8 @@ import { mkdirSync } from 'node:fs';
 import { WebSocket } from 'ws';
 import { loadConfig, type Config, type DeepPartial } from './config';
 import { AccountStore } from './core/accounts';
+import { PlayerStore } from './persist/playerstore';
+import type { StateCtx } from './core/playerstate';
 import { Roster } from './core/players';
 import { ContentGate, EngineGate } from './core/manifest';
 import { CommandRegistry, registerCoreCommands, type CommandContext } from './core/commands';
@@ -41,8 +43,15 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   mkdirSync(opts.dataDir, { recursive: true });
   const config = loadConfig(opts.dataDir, opts.configOverride);
   const accounts = new AccountStore(opts.dataDir);
+  const playerStore = new PlayerStore(opts.dataDir);
   const roster = new Roster();
   const startedAt = Date.now();
+  // At flush time the store pulls the freshest position from the live session, so pose
+  // updates never need to dirty the doc.
+  playerStore.setLivePositionProvider((key) => {
+    const p = roster.activeForAccount(key);
+    return p?.cellKey && p.pose ? { cellKey: p.cellKey, x: p.pose.x, y: p.pose.y, z: p.pose.z } : undefined;
+  });
 
   const api: PluginApi = {
     config,
@@ -52,6 +61,10 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       if (target === 'all') broadcastChat(roster, msg);
       else roster.get(target)?.peer.sendEvent('ChatMessage', msg);
     },
+    sendEvent: (target, name, body) => {
+      if (target === 'all') for (const p of roster.inWorld()) p.peer.sendEvent(name, body);
+      else roster.get(target)?.peer.sendEvent(name, body);
+    },
   };
   const hooks = new HookBus(config.plugins, api);
 
@@ -60,6 +73,15 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   const commandCtx: CommandContext = {
     roster,
     onCommand: (player, name, args) => hooks.command({ id: player.id, name: player.name, rank: player.rank }, name, args),
+  };
+
+  const stateCtx: StateCtx = {
+    roster,
+    store: playerStore,
+    onPlayerDeath: (player) => {
+      log('info', 'player.death', { id: player.id, name: player.name });
+      hooks.playerDeath({ id: player.id, name: player.name, rank: player.rank });
+    },
   };
 
   const ctx: ServerCtx = {
@@ -72,11 +94,20 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     commands,
     commandCtx,
     hooks,
+    players: playerStore,
+    stateCtx,
   };
 
   const httpServer = createHttpServer(() => ({
     name: config.server.name,
-    players: roster.inWorld().map((p) => ({ id: p.id, name: p.name, cellKey: p.cellKey ?? null })),
+    players: roster.inWorld().map((p) => ({
+      id: p.id,
+      name: p.name,
+      cellKey: p.cellKey ?? null,
+      ...(playerStore.getCached(p.accountKey)?.stats?.level !== undefined
+        ? { level: playerStore.getCached(p.accountKey)!.stats!.level }
+        : {}),
+    })),
     maxPlayers: config.server.maxPlayers,
     uptime: Math.round((Date.now() - startedAt) / 1000),
     version: VERSION,
@@ -115,7 +146,10 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   return {
     port,
     config,
-    flush: () => accounts.flush(),
+    flush: async () => {
+      await accounts.flush();
+      await playerStore.flushAll();
+    },
     close: async () => {
       if (closed) return;
       closed = true;
@@ -124,6 +158,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       for (const conn of [...connections]) conn.disconnect('SHUTDOWN', 'server shutting down');
       wss.close();
       await accounts.close();
+      await playerStore.close();
       await new Promise<void>((resolve) => {
         httpServer.close(() => resolve());
         httpServer.closeAllConnections();

@@ -6,6 +6,7 @@
 import type { Config } from '../config';
 import type { LogLevel } from '../log';
 import type { ChatMessageBody } from '../core/chat';
+import type { JsLike } from '../proto/lser';
 
 export interface PluginPlayer {
   id: number;
@@ -19,6 +20,8 @@ export interface PluginApi {
   players(): PluginPlayer[];
   // target: 'all' broadcasts to everyone in-world; a playerId sends to that player.
   chat(target: 'all' | number, msg: ChatMessageBody): void;
+  // Raw event-tier send (M2; e.g. PlayerResurrect from the respawn plugin).
+  sendEvent(target: 'all' | number, name: string, body: JsLike): void;
 }
 
 export interface Plugin {
@@ -28,6 +31,8 @@ export interface Plugin {
   onPlayerAuthed?(api: PluginApi, player: PluginPlayer): void;
   onPlayerJoinWorld?(api: PluginApi, player: PluginPlayer): void;
   onPlayerDisconnect?(api: PluginApi, player: PluginPlayer): void;
+  // M2: fired when a PlayerDeath event arrives (respawn/death-penalty seeds).
+  onPlayerDeath?(api: PluginApi, player: PluginPlayer): void;
   // Pre-broadcast; return false to veto the chat line.
   onChat?(api: PluginApi, player: PluginPlayer, text: string): boolean | void;
   // Return true to mark the command handled (skips the core registry).

@@ -126,6 +126,27 @@ Event-body conventions: arrays = 1-based integer-keyed tables; nil fields = omit
 | `PlayerLeaveWorld` | S→C | `{id=u16}` |
 | `PlayerList` | S→C | `{players={{id=u16, name=string}, …}}` |
 
+## Event-tier additions (M2)
+
+| name | dir | body |
+|---|---|---|
+| `PlayerAppearance` | C→S on join/chargen-done/change; relayed S→C to ALL in-world with `id` | `{race=string, head=string, hair=string, isMale=bool, class=string, name=string}` (record-id strings from the player's own NPC record) |
+| `PlayerEquipment` | C→S on change (client diffs); relayed to ALL with `id` | `{slots={[slotNumber]=recordId, …}}` — full snapshot, slot numbers per `types.Actor.EQUIPMENT_SLOT` |
+| `PlayerStatsDynamic` | C→S on change (0.25 s poll, instant on death); relayed to VISIBLE with `id` | `{hp={c=number,b=number}, mp={c=,b=}, ft={c=,b=}}` (current/base) |
+| `PlayerAttributes` / `PlayerSkills` / `PlayerLevel` | C→S on change (1 s diff) | stored server-side for persistence; not relayed in M2 |
+| `PlayerSpellbook` | C→S `{add={id,…}, remove={id,…}}` | stored; not relayed in M2 |
+| `PlayerInventory` | C→S full snapshot `{items={{id=recordId, n=count}, …}}` on change (2 s diff, cap 512 entries) | stored for rejoin restore; not relayed |
+| `PlayerDeath` | C→S `{}` | server runs respawn/death-penalty plugins |
+| `PlayerResurrect` | S→C `{cellKey=string, x=,y=,z=, restoreHp=bool}` | client teleports self, restores dynamic stats, clears death |
+
+Rejoin restore (M2): `SessionWelcome.playerRecord` is non-null once the server has stored a
+snapshot: `{appearance={…}, equipment={…}, inventory={…}, stats={dynamic=…, attributes=…,
+skills=…, level=…}, spells={…}, position={cellKey=, x=,y=,z=}}`. The client applies it
+instead of running chargen and teleports to `position`. The server flushes the player doc
+on: cell change, level-up, equipment change (10 s debounce), logout, SIGTERM. Appearance
+relays are the puppet-record source of truth — clients rebuild a puppet's NPC record when
+an appearance arrives for an already-spawned puppet.
+
 ## Client-side integration contract (M0)
 
 - Join URL: `index.html?...&mp=<ws(s)-url>&name=<display-name>`; boot JS sets

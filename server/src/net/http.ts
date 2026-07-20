@@ -7,7 +7,7 @@ import { createServer, type Server } from 'node:http';
 
 export interface StatusSnapshot {
   name: string;
-  players: { id: number; name: string; cellKey: string | null }[];
+  players: { id: number; name: string; cellKey: string | null; level?: number }[];
   maxPlayers: number;
   uptime: number; // seconds
   version: string;

@@ -17,6 +17,8 @@ import { TokenBucket, IpRateLimiter } from './ratelimit';
 import { MSG_EVENT, MSG_PLAYER_MOVE, ProtoError, unpackEnvelope, unpackEvent, packEvent, packEnvelope } from '../proto/envelope';
 import { unpackMove } from '../proto/movement';
 import { MAX_ABS_COORD } from '../core/movement';
+import { handleStateEvent, syncStateOnJoin, type StateCtx } from '../core/playerstate';
+import type { PlayerStore, PlayerDoc } from '../persist/playerstore';
 import { lserDecode, lserEncode, jsToL, LserError, type JsLike, type LValue } from '../proto/lser';
 import {
   parseSessionMessage,
@@ -47,6 +49,8 @@ export interface ServerCtx {
   commands: CommandRegistry;
   commandCtx: CommandContext;
   hooks: HookBus;
+  players: PlayerStore;
+  stateCtx: StateCtx;
 }
 
 export class Connection implements Peer {
@@ -113,6 +117,16 @@ export class Connection implements Peer {
     if (this.contentHeld) this.ctx.content.release();
     if (this.engineHeld) this.ctx.engine.release();
     if (this.player) {
+      // Logout flush: capture the freshest position explicitly (the roster entry is
+      // about to go away) and write the doc. Only players with an existing doc are
+      // touched — a connect/quit without any state must not fabricate an empty snapshot.
+      const { accountKey, cellKey, pose } = this.player;
+      if (this.ctx.players.getCached(accountKey)) {
+        this.ctx.players.update(accountKey, (doc) => {
+          if (cellKey && pose) doc.position = { cellKey, x: pose.x, y: pose.y, z: pose.z };
+        });
+        void this.ctx.players.flushKey(accountKey);
+      }
       this.ctx.roster.remove(this.player);
       this.ctx.hooks.playerDisconnect({ id: this.player.id, name: this.player.name, rank: this.player.rank });
       this.ctx.accounts.touchLastSeen(this.player.accountKey);
@@ -194,10 +208,6 @@ export class Connection implements Peer {
     }
     this.lastClientSeq = envelope.seq;
     const { name, body } = unpackEvent(envelope.payload);
-    if (name !== 'ChatSend' && name !== 'PlayerCellChange') {
-      log('warn', 'conn.unknown_event_dropped', { ip: this.ip, name });
-      return;
-    }
     let value;
     try {
       value = lserDecode(body);
@@ -208,6 +218,11 @@ export class Connection implements Peer {
     }
     if (name === 'PlayerCellChange') {
       this.handleCellChange(value);
+      return;
+    }
+    if (handleStateEvent(this.ctx.stateCtx, this.player, name, value)) return; // M2 family
+    if (name !== 'ChatSend') {
+      log('warn', 'conn.unknown_event_dropped', { ip: this.ip, name });
       return;
     }
     handleChatSend(
@@ -266,6 +281,8 @@ export class Connection implements Peer {
       counter: 0,
     };
     player.poseVersion++;
+    // Cell change is a specced persistence flush point.
+    this.ctx.players.update(player.accountKey, (doc) => (doc.position = { cellKey, x, y, z }), 'now');
     log('info', 'player.cell_change', { id: player.id, cellKey });
     for (const p of this.ctx.roster.inWorld())
       p.peer.sendEvent('PlayerCellChange', { id: player.id, cellKey, x, y, z });
@@ -337,7 +354,10 @@ export class Connection implements Peer {
       this.disconnect('AUTH_FAILED', 'account already exists');
       return;
     }
-    this.finishAuth(result);
+    // A register can still have a doc (account file deleted by an operator but player
+    // doc kept, or supersede races); load for consistency with login.
+    const doc = await this.ctx.players.get(result.name.toLowerCase());
+    this.finishAuth(result, doc);
   }
 
   private async handleLogin(msg: SessionLoginRequest): Promise<void> {
@@ -351,10 +371,11 @@ export class Connection implements Peer {
       this.disconnect('BANNED', 'account is banned');
       return;
     }
-    this.finishAuth(account);
+    const doc = await this.ctx.players.get(account.name.toLowerCase());
+    this.finishAuth(account, doc);
   }
 
-  private finishAuth(account: Account): void {
+  private finishAuth(account: Account, doc?: PlayerDoc): void {
     if (this.state !== 'HELLO_OK') return; // raced a disconnect while hashing
     const accountKey = account.name.toLowerCase();
     const existing = this.ctx.roster.activeForAccount(accountKey);
@@ -364,8 +385,11 @@ export class Connection implements Peer {
     this.state = 'AUTHED';
     this.authing = false;
     const sessionToken = randomBytes(16).toString('hex');
+    // playerRecord: only a doc with an appearance skips chargen — a position-only doc
+    // (player quit mid-chargen after a cell change) must not.
+    const record = doc?.appearance ? doc : null;
     // serverSeq = binary seq already consumed for this connection (0: none yet).
-    this.sendText(welcome(this.player.id, sessionToken, this.ctx.config.server.motd, this.outSeq));
+    this.sendText(welcome(this.player.id, sessionToken, this.ctx.config.server.motd, this.outSeq, record));
     this.ctx.hooks.playerAuthed({ id: this.player.id, name: this.player.name, rank: this.player.rank });
     log('info', 'player.authed', { id: this.player.id, name: this.player.name, ip: this.ip });
   }
@@ -374,6 +398,7 @@ export class Connection implements Peer {
     if (!this.player) return;
     this.state = 'IN_WORLD';
     this.ctx.roster.joinWorld(this.player);
+    syncStateOnJoin(this.ctx.stateCtx, this.player); // M2 late-joiner appearance/equipment sync
     this.ctx.hooks.playerJoinWorld({ id: this.player.id, name: this.player.name, rank: this.player.rank });
   }
 }

@@ -37,7 +37,12 @@ Signals: `SIGTERM`/`SIGINT` = graceful shutdown (every session gets
 <dataDir>/
   config.toml            # optional operator overrides (deep-merged over config.default.toml)
   accounts/<name>.json   # one file per account (lower-cased name), written atomically
+  players/<name>.json    # M2 player snapshot (appearance/equipment/inventory/stats/spells/position)
 ```
+
+Player docs are write-behind: flushed on cell change, level-up, equipment change (10 s
+debounce), logout, `SIGTERM`/`SIGUSR1`, and a 45 s sweep. Position coordinates are pulled
+from the live pose at flush time (move frames never trigger writes).
 
 To seed an admin: register in-game, stop the server (or it flushes within 30 s), edit
 the account JSON's `"rank"` to `1` and restart or relog. `"banned": true` blocks login.
@@ -51,7 +56,9 @@ Note `plugins` is a top-level key — in an override file it must appear **befor
 
 | key | default | meaning |
 |---|---|---|
-| `plugins` | `["motd"]` | built-in plugins to load, in order |
+| `plugins` | `["motd", "respawn", "death-penalty"]` | built-in plugins to load, in order |
+| `[rules] respawnCellKey/X/Y/Z` | `"village"`, `0,0,0` | where the respawn plugin sends the dead (placeholder demo coords) |
+| `[rules] deathPenalty` | `"none"` | death-penalty plugin mode (`"none"` = no-op seed) |
 | `[server] name` | `"openmw-mp"` | shown in `SessionHelloOk` and `/status` |
 | `[server] motd` | `"Welcome to openmw-mp."` | sent in `SessionWelcome` + as a server chat line on join |
 | `[server] maxPlayers` | `16` | sessions past Hello are counted |

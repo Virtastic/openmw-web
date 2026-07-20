@@ -12,6 +12,13 @@ export interface Config {
   server: { name: string; motd: string; maxPlayers: number; password: string };
   login: { allowRegistration: boolean; inviteCode: string; resumeWindowSec: number };
   content: { enforce: 'strict' | 'names' | 'off' };
+  rules: {
+    respawnCellKey: string;
+    respawnX: number;
+    respawnY: number;
+    respawnZ: number;
+    deathPenalty: 'none';
+  };
   engine: { enforce: 'warn' | 'refuse' | 'off' };
   limits: {
     msgsPerSec: number;
@@ -55,6 +62,12 @@ function reqNum(t: Tree, sec: string, key: string): number {
   return typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : fail(`[${sec}].${key}`, 'a non-negative number');
 }
 
+// World coordinates may legitimately be negative, unlike limits/counts.
+function reqSignedNum(t: Tree, sec: string, key: string): number {
+  const v = (t[sec] as Tree | undefined)?.[key];
+  return typeof v === 'number' && Number.isFinite(v) ? v : fail(`[${sec}].${key}`, 'a finite number');
+}
+
 function reqBool(t: Tree, sec: string, key: string): boolean {
   const v = (t[sec] as Tree | undefined)?.[key];
   return typeof v === 'boolean' ? v : fail(`[${sec}].${key}`, 'a boolean');
@@ -82,6 +95,13 @@ function validate(t: Tree): Config {
       resumeWindowSec: reqNum(t, 'login', 'resumeWindowSec'),
     },
     content: { enforce: reqEnum(t, 'content', 'enforce', ['strict', 'names', 'off'] as const) },
+    rules: {
+      respawnCellKey: reqStr(t, 'rules', 'respawnCellKey'),
+      respawnX: reqSignedNum(t, 'rules', 'respawnX'),
+      respawnY: reqSignedNum(t, 'rules', 'respawnY'),
+      respawnZ: reqSignedNum(t, 'rules', 'respawnZ'),
+      deathPenalty: reqEnum(t, 'rules', 'deathPenalty', ['none'] as const),
+    },
     engine: { enforce: reqEnum(t, 'engine', 'enforce', ['warn', 'refuse', 'off'] as const) },
     limits: {
       msgsPerSec: reqNum(t, 'limits', 'msgsPerSec'),

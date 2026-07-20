@@ -1,0 +1,226 @@
+// Copyright (C) 2025-2026 Virtastic - https://virtastic.app
+// SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
+// M2 player-state event family (PROTOCOL.md §M2): validate, store into the PlayerStore
+// canonical doc, and relay per-message policy (appearance/equipment -> ALL in-world with
+// id, sender included, mirroring PlayerCellChange; dynamic stats -> VISIBLE only;
+// attributes/skills/level/spellbook/inventory -> store only; death -> plugin hooks).
+
+import type { LValue, LTable, JsLike } from '../proto/lser';
+import type { Player, Roster } from './players';
+import type { PlayerStore, PlayerAppearanceDoc, DynamicStatDoc } from '../persist/playerstore';
+import { cellsVisible } from './movement';
+import { log } from '../log';
+
+const MAX_RECORD_ID = 64;
+const MAX_INVENTORY = 512;
+const MAX_COUNT = 10000;
+const MAX_SPELLS = 1024;
+const MAX_STAT_ENTRIES = 64;
+const MAX_STAT_KEY = 32;
+export const MAX_EQUIPMENT_SLOT = 20;
+
+export interface StateCtx {
+  roster: Roster;
+  store: PlayerStore;
+  onPlayerDeath(player: Player): void;
+}
+
+function tbl(v: LValue | undefined): LTable | undefined {
+  return v instanceof Map ? v : undefined;
+}
+
+function recordId(v: LValue | undefined): string | undefined {
+  return typeof v === 'string' && v.length > 0 && v.length <= MAX_RECORD_ID ? v : undefined;
+}
+
+function finite(v: LValue | undefined): number | undefined {
+  return typeof v === 'number' && Number.isFinite(v) ? v : undefined;
+}
+
+function relayAll(roster: Roster, name: string, body: JsLike): void {
+  for (const p of roster.inWorld()) p.peer.sendEvent(name, body);
+}
+
+// ------------------------------------------------------- per-message handlers
+
+function handleAppearance(ctx: StateCtx, player: Player, body: LTable): boolean {
+  const appearance: PlayerAppearanceDoc = {
+    race: recordId(body.get('race')) ?? '',
+    head: recordId(body.get('head')) ?? '',
+    hair: recordId(body.get('hair')) ?? '',
+    class: recordId(body.get('class')) ?? '',
+    name: recordId(body.get('name')) ?? '',
+    isMale: body.get('isMale') === true,
+  };
+  if (!appearance.race || !appearance.head || !appearance.hair || !appearance.class || !appearance.name) return false;
+  ctx.store.update(player.accountKey, (doc) => (doc.appearance = appearance));
+  relayAll(ctx.roster, 'PlayerAppearance', { id: player.id, ...appearance });
+  return true;
+}
+
+function parseEquipment(body: LTable): Record<number, string> | undefined {
+  const slots = tbl(body.get('slots'));
+  if (!slots || slots.size > MAX_EQUIPMENT_SLOT + 1) return undefined;
+  const out: Record<number, string> = {};
+  for (const [k, v] of slots) {
+    const id = recordId(v);
+    if (typeof k !== 'number' || !Number.isInteger(k) || k < 0 || k > MAX_EQUIPMENT_SLOT || !id) return undefined;
+    out[k] = id;
+  }
+  return out;
+}
+
+function handleEquipment(ctx: StateCtx, player: Player, body: LTable): boolean {
+  const slots = parseEquipment(body);
+  if (!slots) return false;
+  ctx.store.update(player.accountKey, (doc) => (doc.equipment = slots), 'debounced');
+  relayAll(ctx.roster, 'PlayerEquipment', { id: player.id, slots: equipmentToL(slots) });
+  return true;
+}
+
+// Slot keys must go over the wire as Lua NUMBER keys, not strings.
+export function equipmentToL(slots: Record<number, string>): LTable {
+  const t: LTable = new Map();
+  for (const [k, v] of Object.entries(slots)) t.set(Number(k), v);
+  return t;
+}
+
+function parseDynamicStat(v: LValue | undefined): DynamicStatDoc | undefined {
+  const t = tbl(v);
+  const c = t ? finite(t.get('c')) : undefined;
+  const b = t ? finite(t.get('b')) : undefined;
+  return c !== undefined && b !== undefined ? { c, b } : undefined;
+}
+
+function handleStatsDynamic(ctx: StateCtx, player: Player, body: LTable): boolean {
+  const hp = parseDynamicStat(body.get('hp'));
+  const mp = parseDynamicStat(body.get('mp'));
+  const ft = parseDynamicStat(body.get('ft'));
+  if (!hp || !mp || !ft) return false;
+  ctx.store.update(player.accountKey, (doc) => {
+    doc.stats = { ...doc.stats, dynamic: { hp, mp, ft } };
+  });
+  const msg = { id: player.id, hp, mp, ft };
+  for (const p of ctx.roster.inWorld()) {
+    if (cellsVisible(p.cellKey, player.cellKey)) p.peer.sendEvent('PlayerStatsDynamic', msg);
+  }
+  return true;
+}
+
+// Flat string->finite-number map (attributes, skills).
+function parseNumberMap(body: LTable): Record<string, number> | undefined {
+  if (body.size > MAX_STAT_ENTRIES) return undefined;
+  const out: Record<string, number> = {};
+  for (const [k, v] of body) {
+    const n = finite(v);
+    if (typeof k !== 'string' || k.length === 0 || k.length > MAX_STAT_KEY || n === undefined) return undefined;
+    out[k] = n;
+  }
+  return out;
+}
+
+function handleNumberMap(ctx: StateCtx, player: Player, body: LTable, field: 'attributes' | 'skills'): boolean {
+  const map = parseNumberMap(body);
+  if (!map) return false;
+  ctx.store.update(player.accountKey, (doc) => {
+    doc.stats = { ...doc.stats, [field]: map };
+  });
+  return true;
+}
+
+function handleLevel(ctx: StateCtx, player: Player, body: LTable): boolean {
+  const level = finite(body.get('level'));
+  if (level === undefined || !Number.isInteger(level) || level < 1 || level > 255) return false;
+  // Level-up is a specced flush point.
+  ctx.store.update(player.accountKey, (doc) => (doc.stats = { ...doc.stats, level }), 'now');
+  return true;
+}
+
+function parseIdList(v: LValue | undefined): string[] | undefined {
+  const t = tbl(v);
+  if (!t) return v === undefined ? [] : undefined; // omitted list = empty (nil-field convention)
+  const out: string[] = [];
+  for (const [, item] of t) {
+    const id = recordId(item);
+    if (!id) return undefined;
+    out.push(id);
+  }
+  return out;
+}
+
+function handleSpellbook(ctx: StateCtx, player: Player, body: LTable): boolean {
+  const add = parseIdList(body.get('add'));
+  const remove = parseIdList(body.get('remove'));
+  if (add === undefined || remove === undefined) return false;
+  ctx.store.update(player.accountKey, (doc) => {
+    const spells = new Set(doc.spells ?? []);
+    for (const id of add) spells.add(id);
+    for (const id of remove) spells.delete(id);
+    doc.spells = [...spells].slice(0, MAX_SPELLS);
+  });
+  return true;
+}
+
+function handleInventory(ctx: StateCtx, player: Player, body: LTable): boolean {
+  const items = tbl(body.get('items'));
+  if (!items || items.size > MAX_INVENTORY) return false;
+  const out: { id: string; n: number }[] = [];
+  for (const [, entry] of items) {
+    const t = tbl(entry);
+    const id = t ? recordId(t.get('id')) : undefined;
+    const n = t ? finite(t.get('n')) : undefined;
+    if (!id || n === undefined || !Number.isInteger(n) || n < 1 || n > MAX_COUNT) return false;
+    out.push({ id, n });
+  }
+  ctx.store.update(player.accountKey, (doc) => (doc.inventory = out));
+  return true;
+}
+
+// ------------------------------------------------------------------- router
+
+// Returns true when `name` belongs to the M2 state family (whether or not the body
+// validated — invalid bodies are dropped with a warn, never relayed).
+const HANDLERS: Record<string, (ctx: StateCtx, player: Player, body: LTable) => boolean> = {
+  PlayerAppearance: handleAppearance,
+  PlayerEquipment: handleEquipment,
+  PlayerStatsDynamic: handleStatsDynamic,
+  PlayerAttributes: (c, p, b) => handleNumberMap(c, p, b, 'attributes'),
+  PlayerSkills: (c, p, b) => handleNumberMap(c, p, b, 'skills'),
+  PlayerLevel: handleLevel,
+  PlayerSpellbook: handleSpellbook,
+  PlayerInventory: handleInventory,
+};
+
+export function handleStateEvent(ctx: StateCtx, player: Player, name: string, value: LValue | undefined): boolean {
+  if (name === 'PlayerDeath') {
+    ctx.onPlayerDeath(player); // body is {} and carries nothing
+    return true;
+  }
+  const handler = HANDLERS[name];
+  if (!handler) return false;
+  const body = tbl(value);
+  if (!body || !handler(ctx, player, body)) log('warn', 'state.invalid_body', { from: player.name, name });
+  return true;
+}
+
+// Late-joiner state sync (M2 design, documented in README/report):
+// on world join the server (1) sends the JOINER the cached appearance+equipment of every
+// other in-world player, and (2) broadcasts the joiner's STORED appearance+equipment to
+// the OTHERS (the joiner already has its own via SessionWelcome.playerRecord). Fresh
+// players have no doc; their state reaches everyone via their own post-chargen
+// PlayerAppearance/PlayerEquipment broadcasts.
+export function syncStateOnJoin(ctx: StateCtx, joiner: Player): void {
+  for (const other of ctx.roster.inWorld()) {
+    if (other.id === joiner.id) continue;
+    const doc = ctx.store.getCached(other.accountKey);
+    if (doc?.appearance) joiner.peer.sendEvent('PlayerAppearance', { id: other.id, ...doc.appearance });
+    if (doc?.equipment) joiner.peer.sendEvent('PlayerEquipment', { id: other.id, slots: equipmentToL(doc.equipment) });
+  }
+  const own = ctx.store.getCached(joiner.accountKey);
+  if (!own) return;
+  for (const other of ctx.roster.inWorld()) {
+    if (other.id === joiner.id) continue;
+    if (own.appearance) other.peer.sendEvent('PlayerAppearance', { id: joiner.id, ...own.appearance });
+    if (own.equipment) other.peer.sendEvent('PlayerEquipment', { id: joiner.id, slots: equipmentToL(own.equipment) });
+  }
+}
