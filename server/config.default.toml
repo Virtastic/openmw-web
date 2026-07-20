@@ -30,6 +30,7 @@ enforce = "warn"
 
 [limits]
 msgsPerSec = 60                   # per-session message token bucket (burst = rate)
+moveMsgsPerSec = 40               # separate budget for PlayerMove frames (M1); bypasses msgsPerSec
 bytesPerSec = 65536               # per-session byte token bucket (burst = rate)
 maxConnsPerIp = 3
 maxMsgBytes = 262144              # ws maxPayload; larger frames drop the socket

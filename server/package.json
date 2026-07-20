@@ -8,7 +8,7 @@
   "scripts": {
     "dev": "tsx watch src/main.ts",
     "build": "node esbuild.mjs",
-    "test": "tsc --noEmit && node --import tsx --test test/lser.test.ts test/session.test.ts test/ratelimit.test.ts",
+    "test": "tsc --noEmit && node --import tsx --test test/lser.test.ts test/session.test.ts test/ratelimit.test.ts test/movement.test.ts",
     "start": "node dist/server.mjs",
     "lser-dump": "tsx src/proto/lser-dump.ts"
   },

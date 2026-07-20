@@ -15,6 +15,7 @@ export interface Config {
   engine: { enforce: 'warn' | 'refuse' | 'off' };
   limits: {
     msgsPerSec: number;
+    moveMsgsPerSec: number;
     bytesPerSec: number;
     maxConnsPerIp: number;
     maxMsgBytes: number;
@@ -84,6 +85,7 @@ function validate(t: Tree): Config {
     engine: { enforce: reqEnum(t, 'engine', 'enforce', ['warn', 'refuse', 'off'] as const) },
     limits: {
       msgsPerSec: reqNum(t, 'limits', 'msgsPerSec'),
+      moveMsgsPerSec: reqNum(t, 'limits', 'moveMsgsPerSec'),
       bytesPerSec: reqNum(t, 'limits', 'bytesPerSec'),
       maxConnsPerIp: reqNum(t, 'limits', 'maxConnsPerIp'),
       maxMsgBytes: reqNum(t, 'limits', 'maxMsgBytes'),

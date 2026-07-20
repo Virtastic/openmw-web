@@ -24,9 +24,43 @@ them. Current: **M0**.
 | type | name | milestone |
 |---|---|---|
 | `0x0002` | Event | M0 |
-| `0x0100` | PlayerMove (C→S) | M1 (reserved) |
-| `0x0101` | PlayerMoveBatch (S→C) | M1 (reserved) |
+| `0x0100` | PlayerMove (C→S) | M1 |
+| `0x0101` | PlayerMoveBatch (S→C) | M1 |
 | `0x0200` | ActorMoveBatch | M4 (reserved) |
+
+### `0x0100` PlayerMove (M1, C→S)
+
+20-byte payload, little-endian, explicit offsets: `0` f32 x · `4` f32 y · `8` f32 z
+(world units) · `12` u16 yaw (0..65535 ≡ 0..2π, wraps) · `14` u8 pitch
+(0..255 ≡ −π/2..+π/2, clamped) · `15` u8 flags (bit0 run, bit1 sneak, bit2 jump-edge,
+bit3 inAir, bit4 weaponDrawn, bit5 spellReady) · `16` u8 animVel (0..255 ≡ 0..2× base walk
+speed, clamped) · `17` u8 counter (0 in M1) · `18-19` reserved, MUST be zero.
+Sent at ~15 Hz while moving + edge-triggered (jump, stop); receivers drop any frame whose
+envelope `seq` ≤ the last seen from that sender. Movement has its OWN server rate budget
+(~40 msg/s) separate from the general bucket.
+
+### `0x0101` PlayerMoveBatch (M1, S→C)
+
+`u8 count` then `count ×` (`u16 playerId` + the 20-byte PlayerMove payload). Server
+broadcasts on a 66 ms tick containing the latest pose of every VISIBLE player that moved
+since the last tick. Visibility = same cell, or adjacent exterior grid cells. When a player
+first becomes visible (join, cell entry), the server sends their current pose in the next
+batch unconditionally. Client transport decodes this in C++ and delivers ONE global Lua
+event `MP_MoveBatch` whose body is an LSER array of
+`{id=number, x=..., y=..., z=..., yaw=..., pitch=..., flags=..., animVel=...}`.
+
+## Event-tier additions (M1)
+
+| name | dir | body |
+|---|---|---|
+| `PlayerCellChange` | C→S, relayed S→C with `id` added | `{cellKey=string, x=number, y=number, z=number}` — `cellKey` = `"x,y"` for exteriors (comma, integers) or the lowercased interior cell name. Updates server occupancy; receivers despawn/teleport that player's puppet. |
+
+M1 semantics: clients MUST send `PlayerCellChange` immediately after `SessionReady` (until
+then they are visible to nobody and receive no batches); the relay goes to ALL in-world
+players INCLUDING the sender (ignore your own id); the server synthesizes/refreshes the
+stored pose at the cell-change coordinates so never-moving players still spawn for newly
+visible peers; move `seq` is strictly increasing per connection; movement bytes count
+against `bytesPerSec` but not `msgsPerSec` (own `moveMsgsPerSec` budget, default 40).
 
 ### `0x0002` Event (M0)
 

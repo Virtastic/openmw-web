@@ -6,9 +6,10 @@ import { WebSocket } from 'ws';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { packEvent, unpackEnvelope, unpackEvent, MSG_EVENT } from '../src/proto/envelope';
+import { packEvent, packEnvelope, unpackEnvelope, unpackEvent, MSG_EVENT, MSG_PLAYER_MOVE, MSG_PLAYER_MOVE_BATCH } from '../src/proto/envelope';
 import { lserEncode, lserDecode, jsToL, lToJs, type JsLike } from '../src/proto/lser';
 import type { ManifestEntry } from '../src/proto/session';
+import { packMove, unpackMoveBatch, type PlayerPose, type BatchEntry } from '../src/proto/movement';
 
 export function tmpDataDir(): string {
   return mkdtempSync(join(tmpdir(), 'openmw-mp-test-'));
@@ -21,10 +22,11 @@ export const MANIFEST: ManifestEntry[] = [
 
 type JsonMsg = { t: string; [key: string]: unknown };
 type EventMsg = { name: string; seq: number; value: unknown };
-type Inbox = { json: JsonMsg[]; events: EventMsg[] };
+type BatchMsg = { seq: number; entries: BatchEntry[] };
+type Inbox = { json: JsonMsg[]; events: EventMsg[]; batches: BatchMsg[] };
 
 export class TestClient {
-  readonly inbox: Inbox = { json: [], events: [] };
+  readonly inbox: Inbox = { json: [], events: [], batches: [] };
   readonly closed: Promise<{ code: number; reason: string }>;
   isClosed = false;
   private seq = 0;
@@ -37,6 +39,8 @@ export class TestClient {
         if (env.type === MSG_EVENT) {
           const { name, body } = unpackEvent(env.payload);
           this.inbox.events.push({ name, seq: env.seq, value: lToJs(lserDecode(body)) });
+        } else if (env.type === MSG_PLAYER_MOVE_BATCH) {
+          this.inbox.batches.push({ seq: env.seq, entries: unpackMoveBatch(env.payload) });
         }
       } else {
         this.inbox.json.push(JSON.parse(data.toString('utf8')) as JsonMsg);
@@ -80,6 +84,16 @@ export class TestClient {
 
   sendRawBinary(buf: Buffer): void {
     this.ws.send(buf);
+  }
+
+  // seq override lets tests exercise the stale-drop path.
+  sendMove(pose: Partial<PlayerPose>, seq?: number): void {
+    const full: PlayerPose = { x: 0, y: 0, z: 0, yaw: 0, pitch: 128, flags: 0, animVel: 0, counter: 0, ...pose };
+    this.ws.send(packEnvelope(MSG_PLAYER_MOVE, seq ?? ++this.seq, packMove(full)));
+  }
+
+  sendCellChange(cellKey: string, x = 0, y = 0, z = 0): void {
+    this.sendEvent('PlayerCellChange', { cellKey, x, y, z });
   }
 
   hello(manifest: ManifestEntry[] = MANIFEST, engineHash = 'abcdef123456'): void {
@@ -145,6 +159,18 @@ export class TestClient {
         return i === -1 ? undefined : this.inbox.events.splice(i, 1)[0];
       },
       `event ${name}`,
+      timeoutMs,
+    );
+  }
+
+  // Consumes the first matching PlayerMoveBatch.
+  waitBatch(pred: (b: BatchMsg) => boolean = () => true, timeoutMs = 3000): Promise<BatchMsg> {
+    return this.waitFor(
+      () => {
+        const i = this.inbox.batches.findIndex(pred);
+        return i === -1 ? undefined : this.inbox.batches.splice(i, 1)[0];
+      },
+      'move batch',
       timeoutMs,
     );
   }

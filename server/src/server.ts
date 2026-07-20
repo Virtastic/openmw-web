@@ -13,6 +13,7 @@ import { CommandRegistry, registerCoreCommands, type CommandContext } from './co
 import { broadcastChat, type ChatMessageBody } from './core/chat';
 import { HookBus } from './plugins/loader';
 import type { PluginApi } from './plugins/api';
+import { MoveBroadcaster } from './core/movement';
 import { Connection, type ServerCtx } from './net/connection';
 import { attachWss } from './net/ws';
 import { createHttpServer } from './net/http';
@@ -75,7 +76,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
 
   const httpServer = createHttpServer(() => ({
     name: config.server.name,
-    players: roster.inWorld().map((p) => ({ id: p.id, name: p.name })),
+    players: roster.inWorld().map((p) => ({ id: p.id, name: p.name, cellKey: p.cellKey ?? null })),
     maxPlayers: config.server.maxPlayers,
     uptime: Math.round((Date.now() - startedAt) / 1000),
     version: VERSION,
@@ -105,6 +106,8 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   });
   const address = httpServer.address();
   const port = typeof address === 'object' && address !== null ? address.port : opts.port;
+  const moveBroadcaster = new MoveBroadcaster(roster);
+  moveBroadcaster.start();
   hooks.serverStart();
   log('info', 'server.start', { port, dataDir: opts.dataDir, version: VERSION });
 
@@ -116,6 +119,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     close: async () => {
       if (closed) return;
       closed = true;
+      moveBroadcaster.stop();
       hooks.serverStop();
       for (const conn of [...connections]) conn.disconnect('SHUTDOWN', 'server shutting down');
       wss.close();

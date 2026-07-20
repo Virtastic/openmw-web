@@ -1,0 +1,118 @@
+// Copyright (C) 2025-2026 Virtastic - https://virtastic.app
+// SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
+// M1 movement tier per PROTOCOL.md: PlayerMove (0x0100, C->S, 20-byte payload) and
+// PlayerMoveBatch (0x0101, S->C, u8 count + count x (u16 playerId + 20-byte payload)).
+// All little-endian. Quantization helpers mirror what the client transport does.
+
+import { ProtoError } from './envelope';
+
+export const MOVE_PAYLOAD_BYTES = 20;
+
+export interface PlayerPose {
+  x: number; // f32 world units
+  y: number;
+  z: number;
+  yaw: number; // u16, 0..65535 = 0..2pi (wraps)
+  pitch: number; // u8, 0..255 = -pi/2..+pi/2
+  flags: number; // u8: bit0 run, bit1 sneak, bit2 jump-edge, bit3 inAir, bit4 weaponDrawn, bit5 spellReady
+  animVel: number; // u8, 0..255 = 0..2x base walk speed
+  counter: number; // u8, reserved 0 in M1
+}
+
+// ------------------------------------------------------------- quantization
+
+const TWO_PI = Math.PI * 2;
+
+// Radians -> u16 with wrap (2pi = 0).
+export function quantYaw(rad: number): number {
+  const norm = ((rad % TWO_PI) + TWO_PI) % TWO_PI;
+  return Math.round((norm / TWO_PI) * 65536) & 0xffff;
+}
+
+export function unquantYaw(q: number): number {
+  return ((q & 0xffff) / 65536) * TWO_PI;
+}
+
+// Radians clamped to [-pi/2, +pi/2] -> u8.
+export function quantPitch(rad: number): number {
+  const clamped = Math.min(Math.PI / 2, Math.max(-Math.PI / 2, rad));
+  return Math.min(255, Math.round(((clamped + Math.PI / 2) / Math.PI) * 255));
+}
+
+export function unquantPitch(q: number): number {
+  return ((q & 0xff) / 255) * Math.PI - Math.PI / 2;
+}
+
+// Speed ratio (1.0 = base walk speed) clamped to [0, 2] -> u8.
+export function quantAnimVel(ratio: number): number {
+  const clamped = Math.min(2, Math.max(0, ratio));
+  return Math.min(255, Math.round((clamped / 2) * 255));
+}
+
+export function unquantAnimVel(q: number): number {
+  return ((q & 0xff) / 255) * 2;
+}
+
+// ------------------------------------------------------------------- codec
+
+export function packMove(pose: PlayerPose): Buffer {
+  const b = Buffer.allocUnsafe(MOVE_PAYLOAD_BYTES);
+  b.writeFloatLE(pose.x, 0);
+  b.writeFloatLE(pose.y, 4);
+  b.writeFloatLE(pose.z, 8);
+  b.writeUInt16LE(pose.yaw & 0xffff, 12);
+  b.writeUInt8(pose.pitch & 0xff, 14);
+  b.writeUInt8(pose.flags & 0xff, 15);
+  b.writeUInt8(pose.animVel & 0xff, 16);
+  b.writeUInt8(pose.counter & 0xff, 17);
+  b.writeUInt16LE(0, 18); // padding to the specced 20 bytes (reserved, zero)
+  return b;
+}
+
+export function unpackMove(payload: Buffer): PlayerPose {
+  if (payload.length !== MOVE_PAYLOAD_BYTES)
+    throw new ProtoError(`PlayerMove payload must be ${MOVE_PAYLOAD_BYTES} bytes, got ${payload.length}`);
+  return {
+    x: payload.readFloatLE(0),
+    y: payload.readFloatLE(4),
+    z: payload.readFloatLE(8),
+    yaw: payload.readUInt16LE(12),
+    pitch: payload.readUInt8(14),
+    flags: payload.readUInt8(15),
+    animVel: payload.readUInt8(16),
+    counter: payload.readUInt8(17),
+  };
+}
+
+export interface BatchEntry {
+  id: number; // u16 playerId
+  pose: PlayerPose;
+}
+
+export function packMoveBatch(entries: BatchEntry[]): Buffer {
+  if (entries.length > 255) throw new ProtoError('PlayerMoveBatch count exceeds u8');
+  const b = Buffer.allocUnsafe(1 + entries.length * (2 + MOVE_PAYLOAD_BYTES));
+  b.writeUInt8(entries.length, 0);
+  let off = 1;
+  for (const e of entries) {
+    b.writeUInt16LE(e.id & 0xffff, off);
+    packMove(e.pose).copy(b, off + 2);
+    off += 2 + MOVE_PAYLOAD_BYTES;
+  }
+  return b;
+}
+
+export function unpackMoveBatch(payload: Buffer): BatchEntry[] {
+  if (payload.length < 1) throw new ProtoError('PlayerMoveBatch payload missing count');
+  const count = payload.readUInt8(0);
+  if (payload.length !== 1 + count * (2 + MOVE_PAYLOAD_BYTES))
+    throw new ProtoError('PlayerMoveBatch payload size does not match count');
+  const entries: BatchEntry[] = [];
+  let off = 1;
+  for (let i = 0; i < count; i++) {
+    const id = payload.readUInt16LE(off);
+    entries.push({ id, pose: unpackMove(payload.subarray(off + 2, off + 2 + MOVE_PAYLOAD_BYTES)) });
+    off += 2 + MOVE_PAYLOAD_BYTES;
+  }
+  return entries;
+}

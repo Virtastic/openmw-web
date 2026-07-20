@@ -14,8 +14,10 @@ import type { CommandRegistry, CommandContext } from '../core/commands';
 import type { HookBus } from '../plugins/loader';
 import { handleChatSend } from '../core/chat';
 import { TokenBucket, IpRateLimiter } from './ratelimit';
-import { MSG_EVENT, ProtoError, unpackEnvelope, unpackEvent, packEvent } from '../proto/envelope';
-import { lserDecode, lserEncode, jsToL, LserError, type JsLike } from '../proto/lser';
+import { MSG_EVENT, MSG_PLAYER_MOVE, ProtoError, unpackEnvelope, unpackEvent, packEvent, packEnvelope } from '../proto/envelope';
+import { unpackMove } from '../proto/movement';
+import { MAX_ABS_COORD } from '../core/movement';
+import { lserDecode, lserEncode, jsToL, LserError, type JsLike, type LValue } from '../proto/lser';
 import {
   parseSessionMessage,
   helloOk,
@@ -59,6 +61,7 @@ export class Connection implements Peer {
   private authing = false;
   private readonly msgBucket: TokenBucket;
   private readonly byteBucket: TokenBucket;
+  private readonly moveBucket: TokenBucket; // movement has its own budget (PROTOCOL.md M1)
 
   constructor(
     private readonly ws: WebSocket,
@@ -68,6 +71,7 @@ export class Connection implements Peer {
   ) {
     this.msgBucket = new TokenBucket(ctx.config.limits.msgsPerSec);
     this.byteBucket = new TokenBucket(ctx.config.limits.bytesPerSec);
+    this.moveBucket = new TokenBucket(ctx.config.limits.moveMsgsPerSec);
     this.helloTimer = setTimeout(() => {
       if (this.state === 'CONNECTED') this.disconnect('BAD_PROTO', 'SessionHello not received in time');
     }, ctx.config.limits.helloTimeoutMs);
@@ -85,6 +89,11 @@ export class Connection implements Peer {
   sendEvent(name: string, body: JsLike): void {
     if (this.ws.readyState !== this.ws.OPEN) return;
     this.ws.send(packEvent(++this.outSeq, name, lserEncode(jsToL(body))));
+  }
+
+  sendBinary(type: number, payload: Buffer): void {
+    if (this.ws.readyState !== this.ws.OPEN) return;
+    this.ws.send(packEnvelope(type, ++this.outSeq, payload));
   }
 
   disconnect(code: DisconnectCode, detail: string): void {
@@ -115,8 +124,11 @@ export class Connection implements Peer {
 
   private onMessage(data: Buffer, isBinary: boolean): void {
     if (this.state === 'CLOSED') return;
-    if (!this.byteBucket.take(data.byteLength) || !this.msgBucket.take(1)) {
-      this.disconnect('RATE', 'message rate limit exceeded');
+    // PlayerMove frames bypass the general msg bucket and draw from their own budget
+    // (bytes still count: 26 B/frame is noise next to bytesPerSec).
+    const isMove = isBinary && data.byteLength >= 2 && data.readUInt16LE(0) === MSG_PLAYER_MOVE;
+    if (!this.byteBucket.take(data.byteLength) || !(isMove ? this.moveBucket : this.msgBucket).take(1)) {
+      this.disconnect('RATE', isMove ? 'movement rate limit exceeded' : 'message rate limit exceeded');
       return;
     }
     try {
@@ -168,17 +180,21 @@ export class Connection implements Peer {
 
   private onBinary(data: Buffer): void {
     const envelope = unpackEnvelope(data);
-    this.lastClientSeq = envelope.seq;
-    if (envelope.type !== MSG_EVENT) {
+    if (envelope.type !== MSG_EVENT && envelope.type !== MSG_PLAYER_MOVE) {
       log('debug', 'conn.reserved_type_dropped', { ip: this.ip, type: envelope.type });
       return;
     }
     if (this.state !== 'IN_WORLD' || !this.player) {
-      log('warn', 'conn.event_before_in_world', { ip: this.ip, state: this.state });
+      log('warn', 'conn.binary_before_in_world', { ip: this.ip, state: this.state, type: envelope.type });
       return;
     }
+    if (envelope.type === MSG_PLAYER_MOVE) {
+      this.handleMove(envelope.seq, envelope.payload);
+      return;
+    }
+    this.lastClientSeq = envelope.seq;
     const { name, body } = unpackEvent(envelope.payload);
-    if (name !== 'ChatSend') {
+    if (name !== 'ChatSend' && name !== 'PlayerCellChange') {
       log('warn', 'conn.unknown_event_dropped', { ip: this.ip, name });
       return;
     }
@@ -190,6 +206,10 @@ export class Connection implements Peer {
       log('warn', 'conn.bad_lser', { ip: this.ip, name, error: err instanceof LserError ? err.code : String(err) });
       return;
     }
+    if (name === 'PlayerCellChange') {
+      this.handleCellChange(value);
+      return;
+    }
     handleChatSend(
       this.ctx.commandCtx,
       this.ctx.commands,
@@ -197,6 +217,58 @@ export class Connection implements Peer {
       this.player,
       value,
     );
+  }
+
+  // 0x0100 PlayerMove: stale-seq drop, bounds sanity, store latest pose.
+  private handleMove(seq: number, payload: Buffer): void {
+    const player = this.player!;
+    if (seq <= player.moveSeq) return; // stale or replayed frame
+    const pose = unpackMove(payload);
+    if (
+      !Number.isFinite(pose.x) || !Number.isFinite(pose.y) || !Number.isFinite(pose.z) ||
+      Math.abs(pose.x) > MAX_ABS_COORD || Math.abs(pose.y) > MAX_ABS_COORD || Math.abs(pose.z) > MAX_ABS_COORD
+    ) {
+      log('warn', 'conn.move_out_of_bounds', { ip: this.ip, player: player.name, x: pose.x, y: pose.y, z: pose.z });
+      return;
+    }
+    player.moveSeq = seq;
+    player.pose = pose;
+    player.poseVersion++;
+  }
+
+  // PlayerCellChange {cellKey, x, y, z}: update occupancy, refresh (or synthesize) the
+  // stored pose at the new position so players who never send PlayerMove (standing still
+  // after a teleport) still appear in batches, then relay to ALL in-world players with
+  // the sender's id added (everyone must know who entered/left their bubble).
+  private handleCellChange(body: LValue | undefined): void {
+    const player = this.player!;
+    const cellKey = body instanceof Map ? body.get('cellKey') : undefined;
+    const x = body instanceof Map ? body.get('x') : undefined;
+    const y = body instanceof Map ? body.get('y') : undefined;
+    const z = body instanceof Map ? body.get('z') : undefined;
+    if (
+      typeof cellKey !== 'string' || cellKey.length === 0 || cellKey.length > 128 ||
+      typeof x !== 'number' || typeof y !== 'number' || typeof z !== 'number' ||
+      !Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z) ||
+      Math.abs(x) > MAX_ABS_COORD || Math.abs(y) > MAX_ABS_COORD || Math.abs(z) > MAX_ABS_COORD
+    ) {
+      log('warn', 'conn.bad_cell_change', { ip: this.ip, player: player.name });
+      return;
+    }
+    player.cellKey = cellKey;
+    const prev = player.pose;
+    player.pose = {
+      x, y, z,
+      yaw: prev?.yaw ?? 0,
+      pitch: prev?.pitch ?? 128, // level
+      flags: prev?.flags ?? 0,
+      animVel: 0,
+      counter: 0,
+    };
+    player.poseVersion++;
+    log('info', 'player.cell_change', { id: player.id, cellKey });
+    for (const p of this.ctx.roster.inWorld())
+      p.peer.sendEvent('PlayerCellChange', { id: player.id, cellKey, x, y, z });
   }
 
   // ----------------------------------------------------------------- states

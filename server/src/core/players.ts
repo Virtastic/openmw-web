@@ -5,10 +5,12 @@
 
 import type { DisconnectCode } from '../proto/session';
 import type { JsLike } from '../proto/lser';
+import type { PlayerPose } from '../proto/movement';
 import { log } from '../log';
 
 export interface Peer {
   sendEvent(name: string, body: JsLike): void;
+  sendBinary(type: number, payload: Buffer): void;
   disconnect(code: DisconnectCode, detail: string): void;
 }
 
@@ -19,6 +21,13 @@ export interface Player {
   rank: number;
   peer: Peer;
   inWorld: boolean;
+  // M1 movement state. cellKey unset = visible to nobody (client sends PlayerCellChange
+  // right after Ready). poseVersion bumps on every accepted pose/cell update so the batch
+  // broadcaster can do per-recipient change detection + force-include-on-visibility.
+  cellKey?: string;
+  pose?: PlayerPose;
+  moveSeq: number; // last accepted PlayerMove envelope seq (stale-drop)
+  poseVersion: number;
 }
 
 export class Roster {
@@ -58,7 +67,16 @@ export class Roster {
   }
 
   addAuthed(name: string, accountKey: string, rank: number, peer: Peer): Player {
-    const player: Player = { id: this.allocId(), name, accountKey, rank, peer, inWorld: false };
+    const player: Player = {
+      id: this.allocId(),
+      name,
+      accountKey,
+      rank,
+      peer,
+      inWorld: false,
+      moveSeq: 0,
+      poseVersion: 0,
+    };
     this.byId.set(player.id, player);
     this.byAccount.set(accountKey, player);
     return player;

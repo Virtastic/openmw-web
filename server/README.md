@@ -62,6 +62,7 @@ Note `plugins` is a top-level key — in an override file it must appear **befor
 | `[content] enforce` | `"names"` | `"names"` \| `"strict"` (M0: stub, behaves like names) \| `"off"` |
 | `[engine] enforce` | `"warn"` | engineHash mismatch: `"warn"` logs, `"refuse"` -> `BAD_ENGINE`, `"off"` skips |
 | `[limits] msgsPerSec` | `60` | per-session message token bucket (burst = one second) |
+| `[limits] moveMsgsPerSec` | `40` | separate budget for PlayerMove frames (M1); bypasses `msgsPerSec` |
 | `[limits] bytesPerSec` | `65536` | per-session byte token bucket |
 | `[limits] maxConnsPerIp` | `3` | further connections refused (`RATE`) |
 | `[limits] maxMsgBytes` | `262144` | ws `maxPayload` |
