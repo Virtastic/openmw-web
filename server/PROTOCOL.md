@@ -147,6 +147,37 @@ on: cell change, level-up, equipment change (10 s debounce), logout, SIGTERM. Ap
 relays are the puppet-record source of truth — clients rebuild a puppet's NPC record when
 an appearance arrives for an already-spawned puppet.
 
+## Event-tier additions (M3) — world objects & containers
+
+Object addressing is a tagged union in every body: `{ref=<RefNum userdata>}` for
+content-file objects (portable — login enforces identical load order) or `{net=<number>}`
+for runtime-spawned objects (server-issued). Clients keep local↔net maps; client-local
+generated RefNums NEVER travel.
+
+| name | dir | body |
+|---|---|---|
+| `ObjectSpawnRequest` | C→S | `{tempId=number, recordId=string, cellKey=string, x=,y=,z=, rotZ=number, count=number}` |
+| `ObjectSpawnAck` | S→C (requester) | `{tempId=number, netId=number}` |
+| `ObjectPlace` | S→C broadcast (cell-scoped visible) | `{netId=number, recordId=string, cellKey=, x=,y=,z=, rotZ=, count=, byId=u16}` |
+| `ObjectDelete` | C→S; relayed cell-scoped | `{ref|net, cellKey=string}` — tombstoned in the cell doc |
+| `ObjectMove` | C→S; relayed cell-scoped | `{ref|net, cellKey=, x=,y=,z=, rotZ=}` |
+| `ObjectLock` | C→S; relayed cell-scoped | `{ref|net, cellKey=, lockLevel=number|nil}` (nil = unlocked) |
+| `DoorState` | C→S; relayed cell-scoped | `{ref, cellKey=, open=bool}` |
+| `ContainerOpen` | C→S | `{ref|net, cellKey=, contents={{id=,n=},…}|nil}` — first-opener's contents become canonical (leveled-loot roll); thereafter server state is truth |
+| `ContainerState` | S→C | `{ref|net, items={{id=,n=},…}, stateSeq=number}` |
+| `ContainerOpRequest` | C→S | `{ref|net, cellKey=, opId=number, op="take"\|"put", itemId=string, n=number}` |
+| `ContainerOpResult` | S→C (requester) | `{opId=, ok=bool, reason=string?, stateSeq=}` |
+| `ContainerUpdate` | S→C broadcast (cell-scoped) | `{ref|net, delta={itemId=, dn=number}, stateSeq=}` |
+| `WorldCellState` | S→C (on PlayerCellChange + ResyncRequest) | `{cellKey=, placed={…ObjectPlace-shaped…}, deleted={refKeys}, moved={…}, locks={…}, doors={…}, containers={refKey={items,stateSeq}}}` |
+| `ResyncRequest` | C→S | `{cellKey=string}` |
+
+Semantics: the server persists per-cell delta docs (`world/cells/<cellKey>.json`) and is
+the serialization point — ops are applied in server-arrival order and rebroadcast with
+`stateSeq`/order intact. Containers are transactional at the server (conservation-checked;
+losing racer gets `ok=false, reason="gone"`); clients may apply optimistically and MUST
+reconcile to `ContainerState`/`ContainerUpdate` on reject. `refKey` string form for doc
+maps: `"c:<index>:<contentFile>"` for content refs, `"n:<netId>"` for spawned.
+
 ## Client-side integration contract (M0)
 
 - Join URL: `index.html?...&mp=<ws(s)-url>&name=<display-name>`; boot JS sets

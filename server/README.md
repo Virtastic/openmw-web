@@ -38,6 +38,9 @@ Signals: `SIGTERM`/`SIGINT` = graceful shutdown (every session gets
   config.toml            # optional operator overrides (deep-merged over config.default.toml)
   accounts/<name>.json   # one file per account (lower-cased name), written atomically
   players/<name>.json    # M2 player snapshot (appearance/equipment/inventory/stats/spells/position)
+  world/global.json      # M3 netId counter ceiling (block-reserved; ids are never reused)
+  world/cells/<enc>.json # M3 per-cell delta docs (placed/deleted/moved/locks/doors/containers),
+                         # filename = encodeURIComponent(cellKey)
 ```
 
 Player docs are write-behind: flushed on cell change, level-up, equipment change (10 s

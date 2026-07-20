@@ -18,6 +18,7 @@ import { MSG_EVENT, MSG_PLAYER_MOVE, ProtoError, unpackEnvelope, unpackEvent, pa
 import { unpackMove } from '../proto/movement';
 import { MAX_ABS_COORD } from '../core/movement';
 import { handleStateEvent, syncStateOnJoin, type StateCtx } from '../core/playerstate';
+import type { WorldState } from '../core/worldstate';
 import type { PlayerStore, PlayerDoc } from '../persist/playerstore';
 import { lserDecode, lserEncode, jsToL, LserError, type JsLike, type LValue } from '../proto/lser';
 import {
@@ -51,6 +52,7 @@ export interface ServerCtx {
   hooks: HookBus;
   players: PlayerStore;
   stateCtx: StateCtx;
+  world: WorldState;
 }
 
 export class Connection implements Peer {
@@ -128,6 +130,7 @@ export class Connection implements Peer {
         void this.ctx.players.flushKey(accountKey);
       }
       this.ctx.roster.remove(this.player);
+      if (this.player.cellKey) this.ctx.world.onCellVacated(this.player.cellKey);
       this.ctx.hooks.playerDisconnect({ id: this.player.id, name: this.player.name, rank: this.player.rank });
       this.ctx.accounts.touchLastSeen(this.player.accountKey);
     }
@@ -220,6 +223,7 @@ export class Connection implements Peer {
       this.handleCellChange(value);
       return;
     }
+    if (this.ctx.world.handleEvent(this.player, name, value)) return; // M3 family
     if (handleStateEvent(this.ctx.stateCtx, this.player, name, value)) return; // M2 family
     if (name !== 'ChatSend') {
       log('warn', 'conn.unknown_event_dropped', { ip: this.ip, name });
@@ -270,6 +274,7 @@ export class Connection implements Peer {
       log('warn', 'conn.bad_cell_change', { ip: this.ip, player: player.name });
       return;
     }
+    const oldCell = player.cellKey;
     player.cellKey = cellKey;
     const prev = player.pose;
     player.pose = {
@@ -286,6 +291,9 @@ export class Connection implements Peer {
     log('info', 'player.cell_change', { id: player.id, cellKey });
     for (const p of this.ctx.roster.inWorld())
       p.peer.sendEvent('PlayerCellChange', { id: player.id, cellKey, x, y, z });
+    // M3: entering a cell always yields its delta doc; the vacated cell may flush.
+    this.ctx.world.sendCellState(player, cellKey);
+    if (oldCell && oldCell !== cellKey) this.ctx.world.onCellVacated(oldCell);
   }
 
   // ----------------------------------------------------------------- states

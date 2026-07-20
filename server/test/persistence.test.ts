@@ -175,7 +175,9 @@ test('m2 state sync end to end', async (t) => {
   await t.test('death fires plugins: PlayerResurrect at the configured spot', async () => {
     a.sendEvent('PlayerDeath', {});
     const res = await a.waitEvent('PlayerResurrect');
-    assert.deepEqual(res.value, { cellKey: 'village', x: 0, y: 0, z: 0, restoreHp: true });
+    // Coords come from [rules] in config (client agent maintains the real Village spot).
+    const r = server.config.rules;
+    assert.deepEqual(res.value, { cellKey: r.respawnCellKey, x: r.respawnX, y: r.respawnY, z: r.respawnZ, restoreHp: true });
   });
 
   await t.test('/status includes level', async () => {

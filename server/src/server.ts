@@ -8,7 +8,9 @@ import { WebSocket } from 'ws';
 import { loadConfig, type Config, type DeepPartial } from './config';
 import { AccountStore } from './core/accounts';
 import { PlayerStore } from './persist/playerstore';
+import { CellStore } from './persist/cellstore';
 import type { StateCtx } from './core/playerstate';
+import { WorldState } from './core/worldstate';
 import { Roster } from './core/players';
 import { ContentGate, EngineGate } from './core/manifest';
 import { CommandRegistry, registerCoreCommands, type CommandContext } from './core/commands';
@@ -44,7 +46,10 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   const config = loadConfig(opts.dataDir, opts.configOverride);
   const accounts = new AccountStore(opts.dataDir);
   const playerStore = new PlayerStore(opts.dataDir);
+  const cellStore = new CellStore(opts.dataDir);
+  await cellStore.ready(); // netId ceiling must be loaded before any spawn
   const roster = new Roster();
+  const world = new WorldState(roster, cellStore);
   const startedAt = Date.now();
   // At flush time the store pulls the freshest position from the live session, so pose
   // updates never need to dirty the doc.
@@ -96,6 +101,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     hooks,
     players: playerStore,
     stateCtx,
+    world,
   };
 
   const httpServer = createHttpServer(() => ({
@@ -149,6 +155,8 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     flush: async () => {
       await accounts.flush();
       await playerStore.flushAll();
+      await world.drain();
+      await cellStore.flushAll();
     },
     close: async () => {
       if (closed) return;
@@ -159,6 +167,8 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       wss.close();
       await accounts.close();
       await playerStore.close();
+      await world.drain(); // let queued ops land before the final cell flush
+      await cellStore.close();
       await new Promise<void>((resolve) => {
         httpServer.close(() => resolve());
         httpServer.closeAllConnections();
