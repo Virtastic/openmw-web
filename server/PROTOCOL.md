@@ -179,6 +179,46 @@ losing racer gets `ok=false, reason="gone"`); clients may apply optimistically a
 reconcile to `ContainerState`/`ContainerUpdate` on reject. `refKey` string form for doc
 maps: `"c:<index>:<contentFile>"` for content refs, `"n:<netId>"` for spawned.
 
+## Actor authority & sync (M4)
+
+The server assigns each cell a single **authority holder** — the client that simulates that
+cell's NPCs/creatures. Others render them as puppets driven off the wire. NPCs/creatures are
+content-file objects, addressed by RefNum userdata (`ref`), exactly like M3 content objects.
+
+**Authority protocol** — server state `Map<cellKey, {holderId, epoch:u32, lastSnapshot}>`:
+
+| name | dir | body |
+|---|---|---|
+| `ActorAuthorityGrant` | S→C | `{cellKey=string, epoch=u32, snapshot={actors={ {ref, x,y,z,rotZ, hp={c,b},mp,ft, dead=bool, ai=…}, … }}}` — apply the snapshot, THEN begin simulating |
+| `ActorAuthorityRevoke` | S→C | `{cellKey=string, epoch=u32}` — stop simulating; re-attach puppets to those actors |
+| `ActorAuthorityInfo` | S→C | `{cellKey=string, holderId=u16}` — sent to non-holders entering a claimed cell |
+
+- Claim: first client to `PlayerCellChange` into a cell with no holder gets `Grant` (epoch++).
+  Contested entry: server is the single serialization point, first processed wins; the loser
+  gets `ActorAuthorityInfo`. Clients MUST NOT self-start actor simulation without a Grant.
+- Handoff on holder leave/disconnect: longest-present remaining occupant gets `Grant` +
+  `lastSnapshot` (epoch++); empty cell → snapshot folds into the cell doc `actorOverrides`
+  and is handed to the next claimant.
+
+**Actor state** — every `Actor*` message carries `(cellKey, epoch)`; the server drops any
+whose epoch ≠ the current cell epoch (kills the handoff race). Only the holder may send.
+
+| name | dir | body / layout |
+|---|---|---|
+| `ActorMoveBatch` | holder→S→C (binary `0x0200`) | `[u32 epoch][u8 count]` + count × (`8-byte ref` + 20-byte pose, same pose layout as PlayerMove); server infers cell from the holder, validates epoch, relays cell-scoped |
+| `ActorStatsDynamic` | holder→S→C | `{cellKey, epoch, ref, hp={c,b}, mp={c,b}, ft={c,b}}` |
+| `ActorEquip` | holder→S→C | `{cellKey, epoch, ref, slots={[n]=recordId,…}}` |
+| `ActorAI` | holder→S→C | `{cellKey, epoch, ref, pkg="idle"\|"wander"\|"travel"\|"follow"\|"combat", targetRef=…?}` (hint for puppet anim/facing; non-holders don't run AI) |
+| `ActorDeath` | holder→S→C | `{cellKey, epoch, ref, killerPlayerId=u16?, deathNo=number}` — server dedups by (ref, deathNo), persists to `actorOverrides`, may bump kill counts |
+| `ActorSnapshot` | holder→S (5 s + on death/combat-start) | `{cellKey, epoch, actors={…}}` — server stores as `lastSnapshot` for handoff/dormancy |
+| `WorldKillCount` | S→C broadcast | `{refId=string, count=number}` — shared kill tally (quest-critical `GetDeadCount`); server-accumulated from `ActorDeath.killerPlayerId` attribution |
+
+Client contract: non-holders attach `puppet.lua` to the real cell actors (`addScript` +
+`enableAI(false)`) and drive them from `ActorMoveBatch`/stats/death — the SAME puppet path
+as remote players, keyed by ref instead of playerId. On `Grant`, detach those puppets,
+apply the snapshot, re-enable AI, and simulate. On `Revoke`/handoff, reverse it. Death is
+authoritative from the holder; non-holders converge via the 5 s snapshot + stats stream.
+
 ## Client-side integration contract (M0)
 
 - Join URL: `index.html?...&mp=<ws(s)-url>&name=<display-name>`; boot JS sets

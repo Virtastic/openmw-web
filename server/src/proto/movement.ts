@@ -116,3 +116,58 @@ export function unpackMoveBatch(payload: Buffer): BatchEntry[] {
   }
   return entries;
 }
+
+// M4 ActorMoveBatch (0x0200): [u32 epoch][u8 count] + count × (8-byte ref + 20-byte pose).
+// The 8-byte ref is a raw RefNum (u32 index LE + i32 contentFile LE), same layout as the
+// LSER "o" userdata payload — actors are content-file objects.
+export const ACTOR_REF_BYTES = 8;
+
+export interface ActorRef {
+  index: number;
+  contentFile: number;
+}
+
+export interface ActorEntry {
+  ref: ActorRef;
+  pose: PlayerPose;
+}
+
+export interface ActorMoveBatch {
+  epoch: number;
+  entries: ActorEntry[];
+}
+
+const ACTOR_ENTRY_BYTES = ACTOR_REF_BYTES + MOVE_PAYLOAD_BYTES;
+
+export function packActorMoveBatch(epoch: number, entries: ActorEntry[]): Buffer {
+  if (entries.length > 255) throw new ProtoError('ActorMoveBatch count exceeds u8');
+  const b = Buffer.allocUnsafe(5 + entries.length * ACTOR_ENTRY_BYTES);
+  b.writeUInt32LE(epoch >>> 0, 0);
+  b.writeUInt8(entries.length, 4);
+  let off = 5;
+  for (const e of entries) {
+    b.writeUInt32LE(e.ref.index >>> 0, off);
+    b.writeInt32LE(e.ref.contentFile | 0, off + 4);
+    packMove(e.pose).copy(b, off + ACTOR_REF_BYTES);
+    off += ACTOR_ENTRY_BYTES;
+  }
+  return b;
+}
+
+export function unpackActorMoveBatch(payload: Buffer): ActorMoveBatch {
+  if (payload.length < 5) throw new ProtoError('ActorMoveBatch payload shorter than header');
+  const epoch = payload.readUInt32LE(0);
+  const count = payload.readUInt8(4);
+  if (payload.length !== 5 + count * ACTOR_ENTRY_BYTES)
+    throw new ProtoError('ActorMoveBatch payload size does not match count');
+  const entries: ActorEntry[] = [];
+  let off = 5;
+  for (let i = 0; i < count; i++) {
+    entries.push({
+      ref: { index: payload.readUInt32LE(off), contentFile: payload.readInt32LE(off + 4) },
+      pose: unpackMove(payload.subarray(off + ACTOR_REF_BYTES, off + ACTOR_ENTRY_BYTES)),
+    });
+    off += ACTOR_ENTRY_BYTES;
+  }
+  return { epoch, entries };
+}

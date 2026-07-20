@@ -6,10 +6,10 @@ import { WebSocket } from 'ws';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { packEvent, packEnvelope, unpackEnvelope, unpackEvent, MSG_EVENT, MSG_PLAYER_MOVE, MSG_PLAYER_MOVE_BATCH } from '../src/proto/envelope';
+import { packEvent, packEnvelope, unpackEnvelope, unpackEvent, MSG_EVENT, MSG_PLAYER_MOVE, MSG_PLAYER_MOVE_BATCH, MSG_ACTOR_MOVE_BATCH } from '../src/proto/envelope';
 import { lserEncode, lserDecode, jsToL, lToJs, type JsLike } from '../src/proto/lser';
 import type { ManifestEntry } from '../src/proto/session';
-import { packMove, unpackMoveBatch, type PlayerPose, type BatchEntry } from '../src/proto/movement';
+import { packMove, packActorMoveBatch, unpackMoveBatch, unpackActorMoveBatch, type PlayerPose, type BatchEntry, type ActorEntry, type ActorMoveBatch } from '../src/proto/movement';
 
 export function tmpDataDir(): string {
   return mkdtempSync(join(tmpdir(), 'openmw-mp-test-'));
@@ -23,10 +23,11 @@ export const MANIFEST: ManifestEntry[] = [
 type JsonMsg = { t: string; [key: string]: unknown };
 type EventMsg = { name: string; seq: number; value: unknown };
 type BatchMsg = { seq: number; entries: BatchEntry[] };
-type Inbox = { json: JsonMsg[]; events: EventMsg[]; batches: BatchMsg[] };
+type ActorBatchMsg = { seq: number; batch: ActorMoveBatch };
+type Inbox = { json: JsonMsg[]; events: EventMsg[]; batches: BatchMsg[]; actorBatches: ActorBatchMsg[] };
 
 export class TestClient {
-  readonly inbox: Inbox = { json: [], events: [], batches: [] };
+  readonly inbox: Inbox = { json: [], events: [], batches: [], actorBatches: [] };
   readonly closed: Promise<{ code: number; reason: string }>;
   isClosed = false;
   private seq = 0;
@@ -41,6 +42,8 @@ export class TestClient {
           this.inbox.events.push({ name, seq: env.seq, value: lToJs(lserDecode(body)) });
         } else if (env.type === MSG_PLAYER_MOVE_BATCH) {
           this.inbox.batches.push({ seq: env.seq, entries: unpackMoveBatch(env.payload) });
+        } else if (env.type === MSG_ACTOR_MOVE_BATCH) {
+          this.inbox.actorBatches.push({ seq: env.seq, batch: unpackActorMoveBatch(env.payload) });
         }
       } else {
         this.inbox.json.push(JSON.parse(data.toString('utf8')) as JsonMsg);
@@ -94,6 +97,21 @@ export class TestClient {
 
   sendCellChange(cellKey: string, x = 0, y = 0, z = 0): void {
     this.sendEvent('PlayerCellChange', { cellKey, x, y, z });
+  }
+
+  sendActorMoveBatch(epoch: number, entries: ActorEntry[]): void {
+    this.ws.send(packEnvelope(MSG_ACTOR_MOVE_BATCH, ++this.seq, packActorMoveBatch(epoch, entries)));
+  }
+
+  waitActorBatch(pred: (b: ActorBatchMsg) => boolean = () => true, timeoutMs = 3000): Promise<ActorBatchMsg> {
+    return this.waitFor(
+      () => {
+        const i = this.inbox.actorBatches.findIndex(pred);
+        return i === -1 ? undefined : this.inbox.actorBatches.splice(i, 1)[0];
+      },
+      'actor batch',
+      timeoutMs,
+    );
   }
 
   hello(manifest: ManifestEntry[] = MANIFEST, engineHash = 'abcdef123456'): void {

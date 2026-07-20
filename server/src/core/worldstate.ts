@@ -7,10 +7,13 @@
 // are transactional: first-opener contents become canonical, take/put conserve items,
 // the losing racer gets ok=false.
 
-import type { LTable, LValue, JsLike } from '../proto/lser';
+import { lToJs, type LTable, type LValue, type JsLike } from '../proto/lser';
 import { parseObjRef, objRefToJs, netRefKey, type ObjRef } from '../proto/ref';
 import type { Player, Roster } from './players';
 import { cellsVisible, MAX_ABS_COORD } from './movement';
+import { unpackActorMoveBatch } from '../proto/movement';
+import { MSG_ACTOR_MOVE_BATCH } from '../proto/envelope';
+import { Authority, type ActorSnapshot } from './authority';
 import { CellStore, emptyCellDoc, type CellDoc, type ContainerItems } from '../persist/cellstore';
 import { log } from '../log';
 
@@ -29,6 +32,11 @@ const WORLD_EVENTS = new Set([
   'ContainerOpRequest',
   'ResyncRequest',
 ]);
+
+// M4 actor events (all holder-only, epoch-guarded). ActorSnapshot is stored, not relayed;
+// ActorDeath is deduped/persisted/tallied; the rest relay cell-scoped (excluding sender).
+const ACTOR_RELAY_EVENTS = new Set(['ActorStatsDynamic', 'ActorEquip', 'ActorAI']);
+const ACTOR_EVENTS = new Set([...ACTOR_RELAY_EVENTS, 'ActorSnapshot', 'ActorDeath']);
 
 function str(v: LValue | undefined, max: number): string | undefined {
   return typeof v === 'string' && v.length > 0 && v.length <= max ? v : undefined;
@@ -61,11 +69,30 @@ function parseItems(v: LValue | undefined): ContainerItems | undefined {
 
 export class WorldState {
   private queue: Promise<void> = Promise.resolve();
+  private readonly authority: Authority;
 
   constructor(
     private readonly roster: Roster,
     private readonly cells: CellStore,
-  ) {}
+  ) {
+    this.authority = new Authority({
+      grant: (playerId, cellKey, epoch, snapshot) =>
+        this.roster.get(playerId)?.peer.sendEvent('ActorAuthorityGrant', { cellKey, epoch, snapshot }),
+      revoke: (playerId, cellKey, epoch) =>
+        this.roster.get(playerId)?.peer.sendEvent('ActorAuthorityRevoke', { cellKey, epoch }),
+      info: (playerId, cellKey, holderId) =>
+        this.roster.get(playerId)?.peer.sendEvent('ActorAuthorityInfo', { cellKey, holderId }),
+      loadOverrides: async (cellKey) => {
+        const doc = await this.cells.get(cellKey);
+        return (doc.actorOverrides as ActorSnapshot | undefined) ?? { actors: [] };
+      },
+      foldOverrides: async (cellKey, snapshot) => {
+        const doc = await this.cells.get(cellKey);
+        doc.actorOverrides = snapshot;
+        this.cells.markDirty(cellKey);
+      },
+    });
+  }
 
   // Serializes all world mutations/reads; errors are logged, never break the chain.
   private enqueue(fn: () => Promise<void> | void): void {
@@ -83,12 +110,26 @@ export class WorldState {
     }
   }
 
+  // Actor relays exclude the sender: the holder simulates locally and doesn't puppet its
+  // own actors.
+  private relayCellExcept(cellKey: string, exceptId: number, name: string, body: JsLike): void {
+    for (const p of this.roster.inWorld()) {
+      if (p.id !== exceptId && cellsVisible(p.cellKey, cellKey)) p.peer.sendEvent(name, body);
+    }
+  }
+
   private invalid(player: Player, name: string): void {
     log('warn', 'world.invalid_body', { from: player.name, name });
   }
 
   // Sync router called from the connection; returns true when `name` is ours.
   handleEvent(player: Player, name: string, value: LValue | undefined): boolean {
+    if (ACTOR_EVENTS.has(name)) {
+      const body = value instanceof Map ? value : undefined;
+      if (!body) this.invalid(player, name);
+      else this.enqueue(() => this.actorEvent(player, name, body));
+      return true;
+    }
     if (!WORLD_EVENTS.has(name)) return false;
     const body = value instanceof Map ? value : undefined;
     if (!body) {
@@ -111,6 +152,107 @@ export class WorldState {
       }
     }
     return true;
+  }
+
+  // ------------------------------------------------------- authority (M4)
+
+  // Called from the PlayerCellChange path (enqueued so contested entry serializes here).
+  authorityEnter(player: Player, cellKey: string): void {
+    this.enqueue(() => this.authority.onEnter(player.id, cellKey));
+  }
+
+  // Cell change out or disconnect. Captured id/cell because the roster entry may already
+  // be gone by the time the queued turn runs.
+  authorityLeave(playerId: number, cellKey: string, connected: boolean): void {
+    this.enqueue(() => this.authority.onLeave(playerId, cellKey, connected));
+  }
+
+  // Validates {cellKey, epoch} against the current authority for the sender's cell.
+  // Actors are content refs only.
+  private authCheck(player: Player, body: LTable, name: string): { cellKey: string; ref: ObjRef } | undefined {
+    const cellKey = str(body.get('cellKey'), MAX_CELL_KEY);
+    const epoch = finite(body.get('epoch'));
+    const ref = parseObjRef(body);
+    if (!cellKey || epoch === undefined || !ref || ref.kind !== 'ref') {
+      this.invalid(player, name);
+      return undefined;
+    }
+    if (this.authority.holderOf(cellKey) !== player.id || this.authority.currentEpoch(cellKey) !== epoch) {
+      log('warn', 'actor.dropped', { from: player.name, name, cellKey, epoch }); // stale/non-holder
+      return undefined;
+    }
+    return { cellKey, ref };
+  }
+
+  private async actorEvent(player: Player, name: string, body: LTable): Promise<void> {
+    if (name === 'ActorSnapshot') {
+      // Snapshot has no single ref; validate cell+epoch+holder directly, then store.
+      const cellKey = str(body.get('cellKey'), MAX_CELL_KEY);
+      const epoch = finite(body.get('epoch'));
+      const actors = body.get('actors');
+      if (!cellKey || epoch === undefined || !(actors instanceof Map)) {
+        this.invalid(player, name);
+        return;
+      }
+      if (this.authority.holderOf(cellKey) !== player.id || this.authority.currentEpoch(cellKey) !== epoch) {
+        log('warn', 'actor.dropped', { from: player.name, name, cellKey, epoch });
+        return;
+      }
+      this.authority.setSnapshot(cellKey, { actors: lToJs(actors) as JsLike });
+      return;
+    }
+    const checked = this.authCheck(player, body, name);
+    if (!checked) return;
+    const { cellKey, ref } = checked;
+    if (name === 'ActorDeath') {
+      await this.actorDeath(player, cellKey, ref, body);
+      return;
+    }
+    // Stats/Equip/AI: relay verbatim cell-scoped (excluding the holder).
+    this.relayCellExcept(cellKey, player.id, name, { ...lToJs(body) as Record<string, JsLike> });
+  }
+
+  private async actorDeath(player: Player, cellKey: string, ref: ObjRef, body: LTable): Promise<void> {
+    const deathNo = finite(body.get('deathNo'));
+    if (deathNo === undefined) {
+      this.invalid(player, 'ActorDeath');
+      return;
+    }
+    const doc = await this.cells.get(cellKey);
+    const deaths = (doc.actorDeaths ??= {});
+    if ((deaths[ref.key] ?? -Infinity) >= deathNo) return; // duplicate death event
+    deaths[ref.key] = deathNo;
+    this.cells.markDirty(cellKey);
+    this.relayCellExcept(cellKey, player.id, 'ActorDeath', lToJs(body) as Record<string, JsLike>);
+    // Kill attribution: count on the killed actor's base recordId when a killer is named.
+    const killer = finite(body.get('killerPlayerId'));
+    const killedRecordId = str(body.get('killedRecordId'), MAX_RECORD_ID);
+    if (killer !== undefined && killedRecordId) {
+      const count = this.cells.bumpKill(killedRecordId);
+      for (const p of this.roster.inWorld()) p.peer.sendEvent('WorldKillCount', { refId: killedRecordId, count });
+      log('info', 'world.kill', { refId: killedRecordId, count, by: player.name });
+    }
+  }
+
+  // ActorMoveBatch (binary 0x0200): validate holder+epoch, relay the raw payload
+  // cell-scoped (excluding the holder). Enqueued so it orders against authority changes.
+  handleActorMoveBatch(player: Player, payload: Buffer): void {
+    this.enqueue(() => {
+      let epoch: number;
+      try {
+        epoch = unpackActorMoveBatch(payload).epoch;
+      } catch (err) {
+        log('warn', 'actor.bad_batch', { from: player.name, error: String(err) });
+        return;
+      }
+      const cellKey = player.cellKey;
+      if (!cellKey || this.authority.holderOf(cellKey) !== player.id || this.authority.currentEpoch(cellKey) !== epoch) {
+        return; // non-holder or stale epoch
+      }
+      for (const p of this.roster.inWorld()) {
+        if (p.id !== player.id && cellsVisible(p.cellKey, cellKey)) p.peer.sendBinary(MSG_ACTOR_MOVE_BATCH, payload);
+      }
+    });
   }
 
   // ---------------------------------------------------------------- objects

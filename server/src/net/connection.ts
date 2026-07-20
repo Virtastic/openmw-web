@@ -14,7 +14,7 @@ import type { CommandRegistry, CommandContext } from '../core/commands';
 import type { HookBus } from '../plugins/loader';
 import { handleChatSend } from '../core/chat';
 import { TokenBucket, IpRateLimiter } from './ratelimit';
-import { MSG_EVENT, MSG_PLAYER_MOVE, ProtoError, unpackEnvelope, unpackEvent, packEvent, packEnvelope } from '../proto/envelope';
+import { MSG_EVENT, MSG_PLAYER_MOVE, MSG_ACTOR_MOVE_BATCH, ProtoError, unpackEnvelope, unpackEvent, packEvent, packEnvelope } from '../proto/envelope';
 import { unpackMove } from '../proto/movement';
 import { MAX_ABS_COORD } from '../core/movement';
 import { handleStateEvent, syncStateOnJoin, type StateCtx } from '../core/playerstate';
@@ -130,7 +130,11 @@ export class Connection implements Peer {
         void this.ctx.players.flushKey(accountKey);
       }
       this.ctx.roster.remove(this.player);
-      if (this.player.cellKey) this.ctx.world.onCellVacated(this.player.cellKey);
+      // M4: relinquish authority (no Revoke — socket is gone) before the cell may flush.
+      if (this.player.cellKey) {
+        this.ctx.world.authorityLeave(this.player.id, this.player.cellKey, false);
+        this.ctx.world.onCellVacated(this.player.cellKey);
+      }
       this.ctx.hooks.playerDisconnect({ id: this.player.id, name: this.player.name, rank: this.player.rank });
       this.ctx.accounts.touchLastSeen(this.player.accountKey);
     }
@@ -141,9 +145,10 @@ export class Connection implements Peer {
 
   private onMessage(data: Buffer, isBinary: boolean): void {
     if (this.state === 'CLOSED') return;
-    // PlayerMove frames bypass the general msg bucket and draw from their own budget
-    // (bytes still count: 26 B/frame is noise next to bytesPerSec).
-    const isMove = isBinary && data.byteLength >= 2 && data.readUInt16LE(0) === MSG_PLAYER_MOVE;
+    // PlayerMove and ActorMoveBatch frames bypass the general msg bucket and draw from
+    // the movement budget (bytes still count against bytesPerSec).
+    const binType = isBinary && data.byteLength >= 2 ? data.readUInt16LE(0) : -1;
+    const isMove = binType === MSG_PLAYER_MOVE || binType === MSG_ACTOR_MOVE_BATCH;
     if (!this.byteBucket.take(data.byteLength) || !(isMove ? this.moveBucket : this.msgBucket).take(1)) {
       this.disconnect('RATE', isMove ? 'movement rate limit exceeded' : 'message rate limit exceeded');
       return;
@@ -197,7 +202,7 @@ export class Connection implements Peer {
 
   private onBinary(data: Buffer): void {
     const envelope = unpackEnvelope(data);
-    if (envelope.type !== MSG_EVENT && envelope.type !== MSG_PLAYER_MOVE) {
+    if (envelope.type !== MSG_EVENT && envelope.type !== MSG_PLAYER_MOVE && envelope.type !== MSG_ACTOR_MOVE_BATCH) {
       log('debug', 'conn.reserved_type_dropped', { ip: this.ip, type: envelope.type });
       return;
     }
@@ -207,6 +212,10 @@ export class Connection implements Peer {
     }
     if (envelope.type === MSG_PLAYER_MOVE) {
       this.handleMove(envelope.seq, envelope.payload);
+      return;
+    }
+    if (envelope.type === MSG_ACTOR_MOVE_BATCH) {
+      this.ctx.world.handleActorMoveBatch(this.player, envelope.payload);
       return;
     }
     this.lastClientSeq = envelope.seq;
@@ -293,7 +302,12 @@ export class Connection implements Peer {
       p.peer.sendEvent('PlayerCellChange', { id: player.id, cellKey, x, y, z });
     // M3: entering a cell always yields its delta doc; the vacated cell may flush.
     this.ctx.world.sendCellState(player, cellKey);
-    if (oldCell && oldCell !== cellKey) this.ctx.world.onCellVacated(oldCell);
+    // M4: hand off / claim authority. Leave the old cell before claiming the new one.
+    if (oldCell && oldCell !== cellKey) {
+      this.ctx.world.authorityLeave(player.id, oldCell, true);
+      this.ctx.world.onCellVacated(oldCell);
+    }
+    this.ctx.world.authorityEnter(player, cellKey);
   }
 
   // ----------------------------------------------------------------- states

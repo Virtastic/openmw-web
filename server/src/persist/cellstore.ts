@@ -32,6 +32,10 @@ export interface CellDoc {
   locks: Record<string, number | null>; // null = unlocked
   doors: Record<string, boolean>; // open?
   containers: Record<string, { items: ContainerItems; stateSeq: number }>;
+  // M4: last actor snapshot folded when the cell went dormant ({actors:[...]}, JSON-safe),
+  // and per-actor highest processed deathNo (dedup + death persistence).
+  actorOverrides?: unknown;
+  actorDeaths?: Record<string, number>;
 }
 
 export function emptyCellDoc(): CellDoc {
@@ -43,6 +47,7 @@ const NET_ID_BLOCK = 128;
 
 interface GlobalDoc {
   nextNetIdCeiling: number;
+  kills?: Record<string, number>; // M4 shared kill tally, per base recordId
 }
 
 export class CellStore {
@@ -53,6 +58,7 @@ export class CellStore {
   private sweepTimer: NodeJS.Timeout;
   private nextNetId = 1;
   private netIdCeiling = 1; // ids < ceiling are reserved on disk
+  private kills = new Map<string, number>();
   private globalLoaded: Promise<void>;
 
   constructor(dataDir: string) {
@@ -66,6 +72,7 @@ export class CellStore {
         this.nextNetId = g.nextNetIdCeiling;
         this.netIdCeiling = g.nextNetIdCeiling;
       }
+      if (g?.kills) for (const [k, v] of Object.entries(g.kills)) this.kills.set(k, v);
     });
   }
 
@@ -73,17 +80,34 @@ export class CellStore {
     return this.globalLoaded;
   }
 
-  // Monotonic u32, restart-safe. Fire-and-forget ceiling writes are ordered by the
-  // atomic tmp+rename; on crash the unflushed block is skipped, never reissued.
+  private writeGlobal(): void {
+    // Fire-and-forget, atomic tmp+rename; the netId ceiling always leads the actual
+    // counter so a crash skips a block rather than reissuing an id.
+    void writeJsonAtomic(this.globalPath, {
+      nextNetIdCeiling: this.netIdCeiling,
+      kills: Object.fromEntries(this.kills),
+    } satisfies GlobalDoc).catch((err) => log('error', 'world.global_flush_failed', { error: String(err) }));
+  }
+
+  // Monotonic u32, restart-safe; never reused.
   allocNetId(): number {
     const id = this.nextNetId++;
     if (this.nextNetId > this.netIdCeiling) {
       this.netIdCeiling = this.nextNetId + NET_ID_BLOCK;
-      void writeJsonAtomic(this.globalPath, { nextNetIdCeiling: this.netIdCeiling } satisfies GlobalDoc).catch(
-        (err) => log('error', 'world.netid_flush_failed', { error: String(err) }),
-      );
+      this.writeGlobal();
     }
     return id;
+  }
+
+  bumpKill(refId: string): number {
+    const n = (this.kills.get(refId) ?? 0) + 1;
+    this.kills.set(refId, n);
+    this.writeGlobal();
+    return n;
+  }
+
+  killCount(refId: string): number {
+    return this.kills.get(refId) ?? 0;
   }
 
   private path(cellKey: string): string {
