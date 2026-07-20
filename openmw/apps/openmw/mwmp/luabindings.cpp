@@ -86,6 +86,12 @@ namespace MWMP
             return NetManager::instance().sendEvent(name, LuaUtil::serialize(data, serializer));
         };
         api["sendJson"] = [](std::string_view json) { return NetManager::instance().sendJson(std::string(json)); };
+        // Movement tier (M1): mp.sendMove{x=,y=,z=,yaw=,pitch=,flags=,animVel=} -> 0x0100.
+        api["sendMove"] = [](const sol::table& t) {
+            return NetManager::instance().sendMove(t.get_or("x", 0.f), t.get_or("y", 0.f), t.get_or("z", 0.f),
+                t.get_or("yaw", 0.f), t.get_or("pitch", 0.f),
+                static_cast<uint8_t>(t.get_or("flags", 0)), t.get_or("animVel", 0.f));
+        };
         api["isEnabled"] = []() { return std::getenv("OPENMW_MP_URL") != nullptr; };
         api["getUrl"] = []() { return getEnvString("OPENMW_MP_URL"); };
         api["getName"] = []() { return getEnvString("OPENMW_MP_NAME"); };

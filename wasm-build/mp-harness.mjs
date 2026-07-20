@@ -183,6 +183,12 @@ async function launchClient(name, mpPort, extraParams = '', opts = {}) {
     await bsend('Log.enable', {}, sessionId);
     await bsend('Page.navigate', { url }, sessionId);
 
+    // PNG screenshot of the client's viewport (visual checks / M1 puppet captures).
+    handle.screenshot = async (path) => {
+      const shot = await bsend('Page.captureScreenshot', { format: 'png' }, sessionId);
+      writeFileSync(path, Buffer.from(shot.data, 'base64'));
+      return path;
+    };
     handle.eval = async (expr) => {
       const r = await bsend('Runtime.evaluate', { expression: expr, returnByValue: true }, sessionId);
       if (r.exceptionDetails) throw new Error(`eval(${expr}): ` + (r.exceptionDetails.exception?.description || r.exceptionDetails.text));

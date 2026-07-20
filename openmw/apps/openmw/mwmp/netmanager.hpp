@@ -63,6 +63,9 @@ namespace MWMP
         // Event tier: builds [u16 0x0002][u32 seq][u8 nameLen][name][LSER body] (PROTOCOL.md).
         // `lserBody` must already be LuaUtil::serialize output. Returns false if not connected.
         bool sendEvent(std::string_view name, const std::string& lserBody);
+        // Movement tier (M1): quantizes+packs one 0x0100 PlayerMove (20-byte payload).
+        // yaw/pitch in radians, animVel in 0..2 (x base walk speed). Runs at ~15 Hz.
+        bool sendMove(float x, float y, float z, float yaw, float pitch, uint8_t flags, float animVel);
         // Session tier: one JSON object per text frame.
         bool sendJson(const std::string& json);
 
@@ -106,6 +109,7 @@ namespace MWMP
         size_t mInboundBytes = 0;
         std::deque<Outbound> mOutbound;
         uint32_t mSeq = 0; // per-sender, monotonic from 1 (PROTOCOL.md)
+        uint32_t mLastMoveSeqIn = 0; // stale-drop for the movement family (PROTOCOL.md seq rule)
         bool mOpenPending = false;
         bool mClosePending = false;
         bool mSocketDead = false; // close event seen; handle reaped lazily on the next connect()

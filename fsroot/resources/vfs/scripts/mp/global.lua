@@ -1,9 +1,13 @@
--- Multiplayer GLOBAL orchestrator (omw-mp/1, M0) — see server/PROTOCOL.md.
+-- Multiplayer GLOBAL orchestrator (omw-mp/1, M0+M1) — see server/PROTOCOL.md.
 -- Connects on game start when the boot JS enabled MP (?mp= -> ENV OPENMW_MP_URL), drives the
 -- session via scripts/mp/net.lua, maintains the player roster and forwards chat to the
--- player script. Mirrors {state, playerId, players} into window.__omwMP for the harness.
+-- player script. M1: owns remote-player puppet lifecycle (spawn/despawn/teleport) and routes
+-- MP_MoveBatch entries to the per-puppet scripts. Mirrors {state, playerId, players, puppets}
+-- into window.__omwMP for the harness.
 local core = require('openmw.core')
 local mp = require('openmw.mp')
+local types = require('openmw.types')
+local util = require('openmw.util')
 local world = require('openmw.world')
 
 local json = require('scripts.mp.json')
@@ -99,6 +103,139 @@ local FAIL_TEXT = {
 
 local wasJoined = false
 
+-- --- M1: remote-player puppets ---------------------------------------------------------
+-- Server rule mirrored client-side: a remote player is visible when in the same cell, or an
+-- adjacent exterior grid cell. The server only relays poses/cell-changes of visible players
+-- (and force-includes a pose when someone enters the bubble), so the authoritative spawn
+-- trigger is simply "first MP_MoveBatch entry for a rostered id"; PlayerCellChange handles
+-- teleports and despawns.
+local PUPPET_TEMPLATE_ID = 'villager_00' -- demo NPC record (race "Imperial"), neutral kit
+
+local puppets = {} -- id -> {obj=GameObject, name=string}
+local remoteCell = {} -- id -> last cellKey (from PlayerCellChange relays)
+local lastPose = {} -- id -> last known {x=, y=, z=}
+local puppetRecordIds = {} -- player name -> generated NPC record id (records are immutable)
+local ownCellKeyCache = nil
+local lastPuppetMirror = 0
+
+local function toCellKey(cell)
+    if not cell then return nil end
+    if cell.isExterior then return cell.gridX .. ',' .. cell.gridY end
+    return string.lower(cell.name)
+end
+
+local function parseExteriorKey(key)
+    local gx, gy = string.match(key or '', '^(-?%d+),(-?%d+)$')
+    if gx then return tonumber(gx), tonumber(gy) end
+    return nil
+end
+
+local function visibleFrom(ownKey, key)
+    if not ownKey or not key then return false end
+    if ownKey == key then return true end
+    local ax, ay = parseExteriorKey(ownKey)
+    local bx, by = parseExteriorKey(key)
+    return ax ~= nil and bx ~= nil and math.abs(ax - bx) <= 1 and math.abs(ay - by) <= 1
+end
+
+local function rosterName(id)
+    for _, p in ipairs(roster) do
+        if p.id == id then return p.name end
+    end
+    return nil
+end
+
+-- Teleport destination worldspace: exterior keys resolve by position in the default
+-- worldspace (''); interiors are by definition the local player's own cell.
+local function destCellArg()
+    local player = playerScript()
+    if not player or not player.cell then return nil end
+    return player.cell.isExterior and '' or player.cell.name
+end
+
+local function puppetRecordId(name)
+    if puppetRecordIds[name] then return puppetRecordIds[name] end
+    -- Retail Morrowind has no villager_* records: fall back to the first NPC record in the
+    -- content chain (any humanoid works — the puppet only needs a rigged body).
+    local template = types.NPC.records[PUPPET_TEMPLATE_ID] or types.NPC.records[1]
+    if not template then
+        print('[mp] no NPC record available for the puppet template')
+        return nil
+    end
+    local record = world.createRecord(types.NPC.createRecordDraft({ template = template, name = name }))
+    puppetRecordIds[name] = record.id
+    return record.id
+end
+
+local function spawnPuppet(id, pose)
+    if puppets[id] then return end
+    local cellArg = destCellArg()
+    if not cellArg then return end
+    local name = rosterName(id) or ('player ' .. tostring(id))
+    local recordId = puppetRecordId(name)
+    if not recordId then return end
+    local obj = world.createObject(recordId)
+    obj:teleport(cellArg, util.vector3(pose.x, pose.y, pose.z))
+    obj:addScript('scripts/mp/puppet.lua', { playerId = id })
+    puppets[id] = { obj = obj, name = name }
+    print('[mp] puppet spawned for ' .. name .. ' (#' .. tostring(id) .. ')')
+end
+
+local function despawnPuppet(id)
+    local p = puppets[id]
+    if not p then return end
+    puppets[id] = nil
+    if p.obj:isValid() then p.obj:remove() end
+    print('[mp] puppet despawned for ' .. p.name .. ' (#' .. tostring(id) .. ')')
+end
+
+local function despawnAllPuppets()
+    for id in pairs(puppets) do
+        despawnPuppet(id)
+    end
+    remoteCell = {}
+    lastPose = {}
+end
+
+-- Own cell changed: re-evaluate which remote players are still in the visibility bubble.
+local function refreshVisibility()
+    local ownKey = ownCellKeyCache
+    for id, key in pairs(remoteCell) do
+        if visibleFrom(ownKey, key) then
+            if not puppets[id] and lastPose[id] then spawnPuppet(id, lastPose[id]) end
+        else
+            despawnPuppet(id)
+        end
+    end
+end
+
+local function mirrorPuppets()
+    local m = {}
+    for id, p in pairs(puppets) do
+        if p.obj:isValid() then
+            local pos = p.obj.position
+            m[tostring(id)] = { x = pos.x, y = pos.y, z = pos.z }
+        end
+    end
+    mp.testSet('puppets', json.encode(m))
+end
+
+local function puppetTick()
+    local now = core.getRealTime()
+    local player = playerScript()
+    if player then
+        local key = toCellKey(player.cell)
+        if key ~= ownCellKeyCache then
+            ownCellKeyCache = key
+            refreshVisibility()
+        end
+    end
+    if now - lastPuppetMirror >= 0.5 then
+        lastPuppetMirror = now
+        mirrorPuppets()
+    end
+end
+
 local function start()
     if not mp.isEnabled() then return end
     if mp.vectorsEnabled() then dumpVectors() end
@@ -119,6 +256,7 @@ local function start()
         if state ~= 'Joined' then
             roster = {}
             mirrorRoster()
+            despawnAllPuppets()
         end
     end
     if net.state == 'Offline' or net.state == 'Failed' then
@@ -153,7 +291,57 @@ local eventHandlers = {
                 break
             end
         end
+        despawnPuppet(data.id)
+        remoteCell[data.id] = nil
+        lastPose[data.id] = nil
         mirrorRoster()
+    end,
+
+    -- M1: one decoded 0x0101 batch -> route each entry to its puppet (spawning on first
+    -- sighting — the server only sends poses of players visible to us).
+    MP_MoveBatch = function(batch)
+        local now = core.getRealTime()
+        for _, e in ipairs(batch) do
+            if e.id ~= net.playerId then
+                lastPose[e.id] = { x = e.x, y = e.y, z = e.z }
+                if not puppets[e.id] then spawnPuppet(e.id, e) end
+                local p = puppets[e.id]
+                if p and p.obj:isValid() then
+                    e.t = now
+                    p.obj:sendEvent('MP_Pose', e)
+                end
+            end
+        end
+    end,
+
+    -- M1: relayed with the mover's id added; despawn/teleport their puppet. Our OWN
+    -- relay comes back too — ignore it (PROTOCOL.md).
+    MP_PlayerCellChange = function(data)
+        if not data.id or data.id == net.playerId then return end
+        remoteCell[data.id] = data.cellKey
+        lastPose[data.id] = { x = data.x, y = data.y, z = data.z }
+        if visibleFrom(ownCellKeyCache, data.cellKey) then
+            local p = puppets[data.id]
+            if p and p.obj:isValid() then
+                p.obj:teleport(destCellArg(), util.vector3(data.x, data.y, data.z))
+            else
+                spawnPuppet(data.id, data)
+            end
+        else
+            despawnPuppet(data.id)
+        end
+    end,
+
+    -- M1 snap service: puppet.lua steering diverged (blocked, warp) -> hard teleport.
+    mpSnapRequest = function(data)
+        local p = data.id and puppets[data.id]
+        if p and p.obj:isValid() then
+            local cellArg = destCellArg()
+            if cellArg then
+                p.obj:teleport(cellArg, util.vector3(data.x, data.y, data.z))
+                print('[mp] puppet snap #' .. tostring(data.id) .. ' (' .. tostring(data.why) .. ')')
+            end
+        end
     end,
 
     MP_PlayerList = function(data)
@@ -179,6 +367,7 @@ return {
         onUpdate = function()
             net.tick()
             flushNotices()
+            puppetTick()
         end,
     },
     eventHandlers = eventHandlers,
