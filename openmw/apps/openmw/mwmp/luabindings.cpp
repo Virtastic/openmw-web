@@ -8,10 +8,17 @@
 #include <emscripten.h>
 #endif
 
+#include <components/esm/refid.hpp>
 #include <components/lua/luastate.hpp>
 #include <components/lua/serialization.hpp>
 
+#include "../mwbase/environment.hpp"
+#include "../mwbase/mechanicsmanager.hpp"
+#include "../mwbase/statemanager.hpp"
+#include "../mwbase/world.hpp"
+
 #include "../mwlua/context.hpp"
+#include "../mwlua/luamanagerimp.hpp"
 
 #include "netmanager.hpp"
 
@@ -100,6 +107,42 @@ namespace MWMP
         api["vectorsEnabled"] = []() { return std::getenv("OPENMW_MP_VECTORS") != nullptr; };
         // Session-tier state is decided in Lua (scripts/mp/net.lua); mirror it into NetManager.
         api["_setState"] = [](std::string_view name) { NetManager::instance().setSessionState(name); };
+        // M2 rejoin restore: re-run the chargen record edits outside the chargen GUI.
+        // setPlayerRace already does the NpcAnimation rebuild (World::renderPlayer) +
+        // buildPlayer; deferred via addAction so the record/scene edits run in
+        // synchronizedUpdate like every other Lua-initiated world mutation.
+        api["applyChargen"] = [luaManager = context.mLuaManager](const sol::table& t) {
+            std::string race = t.get_or<std::string>("race", "");
+            std::string head = t.get_or<std::string>("head", "");
+            std::string hair = t.get_or<std::string>("hair", "");
+            std::string cls = t.get_or<std::string>("class", "");
+            std::string birthsign = t.get_or<std::string>("birthsign", "");
+            bool isMale = t.get_or("isMale", true);
+            luaManager->addAction(
+                [=] {
+                    MWBase::MechanicsManager* mechanics = MWBase::Environment::get().getMechanicsManager();
+                    if (!race.empty())
+                        mechanics->setPlayerRace(ESM::RefId::deserializeText(race), isMale,
+                            ESM::RefId::deserializeText(head), ESM::RefId::deserializeText(hair));
+                    if (!cls.empty())
+                        mechanics->setPlayerClass(ESM::RefId::deserializeText(cls));
+                    if (!birthsign.empty())
+                        mechanics->setPlayerBirthsign(ESM::RefId::deserializeText(birthsign));
+                },
+                "MPApplyChargen");
+        };
+        // M2 respawn: same path as the console `resurrect` (statsextensions.cpp OpResurrect) —
+        // there is no vanilla Lua API to revive the player.
+        api["resurrect"] = [luaManager = context.mLuaManager]() {
+            luaManager->addAction(
+                [] {
+                    MWWorld::Ptr player = MWBase::Environment::get().getWorld()->getPlayerPtr();
+                    MWBase::Environment::get().getMechanicsManager()->resurrect(player);
+                    if (MWBase::Environment::get().getStateManager()->getState() == MWBase::StateManager::State_Ended)
+                        MWBase::Environment::get().getStateManager()->resumeGame();
+                },
+                "MPResurrect");
+        };
         // Golden-vector dump (server codec tests): LSER-encode any serializable value -> base64.
         api["debugSerialize"] = [serializer = context.mSerializer](const sol::object& data) {
             return base64Encode(LuaUtil::serialize(data, serializer));

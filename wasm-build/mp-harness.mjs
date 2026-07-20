@@ -65,7 +65,10 @@ async function startGameServer() {
   // Per-run MOTD so scenario asserts can prove THIS server's welcome line reached the client
   // (not a stale mirror from a previous run). Merged over config.default.toml.
   const motd = `MOTD-${RUN_ID} welcome`;
-  writeFileSync(join(dataDir, 'config.toml'), `[server]\nmotd = "${motd}"\n`);
+  // Respawn coords = the ?start=Village drop point (measured; see M1/M2 scenarios).
+  writeFileSync(join(dataDir, 'config.toml'),
+    `[server]\nmotd = "${motd}"\n`
+    + `[rules]\nrespawnCellKey = "26,25"\nrespawnX = 216831.0\nrespawnY = 204909.0\nrespawnZ = 513.0\n`);
   const port = await freePort();
   const proc = spawn(process.execPath, [dist, '--data', dataDir, '--port', String(port)], {
     cwd: join(ROOT, 'server'), stdio: ['ignore', 'pipe', 'pipe'],

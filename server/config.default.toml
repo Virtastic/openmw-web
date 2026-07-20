@@ -29,12 +29,13 @@ enforce = "names"
 enforce = "warn"
 
 [rules]
-# Where the respawn plugin sends the dead (M2). Placeholder coords for the demo
-# Village — operators override per content set.
-respawnCellKey = "village"
-respawnX = 0.0
-respawnY = 0.0
-respawnZ = 0.0
+# Where the respawn plugin sends the dead (M2). Defaults = the Example Suite demo's
+# Village spawn point (the ?start=Village drop, verified by scenario s22); operators
+# hosting other content override these in <dataDir>/config.toml.
+respawnCellKey = "26,25"
+respawnX = 216831.0
+respawnY = 204909.0
+respawnZ = 513.0
 # Death penalty applied by the death-penalty plugin: "none" (M2 default; hook is a
 # documented no-op seed for operators/plugins to extend).
 deathPenalty = "none"

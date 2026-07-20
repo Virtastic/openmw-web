@@ -114,7 +114,8 @@ local PUPPET_TEMPLATE_ID = 'villager_00' -- demo NPC record (race "Imperial"), n
 local puppets = {} -- id -> {obj=GameObject, name=string}
 local remoteCell = {} -- id -> last cellKey (from PlayerCellChange relays)
 local lastPose = {} -- id -> last known {x=, y=, z=}
-local puppetRecordIds = {} -- player name -> generated NPC record id (records are immutable)
+local remoteIdentity = {} -- id -> {appearance=, equipment=, dynamic=} (M2; kept across spawns)
+local puppetRecordIds = {} -- identity fingerprint -> generated NPC record id (immutable)
 local ownCellKeyCache = nil
 local lastPuppetMirror = 0
 
@@ -153,8 +154,15 @@ local function destCellArg()
     return player.cell.isExterior and '' or player.cell.name
 end
 
-local function puppetRecordId(name)
-    if puppetRecordIds[name] then return puppetRecordIds[name] end
+-- M2: the puppet record is built from the relayed PlayerAppearance when one is known —
+-- the puppet then IS the remote player's look, not a generic villager. Records are
+-- immutable, so each distinct identity gets its own generated record (cached).
+local function puppetRecordId(id, name)
+    local app = remoteIdentity[id] and remoteIdentity[id].appearance
+    local key = name .. '|'
+        .. (app and table.concat({ tostring(app.race), tostring(app.head), tostring(app.hair),
+            tostring(app.isMale), tostring(app.class) }, '|') or 'default')
+    if puppetRecordIds[key] then return puppetRecordIds[key] end
     -- Retail Morrowind has no villager_* records: fall back to the first NPC record in the
     -- content chain (any humanoid works — the puppet only needs a rigged body).
     local template = types.NPC.records[PUPPET_TEMPLATE_ID] or types.NPC.records[1]
@@ -162,9 +170,82 @@ local function puppetRecordId(name)
         print('[mp] no NPC record available for the puppet template')
         return nil
     end
-    local record = world.createRecord(types.NPC.createRecordDraft({ template = template, name = name }))
-    puppetRecordIds[name] = record.id
+    local draft = { template = template, name = name }
+    if app then
+        draft.race = app.race
+        draft.class = app.class
+        draft.isMale = app.isMale
+        if app.head and app.head ~= '' then draft.head = app.head end
+        if app.hair and app.hair ~= '' then draft.hair = app.hair end
+    end
+    local ok, record = pcall(function() return world.createRecord(types.NPC.createRecordDraft(draft)) end)
+    if not ok then
+        -- Bad/foreign record ids in the appearance (content mismatch): fall back to template look.
+        print('[mp] puppet record build failed (' .. tostring(record) .. '), using template look')
+        record = world.createRecord(types.NPC.createRecordDraft({ template = template, name = name }))
+    end
+    puppetRecordIds[key] = record.id
     return record.id
+end
+
+-- Items another client references may not exist here (dynamic records are per-client;
+-- content mismatches in retail): equip a local placeholder so the SLOT state still syncs.
+local placeholderItemRecordId = nil
+local function placeholderItemId()
+    if placeholderItemRecordId then return placeholderItemRecordId end
+    local ok, rec = pcall(function()
+        return world.createRecord(types.Armor.createRecordDraft({
+            name = 'Unknown Item',
+            model = 'meshes/marker_error.osgt',
+            icon = '',
+            type = types.Armor.TYPE.Helmet,
+            weight = 1,
+            value = 1,
+            health = 100,
+            baseArmor = 0,
+            enchantCapacity = 0,
+        }))
+    end)
+    if ok then placeholderItemRecordId = rec.id end
+    return placeholderItemRecordId
+end
+
+-- Grant any equipment items the puppet does not hold yet, then hand the slot map to the
+-- puppet script (which retries setEquipment until the grants land in its inventory).
+local function pushEquipmentToPuppet(id)
+    local p = puppets[id]
+    local eq = remoteIdentity[id] and remoteIdentity[id].equipment
+    if not p or not p.obj:isValid() or not eq then return end
+    local inventory = types.Actor.inventory(p.obj)
+    local effective = {}
+    for slot, recordId in pairs(eq.slots or {}) do
+        local grantId = recordId
+        local ok, count = pcall(function() return inventory:countOf(grantId) end)
+        if not ok or count == 0 then
+            local okc, item = pcall(function() return world.createObject(grantId) end)
+            if okc then
+                item:moveInto(inventory)
+            else
+                grantId = placeholderItemId() -- unknown record here: visible stand-in
+                if grantId then
+                    local okp, cnt = pcall(function() return inventory:countOf(grantId) end)
+                    if not okp or cnt == 0 then
+                        world.createObject(grantId):moveInto(inventory)
+                    end
+                end
+            end
+        end
+        if grantId then effective[slot] = grantId end
+    end
+    p.obj:sendEvent('MP_Equip', { slots = effective })
+end
+
+local function pushStatsToPuppet(id)
+    local p = puppets[id]
+    local dyn = remoteIdentity[id] and remoteIdentity[id].dynamic
+    if p and p.obj:isValid() and dyn then
+        p.obj:sendEvent('MP_Stats', dyn)
+    end
 end
 
 local function spawnPuppet(id, pose)
@@ -172,13 +253,17 @@ local function spawnPuppet(id, pose)
     local cellArg = destCellArg()
     if not cellArg then return end
     local name = rosterName(id) or ('player ' .. tostring(id))
-    local recordId = puppetRecordId(name)
+    local recordId = puppetRecordId(id, name)
     if not recordId then return end
     local obj = world.createObject(recordId)
     obj:teleport(cellArg, util.vector3(pose.x, pose.y, pose.z))
     obj:addScript('scripts/mp/puppet.lua', { playerId = id })
     puppets[id] = { obj = obj, name = name }
     print('[mp] puppet spawned for ' .. name .. ' (#' .. tostring(id) .. ')')
+    -- Identity that arrived before the spawn applies now, so the first visible frame
+    -- already has the right look/equipment/health.
+    pushEquipmentToPuppet(id)
+    pushStatsToPuppet(id)
 end
 
 local function despawnPuppet(id)
@@ -189,12 +274,23 @@ local function despawnPuppet(id)
     print('[mp] puppet despawned for ' .. p.name .. ' (#' .. tostring(id) .. ')')
 end
 
+-- Appearance changed for a live puppet: records are immutable, so swap the object —
+-- spawn a fresh one from the new record at the old pose, then remove the old.
+local function rebuildPuppet(id)
+    local p = puppets[id]
+    if not p or not p.obj:isValid() then return end
+    local pos = p.obj.position
+    despawnPuppet(id)
+    spawnPuppet(id, { x = pos.x, y = pos.y, z = pos.z })
+end
+
 local function despawnAllPuppets()
     for id in pairs(puppets) do
         despawnPuppet(id)
     end
     remoteCell = {}
     lastPose = {}
+    remoteIdentity = {}
 end
 
 -- Own cell changed: re-evaluate which remote players are still in the visibility bubble.
@@ -214,10 +310,57 @@ local function mirrorPuppets()
     for id, p in pairs(puppets) do
         if p.obj:isValid() then
             local pos = p.obj.position
-            m[tostring(id)] = { x = pos.x, y = pos.y, z = pos.z }
+            local eq = {}
+            local ok, slots = pcall(types.Actor.getEquipment, p.obj)
+            if ok then
+                for _, item in pairs(slots) do eq[#eq + 1] = item.recordId end
+                table.sort(eq)
+            end
+            local rec = types.NPC.records[p.obj.recordId]
+            m[tostring(id)] = { x = pos.x, y = pos.y, z = pos.z,
+                name = rec and rec.name or p.name, eq = eq }
         end
     end
     mp.testSet('puppets', json.encode(m))
+end
+
+-- --- M2: rejoin restore orchestration ----------------------------------------------------
+-- SessionWelcome.playerRecord (captured by net.lua) is applied once the player object
+-- exists: grant the stored inventory (createObject+moveInto — only global can), teleport to
+-- the stored position, then hand the record to player.lua (chargen/stats/spells/equipment).
+local pendingRestore = nil
+local testItemRecordId = nil -- dynamic record for the equiptest harness hook
+
+local function teleportPlayerTo(position)
+    local player = playerScript()
+    if not player or not position then return end
+    local gx, gy = parseExteriorKey(position.cellKey)
+    local cellArg = gx and '' or position.cellKey
+    local ok, err = pcall(function()
+        player:teleport(cellArg, util.vector3(position.x, position.y, position.z))
+    end)
+    if not ok then print('[mp] restore teleport failed: ' .. tostring(err)) end
+end
+
+local function restoreTick()
+    if not pendingRestore then return end
+    local player = playerScript()
+    if not player then return end
+    local record = pendingRestore
+    pendingRestore = nil
+    local inventory = types.Actor.inventory(player)
+    local granted = 0
+    -- Server doc shape: inventory is a flat [{id,n},...] array (persist/playerstore.ts).
+    for _, entry in ipairs(record.inventory or {}) do
+        local ok, item = pcall(function() return world.createObject(entry.id, entry.n or 1) end)
+        if ok then
+            item:moveInto(inventory)
+            granted = granted + 1
+        end
+    end
+    if record.position then teleportPlayerTo(record.position) end
+    player:sendEvent('MP_ApplyRecord', record)
+    print('[mp] rejoin restore: ' .. granted .. ' item stack(s) granted, record forwarded')
 end
 
 local function puppetTick()
@@ -245,6 +388,10 @@ local function start()
             wasJoined = true
             notice('Connected to ' .. tostring(net.serverName or 'server')
                 .. ' as ' .. tostring(mp.getName() or '?'))
+            if net.playerRecord then
+                pendingRestore = net.playerRecord -- applied by restoreTick once the player exists
+                net.playerRecord = nil
+            end
         elseif state == 'Failed' then
             local why = FAIL_TEXT[net.lastError] or net.lastError or 'connection failed'
             local detail = net.lastErrorDetail
@@ -332,6 +479,75 @@ local eventHandlers = {
         end
     end,
 
+    -- --- M2: identity relays -> puppet appliers ------------------------------------------
+    MP_PlayerAppearance = function(data)
+        if not data.id or data.id == net.playerId then return end
+        remoteIdentity[data.id] = remoteIdentity[data.id] or {}
+        remoteIdentity[data.id].appearance = data
+        rebuildPuppet(data.id) -- no-op when not spawned; spawn applies the stored look
+    end,
+
+    MP_PlayerEquipment = function(data)
+        if not data.id or data.id == net.playerId then return end
+        remoteIdentity[data.id] = remoteIdentity[data.id] or {}
+        remoteIdentity[data.id].equipment = { slots = data.slots or {} }
+        pushEquipmentToPuppet(data.id)
+    end,
+
+    MP_PlayerStatsDynamic = function(data)
+        if not data.id or data.id == net.playerId then return end
+        remoteIdentity[data.id] = remoteIdentity[data.id] or {}
+        remoteIdentity[data.id].dynamic = { hp = data.hp, mp = data.mp, ft = data.ft }
+        pushStatsToPuppet(data.id)
+    end,
+
+    -- M2 respawn service: teleport self, then let player.lua revive/refill.
+    MP_PlayerResurrect = function(data)
+        teleportPlayerTo(data)
+        toPlayer('MP_DoResurrect', { restoreHp = data.restoreHp == true })
+    end,
+
+    -- Test hook (equip:<id>:<slot>): grant an item into the LOCAL player's inventory.
+    mpGrantItem = function(data)
+        local player = playerScript()
+        if not player or type(data.id) ~= 'string' then return end
+        local ok, item = pcall(function() return world.createObject(data.id) end)
+        if ok then
+            item:moveInto(types.Actor.inventory(player))
+        else
+            print('[mp] mpGrantItem failed: ' .. tostring(item))
+        end
+    end,
+
+    -- Test hook (equiptest): the clean demo content ships NO item records at all, so the
+    -- equipment scenarios create a dynamic helmet record at runtime and grant it.
+    mpTestItem = function()
+        local player = playerScript()
+        if not player then return end
+        if not testItemRecordId then
+            local ok, rec = pcall(function()
+                return world.createRecord(types.Armor.createRecordDraft({
+                    name = 'MP Test Helmet',
+                    model = 'meshes/marker_error.osgt',
+                    icon = '',
+                    type = types.Armor.TYPE.Helmet,
+                    weight = 1,
+                    value = 1,
+                    health = 100,
+                    baseArmor = 5,
+                    enchantCapacity = 0,
+                }))
+            end)
+            if not ok then
+                print('[mp] mpTestItem record creation failed: ' .. tostring(rec))
+                return
+            end
+            testItemRecordId = rec.id
+        end
+        world.createObject(testItemRecordId):moveInto(types.Actor.inventory(player))
+        toPlayer('MP_TestItem', { id = testItemRecordId })
+    end,
+
     -- M1 snap service: puppet.lua steering diverged (blocked, warp) -> hard teleport.
     mpSnapRequest = function(data)
         local p = data.id and puppets[data.id]
@@ -367,6 +583,7 @@ return {
         onUpdate = function()
             net.tick()
             flushNotices()
+            restoreTick()
             puppetTick()
         end,
     },

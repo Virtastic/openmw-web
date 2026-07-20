@@ -123,6 +123,9 @@ dispatch.SessionWelcome = function(msg)
     net.playerId = msg.playerId
     net.sessionToken = msg.sessionToken
     net.motd = msg.motd
+    -- M2: non-null playerRecord = stored snapshot to restore (json.null when fresh).
+    net.playerRecord = (type(msg.playerRecord) == 'table' and msg.playerRecord ~= json.null)
+        and msg.playerRecord or nil
     mp.testSet('playerId', tostring(msg.playerId))
     send({ t = 'SessionReady' })
     setState('Joined')

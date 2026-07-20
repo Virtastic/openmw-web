@@ -14,6 +14,7 @@ local I = require('openmw.interfaces')
 local self = require('openmw.self')
 
 local json = require('scripts.mp.json')
+local identity = require('scripts.mp.identity')
 
 local HISTORY_MAX = 8
 
@@ -136,6 +137,7 @@ local prevJumpCtl = false
 local lastCellKey = nil
 local lastPoseMirror = 0
 local walkCmd = nil -- harness 'walk:<dx>,<dy>,<ms>' injection
+local pendingTestEquip = nil -- harness 'equip:<id>:<slot>': equip once the grant lands
 
 local function cellKey()
     local cell = self.cell
@@ -179,9 +181,12 @@ end
 local function movementTick()
     if mp.status().state ~= 'Joined' then
         lastCellKey = nil -- rejoin resends PlayerCellChange (required to become visible)
+        identity.reset() -- and the identity diffs re-upload
         return
     end
     local now = core.getRealTime()
+    identity.tick(now) -- M2: appearance/equipment/stats/inventory diff broadcasts
+    identity.equipRetryTick(now)
 
     -- PlayerCellChange: immediately once Joined (before it we are invisible and receive no
     -- batches), then on every cell change.
@@ -233,6 +238,22 @@ local function walkTick()
     self.controls.run = walkCmd.run
 end
 
+local function testEquipTick()
+    if not pendingTestEquip then return end
+    local now = core.getRealTime()
+    for _, item in ipairs(types.Actor.inventory(self):getAll()) do
+        if item.recordId == pendingTestEquip.id then
+            types.Actor.setEquipment(self, { [pendingTestEquip.slot] = pendingTestEquip.id })
+            pendingTestEquip = nil
+            return
+        end
+    end
+    if now > pendingTestEquip.until_ then
+        print('[mp] test equip timed out waiting for ' .. pendingTestEquip.id)
+        pendingTestEquip = nil
+    end
+end
+
 local function pollHarness()
     local cmd = mp.testPollCommand()
     if type(cmd) == 'string' then
@@ -243,6 +264,25 @@ local function pollHarness()
         if cmd == 'cam:3p' then -- visual scenarios: put own avatar in frame
             local camera = require('openmw.camera')
             camera.setMode(camera.MODE.ThirdPerson)
+        end
+        -- M2 test hooks. equip:<recordId>:<slot> grants (via global) then equips; sethp:<n>
+        -- drives the death path (0 = die); applyrace:<race>:<head>:<hair> exercises the
+        -- chargen rebuild for the identity scenarios.
+        local grantId, grantSlot = cmd:match('^equip:([^:]+):(%d+)$')
+        if grantId then
+            core.sendGlobalEvent('mpGrantItem', { id = grantId })
+            pendingTestEquip = { id = grantId, slot = tonumber(grantSlot), until_ = core.getRealTime() + 5 }
+        end
+        if cmd == 'equiptest' then -- demo content has no items; global creates one
+            core.sendGlobalEvent('mpTestItem', {})
+        end
+        local hp = cmd:match('^sethp:(-?[%d.]+)$')
+        if hp then
+            types.Actor.stats.dynamic.health(self).current = tonumber(hp)
+        end
+        local race, head, hair = cmd:match('^applyrace:([^:]+):([^:]+):([^:]*)$')
+        if race then
+            mp.applyChargen({ race = race, head = head, hair = hair, isMale = true })
         end
         local dx, dy, ms = cmd:match('^walk:(-?[%d.]+),(-?[%d.]+),(%d+)$')
         if dx then
@@ -267,11 +307,31 @@ return {
         onFrame = function() -- runs while paused too — the harness must not stall in menus
             pollHarness()
             walkTick()
+            testEquipTick()
             movementTick()
         end,
     },
     eventHandlers = {
         MP_UiChatMessage = pushMessage,
+        -- M2 rejoin restore: global.lua forwards SessionWelcome.playerRecord here (after
+        -- granting the inventory and teleporting us to record.position).
+        MP_ApplyRecord = function(record)
+            identity.applyRecord(record)
+        end,
+        -- Test hook: dynamic record created by global.lua (equiptest) — equip as a helmet.
+        MP_TestItem = function(data)
+            pendingTestEquip = { id = data.id, slot = 0, until_ = core.getRealTime() + 5 }
+        end,
+        -- M2 respawn: global.lua already teleported us; revive + optionally top up stats.
+        MP_DoResurrect = function(data)
+            mp.resurrect()
+            if data and data.restoreHp then
+                local d = types.Actor.stats.dynamic
+                d.health(self).current = d.health(self).base
+                d.magicka(self).current = d.magicka(self).base
+                d.fatigue(self).current = d.fatigue(self).base
+            end
+        end,
         UiModeChanged = function(data)
             -- Esc (or any other window) closed our Interface mode -> drop the chat window.
             if chatElement and data.newMode == nil then

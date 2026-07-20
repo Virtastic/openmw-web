@@ -7,6 +7,7 @@
 -- geometry, big warp) it asks global.lua for a teleport via the mpSnapRequest event.
 local core = require('openmw.core')
 local self = require('openmw.self')
+local types = require('openmw.types')
 
 local Interp = require('scripts.mp.interp')
 
@@ -21,6 +22,8 @@ local lastSnapReq = 0
 local stuckSince = nil
 local lastProgressPos = nil
 local prevJump = false
+local pendingEquip = nil -- M2: slot map waiting for granted items to land in the inventory
+local equipRetryUntil = 0
 
 local function zeroControls()
     self.controls.movement = 0
@@ -46,9 +49,29 @@ local function requestSnap(target, why)
     core.sendGlobalEvent('mpSnapRequest', { id = playerId, x = target.x, y = target.y, z = target.z, why = why })
 end
 
+-- M2: setEquipment only works once the items granted by global.lua exist in our inventory
+-- (createObject+moveInto lands a frame or more later) — retry briefly, then best-effort.
+local function equipTick(now)
+    if not pendingEquip then return end
+    local have = {}
+    for _, item in ipairs(types.Actor.inventory(self):getAll()) do
+        have[item.recordId] = true
+    end
+    local ready = true
+    for _, id in pairs(pendingEquip) do
+        if not have[id] then ready = false end
+    end
+    if ready or now > equipRetryUntil then
+        local ok, err = pcall(types.Actor.setEquipment, self, pendingEquip)
+        if not ok then print('[mp] puppet equip failed: ' .. tostring(err)) end
+        pendingEquip = nil
+    end
+end
+
 local function onUpdate(dt)
     if dt <= 0 or not playerId then return end
     local now = core.getRealTime()
+    equipTick(now)
     local newest = interp:newestTime()
     if not newest or now - newest > IDLE_TIMEOUT then
         zeroControls()
@@ -126,6 +149,28 @@ return {
     eventHandlers = {
         MP_Pose = function(e)
             interp:push(e)
+        end,
+        -- M2: full slot->recordId snapshot (items already granted by global.lua).
+        MP_Equip = function(data)
+            local slots = {}
+            for slot, id in pairs(data.slots or {}) do
+                slots[tonumber(slot) or slot] = id
+            end
+            pendingEquip = slots
+            equipRetryUntil = core.getRealTime() + 3
+        end,
+        -- M2: mirror the remote player's dynamic stats (health bar, death pose).
+        MP_Stats = function(data)
+            local d = types.Actor.stats.dynamic
+            local function apply(stat, v)
+                if v then
+                    stat.base = v.b
+                    stat.current = v.c
+                end
+            end
+            apply(d.health(self), data.hp)
+            apply(d.magicka(self), data.mp)
+            apply(d.fatigue(self), data.ft)
         end,
     },
 }

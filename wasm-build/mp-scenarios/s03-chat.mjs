@@ -32,10 +32,13 @@ export default async function run(ctx) {
   await b.waitFor(`((window.__omwMP||{}).lastChat||"").includes(${JSON.stringify(nonceA)})`,
     CHAT_BUDGET_MS, `A's message on ${b.name}`);
   const dtAB = Date.now() - t0;
-  // lastChatLine (player-script UI mirror) must carry it too, attributed to A.
-  const lineB = await b.eval('(window.__omwMP||{}).lastChatLine||""');
-  assert.ok(lineB.includes(nonceA), `lastChatLine on B missing nonce (got "${lineB}")`);
-  assert.ok(lineB.includes(a.name), `lastChatLine on B not attributed to ${a.name} (got "${lineB}")`);
+  // lastChatLine (player-script UI mirror) lags lastChat by one engine frame (global script
+  // mirrors on receipt, then sendEvent-hops to the player script) — up to ~1s on a throttled
+  // headless tab. So WAIT for it; a bare eval here is a race (bit us in full-suite runs).
+  await b.waitFor(
+    `(((window.__omwMP||{}).lastChatLine||"").includes(${JSON.stringify(nonceA)})
+      && ((window.__omwMP||{}).lastChatLine||"").includes(${JSON.stringify(a.name)}))`,
+    CHAT_BUDGET_MS, `lastChatLine on ${b.name} carries A's nonce + attribution`);
 
   // B replies -> A.
   const nonceB = 'n' + Math.random().toString(36).slice(2, 10);
@@ -44,8 +47,9 @@ export default async function run(ctx) {
   await a.waitFor(`((window.__omwMP||{}).lastChat||"").includes(${JSON.stringify(nonceB)})`,
     CHAT_BUDGET_MS, `B's reply on ${a.name}`);
   const dtBA = Date.now() - t0;
-  const lineA = await a.eval('(window.__omwMP||{}).lastChatLine||""');
-  assert.ok(lineA.includes(nonceB), `lastChatLine on A missing nonce (got "${lineA}")`);
+  await a.waitFor(
+    `((window.__omwMP||{}).lastChatLine||"").includes(${JSON.stringify(nonceB)})`,
+    CHAT_BUDGET_MS, `lastChatLine on ${a.name} carries B's nonce`);
 
   ctx.log(`ok: chat round-trip A->B ${dtAB}ms, B->A ${dtBA}ms`);
 }
