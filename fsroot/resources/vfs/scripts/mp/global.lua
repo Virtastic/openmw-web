@@ -12,6 +12,7 @@ local world = require('openmw.world')
 
 local json = require('scripts.mp.json')
 local net = require('scripts.mp.net')
+local objects = require('scripts.mp.objects')
 
 local roster = {} -- array of {id=u16, name=string}, server order
 
@@ -331,6 +332,52 @@ end
 local pendingRestore = nil
 local testItemRecordId = nil -- dynamic record for the equiptest harness hook
 
+-- M3 test-hook state
+local chestRecordId = nil
+local chestObj = nil
+local lastChestOpId = nil
+local lastDoorMirror = 0
+
+local function nearestDoor()
+    local player = playerScript()
+    if not (player and player.cell) then return nil end
+    local best, bestDist = nil, math.huge
+    local function scan(cell)
+        if not cell then return end
+        local ok, doors = pcall(function() return cell:getAll(types.Door) end)
+        if not ok then return end
+        for _, door in ipairs(doors) do
+            if not types.Door.isTeleport(door) then
+                local d = (door.position - player.position):length()
+                if d < bestDist then
+                    best, bestDist = door, d
+                end
+            end
+        end
+    end
+    if player.cell.isExterior then
+        -- The village spans several grid cells; scan the player's 3x3 neighborhood.
+        for dx = -1, 1 do
+            for dy = -1, 1 do
+                pcall(function() scan(world.getExteriorCell(player.cell.gridX + dx, player.cell.gridY + dy)) end)
+            end
+        end
+    else
+        scan(player.cell)
+    end
+    return best
+end
+
+local function mirrorDoor(now)
+    if now - lastDoorMirror < 0.5 then return end
+    lastDoorMirror = now
+    local door = nearestDoor()
+    if door then
+        mp.testSet('doorOpen', tostring(not types.Door.isClosed(door)))
+        mp.testSet('doorLocked', tostring(types.Lockable.isLocked(door)))
+    end
+end
+
 local function teleportPlayerTo(position)
     local player = playerScript()
     if not player or not position then return end
@@ -382,6 +429,13 @@ end
 local function start()
     if not mp.isEnabled() then return end
     if mp.vectorsEnabled() then dumpVectors() end
+    -- M3 world-object hub wiring (see scripts/mp/objects.lua).
+    objects.init({
+        playerFn = playerScript,
+        ownCellKeyFn = function() return ownCellKeyCache end,
+        ownIdFn = function() return net.state == 'Joined' and net.playerId or nil end,
+        placeholderItemFn = placeholderItemId,
+    })
     net.onStateChanged = function(state)
         print('[mp] session state: ' .. state)
         if state == 'Joined' then
@@ -404,6 +458,7 @@ local function start()
             roster = {}
             mirrorRoster()
             despawnAllPuppets()
+            objects.reset()
         end
     end
     if net.state == 'Offline' or net.state == 'Failed' then
@@ -548,6 +603,122 @@ local eventHandlers = {
         toPlayer('MP_TestItem', { id = testItemRecordId })
     end,
 
+    -- --- M3 test hooks (headless scenarios can't drive the mouse/UI) -------------------
+    -- Drop the first inventory item matching recordId into the world in front of the
+    -- player — via the NATIVE path (inventory->world teleport fires onItemActive, which is
+    -- the same signal a UI drop produces), so the whole spawn pipeline is exercised.
+    mpDropItem = function(data)
+        local player = playerScript()
+        if not player then return end
+        for _, item in ipairs(types.Actor.inventory(player):getAll()) do
+            if item.recordId == data.id then
+                local pos = player.position + util.vector3(0, 100, 0)
+                local cellArg = player.cell.isExterior and '' or player.cell.name
+                item:teleport(cellArg, pos)
+                return
+            end
+        end
+        print('[mp] mpDropItem: no ' .. tostring(data.id) .. ' in inventory')
+    end,
+
+    -- Pick up a net-tracked object through the REAL activation pipeline (activateBy ->
+    -- native pickup + our onActivate hook relays the ObjectDelete).
+    mpTakeNet = function(data)
+        local player = playerScript()
+        local obj = data.netId and objects.objOfNet(data.netId)
+        if player and obj and obj:isValid() then
+            obj:activateBy(player)
+        end
+    end,
+
+    -- Spawn a shared chest: dynamic container record locally + ObjectSpawnRequest so the
+    -- server nets it (peers get a placeholder object; the CONTAINER STATE still syncs —
+    -- that is what M3 asserts; a real shared chest needs shared content records).
+    mpSpawnChest = function()
+        local player = playerScript()
+        if not player then return end
+        if not chestRecordId then
+            local ok, rec = pcall(function()
+                return world.createRecord(types.Container.createRecordDraft({
+                    name = 'MP Test Chest',
+                    model = 'meshes/marker_error.osgt',
+                    weight = 500, -- capacity
+                    isOrganic = false,
+                    isRespawning = false,
+                }))
+            end)
+            if not ok then
+                print('[mp] chest record failed: ' .. tostring(rec))
+                return
+            end
+            chestRecordId = rec.id
+        end
+        local obj = world.createObject(chestRecordId)
+        local cellArg = player.cell.isExterior and '' or player.cell.name
+        local pos = player.position + util.vector3(100, 100, 0)
+        obj:teleport(cellArg, pos)
+        objects.markNetSpawned(obj) -- containers are not items, but keep bookkeeping tidy
+        -- teleport lands next frame; obj.position is not valid yet -> pass the target pos
+        objects.requestSpawn(obj, pos, ownCellKeyCache)
+        chestObj = obj
+    end,
+
+    -- Put an inventory item into the spawned chest (native transfer + the same
+    -- ContainerOpRequest the container watch would send).
+    mpChestPut = function(data)
+        local player = playerScript()
+        if not (player and chestObj and chestObj:isValid()) then return end
+        for _, item in ipairs(types.Actor.inventory(player):getAll()) do
+            if item.recordId == data.id then
+                -- Native transfer only: the container watch (armed by chest:open) diffs the
+                -- inventory change into the ContainerOpRequest — the same path a UI put takes.
+                item:moveInto(types.Container.content(chestObj))
+                return
+            end
+        end
+    end,
+
+    -- Open the chest formally (ContainerOpen with a contents snapshot; the first opener's
+    -- snapshot becomes canonical server-side).
+    mpChestOpen = function(data)
+        if chestObj and chestObj:isValid() then
+            objects.onActivate(chestObj, playerScript())
+        elseif data and data.netId then
+            -- Peer without a real chest (placeholder object): announce with nil contents.
+            mp.sendEvent('ContainerOpen', { net = data.netId, cellKey = ownCellKeyCache })
+        end
+    end,
+
+    -- Race the take: request through the transactional server path; the ok/fail lands in
+    -- the chestOp mirror via MP_ContainerOpResult below.
+    mpChestTake = function(data)
+        local netId = data.netId or (chestObj and objects.netIdOf(chestObj))
+        if netId then
+            local opId = objects.sendContainerOpByNet(netId, 'take', data.id, 1, ownCellKeyCache)
+            lastChestOpId = opId
+        end
+    end,
+
+    -- Toggle/lock/unlock the nearest content-file door (the real ref path).
+    mpDoorToggle = function()
+        local door = nearestDoor()
+        if door then objects.onActivate(door, playerScript()) ; pcall(function() types.Door.activateDoor(door) end) end
+    end,
+    mpDoorLock = function(data)
+        local door = nearestDoor()
+        if door then
+            pcall(function() types.Lockable.lock(door, data.level or 50) end)
+            mp.sendEvent('ObjectLock', { ref = door, cellKey = ownCellKeyCache, lockLevel = data.level or 50 })
+        end
+    end,
+    mpDoorUnlock = function()
+        local door = nearestDoor()
+        if door then
+            pcall(function() types.Lockable.unlock(door) end)
+            mp.sendEvent('ObjectLock', { ref = door, cellKey = ownCellKeyCache })
+        end
+    end,
+
     -- M1 snap service: puppet.lua steering diverged (blocked, warp) -> hard teleport.
     mpSnapRequest = function(data)
         local p = data.id and puppets[data.id]
@@ -576,15 +747,46 @@ local eventHandlers = {
     end,
 }
 
+-- M3: object-sync appliers (MP_ObjectPlace/Delete/Move/Lock, MP_DoorState,
+-- MP_Container*, MP_WorldCellState, MP_ObjectSpawnAck) live in objects.lua.
+for name, fn in pairs(objects.handlers) do
+    eventHandlers[name] = fn
+end
+-- Wrap the op-result applier to expose the outcome to the harness (s31 race assert).
+local baseOpResult = eventHandlers.MP_ContainerOpResult
+eventHandlers.MP_ContainerOpResult = function(data)
+    if data.opId == lastChestOpId then
+        mp.testSet('chestOp', json.encode({ ok = data.ok == true, reason = data.reason }))
+    end
+    baseOpResult(data)
+end
+
 return {
     engineHandlers = {
         onInit = start,
         onLoad = start,
+        onActivate = function(object, actor)
+            if net.state == 'Joined' then
+                local ok, err = pcall(objects.onActivate, object, actor)
+                if not ok then print('[mp] onActivate hook error: ' .. tostring(err)) end
+            end
+        end,
+        onItemActive = function(item)
+            if net.state == 'Joined' then
+                local ok, err = pcall(objects.onItemActive, item)
+                if not ok then print('[mp] onItemActive hook error: ' .. tostring(err)) end
+            end
+        end,
         onUpdate = function()
             net.tick()
             flushNotices()
             restoreTick()
             puppetTick()
+            if net.state == 'Joined' then
+                local now = core.getRealTime()
+                objects.tick(now)
+                mirrorDoor(now)
+            end
         end,
     },
     eventHandlers = eventHandlers,

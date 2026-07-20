@@ -284,6 +284,33 @@ local function pollHarness()
         if race then
             mp.applyChargen({ race = race, head = head, hair = hair, isMale = true })
         end
+        -- M3 test hooks (world objects; all resolved in the GLOBAL script).
+        local dropId = cmd:match('^drop:(.+)$')
+        if dropId then core.sendGlobalEvent('mpDropItem', { id = dropId }) end
+        local takeNet = cmd:match('^takenet:(%d+)$')
+        if takeNet then core.sendGlobalEvent('mpTakeNet', { netId = tonumber(takeNet) }) end
+        if cmd == 'chest:spawn' then core.sendGlobalEvent('mpSpawnChest', {}) end
+        local openNet = cmd:match('^chest:open:?(%d*)$')
+        if openNet then core.sendGlobalEvent('mpChestOpen', { netId = tonumber(openNet) }) end
+        local putId = cmd:match('^chest:put:(.+)$')
+        if putId then core.sendGlobalEvent('mpChestPut', { id = putId }) end
+        -- netId FIRST (may be empty = "my own chest"): record ids can contain colons
+        -- (dynamic records are named like "Generated:0x0").
+        local takeChestNet, takeId = cmd:match('^chesttake:(%d*):(.+)$')
+        if takeId then
+            core.sendGlobalEvent('mpChestTake', { id = takeId, netId = tonumber(takeChestNet) })
+        end
+        if cmd == 'door:toggle' then core.sendGlobalEvent('mpDoorToggle', {}) end
+        local lockLevel = cmd:match('^door:lock:(%d+)$')
+        if lockLevel then core.sendGlobalEvent('mpDoorLock', { level = tonumber(lockLevel) }) end
+        if cmd == 'door:unlock' then core.sendGlobalEvent('mpDoorUnlock', {}) end
+        local countId = cmd:match('^count:(.+)$')
+        if countId then
+            local ok, n = pcall(function()
+                return types.Actor.inventory(self):countOf(countId)
+            end)
+            mp.testSet('count', tostring(ok and n or -1))
+        end
         local dx, dy, ms = cmd:match('^walk:(-?[%d.]+),(-?[%d.]+),(%d+)$')
         if dx then
             walkCmd = {

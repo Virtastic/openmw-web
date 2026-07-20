@@ -180,15 +180,16 @@ function identity.tick(now)
     if now >= nextAt.progression then
         nextAt.progression = now + INTERVALS.progression
         local prog = snapProgression()
+        -- Server contract (playerstate.ts parseNumberMap): the body IS the flat map.
         local fp = fingerprint(prog.attributes)
         if fp ~= last.progression then
             last.progression = fp
-            mp.sendEvent('PlayerAttributes', { attributes = prog.attributes })
+            mp.sendEvent('PlayerAttributes', prog.attributes)
         end
         local sfp = fingerprint(prog.skills)
         if sfp ~= last.skills then
             last.skills = sfp
-            mp.sendEvent('PlayerSkills', { skills = prog.skills })
+            mp.sendEvent('PlayerSkills', prog.skills)
         end
         if prog.level ~= last.level then
             last.level = prog.level

@@ -133,6 +133,7 @@ set(BUILTIN_DATA_FILES
     scripts/mp/json.lua
     scripts/mp/menu.lua
     scripts/mp/net.lua
+    scripts/mp/objects.lua
     scripts/mp/player.lua
     scripts/mp/puppet.lua
 

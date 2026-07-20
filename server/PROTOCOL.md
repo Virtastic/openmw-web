@@ -133,7 +133,8 @@ Event-body conventions: arrays = 1-based integer-keyed tables; nil fields = omit
 | `PlayerAppearance` | C→S on join/chargen-done/change; relayed S→C to ALL in-world with `id` | `{race=string, head=string, hair=string, isMale=bool, class=string, name=string}` (record-id strings from the player's own NPC record) |
 | `PlayerEquipment` | C→S on change (client diffs); relayed to ALL with `id` | `{slots={[slotNumber]=recordId, …}}` — full snapshot, slot numbers per `types.Actor.EQUIPMENT_SLOT` |
 | `PlayerStatsDynamic` | C→S on change (0.25 s poll, instant on death); relayed to VISIBLE with `id` | `{hp={c=number,b=number}, mp={c=,b=}, ft={c=,b=}}` (current/base) |
-| `PlayerAttributes` / `PlayerSkills` / `PlayerLevel` | C→S on change (1 s diff) | stored server-side for persistence; not relayed in M2 |
+| `PlayerAttributes` / `PlayerSkills` | C→S on change (1 s diff) | the body IS the flat `{name=number}` map (≤64 entries, keys ≤32 chars) — no wrapper key, unlike the other bodies | 
+| `PlayerLevel` | C→S on change | `{level=int 1..255}`; stored for persistence; not relayed in M2 |
 | `PlayerSpellbook` | C→S `{add={id,…}, remove={id,…}}` | stored; not relayed in M2 |
 | `PlayerInventory` | C→S full snapshot `{items={{id=recordId, n=count}, …}}` on change (2 s diff, cap 512 entries) | stored for rejoin restore; not relayed |
 | `PlayerDeath` | C→S `{}` | server runs respawn/death-penalty plugins |
@@ -156,7 +157,7 @@ generated RefNums NEVER travel.
 
 | name | dir | body |
 |---|---|---|
-| `ObjectSpawnRequest` | C→S | `{tempId=number, recordId=string, cellKey=string, x=,y=,z=, rotZ=number, count=number}` |
+| `ObjectSpawnRequest` | C→S | `{tempId=number, recordId=string, cellKey=string, x=,y=,z=, rotZ=number, count=number}` — count ≥1 (engine objects not yet placed report count 0; clients clamp) |
 | `ObjectSpawnAck` | S→C (requester) | `{tempId=number, netId=number}` |
 | `ObjectPlace` | S→C broadcast (cell-scoped visible) | `{netId=number, recordId=string, cellKey=, x=,y=,z=, rotZ=, count=, byId=u16}` |
 | `ObjectDelete` | C→S; relayed cell-scoped | `{ref|net, cellKey=string}` — tombstoned in the cell doc |
