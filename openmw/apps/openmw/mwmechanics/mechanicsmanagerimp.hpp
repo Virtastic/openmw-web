@@ -97,6 +97,8 @@ namespace MWMechanics
         int countDeaths(const ESM::RefId& id) const override;
         ///< Return the number of deaths for actors with the given ID.
 
+        void setDeaths(const ESM::RefId& id, int count) override;
+
         void getPersuasionDispositionChange(
             const MWWorld::Ptr& npc, PersuasionType type, bool& success, int& tempChange, int& permChange) override;
         ///< Perform a persuasion action on NPC

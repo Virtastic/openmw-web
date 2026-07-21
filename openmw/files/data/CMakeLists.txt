@@ -127,6 +127,7 @@ set(BUILTIN_DATA_FILES
     # Added by Virtastic for the OpenMW-Web port: omw-mp/1 multiplayer client scripts
     # (opt-in content file; loaded only when the boot JS appends content=mp.omwscripts).
     mp.omwscripts
+    scripts/mp/actors.lua
     scripts/mp/global.lua
     scripts/mp/identity.lua
     scripts/mp/interp.lua

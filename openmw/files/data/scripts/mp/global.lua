@@ -13,6 +13,7 @@ local world = require('openmw.world')
 local json = require('scripts.mp.json')
 local net = require('scripts.mp.net')
 local objects = require('scripts.mp.objects')
+local actors = require('scripts.mp.actors')
 
 local roster = {} -- array of {id=u16, name=string}, server order
 
@@ -436,6 +437,20 @@ local function start()
         ownIdFn = function() return net.state == 'Joined' and net.playerId or nil end,
         placeholderItemFn = placeholderItemId,
     })
+    -- M4 shared-NPC authority hub (see scripts/mp/actors.lua). isMpPuppetFn tells the actor
+    -- sampler which active actors are remote-PLAYER puppets (driven by player move frames) so
+    -- it never double-drives or broadcasts them as cell NPCs.
+    actors.init({
+        playerFn = playerScript,
+        ownCellKeyFn = function() return ownCellKeyCache end,
+        ownIdFn = function() return net.state == 'Joined' and net.playerId or nil end,
+        isMpPuppetFn = function(obj)
+            for _, p in pairs(puppets) do
+                if p.obj:isValid() and p.obj.id == obj.id then return true end
+            end
+            return false
+        end,
+    })
     net.onStateChanged = function(state)
         print('[mp] session state: ' .. state)
         if state == 'Joined' then
@@ -459,6 +474,7 @@ local function start()
             mirrorRoster()
             despawnAllPuppets()
             objects.reset()
+            actors.reset()
         end
     end
     if net.state == 'Offline' or net.state == 'Failed' then
@@ -719,8 +735,13 @@ local eventHandlers = {
         end
     end,
 
-    -- M1 snap service: puppet.lua steering diverged (blocked, warp) -> hard teleport.
+    -- M1/M4 snap service: puppet.lua steering diverged (blocked, warp) -> hard teleport.
+    -- actorKey => an M4 NPC puppet (routed to the actors hub); id => a remote-player puppet.
     mpSnapRequest = function(data)
+        if data.actorKey then
+            actors.snapActor(data.actorKey, data)
+            return
+        end
         local p = data.id and puppets[data.id]
         if p and p.obj:isValid() then
             local cellArg = destCellArg()
@@ -750,6 +771,11 @@ local eventHandlers = {
 -- M3: object-sync appliers (MP_ObjectPlace/Delete/Move/Lock, MP_DoorState,
 -- MP_Container*, MP_WorldCellState, MP_ObjectSpawnAck) live in objects.lua.
 for name, fn in pairs(objects.handlers) do
+    eventHandlers[name] = fn
+end
+-- M4: actor-authority appliers (MP_ActorAuthority*, MP_ActorMoveBatch/StatsDynamic/Death,
+-- MP_WorldKillCount) live in actors.lua.
+for name, fn in pairs(actors.handlers) do
     eventHandlers[name] = fn
 end
 -- Wrap the op-result applier to expose the outcome to the harness (s31 race assert).
@@ -785,6 +811,7 @@ return {
             if net.state == 'Joined' then
                 local now = core.getRealTime()
                 objects.tick(now)
+                actors.tick(now)
                 mirrorDoor(now)
             end
         end,

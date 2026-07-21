@@ -86,12 +86,53 @@ namespace MWMP
             lserNumber(out, v);
         }
 
+        // Emit a RefNum userdata (LSER custom compact form 0b1SSSSTTT: typeName "o", 8-byte
+        // payload = u32 index LE + i32 contentFile LE) so Lua resolves it to a GObject. This
+        // is what the engine's BasicSerializer writes for object references.
+        void lserRefNum(std::string& out, uint32_t index, int32_t contentFile)
+        {
+            out.push_back(static_cast<char>(0x80 | (8 << 3) | (1 - 1))); // dataSize 8, typeName len 1
+            out.push_back('o');
+            appendLE<uint32_t>(out, index);
+            appendLE<int32_t>(out, contentFile);
+        }
+
+        void lserRefKV(std::string& out, std::string_view key, uint32_t index, int32_t contentFile)
+        {
+            lserShortString(out, key);
+            lserRefNum(out, index, contentFile);
+        }
+
         constexpr double sPi = 3.14159265358979323846;
 
         constexpr uint16_t sTypeEvent = 0x0002; // PROTOCOL.md binary type registry
         constexpr uint16_t sTypePlayerMove = 0x0100;
         constexpr uint16_t sTypePlayerMoveBatch = 0x0101;
+        constexpr uint16_t sTypeActorMoveBatch = 0x0200;
         constexpr size_t sMovePayload = 20; // f32 x,y,z + u16 yaw + u8 pitch,flags,animVel,counter
+
+        // Append the shared 20-byte pose payload (PlayerMove/ActorMoveBatch identical layout).
+        void appendPose(std::string& frame, float x, float y, float z, float yaw, float pitch,
+            uint8_t flags, float animVel)
+        {
+            double yawNorm = std::fmod(static_cast<double>(yaw), 2.0 * sPi);
+            if (yawNorm < 0)
+                yawNorm += 2.0 * sPi;
+            const uint16_t yawQ = static_cast<uint16_t>(std::lround(yawNorm / (2.0 * sPi) * 65536.0) & 0xffff);
+            const double pitchC = std::clamp(static_cast<double>(pitch), -sPi / 2.0, sPi / 2.0);
+            const uint8_t pitchQ = static_cast<uint8_t>(std::lround((pitchC + sPi / 2.0) / sPi * 255.0));
+            const uint8_t velQ = static_cast<uint8_t>(std::clamp(std::lround(animVel * 127.5), 0L, 255L));
+            appendF32(frame, x);
+            appendF32(frame, y);
+            appendF32(frame, z);
+            appendLE<uint16_t>(frame, yawQ);
+            frame.push_back(static_cast<char>(pitchQ));
+            frame.push_back(static_cast<char>(flags));
+            frame.push_back(static_cast<char>(velQ));
+            frame.push_back('\0'); // counter, reserved 0
+            frame.push_back('\0'); // bytes 18-19 reserved, MUST be zero (payload is exactly 20)
+            frame.push_back('\0');
+        }
     }
 
     NetManager& NetManager::instance()
@@ -197,29 +238,37 @@ namespace MWMP
     {
         if (!mSocket.isConnected())
             return false;
-        // Quantize per PROTOCOL.md 0x0100: u16 yaw 0..65535 = 0..2pi (wraps),
-        // u8 pitch 0..255 = -pi/2..+pi/2, u8 animVel 0..255 = 0..2x base walk speed.
-        double yawNorm = std::fmod(static_cast<double>(yaw), 2.0 * sPi);
-        if (yawNorm < 0)
-            yawNorm += 2.0 * sPi;
-        const uint16_t yawQ = static_cast<uint16_t>(std::lround(yawNorm / (2.0 * sPi) * 65536.0) & 0xffff);
-        const double pitchC = std::clamp(static_cast<double>(pitch), -sPi / 2.0, sPi / 2.0);
-        const uint8_t pitchQ = static_cast<uint8_t>(std::lround((pitchC + sPi / 2.0) / sPi * 255.0));
-        const uint8_t velQ = static_cast<uint8_t>(std::clamp(std::lround(animVel * 127.5), 0L, 255L));
         std::string frame;
         frame.reserve(6 + sMovePayload);
         appendLE<uint16_t>(frame, sTypePlayerMove);
         appendLE<uint32_t>(frame, ++mSeq);
-        appendF32(frame, x);
-        appendF32(frame, y);
-        appendF32(frame, z);
-        appendLE<uint16_t>(frame, yawQ);
-        frame.push_back(static_cast<char>(pitchQ));
-        frame.push_back(static_cast<char>(flags));
-        frame.push_back(static_cast<char>(velQ));
-        frame.push_back('\0'); // counter, reserved 0 in M1
-        frame.push_back('\0'); // bytes 18-19 reserved, MUST be zero (payload is exactly 20)
-        frame.push_back('\0');
+        appendPose(frame, x, y, z, yaw, pitch, flags, animVel);
+        mOutbound.push_back({ false, std::move(frame) });
+        return true;
+    }
+
+    bool NetManager::sendActorMoveBatch(uint32_t epoch, const std::vector<ActorMoveEntry>& entries)
+    {
+        // PROTOCOL.md 0x0200: [u32 epoch][u8 count] + count x (8-byte ref + 20-byte pose).
+        // The server infers the cell from the holder and validates epoch/holder, so no
+        // cellKey travels. Empty batches are skipped (nothing to relay).
+        if (!mSocket.isConnected() || entries.empty())
+            return false;
+        std::string frame;
+        frame.reserve(6 + 5 + entries.size() * (8 + sMovePayload));
+        appendLE<uint16_t>(frame, sTypeActorMoveBatch);
+        appendLE<uint32_t>(frame, ++mSeq);
+        appendLE<uint32_t>(frame, epoch);
+        frame.push_back(static_cast<char>(std::min<size_t>(entries.size(), 255)));
+        size_t n = 0;
+        for (const ActorMoveEntry& e : entries)
+        {
+            if (n++ >= 255)
+                break; // u8 count cap; caller chunks larger cells
+            appendLE<uint32_t>(frame, e.mIndex);
+            appendLE<int32_t>(frame, e.mContentFile);
+            appendPose(frame, e.mX, e.mY, e.mZ, e.mYaw, e.mPitch, e.mFlags, e.mAnimVel);
+        }
         mOutbound.push_back({ false, std::move(frame) });
         return true;
     }
@@ -329,6 +378,52 @@ namespace MWMP
                 }
                 body.push_back(0x4); // TABLE_END (outer)
                 events.addGlobalEvent({ "MP_MoveBatch", std::move(body) });
+                continue;
+            }
+            if (type == sTypeActorMoveBatch)
+            {
+                // 0x0200: [u32 epoch][u8 count] + count x (8-byte ref + 20-byte pose).
+                // Relayed raw by the server (holder + epoch already validated). Delivered as
+                // ONE MP_ActorMoveBatch: an LSER array of {ref=<RefNum>, x,y,z,yaw,pitch,
+                // flags,animVel}. The ref travels as userdata so Lua gets a resolvable object.
+                const uint32_t seq = readLE<uint32_t>(p + 2);
+                if (seq <= mLastMoveSeqIn)
+                    continue;
+                mLastMoveSeqIn = seq;
+                if (msg.mData.size() < 11)
+                {
+                    ++mStats.mMalformed;
+                    continue;
+                }
+                const size_t count = p[10]; // p[6..9] = epoch (client ignores; server-checked)
+                constexpr size_t entrySize = 8 + sMovePayload;
+                if (msg.mData.size() != 11 + count * entrySize)
+                {
+                    ++mStats.mMalformed;
+                    continue;
+                }
+                std::string body;
+                body.reserve(2 + count * 110);
+                body.push_back('\0'); // FORMAT_VERSION
+                body.push_back(0x3); // TABLE_START (outer array)
+                for (size_t i = 0; i < count; ++i)
+                {
+                    const uint8_t* e = p + 11 + i * entrySize;
+                    const uint8_t* pose = e + 8; // after the 8-byte ref
+                    lserNumber(body, static_cast<double>(i + 1));
+                    body.push_back(0x3); // TABLE_START (entry)
+                    lserRefKV(body, "ref", readLE<uint32_t>(e), static_cast<int32_t>(readLE<uint32_t>(e + 4)));
+                    lserKV(body, "x", readF32(pose));
+                    lserKV(body, "y", readF32(pose + 4));
+                    lserKV(body, "z", readF32(pose + 8));
+                    lserKV(body, "yaw", readLE<uint16_t>(pose + 12) * (2.0 * sPi / 65536.0));
+                    lserKV(body, "pitch", pose[14] / 255.0 * sPi - sPi / 2.0);
+                    lserKV(body, "flags", pose[15]);
+                    lserKV(body, "animVel", pose[16] / 127.5);
+                    body.push_back(0x4); // TABLE_END (entry)
+                }
+                body.push_back(0x4); // TABLE_END (outer)
+                events.addGlobalEvent({ "MP_ActorMoveBatch", std::move(body) });
                 continue;
             }
             if (type != sTypeEvent)

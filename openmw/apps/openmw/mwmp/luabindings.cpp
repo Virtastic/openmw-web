@@ -19,6 +19,7 @@
 
 #include "../mwlua/context.hpp"
 #include "../mwlua/luamanagerimp.hpp"
+#include "../mwlua/object.hpp"
 
 #include "netmanager.hpp"
 
@@ -98,6 +99,36 @@ namespace MWMP
             return NetManager::instance().sendMove(t.get_or("x", 0.f), t.get_or("y", 0.f), t.get_or("z", 0.f),
                 t.get_or("yaw", 0.f), t.get_or("pitch", 0.f),
                 static_cast<uint8_t>(t.get_or("flags", 0)), t.get_or("animVel", 0.f));
+        };
+        // Actor authority tier (M4): mp.sendActorMoveBatch(epoch, {{obj=,x=,y=,z=,yaw=,pitch=,
+        // flags=,animVel=}, ...}) -> 0x0200. `obj` is a GObject; its RefNum is the wire ref.
+        api["sendActorMoveBatch"] = [](uint32_t epoch, const sol::table& list) {
+            std::vector<NetManager::ActorMoveEntry> entries;
+            entries.reserve(list.size());
+            for (auto& [_, value] : list)
+            {
+                sol::table e = value.as<sol::table>();
+                sol::object obj = e["obj"];
+                if (!obj.is<MWLua::Object>())
+                    continue;
+                ESM::RefNum ref = obj.as<MWLua::Object>().id();
+                entries.push_back({ ref.mIndex, ref.mContentFile, e.get_or("x", 0.f), e.get_or("y", 0.f),
+                    e.get_or("z", 0.f), e.get_or("yaw", 0.f), e.get_or("pitch", 0.f), e.get_or("animVel", 0.f),
+                    static_cast<uint8_t>(e.get_or("flags", 0)) });
+            }
+            return NetManager::instance().sendActorMoveBatch(epoch, entries);
+        };
+        // Shared kill tally (M4 WorldKillCount; also M6 quest gates): mirror the engine's
+        // per-record death counter across clients so GetDeadCount is consistent for everyone.
+        api["getDeadCount"] = [](std::string_view recordId) {
+            return MWBase::Environment::get().getMechanicsManager()->countDeaths(
+                ESM::RefId::deserializeText(recordId));
+        };
+        api["setDeadCount"] = [luaManager = context.mLuaManager](std::string_view recordId, int count) {
+            ESM::RefId id = ESM::RefId::deserializeText(recordId);
+            luaManager->addAction(
+                [id, count] { MWBase::Environment::get().getMechanicsManager()->setDeaths(id, count); },
+                "MPSetDeadCount");
         };
         api["isEnabled"] = []() { return std::getenv("OPENMW_MP_URL") != nullptr; };
         api["getUrl"] = []() { return getEnvString("OPENMW_MP_URL"); };

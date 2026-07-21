@@ -1,10 +1,11 @@
--- Remote-player puppet (M1): controls-driven avatar of another player.
--- Attached by global.lua via obj:addScript('scripts/mp/puppet.lua', {playerId=<u16>}).
--- Consumes MP_Pose events (routed per-puppet from MP_MoveBatch) into an interpolation
--- buffer and STEERS toward the 100 ms-delayed target through self.controls — the engine's
--- own movement solver drives animation/collision, so puppets walk/run/jump like real
--- actors instead of gliding between set positions. When steering diverges (blocked by
--- geometry, big warp) it asks global.lua for a teleport via the mpSnapRequest event.
+-- Puppet (M1 players + M4 shared NPCs): controls-driven remote actor.
+-- Attached by global.lua via obj:addScript('scripts/mp/puppet.lua', {playerId=<u16>}) for
+-- remote PLAYERS, or {actorKey=<refKey>} for cell NPCs when this client is NOT the cell's
+-- authority holder. Consumes MP_Pose events (routed per-puppet from MP_MoveBatch /
+-- ActorMoveBatch) into an interpolation buffer and STEERS toward the 100 ms-delayed target
+-- through self.controls — the engine's own movement solver drives animation/collision, so
+-- puppets walk/run/jump like real actors instead of gliding between set positions. On
+-- divergence it asks global.lua for a teleport via mpSnapRequest.
 local core = require('openmw.core')
 local self = require('openmw.self')
 local types = require('openmw.types')
@@ -16,12 +17,14 @@ local STUCK_SECONDS = 0.7 -- commanded to move but no progress this long -> snap
 local IDLE_TIMEOUT = 1.0 -- no snapshots this long -> stand still
 local SNAP_COOLDOWN = 1.0 -- let a requested teleport land before asking again
 
-local playerId = nil
+local playerId = nil -- set for remote-player puppets
+local actorKey = nil -- set for M4 NPC puppets (refKey the holder addresses)
 local interp = Interp.new()
 local lastSnapReq = 0
 local stuckSince = nil
 local lastProgressPos = nil
 local prevJump = false
+local dead = false
 local pendingEquip = nil -- M2: slot map waiting for granted items to land in the inventory
 local equipRetryUntil = 0
 
@@ -46,7 +49,8 @@ local function requestSnap(target, why)
     local now = core.getRealTime()
     if now - lastSnapReq < SNAP_COOLDOWN then return end
     lastSnapReq = now
-    core.sendGlobalEvent('mpSnapRequest', { id = playerId, x = target.x, y = target.y, z = target.z, why = why })
+    core.sendGlobalEvent('mpSnapRequest',
+        { id = playerId, actorKey = actorKey, x = target.x, y = target.y, z = target.z, why = why })
 end
 
 -- M2: setEquipment only works once the items granted by global.lua exist in our inventory
@@ -69,7 +73,11 @@ local function equipTick(now)
 end
 
 local function onUpdate(dt)
-    if dt <= 0 or not playerId then return end
+    if dt <= 0 or (not playerId and not actorKey) then return end
+    if dead then
+        zeroControls()
+        return
+    end
     local now = core.getRealTime()
     equipTick(now)
     local newest = interp:newestTime()
@@ -135,14 +143,16 @@ return {
     engineHandlers = {
         onInit = function(initData)
             playerId = initData and initData.playerId
+            actorKey = initData and initData.actorKey
             self:enableAI(false) -- the pose stream owns this actor, not the AI
         end,
         onLoad = function(data)
             playerId = data and data.playerId
+            actorKey = data and data.actorKey
             self:enableAI(false)
         end,
         onSave = function()
-            return { playerId = playerId }
+            return { playerId = playerId, actorKey = actorKey }
         end,
         onUpdate = onUpdate,
     },
@@ -159,7 +169,7 @@ return {
             pendingEquip = slots
             equipRetryUntil = core.getRealTime() + 3
         end,
-        -- M2: mirror the remote player's dynamic stats (health bar, death pose).
+        -- M2/M4: mirror the remote actor's dynamic stats (health bar, death pose).
         MP_Stats = function(data)
             local d = types.Actor.stats.dynamic
             local function apply(stat, v)
@@ -171,6 +181,26 @@ return {
             apply(d.health(self), data.hp)
             apply(d.magicka(self), data.mp)
             apply(d.fatigue(self), data.ft)
+        end,
+        -- M4: authoritative death from the holder. Zero health so the engine plays the
+        -- death animation locally; puppet steering stops.
+        MP_Kill = function()
+            dead = true
+            zeroControls()
+            pcall(function() types.Actor.stats.dynamic.health(self).current = 0 end)
+        end,
+        MP_Revive = function()
+            dead = false
+        end,
+        -- M4 handoff: this client became the cell's authority holder. Re-enable AI (the
+        -- mDisableAI control persists after removeScript, so it must be cleared here) and
+        -- stop driving; global.lua removes the script right after.
+        MP_Detach = function()
+            actorKey = nil
+            playerId = nil
+            dead = false
+            zeroControls()
+            self:enableAI(true)
         end,
     },
 }

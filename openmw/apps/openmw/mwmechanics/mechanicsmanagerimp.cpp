@@ -595,6 +595,11 @@ namespace MWMechanics
         return mActors.countDeaths(id);
     }
 
+    void MechanicsManager::setDeaths(const ESM::RefId& id, int count)
+    {
+        mActors.setDeaths(id, count);
+    }
+
     void MechanicsManager::getPersuasionDispositionChange(
         const MWWorld::Ptr& npc, PersuasionType type, bool& success, int& tempChange, int& permChange)
     {

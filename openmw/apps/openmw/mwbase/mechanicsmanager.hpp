@@ -103,6 +103,9 @@ namespace MWBase
         virtual int countDeaths(const ESM::RefId& id) const = 0;
         ///< Return the number of deaths for actors with the given ID.
 
+        // Added by Virtastic (OpenMW-Web MP): apply a networked shared kill tally.
+        virtual void setDeaths(const ESM::RefId& id, int count) = 0;
+
         /// Check if \a observer is potentially aware of \a ptr. Does not do a line of sight check!
         virtual bool awarenessCheck(const MWWorld::Ptr& ptr, const MWWorld::Ptr& observer, bool useCache = true) = 0;
 

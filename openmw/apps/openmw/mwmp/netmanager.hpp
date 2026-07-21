@@ -7,6 +7,7 @@
 #include <deque>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "websocket.hpp"
 
@@ -66,6 +67,16 @@ namespace MWMP
         // Movement tier (M1): quantizes+packs one 0x0100 PlayerMove (20-byte payload).
         // yaw/pitch in radians, animVel in 0..2 (x base walk speed). Runs at ~15 Hz.
         bool sendMove(float x, float y, float z, float yaw, float pitch, uint8_t flags, float animVel);
+
+        // Actor authority tier (M4): one 0x0200 ActorMoveBatch for the cell's actors.
+        struct ActorMoveEntry
+        {
+            uint32_t mIndex; // ref: RefNum index
+            int32_t mContentFile; // ref: RefNum contentFile
+            float mX, mY, mZ, mYaw, mPitch, mAnimVel;
+            uint8_t mFlags;
+        };
+        bool sendActorMoveBatch(uint32_t epoch, const std::vector<ActorMoveEntry>& entries);
         // Session tier: one JSON object per text frame.
         bool sendJson(const std::string& json);
 
