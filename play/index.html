@@ -518,24 +518,16 @@
        var w = cssW * dpr, h = cssH * dpr;   // device pixels (match the boot IIFE)
        var budget = window.__maxPixels || 4000000;
        var scale = Math.min(1, Math.sqrt(budget / (w * h)));
-       // New NATIVE (100%) render size for the resized window.
-       var nw = Math.max(320, Math.round(w * scale)), nh = Math.max(240, Math.round(h * scale));
-       // Preserve the player's chosen SCALE TIER across the resize: infer the integer divisor
-       // (1=native, 2=50%, 3=33% …) from the current drawing buffer vs. the PREVIOUS native
-       // (window.__renderW). The Options list only offers native/div tiers, so this is exact.
-       var prevNativeW = window.__renderW || nw;
-       var div = Math.max(1, Math.round(prevNativeW / Math.max(1, canvas.width)));
-       // New buffer = new native / div (native kept exact; downscales evened for FBO/codec sanity).
-       var rw = div === 1 ? nw : (Math.round(nw / div) & ~1);
-       var rh = div === 1 ? nh : (Math.round(nh / div) & ~1);
-       rw = Math.max(320, rw); rh = Math.max(240, rh);
-       // Update the native baseline so the Options list (built from __renderW/H) reflects the
-       // resized window on its next open, and the divisor stays inferable on the next resize.
-       window.__renderW = nw; window.__renderH = nh;
+       // New NATIVE (100%) render size for the resized window. The canvas is ALWAYS native now:
+       // the player's chosen resolution tier lives engine-side as the SCENE render scale
+       // ([Video] internal render scale, applied by the post-processor to its FBO chain), so it
+       // survives this resize automatically — and the GUI stays native-crisp at every tier.
+       var rw = Math.max(320, Math.round(w * scale)), rh = Math.max(240, Math.round(h * scale));
+       window.__renderW = rw; window.__renderH = rh;
        // Keep the GUI-scale ratio current for the new window (buffer px per CSS px).
        window.__guiScale = rw / cssW;
        if (rw === canvas.width && rh === canvas.height) return; // window unchanged -> nothing to do
-       append('[resize] ' + rw + 'x' + rh + ' (1/' + div + ' of ' + nw + 'x' + nh + ')');
+       append('[resize] ' + rw + 'x' + rh + ' (native; scene tier applies engine-side)');
        try { Module._omw_set_resolution(rw, rh); } catch(e){ append('[resize err] '+e,'err'); }
      }, 300);
    });
@@ -728,6 +720,8 @@
        // is a hard GPU sync (flush+wait) in WebGL — a per-frame stall. OFF => NEVER_CHECK_GL_ERRORS.
        // Also stops the residual "invalid enumerant after RenderBin::draw" warning at its checkpoint.
        if (!/[?&]noopt\b/.test(location.search)) ENV.OSG_GL_ERROR_CHECKING='OFF';
+       // ?rsdbg=1 (QA): engine logs the scene render-scale plumbing ([rs] lines — FBO/viewport sizes).
+       if (/[?&]rsdbg=1\b/.test(location.search)) ENV.OPENMW_RS_DEBUG='1';
        // NOTE: OPENMW_DECOMPRESS_TEXTURES removed — OSG now reports S3TC support (GLExtensions
        // patch), so DXT textures upload COMPRESSED via glCompressedTexImage2D (no CPU decompress).
        // USER CONFIG/DATA LIVE ON IDBFS: pointing XDG at the /userdata mount makes the
@@ -764,6 +758,10 @@
            // ?aa=N (QA) sets [Video] antialiasing so scene MSAA can be exercised headlessly
            // (default off = 1:1 with desktop). Normal play leaves AA to the Options menu.
            (/[?&]aa=(\d+)/.test(location.search) ? 'antialiasing = ' + RegExp.$1 + '\n' : '') +
+           // ?rs=F (QA) seeds the SCENE render scale (0.2..1): the 3D scene renders at F x canvas
+           // and the post-processor upscales; GUI stays native. Same setting the Options
+           // resolution tiers write; a user's saved value overrides this defaults layer.
+           (/[?&]rs=(0?\.\d+|1(?:\.0+)?)/.test(location.search) ? 'internal render scale = ' + RegExp.$1 + '\n' : '') +
            '[Camera]\n' +
            'viewing distance = ' + ((/[?&]vd=(\d+)/.exec(location.search)||[])[1] || '16384') + '.0\n' +  // 2 cells: radial distant-terrain vista (paired with 'distant terrain=true' below). ?vd=N overrides (QA)
            'small feature culling pixel size = 3.0\n' +

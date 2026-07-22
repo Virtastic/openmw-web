@@ -152,8 +152,19 @@ namespace MWRender
             if (Stereo::getStereo())
                 mRenderViewport
                     = new osg::Viewport(0, 0, mTextureScene->getTextureWidth(), mTextureScene->getTextureHeight());
+#ifdef __EMSCRIPTEN__
+            // Scene render-scale (web): intermediate passes render at the (possibly scaled)
+            // scene-texture size — without this they inherit the HUD camera's NATIVE viewport and
+            // draw clipped into the smaller pass textures. The final resolve pass still applies
+            // resolveViewport (the native canvas viewport), which performs the upscale. At scale 1
+            // this equals the old nullptr behavior (viewport == texture size).
+            else
+                mRenderViewport
+                    = new osg::Viewport(0, 0, mTextureScene->getTextureWidth(), mTextureScene->getTextureHeight());
+#else
             else
                 mRenderViewport = nullptr;
+#endif
 
             mDirty = false;
         }

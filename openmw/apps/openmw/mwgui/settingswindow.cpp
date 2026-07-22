@@ -2,7 +2,9 @@
 // See WASM_ADAPTATIONS.md at the repository root for details of the changes.
 #include "settingswindow.hpp"
 
+#include <algorithm>
 #include <array>
+#include <cmath>
 
 #include <unicode/locid.h>
 
@@ -362,13 +364,15 @@ namespace MWGui
         std::vector<std::pair<int, int>> resolutions;
 #ifdef __EMSCRIPTEN__
         // A browser canvas has no OS "display modes" (and SDL's display queries hang under
-        // emscripten). The only meaningful choice is the INTERNAL render resolution: CSS always
+        // emscripten). The only meaningful choice is the SCENE render resolution: CSS always
         // stretches the canvas to fill the same on-screen area, so a lower entry just renders the
         // 3D scene smaller and upscales it — a quality/performance dial, NOT a window-shape change.
         // So offer the native drawing-buffer size at 1:1 and integer downscales of it (1/2, 1/3,
         // 1/4 …), every entry sharing the browser's EXACT aspect ratio, down to a ~480px-wide
-        // floor. Apply goes through SDL_SetWindowSize, which resizes the drawing buffer and fires
-        // the normal windowResized path.
+        // floor. Apply writes [Video] "internal render scale" (item i = 1/(i+1)) — the
+        // post-processor renders its scene FBO chain at that fraction and its final pass upscales.
+        // The canvas itself NEVER changes size, so MyGUI (menus/text/HUD) stays native-crisp at
+        // every tier (the old SDL_SetWindowSize route shrank the GUI into unreadability).
         (void)screen;
         (void)resolutions;
         {
@@ -560,8 +564,17 @@ namespace MWGui
         auto resolution = mResolutionList->getItemDataAt<std::pair<int, int>>(mResolutionList->getIndexSelected());
         if (resolution)
         {
+#ifdef __EMSCRIPTEN__
+            // The web list is a SCENE render-scale dial (item i = 1/(i+1) of the canvas), not a
+            // canvas mode: only the post-processor's scene chain changes size. The canvas — and with
+            // it MyGUI — stays at native resolution, so menus/text remain crisp at every tier.
+            // (Setting [Video] resolution here would shrink the whole canvas incl. the GUI.)
+            const size_t index = mResolutionList->getIndexSelected();
+            Settings::video().mInternalRenderScale.set(1.f / static_cast<float>(index + 1));
+#else
             Settings::video().mResolutionX.set(resolution->first);
             Settings::video().mResolutionY.set(resolution->second);
+#endif
 
             apply();
         }
@@ -576,6 +589,13 @@ namespace MWGui
     {
         mResolutionList->setIndexSelected(MyGUI::ITEM_NONE);
 
+#ifdef __EMSCRIPTEN__
+        // Web: the current "resolution" is the scene render-scale (item i = 1/(i+1) of the canvas).
+        const float scale = std::max(0.05f, static_cast<float>(Settings::video().mInternalRenderScale));
+        const size_t index = static_cast<size_t>(std::lround(1.f / scale)) - 1;
+        if (index < mResolutionList->getItemCount())
+            mResolutionList->setIndexSelected(index);
+#else
         const int currentX = Settings::video().mResolutionX;
         const int currentY = Settings::video().mResolutionY;
 
@@ -588,6 +608,7 @@ namespace MWGui
                 break;
             }
         }
+#endif
     }
 
     void SettingsWindow::onRefractionButtonClicked(MyGUI::Widget* /*sender*/)

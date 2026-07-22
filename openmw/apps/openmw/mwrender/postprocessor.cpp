@@ -192,6 +192,15 @@ namespace MWRender
         // desktop GL but a fatal-looking error on WebGL2. Setting the size here makes frame 1 complete.
         mWidth = gc->getTraits()->width;
         mHeight = gc->getTraits()->height;
+        // NOTE (web scene render-scale): the scene camera and its viewport stay at NATIVE canvas
+        // size on purpose — MyGUI sizes itself from the master camera, and the scene rasterization
+        // extent is instead overridden per-frame at the FBO-binding site (PingPongCull), exactly
+        // like the stereo path.
+#ifdef __EMSCRIPTEN__
+        if (getenv("OPENMW_RS_DEBUG"))
+            printf("[rs] PP ctor: canvas=%dx%d scale=%.3f scene=%dx%d\n", mWidth, mHeight,
+                static_cast<float>(Settings::video().mInternalRenderScale), renderWidth(), renderHeight());
+#endif
 
         if (!ext->glDisablei && ext->glDisableIndexedEXT)
             ext->glDisablei = ext->glDisableIndexedEXT;
@@ -273,7 +282,14 @@ namespace MWRender
     void PostProcessor::resize()
     {
         mHUDCamera->resize(mWidth, mHeight);
+        // Master camera stays at canvas size even under the web scene render-scale — the scene
+        // rasterization extent is overridden per-frame in PingPongCull (see note in constructor).
         mViewer->getCamera()->resize(mWidth, mHeight);
+#ifdef __EMSCRIPTEN__
+        if (getenv("OPENMW_RS_DEBUG"))
+            printf("[rs] PP resize: canvas=%dx%d scale=%.3f scene=%dx%d\n", mWidth, mHeight,
+                static_cast<float>(Settings::video().mInternalRenderScale), renderWidth(), renderHeight());
+#endif
         if (Stereo::getStereo())
             Stereo::Manager::instance().screenResolutionChanged();
 
@@ -363,8 +379,16 @@ namespace MWRender
 
         size_t frame = cv->getTraversalNumber();
 
+#ifdef __EMSCRIPTEN__
+        // The scene renders at renderWidth/renderHeight (the PingPongCull viewport override), not at
+        // the camera viewport — feed the shaders the size they actually rasterize at, or every
+        // resolution-dependent effect (SSAO-ish sampling, pixel offsets) is off by the scale factor.
+        mStateUpdater->setResolution(
+            osg::Vec2f(static_cast<float>(renderWidth()), static_cast<float>(renderHeight())));
+#else
         mStateUpdater->setResolution(osg::Vec2f(
             static_cast<float>(cv->getViewport()->width()), static_cast<float>(cv->getViewport()->height())));
+#endif
 
         // per-frame data
         if (frame != mLastFrameNumber)
@@ -549,6 +573,11 @@ namespace MWRender
 
         int width = renderWidth();
         int height = renderHeight();
+
+#ifdef __EMSCRIPTEN__
+        if (getenv("OPENMW_RS_DEBUG"))
+            printf("[rs] createObjectsForFrame(%zu): tex=%dx%d\n", frameId, width, height);
+#endif
 
 #ifdef __EMSCRIPTEN__
         // WebGL2 forbids resolving a multisampled DEPTH buffer into a texture, and PP needs a
@@ -1005,14 +1034,26 @@ namespace MWRender
     {
         if (Stereo::getStereo())
             return Stereo::Manager::instance().eyeResolution().x();
+#ifdef __EMSCRIPTEN__
+        // Scene render-scale (web): the whole scene FBO chain (Tex_Scene/Tex_Depth + technique
+        // targets) renders at a fraction of the canvas and the final canvas pass (mHUDCamera, still
+        // at mWidth/mHeight) upscales it. The GUI is drawn outside this chain at native canvas
+        // resolution, so lowering the Options resolution tier never blurs menus/text.
+        return std::max(1, static_cast<int>(mWidth * Settings::video().mInternalRenderScale + 0.5f));
+#else
         return mWidth;
+#endif
     }
 
     int PostProcessor::renderHeight() const
     {
         if (Stereo::getStereo())
             return Stereo::Manager::instance().eyeResolution().y();
+#ifdef __EMSCRIPTEN__
+        return std::max(1, static_cast<int>(mHeight * Settings::video().mInternalRenderScale + 0.5f));
+#else
         return mHeight;
+#endif
     }
 
     void PostProcessor::triggerShaderReload()

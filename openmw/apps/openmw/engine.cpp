@@ -555,8 +555,25 @@ void OMW::Engine::setSkipMenu(bool skipMenu, bool newGame)
 void OMW::Engine::createWindow()
 {
     const int screen = Settings::video().mScreen;
+#ifdef __EMSCRIPTEN__
+    // The harness owns the canvas size (dpr + pixel budget, window.__renderW/H). Ignore any
+    // persisted [Video] resolution: on web the only resolution dial is the SCENE render scale
+    // ([Video] internal render scale, applied by the post-processor), and a small resolution
+    // persisted by the pre-scale scheme must not shrink the canvas — that would blur the GUI.
+    // clang-format off
+    const int width = EM_ASM_INT({
+        return Math.max(320, Math.round(window.__renderW || ((window.innerWidth || 1280) * (window.devicePixelRatio || 1))));
+    });
+    const int height = EM_ASM_INT({
+        return Math.max(240, Math.round(window.__renderH || ((window.innerHeight || 720) * (window.devicePixelRatio || 1))));
+    });
+    // clang-format on
+    Settings::video().mResolutionX.set(width);
+    Settings::video().mResolutionY.set(height);
+#else
     const int width = Settings::video().mResolutionX;
     const int height = Settings::video().mResolutionY;
+#endif
     const Settings::WindowMode windowMode = Settings::video().mWindowMode;
     const bool windowBorder = Settings::video().mWindowBorder;
     const SDLUtil::VSyncMode vsync = Settings::video().mVsyncMode;
@@ -1081,6 +1098,20 @@ extern "C" EMSCRIPTEN_KEEPALIVE void omw_set_resolution(int w, int h)
     // with windowResized() when that does fire.
     Settings::video().mResolutionX.set(w);
     Settings::video().mResolutionY.set(h);
+}
+
+// Scene render-scale bridge (QA/harness; the Options resolution tiers set the same setting from
+// C++). Renders the 3D scene at `s` × the canvas resolution via the post-processor chain; the
+// canvas and GUI stay native. Dispatches the change immediately (mirrors SettingsWindow::apply()).
+extern "C" EMSCRIPTEN_KEEPALIVE void omw_set_render_scale(float s)
+{
+    if (!(s >= 0.2f && s <= 1.f))
+        return;
+    Settings::video().mInternalRenderScale.set(s);
+    // Only valid once the game is running (like omw_debug_look); boot-time seeding goes through
+    // the ?rs= settings layer instead.
+    MWBase::Environment::get().getWorld()->processChangedSettings(Settings::Manager::getPendingChanges());
+    Settings::Manager::resetPendingChanges();
 }
 
 // OS-clipboard -> SDL bridge: the harness's document 'paste' listener pushes the real browser
