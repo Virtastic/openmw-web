@@ -418,6 +418,64 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
 
     mViewer->renderingTraversals();
 
+#ifdef __EMSCRIPTEN__
+    // ?perfstats=1 (QA): expose the per-frame CPU phase split (Cull vs Draw traversal, ms) to JS
+    // as window.__omwPhase, WITHOUT the F3 stats HUD (which itself costs ~5ms and pollutes the
+    // measurement). "rest" = window.__frameMs - cull - draw (update/physics/AI/GUI/Lua). Collection
+    // is enabled once (takes effect from the next frame); GPU timer queries are omitted (unreliable
+    // on WebGL2). Zero cost when the flag is off.
+    {
+        static int s_perf = getenv("OPENMW_PERF_STATS") ? 1 : 0;
+        if (s_perf)
+        {
+            osgViewer::Viewer::Cameras cams;
+            mViewer->getCameras(cams);
+            static bool s_en = false;
+            if (!s_en)
+            {
+                for (osg::Camera* c : cams)
+                    if (c->getStats())
+                        c->getStats()->collectStats("rendering", true);
+                stats->collectStats("engine", true); // ScopedProfile subsystem buckets (*_time_taken)
+                s_en = true;
+            }
+            double cull = 0.0, draw = 0.0, v = 0.0;
+            for (osg::Camera* c : cams)
+            {
+                osg::Stats* cs = c->getStats();
+                if (!cs)
+                    continue;
+                if (cs->getAttribute(frameNumber, "Cull traversal time taken", v))
+                    cull += v;
+                if (cs->getAttribute(frameNumber, "Draw traversal time taken", v))
+                    draw += v;
+            }
+            // Rest-phase subsystem breakdown (engine ScopedProfile buckets, prefix + "_time_taken").
+            auto sub = [&](const char* key) { double x = 0.0; stats->getAttribute(frameNumber, key, x); return x * 1000.0; };
+            // clang-format off
+            // NB: no comma inside the EM_ASM code block — the C preprocessor would split it as a
+            // macro argument. Build the object with separate statements instead.
+            EM_ASM({
+                window.__omwPhase = {};
+                window.__omwPhase.cull = $0;
+                window.__omwPhase.draw = $1;
+                window.__omwPhase.physics = $2;
+                window.__omwPhase.mechanics = $3;
+                window.__omwPhase.world = $4;
+                window.__omwPhase.lua = $5;
+                window.__omwPhase.gui = $6;
+                window.__omwPhase.input = $7;
+                window.__omwPhase.sound = $8;
+                window.__omwPhase.script = $9;
+            },
+                cull * 1000.0, draw * 1000.0, sub("physics_time_taken"), sub("mechanics_time_taken"),
+                sub("world_time_taken"), sub("lua_time_taken"), sub("gui_time_taken"),
+                sub("input_time_taken"), sub("sound_time_taken"), sub("script_time_taken"));
+            // clang-format on
+        }
+    }
+#endif
+
     mLuaWorker->finishUpdate(frameStart, frameNumber, *stats);
 
     return true;
