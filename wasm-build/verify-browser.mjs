@@ -168,14 +168,17 @@ async function key(k) {
   // produces a DOM keydown for the page — so Escape/WASD were never delivered at all. Provide
   // the generated text (control chars for Escape/Enter/Tab, the char itself for printables).
   const TEXTMAP = { Escape: '', Enter: '\r', Tab: '\t', Backspace: '', Space: ' ' };
-  const text = k.length === 1 ? k : (TEXTMAP[k] ?? '');
+  // Backtick is text-less ON PURPOSE: it must only TOGGLE the in-game console (keydown),
+  // not ALSO insert a '`' into the console's freshly-focused edit box.
+  const text = (k === '`' || k === '~') ? '' : (k.length === 1 ? k : (TEXTMAP[k] ?? ''));
   const base = { key: k.length === 1 ? k : k, code: codeStr, text, unmodifiedText: text,
     windowsVirtualKeyCode: code, nativeVirtualKeyCode: code };
   // 'keyDown' (not 'rawKeyDown') — rawKeyDown skips text processing and emscripten SDL misses
   // some non-printable keys with it (Escape never skipped videos, Return never hit OK buttons).
   await send(browserWs, 'Input.dispatchKeyEvent', { type: 'keyDown', ...base }, sessionId);
-  if (k.length === 1) // printable: deliver the character too (text inputs need the char event)
-    await send(browserWs, 'Input.dispatchKeyEvent', { type: 'char', text: k, ...base }, sessionId);
+  // Do NOT also dispatch an explicit 'char' event for printables: Chrome synthesizes the
+  // keypress from a keyDown that carries `text`, so a second 'char' event DOUBLE-TYPES every
+  // character into MyGUI edit boxes (console commands came out as '`ttccll' garbage).
   await new Promise(r => setTimeout(r, 60));
   await send(browserWs, 'Input.dispatchKeyEvent', { type: 'keyUp', ...base }, sessionId);
   console.log(`[key] ${k}`);
