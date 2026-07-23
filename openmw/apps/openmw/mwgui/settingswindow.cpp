@@ -387,24 +387,33 @@ namespace MWGui
                 return Math.max(240, Math.round(window.__renderH || ((window.innerHeight || 720) * (window.devicePixelRatio || 1))));
             });
             // clang-format on
-            // 1/1, 1/2, 1/3 … while the divided width stays >= 480px.
-            for (int div = 1; div == 1 || (nativeW / div) >= 480; ++div)
+            // Explicit SCENE render-scale ladder (a quality/perf dial, NOT monitor modes): 'Full'
+            // renders the 3D scene at the canvas's native drawing buffer; lower tiers render the scene
+            // smaller and the post-processor upscales to the same window (faster, softer), while the
+            // canvas + MyGUI stay native so menus/text stay crisp. Non-1/n tiers (75%) are supported
+            // because each item stores its float scale as the item data (read back in
+            // onResolutionAccept / highlightCurrentResolution) rather than deriving it from the index.
+            static const struct
             {
-                // 1:1 is added EXACTLY (pixel-perfect); downscales are evened for FBO/codec sanity.
-                const int w = div == 1 ? nativeW : ((nativeW / div) & ~1);
-                const int h = div == 1 ? nativeH : ((nativeH / div) & ~1);
-                // This list is a RENDER-SCALE dial, not monitor modes: 'Full' renders the 3D scene
-                // at the canvas's native drawing buffer, lower tiers render smaller and the browser
-                // upscales to the same window (faster, softer). Label it that way + show the pixels.
-                const int percent = (100 + div / 2) / div; // 100, 50, 33, 25, 20 …
-                const char* tier = div == 1 ? "Full" : div == 2 ? "Half" : div == 3 ? "Third"
-                    : div == 4                                              ? "Quarter"
-                                                                            : nullptr;
-                std::string label = tier ? (std::string(tier) + " (" + std::to_string(percent) + "%)")
-                                         : (std::to_string(percent) + "%");
-                label += " - " + std::to_string(w) + " x " + std::to_string(h);
+                float scale;
+                const char* name;
+            } tiers[] = {
+                { 1.00f, "Full" }, { 0.75f, "High" }, { 0.50f, "Half" }, { 1.f / 3.f, "Third" },
+                { 0.25f, "Quarter" }
+            };
+            for (const auto& t : tiers)
+            {
+                const bool full = t.scale >= 0.999f;
+                // 1:1 is pixel-perfect; downscales are evened for FBO/codec sanity.
+                const int w = full ? nativeW : (static_cast<int>(std::lround(nativeW * t.scale)) & ~1);
+                const int h = full ? nativeH : (static_cast<int>(std::lround(nativeH * t.scale)) & ~1);
+                if (!full && w < 480) // keep Full always; drop tiers below the ~480px floor
+                    continue;
+                const int percent = static_cast<int>(std::lround(t.scale * 100.f));
+                std::string label = std::string(t.name) + " (" + std::to_string(percent) + "%) - "
+                    + std::to_string(w) + " x " + std::to_string(h);
                 if (mResolutionList->findItemIndexWith(label) == MyGUI::ITEM_NONE)
-                    mResolutionList->addItem(label, std::pair<int, int>(w, h));
+                    mResolutionList->addItem(label, t.scale);
             }
         }
 #else
@@ -561,23 +570,26 @@ namespace MWGui
 
     void SettingsWindow::onResolutionAccept()
     {
-        auto resolution = mResolutionList->getItemDataAt<std::pair<int, int>>(mResolutionList->getIndexSelected());
-        if (resolution)
-        {
+        const size_t index = mResolutionList->getIndexSelected();
+        if (index == MyGUI::ITEM_NONE)
+            return;
 #ifdef __EMSCRIPTEN__
-            // The web list is a SCENE render-scale dial (item i = 1/(i+1) of the canvas), not a
-            // canvas mode: only the post-processor's scene chain changes size. The canvas — and with
-            // it MyGUI — stays at native resolution, so menus/text remain crisp at every tier.
-            // (Setting [Video] resolution here would shrink the whole canvas incl. the GUI.)
-            const size_t index = mResolutionList->getIndexSelected();
-            Settings::video().mInternalRenderScale.set(1.f / static_cast<float>(index + 1));
-#else
-            Settings::video().mResolutionX.set(resolution->first);
-            Settings::video().mResolutionY.set(resolution->second);
-#endif
-
+        // The web list is a SCENE render-scale dial: each item stores its float scale. Only the
+        // post-processor's scene chain changes size; the canvas — and with it MyGUI — stays native,
+        // so menus/text remain crisp at every tier. (Setting [Video] resolution would shrink the GUI.)
+        if (const float* scale = mResolutionList->getItemDataAt<float>(index))
+        {
+            Settings::video().mInternalRenderScale.set(*scale);
             apply();
         }
+#else
+        if (auto resolution = mResolutionList->getItemDataAt<std::pair<int, int>>(index))
+        {
+            Settings::video().mResolutionX.set(resolution->first);
+            Settings::video().mResolutionY.set(resolution->second);
+            apply();
+        }
+#endif
     }
 
     void SettingsWindow::onResolutionCancel()
@@ -590,11 +602,18 @@ namespace MWGui
         mResolutionList->setIndexSelected(MyGUI::ITEM_NONE);
 
 #ifdef __EMSCRIPTEN__
-        // Web: the current "resolution" is the scene render-scale (item i = 1/(i+1) of the canvas).
-        const float scale = std::max(0.05f, static_cast<float>(Settings::video().mInternalRenderScale));
-        const size_t index = static_cast<size_t>(std::lround(1.f / scale)) - 1;
-        if (index < mResolutionList->getItemCount())
-            mResolutionList->setIndexSelected(index);
+        // Web: the current "resolution" is the scene render-scale stored on each item; select the
+        // nearest one (tolerance covers the even-width rounding when the ladder was built).
+        const float cur = static_cast<float>(Settings::video().mInternalRenderScale);
+        for (size_t i = 0; i < mResolutionList->getItemCount(); ++i)
+        {
+            const float* s = mResolutionList->getItemDataAt<float>(i);
+            if (s && std::abs(*s - cur) < 0.02f)
+            {
+                mResolutionList->setIndexSelected(i);
+                break;
+            }
+        }
 #else
         const int currentX = Settings::video().mResolutionX;
         const int currentY = Settings::video().mResolutionY;
