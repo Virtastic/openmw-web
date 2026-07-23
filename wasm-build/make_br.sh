@@ -5,7 +5,7 @@
 # Run after every deploy (openmw.js/wasm/data change); the .esm files never change.
 # Skips already-fresh .br files. Audio/video tars (mp3/bik) barely compress — skipped.
 set -euo pipefail
-ROOT="${ROOT:-/Users/mstavridis/Downloads/CS-Web}"
+ROOT="${ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 Q="${Q:-5}"  # quality: 5 is a good speed/ratio tradeoff for 100MB+ files
 
 for f in "$ROOT"/play/openmw.js "$ROOT"/play/openmw.wasm "$ROOT"/play/openmw.data \

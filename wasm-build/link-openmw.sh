@@ -24,7 +24,7 @@
 
 set -euo pipefail
 
-ROOT="${ROOT:-/Users/mstavridis/Downloads/CS-Web}"
+ROOT="${ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 EMSDK_BIN="${EMSDK_BIN:-/opt/homebrew/Cellar/emscripten/6.0.1/libexec}"
 SYSROOT="$EMSDK_BIN/cache/sysroot/lib/wasm32-emscripten"
 LIB="$ROOT/deps/wasm/lib"

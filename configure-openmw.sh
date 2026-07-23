@@ -5,7 +5,7 @@
 set -e
 # ROOT and the emscripten libexec dir are env-overridable so this runs both locally (macOS/Homebrew
 # defaults below) and inside the CI builder image (which exports ROOT + EM_LIBEXEC).
-ROOT="${ROOT:-/Users/mstavridis/Downloads/CS-Web}"
+ROOT="${ROOT:-$(cd "$(dirname "$0")" && pwd)}"
 DW=$ROOT/deps/wasm
 EM_LIBEXEC="${EM_LIBEXEC:-/opt/homebrew/Cellar/emscripten/6.0.1/libexec}"
 SR="$EM_LIBEXEC/cache/sysroot"

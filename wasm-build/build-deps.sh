@@ -23,7 +23,7 @@
 # =============================================================================================
 set -euo pipefail
 
-ROOT="${ROOT:-/Users/mstavridis/Downloads/CS-Web}"
+ROOT="${ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 EM_LIBEXEC="${EM_LIBEXEC:-/opt/homebrew/Cellar/emscripten/6.0.1/libexec}"
 SR="$EM_LIBEXEC/cache/sysroot"
 LIBGL="$SR/lib/wasm32-emscripten/libGL-getprocaddr.a"
