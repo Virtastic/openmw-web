@@ -54,3 +54,6 @@ build-wasm.good/
 # Python bytecode cache (e.g. from play/server.py)
 __pycache__/
 *.pyc
+
+# Local multiplayer server (Node; not part of the web client)
+server/
