@@ -161,7 +161,7 @@ precompressed `.br` artifacts and range requests:
 
 ```bash
 cd play
-python3 server.py        # serves on http://localhost:8795 (override with PORT=...)
+python3 server.py        # serves on http://localhost:8910 (override with PORT=...)
 ```
 
 Then open the printed URL. To show the data-chooser launcher, enable it first
