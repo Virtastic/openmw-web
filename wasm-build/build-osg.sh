@@ -22,7 +22,7 @@
 # - GL/EGL/GLES libs all point at emscripten's libGL-getprocaddr.a.
 set -euo pipefail
 
-ROOT="${ROOT:-/Users/mstavridis/Downloads/CS-Web}"
+ROOT="${ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 # Honor the EM_LIBEXEC the caller exports (build-deps.sh:146) so the CI/Linux builder — where
 # emscripten lives under a different prefix — finds libGL. Falls back to the local Homebrew path.
 EM_LIBEXEC="${EM_LIBEXEC:-/opt/homebrew/Cellar/emscripten/6.0.1/libexec}"
