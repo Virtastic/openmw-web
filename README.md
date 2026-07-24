@@ -2,6 +2,10 @@
 
 **Play Morrowind in your browser** — the OpenMW engine compiled to WebAssembly, by [Virtastic](https://virtastic.app).
 
+<p align="center">
+  <a href="https://morrowind.virtastic.app"><img src="docs/hero-seyda-neen.jpg" alt="Morrowind running live in a desktop Chrome tab at morrowind.virtastic.app — the opening town of Seyda Neen, with the Census office, a silt strider, and the player on the dock" width="850"></a>
+</p>
+
 <p>
   <a href="https://morrowind.virtastic.app"><b>▶ Play now at morrowind.virtastic.app</b></a> ·
   <a href="https://github.com/Virtastic/openmw-web/releases">Releases (self-host bundle)</a> ·
@@ -49,6 +53,12 @@ via the File System Access API), so they outlive clearing browser data and can b
 backed up like any other file; the example-world path keeps saves in browser
 storage (IndexedDB). A themed loading screen shows real download / mount progress
 on the way in.
+
+**Tuning for your GPU.** In-game **Options → Video** includes a resolution-scale
+setting — **Full**, **High** (75%), **Half**, **Third**, **Quarter** — that renders
+the 3D scene at a fraction of native and upscales it, while the menus, HUD, and text
+stay crisp at full resolution. Drop it a notch to trade sharpness for framerate on
+lighter hardware; leave it at Full on a fast GPU.
 
 **Morrowind game data is not included or distributed here.** You must supply your
 own legally-obtained copy to play the full game.
