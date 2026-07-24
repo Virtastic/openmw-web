@@ -8,11 +8,14 @@
 
 <p>
   <a href="https://morrowind.virtastic.app"><b>▶ Play now at morrowind.virtastic.app</b></a> ·
-  <a href="https://github.com/Virtastic/openmw-web/releases">Releases (self-host bundle)</a> ·
+  <a href="https://discord.gg/PzFfDkbSue">Discord</a> ·
+  <a href="https://www.youtube.com/@Virtastic-Apps">YouTube</a> ·
+  <a href="https://github.com/Virtastic/openmw-web/releases">Releases</a> ·
   <a href="https://github.com/Virtastic/openmw-web/issues">Issues</a> ·
   <a href="https://github.com/Virtastic/openmw-web/discussions">Discussions</a>
 </p>
 
+[![Discord](https://img.shields.io/badge/Discord-join%20the%20server-5865F2?logo=discord&logoColor=white)](https://discord.gg/PzFfDkbSue)
 ![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPLv3-blue)
 ![Platform: Chrome desktop](https://img.shields.io/badge/browser-Chrome%20%2F%20Chromium-brightgreen)
 [![Latest release](https://img.shields.io/github/v/release/Virtastic/openmw-web)](https://github.com/Virtastic/openmw-web/releases)
@@ -253,12 +256,21 @@ Bethesda or ZeniMax. No Morrowind game data is included or distributed here; you
 own and supply your own legally-obtained copy. The engine is an independent,
 clean-room reimplementation (OpenMW) and ships no Bethesda assets.
 
-## Community and contributing
+## Community
 
-- Bugs and feature requests:
-  [Issues](https://github.com/Virtastic/openmw-web/issues)
-- Questions, showcase, and help:
-  [Discussions](https://github.com/Virtastic/openmw-web/discussions)
+Come hang out, get help, and show off your setup:
+
+- **[Discord](https://discord.gg/PzFfDkbSue)** is the fastest place for help,
+  screenshots, and news. Drop in and say hi.
+- **[YouTube (@Virtastic-Apps)](https://www.youtube.com/@Virtastic-Apps)** has demos,
+  build logs, and other native-to-browser ports we're working on.
+- **[GitHub Discussions](https://github.com/Virtastic/openmw-web/discussions)** is for
+  longer-form questions and showcase threads.
+
+### Contributing
+
+- Found a bug or want a feature? Open an
+  [Issue](https://github.com/Virtastic/openmw-web/issues).
 - Pull requests are welcome; see [`CONTRIBUTING.md`](CONTRIBUTING.md). Deployment and
   CI to our servers is maintainer-only.
 
