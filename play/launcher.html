@@ -255,7 +255,10 @@
       <p class="lead">Point to the <b>Data Files</b> folder from a legal install. Files stream straight
          from your disk on demand, with no multi-gigabyte upload or copy. <b>Tribunal</b>, <b>Bloodmoon</b>
          and any <b>mods</b> (.esp/.esm/.bsa) in the folder are detected and loaded automatically.</p>
-      <p class="micro">New to this? Tap the <b>?</b> for where to find your files.</p>
+      <p class="micro"><b>Windows + Steam or a Program&nbsp;Files install?</b> The browser can't open
+         system folders, so first <b>copy your <code>Data&nbsp;Files</code> folder to Documents or
+         Desktop</b> and pick that. Same in Chrome and Edge.</p>
+      <p class="micro">New to this? Tap the <b>?</b> for where to find your files and the full walkthrough.</p>
       <div class="note" id="local-note"></div>
       <div class="go" id="local-go">Choose Data Files <span class="arw">▸</span></div>
     </div>
@@ -319,20 +322,32 @@
      <h4>1 · Find your Data&nbsp;Files folder</h4>
      <p>It's inside your Morrowind install:</p>
      <ul>
-       <li><b>Steam</b> — <code>...\\steamapps\\common\\Morrowind\\Data Files</code><br>
+       <li><b>Steam</b>: <code>...\\steamapps\\common\\Morrowind\\Data Files</code><br>
            (Steam → right-click Morrowind → Manage → Browse local files)</li>
-       <li><b>GOG</b> — <code>C:\\GOG Games\\Morrowind\\Data Files</code></li>
-       <li><b>Disc / other</b> — wherever you installed it, the <code>Data Files</code> subfolder.</li>
+       <li><b>GOG</b>: <code>C:\\GOG Games\\Morrowind\\Data Files</code></li>
+       <li><b>Disc / other</b>: wherever you installed it, the <code>Data Files</code> subfolder.</li>
      </ul>
-     <p>Tip: you can also just pick the <b>Morrowind</b> folder itself — it finds <code>Data Files</code> inside.</p>
+     <p>Tip: you can also just pick the <b>Morrowind</b> folder itself, and it finds
+        <code>Data Files</code> inside.</p>
 
-     <h4>2 · Let the browser open it</h4>
-     <p>Click <b>Choose Data Files</b>, select the folder, and when Chrome asks to <b>edit</b> the
-        folder choose <b>Edit files</b>. Nothing leaves your machine — this lets the engine read your
+     <h4>2 · Windows: copy it somewhere the browser can open</h4>
+     <p>Browsers refuse to open folders inside a protected system location, which on Windows includes
+        <code>Program&nbsp;Files</code> and <code>Program&nbsp;Files&nbsp;(x86)</code>. <b>Steam's default
+        library lives there</b> (<code>C:\\Program Files (x86)\\Steam\\</code>), so a default Steam copy
+        of Morrowind gets blocked with <i>"can't open this folder because it contains system files."</i>
+        This is a browser rule, so it is the same in Chrome and Edge; switching browsers does not help.</p>
+     <p><b>The fix:</b> copy your whole <code>Data&nbsp;Files</code> folder to a normal location such as
+        <b>Documents</b>, <b>Desktop</b>, or another drive, then point the picker at that copy. GOG installs
+        under <code>C:\\GOG Games\\</code> are already fine and don't need copying. Once the game is running,
+        your saves are written next to that copy, so keep it around.</p>
+
+     <h4>3 · Let the browser open it</h4>
+     <p>Click <b>Choose Data Files</b>, select the folder, and when the browser asks to <b>edit</b> the
+        folder choose <b>Edit files</b>. Nothing leaves your machine; this lets the engine read your
         game assets on demand and write your saves back to the folder (see below). Your pick is
         remembered for next time.</p>
 
-     <h4>3 · Make sure it's a complete copy</h4>
+     <h4>4 · Make sure it's a complete copy</h4>
      <p>A full install has loose <code>Sound</code>, <code>Music</code> and <code>Video</code> folders
         <b>inside Data Files</b> (they are <b>not</b> stored in <code>Morrowind.bsa</code>). If they're
         missing, the game still runs but with <b>no sound, voices, music or intro video</b> — so we
@@ -360,6 +375,13 @@
 
      <h4>If something's off</h4>
      <ul>
+       <li><b>"Can't open this folder because it contains system files"</b> — your game is in a
+           location the browser refuses to open. Windows blocks <code>Program&nbsp;Files</code> and
+           <code>Program&nbsp;Files&nbsp;(x86)</code>, and <b>Steam's default library lives there</b>
+           (<code>C:\\Program Files (x86)\\Steam\\</code>). This is the same in Chrome and Edge, so
+           switching browsers won't help. <b>Fix:</b> copy the <code>Data&nbsp;Files</code> folder to
+           your <b>Documents</b> or <b>Desktop</b> (or any non-system folder, e.g. another drive) and
+           pick it there.</li>
        <li><b>"Doesn't look like a Data Files folder"</b> — pick the folder that contains
            <code>Morrowind.esm</code> and <code>Morrowind.bsa</code>.</li>
        <li><b>No sound / no intro</b> — your copy is missing the loose <code>Sound</code>/<code>Video</code> folders.</li>
@@ -468,6 +490,12 @@
      location.href='index.html?src=local';
    } catch(e){
      if (e && e.name==='AbortError') return; // user cancelled the picker
+     // Chromium blocks picking folders inside system locations (Program Files, Windows, …).
+     // Steam's default library lives under C:\Program Files (x86)\Steam\, so it trips this.
+     if (e && (e.name==='SecurityError' || /system files|blocklist/i.test((e && e.message)||''))){
+       note('That folder is in a location the browser won’t open (Windows blocks Program Files, including Steam’s default C:\\Program Files (x86)\\Steam\\ folder). This is the same in Chrome and Edge. Copy your Data Files folder to Documents or Desktop and pick it there.','err');
+       return;
+     }
      note('Could not open that folder: '+(e && e.message || e),'err');
    }
  }

@@ -79,6 +79,26 @@ With `OPENMW_LAUNCHER` set, the site root (`/`) serves the data chooser. Without
 `/` boots straight into the game. On a production host, set the `OPENMW_LAUNCHER`
 environment variable (or replicate the routing) however you prefer.
 
+### Troubleshooting
+
+**"Can't open this folder because it contains system files"** when you pick your Data
+Files folder. The browser's File System Access API refuses folders inside protected
+system locations, which on Windows includes `Program Files` and `Program Files (x86)`.
+Steam's default library sits there (`C:\Program Files (x86)\Steam\steamapps\common\`),
+so a default Steam install of Morrowind gets blocked. This is a Chromium behavior, so
+it is identical in Chrome and Edge; switching browsers does not help. The fix is to
+copy the `Data Files` folder to a normal location such as your Documents or Desktop
+folder, or another drive, and point the picker there. GOG installs under `C:\GOG
+Games\` are not affected.
+
+**"Doesn't look like a Data Files folder."** Pick the folder that actually contains
+`Morrowind.esm` and `Morrowind.bsa` (or pick the parent `Morrowind` folder and the
+launcher finds `Data Files` inside it).
+
+**No sound, music, or intro video.** Your copy is missing the loose `Sound`, `Music`,
+or `Video` folders that live inside `Data Files` (they are not stored in the `.bsa`).
+A normal Steam or GOG install has them.
+
 ## What's in this repo
 
 This is a code-only repo. Large binaries (game assets, dependency source caches, and
