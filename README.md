@@ -46,6 +46,10 @@ launcher enabled there are two ways in:
   from a legally-obtained install. Files are read straight from disk on demand via
   the File System Access API and streamed into the engine, so there is no
   multi-gigabyte upload or copy. The folder you pick is remembered for next time.
+  On Windows, first copy that `Data Files` folder somewhere outside a protected
+  system location, such as your Documents or Desktop folder: browsers refuse to open
+  folders inside `Program Files`, and Steam's default library lives there. See
+  [Troubleshooting](#troubleshooting) below.
 
 Settings and keybindings persist in the browser (IndexedDB) and survive reloads.
 Saves persist too. On the bring-your-own path they are written to an
