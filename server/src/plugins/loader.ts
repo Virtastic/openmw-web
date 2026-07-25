@@ -11,9 +11,10 @@ import { respawn } from './builtin/respawn';
 import { deathPenalty } from './builtin/death-penalty';
 import { pvp } from './builtin/pvp';
 import { sharing } from './builtin/sharing';
+import { cellReset } from './builtin/cell-reset';
 import { log } from '../log';
 
-const BUILTINS: Record<string, Plugin> = { motd, respawn, 'death-penalty': deathPenalty, pvp, sharing };
+const BUILTINS: Record<string, Plugin> = { motd, respawn, 'death-penalty': deathPenalty, pvp, sharing, 'cell-reset': cellReset };
 
 export class HookBus {
   private plugins: Plugin[] = [];

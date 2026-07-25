@@ -30,6 +30,10 @@ export interface Config {
     difficulty: number;
   };
   engine: { enforce: 'warn' | 'refuse' | 'off' };
+  // M7 world state.
+  time: { scale: number };
+  gui: { timeoutSec: number };
+  cellReset: { cells: string[]; intervalSec: number };
   limits: {
     msgsPerSec: number;
     moveMsgsPerSec: number;
@@ -130,6 +134,12 @@ function validate(t: Tree): Config {
       difficulty: reqSignedNum(t, 'rules', 'difficulty'),
     },
     engine: { enforce: reqEnum(t, 'engine', 'enforce', ['warn', 'refuse', 'off'] as const) },
+    time: { scale: reqNum(t, 'time', 'scale') },
+    gui: { timeoutSec: reqNum(t, 'gui', 'timeoutSec') },
+    cellReset: {
+      cells: reqStrArray(t, 'cellReset', 'cells'),
+      intervalSec: reqNum(t, 'cellReset', 'intervalSec'),
+    },
     limits: {
       msgsPerSec: reqNum(t, 'limits', 'msgsPerSec'),
       moveMsgsPerSec: reqNum(t, 'limits', 'moveMsgsPerSec'),

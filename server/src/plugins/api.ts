@@ -8,6 +8,30 @@ import type { LogLevel } from '../log';
 import type { ChatMessageBody } from '../core/chat';
 import type { JsLike } from '../proto/lser';
 import type { ShareFamily } from '../core/quests';
+import type { GuiResult } from '../core/gui';
+
+// M7 server-pushed GUI. Each call resolves when the player answers, times out
+// ([gui] timeoutSec), or disconnects — it NEVER stays pending, so a plugin awaiting a
+// reply from someone who rage-quit resumes instead of leaking.
+export interface PluginGui {
+  messageBox(playerId: number, text: string, buttons?: string[]): Promise<GuiResult>;
+  inputDialog(playerId: number, label: string): Promise<GuiResult>;
+  listBox(playerId: number, label: string, items: string[]): Promise<GuiResult>;
+}
+
+// M7 world actions: the operator-facing clock and cell-reset controls.
+export interface PluginWorld {
+  time(): { gameHour: number; day: number; month: number; year: number; timeScale: number };
+  advanceTime(hours: number): void;
+  setTimeScale(scale: number): void;
+  scheduleCellReset(cellKey: string, intervalSec: number): boolean;
+  unscheduleCellReset(cellKey: string): void;
+  scheduledResets(): string[];
+  resetCell(cellKey: string): Promise<void>;
+  // Dialogs still awaiting a reply. Settles to 0 once every prompt is answered, timed
+  // out or orphaned by a disconnect — an operator-visible leak check.
+  pendingGuiCount(): number;
+}
 
 export interface PluginPlayer {
   id: number;
@@ -23,6 +47,8 @@ export interface PluginApi {
   chat(target: 'all' | number, msg: ChatMessageBody): void;
   // Raw event-tier send (M2; e.g. PlayerResurrect from the respawn plugin).
   sendEvent(target: 'all' | number, name: string, body: JsLike): void;
+  gui: PluginGui; // M7
+  world: PluginWorld; // M7
 }
 
 export interface Plugin {

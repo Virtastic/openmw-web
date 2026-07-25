@@ -65,10 +65,44 @@ export function emptySharedQuestState(): SharedQuestState {
   return { journal: {}, globals: {}, factions: {}, bounty: 0 };
 }
 
+// M7 world state, persisted next to the M3/M4/M6 globals in world/global.json.
+export interface WorldTimeState {
+  gameHour: number;
+  day: number;
+  month: number;
+  year: number;
+  timeScale: number;
+}
+
+export interface WeatherState {
+  current: number;
+  next?: number;
+  transition?: number;
+}
+
+export interface CellResetEntry {
+  cellKey: string;
+  intervalSec: number; // 0 = manual only (operator/plugin driven)
+  lastResetMs: number; // wall clock of the last reset; survives restart
+}
+
+export interface WorldM7State {
+  time: WorldTimeState;
+  // Last known weather per region, handed to the next region authority on claim.
+  weather: Record<string, WeatherState>;
+  resets: Record<string, CellResetEntry>; // cellKey -> schedule
+}
+
+export function emptyWorldM7State(): WorldM7State {
+  // Morrowind's own start date; timeScale 30 = vanilla.
+  return { time: { gameHour: 9, day: 16, month: 7, year: 427, timeScale: 30 }, weather: {}, resets: {} };
+}
+
 interface GlobalDoc {
   nextNetIdCeiling: number;
   kills?: Record<string, number>; // M4 shared kill tally, per base recordId
   quest?: SharedQuestState; // M6
+  m7?: WorldM7State; // M7 clock / weather / cell-reset schedule
 }
 
 export class CellStore {
@@ -81,6 +115,7 @@ export class CellStore {
   private netIdCeiling = 1; // ids < ceiling are reserved on disk
   private kills = new Map<string, number>();
   private quest: SharedQuestState = emptySharedQuestState();
+  private m7: WorldM7State = emptyWorldM7State();
   private globalLoaded: Promise<void>;
   private globalWrite: Promise<void> = Promise.resolve();
 
@@ -97,6 +132,14 @@ export class CellStore {
       }
       if (g?.kills) for (const [k, v] of Object.entries(g.kills)) this.kills.set(k, v);
       if (g?.quest) this.quest = { ...emptySharedQuestState(), ...g.quest };
+      if (g?.m7) {
+        const base = emptyWorldM7State();
+        this.m7 = {
+          time: { ...base.time, ...g.m7.time },
+          weather: g.m7.weather ?? {},
+          resets: g.m7.resets ?? {},
+        };
+      }
     });
   }
 
@@ -117,6 +160,7 @@ export class CellStore {
       nextNetIdCeiling: this.netIdCeiling,
       kills: Object.fromEntries(this.kills),
       quest: this.quest,
+      m7: this.m7,
     } satisfies GlobalDoc).catch((err) => log('error', 'world.global_flush_failed', { error: String(err) }));
   }
 
@@ -149,6 +193,20 @@ export class CellStore {
 
   saveShared(): void {
     this.writeGlobal();
+  }
+
+  // M7 world state (clock, per-region weather, cell-reset schedule). Same contract as
+  // sharedQuest(): mutate in place, then saveShared() to schedule the atomic write.
+  worldM7(): WorldM7State {
+    return this.m7;
+  }
+
+  // Wipes every delta for a cell (M7 operator reset) and flushes it immediately, so a
+  // crash right after a reset cannot resurrect the old doc from disk.
+  async resetCell(cellKey: string): Promise<void> {
+    this.cache.set(cellKey, emptyCellDoc());
+    this.dirty.add(cellKey);
+    await this.flushKey(cellKey);
   }
 
   private path(cellKey: string): string {

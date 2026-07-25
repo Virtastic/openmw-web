@@ -3,7 +3,7 @@
 Authoritative contract between the browser client (C++ `mwmp/` transport + `scripts/mp/` Lua)
 and the `openmw-mp` server. This file is the source of truth; both sides cite it in code
 comments. Scope grows per milestone — sections are tagged with the milestone that introduces
-them. Current: **M0**.
+them. Current: **M7** (M0-M6 shipped; M8 pending).
 
 ## Transport (M0)
 
@@ -275,15 +275,16 @@ NOT re-broadcast it (echo guard) — clients seed their diff caches from applied
 
 | name | dir | body |
 |---|---|---|
-| `WorldTime` | S→C (60 s + on change) | `{gameHour=number, day=number, month=number, year=number, timeScale=number}` — the server owns the clock; clients slew rather than snap |
+| `WorldTime` | S→C (60 s + on change + at join) | `{gameHour=number, day=number, month=number, year=number, timeScale=number}` — the server owns the clock; clients slew rather than snap |
 | `WorldTimeRequest` | C→S | `{advanceHours=number, reason="rest"\|"wait"\|"script"}` — the server applies and rebroadcasts, so resting advances time for everyone |
-| `WorldWeather` | C→S from the region authority; S→C broadcast | `{region=string, current=number, next=number?, transition=number?}` |
-| `WorldWeatherAuthority` | S→C | `{region=string, holderId=u16}` — same holder pattern as cells, keyed by region |
+| `WorldRegionChange` | C→S | `{region=string}` — the client declares which region it is in (cell→region mapping lives in the content files, so the server cannot derive it); drives region occupancy and weather-authority handoff |
+| `WorldWeather` | C→S from the region authority; S→C broadcast | `{region=string, current=number, next=number?, transition=number?}` — non-holders are dropped; also replayed per known region at join |
+| `WorldWeatherAuthority` | S→C | `{region=string, holderId=u16}` — same holder pattern as cells, keyed by region; `holderId` equal to your own id means YOU simulate the weather there, `holderId=0` means the region has no authority (you just lost it). Handoff goes to the longest-present occupant; an emptied region folds its last weather and resumes it for the next claimant |
 | `RecordCreate` | C→S | `{tempId=number, kind="spell"\|"potion"\|"enchantment"\|"armor"\|"weapon"\|"clothing"\|"book"\|"misc", data=table}` → `RecordCreateAck {tempId, recordNetId=string}` |
-| `RecordsSync` | S→C at join | `{records={{recordNetId, kind, data}, …}}` — replay all custom records so cross-client ids resolve (fixes the M3 dynamic-record placeholder problem for player-made items) |
-| `WorldCellReset` | S→C | `{cellKey=string}` — cell doc wiped on the operator's schedule; clients drop local deltas and reload |
-| `WorldMapExplored` | C→S; relayed when `[sharing] map` | `{cellKeys={string,…}}` |
-| `GuiMessageBox` / `GuiInputDialog` / `GuiListBox` | S→C | `{guiId=number, text=string, buttons={…}\|label=string\|items={…}}` → `GuiReply {guiId, data}` — server-pushed UI for plugins |
+| `RecordsSync` | S→C at join, and to peers on every `RecordCreate` | `{records={{recordNetId, kind, data}, …}}` — replay all custom records so cross-client ids resolve (fixes the M3 dynamic-record placeholder problem for player-made items). At join it is the COMPLETE set; after a creation it carries just the one new record, so peers can resolve the id before the item is used, not only at their next join |
+| `WorldCellReset` | S→C (all players) | `{cellKey=string}` — cell doc wiped on the operator's schedule (`[cellReset]`, persisted across restarts); clients drop local deltas and reload |
+| `WorldMapExplored` | C→S; relayed when `[sharing] map` | `{cellKeys={string,…}}` — relayed as `{cellKeys, byId}`, sender excluded |
+| `GuiMessageBox` / `GuiInputDialog` / `GuiListBox` | S→C | `{guiId=number, text=string, buttons={…}\|label=string\|items={…}}` → `GuiReply {guiId, data}` (C→S) — server-pushed UI for plugins. `guiId` is server-issued and monotonic; a reply for another player's `guiId` is dropped. A dialog is settled by the reply, by `[gui] timeoutSec`, or by the player disconnecting — never left pending |
 
 ## Ops (M8)
 

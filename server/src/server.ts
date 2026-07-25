@@ -9,10 +9,12 @@ import { loadConfig, type Config, type DeepPartial } from './config';
 import { AccountStore } from './core/accounts';
 import { PlayerStore } from './persist/playerstore';
 import { CellStore } from './persist/cellstore';
+import { RecordStore } from './persist/recordstore';
 import type { StateCtx } from './core/playerstate';
 import { WorldState } from './core/worldstate';
 import { Combat } from './core/combat';
 import { Quests } from './core/quests';
+import { WorldM7 } from './core/m7';
 import { Roster } from './core/players';
 import { ContentGate, EngineGate } from './core/manifest';
 import { CommandRegistry, registerCoreCommands, type CommandContext } from './core/commands';
@@ -39,6 +41,9 @@ export interface StartOptions {
 export interface RunningServer {
   port: number;
   config: Config;
+  // The same surface plugins get. Exposed so an embedder (and the test suite) can drive
+  // world actions and server-pushed GUI without loading a plugin.
+  api: PluginApi;
   flush(): Promise<void>;
   close(): Promise<void>;
 }
@@ -49,7 +54,9 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   const accounts = new AccountStore(opts.dataDir);
   const playerStore = new PlayerStore(opts.dataDir);
   const cellStore = new CellStore(opts.dataDir);
+  const recordStore = new RecordStore(opts.dataDir);
   await cellStore.ready(); // netId ceiling must be loaded before any spawn
+  await recordStore.ready(); // custom-record ids must not restart from 1 after a reboot
   const roster = new Roster();
   const world = new WorldState(roster, cellStore);
   const startedAt = Date.now();
@@ -59,6 +66,19 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     const p = roster.activeForAccount(key);
     return p?.cellKey && p.pose ? { cellKey: p.cellKey, x: p.pose.x, y: p.pose.y, z: p.pose.z } : undefined;
   });
+
+  // M7 needs the hook bus (map sharing policy) and the bus's api needs M7 (gui/world
+  // actions), so the reference is closed over lazily — both are live before any hook or
+  // any client frame can run.
+  let hooks: HookBus;
+  const m7 = new WorldM7({
+    roster,
+    cells: cellStore,
+    records: recordStore,
+    guiTimeoutMs: Math.round(config.gui.timeoutSec * 1000),
+    isMapShared: () => hooks.shareFamily('map'),
+  });
+  m7.clock.setTimeScale(config.time.scale); // config is operator truth for the scale
 
   const api: PluginApi = {
     config,
@@ -72,8 +92,23 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       if (target === 'all') for (const p of roster.inWorld()) p.peer.sendEvent(name, body);
       else roster.get(target)?.peer.sendEvent(name, body);
     },
+    gui: {
+      messageBox: (playerId, text, buttons) => m7.gui.messageBox(playerId, text, buttons),
+      inputDialog: (playerId, label) => m7.gui.inputDialog(playerId, label),
+      listBox: (playerId, label, items) => m7.gui.listBox(playerId, label, items),
+    },
+    world: {
+      time: () => ({ ...cellStore.worldM7().time }),
+      advanceTime: (hours) => m7.clock.advance(hours),
+      setTimeScale: (scale) => m7.clock.setTimeScale(scale),
+      scheduleCellReset: (cellKey, intervalSec) => m7.scheduleCellReset(cellKey, intervalSec),
+      unscheduleCellReset: (cellKey) => m7.unscheduleCellReset(cellKey),
+      scheduledResets: () => m7.scheduledResets(),
+      resetCell: (cellKey) => m7.resetCellNow(cellKey),
+      pendingGuiCount: () => m7.gui.pendingCount(),
+    },
   };
-  const hooks = new HookBus(config.plugins, api);
+  hooks = new HookBus(config.plugins, api);
 
   const commands = new CommandRegistry();
   registerCoreCommands(commands);
@@ -123,6 +158,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     world,
     combat,
     quests,
+    m7,
   };
 
   const httpServer = createHttpServer(() => ({
@@ -166,6 +202,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   const port = typeof address === 'object' && address !== null ? address.port : opts.port;
   const moveBroadcaster = new MoveBroadcaster(roster);
   moveBroadcaster.start();
+  m7.start(); // clock ticking + cell-reset sweep before plugins register schedules
   hooks.serverStart();
   log('info', 'server.start', { port, dataDir: opts.dataDir, version: VERSION });
 
@@ -173,16 +210,20 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   return {
     port,
     config,
+    api,
     flush: async () => {
       await accounts.flush();
       await playerStore.flushAll();
       await world.drain();
+      await m7.drain();
       await cellStore.flushAll();
+      await recordStore.flush();
     },
     close: async () => {
       if (closed) return;
       closed = true;
       moveBroadcaster.stop();
+      await m7.stop();
       hooks.serverStop();
       for (const conn of [...connections]) conn.disconnect('SHUTDOWN', 'server shutting down');
       wss.close();
@@ -190,6 +231,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       await playerStore.close();
       await world.drain(); // let queued ops land before the final cell flush
       await cellStore.close();
+      await recordStore.close();
       await new Promise<void>((resolve) => {
         httpServer.close(() => resolve());
         httpServer.closeAllConnections();

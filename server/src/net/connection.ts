@@ -21,6 +21,7 @@ import { handleStateEvent, syncStateOnJoin, type StateCtx } from '../core/player
 import type { WorldState } from '../core/worldstate';
 import type { Combat } from '../core/combat';
 import type { Quests } from '../core/quests';
+import type { WorldM7 } from '../core/m7';
 import type { PlayerStore, PlayerDoc } from '../persist/playerstore';
 import { lserDecode, lserEncode, jsToL, LserError, type JsLike, type LValue } from '../proto/lser';
 import {
@@ -57,6 +58,7 @@ export interface ServerCtx {
   world: WorldState;
   combat: Combat;
   quests: Quests;
+  m7: WorldM7;
 }
 
 export class Connection implements Peer {
@@ -136,6 +138,9 @@ export class Connection implements Peer {
       this.ctx.roster.remove(this.player);
       // M6: drop every conversation this player held (same teardown as authority).
       this.ctx.quests.releaseDialogueLocks(this.player.id);
+      // M7: relinquish weather authority and settle any dialog we owed this player an
+      // answer for (a pending GUI promise must never outlive the socket).
+      this.ctx.m7.onDisconnect(this.player.id);
       // M4: relinquish authority (no Revoke — socket is gone) before the cell may flush.
       if (this.player.cellKey) {
         this.ctx.world.authorityLeave(this.player.id, this.player.cellKey, false);
@@ -238,6 +243,7 @@ export class Connection implements Peer {
       this.handleCellChange(value);
       return;
     }
+    if (this.ctx.m7.handleEvent(this.player, name, value)) return; // M7 family
     if (this.ctx.quests.handleEvent(this.player, name, value)) return; // M6 family
     if (this.ctx.combat.handleEvent(this.player, name, value)) return; // M5 family
     if (this.ctx.world.handleEvent(this.player, name, value)) return; // M3/M4 family
@@ -437,6 +443,7 @@ export class Connection implements Peer {
     this.ctx.roster.joinWorld(this.player);
     syncStateOnJoin(this.ctx.stateCtx, this.player); // M2 late-joiner appearance/equipment sync
     this.ctx.quests.sendJournalSync(this.player); // M6 full journal state at join
+    this.ctx.m7.onJoinWorld(this.player); // M7 clock + weather + RecordsSync at join
     this.ctx.hooks.playerJoinWorld({ id: this.player.id, name: this.player.name, rank: this.player.rank });
   }
 }
