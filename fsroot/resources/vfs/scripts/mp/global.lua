@@ -396,6 +396,33 @@ local function teleportPlayerTo(position)
     if not ok then print('[mp] restore teleport failed: ' .. tostring(err)) end
 end
 
+-- Restoring the position ONCE loses a race. On a page reload the engine is still placing the
+-- player itself (a ?start= deep-link, or the save/chargen spawn), and that placement can land
+-- AFTER our teleport and silently overwrite it — observed intermittently as a resumed player
+-- snapping back to the start point instead of where they logged out. So re-assert the target
+-- for a short window and stop as soon as it sticks, rather than trusting a single apply.
+local restoreTarget = nil -- {cellKey=, x=, y=, z=, deadline=}
+local RESTORE_HOLD_SECONDS = 4
+local RESTORE_EPSILON = 25 -- units; well inside the ~300u error this exists to catch
+
+local function restorePositionTick(now)
+    if not restoreTarget then return end
+    local player = playerScript()
+    if not player then return end
+    if now > restoreTarget.deadline then
+        print('[mp] restore position gave up after ' .. RESTORE_HOLD_SECONDS .. 's')
+        restoreTarget = nil
+        return
+    end
+    local p = player.position
+    local dx, dy, dz = p.x - restoreTarget.x, p.y - restoreTarget.y, p.z - restoreTarget.z
+    if math.sqrt(dx * dx + dy * dy + dz * dz) <= RESTORE_EPSILON then
+        restoreTarget = nil -- it stuck
+        return
+    end
+    teleportPlayerTo(restoreTarget)
+end
+
 local function restoreTick()
     if not pendingRestore then return end
     local player = playerScript()
@@ -412,7 +439,14 @@ local function restoreTick()
             granted = granted + 1
         end
     end
-    if record.position then teleportPlayerTo(record.position) end
+    if record.position then
+        teleportPlayerTo(record.position)
+        restoreTarget = {
+            cellKey = record.position.cellKey,
+            x = record.position.x, y = record.position.y, z = record.position.z,
+            deadline = core.getRealTime() + RESTORE_HOLD_SECONDS,
+        }
+    end
     player:sendEvent('MP_ApplyRecord', record)
     print('[mp] rejoin restore: ' .. granted .. ' item stack(s) granted, record forwarded')
 end
@@ -971,6 +1005,7 @@ return {
             net.tick()
             flushNotices()
             restoreTick()
+            restorePositionTick(core.getRealTime())
             puppetTick()
             if net.state == 'Joined' then
                 local now = core.getRealTime()

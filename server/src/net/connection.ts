@@ -481,10 +481,20 @@ export class Connection implements Peer {
     // is stale, and for a player who had died it is the respawn point. Resuming off it
     // rubber-banded players backwards on every reconnect (measured: 302.9 units, landing
     // exactly on respawnY). The ticket's parked pose is the live one, so prefer it.
-    const resumeDoc = doc && ticket.cellKey && ticket.pose
-      ? { ...doc, position: { cellKey: ticket.cellKey, x: ticket.pose.x, y: ticket.pose.y, z: ticket.pose.z } }
-      : doc;
-    this.finishAuth(account, resumeDoc);
+    // ...and synthesize a doc when there is none yet (a player who joined and reloaded before
+    // anything flushed still has a live pose worth returning to).
+    const resumePos = ticket.cellKey && ticket.pose
+      ? { cellKey: ticket.cellKey, x: ticket.pose.x, y: ticket.pose.y, z: ticket.pose.z }
+      : undefined;
+    const resumeDoc = resumePos ? { ...(doc ?? {}), position: resumePos } : doc;
+    if (doc && !(ticket.cellKey && ticket.pose)) {
+      // Loud, because falling back to the doc is exactly the rubber-band bug: whatever put
+      // this session in-world without a parked pose needs finding, not silently tolerating.
+      log('warn', 'player.resume_no_pose', {
+        account: account.name, cellKey: ticket.cellKey ?? null, hasPose: !!ticket.pose,
+      });
+    }
+    this.finishAuth(account, resumeDoc, true);
     // Put the session back where it was BEFORE Ready, so the join path re-sends the cell
     // and re-claims authority for the cell the player is standing in.
     if (this.player) {
@@ -509,7 +519,11 @@ export class Connection implements Peer {
     this.finishAuth(account, doc);
   }
 
-  private finishAuth(account: Account, doc?: PlayerDoc): void {
+  // forceRecord: send the doc even without an appearance. The appearance gate below exists
+  // so a FRESH player still gets chargen — but a resumed player was in-world seconds ago and
+  // must never be treated as fresh: withholding the record also withholds its position, so
+  // the client stays wherever its boot URL dropped it instead of returning to where it was.
+  private finishAuth(account: Account, doc?: PlayerDoc, forceRecord = false): void {
     if (this.state !== 'HELLO_OK') return; // raced a disconnect while hashing
     const accountKey = account.name.toLowerCase();
     const existing = this.ctx.roster.activeForAccount(accountKey);
@@ -522,7 +536,7 @@ export class Connection implements Peer {
     this.sessionToken = sessionToken;
     // playerRecord: only a doc with an appearance skips chargen — a position-only doc
     // (player quit mid-chargen after a cell change) must not.
-    const record = doc?.appearance ? doc : null;
+    const record = doc && (doc.appearance || forceRecord) ? doc : null;
     // serverSeq = binary seq already consumed for this connection (0: none yet).
     this.sendText(
       welcome(this.player.id, sessionToken, this.ctx.motd(), this.outSeq, record, {
