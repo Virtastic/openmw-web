@@ -33,6 +33,10 @@ export interface Plugin {
   onPlayerDisconnect?(api: PluginApi, player: PluginPlayer): void;
   // M2: fired when a PlayerDeath event arrives (respawn/death-penalty seeds).
   onPlayerDeath?(api: PluginApi, player: PluginPlayer): void;
+  // M5: pre-route gate for a PLAYER-targeted CombatHit/CombatSpellHit. Return false to
+  // drop it (the pvp builtin implements the [rules] pvp switch; operators can replace it
+  // with faction/team logic). Actor-targeted hits never reach this hook.
+  onPlayerHit?(api: PluginApi, attacker: PluginPlayer, victimId: number, name: string): boolean | void;
   // Pre-broadcast; return false to veto the chat line.
   onChat?(api: PluginApi, player: PluginPlayer, text: string): boolean | void;
   // Return true to mark the command handled (skips the core registry).

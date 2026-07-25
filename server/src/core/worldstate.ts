@@ -154,6 +154,15 @@ export class WorldState {
     return true;
   }
 
+  // Authority accessors for the M5 combat router (actor targets are holder+epoch gated).
+  holderOf(cellKey: string): number | undefined {
+    return this.authority.holderOf(cellKey);
+  }
+
+  epochOf(cellKey: string): number | undefined {
+    return this.authority.currentEpoch(cellKey);
+  }
+
   // ------------------------------------------------------- authority (M4)
 
   // Called from the PlayerCellChange path (enqueued so contested entry serializes here).

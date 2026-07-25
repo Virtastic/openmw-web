@@ -193,14 +193,15 @@ export class TestClient {
     );
   }
 
-  // Full happy path up to IN_WORLD.
-  async joinAsNew(account: string, password = 'hunter22'): Promise<{ playerId: number }> {
+  // Full happy path up to IN_WORLD. Returns the Welcome fields tests assert on (it is
+  // consumed from the inbox here, so it cannot be looked up afterwards).
+  async joinAsNew(account: string, password = 'hunter22'): Promise<{ playerId: number; welcome: JsonMsg }> {
     this.hello();
     await this.waitJson('SessionHelloOk');
     this.register(account, password);
     const w = await this.waitJson('SessionWelcome');
     this.sendJson({ t: 'SessionReady' });
-    return { playerId: w['playerId'] as number };
+    return { playerId: w['playerId'] as number, welcome: w };
   }
 
   close(): void {

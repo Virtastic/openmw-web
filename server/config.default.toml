@@ -4,7 +4,7 @@
 
 # Built-in plugins to load, in order. Available: "motd", "respawn", "death-penalty".
 # (Top-level key: in an override file it must appear before any [table] header.)
-plugins = ["motd", "respawn", "death-penalty"]
+plugins = ["motd", "respawn", "death-penalty", "pvp"]
 
 [server]
 name = "openmw-mp"                # shown in SessionHelloOk and /status
@@ -39,6 +39,12 @@ respawnZ = 513.0
 # Death penalty applied by the death-penalty plugin: "none" (M2 default; hook is a
 # documented no-op seed for operators/plugins to extend).
 deathPenalty = "none"
+# M5: player-vs-player. false -> the pvp plugin drops CombatHit/CombatSpellHit aimed at
+# players (actor targets are unaffected). Swap the plugin for faction/team rules.
+pvp = false
+# Difficulty is surfaced in SessionWelcome.flags and applied CLIENT-side, in the victim's
+# own combat pipeline (the server never computes damage). Morrowind scale: -100..100.
+difficulty = 0
 
 [limits]
 msgsPerSec = 60                   # per-session message token bucket (burst = rate)
@@ -48,3 +54,4 @@ maxConnsPerIp = 3
 maxMsgBytes = 262144              # ws maxPayload; larger frames drop the socket
 helloTimeoutMs = 10000            # SessionHello must arrive within this window
 loginPerMinPerIp = 5              # auth attempts (Register+Login) per IP per minute
+maxHitDamage = 1000               # M5 sanity bound on relayed damage/effect magnitudes (not balance)

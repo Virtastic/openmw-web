@@ -18,6 +18,8 @@ export interface Config {
     respawnY: number;
     respawnZ: number;
     deathPenalty: 'none';
+    pvp: boolean;
+    difficulty: number;
   };
   engine: { enforce: 'warn' | 'refuse' | 'off' };
   limits: {
@@ -28,6 +30,7 @@ export interface Config {
     maxMsgBytes: number;
     helloTimeoutMs: number;
     loginPerMinPerIp: number;
+    maxHitDamage: number;
   };
   plugins: string[];
 }
@@ -101,6 +104,8 @@ function validate(t: Tree): Config {
       respawnY: reqSignedNum(t, 'rules', 'respawnY'),
       respawnZ: reqSignedNum(t, 'rules', 'respawnZ'),
       deathPenalty: reqEnum(t, 'rules', 'deathPenalty', ['none'] as const),
+      pvp: reqBool(t, 'rules', 'pvp'),
+      difficulty: reqSignedNum(t, 'rules', 'difficulty'),
     },
     engine: { enforce: reqEnum(t, 'engine', 'enforce', ['warn', 'refuse', 'off'] as const) },
     limits: {
@@ -111,6 +116,7 @@ function validate(t: Tree): Config {
       maxMsgBytes: reqNum(t, 'limits', 'maxMsgBytes'),
       helloTimeoutMs: reqNum(t, 'limits', 'helloTimeoutMs'),
       loginPerMinPerIp: reqNum(t, 'limits', 'loginPerMinPerIp'),
+      maxHitDamage: reqNum(t, 'limits', 'maxHitDamage'),
     },
     plugins: plugins as string[],
   };

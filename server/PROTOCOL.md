@@ -219,6 +219,35 @@ as remote players, keyed by ref instead of playerId. On `Grant`, detach those pu
 apply the snapshot, re-enable AI, and simulate. On `Revoke`/handoff, reverse it. Death is
 authoritative from the holder; non-holders converge via the 5 s snapshot + stats stream.
 
+## Combat & magic (M5)
+
+Authority model (TES3MP-equivalent): **the attacker's client detects the hit; the victim's
+client applies the damage.** For NPCs/creatures the victim's "client" is that cell's
+authority holder (M4). Raw pre-mitigation damage travels; armor, difficulty, resistances
+and sounds are applied exactly once, on the victim, by the engine's own untouched Lua
+combat pipeline (`files/data-mw/scripts/omw/combat/local.lua`).
+
+| name | dir | body |
+|---|---|---|
+| `CombatHit` | attacker→S→victim-owner | `{target={playerId=u16} \| {ref=RefNum, cellKey=, epoch=}, damage={health=n, fatigue=n?, magicka=n?}, strength=n, sourceType=string, weaponId=string?, ammoId=string?, hitPos={x,y,z}?, successful=bool}` |
+| `CombatCast` | caster→S→cell-scoped | `{spellId=string, target={playerId}\|{ref}\|nil, casterId=u16, kind="spell"\|"enchant"\|"potion"}` — visual/animation mirroring only |
+| `CombatSpellHit` | caster→S→victim-owner | `{target={playerId}\|{ref,cellKey,epoch}, spellId=string, effects={{id=string, magnitude=n, duration=n}, …}, casterId=u16}` |
+| `CombatProjectile` | attacker→S→cell-scoped | `{kind="arrow"\|"bolt"\|"thrown"\|"magic", recordId=string?, spellId=string?, from={x,y,z}, dir={x,y,z}, speed=n, casterId=u16}` — cosmetic mirror; the attacker owns the real projectile |
+
+Rules:
+- The server validates shape + plausibility only (finite, `damage.health` within a config
+  cap, target exists, actor targets require holder+epoch like other `Actor*` messages) and
+  routes: player targets → that player's session; actor targets → the cell's authority
+  holder. It never computes damage — it has no game data.
+- **PvP gate**: when `[rules] pvp = false`, `CombatHit`/`CombatSpellHit` whose target is a
+  *player* are dropped server-side (the `pvp` plugin owns this decision so operators can
+  replace it). Actor targets are unaffected.
+- Clients MUST cancel local damage application for remote-authoritative victims (register an
+  `I.Combat` handler that forwards then `return false`) and re-emit the stock `Hit` event
+  locally when they receive `CombatHit` for themselves, so the victim's own armor/difficulty
+  apply. Death still flows through M2 `PlayerDeath` / M4 `ActorDeath` — combat messages never
+  carry death directly.
+
 ## Client-side integration contract (M0)
 
 - Join URL: `index.html?...&mp=<ws(s)-url>&name=<display-name>`; boot JS sets

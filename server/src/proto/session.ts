@@ -151,19 +151,27 @@ export function helloOk(serverName: string, contentPolicy: 'names' | 'strict' | 
   return JSON.stringify({ t: 'SessionHelloOk', serverName, contentPolicy });
 }
 
+// M5: rule flags the client reflects locally (difficulty is applied client-side, in the
+// victim's own combat pipeline — the server never computes damage).
+export interface SessionFlags {
+  pvp: boolean;
+  difficulty: number;
+}
+
 export function welcome(
   playerId: number,
   sessionToken: string,
   motd: string,
   serverSeq: number,
   playerRecord: unknown = null, // M2: stored snapshot doc, or null for fresh chargen
+  flags: SessionFlags = { pvp: false, difficulty: 0 },
 ): string {
   return JSON.stringify({
     t: 'SessionWelcome',
     playerId,
     sessionToken,
     motd,
-    flags: {},
+    flags,
     playerRecord: playerRecord ?? null,
     serverSeq,
   });

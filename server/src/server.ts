@@ -11,6 +11,7 @@ import { PlayerStore } from './persist/playerstore';
 import { CellStore } from './persist/cellstore';
 import type { StateCtx } from './core/playerstate';
 import { WorldState } from './core/worldstate';
+import { Combat } from './core/combat';
 import { Roster } from './core/players';
 import { ContentGate, EngineGate } from './core/manifest';
 import { CommandRegistry, registerCoreCommands, type CommandContext } from './core/commands';
@@ -89,6 +90,15 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     },
   };
 
+  const combat = new Combat({
+    roster,
+    maxHitDamage: config.limits.maxHitDamage,
+    holderOf: (cellKey) => world.holderOf(cellKey),
+    epochOf: (cellKey) => world.epochOf(cellKey),
+    allowPlayerHit: (attacker, victimId, name) =>
+      hooks.playerHit({ id: attacker.id, name: attacker.name, rank: attacker.rank }, victimId, name),
+  });
+
   const ctx: ServerCtx = {
     config,
     accounts,
@@ -102,6 +112,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     players: playerStore,
     stateCtx,
     world,
+    combat,
   };
 
   const httpServer = createHttpServer(() => ({

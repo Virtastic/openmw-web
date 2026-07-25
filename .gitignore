@@ -55,5 +55,10 @@ build-wasm.good/
 __pycache__/
 *.pyc
 
-# Local multiplayer server working dir (node_modules/dist)
-server/
+# Multiplayer server working dirs. NOTE: do not ignore `server/` wholesale — the server
+# source IS tracked (server/src, test, Dockerfile, PROTOCOL.md, …). Build artifacts are
+# already handled by server/.gitignore (node_modules/, dist/, devdata/); a blanket
+# `server/` rule silently swallows new source files.
+server/node_modules/
+server/dist/
+server/devdata/

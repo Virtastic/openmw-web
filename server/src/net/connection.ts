@@ -19,6 +19,7 @@ import { unpackMove } from '../proto/movement';
 import { MAX_ABS_COORD } from '../core/movement';
 import { handleStateEvent, syncStateOnJoin, type StateCtx } from '../core/playerstate';
 import type { WorldState } from '../core/worldstate';
+import type { Combat } from '../core/combat';
 import type { PlayerStore, PlayerDoc } from '../persist/playerstore';
 import { lserDecode, lserEncode, jsToL, LserError, type JsLike, type LValue } from '../proto/lser';
 import {
@@ -53,6 +54,7 @@ export interface ServerCtx {
   players: PlayerStore;
   stateCtx: StateCtx;
   world: WorldState;
+  combat: Combat;
 }
 
 export class Connection implements Peer {
@@ -232,7 +234,8 @@ export class Connection implements Peer {
       this.handleCellChange(value);
       return;
     }
-    if (this.ctx.world.handleEvent(this.player, name, value)) return; // M3 family
+    if (this.ctx.combat.handleEvent(this.player, name, value)) return; // M5 family
+    if (this.ctx.world.handleEvent(this.player, name, value)) return; // M3/M4 family
     if (handleStateEvent(this.ctx.stateCtx, this.player, name, value)) return; // M2 family
     if (name !== 'ChatSend') {
       log('warn', 'conn.unknown_event_dropped', { ip: this.ip, name });
@@ -411,7 +414,12 @@ export class Connection implements Peer {
     // (player quit mid-chargen after a cell change) must not.
     const record = doc?.appearance ? doc : null;
     // serverSeq = binary seq already consumed for this connection (0: none yet).
-    this.sendText(welcome(this.player.id, sessionToken, this.ctx.config.server.motd, this.outSeq, record));
+    this.sendText(
+      welcome(this.player.id, sessionToken, this.ctx.config.server.motd, this.outSeq, record, {
+        pvp: this.ctx.config.rules.pvp,
+        difficulty: this.ctx.config.rules.difficulty,
+      }),
+    );
     this.ctx.hooks.playerAuthed({ id: this.player.id, name: this.player.name, rank: this.player.rank });
     log('info', 'player.authed', { id: this.player.id, name: this.player.name, ip: this.ip });
   }

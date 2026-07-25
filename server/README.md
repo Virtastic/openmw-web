@@ -59,9 +59,12 @@ Note `plugins` is a top-level key — in an override file it must appear **befor
 
 | key | default | meaning |
 |---|---|---|
-| `plugins` | `["motd", "respawn", "death-penalty"]` | built-in plugins to load, in order |
+| `plugins` | `["motd", "respawn", "death-penalty", "pvp"]` | built-in plugins to load, in order |
 | `[rules] respawnCellKey/X/Y/Z` | `"village"`, `0,0,0` | where the respawn plugin sends the dead (placeholder demo coords) |
 | `[rules] deathPenalty` | `"none"` | death-penalty plugin mode (`"none"` = no-op seed) |
+| `[rules] pvp` | `false` | `false` → the pvp plugin drops player-targeted combat hits (actor targets unaffected) |
+| `[rules] difficulty` | `0` | surfaced in `SessionWelcome.flags`; applied client-side by the victim |
+| `[limits] maxHitDamage` | `1000` | sanity bound on relayed damage / effect magnitudes (not balance) |
 | `[server] name` | `"openmw-mp"` | shown in `SessionHelloOk` and `/status` |
 | `[server] motd` | `"Welcome to openmw-mp."` | sent in `SessionWelcome` + as a server chat line on join |
 | `[server] maxPlayers` | `16` | sessions past Hello are counted |
