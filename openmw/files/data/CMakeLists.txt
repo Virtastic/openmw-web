@@ -128,6 +128,7 @@ set(BUILTIN_DATA_FILES
     # (opt-in content file; loaded only when the boot JS appends content=mp.omwscripts).
     mp.omwscripts
     scripts/mp/actors.lua
+    scripts/mp/admin.lua
     scripts/mp/combat.lua
     scripts/mp/global.lua
     scripts/mp/identity.lua
@@ -140,6 +141,7 @@ set(BUILTIN_DATA_FILES
     scripts/mp/puppet.lua
     scripts/mp/quests.lua
     scripts/mp/testkill.lua
+    scripts/mp/world.lua
 
     scripts/omw/activationhandlers.lua
     scripts/omw/ai.lua

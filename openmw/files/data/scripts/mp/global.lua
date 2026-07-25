@@ -16,6 +16,8 @@ local objects = require('scripts.mp.objects')
 local actors = require('scripts.mp.actors')
 local combat = require('scripts.mp.combat')
 local quests = require('scripts.mp.quests')
+local worldmp = require('scripts.mp.world')
+local admin = require('scripts.mp.admin')
 
 local roster = {} -- array of {id=u16, name=string}, server order
 
@@ -223,7 +225,9 @@ local function pushEquipmentToPuppet(id)
     local inventory = types.Actor.inventory(p.obj)
     local effective = {}
     for slot, recordId in pairs(eq.slots or {}) do
-        local grantId = recordId
+        -- §M7: a peer's custom item arrives as the server's recordNetId; resolve it to the
+        -- record THIS client built from RecordsSync (never trust a foreign local id).
+        local grantId = worldmp.toLocal(recordId)
         local ok, count = pcall(function() return inventory:countOf(grantId) end)
         if not ok or count == 0 then
             local okc, item = pcall(function() return world.createObject(grantId) end)
@@ -421,7 +425,10 @@ local function puppetTick()
         if key ~= ownCellKeyCache then
             ownCellKeyCache = key
             refreshVisibility()
-            if net.state == 'Joined' then quests.onCellChanged() end
+            if net.state == 'Joined' then
+                quests.onCellChanged()
+                worldmp.onCellEntered(key)
+            end
         end
     end
     if now - lastPuppetMirror >= 0.5 then
@@ -485,6 +492,29 @@ local function start()
             return false
         end,
     })
+    -- M7 world state (see scripts/mp/world.lua): clock, region/weather authority, custom
+    -- records, cell resets, map sharing, server-pushed GUI.
+    worldmp.init({
+        playerFn = playerScript,
+        ownCellKeyFn = function() return ownCellKeyCache end,
+        ownIdFn = function() return net.state == 'Joined' and net.playerId or nil end,
+        noticeFn = notice,
+        toPlayerFn = toPlayer,
+        onCellResetFn = function(cellKey)
+            -- Drop our local view of that cell and ask for the (now empty) server truth.
+            objects.forgetCell(cellKey)
+            if cellKey == ownCellKeyCache then
+                mp.sendEvent('ResyncRequest', { cellKey = cellKey })
+            end
+        end,
+    })
+    -- M8 ops (see scripts/mp/admin.lua): the client end of /tp, /give and /console.
+    admin.init({
+        playerFn = playerScript,
+        noticeFn = notice,
+        teleportFn = teleportPlayerTo,
+        toLocalRecordFn = worldmp.toLocal,
+    })
     net.onStateChanged = function(state)
         print('[mp] session state: ' .. state)
         if state == 'Joined' then
@@ -510,6 +540,8 @@ local function start()
             objects.reset()
             actors.reset()
             quests.reset()
+            worldmp.reset()
+            admin.reset()
         end
     end
     if net.state == 'Offline' or net.state == 'Failed' then
@@ -837,6 +869,28 @@ local eventHandlers = {
         end
     end,
 
+    -- --- M7/M8 bridges + test hooks -------------------------------------------------------
+    -- M2 PlayerEquipment is authored in the PLAYER script, but only the global script owns
+    -- the custom-record registry (world.createRecord is global-only), so the snapshot is
+    -- routed through here and every slot id is mapped to its SERVER record id first. A raw
+    -- local dynamic id on the wire is the exact M3 bug §M7 exists to close.
+    mpEquipmentOut = function(data)
+        local slots = {}
+        for slot, recordId in pairs(data.slots or {}) do
+            slots[slot] = worldmp.toNet(recordId)
+        end
+        mp.sendEvent('PlayerEquipment', { slots = slots })
+    end,
+    mpGuiReply = function(data)
+        worldmp.sendGuiReply(data.guiId, data.data)
+    end,
+    mpTestRest = function(data) worldmp.testRest(data.hours) end,
+    mpTestRecord = function(data) worldmp.testCreateRecord(data.name, data.noRegister) end,
+    mpTestSpell = function(data) worldmp.testCreateSpell(data.name) end,
+    mpTestEnchanted = function(data) worldmp.testCreateEnchanted(data.name) end,
+    mpTestWeather = function(data) worldmp.testWeather(data.index) end,
+    mpTestAdmin = function(data) admin.send(data.cmd, data.args) end,
+
     -- --- M6: quest-layer bridges + test hooks -------------------------------------------
     -- onQuestUpdate is a PLAYER-context engine handler; player.lua forwards it here so the
     -- journal cache/echo guard lives in exactly one place.
@@ -863,6 +917,14 @@ end
 -- M4: actor-authority appliers (MP_ActorAuthority*, MP_ActorMoveBatch/StatsDynamic/Death,
 -- MP_WorldKillCount) live in actors.lua.
 for name, fn in pairs(actors.handlers) do
+    eventHandlers[name] = fn
+end
+-- M7: world-state appliers (MP_WorldTime, MP_WorldWeather*, MP_Record*, MP_WorldCellReset,
+-- MP_WorldMapExplored, MP_Gui*) live in world.lua; M8 ops appliers in admin.lua.
+for name, fn in pairs(worldmp.handlers) do
+    eventHandlers[name] = fn
+end
+for name, fn in pairs(admin.handlers) do
     eventHandlers[name] = fn
 end
 -- M6: quest-layer appliers (MP_JournalEntry/JournalSync, MP_GlobalVarUpdate,
@@ -915,6 +977,7 @@ return {
                 objects.tick(now)
                 actors.tick(now)
                 quests.tick(now)
+                worldmp.tick(now)
                 mirrorDoor(now)
             end
         end,

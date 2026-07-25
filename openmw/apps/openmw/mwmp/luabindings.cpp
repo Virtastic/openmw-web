@@ -3,6 +3,8 @@
 #include "luabindings.hpp"
 
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
@@ -15,6 +17,7 @@
 #include "../mwbase/environment.hpp"
 #include "../mwbase/mechanicsmanager.hpp"
 #include "../mwbase/statemanager.hpp"
+#include "../mwbase/windowmanager.hpp"
 #include "../mwbase/world.hpp"
 
 #include "../mwlua/context.hpp"
@@ -178,6 +181,44 @@ namespace MWMP
                 },
                 "MPResurrect");
         };
+        // M7 WorldMapExplored (PROTOCOL.md §M7): mark an exterior cell as discovered on the
+        // world map. There is no Lua binding for map state in 0.52, and the only reachable
+        // surface is GUI-side: WindowManager::addVisitedLocation (mwbase/windowmanager.hpp:243)
+        // -> MapWindow, which is what the engine itself calls when the player enters a named
+        // exterior cell (mwgui/windowmanagerimp.cpp:1181).
+        //
+        // NOTE the deliberate limit: the sibling call there, MapWindow::cellExplored, paints
+        // the global-map fog from `mLocalMapRender->getMapTexture(x, y)` — a texture that only
+        // exists for cells THIS client has actually rendered. A peer's exploration therefore
+        // transfers as the discovered-location marker, not as uncovered fog; the fog is not
+        // transferable without shipping the map texture itself.
+        api["setMapExplored"]
+            = [luaManager = context.mLuaManager](std::string_view cellName, int gridX, int gridY) {
+                  std::string name(cellName);
+                  luaManager->addAction(
+                      [name, gridX, gridY] {
+                          MWBase::Environment::get().getWindowManager()->addVisitedLocation(name, gridX, gridY);
+                      },
+                      "MPSetMapExplored");
+              };
+
+        // M8 ConsoleCommand (PROTOCOL.md §M8): run MWScript console text on this client.
+        // There is NO vanilla Lua binding for that — onConsoleCommand is a *handler* for
+        // commands the player types, not an executor — and the only public entry point is
+        // WindowManager::executeInConsole(path), which runs a file line by line. So write
+        // the payload to a scratch file (MEMFS under emscripten) and hand it over: the
+        // engine's own compiler and error reporting stay in charge.
+        api["runConsole"] = [](std::string_view script) {
+            std::filesystem::path path = std::filesystem::temp_directory_path() / "omwmp_console.txt";
+            {
+                std::ofstream out(path, std::ios::binary | std::ios::trunc);
+                if (!out)
+                    throw std::runtime_error("cannot open the console scratch file");
+                out << script << "\n";
+            }
+            MWBase::Environment::get().getWindowManager()->executeInConsole(path);
+        };
+
         // Golden-vector dump (server codec tests): LSER-encode any serializable value -> base64.
         api["debugSerialize"] = [serializer = context.mSerializer](const sol::object& data) {
             return base64Encode(LuaUtil::serialize(data, serializer));
@@ -200,6 +241,46 @@ namespace MWMP
                     }
                 },
                 keyStr.c_str(), valueStr.c_str());
+        };
+        // M8 session resume: the ticket has to outlive the PAGE, not just the socket —
+        // a browser reload is the canonical "rejoin in place" case. localStorage is the
+        // only store that survives it, and the token is a short-lived, single-use,
+        // server-revocable credential scoped to this origin.
+        api["setResumeToken"] = [](std::string_view token) {
+            std::string tokenStr(token);
+            EM_ASM(
+                {
+                    try
+                    {
+                        var t = UTF8ToString($0);
+                        if (t)
+                            localStorage.setItem('omwmp:resume', t);
+                        else
+                            localStorage.removeItem('omwmp:resume');
+                    }
+                    catch (e)
+                    {
+                    }
+                },
+                tokenStr.c_str());
+        };
+        api["getResumeToken"] = []() -> std::string {
+            char* token = static_cast<char*>(EM_ASM_PTR({
+                try
+                {
+                    var t = localStorage.getItem('omwmp:resume');
+                    return t ? stringToNewUTF8(t) : 0;
+                }
+                catch (e)
+                {
+                    return 0;
+                }
+            }));
+            if (!token)
+                return {};
+            std::string out(token);
+            std::free(token);
+            return out;
         };
         api["testPollCommand"] = [](sol::this_state state) -> sol::object {
             // Reads-and-clears Module.__omwMPCmd (set by harness JS via window.__omwMP.sendChat).
@@ -226,6 +307,8 @@ namespace MWMP
 #else
         api["testSet"] = [](std::string_view, std::string_view) {};
         api["testPollCommand"] = []() { return sol::nil; };
+        api["setResumeToken"] = [](std::string_view) {};
+        api["getResumeToken"] = []() { return std::string(); };
 #endif
 
         return LuaUtil::makeReadOnly(api);

@@ -15,6 +15,7 @@ local world = require('openmw.world')
 local mp = require('openmw.mp')
 
 local json = require('scripts.mp.json')
+local worldmp = require('scripts.mp.world')
 
 local objects = {}
 
@@ -264,7 +265,9 @@ function objects.requestSpawn(obj, posOverride, cellKeyOverride)
     if not okYaw or rotZ ~= rotZ then rotZ = 0 end -- NaN pre-placement
     mp.sendEvent('ObjectSpawnRequest', {
         tempId = tempCounter,
-        recordId = obj.recordId,
+        -- M7: a client-minted record id is meaningless (and dangerous) on a peer — send the
+        -- server's recordNetId when this record has one. Content ids pass through.
+        recordId = worldmp.toNet(obj.recordId),
         cellKey = cellKeyOverride or cellKeyOfObj(obj),
         x = pos.x,
         y = pos.y,
@@ -291,7 +294,11 @@ end
 
 handlers.MP_ObjectPlace = function(data)
     if not data.netId or netToObj[data.netId] then return end -- own echo: already mapped
-    local ok, obj = pcall(function() return world.createObject(data.recordId, data.count or 1) end)
+    -- M7 RecordsSync: a player-made item arrives as a server recordNetId; resolve it to the
+    -- record we built locally for that id. Before M7 this string was the AUTHOR's local
+    -- dynamic id, which could collide with an unrelated local record here.
+    local recordId = worldmp.toLocal(data.recordId)
+    local ok, obj = pcall(function() return world.createObject(recordId, data.count or 1) end)
     -- Foreign dynamic record ids can COLLIDE with unrelated local dynamic records (each
     -- client numbers its own "$dynamic" records — B's may be a puppet NPC record!): only
     -- accept a resolution that is actually an item; anything else gets the stand-in.
@@ -544,6 +551,15 @@ function objects.tick(now)
             if obj:isValid() then netObjs[tostring(netId)] = obj.recordId end
         end
         mp.testSet('netObjects', json.encode(netObjs))
+        -- Display names of the net objects: a PLACEHOLDER stand-in still "exists", so the
+        -- scenarios have to compare the resolved record, not the count (§M7 records).
+        local netNames = {}
+        for netId, obj in pairs(netToObj) do
+            if obj:isValid() then
+                netNames[tostring(netId)] = worldmp.recordNameOf(obj.recordId) or ''
+            end
+        end
+        mp.testSet('netObjectNames', json.encode(netNames))
         local conts = {}
         for key, c in pairs(containerData) do
             conts[key] = c.items
@@ -582,6 +598,25 @@ end
 
 function objects.markNetSpawned(obj)
     netSpawned[obj.id] = true
+end
+
+-- M7 WorldCellReset: the server wiped that cell's doc. Drop every local mapping for it so
+-- a stale netId can never resolve onto a live object after the reload.
+function objects.forgetCell(cellKey)
+    for netId, obj in pairs(netToObj) do
+        local ok, key = pcall(cellKeyOfObj, obj)
+        if not ok or key == cellKey then
+            netToObj[netId] = nil
+            if obj and obj:isValid() then
+                objIdToNet[obj.id] = nil
+                netSpawned[obj.id] = nil
+                pcall(function() obj:remove() end)
+            end
+        end
+    end
+    for key in pairs(containerData) do
+        containerData[key] = nil
+    end
 end
 
 function objects.reset()

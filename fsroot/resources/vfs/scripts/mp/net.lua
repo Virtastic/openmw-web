@@ -21,8 +21,12 @@ local net = {
     onStateChanged = function() end,
 }
 
-local authMode = 'register' -- register-then-login-on-exists (PROTOCOL.md session flow)
+-- Auth ladder (PROTOCOL.md session flow + §M8 resume): resume -> register -> login.
+-- A parked resume ticket is tried FIRST because it skips argon2 and rejoins in place; an
+-- unknown/expired token answers AUTH_FAILED, which drops us onto the normal ladder.
+local authMode = 'register'
 local triedLogin = false
+local triedResume = false
 local lastSendTime = 0 -- real time; onUpdate dt pauses with the world, pings must not
 
 local function setState(s)
@@ -55,7 +59,15 @@ end
 
 function net.start()
     triedLogin = false
+    triedResume = false
     authMode = 'register'
+    -- M8: the ticket survives a PAGE RELOAD (mp.setResumeToken -> localStorage), which is
+    -- the case §M8 is really about — a reloaded tab rejoins in place instead of re-authing.
+    local token = mp.getResumeToken and mp.getResumeToken() or ''
+    if type(token) == 'string' and token ~= '' then
+        authMode = 'resume'
+        net.resumeToken = token
+    end
     net.lastError = nil
     net.lastErrorDetail = nil
     if mp.connect(mp.getUrl()) then
@@ -81,6 +93,18 @@ function net.onClose()
     -- PROTOCOL.md has no in-band "account already exists" reply: a failed SessionRegister is a
     -- SessionDisconnect(AUTH_FAILED) + close. Implement register-then-login-on-exists as one
     -- reconnect with SessionLoginRequest instead.
+    if net.lastError == 'AUTH_FAILED' and authMode == 'resume' and not triedResume then
+        -- Expired/unknown ticket: forget it and fall back to the normal ladder.
+        triedResume = true
+        authMode = 'register'
+        net.resumeToken = nil
+        if mp.setResumeToken then mp.setResumeToken('') end
+        net.lastError = nil
+        if mp.connect(mp.getUrl()) then
+            setState('Connecting')
+            return
+        end
+    end
     if net.lastError == 'AUTH_FAILED' and authMode == 'register' and not triedLogin then
         triedLogin = true
         authMode = 'login'
@@ -111,18 +135,32 @@ local dispatch = {}
 dispatch.SessionHelloOk = function(msg)
     net.serverName = msg.serverName
     mp.testSet('serverName', tostring(msg.serverName or ''))
-    local auth = {
-        t = (authMode == 'register') and 'SessionRegister' or 'SessionLoginRequest',
-        account = mp.getName(),
-        password = mp.getPassword(),
-    }
+    -- §M8: SessionResume is sent in HELLO_OK — AFTER SessionHello — so engine and content
+    -- policy are enforced for a resume exactly as for a login.
+    local auth
+    if authMode == 'resume' then
+        auth = { t = 'SessionResume', token = net.resumeToken }
+    else
+        auth = {
+            t = (authMode == 'register') and 'SessionRegister' or 'SessionLoginRequest',
+            account = mp.getName(),
+            password = mp.getPassword(),
+        }
+    end
     send(auth)
+    mp.testSet('authMode', authMode)
     setState('Authing')
 end
 
 dispatch.SessionWelcome = function(msg)
     net.playerId = msg.playerId
     net.sessionToken = msg.sessionToken
+    -- Tokens are single use: a resumed session gets a fresh one, so always overwrite.
+    if mp.setResumeToken and type(msg.sessionToken) == 'string' then
+        mp.setResumeToken(msg.sessionToken)
+    end
+    net.authPath = authMode
+    mp.testSet('authPath', authMode)
     net.motd = msg.motd
     -- M2: non-null playerRecord = stored snapshot to restore (json.null when fresh).
     net.playerRecord = (type(msg.playerRecord) == 'table' and msg.playerRecord ~= json.null)

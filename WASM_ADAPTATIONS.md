@@ -270,6 +270,12 @@ multiplayer client transport — WebSocket wrapper, NetManager, `openmw.mp` Lua 
 `openmw/files/data/mp.omwscripts` + `openmw/files/data/scripts/mp/` (the multiplayer Lua
 scripts; mirrored into `fsroot/resources/vfs/` for the web preload).
 
+`mwmp/luabindings.cpp` calls into unmodified upstream engine interfaces where multiplayer
+needs a surface vanilla Lua does not expose; no upstream file is patched for these:
+`MechanicsManager::setPlayerRace/setPlayerClass/resurrect/countDeaths/setDeaths` (M2/M4),
+`WindowManager::executeInConsole` (M8 `ConsoleCommand`) and
+`WindowManager::addVisitedLocation` (M7 `WorldMapExplored`).
+
 - `openmw/CMakeLists.txt`
 - `openmw/apps/openmw/CMakeLists.txt` — add_openmw_dir(mwmp …)
 - `openmw/apps/openmw/engine.cpp`

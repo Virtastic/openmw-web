@@ -122,6 +122,98 @@ local function pushMessage(data)
     end
 end
 
+-- --- M7: server-pushed GUI (PROTOCOL.md §M7 GuiMessageBox/GuiInputDialog/GuiListBox) ----
+-- openmw.ui is PLAYER context, so the global hub routes the body here and the answer goes
+-- back out through it. Every dialog is answered exactly once: the server settles a guiId on
+-- reply, timeout or disconnect, and a second reply for the same id is dropped there.
+local guiElement = nil
+local guiCurrent = nil -- {guiId=, kind=, items=}
+local guiDraft = ''
+
+local function destroyGui()
+    if guiElement then
+        guiElement:destroy()
+        guiElement = nil
+    end
+    guiCurrent = nil
+    guiDraft = ''
+    I.UI.removeMode('Interface')
+    mp.testSet('gui', '')
+end
+
+local function guiAnswer(data)
+    if not guiCurrent then return end
+    core.sendGlobalEvent('mpGuiReply', { guiId = guiCurrent.guiId, data = data })
+    mp.testSet('guiAnswered', json.encode({ guiId = guiCurrent.guiId, data = data }))
+    destroyGui()
+end
+
+local function guiRow(text, onClick)
+    local row = {
+        template = I.MWUI.templates.textNormal,
+        props = { text = text },
+    }
+    if onClick then
+        row.events = { mouseClick = async:callback(onClick) }
+    end
+    return row
+end
+
+local function showGui(data)
+    destroyGui()
+    guiCurrent = { guiId = data.guiId, kind = data.kind, items = data.items }
+    local rows = {}
+    if data.kind == 'messagebox' then
+        rows[#rows + 1] = guiRow(tostring(data.text or ''))
+        local buttons = data.buttons or {}
+        if #buttons == 0 then buttons = { 'OK' } end
+        for i, label in ipairs(buttons) do
+            rows[#rows + 1] = guiRow('[ ' .. tostring(label) .. ' ]', function()
+                guiAnswer({ button = i - 1, label = tostring(label) }) -- 0-based: plugin convention
+            end)
+        end
+    elseif data.kind == 'input' then
+        rows[#rows + 1] = guiRow(tostring(data.label or ''))
+        rows[#rows + 1] = {
+            template = I.MWUI.templates.textEditLine,
+            props = { text = '', size = util.vector2(400, 0) },
+            events = {
+                textChanged = async:callback(function(text) guiDraft = text end),
+                keyPress = async:callback(function(e)
+                    if e.code == input.KEY.Enter then guiAnswer({ text = guiDraft }) end
+                end),
+            },
+        }
+    elseif data.kind == 'list' then
+        rows[#rows + 1] = guiRow(tostring(data.label or ''))
+        for i, item in ipairs(data.items or {}) do
+            rows[#rows + 1] = guiRow(i .. '. ' .. tostring(item), function()
+                guiAnswer({ index = i - 1, item = tostring(item) })
+            end)
+        end
+    else
+        return
+    end
+    I.UI.setMode('Interface', { windows = {} })
+    guiElement = ui.create {
+        layer = 'Windows',
+        template = I.MWUI.templates.boxSolid,
+        props = { position = util.vector2(200, 200) },
+        content = ui.content {
+            {
+                type = ui.TYPE.Flex,
+                props = { horizontal = false, autoSize = true },
+                content = ui.content(rows),
+            },
+        },
+    }
+    mp.testSet('gui', json.encode({
+        guiId = data.guiId, kind = data.kind,
+        text = data.text or data.label or '',
+        items = data.items or data.buttons or {},
+    }))
+end
+
 -- --- M1: own-pose sampler -> PlayerMove (0x0100) + PlayerCellChange ---------------------
 -- ~15 Hz real-time while moving, plus edge-triggered sends on jump and on stop. Kept well
 -- under the server's 40 msg/s movement budget.
@@ -322,6 +414,39 @@ local function pollHarness()
             end)
             mp.testSet('count', tostring(ok and n or -1))
         end
+        -- M7/M8 hooks (all resolved in the GLOBAL script).
+        local restHours = cmd:match('^rest:([%d.]+)$')
+        if restHours then core.sendGlobalEvent('mpTestRest', { hours = tonumber(restHours) }) end
+        local recName = cmd:match('^mkrec:(.+)$')
+        if recName then core.sendGlobalEvent('mpTestRecord', { name = recName }) end
+        local localRec = cmd:match('^mklocal:(.+)$')
+        if localRec then
+            core.sendGlobalEvent('mpTestRecord', { name = localRec, noRegister = true })
+        end
+        local spellName = cmd:match('^mkspell:(.+)$')
+        if spellName then core.sendGlobalEvent('mpTestSpell', { name = spellName }) end
+        local enchName = cmd:match('^mkench:(.+)$')
+        if enchName then core.sendGlobalEvent('mpTestEnchanted', { name = enchName }) end
+        local weatherIdx = cmd:match('^weather:(%d+)$')
+        if weatherIdx then core.sendGlobalEvent('mpTestWeather', { index = tonumber(weatherIdx) }) end
+        local adminCmd = cmd:match('^admin:(.+)$')
+        if adminCmd then
+            local parts = {}
+            for word in adminCmd:gmatch('%S+') do parts[#parts + 1] = word end
+            local name = table.remove(parts, 1)
+            core.sendGlobalEvent('mpTestAdmin', { cmd = name, args = parts })
+        end
+        local guiPick = cmd:match('^guireply:(%d+)$')
+        if guiPick and guiCurrent then
+            local n = tonumber(guiPick)
+            if guiCurrent.kind == 'input' then
+                guiAnswer({ text = 'reply' .. tostring(n) })
+            elseif guiCurrent.kind == 'list' then
+                guiAnswer({ index = n, item = tostring((guiCurrent.items or {})[n + 1] or '') })
+            else
+                guiAnswer({ button = n })
+            end
+        end
         -- M6 quest-layer hooks (all resolved in the GLOBAL script).
         local questId, questStage = cmd:match('^quest:(.+):(%d+)$')
         if questId then
@@ -392,6 +517,11 @@ return {
             pendingTestEquip = { id = data.id, slot = 0, until_ = core.getRealTime() + 5 }
         end,
         -- M2 respawn: global.lua already teleported us; revive + optionally top up stats.
+        -- M7: a server/plugin dialog. One at a time — a new push replaces the old element,
+        -- and the server settles the abandoned guiId by timeout.
+        MP_Gui = function(data)
+            showGui(data)
+        end,
         MP_DoResurrect = function(data)
             mp.resurrect()
             if data and data.restoreHp then

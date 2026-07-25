@@ -133,14 +133,17 @@ end
 
 -- --- broadcast tick ----------------------------------------------------------------------
 
-local function diffSend(kind, eventName, snapFn, now)
+-- `sender` overrides the default direct send: M7 routes PlayerEquipment through the global
+-- script so player-made record ids can be mapped to their server recordNetId first (the
+-- registry is global-only — world.createRecord is).
+local function diffSend(kind, eventName, snapFn, now, sender)
     if now < nextAt[kind] then return end
     nextAt[kind] = now + INTERVALS[kind]
     local snap = snapFn()
     local fp = fingerprint(snap)
     if fp ~= last[kind] then
         last[kind] = fp
-        mp.sendEvent(eventName, snap)
+        ;(sender or mp.sendEvent)(eventName, snap)
         return snap
     end
 end
@@ -149,7 +152,9 @@ function identity.tick(now)
     if restoring then return end
 
     diffSend('appearance', 'PlayerAppearance', snapAppearance, now)
-    local eq = diffSend('equipment', 'PlayerEquipment', snapEquipment, now)
+    local eq = diffSend('equipment', 'PlayerEquipment', snapEquipment, now, function(_, snap)
+        core.sendGlobalEvent('mpEquipmentOut', snap)
+    end)
     if eq then
         local ids = {}
         for _, id in pairs(eq.slots) do ids[#ids + 1] = id end
