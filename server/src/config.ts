@@ -46,6 +46,7 @@ export interface Config {
     loginPerMinPerIp: number;
     maxHitDamage: number;
   };
+  metrics: { enabled: boolean; token: string };
   plugins: string[];
 }
 
@@ -155,6 +156,10 @@ function validate(t: Tree): Config {
       helloTimeoutMs: reqNum(t, 'limits', 'helloTimeoutMs'),
       loginPerMinPerIp: reqNum(t, 'limits', 'loginPerMinPerIp'),
       maxHitDamage: reqNum(t, 'limits', 'maxHitDamage'),
+    },
+    metrics: {
+      enabled: reqBool(t, 'metrics', 'enabled'),
+      token: reqStr(t, 'metrics', 'token'),
     },
     plugins: plugins as string[],
   };

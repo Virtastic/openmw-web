@@ -4,6 +4,8 @@
 // /healthz -> "ok", /status -> public JSON snapshot.
 
 import { createServer, type Server } from 'node:http';
+import { timingSafeEqual } from 'node:crypto';
+import { renderMetrics } from '../metrics';
 
 // M8 lobby payload: everything a launcher needs to list a server and offer join-by-URL,
 // and NOTHING more. Deliberately absent: IP addresses, account names (the `name` here is
@@ -24,7 +26,24 @@ export interface StatusSnapshot {
   version: string;
 }
 
-export function createHttpServer(status: () => StatusSnapshot): Server {
+// enabled=false or an empty token makes /metrics indistinguishable from any other unknown
+// path (404, not 401) — a prober must not learn that the endpoint exists here.
+export interface MetricsOptions {
+  enabled: boolean;
+  token: string;
+}
+
+function bearerOk(header: string | undefined, token: string): boolean {
+  if (typeof header !== 'string' || !header.startsWith('Bearer ')) return false;
+  const got = Buffer.from(header.slice(7));
+  const want = Buffer.from(token);
+  // Length is compared separately because timingSafeEqual throws on a mismatch; token
+  // length is not the secret.
+  return got.length === want.length && timingSafeEqual(got, want);
+}
+
+export function createHttpServer(status: () => StatusSnapshot, metricsOpts: MetricsOptions): Server {
+  const metricsOn = metricsOpts.enabled && metricsOpts.token !== '';
   return createServer((req, res) => {
     const url = req.url?.split('?')[0];
     if (req.method === 'GET' && url === '/healthz') {
@@ -36,6 +55,17 @@ export function createHttpServer(status: () => StatusSnapshot): Server {
       // Public by design (launchers poll it cross-origin); read-only and cheap.
       res.writeHead(200, { 'content-type': 'application/json', 'access-control-allow-origin': '*' });
       res.end(JSON.stringify(status()));
+      return;
+    }
+    if (req.method === 'GET' && url === '/metrics' && metricsOn) {
+      if (!bearerOk(req.headers.authorization, metricsOpts.token)) {
+        res.writeHead(401, { 'content-type': 'text/plain', 'www-authenticate': 'Bearer' });
+        res.end('unauthorized');
+        return;
+      }
+      // No CORS header: this is a scraper endpoint, never a browser one.
+      res.writeHead(200, { 'content-type': 'text/plain; version=0.0.4; charset=utf-8' });
+      res.end(renderMetrics());
       return;
     }
     // /ws upgrades never reach here; everything else is not ours.

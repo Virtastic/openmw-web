@@ -102,3 +102,14 @@ owners = []
 # every use is logged with actor, target and the full payload. Set false to remove the
 # capability from the server entirely.
 allowConsole = true
+
+[metrics]
+# Prometheus text-format scrape endpoint at GET /metrics. OFF by default: the numbers are
+# operational (player counts, auth failures, latency) and the endpoint is not something a
+# public listener should expose by accident.
+enabled = false
+# Required bearer token: scrapers must send `Authorization: Bearer <token>`. An empty
+# token disables the endpoint even when enabled = true — there is no unauthenticated mode.
+# While disabled the route answers 404, exactly like any other unknown path, so a prober
+# cannot tell that this server has metrics at all.
+token = ""

@@ -15,6 +15,7 @@ import { join } from 'node:path';
 import { readJson, writeJsonAtomic } from './atomicjson';
 import type { JsLike } from '../proto/lser';
 import { log } from '../log';
+import { timeFlush } from '../metrics';
 
 export type RecordKind =
   | 'spell' | 'potion' | 'enchantment' | 'armor' | 'weapon' | 'clothing' | 'book' | 'misc';
@@ -88,8 +89,9 @@ export class RecordStore {
 
   flush(): Promise<void> {
     this.write = this.write.then(() =>
-      writeJsonAtomic(this.path, { nextId: this.nextId, records: this.records } satisfies RecordsDoc)
-        .catch((err) => log('error', 'records.flush_failed', { error: String(err) })),
+      timeFlush('records', () =>
+        writeJsonAtomic(this.path, { nextId: this.nextId, records: this.records } satisfies RecordsDoc),
+      ).catch((err) => log('error', 'records.flush_failed', { error: String(err) })),
     );
     return this.write;
   }

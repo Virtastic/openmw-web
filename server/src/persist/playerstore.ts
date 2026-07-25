@@ -10,6 +10,7 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { readJson, writeJsonAtomic } from './atomicjson';
 import { log } from '../log';
+import { timeFlush } from '../metrics';
 
 export interface PlayerAppearanceDoc {
   race: string;
@@ -132,7 +133,7 @@ export class PlayerStore {
     const live = this.livePosition(key);
     if (live) doc.position = { ...live };
     try {
-      await writeJsonAtomic(this.path(key), doc);
+      await timeFlush('players', () => writeJsonAtomic(this.path(key), doc));
     } catch (err) {
       this.dirty.add(key); // retry on the next flush point
       log('error', 'players.flush_failed', { player: key, error: String(err) });

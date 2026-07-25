@@ -8,8 +8,17 @@ local json = require('scripts.mp.json')
 
 local PING_IDLE_SECONDS = 30
 
+-- Reconnect backoff. Truncated exponential with FULL jitter: delay = random(0, min(cap,
+-- base*2^n)). The jitter is not decoration — synchronized client retries against a slow or
+-- restarting backend are a documented cascading-failure mode (SRE Workbook, Pokemon GO:
+-- retry amplification produced 20x peak RPS and effectively halved GCLB capacity). Every
+-- one of our clients notices a server restart within the same second, so without jitter
+-- they would all redial in lockstep.
+local RECONNECT_BASE_SECONDS = 1
+local RECONNECT_CAP_SECONDS = 30
+
 local net = {
-    state = 'Offline', -- Offline|Connecting|HelloSent|Authing|Joined|Failed
+    state = 'Offline', -- Offline|Connecting|HelloSent|Authing|Joined|Reconnecting|Failed
     playerId = nil,
     flags = {}, -- SessionWelcome.flags (M5: pvp, difficulty)
     serverName = nil,
@@ -28,6 +37,12 @@ local authMode = 'register'
 local triedLogin = false
 local triedResume = false
 local lastSendTime = 0 -- real time; onUpdate dt pauses with the world, pings must not
+local reconnectAttempt = 0 -- reset on a successful Joined
+local reconnectAt = nil -- real time to redial at, nil = not scheduled
+-- Sticky for the whole reconnect CYCLE, not just the waiting phase. The visible state
+-- oscillates Reconnecting -> Connecting -> (closed) -> Reconnecting on every failed dial,
+-- so keying "should I retry?" off the state alone gives up after exactly one attempt.
+local reconnecting = false
 
 local function setState(s)
     if net.state == s then return end
@@ -55,6 +70,22 @@ local function buildManifest()
         manifest[i] = { name = name, size = 0, idx = i - 1 }
     end
     return manifest
+end
+
+-- Schedule the next redial. Called only for connection LOSS, never for the auth ladder:
+-- ladder retries are bounded (one attempt each) and deliberately immediate.
+local function scheduleReconnect()
+    reconnecting = true
+    mp.testSet('reconnecting', 'true')
+    reconnectAttempt = reconnectAttempt + 1
+    local ceiling = math.min(RECONNECT_CAP_SECONDS, RECONNECT_BASE_SECONDS * 2 ^ (reconnectAttempt - 1))
+    local delay = math.random() * ceiling -- full jitter across [0, ceiling)
+    reconnectAt = core.getRealTime() + delay
+    net.nextRetrySeconds = delay
+    mp.testSet('reconnectAttempt', string.format('%d', reconnectAttempt))
+    mp.testSet('nextRetrySeconds', string.format('%.2f', delay))
+    setState('Reconnecting')
+    print(string.format('[mp] connection lost — reconnecting in %.1fs (attempt %d)', delay, reconnectAttempt))
 end
 
 function net.start()
@@ -114,8 +145,25 @@ function net.onClose()
             return
         end
     end
+    -- Connection LOST after we were in the world (server restart, wifi hop, CF recycling a
+    -- long-lived socket). Previously this dead-ended at "reload the page to retry"; now we
+    -- redial ourselves, and because the resume ticket is still parked the rejoin is in place
+    -- (M8) — a blip should be invisible rather than a re-login.
+    if net.state == 'Joined' or reconnecting then
+        if net.resumeToken or (mp.getResumeToken and mp.getResumeToken() ~= '') then
+            authMode = 'resume'
+            triedResume = false
+            net.resumeToken = net.resumeToken or mp.getResumeToken()
+        else
+            authMode = 'login' -- we had an account; register would just answer AUTH_FAILED
+            triedLogin = true
+        end
+        net.lastError = nil
+        scheduleReconnect()
+        return
+    end
     if net.state ~= 'Failed' then
-        if net.state == 'Joined' or net.state == 'Offline' then
+        if net.state == 'Offline' then
             -- Clean close after joining (server restart, network drop): global.lua turns
             -- this into a "connection lost" notice via its wasJoined flag.
             setState('Offline')
@@ -170,6 +218,13 @@ dispatch.SessionWelcome = function(msg)
     mp.testSet('pvp', tostring(net.flags.pvp == true))
     mp.testSet('playerId', tostring(msg.playerId))
     send({ t = 'SessionReady' })
+    -- Back in the world: forget the backoff so the NEXT outage starts from 1s again rather
+    -- than inheriting a 30s ceiling from an earlier bad patch.
+    reconnectAttempt = 0
+    reconnectAt = nil
+    reconnecting = false
+    mp.testSet('reconnectAttempt', '0')
+    mp.testSet('reconnecting', 'false')
     setState('Joined')
 end
 
@@ -203,8 +258,21 @@ function net.onJson(str)
 end
 
 function net.tick()
+    -- NOT gated on Joined any more: the reconnect scheduler has to run precisely when we are
+    -- NOT connected. Real time throughout — onUpdate dt pauses with the world, and a paused
+    -- tab must still redial.
+    local now = core.getRealTime()
+    if reconnectAt and now >= reconnectAt then
+        reconnectAt = nil
+        if mp.connect(mp.getUrl()) then
+            setState('Connecting')
+        else
+            scheduleReconnect() -- dial refused outright; back off and try again
+        end
+        return
+    end
     if net.state ~= 'Joined' then return end
-    if core.getRealTime() - lastSendTime >= PING_IDLE_SECONDS then
+    if now - lastSendTime >= PING_IDLE_SECONDS then
         send({ t = 'SessionPing', clientTime = nowMs() })
     end
 end

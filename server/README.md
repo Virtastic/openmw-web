@@ -28,6 +28,11 @@ node dist/server.mjs [--data <dir>] [--port <n>]
 - `--port` — HTTP+WS port. Default `8080`. WS endpoint is `/ws`; `/healthz` and `/status`
   are plain HTTP on the same port.
 
+Metrics: `GET /metrics` serves the Prometheus text format, gated on
+`Authorization: Bearer <[metrics] token>`. It is off by default and answers `404` (not
+`401`) while disabled or tokenless, so the endpoint is invisible until an operator turns it
+on. `/status` is unaffected: still public, still unauthenticated.
+
 Signals: `SIGTERM`/`SIGINT` = graceful shutdown (every session gets
 `SessionDisconnect SHUTDOWN`, accounts are flushed); `SIGUSR1` = flush accounts now.
 

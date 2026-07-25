@@ -11,6 +11,7 @@
 import { join } from 'node:path';
 import { readJson, writeJsonAtomic } from './atomicjson';
 import { log } from '../log';
+import { timeFlush } from '../metrics';
 
 export interface BanEntry {
   by: string; // admin account name
@@ -84,7 +85,9 @@ export class BanStore {
 
   private save(): void {
     this.write = this.write.then(() =>
-      writeJsonAtomic(this.path, this.doc).catch((err) => log('error', 'bans.flush_failed', { error: String(err) })),
+      timeFlush('bans', () => writeJsonAtomic(this.path, this.doc)).catch((err) =>
+        log('error', 'bans.flush_failed', { error: String(err) }),
+      ),
     );
   }
 

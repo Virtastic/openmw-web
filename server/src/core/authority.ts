@@ -10,6 +10,7 @@
 // Standalone (senders injected) so the fuzz test can drive it without a live server.
 
 import type { JsLike } from '../proto/lser';
+import { metrics } from '../metrics';
 
 export type ActorSnapshot = JsLike; // { actors: [...] }, JSON-safe (never a Map)
 
@@ -77,6 +78,7 @@ export class Authority {
       const snapshot = c.lastSnapshot ?? (await this.loadOr(cellKey));
       c.holderId = playerId;
       c.epoch += 1;
+      metrics.cellAuthority.inc({ kind: 'grant' });
       this.send.grant(playerId, cellKey, c.epoch, snapshot);
       for (const other of c.order) if (other !== playerId) this.send.info(other, cellKey, playerId, c.epoch);
     } else if (c.holderId !== playerId) {
@@ -96,6 +98,7 @@ export class Authority {
       const next = c.order[0]!; // longest-present remaining
       c.holderId = next;
       c.epoch += 1;
+      metrics.cellAuthority.inc({ kind: 'handoff' });
       this.send.grant(next, cellKey, c.epoch, c.lastSnapshot ?? EMPTY_SNAPSHOT);
       // The epoch just moved: refresh every remaining non-holder.
       for (const other of c.order) if (other !== next) this.send.info(other, cellKey, next, c.epoch);
@@ -103,6 +106,7 @@ export class Authority {
       // Empty cell: fold the snapshot into the doc and go dormant (epoch retained).
       await this.send.foldOverrides(cellKey, c.lastSnapshot ?? EMPTY_SNAPSHOT);
       c.holderId = null;
+      metrics.cellAuthority.inc({ kind: 'dormant' });
     }
   }
 

@@ -31,6 +31,7 @@ import { createHttpServer } from './net/http';
 import { IpConnTracker, IpRateLimiter } from './net/ratelimit';
 import { disconnectMsg } from './proto/session';
 import { log } from './log';
+import { metrics } from './metrics';
 
 export const VERSION = '0.1.0';
 
@@ -215,7 +216,9 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     maxPlayers: config.server.maxPlayers,
     uptime: Math.round((Date.now() - startedAt) / 1000),
     version: VERSION,
-  }));
+  }), config.metrics);
+  // Derived at scrape time from the roster, so no teardown path can strand the gauge.
+  const unhookGauge = metrics.sessionsInWorld.addCollector(() => roster.inWorld().length);
 
   const ipTracker = new IpConnTracker(config.limits.maxConnsPerIp);
   const connections = new Set<Connection>();
@@ -226,12 +229,14 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     const ipBan = bans.isIpBanned(ip);
     if (ipBan) {
       log('info', 'conn.ip_banned', { ip });
+      metrics.connRefused.inc({ reason: 'ip_banned' });
       if (ws.readyState === WebSocket.OPEN) ws.send(disconnectMsg('BANNED', `address banned: ${ipBan.reason}`));
       ws.close(1008, 'BANNED');
       return;
     }
     if (!ipTracker.acquire(ip)) {
       log('info', 'conn.ip_cap_refused', { ip });
+      metrics.connRefused.inc({ reason: 'ip_cap' });
       if (ws.readyState === WebSocket.OPEN) ws.send(disconnectMsg('RATE', 'too many connections from your address'));
       ws.close(1008, 'RATE');
       return;
@@ -242,6 +247,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     });
     connections.add(conn);
     log('info', 'conn.open', { ip });
+    metrics.connOpened.inc();
   });
 
   await new Promise<void>((resolve, reject) => {
@@ -273,6 +279,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     close: async () => {
       if (closed) return;
       closed = true;
+      unhookGauge();
       moveBroadcaster.stop();
       await m7.stop();
       hooks.serverStop();

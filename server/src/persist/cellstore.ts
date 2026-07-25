@@ -10,6 +10,7 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { readJson, writeJsonAtomic } from './atomicjson';
 import { log } from '../log';
+import { timeFlush } from '../metrics';
 
 export interface PlacedObject {
   netId: number;
@@ -235,7 +236,7 @@ export class CellStore {
     const doc = this.cache.get(cellKey);
     if (!doc) return;
     try {
-      await writeJsonAtomic(this.path(cellKey), doc);
+      await timeFlush('cells', () => writeJsonAtomic(this.path(cellKey), doc));
     } catch (err) {
       this.dirty.add(cellKey);
       log('error', 'world.cell_flush_failed', { cellKey, error: String(err) });

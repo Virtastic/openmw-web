@@ -42,8 +42,12 @@ import {
   type DisconnectCode,
 } from '../proto/session';
 import { log } from '../log';
+import { metrics } from '../metrics';
 
 export type SessionState = 'CONNECTED' | 'HELLO_OK' | 'AUTHED' | 'IN_WORLD' | 'CLOSED';
+
+// omwmp_auth_total{op,...}. Kept apart from the message name so the label space is closed.
+type AuthOp = 'register' | 'login' | 'resume';
 
 // Everything a connection needs from the composed server; kept as an interface so
 // connection.ts has no import cycle with server.ts.
@@ -85,6 +89,8 @@ export class Connection implements Peer {
   private readonly msgBucket: TokenBucket;
   private readonly byteBucket: TokenBucket;
   private readonly moveBucket: TokenBucket; // movement has its own budget (PROTOCOL.md M1)
+  private readonly openedAt = Date.now(); // join-latency origin (== the conn.open log line)
+  private closeCounted = false; // exactly one omwmp_disconnects_total sample per session
 
   constructor(
     private readonly ws: WebSocket,
@@ -122,6 +128,8 @@ export class Connection implements Peer {
   disconnect(code: DisconnectCode, detail: string): void {
     if (this.state === 'CLOSED') return;
     log('info', 'conn.disconnect', { ip: this.ip, code, detail, player: this.player?.name });
+    this.closeCounted = true;
+    metrics.disconnects.inc({ code });
     this.sendText(disconnectMsg(code, detail));
     this.cleanup();
     this.ws.close(1000, code);
@@ -132,6 +140,12 @@ export class Connection implements Peer {
   private cleanup(): void {
     if (this.state === 'CLOSED') return;
     this.state = 'CLOSED';
+    // A client that just drops the socket never goes through disconnect(); without this
+    // the disconnect total would only ever see server-initiated closes.
+    if (!this.closeCounted) {
+      this.closeCounted = true;
+      metrics.disconnects.inc({ code: 'CLIENT_CLOSE' });
+    }
     clearTimeout(this.helloTimer);
     if (this.contentHeld) this.ctx.content.release();
     if (this.engineHeld) this.ctx.engine.release();
@@ -182,7 +196,13 @@ export class Connection implements Peer {
     // the movement budget (bytes still count against bytesPerSec).
     const binType = isBinary && data.byteLength >= 2 ? data.readUInt16LE(0) : -1;
     const isMove = binType === MSG_PLAYER_MOVE || binType === MSG_ACTOR_MOVE_BATCH;
-    if (!this.byteBucket.take(data.byteLength) || !(isMove ? this.moveBucket : this.msgBucket).take(1)) {
+    if (!this.byteBucket.take(data.byteLength)) {
+      metrics.rateLimited.inc({ budget: 'bytes' });
+      this.disconnect('RATE', 'byte rate limit exceeded');
+      return;
+    }
+    if (!(isMove ? this.moveBucket : this.msgBucket).take(1)) {
+      metrics.rateLimited.inc({ budget: isMove ? 'move' : 'msgs' });
       this.disconnect('RATE', isMove ? 'movement rate limit exceeded' : 'message rate limit exceeded');
       return;
     }
@@ -194,6 +214,7 @@ export class Connection implements Peer {
         this.disconnect('BAD_PROTO', err.message);
       } else {
         log('error', 'conn.internal_error', { ip: this.ip, error: String(err) });
+        metrics.protocolErrors.inc({ kind: 'internal_error' });
         this.disconnect('BAD_PROTO', 'internal error');
       }
     }
@@ -218,7 +239,7 @@ export class Connection implements Peer {
         const p = msg.t === 'SessionRegister' ? this.handleRegister(msg) : this.handleLogin(msg);
         p.catch((err) => {
           log('error', 'conn.auth_error', { ip: this.ip, error: String(err) });
-          this.disconnect('AUTH_FAILED', 'internal auth error');
+          this.authFail(msg.t === 'SessionRegister' ? 'register' : 'login', 'AUTH_FAILED', 'internal auth error');
         });
         return;
       }
@@ -228,7 +249,7 @@ export class Connection implements Peer {
         this.authing = true;
         this.handleResume(msg).catch((err) => {
           log('error', 'conn.resume_error', { ip: this.ip, error: String(err) });
-          this.disconnect('AUTH_FAILED', 'internal resume error');
+          this.authFail('resume', 'AUTH_FAILED', 'internal resume error');
         });
         return;
       case 'SessionReady':
@@ -236,6 +257,13 @@ export class Connection implements Peer {
         this.handleReady();
         return;
     }
+  }
+
+  // Every auth exit funnels through here (or the success tally in finishAuth), so
+  // sum(omwmp_auth_total) by op == attempts that got past the state machine.
+  private authFail(op: AuthOp, result: 'AUTH_FAILED' | 'BANNED' | 'RATE', detail: string): void {
+    metrics.auth.inc({ op, result });
+    this.disconnect(result, detail);
   }
 
   private requireState(want: SessionState, what: string): void {
@@ -246,10 +274,12 @@ export class Connection implements Peer {
     const envelope = unpackEnvelope(data);
     if (envelope.type !== MSG_EVENT && envelope.type !== MSG_PLAYER_MOVE && envelope.type !== MSG_ACTOR_MOVE_BATCH) {
       log('debug', 'conn.reserved_type_dropped', { ip: this.ip, type: envelope.type });
+      metrics.protocolErrors.inc({ kind: 'reserved_type' });
       return;
     }
     if (this.state !== 'IN_WORLD' || !this.player) {
       log('warn', 'conn.binary_before_in_world', { ip: this.ip, state: this.state, type: envelope.type });
+      metrics.protocolErrors.inc({ kind: 'binary_before_in_world' });
       return;
     }
     if (envelope.type === MSG_PLAYER_MOVE) {
@@ -268,6 +298,7 @@ export class Connection implements Peer {
     } catch (err) {
       // Malformed LSER: drop the frame, keep the session (rate limits bound abuse).
       log('warn', 'conn.bad_lser', { ip: this.ip, name, error: err instanceof LserError ? err.code : String(err) });
+      metrics.protocolErrors.inc({ kind: 'bad_lser' });
       return;
     }
     if (name === 'PlayerCellChange') {
@@ -291,6 +322,7 @@ export class Connection implements Peer {
     if (handleStateEvent(this.ctx.stateCtx, this.player, name, value)) return; // M2 family
     if (name !== 'ChatSend') {
       log('warn', 'conn.unknown_event_dropped', { ip: this.ip, name });
+      metrics.protocolErrors.inc({ kind: 'unknown_event' });
       return;
     }
     handleChatSend(
@@ -400,53 +432,54 @@ export class Connection implements Peer {
     this.sendText(helloOk(this.ctx.config.server.name, this.ctx.config.content.enforce));
   }
 
-  private checkAuthGate(serverPassword: string | undefined): boolean {
+  private checkAuthGate(op: AuthOp, serverPassword: string | undefined): boolean {
     if (!this.ctx.loginLimiter.allow(this.ip)) {
-      this.disconnect('RATE', 'too many auth attempts');
+      metrics.rateLimited.inc({ budget: 'login' });
+      this.authFail(op, 'RATE', 'too many auth attempts');
       return false;
     }
     const want = this.ctx.config.server.password;
     if (want !== '' && serverPassword !== want) {
-      this.disconnect('AUTH_FAILED', 'wrong server password');
+      this.authFail(op, 'AUTH_FAILED', 'wrong server password');
       return false;
     }
     return true;
   }
 
   private async handleRegister(msg: SessionRegister): Promise<void> {
-    if (!this.checkAuthGate(msg.serverPassword)) return;
+    if (!this.checkAuthGate('register', msg.serverPassword)) return;
     const cfg = this.ctx.config.login;
     if (!cfg.allowRegistration) {
-      this.disconnect('AUTH_FAILED', 'registration is disabled');
+      this.authFail('register', 'AUTH_FAILED', 'registration is disabled');
       return;
     }
     if (cfg.inviteCode !== '' && msg.inviteCode !== cfg.inviteCode) {
-      this.disconnect('AUTH_FAILED', 'invalid invite code');
+      this.authFail('register', 'AUTH_FAILED', 'invalid invite code');
       return;
     }
-    if (this.refuseIfBanned(msg.account)) return;
+    if (this.refuseIfBanned('register', msg.account)) return;
     const result = await this.ctx.accounts.register(msg.account, msg.password);
     if (result === 'badname') {
-      this.disconnect('AUTH_FAILED', 'account name must be 2-24 chars of A-Z a-z 0-9 _ - space');
+      this.authFail('register', 'AUTH_FAILED', 'account name must be 2-24 chars of A-Z a-z 0-9 _ - space');
       return;
     }
     if (result === 'exists') {
-      this.disconnect('AUTH_FAILED', 'account already exists');
+      this.authFail('register', 'AUTH_FAILED', 'account already exists');
       return;
     }
     // A register can still have a doc (account file deleted by an operator but player
     // doc kept, or supersede races); load for consistency with login.
     const doc = await this.ctx.players.get(result.name.toLowerCase());
-    this.finishAuth(result, doc);
+    this.finishAuth('register', result, doc);
   }
 
   // M8: a banned account is refused with BANNED at register, login and resume. Returns
   // true when the session has been closed.
-  private refuseIfBanned(accountName: string): boolean {
+  private refuseIfBanned(op: AuthOp, accountName: string): boolean {
     const ban = this.ctx.bans.isAccountBanned(accountName);
     if (!ban) return false;
     log('info', 'conn.banned_account', { ip: this.ip, account: accountName });
-    this.disconnect('BANNED', `account banned: ${ban.reason}`);
+    this.authFail(op, 'BANNED', `account banned: ${ban.reason}`);
     return true;
   }
 
@@ -455,22 +488,23 @@ export class Connection implements Peer {
   // unknown or expired token is AUTH_FAILED: the client falls back to a normal login.
   private async handleResume(msg: SessionResume): Promise<void> {
     if (!this.ctx.resume.enabled) {
-      this.disconnect('AUTH_FAILED', 'session resume is disabled');
+      this.authFail('resume', 'AUTH_FAILED', 'session resume is disabled');
       return;
     }
     if (!this.ctx.loginLimiter.allow(this.ip)) {
-      this.disconnect('RATE', 'too many auth attempts');
+      metrics.rateLimited.inc({ budget: 'login' });
+      this.authFail('resume', 'RATE', 'too many auth attempts');
       return;
     }
     const ticket = this.ctx.resume.claim(msg.token); // single use
     if (!ticket) {
-      this.disconnect('AUTH_FAILED', 'resume token expired or unknown');
+      this.authFail('resume', 'AUTH_FAILED', 'resume token expired or unknown');
       return;
     }
-    if (this.refuseIfBanned(ticket.accountName)) return;
+    if (this.refuseIfBanned('resume', ticket.accountName)) return;
     const account = await this.ctx.accounts.get(ticket.accountName);
     if (!account || account.banned) {
-      this.disconnect('AUTH_FAILED', 'account no longer available');
+      this.authFail('resume', 'AUTH_FAILED', 'account no longer available');
       return;
     }
     const doc = await this.ctx.players.get(ticket.accountKey);
@@ -493,8 +527,9 @@ export class Connection implements Peer {
       log('warn', 'player.resume_no_pose', {
         account: account.name, cellKey: ticket.cellKey ?? null, hasPose: !!ticket.pose,
       });
+      metrics.resumeNoPose.inc();
     }
-    this.finishAuth(account, resumeDoc, true);
+    this.finishAuth('resume', account, resumeDoc, true);
     // Put the session back where it was BEFORE Ready, so the join path re-sends the cell
     // and re-claims authority for the cell the player is standing in.
     if (this.player) {
@@ -504,30 +539,34 @@ export class Connection implements Peer {
   }
 
   private async handleLogin(msg: SessionLoginRequest): Promise<void> {
-    if (!this.checkAuthGate(msg.serverPassword)) return;
-    if (this.refuseIfBanned(msg.account)) return;
+    if (!this.checkAuthGate('login', msg.serverPassword)) return;
+    if (this.refuseIfBanned('login', msg.account)) return;
     const account = await this.ctx.accounts.verifyLogin(msg.account, msg.password);
     if (!account) {
-      this.disconnect('AUTH_FAILED', 'unknown account or wrong password');
+      this.authFail('login', 'AUTH_FAILED', 'unknown account or wrong password');
       return;
     }
-    if (account.banned || this.refuseIfBanned(account.name)) {
-      if (this.state !== 'CLOSED') this.disconnect('BANNED', 'account is banned');
+    if (account.banned || this.refuseIfBanned('login', account.name)) {
+      if (this.state !== 'CLOSED') this.authFail('login', 'BANNED', 'account is banned');
       return;
     }
     const doc = await this.ctx.players.get(account.name.toLowerCase());
-    this.finishAuth(account, doc);
+    this.finishAuth('login', account, doc);
   }
 
   // forceRecord: send the doc even without an appearance. The appearance gate below exists
   // so a FRESH player still gets chargen — but a resumed player was in-world seconds ago and
   // must never be treated as fresh: withholding the record also withholds its position, so
   // the client stays wherever its boot URL dropped it instead of returning to where it was.
-  private finishAuth(account: Account, doc?: PlayerDoc, forceRecord = false): void {
+  private finishAuth(op: AuthOp, account: Account, doc?: PlayerDoc, forceRecord = false): void {
     if (this.state !== 'HELLO_OK') return; // raced a disconnect while hashing
+    metrics.auth.inc({ op, result: 'success' });
     const accountKey = account.name.toLowerCase();
     const existing = this.ctx.roster.activeForAccount(accountKey);
-    if (existing) existing.peer.disconnect('SUPERSEDED', 'account logged in from another connection');
+    if (existing) {
+      metrics.authSuperseded.inc();
+      existing.peer.disconnect('SUPERSEDED', 'account logged in from another connection');
+    }
     this.account = account;
     this.player = this.ctx.roster.addAuthed(account.name, accountKey, account.rank, this, this.ip);
     this.state = 'AUTHED';
@@ -551,6 +590,7 @@ export class Connection implements Peer {
   private handleReady(): void {
     if (!this.player) return;
     this.state = 'IN_WORLD';
+    metrics.joinLatency.observe({}, (Date.now() - this.openedAt) / 1000);
     this.ctx.roster.joinWorld(this.player);
     syncStateOnJoin(this.ctx.stateCtx, this.player); // M2 late-joiner appearance/equipment sync
     this.ctx.quests.sendJournalSync(this.player); // M6 full journal state at join

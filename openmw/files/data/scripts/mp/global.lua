@@ -576,8 +576,14 @@ local function start()
             local detail = net.lastErrorDetail
             notice('Multiplayer: ' .. why .. (detail and detail ~= '' and (' (' .. detail .. ')') or '')
                 .. ' — reload the page to retry')
+        elseif state == 'Reconnecting' then
+            -- We redial ourselves now (backoff + jitter in net.lua), and the parked resume
+            -- ticket means a short outage rejoins in place. Tell the player to wait, not to
+            -- reload — reloading would actually cost them more.
+            notice(string.format('Multiplayer: connection lost — reconnecting in %.0fs…',
+                net.nextRetrySeconds or 0))
         elseif state == 'Offline' and wasJoined then
-            notice('Multiplayer: connection lost — reload the page to retry')
+            notice('Multiplayer: disconnected')
         end
         if state ~= 'Joined' then
             roster = {}

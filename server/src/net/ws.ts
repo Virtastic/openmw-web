@@ -6,6 +6,7 @@
 import type { Server, IncomingMessage } from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { log } from '../log';
+import { metrics } from '../metrics';
 
 // PROTOCOL.md says "omw-mp/1", but "/" is not an RFC 6455 token character: the browser
 // WebSocket constructor (and Node's undici/ws clients) throw SyntaxError before any I/O.
@@ -47,6 +48,7 @@ export function attachWss(
       const missed = missedPongs.get(ws) ?? 0;
       if (missed >= MAX_MISSED_PONGS) {
         log('info', 'ws.pong_timeout_drop', {});
+        metrics.pongTimeouts.inc();
         ws.terminate();
         continue;
       }
@@ -61,6 +63,7 @@ export function attachWss(
     // none is accepted by ws with an empty protocol — PROTOCOL.md says reject.
     if (ws.protocol !== SUBPROTOCOL && ws.protocol !== SUBPROTOCOL_LEGACY) {
       log('info', 'ws.no_subprotocol_refused', { ip: clientIp(req) });
+      metrics.connRefused.inc({ reason: 'no_subprotocol' });
       ws.close(1002, 'subprotocol required');
       return;
     }
