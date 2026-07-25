@@ -11,6 +11,7 @@ local PING_IDLE_SECONDS = 30
 local net = {
     state = 'Offline', -- Offline|Connecting|HelloSent|Authing|Joined|Failed
     playerId = nil,
+    flags = {}, -- SessionWelcome.flags (M5: pvp, difficulty)
     serverName = nil,
     motd = nil,
     sessionToken = nil,
@@ -126,6 +127,9 @@ dispatch.SessionWelcome = function(msg)
     -- M2: non-null playerRecord = stored snapshot to restore (json.null when fresh).
     net.playerRecord = (type(msg.playerRecord) == 'table' and msg.playerRecord ~= json.null)
         and msg.playerRecord or nil
+    -- M5: server rules the client must honour locally (PvP gating, difficulty display).
+    net.flags = (type(msg.flags) == 'table' and msg.flags ~= json.null) and msg.flags or {}
+    mp.testSet('pvp', tostring(net.flags.pvp == true))
     mp.testSet('playerId', tostring(msg.playerId))
     send({ t = 'SessionReady' })
     setState('Joined')

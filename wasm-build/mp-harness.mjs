@@ -55,7 +55,9 @@ async function waitHttp(url, timeoutMs, what) {
 }
 
 // --- omw-mp game server (one per scenario) ---------------------------------------------------
-async function startGameServer() {
+// `extraRules` = additional keys for the [rules] table, e.g. a scenario that needs PvP on
+// (`export const serverRules = 'pvp = true'`). Config is deep-merged over the defaults.
+async function startGameServer(extraRules = '') {
   const dist = join(ROOT, 'server', 'dist', 'server.mjs');
   if (!existsSync(dist)) {
     console.log('[harness] building server (dist/server.mjs missing)...');
@@ -68,7 +70,8 @@ async function startGameServer() {
   // Respawn coords = the ?start=Village drop point (measured; see M1/M2 scenarios).
   writeFileSync(join(dataDir, 'config.toml'),
     `[server]\nmotd = "${motd}"\n`
-    + `[rules]\nrespawnCellKey = "26,25"\nrespawnX = 216831.0\nrespawnY = 204909.0\nrespawnZ = 513.0\n`);
+    + `[rules]\nrespawnCellKey = "26,25"\nrespawnX = 216831.0\nrespawnY = 204909.0\nrespawnZ = 513.0\n`
+    + (extraRules ? extraRules + '\n' : ''));
   const port = await freePort();
   const proc = spawn(process.execPath, [dist, '--data', dataDir, '--port', String(port)], {
     cwd: join(ROOT, 'server'), stdio: ['ignore', 'pipe', 'pipe'],
@@ -119,7 +122,15 @@ async function launchClient(name, mpPort, extraParams = '', opts = {}) {
   // opts.noAuto: skip the harness auto-login (&mpauto=1) so a scenario can supply its own
   // &name=/&pass= via extraParams (e.g. deliberately wrong credentials).
   const auth = opts.noAuto ? '' : `&mpauto=1&mpuser=${encodeURIComponent(name)}`;
-  const url = `http://127.0.0.1:${PLAY_PORT}/index.html?nomw&skipintro=1&start=Village`
+  // opts.retail: boot REAL Morrowind data instead of the baked example suite. Required by
+  // the M4 actor scenarios — the clean Example Suite ships no NPCs at all (verified: the
+  // only active actors are the player and MP puppets), so shared-NPC authority can only be
+  // exercised against content that actually places actors. ?stream lazy-mounts the BSAs
+  // (range reads) so the boot only pulls the bytes it touches.
+  const world = opts.retail
+    ? `?stream&novid&skipintro=1&start=${encodeURIComponent(opts.startCell ?? 'Seyda Neen')}`
+    : `?nomw&skipintro=1&start=${encodeURIComponent(opts.startCell ?? 'Village')}`;
+  const url = `http://127.0.0.1:${PLAY_PORT}/index.html${world}`
     + `&mp=${encodeURIComponent(mpUrl)}${auth}`
     + extraParams;
   const chrome = spawn(CHROME, [
@@ -211,7 +222,8 @@ async function launchClient(name, mpPort, extraParams = '', opts = {}) {
     // Error-path scenarios pass their own terminal condition (e.g. state === "Failed").
     const waitExpr = opts.waitExpr ?? '(window.__omwMP||{}).state === "Joined"';
     const waitWhat = opts.waitWhat ?? '__omwMP.state === Joined';
-    await handle.waitFor(waitExpr, JOIN_TIMEOUT_MS, waitWhat);
+    // Retail boots stream ~hundreds of MB of game data before the world exists.
+    await handle.waitFor(waitExpr, opts.joinTimeoutMs ?? JOIN_TIMEOUT_MS, waitWhat);
     console.log(`[harness] ${name}: reached [${waitWhat}] in ${((Date.now() - boot0) / 1000).toFixed(1)}s`);
     return handle;
   } catch (e) {
@@ -231,12 +243,14 @@ const results = [];
 for (const file of files) {
   const t0 = Date.now();
   const clients = []; // everything launched by this scenario, closed no matter what
+  let torndown = false; // a client that finishes booting AFTER teardown must not leak
   let server = null;
   let err = null;
   console.log(`\n=== scenario ${file} ===`);
   try {
-    server = await startGameServer();
-    const { default: run } = await import(pathToFileURL(join(SCENARIO_DIR, file)));
+    // Import first: a scenario may declare server rules it needs (e.g. pvp = true).
+    const { default: run, serverRules } = await import(pathToFileURL(join(SCENARIO_DIR, file)));
+    server = await startGameServer(serverRules);
     await run({
       runId: RUN_ID,
       motd: server.motd,
@@ -246,6 +260,10 @@ for (const file of files) {
       log: (...a) => console.log('[' + file + ']', ...a),
       launchClient: async (name, extraParams, opts) => {
         const c = await launchClient(`${name}-${RUN_ID}`, server.port, extraParams, opts);
+        // Promise.all([launchClient, launchClient]) rejects as soon as ONE client fails,
+        // while its sibling is still booting. That sibling used to resolve after teardown
+        // and leak a headless Chrome (each retail client pins ~1.5 GB) — close it here.
+        if (torndown) { c.close(); return c; }
         clients.push(c);
         return c;
       },
@@ -253,6 +271,7 @@ for (const file of files) {
   } catch (e) {
     err = e;
   } finally {
+    torndown = true;
     for (const c of clients) c.close();
     server?.stop();
   }

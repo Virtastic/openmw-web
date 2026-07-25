@@ -24,11 +24,14 @@ local deps = nil -- {playerFn, ownCellKeyFn, ownIdFn, isMpPuppetFn}
 -- practice, but the server addresses by cellKey, so key by it.
 local held = {} -- cellKey -> { epoch, actors = { refKey -> tracked } }
 local holderOfCell = {} -- cellKey -> holderId (non-holder knowledge, from ActorAuthorityInfo)
+local infoEpoch = {} -- cellKey -> epoch learned as a NON-holder (M5 actor targeting)
 local puppetActors = {} -- refKey -> { obj, cellKey } (NPCs we puppet as a non-holder)
 
 local lastBroadcast = 0
 local lastSnapshot = 0
 local lastMirror = 0
+local watchKillRecord = nil -- record whose shared kill tally the scenarios watch
+local batchesIn = 0 -- diagnostic: ActorMoveBatch frames applied as a non-holder
 
 -- --------------------------------------------------------------- ref helpers
 
@@ -236,6 +239,10 @@ end
 actors.handlers.MP_ActorAuthorityInfo = function(data)
     if data.cellKey then
         holderOfCell[data.cellKey] = data.holderId
+        -- M5 needs the LIVE epoch to address actor targets, and a non-holder only ever sees
+        -- Info. Read it defensively: older servers omit it (combat on non-held cells is then
+        -- undeliverable — see the M5 note in the report).
+        if data.epoch then infoEpoch[data.cellKey] = data.epoch end
         -- A cell we're in already has a holder: puppet its actors.
         if data.holderId ~= deps.ownIdFn() then
             attachActorPuppets(data.cellKey)
@@ -247,6 +254,7 @@ end
 -- flags,animVel}; route each to its ref-keyed puppet.
 actors.handlers.MP_ActorMoveBatch = function(batch)
     local now = core.getRealTime()
+    batchesIn = batchesIn + 1
     for _, e in ipairs(batch) do
         local obj = e.ref and e.ref:isValid() and e.ref or nil
         if obj and not types.Player.objectIsInstance(obj) then
@@ -282,7 +290,21 @@ end
 actors.handlers.MP_WorldKillCount = function(data)
     if data.refId and data.count then
         mp.setDeadCount(data.refId, data.count)
+        watchKillRecord = data.refId -- mirror this record's tally for the scenarios
     end
+end
+
+-- Test hook (holder side): damage a specific cell NPC to death so the death edge, the
+-- ActorDeath relay and the shared kill tally can be asserted end to end.
+function actors.killActorByRecord(recordId)
+    watchKillRecord = recordId
+    for _, obj in ipairs(cellActors(deps.ownCellKeyFn())) do
+        if obj.recordId == recordId then
+            pcall(function() types.Actor.stats.dynamic.health(obj).current = 0 end)
+            return true
+        end
+    end
+    return false
 end
 
 -- Snap service for actor puppets that diverged (routed here from global.lua's mpSnapRequest).
@@ -296,6 +318,22 @@ end
 
 function actors.isPuppetedActor(obj)
     return puppetActors[refKeyOf(obj)] ~= nil
+end
+
+-- M5: the live epoch for a cell — ours when we hold it, otherwise whatever the server told
+-- us via ActorAuthorityInfo. nil means "no legal value to send" (the server would drop it).
+function actors.epochOf(cellKey)
+    local mine = held[cellKey]
+    if mine then return mine.epoch end
+    return infoEpoch[cellKey]
+end
+
+function actors.isHolderOf(cellKey)
+    return cellKey ~= nil and held[cellKey] ~= nil
+end
+
+function actors.cellKeyOfObj(obj)
+    return cellKeyOf(obj.cell)
 end
 
 -- --------------------------------------------------------------- tick
@@ -318,23 +356,46 @@ function actors.tick(now)
     if now - lastMirror >= 0.5 then
         lastMirror = now
         local ownCell = deps.ownCellKeyFn()
-        mp.testSet('authorityHolder', tostring(holderOfCell[ownCell] or 'none'))
+        -- Ids arrive over LSER as doubles: format as integers so "1" never reads as "1.0".
+        local holderId = holderOfCell[ownCell]
+        mp.testSet('authorityHolder', holderId and string.format('%.0f', holderId) or 'none')
         mp.testSet('isHolder', tostring(held[ownCell] ~= nil))
         mp.testSet('actorCount', tostring(#cellActors(ownCell)))
-        -- First live NPC's position + record + kill count (scenario probes).
-        local npc = cellActors(ownCell)[1]
-        if npc then
-            local p = npc.position
-            mp.testSet('npcPos', json.encode({ x = p.x, y = p.y, z = p.z }))
-            mp.testSet('npcRecord', npc.recordId)
-            mp.testSet('npcDead', tostring(types.Actor.isDead(npc)))
-            mp.testSet('killCount', tostring(mp.getDeadCount(npc.recordId)))
+        -- Diagnostic: unfiltered active-actor census (distinguishes "filter too strict" from
+        -- "content ships no actors"; the clean Example Suite ships none).
+        local raw, census = 0, {}
+        for _, obj in ipairs(world.activeActors) do
+            raw = raw + 1
+            local tag = types.Player.objectIsInstance(obj) and 'player'
+                or (deps.isMpPuppetFn(obj) and 'mppuppet' or 'npc')
+            census[#census + 1] = tag .. '@' .. tostring(cellKeyOf(obj.cell))
+        end
+        mp.testSet('activeActorsRaw', tostring(raw))
+        mp.testSet('actorCensus', json.encode(census))
+        local puppeted = 0
+        for _ in pairs(puppetActors) do puppeted = puppeted + 1 end
+        mp.testSet('puppetedActors', tostring(puppeted))
+        mp.testSet('actorBatchesIn', tostring(batchesIn))
+        -- Deterministic cross-client actor probe: world.activeActors is in engine-internal
+        -- order, which differs per client, so key by recordId and sort. Scenarios compare
+        -- the SAME record on both clients.
+        local probe = {}
+        for _, obj in ipairs(cellActors(ownCell)) do
+            local rec = obj.recordId
+            if not probe[rec] then
+                local p = obj.position
+                probe[rec] = { x = p.x, y = p.y, z = p.z, dead = types.Actor.isDead(obj) }
+            end
+        end
+        mp.testSet('actorProbe', json.encode(probe))
+        if watchKillRecord then
+            mp.testSet('killCountOf',
+                watchKillRecord .. '=' .. string.format('%.0f', mp.getDeadCount(watchKillRecord)))
         end
     end
 end
 
 function actors.reset()
-    for cellKey in pairs(held) do end
     -- Detach all puppets on session loss.
     for key, p in pairs(puppetActors) do
         if p.obj:isValid() then
@@ -344,6 +405,7 @@ function actors.reset()
     end
     held = {}
     holderOfCell = {}
+    infoEpoch = {}
     puppetActors = {}
 end
 

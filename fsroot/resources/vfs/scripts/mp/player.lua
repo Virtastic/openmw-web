@@ -300,6 +300,8 @@ local function pollHarness()
         if takeId then
             core.sendGlobalEvent('mpChestTake', { id = takeId, netId = tonumber(takeChestNet) })
         end
+        local killNpc = cmd:match('^killnpc:(.+)$')
+        if killNpc then core.sendGlobalEvent('mpKillNpc', { id = killNpc }) end
         if cmd == 'door:toggle' then core.sendGlobalEvent('mpDoorToggle', {}) end
         local lockLevel = cmd:match('^door:lock:(%d+)$')
         if lockLevel then core.sendGlobalEvent('mpDoorLock', { level = tonumber(lockLevel) }) end

@@ -715,6 +715,13 @@ local eventHandlers = {
         end
     end,
 
+    -- M4 test hook: kill a specific cell NPC (holder side drives the death edge).
+    mpKillNpc = function(data)
+        if type(data.id) == 'string' and not actors.killActorByRecord(data.id) then
+            print('[mp] mpKillNpc: no actor with record ' .. data.id .. ' in cell')
+        end
+    end,
+
     -- Toggle/lock/unlock the nearest content-file door (the real ref path).
     mpDoorToggle = function()
         local door = nearestDoor()
