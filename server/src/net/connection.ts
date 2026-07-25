@@ -476,7 +476,15 @@ export class Connection implements Peer {
     const doc = await this.ctx.players.get(ticket.accountKey);
     this.resumed = ticket;
     log('info', 'player.resume', { account: account.name, ip: this.ip, cellKey: ticket.cellKey ?? null });
-    this.finishAuth(account, doc);
+    // The Welcome's playerRecord is what the CLIENT teleports to, and the doc's position is
+    // only written on cell change / level-up / logout / sweep — so on a mid-cell reconnect it
+    // is stale, and for a player who had died it is the respawn point. Resuming off it
+    // rubber-banded players backwards on every reconnect (measured: 302.9 units, landing
+    // exactly on respawnY). The ticket's parked pose is the live one, so prefer it.
+    const resumeDoc = doc && ticket.cellKey && ticket.pose
+      ? { ...doc, position: { cellKey: ticket.cellKey, x: ticket.pose.x, y: ticket.pose.y, z: ticket.pose.z } }
+      : doc;
+    this.finishAuth(account, resumeDoc);
     // Put the session back where it was BEFORE Ready, so the join path re-sends the cell
     // and re-claims authority for the cell the player is standing in.
     if (this.player) {

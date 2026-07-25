@@ -54,7 +54,11 @@ export default async function run(ctx) {
   const poseAfter = await poseOf(a);
   const drift = dist(poseBefore, poseAfter);
   ctx.log(`pose ${JSON.stringify(poseBefore)} -> ${JSON.stringify(poseAfter)} (drift ${drift.toFixed(1)} units)`);
-  assert.ok(drift < 400, `resumed player did not land where it left off (${drift.toFixed(1)} units)`);
+  // Tight on purpose. At 400 this passed while the server was resuming players off the
+  // PlayerDoc's last-flushed position instead of the ticket's live pose — a 302.9-unit
+  // backwards rubber-band on every reconnect, and a teleport to the respawn point for anyone
+  // who had died. A loose threshold hid a real bug; "landed where I left off" means metres.
+  assert.ok(drift < 40, `resumed player did not land where it left off (${drift.toFixed(1)} units)`);
 
   // Superset claim (§M8): everything a fresh join delivers is delivered again.
   await a.waitFor('(window.__omwMP||{}).journalSynced === "true"', STEP_TIMEOUT, 'JournalSync re-sent (M6)');
