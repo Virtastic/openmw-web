@@ -71,6 +71,7 @@ async function freePort(): Promise<number> {
 interface Bot {
   name: string;
   client: TestClient;
+  playerId: number;
   cell: number;
   x: number;
   y: number;
@@ -111,10 +112,10 @@ async function main(): Promise<void> {
     for (let i = 0; i < BOTS; i++) {
       const name = `soak${i}`;
       const client = await TestClient.connect(port);
-      await client.joinAsNew(name);
+      const { playerId } = await client.joinAsNew(name);
       const cell = i % CELLS;
       client.sendCellChange(`${cell},0`, cell * 8192, 0, 0);
-      bots.push({ name, client, cell, x: cell * 8192, y: 0, chatsSeen: 0, disconnected: false });
+      bots.push({ name, client, playerId, cell, x: cell * 8192, y: 0, chatsSeen: 0, disconnected: false });
       client.closed.then(() => {
         const b = bots.find((bb) => bb.name === name);
         if (b) b.disconnected = true;
@@ -129,6 +130,8 @@ async function main(): Promise<void> {
     let tick = 0;
     let lastSample = 0;
     let chatsSent = 0;
+    let journalStage = 0;
+    let recordsRequested = 0;
 
     // --- drive traffic -----------------------------------------------------------------
     while (Date.now() < endAt) {
@@ -171,6 +174,49 @@ async function main(): Promise<void> {
             x: b.x, y: b.y, z: 512, rotZ: 0, count: 1,
           });
         }
+      }
+
+      // M5-M7 families. Stability under load is not enough for these: they carry
+      // ARBITRATED state (journal is monotonic-max, records get server-issued ids), so the
+      // soak also checks those invariants hold while everything else is thrashing.
+      if (tick % (MOVE_HZ * 9) === 0) {
+        // Combat: hit a random OTHER player. With [rules] pvp default false these are
+        // dropped by the pvp plugin — which is itself worth hammering (the drop path runs
+        // on every hit), and the victim must never take damage state from it.
+        const atk = bots[tick % bots.length];
+        const vic = bots[(tick + 3) % bots.length];
+        if (!atk.disconnected && !vic.disconnected && atk !== vic && atk.cell === vic.cell) {
+          atk.client.sendEvent('CombatHit', {
+            target: { playerId: vic.playerId },
+            damage: { health: 5 }, strength: 1, sourceType: 'melee', successful: true,
+          });
+        }
+      }
+      if (tick % (MOVE_HZ * 13) === 0) {
+        // Journal: every bot pushes the SAME quest, racing the monotonic-max arbitration.
+        journalStage++;
+        const b = bots[(tick * 7) % bots.length];
+        if (!b.disconnected) {
+          b.client.sendEvent('JournalEntry', { questId: 'soak_quest', index: journalStage });
+          // Also push a deliberately STALE index: it must never move the shared stage back.
+          b.client.sendEvent('JournalEntry', { questId: 'soak_quest', index: 1 });
+        }
+      }
+      if (tick % (MOVE_HZ * 17) === 0) {
+        const b = bots[(tick * 11) % bots.length];
+        if (!b.disconnected) {
+          recordsRequested++;
+          b.client.sendEvent('RecordCreate', {
+            tempId: recordsRequested,
+            kind: 'potion',
+            data: { name: `soak potion ${recordsRequested}`, weight: 0.5 },
+          });
+        }
+      }
+      if (tick % (MOVE_HZ * 23) === 0) {
+        // Resting advances the clock for EVERYONE — contended by design here.
+        const b = bots[(tick * 5) % bots.length];
+        if (!b.disconnected) b.client.sendEvent('WorldTimeRequest', { advanceHours: 1, reason: 'rest' });
       }
 
       // --- metrics ---------------------------------------------------------------------
@@ -230,6 +276,39 @@ async function main(): Promise<void> {
       failures.push(`/status reports ${status.players.length} players but ${alive} bots are alive (session leak)`);
     }
     console.log(`[soak] chats sent=${chatsSent}, server reports ${status.players.length} players`);
+
+    // --- correctness invariants, checked AFTER sustained concurrent load ----------------
+    const probe = bots.find((b) => !b.disconnected);
+    if (probe) {
+      // Journal: interleaved advances and deliberately stale (index=1) writes from many
+      // players must leave the shared stage at the max ever sent, never rewound.
+      const seenStages = probe.client.inbox.events
+        .filter((e) => e.name === 'JournalEntry')
+        .map((e) => Number((e.value as { index?: number }).index ?? 0));
+      if (seenStages.length) {
+        const relayedMax = Math.max(...seenStages);
+        let prev = 0;
+        for (const s of seenStages) {
+          if (s < prev) failures.push(`journal stage went BACKWARDS in the relay stream: ${prev} -> ${s}`);
+          prev = Math.max(prev, s);
+        }
+        if (relayedMax > journalStage) failures.push(`journal relayed stage ${relayedMax} > max sent ${journalStage}`);
+        console.log(`[soak] journal: ${seenStages.length} relays, max stage ${relayedMax}/${journalStage}, monotonic OK`);
+      }
+      // Records: every accepted RecordCreate must have produced exactly one unique id.
+      const ids = probe.client.inbox.events
+        .filter((e) => e.name === 'RecordCreateAck' || e.name === 'RecordsSync')
+        .flatMap((e) => {
+          const v = e.value as { recordNetId?: string; records?: { recordNetId?: string }[] };
+          return v.recordNetId ? [v.recordNetId] : (v.records ?? []).map((r) => r.recordNetId ?? '');
+        })
+        .filter(Boolean);
+      if (new Set(ids).size !== ids.length) failures.push(`duplicate recordNetId issued under load (${ids.length} ids, ${new Set(ids).size} unique)`);
+      // PvP off (default): no player-targeted hit may ever be delivered.
+      const leakedHits = bots.filter((b) => b.client.inbox.events.some((e) => e.name === 'CombatHit'));
+      if (leakedHits.length) failures.push(`pvp is off but ${leakedHits.length} bot(s) received a CombatHit`);
+      console.log(`[soak] records: ${new Set(ids).size} unique ids; pvp-off leak check clean`);
+    }
   } finally {
     for (const b of bots) { try { b.client.ws.close(); } catch {} }
     await sleep(500);
