@@ -85,10 +85,40 @@ async function eraseReports(dataDir: string, key: string): Promise<number> {
   return removed;
 }
 
+// Phase B: an (iss,sub) pair identifies a person AT A PROVIDER, so it is personal data and
+// goes with the account. Leaving it behind would also mean the next SSO login silently
+// re-created the erased account.
+async function eraseIdentities(dataDir: string, key: string): Promise<number> {
+  const dir = join(dataDir, 'identities');
+  let names: string[];
+  try {
+    names = await readdir(dir);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return 0;
+    throw err;
+  }
+  let removed = 0;
+  for (const name of names.filter((n) => n.endsWith('.json'))) {
+    const path = join(dir, name);
+    let doc: { accountKey?: unknown };
+    try {
+      doc = JSON.parse(await readFile(path, 'utf8')) as typeof doc;
+    } catch {
+      continue; // unreadable: leave it for the operator rather than deleting blind
+    }
+    if (doc.accountKey === key) {
+      await rm(path, { force: true });
+      removed++;
+    }
+  }
+  return removed;
+}
+
 export interface EraseReport {
   account: boolean;
   player: boolean;
   bans: boolean;
+  identities: number; // Phase B: linked SSO identities removed
   chatLines: number; // A4: lines removed from logs/chat-*.jsonl
   reports: number; // A4: report docs removed (filed BY or ABOUT the account)
 }
@@ -109,6 +139,7 @@ export async function deleteAccount(dataDir: string, name: string): Promise<Eras
     account: await unlinkIfPresent(join(dataDir, 'accounts', `${key}.json`)),
     player: await unlinkIfPresent(join(dataDir, 'players', `${key}.json`)),
     bans: false,
+    identities: await eraseIdentities(dataDir, key),
     chatLines: await eraseChatLines(dataDir, key),
     reports: await eraseReports(dataDir, key),
   };

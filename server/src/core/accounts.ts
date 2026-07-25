@@ -12,7 +12,9 @@ import { log } from '../log';
 
 export interface Account {
   name: string; // display casing as registered
-  pwHash: string;
+  // Phase B: optional. An SSO-only account has no password at all — not an empty hash, not
+  // a hash of a random string: absent. verifyLogin() refuses it cleanly.
+  pwHash?: string;
   createdAt: string;
   lastSeenAt: string;
   rank: number; // 0 = player, >=1 = admin (seeded by editing the JSON by hand in M0)
@@ -70,10 +72,25 @@ export class AccountStore {
     return account;
   }
 
-  // null on unknown account or wrong password (indistinguishable to the caller by design).
+  // Phase B: an account created through SSO, with no password. The caller has ALREADY
+  // checked that the name is free and picked one that cannot collide.
+  async createSso(name: string): Promise<Account | 'exists' | 'badname'> {
+    if (!validAccountName(name)) return 'badname';
+    if (await this.get(name)) return 'exists';
+    const now = new Date().toISOString();
+    const account: Account = { name, createdAt: now, lastSeenAt: now, rank: 0 };
+    const key = name.toLowerCase();
+    this.cache.set(key, account);
+    await writeJsonAtomic(this.path(key), account);
+    return account;
+  }
+
+  // null on unknown account, an SSO-only account, or a wrong password (indistinguishable
+  // to the caller by design). The pwHash guard is what keeps a password attempt against an
+  // SSO-only account a clean refusal instead of an argon2 throw.
   async verifyLogin(name: string, password: string): Promise<Account | null> {
     const account = await this.get(name);
-    if (!account) return null;
+    if (!account || !account.pwHash) return null;
     return (await verify(account.pwHash, password)) ? account : null;
   }
 

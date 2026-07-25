@@ -292,7 +292,7 @@ test('erasure removes chat lines and reports naming the account', async (t) => {
 
   // Idempotent.
   const again = await deleteAccount(dataDir, 'Erasable');
-  assert.deepEqual(again, { account: false, player: false, bans: false, chatLines: 0, reports: 0 });
+  assert.deepEqual(again, { account: false, player: false, bans: false, identities: 0, chatLines: 0, reports: 0 });
 });
 
 test('an unreadable report does not hide the readable ones', async (t) => {

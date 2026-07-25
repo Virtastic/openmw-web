@@ -125,3 +125,61 @@ enabled = false
 # While disabled the route answers 404, exactly like any other unknown path, so a prober
 # cannot tell that this server has metrics at all.
 token = ""
+
+[auth]
+# Phase B: single sign-on ALONGSIDE the account+password path, never instead of it.
+# Flow: Authorization Code + PKCE (S256), with the code->token exchange done HERE, on the
+# server, holding the client secret (a Backend-For-Frontend). The provider's access/refresh
+# /ID tokens never reach the browser and never enter the WebSocket protocol; the browser
+# only ever receives a one-time, 60-second login ticket. Implicit flow is not implemented
+# and will not be (RFC 9700 s2.1.2 deprecates it).
+# Accounts are keyed on (issuer, subject). NEVER on email: email is mutable and providers
+# re-assign it, so keying on it would hand one player's character to another. No email
+# scope is requested at all.
+allowPasswordLogin = true
+# Where the callback sends the browser back to — your game page. The result arrives in the
+# URL FRAGMENT (#mpticket=..., #mperror=..., #mplink=...) so it is never logged, cached or
+# sent in a Referer. Required as soon as any provider below is enabled. A `return`
+# parameter from the caller is ignored: this server is not an open redirector.
+returnUrl = ""
+
+# Per provider: register `redirectUri` with the provider EXACTLY as written here.
+#   discord   -> https://discord.com/developers/applications  (OAuth2 -> Redirects)
+#   google    -> https://console.cloud.google.com/apis/credentials  (OAuth client, type "Web")
+#   microsoft -> https://entra.microsoft.com  (App registrations -> Authentication -> Web)
+#   custom    -> any OIDC issuer (Keycloak, Authentik, Auth0...); `issuer` is REQUIRED and
+#                must serve /.well-known/openid-configuration.
+# `issuer` overrides the well-known issuer (leave "" for the three named providers).
+# `scope` overrides the default ("identify" for Discord, "openid profile" otherwise).
+
+[auth.discord]
+enabled = false
+clientId = ""
+clientSecret = ""
+redirectUri = ""
+issuer = ""
+scope = ""
+
+[auth.google]
+enabled = false
+clientId = ""
+clientSecret = ""
+redirectUri = ""
+issuer = ""
+scope = ""
+
+[auth.microsoft]
+enabled = false
+clientId = ""
+clientSecret = ""
+redirectUri = ""
+issuer = ""
+scope = ""
+
+[auth.custom]
+enabled = false
+clientId = ""
+clientSecret = ""
+redirectUri = ""
+issuer = ""
+scope = ""

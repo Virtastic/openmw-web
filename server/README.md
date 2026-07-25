@@ -48,6 +48,8 @@ Signals: `SIGTERM`/`SIGINT` = graceful shutdown (every session gets
                          # filename = encodeURIComponent(cellKey)
   logs/chat-YYYY-MM-DD.jsonl  # A4 durable chat log, one JSON object per line, rotated daily
   reports/<ts>-<reporter>.json # A4 /report inbox (reporter, target + cell, reason, context)
+  identities/<sha256>.json    # Phase B SSO: (issuer, subject) -> account, one file per link
+
 ```
 
 Player docs are write-behind: flushed on cell change, level-up, equipment change (10 s
@@ -105,6 +107,45 @@ Content policy in M0 (`names`): the server has no game data, so the **first** pl
 manifest becomes the session's canonical manifest (exact name+size+order); it is dropped
 once no session that passed the check remains connected. The engine-hash check uses the
 same adopt-first rule.
+
+## Single sign-on (optional)
+
+SSO runs **alongside** account+password — a self-hoster who ignores `[auth]` sees no
+change (`allowPasswordLogin = true` by default). Flow: OAuth 2.0 **Authorization Code +
+PKCE (S256)**, with the code→token exchange done **on this server** holding the client
+secret (a Backend-For-Frontend). The provider's access/refresh/ID tokens never reach the
+browser; all it ever gets is a one-time, 60-second login ticket. Accounts are keyed on
+`(issuer, subject)`, never on email — email is mutable and providers re-assign it — and no
+email scope is requested.
+
+To enable a provider, register an application with it, set the redirect URI to
+`https://<your-host>/auth/<provider>/callback` **byte for byte**, and fill in:
+
+```toml
+[auth]
+allowPasswordLogin = true
+returnUrl = "https://<your-game-page>/"   # required as soon as any provider is enabled
+
+[auth.google]
+enabled = true
+clientId = "…apps.googleusercontent.com"
+clientSecret = "…"                         # Google web clients always have one
+redirectUri = "https://<your-host>/auth/google/callback"
+```
+
+| Provider | Where to register | Notes |
+| --- | --- | --- |
+| `discord` | discord.com/developers/applications → OAuth2 → Redirects | OAuth 2.0, **not** OIDC: identity comes from `GET /users/@me` over the access token, scope `identify` |
+| `google` | console.cloud.google.com/apis/credentials → OAuth client, type **Web** | OIDC discovery; scope `openid profile` |
+| `microsoft` | entra.microsoft.com → App registrations → Authentication → **Web** | OIDC discovery via the `/common` endpoint; the per-tenant issuer is validated against the templated one |
+| `custom` | any OIDC issuer (Keycloak, Authentik, Auth0…) | `issuer` is **required** and must serve `/.well-known/openid-configuration` |
+
+The callback sends the browser back to `returnUrl` with the result in the URL **fragment**
+(`#mpticket=…`, `#mperror=<code>`, `#mplink=<provider>`) — a fragment is never logged,
+cached, or sent in a `Referer`. A `return` parameter from the caller is ignored on purpose:
+this server is not an open redirector. Players can add further providers to one account via
+`/auth/link/:provider?session=<sessionToken>`; an identity already owned by someone else is
+refused. Linked identities are **personal data** — see [PRIVACY.md](PRIVACY.md).
 
 ## Trust model (read this before opening the port)
 

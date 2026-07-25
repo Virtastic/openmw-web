@@ -19,6 +19,7 @@ Everything lives under the data directory (`--data`, `/data` in the container).
 | `createdAt` / `lastSeenAt` timestamps, rank (0-3), banned flag | `accounts/<name>.json` | moderation and operator visibility |
 | Character document: appearance, equipment, inventory, stats, spells, position, journal, factions, bounty | `players/<name>.json` | the character has to exist between sessions |
 | Ban entries: banned account name, or **IP address** for an IP ban, plus who banned, when, and the reason | `bans.json` | enforcing bans across reconnects |
+| **SSO identity**: the provider's issuer URL and your opaque subject id at that provider (e.g. a Discord/Google/Microsoft user id), plus when it was linked | `identities/<sha256>.json` | recognising you on your next single sign-on. **No email address is stored, and none is requested** — the server asks only for `openid profile` (Discord: `identify`) and keys accounts on `(issuer, subject)`, because email is mutable and providers re-assign it. Provider access/refresh/ID tokens are never stored: the code exchange happens server-side and the tokens are discarded once the identity is read |
 | World state: cell deltas, containers, custom records, clock, weather | `world/` | shared world; keyed to cells and objects, **not** to people. The only per-player trace is a transient session `playerId` on objects a player spawned, which is a per-session number and not an identifier |
 | Chat log: every chat line and every slash command a player typed, with timestamp, account key, display name, session playerId and channel | `logs/chat-YYYY-MM-DD.jsonl` | moderation evidence. Public play needs an answer to "what was actually said". Off with `[moderation] chatLog = false` |
 | Reports: who reported whom, the reason text, the reported player's cell at the time, and the last `[moderation] contextLines` chat lines (which quote **other** players) | `reports/<ts>-<reporter>.json` | acting on a `/report` requires the surrounding conversation; a reason alone is not actionable |
@@ -77,7 +78,10 @@ node dist/server.mjs --data /data --delete-account "Player Name"
 
 This removes:
 
-- `accounts/<name>.json` (name, password hash, timestamps, rank);
+- `accounts/<name>.json` (name, password hash if any, timestamps, rank);
+- every `identities/<sha256>.json` linking that account to a login provider — an
+  (issuer, subject) pair identifies a person *at that provider*, so it goes with the
+  account. Removing it also stops the next SSO login from silently re-creating them;
 - `players/<name>.json` (the whole character);
 - any ban entry naming that account — a ban cannot outlive the data it names, so re-ban by
   IP first if you need the block to stick;

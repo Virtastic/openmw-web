@@ -44,6 +44,14 @@ export interface SessionResume {
   t: 'SessionResume';
   token: string;
 }
+// Phase B SSO: the browser completed an OAuth round trip against /auth/:provider/* and
+// came back holding a one-time ticket. Sent in HELLO_OK exactly where a login goes; it
+// carries no provider token and no password. Single use, <=60 s.
+export interface SessionLoginTicket {
+  t: 'SessionLoginTicket';
+  ticket: string;
+  serverPassword?: string;
+}
 export interface SessionReady {
   t: 'SessionReady';
 }
@@ -55,6 +63,7 @@ export type ClientSessionMsg =
   | SessionHello
   | SessionRegister
   | SessionLoginRequest
+  | SessionLoginTicket
   | SessionResume
   | SessionReady
   | SessionPing;
@@ -141,6 +150,12 @@ export function parseSessionMessage(text: string): ClientSessionMsg | null {
         t,
         account: str(o, 'account'),
         password: str(o, 'password'),
+        ...(typeof o['serverPassword'] === 'string' ? { serverPassword: o['serverPassword'] } : {}),
+      };
+    case 'SessionLoginTicket':
+      return {
+        t,
+        ticket: str(o, 'ticket'),
         ...(typeof o['serverPassword'] === 'string' ? { serverPassword: o['serverPassword'] } : {}),
       };
     case 'SessionResume':

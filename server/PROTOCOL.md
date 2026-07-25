@@ -94,6 +94,8 @@ Client → server:
 - `{"t":"SessionLoginRequest", "account":"name", "password":"…", "serverPassword":"<opt>"}`
 - `{"t":"SessionResume", "token":"<hex>"}` — M8 rejoin-in-place; valid in `HELLO_OK`
   instead of a Register/Login (see §Ops).
+- `{"t":"SessionLoginTicket", "ticket":"<base64url>", "serverPassword":"<opt>"}` — Phase B
+  SSO; valid in `HELLO_OK` instead of a Register/Login (see §Single sign-on).
 - `{"t":"SessionReady"}` — after the client has applied `SessionWelcome` and is in-game.
 - `{"t":"SessionPing", "clientTime":<ms>}`
 
@@ -330,6 +332,40 @@ its previous cell is restored server-side, a `PlayerCellChange` for it is broadc
 peers re-place the player, `WorldCellState` for that cell is re-sent, and cell authority is
 re-claimed (`ActorAuthorityGrant`/`Info`). The client therefore needs no special resume
 handling beyond sending the token: the post-Ready stream is a superset of the normal one.
+
+## Single sign-on (Phase B)
+
+SSO runs **alongside** account+password, never instead of it (`[auth] allowPasswordLogin`,
+default `true`). The browser half is OAuth 2.0 **Authorization Code + PKCE (S256)**;
+implicit is not implemented and will not be (RFC 9700 §2.1.2). The relay is a
+**Backend-For-Frontend**: it performs the code→token exchange itself, holding the client
+secret, so the provider's access/refresh/ID tokens NEVER reach the browser and never enter
+this protocol. Accounts are keyed on `(iss, sub)` — never on email, which is mutable and
+re-assignable; no email scope is requested.
+
+HTTP routes (all `GET`):
+
+- `/auth/providers` → `{providers:[…], allowPasswordLogin, allowRegistration}` (public,
+  CORS, so a client can render login buttons).
+- `/auth/:provider/start[?invite=…]` → `302` to the provider. PKCE verifier, `state` and
+  `nonce` are minted server-side; `state` is mirrored into an `httpOnly; SameSite=Lax;
+  Path=/auth` cookie (`omwmp_oauth`) and the callback requires both.
+- `/auth/:provider/callback` → server-side code exchange, ID-token verification (RS256 only,
+  against the provider JWKS, checking `iss`/`aud`/`exp`/`nbf`/`nonce`), then `302` back to
+  `[auth] returnUrl` with the result in the **URL fragment**:
+  `#mpticket=…` (success) · `#mperror=<code>` · `#mplink=<provider>`.
+  A fragment is never logged, cached or sent in a `Referer`; a `return` parameter from the
+  caller is ignored, so this is not an open redirector.
+- `/auth/link/:provider?session=<sessionToken>` → same round trip, but binds the identity to
+  the account holding that live game session. Refused with `#mperror=link_conflict` when the
+  identity already belongs to a different account. One account, several providers.
+
+`mpticket` is a **one-time, ≤60 s, 256-bit** login ticket. The client sends it as
+`{"t":"SessionLoginTicket","ticket":"…"}` in `HELLO_OK`, exactly where a `SessionLoginRequest`
+would go; the server claims it (single use), resolves the account and answers `SessionWelcome`
+as usual. Bans are re-checked **against the resolved account** at redemption, so a ticket
+minted before a ban is still refused with `BANNED`. Identities live in
+`<dataDir>/identities/<sha256(iss\nsub)>.json` and are erased with the account.
 
 `GET /status` (public, `access-control-allow-origin: *`) is the lobby payload:
 `{name, motd, players[{id,name,cellKey,level?}], playerCount, maxPlayers, contentPolicy,

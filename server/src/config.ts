@@ -48,7 +48,28 @@ export interface Config {
     maxHitDamage: number;
   };
   metrics: { enabled: boolean; token: string };
+  // Phase B SSO. Password login stays on by default, so a self-hoster who never touches
+  // this section sees no change at all.
+  auth: AuthConfig;
   plugins: string[];
+}
+
+export interface AuthProviderConfig {
+  enabled: boolean;
+  clientId: string;
+  clientSecret: string; // BFF: the exchange happens server-side, so this never ships to a browser
+  redirectUri: string; // must match the one registered with the provider, byte for byte
+  issuer: string; // "" = the provider's well-known issuer; required for `custom`
+  scope: string; // "" = the provider default (never includes an email scope)
+}
+
+export interface AuthConfig {
+  allowPasswordLogin: boolean;
+  returnUrl: string; // the game page the callback sends the browser back to
+  discord: AuthProviderConfig;
+  google: AuthProviderConfig;
+  microsoft: AuthProviderConfig;
+  custom: AuthProviderConfig;
 }
 
 export type DeepPartial<T> = { [K in keyof T]?: T[K] extends object ? DeepPartial<T[K]> : T[K] };
@@ -102,6 +123,54 @@ function reqEnum<T extends string>(t: Tree, sec: string, key: string, allowed: r
   const v = (t[sec] as Tree | undefined)?.[key];
   if (typeof v === 'string' && (allowed as readonly string[]).includes(v)) return v as T;
   return fail(`[${sec}].${key}`, `one of ${allowed.join('|')}`);
+}
+
+function subtable(t: Tree, path: string): Tree {
+  const v = t[path.split('.').pop()!];
+  return isTree(v) ? v : fail(path, 'a table');
+}
+
+function provider(auth: Tree, id: string): AuthProviderConfig {
+  const p = subtable(auth, `auth.${id}`);
+  const s = (key: string): string => {
+    const v = p[key];
+    return typeof v === 'string' ? v : fail(`[auth.${id}].${key}`, 'a string');
+  };
+  const enabled = typeof p['enabled'] === 'boolean' ? (p['enabled'] as boolean) : fail(`[auth.${id}].enabled`, 'a boolean');
+  return { enabled, clientId: s('clientId'), clientSecret: s('clientSecret'), redirectUri: s('redirectUri'), issuer: s('issuer'), scope: s('scope') };
+}
+
+function validateAuth(t: Tree): AuthConfig {
+  const auth = subtable(t, 'auth');
+  const allowPasswordLogin =
+    typeof auth['allowPasswordLogin'] === 'boolean'
+      ? (auth['allowPasswordLogin'] as boolean)
+      : fail('[auth].allowPasswordLogin', 'a boolean');
+  const returnUrl = typeof auth['returnUrl'] === 'string' ? (auth['returnUrl'] as string) : fail('[auth].returnUrl', 'a string');
+  const cfg: AuthConfig = {
+    allowPasswordLogin,
+    returnUrl,
+    discord: provider(auth, 'discord'),
+    google: provider(auth, 'google'),
+    microsoft: provider(auth, 'microsoft'),
+    custom: provider(auth, 'custom'),
+  };
+  const anyEnabled = [cfg.discord, cfg.google, cfg.microsoft, cfg.custom].some((p) => p.enabled);
+  // Fail boot rather than redirect a player into a dead end: with no return URL the
+  // callback has nowhere to hand the login ticket.
+  if (anyEnabled && returnUrl === '') fail('[auth].returnUrl', 'set when any provider is enabled');
+  if (returnUrl !== '') {
+    let parsed: URL;
+    try {
+      parsed = new URL(returnUrl);
+    } catch {
+      return fail('[auth].returnUrl', 'an absolute http(s) URL');
+    }
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') fail('[auth].returnUrl', 'an absolute http(s) URL');
+  }
+  // An operator who turns every login path off has locked themselves out; say so now.
+  if (!allowPasswordLogin && !anyEnabled) fail('[auth].allowPasswordLogin', 'true unless an SSO provider is enabled');
+  return cfg;
 }
 
 function validate(t: Tree): Config {
@@ -167,6 +236,7 @@ function validate(t: Tree): Config {
       enabled: reqBool(t, 'metrics', 'enabled'),
       token: reqStr(t, 'metrics', 'token'),
     },
+    auth: validateAuth(t),
     plugins: plugins as string[],
   };
 }

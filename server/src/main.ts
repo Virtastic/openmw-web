@@ -36,7 +36,7 @@ if (eraseTarget !== undefined) {
   const report = await deleteAccount(dataDir, eraseTarget);
   console.log(
     `erased "${eraseTarget}": account=${report.account} character=${report.player} banEntry=${report.bans}` +
-      ` chatLines=${report.chatLines} reports=${report.reports}`,
+      ` identities=${report.identities} chatLines=${report.chatLines} reports=${report.reports}`,
   );
   if (!report.account && !report.player) {
     console.error('nothing found under that name (already erased, or wrong --data dir)');

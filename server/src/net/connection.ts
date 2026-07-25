@@ -26,6 +26,7 @@ import type { WorldM7 } from '../core/m7';
 import type { Admin } from '../core/admin';
 import type { BanStore } from '../persist/banstore';
 import type { ResumeStore, ResumeTicket } from '../core/resume';
+import type { LoginTicketStore, SessionIndex } from '../auth/identities';
 import type { PlayerStore, PlayerDoc } from '../persist/playerstore';
 import { lserDecode, lserEncode, jsToL, LserError, type JsLike, type LValue } from '../proto/lser';
 import {
@@ -40,6 +41,7 @@ import {
   type SessionResume,
   type SessionRegister,
   type SessionLoginRequest,
+  type SessionLoginTicket,
   type DisconnectCode,
 } from '../proto/session';
 import { log } from '../log';
@@ -48,7 +50,7 @@ import { metrics } from '../metrics';
 export type SessionState = 'CONNECTED' | 'HELLO_OK' | 'AUTHED' | 'IN_WORLD' | 'CLOSED';
 
 // omwmp_auth_total{op,...}. Kept apart from the message name so the label space is closed.
-type AuthOp = 'register' | 'login' | 'resume';
+type AuthOp = 'register' | 'login' | 'resume' | 'ticket';
 
 // Everything a connection needs from the composed server; kept as an interface so
 // connection.ts has no import cycle with server.ts.
@@ -73,6 +75,10 @@ export interface ServerCtx {
   bans: BanStore;
   resume: ResumeStore;
   moderation: Moderation; // A4: durable chat log + report inbox
+  // Phase B SSO. Both are always present; SSO being disabled just means no ticket is ever
+  // minted, so redeeming one always fails.
+  tickets: LoginTicketStore;
+  sessions: SessionIndex;
   motd(): string; // mutable at runtime via /motd
 }
 
@@ -149,6 +155,7 @@ export class Connection implements Peer {
       metrics.disconnects.inc({ code: 'CLIENT_CLOSE' });
     }
     clearTimeout(this.helloTimer);
+    this.ctx.sessions.remove(this.sessionToken); // Phase B: no linking after the socket dies
     if (this.contentHeld) this.ctx.content.release();
     if (this.engineHeld) this.ctx.engine.release();
     if (this.player) {
@@ -234,14 +241,22 @@ export class Connection implements Peer {
         this.handleHello(msg);
         return;
       case 'SessionRegister':
-      case 'SessionLoginRequest': {
+      case 'SessionLoginRequest':
+      case 'SessionLoginTicket': {
         this.requireState('HELLO_OK', msg.t);
         if (this.authing) return; // duplicate auth message while hashing; drop
         this.authing = true;
-        const p = msg.t === 'SessionRegister' ? this.handleRegister(msg) : this.handleLogin(msg);
+        const op: AuthOp =
+          msg.t === 'SessionRegister' ? 'register' : msg.t === 'SessionLoginRequest' ? 'login' : 'ticket';
+        const p =
+          msg.t === 'SessionRegister'
+            ? this.handleRegister(msg)
+            : msg.t === 'SessionLoginRequest'
+              ? this.handleLogin(msg)
+              : this.handleLoginTicket(msg);
         p.catch((err) => {
           log('error', 'conn.auth_error', { ip: this.ip, error: String(err) });
-          this.authFail(msg.t === 'SessionRegister' ? 'register' : 'login', 'AUTH_FAILED', 'internal auth error');
+          this.authFail(op, 'AUTH_FAILED', 'internal auth error');
         });
         return;
       }
@@ -543,6 +558,12 @@ export class Connection implements Peer {
 
   private async handleLogin(msg: SessionLoginRequest): Promise<void> {
     if (!this.checkAuthGate('login', msg.serverPassword)) return;
+    // Phase B: an operator can turn the password path off entirely (SSO-only server).
+    // Registration is gated separately by [login].allowRegistration.
+    if (!this.ctx.config.auth.allowPasswordLogin) {
+      this.authFail('login', 'AUTH_FAILED', 'password login is disabled on this server');
+      return;
+    }
     if (this.refuseIfBanned('login', msg.account)) return;
     const account = await this.ctx.accounts.verifyLogin(msg.account, msg.password);
     if (!account) {
@@ -555,6 +576,42 @@ export class Connection implements Peer {
     }
     const doc = await this.ctx.players.get(account.name.toLowerCase());
     this.finishAuth('login', account, doc);
+  }
+
+  // Phase B: redeem the one-time ticket the SSO callback handed the browser. The ticket is
+  // the ONLY thing that crosses from the HTTP side — no provider access/refresh/ID token
+  // ever enters this protocol.
+  //
+  // Bans are re-checked here, against the RESOLVED account. refuseIfBanned() on the
+  // password path runs on the client-supplied name before verification, which is harmless
+  // there (an unverified name gets refused either way); here the name is not supplied at
+  // all, so the ban check MUST happen after resolution or it would not happen.
+  private async handleLoginTicket(msg: SessionLoginTicket): Promise<void> {
+    if (!this.checkAuthGate('ticket', msg.serverPassword)) return;
+    if (msg.ticket.length === 0 || msg.ticket.length > 256) {
+      this.authFail('ticket', 'AUTH_FAILED', 'malformed login ticket');
+      return;
+    }
+    const claimed = this.ctx.tickets.claim(msg.ticket); // single use, <=60 s
+    if (!claimed) {
+      this.authFail('ticket', 'AUTH_FAILED', 'login ticket expired or already used');
+      return;
+    }
+    const account = await this.ctx.accounts.get(claimed.accountKey);
+    if (!account) {
+      // The account existed when the ticket was minted; it disappearing inside 60 s means
+      // an operator erased it mid-flow. Loud, because it should be impossible.
+      log('warn', 'conn.ticket_account_gone', { ip: this.ip, account: claimed.accountKey });
+      this.authFail('ticket', 'AUTH_FAILED', 'account no longer available');
+      return;
+    }
+    if (account.banned || this.refuseIfBanned('ticket', account.name)) {
+      if (this.state !== 'CLOSED') this.authFail('ticket', 'BANNED', 'account is banned');
+      return;
+    }
+    const doc = await this.ctx.players.get(account.name.toLowerCase());
+    log('info', 'player.sso_login', { account: account.name, ip: this.ip });
+    this.finishAuth('ticket', account, doc);
   }
 
   // forceRecord: send the doc even without an appearance. The appearance gate below exists
@@ -576,6 +633,9 @@ export class Connection implements Peer {
     this.authing = false;
     const sessionToken = randomBytes(16).toString('hex');
     this.sessionToken = sessionToken;
+    // Phase B: /auth/link/:provider authenticates with this token, so it must be
+    // resolvable for exactly as long as the socket lives (cleanup() drops it).
+    this.ctx.sessions.add(sessionToken, accountKey, account.name);
     // playerRecord: only a doc with an appearance skips chargen — a position-only doc
     // (player quit mid-chargen after a cell change) must not.
     const record = doc && (doc.appearance || forceRecord) ? doc : null;

@@ -35,6 +35,9 @@ import { MoveBroadcaster } from './core/movement';
 import { Connection, type ServerCtx } from './net/connection';
 import { attachWss } from './net/ws';
 import { createHttpServer } from './net/http';
+import { OidcService } from './auth/oidc';
+import { IdentityStore, LoginTicketStore, SessionIndex } from './auth/identities';
+import { createAuthRoutes } from './auth/routes';
 import { IpConnTracker, IpRateLimiter } from './net/ratelimit';
 import { disconnectMsg } from './proto/session';
 import { log } from './log';
@@ -68,6 +71,13 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   const recordStore = new RecordStore(opts.dataDir);
   const bans = new BanStore(opts.dataDir);
   await bans.ready(); // the ban list must be authoritative before the listener opens
+  // Phase B: the identity index must be complete before the listener opens too — a missed
+  // (iss,sub) entry would hand a returning player a brand new empty account.
+  const identities = new IdentityStore(opts.dataDir);
+  await identities.ready();
+  const tickets = new LoginTicketStore();
+  const sessions = new SessionIndex();
+  const oidc = new OidcService(config.auth);
   await cellStore.ready(); // netId ceiling must be loaded before any spawn
   await recordStore.ready(); // custom-record ids must not restart from 1 after a reboot
   const roster = new Roster();
@@ -204,6 +214,8 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     bans,
     resume,
     moderation,
+    tickets,
+    sessions,
     motd: () => motd,
   };
 
@@ -227,7 +239,18 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     maxPlayers: config.server.maxPlayers,
     uptime: Math.round((Date.now() - startedAt) / 1000),
     version: VERSION,
-  }), config.metrics);
+  }), config.metrics, createAuthRoutes({
+    config,
+    oidc,
+    identities,
+    tickets,
+    sessions,
+    accounts,
+    bans,
+    // SSO round trips draw from the same per-IP auth budget as Register/Login: one
+    // attacker should not get a second, separate allowance by using the HTTP door.
+    limiter: new IpRateLimiter(config.limits.loginPerMinPerIp),
+  }));
   // Derived at scrape time from the roster, so no teardown path can strand the gauge.
   const unhookGauge = metrics.sessionsInWorld.addCollector(() => roster.inWorld().length);
 
@@ -305,6 +328,8 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       await bans.flush();
       await moderation.flush();
       resume.clear();
+      oidc.close();
+      tickets.clear();
       await new Promise<void>((resolve) => {
         httpServer.close(() => resolve());
         httpServer.closeAllConnections();
