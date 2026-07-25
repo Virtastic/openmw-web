@@ -87,6 +87,33 @@ Reload gets the latest build (server sends no-cache). Toggle the dev log with th
       playing → in-game "connection lost — reload the page to retry" message (no banner)
 - [ ] "Connected to <server> as <name>" pops shortly after the world loads
 
+## 10. Multiplayer co-op (M1–M8 — two browsers, ideally two machines)
+
+Everything below is covered by the automated suite (`node wasm-build/mp-harness.mjs`), so this
+pass is about how it *feels*, not whether it functions. Use two tabs/windows with different
+`name=`; the shared-NPC items need retail data (`play/mwdata/`) because the Example Suite demo
+ships no NPC placements at all.
+
+- [ ] You can see the other player move, run, jump — motion is smooth, not teleporting
+- [ ] They look like their actual character (race/face/hair), and equipment changes show up
+- [ ] Their health bar behaviour matches what's happening to them
+- [ ] Drop an item; the other player can pick it up; it's gone for you. Both quit and rejoin —
+      the world still agrees
+- [ ] Open the same chest together and grab the same item: exactly one of you gets it, no dupe,
+      and the loser's inventory snaps back rather than silently keeping a ghost copy
+- [ ] Doors and locks: one opens, both see it
+- [ ] Retail: NPCs walk the same patrol on both screens. Kill one — it dies for both and the
+      shared kill tally agrees (this gates `GetDeadCount` quests)
+- [ ] Retail: close the tab of whoever is simulating a cell — the other player takes over within
+      a couple of seconds and the NPCs keep moving (NOT frozen)
+- [ ] Fight something together: damage lands, it dies once, both of you get credit
+- [ ] PvP is off by default — attacking each other does nothing until `[rules] pvp = true`
+- [ ] Advance a quest; the other player's journal updates and they can continue it
+- [ ] Talk to an NPC while the other tries the same NPC — they're told you're busy with it
+- [ ] Rest: the clock advances for BOTH of you, weather agrees
+- [ ] Reload your page mid-session — you rejoin in place without re-entering a password
+- [ ] Latency feels acceptable on a real network (the local soak is 24 players at ~4 ms mean)
+
 ## Known open (already triaged — not bugs to re-report)
 - Some textures skip mipmaps (`glGenerateMipmap` warning) → slight distant shimmer — OSG fix pending
 - No MSAA → jagged edges vs desktop — enhancement, deferred

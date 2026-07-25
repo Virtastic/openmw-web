@@ -99,6 +99,22 @@ it has no game data and no simulation to check against. The design target is
 `[server] password` set for anything internet-facing, and treat `/kick` + `banned` as
 social tools, not security boundaries.
 
+## Measured capacity
+
+`npm run soak -- --bots 24 --minutes 30 --cells 6` (protocol-level bots: movement at the real
+15 Hz, chat, cell hops that thrash cell authority, object spawns, combat, journal writes,
+record creation, contended rest requests):
+
+- **RSS 168 → 78 MB** over 30 min — the half-run means fall (126 → 77 MB), i.e. memory settles
+  rather than creeping. 24 concurrent players sit well inside the 384 MB compose limit.
+- 24/24 sessions alive throughout, zero unexpected drops; ping mean 4 ms, max 85 ms.
+- Correctness held under that load, not just stability: journal stages stayed monotonic
+  (129/129) while every bot raced the same quest and injected stale writes; 98 record ids were
+  issued with no collisions; with PvP off, no player-targeted hit was ever delivered.
+
+The soak fails the run on leak, drop, latency, session-count mismatch, or any of those
+invariants — it is a gate, not a benchmark.
+
 ## VPS headroom
 
 Measured 2026-07-19 on the shared OVH box (before openmw-mp existed):
