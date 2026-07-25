@@ -36,6 +36,8 @@ export interface CellDoc {
   // and per-actor highest processed deathNo (dedup + death persistence).
   actorOverrides?: unknown;
   actorDeaths?: Record<string, number>;
+  // M6: per-object MWScript locals, refKey -> {varName: value}.
+  memberVars?: Record<string, Record<string, number>>;
 }
 
 export function emptyCellDoc(): CellDoc {
@@ -45,9 +47,28 @@ export function emptyCellDoc(): CellDoc {
 const SWEEP_MS = 45_000;
 const NET_ID_BLOCK = 128;
 
+// M6 shared world state lives alongside the M3/M4 counters in world/global.json.
+export interface FactionState {
+  rank: number;
+  reputation?: number;
+  expelled?: boolean;
+}
+
+export interface SharedQuestState {
+  journal: Record<string, number>; // questId -> arbitrated index
+  globals: Record<string, { value: number; seq: number }>; // MWScript globals + LWW seq
+  factions: Record<string, FactionState>;
+  bounty: number; // shared crime bounty
+}
+
+export function emptySharedQuestState(): SharedQuestState {
+  return { journal: {}, globals: {}, factions: {}, bounty: 0 };
+}
+
 interface GlobalDoc {
   nextNetIdCeiling: number;
   kills?: Record<string, number>; // M4 shared kill tally, per base recordId
+  quest?: SharedQuestState; // M6
 }
 
 export class CellStore {
@@ -59,7 +80,9 @@ export class CellStore {
   private nextNetId = 1;
   private netIdCeiling = 1; // ids < ceiling are reserved on disk
   private kills = new Map<string, number>();
+  private quest: SharedQuestState = emptySharedQuestState();
   private globalLoaded: Promise<void>;
+  private globalWrite: Promise<void> = Promise.resolve();
 
   constructor(dataDir: string) {
     this.cellsDir = join(dataDir, 'world', 'cells');
@@ -73,6 +96,7 @@ export class CellStore {
         this.netIdCeiling = g.nextNetIdCeiling;
       }
       if (g?.kills) for (const [k, v] of Object.entries(g.kills)) this.kills.set(k, v);
+      if (g?.quest) this.quest = { ...emptySharedQuestState(), ...g.quest };
     });
   }
 
@@ -81,11 +105,18 @@ export class CellStore {
   }
 
   private writeGlobal(): void {
-    // Fire-and-forget, atomic tmp+rename; the netId ceiling always leads the actual
-    // counter so a crash skips a block rather than reissuing an id.
-    void writeJsonAtomic(this.globalPath, {
+    // Serialized behind the previous write (atomic tmp+rename each time) and tracked so
+    // flush/close can await durability — a kill tally or journal advance must not be lost
+    // on shutdown. The netId ceiling always leads the counter, so a crash skips a block
+    // rather than reissuing an id.
+    this.globalWrite = this.globalWrite.then(() => this.writeGlobalNow());
+  }
+
+  private writeGlobalNow(): Promise<void> {
+    return writeJsonAtomic(this.globalPath, {
       nextNetIdCeiling: this.netIdCeiling,
       kills: Object.fromEntries(this.kills),
+      quest: this.quest,
     } satisfies GlobalDoc).catch((err) => log('error', 'world.global_flush_failed', { error: String(err) }));
   }
 
@@ -108,6 +139,16 @@ export class CellStore {
 
   killCount(refId: string): number {
     return this.kills.get(refId) ?? 0;
+  }
+
+  // M6 shared quest state. Mutate through sharedQuest() then call saveShared() — writes
+  // are atomic and coalesced by the same fire-and-forget path as the counters.
+  sharedQuest(): SharedQuestState {
+    return this.quest;
+  }
+
+  saveShared(): void {
+    this.writeGlobal();
   }
 
   private path(cellKey: string): string {
@@ -145,6 +186,7 @@ export class CellStore {
 
   async flushAll(): Promise<void> {
     for (const key of [...this.dirty]) await this.flushKey(key);
+    await this.globalWrite; // kills / shared quest state must be on disk too
   }
 
   async close(): Promise<void> {

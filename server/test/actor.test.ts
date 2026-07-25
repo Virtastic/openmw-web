@@ -54,7 +54,8 @@ test('actor authority and relay end to end', async (t) => {
     b.sendCellChange('0,0', 0, 0, 0);
     await b.waitEvent('PlayerCellChange');
     const info = await b.waitEvent('ActorAuthorityInfo');
-    assert.deepEqual(info.value, { cellKey: '0,0', holderId: aId });
+    // Info carries the live epoch so non-holders can address actors (M5 combat).
+    assert.deepEqual(info.value, { cellKey: '0,0', holderId: aId, epoch: epochA });
     // Info goes only to the entrant; Alice (already holding) gets nothing here, and no
     // Grant reaches Bob.
     b.sendEvent('ChatSend', { text: 'fence' });

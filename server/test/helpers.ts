@@ -11,6 +11,11 @@ import { lserEncode, lserDecode, jsToL, lToJs, type JsLike } from '../src/proto/
 import type { ManifestEntry } from '../src/proto/session';
 import { packMove, packActorMoveBatch, unpackMoveBatch, unpackActorMoveBatch, type PlayerPose, type BatchEntry, type ActorEntry, type ActorMoveBatch } from '../src/proto/movement';
 
+// Generous: argon2id logins are deliberately CPU-heavy, and several test files run
+// concurrently, so a busy machine can take seconds to answer a register/login. Real
+// failures still surface via the assertions; this only bounds a genuine hang.
+const DEFAULT_TIMEOUT_MS = 20_000;
+
 export function tmpDataDir(): string {
   return mkdtempSync(join(tmpdir(), 'openmw-mp-test-'));
 }
@@ -103,7 +108,7 @@ export class TestClient {
     this.ws.send(packEnvelope(MSG_ACTOR_MOVE_BATCH, ++this.seq, packActorMoveBatch(epoch, entries)));
   }
 
-  waitActorBatch(pred: (b: ActorBatchMsg) => boolean = () => true, timeoutMs = 3000): Promise<ActorBatchMsg> {
+  waitActorBatch(pred: (b: ActorBatchMsg) => boolean = () => true, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<ActorBatchMsg> {
     return this.waitFor(
       () => {
         const i = this.inbox.actorBatches.findIndex(pred);
@@ -145,7 +150,7 @@ export class TestClient {
   }
 
   // Consumes (removes) the first matching JSON message.
-  waitJson(t: string, timeoutMs = 3000): Promise<JsonMsg> {
+  waitJson(t: string, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<JsonMsg> {
     return this.waitFor(
       () => {
         const i = this.inbox.json.findIndex((m) => m.t === t);
@@ -157,7 +162,7 @@ export class TestClient {
   }
 
   // Waits for SessionDisconnect with a specific code (does not require the close yet).
-  async waitDisconnect(code: string, timeoutMs = 3000): Promise<JsonMsg> {
+  async waitDisconnect(code: string, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<JsonMsg> {
     const msg = await this.waitFor(
       () => {
         const i = this.inbox.json.findIndex((m) => m.t === 'SessionDisconnect' && m.code === code);
@@ -170,7 +175,7 @@ export class TestClient {
   }
 
   // Consumes the first matching event.
-  waitEvent(name: string, pred: (value: unknown) => boolean = () => true, timeoutMs = 3000): Promise<EventMsg> {
+  waitEvent(name: string, pred: (value: unknown) => boolean = () => true, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<EventMsg> {
     return this.waitFor(
       () => {
         const i = this.inbox.events.findIndex((e) => e.name === name && pred(e.value));
@@ -182,7 +187,7 @@ export class TestClient {
   }
 
   // Consumes the first matching PlayerMoveBatch.
-  waitBatch(pred: (b: BatchMsg) => boolean = () => true, timeoutMs = 3000): Promise<BatchMsg> {
+  waitBatch(pred: (b: BatchMsg) => boolean = () => true, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<BatchMsg> {
     return this.waitFor(
       () => {
         const i = this.inbox.batches.findIndex(pred);

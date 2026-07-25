@@ -191,7 +191,7 @@ content-file objects, addressed by RefNum userdata (`ref`), exactly like M3 cont
 |---|---|---|
 | `ActorAuthorityGrant` | S→C | `{cellKey=string, epoch=u32, snapshot={actors={ {ref, x,y,z,rotZ, hp={c,b},mp,ft, dead=bool, ai=…}, … }}}` — apply the snapshot, THEN begin simulating |
 | `ActorAuthorityRevoke` | S→C | `{cellKey=string, epoch=u32}` — stop simulating; re-attach puppets to those actors |
-| `ActorAuthorityInfo` | S→C | `{cellKey=string, holderId=u16}` — sent to non-holders entering a claimed cell |
+| `ActorAuthorityInfo` | S→C | `{cellKey=string, holderId=u16, epoch=u32}` — sent to a non-holder entering a claimed cell, and re-sent to every remaining non-holder whenever the epoch changes (handoff), so all occupants always know the live epoch |
 
 - Claim: first client to `PlayerCellChange` into a cell with no holder gets `Grant` (epoch++).
   Contested entry: server is the single serialization point, first processed wins; the loser
@@ -229,16 +229,21 @@ combat pipeline (`files/data-mw/scripts/omw/combat/local.lua`).
 
 | name | dir | body |
 |---|---|---|
-| `CombatHit` | attacker→S→victim-owner | `{target={playerId=u16} \| {ref=RefNum, cellKey=, epoch=}, damage={health=n, fatigue=n?, magicka=n?}, strength=n, sourceType=string, weaponId=string?, ammoId=string?, hitPos={x,y,z}?, successful=bool}` |
+| `CombatHit` | attacker→S→victim-owner | `{target={playerId=u16} \| {ref=RefNum, cellKey=, epoch=?}, damage={health=n, fatigue=n?, magicka=n?}, strength=n, sourceType=string, weaponId=string?, ammoId=string?, hitPos={x,y,z}?, successful=bool}` |
 | `CombatCast` | caster→S→cell-scoped | `{spellId=string, target={playerId}\|{ref}\|nil, casterId=u16, kind="spell"\|"enchant"\|"potion"}` — visual/animation mirroring only |
 | `CombatSpellHit` | caster→S→victim-owner | `{target={playerId}\|{ref,cellKey,epoch}, spellId=string, effects={{id=string, magnitude=n, duration=n}, …}, casterId=u16}` |
 | `CombatProjectile` | attacker→S→cell-scoped | `{kind="arrow"\|"bolt"\|"thrown"\|"magic", recordId=string?, spellId=string?, from={x,y,z}, dir={x,y,z}, speed=n, casterId=u16}` — cosmetic mirror; the attacker owns the real projectile |
 
 Rules:
 - The server validates shape + plausibility only (finite, `damage.health` within a config
-  cap, target exists, actor targets require holder+epoch like other `Actor*` messages) and
-  routes: player targets → that player's session; actor targets → the cell's authority
-  holder. It never computes damage — it has no game data.
+  cap, target exists) and routes: player targets → that player's session; actor targets →
+  the cell's current authority holder. It never computes damage — it has no game data.
+- Actor targets: `epoch` is **optional** here, unlike the holder-authored `Actor*` family.
+  The attacker is usually a NON-holder, so presence is proven by proximity (the attacker's
+  own cell must be visible to `target.cellKey`) and the hit is routed to whoever holds the
+  cell at arrival time. When `epoch` IS supplied it must be current, so a mid-handoff hit
+  cannot land on the wrong simulator. Clients may take the live epoch from
+  `ActorAuthorityInfo`/`ActorAuthorityGrant`, or omit it entirely.
 - **PvP gate**: when `[rules] pvp = false`, `CombatHit`/`CombatSpellHit` whose target is a
   *player* are dropped server-side (the `pvp` plugin owns this decision so operators can
   replace it). Actor targets are unaffected.
@@ -247,6 +252,45 @@ Rules:
   locally when they receive `CombatHit` for themselves, so the victim's own armor/difficulty
   apply. Death still flows through M2 `PlayerDeath` / M4 `ActorDeath` — combat messages never
   carry death directly.
+
+## Quest layer (M6)
+
+The milestone that makes retail co-op actually co-op: shared journal, vanilla script state,
+factions, crime. Sharing is operator-configurable per family (`[sharing]`).
+
+| name | dir | body |
+|---|---|---|
+| `JournalEntry` | C→S; relayed to all when `[sharing] journal` | `{questId=string, index=number, actorRefId=string?}` — server arbitrates **monotonic max per questId** (a lagging client can never regress a shared quest); non-monotonic updates are stored but not relayed unless `questId` is in the operator's `regressAllowlist` |
+| `JournalSync` | S→C at join | `{quests={[questId]=index, …}}` — full shared journal state (shared mode) or the player's own stored journal (individual mode) |
+| `GlobalVarUpdate` | C→S; relayed to all when `[sharing] questVars` | `{name=string, value=number, seq=number?}` — MWScript globals; **last-write-wins with a per-variable sequence**; the time globals (`GameHour/Day/Month/Year/DaysPassed`) are EXCLUDED here and owned by M7 |
+| `MemberVarUpdate` | C→S; relayed cell-scoped | `{ref=RefNum, name=string, value=number}` — per-object MWScript locals, piggybacked on object interaction |
+| `FactionUpdate` | C→S; relayed when `[sharing] factions` | `{factionId=string, rank=number, reputation=number?, expelled=bool?}` |
+| `CrimeUpdate` | C→S; relayed when `[sharing] crime` | `{bounty=number, kind=string?}` — shared vs personal bounty is a server policy flag |
+| `DialogueLock` | C→S | `{ref=RefNum, cellKey=, want=bool}` → `DialogueLockResult {ref, granted=bool, holderId=u16?}` — one player may converse with an NPC at a time; released on close, cell change, or disconnect |
+
+Kill counts ride M4's `WorldKillCount`. Applying a received journal/faction/var update MUST
+NOT re-broadcast it (echo guard) — clients seed their diff caches from applied state.
+
+## World state (M7)
+
+| name | dir | body |
+|---|---|---|
+| `WorldTime` | S→C (60 s + on change) | `{gameHour=number, day=number, month=number, year=number, timeScale=number}` — the server owns the clock; clients slew rather than snap |
+| `WorldTimeRequest` | C→S | `{advanceHours=number, reason="rest"\|"wait"\|"script"}` — the server applies and rebroadcasts, so resting advances time for everyone |
+| `WorldWeather` | C→S from the region authority; S→C broadcast | `{region=string, current=number, next=number?, transition=number?}` |
+| `WorldWeatherAuthority` | S→C | `{region=string, holderId=u16}` — same holder pattern as cells, keyed by region |
+| `RecordCreate` | C→S | `{tempId=number, kind="spell"\|"potion"\|"enchantment"\|"armor"\|"weapon"\|"clothing"\|"book"\|"misc", data=table}` → `RecordCreateAck {tempId, recordNetId=string}` |
+| `RecordsSync` | S→C at join | `{records={{recordNetId, kind, data}, …}}` — replay all custom records so cross-client ids resolve (fixes the M3 dynamic-record placeholder problem for player-made items) |
+| `WorldCellReset` | S→C | `{cellKey=string}` — cell doc wiped on the operator's schedule; clients drop local deltas and reload |
+| `WorldMapExplored` | C→S; relayed when `[sharing] map` | `{cellKeys={string,…}}` |
+| `GuiMessageBox` / `GuiInputDialog` / `GuiListBox` | S→C | `{guiId=number, text=string, buttons={…}\|label=string\|items={…}}` → `GuiReply {guiId, data}` — server-pushed UI for plugins |
+
+## Ops (M8)
+
+`AdminCommand` (C→S, rank-gated) `{cmd=string, args={…}}` → `AdminResult {text=string}`;
+`ConsoleCommand` (S→C, admin-gated) `{script=string}` executed client-side. Session resume
+per §Session tier: `SessionResume{token}` within `[login] resumeWindowSec` skips auth and
+re-sends `WorldCellState` + `JournalSync` + `RecordsSync` for a rejoin-in-place.
 
 ## Client-side integration contract (M0)
 

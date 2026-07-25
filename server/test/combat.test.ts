@@ -30,7 +30,8 @@ async function scenario(t: { after(fn: () => unknown): void }, pvp: boolean) {
     dataDir: tmpDataDir(),
     port: 0,
     host: '127.0.0.1',
-    configOverride: { rules: { pvp } },
+    // Every client shares 127.0.0.1, so the per-IP cap must not gate the scenario.
+    configOverride: { rules: { pvp }, limits: { maxConnsPerIp: 16 } },
   });
   t.after(() => server.close());
 
@@ -68,7 +69,7 @@ async function fence(from: TestClient, ...watchers: TestClient[]) {
 }
 
 test('combat routing with pvp enabled', async (t) => {
-  const { atk, vic, far, atkId, vicId, epoch, welcome } = await scenario(t, true);
+  const { server, atk, vic, far, atkId, vicId, epoch, welcome } = await scenario(t, true);
 
   await t.test('player target reaches the victim only', async () => {
     atk.sendEvent('CombatHit', hitBody({ playerId: vicId }));
@@ -97,6 +98,34 @@ test('combat routing with pvp enabled', async (t) => {
     vic.sendEvent('CombatHit', hitBody({ ref: ACTOR_REF, cellKey: 'nobody-here', epoch: 1 }));
     await fence(vic, atk);
     assert.equal(atk.inbox.events.filter((e) => e.name === 'CombatHit').length, 0);
+  });
+
+  await t.test('non-holder may omit epoch; proximity is the presence proof', async () => {
+    // The common case: a non-holder attacks an NPC in a cell someone else simulates.
+    // It has no Grant, so it quotes no epoch — the hit must still reach the holder.
+    vic.sendEvent('CombatHit', hitBody({ ref: ACTOR_REF, cellKey: '0,0' }));
+    const got = await atk.waitEvent('CombatHit');
+    assert.equal((got.value as { attackerId: number }).attackerId, vicId);
+    // But a distant player cannot reach into the cell, epoch or not.
+    far.sendEvent('CombatHit', hitBody({ ref: ACTOR_REF, cellKey: '0,0' }));
+    far.sendEvent('CombatHit', hitBody({ ref: ACTOR_REF, cellKey: '0,0', epoch }));
+    await fence(far, atk);
+    assert.equal(atk.inbox.events.filter((e) => e.name === 'CombatHit').length, 0);
+  });
+
+  await t.test('ActorAuthorityInfo carries the live epoch', async () => {
+    // Victim entered a cell already held by the attacker; its Info must let it address
+    // actors there without ever receiving a Grant.
+    const late = await TestClient.connect(server.port);
+    await late.joinAsNew('Late');
+    await late.waitEvent('PlayerList');
+    late.sendCellChange('0,0', 0, 0, 0);
+    const info = await late.waitEvent('ActorAuthorityInfo');
+    assert.deepEqual(info.value, { cellKey: '0,0', holderId: atkId, epoch });
+    late.sendEvent('CombatHit', hitBody({ ref: ACTOR_REF, cellKey: '0,0', epoch: (info.value as { epoch: number }).epoch }));
+    await atk.waitEvent('CombatHit');
+    late.close();
+    await late.closed;
   });
 
   await t.test('unknown target player is dropped', async () => {

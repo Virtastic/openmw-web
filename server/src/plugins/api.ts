@@ -7,6 +7,7 @@ import type { Config } from '../config';
 import type { LogLevel } from '../log';
 import type { ChatMessageBody } from '../core/chat';
 import type { JsLike } from '../proto/lser';
+import type { ShareFamily } from '../core/quests';
 
 export interface PluginPlayer {
   id: number;
@@ -33,6 +34,12 @@ export interface Plugin {
   onPlayerDisconnect?(api: PluginApi, player: PluginPlayer): void;
   // M2: fired when a PlayerDeath event arrives (respawn/death-penalty seeds).
   onPlayerDeath?(api: PluginApi, player: PluginPlayer): void;
+  // M6: sharing policy per quest family. Return true to share (relay + one global copy),
+  // false for individual mode (stored per-player, never relayed). The `sharing` builtin
+  // answers from [sharing]; replace it for party/faction-scoped rules.
+  onShareFamily?(api: PluginApi, family: ShareFamily): boolean | void;
+  // M6: may this quest's journal index go DOWN? Default is monotonic-max arbitration.
+  onJournalRegress?(api: PluginApi, questId: string): boolean | void;
   // M5: pre-route gate for a PLAYER-targeted CombatHit/CombatSpellHit. Return false to
   // drop it (the pvp builtin implements the [rules] pvp switch; operators can replace it
   // with faction/team logic). Actor-targeted hits never reach this hook.

@@ -80,8 +80,8 @@ export class WorldState {
         this.roster.get(playerId)?.peer.sendEvent('ActorAuthorityGrant', { cellKey, epoch, snapshot }),
       revoke: (playerId, cellKey, epoch) =>
         this.roster.get(playerId)?.peer.sendEvent('ActorAuthorityRevoke', { cellKey, epoch }),
-      info: (playerId, cellKey, holderId) =>
-        this.roster.get(playerId)?.peer.sendEvent('ActorAuthorityInfo', { cellKey, holderId }),
+      info: (playerId, cellKey, holderId, epoch) =>
+        this.roster.get(playerId)?.peer.sendEvent('ActorAuthorityInfo', { cellKey, holderId, epoch }),
       loadOverrides: async (cellKey) => {
         const doc = await this.cells.get(cellKey);
         return (doc.actorOverrides as ActorSnapshot | undefined) ?? { actors: [] };

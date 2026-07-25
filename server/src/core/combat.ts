@@ -23,7 +23,13 @@ const MAX_EFFECTS = 64;
 export const COMBAT_EVENTS = new Set(['CombatHit', 'CombatSpellHit', 'CombatCast', 'CombatProjectile']);
 
 // Target union: a player session, or an actor owned by a cell's authority holder.
-export type CombatTarget = { kind: 'player'; playerId: number } | { kind: 'actor'; ref: ObjRef; cellKey: string; epoch: number };
+// epoch is OPTIONAL on actor targets: the attacker is usually a NON-holder, and until it
+// has seen an ActorAuthorityInfo/Grant for that cell it has no legal epoch to quote.
+// Presence is proven by proximity instead (see resolveOwner); when an epoch IS supplied
+// it must be current, which keeps a mid-handoff hit from landing on the wrong simulator.
+export type CombatTarget =
+  | { kind: 'player'; playerId: number }
+  | { kind: 'actor'; ref: ObjRef; cellKey: string; epoch?: number };
 
 export interface CombatCtx {
   roster: Roster;
@@ -73,9 +79,11 @@ function parseTarget(v: LValue | undefined): CombatTarget | null {
   }
   const ref = parseObjRef(t);
   const cellKey = str(t.get('cellKey'), MAX_CELL_KEY);
-  const epoch = finite(t.get('epoch'));
-  if (!ref || ref.kind !== 'ref' || !cellKey || epoch === undefined) return null; // actors are content refs
-  return { kind: 'actor', ref, cellKey, epoch };
+  const rawEpoch = t.get('epoch');
+  const epoch = rawEpoch === undefined ? undefined : finite(rawEpoch);
+  if (!ref || ref.kind !== 'ref' || !cellKey) return null; // actors are content refs
+  if (rawEpoch !== undefined && epoch === undefined) return null; // present but not a number
+  return { kind: 'actor', ref, cellKey, ...(epoch !== undefined ? { epoch } : {}) };
 }
 
 // Damage/effect magnitudes: finite and within the sanity cap (never balance logic).
@@ -103,10 +111,21 @@ export class Combat {
       if (!this.ctx.allowPlayerHit(attacker, victim.id, name)) return null; // pvp plugin veto
       return victim;
     }
-    // Actor target: holder+epoch guarded exactly like the Actor* family.
+    // Actor target: the owner is whoever currently simulates the cell. Unlike the Actor*
+    // family (authored BY the holder, where the epoch is the race-killer), the attacker
+    // here is typically a non-holder, so presence is proven by proximity and the epoch is
+    // only checked when supplied.
+    if (!cellsVisible(attacker.cellKey, target.cellKey)) {
+      this.drop(attacker, name, 'attacker not near the target cell');
+      return null;
+    }
     const holderId = this.ctx.holderOf(target.cellKey);
-    if (holderId === undefined || this.ctx.epochOf(target.cellKey) !== target.epoch) {
-      this.drop(attacker, name, 'no authority or stale epoch');
+    if (holderId === undefined) {
+      this.drop(attacker, name, 'cell has no authority holder');
+      return null;
+    }
+    if (target.epoch !== undefined && this.ctx.epochOf(target.cellKey) !== target.epoch) {
+      this.drop(attacker, name, 'stale epoch');
       return null;
     }
     const holder = this.ctx.roster.get(holderId);

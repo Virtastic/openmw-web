@@ -38,6 +38,11 @@ export interface PlayerDoc {
   };
   spells?: string[];
   position?: { cellKey: string; x: number; y: number; z: number };
+  // M6: this player's own view. Always written (even in shared mode, so a family can be
+  // switched to individual later without losing history); relayed only per [sharing].
+  journal?: Record<string, number>; // questId -> highest index this player reported
+  factions?: Record<string, { rank: number; reputation?: number; expelled?: boolean }>;
+  bounty?: number;
 }
 
 export type LivePosition = { cellKey: string; x: number; y: number; z: number };

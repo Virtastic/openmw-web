@@ -16,7 +16,10 @@ export type ActorSnapshot = JsLike; // { actors: [...] }, JSON-safe (never a Map
 export interface AuthoritySenders {
   grant(playerId: number, cellKey: string, epoch: number, snapshot: ActorSnapshot): void;
   revoke(playerId: number, cellKey: string, epoch: number): void; // to a holder leaving its cell
-  info(playerId: number, cellKey: string, holderId: number): void; // to a non-holder entrant
+  // To a non-holder: on entry, and again whenever the epoch changes (handoff), so every
+  // client in a cell always knows the live epoch — non-holders need it to address actors
+  // (M5 combat) and to recognise stale traffic.
+  info(playerId: number, cellKey: string, holderId: number, epoch: number): void;
   // Dormant cell state: persisted in the cell doc, handed to the next claimant.
   loadOverrides(cellKey: string): Promise<ActorSnapshot>;
   foldOverrides(cellKey: string, snapshot: ActorSnapshot): Promise<void>;
@@ -75,9 +78,9 @@ export class Authority {
       c.holderId = playerId;
       c.epoch += 1;
       this.send.grant(playerId, cellKey, c.epoch, snapshot);
-      for (const other of c.order) if (other !== playerId) this.send.info(other, cellKey, playerId);
+      for (const other of c.order) if (other !== playerId) this.send.info(other, cellKey, playerId, c.epoch);
     } else if (c.holderId !== playerId) {
-      this.send.info(playerId, cellKey, c.holderId);
+      this.send.info(playerId, cellKey, c.holderId, c.epoch);
     }
   }
 
@@ -94,6 +97,8 @@ export class Authority {
       c.holderId = next;
       c.epoch += 1;
       this.send.grant(next, cellKey, c.epoch, c.lastSnapshot ?? EMPTY_SNAPSHOT);
+      // The epoch just moved: refresh every remaining non-holder.
+      for (const other of c.order) if (other !== next) this.send.info(other, cellKey, next, c.epoch);
     } else {
       // Empty cell: fold the snapshot into the doc and go dormant (epoch retained).
       await this.send.foldOverrides(cellKey, c.lastSnapshot ?? EMPTY_SNAPSHOT);

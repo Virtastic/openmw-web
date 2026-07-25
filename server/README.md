@@ -38,7 +38,7 @@ Signals: `SIGTERM`/`SIGINT` = graceful shutdown (every session gets
   config.toml            # optional operator overrides (deep-merged over config.default.toml)
   accounts/<name>.json   # one file per account (lower-cased name), written atomically
   players/<name>.json    # M2 player snapshot (appearance/equipment/inventory/stats/spells/position)
-  world/global.json      # M3 netId counter ceiling (block-reserved) + M4 shared kill tally
+  world/global.json      # M3 netId ceiling + M4 kill tally + M6 shared journal/globals/factions
   world/cells/<enc>.json # M3 per-cell delta docs (placed/deleted/moved/locks/doors/containers),
                          # filename = encodeURIComponent(cellKey)
 ```
@@ -59,7 +59,9 @@ Note `plugins` is a top-level key — in an override file it must appear **befor
 
 | key | default | meaning |
 |---|---|---|
-| `plugins` | `["motd", "respawn", "death-penalty", "pvp"]` | built-in plugins to load, in order |
+| `plugins` | `["motd", "respawn", "death-penalty", "pvp", "sharing"]` | built-in plugins to load, in order |
+| `[sharing] journal/questVars/factions/crime/map` | `true` | per-family M6 sharing; `false` = individual mode (stored per-player, never relayed) |
+| `[sharing] regressAllowlist` | `[]` | quest ids allowed to move backwards; everything else is monotonic-max |
 | `[rules] respawnCellKey/X/Y/Z` | `"village"`, `0,0,0` | where the respawn plugin sends the dead (placeholder demo coords) |
 | `[rules] deathPenalty` | `"none"` | death-penalty plugin mode (`"none"` = no-op seed) |
 | `[rules] pvp` | `false` | `false` → the pvp plugin drops player-targeted combat hits (actor targets unaffected) |

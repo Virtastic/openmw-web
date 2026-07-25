@@ -5,13 +5,15 @@
 // plugin is logged and skipped — never fatal.
 
 import type { Plugin, PluginApi, PluginPlayer } from './api';
+import type { ShareFamily } from '../core/quests';
 import { motd } from './builtin/motd';
 import { respawn } from './builtin/respawn';
 import { deathPenalty } from './builtin/death-penalty';
 import { pvp } from './builtin/pvp';
+import { sharing } from './builtin/sharing';
 import { log } from '../log';
 
-const BUILTINS: Record<string, Plugin> = { motd, respawn, 'death-penalty': deathPenalty, pvp };
+const BUILTINS: Record<string, Plugin> = { motd, respawn, 'death-penalty': deathPenalty, pvp, sharing };
 
 export class HookBus {
   private plugins: Plugin[] = [];
@@ -60,6 +62,13 @@ export class HookBus {
   }
   playerDeath(player: PluginPlayer): void {
     this.run('onPlayerDeath', (p) => void p.onPlayerDeath?.(this.api, player));
+  }
+  // M6 policy queries. No plugin loaded -> share everything, never allow regression.
+  shareFamily(family: ShareFamily): boolean {
+    return this.run('onShareFamily', (p) => p.onShareFamily?.(this.api, family)) !== false;
+  }
+  journalRegress(questId: string): boolean {
+    return this.run('onJournalRegress', (p) => p.onJournalRegress?.(this.api, questId)) === true;
   }
   // false = vetoed (player-targeted combat only).
   playerHit(attacker: PluginPlayer, victimId: number, name: string): boolean {

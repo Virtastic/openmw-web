@@ -12,6 +12,14 @@ export interface Config {
   server: { name: string; motd: string; maxPlayers: number; password: string };
   login: { allowRegistration: boolean; inviteCode: string; resumeWindowSec: number };
   content: { enforce: 'strict' | 'names' | 'off' };
+  sharing: {
+    journal: boolean;
+    questVars: boolean;
+    factions: boolean;
+    crime: boolean;
+    map: boolean;
+    regressAllowlist: string[];
+  };
   rules: {
     respawnCellKey: string;
     respawnX: number;
@@ -71,6 +79,12 @@ function reqSignedNum(t: Tree, sec: string, key: string): number {
   return typeof v === 'number' && Number.isFinite(v) ? v : fail(`[${sec}].${key}`, 'a finite number');
 }
 
+function reqStrArray(t: Tree, sec: string, key: string): string[] {
+  const v = (t[sec] as Tree | undefined)?.[key];
+  if (!Array.isArray(v) || v.some((e) => typeof e !== 'string')) fail(`[${sec}].${key}`, 'an array of strings');
+  return v as string[];
+}
+
 function reqBool(t: Tree, sec: string, key: string): boolean {
   const v = (t[sec] as Tree | undefined)?.[key];
   return typeof v === 'boolean' ? v : fail(`[${sec}].${key}`, 'a boolean');
@@ -98,6 +112,14 @@ function validate(t: Tree): Config {
       resumeWindowSec: reqNum(t, 'login', 'resumeWindowSec'),
     },
     content: { enforce: reqEnum(t, 'content', 'enforce', ['strict', 'names', 'off'] as const) },
+    sharing: {
+      journal: reqBool(t, 'sharing', 'journal'),
+      questVars: reqBool(t, 'sharing', 'questVars'),
+      factions: reqBool(t, 'sharing', 'factions'),
+      crime: reqBool(t, 'sharing', 'crime'),
+      map: reqBool(t, 'sharing', 'map'),
+      regressAllowlist: reqStrArray(t, 'sharing', 'regressAllowlist'),
+    },
     rules: {
       respawnCellKey: reqStr(t, 'rules', 'respawnCellKey'),
       respawnX: reqSignedNum(t, 'rules', 'respawnX'),

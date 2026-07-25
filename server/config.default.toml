@@ -4,7 +4,7 @@
 
 # Built-in plugins to load, in order. Available: "motd", "respawn", "death-penalty".
 # (Top-level key: in an override file it must appear before any [table] header.)
-plugins = ["motd", "respawn", "death-penalty", "pvp"]
+plugins = ["motd", "respawn", "death-penalty", "pvp", "sharing"]
 
 [server]
 name = "openmw-mp"                # shown in SessionHelloOk and /status
@@ -45,6 +45,19 @@ pvp = false
 # Difficulty is surfaced in SessionWelcome.flags and applied CLIENT-side, in the victim's
 # own combat pipeline (the server never computes damage). Morrowind scale: -100..100.
 difficulty = 0
+
+[sharing]
+# M6 per-family sharing policy, enforced by the `sharing` plugin (swap it to implement
+# party/faction-scoped rules). true = relay to everyone and keep one shared copy;
+# false = "individual" mode, stored per-player and never relayed.
+journal = true
+questVars = true      # MWScript globals (the time globals are owned by M7, never here)
+factions = true
+crime = true
+map = true            # M7 WorldMapExplored; the toggle exists now so operators see it
+# Quest ids whose journal index may legitimately go DOWN (some MW quests regress).
+# Everything else is arbitrated monotonic-max: a lagging client can never rewind a quest.
+regressAllowlist = []
 
 [limits]
 msgsPerSec = 60                   # per-session message token bucket (burst = rate)

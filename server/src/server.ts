@@ -12,6 +12,7 @@ import { CellStore } from './persist/cellstore';
 import type { StateCtx } from './core/playerstate';
 import { WorldState } from './core/worldstate';
 import { Combat } from './core/combat';
+import { Quests } from './core/quests';
 import { Roster } from './core/players';
 import { ContentGate, EngineGate } from './core/manifest';
 import { CommandRegistry, registerCoreCommands, type CommandContext } from './core/commands';
@@ -99,6 +100,14 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       hooks.playerHit({ id: attacker.id, name: attacker.name, rank: attacker.rank }, victimId, name),
   });
 
+  const quests = new Quests({
+    roster,
+    cells: cellStore,
+    players: playerStore,
+    isShared: (family) => hooks.shareFamily(family),
+    regressAllowed: (questId) => hooks.journalRegress(questId),
+  });
+
   const ctx: ServerCtx = {
     config,
     accounts,
@@ -113,6 +122,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     stateCtx,
     world,
     combat,
+    quests,
   };
 
   const httpServer = createHttpServer(() => ({

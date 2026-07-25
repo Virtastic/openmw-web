@@ -20,6 +20,7 @@ import { MAX_ABS_COORD } from '../core/movement';
 import { handleStateEvent, syncStateOnJoin, type StateCtx } from '../core/playerstate';
 import type { WorldState } from '../core/worldstate';
 import type { Combat } from '../core/combat';
+import type { Quests } from '../core/quests';
 import type { PlayerStore, PlayerDoc } from '../persist/playerstore';
 import { lserDecode, lserEncode, jsToL, LserError, type JsLike, type LValue } from '../proto/lser';
 import {
@@ -55,6 +56,7 @@ export interface ServerCtx {
   stateCtx: StateCtx;
   world: WorldState;
   combat: Combat;
+  quests: Quests;
 }
 
 export class Connection implements Peer {
@@ -132,6 +134,8 @@ export class Connection implements Peer {
         void this.ctx.players.flushKey(accountKey);
       }
       this.ctx.roster.remove(this.player);
+      // M6: drop every conversation this player held (same teardown as authority).
+      this.ctx.quests.releaseDialogueLocks(this.player.id);
       // M4: relinquish authority (no Revoke — socket is gone) before the cell may flush.
       if (this.player.cellKey) {
         this.ctx.world.authorityLeave(this.player.id, this.player.cellKey, false);
@@ -234,6 +238,7 @@ export class Connection implements Peer {
       this.handleCellChange(value);
       return;
     }
+    if (this.ctx.quests.handleEvent(this.player, name, value)) return; // M6 family
     if (this.ctx.combat.handleEvent(this.player, name, value)) return; // M5 family
     if (this.ctx.world.handleEvent(this.player, name, value)) return; // M3/M4 family
     if (handleStateEvent(this.ctx.stateCtx, this.player, name, value)) return; // M2 family
@@ -309,6 +314,8 @@ export class Connection implements Peer {
     if (oldCell && oldCell !== cellKey) {
       this.ctx.world.authorityLeave(player.id, oldCell, true);
       this.ctx.world.onCellVacated(oldCell);
+      // M6: walking out of the cell ends any conversation started there.
+      this.ctx.quests.releaseDialogueLocks(player.id, oldCell);
     }
     this.ctx.world.authorityEnter(player, cellKey);
   }
@@ -429,6 +436,7 @@ export class Connection implements Peer {
     this.state = 'IN_WORLD';
     this.ctx.roster.joinWorld(this.player);
     syncStateOnJoin(this.ctx.stateCtx, this.player); // M2 late-joiner appearance/equipment sync
+    this.ctx.quests.sendJournalSync(this.player); // M6 full journal state at join
     this.ctx.hooks.playerJoinWorld({ id: this.player.id, name: this.player.name, rank: this.player.rank });
   }
 }
