@@ -58,9 +58,12 @@ test('session flow end to end', async (t) => {
       assert.ok(bChat.seq >= 1); // server binary seq is monotonic from 1
 
       b.sendEvent('ChatSend', { text: '/list' });
-      // b's own motd is still queued on the server channel; match the /list reply itself.
-      const listReply = await b.waitEvent('ChatMessage', (v) => (v as { text?: string }).text?.startsWith('Players') === true);
-      assert.match((listReply.value as { text: string }).text, /Players \(2\): Alice, Bob/);
+      // M8 rewrote /list: one line per player, "#<id> <name> [<rank>] <cell>". b's own
+      // motd is still queued on the server channel, so match the roster lines themselves.
+      const aliceLine = await b.waitEvent('ChatMessage', (v) => (v as { text?: string }).text?.includes('Alice') === true);
+      assert.match((aliceLine.value as { text: string }).text, /^#\d+ Alice \[player\] /);
+      const bobLine = await b.waitEvent('ChatMessage', (v) => (v as { text?: string }).text?.includes('Bob') === true);
+      assert.match((bobLine.value as { text: string }).text, /^#\d+ Bob \[player\] /);
       b.close();
       await b.closed;
       const leave = await a.waitEvent('PlayerLeaveWorld');

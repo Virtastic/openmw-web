@@ -3,9 +3,9 @@
 # replace, tables merge key-by-key).
 
 # Built-in plugins to load, in order. Available: "motd", "respawn", "death-penalty",
-# "pvp", "sharing", "cell-reset".
+# "pvp", "sharing", "cell-reset", "admin".
 # (Top-level key: in an override file it must appear before any [table] header.)
-plugins = ["motd", "respawn", "death-penalty", "pvp", "sharing", "cell-reset"]
+plugins = ["motd", "respawn", "death-penalty", "pvp", "sharing", "cell-reset", "admin"]
 
 [server]
 name = "openmw-mp"                # shown in SessionHelloOk and /status
@@ -92,3 +92,13 @@ timeoutSec = 60
 # return to their content-file state and clients are told to reload). Empty = no resets.
 cells = []
 intervalSec = 259200              # 3 days; only applies to the cells listed above
+
+[admin]
+# M8: accounts promoted to rank 3 (owner) on every boot, so the first operator never has
+# to hand-edit accounts/<name>.json. Ranks: 0 player, 1 moderator (kick/tp/tpto),
+# 2 admin (ban/unban/ipban/give/motd), 3 owner (setrank/console).
+owners = []
+# /console ships arbitrary Lua to a player's OWN machine. Owner-only even when true, and
+# every use is logged with actor, target and the full payload. Set false to remove the
+# capability from the server entirely.
+allowConsole = true

@@ -22,6 +22,9 @@ import type { WorldState } from '../core/worldstate';
 import type { Combat } from '../core/combat';
 import type { Quests } from '../core/quests';
 import type { WorldM7 } from '../core/m7';
+import type { Admin } from '../core/admin';
+import type { BanStore } from '../persist/banstore';
+import type { ResumeStore, ResumeTicket } from '../core/resume';
 import type { PlayerStore, PlayerDoc } from '../persist/playerstore';
 import { lserDecode, lserEncode, jsToL, LserError, type JsLike, type LValue } from '../proto/lser';
 import {
@@ -33,6 +36,7 @@ import {
   SessionParseError,
   type ClientSessionMsg,
   type SessionHello,
+  type SessionResume,
   type SessionRegister,
   type SessionLoginRequest,
   type DisconnectCode,
@@ -59,6 +63,11 @@ export interface ServerCtx {
   combat: Combat;
   quests: Quests;
   m7: WorldM7;
+  // M8 ops.
+  admin: Admin;
+  bans: BanStore;
+  resume: ResumeStore;
+  motd(): string; // mutable at runtime via /motd
 }
 
 export class Connection implements Peer {
@@ -71,6 +80,8 @@ export class Connection implements Peer {
   private contentHeld = false;
   private engineHeld = false;
   private authing = false;
+  private sessionToken = ''; // M8: parked as a resume ticket when an in-world session drops
+  private resumed?: ResumeTicket;
   private readonly msgBucket: TokenBucket;
   private readonly byteBucket: TokenBucket;
   private readonly moveBucket: TokenBucket; // movement has its own budget (PROTOCOL.md M1)
@@ -134,6 +145,17 @@ export class Connection implements Peer {
           if (cellKey && pose) doc.position = { cellKey, x: pose.x, y: pose.y, z: pose.z };
         });
         void this.ctx.players.flushKey(accountKey);
+      }
+      // M8: park a resume ticket BEFORE the roster slot goes, so a reconnect within
+      // [login] resumeWindowSec can rejoin in place instead of paying argon2 again.
+      // Only in-world sessions get one: there is nothing to resume mid-auth.
+      if (this.player.inWorld && !this.ctx.bans.isAccountBanned(this.player.accountKey)) {
+        this.ctx.resume.park(this.sessionToken, {
+          accountKey: this.player.accountKey,
+          accountName: this.player.name,
+          ...(this.player.cellKey ? { cellKey: this.player.cellKey } : {}),
+          ...(this.player.pose ? { pose: this.player.pose } : {}),
+        });
       }
       this.ctx.roster.remove(this.player);
       // M6: drop every conversation this player held (same teardown as authority).
@@ -200,6 +222,15 @@ export class Connection implements Peer {
         });
         return;
       }
+      case 'SessionResume':
+        this.requireState('HELLO_OK', msg.t);
+        if (this.authing) return;
+        this.authing = true;
+        this.handleResume(msg).catch((err) => {
+          log('error', 'conn.resume_error', { ip: this.ip, error: String(err) });
+          this.disconnect('AUTH_FAILED', 'internal resume error');
+        });
+        return;
       case 'SessionReady':
         this.requireState('AUTHED', msg.t);
         this.handleReady();
@@ -241,6 +272,16 @@ export class Connection implements Peer {
     }
     if (name === 'PlayerCellChange') {
       this.handleCellChange(value);
+      return;
+    }
+    if (name === 'AdminCommand') {
+      // M8: same gate as the slash path; the answer is always an AdminResult, including
+      // refusals, so a client never has to guess whether a command silently failed.
+      const body = value instanceof Map ? value : undefined;
+      const player = this.player;
+      void this.ctx.admin
+        .execEvent(player, body?.get('cmd'), body?.get('args'))
+        .then((text) => player.peer.sendEvent('AdminResult', { text }));
       return;
     }
     if (this.ctx.m7.handleEvent(this.player, name, value)) return; // M7 family
@@ -383,6 +424,7 @@ export class Connection implements Peer {
       this.disconnect('AUTH_FAILED', 'invalid invite code');
       return;
     }
+    if (this.refuseIfBanned(msg.account)) return;
     const result = await this.ctx.accounts.register(msg.account, msg.password);
     if (result === 'badname') {
       this.disconnect('AUTH_FAILED', 'account name must be 2-24 chars of A-Z a-z 0-9 _ - space');
@@ -398,15 +440,61 @@ export class Connection implements Peer {
     this.finishAuth(result, doc);
   }
 
+  // M8: a banned account is refused with BANNED at register, login and resume. Returns
+  // true when the session has been closed.
+  private refuseIfBanned(accountName: string): boolean {
+    const ban = this.ctx.bans.isAccountBanned(accountName);
+    if (!ban) return false;
+    log('info', 'conn.banned_account', { ip: this.ip, account: accountName });
+    this.disconnect('BANNED', `account banned: ${ban.reason}`);
+    return true;
+  }
+
+  // M8 SessionResume {token}. Runs in HELLO_OK, so engine + content policy have ALREADY
+  // been enforced by handleHello — a resume can never be used to slip past them. An
+  // unknown or expired token is AUTH_FAILED: the client falls back to a normal login.
+  private async handleResume(msg: SessionResume): Promise<void> {
+    if (!this.ctx.resume.enabled) {
+      this.disconnect('AUTH_FAILED', 'session resume is disabled');
+      return;
+    }
+    if (!this.ctx.loginLimiter.allow(this.ip)) {
+      this.disconnect('RATE', 'too many auth attempts');
+      return;
+    }
+    const ticket = this.ctx.resume.claim(msg.token); // single use
+    if (!ticket) {
+      this.disconnect('AUTH_FAILED', 'resume token expired or unknown');
+      return;
+    }
+    if (this.refuseIfBanned(ticket.accountName)) return;
+    const account = await this.ctx.accounts.get(ticket.accountName);
+    if (!account || account.banned) {
+      this.disconnect('AUTH_FAILED', 'account no longer available');
+      return;
+    }
+    const doc = await this.ctx.players.get(ticket.accountKey);
+    this.resumed = ticket;
+    log('info', 'player.resume', { account: account.name, ip: this.ip, cellKey: ticket.cellKey ?? null });
+    this.finishAuth(account, doc);
+    // Put the session back where it was BEFORE Ready, so the join path re-sends the cell
+    // and re-claims authority for the cell the player is standing in.
+    if (this.player) {
+      if (ticket.cellKey) this.player.cellKey = ticket.cellKey;
+      if (ticket.pose) this.player.pose = ticket.pose;
+    }
+  }
+
   private async handleLogin(msg: SessionLoginRequest): Promise<void> {
     if (!this.checkAuthGate(msg.serverPassword)) return;
+    if (this.refuseIfBanned(msg.account)) return;
     const account = await this.ctx.accounts.verifyLogin(msg.account, msg.password);
     if (!account) {
       this.disconnect('AUTH_FAILED', 'unknown account or wrong password');
       return;
     }
-    if (account.banned) {
-      this.disconnect('BANNED', 'account is banned');
+    if (account.banned || this.refuseIfBanned(account.name)) {
+      if (this.state !== 'CLOSED') this.disconnect('BANNED', 'account is banned');
       return;
     }
     const doc = await this.ctx.players.get(account.name.toLowerCase());
@@ -419,16 +507,17 @@ export class Connection implements Peer {
     const existing = this.ctx.roster.activeForAccount(accountKey);
     if (existing) existing.peer.disconnect('SUPERSEDED', 'account logged in from another connection');
     this.account = account;
-    this.player = this.ctx.roster.addAuthed(account.name, accountKey, account.rank, this);
+    this.player = this.ctx.roster.addAuthed(account.name, accountKey, account.rank, this, this.ip);
     this.state = 'AUTHED';
     this.authing = false;
     const sessionToken = randomBytes(16).toString('hex');
+    this.sessionToken = sessionToken;
     // playerRecord: only a doc with an appearance skips chargen — a position-only doc
     // (player quit mid-chargen after a cell change) must not.
     const record = doc?.appearance ? doc : null;
     // serverSeq = binary seq already consumed for this connection (0: none yet).
     this.sendText(
-      welcome(this.player.id, sessionToken, this.ctx.config.server.motd, this.outSeq, record, {
+      welcome(this.player.id, sessionToken, this.ctx.motd(), this.outSeq, record, {
         pvp: this.ctx.config.rules.pvp,
         difficulty: this.ctx.config.rules.difficulty,
       }),
@@ -444,6 +533,19 @@ export class Connection implements Peer {
     syncStateOnJoin(this.ctx.stateCtx, this.player); // M2 late-joiner appearance/equipment sync
     this.ctx.quests.sendJournalSync(this.player); // M6 full journal state at join
     this.ctx.m7.onJoinWorld(this.player); // M7 clock + weather + RecordsSync at join
+    // M8 resume completeness: a rejoin-in-place gets everything a fresh join gets
+    // (PlayerList, M2 appearance/equipment/stats, JournalSync, WorldTime, weather,
+    // RecordsSync) PLUS the cell it left off in — peers are told where the player is,
+    // the cell delta doc is replayed, and cell authority is re-claimed. Without this last
+    // step a resumed client would stand in an un-synced cell holding nothing.
+    if (this.resumed && this.player.cellKey) {
+      const { cellKey, pose } = this.player;
+      for (const p of this.ctx.roster.inWorld()) {
+        p.peer.sendEvent('PlayerCellChange', { id: this.player.id, cellKey, x: pose?.x ?? 0, y: pose?.y ?? 0, z: pose?.z ?? 0 });
+      }
+      this.ctx.world.sendCellState(this.player, cellKey);
+      this.ctx.world.authorityEnter(this.player, cellKey);
+    }
     this.ctx.hooks.playerJoinWorld({ id: this.player.id, name: this.player.name, rank: this.player.rank });
   }
 }

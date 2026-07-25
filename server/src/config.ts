@@ -34,6 +34,8 @@ export interface Config {
   time: { scale: number };
   gui: { timeoutSec: number };
   cellReset: { cells: string[]; intervalSec: number };
+  // M8 ops.
+  admin: { owners: string[]; allowConsole: boolean };
   limits: {
     msgsPerSec: number;
     moveMsgsPerSec: number;
@@ -139,6 +141,10 @@ function validate(t: Tree): Config {
     cellReset: {
       cells: reqStrArray(t, 'cellReset', 'cells'),
       intervalSec: reqNum(t, 'cellReset', 'intervalSec'),
+    },
+    admin: {
+      owners: reqStrArray(t, 'admin', 'owners'),
+      allowConsole: reqBool(t, 'admin', 'allowConsole'),
     },
     limits: {
       msgsPerSec: reqNum(t, 'limits', 'msgsPerSec'),

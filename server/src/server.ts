@@ -10,6 +10,7 @@ import { AccountStore } from './core/accounts';
 import { PlayerStore } from './persist/playerstore';
 import { CellStore } from './persist/cellstore';
 import { RecordStore } from './persist/recordstore';
+import { BanStore } from './persist/banstore';
 import type { StateCtx } from './core/playerstate';
 import { WorldState } from './core/worldstate';
 import { Combat } from './core/combat';
@@ -17,7 +18,9 @@ import { Quests } from './core/quests';
 import { WorldM7 } from './core/m7';
 import { Roster } from './core/players';
 import { ContentGate, EngineGate } from './core/manifest';
-import { CommandRegistry, registerCoreCommands, type CommandContext } from './core/commands';
+import { CommandRegistry, registerCoreCommands, registerAdminCommands, type CommandContext } from './core/commands';
+import { Admin } from './core/admin';
+import { ResumeStore } from './core/resume';
 import { broadcastChat, type ChatMessageBody } from './core/chat';
 import { HookBus } from './plugins/loader';
 import type { PluginApi } from './plugins/api';
@@ -55,9 +58,14 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   const playerStore = new PlayerStore(opts.dataDir);
   const cellStore = new CellStore(opts.dataDir);
   const recordStore = new RecordStore(opts.dataDir);
+  const bans = new BanStore(opts.dataDir);
+  await bans.ready(); // the ban list must be authoritative before the listener opens
   await cellStore.ready(); // netId ceiling must be loaded before any spawn
   await recordStore.ready(); // custom-record ids must not restart from 1 after a reboot
   const roster = new Roster();
+  // M8: /motd rewrites this at runtime; SessionWelcome and the motd plugin read it here.
+  let motd = config.server.motd;
+  const resume = new ResumeStore(config.login.resumeWindowSec);
   const world = new WorldState(roster, cellStore);
   const startedAt = Date.now();
   // At flush time the store pulls the freshest position from the live session, so pose
@@ -71,6 +79,19 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // actions), so the reference is closed over lazily — both are live before any hook or
   // any client frame can run.
   let hooks: HookBus;
+  const admin = new Admin({
+    roster,
+    accounts,
+    bans,
+    resume,
+    allowConsole: config.admin.allowConsole,
+    motd: () => motd,
+    setMotd: (text) => {
+      motd = text;
+      config.server.motd = text; // plugins and Welcome read config.server.motd
+    },
+    allow: (actor, cmd) => hooks.adminCommand({ id: actor.id, name: actor.name, rank: actor.rank }, cmd),
+  });
   const m7 = new WorldM7({
     roster,
     cells: cellStore,
@@ -105,6 +126,14 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       unscheduleCellReset: (cellKey) => m7.unscheduleCellReset(cellKey),
       scheduledResets: () => m7.scheduledResets(),
       resetCell: (cellKey) => m7.resetCellNow(cellKey),
+      promoteOwner: async (account) => {
+        const found = await accounts.get(account);
+        if (!found) return false;
+        accounts.setRank(found.name, 3);
+        const online = roster.findByName(found.name);
+        if (online) online.rank = 3;
+        return true;
+      },
       pendingGuiCount: () => m7.gui.pendingCount(),
     },
   };
@@ -112,6 +141,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
 
   const commands = new CommandRegistry();
   registerCoreCommands(commands);
+  registerAdminCommands(commands, admin);
   const commandCtx: CommandContext = {
     roster,
     onCommand: (player, name, args) => hooks.command({ id: player.id, name: player.name, rank: player.rank }, name, args),
@@ -159,10 +189,21 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     combat,
     quests,
     m7,
+    admin,
+    bans,
+    resume,
+    motd: () => motd,
   };
 
   const httpServer = createHttpServer(() => ({
     name: config.server.name,
+    motd,
+    contentPolicy: config.content.enforce,
+    enginePolicy: config.engine.enforce,
+    requiresPassword: config.server.password !== '',
+    allowsRegistration: config.login.allowRegistration && config.login.inviteCode === '',
+    playerCount: roster.inWorld().length,
+    pvp: config.rules.pvp,
     players: roster.inWorld().map((p) => ({
       id: p.id,
       name: p.name,
@@ -180,6 +221,15 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   const connections = new Set<Connection>();
 
   const wss = attachWss(httpServer, config.limits.maxMsgBytes, (ws, ip) => {
+    // M8: an IP ban is refused at accept — the cheapest possible answer, before any
+    // parsing, argon2 work or roster slot is spent on the connection.
+    const ipBan = bans.isIpBanned(ip);
+    if (ipBan) {
+      log('info', 'conn.ip_banned', { ip });
+      if (ws.readyState === WebSocket.OPEN) ws.send(disconnectMsg('BANNED', `address banned: ${ipBan.reason}`));
+      ws.close(1008, 'BANNED');
+      return;
+    }
     if (!ipTracker.acquire(ip)) {
       log('info', 'conn.ip_cap_refused', { ip });
       if (ws.readyState === WebSocket.OPEN) ws.send(disconnectMsg('RATE', 'too many connections from your address'));
@@ -218,6 +268,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       await m7.drain();
       await cellStore.flushAll();
       await recordStore.flush();
+      await bans.flush();
     },
     close: async () => {
       if (closed) return;
@@ -232,6 +283,8 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       await world.drain(); // let queued ops land before the final cell flush
       await cellStore.close();
       await recordStore.close();
+      await bans.flush();
+      resume.clear();
       await new Promise<void>((resolve) => {
         httpServer.close(() => resolve());
         httpServer.closeAllConnections();

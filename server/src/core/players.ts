@@ -20,6 +20,7 @@ export interface Player {
   accountKey: string; // nameLower
   rank: number;
   peer: Peer;
+  ip: string; // M8: needed by /ipban; never leaves the server except into ban/log lines
   inWorld: boolean;
   // M1 movement state. cellKey unset = visible to nobody (client sends PlayerCellChange
   // right after Ready). poseVersion bumps on every accepted pose/cell update so the batch
@@ -66,13 +67,14 @@ export class Roster {
     throw new Error('playerId space exhausted');
   }
 
-  addAuthed(name: string, accountKey: string, rank: number, peer: Peer): Player {
+  addAuthed(name: string, accountKey: string, rank: number, peer: Peer, ip = ''): Player {
     const player: Player = {
       id: this.allocId(),
       name,
       accountKey,
       rank,
       peer,
+      ip,
       inWorld: false,
       moveSeq: 0,
       poseVersion: 0,

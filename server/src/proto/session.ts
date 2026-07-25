@@ -38,6 +38,12 @@ export interface SessionLoginRequest {
   password: string;
   serverPassword?: string;
 }
+// M8: rejoin-in-place with a token parked when the previous session dropped. Sent in
+// HELLO_OK, i.e. AFTER Hello — a resume never bypasses the engine/content policy.
+export interface SessionResume {
+  t: 'SessionResume';
+  token: string;
+}
 export interface SessionReady {
   t: 'SessionReady';
 }
@@ -49,6 +55,7 @@ export type ClientSessionMsg =
   | SessionHello
   | SessionRegister
   | SessionLoginRequest
+  | SessionResume
   | SessionReady
   | SessionPing;
 
@@ -136,6 +143,8 @@ export function parseSessionMessage(text: string): ClientSessionMsg | null {
         password: str(o, 'password'),
         ...(typeof o['serverPassword'] === 'string' ? { serverPassword: o['serverPassword'] } : {}),
       };
+    case 'SessionResume':
+      return { t, token: str(o, 'token') };
     case 'SessionReady':
       return { t };
     case 'SessionPing':

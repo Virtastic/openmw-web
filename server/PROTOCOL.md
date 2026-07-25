@@ -3,7 +3,7 @@
 Authoritative contract between the browser client (C++ `mwmp/` transport + `scripts/mp/` Lua)
 and the `openmw-mp` server. This file is the source of truth; both sides cite it in code
 comments. Scope grows per milestone — sections are tagged with the milestone that introduces
-them. Current: **M7** (M0-M6 shipped; M8 pending).
+them. Current: **M8** (M0-M7 shipped).
 
 ## Transport (M0)
 
@@ -92,6 +92,8 @@ Client → server:
 - `{"t":"SessionRegister", "account":"name", "password":"…", "serverPassword":"<opt>",
    "inviteCode":"<opt>"}`
 - `{"t":"SessionLoginRequest", "account":"name", "password":"…", "serverPassword":"<opt>"}`
+- `{"t":"SessionResume", "token":"<hex>"}` — M8 rejoin-in-place; valid in `HELLO_OK`
+  instead of a Register/Login (see §Ops).
 - `{"t":"SessionReady"}` — after the client has applied `SessionWelcome` and is in-game.
 - `{"t":"SessionPing", "clientTime":<ms>}`
 
@@ -288,10 +290,45 @@ NOT re-broadcast it (echo guard) — clients seed their diff caches from applied
 
 ## Ops (M8)
 
-`AdminCommand` (C→S, rank-gated) `{cmd=string, args={…}}` → `AdminResult {text=string}`;
-`ConsoleCommand` (S→C, admin-gated) `{script=string}` executed client-side. Session resume
-per §Session tier: `SessionResume{token}` within `[login] resumeWindowSec` skips auth and
-re-sends `WorldCellState` + `JournalSync` + `RecordsSync` for a rejoin-in-place.
+**Ranks** live on the account (`accounts/<name>.json`, seeded from `[admin] owners`):
+`0` player, `1` moderator, `2` admin, `3` owner.
+
+| name | dir | body |
+|---|---|---|
+| `AdminCommand` | C→S, rank-gated | `{cmd=string, args={string\|number,…}}` — same commands as the chat slash path, same gate |
+| `AdminResult` | S→C | `{text=string}` — ALWAYS answered, refusals included (`"/ban requires rank 2 …"`), may be multi-line |
+| `ConsoleCommand` | S→C, owner-gated | `{script=string}` executed client-side. Remote code execution on the player's own machine: rank 3 only, removable with `[admin] allowConsole=false`, and every use is logged with actor, target and full payload |
+| `AdminTeleport` | S→C | `{cellKey=string, x=, y=, z=}` — the `/tp` and `/tpto` effect; the client moves the player and then reports the move normally (`PlayerCellChange`) |
+| `AdminGive` | S→C | `{recordId=string, count=number}` — the `/give` effect; the client adds the item and reports inventory as usual |
+
+Commands and their minimum rank: `list` `motd` (read) 0 · `kick` `tp` `tpto` 1 ·
+`motd <text>` `ban` `unban` `ipban` `give` 2 · `setrank` `console` 3. A player who
+outranks the actor cannot be kicked/banned/ip-banned. Account bans are enforced at
+register/login/resume (`BANNED`); IP bans are enforced at socket accept, before any
+parsing or hashing.
+
+**Session resume** (§Session tier): when an IN-WORLD session drops, its `sessionToken` is
+parked in memory for `[login] resumeWindowSec`. `{"t":"SessionResume","token":"<hex>"}` is
+sent in `HELLO_OK` — i.e. AFTER `SessionHello`, so engine and content policy are enforced
+exactly as for a login and resume can never bypass them. Tokens are single-use (a resumed
+session gets a fresh one), memory-only (a restart invalidates every ticket), and revoked on
+ban. Success answers `SessionWelcome` (new token, `playerRecord` restored) and the client
+then sends `SessionReady` as usual; failure is `AUTH_FAILED` and the client falls back to a
+normal login. Supersede semantics are unchanged: resuming an account that is currently
+connected elsewhere kicks that connection with `SUPERSEDED`.
+
+After `SessionReady` a resumed session receives **everything a fresh join receives** —
+`PlayerJoinWorld`/`PlayerList`, the M2 appearance/equipment/stats sync, `JournalSync`,
+`WorldTime`, per-region `WorldWeather`, `RecordsSync` — **plus** the rejoin-in-place set:
+its previous cell is restored server-side, a `PlayerCellChange` for it is broadcast so
+peers re-place the player, `WorldCellState` for that cell is re-sent, and cell authority is
+re-claimed (`ActorAuthorityGrant`/`Info`). The client therefore needs no special resume
+handling beyond sending the token: the post-Ready stream is a superset of the normal one.
+
+`GET /status` (public, `access-control-allow-origin: *`) is the lobby payload:
+`{name, motd, players[{id,name,cellKey,level?}], playerCount, maxPlayers, contentPolicy,
+enginePolicy, requiresPassword, allowsRegistration, pvp, uptime, version}` — no IPs, no
+account data. `GET /healthz` → `ok`.
 
 ## Client-side integration contract (M0)
 

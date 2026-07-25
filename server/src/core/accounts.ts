@@ -77,6 +77,31 @@ export class AccountStore {
     return (await verify(account.pwHash, password)) ? account : null;
   }
 
+  // M8: rank/ban mutations go through the dirty queue like lastSeen. The account must be
+  // in cache (every caller has just awaited get()).
+  setRank(name: string, rank: number): void {
+    const account = this.cache.get(name.toLowerCase());
+    if (!account) return;
+    account.rank = rank;
+    this.dirty.add(name.toLowerCase());
+  }
+
+  setBanned(name: string, banned: boolean): void {
+    const account = this.cache.get(name.toLowerCase());
+    if (!account) return;
+    if (banned) account.banned = true;
+    else delete account.banned;
+    this.dirty.add(name.toLowerCase());
+  }
+
+  // Erasure (--delete-account): forget the cached copy so nothing rewrites the file we
+  // are about to unlink.
+  forget(name: string): void {
+    const key = name.toLowerCase();
+    this.cache.delete(key);
+    this.dirty.delete(key);
+  }
+
   touchLastSeen(name: string): void {
     const key = name.toLowerCase();
     const account = this.cache.get(key);

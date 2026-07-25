@@ -72,6 +72,79 @@ example.com {
 Static hosts (Netlify, Cloudflare Pages, …) work too — set the same three
 headers in the host's headers config.
 
+## Multiplayer server
+
+The multiplayer relay (`server/`) is a separate, optional process: a Node 22 WebSocket
+server that validates and relays play between clients and persists the shared world. It is
+not needed to host single-player.
+
+### Run it
+
+```bash
+cd server
+npm ci
+npm run build
+node dist/server.mjs --data ./devdata --port 8080
+```
+
+Or with Docker (`server/Dockerfile`, `server/docker-compose.prod.yml`):
+
+```bash
+docker compose -f server/docker-compose.prod.yml up -d
+```
+
+Behind a reverse proxy, `/ws` must be upgraded to a WebSocket and `/status` + `/healthz`
+proxied as plain GETs. With Caddy:
+
+```
+mp.example.com {
+    reverse_proxy 127.0.0.1:8080
+}
+```
+
+Use `wss://` in production. The game client joins via
+`index.html?mp=wss://mp.example.com/ws&name=<display-name>`, which is exactly the URL a
+launcher hands out — so a working `/status` plus that URL is all a server list needs.
+
+### Configuration
+
+Defaults live in `server/config.default.toml` (documented inline); operator overrides go in
+`<dataDir>/config.toml` and are deep-merged over them. The knobs you will actually touch:
+
+| Key | What |
+|---|---|
+| `[server] name`, `motd`, `maxPlayers`, `password` | identity and the front door |
+| `[login] allowRegistration`, `inviteCode`, `resumeWindowSec` | who may create an account; how long a dropped session may rejoin in place |
+| `[content] enforce`, `[engine] enforce` | load-order / engine-build matching (`names`, `strict`, `off`) |
+| `[sharing] *` | which quest families are world-shared vs per-player |
+| `[rules] pvp`, `difficulty`, `respawn*` | gameplay policy |
+| `[admin] owners`, `allowConsole` | who bootstraps as rank 3; whether `/console` exists at all |
+| `[cellReset] cells`, `intervalSec` | scheduled cell wipes |
+| `[limits] *` | rate limits and per-IP caps |
+
+### Operating it
+
+Ranks are stored per account: **0** player, **1** moderator (`/kick /tp /tpto`), **2** admin
+(`/ban /unban /ipban /give /motd`), **3** owner (`/setrank /console`). List your own account
+in `[admin] owners` and restart — it is promoted on boot, so you never hand-edit account
+files. Commands work as chat slash-commands and, for launcher/tooling use, as the
+`AdminCommand` protocol message; both go through the same rank gate, and every action is
+logged as `admin.action` with actor, target and arguments.
+
+`/console` sends a script to a player's own client to execute. Treat it as remote code
+execution on someone else's machine: it is owner-only, every use is logged in full, and
+`[admin] allowConsole = false` removes it entirely.
+
+- `GET /healthz` → `ok` (liveness).
+- `GET /status` → public JSON for launchers: server name, MOTD, player count and list,
+  max players, content/engine policy, whether a password or invite is required, PvP flag,
+  uptime, version. It contains no IP addresses and no account data.
+- `SIGUSR1` flushes state to disk; `SIGTERM`/`SIGINT` disconnect players cleanly and flush.
+
+Everything the server stores about players, and how to erase it, is documented in
+`server/PRIVACY.md` — including the `--delete-account <name>` CLI for deletion requests.
+Read it before you take registrations from anyone but yourself.
+
 ## Browser support
 
 Desktop Chrome/Chromium only (SharedArrayBuffer + WebGL2/ANGLE +

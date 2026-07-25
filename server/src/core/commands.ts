@@ -1,10 +1,11 @@
 // Copyright (C) 2025-2026 Virtastic - https://virtastic.app
 // SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
-// Slash-command registry. Core set: /help /list /me, plus rank-gated /kick as the
-// admin seed (rank >= 1, set by editing the account JSON in M0). Plugins get first
-// crack via the onCommand hook (return true = handled).
+// Slash-command registry. Core set: /help /me; M8 adds every operator command from
+// core/admin.ts (one implementation, shared with the AdminCommand event path). Plugins
+// get first crack via the onCommand hook (return true = handled).
 
 import type { Player, Roster } from './players';
+import { Admin, ADMIN_COMMANDS } from './admin';
 import { broadcastChat, serverWhisper } from './chat';
 import { log } from '../log';
 
@@ -17,7 +18,10 @@ export interface CommandContext {
 export interface Command {
   name: string;
   help: string;
-  minRank: number;
+  minRank: number; // used for /help visibility, and for gating unless selfGated
+  // M8 admin commands rank-check inside Admin.exec so the chat and event paths share ONE
+  // gate (and one refusal wording); the registry must not pre-empt them.
+  selfGated?: boolean;
   run(ctx: CommandContext, player: Player, args: string): void;
 }
 
@@ -39,7 +43,7 @@ export class CommandRegistry {
       serverWhisper(player, `Unknown command /${name} — try /help`);
       return;
     }
-    if (player.rank < cmd.minRank) {
+    if (!cmd.selfGated && player.rank < cmd.minRank) {
       serverWhisper(player, `/${cmd.name} requires a higher rank`);
       return;
     }
@@ -62,15 +66,6 @@ export function registerCoreCommands(registry: CommandRegistry): void {
     },
   });
   registry.register({
-    name: 'list',
-    help: 'list players in world',
-    minRank: 0,
-    run(ctx, player) {
-      const names = ctx.roster.inWorld().map((p) => p.name);
-      serverWhisper(player, `Players (${names.length}): ${names.join(', ')}`);
-    },
-  });
-  registry.register({
     name: 'me',
     help: 'emote: /me waves',
     minRank: 0,
@@ -87,17 +82,29 @@ export function registerCoreCommands(registry: CommandRegistry): void {
       });
     },
   });
-  registry.register({
-    name: 'kick',
-    help: 'kick a player by name (admin)',
-    minRank: 1,
-    run(ctx, player, args) {
-      const target = args ? ctx.roster.findByName(args) : undefined;
-      if (!target) {
-        serverWhisper(player, args ? `No player named "${args}"` : 'usage: /kick <name>');
-        return;
-      }
-      target.peer.disconnect('KICKED', `kicked by ${player.name}`);
-    },
-  });
+}
+
+// M8: expose every ADMIN_COMMANDS entry as a slash command. The registry only supplies
+// discovery (/help) and argument splitting; authority, auditing and refusal wording all
+// live in Admin.exec.
+export function registerAdminCommands(registry: CommandRegistry, admin: Admin): void {
+  for (const [name, spec] of Object.entries(ADMIN_COMMANDS)) {
+    registry.register({
+      name,
+      help: spec.help,
+      minRank: spec.minRank,
+      selfGated: true,
+      run(_ctx, player, args) {
+        void admin.exec(player, name, splitArgs(args)).then((text) => {
+          for (const line of text.split('\n')) serverWhisper(player, line);
+        });
+      },
+    });
+  }
+}
+
+// Whitespace split, but the LAST argument of a script-carrying command keeps its spaces
+// because Admin joins the tail itself (/console <player> <script>).
+function splitArgs(args: string): string[] {
+  return args.length === 0 ? [] : args.split(/\s+/);
 }

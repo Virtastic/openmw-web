@@ -12,9 +12,10 @@ import { deathPenalty } from './builtin/death-penalty';
 import { pvp } from './builtin/pvp';
 import { sharing } from './builtin/sharing';
 import { cellReset } from './builtin/cell-reset';
+import { admin } from './builtin/admin';
 import { log } from '../log';
 
-const BUILTINS: Record<string, Plugin> = { motd, respawn, 'death-penalty': deathPenalty, pvp, sharing, 'cell-reset': cellReset };
+const BUILTINS: Record<string, Plugin> = { motd, respawn, 'death-penalty': deathPenalty, pvp, sharing, 'cell-reset': cellReset, admin };
 
 export class HookBus {
   private plugins: Plugin[] = [];
@@ -78,6 +79,10 @@ export class HookBus {
   // false = vetoed.
   chat(player: PluginPlayer, text: string): boolean {
     return this.run('onChat', (p) => p.onChat?.(this.api, player, text)) !== false;
+  }
+  // M8: false = a plugin refused this admin command (the rank gate already passed).
+  adminCommand(actor: PluginPlayer, cmd: string): boolean {
+    return this.run('onAdminCommand', (p) => p.onAdminCommand?.(this.api, actor, cmd)) !== false;
   }
   // true = handled by a plugin.
   command(player: PluginPlayer, name: string, args: string): boolean {

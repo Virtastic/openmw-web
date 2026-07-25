@@ -28,6 +28,8 @@ export interface PluginWorld {
   unscheduleCellReset(cellKey: string): void;
   scheduledResets(): string[];
   resetCell(cellKey: string): Promise<void>;
+  // M8: promote an existing account to owner (rank 3). Resolves false if unknown.
+  promoteOwner(account: string): Promise<boolean>;
   // Dialogs still awaiting a reply. Settles to 0 once every prompt is answered, timed
   // out or orphaned by a disconnect — an operator-visible leak check.
   pendingGuiCount(): number;
@@ -74,4 +76,7 @@ export interface Plugin {
   onChat?(api: PluginApi, player: PluginPlayer, text: string): boolean | void;
   // Return true to mark the command handled (skips the core registry).
   onCommand?(api: PluginApi, player: PluginPlayer, name: string, args: string): boolean | void;
+  // M8: per-command veto applied AFTER the rank gate (the `admin` builtin uses it for
+  // [admin] allowConsole). Return false to refuse; anything else allows.
+  onAdminCommand?(api: PluginApi, actor: PluginPlayer, cmd: string): boolean | void;
 }
