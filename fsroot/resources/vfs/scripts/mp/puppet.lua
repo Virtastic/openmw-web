@@ -244,6 +244,11 @@ return {
             dead = false
             zeroControls()
             self:enableAI(true)
+            -- Remove OURSELVES, only now that AI is back on. The global script must not do
+            -- it: sendEvent is delivered next frame while removeScript takes effect at once,
+            -- so removing from there destroyed this script before it ever ran — leaving
+            -- mDisableAI set forever and the whole cell's NPCs frozen after a handoff.
+            pcall(function() self:removeScript('scripts/mp/puppet.lua') end)
         end,
     },
 }

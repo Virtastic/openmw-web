@@ -179,10 +179,10 @@ end
 local function detachActorPuppetsInCell(cellKey)
     for key, p in pairs(puppetActors) do
         if p.cellKey == cellKey and p.obj:isValid() then
-            -- Tell the puppet to re-enable AI (mDisableAI persists after the script is
-            -- removed), THEN remove it so the real actor resumes simulation.
+            -- Only signal: the puppet re-enables AI and removes ITSELF (see puppet.lua's
+            -- MP_Detach). Removing the script from here raced the queued event and left
+            -- mDisableAI stuck on, freezing the cell's NPCs after every handoff.
             pcall(function() p.obj:sendEvent('MP_Detach', {}) end)
-            pcall(function() p.obj:removeScript('scripts/mp/puppet.lua') end)
             puppetActors[key] = nil
         end
     end
