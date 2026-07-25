@@ -7,6 +7,7 @@
 import type { Player, Roster } from './players';
 import { Admin, ADMIN_COMMANDS } from './admin';
 import { broadcastChat, serverWhisper } from './chat';
+import { MAX_REASON_CHARS, type Moderation } from './moderation';
 import { log } from '../log';
 
 export interface CommandContext {
@@ -80,6 +81,52 @@ export function registerCoreCommands(registry: CommandRegistry): void {
         fromId: player.id,
         text: `* ${player.name} ${args}`,
       });
+    },
+  });
+}
+
+// A4: /report is the one moderation command a rank-0 player may run, so it lives in the
+// plain registry rather than ADMIN_COMMANDS (which is the operator surface). It is
+// deliberately cheap to file and expensive to abuse: the reporter's own name is stamped on
+// every report, and the reason is bounded before it ever reaches a filename or a JSON doc.
+export function registerReportCommand(registry: CommandRegistry, mod: Moderation): void {
+  registry.register({
+    name: 'report',
+    help: 'report a player to the operators: /report <player> <reason>',
+    minRank: 0,
+    run(ctx, player, args) {
+      const space = args.indexOf(' ');
+      const targetName = space === -1 ? args : args.slice(0, space);
+      const reason = space === -1 ? '' : args.slice(space + 1).trim().slice(0, MAX_REASON_CHARS);
+      if (!targetName || !reason) {
+        serverWhisper(player, 'usage: /report <player> <reason>');
+        return;
+      }
+      // An offline target is still reportable (they may have just logged off after
+      // griefing), so a miss records the name rather than refusing.
+      const target = ctx.roster.findByName(targetName);
+      void mod.reports
+        .write({
+          ts: new Date().toISOString(),
+          reporter: { id: player.id, name: player.name, account: player.accountKey },
+          target: {
+            id: target?.id ?? null,
+            name: target?.name ?? targetName.slice(0, 64),
+            account: target?.accountKey ?? null,
+            cellKey: target?.cellKey ?? null,
+          },
+          reason,
+          context: mod.chat.context(),
+        })
+        .then((file) => {
+          log('info', 'moderation.report', { reporter: player.name, target: targetName, file });
+          serverWhisper(player, `Report filed against ${targetName}. Thank you.`);
+        })
+        .catch((err) => {
+          // Never swallow: the player is told it failed AND the operator sees why.
+          log('error', 'moderation.report_failed', { reporter: player.name, error: String(err) });
+          serverWhisper(player, 'Could not file that report — please tell an operator directly.');
+        });
     },
   });
 }

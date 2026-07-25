@@ -139,7 +139,7 @@ async function main(): Promise<void> {
       const now = Date.now();
 
       for (const b of bots) {
-        if (b.disconnected) continue;
+        if (!b || b.disconnected) continue;
         // Movement: a slow circuit inside the bot's cell, at the real client's rate.
         b.x += Math.cos(tick / 20) * 12;
         b.y += Math.sin(tick / 20) * 12;
@@ -150,7 +150,7 @@ async function main(): Promise<void> {
       // and container ops (the transactional path) — the mix a real session produces.
       if (tick % (MOVE_HZ * 5) === 0) {
         const b = bots[tick % bots.length];
-        if (!b.disconnected) {
+        if (b && !b.disconnected) {
           b.client.sendEvent('ChatSend', { text: `soak tick ${tick}` });
           chatsSent++;
         }
@@ -158,7 +158,7 @@ async function main(): Promise<void> {
       if (tick % (MOVE_HZ * 11) === 0) {
         // Authority thrash: a bot ping-pongs between cells, forcing claim/handoff churn.
         const b = bots[(tick / (MOVE_HZ * 11)) % bots.length];
-        if (!b.disconnected) {
+        if (b && !b.disconnected) {
           b.cell = (b.cell + 1) % CELLS;
           b.x = b.cell * 8192;
           b.client.sendCellChange(`${b.cell},0`, b.x, b.y, 512);
@@ -166,7 +166,7 @@ async function main(): Promise<void> {
       }
       if (tick % (MOVE_HZ * 7) === 0) {
         const b = bots[(tick * 3) % bots.length];
-        if (!b.disconnected) {
+        if (b && !b.disconnected) {
           b.client.sendEvent('ObjectSpawnRequest', {
             tempId: tick,
             recordId: 'misc_soak_item',
@@ -185,7 +185,7 @@ async function main(): Promise<void> {
         // on every hit), and the victim must never take damage state from it.
         const atk = bots[tick % bots.length];
         const vic = bots[(tick + 3) % bots.length];
-        if (!atk.disconnected && !vic.disconnected && atk !== vic && atk.cell === vic.cell) {
+        if (atk && vic && !atk.disconnected && !vic.disconnected && atk !== vic && atk.cell === vic.cell) {
           atk.client.sendEvent('CombatHit', {
             target: { playerId: vic.playerId },
             damage: { health: 5 }, strength: 1, sourceType: 'melee', successful: true,
@@ -196,7 +196,7 @@ async function main(): Promise<void> {
         // Journal: every bot pushes the SAME quest, racing the monotonic-max arbitration.
         journalStage++;
         const b = bots[(tick * 7) % bots.length];
-        if (!b.disconnected) {
+        if (b && !b.disconnected) {
           b.client.sendEvent('JournalEntry', { questId: 'soak_quest', index: journalStage });
           // Also push a deliberately STALE index: it must never move the shared stage back.
           b.client.sendEvent('JournalEntry', { questId: 'soak_quest', index: 1 });
@@ -204,7 +204,7 @@ async function main(): Promise<void> {
       }
       if (tick % (MOVE_HZ * 17) === 0) {
         const b = bots[(tick * 11) % bots.length];
-        if (!b.disconnected) {
+        if (b && !b.disconnected) {
           recordsRequested++;
           b.client.sendEvent('RecordCreate', {
             tempId: recordsRequested,
@@ -216,7 +216,7 @@ async function main(): Promise<void> {
       if (tick % (MOVE_HZ * 23) === 0) {
         // Resting advances the clock for EVERYONE — contended by design here.
         const b = bots[(tick * 5) % bots.length];
-        if (!b.disconnected) b.client.sendEvent('WorldTimeRequest', { advanceHours: 1, reason: 'rest' });
+        if (b && !b.disconnected) b.client.sendEvent('WorldTimeRequest', { advanceHours: 1, reason: 'rest' });
       }
 
       // --- metrics ---------------------------------------------------------------------

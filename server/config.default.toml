@@ -103,6 +103,18 @@ owners = []
 # capability from the server entirely.
 allowConsole = true
 
+[moderation]
+# A4: durable chat log + /report inbox under <dataDir>/logs and <dataDir>/reports.
+# Public play needs evidence an admin can read after the fact; stdout is not that (it is
+# level-filtered and rotated by the supervisor). See PRIVACY.md — this is personal data.
+chatLog = true
+# Days of chat logs and reports to keep. Matches the documented backup retention (README).
+# 0 = prune everything older than today, i.e. effectively keep only the current day.
+retentionDays = 14
+# How many recent chat lines are attached to a /report as context. This is what an admin
+# actually needs: a reason with no surrounding conversation is not actionable.
+contextLines = 20
+
 [metrics]
 # Prometheus text-format scrape endpoint at GET /metrics. OFF by default: the numbers are
 # operational (player counts, auth failures, latency) and the endpoint is not something a

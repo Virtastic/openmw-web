@@ -48,6 +48,25 @@ jobs:
       - name: Install edge vhost
         run: sudo cp deploy/openmw-mp.caddy /opt/edge/sites/openmw-mp.caddy
 
+      # Drain BEFORE the swap. `compose up -d` on a changed image recreates the container,
+      # which kills connected players mid-session with no warning frame. `compose stop`
+      # sends SIGTERM and honours stop_grace_period (30s), and the server's SIGTERM path
+      # broadcasts SessionDisconnect SHUTDOWN to every session and flushes all state before
+      # exiting — so players see "server shutting down" and reconnect cleanly instead of
+      # having the socket vanish. Timeout is one second under the grace period so compose,
+      # not us, owns the SIGKILL. First deploy (no container yet) is a no-op.
+      - name: Drain connected players
+        env:
+          COMPOSE_FILE: /opt/openmw-mp/docker-compose.prod.yml
+        run: |
+          set -e
+          if [ -n "$(docker ps -q -f name='^openmw-mp$')" ]; then
+            docker compose -f "$COMPOSE_FILE" stop -t 29 openmw-mp
+            echo "drained: previous container stopped gracefully"
+          else
+            echo "no running container to drain"
+          fi
+
       - name: Start / update container
         run: docker compose -f /opt/openmw-mp/docker-compose.prod.yml up -d
 

@@ -293,6 +293,12 @@ NOT re-broadcast it (echo guard) — clients seed their diff caches from applied
 **Ranks** live on the account (`accounts/<name>.json`, seeded from `[admin] owners`):
 `0` player, `1` moderator, `2` admin, `3` owner.
 
+Moderation (A4) rides the same two entry points and the same single `Admin.exec` gate:
+`/report <player> <reason>` is rank 0 (it writes `reports/<ts>-<reporter>.json` with the
+target's current cell and the last `[moderation] contextLines` chat lines), while
+`/reports [n]` and `/chatlog <player> [minutes]` are rank 1. Chat is persisted to
+`logs/chat-YYYY-MM-DD.jsonl` — see PRIVACY.md.
+
 | name | dir | body |
 |---|---|---|
 | `AdminCommand` | C→S, rank-gated | `{cmd=string, args={string\|number,…}}` — same commands as the chat slash path, same gate |

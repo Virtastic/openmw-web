@@ -13,6 +13,7 @@ import type { Player, Peer, Roster } from '../core/players';
 import type { CommandRegistry, CommandContext } from '../core/commands';
 import type { HookBus } from '../plugins/loader';
 import { handleChatSend } from '../core/chat';
+import type { Moderation } from '../core/moderation';
 import { TokenBucket, IpRateLimiter } from './ratelimit';
 import { MSG_EVENT, MSG_PLAYER_MOVE, MSG_ACTOR_MOVE_BATCH, ProtoError, unpackEnvelope, unpackEvent, packEvent, packEnvelope } from '../proto/envelope';
 import { unpackMove } from '../proto/movement';
@@ -71,6 +72,7 @@ export interface ServerCtx {
   admin: Admin;
   bans: BanStore;
   resume: ResumeStore;
+  moderation: Moderation; // A4: durable chat log + report inbox
   motd(): string; // mutable at runtime via /motd
 }
 
@@ -331,6 +333,7 @@ export class Connection implements Peer {
       { onChat: (p, t) => this.ctx.hooks.chat({ id: p.id, name: p.name, rank: p.rank }, t) },
       this.player,
       value,
+      this.ctx.moderation,
     );
   }
 

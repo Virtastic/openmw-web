@@ -18,7 +18,14 @@ import { Quests } from './core/quests';
 import { WorldM7 } from './core/m7';
 import { Roster } from './core/players';
 import { ContentGate, EngineGate } from './core/manifest';
-import { CommandRegistry, registerCoreCommands, registerAdminCommands, type CommandContext } from './core/commands';
+import {
+  CommandRegistry,
+  registerCoreCommands,
+  registerAdminCommands,
+  registerReportCommand,
+  type CommandContext,
+} from './core/commands';
+import { Moderation } from './core/moderation';
 import { Admin } from './core/admin';
 import { ResumeStore } from './core/resume';
 import { broadcastChat, type ChatMessageBody } from './core/chat';
@@ -80,11 +87,13 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // actions), so the reference is closed over lazily — both are live before any hook or
   // any client frame can run.
   let hooks: HookBus;
+  const moderation = new Moderation(opts.dataDir, config.moderation);
   const admin = new Admin({
     roster,
     accounts,
     bans,
     resume,
+    moderation,
     allowConsole: config.admin.allowConsole,
     motd: () => motd,
     setMotd: (text) => {
@@ -142,6 +151,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
 
   const commands = new CommandRegistry();
   registerCoreCommands(commands);
+  registerReportCommand(commands, moderation);
   registerAdminCommands(commands, admin);
   const commandCtx: CommandContext = {
     roster,
@@ -193,6 +203,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     admin,
     bans,
     resume,
+    moderation,
     motd: () => motd,
   };
 
@@ -275,6 +286,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       await cellStore.flushAll();
       await recordStore.flush();
       await bans.flush();
+      await moderation.flush(); // a backup taken after SIGUSR1 must include the chat log
     },
     close: async () => {
       if (closed) return;
@@ -291,6 +303,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       await cellStore.close();
       await recordStore.close();
       await bans.flush();
+      await moderation.flush();
       resume.clear();
       await new Promise<void>((resolve) => {
         httpServer.close(() => resolve());

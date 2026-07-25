@@ -36,6 +36,7 @@ export interface Config {
   cellReset: { cells: string[]; intervalSec: number };
   // M8 ops.
   admin: { owners: string[]; allowConsole: boolean };
+  moderation: { chatLog: boolean; retentionDays: number; contextLines: number };
   limits: {
     msgsPerSec: number;
     moveMsgsPerSec: number;
@@ -146,6 +147,11 @@ function validate(t: Tree): Config {
     admin: {
       owners: reqStrArray(t, 'admin', 'owners'),
       allowConsole: reqBool(t, 'admin', 'allowConsole'),
+    },
+    moderation: {
+      chatLog: reqBool(t, 'moderation', 'chatLog'),
+      retentionDays: reqNum(t, 'moderation', 'retentionDays'),
+      contextLines: reqNum(t, 'moderation', 'contextLines'),
     },
     limits: {
       msgsPerSec: reqNum(t, 'limits', 'msgsPerSec'),

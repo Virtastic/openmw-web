@@ -20,6 +20,8 @@ Everything lives under the data directory (`--data`, `/data` in the container).
 | Character document: appearance, equipment, inventory, stats, spells, position, journal, factions, bounty | `players/<name>.json` | the character has to exist between sessions |
 | Ban entries: banned account name, or **IP address** for an IP ban, plus who banned, when, and the reason | `bans.json` | enforcing bans across reconnects |
 | World state: cell deltas, containers, custom records, clock, weather | `world/` | shared world; keyed to cells and objects, **not** to people. The only per-player trace is a transient session `playerId` on objects a player spawned, which is a per-session number and not an identifier |
+| Chat log: every chat line and every slash command a player typed, with timestamp, account key, display name, session playerId and channel | `logs/chat-YYYY-MM-DD.jsonl` | moderation evidence. Public play needs an answer to "what was actually said". Off with `[moderation] chatLog = false` |
+| Reports: who reported whom, the reason text, the reported player's cell at the time, and the last `[moderation] contextLines` chat lines (which quote **other** players) | `reports/<ts>-<reporter>.json` | acting on a `/report` requires the surrounding conversation; a reason alone is not actionable |
 | Session/resume tokens | memory only | never written to disk; discarded on restart and when the window (`[login] resumeWindowSec`) expires |
 
 **IP addresses**: the server holds a client's IP only for the lifetime of the connection
@@ -52,6 +54,18 @@ logging:
 
 If you promise players a retention period, configure it — this file cannot enforce it for you.
 
+### Chat logs and reports (the one log stream the server *does* manage)
+
+Unlike stdout, `logs/chat-*.jsonl` and `reports/*.json` are written and pruned by the server
+itself. Retention is `[moderation] retentionDays` (**default 14**, matching the recommended
+log and backup retention); pruning runs at boot and when the day rolls over, so a server that
+is restarted regularly prunes regularly. Tell your players these exist — a chat log they did
+not know about is the part operators get wrong.
+
+Note the reports directory contains a **third party's** words: the context lines quote whoever
+was talking at the time, not only the reporter and the target. Treat the directory as
+restricted; `/reports` and `/chatlog` are rank 1 for the same reason.
+
 ## Erasure
 
 To honour a deletion request, stop the server (or run against its data directory while the
@@ -61,12 +75,25 @@ account is offline) and:
 node dist/server.mjs --data /data --delete-account "Player Name"
 ```
 
-This removes `accounts/<name>.json` (name, password hash, timestamps, rank) and
-`players/<name>.json` (the whole character), and lifts any ban entry naming that account —
-a ban cannot outlive the data it names, so re-ban by IP first if you need the block to stick.
+This removes:
+
+- `accounts/<name>.json` (name, password hash, timestamps, rank);
+- `players/<name>.json` (the whole character);
+- any ban entry naming that account — a ban cannot outlive the data it names, so re-ban by
+  IP first if you need the block to stick;
+- **every chat line from that account** in `logs/chat-*.jsonl`. Day files are rewritten
+  without those lines rather than deleted, so one player's erasure does not destroy
+  everyone else's conversation (a file left with no lines at all is removed);
+- **every report filed by or about that account** in `reports/`. This does delete reports
+  *other* players filed about them — the alternative is keeping a dossier on someone who
+  asked to be forgotten. Back the directory up first if you are erasing someone you may
+  still need to ban.
+
+The command prints what it removed, e.g.
+`account=true character=true banEntry=false chatLines=37 reports=2`.
 
 It deliberately does **not** rewrite world state (it contains no personal data) and cannot
-rewrite your logs. After erasing, purge the name from rotated logs, e.g.
+rewrite your stdout logs — chat text appears there too, and that stream is yours to purge. After erasing, purge the name from rotated logs, e.g.
 `journalctl --vacuum-time=1s` for a full wipe, or grep the name out of archived files.
 
 ## Retention summary
@@ -75,5 +102,6 @@ rewrite your logs. After erasing, purge the name from rotated logs, e.g.
   dormant accounts can delete files older than a chosen `lastSeenAt` — the server treats a
   missing account as "never registered".
 - Bans: kept until lifted with `/unban`.
+- Chat logs and reports: `[moderation] retentionDays`, default 14 days, pruned by the server.
 - Resume tokens: at most `[login] resumeWindowSec` (default 300 s), memory only.
 - Logs: your retention policy; 14 days recommended above.

@@ -6,7 +6,7 @@
 //
 // Ranks (stored on the account, 0-3):
 //   0 player     nothing privileged
-//   1 moderator  kick, tp, tpto  (crowd control)
+//   1 moderator  kick, tp, tpto, reports, chatlog  (crowd control + evidence)
 //   2 admin      ban, unban, ipban, give, motd  (state + access control)
 //   3 owner      setrank, console                (privilege escalation + remote code)
 //
@@ -20,6 +20,7 @@ import type { Player, Roster } from './players';
 import type { AccountStore } from './accounts';
 import type { BanStore } from '../persist/banstore';
 import type { ResumeStore } from './resume';
+import type { Moderation } from './moderation';
 import { broadcastChat } from './chat';
 import { log } from '../log';
 
@@ -28,12 +29,18 @@ export const MAX_RANK = 3;
 
 const MAX_ARG = 256;
 const MAX_SCRIPT = 4096;
+// A4: an admin answer is whispered line-by-line over the chat tier, so an unbounded
+// /chatlog would be a self-inflicted flood. Bound the reply, not the stored data.
+const MAX_REPORT_LIST = 50;
+const MAX_CHATLOG_LINES = 40;
+const MAX_CHATLOG_MINUTES = 60 * 24 * 7;
 
 export interface AdminCtx {
   roster: Roster;
   accounts: AccountStore;
   bans: BanStore;
   resume: ResumeStore;
+  moderation: Moderation;
   allowConsole: boolean;
   motd: () => string;
   setMotd(text: string): void;
@@ -85,6 +92,42 @@ export const ADMIN_COMMANDS: Record<string, AdminCommandSpec> = {
       broadcastChat(ctx.roster, { channel: 'server', text });
       audit(actor, 'motd', { text });
       return `MOTD set to: ${text}`;
+    },
+  },
+  reports: {
+    minRank: 1,
+    usage: '/reports [n]',
+    help: 'list the most recent player reports (moderator)',
+    async run(ctx, _actor, args) {
+      const n = args[0] === undefined ? 10 : Number(args[0]);
+      if (!Number.isInteger(n) || n < 1 || n > MAX_REPORT_LIST) return `usage: /reports [1-${MAX_REPORT_LIST}]`;
+      const found = await ctx.moderation.reports.list(n);
+      if (found.length === 0) return 'No reports on file.';
+      return found
+        .map(({ file, doc }) =>
+          `${doc.ts} ${doc.reporter.name} -> ${doc.target.name}` +
+          ` @${doc.target.cellKey ?? '?'}: ${doc.reason.slice(0, 120)}  [${file}]`)
+        .join('\n');
+    },
+  },
+  chatlog: {
+    minRank: 1,
+    usage: '/chatlog <player> [minutes]',
+    help: 'read one player\'s recent chat (moderator)',
+    async run(ctx, _actor, args) {
+      const name = arg(args, 0);
+      if (!name) return 'usage: /chatlog <player> [minutes]';
+      const minutes = args[1] === undefined ? 15 : Number(args[1]);
+      if (!Number.isInteger(minutes) || minutes < 1 || minutes > MAX_CHATLOG_MINUTES) {
+        return `minutes must be an integer 1-${MAX_CHATLOG_MINUTES}.`;
+      }
+      const lines = await ctx.moderation.chat.readRecent(minutes, name);
+      if (lines.length === 0) return `No chat from "${name}" in the last ${minutes} min.`;
+      // Tail, not head: the interesting part of an incident is always the end of it.
+      return lines
+        .slice(-MAX_CHATLOG_LINES)
+        .map((l) => `${l.ts} [${l.channel}] ${l.name}: ${l.text}`)
+        .join('\n');
     },
   },
   kick: {

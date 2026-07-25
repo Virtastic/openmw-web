@@ -46,6 +46,8 @@ Signals: `SIGTERM`/`SIGINT` = graceful shutdown (every session gets
   world/global.json      # M3 netId ceiling + M4 kill tally + M6 shared journal/globals/factions
   world/cells/<enc>.json # M3 per-cell delta docs (placed/deleted/moved/locks/doors/containers),
                          # filename = encodeURIComponent(cellKey)
+  logs/chat-YYYY-MM-DD.jsonl  # A4 durable chat log, one JSON object per line, rotated daily
+  reports/<ts>-<reporter>.json # A4 /report inbox (reporter, target + cell, reason, context)
 ```
 
 Player docs are write-behind: flushed on cell change, level-up, equipment change (10 s
@@ -88,6 +90,16 @@ Note `plugins` is a top-level key — in an override file it must appear **befor
 | `[limits] maxMsgBytes` | `262144` | ws `maxPayload` |
 | `[limits] helloTimeoutMs` | `45000` | `SessionHello` deadline (generous: the client can only send it on a Lua tick, which stalls while the engine streams/loads a retail world) |
 | `[limits] loginPerMinPerIp` | `5` | auth attempts per IP per minute |
+| `[moderation] chatLog` | `true` | write chat + slash commands to `logs/chat-YYYY-MM-DD.jsonl` |
+| `[moderation] retentionDays` | `14` | days of chat logs and reports kept (pruned at boot and on day rollover) |
+| `[moderation] contextLines` | `20` | recent chat lines attached to each `/report` |
+
+Moderation commands: `/report <player> <reason>` (any player) files a report with the
+target's current cell and the last `contextLines` chat lines; `/reports [n]` and
+`/chatlog <player> [minutes]` are rank 1 (moderator) and go through the same
+`Admin.exec` gate as every other operator command, so the chat and `AdminCommand` event
+paths cannot diverge. Chat logs and reports are **personal data** — see
+[PRIVACY.md](PRIVACY.md).
 
 Content policy in M0 (`names`): the server has no game data, so the **first** player's
 manifest becomes the session's canonical manifest (exact name+size+order); it is dropped
@@ -147,3 +159,42 @@ services). SIGUSR1 makes the server flush all dirty state to disk first:
 
 Restore: stop the container, untar over `/opt/openmw-mp/data`, `docker compose up -d`.
 The deploy workflow never touches `/opt/openmw-mp/data`, so redeploys are always safe.
+
+### Verifying the backup actually restores
+
+Configuring a backup and knowing it restores are two different exercises. Having a cron
+line is not evidence; a completed round trip is. `scripts/restore-drill.sh` is that
+evidence:
+
+```sh
+server/scripts/restore-drill.sh          # ~15 s; --keep leaves the scratch dir for inspection
+```
+
+It boots a server on an ephemeral port and a scratch data dir, drives a **real** omw-mp/1
+client to create an account plus a known character (appearance, cell, coordinates) and a
+chat line, flushes with `SIGUSR1`, takes a `tar czf` backup **exactly the way the cron
+above does**, deletes the data dir, restores from the tarball, boots again, and then
+**asserts** the state came back: the account logs in, `SessionWelcome.playerRecord` carries
+the same appearance and position, and the chat log still contains the seeded line. Any
+mismatch exits nonzero with a reason, so it can gate CI — it never prints "probably fine".
+
+Run it after any change to the persistence layer, the flush path, or the backup command
+itself. If it fails, the nightly cron is not a backup, it is a tarball.
+
+## Deploys and connected players
+
+`.github/workflows/deploy-mp.yml` drains before it swaps: the running container is stopped
+with `docker compose stop -t 29`, which sends `SIGTERM` and lets the server broadcast
+`SessionDisconnect SHUTDOWN` to every session and flush all state within the compose
+`stop_grace_period` (30 s). Players see a shutdown notice and reconnect, rather than having
+the socket vanish mid-session.
+
+**Known limitation — a deploy invalidates every resume ticket.** Session resume tickets live
+in memory only (`src/core/resume.ts`, `[login] resumeWindowSec`), so they do not survive the
+process. After a deploy every player pays a full re-login (argon2id, chargen-skip handshake,
+world re-sync) instead of rejoining in place. That is acceptable for one server with a short
+deploy window, and it is **not** acceptable for the persistent-worlds plan: multiple servers,
+or a server that redeploys during peak, need tickets in shared durable storage (a small
+signed-ticket file or a shared store keyed by account, expiring on the same window) so a
+restart or a hand-off is invisible to the player. Nothing else in the resume path assumes
+in-memory storage — `ResumeStore` is the only thing that would change.

@@ -413,9 +413,10 @@ test('erasure removes everything about an account', async (t) => {
   await server.close();
 
   const report = await deleteAccount(dataDir, 'Forgettable');
-  assert.deepEqual(report, { account: true, player: true, bans: true });
+  assert.deepEqual(report, { account: true, player: true, bans: true, chatLines: 0, reports: 0 });
   assert.ok(!(await readdir(pjoin(dataDir, 'accounts'))).includes('forgettable.json'));
   assert.ok(!(await readdir(pjoin(dataDir, 'players'))).includes('forgettable.json'));
   // Idempotent: erasing again reports nothing left to erase rather than throwing.
-  assert.deepEqual(await deleteAccount(dataDir, 'Forgettable'), { account: false, player: false, bans: false });
+  assert.deepEqual(await deleteAccount(dataDir, 'Forgettable'),
+    { account: false, player: false, bans: false, chatLines: 0, reports: 0 });
 });
