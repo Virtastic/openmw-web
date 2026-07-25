@@ -36,6 +36,7 @@ local net = {
 local authMode = 'register'
 local triedLogin = false
 local triedResume = false
+local triedTicket = false
 local lastSendTime = 0 -- real time; onUpdate dt pauses with the world, pings must not
 local reconnectAttempt = 0 -- reset on a successful Joined
 local reconnectAt = nil -- real time to redial at, nil = not scheduled
@@ -91,6 +92,7 @@ end
 function net.start()
     triedLogin = false
     triedResume = false
+    triedTicket = false
     authMode = 'register'
     -- M8: the ticket survives a PAGE RELOAD (mp.setResumeToken -> localStorage), which is
     -- the case §M8 is really about — a reloaded tab rejoins in place instead of re-authing.
@@ -98,6 +100,14 @@ function net.start()
     if type(token) == 'string' and token ~= '' then
         authMode = 'resume'
         net.resumeToken = token
+    end
+    -- An SSO ticket outranks the password ladder but NOT a parked resume ticket: resuming
+    -- rejoins in place and costs the server nothing, whereas redeeming burns the one-use
+    -- ticket. Both are tried before falling back to register/login.
+    local ticket = mp.getLoginTicket and mp.getLoginTicket() or ''
+    if authMode ~= 'resume' and type(ticket) == 'string' and ticket ~= '' then
+        authMode = 'ticket'
+        net.loginTicket = ticket
     end
     net.lastError = nil
     net.lastErrorDetail = nil
@@ -124,6 +134,19 @@ function net.onClose()
     -- PROTOCOL.md has no in-band "account already exists" reply: a failed SessionRegister is a
     -- SessionDisconnect(AUTH_FAILED) + close. Implement register-then-login-on-exists as one
     -- reconnect with SessionLoginRequest instead.
+    -- An SSO ticket is single-use and short-lived, so AUTH_FAILED means it is spent or
+    -- expired — never retry it. Drop to the password ladder, which is a no-op on a
+    -- password-less SSO account (the server refuses cleanly) and correct for everyone else.
+    if net.lastError == 'AUTH_FAILED' and authMode == 'ticket' and not triedTicket then
+        triedTicket = true
+        authMode = 'register'
+        net.loginTicket = nil
+        net.lastError = nil
+        if mp.connect(mp.getUrl()) then
+            setState('Connecting')
+            return
+        end
+    end
     if net.lastError == 'AUTH_FAILED' and authMode == 'resume' and not triedResume then
         -- Expired/unknown ticket: forget it and fall back to the normal ladder.
         triedResume = true
@@ -188,6 +211,11 @@ dispatch.SessionHelloOk = function(msg)
     local auth
     if authMode == 'resume' then
         auth = { t = 'SessionResume', token = net.resumeToken }
+    elseif authMode == 'ticket' then
+        -- Phase B SSO. The ticket is single-use and ~60s-lived, so it is redeemed on this
+        -- page load or not at all; onClose drops us to the password ladder rather than
+        -- retrying a ticket that can no longer work.
+        auth = { t = 'SessionLoginTicket', ticket = net.loginTicket }
     else
         auth = {
             t = (authMode == 'register') and 'SessionRegister' or 'SessionLoginRequest',

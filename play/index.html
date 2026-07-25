@@ -762,6 +762,24 @@
              }
              if (mpName) ENV.OPENMW_MP_NAME = decodeURIComponent(mpName);
              if (mpPass) ENV.OPENMW_MP_PASS = decodeURIComponent(mpPass);
+             // SSO (Phase B): the server's /auth/<provider>/callback sends us back with the
+             // one-time login ticket in the URL FRAGMENT — fragments are never sent to a
+             // server, logged, or put in a Referer, which is exactly why it is not a query
+             // param. Read it, then CLEAR the hash immediately so a reload or a bookmarked
+             // URL cannot replay it (it is single-use and 60s-lived, but a stale ticket in
+             // someone's history is still avoidable).
+             try {
+               var h = location.hash || '';
+               var tk = /[#&]mpticket=([^&]+)/.exec(h);
+               var lk = /[#&]mplink=([^&]+)/.exec(h);
+               var er = /[#&]mperror=([^&]+)/.exec(h);
+               if (tk) ENV.OPENMW_MP_TICKET = decodeURIComponent(tk[1]);
+               if (lk) append('[mp] linked ' + decodeURIComponent(lk[1]) + ' to your account');
+               if (er) append('[mp] sign-in failed: ' + decodeURIComponent(er[1]), 'err');
+               if (tk || lk || er) {
+                 history.replaceState(null, '', location.pathname + location.search);
+               }
+             } catch(e){ append('[mp sso err] ' + e, 'err'); }
              // SessionHello engineHash: the 12-hex wasm content hash stamped by
              // version-engine.sh; unstamped local dev sends '' (server may not pin).
              if (/^[0-9a-f]{12}$/.test(__ENGINE_VER)) ENV.OPENMW_MP_ENGINEHASH = __ENGINE_VER;

@@ -141,6 +141,9 @@ namespace MWMP
         api["getUrl"] = []() { return getEnvString("OPENMW_MP_URL"); };
         api["getName"] = []() { return getEnvString("OPENMW_MP_NAME"); };
         api["getPassword"] = []() { return getEnvString("OPENMW_MP_PASS"); };
+        // Phase B SSO: a one-time login ticket the boot JS lifted out of the URL fragment
+        // after the provider round trip. Empty when signing in with a password.
+        api["getLoginTicket"] = []() { return getEnvString("OPENMW_MP_TICKET"); };
         api["getEngineHash"] = []() { return getEnvString("OPENMW_MP_ENGINEHASH"); };
         api["vectorsEnabled"] = []() { return std::getenv("OPENMW_MP_VECTORS") != nullptr; };
         // Session-tier state is decided in Lua (scripts/mp/net.lua); mirror it into NetManager.
