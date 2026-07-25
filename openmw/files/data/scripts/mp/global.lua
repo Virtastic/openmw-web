@@ -402,29 +402,40 @@ end
 -- snapping back to the start point instead of where they logged out. So re-assert the target
 -- for a short window and stop as soon as it sticks, rather than trusting a single apply.
 local restoreTarget = nil -- {cellKey=, x=, y=, z=, deadline=}
-local RESTORE_HOLD_SECONDS = 4
+local RESTORE_HOLD_SECONDS = 8
 local RESTORE_EPSILON = 25 -- units; well inside the ~300u error this exists to catch
 
+local function dist3(a, b)
+    local dx, dy, dz = a.x - b.x, a.y - b.y, a.z - b.z
+    return math.sqrt(dx * dx + dy * dy + dz * dz)
+end
+
+-- Deliberately dumb: re-assert the target EVERY tick it is off, for a short window.
+--
+-- A cleverer version (only correct on a detected single-tick "jump", so a player who walks
+-- away is never dragged back) tested WORSE — the engine's post-reload placement does not
+-- always arrive as one clean jump, and teleports are deferred to the next
+-- synchronizedUpdate, so any one-shot correction is easily lost. The window is what keeps
+-- this safe instead: 8s is long enough to outlast a slow world load on a busy machine, and
+-- short enough that a player is very unlikely to have walked 25+ units of their own accord
+-- before it lapses. Correctness of "you are where you logged out" beats elegance here.
 local function restorePositionTick(now)
     if not restoreTarget then return end
     local player = playerScript()
     if not player then return end
     if now > restoreTarget.deadline then
-        print('[mp] restore position gave up after ' .. RESTORE_HOLD_SECONDS .. 's')
+        if dist3(player.position, restoreTarget) > RESTORE_EPSILON then
+            print('[mp] restore position never took hold')
+        end
         restoreTarget = nil
         return
     end
-    local p = player.position
-    local dx, dy, dz = p.x - restoreTarget.x, p.y - restoreTarget.y, p.z - restoreTarget.z
-    if math.sqrt(dx * dx + dy * dy + dz * dz) <= RESTORE_EPSILON then
-        restoreTarget = nil -- it stuck
-        return
-    end
-    teleportPlayerTo(restoreTarget)
+    if dist3(player.position, restoreTarget) > RESTORE_EPSILON then teleportPlayerTo(restoreTarget) end
 end
 
 local function restoreTick()
     if not pendingRestore then return end
+    mp.testSet('restoreFired', '1')
     local player = playerScript()
     if not player then return end
     local record = pendingRestore
@@ -439,6 +450,7 @@ local function restoreTick()
             granted = granted + 1
         end
     end
+    mp.testSet('restorePos', record.position and json.encode(record.position) or 'none')
     if record.position then
         teleportPlayerTo(record.position)
         restoreTarget = {

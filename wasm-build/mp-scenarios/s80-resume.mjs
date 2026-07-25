@@ -51,6 +51,20 @@ export default async function run(ctx) {
   // Rejoined IN PLACE: the server restored the cell and pose from the ticket, and the
   // client applied the normal playerRecord path (no resume-specific code).
   await a.waitFor('((window.__omwMP||{}).pose||"") !== ""', STEP_TIMEOUT, 'A pose mirror live again');
+  // Wait for the restore to COMPLETE before measuring. Reaching `Joined` only means the
+  // session resumed; the engine has meanwhile placed the player itself (the boot URL's
+  // ?start= spawn) and the restore teleport lands a moment later — it is deferred to the
+  // next synchronizedUpdate and re-asserted until it sticks. Sampling on `Joined` therefore
+  // races the restore and reads the SPAWN point, which looked exactly like a resume bug
+  // (a verified-correct client still reported ~300 units of "drift"). Assert the mechanism
+  // fired, then let the position settle. The tolerance below is unchanged.
+  await a.waitFor('((window.__omwMP||{}).restoreFired||"") === "1"', STEP_TIMEOUT,
+    'restore path ran (playerRecord with a position arrived)');
+  const target = `Math.hypot(
+      (JSON.parse((window.__omwMP||{}).pose||"{}").x||0) - ${poseBefore.x},
+      (JSON.parse((window.__omwMP||{}).pose||"{}").y||0) - ${poseBefore.y},
+      (JSON.parse((window.__omwMP||{}).pose||"{}").z||0) - ${poseBefore.z}) < 40`;
+  await a.waitFor(target, STEP_TIMEOUT, 'A settled back where it logged out');
   const poseAfter = await poseOf(a);
   const drift = dist(poseBefore, poseAfter);
   ctx.log(`pose ${JSON.stringify(poseBefore)} -> ${JSON.stringify(poseAfter)} (drift ${drift.toFixed(1)} units)`);
