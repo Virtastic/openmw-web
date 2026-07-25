@@ -322,6 +322,32 @@ local function pollHarness()
             end)
             mp.testSet('count', tostring(ok and n or -1))
         end
+        -- M6 quest-layer hooks (all resolved in the GLOBAL script).
+        local questId, questStage = cmd:match('^quest:(.+):(%d+)$')
+        if questId then
+            core.sendGlobalEvent('mpTestQuest', { id = questId, stage = tonumber(questStage) })
+        end
+        local gvarName, gvarValue = cmd:match('^gvar:([^:]+):(-?[%d.]+)$')
+        if gvarName then
+            core.sendGlobalEvent('mpTestGlobal', { name = gvarName, value = tonumber(gvarValue) })
+        end
+        local bountyN = cmd:match('^bounty:(%d+)$')
+        if bountyN then core.sendGlobalEvent('mpTestBounty', { n = tonumber(bountyN) }) end
+        local facId, facRank = cmd:match('^faction:([^:]+):(%d+)$')
+        if facId then
+            core.sendGlobalEvent('mpTestFaction', { id = facId, rank = tonumber(facRank) })
+        end
+        local mvRec, mvName, mvVal = cmd:match('^mvar:([^:]+):([^:]+):(-?[%d.]+)$')
+        if mvRec then
+            core.sendGlobalEvent('mpTestMemberVar',
+                { id = mvRec, name = mvName, value = tonumber(mvVal) })
+        end
+        if cmd == 'dlg:release' then
+            core.sendGlobalEvent('mpDialogueClosed', {})
+        else
+            local dlgId = cmd:match('^dlg:(.+)$')
+            if dlgId then core.sendGlobalEvent('mpTestDialogue', { id = dlgId }) end
+        end
         local dx, dy, ms = cmd:match('^walk:(-?[%d.]+),(-?[%d.]+),(%d+)$')
         if dx then
             walkCmd = {
@@ -337,6 +363,11 @@ end
 
 return {
     engineHandlers = {
+        -- M6: the ONLY quest-layer signal that is player-context-only. Forward it to the
+        -- global hub (scripts/mp/quests.lua), which owns the journal cache + echo guard.
+        onQuestUpdate = function(questId, stage)
+            core.sendGlobalEvent('mpQuestUpdate', { questId = questId, stage = stage })
+        end,
         onKeyPress = function(key)
             if key.symbol == 't' and not I.UI.getMode() then
                 toggleChat()
@@ -374,6 +405,11 @@ return {
             -- Esc (or any other window) closed our Interface mode -> drop the chat window.
             if chatElement and data.newMode == nil then
                 destroyChat()
+            end
+            -- M6: leaving the dialogue window releases the NPC's conversation lock
+            -- (PROTOCOL.md §M6: "released on close, cell change, or disconnect").
+            if data.oldMode == 'Dialogue' and data.newMode ~= 'Dialogue' then
+                core.sendGlobalEvent('mpDialogueClosed', {})
             end
         end,
     },

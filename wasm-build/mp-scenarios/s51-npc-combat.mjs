@@ -48,7 +48,13 @@ export default async function run(ctx) {
 
   // A victim both clients can see.
   const [ph, pp] = await Promise.all([probeOf(holder), probeOf(peer)]);
-  const victim = Object.keys(ph).find((r) => pp[r] && !ph[r].dead);
+  // Prefer a settled NPC over a wandering creature. Creatures like the mudcrab roam far
+  // enough to leave the peer's visible set mid-test, which times out the relay assert on a
+  // scenario that is really about combat routing — a flake, not a product defect. Records
+  // with a space in the id are Morrowind's named NPCs ("indrele rathryon"); single-word
+  // ids are typically creatures ("mudcrab"). Fall back to anything living if none exist.
+  const living = Object.keys(ph).filter((r) => pp[r] && !ph[r].dead);
+  const victim = living.find((r) => r.includes(' ')) ?? living[0];
   assert.ok(victim, 'need a living NPC visible to both clients');
   ctx.log(`victim NPC: ${victim}`);
 

@@ -15,6 +15,7 @@ local net = require('scripts.mp.net')
 local objects = require('scripts.mp.objects')
 local actors = require('scripts.mp.actors')
 local combat = require('scripts.mp.combat')
+local quests = require('scripts.mp.quests')
 
 local roster = {} -- array of {id=u16, name=string}, server order
 
@@ -420,6 +421,7 @@ local function puppetTick()
         if key ~= ownCellKeyCache then
             ownCellKeyCache = key
             refreshVisibility()
+            if net.state == 'Joined' then quests.onCellChanged() end
         end
     end
     if now - lastPuppetMirror >= 0.5 then
@@ -467,6 +469,22 @@ local function start()
         -- PvP is a server rule (SessionWelcome.flags.pvp); default OFF until told otherwise.
         isPvpEnabled = function() return net.flags and net.flags.pvp == true end,
     })
+    -- M6 quest layer (see scripts/mp/quests.lua): journal, MWScript globals/locals,
+    -- factions, crime, dialogue locks. Global context because every writable end of it is
+    -- global-gated in 0.52 (setCrimeLevel, world.mwscript).
+    quests.init({
+        playerFn = playerScript,
+        ownCellKeyFn = function() return ownCellKeyCache end,
+        ownIdFn = function() return net.state == 'Joined' and net.playerId or nil end,
+        noticeFn = notice,
+        rosterNameFn = rosterName,
+        isMpPuppetFn = function(obj)
+            for _, p in pairs(puppets) do
+                if p.obj:isValid() and p.obj.id == obj.id then return true end
+            end
+            return false
+        end,
+    })
     net.onStateChanged = function(state)
         print('[mp] session state: ' .. state)
         if state == 'Joined' then
@@ -491,6 +509,7 @@ local function start()
             despawnAllPuppets()
             objects.reset()
             actors.reset()
+            quests.reset()
         end
     end
     if net.state == 'Offline' or net.state == 'Failed' then
@@ -817,6 +836,23 @@ local eventHandlers = {
             mp.sendEvent('ChatSend', { text = data.text })
         end
     end,
+
+    -- --- M6: quest-layer bridges + test hooks -------------------------------------------
+    -- onQuestUpdate is a PLAYER-context engine handler; player.lua forwards it here so the
+    -- journal cache/echo guard lives in exactly one place.
+    mpQuestUpdate = function(data)
+        quests.onQuestUpdate(data.questId, data.stage)
+    end,
+    -- Dialogue window closed on the player side -> release the lock.
+    mpDialogueClosed = function()
+        quests.releaseLock('windowclosed')
+    end,
+    mpTestQuest = function(data) quests.testSetQuestStage(data.id, data.stage) end,
+    mpTestGlobal = function(data) quests.testSetGlobal(data.name, data.value) end,
+    mpTestBounty = function(data) quests.testSetBounty(data.n) end,
+    mpTestFaction = function(data) quests.testJoinFaction(data.id, data.rank) end,
+    mpTestDialogue = function(data) quests.testActivateNpc(data.id) end,
+    mpTestMemberVar = function(data) quests.testSetMemberVar(data.id, data.name, data.value) end,
 }
 
 -- M3: object-sync appliers (MP_ObjectPlace/Delete/Move/Lock, MP_DoorState,
@@ -827,6 +863,12 @@ end
 -- M4: actor-authority appliers (MP_ActorAuthority*, MP_ActorMoveBatch/StatsDynamic/Death,
 -- MP_WorldKillCount) live in actors.lua.
 for name, fn in pairs(actors.handlers) do
+    eventHandlers[name] = fn
+end
+-- M6: quest-layer appliers (MP_JournalEntry/JournalSync, MP_GlobalVarUpdate,
+-- MP_MemberVarUpdate, MP_FactionUpdate, MP_CrimeUpdate, MP_DialogueLockResult) live in
+-- quests.lua.
+for name, fn in pairs(quests.handlers) do
     eventHandlers[name] = fn
 end
 -- M5: combat appliers (MP_CombatHit/SpellHit/Cast/Projectile) live in combat.lua.
@@ -852,6 +894,9 @@ return {
             if net.state == 'Joined' then
                 local ok, err = pcall(objects.onActivate, object, actor)
                 if not ok then print('[mp] onActivate hook error: ' .. tostring(err)) end
+                -- M6: watch the object's MWScript locals across the interaction window.
+                local okq, errq = pcall(quests.onActivate, object, actor)
+                if not okq then print('[mp] quests.onActivate hook error: ' .. tostring(errq)) end
             end
         end,
         onItemActive = function(item)
@@ -869,6 +914,7 @@ return {
                 local now = core.getRealTime()
                 objects.tick(now)
                 actors.tick(now)
+                quests.tick(now)
                 mirrorDoor(now)
             end
         end,
