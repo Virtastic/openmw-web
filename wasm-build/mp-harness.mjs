@@ -156,9 +156,13 @@ async function launchClient(name, mpPort, extraParams = '', opts = {}) {
       const m = String(d).match(/DevTools listening on (ws:\/\/\S+)/);
       if (m) wsUrl = m[1];
     });
+    // 60s, not 15: with a retail client already resident (~1.5 GB) the machine is under
+    // memory pressure, and Chrome's own startup — before it ever prints the DevTools
+    // endpoint — slows to tens of seconds. A short wait here reports "CDP never came up"
+    // for what is really just a slow launch.
     const t0 = Date.now();
-    while (!wsUrl && Date.now() - t0 < 15_000) await sleep(100);
-    if (!wsUrl) throw new Error('Chrome CDP endpoint never came up');
+    while (!wsUrl && Date.now() - t0 < 60_000) await sleep(100);
+    if (!wsUrl) throw new Error('Chrome CDP endpoint never came up (60s)');
 
     const browser = new WebSocket(wsUrl);
     await new Promise((res, rej) => {
@@ -244,6 +248,7 @@ for (const file of files) {
   const t0 = Date.now();
   const clients = []; // everything launched by this scenario, closed no matter what
   let torndown = false; // a client that finishes booting AFTER teardown must not leak
+  let bootQueue = Promise.resolve(); // serializes client boots (see launchClient below)
   let server = null;
   let err = null;
   console.log(`\n=== scenario ${file} ===`);
@@ -259,7 +264,15 @@ for (const file of files) {
       sleep,
       log: (...a) => console.log('[' + file + ']', ...a),
       launchClient: async (name, extraParams, opts) => {
-        const c = await launchClient(`${name}-${RUN_ID}`, server.port, extraParams, opts);
+        // Serialize BOOTS even when a scenario asks for clients via Promise.all. Two retail
+        // clients booting at once each want ~1.5 GB plus streamed game data; concurrently
+        // they thrash a busy machine badly enough to blow even a 420 s join timeout, while
+        // either one alone boots in ~20 s. Scenarios still run their clients in parallel
+        // afterwards — only the expensive boot window is queued.
+        const mine = bootQueue.then(() =>
+          launchClient(`${name}-${RUN_ID}`, server.port, extraParams, opts));
+        bootQueue = mine.catch(() => {}); // a failed boot must not wedge the queue
+        const c = await mine;
         // Promise.all([launchClient, launchClient]) rejects as soon as ONE client fails,
         // while its sibling is still booting. That sibling used to resolve after teardown
         // and leak a headless Chrome (each retail client pins ~1.5 GB) — close it here.

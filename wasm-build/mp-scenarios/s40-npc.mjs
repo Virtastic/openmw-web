@@ -54,6 +54,15 @@ export default async function run(ctx) {
     'exactly one client must hold cell authority');
   const [holder, peer] = holderA === 'true' ? [a, b] : [b, a];
 
+  // The non-holder MUST actually be puppeting the cell's actors. Assert the mechanism, not
+  // just the symptom: with both clients running independent AI from identical spawns, the
+  // positions stay close for a while by luck, so a convergence check alone reports a green
+  // for a completely unsynced world (observed: puppetedActors=0 passing at 46.9 units in one
+  // run and failing at 644 in the next, purely on how far the NPCs had wandered).
+  await peer.waitFor('Number((window.__omwMP||{}).puppetedActors||0) >= 3', STEP_TIMEOUT,
+    'non-holder attached puppets to the cell actors');
+  ctx.log(`non-holder puppeted ${await peer.eval('(window.__omwMP||{}).puppetedActors')} actors`);
+
   // Same NPCs, converged positions. Compare records present on BOTH clients.
   let shared = [];
   const deadline = Date.now() + STEP_TIMEOUT;
@@ -73,6 +82,18 @@ export default async function run(ctx) {
     await ctx.sleep(500);
   }
   ctx.log(`${shared.length} shared NPCs; worst convergence error ${worst.toFixed(1)} units (${worstRec})`);
+  // On failure, say WHY: "no puppets attached" and "puppets attached but no pose stream"
+  // are completely different bugs and the position delta alone can't tell them apart.
+  if (worst >= CONVERGE_EPS) {
+    const [pk, bi, ac, ah, ih] = await Promise.all([
+      peer.eval('(window.__omwMP||{}).puppetedActors'),
+      peer.eval('(window.__omwMP||{}).actorBatchesIn'),
+      peer.eval('(window.__omwMP||{}).actorCount'),
+      peer.eval('(window.__omwMP||{}).authorityHolder'),
+      peer.eval('(window.__omwMP||{}).isHolder'),
+    ]);
+    ctx.log(`diag(non-holder): puppetedActors=${pk} actorBatchesIn=${bi} actorCount=${ac} authorityHolder=${ah} isHolder=${ih}`);
+  }
   assert.ok(shared.length >= 3, `expected >=3 shared NPCs, got ${shared.length}`);
   assert.ok(worst < CONVERGE_EPS, `puppet NPCs did not converge: ${worst.toFixed(1)} units`);
 
@@ -87,7 +108,16 @@ export default async function run(ctx) {
 
   // Shared kill tally (WorldKillCount -> mp.setDeadCount) reaches BOTH clients.
   const tallyExpr = `((window.__omwMP||{}).killCountOf||"") === ${JSON.stringify(victim + '=1')}`;
-  await holder.waitFor(tallyExpr, STEP_TIMEOUT, 'kill tally on the holder');
-  await peer.waitFor(tallyExpr, STEP_TIMEOUT, 'kill tally on the non-holder');
+  try {
+    await holder.waitFor(tallyExpr, STEP_TIMEOUT, 'kill tally on the holder');
+    await peer.waitFor(tallyExpr, STEP_TIMEOUT, 'kill tally on the non-holder');
+  } catch (e) {
+    const [th, tp] = await Promise.all([
+      holder.eval('(window.__omwMP||{}).killCountOf'),
+      peer.eval('(window.__omwMP||{}).killCountOf'),
+    ]);
+    ctx.log(`diag tally: holder=${JSON.stringify(th)} peer=${JSON.stringify(tp)} expected="${victim}=1"`);
+    throw e;
+  }
   ctx.log(`ok: shared kill count = 1 for "${victim}" on both clients`);
 }

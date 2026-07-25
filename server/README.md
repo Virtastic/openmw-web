@@ -81,7 +81,7 @@ Note `plugins` is a top-level key — in an override file it must appear **befor
 | `[limits] bytesPerSec` | `65536` | per-session byte token bucket |
 | `[limits] maxConnsPerIp` | `3` | further connections refused (`RATE`) |
 | `[limits] maxMsgBytes` | `262144` | ws `maxPayload` |
-| `[limits] helloTimeoutMs` | `10000` | `SessionHello` deadline |
+| `[limits] helloTimeoutMs` | `45000` | `SessionHello` deadline (generous: the client can only send it on a Lua tick, which stalls while the engine streams/loads a retail world) |
 | `[limits] loginPerMinPerIp` | `5` | auth attempts per IP per minute |
 
 Content policy in M0 (`names`): the server has no game data, so the **first** player's

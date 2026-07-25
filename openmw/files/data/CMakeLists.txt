@@ -138,6 +138,7 @@ set(BUILTIN_DATA_FILES
     scripts/mp/objects.lua
     scripts/mp/player.lua
     scripts/mp/puppet.lua
+    scripts/mp/testkill.lua
 
     scripts/omw/activationhandlers.lua
     scripts/omw/ai.lua

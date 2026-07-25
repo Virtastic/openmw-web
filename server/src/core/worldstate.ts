@@ -233,13 +233,18 @@ export class WorldState {
     deaths[ref.key] = deathNo;
     this.cells.markDirty(cellKey);
     this.relayCellExcept(cellKey, player.id, 'ActorDeath', lToJs(body) as Record<string, JsLike>);
-    // Kill attribution: count on the killed actor's base recordId when a killer is named.
+    // Shared kill tally. Counted for EVERY death that names a record, not only
+    // player-attributed ones: vanilla `GetDeadCount` counts deaths of a record regardless
+    // of cause, and quest gates depend on that. An NPC finished off by a guard, a trap, a
+    // fall or another creature still has to satisfy "kill the smugglers", so gating this
+    // on killerPlayerId would silently strand co-op quests. killerPlayerId stays as
+    // optional attribution for logs and future per-player stats.
     const killer = finite(body.get('killerPlayerId'));
     const killedRecordId = str(body.get('killedRecordId'), MAX_RECORD_ID);
-    if (killer !== undefined && killedRecordId) {
+    if (killedRecordId) {
       const count = this.cells.bumpKill(killedRecordId);
       for (const p of this.roster.inWorld()) p.peer.sendEvent('WorldKillCount', { refId: killedRecordId, count });
-      log('info', 'world.kill', { refId: killedRecordId, count, by: player.name });
+      log('info', 'world.kill', { refId: killedRecordId, count, by: killer !== undefined ? player.name : 'unattributed' });
     }
   }
 

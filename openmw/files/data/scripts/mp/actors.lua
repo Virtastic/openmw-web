@@ -16,6 +16,9 @@ local actors = {}
 
 local BROADCAST_HZ = 15
 local SNAPSHOT_SECONDS = 5
+-- How often a non-holder re-sweeps its cell for actors to puppet. Cheap (per-key
+-- idempotent) and must keep running: cell actors stream in after the cell-change event.
+local ATTACH_SWEEP_SECONDS = 1
 local STATS_MIN_INTERVAL = 0.25
 
 local deps = nil -- {playerFn, ownCellKeyFn, ownIdFn, isMpPuppetFn}
@@ -30,6 +33,7 @@ local puppetActors = {} -- refKey -> { obj, cellKey } (NPCs we puppet as a non-h
 local lastBroadcast = 0
 local lastSnapshot = 0
 local lastMirror = 0
+local lastAttachSweep = 0
 local watchKillRecord = nil -- record whose shared kill tally the scenarios watch
 local batchesIn = 0 -- diagnostic: ActorMoveBatch frames applied as a non-holder
 
@@ -287,8 +291,19 @@ actors.handlers.MP_ActorDeath = function(data)
     end
 end
 
+-- Server-authoritative kill tallies, re-asserted every mirror tick.
+--
+-- A single setDeadCount on arrival is NOT enough: a non-holder ALSO increments its own
+-- engine death counter when its puppet dies, and that local bump can land after the
+-- server's value, leaving the record permanently one too high (observed: holder=1,
+-- non-holder=2). Since the shared tally is owned by the server, converging on it
+-- continuously is both correct and idempotent — the holder's own count already agrees,
+-- and any death the server hasn't counted yet arrives as a fresh WorldKillCount.
+local authKills = {}
+
 actors.handlers.MP_WorldKillCount = function(data)
     if data.refId and data.count then
+        authKills[data.refId] = data.count
         mp.setDeadCount(data.refId, data.count)
         watchKillRecord = data.refId -- mirror this record's tally for the scenarios
     end
@@ -300,8 +315,14 @@ function actors.killActorByRecord(recordId)
     watchKillRecord = recordId
     for _, obj in ipairs(cellActors(deps.ownCellKeyFn())) do
         if obj.recordId == recordId then
-            pcall(function() types.Actor.stats.dynamic.health(obj).current = 0 end)
-            return true
+            -- Dynamic-stat writes are Self-gated: setting health from here silently fails
+            -- (a pcall around it just hides the error). Attach a one-shot CUSTOM script to
+            -- reach the actor's own Self context instead.
+            local ok, err = pcall(function()
+                obj:addScript('scripts/mp/testkill.lua', {})
+            end)
+            if not ok then print('[mp] killActorByRecord: addScript failed: ' .. tostring(err)) end
+            return ok
         end
     end
     return false
@@ -339,6 +360,22 @@ end
 -- --------------------------------------------------------------- tick
 
 function actors.tick(now)
+    -- Non-holder: keep trying to puppet our cell's actors. Attaching ONLY on
+    -- MP_ActorAuthorityInfo loses the race — that event lands on our PlayerCellChange,
+    -- while the cell's actors are still streaming in, so cellActors() is empty or partial
+    -- and nothing gets attached. (Symptom: authority elected fine, actors visible on both
+    -- clients, yet the non-holder's NPCs ran their own AI and drifted hundreds of units.)
+    -- attachActorPuppets is per-key idempotent, so re-running it is cheap and also picks up
+    -- actors that spawn or wander in later.
+    if now - lastAttachSweep >= ATTACH_SWEEP_SECONDS then
+        lastAttachSweep = now
+        local ownCell = deps.ownCellKeyFn()
+        local holder = ownCell and holderOfCell[ownCell]
+        if ownCell and holder and holder ~= deps.ownIdFn() and not held[ownCell] then
+            attachActorPuppets(ownCell)
+        end
+    end
+
     -- Holder broadcast loop.
     if now - lastBroadcast >= 1 / BROADCAST_HZ then
         lastBroadcast = now
@@ -355,6 +392,10 @@ function actors.tick(now)
 
     if now - lastMirror >= 0.5 then
         lastMirror = now
+        -- Re-assert server truth over any local engine death increments (see authKills).
+        for refId, count in pairs(authKills) do
+            if mp.getDeadCount(refId) ~= count then mp.setDeadCount(refId, count) end
+        end
         local ownCell = deps.ownCellKeyFn()
         -- Ids arrive over LSER as doubles: format as integers so "1" never reads as "1.0".
         local holderId = holderOfCell[ownCell]

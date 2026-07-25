@@ -9,6 +9,7 @@
 local core = require('openmw.core')
 local self = require('openmw.self')
 local types = require('openmw.types')
+local I = require('openmw.interfaces')
 
 local Interp = require('scripts.mp.interp')
 
@@ -72,7 +73,41 @@ local function equipTick(now)
     end
 end
 
+-- M5: intercept every hit landed on this puppet. Handlers run last-registered-first
+-- (openmw_aux.util.callEventHandlers iterates in reverse) and this script attaches at
+-- RUNTIME, after the builtin combat script — so this runs FIRST, forwards the raw
+-- PRE-mitigation damage to the victim's owner, and returns false to cancel the entire local
+-- chain. Nothing is applied here: armor/difficulty/sounds belong to the owner's engine.
+local function onHitIntercept(attack)
+    if not playerId and not actorKey then return end -- not a live puppet: let the engine be
+    local weapon = attack.weapon
+    core.sendGlobalEvent('mpCombatHit', {
+        victim = self.object,
+        playerId = playerId,
+        damage = attack.damage,
+        strength = attack.strength,
+        sourceType = attack.sourceType,
+        successful = attack.successful,
+        weaponId = weapon and weapon.recordId or nil,
+        ammoId = attack.ammo,
+        hitPos = attack.hitPos and { x = attack.hitPos.x, y = attack.hitPos.y, z = attack.hitPos.z } or nil,
+    })
+    return false -- cancel local damage; the owner applies it
+end
+
+-- I.Combat comes from the builtin combat script, which is already attached to any actor we
+-- puppet (it attaches at object load, we attach later) — but never assume: if the interface
+-- is not up yet, register on the next tick instead of erroring out at load.
+local hitHandlerRegistered = false
+local function ensureHitHandler()
+    if hitHandlerRegistered or not I.Combat then return end
+    I.Combat.addOnHitHandler(onHitIntercept)
+    hitHandlerRegistered = true
+end
+ensureHitHandler()
+
 local function onUpdate(dt)
+    ensureHitHandler()
     if dt <= 0 or (not playerId and not actorKey) then return end
     if dead then
         zeroControls()
@@ -191,6 +226,14 @@ return {
         end,
         MP_Revive = function()
             dead = false
+        end,
+        -- M5 cosmetic: mirror a remote caster's spell animation (best effort — a missing
+        -- animation group must never break the puppet).
+        MP_CastFx = function()
+            pcall(function()
+                local anim = require('openmw.animation')
+                anim.playBlendedAnimation(self, 'spellcast', { priority = anim.PRIORITY.Weapon })
+            end)
         end,
         -- M4 handoff: this client became the cell's authority holder. Re-enable AI (the
         -- mDisableAI control persists after removeScript, so it must be cleared here) and

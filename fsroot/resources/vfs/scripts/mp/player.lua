@@ -300,6 +300,15 @@ local function pollHarness()
         if takeId then
             core.sendGlobalEvent('mpChestTake', { id = takeId, netId = tonumber(takeChestNet) })
         end
+        -- M5: hit a player (hitp:<playerId>:<dmg>) or an NPC (hitn:<recordId>:<dmg>).
+        local hitPid, hitPdmg = cmd:match('^hitp:(%d+):([%d.]+)$')
+        if hitPid then
+            core.sendGlobalEvent('mpTestHit', { playerId = tonumber(hitPid), damage = tonumber(hitPdmg) })
+        end
+        local hitRec, hitNdmg = cmd:match('^hitn:(.+):([%d.]+)$')
+        if hitRec then
+            core.sendGlobalEvent('mpTestHit', { record = hitRec, damage = tonumber(hitNdmg) })
+        end
         local killNpc = cmd:match('^killnpc:(.+)$')
         if killNpc then core.sendGlobalEvent('mpKillNpc', { id = killNpc }) end
         if cmd == 'door:toggle' then core.sendGlobalEvent('mpDoorToggle', {}) end

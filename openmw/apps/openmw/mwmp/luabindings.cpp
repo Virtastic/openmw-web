@@ -120,12 +120,16 @@ namespace MWMP
         };
         // Shared kill tally (M4 WorldKillCount; also M6 quest gates): mirror the engine's
         // per-record death counter across clients so GetDeadCount is consistent for everyone.
+        // stringRefId, NOT deserializeText: Lua hands us a plain record id ("fargoth"), while
+        // deserializeText parses the *serialized* RefId form and so never matched a real
+        // record — every lookup silently returned 0. Same constructor mwlua/contentbindings
+        // uses for record ids.
         api["getDeadCount"] = [](std::string_view recordId) {
             return MWBase::Environment::get().getMechanicsManager()->countDeaths(
-                ESM::RefId::deserializeText(recordId));
+                ESM::RefId::stringRefId(recordId));
         };
         api["setDeadCount"] = [luaManager = context.mLuaManager](std::string_view recordId, int count) {
-            ESM::RefId id = ESM::RefId::deserializeText(recordId);
+            ESM::RefId id = ESM::RefId::stringRefId(recordId);
             luaManager->addAction(
                 [id, count] { MWBase::Environment::get().getMechanicsManager()->setDeaths(id, count); },
                 "MPSetDeadCount");

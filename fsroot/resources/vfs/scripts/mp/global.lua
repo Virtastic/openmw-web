@@ -14,6 +14,7 @@ local json = require('scripts.mp.json')
 local net = require('scripts.mp.net')
 local objects = require('scripts.mp.objects')
 local actors = require('scripts.mp.actors')
+local combat = require('scripts.mp.combat')
 
 local roster = {} -- array of {id=u16, name=string}, server order
 
@@ -451,6 +452,21 @@ local function start()
             return false
         end,
     })
+    -- M5 combat hub (see scripts/mp/combat.lua).
+    combat.init({
+        playerFn = playerScript,
+        ownCellKeyFn = function() return ownCellKeyCache end,
+        ownIdFn = function() return net.state == 'Joined' and net.playerId or nil end,
+        puppetObjOf = function(id)
+            local p = puppets[id]
+            return p and p.obj:isValid() and p.obj or nil
+        end,
+        epochOf = actors.epochOf,
+        isHolderOf = actors.isHolderOf,
+        cellKeyOfObj = actors.cellKeyOfObj,
+        -- PvP is a server rule (SessionWelcome.flags.pvp); default OFF until told otherwise.
+        isPvpEnabled = function() return net.flags and net.flags.pvp == true end,
+    })
     net.onStateChanged = function(state)
         print('[mp] session state: ' .. state)
         if state == 'Joined' then
@@ -715,6 +731,34 @@ local eventHandlers = {
         end
     end,
 
+    -- M5 test hook: land a synthetic melee hit on a target. This posts the STOCK `Hit`
+    -- event, so it travels the identical path a real weapon swing takes: for a puppet the
+    -- interception handler forwards it and cancels locally; for an actor we hold, the
+    -- builtin pipeline applies it. Headless CDP cannot swing a weapon, but everything
+    -- downstream of the swing is exercised verbatim.
+    mpTestHit = function(data)
+        local victim = nil
+        if data.playerId then
+            local p = puppets[data.playerId]
+            victim = p and p.obj:isValid() and p.obj or nil
+        elseif data.record then
+            for _, obj in ipairs(world.activeActors) do
+                if obj:isValid() and obj.recordId == data.record then victim = obj break end
+            end
+        end
+        if not victim then
+            print('[mp] mpTestHit: no victim for ' .. json.encode(data))
+            return
+        end
+        victim:sendEvent('Hit', {
+            damage = { health = data.damage or 10 },
+            strength = 1,
+            successful = true,
+            sourceType = 'Melee',
+            attacker = playerScript(),
+        })
+    end,
+
     -- M4 test hook: kill a specific cell NPC (holder side drives the death edge).
     mpKillNpc = function(data)
         if type(data.id) == 'string' and not actors.killActorByRecord(data.id) then
@@ -785,6 +829,12 @@ end
 for name, fn in pairs(actors.handlers) do
     eventHandlers[name] = fn
 end
+-- M5: combat appliers (MP_CombatHit/SpellHit/Cast/Projectile) live in combat.lua.
+for name, fn in pairs(combat.handlers) do
+    eventHandlers[name] = fn
+end
+-- puppet.lua -> here: a hit landed on a puppet; forward it to the victim's owner.
+eventHandlers.mpCombatHit = combat.onPuppetHit
 -- Wrap the op-result applier to expose the outcome to the harness (s31 race assert).
 local baseOpResult = eventHandlers.MP_ContainerOpResult
 eventHandlers.MP_ContainerOpResult = function(data)

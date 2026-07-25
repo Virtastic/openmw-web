@@ -65,6 +65,11 @@ moveMsgsPerSec = 40               # separate budget for PlayerMove frames (M1); 
 bytesPerSec = 65536               # per-session byte token bucket (burst = rate)
 maxConnsPerIp = 3
 maxMsgBytes = 262144              # ws maxPayload; larger frames drop the socket
-helloTimeoutMs = 10000            # SessionHello must arrive within this window
+# SessionHello deadline. Generous on purpose: the browser client opens its socket from Lua,
+# but Hello can only be sent on the next Lua tick — and while the engine streams game data
+# and loads the world, ticks can stall for tens of seconds. At 10s a retail client was
+# reliably refused with BAD_PROTO before it ever spoke. This still reaps dead sockets; it
+# just doesn't punish players with big load orders or slow connections.
+helloTimeoutMs = 45000
 loginPerMinPerIp = 5              # auth attempts (Register+Login) per IP per minute
 maxHitDamage = 1000               # M5 sanity bound on relayed damage/effect magnitudes (not balance)
