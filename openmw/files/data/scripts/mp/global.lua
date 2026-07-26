@@ -41,7 +41,7 @@ local TIER_NEAR, TIER_MID, TIER_FAR = 0, 1, 2
 -- "nobody was degraded" then passed against no data at all.
 local TIER_NAME = { [0] = 'near', [1] = 'mid', [2] = 'far' }
 local tierSeen = {} -- tier name -> count, reset each batch (mirrored for the capacity tests)
-local d2Buf, nearBuf = {}, {} -- scratch, reused across batches (this runs 15x/second)
+local d2Buf, nearBuf, entryBuf = {}, {}, {} -- scratch, reused across batches (runs 15x/second)
 
 -- The near RADIUS alone does not bound cost, and the case where it fails is the one that
 -- matters: in a tight crowd — a market square, a guild hall, everyone piling onto one
@@ -748,14 +748,22 @@ local eventHandlers = {
 
         -- Pass 1: distances. The nearest-K cap needs to rank the whole batch before it can
         -- tier any single entry, which is why this is two passes and not one.
-        local count = #batch
-        for i = 1, count do
-            local e = batch[i]
+        --
+        -- Entries are collected with ipairs and counted, NOT indexed via `#batch`. The `#`
+        -- operator is only defined on a proper sequence, and using it here silently
+        -- processed nothing: puppets then spawned ONLY via PlayerCellChange, so two players
+        -- who spawn in the same cell and stand still never saw each other. It was asymmetric
+        -- and easy to misread as a flake — the player who joins first sends its cell change
+        -- before the second is in-world, so only the SECOND player's puppet went missing.
+        local count = 0
+        for _, e in ipairs(batch) do
+            count = count + 1
+            entryBuf[count] = e
             if tiered then
                 local dx, dy, dz = e.x - origin.x, e.y - origin.y, e.z - origin.z
-                d2Buf[i] = dx * dx + dy * dy + dz * dz
+                d2Buf[count] = dx * dx + dy * dy + dz * dz
             else
-                d2Buf[i] = -1 -- not comparable: always near, never degraded
+                d2Buf[count] = -1 -- not comparable: always near, never degraded
             end
         end
         local cutoff = nearCutoff(nearR2, tiered and (f.lodNearMaxAvatars or 0) or 0, count)
@@ -769,7 +777,7 @@ local eventHandlers = {
         -- bug. The cutoff stays as a cheap pre-filter; this counter is the actual bound.
         local nearLeft = maxNear > 0 and maxNear or math.huge
         for i = 1, count do
-            local e = batch[i]
+            local e = entryBuf[i]
             if e.id ~= net.playerId then
                 lastPose[e.id] = { x = e.x, y = e.y, z = e.z }
                 if not puppets[e.id] then spawnPuppet(e.id, e) end

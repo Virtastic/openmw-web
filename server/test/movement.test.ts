@@ -565,3 +565,32 @@ test('spatial index: per-recipient work depends on LOCAL density, not world popu
   assert.equal(small, 20);
   assert.ok(large <= small, `per-recipient work grew with world population: ${small} -> ${large}`);
 });
+
+// The exact shape s10 and s20 exercise and the existing relay test does not: two players in
+// the SAME cell at the SAME coordinates, neither of whom ever moves. Their puppets exist
+// only because the server force-includes a never-moving player's synthesised pose on first
+// visibility; a stationary player never bumps poseVersion again, so if that one send is
+// missed there is no second chance and the two never see each other.
+test('two stationary players in one cell each receive the other', async (t) => {
+  const server = await startServer({ dataDir: tmpDataDir(), port: 0, host: '127.0.0.1' });
+  t.after(() => server.close());
+
+  const a = await TestClient.connect(server.port);
+  const { playerId: aId } = await a.joinAsNew('StillA');
+  await a.waitEvent('PlayerList');
+  const b = await TestClient.connect(server.port);
+  const { playerId: bId } = await b.joinAsNew('StillB');
+  await b.waitEvent('PlayerList');
+
+  // Identical cell AND identical position — the shared-spawn case.
+  a.sendCellChange('7,7', 500, 500, 100);
+  b.sendCellChange('7,7', 500, 500, 100);
+  await a.waitEvent('PlayerCellChange');
+  await b.waitEvent('PlayerCellChange');
+
+  // Neither client sends a single PlayerMove after this point.
+  const gotB = await b.waitBatch((x) => x.entries.some((e) => e.id === aId), 5000);
+  assert.ok(gotB.entries.some((e) => e.id === aId), 'B never received a pose for stationary A');
+  const gotA = await a.waitBatch((x) => x.entries.some((e) => e.id === bId), 5000);
+  assert.ok(gotA.entries.some((e) => e.id === bId), 'A never received a pose for stationary B');
+});
