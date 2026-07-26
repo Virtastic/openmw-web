@@ -114,6 +114,25 @@ ships no NPC placements at all.
 - [ ] Reload your page mid-session — you rejoin in place without re-entering a password
 - [ ] Latency feels acceptable on a real network (the local soak is 24 players at ~4 ms mean)
 
+### Multiplayer windows (F = friends, G = admin)
+`s46-ui-flow` already drives these flows headlessly and writes a screenshot at each step, so
+the checks below are the ones it genuinely **cannot** make. It found three bugs a state-only
+test could not see (windows that never rendered at all, `#` in a name eaten as a MyGUI colour
+code, replies burying the player in screen messages) — assume it catches that class and
+concentrate on judgement.
+
+- [ ] **F and G actually open the windows.** The harness cannot inject SDL keys, so the
+      automated run opens them by event. The key bindings themselves are untested.
+- [ ] Neither key fires while another UI is open, or while typing in chat (T).
+- [ ] Clicking a row does what the label says: `[invite]`, `[unfriend]`, `[accept]`,
+      `[block]`, `[join]`.
+- [ ] The text field accepts a click, then typing, then Enter. (0.52 Lua cannot focus it
+      programmatically, so a click is required — is that discoverable?)
+- [ ] Text is legible at your resolution and the window does not run off-screen with a long
+      friends list or many players.
+- [ ] Accepting an invite lands you next to your friend and the world looks right afterwards
+      (no missing cell, no fall-through).
+
 ### Avatar render LOD (the part automation cannot judge)
 Distant players are deliberately degraded so a crowded cell stays playable: past
 `[limits] lodNearMaxAvatars` (default 12) an avatar stops walking and is repositioned in
