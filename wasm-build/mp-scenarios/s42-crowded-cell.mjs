@@ -60,6 +60,7 @@ const CONVERGE_EPS = 80; // units; same budget as s40 (puppet steering + 100ms r
 // fidelity degrades in a crowd even though state stays consistent. That is the real cost of
 // crowding a cell, it is bounded here rather than asserted away, and whether it FEELS bad is
 // a playtest question (PLAYTEST.md), not something this number settles.
+const METRICS_TOKEN = 's42-metrics-token'; // declared above serverRules, which reads it at import
 const CROWD_CONVERGE_EPS = 2000; // catastrophic ceiling only; see the assertion below
 const STEP_TIMEOUT = 30_000;
 const BOOT = { retail: true, joinTimeoutMs: 420_000 };
@@ -73,7 +74,31 @@ const BOOT = { retail: true, joinTimeoutMs: 420_000 };
 export const serverRules =
   `\n[server]\nmaxPlayers = ${(CLIENTS + BOTS) * 2 + 16}\n`
   + `\n[content]\nenforce = "off"\n`
-  + `\n[limits]\nmaxConnsPerIp = ${(CLIENTS + BOTS) * 4 + 16}\nloginPerMinPerIp = 100000\n`;
+  + `\n[limits]\nmaxConnsPerIp = ${(CLIENTS + BOTS) * 4 + 16}\nloginPerMinPerIp = 100000\n`
+  // Metrics on so a stalled actor stream can be ATTRIBUTED. "The stream stopped" has two
+  // opposite causes — the server shed the frames defending a backed-up socket (the
+  // designed degradation, D-fix-2) or the holder stopped producing them (a real bug) — and
+  // the client-side counter alone cannot tell them apart.
+  + `\n[metrics]\nenabled = true\ntoken = "${METRICS_TOKEN}"\n`;
+
+// Counters that explain a stall, pulled straight from the Prometheus text format.
+async function shedCounters(port) {
+  try {
+    const r = await fetch(`http://127.0.0.1:${port}/metrics`, {
+      headers: { authorization: `Bearer ${METRICS_TOKEN}` },
+    });
+    if (!r.ok) return `metrics HTTP ${r.status}`;
+    const body = await r.text();
+    const pick = (re) => body.split('\n').filter((l) => re.test(l) && !l.startsWith('#')).join(' | ') || 'none';
+    return [
+      `rate_limited: ${pick(/^omwmp_rate_limited_total/)}`,
+      `backpressure: ${pick(/^omwmp_backpressure_dropped_total/)}`,
+      `buffered: ${pick(/^omwmp_outbound_buffered_bytes/)}`,
+    ].join('\n      ');
+  } catch (e) {
+    return `metrics unavailable: ${e.message}`;
+  }
+}
 
 const probeOf = async (c) => JSON.parse(await c.eval('(window.__omwMP||{}).actorProbe||"{}"'));
 const dist = (p, q) => Math.hypot(p.x - q.x, p.y - q.y, p.z - q.z);
@@ -234,7 +259,14 @@ export default async function run(ctx) {
       + `worst ${under.worst === null ? 'n/a' : under.worst.toFixed(1)} units (${under.rec}); `
       + `actorBatchesIn ${batches0.join(',')} -> ${batches1.join(',')}`);
 
-    assert.equal(stalled.length, 0, `puppet stream stalled under load on: ${stalled.join(', ')}`);
+    if (stalled.length) {
+      ctx.log(`STALL on ${stalled.join(', ')} — server counters:\n      ${await shedCounters(ctx.serverPort)}`);
+    }
+    assert.equal(stalled.length, 0,
+      `puppet stream stalled under load on: ${stalled.join(', ')} — see the counters above: `
+      + 'backpressure_dropped{kind="actor"} rising means the client could not drain and the '
+      + 'server shed frames defending it (designed); zero there means the HOLDER stopped '
+      + 'producing, which is a real bug');
     assert.ok(under.shared >= 3, `shared NPC set collapsed under load: ${under.shared}`);
     // The PEAK is reported, never asserted. Measured peaks of 93, 148, 249 and 583 units
     // across runs track HOST LOAD rather than crowd size — divergence is a function of the

@@ -345,7 +345,12 @@ local function despawnPuppet(id)
     local p = puppets[id]
     if not p then return end
     puppets[id] = nil
-    if p.obj:isValid() then p.obj:remove() end
+    -- Guarded, and deliberately AFTER the bookkeeping above: remove() throws when the
+    -- object is already gone or otherwise not removable ("Can't remove 0 of 0 items"), and
+    -- an engine handler that throws ABORTS — which took the rest of MP_PlayerLeaveWorld
+    -- with it, leaving the roster mirror stale and remoteCell/lastPose still holding a
+    -- player who had left. Same transient-engine-state reasoning as tryTeleport.
+    if p.obj:isValid() then pcall(function() p.obj:remove() end) end
     print('[mp] puppet despawned for ' .. p.name .. ' (#' .. tostring(id) .. ')')
 end
 
