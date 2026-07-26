@@ -65,6 +65,12 @@ export class SocialStore {
         PRIMARY KEY (fromAcct, toAcct)
       );
       CREATE INDEX IF NOT EXISTS friend_request_to ON friend_request(toAcct);
+      -- Presence mode is a per-account PREFERENCE, so it persists; party membership is
+      -- session state and deliberately does not (see social.ts).
+      CREATE TABLE IF NOT EXISTS presence_pref (
+        account TEXT PRIMARY KEY,
+        mode    TEXT NOT NULL
+      );
     `);
   }
 
@@ -162,6 +168,18 @@ export class SocialStore {
       .prepare('SELECT COUNT(*) AS n FROM friend_request WHERE fromAcct = ? AND expires > ?')
       .get(from, now) as { n: number };
     return row.n;
+  }
+
+  // ------------------------------------------------------------ presence mode
+
+  getPresenceMode(account: AccountKey): string | undefined {
+    const row = this.db.prepare('SELECT mode FROM presence_pref WHERE account = ?').get(account) as
+      { mode: string } | undefined;
+    return row?.mode;
+  }
+
+  setPresenceMode(account: AccountKey, mode: string): void {
+    this.db.prepare('INSERT OR REPLACE INTO presence_pref (account, mode) VALUES (?, ?)').run(account, mode);
   }
 
   sweepExpired(now: number): number {

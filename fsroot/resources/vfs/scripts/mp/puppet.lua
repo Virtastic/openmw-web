@@ -285,11 +285,17 @@ return {
             dead = false
             zeroControls()
             self:enableAI(true)
-            -- Remove OURSELVES, only now that AI is back on. The global script must not do
-            -- it: sendEvent is delivered next frame while removeScript takes effect at once,
-            -- so removing from there destroyed this script before it ever ran — leaving
-            -- mDisableAI set forever and the whole cell's NPCs frozen after a handoff.
-            pcall(function() self:removeScript('scripts/mp/puppet.lua') end)
+            -- Ask the GLOBAL script to remove us, now that AI is back on. `removeScript` is
+            -- bound on GObject only (objectbindings.cpp) — it does not exist on a local
+            -- script's `self`, so the previous `self:removeScript(...)` here threw and the
+            -- pcall around it swallowed the failure: the script was NEVER removed on
+            -- handoff, despite the comment claiming it was.
+            --
+            -- The global script still must not remove it directly on MP_Detach: sendEvent
+            -- lands next frame while removeScript takes effect at once, so doing it there
+            -- destroyed this script before it re-enabled AI, freezing the cell's NPCs. The
+            -- extra event hop preserves that ordering — AI is on before removal is handled.
+            core.sendGlobalEvent('mpPuppetDetached', { obj = self.object })
         end,
     },
 }

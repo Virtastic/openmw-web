@@ -205,3 +205,80 @@ test('social: you cannot friend or invite yourself, or a name that does not exis
   assert.equal(w.social.invite(alice, 'alice'), 'self');
   w.close();
 });
+
+test('social: presence mode gates location disclosure, not just friendship', () => {
+  const w = world();
+  const alice = w.add('alice', 'Alice', { cellKey: '-2,-9' });
+  const bob = w.add('bob', 'Bob');
+  w.store.addFriend('alice', 'bob', w.now());
+
+  // Default is friends-only: a friend sees where you are.
+  assert.equal(w.social.friendList('bob')[0]!.cellKey, '-2,-9');
+
+  // Private must hide the location from FRIENDS too — that is the whole point of picking
+  // it. A mode that only hid you from strangers would be indistinguishable from the
+  // default and would quietly not do what the player asked.
+  assert.equal(w.social.setPresenceMode(alice, 'private'), 'ok');
+  assert.equal(w.social.friendList('bob')[0]!.cellKey, undefined, 'private still leaked a location to a friend');
+  assert.equal(w.social.friendList('bob')[0]!.online, true, 'private hides WHERE, not THAT you are online');
+  w.close();
+});
+
+test('social: private refuses incoming invites, not merely location', () => {
+  const w = world();
+  const alice = w.add('alice', 'Alice');
+  const bob = w.add('bob', 'Bob');
+  assert.equal(w.social.setPresenceMode(bob, 'private'), 'ok');
+  assert.equal(w.social.invite(alice, 'bob'), 'private', 'private must mean do-not-contact');
+  assert.equal(w.social.partyInvite(alice, 'bob'), 'private');
+  w.close();
+});
+
+test('social: inviting with no party creates one; the leader leaving hands over', () => {
+  const w = world();
+  const alice = w.add('alice', 'Alice');
+  const bob = w.add('bob', 'Bob');
+  const carol = w.add('carol', 'Carol');
+
+  // No explicit "create party" step — nobody wants a party of one.
+  assert.equal(w.social.partyInvite(alice, 'bob'), 'ok');
+  assert.equal(w.social.partyAccept(bob, 'alice'), 'ok');
+  assert.equal(w.social.partyInvite(alice, 'carol'), 'ok');
+  assert.equal(w.social.partyAccept(carol, 'alice'), 'ok');
+  const initial = w.social.partyView('bob');
+  assert.ok(initial, 'bob should be in a party');
+  assert.equal(initial.members.length, 3);
+  assert.equal(initial.leader, 'alice');
+
+  // The leader leaving hands over rather than dissolving: ejecting everyone because one
+  // person left is worse than an arbitrary successor.
+  w.social.partyLeave('alice');
+  const after = w.social.partyView('bob');
+  assert.ok(after, 'the party must survive its leader leaving');
+  assert.equal(after!.members.length, 2);
+  assert.ok(after!.leader === 'bob' || after!.leader === 'carol', `leadership was not handed over: ${after!.leader}`);
+  assert.equal(w.social.partyView('alice'), null, 'the leaver must be out of the party');
+  w.close();
+});
+
+test('social: a party of one is disbanded rather than left dangling', () => {
+  const w = world();
+  const alice = w.add('alice', 'Alice');
+  const bob = w.add('bob', 'Bob');
+  assert.equal(w.social.partyInvite(alice, 'bob'), 'ok');
+  assert.equal(w.social.partyAccept(bob, 'alice'), 'ok');
+  w.social.partyLeave('bob');
+  assert.equal(w.social.partyView('alice'), null, 'a one-person party should not persist');
+  w.close();
+});
+
+test('social: you cannot be in two parties at once', () => {
+  const w = world();
+  const alice = w.add('alice', 'Alice');
+  const bob = w.add('bob', 'Bob');
+  const carol = w.add('carol', 'Carol');
+  assert.equal(w.social.partyInvite(alice, 'bob'), 'ok');
+  assert.equal(w.social.partyAccept(bob, 'alice'), 'ok');
+  assert.equal(w.social.partyInvite(carol, 'bob'), 'already_in_party');
+  w.close();
+});

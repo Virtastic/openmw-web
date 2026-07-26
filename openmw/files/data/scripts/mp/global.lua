@@ -23,6 +23,10 @@ local roster = {} -- array of {id=u16, name=string}, server order
 
 local function mirrorRoster()
     mp.testSet('players', json.encode(roster))
+    -- The social hub lists everyone currently playing, and the roster lives here. Forwarded
+    -- rather than duplicated so there is one source of truth for who is online.
+    local player = world.players[1]
+    if player then player:sendEvent('MP_Roster', { players = roster }) end
 end
 
 local function playerScript()
@@ -675,6 +679,8 @@ local eventHandlers = {
     MP_FriendRequestReceived = function(data) toPlayer('MP_FriendRequestReceived', data) end,
     MP_InviteReceived = function(data) toPlayer('MP_InviteReceived', data) end,
     MP_PresenceUpdate = function(data) toPlayer('MP_PresenceUpdate', data) end,
+    MP_PartyUpdate = function(data) toPlayer('MP_PartyUpdate', data) end,
+    MP_PartyInviteReceived = function(data) toPlayer('MP_PartyInviteReceived', data) end,
     MP_SocialResult = function(data) toPlayer('MP_SocialResult', data) end,
 
     -- The server answers InviteAccept with the host's live position. Travelling is done
@@ -1090,10 +1096,26 @@ local eventHandlers = {
         local OPS = {
             FriendRequest = true, FriendAccept = true, FriendRemove = true,
             BlockAdd = true, BlockRemove = true, InviteSend = true, InviteAccept = true,
+            PartyInvite = true, PartyAccept = true, PartyLeave = true, PresenceMode = true,
         }
         local op = tostring(data.op or '')
         if not OPS[op] then return end
-        mp.sendEvent(op, { name = data.name, acct = data.acct })
+        mp.sendEvent(op, { name = data.name, acct = data.acct, mode = data.mode })
+    end,
+
+    -- Script removal lives here because removeScript is bound on GObject only. Both senders
+    -- have already done whatever had to happen first (puppet.lua re-enables AI before
+    -- asking), and the event hop is exactly what guarantees that ordering.
+    mpPuppetDetached = function(data)
+        if data.obj and data.obj:isValid() then
+            data.obj:removeScript('scripts/mp/puppet.lua')
+        end
+    end,
+
+    mpRemoveTestKill = function(data)
+        if data.obj and data.obj:isValid() then
+            data.obj:removeScript('scripts/mp/testkill.lua')
+        end
     end,
 
     mpChatSend = function(data)

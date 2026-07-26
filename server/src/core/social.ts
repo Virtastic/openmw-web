@@ -38,6 +38,22 @@ export interface FriendView {
   cellKey?: string;
 }
 
+// Who may see where you are, and who may invite you.
+//   public  — anyone in the world (the lobby list shows your cell)
+//   friends — friends only (the default; matches what Phase C shipped)
+//   party   — only your current party
+//   private — nobody; you appear online with no location, and invites are refused
+// This is a PRIVACY control, so the server enforces it on every path that could disclose a
+// location or deliver an invite. A client-side filter would be decorative.
+export const PRESENCE_MODES = ['public', 'friends', 'party', 'private'] as const;
+export type PresenceMode = (typeof PRESENCE_MODES)[number];
+export const DEFAULT_PRESENCE: PresenceMode = 'friends';
+
+export interface PartyView {
+  leader: AccountKey;
+  members: { acct: AccountKey; name: string; online: boolean; playerId?: number; cellKey?: string }[];
+}
+
 export type SocialFailure =
   | 'no_such_player'
   | 'blocked'
@@ -45,7 +61,12 @@ export type SocialFailure =
   | 'self'
   | 'too_many_requests'
   | 'no_request'
-  | 'not_online';
+  | 'not_online'
+  | 'private'
+  | 'not_in_party'
+  | 'not_leader'
+  | 'party_full'
+  | 'already_in_party';
 
 export interface SocialDeps {
   store: SocialStore;
@@ -62,6 +83,12 @@ interface PendingInvite {
   expires: number;
 }
 
+interface Party {
+  id: number;
+  leader: AccountKey;
+  members: Set<AccountKey>;
+}
+
 export class Social {
   private readonly d: SocialDeps;
   private readonly tuning: SocialTuning;
@@ -70,6 +97,13 @@ export class Social {
   // Invites are session state and stay in memory: persisting them means resurrecting dead
   // invitations after a restart, pointing at a session that no longer exists.
   private readonly invites = new Map<AccountKey, PendingInvite[]>();
+  // Parties are SESSION state and stay in memory. Persisting them means restoring a party
+  // after a restart whose members are all offline and whose leader may never return — a
+  // group that exists on paper and cannot be left.
+  private readonly parties = new Map<number, Party>();
+  private readonly partyOf = new Map<AccountKey, number>();
+  private nextPartyId = 1;
+  private readonly maxParty = 8;
 
   constructor(deps: SocialDeps, tuning: SocialTuning = socialTuning) {
     this.d = deps;
@@ -89,11 +123,15 @@ export class Social {
     const out: FriendView[] = [];
     for (const f of this.d.store.friendsOf(acct)) {
       const p = this.onlinePlayer(f.account);
+      // cellKey is gated by the SUBJECT's presence mode, not merely by friendship: a player
+      // who set themselves to party-only or private stays hidden from friends too, which is
+      // the entire point of choosing it.
+      const showWhere = p !== undefined && p.cellKey !== undefined && this.maySeeLocation(acct, f.account);
       out.push({
         acct: f.account,
         name: this.d.displayName(f.account) ?? f.account,
         online: p !== undefined,
-        ...(p ? { playerId: p.id, ...(p.cellKey ? { cellKey: p.cellKey } : {}) } : {}),
+        ...(p ? { playerId: p.id, ...(showWhere ? { cellKey: p.cellKey } : {}) } : {}),
       });
     }
     return out;
@@ -128,14 +166,20 @@ export class Social {
       clearTimeout(t);
       this.offlineTimers.delete(acct);
       this.sendFriendList(player);
+      this.sendParty(acct);
       return; // no PresenceUpdate at all — they were never shown offline
     }
     this.sendFriendList(player);
+    this.sendParty(acct);
     this.notifyFriends(acct, true);
   }
 
   onLeave(player: Player): void {
     const acct = player.accountKey;
+    this.invites.delete(acct);
+    // Party membership survives a brief drop, exactly like presence: being dropped from
+    // your group because your connection blipped is worse than a stale row for a few
+    // seconds. It is cleared when the offline announcement finally fires.
     this.invites.delete(acct);
     const existing = this.offlineTimers.get(acct);
     if (existing) clearTimeout(existing);
@@ -143,6 +187,7 @@ export class Social {
       this.offlineTimers.delete(acct);
       // Re-check: the account may have come back on a different connection.
       if (this.onlinePlayer(acct)) return;
+      this.partyLeave(acct); // the grace window has lapsed: they really are gone
       this.notifyFriends(acct, false);
     }, this.tuning.presenceGraceMs);
     timer.unref?.();
@@ -254,6 +299,8 @@ export class Social {
     const from = player.accountKey;
     if (targetAcct === from) return 'self';
     if (this.d.store.blockedEitherWay(from, targetAcct)) return 'blocked';
+    // 'private' means do not contact me, not just do not locate me.
+    if (this.presenceMode(targetAcct) === 'private') return 'private';
     const target = this.onlinePlayer(targetAcct);
     if (!target) return 'not_online';
     const now = this.d.now();
@@ -264,6 +311,156 @@ export class Social {
     this.invites.set(targetAcct, kept);
     target.peer.sendEvent('InviteReceived', { fromAcct: from, fromName: player.name });
     return 'ok';
+  }
+
+  // ------------------------------------------------------------ presence mode
+
+  presenceMode(acct: AccountKey): PresenceMode {
+    const raw = this.d.store.getPresenceMode(acct);
+    return (PRESENCE_MODES as readonly string[]).includes(raw ?? '') ? (raw as PresenceMode) : DEFAULT_PRESENCE;
+  }
+
+  setPresenceMode(player: Player, mode: string): SocialFailure | 'ok' {
+    if (!(PRESENCE_MODES as readonly string[]).includes(mode)) return 'no_such_player';
+    this.d.store.setPresenceMode(player.accountKey, mode);
+    // Everyone who can see this player re-reads them: going private must take effect now,
+    // not whenever their next friend list happens to be rebuilt.
+    this.sendFriendList(player);
+    this.sendParty(player.accountKey);
+    for (const f of this.d.store.friendsOf(player.accountKey)) {
+      const p = this.onlinePlayer(f.account);
+      if (p) this.sendFriendList(p);
+    }
+    return 'ok';
+  }
+
+  // May `viewer` see where `subject` is? The single place this question is answered, so a
+  // new surface cannot accidentally disclose a location the player asked to hide.
+  private maySeeLocation(viewer: AccountKey, subject: AccountKey): boolean {
+    if (viewer === subject) return true;
+    if (this.d.store.blockedEitherWay(viewer, subject)) return false;
+    switch (this.presenceMode(subject)) {
+      case 'public': return true;
+      case 'friends': return this.d.store.areFriends(viewer, subject);
+      case 'party': return this.samePartyAs(viewer, subject);
+      case 'private': return false;
+    }
+  }
+
+  // ------------------------------------------------------------------- party
+
+  private samePartyAs(a: AccountKey, b: AccountKey): boolean {
+    const pa = this.partyOf.get(a);
+    return pa !== undefined && pa === this.partyOf.get(b);
+  }
+
+  partyView(acct: AccountKey): PartyView | null {
+    const id = this.partyOf.get(acct);
+    if (id === undefined) return null;
+    const party = this.parties.get(id);
+    if (!party) return null;
+    return {
+      leader: party.leader,
+      members: [...party.members].map((m) => {
+        const p = this.onlinePlayer(m);
+        return {
+          acct: m,
+          name: this.d.displayName(m) ?? m,
+          online: p !== undefined,
+          // A party member's location is shown to the party regardless of mode 'party',
+          // but 'private' still hides it — opting out has to mean something even here.
+          ...(p ? { playerId: p.id, ...(p.cellKey && this.presenceMode(m) !== 'private' ? { cellKey: p.cellKey } : {}) } : {}),
+        };
+      }),
+    };
+  }
+
+  private sendParty(acct: AccountKey): void {
+    const p = this.onlinePlayer(acct);
+    if (!p) return;
+    const view = this.partyView(acct);
+    p.peer.sendEvent('PartyUpdate', view === null
+      ? { leader: '', members: [] as unknown as never }
+      : { leader: view.leader, members: view.members as unknown as never });
+  }
+
+  private broadcastParty(id: number): void {
+    const party = this.parties.get(id);
+    if (!party) return;
+    for (const m of party.members) this.sendParty(m);
+  }
+
+  // Inviting when you have no party creates one with you as leader. Requiring an explicit
+  // "create party" step first is a pure ceremony tax: nobody wants a party of one.
+  partyInvite(player: Player, targetAcct: AccountKey): SocialFailure | 'ok' {
+    const from = player.accountKey;
+    if (targetAcct === from) return 'self';
+    if (this.d.store.blockedEitherWay(from, targetAcct)) return 'blocked';
+    if (this.presenceMode(targetAcct) === 'private') return 'private';
+    const target = this.onlinePlayer(targetAcct);
+    if (!target) return 'not_online';
+    if (this.partyOf.has(targetAcct)) return 'already_in_party';
+
+    let id = this.partyOf.get(from);
+    if (id === undefined) {
+      id = this.nextPartyId++;
+      this.parties.set(id, { id, leader: from, members: new Set([from]) });
+      this.partyOf.set(from, id);
+    }
+    const party = this.parties.get(id)!;
+    if (party.leader !== from) return 'not_leader';
+    if (party.members.size >= this.maxParty) return 'party_full';
+
+    const now = this.d.now();
+    const list = (this.invites.get(targetAcct) ?? []).filter((i) => i.expires > now && i.from !== from);
+    list.push({ from, expires: now + this.tuning.inviteTtlMs });
+    this.invites.set(targetAcct, list);
+    target.peer.sendEvent('PartyInviteReceived', { fromAcct: from, fromName: player.name });
+    this.sendParty(from);
+    return 'ok';
+  }
+
+  partyAccept(player: Player, fromAcct: AccountKey): SocialFailure | 'ok' {
+    const me = player.accountKey;
+    const now = this.d.now();
+    const list = (this.invites.get(me) ?? []).filter((i) => i.expires > now);
+    if (!list.some((i) => i.from === fromAcct)) return 'no_request';
+    if (this.d.store.blockedEitherWay(me, fromAcct)) return 'blocked';
+    if (this.partyOf.has(me)) return 'already_in_party';
+    const id = this.partyOf.get(fromAcct);
+    const party = id !== undefined ? this.parties.get(id) : undefined;
+    if (!party) return 'not_in_party';
+    if (party.members.size >= this.maxParty) return 'party_full';
+    party.members.add(me);
+    this.partyOf.set(me, party.id);
+    this.invites.set(me, list.filter((i) => i.from !== fromAcct));
+    this.broadcastParty(party.id);
+    return 'ok';
+  }
+
+  partyLeave(acct: AccountKey): void {
+    const id = this.partyOf.get(acct);
+    if (id === undefined) return;
+    const party = this.parties.get(id);
+    this.partyOf.delete(acct);
+    if (!party) return;
+    party.members.delete(acct);
+    // The leader leaving hands over rather than dissolving the group: everyone else being
+    // silently ejected because one person left is worse than an arbitrary successor.
+    if (party.leader === acct) {
+      const next = [...party.members][0];
+      if (next) party.leader = next;
+    }
+    if (party.members.size <= 1) {
+      for (const m of party.members) {
+        this.partyOf.delete(m);
+        this.sendParty(m);
+      }
+      this.parties.delete(id);
+    } else {
+      this.broadcastParty(id);
+    }
+    this.sendParty(acct); // the leaver gets an empty party
   }
 
   // ------------------------------------------------------------------ dispatch
@@ -310,6 +507,25 @@ export class Social {
         this.reply(player, 'InviteSend', r === 'ok', r);
         return true;
       }
+      case 'PresenceMode': {
+        const r = this.setPresenceMode(player, str('mode'));
+        this.reply(player, 'PresenceMode', r === 'ok', r === 'ok' ? str('mode') : r);
+        return true;
+      }
+      case 'PartyInvite': {
+        const r = this.partyInvite(player, str('acct'));
+        this.reply(player, 'PartyInvite', r === 'ok', r);
+        return true;
+      }
+      case 'PartyAccept': {
+        const r = this.partyAccept(player, str('acct'));
+        this.reply(player, 'PartyAccept', r === 'ok', r);
+        return true;
+      }
+      case 'PartyLeave':
+        this.partyLeave(player.accountKey);
+        this.reply(player, 'PartyLeave', true, 'ok');
+        return true;
       case 'InviteAccept': {
         const r = this.acceptInvite(player, str('acct'));
         if (r.ok) {
