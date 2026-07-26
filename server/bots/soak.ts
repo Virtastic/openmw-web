@@ -159,14 +159,15 @@ interface StepRow {
   playerEntryHz: number; // poses per second per client — the O(N) term
   actorBatchHz: number;
   actorSentHz: number;
-  actorDropPct: number;
+  actorDropPct: number | null;
   growJoinMs: number;
   probeWelcomeMs: number;
   probeFirstBatchMs: number;
   pingMean: number;
   pingMax: number;
-  divergent: number;
-  worstLag: number;
+  // null = there was no actor stream to measure (spread mode), NOT zero divergence.
+  divergent: number | null;
+  worstLag: number | null;
 }
 
 // Synthetic actor load for the correctness invariant. 16 actors at the client's own move
@@ -717,6 +718,12 @@ async function main(): Promise<void> {
         }
         if (bad) divergent++;
       }
+      // Was there an actor stream to measure at all? In spread mode nobody claims a cell
+      // holder, so no ActorMoveBatch is ever sent and every bot trivially counts as silent
+      // and divergent — the run then printed "divergent=23" beside "PASS", which is worse
+      // than printing nothing: a number that alarming and that wrong teaches an operator to
+      // ignore the column that actually matters in one-cell runs.
+      const actorMeasured = sent > 0 || bots.slice(1).some((b) => b.rxActorBatches > 0);
       if (ONECELL && !ATTACH) {
         // The relay excludes the sender: an echo back to the holder would double every
         // client's actor cost and is worth failing on, not just noting.
@@ -749,25 +756,28 @@ async function main(): Promise<void> {
         playerEntryHz: mean(playerEntryHz),
         actorBatchHz: mean(actorBatchHz),
         actorSentHz: sent / dt,
-        actorDropPct: mean(dropPcts),
+        actorDropPct: actorMeasured ? mean(dropPcts) : null,
         growJoinMs: mean(growJoins),
         probeWelcomeMs: probeResult.welcomeMs,
         probeFirstBatchMs: probeResult.firstBatchMs,
         pingMean: mean(stepPings),
         pingMax: stepPings.length ? Math.max(...stepPings) : NaN,
-        divergent,
-        worstLag,
+        divergent: actorMeasured ? divergent : null,
+        worstLag: actorMeasured ? worstLag : null,
       };
       rows.push(row);
       console.log(
         `[step] N=${row.n} alive=${row.alive} rss=${row.rssMb.toFixed(0)}MB cpu=${row.cpuPct.toFixed(0)}% botcpu=${row.botCpuPct.toFixed(0)}% ` +
         `rx/client=${row.rxKbMean.toFixed(1)}KB/s (max ${row.rxKbMax.toFixed(1)}) agg=${row.aggKbSec.toFixed(0)}KB/s ` +
         `pmb=${row.playerBatchHz.toFixed(1)}/s entries=${row.playerEntryHz.toFixed(1)}/s ` +
-        `amb=${row.actorBatchHz.toFixed(1)}/s of ${row.actorSentHz.toFixed(1)} sent (undelivered ${row.actorDropPct.toFixed(2)}%) ` +
+        `amb=${row.actorBatchHz.toFixed(1)}/s of ${row.actorSentHz.toFixed(1)} sent ` +
+        `(undelivered ${row.actorDropPct === null ? 'n/a' : row.actorDropPct.toFixed(2) + '%'}) ` +
         `vis=${row.visPeersMean.toFixed(1)}/${row.n - 1} leaveView=${row.leaveViews} ` +
         `join=${row.probeWelcomeMs.toFixed(0)}ms/+batch ${row.probeFirstBatchMs.toFixed(0)}ms ` +
         `ping=${row.pingMean.toFixed(0)}/${row.pingMax}ms shed=${row.moveShed}/${row.actorShed} bp=${row.bpDropped} ` +
-        `buf=${row.bufferedKb.toFixed(1)}KB divergent=${row.divergent} worstLag=${row.worstLag}`,
+        `buf=${row.bufferedKb.toFixed(1)}KB ` +
+        `divergent=${row.divergent === null ? 'n/a (no actor stream)' : row.divergent} ` +
+        `worstLag=${row.worstLag === null ? 'n/a' : row.worstLag}`,
       );
     }
 
@@ -777,11 +787,11 @@ async function main(): Promise<void> {
       console.log(
         `  ${String(r.n).padStart(2)} | ${String(r.alive).padStart(5)} | ${r.visPeersMean.toFixed(1).padStart(9)} | ${r.rssMb.toFixed(0).padStart(6)} | ${r.cpuPct.toFixed(0).padStart(5)} | ${r.botCpuPct.toFixed(0).padStart(9)} | ` +
         `${r.rxKbMean.toFixed(1).padStart(14)} | ${r.aggKbSec.toFixed(0).padStart(8)} | ${r.playerBatchHz.toFixed(1).padStart(5)} | ` +
-        `${r.playerEntryHz.toFixed(1).padStart(7)} | ${r.actorBatchHz.toFixed(1).padStart(5)} | ${r.actorDropPct.toFixed(2).padStart(6)} | ` +
+        `${r.playerEntryHz.toFixed(1).padStart(7)} | ${r.actorBatchHz.toFixed(1).padStart(5)} | ${(r.actorDropPct === null ? '-' : r.actorDropPct.toFixed(2)).padStart(6)} | ` +
         `${r.probeWelcomeMs.toFixed(0).padStart(7)} | ${r.probeFirstBatchMs.toFixed(0).padStart(10)} | ${r.pingMean.toFixed(0).padStart(7)} | ` +
         `${String(r.moveShed).padStart(9)} | ${String(r.actorShed).padStart(10)} | ${String(r.bpDropped).padStart(7)} | ` +
         `${r.bufferedKb.toFixed(1).padStart(6)} | ` +
-        `${String(r.divergent).padStart(9)} | ${String(r.worstLag).padStart(9)}`,
+        `${String(r.divergent ?? '-').padStart(9)} | ${String(r.worstLag ?? '-').padStart(9)}`,
       );
     }
 
