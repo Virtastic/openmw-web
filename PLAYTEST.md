@@ -114,6 +114,24 @@ ships no NPC placements at all.
 - [ ] Reload your page mid-session — you rejoin in place without re-entering a password
 - [ ] Latency feels acceptable on a real network (the local soak is 24 players at ~4 ms mean)
 
+### Social hub styling and ESC → Options → Social
+The hub is built from the same MWUI templates as the game's own Options screen, so it should
+read as part of the game. Automation can prove the flows work and can screenshot them; only
+a person can say whether it LOOKS right next to the real menus.
+
+- [ ] Open the Social hub (F) with a real menu open behind it — do the border, transparency
+      and font colour match, or does it read as a bolt-on?
+- [ ] ESC → Options → **Social** exists and renders like every other settings page. Changing
+      "Visible to" there takes effect immediately (check a friend's view).
+- [ ] Tab bar: the active tab is legible as active. Counts update as people join and leave.
+- [ ] With 20+ players online, does the Players tab stay usable, or does it need scrolling
+      and/or a filter? (No scroll container exists yet — this is the check that decides
+      whether one is needed.)
+- [ ] Party: invite, accept, see members and their locations, leave. The leader leaving
+      should hand over, not disband.
+- [ ] Privacy: set `private`, and confirm a FRIEND can no longer see your location and
+      cannot invite you. Set `party`, and confirm only party members can.
+
 ### Multiplayer windows (F = friends, G = admin)
 `s46-ui-flow` already drives these flows headlessly and writes a screenshot at each step, so
 the checks below are the ones it genuinely **cannot** make. It found three bugs a state-only

@@ -447,7 +447,9 @@ returned by a previous `FriendList`:
 
 - `FriendRequest{name}` · `FriendAccept{acct}` · `FriendRemove{acct}`
 - `BlockAdd{name}` · `BlockRemove{acct}`
-- `InviteSend{acct}` · `InviteAccept{acct}`
+- `InviteSend{acct}` · `InviteAccept{acct}` — travel-to invite
+- `PartyInvite{acct}` · `PartyAccept{acct}` · `PartyLeave{}`
+- `PresenceMode{mode}` — one of `public` `friends` `party` `private`
 
 Server → client:
 
@@ -456,6 +458,9 @@ Server → client:
   incremental form)
 - `PresenceUpdate{acct, online, playerId?}`
 - `FriendRequestReceived{fromAcct, fromName}` · `InviteReceived{fromAcct, fromName}`
+- `PartyInviteReceived{fromAcct, fromName}`
+- `PartyUpdate{leader, members:[{acct, name, online, playerId?, cellKey?}]}` — full snapshot;
+  an empty `members` means "you are not in a party"
 - `InviteAccepted{cellKey, x, y, z}` — the host's live position, resolved server-side.
   The client travels to THIS rather than to a coordinate it chose: the server is the only
   party that knows where the host actually is.
@@ -477,6 +482,16 @@ loud:
 - Invites expire and are capped per sender, or the channel is a spam vector.
 - Friendship is stored **once per pair** (lower account id first). Two rows per friendship
   lets a half-applied mutation leave A friends with B but not the reverse.
+- **Presence mode is a server-enforced privacy control**, not a client preference. Every
+  path that could disclose a location or deliver an invite goes through one check, so a new
+  surface cannot accidentally leak what a player asked to hide. `private` hides you from
+  **friends too** and refuses invites outright — a mode that only hid you from strangers
+  would be indistinguishable from the default. It is the one social field that persists;
+  party membership does not.
+- **Parties are session state and are never persisted.** Restoring one after a restart
+  produces a group whose members are all offline and whose leader may never return — a
+  group you cannot leave. A player is in at most one party; the leader leaving hands over
+  rather than dissolving it, and a party that falls to one member is disbanded.
 
 Storage is `node:sqlite` in the existing data dir. This is only correct because the world
 is single-process; if the map is ever region-sharded across processes, the social data has
