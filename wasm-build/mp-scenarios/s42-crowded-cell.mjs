@@ -36,8 +36,13 @@ const BOOT = { retail: true, joinTimeoutMs: 420_000 };
 
 // maxConnsPerIp defaults to 3 and every bot dials from 127.0.0.1 — without this the crowd
 // is refused before any load is applied. Appended as raw TOML after the [rules] table.
+// enforce = "off": ContentGate makes the FIRST client's manifest canonical, and the retail
+// browser clients join before the bots — so every bot would be refused BAD_CONTENT and the
+// crowd would never materialise, leaving the convergence checks below to pass against an
+// uncrowded cell. See s43 for the same note.
 export const serverRules =
   `\n[server]\nmaxPlayers = ${(CLIENTS + BOTS) * 2 + 16}\n`
+  + `\n[content]\nenforce = "off"\n`
   + `\n[limits]\nmaxConnsPerIp = ${(CLIENTS + BOTS) * 4 + 16}\nloginPerMinPerIp = 100000\n`;
 
 const probeOf = async (c) => JSON.parse(await c.eval('(window.__omwMP||{}).actorProbe||"{}"'));

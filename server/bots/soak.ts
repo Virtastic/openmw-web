@@ -108,6 +108,28 @@ const ONE_CELL_KEY = (() => {
   if (!v || v.startsWith('--')) throw new Error('--cellkey needs a cell key, e.g. --cellkey -2,-9');
   return v;
 })();
+// Bots must stand where they SAY they stand. The layout is anchored at the claimed cell's
+// centre, not at the world origin: with --cellkey -2,-9 (Seyda Neen) a bot posed at (0,0)
+// is ~75k units from anyone actually in that cell, so interest culling correctly removes it
+// and the crowd never reaches the client at all — a load test that applies no load, and a
+// frame-rate measurement of an empty scene. Exterior cells are 8192 units square.
+const CELL_SIZE = 8192;
+const CELL_ORIGIN = (() => {
+  const m = /^(-?\d+),(-?\d+)$/.exec(ONE_CELL_KEY);
+  if (!m) return { x: 0, y: 0 }; // interior key: no world grid to anchor to
+  return { x: (parseInt(m[1]!, 10) + 0.5) * CELL_SIZE, y: (parseInt(m[2]!, 10) + 0.5) * CELL_SIZE };
+})();
+// Bot names are account keys. Two soak processes attached to the SAME server both naming
+// their bots soak0..soakN collide: the second registration supersedes the first session
+// rather than adding a player, so the population silently stops growing. --prefix keeps
+// concurrent waves distinct (see s43, which ramps by attaching successive waves).
+const NAME_PREFIX = (() => {
+  const i = process.argv.indexOf('--prefix');
+  if (i === -1) return 'soak';
+  const v = process.argv[i + 1];
+  if (!v || v.startsWith('--')) throw new Error('--prefix needs a value, e.g. --prefix wave2_');
+  return v;
+})();
 const MOVE_HZ = 15; // matches the real client's sampler
 const SAMPLE_MS = 10_000; // metrics cadence
 const SETTLE_MS = 15_000; // discarded head of each step: joins are not steady state
@@ -377,7 +399,7 @@ async function main(): Promise<void> {
 
     // --- fleet ---------------------------------------------------------------------------
     const joinBot = async (i: number): Promise<number> => {
-      const name = `soak${i}`;
+      const name = `${NAME_PREFIX}${i}`;
       const t = Date.now();
       const client = await TestClient.connect(port);
       const { playerId } = await client.joinAsNew(name);
@@ -387,7 +409,10 @@ async function main(): Promise<void> {
       // Laid out against the FINAL fleet size so positions never shift as the ramp grows —
       // a moving layout would change every pairwise distance mid-run and make the LOD tier
       // mix incomparable between steps.
-      const base = ONECELL ? layoutPos(i, MAX_BOTS) : { x: cell * 8192, y: 0 };
+      const layout = layoutPos(i, MAX_BOTS);
+      const base = ONECELL
+        ? { x: CELL_ORIGIN.x + layout.x, y: CELL_ORIGIN.y + layout.y }
+        : { x: cell * CELL_SIZE, y: 0 };
       client.sendCellChange(cellKey, base.x, base.y, 0);
       const bot: Bot = {
         name, client, playerId, cell, cellKey, x: base.x, y: base.y, baseX: base.x, baseY: base.y,
@@ -410,7 +435,11 @@ async function main(): Promise<void> {
       const client = await TestClient.connect(port);
       await client.joinAsNew(`probe${n}x${Date.now()}`);
       const welcomeMs = Date.now() - t;
-      client.sendCellChange(ONECELL ? ONE_CELL_KEY : '0,0', 0, 0, 0);
+      // Anchored like the fleet: a probe posed at the world origin inside a retail cell is
+      // culled by distance, so it would wait out the full timeout for a first batch that
+      // was never going to arrive and report the join as slow rather than as mislocated.
+      client.sendCellChange(ONECELL ? ONE_CELL_KEY : '0,0',
+        ONECELL ? CELL_ORIGIN.x : 0, ONECELL ? CELL_ORIGIN.y : 0, 0);
       let firstBatchMs = NaN;
       try {
         await client.waitBatch(() => true, 15_000);
