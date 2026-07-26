@@ -148,9 +148,26 @@ Server → client:
 
 - `{"t":"SessionHelloOk", "serverName":"…", "contentPolicy":"names|strict|off"}`
 - `{"t":"SessionWelcome", "playerId":<u16>, "sessionToken":"<hex>", "motd":"…",
-   "flags":{}, "playerRecord":null, "serverSeq":<u32>}`
+   "flags":{…}, "playerRecord":null, "serverSeq":<u32>}`
   (`playerRecord:null` → fresh character; non-null restore lands in M2. `serverSeq` = binary
   seq already consumed on this connection: 0 at welcome, first server Event frame is seq 1.)
+
+  `flags` are session rules the client applies locally:
+
+  | field | meaning |
+  | --- | --- |
+  | `pvp` | player-vs-player hits are relayed (M5) |
+  | `difficulty` | applied client-side, in the victim's own combat pipeline |
+  | `renderLod` | `"tiered"` degrades distant avatars; `"full"` simulates every avatar |
+  | `lodNearRadius` / `lodMidRadius` | render tier boundaries, in world units |
+  | `lodNearMaxAvatars` | hard ceiling on fully-simulated avatars; `0` = radius only |
+
+  The render-LOD fields are sent rather than baked into the client because the client's
+  scripts live inside `openmw.data` and changing a constant there costs a full relink.
+  **A client that does not understand them must default to full fidelity** — the fallback
+  for a missing tier is "near", never a silent degrade. They intentionally mirror the
+  server's own network-LOD radii so an avatar receiving poses at 1 Hz is not also being
+  asked to walk smoothly between them.
 - `{"t":"SessionPong", "clientTime":<ms>, "serverTime":<ms>}`
 - `{"t":"SessionDisconnect", "code":"<CODE>", "detail":"human-readable"}` then close.
   Codes: `BAD_PROTO BAD_ENGINE BAD_CONTENT AUTH_FAILED BANNED SUPERSEDED KICKED RATE

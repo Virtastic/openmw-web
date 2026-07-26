@@ -114,6 +114,26 @@ ships no NPC placements at all.
 - [ ] Reload your page mid-session — you rejoin in place without re-entering a password
 - [ ] Latency feels acceptable on a real network (the local soak is 24 players at ~4 ms mean)
 
+### Avatar render LOD (the part automation cannot judge)
+Distant players are deliberately degraded so a crowded cell stays playable: past
+`[limits] lodNearMaxAvatars` (default 12) an avatar stops walking and is repositioned in
+occasional jumps, up to ~2048 units from where it really is. Frame cost is measured and
+the drift is bounded by a test — **whether it looks acceptable is a human judgement, and
+it is the only open question about this feature.**
+
+- [ ] Walk with a friend at normal distance: they animate smoothly, no jumping. (They are
+      inside the near cap, so any stutter here is a real bug, not LOD.)
+- [ ] Watch a player across a town square, then across a full cell — expect visible
+      jumping. Judge: reads as "far away and low detail", or as broken/teleporting?
+- [ ] Stand in a crowd of 10+ and watch the ones at the back. The nearest 12 should look
+      normal; note if the boundary between smooth and jumpy is distracting.
+- [ ] Walk toward, then away from, a degraded player. Promotion to smooth and demotion
+      back should not visibly snap or freeze mid-stride.
+- [ ] With `[limits] renderLod = "full"`, everything is smooth but a crowd costs ~1.2 ms
+      per avatar. Compare the two and say which you would ship.
+- [ ] Combat with a player near the cap boundary: does hit feedback still line up with
+      where they appear to be? (Degraded avatars are *drawn* up to 2048 units off.)
+
 ## Known open (already triaged — not bugs to re-report)
 - Some textures skip mipmaps (`glGenerateMipmap` warning) → slight distant shimmer — OSG fix pending
 - No MSAA → jagged edges vs desktop — enhancement, deferred
