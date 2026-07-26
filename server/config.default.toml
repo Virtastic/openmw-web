@@ -88,6 +88,31 @@ helloTimeoutMs = 45000
 loginPerMinPerIp = 5              # auth attempts (Register+Login) per IP per minute
 maxHitDamage = 1000               # M5 sanity bound on relayed damage/effect magnitudes (not balance)
 
+# Interest management + level of detail. Cell-granular visibility alone makes one busy cell
+# an N x N pose mesh, and at 64 co-located players the binding constraint is CLIENT cost —
+# every tab renders and interpolates 63 avatars plus the NPCs — not bandwidth. These knobs
+# cut what each client has to draw and process. Distances are Morrowind world units
+# (1 exterior cell = 8192). All of it applies to EXTERIOR cells only: interiors stay
+# cell-granular, because there "too far to matter" is an occlusion question, not a distance
+# one, and a radius tuned for open terrain would pop peers standing one wall away.
+interestRadius = 12288            # 1.5 cells: beyond this a peer leaves your view. 0 = no culling
+# The band a player must re-cover to flip state. Enter at interestRadius, leave only past
+# interestRadius + this. Equal thresholds would make anyone walking the line spawn and
+# despawn on alternate ticks in every other client.
+interestHysteresis = 2048
+# Nearest-K floor: the K closest peers stay in view whatever the radius says, so culling can
+# never make someone feel alone in a crowd.
+interestMinPeers = 12
+# Send rate by distance. The client interpolates with a 100 ms render delay, so a lower rate
+# for distant players costs almost nothing visually. Also tiers the holder's ActorMoveBatch
+# stream — a distant player does not need 15 Hz NPC updates either. Rates are rounded to a
+# whole number of 66 ms ticks (15/5/1 Hz -> every 1st/3rd/15th).
+lodNearRadius = 4096              # <= this: near tier
+lodMidRadius = 8192               # <= this: mid tier; beyond it, far tier (until interestRadius)
+lodNearHz = 15
+lodMidHz = 5
+lodFarHz = 1
+
 [time]
 # M7: the server owns the clock. Morrowind scale = 30 (30 game seconds per real second);
 # 0 freezes time (it then only moves on a WorldTimeRequest, i.e. resting/waiting).
@@ -127,6 +152,32 @@ retentionDays = 14
 # How many recent chat lines are attached to a /report as context. This is what an admin
 # actually needs: a reason with no surrounding conversation is not actionable.
 contextLines = 20
+
+[authority]
+# M4 cell actor authority: ONE client per cell simulates every NPC there and streams
+# ActorMoveBatch to the rest, on top of playing the game itself. It is the heaviest seat in
+# the room, so it is elected on measured fitness rather than on who arrived first.
+# Fitness is the SERVER's own round-trip measurement (WebSocket ping/pong with an echoed
+# stamp) plus the client's outbound shed rate. A client-reported latency is never used: it
+# would let a modified client seize or dodge the role at will.
+rttProbeSec = 5        # ping cadence; ~6 B/s/player. The 50 s keepalive deadline is unchanged.
+reviewSec = 10         # how often a cell re-checks its holder (cheap: a scan of held cells)
+unknownRttMs = 200     # score for a player with no sample yet — never a free promotion
+shedPenaltyMs = 500    # a 100%-shed client is scored 500 ms worse than a clean one
+# A challenger must beat the incumbent by BOTH margins. Absolute margin ignores jitter;
+# the ratio stops "350 vs 400 ms" (both unplayable) from counting as an improvement.
+improveMs = 40
+improveRatio = 0.75    # must be <= 1
+# Degradation gate. The holder must sit above degradeScoreMs continuously for sustainSec
+# before it is even a candidate for replacement — a single bad sample proves nothing. After
+# any re-election the cell is frozen for cooldownSec: a handoff costs a snapshot plus a
+# re-sync for everyone in the cell, so a flapping holder is worse than a mediocre one.
+degradeScoreMs = 250
+sustainSec = 30
+cooldownSec = 60
+# A player who just walked in may be about to walk out; below this age they are not
+# electable while any settled occupant exists.
+settleSec = 20
 
 [metrics]
 # Prometheus text-format scrape endpoint at GET /metrics. OFF by default: the numbers are

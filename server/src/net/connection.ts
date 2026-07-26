@@ -15,7 +15,9 @@ import type { HookBus } from '../plugins/loader';
 import { handleChatSend } from '../core/chat';
 import type { Moderation } from '../core/moderation';
 import { TokenBucket, IpRateLimiter } from './ratelimit';
-import { MSG_EVENT, MSG_PLAYER_MOVE, MSG_PLAYER_MOVE_BATCH, MSG_ACTOR_MOVE_BATCH, ProtoError, unpackEnvelope, unpackEvent, packEvent, packEnvelope } from '../proto/envelope';
+import { playerFitness } from '../core/authority';
+import { socketRttMs } from './ws';
+import { MSG_EVENT, MSG_PLAYER_MOVE, MSG_PLAYER_MOVE_BATCH, MSG_ACTOR_MOVE_BATCH, ProtoError, unpackEnvelope, unpackEvent, packEvent, packEnvelope, nextBroadcastSeq } from '../proto/envelope';
 import { unpackMove } from '../proto/movement';
 import { MAX_ABS_COORD } from '../core/movement';
 import { handleStateEvent, syncStateOnJoin, type StateCtx } from '../core/playerstate';
@@ -118,6 +120,12 @@ export class Connection implements Peer {
     }, ctx.config.limits.helloTimeoutMs);
     ws.on('message', (data: Buffer, isBinary: boolean) => this.onMessage(data, isBinary));
     ws.on('error', (err) => log('warn', 'conn.socket_error', { ip: this.ip, error: String(err) }));
+    // M4: feed the server-measured RTT to the authority fitness tracker. The measurement
+    // itself lives in net/ws.ts (ping stamp echo); this only attaches it to a playerId.
+    ws.on('pong', () => {
+      const rtt = socketRttMs(ws);
+      if (rtt !== undefined && this.player) playerFitness.sampleRtt(this.player.id, rtt);
+    });
     ws.on('close', () => this.cleanup());
   }
 
@@ -147,6 +155,14 @@ export class Connection implements Peer {
   // that recipient stale until the sender happens to move again, which for someone standing
   // still is forever.
   sendBinary(type: number, payload: Buffer): boolean {
+    return this.sendBinaryFrame(type, packEnvelope(type, nextBroadcastSeq(), payload));
+  }
+
+  // The lossy binary family draws its envelope seq from the server-global broadcast
+  // counter, NOT this connection's outSeq: that is what lets one serialized frame serve
+  // every recipient of a broadcast. See nextBroadcastSeq for why the client's stale-drop
+  // still holds.
+  sendBinaryFrame(type: number, frame: Buffer): boolean {
     if (this.ws.readyState !== this.ws.OPEN) return false;
     // Movement and actor batches are the only stale-tolerant traffic on the wire, so they
     // are what gets shed when a client stops draining: a dropped pose is corrected by the
@@ -162,10 +178,14 @@ export class Connection implements Peer {
       }
       if (buffered > maxBufferedBytes) {
         metrics.backpressureDropped.inc({ kind: type === MSG_ACTOR_MOVE_BATCH ? 'actor' : 'move' });
+        if (this.player) playerFitness.noteShed(this.player.id, true);
         return false;
       }
+      // M4: a client that cannot drain is a poor authority candidate even at a good RTT,
+      // so the shed rate feeds the same fitness score.
+      if (this.player) playerFitness.noteShed(this.player.id, false);
     }
-    this.ws.send(packEnvelope(type, ++this.outSeq, payload));
+    this.ws.send(frame);
     return true;
   }
 
@@ -227,6 +247,7 @@ export class Connection implements Peer {
         this.ctx.world.authorityLeave(this.player.id, this.player.cellKey, false);
         this.ctx.world.onCellVacated(this.player.cellKey);
       }
+      playerFitness.forget(this.player.id); // ids are recycled by the roster: never inherit fitness
       this.ctx.hooks.playerDisconnect({ id: this.player.id, name: this.player.name, rank: this.player.rank });
       this.ctx.accounts.touchLastSeen(this.player.accountKey);
     }

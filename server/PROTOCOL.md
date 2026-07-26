@@ -43,9 +43,10 @@ envelope `seq` ≤ the last seen from that sender. Movement has its OWN server r
 
 `u8 count` then `count ×` (`u16 playerId` + the 20-byte PlayerMove payload). Server
 broadcasts on a 66 ms tick containing the latest pose of every VISIBLE player that moved
-since the last tick. Visibility = same cell, or adjacent exterior grid cells. When a player
-first becomes visible (join, cell entry), the server sends their current pose in the next
-batch unconditionally. Client transport decodes this in C++ and delivers ONE global Lua
+since the last tick. Visibility = same cell, or adjacent exterior grid cells, narrowed by
+interest management (below). When a player first becomes visible (join, cell entry, or
+re-entering the interest radius), the server sends their current pose in the next batch
+unconditionally. Client transport decodes this in C++ and delivers ONE global Lua
 event `MP_MoveBatch` whose body is an LSER array of
 `{id=number, x=..., y=..., z=..., yaw=..., pitch=..., flags=..., animVel=...}`.
 
@@ -54,6 +55,46 @@ event `MP_MoveBatch` whose body is an LSER array of
 | name | dir | body |
 |---|---|---|
 | `PlayerCellChange` | C→S, relayed S→C with `id` added | `{cellKey=string, x=number, y=number, z=number}` — `cellKey` = `"x,y"` for exteriors (comma, integers) or the lowercased interior cell name. Updates server occupancy; receivers despawn/teleport that player's puppet. |
+| `PlayerLeaveView` | S→C only | `{id=number}` — that player is no longer in YOUR view. See below. |
+
+### Interest management & LOD (M9, `0x0101` and `0x0200`)
+
+Cell-granular visibility alone makes one busy cell an N×N pose mesh. On top of the cell
+rule the server applies, **for exterior cells only** (interiors stay cell-granular):
+
+- **Distance culling.** A peer enters your view within `[limits] interestRadius` and leaves
+  it only beyond `interestRadius + interestHysteresis` — the two thresholds differ so a
+  player pacing the boundary does not flicker in and out. The nearest
+  `interestMinPeers` are always in view regardless of radius. `interestRadius = 0`
+  disables culling.
+- **Rate tiering.** Pose updates are sent at `lodNearHz` within `lodNearRadius`,
+  `lodMidHz` within `lodMidRadius`, and `lodFarHz` beyond it (rounded to whole 66 ms
+  ticks). `0x0200` ActorMoveBatch is tiered the same way on the recipient's distance from
+  the authority holder — but it is **never culled**, so NPC puppets can't freeze.
+  Rates are per-peer; a first sighting or re-entry always bypasses the tier.
+
+**`PlayerLeaveView {id}` — required client behaviour.** Puppets are spawned on the first
+`MP_MoveBatch` entry for a rostered id, so if pose sends simply stopped the peer would keep
+a **ghost frozen at the boundary**. The server therefore sends exactly one
+`PlayerLeaveView` to a client at the moment a player it had been receiving poses for leaves
+that client's view (cull, or cell exit). On receipt the client MUST, for that `id`:
+
+1. despawn the puppet immediately and deterministically — no stale timeout;
+2. drop cached pose/interpolation state so a later re-entry starts clean;
+3. **keep the roster entry** — the player is still in the world, just not visible to you.
+   Only `PlayerLeaveWorld` removes them from the roster and the player list.
+
+It is idempotent and safe for an unknown id (drop it). Re-entry needs no signal: the server
+force-sends that player's pose in the next batch, which respawns the puppet through the
+normal first-sighting path. `PlayerLeaveView` is never sent for a player whose pose never
+actually reached that client.
+
+**Envelope seq for the lossy binary family.** `0x0101` and `0x0200` draw their envelope
+`seq` from a single server-global counter minted once per broadcast group, not from the
+per-connection event counter. A recipient receives at most one frame per group, so its
+socket still sees a strictly increasing `seq` and the client's shared stale-drop cursor is
+unaffected — this is what lets one serialized `0x0200` frame be sent to every peer in a
+cell. Clients MUST NOT assume these sequences are dense or shared with the event tier.
 
 M1 semantics: clients MUST send `PlayerCellChange` immediately after `SessionReady` (until
 then they are visible to nobody and receive no batches); the relay goes to ALL in-world

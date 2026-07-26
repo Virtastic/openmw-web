@@ -67,7 +67,11 @@ export class WeatherRegions {
           this.ctx.save();
         }
       },
-    });
+    },
+    // No fitness sweep for regions: the weather holder only forwards its own weather
+    // packet, so it costs nothing to be a slow one — and every handoff re-broadcasts
+    // WorldWeatherAuthority to a whole region for no gain.
+    { review: false });
   }
 
   private send(playerId: number, name: string, body: JsLike): void {

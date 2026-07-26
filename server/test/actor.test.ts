@@ -171,3 +171,69 @@ test('actor authority and relay end to end', async (t) => {
     await d.closed;
   });
 });
+
+// M9 capacity: the holder's payload is byte-identical for every peer, so it is enveloped
+// ONCE and the same frame handed to all of them. This is where a sequence mistake would
+// show — the client's stale-drop is `seq <= last -> drop` over a cursor SHARED by 0x0101
+// and 0x0200, so a repeated or regressing seq on any socket silently mutes both families.
+test('shared ActorMoveBatch frame decodes independently for every recipient', async (t) => {
+  const server = await startServer({
+    dataDir: tmpDataDir(),
+    port: 0,
+    host: '127.0.0.1',
+    configOverride: { limits: { maxConnsPerIp: 8 } }, // 4 sockets, all from 127.0.0.1
+  });
+  t.after(() => server.close());
+
+  const holder = await TestClient.connect(server.port);
+  await holder.joinAsNew('Holder');
+  await holder.waitEvent('PlayerList');
+  holder.sendCellChange('5,5', 0, 0, 0);
+  await holder.waitEvent('PlayerCellChange');
+  const grant = await holder.waitEvent('ActorAuthorityGrant');
+  const epoch = (grant.value as { epoch: number }).epoch;
+
+  const peers: TestClient[] = [];
+  for (const name of ['Peer1', 'Peer2', 'Peer3']) {
+    const c = await TestClient.connect(server.port);
+    await c.joinAsNew(name);
+    await c.waitEvent('PlayerList');
+    c.sendCellChange('5,5', 0, 0, 0); // co-located: all in the near LOD tier, none skipped
+    await c.waitEvent('PlayerCellChange');
+    await c.waitEvent('ActorAuthorityInfo');
+    peers.push(c);
+  }
+  for (const c of peers) c.inbox.actorBatches.length = 0;
+
+  const ROUNDS = 3;
+  for (let i = 0; i < ROUNDS; i++) {
+    holder.sendActorMoveBatch(epoch, [{ ...REF_ENTRY, pose: { ...REF_ENTRY.pose, x: 100 + i } }]);
+  }
+  // Read the inbox directly rather than waitActorBatch (which consumes): the whole point is
+  // to inspect the full per-socket frame sequence.
+  for (const c of peers) await c.waitUntil(() => c.inbox.actorBatches.length >= ROUNDS, '3 actor batches');
+
+  for (const c of peers) {
+    const got = c.inbox.actorBatches;
+    assert.equal(got.length, ROUNDS, 'every peer got every relayed frame');
+    // Independently decodable AND correct: one shared buffer must not mean shared damage.
+    got.forEach((f, i) => {
+      assert.equal(f.batch.epoch, epoch);
+      assert.deepEqual(f.batch.entries, [{ ...REF_ENTRY, pose: { ...REF_ENTRY.pose, x: 100 + i } }]);
+    });
+    for (let i = 1; i < got.length; i++) {
+      assert.ok(got[i]!.seq > got[i - 1]!.seq, `seq must strictly increase per socket: ${got.map((f) => f.seq)}`);
+    }
+  }
+  // Same frame, same seq for all recipients of one relay — that identity is exactly what
+  // makes a single serialization reusable, and it is safe because each peer gets one.
+  for (let i = 0; i < ROUNDS; i++) {
+    const seqs = peers.map((c) => c.inbox.actorBatches[i]!.seq);
+    assert.equal(new Set(seqs).size, 1, `one relay -> one seq, got ${seqs}`);
+  }
+
+  holder.close();
+  for (const c of peers) c.close();
+  await holder.closed;
+  for (const c of peers) await c.closed;
+});

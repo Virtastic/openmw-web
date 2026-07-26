@@ -10,9 +10,9 @@
 import { lToJs, type LTable, type LValue, type JsLike } from '../proto/lser';
 import { parseObjRef, objRefToJs, netRefKey, type ObjRef } from '../proto/ref';
 import type { Player, Roster } from './players';
-import { cellsVisible, MAX_ABS_COORD } from './movement';
+import { cellsVisible, lodStride, parseExterior, MAX_ABS_COORD, type InterestSettings } from './movement';
 import { unpackActorMoveBatch } from '../proto/movement';
-import { MSG_ACTOR_MOVE_BATCH } from '../proto/envelope';
+import { MSG_ACTOR_MOVE_BATCH, packEnvelope, nextBroadcastSeq } from '../proto/envelope';
 import { Authority, type ActorSnapshot } from './authority';
 import { CellStore, emptyCellDoc, type CellDoc, type ContainerItems } from '../persist/cellstore';
 import { log } from '../log';
@@ -70,10 +70,14 @@ function parseItems(v: LValue | undefined): ContainerItems | undefined {
 export class WorldState {
   private queue: Promise<void> = Promise.resolve();
   private readonly authority: Authority;
+  // cellKey -> count of ActorMoveBatch frames relayed for that cell, the phase source for
+  // actor LOD striding. Cleared when the cell empties.
+  private readonly actorBatchNo = new Map<string, number>();
 
   constructor(
     private readonly roster: Roster,
     private readonly cells: CellStore,
+    private readonly interest?: InterestSettings,
   ) {
     this.authority = new Authority({
       grant: (playerId, cellKey, epoch, snapshot) =>
@@ -263,8 +267,29 @@ export class WorldState {
       if (!cellKey || this.authority.holderOf(cellKey) !== player.id || this.authority.currentEpoch(cellKey) !== epoch) {
         return; // non-holder or stale epoch
       }
+      const batchNo = (this.actorBatchNo.get(cellKey) ?? 0) + 1;
+      this.actorBatchNo.set(cellKey, batchNo);
+      // Distance is only comparable between exterior cells (same reason as pose interest
+      // management); interiors keep the flat cell-granular stream.
+      const holderPose = this.interest && parseExterior(cellKey) ? player.pose : undefined;
+      // Serialized ONCE for the whole fan-out: unlike pose batches (whose entry list differs
+      // per recipient), every peer gets byte-identical actor bytes, so re-enveloping per peer
+      // was pure copying. Safe because the envelope seq is server-global, not per-connection.
+      let frame: Buffer | undefined;
       for (const p of this.roster.inWorld()) {
-        if (p.id !== player.id && cellsVisible(p.cellKey, cellKey)) p.peer.sendBinary(MSG_ACTOR_MOVE_BATCH, payload);
+        if (p.id === player.id || !cellsVisible(p.cellKey, cellKey)) continue;
+        // LOD: a player across the cell does not need 15 Hz NPC updates. Rate only, NEVER
+        // culled — actors have no leave-view signal, so cutting the stream would freeze
+        // NPC puppets in place instead of removing them.
+        if (holderPose && p.pose) {
+          const dx = p.pose.x - holderPose.x;
+          const dy = p.pose.y - holderPose.y;
+          const dz = p.pose.z - holderPose.z;
+          const st = lodStride(dx * dx + dy * dy + dz * dz, this.interest!);
+          if (st > 1 && (batchNo + p.id) % st !== 0) continue;
+        }
+        frame ??= packEnvelope(MSG_ACTOR_MOVE_BATCH, nextBroadcastSeq(), payload);
+        p.peer.sendBinaryFrame(MSG_ACTOR_MOVE_BATCH, frame);
       }
     });
   }
@@ -485,6 +510,7 @@ export class WorldState {
   // Cell-empty flush point: called when a cell may have lost its last occupant.
   onCellVacated(cellKey: string): void {
     if (this.roster.inWorld().some((p) => p.cellKey === cellKey)) return;
+    this.actorBatchNo.delete(cellKey); // no occupants -> no holder -> no stride phase to keep
     this.enqueue(() => this.cells.flushKey(cellKey));
   }
 }

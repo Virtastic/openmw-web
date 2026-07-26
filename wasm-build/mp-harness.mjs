@@ -68,10 +68,31 @@ async function startGameServer(extraRules = '') {
   // (not a stale mirror from a previous run). Merged over config.default.toml.
   const motd = `MOTD-${RUN_ID} welcome`;
   // Respawn coords = the ?start=Village drop point (measured; see M1/M2 scenarios).
+  // Merge by SECTION rather than concatenating TOML text. A scenario that wants one more
+  // key in a table the harness already wrote (e.g. [server] maxPlayers alongside our motd)
+  // would otherwise emit a second [server] header, and TOML rejects a redefined table —
+  // the server then dies at boot with a parse error that reads like an unrelated
+  // "/healthz timeout". Cheaper to merge here once than to make every scenario know which
+  // sections we happen to have used.
+  const sections = new Map([
+    ['server', [`motd = "${motd}"`]],
+    ['rules', ['respawnCellKey = "26,25"', 'respawnX = 216831.0', 'respawnY = 204909.0', 'respawnZ = 513.0']],
+  ]);
+  let current = null;
+  for (const raw of (extraRules ?? '').split('\n')) {
+    const line = raw.trim();
+    if (!line) continue;
+    const header = /^\[([^\]]+)\]$/.exec(line);
+    if (header) {
+      current = header[1];
+      if (!sections.has(current)) sections.set(current, []);
+      continue;
+    }
+    if (current === null) throw new Error(`serverRules line outside any [section]: ${line}`);
+    sections.get(current).push(line);
+  }
   writeFileSync(join(dataDir, 'config.toml'),
-    `[server]\nmotd = "${motd}"\n`
-    + `[rules]\nrespawnCellKey = "26,25"\nrespawnX = 216831.0\nrespawnY = 204909.0\nrespawnZ = 513.0\n`
-    + (extraRules ? extraRules + '\n' : ''));
+    [...sections].map(([name, lines]) => `[${name}]\n${lines.join('\n')}\n`).join(''));
   const port = await freePort();
   const proc = spawn(process.execPath, [dist, '--data', dataDir, '--port', String(port)], {
     cwd: join(ROOT, 'server'), stdio: ['ignore', 'pipe', 'pipe'],
@@ -259,6 +280,9 @@ for (const file of files) {
     await run({
       runId: RUN_ID,
       motd: server.motd,
+      // s42 attaches protocol bots to this same server (bots/soak.ts --attach) so a
+      // scenario can put crowd load behind its real browser clients.
+      serverPort: server.port,
       serverStatus: server.status,
       serverKill: server.kill,
       sleep,

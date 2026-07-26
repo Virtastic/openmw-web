@@ -55,17 +55,25 @@ export function unquantAnimVel(q: number): number {
 
 // ------------------------------------------------------------------- codec
 
+// Writes a pose in place. Batch packers MUST use this rather than packMove().copy():
+// at 64 co-located players the batch path moves ~60k poses/s, and a throwaway 20-byte
+// Buffer plus a memcpy per pose was pure garbage-collector load for bytes we were
+// already holding a destination for.
+export function writeMove(pose: PlayerPose, b: Buffer, off: number): void {
+  b.writeFloatLE(pose.x, off);
+  b.writeFloatLE(pose.y, off + 4);
+  b.writeFloatLE(pose.z, off + 8);
+  b.writeUInt16LE(pose.yaw & 0xffff, off + 12);
+  b.writeUInt8(pose.pitch & 0xff, off + 14);
+  b.writeUInt8(pose.flags & 0xff, off + 15);
+  b.writeUInt8(pose.animVel & 0xff, off + 16);
+  b.writeUInt8(pose.counter & 0xff, off + 17);
+  b.writeUInt16LE(0, off + 18); // padding to the specced 20 bytes (reserved, zero)
+}
+
 export function packMove(pose: PlayerPose): Buffer {
   const b = Buffer.allocUnsafe(MOVE_PAYLOAD_BYTES);
-  b.writeFloatLE(pose.x, 0);
-  b.writeFloatLE(pose.y, 4);
-  b.writeFloatLE(pose.z, 8);
-  b.writeUInt16LE(pose.yaw & 0xffff, 12);
-  b.writeUInt8(pose.pitch & 0xff, 14);
-  b.writeUInt8(pose.flags & 0xff, 15);
-  b.writeUInt8(pose.animVel & 0xff, 16);
-  b.writeUInt8(pose.counter & 0xff, 17);
-  b.writeUInt16LE(0, 18); // padding to the specced 20 bytes (reserved, zero)
+  writeMove(pose, b, 0);
   return b;
 }
 
@@ -96,7 +104,7 @@ export function packMoveBatch(entries: BatchEntry[]): Buffer {
   let off = 1;
   for (const e of entries) {
     b.writeUInt16LE(e.id & 0xffff, off);
-    packMove(e.pose).copy(b, off + 2);
+    writeMove(e.pose, b, off + 2);
     off += 2 + MOVE_PAYLOAD_BYTES;
   }
   return b;
@@ -148,7 +156,7 @@ export function packActorMoveBatch(epoch: number, entries: ActorEntry[]): Buffer
   for (const e of entries) {
     b.writeUInt32LE(e.ref.index >>> 0, off);
     b.writeInt32LE(e.ref.contentFile | 0, off + 4);
-    packMove(e.pose).copy(b, off + ACTOR_REF_BYTES);
+    writeMove(e.pose, b, off + ACTOR_REF_BYTES);
     off += ACTOR_ENTRY_BYTES;
   }
   return b;

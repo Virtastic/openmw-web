@@ -11,6 +11,11 @@ import { log } from '../log';
 export interface Peer {
   sendEvent(name: string, body: JsLike): void;
   sendBinary(type: number, payload: Buffer): boolean; // false = shed (see Connection)
+  // Pre-framed variant: the caller already ran packEnvelope, so ONE serialized frame can be
+  // handed to every recipient of a broadcast instead of re-enveloping identical bytes per
+  // peer. Backpressure/shed rules are identical. See nextBroadcastSeq for why sharing the
+  // envelope seq across recipients is safe.
+  sendBinaryFrame(type: number, frame: Buffer): boolean;
   disconnect(code: DisconnectCode, detail: string): void;
 }
 
@@ -35,13 +40,17 @@ export class Roster {
   private byId = new Map<number, Player>();
   private byAccount = new Map<string, Player>();
   private nextId = 1;
+  private inWorldCache?: Player[];
 
   get count(): number {
     return this.byId.size;
   }
 
+  // Hot: read once per broadcaster tick and once per relayed actor batch. Cached because
+  // it allocated and re-filtered the whole roster every time. The membership only changes
+  // in joinWorld/remove, which invalidate. CALLERS MUST NOT MUTATE the returned array.
   inWorld(): Player[] {
-    return [...this.byId.values()].filter((p) => p.inWorld);
+    return (this.inWorldCache ??= [...this.byId.values()].filter((p) => p.inWorld));
   }
 
   get(id: number): Player | undefined {
@@ -88,6 +97,7 @@ export class Roster {
   // joiner the full roster snapshot.
   joinWorld(player: Player): void {
     player.inWorld = true;
+    this.inWorldCache = undefined; // before the reads below, or the joiner misses itself
     for (const p of this.inWorld()) p.peer.sendEvent('PlayerJoinWorld', { id: player.id, name: player.name });
     player.peer.sendEvent('PlayerList', {
       players: this.inWorld().map((p) => ({ id: p.id, name: p.name })),
@@ -97,6 +107,7 @@ export class Roster {
 
   remove(player: Player): void {
     if (!this.byId.delete(player.id)) return; // already removed (supersede + close race)
+    this.inWorldCache = undefined;
     if (this.byAccount.get(player.accountKey) === player) this.byAccount.delete(player.accountKey);
     if (player.inWorld) {
       player.inWorld = false;

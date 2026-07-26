@@ -6,7 +6,14 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Authority, type AuthoritySenders, type ActorSnapshot } from '../src/core/authority';
+import {
+  Authority,
+  authorityTuning,
+  type AuthoritySenders,
+  type ActorSnapshot,
+  type FitnessSource,
+  type PlayerFitness,
+} from '../src/core/authority';
 
 // A mirror of what the senders observe, so tests can assert grant/info/revoke traffic.
 interface Recorder {
@@ -63,6 +70,203 @@ test('authority: claim, contested entry, info, handoff, dormancy', async () => {
   assert.equal(auth.holderOf('a'), 9);
   assert.equal(auth.currentEpoch('a'), 4);
   assert.deepEqual(rec.grants.at(-1)!.snapshot, { actors: [{ ref: 'x' }] });
+});
+
+// ------------------------------------------------------------ fitness election
+// A fake fitness source + a driven clock, so election is exercised as a pure function of
+// (score, age) rather than by sleeping. `review: false` kills the self-timer: these tests
+// call reviewAll() explicitly, so a sweep can never land between assertions.
+function makeTuned(): {
+  auth: Authority;
+  rec: Recorder;
+  rtt: Map<number, number>;
+  tick: (ms: number) => void;
+} {
+  const rec: Recorder = { grants: [], infos: [], revokes: [], overrides: new Map() };
+  const rtt = new Map<number, number>();
+  const fitness: FitnessSource = {
+    get: (id): PlayerFitness | undefined => {
+      const r = rtt.get(id);
+      return r === undefined ? undefined : { rttMs: r, shedRate: 0, samples: 10 };
+    },
+  };
+  let clock = 1_000_000;
+  const senders: AuthoritySenders = {
+    grant: (playerId, cellKey, epoch, snapshot) => rec.grants.push({ playerId, cellKey, epoch, snapshot }),
+    info: (playerId, cellKey, holderId) => rec.infos.push({ playerId, cellKey, holderId }),
+    revoke: (playerId, cellKey, epoch) => rec.revokes.push({ playerId, cellKey, epoch }),
+    loadOverrides: async (cellKey) => rec.overrides.get(cellKey) ?? { actors: [] },
+    foldOverrides: async (cellKey, snapshot) => void rec.overrides.set(cellKey, snapshot),
+  };
+  const auth = new Authority(senders, { fitness, now: () => clock, review: false });
+  return { auth, rec, rtt, tick: (ms) => void (clock += ms) };
+}
+
+const SETTLED = () => authorityTuning.settleMs + 1;
+
+test('authority: handoff picks the fittest settled candidate, not the longest-present', async () => {
+  const { auth, rec, rtt, tick } = makeTuned();
+  rtt.set(1, 30); // holder
+  rtt.set(2, 300); // longest-present remainder, but a bad link
+  rtt.set(3, 25); // fittest
+  await auth.onEnter(1, 'a');
+  await auth.onEnter(2, 'a');
+  await auth.onEnter(3, 'a');
+  tick(SETTLED()); // everyone is settled, so seniority no longer shields 2
+
+  await auth.onLeave(1, 'a', true);
+  assert.equal(auth.holderOf('a'), 3, 'fittest remaining wins the forced handoff');
+  assert.equal(auth.currentEpoch('a'), 2, 'epoch advances exactly once');
+  assert.equal(rec.grants.at(-1)!.playerId, 3);
+  // The epoch moved: every remaining non-holder is told, in the same turn.
+  assert.deepEqual(
+    rec.infos.filter((i) => i.holderId === 3).map((i) => i.playerId),
+    [2],
+  );
+});
+
+test('authority: a just-arrived candidate is not elected while a settled one exists', async () => {
+  const { auth, rtt, tick } = makeTuned();
+  rtt.set(1, 30);
+  rtt.set(2, 200);
+  await auth.onEnter(1, 'a');
+  await auth.onEnter(2, 'a');
+  tick(SETTLED());
+  rtt.set(3, 1); // a perfect link that just walked in — and may walk straight out
+  await auth.onEnter(3, 'a');
+
+  await auth.onLeave(1, 'a', true);
+  assert.equal(auth.holderOf('a'), 2, 'unsettled 3 is held back despite the better score');
+
+  // With no settled candidate left, the newcomer is electable: an occupied cell must
+  // always have a holder.
+  await auth.onLeave(2, 'a', true);
+  assert.equal(auth.holderOf('a'), 3);
+});
+
+test('authority: ties and near-ties keep the incumbent', async () => {
+  const { auth, rec, rtt, tick } = makeTuned();
+  rtt.set(1, authorityTuning.degradeScoreMs + 50); // bad enough to open the degrade gate
+  rtt.set(2, authorityTuning.degradeScoreMs + 50); // exactly as bad
+  await auth.onEnter(1, 'a');
+  await auth.onEnter(2, 'a');
+  tick(SETTLED());
+  const epoch = auth.currentEpoch('a');
+
+  tick(authorityTuning.sustainMs + 1);
+  auth.reviewAll();
+  assert.equal(auth.holderOf('a'), 1, 'an exact tie is not "clearly better"');
+
+  // Better, but only by a jitter-sized margin: still not worth a snapshot + re-sync.
+  rtt.set(2, authorityTuning.degradeScoreMs + 50 - (authorityTuning.improveMs - 1));
+  auth.reviewAll();
+  assert.equal(auth.holderOf('a'), 1);
+  // ...and better absolutely but not by the ratio (both links are hopeless anyway).
+  rtt.set(1, 4000);
+  rtt.set(2, 3200); // 800 ms better, but 3200 > 4000 * 0.75
+  auth.reviewAll();
+  assert.equal(auth.holderOf('a'), 1);
+  assert.equal(auth.currentEpoch('a'), epoch, 'no epoch churn while the incumbent stands');
+  assert.equal(rec.revokes.length, 0);
+});
+
+test('authority: a degrading holder is replaced only after the sustained window', async () => {
+  const { auth, rec, rtt, tick } = makeTuned();
+  rtt.set(1, 20);
+  rtt.set(2, 20);
+  await auth.onEnter(1, 'a');
+  await auth.onEnter(2, 'a');
+  tick(SETTLED());
+
+  rtt.set(1, 900); // holder's link falls over
+  auth.reviewAll();
+  assert.equal(auth.holderOf('a'), 1, 'one bad sample must not move authority');
+
+  tick(authorityTuning.sustainMs - 1);
+  auth.reviewAll();
+  assert.equal(auth.holderOf('a'), 1, 'still inside the sustain window');
+
+  // Recovery resets the clock: the gate is on a CONTINUOUS bad stretch, not a total.
+  rtt.set(1, 20);
+  auth.reviewAll(); // clears badSince
+  rtt.set(1, 900);
+  auth.reviewAll(); // re-arms it, from NOW
+  tick(authorityTuning.sustainMs - 1);
+  auth.reviewAll();
+  assert.equal(auth.holderOf('a'), 1, 'recovery re-armed the window');
+
+  tick(2);
+  auth.reviewAll();
+  assert.equal(auth.holderOf('a'), 2, 'sustained degradation hands off');
+  assert.equal(auth.currentEpoch('a'), 2);
+  assert.deepEqual(rec.revokes.at(-1), { playerId: 1, cellKey: 'a', epoch: 1 }); // revoked at the OLD epoch
+  assert.equal(rec.grants.at(-1)!.playerId, 2);
+  assert.deepEqual(
+    rec.infos.filter((i) => i.holderId === 2).map((i) => i.playerId),
+    [1],
+    'the displaced holder is told who took over',
+  );
+});
+
+test('authority: jitter across the degrade threshold produces no handoff at all', async () => {
+  const { auth, rec, rtt, tick } = makeTuned();
+  rtt.set(2, 20); // a permanently better candidate is always sitting right there
+  rtt.set(3, 20);
+  await auth.onEnter(1, 'a');
+  await auth.onEnter(2, 'a');
+  await auth.onEnter(3, 'a');
+  tick(SETTLED());
+
+  // The realistic case: the holder's link wobbles either side of the gate. Because every
+  // good sample re-arms the sustain window, a wobble never accumulates into a handoff —
+  // only a genuinely persistent degradation does.
+  for (let i = 0; i < 200; i++) {
+    rtt.set(1, i % 2 === 0 ? authorityTuning.degradeScoreMs + 400 : authorityTuning.degradeScoreMs - 10);
+    tick(20_000); // 20 s per step: without the reset, 200 steps is 66 sustain windows
+    auth.reviewAll();
+  }
+  assert.equal(auth.holderOf('a'), 1, 'jitter never unseats the incumbent');
+  assert.equal(auth.currentEpoch('a'), 1, 'and never burns an epoch');
+  assert.equal(rec.revokes.length, 0);
+});
+
+test('authority: flapping RTT does not produce repeated handoffs', async () => {
+  const { auth, rec, rtt, tick } = makeTuned();
+  await auth.onEnter(1, 'a');
+  await auth.onEnter(2, 'a');
+  await auth.onEnter(3, 'a');
+  tick(SETTLED());
+
+  // A pathological series: whoever currently holds authority is always the worst, and by a
+  // margin that clears both improvement gates. Without damping this is one handoff per
+  // review — the exact failure mode that costs a snapshot + re-sync every time.
+  let seed = 12345;
+  const rnd = (m: number) => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) % m);
+  for (let i = 0; i < 400; i++) {
+    const holder = auth.holderOf('a')!;
+    for (const p of [1, 2, 3]) rtt.set(p, p === holder ? 700 + rnd(200) : 20 + rnd(30));
+    tick(5_000);
+    auth.reviewAll();
+  }
+
+  const handoffs = rec.revokes.length;
+  // 400 reviews * 5 s = 2000 s of pure flapping. The cooldown alone caps re-elections at
+  // one per cooldownMs; assert well inside that so the bound is meaningful, not tautological.
+  const ceiling = Math.ceil((400 * 5_000) / authorityTuning.cooldownMs) + 1;
+  assert.ok(handoffs <= ceiling, `${handoffs} handoffs exceeds the damped ceiling ${ceiling}`);
+  assert.ok(handoffs > 0, 'damping must not mean "never hand off"');
+  // Epoch churn is the real cost, and it tracks handoffs exactly.
+  assert.equal(auth.currentEpoch('a'), 1 + handoffs);
+});
+
+test('authority: a lone holder is never re-elected, however bad its link', async () => {
+  const { auth, rec, rtt, tick } = makeTuned();
+  rtt.set(1, 5000);
+  await auth.onEnter(1, 'a');
+  tick(SETTLED() + authorityTuning.sustainMs + 1);
+  auth.reviewAll();
+  assert.equal(auth.holderOf('a'), 1, 'nobody to hand to: a bad holder beats no holder');
+  assert.equal(rec.revokes.length, 0);
 });
 
 test('authority fuzz: invariants hold across random enter/leave/disconnect', async () => {

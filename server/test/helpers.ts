@@ -149,6 +149,12 @@ export class TestClient {
     }
   }
 
+  // Non-consuming: blocks until `pred` holds, leaving the inbox intact. For assertions on a
+  // whole received SEQUENCE, which the consuming waiters destroy as they match.
+  waitUntil(pred: () => boolean, what = 'condition', timeoutMs = DEFAULT_TIMEOUT_MS): Promise<true> {
+    return this.waitFor(() => (pred() ? true : undefined), what, timeoutMs);
+  }
+
   // Consumes (removes) the first matching JSON message.
   waitJson(t: string, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<JsonMsg> {
     return this.waitFor(

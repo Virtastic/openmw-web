@@ -31,7 +31,8 @@ import { ResumeStore } from './core/resume';
 import { broadcastChat, type ChatMessageBody } from './core/chat';
 import { HookBus } from './plugins/loader';
 import type { PluginApi } from './plugins/api';
-import { MoveBroadcaster } from './core/movement';
+import { MoveBroadcaster, interestFromLimits } from './core/movement';
+import { configureAuthority } from './core/authority';
 import { Connection, type ServerCtx } from './net/connection';
 import { attachWss } from './net/ws';
 import { createHttpServer } from './net/http';
@@ -65,6 +66,19 @@ export interface RunningServer {
 export async function startServer(opts: StartOptions): Promise<RunningServer> {
   mkdirSync(opts.dataDir, { recursive: true });
   const config = loadConfig(opts.dataDir, opts.configOverride);
+  // M4 election tuning is read live by core/authority.ts, which WorldState builds without
+  // ever seeing the config; push it before anything can elect.
+  configureAuthority({
+    unknownRttMs: config.authority.unknownRttMs,
+    shedPenaltyMs: config.authority.shedPenaltyMs,
+    improveMs: config.authority.improveMs,
+    improveRatio: config.authority.improveRatio,
+    degradeScoreMs: config.authority.degradeScoreMs,
+    sustainMs: config.authority.sustainSec * 1000,
+    cooldownMs: config.authority.cooldownSec * 1000,
+    settleMs: config.authority.settleSec * 1000,
+    reviewMs: config.authority.reviewSec * 1000,
+  });
   const accounts = new AccountStore(opts.dataDir);
   const playerStore = new PlayerStore(opts.dataDir);
   const cellStore = new CellStore(opts.dataDir);
@@ -84,7 +98,8 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // M8: /motd rewrites this at runtime; SessionWelcome and the motd plugin read it here.
   let motd = config.server.motd;
   const resume = new ResumeStore(config.login.resumeWindowSec);
-  const world = new WorldState(roster, cellStore);
+  const interest = interestFromLimits(config.limits);
+  const world = new WorldState(roster, cellStore, interest);
   const startedAt = Date.now();
   // At flush time the store pulls the freshest position from the live session, so pose
   // updates never need to dirty the doc.
@@ -289,7 +304,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     connections.add(conn);
     log('info', 'conn.open', { ip });
     metrics.connOpened.inc();
-  });
+  }, config.authority.rttProbeSec * 1000);
 
   await new Promise<void>((resolve, reject) => {
     httpServer.once('error', reject);
@@ -297,7 +312,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   });
   const address = httpServer.address();
   const port = typeof address === 'object' && address !== null ? address.port : opts.port;
-  const moveBroadcaster = new MoveBroadcaster(roster);
+  const moveBroadcaster = new MoveBroadcaster(roster, undefined, interest);
   moveBroadcaster.start();
   m7.start(); // clock ticking + cell-reset sweep before plugins register schedules
   hooks.serverStart();

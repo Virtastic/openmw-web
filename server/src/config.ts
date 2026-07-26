@@ -49,6 +49,29 @@ export interface Config {
     helloTimeoutMs: number;
     loginPerMinPerIp: number;
     maxHitDamage: number;
+    // M9 interest management + LOD. Tunable, not constants: a crowded public world and a
+    // 4-player co-op session want very different answers and neither should need a rebuild.
+    interestRadius: number; // 0 disables culling (LOD still applies)
+    interestHysteresis: number;
+    interestMinPeers: number;
+    lodNearRadius: number;
+    lodMidRadius: number;
+    lodNearHz: number;
+    lodMidHz: number;
+    lodFarHz: number;
+  };
+  // M4 cell actor-authority election (see core/authority.ts). All in ms except probeSec.
+  authority: {
+    rttProbeSec: number;
+    reviewSec: number;
+    unknownRttMs: number;
+    shedPenaltyMs: number;
+    improveMs: number;
+    improveRatio: number;
+    degradeScoreMs: number;
+    sustainSec: number;
+    cooldownSec: number;
+    settleSec: number;
   };
   metrics: { enabled: boolean; token: string };
   // Phase B SSO. Password login stays on by default, so a self-hoster who never touches
@@ -103,6 +126,13 @@ function reqStr(t: Tree, sec: string, key: string): string {
 function reqNum(t: Tree, sec: string, key: string): number {
   const v = (t[sec] as Tree | undefined)?.[key];
   return typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : fail(`[${sec}].${key}`, 'a non-negative number');
+}
+
+// Rates that become a divisor: zero would make the derived send interval infinite, i.e. a
+// silently muted tier rather than a slow one.
+function reqPosNum(t: Tree, sec: string, key: string): number {
+  const v = (t[sec] as Tree | undefined)?.[key];
+  return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : fail(`[${sec}].${key}`, 'a positive number');
 }
 
 // World coordinates may legitimately be negative, unlike limits/counts.
@@ -183,6 +213,17 @@ function validate(t: Tree): Config {
   // look like a working backpressure valve while nothing ever recovers.
   if (reqNum(t, 'limits', 'maxBufferedBytesHard') < reqNum(t, 'limits', 'maxBufferedBytes'))
     fail('[limits].maxBufferedBytesHard', '>= [limits].maxBufferedBytes');
+  // A mid radius inside the near radius makes the mid tier unreachable — the far tier would
+  // then start where near ends, silently halving the update rate of everyone nearby.
+  if (reqNum(t, 'limits', 'lodMidRadius') < reqNum(t, 'limits', 'lodNearRadius'))
+    fail('[limits].lodMidRadius', '>= [limits].lodNearRadius');
+  // Culling inside the LOD ladder would delete peers the tiers are still budgeting for.
+  const interestRadius = reqNum(t, 'limits', 'interestRadius');
+  if (interestRadius > 0 && interestRadius < reqNum(t, 'limits', 'lodMidRadius'))
+    fail('[limits].interestRadius', '0 or >= [limits].lodMidRadius');
+  // A ratio above 1 would let a WORSE candidate pass the "clearly better" gate, i.e. turn
+  // the damping into a handoff generator. Refuse it at boot rather than flap in production.
+  if (reqNum(t, 'authority', 'improveRatio') > 1) fail('[authority].improveRatio', '<= 1');
   return {
     server: {
       name: reqStr(t, 'server', 'name'),
@@ -241,6 +282,26 @@ function validate(t: Tree): Config {
       helloTimeoutMs: reqNum(t, 'limits', 'helloTimeoutMs'),
       loginPerMinPerIp: reqNum(t, 'limits', 'loginPerMinPerIp'),
       maxHitDamage: reqNum(t, 'limits', 'maxHitDamage'),
+      interestRadius: reqNum(t, 'limits', 'interestRadius'),
+      interestHysteresis: reqNum(t, 'limits', 'interestHysteresis'),
+      interestMinPeers: reqNum(t, 'limits', 'interestMinPeers'),
+      lodNearRadius: reqNum(t, 'limits', 'lodNearRadius'),
+      lodMidRadius: reqNum(t, 'limits', 'lodMidRadius'),
+      lodNearHz: reqPosNum(t, 'limits', 'lodNearHz'),
+      lodMidHz: reqPosNum(t, 'limits', 'lodMidHz'),
+      lodFarHz: reqPosNum(t, 'limits', 'lodFarHz'),
+    },
+    authority: {
+      rttProbeSec: reqNum(t, 'authority', 'rttProbeSec'),
+      reviewSec: reqNum(t, 'authority', 'reviewSec'),
+      unknownRttMs: reqNum(t, 'authority', 'unknownRttMs'),
+      shedPenaltyMs: reqNum(t, 'authority', 'shedPenaltyMs'),
+      improveMs: reqNum(t, 'authority', 'improveMs'),
+      improveRatio: reqNum(t, 'authority', 'improveRatio'),
+      degradeScoreMs: reqNum(t, 'authority', 'degradeScoreMs'),
+      sustainSec: reqNum(t, 'authority', 'sustainSec'),
+      cooldownSec: reqNum(t, 'authority', 'cooldownSec'),
+      settleSec: reqNum(t, 'authority', 'settleSec'),
     },
     metrics: {
       enabled: reqBool(t, 'metrics', 'enabled'),

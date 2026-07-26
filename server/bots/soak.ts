@@ -64,6 +64,37 @@ function listArg(name: string, dflt: number[]): number[] {
 
 const RAMP = flag('ramp');
 const ONECELL = flag('onecell') || RAMP; // a ramp is only meaningful inside one cell
+
+// --layout decides whether interest management can help at all, and the two answers are
+// very different products:
+//   cluster (default) — every bot inside lodNearRadius of every other. A town square, a
+//     market, a boss fight. The radius NEVER bites, everyone stays near-tier at 15 Hz, and
+//     only the serialization/allocation wins apply. There is a nearest-K FLOOR but no
+//     ceiling, so a real crowd defeats culling entirely. This is the number that decides
+//     whether a headline player count is publishable.
+//   spread — bots on a grid spanning several interest radii, so culling, the LOD tiers and
+//     PlayerLeaveView all engage. This is the optimistic case.
+const LAYOUT = (() => {
+  const i = process.argv.indexOf('--layout');
+  if (i === -1) return 'cluster';
+  const v = process.argv[i + 1];
+  if (v !== 'cluster' && v !== 'spread') throw new Error(`--layout must be cluster|spread, got ${String(v)}`);
+  return v;
+})();
+const CLUSTER_RADIUS = 1800; // max pairwise 3600 < lodNearRadius 4096
+const SPREAD_PITCH = 6000; // neighbours mid-tier, diagonals far-tier, corners culled
+
+// Deterministic so a rerun places the same fleet. Cluster = golden-angle disc (even fill,
+// no lattice artefacts); spread = square grid.
+function layoutPos(i: number, n: number): { x: number; y: number } {
+  if (LAYOUT === 'cluster') {
+    const r = CLUSTER_RADIUS * Math.sqrt(n <= 1 ? 0 : i / (n - 1));
+    const th = i * 2.399963229728653;
+    return { x: r * Math.cos(th), y: r * Math.sin(th) };
+  }
+  const side = Math.ceil(Math.sqrt(n));
+  return { x: (i % side) * SPREAD_PITCH, y: Math.floor(i / side) * SPREAD_PITCH };
+}
 const STEPS = RAMP ? listArg('steps', [8, 16, 24, 32]) : [arg('bots', 16)];
 const STEP_MINUTES = RAMP ? arg('step-minutes', 3) : arg('minutes', 5);
 const MAX_BOTS = STEPS[STEPS.length - 1]!;
@@ -89,6 +120,16 @@ interface StepRow {
   rssMb: number;
   cpuPct: number;
   botCpuPct: number; // harness self-load; a capacity claim is void if this is pegged
+  // Post-D-fix shed counters: where a crowded cell used to DISCONNECT the authority holder
+  // it now drops stale-tolerant frames instead, so these must be read to know it happened.
+  layout: string;
+  visPeersMean: number; // peers actually relayed to each client — culling's read-out
+  visPeersMax: number;
+  leaveViews: number;
+  moveShed: number;
+  actorShed: number;
+  bpDropped: number;
+  bufferedKb: number;
   rxKbMean: number;
   rxKbMax: number;
   aggKbSec: number;
@@ -111,10 +152,47 @@ interface StepRow {
 // other occupant pays the receive cost, which is exactly the TES3MP per-cell-authority
 // shape we are trying to falsify.
 const ACTOR_COUNT = 16;
+// > the widest LOD stride (far tier = every 15th tick), so every peer gets at least one.
+const ACTOR_FLUSH_FRAMES = 20;
 const ACTOR_REFS = Array.from({ length: ACTOR_COUNT }, (_, i) => ({ index: 1000 + i, contentFile: 0 }));
 const refKey = (r: { index: number; contentFile: number }) => `${r.contentFile}:${r.index}`;
 
+const METRICS_TOKEN = 'soak-scrape';
+const CPUPROF = (() => {
+  const i = process.argv.indexOf('--cpuprof');
+  if (i === -1) return '';
+  const v = process.argv[i + 1];
+  if (!v || v.startsWith('--')) throw new Error('--cpuprof needs an output directory');
+  return v;
+})();
+
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// Scrapes the counters a crowded cell is expected to move. Returns 0 for a series the
+// server has never incremented (Prometheus omits untouched label sets), which is the
+// honest reading — but a scrape that FAILS must never be silently reported as zero.
+async function scrapeMetrics(port: number): Promise<Record<string, number>> {
+  const res = await fetch(`http://127.0.0.1:${port}/metrics`, { headers: { Authorization: `Bearer ${METRICS_TOKEN}` } });
+  if (!res.ok) throw new Error(`/metrics scrape failed: ${res.status} ${res.statusText}`);
+  const out: Record<string, number> = {
+    move_shed: 0, actor_shed: 0, bp_move: 0, bp_actor: 0, buffered: 0, rate_msgs: 0, rate_bytes: 0,
+  };
+  for (const line of (await res.text()).split('\n')) {
+    if (line.startsWith('#') || !line.trim()) continue;
+    const sp = line.lastIndexOf(' ');
+    const key = line.slice(0, sp);
+    const val = Number(line.slice(sp + 1));
+    if (!Number.isFinite(val)) continue;
+    if (key === 'omwmp_rate_limited_total{budget="move_shed"}') out['move_shed'] = val;
+    else if (key === 'omwmp_rate_limited_total{budget="actor_shed"}') out['actor_shed'] = val;
+    else if (key === 'omwmp_rate_limited_total{budget="msgs"}') out['rate_msgs'] = val;
+    else if (key === 'omwmp_rate_limited_total{budget="bytes"}') out['rate_bytes'] = val;
+    else if (key === 'omwmp_backpressure_dropped_total{kind="move"}') out['bp_move'] = val;
+    else if (key === 'omwmp_backpressure_dropped_total{kind="actor"}') out['bp_actor'] = val;
+    else if (key === 'omwmp_outbound_buffered_bytes') out['buffered'] = val;
+  }
+  return out;
+}
 
 // Sampled RSS + CPU-seconds of the server process. `ps` is portable enough here (macOS +
 // Linux both accept these) and avoids instrumenting the server itself. CPU is taken as
@@ -178,6 +256,11 @@ interface Bot {
   // Actor state as this bot would render it: refKey -> last pose seen. The holder encodes a
   // monotonic broadcast sequence in pose.x, so `seqsSeen` measures LOSS and `actors`
   // measures AGREEMENT after quiescence.
+  baseX: number;
+  baseY: number;
+  // Distinct peers whose poses actually reached this bot in the window — the direct
+  // read-out of interest management (cluster: everyone; spread: the culled subset).
+  sendersSeen: Set<number>;
   actors: Map<string, { x: number; y: number; z: number }>;
   seqsSeen: Set<number>;
   badEpoch: number;
@@ -196,7 +279,9 @@ function instrument(b: Bot): void {
     if (type === MSG_PLAYER_MOVE_BATCH) {
       b.rxPlayerBatches++;
       try {
-        b.rxPlayerEntries += unpackMoveBatch(payload).length;
+        const entries = unpackMoveBatch(payload);
+        b.rxPlayerEntries += entries.length;
+        for (const e of entries) b.sendersSeen.add(e.id);
       } catch (err) {
         throw new Error(`[${b.name}] undecodable PlayerMoveBatch: ${String(err)}`);
       }
@@ -247,10 +332,17 @@ async function main(): Promise<void> {
     writeFileSync(
       join(dataDir, 'config.toml'),
       `[server]\nmaxPlayers = ${Math.max(64, MAX_BOTS * 2)}\n\n` +
-      `[limits]\nmaxConnsPerIp = ${MAX_BOTS * 4 + 8}\nloginPerMinPerIp = 100000\n`,
+      `[limits]\nmaxConnsPerIp = ${MAX_BOTS * 4 + 8}\nloginPerMinPerIp = 100000\n\n` +
+      // Shed and backpressure are the whole point of a crowded-cell ramp: without the
+      // scrape the run cannot tell "nothing was dropped" from "drops were invisible".
+      `[metrics]\nenabled = true\ntoken = "${METRICS_TOKEN}"\n`,
     );
     port = arg('port', 0) || (await freePort());
-    server = spawn(process.execPath, [dist, '--data', dataDir, '--port', String(port)], {
+    // --cpuprof <dir>: run the server under V8's sampling profiler so a step's CPU can be
+    // ATTRIBUTED (per-peer ws.send vs roster.inWorld vs codec) instead of just totalled.
+    // The profile is only written on a clean exit, so teardown waits for SIGTERM below.
+    const profArgs = CPUPROF ? ['--cpu-prof', '--cpu-prof-dir', CPUPROF] : [];
+    server = spawn(process.execPath, [...profArgs, dist, '--data', dataDir, '--port', String(port)], {
       cwd: ROOT,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -292,12 +384,16 @@ async function main(): Promise<void> {
       const welcomeMs = Date.now() - t;
       const cell = ONECELL ? 0 : i % CELLS;
       const cellKey = ONECELL ? ONE_CELL_KEY : `${cell},0`;
-      const x = ONECELL ? 0 : cell * 8192;
-      client.sendCellChange(cellKey, x, 0, 0);
+      // Laid out against the FINAL fleet size so positions never shift as the ramp grows —
+      // a moving layout would change every pairwise distance mid-run and make the LOD tier
+      // mix incomparable between steps.
+      const base = ONECELL ? layoutPos(i, MAX_BOTS) : { x: cell * 8192, y: 0 };
+      client.sendCellChange(cellKey, base.x, base.y, 0);
       const bot: Bot = {
-        name, client, playerId, cell, cellKey, x, y: 0, chatsSeen: 0, disconnected: false,
+        name, client, playerId, cell, cellKey, x: base.x, y: base.y, baseX: base.x, baseY: base.y,
+        chatsSeen: 0, disconnected: false,
         rxBytes: 0, rxFrames: 0, rxPlayerBatches: 0, rxPlayerEntries: 0, rxActorBatches: 0,
-        actors: new Map(), seqsSeen: new Set(), badEpoch: 0,
+        sendersSeen: new Set(), actors: new Map(), seqsSeen: new Set(), badEpoch: 0,
       };
       instrument(bot);
       bots.push(bot);
@@ -512,8 +608,10 @@ async function main(): Promise<void> {
       // shows up as server latency — so its CPU is reported alongside, and any capacity
       // number taken while this is pegged is the HARNESS's limit, not the server's.
       const botCpu0 = procStat(process.pid);
+      const m0 = ATTACH ? null : await scrapeMetrics(port);
       const base = bots.map((b) => ({ rxBytes: b.rxBytes, rxFrames: b.rxFrames, pb: b.rxPlayerBatches, pe: b.rxPlayerEntries, ab: b.rxActorBatches }));
-      for (const b of bots) b.seqsSeen.clear();
+      for (const b of bots) { b.seqsSeen.clear(); b.sendersSeen.clear(); }
+      const leaveView0 = bots.map((b) => b.client.inbox.events.filter((e) => e.name === 'PlayerLeaveView').length);
       const seqStart = actorSeq;
       const holdMs = Math.max(0, STEP_MINUTES * 60_000 - SETTLE_MS);
 
@@ -532,15 +630,35 @@ async function main(): Promise<void> {
       const dt = (Date.now() - winT0) / 1000;
       const cpu1 = procStat(serverPid);
       const botCpu1 = procStat(process.pid);
+      const m1 = ATTACH ? null : await scrapeMetrics(port);
       const rssEndStep = cpu1.rssMb;
       const cpuPct = ((cpu1.cpuSec - cpu0.cpuSec) / dt) * 100;
       const perBotBps = bots.map((b, i) => (b.rxBytes - base[i]!.rxBytes) / dt);
       const playerBatchHz = bots.map((b, i) => (b.rxPlayerBatches - base[i]!.pb) / dt);
       const playerEntryHz = bots.map((b, i) => (b.rxPlayerEntries - base[i]!.pe) / dt);
       const actorBatchHz = bots.slice(1).map((b, i) => (b.rxActorBatches - base[i + 1]!.ab) / dt);
+      // Visible peers per client: the direct read-out of culling. In cluster layout this
+      // must stay at N-1 (the radius never bites); in spread it should fall well below.
+      const visiblePeers = bots.map((b) => b.sendersSeen.size);
+      const leaveViews = bots.reduce((acc, b, i) => acc + (b.client.inbox.events.filter((e) => e.name === 'PlayerLeaveView').length - leaveView0[i]!), 0);
 
       // --- quiesce, then CORRECTNESS ---
       actorPaused = true;
+      // LOD strides actor batches by distance (worldstate: `(batchNo + p.id) % st`), so a
+      // far-tier peer legitimately receives only every 15th frame. Comparing final state
+      // straight after the last broadcast would score that lag as DIVERGENCE and blame the
+      // relay for the feature working. Re-send the SAME final pose enough consecutive times
+      // that every stride is guaranteed a hit, then require exact agreement — which stays a
+      // real delivery+agreement assertion, not a softened one.
+      for (let i = 0; i < ACTOR_FLUSH_FRAMES; i++) {
+        const holder = bots[0];
+        if (ONECELL && !ATTACH && holderEpoch !== undefined && holder && !holder.disconnected) {
+          holder.client.sendActorMoveBatch(holderEpoch, ACTOR_REFS.map((ref, k) => ({
+            ref, pose: { x: actorSeq, y: k * 100, z: 512, yaw: 0, pitch: 128, flags: 0, animVel: 0, counter: 0 },
+          })));
+        }
+        await sleep(66);
+      }
       await sleep(2000); // drain anything still in flight before declaring divergence
 
       // Every non-holder must hold EXACTLY the state the holder last broadcast: all
@@ -587,6 +705,14 @@ async function main(): Promise<void> {
         rssMb: rssEndStep,
         cpuPct,
         botCpuPct: ((botCpu1.cpuSec - botCpu0.cpuSec) / dt) * 100,
+        layout: LAYOUT,
+        visPeersMean: mean(visiblePeers),
+        visPeersMax: Math.max(...visiblePeers),
+        leaveViews,
+        moveShed: m1 && m0 ? m1['move_shed']! - m0['move_shed']! : NaN,
+        actorShed: m1 && m0 ? m1['actor_shed']! - m0['actor_shed']! : NaN,
+        bpDropped: m1 && m0 ? (m1['bp_move']! - m0['bp_move']!) + (m1['bp_actor']! - m0['bp_actor']!) : NaN,
+        bufferedKb: m1 ? m1['buffered']! / 1024 : NaN,
         rxKbMean: mean(perBotBps) / 1024,
         rxKbMax: Math.max(...perBotBps) / 1024,
         aggKbSec: perBotBps.reduce((a, b) => a + b, 0) / 1024,
@@ -608,20 +734,24 @@ async function main(): Promise<void> {
         `[step] N=${row.n} alive=${row.alive} rss=${row.rssMb.toFixed(0)}MB cpu=${row.cpuPct.toFixed(0)}% botcpu=${row.botCpuPct.toFixed(0)}% ` +
         `rx/client=${row.rxKbMean.toFixed(1)}KB/s (max ${row.rxKbMax.toFixed(1)}) agg=${row.aggKbSec.toFixed(0)}KB/s ` +
         `pmb=${row.playerBatchHz.toFixed(1)}/s entries=${row.playerEntryHz.toFixed(1)}/s ` +
-        `amb=${row.actorBatchHz.toFixed(1)}/s of ${row.actorSentHz.toFixed(1)} sent (drop ${row.actorDropPct.toFixed(2)}%) ` +
+        `amb=${row.actorBatchHz.toFixed(1)}/s of ${row.actorSentHz.toFixed(1)} sent (undelivered ${row.actorDropPct.toFixed(2)}%) ` +
+        `vis=${row.visPeersMean.toFixed(1)}/${row.n - 1} leaveView=${row.leaveViews} ` +
         `join=${row.probeWelcomeMs.toFixed(0)}ms/+batch ${row.probeFirstBatchMs.toFixed(0)}ms ` +
-        `ping=${row.pingMean.toFixed(0)}/${row.pingMax}ms divergent=${row.divergent} worstLag=${row.worstLag}`,
+        `ping=${row.pingMean.toFixed(0)}/${row.pingMax}ms shed=${row.moveShed}/${row.actorShed} bp=${row.bpDropped} ` +
+        `buf=${row.bufferedKb.toFixed(1)}KB divergent=${row.divergent} worstLag=${row.worstLag}`,
       );
     }
 
-    console.log('\n[soak] ramp table');
-    console.log('  N | alive | RSS MB | CPU % | bot CPU % | rx KB/s/client | agg KB/s | PMB/s | poses/s | AMB/s | drop % | join ms | +1st batch | ping ms | divergent | worst lag');
+    console.log(`\n[soak] ramp table (layout=${LAYOUT})`);
+    console.log('  N | alive | vis peers | RSS MB | CPU % | bot CPU % | rx KB/s/client | agg KB/s | PMB/s | poses/s | AMB/s | undeliv % | join ms | +1st batch | ping ms | move shed | actor shed | bp drop | buf KB | divergent | worst lag');
     for (const r of rows) {
       console.log(
-        `  ${String(r.n).padStart(2)} | ${String(r.alive).padStart(5)} | ${r.rssMb.toFixed(0).padStart(6)} | ${r.cpuPct.toFixed(0).padStart(5)} | ${r.botCpuPct.toFixed(0).padStart(9)} | ` +
+        `  ${String(r.n).padStart(2)} | ${String(r.alive).padStart(5)} | ${r.visPeersMean.toFixed(1).padStart(9)} | ${r.rssMb.toFixed(0).padStart(6)} | ${r.cpuPct.toFixed(0).padStart(5)} | ${r.botCpuPct.toFixed(0).padStart(9)} | ` +
         `${r.rxKbMean.toFixed(1).padStart(14)} | ${r.aggKbSec.toFixed(0).padStart(8)} | ${r.playerBatchHz.toFixed(1).padStart(5)} | ` +
         `${r.playerEntryHz.toFixed(1).padStart(7)} | ${r.actorBatchHz.toFixed(1).padStart(5)} | ${r.actorDropPct.toFixed(2).padStart(6)} | ` +
         `${r.probeWelcomeMs.toFixed(0).padStart(7)} | ${r.probeFirstBatchMs.toFixed(0).padStart(10)} | ${r.pingMean.toFixed(0).padStart(7)} | ` +
+        `${String(r.moveShed).padStart(9)} | ${String(r.actorShed).padStart(10)} | ${String(r.bpDropped).padStart(7)} | ` +
+        `${r.bufferedKb.toFixed(1).padStart(6)} | ` +
         `${String(r.divergent).padStart(9)} | ${String(r.worstLag).padStart(9)}`,
       );
     }
@@ -696,7 +826,14 @@ async function main(): Promise<void> {
     for (const b of bots) { try { b.client.ws.close(); } catch {} }
     await sleep(500);
     server?.kill('SIGTERM');
-    await sleep(1500);
+    // A profiled server must be allowed to exit on its own or V8 never flushes the
+    // .cpuprofile; unprofiled runs keep the old short leash.
+    if (server && CPUPROF) {
+      const exited = new Promise<void>((r) => server!.once('exit', () => r()));
+      await Promise.race([exited, sleep(30_000)]);
+    } else {
+      await sleep(1500);
+    }
     server?.kill('SIGKILL');
     if (dataDir) { try { rmSync(dataDir, { recursive: true, force: true }); } catch {} }
   }

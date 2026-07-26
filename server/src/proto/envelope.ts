@@ -23,10 +23,33 @@ export interface Envelope {
 }
 
 export function packEnvelope(type: number, seq: number, payload: Buffer): Buffer {
-  const head = Buffer.allocUnsafe(6);
-  head.writeUInt16LE(type, 0);
-  head.writeUInt32LE(seq >>> 0, 2);
-  return Buffer.concat([head, payload]);
+  // One allocation, not two + a concat: this is on the per-recipient broadcast path.
+  const buf = Buffer.allocUnsafe(6 + payload.length);
+  buf.writeUInt16LE(type, 0);
+  buf.writeUInt32LE(seq >>> 0, 2);
+  payload.copy(buf, 6);
+  return buf;
+}
+
+// Sequence space for the LOSSY BINARY FAMILY (0x0101 PlayerMoveBatch + 0x0200
+// ActorMoveBatch). The client keeps ONE stale-drop cursor shared by both types
+// (netmanager.cpp mLastMoveSeqIn: `if (seq <= last) drop`), so the only property it needs
+// is "strictly increasing on my socket" — it never requires density or per-connection
+// numbering. A single server-global counter satisfies that on every socket at once, which
+// is what lets ONE serialized frame be handed to N recipients instead of re-enveloping
+// identical bytes per peer.
+//
+// Minted once per BROADCAST GROUP, not per send: a group emits at most one frame to any
+// given recipient (one MoveBroadcaster tick = one batch each; one relayed ActorMoveBatch =
+// one frame each), so sharing a seq inside a group keeps every socket strictly increasing
+// while burning ~30 values/s per active cell instead of ~1000/s. At that rate the u32 space
+// lasts years of uptime; wrapping would look like a total movement stall to every client,
+// so keep group-minting if this is ever extended.
+let broadcastSeq = 0;
+
+export function nextBroadcastSeq(): number {
+  broadcastSeq = (broadcastSeq + 1) >>> 0;
+  return broadcastSeq;
 }
 
 export function unpackEnvelope(buf: Buffer): Envelope {

@@ -634,6 +634,20 @@ local eventHandlers = {
         mirrorRoster()
     end,
 
+    -- Interest management: this player left OUR view (distance cull or cell exit) — they are
+    -- still in the world, just no longer streamed to us. Without this the server simply stops
+    -- sending their poses and we would keep a ghost puppet frozen at the boundary forever.
+    -- Despawn NOW rather than on a stale timeout (seconds of a motionless body is exactly the
+    -- artefact this exists to prevent), drop the interp state so a re-entry starts clean, and
+    -- KEEP the roster entry — only PlayerLeaveWorld means they actually left. Re-entry needs
+    -- no signal: the server force-sends their pose and the first-sighting path respawns them.
+    MP_PlayerLeaveView = function(data)
+        if data.id == nil then return end
+        despawnPuppet(data.id) -- idempotent; safe for an id we never spawned
+        remoteCell[data.id] = nil
+        lastPose[data.id] = nil
+    end,
+
     -- M1: one decoded 0x0101 batch -> route each entry to its puppet (spawning on first
     -- sighting — the server only sends poses of players visible to us).
     MP_MoveBatch = function(batch)
