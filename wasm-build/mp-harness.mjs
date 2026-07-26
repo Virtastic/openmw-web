@@ -78,7 +78,12 @@ async function startGameServer(extraRules = '') {
     ['server', [`motd = "${motd}"`]],
     ['rules', ['respawnCellKey = "26,25"', 'respawnX = 216831.0', 'respawnY = 204909.0', 'respawnZ = 513.0']],
   ]);
-  let current = null;
+  // Default section is `rules`: scenarios predating the merge export a bare key
+  // (`serverRules = 'pvp = true'`) because the old writer appended straight after the
+  // [rules] table. Honour that implicit contract rather than throwing — otherwise those
+  // scenarios die before boot with a config error that surfaces as an instant, mystifying
+  // 0.0s failure.
+  let current = 'rules';
   for (const raw of (extraRules ?? '').split('\n')) {
     const line = raw.trim();
     if (!line) continue;
@@ -88,7 +93,6 @@ async function startGameServer(extraRules = '') {
       if (!sections.has(current)) sections.set(current, []);
       continue;
     }
-    if (current === null) throw new Error(`serverRules line outside any [section]: ${line}`);
     sections.get(current).push(line);
   }
   writeFileSync(join(dataDir, 'config.toml'),

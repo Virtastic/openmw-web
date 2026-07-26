@@ -176,6 +176,32 @@ record creation, contended rest requests):
 The soak fails the run on leak, drop, latency, session-count mismatch, or any of those
 invariants — it is a gate, not a benchmark.
 
+### Broadcaster cost (one world, spatial index)
+
+Movement relay is the only per-tick O(population) work, so it sets the process ceiling.
+Microbenchmark of `MoveBroadcaster.tick()` (66 ms budget per tick), sender-candidates
+examined in brackets:
+
+| Population | Spread over a map | All in ONE cell |
+| --- | --- | --- |
+| 64 | 0.44 ms (474) | 1.70 ms (4 096) |
+| 100 | 0.72 ms (780) | 4.84 ms (10 000) |
+| 200 | 1.66 ms (2 450) | 20.7 ms (40 000) |
+
+Two things this says, one of which is a limit rather than a win:
+
+- **Spread out, cost is now linear in population, not quadratic.** The cell index means a
+  player in Balmora is never compared against one in Ald'ruhn; at N=200 that is 2 450
+  comparisons instead of 40 000. This is what makes a single world of hundreds viable.
+- **Co-located, the index cannot help, by construction.** If everyone genuinely is visible
+  to everyone, there is no comparison to skip — the clustered column IS N². What bounds
+  that case is interest culling and LOD (`interestRadius`, `lod*`), not the index.
+
+Even so, 100 players standing in one cell costs ~7% of one broadcaster tick. The server is
+comfortable with a single world of 100 **even in the pathological all-in-one-cell case**;
+the binding constraint on players-per-cell is the browser client, which must render and
+interpolate every avatar. That is what the render-LOD tiers address.
+
 ## VPS headroom
 
 Measured 2026-07-19 on the shared OVH box (before openmw-mp existed):

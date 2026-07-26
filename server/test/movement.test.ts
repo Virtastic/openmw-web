@@ -499,3 +499,69 @@ test('shared serialization: every recipient decodes its own frame, seq strictly 
   assert.equal(h.recv.get(1)!.frames[0]!.seq, h.recv.get(2)!.frames[0]!.seq);
   assert.equal(h.recv.get(2)!.frames[0]!.seq, h.recv.get(3)!.frames[0]!.seq);
 });
+
+// ---------------------------------------------------------------- spatial index (G1)
+//
+// The index replaced a full N x N roster scan. Two things have to hold, and they pull in
+// opposite directions: it must examine strictly less, while still delivering EXACTLY what
+// the old scan delivered. Testing only the first would pass trivially by dropping peers —
+// the failure mode here is silent invisibility, which no convergence check would catch.
+
+// Deterministic PRNG: a randomized population is the point (hand-picked layouts test the
+// cases I already thought of), but a seed makes a failure reproducible.
+function lcg(seed: number): () => number {
+  let s = seed >>> 0;
+  return () => ((s = (Math.imul(s, 1664525) + 1013904223) >>> 0) / 4294967296);
+}
+
+test('spatial index: delivers exactly what a brute-force cellsVisible scan would', () => {
+  const rand = lcg(0xc0ffee);
+  const h = harness(); // no settings = culling off, near tier: pure visibility, no LOD
+  const cells: (string | undefined)[] = [];
+  for (let i = 0; i < 60; i++) {
+    const r = rand();
+    // A spread of exteriors (so adjacency actually bites), two interiors that must stay
+    // cell-granular, and unplaced players that are visible to nobody.
+    if (r < 0.75) cells.push(`${Math.floor(rand() * 5) - 2},${Math.floor(rand() * 5) - 2}`);
+    else if (r < 0.92) cells.push(rand() < 0.5 ? 'Balmora, Guild of Fighters' : 'Vivec, Foreign Quarter')
+    else cells.push(undefined);
+  }
+  cells.forEach((c, i) => h.add(i + 1, c, i * 3));
+
+  h.bc.tick();
+
+  for (let i = 0; i < cells.length; i++) {
+    const id = i + 1;
+    const expected = cells
+      .map((c, j) => ({ id: j + 1, cell: c }))
+      .filter((s) => s.id !== id && cellsVisible(cells[i], s.cell))
+      .map((s) => s.id)
+      .sort((a, b) => a - b);
+    const frames = h.recv.get(id)!.frames;
+    const got = frames.length === 0 ? [] : frames[0]!.entries.map((e) => e.id).sort((a, b) => a - b);
+    assert.deepEqual(got, expected, `recipient ${id} in ${String(cells[i])}`);
+  }
+});
+
+test('spatial index: per-recipient work depends on LOCAL density, not world population', () => {
+  // Same local neighbourhood in both worlds; the second adds 200 players who are nowhere
+  // near it. Under the old full-roster scan the second number was ~10x the first, which is
+  // precisely the cost that made one world of 100+ untenable.
+  const perRecipient = (distantPlayers: number): number => {
+    const h = harness();
+    let id = 1;
+    for (let i = 0; i < 20; i++) h.add(id++, '0,0', i * 10); // the crowd under test
+    // Spread far away, >1 cell apart from the crowd AND from each other's relevance.
+    for (let i = 0; i < distantPlayers; i++) h.add(id++, `${50 + (i % 40) * 3},${Math.floor(i / 40) * 3}`, 0);
+    h.bc.tick();
+    return h.bc.pairsExamined / (id - 1);
+  };
+
+  const small = perRecipient(0);
+  const large = perRecipient(200);
+  // 20 co-located players examine 20 candidates each (own bucket, self included and skipped
+  // in the loop). Distant players examine only their own sparse buckets, so the average can
+  // only FALL as they are added — what must not happen is it climbing with population.
+  assert.equal(small, 20);
+  assert.ok(large <= small, `per-recipient work grew with world population: ${small} -> ${large}`);
+});

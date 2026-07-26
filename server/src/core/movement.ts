@@ -84,6 +84,57 @@ export function lodStride(d2: number, s: InterestSettings): number {
   return d2 <= s.midR2 ? s.midStride : s.farStride;
 }
 
+// ------------------------------------------------- spatial index
+//
+// Visibility is bounded by the cell rule, so the recipient x sender loop never needed to
+// look at the whole world: someone in Balmora can never be visible to someone in Ald'ruhn,
+// yet the naive scan compared them 15 times a second. That is O(N^2) in TOTAL population —
+// fine at 8, ~150k comparisons/s at 100, and it grows with players who are nowhere near
+// each other, which is precisely the wrong thing to scale with.
+//
+// The index buckets players by cellKey so a recipient only ever visits its own bucket plus
+// the 8 adjacent exterior buckets, making the cost O(N x LOCAL density). It is rebuilt from
+// scratch every tick rather than maintained on cellKey writes: the rebuild is O(N) and is
+// dwarfed by the loop it feeds, and deriving it fresh from the same roster the old scan
+// read makes it impossible for the index to disagree with the truth. Incremental
+// maintenance would buy nothing asymptotically and would silently strand players in the
+// wrong bucket the first time a cellKey write site was missed.
+class CellIndex {
+  private buckets = new Map<string, Player[]>();
+
+  rebuild(inWorld: Player[]): void {
+    // Arrays are truncated and reused, not dropped: rebuilding into fresh arrays every tick
+    // is exactly the per-tick garbage this module already goes out of its way to avoid.
+    for (const list of this.buckets.values()) list.length = 0;
+    for (const p of inWorld) {
+      // No cellKey = visible to nobody and sees nobody (cellsVisible is false both ways),
+      // so such a player is not a candidate for anyone and is simply left unbucketed.
+      if (p.cellKey === undefined) continue;
+      let list = this.buckets.get(p.cellKey);
+      if (!list) this.buckets.set(p.cellKey, (list = []));
+      list.push(p);
+    }
+  }
+
+  // Appends every player whose cell is visible from `cellKey` into `out`. Buckets are
+  // disjoint (a player has exactly one cellKey), so no de-duplication is needed.
+  candidates(cellKey: string | undefined, out: Player[]): void {
+    out.length = 0;
+    if (cellKey === undefined) return;
+    const own = this.buckets.get(cellKey);
+    if (own) for (const p of own) out.push(p);
+    const e = parseExterior(cellKey);
+    if (!e) return; // interior: the cell rule stops at the same key
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        if (dx === 0 && dy === 0) continue; // own bucket already added
+        const list = this.buckets.get(`${e.x + dx},${e.y + dy}`);
+        if (list) for (const p of list) out.push(p);
+      }
+    }
+  }
+}
+
 // Per-(recipient, sender) relay state. Presence in the recipient's map IS the hysteresis
 // "currently in view" bit.
 interface View {
@@ -109,6 +160,12 @@ export class MoveBroadcaster {
   private readonly entries: BatchEntry[] = [];
   private readonly stagedViews: View[] = [];
   private readonly stagedVer: number[] = [];
+  private readonly index = new CellIndex();
+  private readonly cand: Player[] = [];
+  // Sender-candidates examined this tick. This is the number the spatial index exists to
+  // flatten, and it is asserted directly in the tests — CPU time is a proxy that moves for
+  // a dozen unrelated reasons, whereas this counts the exact work the index removes.
+  pairsExamined = 0;
 
   constructor(
     private readonly roster: Roster,
@@ -149,6 +206,8 @@ export class MoveBroadcaster {
     for (const p of inWorld) liveIds.add(p.id);
     // Drop state for recipients that left.
     for (const id of this.perRecipient.keys()) if (!liveIds.has(id)) this.perRecipient.delete(id);
+    this.index.rebuild(inWorld);
+    this.pairsExamined = 0;
 
     for (const recipient of inWorld) {
       let views = this.perRecipient.get(recipient.id);
@@ -156,7 +215,8 @@ export class MoveBroadcaster {
         views = new Map();
         this.perRecipient.set(recipient.id, views);
       }
-      this.selectPeers(recipient, inWorld, views);
+      this.index.candidates(recipient.cellKey, this.cand);
+      this.selectPeers(recipient, this.cand, views);
       this.buildBatch(recipient, views, tickNo);
       this.sweep(recipient, views, tickNo);
       this.flush(recipient, seq, tickNo);
@@ -168,7 +228,7 @@ export class MoveBroadcaster {
   // interiors stay cell-granular because there "far" is an occlusion question, not a
   // distance one, and a radius tuned for open terrain would pop peers standing one wall
   // away in a canton.
-  private selectPeers(recipient: Player, inWorld: Player[], views: Map<number, View>): void {
+  private selectPeers(recipient: Player, candidates: Player[], views: Map<number, View>): void {
     const s = this.s;
     this.inSet.length = 0;
     this.inD2.length = 0;
@@ -179,9 +239,13 @@ export class MoveBroadcaster {
     // cell), so this single parse decides comparability for the whole inner loop.
     const rPose = recipient.cellKey !== undefined && parseExterior(recipient.cellKey) ? recipient.pose : undefined;
 
-    for (const sender of inWorld) {
+    this.pairsExamined += candidates.length;
+    for (const sender of candidates) {
       if (sender.id === recipient.id) continue;
-      if (!cellsVisible(recipient.cellKey, sender.cellKey)) continue;
+      // No cellsVisible() call: the index yields exactly the set it would accept (own key,
+      // or an exterior key within Chebyshev 1), so re-testing it here would only re-run two
+      // regexes per pair on the hottest loop in the server. cellsVisible remains the
+      // definition of the rule and is what the index is tested against.
       let d2 = -1;
       if (rPose && sender.pose) {
         const dx = sender.pose.x - rPose.x;
