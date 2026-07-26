@@ -260,7 +260,15 @@ export default async function run(ctx) {
       + `actorBatchesIn ${batches0.join(',')} -> ${batches1.join(',')}`);
 
     if (stalled.length) {
-      ctx.log(`STALL on ${stalled.join(', ')} — server counters:\n      ${await shedCounters(ctx.serverPort)}`);
+      // Who holds the cell NOW? Authority is elected on FITNESS (D-cap-2), and a protocol
+      // bot is a near-perfect candidate on RTT while being utterly unable to simulate an
+      // actor — it has no engine. If a bot has taken the cell, the stream stopping is not a
+      // client fault at all: nobody is producing, by design.
+      const holderNow = await Promise.all(clients.map((c) => c.eval('(window.__omwMP||{}).authorityHolder')));
+      const stillHolder = await Promise.all(clients.map((c) => c.eval('(window.__omwMP||{}).isHolder')));
+      ctx.log(`STALL on ${stalled.join(', ')}`);
+      ctx.log(`  holder was ${holderId}; now authorityHolder=${holderNow.join(',')} isHolder=${stillHolder.join(',')}`);
+      ctx.log(`  server counters:\n      ${await shedCounters(ctx.serverPort)}`);
     }
     assert.equal(stalled.length, 0,
       `puppet stream stalled under load on: ${stalled.join(', ')} — see the counters above: `

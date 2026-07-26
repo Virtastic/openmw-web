@@ -64,6 +64,10 @@ export interface AuthorityTuning {
   // electable while any settled occupant exists.
   settleMs: number;
   reviewMs: number; // 0 disables the periodic degradation sweep
+  // A holder that has produced no ActorMoveBatch for this long loses the cell, whatever its
+  // fitness says. 0 disables. This is a LIVENESS check, not a quality one: fitness measures
+  // whether a client can talk to us, and says nothing about whether it is doing the job.
+  actorSilenceMs: number;
 }
 
 // Live, mutable: WorldState builds its Authority in its own constructor and never sees the
@@ -79,6 +83,10 @@ export const authorityTuning: AuthorityTuning = {
   cooldownMs: 60_000,
   settleMs: 20_000,
   reviewMs: 10_000,
+  // Comfortably longer than a stalled frame or a cell load, short enough that nobody plays
+  // for long beside frozen NPCs. The grace clock starts at the GRANT, so a client that has
+  // just taken the cell is never judged before it could have produced anything.
+  actorSilenceMs: 15_000,
 };
 
 export function configureAuthority(t: Partial<AuthorityTuning>): void {
@@ -168,6 +176,10 @@ interface Cell {
   enteredAt: Map<number, number>; // occupant -> when they arrived (settle bias)
   badSince: number | null; // holder has scored above the degrade gate since this instant
   frozenUntil: number; // no fitness re-election before this instant (post-handoff damping)
+  // When the holder last actually PRODUCED an actor frame. Fitness measures whether a
+  // client can talk to us; this measures whether it is doing the job.
+  lastActorFrame: number;
+  grantedAt: number; // when the current holder took the cell (liveness grace starts here)
 }
 
 const EMPTY_SNAPSHOT: ActorSnapshot = { actors: [] };
@@ -241,6 +253,8 @@ export class Authority {
     if (!c) {
       c = {
         holderId: null,
+        lastActorFrame: 0,
+        grantedAt: 0,
         epoch: 0,
         lastSnapshot: null,
         order: [],
@@ -262,6 +276,16 @@ export class Authority {
     const f = this.fitness.get(playerId);
     if (!f) return authorityTuning.unknownRttMs;
     return f.rttMs + f.shedRate * authorityTuning.shedPenaltyMs;
+  }
+
+  // Called on every accepted ActorMoveBatch from the holder. This is the liveness signal:
+  // authority is otherwise elected purely on NETWORK fitness, which says nothing about
+  // whether the winner can simulate. A protocol bot, or a real client that is loading,
+  // minimised or wedged, has excellent RTT and produces nothing at all — and the cell's NPCs
+  // freeze for everyone while the server believes the holder is fine.
+  noteActorFrame(cellKey: string): void {
+    const c = this.cells.get(cellKey);
+    if (c) c.lastActorFrame = this.now();
   }
 
   // Best candidate among `order`, excluding `except`. Newcomers are held back while any
@@ -298,6 +322,8 @@ export class Authority {
     c.holderId = next;
     c.epoch += 1;
     c.badSince = null;
+    c.grantedAt = this.now();
+    c.lastActorFrame = 0;
     metrics.cellAuthority.inc({ kind });
     this.send.grant(next, cellKey, c.epoch, c.lastSnapshot ?? EMPTY_SNAPSHOT);
     for (const other of c.order) if (other !== next) this.send.info(other, cellKey, next, c.epoch);
@@ -324,7 +350,17 @@ export class Authority {
       c.holderId = playerId;
       c.epoch += 1;
       c.badSince = null;
+      c.grantedAt = this.now();
+      c.lastActorFrame = 0;
       const snapshot = c.lastSnapshot ?? (await this.loadOr(cellKey));
+      // Remember what the doc says the cell contains. The server ships no game data, so a
+      // client snapshot is the ONLY way it can learn whether a cell has actors — and the
+      // liveness check needs that answer for a holder that has never produced anything.
+      // Without this, a freshly restarted server could not enforce liveness at all: the one
+      // signal that would reveal the cell has NPCs is the very thing a silent holder is not
+      // sending. Still a known limit on a genuinely first-ever visit to a cell, where no doc
+      // and no snapshot exist yet; the check arms as soon as any snapshot has been seen.
+      c.lastSnapshot = snapshot;
       metrics.cellAuthority.inc({ kind: 'grant' });
       this.send.grant(playerId, cellKey, c.epoch, snapshot);
       for (const other of c.order) if (other !== playerId) this.send.info(other, cellKey, playerId, c.epoch);
@@ -371,6 +407,35 @@ export class Authority {
       return;
     }
     const now = this.now();
+
+    // Liveness first, and it is NOT subject to the clearlyBetter margin below. A silent
+    // holder is not "slightly worse than a challenger" — it is doing nothing, so ANY other
+    // candidate is an improvement and the usual anti-flap damping would only prolong a dead
+    // cell. Grace is measured from the grant so a client that has just taken the cell is not
+    // judged before it can have produced anything.
+    // ONLY where there is something to simulate. A cell with no NPCs correctly produces no
+    // actor frames — most interiors and plenty of exteriors — and without this the check
+    // would revoke the holder of every empty cell on a timer, churning authority (and a
+    // snapshot plus a full re-sync each time) forever. The last snapshot is the server's own
+    // record of whether the cell has actors; a stale one still answers the question, because
+    // NPCs do not vanish because a holder went quiet.
+    const snap = c.lastSnapshot as { actors?: unknown[] } | null;
+    const cellHasActors = Array.isArray(snap?.actors) && snap.actors.length > 0;
+
+    const since = Math.max(c.lastActorFrame, c.grantedAt);
+    if (cellHasActors && authorityTuning.actorSilenceMs > 0 && now - since > authorityTuning.actorSilenceMs) {
+      const alt = this.bestCandidate(c, holder);
+      if (alt !== null) {
+        log('warn', 'authority.silent_holder', {
+          cell: cellKey, from: holder, to: alt, silentMs: Math.round(now - since),
+        });
+        this.send.revoke(holder, cellKey, c.epoch);
+        c.frozenUntil = now + authorityTuning.cooldownMs;
+        this.handTo(c, cellKey, alt, 'silent');
+        return;
+      }
+    }
+
     const bad = this.score(holder) > authorityTuning.degradeScoreMs;
     if (!bad) {
       c.badSince = null; // hysteresis: recovery resets the clock, one good sample is enough

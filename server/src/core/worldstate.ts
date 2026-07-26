@@ -267,6 +267,11 @@ export class WorldState {
       if (!cellKey || this.authority.holderOf(cellKey) !== player.id || this.authority.currentEpoch(cellKey) !== epoch) {
         return; // non-holder or stale epoch
       }
+      // Liveness: this holder is demonstrably doing the job. Recorded only for ACCEPTED
+      // frames, so a stale-epoch sender cannot keep a dead cell looking alive.
+      this.authority.noteActorFrame(cellKey);
+      {
+      }
       const batchNo = (this.actorBatchNo.get(cellKey) ?? 0) + 1;
       this.actorBatchNo.set(cellKey, batchNo);
       // Distance is only comparable between exterior cells (same reason as pose interest

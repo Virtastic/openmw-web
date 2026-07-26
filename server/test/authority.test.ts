@@ -371,3 +371,83 @@ test('authority: two players entering one dormant cell produce exactly one holde
   assert.ok(rec.infos.some((i) => i.playerId === loser && i.holderId === holder),
     `the other entrant must be told the holder, got ${JSON.stringify(rec.infos)}`);
 });
+
+test('authority: a holder that produces no actor frames loses the cell', async () => {
+  const rec: Recorder = { grants: [], infos: [], revokes: [], overrides: new Map() };
+  let clock = 1_000_000;
+  const auth = new Authority({
+    grant: (playerId, cellKey, epoch, snapshot) => rec.grants.push({ playerId, cellKey, epoch, snapshot }),
+    info: (playerId, cellKey, holderId) => rec.infos.push({ playerId, cellKey, holderId }),
+    revoke: (playerId, cellKey, epoch) => rec.revokes.push({ playerId, cellKey, epoch }),
+    // The cell HAS an NPC. That is the precondition for the liveness check: a cell with
+    // nothing to simulate legitimately produces no frames (see the empty-cell test below).
+    loadOverrides: async () => ({ actors: [{ ref: { __refnum: { index: 1, contentFile: 0 } } }] }),
+    foldOverrides: async () => {},
+  }, { now: () => clock, review: false });
+
+  await auth.onEnter(1, 'cell');
+  await auth.onEnter(2, 'cell');
+  assert.equal(auth.holderOf('cell'), 1);
+
+  // Player 1 holds the cell and produces nothing, while looking PERFECT on fitness — which
+  // is the whole point. A protocol bot, or a real client that is loading, minimised or
+  // wedged, has excellent RTT and simulates nothing; election on fitness alone hands it the
+  // cell and every NPC in it then freezes for everyone.
+  clock += authorityTuning.actorSilenceMs + 1_000;
+  auth.reviewAll();
+
+  assert.equal(auth.holderOf('cell'), 2, 'a silent holder must lose the cell');
+  assert.ok(rec.revokes.some((r) => r.playerId === 1), 'the silent holder must be revoked');
+});
+
+test('authority: a productive holder is never unseated by the liveness check', async () => {
+  const rec: Recorder = { grants: [], infos: [], revokes: [], overrides: new Map() };
+  let clock = 1_000_000;
+  const auth = new Authority({
+    grant: (playerId, cellKey, epoch, snapshot) => rec.grants.push({ playerId, cellKey, epoch, snapshot }),
+    info: (playerId, cellKey, holderId) => rec.infos.push({ playerId, cellKey, holderId }),
+    revoke: (playerId, cellKey, epoch) => rec.revokes.push({ playerId, cellKey, epoch }),
+    loadOverrides: async () => ({ actors: [{ ref: { __refnum: { index: 1, contentFile: 0 } } }] }),
+    foldOverrides: async () => {},
+  }, { now: () => clock, review: false });
+
+  await auth.onEnter(1, 'cell');
+  await auth.onEnter(2, 'cell');
+
+  // Frames keep arriving, so the silence clock keeps resetting. Without that reset the check
+  // would be a rotating handoff costing a snapshot and a full re-sync every interval.
+  for (let i = 0; i < 5; i++) {
+    clock += authorityTuning.actorSilenceMs - 1_000;
+    auth.noteActorFrame('cell');
+    auth.reviewAll();
+  }
+  assert.equal(auth.holderOf('cell'), 1, 'a working holder was unseated');
+  assert.equal(rec.revokes.length, 0, 'no revoke should have been issued');
+});
+
+test('authority: an EMPTY cell never rotates on the liveness check', async () => {
+  const rec: Recorder = { grants: [], infos: [], revokes: [], overrides: new Map() };
+  let clock = 1_000_000;
+  const auth = new Authority({
+    grant: (playerId, cellKey, epoch, snapshot) => rec.grants.push({ playerId, cellKey, epoch, snapshot }),
+    info: (playerId, cellKey, holderId) => rec.infos.push({ playerId, cellKey, holderId }),
+    revoke: (playerId, cellKey, epoch) => rec.revokes.push({ playerId, cellKey, epoch }),
+    loadOverrides: async () => ({ actors: [] }), // nothing to simulate
+    foldOverrides: async () => {},
+  }, { now: () => clock, review: false });
+
+  await auth.onEnter(1, 'empty');
+  await auth.onEnter(2, 'empty');
+
+  // A cell with no NPCs correctly produces no actor frames — most interiors, and plenty of
+  // exteriors. The first version of the liveness check did not test for this and would have
+  // revoked the holder of every empty cell on a timer, churning authority (and a snapshot
+  // plus a full re-sync per client) forever. Caught by the existing degradation tests, which
+  // is why this now has a test of its own rather than relying on them noticing again.
+  for (let i = 0; i < 5; i++) {
+    clock += authorityTuning.actorSilenceMs * 2;
+    auth.reviewAll();
+  }
+  assert.equal(auth.holderOf('empty'), 1, 'an empty cell must not rotate its holder');
+  assert.equal(rec.revokes.length, 0, 'no revoke should be issued for a cell with nothing to simulate');
+});
