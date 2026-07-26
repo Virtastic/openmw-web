@@ -204,37 +204,28 @@ interpolate every avatar. That is what the render-LOD tiers address.
 
 ### Client cost per avatar (render LOD)
 
-Measured with `s43-avatar-load`, one browser client in a retail cell with protocol bots
-ramped into it. The host was busy throughout, so **absolute fps is depressed and only the
-marginal per-avatar cost should be quoted**:
+Measured with `wasm-build/measure-avatar-cost.sh`, which runs all three arms back to back so
+they share contention conditions. Host load 4-8 throughout (an idle workstation); one
+browser client in a retail cell with protocol bots ramped into it.
 
-| avatar treatment | frame cost each |
-| --- | --- |
-| fully simulated (`renderLod = "full"`, or inside the near cap) | ~1.22 ms |
-| degraded (beyond the cap) | ~0.05 ms |
+Frame cost at 64 co-located avatars, and the marginal cost of each additional avatar:
 
-`lodNearMaxAvatars` (default 12) is what makes this a *bound* rather than a slope. Client
-cost is then roughly:
+| configuration | fps @ 64 | frame @ 64 | per avatar |
+| --- | --- | --- | --- |
+| `renderLod = "full"` (every avatar fully simulated) | 37 | 26.2 ms | 0.177 ms |
+| tiered, everyone degraded | 40 | 22.8 ms | 0.139 ms |
+| **tiered + `lodNearMaxAvatars = 12` (shipped)** | **48** | **20.0 ms** | **0.086 ms** |
 
-```
-baseline + lodNearMaxAvatars x 1.22ms + (everyone else) x 0.05ms
-```
+**64 players in a single cell runs at 48 fps.** The shipped configuration is the best of the
+three, and roughly halves the per-avatar cost against no LOD at all.
 
-which does not grow meaningfully with population. Going 16 -> 32 co-located avatars added
-**0.86 ms in total**. At a 16 ms baseline that puts 64 co-located players near a 30fps
-budget, and the figure is insensitive to whether they spread out or pile into one spot —
-which the radius alone never achieved, because in a tight crowd everybody is "near".
-
-**What it costs.** A degraded avatar may sit up to ~2048 units from where its player
-actually is, and moves in occasional jumps instead of walking. That is deliberate and is
-the whole saving: repositioning an actor is *more* expensive than steering one, so a tier
-tuned to reposition often (~30/second across a crowd) measured 143 ms/frame — worse than
-not degrading anyone. Rare repositioning is the win; tight thresholds are a pessimisation.
-`s44-far-tier-correct` pins the drift as a fixed bound and proves degraded avatars still
-track their players rather than freezing.
-
-Tuning: raise `lodNearMaxAvatars` for small co-op sessions (fidelity over headroom), lower
-it for crowded public worlds. `renderLod = "full"` restores pre-LOD behaviour.
+> **Correction.** An earlier revision of this section quoted ~1.22 ms per avatar and
+> concluded 64 co-located players would be ~10 fps. Those numbers were taken while the host
+> was at load 54-131 and are wrong by an order of magnitude — contention inflates the
+> steering path (CPU-bound) far more than it inflates the degraded path, which also made the
+> LOD win look like ~20x when it is closer to 2x. The caveat was attached at the time, but
+> the figures should not have been published as headline capacity. Capacity claims are only
+> meaningful from an idle box, which is what the script above exists to enforce.
 
 ### The per-cell QUALITY limit (not a correctness limit)
 
