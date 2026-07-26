@@ -713,7 +713,14 @@ local eventHandlers = {
         end
         local cutoff = nearCutoff(nearR2, tiered and (f.lodNearMaxAvatars or 0) or 0, count)
 
-        -- Pass 2: tier and route.
+        -- Pass 2: tier and route. `nearLeft` enforces the cap EXACTLY. The cutoff alone
+        -- does not: it is the K-th smallest distance and the test is `d2 <= cutoff`, so
+        -- every avatar tied at exactly that distance stays near and the cap is exceeded.
+        -- Ties are not exotic here — players stacked in a doorway, a formation, or bots on
+        -- a ring layout sit at identical distances — and the symptom would be an
+        -- intermittently-breached cap that reads as a flaky test rather than an off-by-ties
+        -- bug. The cutoff stays as a cheap pre-filter; this counter is the actual bound.
+        local nearLeft = maxNear > 0 and maxNear or math.huge
         for i = 1, count do
             local e = batch[i]
             if e.id ~= net.playerId then
@@ -723,9 +730,16 @@ local eventHandlers = {
                 if p and p.obj:isValid() then
                     local d2 = d2Buf[i]
                     local tier
-                    if d2 < 0 or d2 <= cutoff then tier = TIER_NEAR
-                    elseif d2 <= midR2 then tier = TIER_MID
-                    else tier = TIER_FAR end
+                    if d2 < 0 then
+                        tier = TIER_NEAR -- not comparable: never degraded
+                    elseif d2 <= cutoff and nearLeft > 0 then
+                        tier = TIER_NEAR
+                        nearLeft = nearLeft - 1
+                    elseif d2 <= midR2 then
+                        tier = TIER_MID
+                    else
+                        tier = TIER_FAR
+                    end
                     e.t = now
                     e.tier = tier
                     local tn = TIER_NAME[tier] or 'near'
@@ -738,7 +752,9 @@ local eventHandlers = {
         -- it, a "tiered" run that silently classified every avatar as near would report a
         -- free performance win that is actually just the old behaviour.
         mp.testSet('puppetTiers', json.encode(tierSeen))
-        tierSeen = {}
+        -- Cleared in place: `tierSeen = {}` allocated a fresh table 15x/second, and this
+        -- module already goes out of its way to avoid per-tick garbage.
+        tierSeen.near, tierSeen.mid, tierSeen.far = nil, nil, nil
     end,
 
     -- M1: relayed with the mover's id added; despawn/teleport their puppet. Our OWN

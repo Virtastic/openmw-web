@@ -314,10 +314,17 @@ export class Authority {
       // Fresh claim of a dormant/new cell: snapshot = in-memory last, else the doc
       // overrides (survives restart), else empty. No election to make — the entrant is the
       // only candidate, and an unheld cell simulates nothing at all.
-      const snapshot = c.lastSnapshot ?? (await this.loadOr(cellKey));
+      //
+      // The seat is claimed SYNCHRONOUSLY, before the snapshot load. The load is awaited,
+      // and the previous order (check holderId -> await -> assign) let two players entering
+      // the same dormant cell in one tick both observe it free and both be granted: two
+      // holders, and an epoch bumped twice so the first client's freshly-issued epoch was
+      // already stale. Reachable only when there is no cached snapshot — a fresh or
+      // just-restarted server, i.e. exactly when a crowd arrives at once.
       c.holderId = playerId;
       c.epoch += 1;
       c.badSince = null;
+      const snapshot = c.lastSnapshot ?? (await this.loadOr(cellKey));
       metrics.cellAuthority.inc({ kind: 'grant' });
       this.send.grant(playerId, cellKey, c.epoch, snapshot);
       for (const other of c.order) if (other !== playerId) this.send.info(other, cellKey, playerId, c.epoch);

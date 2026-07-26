@@ -345,3 +345,29 @@ test('authority fuzz: invariants hold across random enter/leave/disconnect', asy
   }
   for (const cell of CELLS) assert.equal(auth.holderOf(cell), undefined);
 });
+
+test('authority: two players entering one dormant cell produce exactly one holder', async () => {
+  const { auth, rec } = makeAuthority();
+  // The two calls are deliberately NOT awaited in sequence. onEnter checks
+  // `holderId === null`, then AWAITS the snapshot load, then assigns the holder — so two
+  // entrants in the same tick can both observe a dormant cell and both be granted. Every
+  // other test in this file enters players one at a time and therefore cannot see it.
+  //
+  // This is the launch-day case, not a curiosity: the await is only reached when the cell
+  // has no cached snapshot (`c.lastSnapshot ?? await ...`), i.e. on a fresh or just-restarted
+  // server — exactly when a crowd arrives at once.
+  await Promise.all([auth.onEnter(1, 'fresh'), auth.onEnter(2, 'fresh')]);
+
+  assert.equal(rec.grants.length, 1,
+    `at most one Grant may be issued for a dormant cell, got ${JSON.stringify(rec.grants)}`);
+  const holder = auth.holderOf('fresh');
+  assert.ok(holder === 1 || holder === 2, `holder must be one of the entrants, got ${String(holder)}`);
+  assert.equal(rec.grants[0]!.playerId, holder, 'the granted player must be the recorded holder');
+  // Epoch must advance once, not once per entrant: non-holders address actors by epoch, so
+  // a double bump silently invalidates the epoch the other client was just told to use.
+  assert.equal(auth.currentEpoch('fresh'), 1, 'a single claim must bump the epoch exactly once');
+  // The loser learns who holds it.
+  const loser = holder === 1 ? 2 : 1;
+  assert.ok(rec.infos.some((i) => i.playerId === loser && i.holderId === holder),
+    `the other entrant must be told the holder, got ${JSON.stringify(rec.infos)}`);
+});

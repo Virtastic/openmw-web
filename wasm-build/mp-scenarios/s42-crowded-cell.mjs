@@ -27,7 +27,13 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
-const CLIENTS = Number(process.env.S42_CLIENTS ?? 4);
+// Default 2, not 4. Each retail client pins ~1.5 GB of WASM heap, so 4 needs ~6 GB of
+// headroom; on a workstation already using swap the machine thrashes, boots take minutes,
+// and the clients go unresponsive enough that authority mirrors read stale — a run at 4
+// took 91 minutes here and reported no authority holder at all, which is a measurement of
+// the box, not of the server. 2 is what this scenario can assert honestly; raise
+// S42_CLIENTS on a machine with the RAM to back it (check swap first, not just total RAM).
+const CLIENTS = Number(process.env.S42_CLIENTS ?? 2);
 const BOTS = Number(process.env.S42_BOTS ?? 20);
 const BOT_MINUTES = Number(process.env.S42_BOT_MINUTES ?? 2);
 const CONVERGE_EPS = 80; // units; same budget as s40 (puppet steering + 100ms render delay)
