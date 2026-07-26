@@ -181,7 +181,22 @@ test('combat routing with pvp enabled', async (t) => {
   });
 
   await t.test('SessionWelcome.flags carries pvp and difficulty', () => {
-    assert.deepEqual(welcome['flags'], { pvp: true, difficulty: 0 });
+    // Asserts the two fields this test is about, not the whole flags schema: flags is a
+    // growing bag (render LOD joined it in G2) and a deep-equal here fails every time an
+    // unrelated field is added, which says nothing about combat.
+    assert.equal((welcome['flags'] as Record<string, unknown>).pvp, true);
+    assert.equal((welcome['flags'] as Record<string, unknown>).difficulty, 0);
+  });
+
+  await t.test('SessionWelcome.flags carries the render-LOD contract', () => {
+    // The client cannot tier avatars without these, and it deliberately falls back to full
+    // fidelity when they are absent — so a server that quietly stopped sending them would
+    // not fail anything, it would just cost every player ~1.3ms of frame time per avatar.
+    // Assert the wire contract explicitly rather than relying on that fallback.
+    const f = welcome['flags'] as Record<string, unknown>;
+    assert.ok(f.renderLod === 'tiered' || f.renderLod === 'full', `bad renderLod ${String(f.renderLod)}`);
+    assert.ok(Number(f.lodNearRadius) > 0 && Number(f.lodMidRadius) >= Number(f.lodNearRadius),
+      `radii must be positive and ordered, got near=${String(f.lodNearRadius)} mid=${String(f.lodMidRadius)}`);
   });
 });
 
@@ -205,6 +220,7 @@ test('pvp gate blocks player targets but not actor targets', async (t) => {
   });
 
   await t.test('Welcome flags report pvp=false', () => {
-    assert.deepEqual(welcome['flags'], { pvp: false, difficulty: 0 });
+    assert.equal((welcome['flags'] as Record<string, unknown>).pvp, false);
+    assert.equal((welcome['flags'] as Record<string, unknown>).difficulty, 0);
   });
 });

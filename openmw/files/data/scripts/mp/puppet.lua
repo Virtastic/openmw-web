@@ -13,7 +13,32 @@ local I = require('openmw.interfaces')
 
 local Interp = require('scripts.mp.interp')
 
-local SNAP_DISTANCE = 128 -- units of divergence before asking for a teleport
+-- G2 render LOD. tier arrives stamped on each MP_Pose by global.lua (which knows where the
+-- local player is); 0 = near, 1 = mid, 2 = far.
+--
+-- NEAR is the full-fidelity path: steer through self.controls so the engine's own movement
+-- solver produces real walk/run animation, collision and footing.
+--
+-- MID and FAR stop driving controls entirely and reposition instead. This is the whole
+-- saving: an actor that is never commanded to move stands in an idle animation and does no
+-- per-frame movement solve, whereas a steered one runs the character controller, blends
+-- locomotion animation and sweeps physics every single frame. What it costs is smooth
+-- motion for that avatar — which is why the thresholds widen with distance, where a
+-- reposition covers fewer pixels and reads as normal movement.
+local TIER_NEAR, TIER_MID = 0, 1
+-- Units of divergence tolerated before asking for a teleport, and the minimum gap between
+-- teleports, per tier.
+--
+-- These are wide on purpose, and the reason is counter-intuitive enough to record: a
+-- REPOSITION IS MORE EXPENSIVE THAN STEERING. Measured, a degraded avatar that rarely
+-- teleports costs ~0.06ms/frame while a fully steered one costs ~1.22ms — but an
+-- intermediate tier tuned to teleport about once a second cost ~3ms, i.e. worse than doing
+-- nothing clever at all, because ~30 actors/second were being re-placed in the world. The
+-- saving here comes from repositioning RARELY, not from skipping the character controller,
+-- so a tighter threshold does not buy accuracy: it buys a slower client.
+local SNAP_BY_TIER = { [0] = 128, [1] = 1024, [2] = 2048 }
+local SNAP_COOLDOWN_BY_TIER = { [0] = 1.0, [1] = 2.0, [2] = 3.0 }
+local SNAP_DISTANCE = 128 -- near-tier divergence before asking for a teleport (legacy name)
 local STUCK_SECONDS = 0.7 -- commanded to move but no progress this long -> snap
 local IDLE_TIMEOUT = 1.0 -- no snapshots this long -> stand still
 local SNAP_COOLDOWN = 1.0 -- let a requested teleport land before asking again
@@ -25,6 +50,7 @@ local lastSnapReq = 0
 local stuckSince = nil
 local lastProgressPos = nil
 local prevJump = false
+local tier = TIER_NEAR -- last tier stamped on a pose; near until told otherwise
 local dead = false
 local pendingEquip = nil -- M2: slot map waiting for granted items to land in the inventory
 local equipRetryUntil = 0
@@ -48,7 +74,7 @@ end
 
 local function requestSnap(target, why)
     local now = core.getRealTime()
-    if now - lastSnapReq < SNAP_COOLDOWN then return end
+    if now - lastSnapReq < (SNAP_COOLDOWN_BY_TIER[tier] or SNAP_COOLDOWN) then return end
     lastSnapReq = now
     core.sendGlobalEvent('mpSnapRequest',
         { id = playerId, actorKey = actorKey, x = target.x, y = target.y, z = target.z, why = why })
@@ -133,9 +159,21 @@ local function onUpdate(dt)
     local dist2d = math.sqrt(dx * dx + dy * dy)
     local dist3d = math.sqrt(dx * dx + dy * dy + dz * dz)
 
-    if dist3d > SNAP_DISTANCE then
+    if dist3d > (SNAP_BY_TIER[tier] or SNAP_DISTANCE) then
         requestSnap(target, 'distance')
         zeroControls()
+        return
+    end
+
+    -- Beyond the near tier: never touch controls again. Returning here is the entire point
+    -- of the tier — the reposition above is the only movement a distant avatar gets, and
+    -- skipping the steering below is what stops the engine simulating it every frame.
+    if tier ~= TIER_NEAR then
+        zeroControls()
+        -- The stuck detector only means something for an actor we are steering; leaving it
+        -- armed across a tier change makes a promoted puppet fire a bogus snap immediately.
+        stuckSince = nil
+        lastProgressPos = nil
         return
     end
 
@@ -193,6 +231,9 @@ return {
     },
     eventHandlers = {
         MP_Pose = function(e)
+            -- Absent tier (a server predating G2, or renderLod = "full") means near: the
+            -- fallback must be full fidelity, never a silent degrade.
+            tier = e.tier or TIER_NEAR
             interp:push(e)
         end,
         -- M2: full slot->recordId snapshot (items already granted by global.lua).

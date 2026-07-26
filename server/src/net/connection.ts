@@ -711,6 +711,10 @@ export class Connection implements Peer {
       welcome(this.player.id, sessionToken, this.ctx.motd(), this.outSeq, record, {
         pvp: this.ctx.config.rules.pvp,
         difficulty: this.ctx.config.rules.difficulty,
+        renderLod: this.ctx.config.limits.renderLod,
+        lodNearRadius: this.ctx.config.limits.lodNearRadius,
+        lodMidRadius: this.ctx.config.limits.lodMidRadius,
+        lodNearMaxAvatars: this.ctx.config.limits.lodNearMaxAvatars,
       }),
     );
     this.ctx.hooks.playerAuthed({ id: this.player.id, name: this.player.name, rank: this.player.rank });

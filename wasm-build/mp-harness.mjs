@@ -13,7 +13,7 @@
 // kills ONLY the PIDs this harness spawned — never any pkill pattern (repo hard rule: the
 // user's real Chrome must be untouchable; every client runs in a throwaway --user-data-dir).
 import { spawn, execSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs';
 import net from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -59,8 +59,22 @@ async function waitHttp(url, timeoutMs, what) {
 // (`export const serverRules = 'pvp = true'`). Config is deep-merged over the defaults.
 async function startGameServer(extraRules = '') {
   const dist = join(ROOT, 'server', 'dist', 'server.mjs');
-  if (!existsSync(dist)) {
-    console.log('[harness] building server (dist/server.mjs missing)...');
+  // Rebuild when dist is missing OR older than any source under src/. Checking only for
+  // existence means a source change silently does not take effect: every scenario then runs
+  // against the previous build and reports confident, wrong results — a server-side feature
+  // can look completely unimplemented while its unit tests pass, because the tests import
+  // src/ and the harness runs dist/.
+  const newestSrc = (dir) => {
+    let newest = 0;
+    for (const ent of readdirSync(dir, { withFileTypes: true })) {
+      const p = join(dir, ent.name);
+      newest = Math.max(newest, ent.isDirectory() ? newestSrc(p) : statSync(p).mtimeMs);
+    }
+    return newest;
+  };
+  const srcMs = newestSrc(join(ROOT, 'server', 'src'));
+  if (!existsSync(dist) || statSync(dist).mtimeMs < srcMs) {
+    console.log(`[harness] building server (dist ${existsSync(dist) ? 'stale' : 'missing'})...`);
     execSync('npm run build', { cwd: join(ROOT, 'server'), stdio: 'inherit' });
   }
   const dataDir = mkdtempSync(join(tmpdir(), 'omw-mp-data-'));

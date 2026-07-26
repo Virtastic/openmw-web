@@ -112,6 +112,22 @@ lodMidRadius = 8192               # <= this: mid tier; beyond it, far tier (unti
 lodNearHz = 15
 lodMidHz = 5
 lodFarHz = 1
+# How hard clients degrade DISTANT AVATARS (players), reusing the radii above so a puppet
+# updated at 1 Hz is never also asked to walk smoothly:
+#   "tiered" - near avatars are fully simulated; mid/far stop driving the character
+#              controller and are repositioned instead. Everyone stays visible.
+#   "full"   - every avatar fully simulated regardless of distance (pre-G2 behaviour).
+#              Costs ~1.3 ms of client frame time per co-located avatar; kept as the
+#              control for capacity measurements.
+renderLod = "tiered"
+# Hard ceiling on how many avatars a client fully simulates, whatever the radius says.
+# 0 disables the cap. The radius alone does not bound cost in the case that matters: in a
+# tight crowd everyone is inside the near radius, so everyone stays fully simulated and
+# frame time scales with the crowd again. With the cap, worst-case client cost is
+# lodNearMaxAvatars * ~1.2ms + (everyone else) * ~0.06ms, independent of clustering.
+# 12 keeps a co-located 64 inside a 30fps budget; raise it for small co-op sessions where
+# fidelity matters more than headroom.
+lodNearMaxAvatars = 12
 
 [time]
 # M7: the server owns the clock. Morrowind scale = 30 (30 game seconds per real second);

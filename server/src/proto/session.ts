@@ -180,6 +180,17 @@ export function helloOk(serverName: string, contentPolicy: 'names' | 'strict' | 
 export interface SessionFlags {
   pvp: boolean;
   difficulty: number;
+  // G2 render LOD. The client degrades DISTANT avatars rather than hiding them, and it
+  // tiers on the SAME radii the broadcaster uses to tier send rate — so a puppet updated at
+  // 1 Hz is never also being asked to walk smoothly, which is what made distant avatars
+  // both expensive and visibly wrong. Shipped as flags rather than client constants so a
+  // crowded public world and a 4-player co-op session can be tuned without a client
+  // rebuild; the client bakes its scripts into openmw.data, so a constant here would cost a
+  // full relink to change.
+  renderLod: 'full' | 'tiered'; // 'full' = pre-G2 behaviour (every puppet fully driven)
+  lodNearRadius: number;
+  lodMidRadius: number;
+  lodNearMaxAvatars: number; // hard ceiling on fully-simulated avatars; 0 = radius only
 }
 
 export function welcome(
@@ -188,7 +199,12 @@ export function welcome(
   motd: string,
   serverSeq: number,
   playerRecord: unknown = null, // M2: stored snapshot doc, or null for fresh chargen
-  flags: SessionFlags = { pvp: false, difficulty: 0 },
+  // Default mirrors config.default.toml's radii, with renderLod 'full' so a caller that
+  // omits flags gets full fidelity rather than a silent degrade.
+  flags: SessionFlags = {
+    pvp: false, difficulty: 0, renderLod: 'full',
+    lodNearRadius: 4096, lodMidRadius: 8192, lodNearMaxAvatars: 0,
+  },
 ): string {
   return JSON.stringify({
     t: 'SessionWelcome',

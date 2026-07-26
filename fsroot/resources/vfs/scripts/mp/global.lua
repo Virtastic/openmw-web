@@ -29,6 +29,43 @@ local function playerScript()
     return world.players[1]
 end
 
+-- G2 render LOD. Everyone stays VISIBLE; distance buys a cheaper simulation, not a
+-- despawn. Tiers reuse the server's network-LOD radii (delivered in SessionWelcome) so a
+-- puppet whose poses arrive at 1 Hz is never simultaneously asked to walk smoothly between
+-- them — matching the two is what makes the degradation look deliberate instead of broken.
+-- Radii are squared once per batch, never per puppet.
+local TIER_NEAR, TIER_MID, TIER_FAR = 0, 1, 2
+-- Counts are keyed by NAME, not by the numeric tier: a Lua table keyed {[0]=n} serialises
+-- as an empty object (json sees no index 1 and calls it an empty array), so the numeric
+-- version mirrored "{}" no matter how many avatars were degraded — and a test asserting
+-- "nobody was degraded" then passed against no data at all.
+local TIER_NAME = { [0] = 'near', [1] = 'mid', [2] = 'far' }
+local tierSeen = {} -- tier name -> count, reset each batch (mirrored for the capacity tests)
+local d2Buf, nearBuf = {}, {} -- scratch, reused across batches (this runs 15x/second)
+
+-- The near RADIUS alone does not bound cost, and the case where it fails is the one that
+-- matters: in a tight crowd — a market square, a guild hall, everyone piling onto one
+-- quest giver — every avatar is inside the near radius, so every avatar stays fully
+-- simulated and frame time scales with the crowd exactly as it did before any of this.
+-- The cap fixes the worst case regardless of how players cluster: at most `maxNear`
+-- avatars are ever fully simulated, and the nearest ones win. Returns the effective
+-- squared near cutoff for this batch.
+local function nearCutoff(nearR2, maxNear, count)
+    if maxNear <= 0 then return nearR2 end -- cap disabled
+    local n = 0
+    for i = 1, count do
+        local d2 = d2Buf[i]
+        if d2 >= 0 and d2 <= nearR2 then
+            n = n + 1
+            nearBuf[n] = d2
+        end
+    end
+    if n <= maxNear then return nearR2 end -- under the cap: radius governs
+    for i = n + 1, #nearBuf do nearBuf[i] = nil end -- drop last batch's tail before sorting
+    table.sort(nearBuf)
+    return nearBuf[maxNear] -- the K-th nearest becomes the cutoff
+end
+
 local function toPlayer(eventName, data)
     local player = playerScript()
     if player then player:sendEvent(eventName, data) end
@@ -652,17 +689,56 @@ local eventHandlers = {
     -- sighting — the server only sends poses of players visible to us).
     MP_MoveBatch = function(batch)
         local now = core.getRealTime()
-        for _, e in ipairs(batch) do
+        -- G2: the render tier is decided HERE, once per batch, and stamped onto each pose.
+        -- The alternative — every puppet asking `nearby` for the player each frame — pays
+        -- the lookup per puppet per frame, which is the cost this is trying to remove.
+        local me = playerScript()
+        local origin = me and me.position or nil
+        local f = net.flags
+        local tiered = origin ~= nil and f ~= nil and f.renderLod == 'tiered'
+        local nearR2 = tiered and (f.lodNearRadius or 0) ^ 2 or 0
+        local midR2 = tiered and (f.lodMidRadius or 0) ^ 2 or 0
+
+        -- Pass 1: distances. The nearest-K cap needs to rank the whole batch before it can
+        -- tier any single entry, which is why this is two passes and not one.
+        local count = #batch
+        for i = 1, count do
+            local e = batch[i]
+            if tiered then
+                local dx, dy, dz = e.x - origin.x, e.y - origin.y, e.z - origin.z
+                d2Buf[i] = dx * dx + dy * dy + dz * dz
+            else
+                d2Buf[i] = -1 -- not comparable: always near, never degraded
+            end
+        end
+        local cutoff = nearCutoff(nearR2, tiered and (f.lodNearMaxAvatars or 0) or 0, count)
+
+        -- Pass 2: tier and route.
+        for i = 1, count do
+            local e = batch[i]
             if e.id ~= net.playerId then
                 lastPose[e.id] = { x = e.x, y = e.y, z = e.z }
                 if not puppets[e.id] then spawnPuppet(e.id, e) end
                 local p = puppets[e.id]
                 if p and p.obj:isValid() then
+                    local d2 = d2Buf[i]
+                    local tier
+                    if d2 < 0 or d2 <= cutoff then tier = TIER_NEAR
+                    elseif d2 <= midR2 then tier = TIER_MID
+                    else tier = TIER_FAR end
                     e.t = now
+                    e.tier = tier
+                    local tn = TIER_NAME[tier] or 'near'
+                    tierSeen[tn] = (tierSeen[tn] or 0) + 1
                     p.obj:sendEvent('MP_Pose', e)
                 end
             end
         end
+        -- Mirrored so a capacity run can prove puppets really ARE being degraded. Without
+        -- it, a "tiered" run that silently classified every avatar as near would report a
+        -- free performance win that is actually just the old behaviour.
+        mp.testSet('puppetTiers', json.encode(tierSeen))
+        tierSeen = {}
     end,
 
     -- M1: relayed with the mover's id added; despawn/teleport their puppet. Our OWN

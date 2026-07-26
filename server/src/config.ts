@@ -59,6 +59,11 @@ export interface Config {
     lodNearHz: number;
     lodMidHz: number;
     lodFarHz: number;
+    // Relayed to clients in SessionWelcome: how hard the client degrades distant AVATARS.
+    // "full" is the pre-G2 behaviour and exists as the measurement control.
+    renderLod: 'full' | 'tiered';
+    // Hard ceiling on fully-simulated avatars per client. 0 = no cap (radius alone).
+    lodNearMaxAvatars: number;
   };
   // M4 cell actor-authority election (see core/authority.ts). All in ms except probeSec.
   authority: {
@@ -290,6 +295,8 @@ function validate(t: Tree): Config {
       lodNearHz: reqPosNum(t, 'limits', 'lodNearHz'),
       lodMidHz: reqPosNum(t, 'limits', 'lodMidHz'),
       lodFarHz: reqPosNum(t, 'limits', 'lodFarHz'),
+      renderLod: reqEnum(t, 'limits', 'renderLod', ['full', 'tiered'] as const),
+      lodNearMaxAvatars: reqNum(t, 'limits', 'lodNearMaxAvatars'),
     },
     authority: {
       rttProbeSec: reqNum(t, 'authority', 'rttProbeSec'),
