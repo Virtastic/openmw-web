@@ -102,6 +102,19 @@ export default async function run(ctx) {
     await ctx.sleep(500);
   }
   ctx.log(`isHolder: ${clients.map((c, i) => `${c.name}=${flags[i]}`).join(' ')}`);
+  if (flags.filter((h) => h === 'true').length !== 1) {
+    // isHolder alone cannot distinguish "nobody was ever granted" from "granted under a
+    // cellKey the client mirror is not looking at" — and those need completely different
+    // fixes. Dump what each client believes before failing, so the next run does not have
+    // to be a second experiment just to learn which one it is.
+    for (const c of clients) {
+      const holderId = await c.eval('(window.__omwMP||{}).authorityHolder');
+      const myId = await c.eval('(window.__omwMP||{}).playerId');
+      const census = await c.eval('(window.__omwMP||{}).actorCensus||"[]"');
+      const me = JSON.parse(census).find((e) => e.startsWith('player@')) ?? 'none';
+      ctx.log(`  ${c.name}: id=${myId} authorityHolder=${holderId} cellPerCensus=${me}`);
+    }
+  }
   assert.equal(flags.filter((h) => h === 'true').length, 1,
     `exactly one client must hold ${cellKey}, got ${JSON.stringify(flags)}`);
   const holder = clients[flags.indexOf('true')];
