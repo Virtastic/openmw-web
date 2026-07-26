@@ -34,6 +34,45 @@ Friendship is stored **once per pair**, not twice, with the lower account id fir
 both directions means a half-applied mutation can leave A friends with B while B is not
 friends with A, and every read has to decide which direction is authoritative.
 
+### Schema
+
+```sql
+-- Friendship is one row per PAIR, lower account id first, enforced by the CHECK.
+-- Two-row-per-friendship schemas allow a half-applied mutation to leave A friends
+-- with B while B is not friends with A, and every read then has to pick a winner.
+CREATE TABLE IF NOT EXISTS friend (
+  a       TEXT NOT NULL,
+  b       TEXT NOT NULL,
+  since   INTEGER NOT NULL,
+  PRIMARY KEY (a, b),
+  CHECK (a < b)
+);
+
+-- Directional by nature: A blocking B is not B blocking A.
+CREATE TABLE IF NOT EXISTS block (
+  blocker TEXT NOT NULL,
+  blocked TEXT NOT NULL,
+  since   INTEGER NOT NULL,
+  PRIMARY KEY (blocker, blocked)
+);
+
+-- Pending, not history. Rows are deleted on accept/decline and swept on expiry;
+-- `expires` is what stops invites being a spam channel.
+CREATE TABLE IF NOT EXISTS friend_request (
+  fromAcct TEXT NOT NULL,
+  toAcct   TEXT NOT NULL,
+  sent     INTEGER NOT NULL,
+  expires  INTEGER NOT NULL,
+  PRIMARY KEY (fromAcct, toAcct)
+);
+CREATE INDEX IF NOT EXISTS friend_request_to ON friend_request(toAcct);
+```
+
+Keys are **account keys** (the existing `(iss, sub)`-derived identifier), not player ids —
+player ids are per-session and would make every friendship expire on reconnect. Presence and
+invites are in-memory: they are session state, and persisting them means restoring a lie
+after a crash (everyone shown online, invites resurrected).
+
 ## Messages
 
 Client → server: `FriendRequest{name}`, `FriendAccept{id}`, `FriendRemove{id}`,
