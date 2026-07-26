@@ -183,6 +183,13 @@ async function launchClient(name, mpPort, extraParams = '', opts = {}) {
   const handle = {
     name,
     logTail: (n = 30) => logs.slice(-n).join('\n'),
+    // A Lua event handler that throws takes its whole subsystem down SILENTLY: the engine
+    // logs the error and carries on, so the game still runs, the mirrors still update from
+    // whatever else is working, and scenarios fail somewhere far away with a misleading
+    // symptom. That is exactly how a one-word scoping bug in MP_MoveBatch was chased through
+    // two wrong hypotheses while the answer sat in the log the whole time. Surfaced per
+    // client so it is never buried again.
+    luaErrors: () => logs.filter((l) => l.includes('Lua error')),
     close: () => {
       try { chrome.kill('SIGKILL'); } catch {}
       try { rmSync(profile, { recursive: true, force: true }); } catch {}
@@ -257,7 +264,11 @@ async function launchClient(name, mpPort, extraParams = '', opts = {}) {
         try { if (await handle.eval(expr)) return; } catch {}
         await sleep(250);
       }
-      throw new Error(`[${name}] timeout (${timeoutMs}ms) waiting for: ${what}\n--- last logs ---\n${handle.logTail()}`);
+      const lua = handle.luaErrors();
+      throw new Error(`[${name}] timeout (${timeoutMs}ms) waiting for: ${what}`
+        + (lua.length ? `\n--- LUA ERRORS (${lua.length}) — a throwing handler disables its whole subsystem ---\n`
+            + [...new Set(lua)].slice(0, 5).join('\n') : '')
+        + `\n--- last logs ---\n${handle.logTail()}`);
     };
 
     console.log(`[harness] ${name}: booting ${url}`);
@@ -327,6 +338,16 @@ for (const file of files) {
     err = e;
   } finally {
     torndown = true;
+    // A scenario that PASSES while a Lua handler was throwing is not a pass — it means the
+    // assertions happened to be satisfied by some other path while a subsystem was dead.
+    // Reported (not failed) so it cannot be silently normalised, and so a green suite still
+    // says "something is broken in here".
+    const luaErrs = [...new Set(clients.flatMap((c) => c.luaErrors?.() ?? []))];
+    if (luaErrs.length) {
+      console.error(`[harness] ${file}: ${luaErrs.length} distinct LUA ERROR(s) during this scenario —`
+        + ' a throwing handler disables its whole subsystem even when the run passes:');
+      for (const l of luaErrs.slice(0, 5)) console.error('  ' + l.trim());
+    }
     for (const c of clients) c.close();
     server?.stop();
   }

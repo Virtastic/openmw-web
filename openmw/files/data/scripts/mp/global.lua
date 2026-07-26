@@ -766,7 +766,8 @@ local eventHandlers = {
                 d2Buf[count] = -1 -- not comparable: always near, never degraded
             end
         end
-        local cutoff = nearCutoff(nearR2, tiered and (f.lodNearMaxAvatars or 0) or 0, count)
+        local maxNear = tiered and (f.lodNearMaxAvatars or 0) or 0
+        local cutoff = nearCutoff(nearR2, maxNear, count)
 
         -- Pass 2: tier and route. `nearLeft` enforces the cap EXACTLY. The cutoff alone
         -- does not: it is the K-th smallest distance and the test is `d2 <= cutoff`, so
@@ -775,6 +776,11 @@ local eventHandlers = {
         -- a ring layout sit at identical distances — and the symptom would be an
         -- intermittently-breached cap that reads as a flaky test rather than an off-by-ties
         -- bug. The cutoff stays as a cheap pre-filter; this counter is the actual bound.
+        --
+        -- `maxNear` is a LOCAL computed above. It was previously written here as a bare name
+        -- that existed only as a parameter of nearCutoff, so at this scope it was a nil
+        -- global and `nil > 0` threw on EVERY batch — the handler died before routing a
+        -- single pose, and puppets could then only appear via PlayerCellChange.
         local nearLeft = maxNear > 0 and maxNear or math.huge
         for i = 1, count do
             local e = entryBuf[i]

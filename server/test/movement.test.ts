@@ -594,3 +594,29 @@ test('two stationary players in one cell each receive the other', async (t) => {
   const gotA = await a.waitBatch((x) => x.entries.some((e) => e.id === bId), 5000);
   assert.ok(gotA.entries.some((e) => e.id === bId), 'A never received a pose for stationary B');
 });
+
+// The REAL browser ordering, which the test above does not reproduce: A joins and sends its
+// cell change while B is still connecting, so B is not in the world to receive that relay.
+// B's puppet of A can then only come from a force-included pose in a move batch. This is
+// the exact shape of the s10/s20 failures, where A always sees B and B never sees A.
+test('a player who joins AFTER someone already settled still receives their pose', async (t) => {
+  const server = await startServer({ dataDir: tmpDataDir(), port: 0, host: '127.0.0.1' });
+  t.after(() => server.close());
+
+  const a = await TestClient.connect(server.port);
+  const { playerId: aId } = await a.joinAsNew('EarlyA');
+  await a.waitEvent('PlayerList');
+  a.sendCellChange('9,9', 1000, 1000, 100);
+  await a.waitEvent('PlayerCellChange');
+  // A now stands still forever. Nothing it does after this point will bump poseVersion.
+
+  const b = await TestClient.connect(server.port);
+  await b.joinAsNew('LateB');
+  await b.waitEvent('PlayerList');
+  b.sendCellChange('9,9', 1000, 1000, 100);
+  await b.waitEvent('PlayerCellChange');
+
+  const got = await b.waitBatch((x) => x.entries.some((e) => e.id === aId), 5000);
+  assert.ok(got.entries.some((e) => e.id === aId),
+    'a late joiner never received the pose of a player who was already standing there');
+});
