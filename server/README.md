@@ -202,6 +202,40 @@ comfortable with a single world of 100 **even in the pathological all-in-one-cel
 the binding constraint on players-per-cell is the browser client, which must render and
 interpolate every avatar. That is what the render-LOD tiers address.
 
+### Client cost per avatar (render LOD)
+
+Measured with `s43-avatar-load`, one browser client in a retail cell with protocol bots
+ramped into it. The host was busy throughout, so **absolute fps is depressed and only the
+marginal per-avatar cost should be quoted**:
+
+| avatar treatment | frame cost each |
+| --- | --- |
+| fully simulated (`renderLod = "full"`, or inside the near cap) | ~1.22 ms |
+| degraded (beyond the cap) | ~0.05 ms |
+
+`lodNearMaxAvatars` (default 12) is what makes this a *bound* rather than a slope. Client
+cost is then roughly:
+
+```
+baseline + lodNearMaxAvatars x 1.22ms + (everyone else) x 0.05ms
+```
+
+which does not grow meaningfully with population. Going 16 -> 32 co-located avatars added
+**0.86 ms in total**. At a 16 ms baseline that puts 64 co-located players near a 30fps
+budget, and the figure is insensitive to whether they spread out or pile into one spot —
+which the radius alone never achieved, because in a tight crowd everybody is "near".
+
+**What it costs.** A degraded avatar may sit up to ~2048 units from where its player
+actually is, and moves in occasional jumps instead of walking. That is deliberate and is
+the whole saving: repositioning an actor is *more* expensive than steering one, so a tier
+tuned to reposition often (~30/second across a crowd) measured 143 ms/frame — worse than
+not degrading anyone. Rare repositioning is the win; tight thresholds are a pessimisation.
+`s44-far-tier-correct` pins the drift as a fixed bound and proves degraded avatars still
+track their players rather than freezing.
+
+Tuning: raise `lodNearMaxAvatars` for small co-op sessions (fidelity over headroom), lower
+it for crowded public worlds. `renderLod = "full"` restores pre-LOD behaviour.
+
 ## VPS headroom
 
 Measured 2026-07-19 on the shared OVH box (before openmw-mp existed):
