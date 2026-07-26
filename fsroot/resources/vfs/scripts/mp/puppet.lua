@@ -30,12 +30,17 @@ local TIER_NEAR, TIER_MID = 0, 1
 -- teleports, per tier.
 --
 -- These are wide on purpose, and the reason is counter-intuitive enough to record: a
--- REPOSITION IS MORE EXPENSIVE THAN STEERING. Measured, a degraded avatar that rarely
--- teleports costs ~0.06ms/frame while a fully steered one costs ~1.22ms — but an
--- intermediate tier tuned to teleport about once a second cost ~3ms, i.e. worse than doing
--- nothing clever at all, because ~30 actors/second were being re-placed in the world. The
--- saving here comes from repositioning RARELY, not from skipping the character controller,
--- so a tighter threshold does not buy accuracy: it buys a slower client.
+-- REPOSITION IS MORE EXPENSIVE THAN STEERING. A mid tier tuned to teleport about once a
+-- second measured WORSE than doing nothing clever at all, because ~30 actors/second were
+-- being re-placed in the world. The saving comes from repositioning RARELY, not from
+-- skipping the character controller, so a tighter threshold does not buy accuracy: it buys
+-- a slower client.
+--
+-- The absolute figures that observation was first made against were taken on a contended
+-- box and were an order of magnitude too high; see server/README.md for the corrected
+-- idle-box numbers (0.177 ms/avatar fully simulated vs 0.086 ms with the cap). The ORDERING
+-- held up on re-measurement — frequent repositioning is still the expensive path — which is
+-- why these thresholds stay wide.
 local SNAP_BY_TIER = { [0] = 128, [1] = 1024, [2] = 2048 }
 local SNAP_COOLDOWN_BY_TIER = { [0] = 1.0, [1] = 2.0, [2] = 3.0 }
 local SNAP_DISTANCE = 128 -- near-tier divergence before asking for a teleport (legacy name)

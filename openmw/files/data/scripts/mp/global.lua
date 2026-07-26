@@ -70,6 +70,20 @@ local function nearCutoff(nearR2, maxNear, count)
     return nearBuf[maxNear] -- the K-th nearest becomes the cutoff
 end
 
+-- teleport() throws when the object is mid-teleport or was removed between the isValid()
+-- check and the call, and an engine handler that throws aborts — taking the rest of the
+-- handler with it and polluting the error log, which then masks real failures.
+--
+-- Deliberately different from the removeScript case: THAT pcall hid a permanent API mistake
+-- (the binding does not exist on a local self) and should never have been swallowed. This
+-- guards a genuinely TRANSIENT engine state, and the position self-corrects — the next pose
+-- batch sees the divergence and requests a snap. Returns whether the move happened.
+local function tryTeleport(obj, cellArg, pos)
+    if not obj or not obj:isValid() or not cellArg then return false end
+    local ok = pcall(function() obj:teleport(cellArg, pos) end)
+    return ok
+end
+
 local function toPlayer(eventName, data)
     local player = playerScript()
     if player then player:sendEvent(eventName, data) end
@@ -833,7 +847,7 @@ local eventHandlers = {
         if visibleFrom(ownCellKeyCache, data.cellKey) then
             local p = puppets[data.id]
             if p and p.obj:isValid() then
-                p.obj:teleport(destCellArg(), util.vector3(data.x, data.y, data.z))
+                tryTeleport(p.obj, destCellArg(), util.vector3(data.x, data.y, data.z))
             else
                 spawnPuppet(data.id, data)
             end
@@ -1070,12 +1084,8 @@ local eventHandlers = {
             return
         end
         local p = data.id and puppets[data.id]
-        if p and p.obj:isValid() then
-            local cellArg = destCellArg()
-            if cellArg then
-                p.obj:teleport(cellArg, util.vector3(data.x, data.y, data.z))
-                print('[mp] puppet snap #' .. tostring(data.id) .. ' (' .. tostring(data.why) .. ')')
-            end
+        if p and tryTeleport(p.obj, destCellArg(), util.vector3(data.x, data.y, data.z)) then
+            print('[mp] puppet snap #' .. tostring(data.id) .. ' (' .. tostring(data.why) .. ')')
         end
     end,
 
