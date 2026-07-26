@@ -176,6 +176,24 @@
  .continue .txt{font-size:14px; color:var(--muted)}
  .continue .txt b{color:var(--gold); font-weight:600}
 
+ /* "This needs a desktop browser" panel. Hidden unless the capability check fails. */
+ .unsupported{margin:0 0 26px; padding:24px 22px; text-align:left;
+   background:linear-gradient(160deg,var(--panel-2),var(--panel));
+   border:1px solid rgba(211,168,78,.45); border-radius:7px}
+ .unsupported h2{margin:0 0 8px; font-size:20px; color:var(--gold)}
+ .unsupported .lead{margin:0; font-size:14.5px; line-height:1.6; color:var(--muted)}
+ .unsupported .lead b{color:var(--ink); font-weight:600}
+ .unsupported .u-actions{display:flex; flex-wrap:wrap; gap:10px; margin-top:18px}
+ /* text-decoration:none because two of these are anchors, and .btn alone does not reset it. */
+ .unsupported .u-actions .btn{flex:1 1 auto; text-align:center; justify-content:center;
+   text-decoration:none}
+ .btn-solid{background:var(--gold); color:#1a140a; border-color:var(--gold)}
+ .btn-solid:hover{background:var(--gold-hi); border-color:var(--gold-hi); color:#1a140a}
+ .unsupported .micro{margin:12px 0 0; font-size:12px; color:var(--faint); min-height:1em}
+ /* Cards stay usable, just visibly demoted, so a false negative never locks anyone out. */
+ .cards.demoted{opacity:.5}
+ .cards.demoted:hover,.cards.demoted:focus-within{opacity:1}
+
  /* --- Footer --- */
  footer{margin:44px auto 0; padding-top:22px; border-top:1px solid rgba(138,104,56,.22);
    color:var(--faint); font-size:12.5px; line-height:1.7; max-width:64ch}
@@ -218,6 +236,25 @@
   <div class="continue reveal" id="continue">
     <div class="txt">Remembered install: <b id="continue-name">Data Files</b></div>
     <button class="btn btn-ghost" id="continue-btn">Continue <span class="arw">▸</span></button>
+  </div>
+
+  <!-- Shown only when the engine cannot run here (phones, and any browser without the APIs it
+       needs). Most inbound traffic is mobile, and without this a phone visitor taps "Start the
+       demo", gets a black tab, and reasonably concludes the project is broken. Offer the things
+       that DO work on a phone instead of a dead end. The cards below stay reachable on purpose:
+       detection can be wrong, and being wrong should cost prominence, not access. -->
+  <div class="unsupported" id="unsupported" hidden>
+    <h2>This needs a desktop browser</h2>
+    <p class="lead">The engine runs on your own machine, and that needs desktop
+      <b>Chrome</b>, <b>Edge</b> or <b>Brave</b>. From a phone you can still:</p>
+    <div class="u-actions">
+      <a class="btn btn-solid" href="https://www.youtube.com/watch?v=iqZ20MtdD4I"
+         target="_blank" rel="noopener">Watch it running <span class="arw">▸</span></a>
+      <a class="btn btn-ghost" href="https://discord.gg/PzFfDkbSue"
+         target="_blank" rel="noopener">Join the Discord</a>
+      <button class="btn btn-ghost" id="send-link" type="button">Send myself the link</button>
+    </div>
+    <p class="micro" id="send-note" aria-live="polite"></p>
   </div>
 
   <div class="cards">
@@ -417,6 +454,42 @@
    const tx=db.transaction(STORE,'readwrite'); tx.objectStore(STORE).put(val,key);
    tx.oncomplete=()=>res(); tx.onerror=()=>rej(tx.error);
  })); }
+
+ // --- can the engine actually run here? ---
+ // Capability checks, not user-agent sniffing: UA strings lie and break, whereas these are the
+ // exact features the engine needs. SharedArrayBuffer requires cross-origin isolation, and a
+ // coarse pointer on a narrow screen is a phone regardless of what it claims to be.
+ function engineUnsupported(){
+   if (/[?&]forceUnsupported\b/.test(location.search)) return true;   // ?forceUnsupported to preview it
+   const noSAB = typeof SharedArrayBuffer === 'undefined' || !self.crossOriginIsolated;
+   // Touch signal OR-ed from two sources because neither is universal, then AND-ed with a narrow
+   // viewport so touchscreen laptops (maxTouchPoints > 0, wide screen) are not caught by mistake.
+   const touch = matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
+   const phone = touch && Math.min(innerWidth, innerHeight) < 820;
+   return noSAB || phone;
+ }
+
+ (function gateOnCapability(){
+   if (!engineUnsupported()) return;         // desktop Chromium: nothing changes
+   $('unsupported').hidden = false;
+   document.querySelector('.cards').classList.add('demoted');
+
+   // Capture the intent we would otherwise lose: hand the URL to the share sheet so they can
+   // mail/message it to themselves and open it on a desktop later.
+   const btn = $('send-link'), note = $('send-note');
+   const url = location.href;
+   btn.addEventListener('click', async ()=>{
+     const payload = { title:'Morrowind in your browser', text:'Open this on a desktop to play:', url };
+     try {
+       if (navigator.share){ await navigator.share(payload); return; }
+       await navigator.clipboard.writeText(url);
+       note.textContent = 'Link copied. Open it on a desktop to play.';
+     } catch(e){
+       if (e && e.name === 'AbortError') return;   // user dismissed the share sheet
+       note.textContent = url;                      // last resort: show it to copy by hand
+     }
+   });
+ })();
 
  // --- sample game ---
  function playSample(){ location.href='index.html?nomw'; }
