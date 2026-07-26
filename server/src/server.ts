@@ -15,6 +15,8 @@ import type { StateCtx } from './core/playerstate';
 import { WorldState } from './core/worldstate';
 import { Combat } from './core/combat';
 import { Quests } from './core/quests';
+import { Social } from './core/social';
+import { SocialStore } from './core/socialstore';
 import { WorldM7 } from './core/m7';
 import { Roster } from './core/players';
 import { ContentGate, EngineGate } from './core/manifest';
@@ -209,6 +211,19 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     regressAllowed: (questId) => hooks.journalRegress(questId),
   });
 
+  // Phase C. The store is opened here so its lifetime matches the server's; social.stop()
+  // clears presence timers that would otherwise keep the process alive on shutdown.
+  const socialStore = new SocialStore(opts.dataDir);
+  const social = new Social({
+    store: socialStore,
+    roster,
+    displayName: (acct) => accounts.cachedByKey(acct)?.name,
+    // Resolution is by display name because that is what a player types, but everything
+    // stored keys on the account — names are mutable and reusable.
+    resolveName: (name) => (accounts.existsNow(name) ? name.toLowerCase() : undefined),
+    now: () => Date.now(),
+  });
+
   const ctx: ServerCtx = {
     config,
     accounts,
@@ -224,6 +239,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     world,
     combat,
     quests,
+    social,
     m7,
     admin,
     bans,
@@ -339,6 +355,8 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       unhookGauge();
       unhookBufferedGauge();
       moveBroadcaster.stop();
+      social.stop(); // pending presence timers would keep the process alive
+      socialStore.close();
       await m7.stop();
       hooks.serverStop();
       for (const conn of [...connections]) conn.disconnect('SHUTDOWN', 'server shutting down');

@@ -13,6 +13,7 @@ import type { Player, Peer, Roster } from '../core/players';
 import type { CommandRegistry, CommandContext } from '../core/commands';
 import type { HookBus } from '../plugins/loader';
 import { handleChatSend } from '../core/chat';
+import type { Social } from '../core/social';
 import type { Moderation } from '../core/moderation';
 import { TokenBucket, IpRateLimiter } from './ratelimit';
 import { playerFitness } from '../core/authority';
@@ -71,6 +72,7 @@ export interface ServerCtx {
   world: WorldState;
   combat: Combat;
   quests: Quests;
+  social: Social;
   m7: WorldM7;
   // M8 ops.
   admin: Admin;
@@ -236,6 +238,10 @@ export class Connection implements Peer {
           ...(this.player.pose ? { pose: this.player.pose } : {}),
         });
       }
+      // Phase C: BEFORE roster.remove, so the grace-window timer is armed while the
+      // account still resolves; a reconnect inside the window then cancels it and friends
+      // never see a flicker.
+      this.ctx.social.onLeave(this.player);
       this.ctx.roster.remove(this.player);
       // M6: drop every conversation this player held (same teardown as authority).
       this.ctx.quests.releaseDialogueLocks(this.player.id);
@@ -400,6 +406,7 @@ export class Connection implements Peer {
       return;
     }
     if (this.ctx.m7.handleEvent(this.player, name, value)) return; // M7 family
+    if (this.ctx.social.handleEvent(this.player, name, value)) return; // Phase C family
     if (this.ctx.quests.handleEvent(this.player, name, value)) return; // M6 family
     if (this.ctx.combat.handleEvent(this.player, name, value)) return; // M5 family
     if (this.ctx.world.handleEvent(this.player, name, value)) return; // M3/M4 family
@@ -729,6 +736,7 @@ export class Connection implements Peer {
     syncStateOnJoin(this.ctx.stateCtx, this.player); // M2 late-joiner appearance/equipment sync
     this.ctx.quests.sendJournalSync(this.player); // M6 full journal state at join
     this.ctx.m7.onJoinWorld(this.player); // M7 clock + weather + RecordsSync at join
+    this.ctx.social.onJoin(this.player); // Phase C FriendList + presence to friends
     // M8 resume completeness: a rejoin-in-place gets everything a fresh join gets
     // (PlayerList, M2 appearance/equipment/stats, JournalSync, WorldTime, weather,
     // RecordsSync) PLUS the cell it left off in — peers are told where the player is,

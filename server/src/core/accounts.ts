@@ -6,6 +6,7 @@
 
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { existsSync } from 'node:fs';
 import { hash, verify, Algorithm } from '@node-rs/argon2';
 import { readJson, writeJsonAtomic } from '../persist/atomicjson';
 import { log } from '../log';
@@ -43,6 +44,20 @@ export class AccountStore {
 
   private path(nameLower: string): string {
     return join(this.dir, `${nameLower}.json`);
+  }
+
+  // Sync lookups for user-initiated, low-frequency actions (Phase C friend requests and
+  // blocks). Account files are named by the lowercased key, so file presence IS the
+  // existence answer — no read or parse. Kept separate from get() so nothing on a hot path
+  // is tempted to use a blocking stat.
+  existsNow(name: string): boolean {
+    const key = name.toLowerCase();
+    return this.cache.has(key) || existsSync(this.path(key));
+  }
+
+  // Display casing for an account that may be offline; undefined when it is not cached.
+  cachedByKey(key: string): Account | undefined {
+    return this.cache.get(key);
   }
 
   async get(name: string): Promise<Account | undefined> {
