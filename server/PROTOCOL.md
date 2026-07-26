@@ -434,23 +434,34 @@ minted before a ban is still refused with `BANNED`. Identities live in
 enginePolicy, requiresPassword, allowsRegistration, pvp, uptime, version}` — no IPs, no
 account data. `GET /healthz` → `ok`.
 
-## Social layer (Phase C) — PLANNED, not implemented
+## Social layer (Phase C)
 
-Contract written before the code so the client and server agree up front; see
-`docs/PHASE-C-SOCIAL.md` for the design and its rationale.
+Design and rationale in `docs/PHASE-C-SOCIAL.md`.
 
-Client → server (event tier):
+Identity is the **account key** (`acct`) throughout, never the player id: ids are
+per-session, so an id-keyed friendship would expire on every reconnect. The live
+`playerId` rides alongside and only while the friend is online.
 
-- `FriendRequest{name}` · `FriendAccept{id}` · `FriendRemove{id}`
-- `BlockAdd{name}` · `BlockRemove{id}`
-- `InviteSend{id}` · `InviteAccept{id}`
+Client → server (event tier). `name` is a typed display name; `acct` is an account key
+returned by a previous `FriendList`:
+
+- `FriendRequest{name}` · `FriendAccept{acct}` · `FriendRemove{acct}`
+- `BlockAdd{name}` · `BlockRemove{acct}`
+- `InviteSend{acct}` · `InviteAccept{acct}`
 
 Server → client:
 
-- `FriendList{friends:[{id, name, online, cellKey?}]}` — full snapshot, sent on join and
-  after any mutation
-- `PresenceUpdate{id, online}` — coalesced, like `PlayerMoveBatch`
-- `InviteReceived{fromId, fromName}`
+- `FriendList{friends:[{acct, name, online, playerId?, cellKey?}]}` — full snapshot, sent on
+  join and after any mutation (the client rebuilds its window from it; there is no
+  incremental form)
+- `PresenceUpdate{acct, online, playerId?}`
+- `FriendRequestReceived{fromAcct, fromName}` · `InviteReceived{fromAcct, fromName}`
+- `InviteAccepted{cellKey, x, y, z}` — the host's live position, resolved server-side.
+  The client travels to THIS rather than to a coordinate it chose: the server is the only
+  party that knows where the host actually is.
+- `SocialResult{op, ok, detail}` — sent for every client→server op above. A refused action
+  must never be silent; a friend request that does nothing is indistinguishable from a
+  broken server.
 
 Rules the implementation must honour, each because getting it wrong is silent rather than
 loud:

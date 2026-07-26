@@ -10,6 +10,7 @@
 
 import type { Player, Roster } from './players';
 import type { SocialStore, AccountKey } from './socialstore';
+import type { LValue } from '../proto/lser';
 import { log } from '../log';
 
 export interface SocialTuning {
@@ -270,9 +271,16 @@ export class Social {
   // Returns true when the event belonged to this family, matching the other core modules.
   // Every failure is reported back to the caller rather than dropped: a friend request that
   // silently does nothing is indistinguishable from a broken server to the player.
-  handleEvent(player: Player, name: string, value: unknown): boolean {
-    const body = (value ?? {}) as Record<string, unknown>;
-    const str = (k: string): string => (typeof body[k] === 'string' ? (body[k] as string) : '');
+  handleEvent(player: Player, name: string, value: LValue | undefined): boolean {
+    // LSER decodes tables to Map, not to a plain object. Reading it as an object silently
+    // yields '' for every field, which the policy then correctly reports as
+    // "no_such_player" — a failure that looks like a lookup bug and is actually a decode
+    // bug. Matches the accessor every other event family uses.
+    const body = value instanceof Map ? value : undefined;
+    const str = (k: string): string => {
+      const v = body?.get(k);
+      return typeof v === 'string' ? v : '';
+    };
     switch (name) {
       case 'FriendRequest': {
         const r = this.requestFriend(player, str('name'));

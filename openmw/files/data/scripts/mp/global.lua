@@ -197,6 +197,15 @@ local function destCellArg()
     return player.cell.isExterior and '' or player.cell.name
 end
 
+-- Phase C: worldspace for an invite teleport. Distinct from destCellArg(), which answers
+-- for the LOCAL player's current cell — an invite is precisely the case where the
+-- destination may be somewhere the invitee is not, including a different interior, so the
+-- destination has to be derived from the target key rather than from where we stand.
+-- Exterior keys ("x,y") resolve by position in the default worldspace; interiors are named.
+local function inviteCellArg(cellKey)
+    return cellKey:match('^%-?%d+,%-?%d+$') and '' or cellKey
+end
+
 -- M2: the puppet record is built from the relayed PlayerAppearance when one is known —
 -- the puppet then IS the remote player's look, not a generic villager. Records are
 -- immutable, so each distinct identity gets its own generated record (cached).
@@ -643,6 +652,32 @@ local eventHandlers = {
     MP_TransportClose = function() net.onClose() end,
     MP_SessionJson = function(str) net.onJson(str) end,
 
+    -- --- Phase C: social relays -----------------------------------------------------
+    -- Straight pass-through to the player script, which owns the window. The one exception
+    -- is InviteAccepted, which is an ACTION (a teleport) and therefore has to happen in the
+    -- global context where teleport is available.
+    MP_FriendList = function(data)
+        mp.testSet('friends', json.encode(data.friends or {}))
+        toPlayer('MP_FriendList', data)
+    end,
+    MP_FriendRequestReceived = function(data) toPlayer('MP_FriendRequestReceived', data) end,
+    MP_InviteReceived = function(data) toPlayer('MP_InviteReceived', data) end,
+    MP_PresenceUpdate = function(data) toPlayer('MP_PresenceUpdate', data) end,
+    MP_SocialResult = function(data) toPlayer('MP_SocialResult', data) end,
+
+    -- The server answers InviteAccept with the host's live position. Travelling is done
+    -- here rather than trusting a client-side coordinate: the server is the only thing that
+    -- knows where the host actually is.
+    MP_InviteAccepted = function(data)
+        local player = playerScript()
+        if not player or not data.cellKey then return end
+        local ok, err = pcall(function()
+            player:teleport(inviteCellArg(tostring(data.cellKey)), util.vector3(data.x or 0, data.y or 0, data.z or 0))
+        end)
+        if not ok then print('[mp] invite teleport failed: ' .. tostring(err)) end
+        mp.testSet('invitedTo', tostring(data.cellKey))
+    end,
+
     MP_ChatMessage = function(data)
         mp.testSet('lastChat', json.encode(data))
         toPlayer('MP_UiChatMessage', data)
@@ -1021,6 +1056,20 @@ local eventHandlers = {
     end,
 
     -- player.lua -> here -> server (Event tier, PROTOCOL.md `ChatSend`).
+    -- Phase C uplink. One handler for the whole family: the player script names the op, so
+    -- adding a social message does not mean touching the global script again. `op` is
+    -- checked against a whitelist rather than forwarded blindly — a local script must not
+    -- be able to name an arbitrary server event.
+    mpSocial = function(data)
+        local OPS = {
+            FriendRequest = true, FriendAccept = true, FriendRemove = true,
+            BlockAdd = true, BlockRemove = true, InviteSend = true, InviteAccept = true,
+        }
+        local op = tostring(data.op or '')
+        if not OPS[op] then return end
+        mp.sendEvent(op, { name = data.name, acct = data.acct })
+    end,
+
     mpChatSend = function(data)
         if type(data.text) == 'string' and data.text ~= '' then
             mp.sendEvent('ChatSend', { text = data.text })

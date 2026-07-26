@@ -349,6 +349,19 @@ end
 local function pollHarness()
     local cmd = mp.testPollCommand()
     if type(cmd) == 'string' then
+        -- Phase C: 'social:<Op>:<arg>'. The arg is a display NAME for FriendRequest and
+        -- BlockAdd (what a player types) and an ACCOUNT KEY for everything else, matching
+        -- the server contract.
+        local sop, sarg = cmd:match('^social:([%a]+):(.*)$')
+        if sop then
+            local byName = (sop == 'FriendRequest' or sop == 'BlockAdd')
+            core.sendGlobalEvent('mpSocial', {
+                op = sop,
+                name = byName and sarg or nil,
+                acct = (not byName) and sarg or nil,
+            })
+        end
+
         local text = cmd:match('^chat:(.*)$')
         if text and text ~= '' then
             core.sendGlobalEvent('mpChatSend', { text = text })

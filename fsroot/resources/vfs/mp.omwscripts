@@ -3,6 +3,9 @@
 # so singleplayer is completely unaffected.
 GLOBAL: scripts/mp/global.lua
 PLAYER: scripts/mp/player.lua
+# Phase C social window (F). Separate from player.lua so the friends UI and the chat UI
+# cannot break each other, and so the file stays reviewable.
+PLAYER: scripts/mp/social.lua
 MENU: scripts/mp/menu.lua
 CUSTOM: scripts/mp/puppet.lua
 # Test-only: attached on demand by actors.killActorByRecord (see testkill.lua).
