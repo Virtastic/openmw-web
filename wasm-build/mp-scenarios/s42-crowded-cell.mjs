@@ -37,10 +37,18 @@ const CLIENTS = Number(process.env.S42_CLIENTS ?? 2);
 const BOTS = Number(process.env.S42_BOTS ?? 20);
 const BOT_MINUTES = Number(process.env.S42_BOT_MINUTES ?? 2);
 const CONVERGE_EPS = 80; // units; same budget as s40 (puppet steering + 100ms render delay)
-// Crowd load gets its own, wider budget — measured at 93 and 148 units in two runs, and
-// notably NOT scaling with bot count (12 bots diverged less than 4), which points at
-// frame-time-induced steering lag on the non-holder rather than a desync that grows with
-// load. Reusing the uncrowded 80 here would be asserting that crowding is free.
+// Crowd load gets its own budget, and it is a "not BROKEN" bound rather than a quality
+// target — the distinction matters, because the two want opposite numbers.
+//
+// Measured across runs: 148 units (4 bots), 93 (12), 249 (20). Large, variable, and only
+// loosely related to crowd size, which is the signature of frame-time-induced steering lag
+// on the non-holder rather than a desync that grows with load. An earlier version of this
+// constant was set to 250 — directly on top of an observed 249 — which is a fit, not a
+// bound, and would flake on the next noisy run. It has real headroom now.
+//
+// The QUALITY question is answered by reporting the number every run (see the log line
+// below) and by PLAYTEST.md, not by this constant. Tightening it to chase the measured
+// value would only convert a known limitation into an intermittent test failure.
 //
 // It cannot cause STATE divergence: M5 routes every actor hit to the authority holder, and
 // the holder applies damage from its own state (core/combat.ts), so two clients can never
@@ -52,7 +60,7 @@ const CONVERGE_EPS = 80; // units; same budget as s40 (puppet steering + 100ms r
 // fidelity degrades in a crowd even though state stays consistent. That is the real cost of
 // crowding a cell, it is bounded here rather than asserted away, and whether it FEELS bad is
 // a playtest question (PLAYTEST.md), not something this number settles.
-const CROWD_CONVERGE_EPS = 250;
+const CROWD_CONVERGE_EPS = 450;
 const STEP_TIMEOUT = 30_000;
 const BOOT = { retail: true, joinTimeoutMs: 420_000 };
 
@@ -195,6 +203,12 @@ export default async function run(ctx) {
       await ctx.sleep(1000);
     }
     ctx.log(`server reports ${players} players (wanted >= ${wantPlayers})`);
+    if (players < wantPlayers) {
+      // soakOut is already being captured; without printing it, "19/22" gives no way to
+      // tell a refused connection from a bot that never finished starting, and the next
+      // run has to be a second experiment just to learn which.
+      ctx.log(`bots did not all arrive — soak output:\n${soakOut.join('').split('\n').slice(-30).join('\n')}`);
+    }
     assert.ok(players >= wantPlayers, `crowd never fully joined: ${players}/${wantPlayers}`);
 
     // Sustained sampling, not a single lucky read: take the WORST agreement seen while the

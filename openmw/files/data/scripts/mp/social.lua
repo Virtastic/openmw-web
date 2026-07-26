@@ -39,6 +39,12 @@ local status = ''
 local draft = ''
 local myName = nil
 
+-- There is no scroll container in this UI API, so a long list would simply run off the
+-- bottom of the screen. The world is designed for ~100 concurrent players, so the Players
+-- tab WILL exceed the screen — cap it and say how many are hidden rather than rendering a
+-- window taller than the display and pretending it is fine.
+local MAX_ROWS = 12
+
 local PRESENCE_MODES = { 'public', 'friends', 'party', 'private' }
 local PRESENCE_HELP = {
     public = 'anyone can see where you are',
@@ -96,23 +102,30 @@ end
 local function playersTab()
     local rows = {}
     local others = 0
+    local shown = 0
     for _, p in ipairs(roster) do
         if p.name ~= myName then
             others = others + 1
-            local acct = string.lower(p.name) -- account keys are the lowercased display name
-            local actions = {}
-            if not isFriend(acct) then
-                actions[#actions + 1] = { 'add friend', function() send('FriendRequest', { name = p.name }) end }
+            if shown < MAX_ROWS then
+                shown = shown + 1
+                local acct = string.lower(p.name) -- account keys are the lowercased name
+                local actions = {}
+                if not isFriend(acct) then
+                    actions[#actions + 1] = { 'add friend', function() send('FriendRequest', { name = p.name }) end }
+                end
+                if not inParty(acct) then
+                    actions[#actions + 1] = { 'party', function() send('PartyInvite', { acct = acct }) end }
+                end
+                actions[#actions + 1] = { 'block', function() send('BlockAdd', { name = p.name }) end }
+                rows[#rows + 1] = personRow(p.name, { actions = actions })
             end
-            if not inParty(acct) then
-                actions[#actions + 1] = { 'party', function() send('PartyInvite', { acct = acct }) end }
-            end
-            actions[#actions + 1] = { 'block', function() send('BlockAdd', { name = p.name }) end }
-            rows[#rows + 1] = personRow(p.name, { actions = actions })
         end
     end
     if others == 0 then
         rows[#rows + 1] = U.text('Nobody else is online right now.')
+    elseif others > shown then
+        rows[#rows + 1] = U.text('... and ' .. (others - shown) .. ' more online'
+            .. ' (add them by name from the Friends tab)')
     end
     return rows
 end

@@ -236,6 +236,30 @@ track their players rather than freezing.
 Tuning: raise `lodNearMaxAvatars` for small co-op sessions (fidelity over headroom), lower
 it for crowded public worlds. `renderLod = "full"` restores pre-LOD behaviour.
 
+### The per-cell QUALITY limit (not a correctness limit)
+
+`s42-crowded-cell` measures how far two clients disagree about a shared NPC's position while
+a cell is crowded. Uncrowded that is 11–76 units. Under bot load, measured across runs:
+
+| bots in the cell | worst disagreement |
+| --- | --- |
+| 4 | 148 units |
+| 12 | 93 units |
+| 20 | 249 units |
+
+Large, variable, and only loosely related to crowd size — the signature of frame-time
+induced steering lag on the non-holder, not a desync that grows with load.
+
+**This cannot desync state.** M5 routes every actor hit to the authority holder, and the
+holder applies damage from its own state, so two clients can never disagree about an NPC's
+health.
+
+**It is not cosmetic either.** The attacker detects its hit locally, against the puppet it
+can see, so at 1–2 m of error a player can swing where an NPC appears and have the holder
+resolve that swing somewhere else. **Aim fidelity degrades in a crowd even though state
+stays consistent** — that is the real cost of packing a cell, and it is the thing to judge
+in a playtest before publishing a per-cell number for combat-heavy play.
+
 ## VPS headroom
 
 Measured 2026-07-19 on the shared OVH box (before openmw-mp existed):
