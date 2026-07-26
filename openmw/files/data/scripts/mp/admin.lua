@@ -30,6 +30,12 @@ handlers.MP_AdminResult = function(data)
     local text = tostring(data.text or '')
     lastResult = text
     mp.testSet('adminResult', text)
+    -- E3: offer the reply to the admin WINDOW first. If the window asked for it, it
+    -- displays it and we do NOT also pop every line as a screen message — opening the menu
+    -- otherwise buries the player under its own /list output, which is what it looked like
+    -- the first time this was screenshotted.
+    local consumed = deps.menuFn and deps.menuFn(text)
+    if consumed then return end
     for line in (text .. '\n'):gmatch('([^\n]*)\n') do
         if line ~= '' then deps.noticeFn(line) end
     end

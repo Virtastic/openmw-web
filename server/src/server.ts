@@ -128,6 +128,10 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       config.server.motd = text; // plugins and Welcome read config.server.motd
     },
     allow: (actor, cmd) => hooks.adminCommand({ id: actor.id, name: actor.name, rank: actor.rank }, cmd),
+    // Closed over lazily, like `hooks` above: the command registry is built further down,
+    // and this is only ever called once a client is connected. Sharing it means the admin
+    // window's menu and the chat /help can never disagree about what a rank permits.
+    helpLines: (rank) => commands.helpLines(rank),
   });
   const m7 = new WorldM7({
     roster,

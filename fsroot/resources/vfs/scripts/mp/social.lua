@@ -15,6 +15,11 @@ local I = require('openmw.interfaces')
 
 local json = require('scripts.mp.json')
 
+-- `isOpen` is deliberately separate from `element`. Using the element slot itself as the
+-- open flag (element = true) meant destroy() ran `element:destroy()` on a BOOLEAN and threw
+-- inside the event handler: every mirror still updated, so state assertions passed, and the
+-- window simply never appeared. Only a screenshot caught it.
+local isOpen = false
 local element = nil
 local friends = {} -- array of {acct, name, online, playerId, cellKey}
 local requests = {} -- acct -> name, incoming friend requests awaiting an answer
@@ -22,8 +27,16 @@ local invites = {} -- acct -> name, incoming invites awaiting an answer
 local status = '' -- last SocialResult, shown so a refused action is never silent
 local draft = ''
 
+-- MyGUI reads '#' as a colour escape ("#RRGGBB"), so any text containing one is silently
+-- mangled: /list output like "#1 ui-a-ms1ytyfi" rendered as green "-ms1ytyfi" because
+-- "#1 ui-" was eaten as a colour. '##' is MyGUI's literal '#'. This matters beyond ids —
+-- a player whose NAME contains '#' would corrupt every row it appears in.
+local function escape(text)
+    return (tostring(text):gsub('#', '##'))
+end
+
 local function row(text, onClick)
-    local r = { template = I.MWUI.templates.textNormal, props = { text = text } }
+    local r = { template = I.MWUI.templates.textNormal, props = { text = escape(text) } }
     if onClick then r.events = { mouseClick = async:callback(onClick) } end
     return r
 end
@@ -38,7 +51,7 @@ end
 -- Windows rebuild by destroy+create: there is no in-place update in this UI API, so every
 -- state change re-renders the whole list.
 local function render()
-    if not element then return end
+    if not isOpen then return end
     destroy()
     local rows = {}
     rows[#rows + 1] = row('-- Friends --')
@@ -110,6 +123,7 @@ local function render()
     }
     if status ~= '' then rows[#rows + 1] = row(status) end
     rows[#rows + 1] = row('[ close ]', function()
+        isOpen = false
         destroy()
         I.UI.removeMode('Interface')
     end)
@@ -126,12 +140,13 @@ local function render()
 end
 
 local function toggle()
-    if element then
+    if isOpen then
+        isOpen = false
         destroy()
         I.UI.removeMode('Interface')
         return
     end
-    element = true -- render() rebuilds from scratch; this just marks it open
+    isOpen = true
     render()
 end
 
@@ -152,8 +167,22 @@ return {
         end,
     },
     eventHandlers = {
+        -- Test-only: the harness cannot press F (no SDL key injection), so the window has
+        -- to be openable another way for any automated UI check to exist.
+        MP_SocialUiOpen = function()
+            if not isOpen then toggle() end
+        end,
         MP_FriendList = function(data)
             friends = data.friends or {}
+            -- Drop any pending request from someone who is now a friend. Clearing it only
+            -- in the [accept] click handler left the same person listed as BOTH a friend
+            -- and a pending request whenever the accept happened any other way — from
+            -- another session, or from the mutual-request path where the server completes
+            -- the friendship without this client ever pressing accept.
+            for _, f in ipairs(friends) do
+                requests[f.acct] = nil
+                invites[f.acct] = nil
+            end
             mirror()
             render()
         end,

@@ -362,6 +362,9 @@ local function pollHarness()
             })
         end
 
+        local uiWhich = cmd:match('^openui:(%a+)$')
+        if uiWhich then core.sendGlobalEvent('mpOpenUi', { which = uiWhich }) end
+
         local text = cmd:match('^chat:(.*)$')
         if text and text ~= '' then
             core.sendGlobalEvent('mpChatSend', { text = text })

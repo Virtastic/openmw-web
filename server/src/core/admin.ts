@@ -46,6 +46,8 @@ export interface AdminCtx {
   setMotd(text: string): void;
   // Plugin veto: false = this actor may not run this command (default allow).
   allow(actor: Player, cmd: string): boolean;
+  // Rank-filtered command list, shared with the chat /help so both paths agree.
+  helpLines(rank: number): string[];
 }
 
 interface AdminCommandSpec {
@@ -67,6 +69,18 @@ function arg(args: string[], i: number): string | undefined {
 }
 
 export const ADMIN_COMMANDS: Record<string, AdminCommandSpec> = {
+  // E3: the capability query. The admin WINDOW builds its menu from this rather than
+  // hardcoding rows, so the menu is exactly what this actor's rank permits and cannot drift
+  // from the gate that enforces it. It is the same rank-filtered list the chat /help
+  // returns; a second, separately-maintained list would be a second place to be wrong.
+  help: {
+    minRank: 0,
+    usage: '/help',
+    help: 'list the commands your rank permits',
+    run(ctx, actor) {
+      return ctx.helpLines(actor.rank).join('\n');
+    },
+  },
   list: {
     minRank: 0,
     usage: '/list',

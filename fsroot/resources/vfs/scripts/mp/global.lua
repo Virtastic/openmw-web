@@ -145,6 +145,9 @@ local FAIL_TEXT = {
 }
 
 local wasJoined = false
+-- Admin replies the WINDOW is waiting for (see menuFn). Chat-issued /slash commands leave
+-- this at zero and keep their screen notices.
+local adminUiPending = 0
 
 -- --- M1: remote-player puppets ---------------------------------------------------------
 -- Server rule mirrored client-side: a remote player is visible when in the same cell, or an
@@ -606,6 +609,15 @@ local function start()
         noticeFn = notice,
         teleportFn = teleportPlayerTo,
         toLocalRecordFn = worldmp.toLocal,
+        -- Claims a reply only when the WINDOW issued the request. Replies are 1:1 and
+        -- ordered per connection, so a simple outstanding count correlates them without a
+        -- request id — and a /slash command typed in chat still notices normally.
+        menuFn = function(text)
+            if adminUiPending <= 0 then return false end
+            adminUiPending = adminUiPending - 1
+            toPlayer('MP_AdminMenuResult', { text = text })
+            return true
+        end,
     })
     net.onStateChanged = function(state)
         print('[mp] session state: ' .. state)
@@ -1097,6 +1109,21 @@ local eventHandlers = {
     mpTestEnchanted = function(data) worldmp.testCreateEnchanted(data.name) end,
     mpTestWeather = function(data) worldmp.testWeather(data.index) end,
     mpTestAdmin = function(data) admin.send(data.cmd, data.args) end,
+    -- E3: the admin window's uplink. Same registry, same rank gate, same audit trail as
+    -- the /slash path — a second route to these actions would be a second place for the
+    -- permission check to be wrong.
+    mpAdminCommand = function(data)
+        if type(data.cmd) == 'string' and data.cmd ~= '' then
+            adminUiPending = adminUiPending + 1
+            admin.send(data.cmd, data.args or {})
+        end
+    end,
+    -- Test-only window openers. The harness cannot drive SDL keys (PLAYTEST.md 9), so
+    -- without these no automated check of the UI is possible at all.
+    mpOpenUi = function(data)
+        if data.which == 'admin' then toPlayer('MP_AdminUiOpen', {})
+        elseif data.which == 'social' then toPlayer('MP_SocialUiOpen', {}) end
+    end,
 
     -- --- M6: quest-layer bridges + test hooks -------------------------------------------
     -- onQuestUpdate is a PLAYER-context engine handler; player.lua forwards it here so the
