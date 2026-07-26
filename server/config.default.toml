@@ -62,8 +62,21 @@ regressAllowlist = []
 
 [limits]
 msgsPerSec = 60                   # per-session message token bucket (burst = rate)
-moveMsgsPerSec = 40               # separate budget for PlayerMove frames (M1); bypasses msgsPerSec
+moveMsgsPerSec = 40               # separate budget for the player's OWN PlayerMove frames; bypasses msgsPerSec
+# Cell actor authority: the holder simulates every NPC in its cell and streams ActorMoveBatch
+# for everyone else, ON TOP of its own pose. Sharing one budget meant the busiest, most
+# useful client tripped the limit first — so the actor stream gets its own. Nominal is 15 Hz;
+# 60 leaves room for a hitching client catching up and for a re-broadcast after a handoff.
+actorMoveMsgsPerSec = 60
 bytesPerSec = 65536               # per-session byte token bucket (burst = rate)
+# Outbound backpressure. `ws` queues bytes a client has not read in SERVER memory with no
+# ceiling, so in a crowded cell one stalled reader grows RSS for everyone. Past the soft
+# limit only LOSSY frames (movement / actor batches) are dropped — a stale pose is corrected
+# by the next one; chat, journal and object ops are never shed. Past the hard limit the
+# session is dropped: a client that cannot drain 1 MB is not playing. Two keys rather than a
+# multiplier so an operator can widen the shed window without also widening the kill window.
+maxBufferedBytes = 262144         # 256 KB ~= 4 s of the byte budget
+maxBufferedBytesHard = 1048576    # 1 MB
 maxConnsPerIp = 3
 maxMsgBytes = 262144              # ws maxPayload; larger frames drop the socket
 # SessionHello deadline. Generous on purpose: the browser client opens its socket from Lua,

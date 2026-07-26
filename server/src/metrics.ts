@@ -214,8 +214,14 @@ export const metrics = {
   // Its own series rather than a disconnect code: terminate() also runs the CLIENT_CLOSE
   // path, and one dead socket must not be counted twice in the disconnect total.
   pongTimeouts: reg(new Counter('omwmp_pong_timeout_drops_total', 'Sockets reaped by the ping keepalive.', [])),
-  // budget: msgs | bytes | move | login
+  // budget: msgs | bytes | login (these disconnect) | move_shed | actor_shed (these drop the
+  // frame and keep the session — see Connection.onMessage).
   rateLimited: reg(new Counter('omwmp_rate_limited_total', 'Rate-limit trips, by which budget ran out.', ['budget'])),
+  // kind: move | actor. Outbound lossy frames dropped because the socket's send queue was
+  // over [limits] maxBufferedBytes; a rising rate means a client is not keeping up.
+  backpressureDropped: reg(
+    new Counter('omwmp_backpressure_dropped_total', 'Lossy outbound frames dropped on a backed-up socket.', ['kind']),
+  ),
   // kind: bad_lser | unknown_event | reserved_type | binary_before_in_world | internal_error
   protocolErrors: reg(new Counter('omwmp_protocol_errors_total', 'Malformed or out-of-state client frames.', ['kind'])),
   // op: register | login | resume; result: success | AUTH_FAILED | BANNED | RATE
@@ -238,6 +244,11 @@ export const metrics = {
     new Histogram('omwmp_join_latency_seconds', 'Socket accept to IN_WORLD.', [], SECONDS_JOIN),
   ),
   sessionsInWorld: reg(new Gauge('omwmp_sessions_in_world', 'Sessions currently in world (read from the roster).')),
+  // Server-side memory held for clients that have not read it yet; the thing the shed above
+  // is defending. Sampled from the live sockets at scrape time.
+  outboundBuffered: reg(
+    new Gauge('omwmp_outbound_buffered_bytes', 'Bytes queued for delivery across all live sockets.'),
+  ),
 };
 
 // Times fn and files it under the store's histogram. Never swallows: the error is

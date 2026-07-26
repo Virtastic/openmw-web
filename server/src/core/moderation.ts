@@ -127,7 +127,16 @@ export class ChatLog {
     await this.drain();
     const now = Date.now();
     const cutoff = now - minutes * 60_000;
-    const days = Math.min(MAX_CONTEXT_SCAN_DAYS, Math.floor((now - cutoff) / DAY_MS) + 1);
+    // Span the day files the window actually TOUCHES, not the number of whole days it is
+    // long. Files are keyed by UTC date (dayKey uses toISOString), so a short window can
+    // still straddle a UTC midnight: `floor(60min / 24h) + 1` says one file, while the
+    // window really covers two. That made /chatlog return nothing from before midnight —
+    // precisely when an admin is reviewing an incident that just happened. DAY_MS buckets
+    // align to UTC epoch days, so flooring each end gives the real file span.
+    const days = Math.min(
+      MAX_CONTEXT_SCAN_DAYS,
+      Math.floor(now / DAY_MS) - Math.floor(cutoff / DAY_MS) + 1,
+    );
     const want = nameFilter?.toLowerCase();
     const out: ChatLine[] = [];
     for (let i = days - 1; i >= 0; i--) {

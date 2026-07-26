@@ -65,6 +65,7 @@ export class MoveBroadcaster {
       }
       const visibleIds = new Set<number>();
       const entries: BatchEntry[] = [];
+      const sent: [number, number][] = []; // committed to `known` only if the batch is actually sent
       for (const sender of inWorld) {
         if (sender.id === recipient.id) continue;
         if (!cellsVisible(recipient.cellKey, sender.cellKey)) continue;
@@ -73,12 +74,18 @@ export class MoveBroadcaster {
         if (known.get(sender.id) === sender.poseVersion) continue; // unchanged since last batch
         if (entries.length < 255) {
           entries.push({ id: sender.id, pose: sender.pose });
-          known.set(sender.id, sender.poseVersion);
+          // Staged, NOT committed: the send below can be shed under backpressure, and marking
+          // a pose delivered that never left leaves this recipient stale until the sender
+          // moves again — which for someone standing still never happens.
+          sent.push([sender.id, sender.poseVersion]);
         }
       }
       // Forget senders that left visibility so their return force-includes.
       for (const id of known.keys()) if (!visibleIds.has(id)) known.delete(id);
-      if (entries.length > 0) recipient.peer.sendBinary(MSG_PLAYER_MOVE_BATCH, packMoveBatch(entries));
+      if (entries.length > 0
+        && recipient.peer.sendBinary(MSG_PLAYER_MOVE_BATCH, packMoveBatch(entries))) {
+        for (const [id, version] of sent) known.set(id, version);
+      }
     }
   }
 }

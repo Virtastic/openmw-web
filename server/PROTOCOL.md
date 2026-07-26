@@ -60,7 +60,11 @@ then they are visible to nobody and receive no batches); the relay goes to ALL i
 players INCLUDING the sender (ignore your own id); the server synthesizes/refreshes the
 stored pose at the cell-change coordinates so never-moving players still spawn for newly
 visible peers; move `seq` is strictly increasing per connection; movement bytes count
-against `bytesPerSec` but not `msgsPerSec` (own `moveMsgsPerSec` budget, default 40).
+against `bytesPerSec` but not `msgsPerSec` (own `moveMsgsPerSec` budget, default 40, and a
+separate `actorMoveMsgsPerSec` budget, default 60, for `ActorMoveBatch`). Exceeding either
+movement budget DROPS the frame; it does not close the session. Outbound, movement and
+actor batches are also dropped for a client whose send queue is over `maxBufferedBytes`, and
+such a client is disconnected with `RATE` past `maxBufferedBytesHard`.
 
 ### `0x0002` Event (M0)
 

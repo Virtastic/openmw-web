@@ -15,7 +15,7 @@ import type { HookBus } from '../plugins/loader';
 import { handleChatSend } from '../core/chat';
 import type { Moderation } from '../core/moderation';
 import { TokenBucket, IpRateLimiter } from './ratelimit';
-import { MSG_EVENT, MSG_PLAYER_MOVE, MSG_ACTOR_MOVE_BATCH, ProtoError, unpackEnvelope, unpackEvent, packEvent, packEnvelope } from '../proto/envelope';
+import { MSG_EVENT, MSG_PLAYER_MOVE, MSG_PLAYER_MOVE_BATCH, MSG_ACTOR_MOVE_BATCH, ProtoError, unpackEnvelope, unpackEvent, packEvent, packEnvelope } from '../proto/envelope';
 import { unpackMove } from '../proto/movement';
 import { MAX_ABS_COORD } from '../core/movement';
 import { handleStateEvent, syncStateOnJoin, type StateCtx } from '../core/playerstate';
@@ -97,6 +97,9 @@ export class Connection implements Peer {
   private readonly msgBucket: TokenBucket;
   private readonly byteBucket: TokenBucket;
   private readonly moveBucket: TokenBucket; // movement has its own budget (PROTOCOL.md M1)
+  // The cell's actor-authority holder streams NPC batches on top of its own pose, so it
+  // must not spend the same budget as everyone else's movement.
+  private readonly actorMoveBucket: TokenBucket;
   private readonly openedAt = Date.now(); // join-latency origin (== the conn.open log line)
   private closeCounted = false; // exactly one omwmp_disconnects_total sample per session
 
@@ -109,6 +112,7 @@ export class Connection implements Peer {
     this.msgBucket = new TokenBucket(ctx.config.limits.msgsPerSec);
     this.byteBucket = new TokenBucket(ctx.config.limits.bytesPerSec);
     this.moveBucket = new TokenBucket(ctx.config.limits.moveMsgsPerSec);
+    this.actorMoveBucket = new TokenBucket(ctx.config.limits.actorMoveMsgsPerSec);
     this.helloTimer = setTimeout(() => {
       if (this.state === 'CONNECTED') this.disconnect('BAD_PROTO', 'SessionHello not received in time');
     }, ctx.config.limits.helloTimeoutMs);
@@ -128,9 +132,41 @@ export class Connection implements Peer {
     this.ws.send(packEvent(++this.outSeq, name, lserEncode(jsToL(body))));
   }
 
-  sendBinary(type: number, payload: Buffer): void {
-    if (this.ws.readyState !== this.ws.OPEN) return;
+  // Bytes `ws` is holding for this client because it has not read them yet. Read through a
+  // seam: a real socket drains too fast to hold a backlog on demand, so tests substitute a
+  // reader (returning undefined falls back to the socket). Never set in production.
+  static bufferedAmountReader?: (conn: Connection) => number | undefined;
+
+  get bufferedBytes(): number {
+    const stubbed = Connection.bufferedAmountReader?.(this);
+    return stubbed ?? this.ws.bufferedAmount;
+  }
+
+  // Returns FALSE when the frame was shed (or the socket is gone). Callers that track what
+  // a recipient has already seen MUST honour this: recording a shed pose as delivered leaves
+  // that recipient stale until the sender happens to move again, which for someone standing
+  // still is forever.
+  sendBinary(type: number, payload: Buffer): boolean {
+    if (this.ws.readyState !== this.ws.OPEN) return false;
+    // Movement and actor batches are the only stale-tolerant traffic on the wire, so they
+    // are what gets shed when a client stops draining: a dropped pose is corrected by the
+    // next one. Session- and event-tier frames (chat, journal, object ops, admin) are
+    // never shed — losing one loses state, not a frame.
+    if (type === MSG_PLAYER_MOVE_BATCH || type === MSG_ACTOR_MOVE_BATCH) {
+      const { maxBufferedBytes, maxBufferedBytesHard } = this.ctx.config.limits;
+      const buffered = this.bufferedBytes;
+      if (buffered > maxBufferedBytesHard) {
+        log('info', 'conn.backpressure_drop', { ip: this.ip, player: this.player?.name, buffered });
+        this.disconnect('RATE', 'outbound buffer overflow (client is not reading)');
+        return false;
+      }
+      if (buffered > maxBufferedBytes) {
+        metrics.backpressureDropped.inc({ kind: type === MSG_ACTOR_MOVE_BATCH ? 'actor' : 'move' });
+        return false;
+      }
+    }
     this.ws.send(packEnvelope(type, ++this.outSeq, payload));
+    return true;
   }
 
   disconnect(code: DisconnectCode, detail: string): void {
@@ -201,18 +237,28 @@ export class Connection implements Peer {
 
   private onMessage(data: Buffer, isBinary: boolean): void {
     if (this.state === 'CLOSED') return;
-    // PlayerMove and ActorMoveBatch frames bypass the general msg bucket and draw from
-    // the movement budget (bytes still count against bytesPerSec).
+    // PlayerMove and ActorMoveBatch frames bypass the general msg bucket, and draw from two
+    // SEPARATE movement budgets (bytes still count against bytesPerSec).
     const binType = isBinary && data.byteLength >= 2 ? data.readUInt16LE(0) : -1;
-    const isMove = binType === MSG_PLAYER_MOVE || binType === MSG_ACTOR_MOVE_BATCH;
     if (!this.byteBucket.take(data.byteLength)) {
       metrics.rateLimited.inc({ budget: 'bytes' });
       this.disconnect('RATE', 'byte rate limit exceeded');
       return;
     }
-    if (!(isMove ? this.moveBucket : this.msgBucket).take(1)) {
-      metrics.rateLimited.inc({ budget: isMove ? 'move' : 'msgs' });
-      this.disconnect('RATE', isMove ? 'movement rate limit exceeded' : 'message rate limit exceeded');
+    // Movement overruns SHED, they do not disconnect. Kicking the actor-authority holder for
+    // doing the cell's shared work took the whole cell's NPCs down with it; and an own-pose
+    // burst (a hitching or tab-throttled client catching up) is self-correcting, since every
+    // pose is absolute. Abuse is still bounded — by bytesPerSec, which does disconnect, and
+    // by msgsPerSec for everything that actually carries state.
+    if (binType === MSG_ACTOR_MOVE_BATCH || binType === MSG_PLAYER_MOVE) {
+      const actor = binType === MSG_ACTOR_MOVE_BATCH;
+      if (!(actor ? this.actorMoveBucket : this.moveBucket).take(1)) {
+        metrics.rateLimited.inc({ budget: actor ? 'actor_shed' : 'move_shed' });
+        return;
+      }
+    } else if (!this.msgBucket.take(1)) {
+      metrics.rateLimited.inc({ budget: 'msgs' });
+      this.disconnect('RATE', 'message rate limit exceeded');
       return;
     }
     try {

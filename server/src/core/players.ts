@@ -10,7 +10,7 @@ import { log } from '../log';
 
 export interface Peer {
   sendEvent(name: string, body: JsLike): void;
-  sendBinary(type: number, payload: Buffer): void;
+  sendBinary(type: number, payload: Buffer): boolean; // false = shed (see Connection)
   disconnect(code: DisconnectCode, detail: string): void;
 }
 

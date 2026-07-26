@@ -180,7 +180,9 @@ test('movement relay over real clients', async (t) => {
   await b.closed;
 });
 
-test('movement budget kick', async (t) => {
+// Was a kick; movement now SHEDS (see backpressure.test.ts). Kicking a player for a burst
+// of self-correcting absolute poses cost more than the frames it saved.
+test('movement budget shed', async (t) => {
   const server = await startServer({
     dataDir: tmpDataDir(),
     port: 0,
@@ -194,10 +196,13 @@ test('movement budget kick', async (t) => {
   await c.waitEvent('PlayerList');
   c.sendCellChange('0,0');
   await c.waitEvent('PlayerCellChange');
-  // General msg budget (60/s) untouched; the move budget (5) trips on a flood.
+  // General msg budget (60/s) untouched; the move budget (5) trips on a flood — the excess
+  // frames are dropped and the session lives.
   for (let i = 0; i < 40 && !c.isClosed; i++) c.sendMove({ x: i, y: 0, z: 0 });
-  const d = await c.waitDisconnect('RATE');
-  assert.match(d['detail'] as string, /movement/);
+  c.sendJson({ t: 'SessionPing', clientTime: 1 });
+  await c.waitJson('SessionPong');
+  assert.equal(c.isClosed, false);
+  c.close();
   await c.closed;
 });
 
@@ -216,8 +221,12 @@ test('broadcaster unit: no empty batches, per-recipient dirty tracking', () => {
     poseVersion: 1,
     peer: {
       sendEvent: () => {},
+      // Returns true = "delivered". The broadcaster only commits its per-recipient
+      // seen-version map when the send actually lands, so a fake returning void would
+      // silently model a permanently-shedding client.
       sendBinary: (_type: number, payload: Buffer) => {
         sent.get(id)?.push(payload) ?? sent.set(id, [payload]);
+        return true;
       },
       disconnect: () => {},
     },

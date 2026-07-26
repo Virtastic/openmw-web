@@ -86,8 +86,11 @@ Note `plugins` is a top-level key — in an override file it must appear **befor
 | `[content] enforce` | `"names"` | `"names"` \| `"strict"` (M0: stub, behaves like names) \| `"off"` |
 | `[engine] enforce` | `"warn"` | engineHash mismatch: `"warn"` logs, `"refuse"` -> `BAD_ENGINE`, `"off"` skips |
 | `[limits] msgsPerSec` | `60` | per-session message token bucket (burst = one second) |
-| `[limits] moveMsgsPerSec` | `40` | separate budget for PlayerMove frames (M1); bypasses `msgsPerSec` |
+| `[limits] moveMsgsPerSec` | `40` | separate budget for the player's own `PlayerMove` frames; over it, frames are dropped (not a kick) |
+| `[limits] actorMoveMsgsPerSec` | `60` | own budget for the cell authority holder's `ActorMoveBatch` stream; over it, frames are dropped |
 | `[limits] bytesPerSec` | `65536` | per-session byte token bucket |
+| `[limits] maxBufferedBytes` | `262144` | outbound queue soft limit; over it, movement/actor frames to that client are dropped |
+| `[limits] maxBufferedBytesHard` | `1048576` | outbound queue hard ceiling; over it the session is disconnected (`RATE`) |
 | `[limits] maxConnsPerIp` | `3` | further connections refused (`RATE`) |
 | `[limits] maxMsgBytes` | `262144` | ws `maxPayload` |
 | `[limits] helloTimeoutMs` | `45000` | `SessionHello` deadline (generous: the client can only send it on a Lua tick, which stalls while the engine streams/loads a retail world) |

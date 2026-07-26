@@ -40,7 +40,10 @@ export interface Config {
   limits: {
     msgsPerSec: number;
     moveMsgsPerSec: number;
+    actorMoveMsgsPerSec: number;
     bytesPerSec: number;
+    maxBufferedBytes: number;
+    maxBufferedBytesHard: number;
     maxConnsPerIp: number;
     maxMsgBytes: number;
     helloTimeoutMs: number;
@@ -176,6 +179,10 @@ function validateAuth(t: Tree): AuthConfig {
 function validate(t: Tree): Config {
   const plugins = t['plugins'];
   if (!Array.isArray(plugins) || plugins.some((p) => typeof p !== 'string')) fail('plugins', 'an array of strings');
+  // Soft above hard would drop every lossy frame and then never disconnect: the shed would
+  // look like a working backpressure valve while nothing ever recovers.
+  if (reqNum(t, 'limits', 'maxBufferedBytesHard') < reqNum(t, 'limits', 'maxBufferedBytes'))
+    fail('[limits].maxBufferedBytesHard', '>= [limits].maxBufferedBytes');
   return {
     server: {
       name: reqStr(t, 'server', 'name'),
@@ -225,7 +232,10 @@ function validate(t: Tree): Config {
     limits: {
       msgsPerSec: reqNum(t, 'limits', 'msgsPerSec'),
       moveMsgsPerSec: reqNum(t, 'limits', 'moveMsgsPerSec'),
+      actorMoveMsgsPerSec: reqNum(t, 'limits', 'actorMoveMsgsPerSec'),
       bytesPerSec: reqNum(t, 'limits', 'bytesPerSec'),
+      maxBufferedBytes: reqNum(t, 'limits', 'maxBufferedBytes'),
+      maxBufferedBytesHard: reqNum(t, 'limits', 'maxBufferedBytesHard'),
       maxConnsPerIp: reqNum(t, 'limits', 'maxConnsPerIp'),
       maxMsgBytes: reqNum(t, 'limits', 'maxMsgBytes'),
       helloTimeoutMs: reqNum(t, 'limits', 'helloTimeoutMs'),

@@ -256,6 +256,13 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
 
   const ipTracker = new IpConnTracker(config.limits.maxConnsPerIp);
   const connections = new Set<Connection>();
+  // Same shape as the roster gauge: summed from the live sockets at scrape time, so a
+  // teardown path can never strand it.
+  const unhookBufferedGauge = metrics.outboundBuffered.addCollector(() => {
+    let total = 0;
+    for (const c of connections) total += c.bufferedBytes;
+    return total;
+  });
 
   const wss = attachWss(httpServer, config.limits.maxMsgBytes, (ws, ip) => {
     // M8: an IP ban is refused at accept — the cheapest possible answer, before any
@@ -315,6 +322,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       if (closed) return;
       closed = true;
       unhookGauge();
+      unhookBufferedGauge();
       moveBroadcaster.stop();
       await m7.stop();
       hooks.serverStop();

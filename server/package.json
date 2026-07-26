@@ -8,7 +8,7 @@
   "scripts": {
     "dev": "tsx watch src/main.ts",
     "build": "node esbuild.mjs",
-    "test": "tsc --noEmit && node --import tsx --test --test-concurrency=2 test/lser.test.ts test/session.test.ts test/ratelimit.test.ts test/movement.test.ts test/persistence.test.ts test/worldstate.test.ts test/authority.test.ts test/actor.test.ts test/combat.test.ts test/adversarial.test.ts test/metrics.test.ts test/quests.test.ts test/worldtime.test.ts test/admin.test.ts test/moderation.test.ts test/auth.test.ts",
+    "test": "tsc --noEmit && node --import tsx --test --test-concurrency=2 test/lser.test.ts test/session.test.ts test/ratelimit.test.ts test/backpressure.test.ts test/movement.test.ts test/persistence.test.ts test/worldstate.test.ts test/authority.test.ts test/actor.test.ts test/combat.test.ts test/adversarial.test.ts test/metrics.test.ts test/quests.test.ts test/worldtime.test.ts test/admin.test.ts test/moderation.test.ts test/auth.test.ts",
     "start": "node dist/server.mjs",
     "lser-dump": "tsx src/proto/lser-dump.ts",
     "soak": "tsx bots/soak.ts"
