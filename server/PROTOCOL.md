@@ -434,6 +434,43 @@ minted before a ban is still refused with `BANNED`. Identities live in
 enginePolicy, requiresPassword, allowsRegistration, pvp, uptime, version}` — no IPs, no
 account data. `GET /healthz` → `ok`.
 
+## Social layer (Phase C) — PLANNED, not implemented
+
+Contract written before the code so the client and server agree up front; see
+`docs/PHASE-C-SOCIAL.md` for the design and its rationale.
+
+Client → server (event tier):
+
+- `FriendRequest{name}` · `FriendAccept{id}` · `FriendRemove{id}`
+- `BlockAdd{name}` · `BlockRemove{id}`
+- `InviteSend{id}` · `InviteAccept{id}`
+
+Server → client:
+
+- `FriendList{friends:[{id, name, online, cellKey?}]}` — full snapshot, sent on join and
+  after any mutation
+- `PresenceUpdate{id, online}` — coalesced, like `PlayerMoveBatch`
+- `InviteReceived{fromId, fromName}`
+
+Rules the implementation must honour, each because getting it wrong is silent rather than
+loud:
+
+- Identity is the **account id**, never the display name. Names are mutable and reusable, so
+  a name-keyed friendship silently re-points at whoever holds the name next.
+- **Blocks outrank friendship and invites, in both directions**, and cannot be defeated by
+  the blocked party re-requesting.
+- `cellKey` in `FriendList` **leaks location** and is therefore friends-only — never
+  returned to a stranger, and never to someone the player has blocked.
+- Presence must flip on an abrupt **drop**, not only a clean logout; the reconnect path is
+  where presence goes stale.
+- Invites expire and are capped per sender, or the channel is a spam vector.
+- Friendship is stored **once per pair** (lower account id first). Two rows per friendship
+  lets a half-applied mutation leave A friends with B but not the reverse.
+
+Storage is `node:sqlite` in the existing data dir. This is only correct because the world
+is single-process; if the map is ever region-sharded across processes, the social data has
+to move out to a shared service first.
+
 ## Client-side integration contract (M0)
 
 - Join URL: `index.html?...&mp=<ws(s)-url>&name=<display-name>`; boot JS sets
