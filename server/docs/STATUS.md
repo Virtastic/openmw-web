@@ -17,6 +17,7 @@ combat, quests, world state, ops), plus:
 | **E3** admin | in-game window whose menu is generated from the server's own rank-filtered `/help` |
 | **G1** scaling | broadcaster spatial index — cost linear in population, not quadratic |
 | **G2** scaling | avatar render LOD — client cost bounded by a cap, not by population |
+| **M4** correctness | cell authority now requires a client that can actually SIMULATE (`simulatesActors`), plus a liveness guard that revokes a holder producing nothing |
 
 ## What is verified, and how
 
@@ -27,6 +28,8 @@ combat, quests, world state, ops), plus:
   monotonic, no record-id collisions.
 - **UI/UX**: `s46` drives the windows and screenshots each step.
 - **Capacity**: 64 co-located avatars at 48 fps; see README "Measured capacity".
+- **Crowded cell**: 2 browser clients + 20 bots — actor stream flowing, agreement median
+  59.7 units (below the uncrowded budget).
 
 ## Known open
 
@@ -53,9 +56,20 @@ host was at load 54–131. The corrected figures are in the README with an expli
 Every capacity script now prints host load around each phase. **Do not quote a number taken
 above roughly load 10.**
 
-**Several bugs were found by tooling, not by tests failing.** Four of the seven real defects
+**Several bugs were found by tooling, not by tests failing.** Four of the nine real defects
 this cycle were sitting underneath green runs, and surfaced only once the harness started
 reporting Lua errors and capturing screenshots. A throwing engine handler disables its whole
 subsystem silently — the suite stays green because the assertions are satisfied by some other
 path. If a subsystem misbehaves, read the client log for `Lua error` **before** forming a
 hypothesis; that would have saved two wrong theories and two rebuilds on the last one.
+
+**A plausible mechanism is not a diagnosis.** Crowd divergence was published with an
+explanation attached (frame-time steering lag) that was simply wrong — it was authority
+thrashing to clients that could not simulate. Effort then went into widening a test budget
+to accommodate what was a bug. The server counters that eventually settled it existed the
+whole time. Attribute a number before explaining it.
+
+**Kill orphaned harness processes before trusting a measurement.** Stopping a background
+task kills the shell, not the child `node`. One harness ran for 20 hours competing with
+every gate, and a good share of what was written off as "the host is busy" was that. Check
+`ps -Ao command | grep '[m]p-harness'` before believing a load-related excuse.
