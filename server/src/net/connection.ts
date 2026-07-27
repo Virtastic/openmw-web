@@ -96,6 +96,7 @@ export class Connection implements Peer {
   private contentHeld = false;
   // Declared at Hello; carried onto the Player so cell-authority election can require it.
   private simulatesActors = false;
+  private isSystem = false;
   private engineHeld = false;
   private authing = false;
   private sessionToken = ''; // M8: parked as a resume ticket when an in-world session drops
@@ -499,6 +500,7 @@ export class Connection implements Peer {
     // Absent = false. Only a client that explicitly claims it can simulate a cell's actors
     // is ever eligible to hold authority for one.
     this.simulatesActors = msg.simulatesActors === true;
+    this.isSystem = msg.system === true;
     if (msg.proto !== 1) {
       this.disconnect('BAD_PROTO', `unsupported protocol version ${msg.proto}`);
       return;
@@ -507,7 +509,13 @@ export class Connection implements Peer {
       this.disconnect('BAD_PROTO', `unsupported lserVersion ${msg.lserVersion}`);
       return;
     }
-    if (this.ctx.roster.count >= this.ctx.config.server.maxPlayers) {
+    // A system peer never counts against maxPlayers and is never refused as "full": it is
+    // operator infrastructure, and turning it away would be the server refusing to simulate
+    // its own world.
+    // A system peer never counts against maxPlayers and is never refused as "full": it is
+    // operator infrastructure, and turning it away would be the server refusing to simulate
+    // its own world. (humanCount already excludes it; the explicit guard states the intent.)
+    if (!this.isSystem && this.ctx.roster.humanCount >= this.ctx.config.server.maxPlayers) {
       this.disconnect('SERVER_FULL', 'server is full');
       return;
     }
@@ -709,6 +717,7 @@ export class Connection implements Peer {
     this.account = account;
     this.player = this.ctx.roster.addAuthed(account.name, accountKey, account.rank, this, this.ip);
     this.player.simulatesActors = this.simulatesActors;
+    this.player.system = this.isSystem;
     this.state = 'AUTHED';
     this.authing = false;
     const sessionToken = randomBytes(16).toString('hex');

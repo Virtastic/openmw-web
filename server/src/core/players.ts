@@ -34,6 +34,9 @@ export interface Player {
   // Declared at Hello. Only a client that can actually simulate a cell's actors is eligible
   // to hold authority for one; see Authority.bestCandidate.
   simulatesActors?: boolean;
+  // Headless sim peer (Phase H): kept out of every human-facing count/list. See
+  // roster.humanCount() / humansInWorld().
+  system?: boolean;
   pose?: PlayerPose;
   moveSeq: number; // last accepted PlayerMove envelope seq (stale-drop)
   poseVersion: number;
@@ -47,6 +50,20 @@ export class Roster {
 
   get count(): number {
     return this.byId.size;
+  }
+
+  // Humans only: a headless sim peer (Phase H) is infrastructure, not a participant, so it
+  // must not fill a maxPlayers slot, appear in the lobby, or be counted for anyone. Every
+  // human-facing surface uses these; the simulation paths (broadcaster, authority) still use
+  // count/inWorld() because the peer is very much a real occupant THERE.
+  get humanCount(): number {
+    let n = 0;
+    for (const p of this.byId.values()) if (!p.system) n++;
+    return n;
+  }
+
+  humansInWorld(): Player[] {
+    return this.inWorld().filter((p) => !p.system);
   }
 
   // Hot: read once per broadcaster tick and once per relayed actor batch. Cached because
@@ -101,11 +118,17 @@ export class Roster {
   joinWorld(player: Player): void {
     player.inWorld = true;
     this.inWorldCache = undefined; // before the reads below, or the joiner misses itself
-    for (const p of this.inWorld()) p.peer.sendEvent('PlayerJoinWorld', { id: player.id, name: player.name });
+    // A system peer is invisible as a PARTICIPANT: it is never announced and never listed,
+    // so no client spawns a puppet NPC of it. But it is announced TO — it needs everyone
+    // else's poses to simulate them — and a human joining is still announced normally. So
+    // the join broadcast is suppressed only for the peer's own arrival, and the peer is
+    // filtered out of every roster others receive.
+    if (!player.system)
+      for (const p of this.inWorld()) p.peer.sendEvent('PlayerJoinWorld', { id: player.id, name: player.name });
     player.peer.sendEvent('PlayerList', {
-      players: this.inWorld().map((p) => ({ id: p.id, name: p.name })),
+      players: this.humansInWorld().map((p) => ({ id: p.id, name: p.name })),
     });
-    log('info', 'player.join_world', { id: player.id, name: player.name });
+    log('info', 'player.join_world', { id: player.id, name: player.name, system: player.system === true });
   }
 
   remove(player: Player): void {
@@ -114,7 +137,10 @@ export class Roster {
     if (this.byAccount.get(player.accountKey) === player) this.byAccount.delete(player.accountKey);
     if (player.inWorld) {
       player.inWorld = false;
-      for (const p of this.inWorld()) p.peer.sendEvent('PlayerLeaveWorld', { id: player.id });
+      // Mirror joinWorld: no client ever spawned a puppet for a system peer, so no client
+      // needs a leave for it. Announcing one would name an id they never knew.
+      if (!player.system)
+        for (const p of this.inWorld()) p.peer.sendEvent('PlayerLeaveWorld', { id: player.id });
       log('info', 'player.leave_world', { id: player.id, name: player.name });
     }
   }

@@ -141,6 +141,10 @@ namespace MWMP
         api["getUrl"] = []() { return getEnvString("OPENMW_MP_URL"); };
         api["getName"] = []() { return getEnvString("OPENMW_MP_NAME"); };
         api["getPassword"] = []() { return getEnvString("OPENMW_MP_PASS"); };
+        // Phase H: a headless simulation peer sets OPENMW_MP_SYSTEM=1. It declares system so
+        // the server keeps it out of the player list / count / maxPlayers. A normal client
+        // never sets it (getenv null), so this is false for every human.
+        api["isSystem"] = []() { return std::getenv("OPENMW_MP_SYSTEM") != nullptr; };
         // Phase B SSO: a one-time login ticket the boot JS lifted out of the URL fragment
         // after the provider round trip. Empty when signing in with a password.
         api["getLoginTicket"] = []() { return getEnvString("OPENMW_MP_TICKET"); };

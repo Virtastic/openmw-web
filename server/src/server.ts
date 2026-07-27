@@ -261,9 +261,9 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     enginePolicy: config.engine.enforce,
     requiresPassword: config.server.password !== '',
     allowsRegistration: config.login.allowRegistration && config.login.inviteCode === '',
-    playerCount: roster.inWorld().length,
+    playerCount: roster.humansInWorld().length,
     pvp: config.rules.pvp,
-    players: roster.inWorld().map((p) => ({
+    players: roster.humansInWorld().map((p) => ({
       id: p.id,
       name: p.name,
       cellKey: p.cellKey ?? null,

@@ -30,6 +30,10 @@ export interface SessionHello {
   // nothing, which freezes every NPC in the cell for everyone. Absent = false, so anything
   // that does not explicitly claim the capability is never handed the job.
   simulatesActors?: boolean;
+  // A headless simulation peer (Phase H), not a human. It is exempt from the human-facing
+  // surfaces — player list, playerCount, maxPlayers, idle/AFK — because it is
+  // infrastructure the operator runs, not a participant. Absent = false.
+  system?: boolean;
 }
 export interface SessionRegister {
   t: 'SessionRegister';
@@ -143,6 +147,7 @@ export function parseSessionMessage(text: string): ClientSessionMsg | null {
         manifest: parseManifest(o),
         ...(typeof o['resumeToken'] === 'string' ? { resumeToken: o['resumeToken'] } : {}),
         ...(o['simulatesActors'] === true ? { simulatesActors: true } : {}),
+        ...(o['system'] === true ? { system: true } : {}),
       };
     case 'SessionRegister':
       return {

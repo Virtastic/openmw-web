@@ -34,6 +34,9 @@ type Inbox = { json: JsonMsg[]; events: EventMsg[]; batches: BatchMsg[]; actorBa
 export class TestClient {
   // Overridden before hello() by callers that model a non-simulating participant.
   simulatesActors = true;
+  // Phase H: a headless sim peer sets this; the server then keeps it out of the player
+  // list, playerCount and maxPlayers. Default false = an ordinary human client.
+  system = false;
 
   readonly inbox: Inbox = { json: [], events: [], batches: [], actorBatches: [] };
   readonly closed: Promise<{ code: number; reason: string }>;
@@ -130,6 +133,7 @@ export class TestClient {
     this.sendJson({
       t: 'SessionHello', proto: 1, engineHash, lserVersion: 0, manifest,
       simulatesActors: this.simulatesActors,
+      ...(this.system ? { system: true } : {}),
     });
   }
 
