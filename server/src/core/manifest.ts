@@ -14,8 +14,29 @@ export type ContentCheck = { ok: true } | { ok: false; detail: string };
 export class ContentGate {
   private canonical: ManifestEntry[] | null = null;
   private holders = 0;
+  // Set when the SERVER owns the world's data (tier 2). The canonical list then comes from
+  // the sim peer — a real engine running the server's data, so its content list is computed
+  // by the same code as every player's — and is never adopted from a client nor dropped when
+  // the server empties.
+  private authoritative = false;
 
   constructor(private readonly mode: 'strict' | 'names' | 'off') {}
+
+  get isAuthoritative(): boolean {
+    return this.authoritative;
+  }
+
+  // Tier 2: pin the world's content list. Called once the sim peer reports its manifest.
+  //
+  // Deriving this list server-side is NOT possible and the attempt was measured: a real
+  // client sends `builtin.omwscripts#0, openmw-template.omwgame#1, ...`, and both of those
+  // live in the ENGINE's resources, not in the game data folder. Any folder scan or cfg
+  // parse would omit them and refuse 100% of clients.
+  setAuthoritative(entries: ManifestEntry[]): void {
+    this.canonical = entries.map((e) => ({ ...e }));
+    this.authoritative = true;
+    log('info', 'content.authoritative', { files: entries.map((e) => e.name).join(',') });
+  }
 
   // On ok the caller owns one hold and must release() it on disconnect.
   check(manifest: ManifestEntry[]): ContentCheck {
@@ -24,10 +45,14 @@ export class ContentGate {
       return { ok: true };
     }
     if (this.mode === 'strict') {
-      // TODO(M1): verify per-file sha256. Until then strict degrades to names.
-      log('warn', 'content.strict_stub', { note: 'strict mode not implemented in M0, using names' });
+      // TODO: verify per-file sha256 (needs a client-side hash binding). Until then strict
+      // degrades to names, which catches added/removed/reordered files but NOT a file
+      // edited in place.
+      log('warn', 'content.strict_stub', { note: 'strict mode not implemented, using names' });
     }
     if (this.canonical === null) {
+      // Adopt-first (tier 1): the server has no data of its own, so the first player defines
+      // the session. Never reached once setAuthoritative has run.
       this.canonical = manifest.map((e) => ({ ...e }));
       this.holders++;
       return { ok: true };
@@ -40,18 +65,41 @@ export class ContentGate {
 
   release(): void {
     if (this.holders > 0) this.holders--;
-    if (this.holders === 0) this.canonical = null; // server empty -> next player re-canonicalizes
+    // An authoritative list belongs to the WORLD, not to whoever happens to be connected, so
+    // an empty server must not forget it. Tier 1 still re-canonicalizes on the next player.
+    if (this.holders === 0 && !this.authoritative) this.canonical = null;
   }
 
   private diff(want: ManifestEntry[], got: ManifestEntry[]): string | null {
+    // Player-facing first: name the FILES that differ, because "load-order mismatch at
+    // position 3" tells a player nothing they can act on. The positional detail below still
+    // runs for anything the set difference cannot explain (pure reordering).
+    const wantNames = new Set(want.map((e) => e.name));
+    const gotNames = new Set(got.map((e) => e.name));
+    const missing = want.filter((e) => !gotNames.has(e.name)).map((e) => e.name);
+    const extra = got.filter((e) => !wantNames.has(e.name)).map((e) => e.name);
+    if (missing.length || extra.length) {
+      const runs = want.map((e) => e.name).join(' + ');
+      const parts: string[] = [];
+      if (missing.length) parts.push(`your game is missing ${missing.join(', ')}`);
+      if (extra.length) parts.push(`your game has extra content: ${extra.join(', ')}`);
+      return `this world runs ${runs}; ${parts.join('; ')}`;
+    }
+
     for (let i = 0; i < Math.max(want.length, got.length); i++) {
       const w = want[i];
       const g = got[i];
       if (!w) return `unexpected extra content file "${g!.name}" at position ${i}`;
       if (!g) return `missing content file "${w.name}" at position ${i}`;
-      if (w.name !== g.name) return `content file mismatch at position ${i}: expected "${w.name}", got "${g.name}"`;
-      if (w.size !== g.size) return `size mismatch for "${w.name}": expected ${w.size}, got ${g.size}`;
-      if (w.idx !== g.idx) return `load-order mismatch for "${w.name}": expected idx ${w.idx}, got ${g.idx}`;
+      if (w.name !== g.name)
+        return `load order differs: expected "${w.name}" at position ${i}, got "${g.name}"`;
+      // Size is only comparable when BOTH sides report one. Clients always send 0 because
+      // Lua cannot read file sizes (net.lua buildManifest), so comparing against a real
+      // server-side size would refuse every client. Same idiom as EngineGate's empty hash.
+      if (w.size !== 0 && g.size !== 0 && w.size !== g.size)
+        return `size mismatch for "${w.name}": expected ${w.size}, got ${g.size}`;
+      if (w.idx !== g.idx)
+        return `load order differs for "${w.name}": expected position ${w.idx}, got ${g.idx}`;
     }
     return null;
   }
