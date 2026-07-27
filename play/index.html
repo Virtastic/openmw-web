@@ -751,6 +751,21 @@
            } else {
              window.__omwMPEnabled = true;
              ENV.OPENMW_MP_URL = mpUrl;
+             // NOTE ON URL FLAGS — deliberately NOT blocked here, and the reasoning matters.
+             //
+             // ?start=<cell> is a boot-time teleport, so blocking it looks attractive. But a
+             // URL flag is one edit away from being re-added: anyone who can type ?start can
+             // delete the block, so client-side refusal buys close to nothing. It also breaks
+             // the test harness, which uses ?start to place scenario clients in retail cells.
+             //
+             // The console gate (ActionManager::toggleConsole) is worth having by the same
+             // reasoning inverted: bypassing THAT requires rebuilding the WASM engine, which
+             // is a real barrier rather than a text edit.
+             //
+             // Position is therefore enforced where it actually can be — server-side movement
+             // validation (speed/teleport/no-clip), which the sim peer makes possible for the
+             // first time and which is NOT yet implemented. Until it is, treat player position
+             // as client-authored and say so rather than implying a URL block secures it.
              var mpName = (/[?&]name=([^&]+)/.exec(location.search)||[])[1];
              var mpPass = (/[?&]pass=([^&]+)/.exec(location.search)||[])[1];
              // Harness mode: &mpauto=1&mpuser=<account> auto-registers/logs in with the
