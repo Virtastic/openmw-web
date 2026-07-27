@@ -191,3 +191,24 @@ test('sim peer: its account is ephemeral — no player doc is ever written', asy
     await server.close();
   }
 });
+
+test('sim peer: a content refusal is TERMINAL, not a crash to retry', async () => {
+  // The live bug this fixes: a peer whose data disagrees with the world is refused at hello,
+  // exits, and restartBackoffMs respawns it forever at ~360 MB a time — while players sit
+  // with frozen NPCs and only a `warn` explains it. Retrying cannot fix a misconfiguration.
+  const { sup, spawned, advance } = harness();
+  sup.ensure('world');
+  assert.equal(spawned.length, 1);
+
+  sup.disablePermanently('BAD_CONTENT: your game is missing Tribunal.esm');
+  await tick();
+  assert.equal(sup.running, 0, 'the running peer is stopped');
+  assert.match(String(sup.disabledReason), /Tribunal\.esm/,
+    'the reason is kept so an operator can see WHY simulation is off');
+
+  // No amount of time or re-ensuring brings it back.
+  advance(60_000);
+  sup.ensure('world');
+  sup.ensure('world');
+  assert.equal(spawned.length, 1, 'a permanently disabled peer is never respawned');
+});

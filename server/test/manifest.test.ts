@@ -110,3 +110,60 @@ test("mode 'off' ignores everything, including an authoritative list", () => {
   assert.deepEqual(gate.check(plus(without(REAL_CLIENT, 'land.esp'), 'Whatever.esp')), { ok: true },
     'off means off — it must short-circuit before the authoritative path');
 });
+
+// End-to-end: the world's content list comes from the SIM PEER, not from the first human.
+// This is the behaviour change — before it, whichever stranger connected first defined what
+// everyone else had to match.
+test('e2e: the sim peer pins the world content list and mismatched players are refused', async () => {
+  const { startServer } = await import('../src/server');
+  const { TestClient, tmpDataDir, MANIFEST } = await import('./helpers');
+  const { mkdirSync, writeFileSync } = await import('node:fs');
+  const { join } = await import('node:path');
+
+  // Tier 2 requires VALID game data on the server, otherwise the peer's manifest is not
+  // trusted (a server with no data has no business dictating content).
+  const dir = tmpDataDir();
+  const gd = join(dir, 'gamedata');
+  mkdirSync(gd, { recursive: true });
+  for (const f of ['Morrowind.esm', 'Morrowind.bsa']) writeFileSync(join(gd, f), 'x');
+
+  const server = await startServer({ dataDir: dir, port: 0, host: '127.0.0.1' });
+  try {
+    // The peer connects first and declares the world's content.
+    const peer = await TestClient.connect(server.port);
+    peer.system = true;
+    await peer.joinAsNew('simpeer_world');
+
+    // A player with the SAME content joins normally.
+    const ok = await TestClient.connect(server.port);
+    const welcome = await ok.joinAsNew('matching_player');
+    assert.ok(welcome.playerId > 0, 'a matching player joins');
+
+    // A player MISSING a file is refused, and told which one.
+    const bad = await TestClient.connect(server.port);
+    bad.hello(MANIFEST.filter((e) => e.name !== 'mp.omwscripts'));
+    const refusal = await bad.waitJson('SessionDisconnect');
+    assert.equal(refusal['code'], 'BAD_CONTENT');
+    assert.match(String(refusal['detail']), /mp\.omwscripts/,
+      'the refusal must name the file the player is missing');
+
+    // THE DISTINGUISHING CHECK. Everything above would also pass under plain adopt-first
+    // (the peer connected first, so its list would have been adopted anyway). What only
+    // AUTHORITATIVE mode gives is that the list belongs to the WORLD: empty the server
+    // completely, and a mismatched player is still refused instead of redefining the world.
+    peer.ws.close();
+    ok.ws.close();
+    bad.ws.close();
+    await new Promise((r) => setTimeout(r, 300)); // let the closes land, holders -> 0
+
+    const late = await TestClient.connect(server.port);
+    late.hello(MANIFEST.filter((e) => e.name !== 'mp.omwscripts'));
+    const stillRefused = await late.waitJson('SessionDisconnect');
+    assert.equal(stillRefused['code'], 'BAD_CONTENT',
+      'on an EMPTY server the world still dictates its content — this is the whole point, '
+      + 'and it is the one assertion adopt-first cannot satisfy');
+    late.ws.close();
+  } finally {
+    await server.close();
+  }
+});

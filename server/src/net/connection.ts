@@ -63,6 +63,12 @@ export interface ServerCtx {
   roster: Roster;
   content: ContentGate;
   engine: EngineGate;
+  // Phase H: present only when a sim peer is configured. Used to stop retrying a peer that
+  // was refused for a reason retrying cannot fix.
+  simPeers?: { disablePermanently(reason: string): void };
+  // Tier 2 (the server has its own valid game data). Only then may a sim peer's manifest be
+  // pinned as the world's canonical content list.
+  gameDataOk?: boolean;
   loginLimiter: IpRateLimiter;
   commands: CommandRegistry;
   commandCtx: CommandContext;
@@ -192,6 +198,17 @@ export class Connection implements Peer {
     }
     this.ws.send(frame);
     return true;
+  }
+
+  // Refuse a connection at setup (bad engine hash / bad content). Identical to disconnect()
+  // for a human, but a SYSTEM peer refused here is a misconfiguration that will refuse the
+  // same way every time — so the supervisor is told to stop trying rather than respawning a
+  // ~360 MB process forever while players sit with frozen NPCs and nothing explains why.
+  private refuseSetup(code: 'BAD_ENGINE' | 'BAD_CONTENT', detail: string): void {
+    if (this.isSystem) {
+      this.ctx.simPeers?.disablePermanently(`${code}: ${detail}`);
+    }
+    this.disconnect(code, detail);
   }
 
   disconnect(code: DisconnectCode, detail: string): void {
@@ -521,16 +538,26 @@ export class Connection implements Peer {
     }
     const engineCheck = this.ctx.engine.check(msg.engineHash);
     if (!engineCheck.ok) {
-      this.disconnect('BAD_ENGINE', engineCheck.detail);
+      this.refuseSetup('BAD_ENGINE', engineCheck.detail);
       return;
     }
     this.engineHeld = true;
     const contentCheck = this.ctx.content.check(msg.manifest);
     if (!contentCheck.ok) {
-      this.disconnect('BAD_CONTENT', contentCheck.detail);
+      this.refuseSetup('BAD_CONTENT', contentCheck.detail);
       return;
     }
     this.contentHeld = true;
+    // Tier 2: the sim peer runs the SERVER's own game data, and its content list is computed
+    // by the same engine code as every player's client — so it is the world's truth. Pin it
+    // the first time the peer connects; from then on players are measured against the world
+    // rather than against whichever stranger happened to connect first.
+    //
+    // Pinned AFTER the peer's own check passes, so a peer that is itself misconfigured
+    // cannot install a broken canonical list and lock everyone out.
+    if (this.isSystem && this.ctx.gameDataOk && !this.ctx.content.isAuthoritative) {
+      this.ctx.content.setAuthoritative(msg.manifest);
+    }
     // msg.resumeToken: reserved for M1 session resume ([login].resumeWindowSec); ignored.
     clearTimeout(this.helloTimer);
     this.state = 'HELLO_OK';

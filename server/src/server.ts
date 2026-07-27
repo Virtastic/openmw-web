@@ -47,6 +47,7 @@ import { log } from './log';
 import { metrics } from './metrics';
 import { SimPeerSupervisor } from './core/simpeer';
 import { WorldBrowser } from './core/worldbrowser';
+import { detectGameData, gameDataDir } from './core/gamedata';
 
 export const VERSION = '0.1.0';
 
@@ -247,11 +248,13 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       : {}),
   });
 
+  const contentGate = new ContentGate(config.content.enforce);
+
   const ctx: ServerCtx = {
     config,
     accounts,
     roster,
-    content: new ContentGate(config.content.enforce),
+    content: contentGate,
     engine: new EngineGate(config.engine.enforce),
     loginLimiter: new IpRateLimiter(config.limits.loginPerMinPerIp),
     commands,
@@ -313,11 +316,20 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // periodic observation of the roster cannot drift out of sync with it the way paired
   // hooks can (a missed leave would strand a peer forever — exactly the leak the reaper
   // exists to prevent). Disabled by default; see [simPeer] in config.default.toml.
+  // Tier detection. The peer's manifest becomes the world's canonical content list once it
+  // connects (see connection.ts handleHello) — the server cannot DERIVE that list, because a
+  // real client's includes engine-resource entries (builtin.omwscripts, *.omwgame) that no
+  // data folder contains.
+  const gameData = detectGameData(gameDataDir(opts.dataDir));
+  log('info', 'gamedata.detect', { ok: gameData.ok, reason: gameData.reason });
+
   const simPeers = new SimPeerSupervisor({
     settings: config.simPeer,
     wsUrl: () => `ws://127.0.0.1:${port}/ws`,
     password: config.server.password,
   });
+  ctx.simPeers = simPeers;
+  ctx.gameDataOk = gameData.ok;
   const WORLD_KEY = 'world'; // one world per process today; F3 (multi-world) is not built
   const simPeerTick = setInterval(() => {
     if (!config.simPeer.enabled) return;

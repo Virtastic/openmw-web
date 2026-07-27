@@ -59,6 +59,9 @@ export interface SimPeerDeps {
 export class SimPeerSupervisor {
   private peers = new Map<string, Peer>();
   private blockedUntil = new Map<string, number>();
+  // Set once a peer is refused for a reason that will not change on retry (bad content, bad
+  // engine hash). Distinct from blockedUntil, which is a temporary crash backoff.
+  private permanentlyDisabled?: string;
   private sweepTimer?: NodeJS.Timeout;
   private readonly now: () => number;
 
@@ -74,10 +77,24 @@ export class SimPeerSupervisor {
     return this.peers.has(key);
   }
 
+  // A peer refused for CONTENT or ENGINE reasons is not a crash to retry — it is a
+  // misconfiguration that will refuse identically every time. Retrying would respawn a
+  // ~360 MB process forever while players sit with frozen NPCs and nothing says why.
+  disablePermanently(reason: string): void {
+    this.permanentlyDisabled = reason;
+    log('error', 'simpeer.disabled_permanently', { reason });
+    for (const key of [...this.peers.keys()]) this.stop(key);
+  }
+
+  get disabledReason(): string | undefined {
+    return this.permanentlyDisabled;
+  }
+
   // Called when a human is present in `key`'s world. Idempotent: it either starts the peer,
   // or clears an existing peer's idle deadline so the reaper leaves it alone.
   ensure(key: string): void {
     if (!this.deps.settings.enabled) return;
+    if (this.permanentlyDisabled !== undefined) return;
     const existing = this.peers.get(key);
     if (existing) {
       existing.idleSince = undefined; // humans are back; cancel any pending reap

@@ -220,8 +220,12 @@ export class TestClient {
 
   // Full happy path up to IN_WORLD. Returns the Welcome fields tests assert on (it is
   // consumed from the inbox here, so it cannot be looked up afterwards).
-  async joinAsNew(account: string, password = 'hunter22'): Promise<{ playerId: number; welcome: JsonMsg }> {
-    this.hello();
+  async joinAsNew(
+    account: string,
+    password = 'hunter22',
+    manifest: ManifestEntry[] = MANIFEST,
+  ): Promise<{ playerId: number; welcome: JsonMsg }> {
+    this.hello(manifest);
     await this.waitJson('SessionHelloOk');
     this.register(account, password);
     const w = await this.waitJson('SessionWelcome');
