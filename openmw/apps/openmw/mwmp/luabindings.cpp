@@ -15,6 +15,7 @@
 #include <components/lua/serialization.hpp>
 
 #include "../mwbase/environment.hpp"
+#include "../mwbase/inputmanager.hpp"
 #include "../mwbase/mechanicsmanager.hpp"
 #include "../mwbase/statemanager.hpp"
 #include "../mwbase/windowmanager.hpp"
@@ -23,6 +24,8 @@
 #include "../mwlua/context.hpp"
 #include "../mwlua/luamanagerimp.hpp"
 #include "../mwlua/object.hpp"
+
+#include "../mwinput/actions.hpp"
 
 #include "netmanager.hpp"
 
@@ -150,6 +153,20 @@ namespace MWMP
         api["getLoginTicket"] = []() { return getEnvString("OPENMW_MP_TICKET"); };
         api["getEngineHash"] = []() { return getEnvString("OPENMW_MP_ENGINEHASH"); };
         api["vectorsEnabled"] = []() { return std::getenv("OPENMW_MP_VECTORS") != nullptr; };
+        // Test seam for the multiplayer console gate. The harness cannot press a key (no SDL
+        // injection), so without a way to REQUEST the console and then observe whether it
+        // opened, the gate could only be eyeballed in a screenshot.
+        //
+        // requestConsole() deliberately routes through the same ActionManager::toggleConsole
+        // the keybind uses, so the test exercises the real guard rather than a copy of it.
+        api["requestConsole"] = []() {
+            // A_Console == the console action id (mwinput/actions.hpp); executeAction is the
+            // same entry point the keybind uses.
+            MWBase::Environment::get().getInputManager()->executeAction(MWInput::A_Console);
+        };
+        api["isConsoleOpen"] = []() {
+            return MWBase::Environment::get().getWindowManager()->isConsoleMode();
+        };
         // Session-tier state is decided in Lua (scripts/mp/net.lua); mirror it into NetManager.
         api["_setState"] = [](std::string_view name) { NetManager::instance().setSessionState(name); };
         // M2 rejoin restore: re-run the chargen record edits outside the chargen GUI.

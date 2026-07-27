@@ -382,6 +382,15 @@ local function pollHarness()
         -- because the question is WHICH world the client comes back to.
         if cmd == 'netdrop' then core.sendGlobalEvent('mpNetDrop', {}) end
 
+        -- Test hook for the multiplayer console gate. Goes through the engine's own
+        -- executeAction(A_Console) — the same entry point the keybind uses — then mirrors
+        -- what the ENGINE says about console state, so the assertion is on real state and
+        -- not on how a screenshot looks.
+        if cmd == 'console:request' then
+            mp.requestConsole()
+            mp.testSet('consoleOpen', tostring(mp.isConsoleOpen()))
+        end
+
         local joinId = cmd:match('^worldjoin:([%w_-]+)$')
         if joinId then core.sendGlobalEvent('mpSocialJoinById', { id = joinId }) end
 
