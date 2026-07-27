@@ -16,8 +16,10 @@
 // ENGINE's resources, not from any data folder — so no directory scan can reproduce it. The
 // authoritative manifest comes from the sim peer itself (see ContentGate.setAuthoritative).
 
-import { existsSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
+import { log } from '../log';
 
 export interface GameData {
   ok: boolean;
@@ -145,4 +147,33 @@ export function buildPeerCfg(data: GameData, resourcesDir: string): string {
 /** Conventional location: <dataDir>/gamedata — the operator drops their files here. */
 export function gameDataDir(dataDir: string): string {
   return join(dataDir, 'gamedata');
+}
+
+/**
+ * sha256 per CONTENT file, for `[content] enforce = "strict"`.
+ *
+ * ARCHIVES ARE DELIBERATELY NOT HASHED. Measured in play/mwdata: content files total ~90 MB
+ * (Morrowind 76.1 + Tribunal 4.3 + Bloodmoon 9.2) against ~471 MB of BSAs. Gameplay records —
+ * items, stats, NPCs, spells, everything worth cheating with — live in the content files;
+ * BSAs hold meshes, textures and sounds, so tampering there changes what a player SEES, not
+ * the balance. Hashing them would be ~7x the cost for little security value, and far worse in
+ * the browser: the client streams archives on demand via range reads, so hashing one would
+ * force a full download of a file it otherwise never reads end to end. Content files are
+ * already read in full at load, so hashing them costs no extra I/O.
+ *
+ * Returns a name -> sha256 map. Unreadable files are omitted rather than throwing: a hash we
+ * could not compute must not become a refusal for every player.
+ */
+export function hashContentFiles(data: GameData): Map<string, string> {
+  const out = new Map<string, string>();
+  if (!data.ok) return out;
+  for (const name of data.contentFiles) {
+    try {
+      const buf = readFileSync(join(data.dir, name));
+      out.set(name, createHash('sha256').update(buf).digest('hex'));
+    } catch (err) {
+      log('warn', 'gamedata.hash_failed', { file: name, error: String(err) });
+    }
+  }
+  return out;
 }

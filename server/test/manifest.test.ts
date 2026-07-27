@@ -167,3 +167,61 @@ test('e2e: the sim peer pins the world content list and mismatched players are r
     await server.close();
   }
 });
+
+// ---- strict mode: per-file hashes ------------------------------------------------------
+// names-and-order stops a player ADDING or REMOVING a file. It cannot stop one who edits
+// Morrowind.esm in place to buff an item — same name, same index. That is what strict closes.
+
+const hashed = (m: ManifestEntry[], overrides: Record<string, string> = {}): ManifestEntry[] =>
+  m.map((e) => ({ ...e, sha256: overrides[e.name] ?? `hash-of-${e.name}` }));
+
+test('strict: a TAMPERED file is refused and named, where names mode lets it through', () => {
+  const world = hashed(REAL_CLIENT);
+  const tampered = hashed(REAL_CLIENT, { 'land.esp': 'edited-by-a-cheater' });
+
+  // The whole point: identical names, identical order — names mode cannot tell them apart.
+  const lenient = new ContentGate('names');
+  lenient.setAuthoritative(world);
+  assert.deepEqual(lenient.check(tampered), { ok: true },
+    'names mode is blind to an edited file — this is the hole strict exists to close');
+
+  const strict = new ContentGate('strict');
+  strict.setAuthoritative(world);
+  const r = strict.check(tampered);
+  assert.equal(r.ok, false);
+  const detail = (r as { ok: false; detail: string }).detail;
+  assert.match(detail, /land\.esp/, 'the refusal names the file');
+  assert.doesNotMatch(detail, /edited-by-a-cheater|hash-of-/,
+    'never show raw hashes — they tell a player nothing actionable');
+});
+
+test('strict: a client that reports NO hashes is refused; names mode still accepts it', () => {
+  const world = hashed(REAL_CLIENT);
+
+  const strict = new ContentGate('strict');
+  strict.setAuthoritative(world);
+  const r = strict.check(REAL_CLIENT); // no sha256 fields at all
+  assert.equal(r.ok, false,
+    'strict must NOT silently degrade to names for a client that cannot hash — that client '
+    + 'is exactly the one most likely to have been modified');
+  assert.match((r as { ok: false; detail: string }).detail, /update your client/);
+
+  const lenient = new ContentGate('names');
+  lenient.setAuthoritative(world);
+  assert.deepEqual(lenient.check(REAL_CLIENT), { ok: true },
+    'under names the same client is fine — that is what names means');
+});
+
+test('strict: matching hashes pass', () => {
+  const gate = new ContentGate('strict');
+  gate.setAuthoritative(hashed(REAL_CLIENT));
+  assert.deepEqual(gate.check(hashed(REAL_CLIENT)), { ok: true });
+});
+
+test('strict: a server with no hashes of its own does not refuse anyone', () => {
+  // Tier 1, or files the server could not read. Nothing to compare against, so nothing to
+  // refuse on — a hash we failed to compute must not lock out every player.
+  const gate = new ContentGate('strict');
+  gate.setAuthoritative(REAL_CLIENT); // canonical carries no sha256
+  assert.deepEqual(gate.check(hashed(REAL_CLIENT)), { ok: true });
+});

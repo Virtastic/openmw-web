@@ -44,11 +44,12 @@ export class ContentGate {
       this.holders++;
       return { ok: true };
     }
-    if (this.mode === 'strict') {
-      // TODO: verify per-file sha256 (needs a client-side hash binding). Until then strict
-      // degrades to names, which catches added/removed/reordered files but NOT a file
-      // edited in place.
-      log('warn', 'content.strict_stub', { note: 'strict mode not implemented, using names' });
+    // 'strict' additionally compares per-file sha256. Names-and-order alone catches a player
+    // ADDING SuperSword.esp or REMOVING Tribunal.esm, but not one who edits Morrowind.esm in
+    // place to buff an item — same name, same index. Hashes close that.
+    if (this.mode === 'strict' && this.canonical !== null) {
+      const hashMismatch = this.diffHashes(this.canonical, manifest);
+      if (hashMismatch) return { ok: false, detail: hashMismatch };
     }
     if (this.canonical === null) {
       // Adopt-first (tier 1): the server has no data of its own, so the first player defines
@@ -68,6 +69,37 @@ export class ContentGate {
     // An authoritative list belongs to the WORLD, not to whoever happens to be connected, so
     // an empty server must not forget it. Tier 1 still re-canonicalizes on the next player.
     if (this.holders === 0 && !this.authoritative) this.canonical = null;
+  }
+
+  // Per-file integrity, only under 'strict'. Runs AFTER diff() has established that the two
+  // lists hold the same files in the same order, so this compares like with like.
+  //
+  // A client that reports NO hashes is refused under strict — it must not silently degrade to
+  // names, because a client that cannot (or will not) hash is exactly the one most likely to
+  // have been modified. Under 'names' the same client is fine; that is what names means.
+  private diffHashes(want: ManifestEntry[], got: ManifestEntry[]): string | null {
+    const byName = new Map(got.map((e) => [e.name, e]));
+    const unhashed: string[] = [];
+    const tampered: string[] = [];
+    for (const w of want) {
+      // The server side may legitimately lack a hash (tier 1, or a file it cannot read).
+      // Nothing to compare against, so nothing to refuse on.
+      if (!w.sha256) continue;
+      const g = byName.get(w.name);
+      if (!g) continue; // diff() already reported the missing file, with a better message
+      if (!g.sha256) unhashed.push(w.name);
+      else if (g.sha256 !== w.sha256) tampered.push(w.name);
+    }
+    if (tampered.length) {
+      // Names, never the hash pair — "expected a1b2… got c3d4…" tells a player nothing.
+      return `${tampered.join(', ')} ${tampered.length === 1 ? 'does' : 'do'} not match this `
+        + "world's copy — reinstall or verify your game files";
+    }
+    if (unhashed.length) {
+      return 'this world verifies game files and your client did not report them'
+        + ' — update your client';
+    }
+    return null;
   }
 
   private diff(want: ManifestEntry[], got: ManifestEntry[]): string | null {
