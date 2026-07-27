@@ -79,8 +79,11 @@ namespace SDLUtil
         bool mWindowHasFocus;
         bool mMouseInWindow;
 
-        Uint16 mScaleX;
-        Uint16 mScaleY;
+        // Drawable-pixels-per-window-unit. MUST be floating point: a fractional device-pixel ratio
+        // (Windows display scaling 125%/150%, or browser zoom) truncates to 1 as an integer, which
+        // leaves mouse coordinates unscaled while the GUI scales correctly -> cursor/click offset.
+        float mScaleX;
+        float mScaleY;
     };
 
 }
