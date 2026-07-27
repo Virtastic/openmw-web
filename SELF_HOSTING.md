@@ -160,5 +160,30 @@ already do this in their footers, so leaving them intact is enough. The demo
 world is freely-licensed content (see `CREDITS-DEMO-DATA.txt`); Morrowind
 game data is **not** included and must never be bundled by hosts either.
 
+### Multiplayer servers and game data
+
+The multiplayer relay needs **no game data at all** — movement, chat, objects, quests,
+combat and the social layer all work with nothing installed on the server. That is the
+normal configuration and nothing below is required for it.
+
+Game data on a *server* buys exactly one thing: the **simulation peer**, a headless OpenMW
+that runs NPCs on the operator's machine instead of in a player's browser. It closes the
+largest anti-cheat hole (a modified client can no longer author NPC behaviour for everyone
+else) and lets the server validate content at join.
+
+Two things follow, and neither is a change to the licensing stance above:
+
+- **Nothing is bundled.** An operator who wants this places *their own legally-owned* copy
+  in `<dataDir>/gamedata`, exactly as a player points the browser at their own `Data Files`.
+  Distributing that data with the server would be as wrong as bundling it with the client.
+- **Without it you lose nothing but the peer.** Multiplayer stays fully functional; NPCs are
+  simulated by a player's client, which is how it has always worked.
+
+What tier 2 additionally requires, and which the shipped deploy does **not** yet provide:
+a `/opt/openmw-mp/gamedata:/data/gamedata:ro` mount, `mem_limit` raised from 384 MB to
+around 1 GB per peer (measured ~360 MB RSS each), and a base image carrying an `openmw`
+binary — the current image is `node:22-alpine` with no engine in it. Until those exist the
+peer stays off in production regardless of what is in the folder.
+
 ---
 WASM port © 2025–2026 [Virtastic](https://virtastic.app) — GPL-3.0-or-later

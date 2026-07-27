@@ -115,6 +115,30 @@ Previously an argument; now a negative-controlled test. A non-holder forging an
 still reaches the same victim, proving the check discriminates rather than the stream being
 dead. Remove the holder check and it fails.
 
+## Content validation (added 2026-07-27)
+
+The server can now own its world's content list rather than adopting whichever stranger
+connects first. Worth recording HOW, because the obvious approach does not work.
+
+**A server cannot derive the content list.** Captured from a real client:
+`builtin.omwscripts#0, openmw-template.omwgame#1, land.esp#2, examplesuite.omwaddon#3,
+mp.omwscripts#4`. Entries 0 and 1 live in the ENGINE's resources, not in any data folder, so
+neither a directory scan nor an `openmw.cfg` parse can reproduce them — both would refuse
+100% of clients. Two successive plan drafts proposed exactly that; a one-line temporary log
+plus one `s01` run killed the idea before it was built.
+
+**So the sim peer reports it.** The peer is a real engine running the server's data, so its
+list is computed by the same code as every player's client — correct by construction. It is
+pinned only after the peer's OWN content check passes, so a misconfigured peer cannot install
+a broken canonical and lock everyone out.
+
+**`strict` now means something.** It compares per-file sha256 in addition to names and order,
+which is the difference between "you must have the same mod list" and "you must have the same
+files". Archives are deliberately excluded: content files are ~90 MB and already read in full
+at load, while BSAs are ~471 MB streamed on demand, so hashing them would force a full
+download to protect meshes and textures. NOT usable yet — no client sends hashes until the
+`mp.getContentHashes` engine binding exists, so enabling strict today refuses everyone.
+
 ## What is still NOT true, stated plainly
 
 - **"Public, private and party" maps to one world per process today.** A peer per SESSION
