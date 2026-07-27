@@ -1,0 +1,248 @@
+// Copyright (C) 2025-2026 Virtastic - https://virtastic.app
+// SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
+// F3 — the world supervisor: many world PROCESSES, one directory in front of them.
+//
+// WHY PROCESSES AND NOT ONE PROCESS WITH MANY WORLDS. Not only because Node is
+// single-threaded (that is the performance half). `core/authority.ts` keeps its tuning in a
+// module-level singleton that `configureAuthority()` MUTATES, and `metrics` is a module
+// singleton too. Two worlds sharing a process would share both: the last world to boot
+// would silently retune every other world's authority election, and no metric could be
+// attributed to a world. Process-per-world is a correctness boundary, not a preference.
+//
+// This is also what makes a sim peer PER SESSION real: each world process runs its own
+// SimPeerSupervisor (H4), so a private session that spawns a world gets a headless peer with
+// it, and reaping the world reaps the peer.
+//
+// The lifecycle mirrors core/simpeer.ts deliberately — cap, idle reap, crash backoff — for
+// the same reason: a world per party is how a box runs out of memory if nothing reaps.
+
+import { spawn, type ChildProcess } from 'node:child_process';
+import { mkdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { log } from '../log';
+
+export type WorldMode = 'public' | 'private' | 'party';
+
+export interface WorldSettings {
+  worldsDir: string; // per-world data dirs live under here
+  serverEntry: string; // path to the world server entry (dist/server.mjs)
+  nodeBin: string;
+  basePort: number;
+  maxWorlds: number; // hard cap across ALL modes
+  idleReapMs: number; // a non-public world with no players this long is stopped
+  startTimeoutMs: number;
+  restartBackoffMs: number;
+  publicWorlds: string[]; // always-on world ids, started at boot and never reaped
+}
+
+export interface WorldInfo {
+  id: string;
+  mode: WorldMode;
+  port: number;
+  playerCount: number;
+  maxPlayers: number;
+  name: string;
+  up: boolean;
+  ownerAccount?: string; // private/party: who created it
+}
+
+interface World {
+  id: string;
+  mode: WorldMode;
+  port: number;
+  child: ChildProcess;
+  startedAt: number;
+  idleSince?: number;
+  stopping: boolean;
+  ownerAccount?: string;
+  lastStatus?: { playerCount: number; maxPlayers: number; name: string };
+}
+
+export interface WorldDeps {
+  settings: WorldSettings;
+  spawner?: (id: string, args: string[], env: NodeJS.ProcessEnv) => ChildProcess;
+  fetchStatus?: (port: number) => Promise<{ playerCount: number; maxPlayers: number; name: string } | null>;
+  now?: () => number;
+}
+
+export class WorldSupervisor {
+  private worlds = new Map<string, World>();
+  private blockedUntil = new Map<string, number>();
+  private usedPorts = new Set<number>();
+  private pollTimer?: NodeJS.Timeout;
+  private readonly now: () => number;
+
+  constructor(private readonly deps: WorldDeps) {
+    this.now = deps.now ?? Date.now;
+  }
+
+  get running(): number {
+    return this.worlds.size;
+  }
+
+  list(): WorldInfo[] {
+    return [...this.worlds.values()].map((w) => ({
+      id: w.id,
+      mode: w.mode,
+      port: w.port,
+      playerCount: w.lastStatus?.playerCount ?? 0,
+      maxPlayers: w.lastStatus?.maxPlayers ?? 0,
+      name: w.lastStatus?.name ?? w.id,
+      up: w.lastStatus !== undefined,
+      ...(w.ownerAccount ? { ownerAccount: w.ownerAccount } : {}),
+    }));
+  }
+
+  get(id: string): WorldInfo | undefined {
+    return this.list().find((w) => w.id === id);
+  }
+
+  // Start the always-on worlds. Public worlds are never reaped: an empty public world must
+  // still be joinable, which is the whole point of it being public.
+  startPublic(): void {
+    for (const id of this.deps.settings.publicWorlds) this.ensure(id, 'public');
+  }
+
+  // Idempotent. Returns the world (existing or new), or null if it could not be started —
+  // callers must handle null rather than assume a world exists.
+  ensure(id: string, mode: WorldMode, ownerAccount?: string): WorldInfo | null {
+    const existing = this.worlds.get(id);
+    if (existing) {
+      existing.idleSince = undefined;
+      return this.get(id)!;
+    }
+    if (this.worlds.size >= this.deps.settings.maxWorlds) {
+      log('warn', 'world.at_cap', { id, running: this.worlds.size, cap: this.deps.settings.maxWorlds });
+      return null;
+    }
+    const blocked = this.blockedUntil.get(id);
+    if (blocked !== undefined && this.now() < blocked) {
+      log('warn', 'world.backoff', { id });
+      return null;
+    }
+    return this.start(id, mode, ownerAccount);
+  }
+
+  private allocPort(): number | null {
+    const { basePort, maxWorlds } = this.deps.settings;
+    for (let p = basePort; p < basePort + maxWorlds * 4; p++) {
+      if (!this.usedPorts.has(p)) return p;
+    }
+    return null;
+  }
+
+  private start(id: string, mode: WorldMode, ownerAccount?: string): WorldInfo | null {
+    const s = this.deps.settings;
+    const port = this.allocPort();
+    if (port === null) {
+      log('error', 'world.no_port', { id });
+      return null;
+    }
+    const dataDir = join(s.worldsDir, id);
+    try {
+      mkdirSync(dataDir, { recursive: true });
+    } catch (err) {
+      log('error', 'world.mkdir_failed', { id, error: String(err) });
+      return null;
+    }
+    const args = [s.serverEntry, '--data', dataDir, '--port', String(port)];
+    let child: ChildProcess;
+    try {
+      const spawner = this.deps.spawner
+        ?? ((_id, a, env) => spawn(s.nodeBin, a, { env, stdio: 'ignore' }));
+      child = spawner(id, args, { ...process.env, OMW_WORLD_ID: id, OMW_WORLD_MODE: mode });
+    } catch (err) {
+      log('error', 'world.spawn_failed', { id, error: String(err) });
+      return null;
+    }
+    this.usedPorts.add(port);
+    const world: World = { id, mode, port, child, startedAt: this.now(), stopping: false, ownerAccount };
+    this.worlds.set(id, world);
+    log('info', 'world.started', { id, mode, port, pid: child.pid ?? -1 });
+
+    child.on('exit', (code, signal) => {
+      if (this.worlds.get(id) !== world) return; // a stale exit must not evict its successor
+      this.worlds.delete(id);
+      this.usedPorts.delete(port);
+      if (world.stopping) {
+        log('info', 'world.stopped', { id });
+        return;
+      }
+      this.blockedUntil.set(id, this.now() + s.restartBackoffMs);
+      log('error', 'world.crashed', { id, code: code ?? -1, signal: signal ?? '' });
+    });
+    child.on('error', (err) => log('error', 'world.child_error', { id, error: String(err) }));
+    return this.get(id)!;
+  }
+
+  // Poll every world's /status: it is the same endpoint the lobby uses, so the directory
+  // reports exactly what a player would see, and a world that stops answering is marked
+  // down rather than silently listed as healthy.
+  async poll(): Promise<void> {
+    const fetchStatus = this.deps.fetchStatus ?? defaultFetchStatus;
+    await Promise.all([...this.worlds.values()].map(async (w) => {
+      const st = await fetchStatus(w.port);
+      if (st) {
+        w.lastStatus = st;
+        // Public worlds are never idle-reaped; see startPublic. This is guarded HERE (never
+        // start the idle clock) and again in sweep() (never act on it). That redundancy is
+        // DELIBERATE and verified: removing either guard alone keeps the property, removing
+        // both breaks it. Do not delete one as dead code — a public world quietly vanishing
+        // is players failing to join the world the lobby is advertising.
+        if (w.mode !== 'public') {
+          if (st.playerCount > 0) w.idleSince = undefined;
+          else if (w.idleSince === undefined) w.idleSince = this.now();
+        }
+      } else {
+        w.lastStatus = undefined; // down: reported as up:false, not omitted
+      }
+    }));
+    this.sweep();
+  }
+
+  sweep(): void {
+    const cutoff = this.now() - this.deps.settings.idleReapMs;
+    for (const w of [...this.worlds.values()]) {
+      if (w.mode === 'public') continue; // second half of the deliberate guard; see poll()
+      if (w.idleSince !== undefined && w.idleSince <= cutoff) {
+        log('info', 'world.reaped', { id: w.id, idleMs: this.now() - w.idleSince });
+        this.stop(w.id);
+      }
+    }
+  }
+
+  startPolling(intervalMs = 5_000): void {
+    if (this.pollTimer) return;
+    this.pollTimer = setInterval(() => void this.poll(), intervalMs);
+    this.pollTimer.unref();
+  }
+
+  stop(id: string): void {
+    const w = this.worlds.get(id);
+    if (!w) return;
+    w.stopping = true;
+    // SIGTERM so the world drains and flushes its stores; main.ts already handles it.
+    w.child.kill('SIGTERM');
+  }
+
+  stopAll(): void {
+    if (this.pollTimer) clearInterval(this.pollTimer);
+    this.pollTimer = undefined;
+    for (const id of [...this.worlds.keys()]) this.stop(id);
+  }
+}
+
+async function defaultFetchStatus(port: number): Promise<{ playerCount: number; maxPlayers: number; name: string } | null> {
+  try {
+    const r = await fetch(`http://127.0.0.1:${port}/status`, { signal: AbortSignal.timeout(2000) });
+    if (!r.ok) return null;
+    const j = await r.json() as { playerCount?: number; maxPlayers?: number; name?: string };
+    return {
+      playerCount: typeof j.playerCount === 'number' ? j.playerCount : 0,
+      maxPlayers: typeof j.maxPlayers === 'number' ? j.maxPlayers : 0,
+      name: typeof j.name === 'string' ? j.name : `world:${port}`,
+    };
+  } catch {
+    return null; // not up yet, or wedged — either way it is not joinable
+  }
+}
