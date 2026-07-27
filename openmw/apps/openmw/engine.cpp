@@ -416,7 +416,12 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     // if there is a separate Lua thread, it starts the update now
     mLuaWorker->allowUpdate(frameStart, frameNumber, *stats);
 
-    mViewer->renderingTraversals();
+    // H1 sim-peer spike: simulation (AI, physics, scripts) ran in updateTraversal() above;
+    // drawing is this call alone. Skipping it is the entire headless saving — GL is paid
+    // once at init and zero per frame. allowUpdate/finishUpdate stay paired around it.
+    static const bool sHeadless = std::getenv("OPENMW_HEADLESS") != nullptr;
+    if (!sHeadless)
+        mViewer->renderingTraversals();
 
     mLuaWorker->finishUpdate(frameStart, frameNumber, *stats);
 
@@ -599,6 +604,13 @@ void OMW::Engine::createWindow()
         checkSDLError(SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 1));
         checkSDLError(SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, antialiasing));
     }
+
+    // H1 sim-peer spike (Phase H): create the window HIDDEN and never render (frame()
+    // skips renderingTraversals). A real GL context is still created so RenderingManager
+    // constructs normally — the saving is per-frame, not at init. On a displayless Linux
+    // box this becomes SDL_VIDEODRIVER=offscreen instead of a hidden window.
+    if (std::getenv("OPENMW_HEADLESS") != nullptr)
+        flags |= SDL_WINDOW_HIDDEN;
 
     osg::ref_ptr<SDLUtil::GraphicsWindowSDL2> graphicsWindow;
     while (!graphicsWindow || !graphicsWindow->valid())
