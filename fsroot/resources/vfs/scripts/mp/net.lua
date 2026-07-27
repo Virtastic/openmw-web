@@ -126,6 +126,10 @@ function net.onOpen()
         engineHash = mp.getEngineHash(),
         lserVersion = 0,
         manifest = buildManifest(),
+        -- Phase H: a headless simulation peer (OPENMW_MP_SYSTEM=1) is infrastructure, not a
+        -- participant, so it asks the server to keep it out of the player list, the count,
+        -- and maxPlayers. mp.isSystem() is false for every normal client.
+        system = mp.isSystem(),
         -- We run a real engine, so we can hold cell actor authority. The server refuses to
         -- hand a cell to anything that does not claim this: authority is otherwise elected
         -- on network fitness, and a protocol-only client (a bot, a load tool) is a
