@@ -7,9 +7,10 @@
 
 import { build } from 'esbuild';
 
-await build({
-  entryPoints: ['src/main.ts'],
-  outfile: 'dist/server.mjs',
+// Two bundles: the world server (what a self-hoster and every test runs) and the F3
+// gateway (an ADDITION for operators running many worlds). Shared options so they can never
+// drift on target/format/externals.
+const common = {
   bundle: true,
   platform: 'node',
   target: 'node22',
@@ -21,4 +22,7 @@ await build({
     js: "import { createRequire as __cr } from 'node:module'; const require = __cr(import.meta.url);",
   },
   logLevel: 'info',
-});
+};
+
+await build({ ...common, entryPoints: ['src/main.ts'], outfile: 'dist/server.mjs' });
+await build({ ...common, entryPoints: ['src/gateway/main.ts'], outfile: 'dist/gateway.mjs' });
