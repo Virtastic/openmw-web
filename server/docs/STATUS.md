@@ -42,7 +42,9 @@ combat, quests, world state, ops), plus:
 | item | state |
 | --- | --- |
 | **D-cap-5** — split actor authority within a cell | Not built, and the premise is now WEAKER: with a sim peer holding the cell (Phase H), the holder is a dedicated machine rather than a player's browser, which was the original motivation. Confirm the need before building. |
-| **F3/F4** — multi-process gateway | **Not built.** Verified 2026-07-27: no gateway, no `child_process` in `server/src`, no `[worlds]` config. A task list marked this done; it was wrong and has been corrected. This is what a peer PER SESSION (private/party) depends on. |
+| **F3** — multi-world gateway | **BUILT** 2026-07-27. `dist/gateway.mjs` supervises world PROCESSES and serves a directory (`GET/POST /worlds`). Public worlds are always on; private/party spawn on demand and are reaped when idle. Proven with real processes: isolated rosters, `world.reaped idleMs=120030`, public untouched. Each world runs its own sim peer, so a per-session peer comes for free. |
+| **F4** — cross-world ops | Not built: aggregated metrics with a per-world label, and rolling restarts. Cross-world BANS now work (they moved to the shared store with F1). |
+| **Client lobby UI** | Not built. Nothing in-game talks to the gateway yet — a player cannot browse or create worlds from MyGUI. This is the gap between "the platform works" and "a player can use it". |
 | **F2** — 256-player ceiling | Not measured. `wasm-build/measure-256.sh` runs it. Extrapolation says server-spread is fine and the wall is CLIENT MEMORY; that is a guess until run. |
 | **Upstream `DelayedAction`** errors | OpenMW's own menu scripts, present before our changes, harmless so far. |
 | **Human playtest** | `PLAYTEST.md` §10 + the social/LOD sections. Nothing automated can answer "does it feel right". |
@@ -83,6 +85,12 @@ said `isHolder=false,true` — the "stalled" client had been PROMOTED to holder 
 re-election and had correctly stopped receiving its own stream. Three sibling failures in
 that run really were load (all passed in isolation), which is exactly what made the fourth
 easy to wave through. Attribute each failure separately.
+
+**Two task entries were found marked done that had never been built** (F3/F4, then F1's
+shared store). Both were caught by reading the code rather than trusting the status, and F1's
+was blocking: with multi-world worlds, a player could not log into their own private session
+with the account they made in the public world. Verify a "done" claim against the source
+before building on it.
 
 **Kill orphaned harness processes before trusting a measurement.** Stopping a background
 task kills the shell, not the child `node`. One harness ran for 20 hours competing with
