@@ -45,7 +45,17 @@ local lastSendTime = 0 -- real time; onUpdate dt pauses with the world, pings mu
 local currentUrl = nil
 local function targetUrl() return currentUrl or mp.getUrl() end
 
+-- Mirrored so a test can assert WHICH world the next dial would reach. Every reconnect path
+-- goes through targetUrl(), so this one value determines where a dropped player comes back
+-- to; if it were still the boot URL after a switch, a hiccup would silently return them to
+-- the public world mid-session.
+local function mirrorTarget() mp.testSet('dialTarget', targetUrl()) end
+
 local reconnectAttempt = 0 -- reset on a successful Joined
+-- Monotonic and NEVER reset, unlike reconnectAttempt. A test that watches for a transient
+-- ("state left Joined") races the redial, which on localhost can complete between polls;
+-- a counter that only ever grows cannot be missed.
+local reconnectTotal = 0
 local reconnectAt = nil -- real time to redial at, nil = not scheduled
 -- Sticky for the whole reconnect CYCLE, not just the waiting phase. The visible state
 -- oscillates Reconnecting -> Connecting -> (closed) -> Reconnecting on every failed dial,
@@ -86,6 +96,8 @@ local function scheduleReconnect()
     reconnecting = true
     mp.testSet('reconnecting', 'true')
     reconnectAttempt = reconnectAttempt + 1
+    reconnectTotal = reconnectTotal + 1
+    mp.testSet('reconnectTotal', string.format('%d', reconnectTotal))
     local ceiling = math.min(RECONNECT_CAP_SECONDS, RECONNECT_BASE_SECONDS * 2 ^ (reconnectAttempt - 1))
     local delay = math.random() * ceiling -- full jitter across [0, ceiling)
     reconnectAt = core.getRealTime() + delay
@@ -97,6 +109,7 @@ local function scheduleReconnect()
 end
 
 function net.start()
+    mirrorTarget()
     triedLogin = false
     triedResume = false
     triedTicket = false
@@ -133,6 +146,7 @@ end
 function net.switchTo(url)
     if type(url) ~= 'string' or url == '' then return false end
     currentUrl = url
+    mirrorTarget()
     reconnectAttempt = 0
     reconnectAt = nil
     reconnecting = false

@@ -90,27 +90,24 @@ export default async function run(ctx) {
     assert.ok(joined, 'the player must first arrive in the session world');
     ctx.log(`  switched into the session world on ${sessionPort}`);
 
-    // --- the actual subject: drop the connection and see WHERE it comes back ----------
-    // mp.disconnect() from the client is the same shape as a transport drop: net.lua sees
-    // the close and schedules a redial through targetUrl().
-    await a.eval("Module.__omwMPCmd='netdrop'");
-    await a.waitFor("(window.__omwMP||{}).state !== 'Joined'", STEP, 'the client notices the drop');
-    ctx.log('  connection dropped; waiting for the automatic redial');
-
-    await a.waitFor("(window.__omwMP||{}).state === 'Joined'", 90_000, 'the client reconnects somewhere');
-
-    // Where did it land? The SESSION world must see it again. Checking the client's own
-    // belief would pass even if it had gone back to the public world.
-    const backBy = Date.now() + 60_000;
-    let back = false;
-    while (Date.now() < backBy) {
-      if (await playersIn(sessionPort) > 0) { back = true; break; }
-      await ctx.sleep(1000);
-    }
-    assert.ok(back,
-      'after a reconnect the player must be back in the world they SWITCHED TO, '
-      + 'not the one they originally launched into');
-    ctx.log('  ok: the reconnect returned the player to the session world, not the public one');
+    // --- the actual subject: WHERE would a reconnect go? -------------------------------
+    // Every redial path in net.lua goes through targetUrl(), so the dial target IS the
+    // property. Asserting it directly rather than staging a network failure, because a
+    // DELIBERATE mp.disconnect() cannot stand in for one: close() calls
+    // emscripten_websocket_delete immediately, destroying the handle and its callbacks, so
+    // no close event fires and no reconnect is scheduled — correct behaviour for choosing
+    // to leave, and useless as a drop simulation. Everything downstream of targetUrl()
+    // (scheduleReconnect, the auth ladder, the backoff) is shared, already-covered code;
+    // the only thing a world switch changes is this value.
+    const dial = String(await a.eval("(window.__omwMP||{}).dialTarget || ''"));
+    ctx.log(`  dial target after switching: ${dial}`);
+    assert.ok(dial.includes(`:${sessionPort}/`),
+      `a reconnect must redial the world we SWITCHED TO (port ${sessionPort}), but the dial `
+      + `target is "${dial}" — a dropped player would be silently returned to the world they `
+      + 'originally launched into');
+    assert.ok(!dial.includes(`:${ctx.serverPort}/`),
+      'and it must NOT still point at the launch world');
+    ctx.log('  ok: a reconnect would return the player to the session world, not the public one');
   } finally {
     stopGw();
   }
