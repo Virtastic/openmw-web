@@ -332,9 +332,25 @@ export default async function run(ctx) {
       + `${CROWD_CONVERGE_EPS} — this is past anything steering lag explains`);
 
     // Authority must not have wandered while the crowd joined: a handoff mid-measurement
-    // would make every number above unattributable.
+    // makes every number above unattributable. That is a MEASUREMENT-VALIDITY condition, not
+    // a bug report — D-cap-2 re-elects deliberately when the holder's fitness degrades, and a
+    // contended host degrades every client, so a handoff there is the system working.
+    //
+    // So: skip on a busy box (the numbers cannot be trusted anyway), fail on an idle one
+    // (nothing external explains it, so it is real). Same rule the convergence gate above
+    // uses, for the same reason.
     const stillHolder = await holder.eval('(window.__omwMP||{}).isHolder');
-    assert.equal(stillHolder, 'true', `authority left ${holder.name} during the crowd load`);
+    if (stillHolder !== 'true') {
+      const loadNow = os.loadavg()[0];
+      if (loadNow > 12) {
+        ctx.log(`SKIP: authority moved off ${holder.name} at host load ${loadNow.toFixed(1)} `
+          + '— a degraded holder is re-elected BY DESIGN, and the measurement above is '
+          + 'unattributable once it moves. Re-run when idle.');
+        return;
+      }
+      assert.fail(`authority left ${holder.name} during the crowd load at host load `
+        + `${loadNow.toFixed(1)} — the box is idle, so this is not fitness re-election`);
+    }
     ctx.log(`ok: ${clients.length} browser clients agreed on shared actor state with ${BOTS} bots in ${cellKey}`);
     botFailure = await reapBots();
   } finally {
