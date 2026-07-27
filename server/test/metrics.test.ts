@@ -244,3 +244,37 @@ test('metrics: every registered metric renders a HELP and TYPE line', () => {
     assert.match(text, new RegExp(`^# TYPE ${name} `, 'm'), `${name} TYPE`);
   }
 });
+
+// F4: with many worlds, an aggregated scrape must be able to tell them apart. The label is
+// applied at the single formatting chokepoint so no metric can silently lack it.
+test('metrics: every series carries world= when the gateway named this world', () => {
+  const prev = process.env['OMW_WORLD_ID'];
+  process.env['OMW_WORLD_ID'] = 'alices-game';
+  try {
+    resetMetrics();
+    metrics.connOpened.inc({});
+    metrics.disconnects.inc({ code: 'RATE' });
+    const text = renderMetrics();
+
+    const series = text.split('\n').filter((l: string) => l && !l.startsWith('#'));
+    assert.ok(series.length > 0, 'there must be series to check');
+    const unlabelled = series.filter((l: string) => !l.includes('world="alices-game"'));
+    assert.deepEqual(unlabelled, [],
+      `every series must carry the world label; these did not:\n${unlabelled.join('\n')}`);
+
+    // Existing labels survive alongside it rather than being replaced.
+    assert.ok(text.includes('code="RATE"') && text.includes('world="alices-game"'),
+      'the world label is ADDED to existing labels, not substituted for them');
+  } finally {
+    if (prev === undefined) delete process.env['OMW_WORLD_ID'];
+    else process.env['OMW_WORLD_ID'] = prev;
+  }
+});
+
+test('metrics: a standalone world emits no world label at all', () => {
+  // A single self-hosted server's scrape must be byte-identical to before this change —
+  // an empty world="" on every series would be noise in every existing dashboard.
+  assert.equal(process.env['OMW_WORLD_ID'], undefined, 'this test assumes no world id');
+  const text = renderMetrics();
+  assert.ok(!text.includes('world='), 'no world label when the world is not named');
+});

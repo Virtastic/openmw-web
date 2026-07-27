@@ -21,11 +21,25 @@ function escapeLabel(v: string): string {
   return v.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n');
 }
 
+// F4: every series from this process carries world="<id>" when the gateway started it
+// (OMW_WORLD_ID). Applied HERE, at the single formatting chokepoint, rather than at each
+// call site — a metric that silently lacks the label would be indistinguishable from
+// another world's in an aggregated scrape, which is precisely the mistake this prevents.
+// Empty for a standalone world, so a single-server scrape is byte-identical to before.
+// Read at RENDER time, not module load: scrapes are infrequent so the cost is nil, and it
+// removes a class of bug where the value is fixed before the environment is fully set up
+// (which also made it untestable without re-importing the module).
+function worldId(): string {
+  return process.env['OMW_WORLD_ID'] ?? '';
+}
+
 function renderLabels(labels: Labels, extra?: [string, string]): string {
   const parts = Object.keys(labels)
     .sort()
     .map((k) => `${k}="${escapeLabel(labels[k]!)}"`);
   if (extra) parts.push(`${extra[0]}="${escapeLabel(extra[1])}"`);
+  const w = worldId();
+  if (w !== '') parts.push(`world="${escapeLabel(w)}"`);
   return parts.length === 0 ? '' : `{${parts.join(',')}}`;
 }
 
@@ -91,7 +105,7 @@ export class Counter extends Metric {
     out.push(`# HELP ${this.name} ${this.help}`, `# TYPE ${this.name} counter`);
     // An unlabelled counter still reports 0 so dashboards have a series from boot; a
     // labelled one cannot (the label space is only known once it is hit).
-    if (this.series.size === 0 && this.labelNames.length === 0) out.push(`${this.name} 0`);
+    if (this.series.size === 0 && this.labelNames.length === 0) out.push(`${this.name}${renderLabels({})} 0`);
     for (const s of this.series.values()) out.push(`${this.name}${renderLabels(s.labels)} ${s.value}`);
   }
 
@@ -181,7 +195,7 @@ export class Gauge extends Metric {
       }
       total += v;
     }
-    out.push(`# HELP ${this.name} ${this.help}`, `# TYPE ${this.name} gauge`, `${this.name} ${total}`);
+    out.push(`# HELP ${this.name} ${this.help}`, `# TYPE ${this.name} gauge`, `${this.name}${renderLabels({})} ${total}`);
   }
 
   reset(): void {
