@@ -377,6 +377,11 @@ local function pollHarness()
         -- Test hook: press the Worlds tab's "join" button for a world by id. The harness
         -- cannot click, and the join path (disconnect + redial a different world) is the
         -- one thing about the tab a player would notice most if it were broken.
+        -- Test hook: drop the transport without killing the server, so the AUTOMATIC redial
+        -- can be observed. s92 kills the server instead; here the world must stay up,
+        -- because the question is WHICH world the client comes back to.
+        if cmd == 'netdrop' then core.sendGlobalEvent('mpNetDrop', {}) end
+
         local joinId = cmd:match('^worldjoin:([%w_-]+)$')
         if joinId then core.sendGlobalEvent('mpSocialJoinById', { id = joinId }) end
 
