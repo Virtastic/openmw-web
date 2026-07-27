@@ -312,6 +312,12 @@ namespace MWMP
 
     void NetManager::pumpInboundToLua(MWLua::LuaEvents& events)
     {
+        // Native transport (H2): drain the reader thread's event queue and fire the
+        // socket callbacks HERE, on the main thread, before this frame's inbound pump —
+        // reproducing the emscripten contract that callbacks never interleave with a
+        // frame. No-op in the browser.
+        mSocket.poll();
+
         if (mOpenPending)
         {
             mOpenPending = false;

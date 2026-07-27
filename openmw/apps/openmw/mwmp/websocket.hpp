@@ -35,6 +35,15 @@ namespace MWMP
 
         void setCallbacks(Callbacks callbacks) { mCallbacks = std::move(callbacks); }
 
+        // Drain queued socket events and fire callbacks — MAIN THREAD ONLY, once per frame
+        // (called from NetManager::pumpInboundToLua). On emscripten this is a no-op: the
+        // browser already delivers callbacks as main-thread tasks between frames. The
+        // native build has a real reader thread, and NetManager's callbacks mutate its
+        // state inline, so firing them from the socket thread would race the whole net
+        // layer; poll() is what preserves the "callbacks never interleave with a frame"
+        // invariant the emscripten path gets for free.
+        void poll();
+
         bool open(const std::string& url, const std::string& subprotocol);
         void close(uint16_t code, const std::string& reason);
         bool sendBinary(const void* data, size_t size);
@@ -45,8 +54,13 @@ namespace MWMP
 
     private:
         Callbacks mCallbacks;
-        int mSocket = 0; // EMSCRIPTEN_WEBSOCKET_T (0 = none)
+        int mSocket = 0; // EMSCRIPTEN_WEBSOCKET_T (0 = none); native: 1 while connected
         bool mOpen = false;
+
+        // Native transport state (unused on emscripten); pimpl so this header stays free of
+        // <thread>/<mutex> and platform sockets.
+        struct NativeState;
+        NativeState* mNative = nullptr;
 
         friend struct WebSocketCallbackBridge;
     };
