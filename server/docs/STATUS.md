@@ -73,6 +73,14 @@ thrashing to clients that could not simulate. Effort then went into widening a t
 to accommodate what was a bug. The server counters that eventually settled it existed the
 whole time. Attribute a number before explaining it.
 
+**Read the diagnostic you already printed before reaching for the easy explanation.**
+`s42` failed with "puppet stream stalled ... which is a real bug" and the box was at load
+139, so "it is just load" was right there and wrong. The next two lines of its OWN output
+said `isHolder=false,true` — the "stalled" client had been PROMOTED to holder by fitness
+re-election and had correctly stopped receiving its own stream. Three sibling failures in
+that run really were load (all passed in isolation), which is exactly what made the fourth
+easy to wave through. Attribute each failure separately.
+
 **Kill orphaned harness processes before trusting a measurement.** Stopping a background
 task kills the shell, not the child `node`. One harness ran for 20 hours competing with
 every gate, and a good share of what was written off as "the host is busy" was that. Check
