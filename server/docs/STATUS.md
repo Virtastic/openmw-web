@@ -22,6 +22,9 @@ combat, quests, world state, ops), plus:
 
 ## What is verified, and how
 
+- **Double gate PASSED 2026-07-27**: the full 32-scenario browser suite green TWICE
+  consecutively (32/32, 32/32), the second run on a genuinely quiet box (load 2.6), plus the
+  singleplayer smoke green (boots, renders, no context loss).
 - **329 server tests**, several negative-controlled (the control is broken deliberately to
   confirm the test fails).
 - **Anti-cheat is now a test, not a claim**: a non-holder's forged `ActorMoveBatch` is
