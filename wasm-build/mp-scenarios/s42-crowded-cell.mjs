@@ -273,7 +273,19 @@ export default async function run(ctx) {
       await ctx.sleep(2000);
     }
     const batches1 = await Promise.all(peers.map((p) => p.eval('Number((window.__omwMP||{}).actorBatchesIn||0)')));
-    const stalled = peers.filter((_, i) => batches1[i] <= batches0[i]).map((p) => p.name);
+    // Holder-ness must be read NOW, not from setup. Authority is elected on FITNESS
+    // (D-cap-2) and re-elected when the current holder degrades — which is exactly what a
+    // loaded box provokes. A peer PROMOTED to holder mid-run stops receiving actor batches
+    // because it is now the one SENDING them, and flagging that as a stall reports a
+    // correct handoff as a product bug. (Observed: "holder was 1; now authorityHolder=2,2
+    // isHolder=false,true" — crowd1 had become the holder and was flagged for not
+    // receiving its own stream.)
+    const peerIsHolderNow = await Promise.all(peers.map((p) => p.eval('(window.__omwMP||{}).isHolder')));
+    const stalled = peers
+      .filter((_, i) => batches1[i] <= batches0[i] && peerIsHolderNow[i] !== 'true')
+      .map((p) => p.name);
+    const promoted = peers.filter((_, i) => peerIsHolderNow[i] === 'true').map((p) => p.name);
+    if (promoted.length) ctx.log(`note: ${promoted.join(', ')} became holder mid-run (fitness re-election); not a stall`);
     ctx.log(`under load (${clients.length} clients + ${BOTS} bots): ${under.shared} shared NPCs, `
       + `worst ${under.worst === null ? 'n/a' : under.worst.toFixed(1)} units (${under.rec}); `
       + `actorBatchesIn ${batches0.join(',')} -> ${batches1.join(',')}`);
