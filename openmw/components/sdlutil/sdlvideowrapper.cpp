@@ -101,15 +101,18 @@ namespace SDLUtil
         {
             SDL_DisplayMode mode;
             SDL_GetWindowDisplayMode(mWindow, &mode);
-            mode.w = width / (dw / w);
-            mode.h = height / (dh / h);
+            // Floating point: integer (dw/w) truncates a fractional device-pixel ratio to 1 (no
+            // scaling) and truncates to 0 when the drawable is smaller than the window (div by zero).
+            mode.w = dw > 0 ? static_cast<int>(static_cast<double>(width) * w / dw + 0.5) : width;
+            mode.h = dh > 0 ? static_cast<int>(static_cast<double>(height) * h / dh + 0.5) : height;
             SDL_SetWindowDisplayMode(mWindow, &mode);
             SDL_SetWindowFullscreen(mWindow,
                 windowMode == Settings::WindowMode::Fullscreen ? SDL_WINDOW_FULLSCREEN : SDL_WINDOW_FULLSCREEN_DESKTOP);
         }
         else
         {
-            SDL_SetWindowSize(mWindow, width / (dw / w), height / (dh / h));
+            SDL_SetWindowSize(mWindow, dw > 0 ? static_cast<int>(static_cast<double>(width) * w / dw + 0.5) : width,
+                dh > 0 ? static_cast<int>(static_cast<double>(height) * h / dh + 0.5) : height);
             SDL_SetWindowBordered(mWindow, windowBorder ? SDL_TRUE : SDL_FALSE);
 
             centerWindow();

@@ -62,7 +62,10 @@ namespace SDLUtil
         SDL_GL_GetDrawableSize(mWindow, &dw, &dh);
 
         SDL_SetWindowPosition(mWindow, x, y);
-        SDL_SetWindowSize(mWindow, width / (dw / w), height / (dh / h));
+        // Floating point: integer (dw/w) truncates a fractional device-pixel ratio to 1 (no scaling)
+        // and truncates to 0 when the drawable is smaller than the window (div by zero).
+        SDL_SetWindowSize(mWindow, dw > 0 ? static_cast<int>(static_cast<double>(width) * w / dw + 0.5) : width,
+            dh > 0 ? static_cast<int>(static_cast<double>(height) * h / dh + 0.5) : height);
         return true;
     }
 

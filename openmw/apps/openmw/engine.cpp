@@ -710,7 +710,13 @@ void OMW::Engine::createWindow()
         SDL_GL_GetDrawableSize(mWindow, &dw, &dh);
         if (dw != w || dh != h)
         {
-            SDL_SetWindowSize(mWindow, width / (dw / w), height / (dh / h));
+            // width / (dw/w) == width * w / dw. Computed in floating point and rounded: as integer
+            // division, (dw/w) truncates a fractional device-pixel ratio (Windows 125%/150%, browser
+            // zoom) to 1, so the window was never scaled down and the drawable stayed oversized —
+            // and truncates to 0 when the drawable is smaller than the window, dividing by zero.
+            const int sw = dw > 0 ? static_cast<int>(static_cast<double>(width) * w / dw + 0.5) : width;
+            const int sh = dh > 0 ? static_cast<int>(static_cast<double>(height) * h / dh + 0.5) : height;
+            SDL_SetWindowSize(mWindow, sw, sh);
         }
 
 #ifndef __EMSCRIPTEN__
