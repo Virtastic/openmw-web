@@ -478,3 +478,34 @@ test('authority: a client that cannot simulate never holds a cell', async () => 
   assert.equal(auth.holderOf('cell'), 1,
     'with nobody capable left, the cell falls back to any occupant rather than going ownerless');
 });
+
+test('authority: a capable occupant takes over when the holder leaves (peer/human fallback)', async () => {
+  const rec: Recorder = { grants: [], infos: [], revokes: [], overrides: new Map() };
+  // Both can simulate; 1 is the sim peer (fitter — localhost), 2 is a human on a real link.
+  const fitness = {
+    get: (id: number) => (id === 1
+      ? { rttMs: 1, shedRate: 0, samples: 10 }   // peer: near-zero RTT
+      : { rttMs: 80, shedRate: 0, samples: 10 }), // human: ordinary link
+  };
+  const auth = new Authority({
+    grant: (playerId, cellKey, epoch, snapshot) => rec.grants.push({ playerId, cellKey, epoch, snapshot }),
+    info: (playerId, cellKey, holderId) => rec.infos.push({ playerId, cellKey, holderId }),
+    revoke: (playerId, cellKey, epoch) => rec.revokes.push({ playerId, cellKey, epoch }),
+    loadOverrides: async () => ({ actors: [{ ref: { __refnum: { index: 1, contentFile: 0 } } }] }),
+    foldOverrides: async () => {},
+  }, { fitness, review: false, caps: { canSimulate: () => true } });
+
+  // Human arrives first, peer second. On fitness the peer is the better holder, but the M4
+  // handoff is not automatic on entry — the human legitimately holds until it degrades or
+  // leaves. What matters for the sim-peer story is the FALLBACK: when the holder leaves,
+  // authority must pass to the other capable occupant, not evaporate.
+  await auth.onEnter(2, 'cell'); // human claims (only occupant)
+  await auth.onEnter(1, 'cell'); // peer joins
+  const holder = auth.holderOf('cell');
+  assert.ok(holder === 1 || holder === 2, 'someone must hold it');
+
+  // The holder leaves. The cell must NOT go ownerless while a capable occupant remains.
+  await auth.onLeave(holder!, 'cell', true);
+  const after = auth.holderOf('cell');
+  assert.ok(after !== null && after !== holder, `authority must fall back to the remaining occupant, got ${String(after)}`);
+});
