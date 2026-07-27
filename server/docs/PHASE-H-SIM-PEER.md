@@ -62,6 +62,36 @@ Exit criteria: a headless build that loads a cell, ticks NPCs for a minute, and 
 RSS/CPU. If that cannot be reached in about a day, stop and reconsider — D-cap-5 (splitting
 authority across players) becomes the fallback, and the current model still works.
 
+### H1 result so far (build side proven; runtime pending)
+
+The native toolchain question is answered: OpenMW **configures and is compiling** natively on
+this machine (macOS/arm64), tools off. What it took, all local and gitignored:
+- double-precision Bullet from `deps/src/bullet3` (brew's is single; OpenMW rejects it),
+- MyGUI 3.4.3 from `deps/src/mygui` (no brew formula),
+- one upstream CMake guard: the macOS Qt-plugin bundling block ran under `if (APPLE)` and had
+  to become `if (APPLE AND USE_QT)`, since a tools-off build has no Qt targets. Committed.
+
+### The headless patch, located precisely (to apply once the binary runs)
+
+Reading `apps/openmw/engine.cpp` confirms the two-part hypothesis and pins where each part
+lives, so the patch is small and targeted rather than exploratory:
+
+1. **Init** — `createWindow()` (line ~555) creates the SDL window and a real GL context, and
+   everything that simulates (`MWWorld::World`, physics, Lua, scripts) is built AFTER it in
+   `prepareEngine()`. A `--headless` path creates the window `SDL_WINDOW_HIDDEN` and keeps a
+   real (software) GL context, so `RenderingManager` still constructs. No renderer teardown,
+   no null-context surgery.
+2. **Per frame** — the frame is `eventTraversal()` / `updateTraversal()` / then
+   `renderingTraversals()` at engine.cpp:407-419 (and the emscripten path at 249-251).
+   Simulation is the update traversal; drawing is `renderingTraversals()`. Headless simply
+   does not call the third. Under `--headless` the peer pays for a GL context ONCE and does
+   zero per-frame GPU work — which is the property H4's per-peer cost depends on.
+
+Still to prove at runtime, in order: (a) the hidden-window context actually creates under a
+software GL on a machine with no display attached (the real deployment target); if not, fall
+back to an EGL/OSMesa surfaceless context. (b) NPCs actually tick with the third traversal
+skipped. (c) RSS/CPU for one instance holding one world's active cells.
+
 ## H2 — native WebSocket transport
 
 `apps/openmw/mwmp/websocket.cpp` wraps the **emscripten** WebSocket API; on native builds
