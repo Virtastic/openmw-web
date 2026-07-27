@@ -2,8 +2,41 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web -->
 # D-cap-5 — splitting actor authority within a cell
 
-Design only. Not implemented, and **the first step is to confirm it is still needed**, which
-is not currently established.
+Design only. Not implemented. **Recommendation as of 2026-07-27: do not build this yet, and
+probably not at all.** The reasoning below is the record of why, so a future reader does not
+re-derive it or build it on a premise that has since changed.
+
+## Why the premise weakened twice
+
+This item existed because ONE BROWSER TAB simulated every NPC in a cell while also rendering,
+interpolating puppets and running the game. Two things have since changed that:
+
+1. **The authority election was fixed.** Most of what looked like holder overload was
+   authority thrashing to clients that could not simulate at all. After the fix, `s42`
+   (2 browser clients + 20 bots in one retail cell) reports agreement with a median BELOW the
+   uncrowded budget.
+2. **Phase H moved simulation off browsers entirely.** A headless OpenMW on the operator's
+   machine now holds the cell: ~360 MB and ~9% of one core, doing no rendering, no puppet
+   interpolation and no per-frame GPU work. The "holder is also a player's game client"
+   problem — the entire motivation for splitting — does not exist where a sim peer is
+   running.
+
+So the remaining question is narrow: is a DEDICATED machine, doing nothing but simulation,
+the binding constraint for a cell? Nobody has measured that, and it is a very different
+question from the one this item was opened to answer.
+
+## What would change the recommendation
+
+Build it only if BOTH hold:
+
+- a sim peer's frame time is measurably superlinear in actor count (instrument the peer, not
+  a browser client), AND
+- a real cell exists that exceeds that budget — Seyda Neen's 11-13 NPCs is nowhere near it.
+
+If a world runs WITHOUT a sim peer (a self-hoster with no game data on the server), the
+original concern returns in full. In that case the cheaper lever is the one at the bottom of
+this document — reduced-fidelity simulation for actors the holder is not rendering — which
+needs no protocol change and no new invariant.
 
 ## What the problem was, and what is left of it
 
