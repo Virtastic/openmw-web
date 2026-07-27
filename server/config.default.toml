@@ -280,3 +280,9 @@ maxPeers = 4                      # hard ceiling; measured cost is ~360 MB + ~9%
 idleReapMs = 120000               # reap a peer whose world has had no humans this long
 startTimeoutMs = 120000           # retail data load is slow; generous, and failure is non-fatal
 restartBackoffMs = 15000          # after a crash, wait before respawning (no hot crash loop)
+
+# F3 — the world directory this world's players can browse from the in-game Social menu.
+# Empty means no gateway: the Worlds tab says so and everything else works normally, which
+# is the right experience for a single self-hosted world.
+[gateway]
+url = ""

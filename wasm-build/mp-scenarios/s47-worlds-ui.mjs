@@ -1,0 +1,100 @@
+// Copyright (C) 2025-2026 Virtastic - https://virtastic.app
+// SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
+// s47 (F3): the WORLDS tab in the Social hub, driven against a REAL gateway.
+//
+// This is the scenario that decides whether a player can actually reach multi-world, as
+// opposed to the platform merely working. It asserts the mechanism (the client received a
+// world list, and creating a session produced a joinable world) AND screenshots the tab,
+// because a Lua UI that throws still leaves every state mirror correct — this project has
+// already shipped two windows that never rendered while their state assertions passed.
+import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const ROOT = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
+const STEP = 30_000;
+
+// Fixed at module scope because `serverRules` is a static export evaluated before run(): the
+// world's [gateway] url has to be written into its config before the server boots, so the
+// port cannot be discovered later. Derived from the pid so two concurrent runs do not collide.
+const GW_PORT = 58400 + (process.pid % 120);
+
+// Point this scenario's world at the gateway below. Without it the Worlds tab correctly
+// reports "standalone" and there is nothing to exercise.
+export const serverRules = `[gateway]\nurl = "http://127.0.0.1:${GW_PORT}"`;
+
+async function waitHttp(url, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const r = await fetch(url, { signal: AbortSignal.timeout(1000) });
+      if (r.ok) return true;
+    } catch { /* not up yet */ }
+    await new Promise((r) => setTimeout(r, 300));
+  }
+  return false;
+}
+
+export default async function run(ctx) {
+  const SHOTS = mkdtempSync(join(tmpdir(), 'omw-s47-'));
+  const worldsDir = mkdtempSync(join(tmpdir(), 'omw-s47-worlds-'));
+  const gwPort = GW_PORT;
+  const basePort = gwPort + 200;
+
+  // A real gateway supervising real world processes. The scenario's own server (ctx) is a
+  // separate world; this one is what the browser client will BROWSE.
+  const gw = spawn(process.execPath, [
+    join(ROOT, 'server', 'dist', 'gateway.mjs'),
+    '--worlds', worldsDir,
+    '--port', String(gwPort),
+    '--base-port', String(basePort),
+    '--public-host', '127.0.0.1',
+    '--max-worlds', '4',
+  ], { stdio: 'ignore' });
+  const stopGw = () => { try { gw.kill('SIGTERM'); } catch { /* already gone */ } };
+
+  try {
+    assert.ok(await waitHttp(`http://127.0.0.1:${gwPort}/healthz`, 30_000), 'the gateway must come up');
+    ctx.log(`gateway up on ${gwPort}`);
+
+    // The scenario's world must point at this gateway, or its Worlds tab correctly reports
+    // "standalone" and there is nothing to test.
+    const a = await ctx.launchClient('bot-a', '');
+
+    // --- 1. The tab fetches the directory the first time it is opened ------------------
+    await a.eval("Module.__omwMPCmd='socialtab:worlds'");
+    await a.waitFor("(window.__omwMP||{}).worldCount !== undefined", STEP,
+      'the client received a world list from the gateway');
+    const count = Number(await a.eval("(window.__omwMP||{}).worldCount"));
+    const err = String(await a.eval("(window.__omwMP||{}).worldsError"));
+    assert.equal(err, '', `the directory must be reachable, got error "${err}"`);
+    assert.ok(count >= 1, `the public world must be listed, saw ${count}`);
+    ctx.log(`  worlds listed: ${count}`);
+    ctx.log(`  worlds tab: ${await a.screenshot(join(SHOTS, '1-worlds-list.png'))}`);
+
+    // --- 2. Creating a session from the UI produces a real, joinable world -------------
+    const before = count;
+    // The harness cannot type into the name field, so the create is driven by a test hook
+    // that goes through the same uplink a button press would.
+    await a.eval("Module.__omwMPCmd='worldcreate:my-session:private'");
+    await a.waitFor(`Number((window.__omwMP||{}).worldCount||0) > ${before}`, STEP,
+      'the new session appears in the list');
+    ctx.log(`  after create: ${await a.eval("(window.__omwMP||{}).worldCount")} worlds`);
+    ctx.log(`  worlds tab (session created): ${await a.screenshot(join(SHOTS, '2-worlds-created.png'))}`);
+
+    // The gateway must agree — the UI must not be showing a world that does not exist.
+    // The account is the CLIENT's generated name (the harness suffixes it to keep runs
+    // isolated), lowercased the way the server keys accounts.
+    const acct = a.name.toLowerCase();
+    const listed = await (await fetch(`http://127.0.0.1:${gwPort}/worlds?account=${encodeURIComponent(acct)}`)).json();
+    assert.ok(listed.worlds.some((w) => w.id === 'my-session'),
+      'the session the player created must exist on the gateway, not just in the UI');
+
+    ctx.log(`UI screenshots written to ${SHOTS} — review the Worlds tab for layout and legibility`);
+  } finally {
+    stopGw();
+  }
+}

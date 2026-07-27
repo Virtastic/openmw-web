@@ -27,7 +27,7 @@ local U = require('scripts.mp.ui')
 -- while the player saw no window at all.
 local isOpen = false
 local element = nil
-local tab = 'players' -- players | friends | party
+local tab = 'players' -- players | friends | party | worlds
 
 local roster = {} -- everyone in the world: {id, name}
 local friends = {} -- {acct, name, online, playerId, cellKey}
@@ -38,6 +38,13 @@ local presence = 'friends'
 local status = ''
 local draft = ''
 local myName = nil
+
+-- F3 world browser. worlds=nil means "not asked yet", {} means "asked, none joinable" —
+-- the two read very differently to a player and must not collapse into one blank list.
+local worlds = nil
+local worldsError = ''
+local worldDraft = ''
+local myWorldPort = nil -- so the world we are IN is marked rather than offered as a join
 
 -- There is no scroll container in this UI API, so a long list would simply run off the
 -- bottom of the screen. The world is designed for ~100 concurrent players, so the Players
@@ -215,12 +222,101 @@ local function partyTab()
     return rows
 end
 
+local function joinWorld(w)
+    -- Switching world is a reconnect, not a reload: mp.connect takes any URL, so the engine
+    -- keeps running and only the session moves. Accounts are shared across worlds (F1), so
+    -- the same login works wherever we land.
+    if not w.host or not w.port then
+        status = 'That world did not say where to connect.'
+        render()
+        return
+    end
+    local url = 'ws://' .. tostring(w.host) .. ':' .. string.format('%d', w.port) .. '/ws'
+    status = 'Joining ' .. tostring(w.name) .. '...'
+    render()
+    core.sendGlobalEvent('MP_JoinWorld', { url = url, name = tostring(w.name) })
+end
+
+local function worldsTab()
+    local rows = {}
+
+    if worldsError == 'no_gateway' then
+        rows[#rows + 1] = U.text('This is a standalone world.')
+        rows[#rows + 1] = U.text('There is no world directory to browse - which is perfectly')
+        rows[#rows + 1] = U.text('normal for a single server.')
+        return rows
+    end
+    if worldsError ~= '' then
+        rows[#rows + 1] = U.text('Could not reach the world directory.')
+        rows[#rows + 1] = U.row { U.button('try again', function() send('WorldList', {}) end) }
+        return rows
+    end
+    if worlds == nil then
+        -- Never asked yet. Distinct from "asked and there are none".
+        rows[#rows + 1] = U.text('Loading worlds...')
+        return rows
+    end
+    if #worlds == 0 then
+        rows[#rows + 1] = U.text('No worlds are available right now.')
+    end
+
+    for _, w in ipairs(worlds) do
+        local here = myWorldPort ~= nil and w.port == myWorldPort
+        local full = w.maxPlayers > 0 and w.playerCount >= w.maxPlayers
+        local where = string.format('%d', w.playerCount or 0)
+        if (w.maxPlayers or 0) > 0 then where = where .. '/' .. string.format('%d', w.maxPlayers) end
+        where = where .. ' players, ' .. tostring(w.mode)
+        if not w.up then where = where .. ', starting up' end
+
+        local actions = nil
+        if here then
+            -- The world you are standing in is marked, not offered — a "join" that
+            -- reconnects you to where you already are looks like a bug.
+            where = where .. ' - you are here'
+        elseif not w.up then
+            where = where .. ''
+        elseif full then
+            where = where .. ' - full'
+        else
+            actions = { { 'join', function() joinWorld(w) end } }
+        end
+        rows[#rows + 1] = personRow(tostring(w.name), { where = where, actions = actions })
+    end
+
+    rows[#rows + 1] = U.text('')
+    rows[#rows + 1] = U.text('Host your own session:')
+    rows[#rows + 1] = U.row {
+        U.text('Name: '),
+        {
+            template = I.MWUI.templates.textEditLine,
+            props = { size = util.vector2(180, 22), text = worldDraft },
+            events = {
+                textChanged = async:callback(function(text) worldDraft = text end),
+            },
+        },
+        U.button('private', function()
+            if worldDraft ~= '' then send('WorldCreate', { id = worldDraft, mode = 'private' }) end
+        end),
+        U.button('party', function()
+            if worldDraft ~= '' then send('WorldCreate', { id = worldDraft, mode = 'party' }) end
+        end),
+    }
+    rows[#rows + 1] = U.text('A private session is yours alone; a party session is for your party.')
+    return rows
+end
+
 local function tabBar()
     local function tabButton(key, label)
         -- The active tab is marked with the header colour rather than punctuation, so the
         -- bar reads like the game's own tabbed panels.
         return U.button(label, function()
             tab = key
+            -- Ask the directory the first time the Worlds tab is opened, not on every
+            -- render (render runs on every roster/presence event) and not at login (a
+            -- player who never opens it should cost the gateway nothing).
+            if key == 'worlds' and worlds == nil and worldsError == '' then
+                send('WorldList', {})
+            end
             render()
         end, { color = key == tab and I.MWUI.templates.textHeader.props.textColor or nil })
     end
@@ -228,6 +324,7 @@ local function tabBar()
         tabButton('players', 'Players (' .. math.max(0, #roster - 1) .. ')'),
         tabButton('friends', 'Friends (' .. #friends .. ')'),
         tabButton('party', 'Party (' .. #(party.members or {}) .. ')'),
+        tabButton('worlds', worlds and ('Worlds (' .. #worlds .. ')') or 'Worlds'),
     }
 end
 
@@ -249,7 +346,10 @@ end
 render = function()
     if not isOpen then return end
     destroy()
-    local tabRows = (tab == 'friends' and friendsTab()) or (tab == 'party' and partyTab()) or playersTab()
+    local tabRows = (tab == 'friends' and friendsTab())
+        or (tab == 'party' and partyTab())
+        or (tab == 'worlds' and worldsTab())
+        or playersTab()
     -- Tab content and the privacy control each get their own bordered panel, mirroring how
     -- the settings screen groups controls, so the eye can find the sections.
     local body = { tabBar(), U.panel(tabRows), U.panel({ presenceBar() }) }
@@ -395,6 +495,45 @@ return {
                 mirror()
                 render()
             end
+        end,
+        -- Test-only: the harness has no way to click a tab button.
+        MP_SocialTab = function(data)
+            local which = tostring(data.tab or '')
+            if which == 'players' or which == 'friends' or which == 'party' or which == 'worlds' then
+                tab = which
+                if which == 'worlds' and worlds == nil and worldsError == '' then
+                    send('WorldList', {})
+                end
+                if not isOpen then toggle() else render() end
+            end
+        end,
+        MP_WorldList = function(data)
+            worlds = data.worlds or {}
+            worldsError = tostring(data.error or '')
+            myWorldPort = data.myPort
+            mp.testSet('worldCount', string.format('%d', #worlds))
+            mp.testSet('worldsError', worldsError)
+            render()
+        end,
+        MP_WorldCreate = function(data)
+            if data.ok == true and data.world then
+                status = 'Session "' .. tostring(data.world.name or data.world.id) .. '" is ready.'
+                worldDraft = ''
+                -- Refresh so the new session appears in the list with a join button.
+                send('WorldList', {})
+            else
+                local why = tostring(data.error or 'refused')
+                local human = why
+                if why == 'too_many_sessions' then human = 'You already have as many sessions as you are allowed.'
+                elseif why == 'platform_full' then human = 'The server has no room for another world right now.'
+                elseif why == 'bad_id' then human = 'That name has characters the server will not accept.'
+                elseif why == 'unreachable' then human = 'The world directory did not answer.'
+                end
+                status = human
+                ui.showMessage(human)
+            end
+            mp.testSet('worldCreate', json.encode({ ok = data.ok, error = data.error }))
+            render()
         end,
         MP_PresenceUpdate = function(data)
             for _, f in ipairs(friends) do

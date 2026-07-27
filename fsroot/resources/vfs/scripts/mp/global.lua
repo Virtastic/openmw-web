@@ -695,6 +695,10 @@ local eventHandlers = {
         mp.testSet('friends', json.encode(data.friends or {}))
         toPlayer('MP_FriendList', data)
     end,
+    -- F3 world browser. Inbound server events land in the GLOBAL context and reach the
+    -- window only if forwarded here — the social family's straight pass-through pattern.
+    MP_WorldList = function(data) toPlayer('MP_WorldList', data) end,
+    MP_WorldCreate = function(data) toPlayer('MP_WorldCreate', data) end,
     MP_FriendRequestReceived = function(data) toPlayer('MP_FriendRequestReceived', data) end,
     MP_InviteReceived = function(data) toPlayer('MP_InviteReceived', data) end,
     MP_PresenceUpdate = function(data) toPlayer('MP_PresenceUpdate', data) end,
@@ -1112,10 +1116,30 @@ local eventHandlers = {
             FriendRequest = true, FriendAccept = true, FriendRemove = true,
             BlockAdd = true, BlockRemove = true, InviteSend = true, InviteAccept = true,
             PartyInvite = true, PartyAccept = true, PartyLeave = true, PresenceMode = true,
+            -- F3 world browser. The server takes the ACCOUNT from the authenticated
+            -- session, never from here, so a client cannot list or create sessions under
+            -- someone else's identity.
+            WorldList = true, WorldCreate = true,
         }
         local op = tostring(data.op or '')
         if not OPS[op] then return end
-        mp.sendEvent(op, { name = data.name, acct = data.acct, mode = data.mode })
+        mp.sendEvent(op, { name = data.name, acct = data.acct, mode = data.mode, id = data.id })
+    end,
+
+    -- F3: switch worlds. A reconnect, not a page reload — mp.connect takes any URL, so the
+    -- engine and loaded assets stay put and only the session moves. Accounts are shared
+    -- across worlds, so the login that got us here works there too.
+    mpSocialTab = function(data)
+        -- toPlayer, not a world.players loop: the same helper every other player-bound
+        -- bridge here uses, and the one that actually resolves the player script.
+        toPlayer('MP_SocialTab', { tab = tostring(data.tab or '') })
+    end,
+
+    mpJoinWorld = function(data)
+        local url = tostring(data.url or '')
+        if url == '' then return end
+        print('[mp] switching to ' .. tostring(data.name) .. ' at ' .. url)
+        net.switchTo(url)
     end,
 
     -- Script removal lives here because removeScript is bound on GObject only. Both senders

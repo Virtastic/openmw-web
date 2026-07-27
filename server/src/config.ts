@@ -14,6 +14,10 @@ export interface Config {
   // simulates NPCs for everyone else. Off by default — it needs a native binary and game
   // data on the server, which a self-hoster may not have; the existing client-authority
   // path stays the fallback.
+  // F3: where this world's clients can find the world directory. Empty = no gateway, and
+  // the in-game world browser simply reports that there is nothing to browse (a single
+  // self-hosted world is a complete, valid setup).
+  gateway: { url: string };
   simPeer: {
     enabled: boolean;
     binary: string; // absolute path to the headless openmw
@@ -251,6 +255,7 @@ function validate(t: Tree): Config {
       maxPlayers: reqNum(t, 'server', 'maxPlayers'),
       password: reqStr(t, 'server', 'password'),
     },
+    gateway: { url: reqStr(t, 'gateway', 'url') },
     simPeer: {
       enabled: reqBool(t, 'simPeer', 'enabled'),
       binary: reqStr(t, 'simPeer', 'binary'),

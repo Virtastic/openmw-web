@@ -10,7 +10,8 @@
 
 import type { Player, Roster } from './players';
 import type { SocialStore, AccountKey } from './socialstore';
-import type { LValue } from '../proto/lser';
+import type { LValue, JsLike } from '../proto/lser';
+import type { WorldBrowser } from './worldbrowser';
 import { log } from '../log';
 
 export interface SocialTuning {
@@ -76,6 +77,9 @@ export interface SocialDeps {
   // Resolve a typed-in display name to an account key (case-insensitive).
   resolveName(name: string): AccountKey | undefined;
   now(): number;
+  // F3: absent when no gateway is configured, in which case the Worlds tab says so rather
+  // than pretending there is nothing to see.
+  worlds?: WorldBrowser;
 }
 
 interface PendingInvite {
@@ -108,7 +112,10 @@ export class Social {
   constructor(deps: SocialDeps, tuning: SocialTuning = socialTuning) {
     this.d = deps;
     this.tuning = tuning;
+    this.worlds = deps.worlds;
   }
+
+  private readonly worlds?: WorldBrowser;
 
   // ------------------------------------------------------------------ presence
 
@@ -505,6 +512,54 @@ export class Social {
       case 'InviteSend': {
         const r = this.invite(player, str('acct'));
         this.reply(player, 'InviteSend', r === 'ok', r);
+        return true;
+      }
+      // F3 world browser. Async, unlike every other case here: it calls out to the gateway.
+      // The handler still returns true immediately — the reply arrives as its own event when
+      // the gateway answers, so a slow directory can never stall the player's session.
+      case 'WorldList': {
+        // ALWAYS reply. `this.worlds` is undefined when no gateway is configured, and an
+        // optional-chained call there would silently send nothing — leaving the client
+        // waiting forever on a request that was received and understood. A player staring
+        // at "Loading worlds..." with no explanation is the worst of both worlds.
+        if (!this.worlds) {
+          player.peer.sendEvent('WorldList', { error: 'no_gateway', worlds: [], myPort: 0 });
+          return true;
+        }
+        void this.worlds.list(player).then((r) => {
+          // Mapped field by field rather than forwarded wholesale: the gateway's record
+          // carries ownerAccount, and echoing another player's account key into a client
+          // would leak identity the lobby has no business showing.
+          player.peer.sendEvent('WorldList', {
+            error: r.error ?? '',
+            // So the UI can mark the world the player is standing in rather than offering
+            // a "join" that reconnects them to where they already are.
+            myPort: this.worlds?.ownPort ?? 0,
+            worlds: r.worlds.map((w) => ({
+              id: w.id, mode: w.mode, name: w.name, host: w.host, port: w.port,
+              playerCount: w.playerCount, maxPlayers: w.maxPlayers, up: w.up,
+            })),
+          });
+        });
+        return true;
+      }
+      case 'WorldCreate': {
+        if (!this.worlds) {
+          player.peer.sendEvent('WorldCreate', { ok: false, error: 'no_gateway' });
+          return true;
+        }
+        void this.worlds.create(player, str('id'), str('mode')).then((r) => {
+          player.peer.sendEvent('WorldCreate', {
+            ok: r.world !== undefined,
+            error: r.error ?? '',
+            ...(r.world ? {
+              world: {
+                id: r.world.id, mode: r.world.mode, name: r.world.name,
+                host: r.world.host, port: r.world.port,
+              },
+            } : {}),
+          });
+        });
         return true;
       }
       case 'PresenceMode': {

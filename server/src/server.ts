@@ -46,6 +46,7 @@ import { disconnectMsg } from './proto/session';
 import { log } from './log';
 import { metrics } from './metrics';
 import { SimPeerSupervisor } from './core/simpeer';
+import { WorldBrowser } from './core/worldbrowser';
 
 export const VERSION = '0.1.0';
 
@@ -239,6 +240,11 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     // stored keys on the account — names are mutable and reusable.
     resolveName: (name) => (accounts.existsNow(name) ? name.toLowerCase() : undefined),
     now: () => Date.now(),
+    // F3: only when a gateway is configured. Without one the Worlds tab reports that this
+    // is a standalone world, which is an honest answer and a valid setup.
+    ...(config.gateway.url
+      ? { worlds: new WorldBrowser({ gatewayUrl: config.gateway.url, ownPort: () => port }) }
+      : {}),
   });
 
   const ctx: ServerCtx = {

@@ -365,6 +365,20 @@ local function pollHarness()
         local uiWhich = cmd:match('^openui:(%a+)$')
         if uiWhich then core.sendGlobalEvent('mpOpenUi', { which = uiWhich }) end
 
+        -- Test hook: switch the Social hub's tab. The harness cannot click, so without this
+        -- the Worlds tab could only ever be verified by reading state, never by looking at
+        -- what a player would actually see.
+        local socialTab = cmd:match('^socialtab:(%a+)$')
+        if socialTab then core.sendGlobalEvent('mpSocialTab', { tab = socialTab }) end
+
+        -- Test hook: create a world through the same uplink the Worlds tab's button uses.
+        -- The harness cannot type into the name field, so without this the create path
+        -- could only be tested at the protocol level, never as the player experiences it.
+        local wcId, wcMode = cmd:match('^worldcreate:([%w_-]+):(%a+)$')
+        if wcId then
+            core.sendGlobalEvent('mpSocial', { op = 'WorldCreate', id = wcId, mode = wcMode })
+        end
+
         local text = cmd:match('^chat:(.*)$')
         if text and text ~= '' then
             core.sendGlobalEvent('mpChatSend', { text = text })

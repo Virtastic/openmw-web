@@ -38,6 +38,13 @@ local triedLogin = false
 local triedResume = false
 local triedTicket = false
 local lastSendTime = 0 -- real time; onUpdate dt pauses with the world, pings must not
+-- F3: the world we are currently dialling. nil = the boot URL from the environment. Set by
+-- switchTo so that RECONNECTS after a world switch redial the new world, not the one the
+-- player originally launched into — otherwise a dropped connection would silently teleport
+-- them back to the public world.
+local currentUrl = nil
+local function targetUrl() return currentUrl or mp.getUrl() end
+
 local reconnectAttempt = 0 -- reset on a successful Joined
 local reconnectAt = nil -- real time to redial at, nil = not scheduled
 -- Sticky for the whole reconnect CYCLE, not just the waiting phase. The visible state
@@ -111,12 +118,27 @@ function net.start()
     end
     net.lastError = nil
     net.lastErrorDetail = nil
-    if mp.connect(mp.getUrl()) then
+    if mp.connect(targetUrl()) then
         setState('Connecting')
     else
         net.lastError = 'connect failed'
         setState('Failed')
     end
+end
+
+-- F3: move this session to another world. Deliberately resets the reconnect backoff and the
+-- auth ladder: arriving at a new world is a fresh connection attempt, and carrying an
+-- exponential delay (or a spent resume token) over from the old one would make the first
+-- join look broken.
+function net.switchTo(url)
+    if type(url) ~= 'string' or url == '' then return false end
+    currentUrl = url
+    reconnectAttempt = 0
+    reconnectAt = nil
+    reconnecting = false
+    mp.disconnect()
+    net.start()
+    return true
 end
 
 function net.onOpen()
@@ -152,7 +174,7 @@ function net.onClose()
         authMode = 'register'
         net.loginTicket = nil
         net.lastError = nil
-        if mp.connect(mp.getUrl()) then
+        if mp.connect(targetUrl()) then
             setState('Connecting')
             return
         end
@@ -164,7 +186,7 @@ function net.onClose()
         net.resumeToken = nil
         if mp.setResumeToken then mp.setResumeToken('') end
         net.lastError = nil
-        if mp.connect(mp.getUrl()) then
+        if mp.connect(targetUrl()) then
             setState('Connecting')
             return
         end
@@ -173,7 +195,7 @@ function net.onClose()
         triedLogin = true
         authMode = 'login'
         net.lastError = nil
-        if mp.connect(mp.getUrl()) then
+        if mp.connect(targetUrl()) then
             setState('Connecting')
             return
         end
@@ -302,7 +324,7 @@ function net.tick()
     local now = core.getRealTime()
     if reconnectAt and now >= reconnectAt then
         reconnectAt = nil
-        if mp.connect(mp.getUrl()) then
+        if mp.connect(targetUrl()) then
             setState('Connecting')
         else
             scheduleReconnect() -- dial refused outright; back off and try again
