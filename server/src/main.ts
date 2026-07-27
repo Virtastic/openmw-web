@@ -67,3 +67,31 @@ process.on('SIGUSR1', () => {
   log('info', 'server.flush_signal', {});
   void server.flush();
 });
+
+// Last-gasp save. Without this, an uncaught throw or a rejected promise loses up to one
+// sweep interval of progress for EVERY player at once, silently.
+//
+// Deliberately best-effort and deliberately loud, in this order:
+//   1. log the original error FIRST, so the crash is never masked by whatever the flush does
+//   2. attempt the flush on a short deadline — a corrupted process may not manage it, and
+//      hanging here would turn a crash into a wedge
+//   3. exit NON-ZERO always, so a supervisor restarts and nobody mistakes this for a clean stop
+//
+// This is not a substitute for fixing the crash; it bounds the damage while you do.
+function lastGaspExit(kind: string, err: unknown): void {
+  log('error', 'server.crash', { kind, error: String(err), stack: (err as Error)?.stack });
+  if (shuttingDown) process.exit(1);
+  shuttingDown = true;
+  const deadline = setTimeout(() => {
+    log('error', 'server.crash_flush_timeout', {});
+    process.exit(1);
+  }, 5000);
+  deadline.unref();
+  void server.flush()
+    .then(() => log('info', 'server.crash_flush_ok', {}))
+    .catch((e) => log('error', 'server.crash_flush_failed', { error: String(e) }))
+    .finally(() => process.exit(1));
+}
+
+process.on('uncaughtException', (err) => lastGaspExit('uncaughtException', err));
+process.on('unhandledRejection', (err) => lastGaspExit('unhandledRejection', err));

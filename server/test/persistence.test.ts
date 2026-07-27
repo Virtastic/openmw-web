@@ -197,3 +197,43 @@ test('m2 state sync end to end', async (t) => {
     assert.equal(a.inbox.events.filter((e) => ['PlayerAppearance', 'PlayerEquipment'].includes(e.name)).length, 0);
   });
 });
+
+// Death must reach the DISK immediately, not on the 45 s sweep — so that a SERVER crash
+// (OOM, kill -9) between the death and the next sweep cannot resurrect the player. That is a
+// lost-progress bug and an exploit at once.
+//
+// NOTE ON WHAT THIS DOES *NOT* TEST: an abrupt client disconnect is already covered by the
+// flush in connection.cleanup(), so asserting "die then terminate the socket" proves nothing
+// about the death flush — verified by negative control, where that version passed with the
+// death flush removed. The distinguishing case is checking the file while the player is
+// STILL CONNECTED: no disconnect flush has run, so only an immediate write can have landed.
+test('death is written immediately, before any disconnect or sweep', async () => {
+  const dir = tmpDataDir();
+  const server = await startServer({ dataDir: dir, port: 0, host: '127.0.0.1' });
+  try {
+    const c = await TestClient.connect(server.port);
+    await c.joinAsNew('dying_player');
+    c.sendCellChange('7,7', 0, 0, 0);
+
+    // Alive first: this rides the sweep, so it must NOT be on disk yet.
+    c.sendEvent('PlayerStatsDynamic', {
+      hp: { c: 100, b: 100 }, mp: { c: 50, b: 50 }, ft: { c: 80, b: 80 },
+    });
+    await new Promise((r) => setTimeout(r, 300));
+
+    c.sendEvent('PlayerStatsDynamic', {
+      hp: { c: 0, b: 100 }, mp: { c: 50, b: 50 }, ft: { c: 80, b: 80 },
+    });
+    await new Promise((r) => setTimeout(r, 400));
+
+    // STILL CONNECTED. No cleanup flush, no server.flush(), sweep is 45 s away.
+    const doc = JSON.parse(readFileSync(join(dir, 'players', 'dying_player.json'), 'utf8')) as
+      { stats?: { dynamic?: { hp?: { c: number } } } };
+    assert.equal(doc.stats?.dynamic?.hp?.c, 0,
+      'death must hit the disk at once — a crash before the next sweep must not resurrect');
+
+    c.ws.close();
+  } finally {
+    await server.close();
+  }
+});

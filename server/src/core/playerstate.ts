@@ -97,9 +97,15 @@ function handleStatsDynamic(ctx: StateCtx, player: Player, body: LTable): boolea
   const mp = parseDynamicStat(body.get('mp'));
   const ft = parseDynamicStat(body.get('ft'));
   if (!hp || !mp || !ft) return false;
+  // DEATH IS A FLUSH POINT. Everything else here rides the sweep, but hp reaching 0 must hit
+  // the disk immediately: the client sends the death edge instantly, and a player who dies
+  // and closes the tab in the same second would otherwise rejoin alive — a progress bug and
+  // an exploit at once. Being alive is still cheap (sweep), so this costs a write per death,
+  // not per tick.
+  const died = hp.c <= 0;
   ctx.store.update(player.accountKey, (doc) => {
     doc.stats = { ...doc.stats, dynamic: { hp, mp, ft } };
-  });
+  }, died ? 'now' : 'sweep');
   const msg = { id: player.id, hp, mp, ft };
   for (const p of ctx.roster.inWorld()) {
     if (cellsVisible(p.cellKey, player.cellKey)) p.peer.sendEvent('PlayerStatsDynamic', msg);
