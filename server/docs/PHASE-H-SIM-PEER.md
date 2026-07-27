@@ -22,6 +22,11 @@ authoritative" as a claim to be proven, not assumed.
 
 **Nothing below is worth planning in detail until this answers yes.**
 
+0. **Can the repo even build OpenMW natively?** `deps/` currently holds only the wasm
+   sysroot and there is no `build-native`. A native build needs OSG, Bullet, MyGUI, ICU and
+   friends first, which on this machine is hours, not minutes. Budget it, or evaluate
+   running the EXISTING wasm build under Node instead (it hits the same GL question, so the
+   crux below is unchanged either way).
 1. **Can OpenMW initialise without a GL context?** It is not built for headless operation and
    much of its startup assumes a window and a renderer. Options in increasing desperation:
    an offscreen context (EGL/OSMesa), a null OSG graphics context, or patching the render
@@ -31,6 +36,27 @@ authoritative" as a claim to be proven, not assumed.
    run. A build that boots headless but does not tick actors is worthless.
 3. **What does it cost?** RSS and CPU for one instance simulating one world's active cells.
    This number decides whether per-session peers are affordable at all (see H4).
+
+### What a first read of the engine suggests (analysis, NOT proof)
+
+Two things make this look more tractable than "OpenMW has no headless mode" implies, and the
+spike should test them directly rather than starting from scratch:
+
+- **The frame is already three separable traversals.** `engine.cpp` runs
+  `mViewer->eventTraversal()`, `updateTraversal()`, then `renderingTraversals()`. The world,
+  physics and AI tick in the update traversal; drawing is the third call. A headless mode may
+  be as narrow as *skipping the third* — simulation without any GPU work per frame.
+- **The GL dependency is concentrated at INIT, not per frame.** `createWindow()` runs early in
+  `prepareEngine()` and everything that matters — Lua, `MWWorld::World`, physics, the script
+  manager — is constructed after it. So the likely shape is: a HIDDEN window with a real
+  (software) GL context so `RenderingManager` can construct, then skip rendering every frame.
+
+If that holds, the patch is small and targeted rather than deep surgery on the render path.
+It also means the peer pays for a GL context once at startup and no per-frame draw cost,
+which matters a great deal for the per-peer cost in H4.
+
+**Treat all of the above as a hypothesis to falsify.** It is a read of the call order, not a
+working build, and this project has already had one confident mechanism turn out wrong.
 
 Exit criteria: a headless build that loads a cell, ticks NPCs for a minute, and reports its
 RSS/CPU. If that cannot be reached in about a day, stop and reconsider — D-cap-5 (splitting
