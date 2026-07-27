@@ -14,6 +14,7 @@ import { log } from './log';
 const { values } = parseArgs({
   options: {
     data: { type: 'string' },
+    shared: { type: 'string' },
     port: { type: 'string' },
     'delete-account': { type: 'string' },
   },
@@ -46,7 +47,10 @@ if (eraseTarget !== undefined) {
   process.exit(0);
 }
 
-const server = await startServer({ dataDir, port });
+// --shared: accounts, identities, friends and bans live here instead of in the world's own
+// data dir, so several worlds share one identity. Omitted = the data dir itself, which is
+// exactly the previous behaviour for anyone running a single world.
+const server = await startServer({ dataDir, port, ...(values.shared ? { sharedDir: values.shared } : {}) });
 
 let shuttingDown = false;
 async function shutdown(signal: string): Promise<void> {

@@ -229,6 +229,17 @@ export class TestClient {
     return { playerId: w['playerId'] as number, welcome: w };
   }
 
+  // Log in to an account that already exists — the cross-world identity case: a player who
+  // registered in one world arriving at another that has never seen them.
+  async joinExisting(account: string, password = 'hunter22'): Promise<JsonMsg> {
+    this.hello();
+    await this.waitJson('SessionHelloOk');
+    this.login(account, password);
+    const w = await this.waitJson('SessionWelcome');
+    this.sendJson({ t: 'SessionReady' });
+    return w;
+  }
+
   close(): void {
     this.ws.close();
   }

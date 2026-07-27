@@ -26,10 +26,14 @@ const { values } = parseArgs({
     'max-per-owner': { type: 'string' },
     'public-world': { type: 'string', multiple: true },
     'server-entry': { type: 'string' },
+    shared: { type: 'string' },
   },
 });
 
 const worldsDir = resolve(values.worlds ?? './worlds');
+// Defaults to a sibling of the world dirs, so the common case needs no flag and shared
+// state never lands INSIDE a world dir (where reaping that world could take it away).
+const sharedDir = resolve(values.shared ?? join(worldsDir, '..', 'shared'));
 const port = Number(values.port ?? 8080);
 const publicHost = values['public-host'] ?? '127.0.0.1';
 // Default to the sibling server bundle, so a normal `dist/` layout needs no flag.
@@ -54,6 +58,7 @@ const worlds = new WorldSupervisor({
     startTimeoutMs: 120_000,
     restartBackoffMs: 15_000,
     publicWorlds: values['public-world'] ?? ['vvardenfell'],
+    sharedDir,
   },
 });
 
@@ -65,7 +70,7 @@ const directory = await startDirectory({
 });
 
 log('info', 'gateway.start', {
-  port: directory.port, worldsDir, publicHost, serverEntry,
+  port: directory.port, worldsDir, sharedDir, publicHost, serverEntry,
 });
 
 let shuttingDown = false;

@@ -53,6 +53,16 @@ export interface StartOptions {
   dataDir: string;
   port: number;
   host?: string;
+  // F1/F3: state that must be the SAME for a player across every world — accounts, SSO
+  // identities, friends/party/presence, and bans. Defaults to dataDir, so a single-world
+  // self-hoster is completely unaffected and existing data dirs keep working in place.
+  // Under the F3 gateway every world is pointed at one shared dir, which is what makes
+  // "log in once, see your friends wherever they are, a ban means banned" true.
+  //
+  // What deliberately does NOT move: cells, player docs and custom records stay PER WORLD.
+  // One account with a character per world is the safe shape — a character carried between
+  // worlds would let items be duplicated by joining a second world with the same inventory.
+  sharedDir?: string;
   configOverride?: DeepPartial<Config>; // tests
 }
 
@@ -68,6 +78,8 @@ export interface RunningServer {
 
 export async function startServer(opts: StartOptions): Promise<RunningServer> {
   mkdirSync(opts.dataDir, { recursive: true });
+  const sharedDir = opts.sharedDir ?? opts.dataDir;
+  if (sharedDir !== opts.dataDir) mkdirSync(sharedDir, { recursive: true });
   const config = loadConfig(opts.dataDir, opts.configOverride);
   // M4 election tuning is read live by core/authority.ts, which WorldState builds without
   // ever seeing the config; push it before anything can elect.
@@ -82,15 +94,15 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     settleMs: config.authority.settleSec * 1000,
     reviewMs: config.authority.reviewSec * 1000,
   });
-  const accounts = new AccountStore(opts.dataDir);
+  const accounts = new AccountStore(sharedDir);
   const playerStore = new PlayerStore(opts.dataDir);
   const cellStore = new CellStore(opts.dataDir);
   const recordStore = new RecordStore(opts.dataDir);
-  const bans = new BanStore(opts.dataDir);
+  const bans = new BanStore(sharedDir);
   await bans.ready(); // the ban list must be authoritative before the listener opens
   // Phase B: the identity index must be complete before the listener opens too — a missed
   // (iss,sub) entry would hand a returning player a brand new empty account.
-  const identities = new IdentityStore(opts.dataDir);
+  const identities = new IdentityStore(sharedDir);
   await identities.ready();
   const tickets = new LoginTicketStore();
   const sessions = new SessionIndex();
@@ -115,7 +127,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // actions), so the reference is closed over lazily — both are live before any hook or
   // any client frame can run.
   let hooks: HookBus;
-  const moderation = new Moderation(opts.dataDir, config.moderation);
+  const moderation = new Moderation(sharedDir, config.moderation);
   const admin = new Admin({
     roster,
     accounts,
@@ -218,7 +230,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
 
   // Phase C. The store is opened here so its lifetime matches the server's; social.stop()
   // clears presence timers that would otherwise keep the process alive on shutdown.
-  const socialStore = new SocialStore(opts.dataDir);
+  const socialStore = new SocialStore(sharedDir);
   const social = new Social({
     store: socialStore,
     roster,
@@ -359,7 +371,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   moveBroadcaster.start();
   m7.start(); // clock ticking + cell-reset sweep before plugins register schedules
   hooks.serverStart();
-  log('info', 'server.start', { port, dataDir: opts.dataDir, version: VERSION });
+  log('info', 'server.start', { port, dataDir: opts.dataDir, sharedDir, version: VERSION });
 
   let closed = false;
   return {

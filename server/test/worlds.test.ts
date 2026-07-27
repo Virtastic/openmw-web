@@ -35,6 +35,7 @@ function harness(over: Partial<WorldSettings> = {}) {
     startTimeoutMs: 60_000,
     restartBackoffMs: 15_000,
     publicWorlds: ['vvardenfell'],
+    sharedDir: mkdtempSync(join(tmpdir(), 'omw-shared-')),
     ...over,
   };
   const spawned: { id: string; args: string[]; child: FakeChild }[] = [];
@@ -131,6 +132,7 @@ test('worlds: a world that stops answering /status is reported down, not silentl
       worldsDir: mkdtempSync(join(tmpdir(), 'omw-worlds-')), serverEntry: '/f', nodeBin: '/n',
       basePort: 41000, maxWorlds: 2, idleReapMs: 60_000, startTimeoutMs: 1000,
       restartBackoffMs: 1000, publicWorlds: [],
+      sharedDir: mkdtempSync(join(tmpdir(), 'omw-shared-')),
     },
     spawner: () => new FakeChild() as unknown as ChildProcess,
     fetchStatus: async () => null, // wedged / not up
@@ -171,4 +173,47 @@ test('worlds: a stale exit cannot evict the world that replaced it, and frees no
   sup.ensure('other', 'private');
   const p3 = Number(spawned[2]!.args[spawned[2]!.args.indexOf('--port') + 1]);
   assert.notEqual(p3, p2, 'the live successor keeps its port reserved');
+});
+
+// F1: the gap F3 exposed. Every store was scoped to the per-world dataDir, which was
+// harmless with one world and blocking with many: a player could not log into their own
+// private session with the account they registered in the public world.
+test('shared: one account works across worlds; per-world state stays separate', async () => {
+  const { startServer } = await import('../src/server');
+  const { TestClient, tmpDataDir } = await import('./helpers');
+  const { existsSync } = await import('node:fs');
+  const { join } = await import('node:path');
+
+  const shared = tmpDataDir();
+  const worldA = tmpDataDir();
+  const worldB = tmpDataDir();
+  const a = await startServer({ dataDir: worldA, sharedDir: shared, port: 0, host: '127.0.0.1' });
+  const b = await startServer({ dataDir: worldB, sharedDir: shared, port: 0, host: '127.0.0.1' });
+  try {
+    // Register in world A only.
+    const c1 = await TestClient.connect(a.port);
+    await c1.joinAsNew('traveller');
+    c1.ws.close();
+    await a.flush();
+
+    // The SAME credentials must work in world B, which the player has never visited.
+    const c2 = await TestClient.connect(b.port);
+    const welcome = await c2.joinExisting('traveller');
+    assert.ok(welcome, 'one account must work in every world — this is the whole point of sharedDir');
+    c2.ws.close();
+    await b.flush();
+
+    // Accounts live in the SHARED dir, not in either world.
+    assert.ok(existsSync(join(shared, 'accounts')), 'accounts belong to the shared dir');
+    assert.ok(!existsSync(join(worldA, 'accounts')), 'and not to a world dir');
+
+    // But per-world game state stays per world: a character in each, so an item cannot be
+    // duplicated by carrying one inventory into a second world.
+    assert.ok(existsSync(join(worldA, 'players')) || existsSync(join(worldB, 'players')),
+      'player docs stay per world');
+    assert.ok(!existsSync(join(shared, 'players')), 'player docs must NOT be shared');
+  } finally {
+    await a.close();
+    await b.close();
+  }
 });

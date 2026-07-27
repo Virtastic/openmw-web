@@ -33,6 +33,11 @@ export interface WorldSettings {
   startTimeoutMs: number;
   restartBackoffMs: number;
   publicWorlds: string[]; // always-on world ids, started at boot and never reaped
+  // One identity across every world: accounts, SSO identities, friends/party/presence and
+  // bans live here, NOT in each world's data dir. Without it a player could not log into
+  // their own private session with the account they made in the public world, friends would
+  // not span worlds, and a ban would apply only where it was issued.
+  sharedDir: string;
 }
 
 export interface WorldInfo {
@@ -145,7 +150,7 @@ export class WorldSupervisor {
       log('error', 'world.mkdir_failed', { id, error: String(err) });
       return null;
     }
-    const args = [s.serverEntry, '--data', dataDir, '--port', String(port)];
+    const args = [s.serverEntry, '--data', dataDir, '--shared', s.sharedDir, '--port', String(port)];
     let child: ChildProcess;
     try {
       const spawner = this.deps.spawner

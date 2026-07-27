@@ -23,6 +23,7 @@ async function harness(maxWorlds = 5, maxPerOwner = 2) {
       serverEntry: '/fake/server.mjs', nodeBin: '/fake/node',
       basePort: 42000, maxWorlds, idleReapMs: 60_000, startTimeoutMs: 1000,
       restartBackoffMs: 1000, publicWorlds: ['vvardenfell'],
+      sharedDir: mkdtempSync(join(tmpdir(), 'omw-shared-')),
     },
     spawner: () => new FakeChild() as unknown as ChildProcess,
     fetchStatus: async (port) => ({ playerCount: 0, maxPlayers: 32, name: `w${port}` }),
