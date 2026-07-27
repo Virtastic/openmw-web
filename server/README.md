@@ -227,29 +227,34 @@ three, and roughly halves the per-avatar cost against no LOD at all.
 > the figures should not have been published as headline capacity. Capacity claims are only
 > meaningful from an idle box, which is what the script above exists to enforce.
 
-### The per-cell QUALITY limit (not a correctness limit)
+### Per-cell agreement under crowd load
 
 `s42-crowded-cell` measures how far two clients disagree about a shared NPC's position while
-a cell is crowded. Uncrowded that is 11–76 units. Under bot load, measured across runs:
+a cell is crowded (2 browser clients + 20 protocol bots). Current, with the authority
+capability rule in place:
 
-| bots in the cell | worst disagreement |
+| | units |
 | --- | --- |
-| 4 | 148 units |
-| 12 | 93 units |
-| 20 | 249 units |
+| uncrowded baseline | 36–78 |
+| crowded: best | 36.6 |
+| crowded: median | **59.7** |
+| crowded: worst | 147.2 |
 
-Large, variable, and only loosely related to crowd size — the signature of frame-time
-induced steering lag on the non-holder, not a desync that grows with load.
+The median under load sits BELOW the uncrowded budget, and the actor stream keeps flowing.
 
-**This cannot desync state.** M5 routes every actor hit to the authority holder, and the
-holder applies damage from its own state, so two clients can never disagree about an NPC's
-health.
+> **Correction.** An earlier revision reported 93/148/249/583 units here and explained it as
+> frame-time steering lag on the non-holder. That explanation was wrong. Most of it was
+> authority thrashing: cell authority was elected on network fitness alone, so protocol bots
+> — perfect on RTT, no engine at all — won the cell, produced nothing, and the NPC stream
+> stalled outright. Fixing the election (a holder must declare `simulatesActors`) removed
+> the bulk of the divergence. The lesson is the one this repo keeps relearning: a plausible
+> mechanism is not a diagnosis, and the number should have been attributed before it was
+> explained.
 
-**It is not cosmetic either.** The attacker detects its hit locally, against the puppet it
-can see, so at 1–2 m of error a player can swing where an NPC appears and have the holder
-resolve that swing somewhere else. **Aim fidelity degrades in a crowd even though state
-stays consistent** — that is the real cost of packing a cell, and it is the thing to judge
-in a playtest before publishing a per-cell number for combat-heavy play.
+What remains is genuine steering lag and is small. It cannot desync state — M5 routes every
+actor hit to the authority holder, which applies damage from its own state — and at these
+magnitudes it is not a meaningful aim-fidelity problem either. Whether a busier cell than
+this degrades further is a playtest question.
 
 ## VPS headroom
 

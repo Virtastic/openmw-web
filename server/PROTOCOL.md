@@ -126,6 +126,13 @@ Payload: `[u8 nameLen][name: nameLen bytes, ASCII][body: LSER blob]`.
 
 Flow: `CONNECTED → (Hello ≤10 s) → HELLO_OK → (auth) → AUTHED → (Ready) → IN_WORLD`.
 
+`SessionHello` carries an optional **`simulatesActors: true`**. A client that omits it is
+never granted cell actor authority — neither by election nor by claiming a dormant cell.
+Authority is otherwise chosen on network fitness, and a protocol-only client (a load bot, a
+headless tool) is a near-perfect RTT candidate that simulates nothing: it wins the cell and
+every NPC in it freezes for everyone. A cell with no capable occupant stays **dormant**,
+which is the same amount of simulation without the server believing the job is covered.
+
 Client → server:
 
 - `{"t":"SessionHello", "proto":1, "engineHash":"<12-hex or empty>", "lserVersion":0,
