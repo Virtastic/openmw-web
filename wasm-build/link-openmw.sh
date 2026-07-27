@@ -40,6 +40,15 @@ rsync -a --delete "$ROOT/openmw/files/data/scripts/mp/" "$ROOT/fsroot/resources/
 cp "$ROOT/openmw/files/data/mp.omwscripts" "$ROOT/fsroot/resources/vfs/mp.omwscripts"
 
 # Make sure the objects on the explicit link line are fresh.
+#
+# openmw-lib AND components must be built here, not just main.cpp.o. The link line below
+# names libopenmw-lib.a and libcomponents.a directly, so a stale archive links CLEANLY and
+# silently ships an engine without your change in it. That is not hypothetical: a new
+# openmw.mp Lua binding was added to luabindings.cpp (in openmw-lib), only main.cpp.o was
+# rebuilt, and the deployed client threw "attempt to call a nil value" at runtime — which
+# killed the whole MP transport, because a throwing Lua handler disables its subsystem.
+# Ninja no-ops these in seconds when nothing changed, so there is no reason to skip them.
+ninja components openmw-lib
 ninja apps/openmw/CMakeFiles/openmw.dir/main.cpp.o
 
 # X11 no-op stubs (osgViewer's X11 backend symbols; see wasm-build/x11_stubs.c).
