@@ -1129,6 +1129,10 @@ local eventHandlers = {
     -- F3: switch worlds. A reconnect, not a page reload — mp.connect takes any URL, so the
     -- engine and loaded assets stay put and only the session moves. Accounts are shared
     -- across worlds, so the login that got us here works there too.
+    mpSocialJoinById = function(data)
+        toPlayer('MP_SocialJoinById', { id = tostring(data.id or '') })
+    end,
+
     mpSocialTab = function(data)
         -- toPlayer, not a world.players loop: the same helper every other player-bound
         -- bridge here uses, and the one that actually resolves the player script.

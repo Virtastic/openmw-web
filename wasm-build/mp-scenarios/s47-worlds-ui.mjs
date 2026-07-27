@@ -93,6 +93,44 @@ export default async function run(ctx) {
     assert.ok(listed.worlds.some((w) => w.id === 'my-session'),
       'the session the player created must exist on the gateway, not just in the UI');
 
+    // --- 3. JOIN actually moves the player to the other world -------------------------
+    // The part a player would notice most if it were broken. Pressing join goes through
+    // joinWorld() -> MP_JoinWorld -> net.switchTo(): a disconnect and a redial of a
+    // DIFFERENT world, with no page reload, so the engine and loaded assets stay put.
+    const sessionPort = listed.worlds.find((w) => w.id === 'my-session').port;
+
+    // A freshly spawned world takes time to answer /status; the UI only offers a join once
+    // it is up, so the test must wait for the same condition rather than racing it.
+    const upBy = Date.now() + 60_000;
+    let up = false;
+    while (Date.now() < upBy) {
+      const l = await (await fetch(`http://127.0.0.1:${gwPort}/worlds?account=${encodeURIComponent(acct)}`)).json();
+      if (l.worlds.find((w) => w.id === 'my-session')?.up) { up = true; break; }
+      await ctx.sleep(1000);
+    }
+    assert.ok(up, 'the created session must come up, or there is nothing to join');
+    // Refresh the client's list so it sees the world as joinable.
+    await a.eval("Module.__omwMPCmd='socialtab:players'");
+    await a.eval("Module.__omwMPCmd='socialtab:worlds'");
+    await ctx.sleep(1500);
+
+    await a.eval("Module.__omwMPCmd='worldjoin:my-session'");
+    // The definitive check is on the DESTINATION world: it must report a player that was
+    // not there before. Asserting only on client state would pass if the client merely
+    // believed it had moved.
+    const joinedBy = Date.now() + 60_000;
+    let arrived = false;
+    while (Date.now() < joinedBy) {
+      try {
+        const st = await (await fetch(`http://127.0.0.1:${sessionPort}/status`)).json();
+        if ((st.playerCount ?? 0) > 0) { arrived = true; break; }
+      } catch { /* still switching */ }
+      await ctx.sleep(1000);
+    }
+    assert.ok(arrived, 'the player must actually arrive in the world they joined');
+    ctx.log('  join: player moved to my-session and the destination world sees them');
+    ctx.log(`  after join: ${await a.screenshot(join(SHOTS, '3-joined-session.png'))}`);
+
     ctx.log(`UI screenshots written to ${SHOTS} — review the Worlds tab for layout and legibility`);
   } finally {
     stopGw();

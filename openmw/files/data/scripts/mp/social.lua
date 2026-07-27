@@ -45,6 +45,7 @@ local worlds = nil
 local worldsError = ''
 local worldDraft = ''
 local myWorldPort = nil -- so the world we are IN is marked rather than offered as a join
+local joiningWorld = nil -- name of the world a join is in flight to, nil = not switching
 
 -- There is no scroll container in this UI API, so a long list would simply run off the
 -- bottom of the screen. The world is designed for ~100 concurrent players, so the Players
@@ -232,9 +233,13 @@ local function joinWorld(w)
         return
     end
     local url = 'ws://' .. tostring(w.host) .. ':' .. string.format('%d', w.port) .. '/ws'
-    status = 'Joining ' .. tostring(w.name) .. '...'
+    joiningWorld = tostring(w.name)
+    status = 'Joining ' .. joiningWorld .. '...'
     render()
-    core.sendGlobalEvent('MP_JoinWorld', { url = url, name = tostring(w.name) })
+    -- mpJoinWorld, NOT MP_JoinWorld: this repo's convention is `mp*` for player -> global
+    -- (mpSocial, mpOpenUi) and `MP_*` for global -> player. Sending the wrong one is
+    -- silent — sendGlobalEvent for an unhandled name simply does nothing.
+    core.sendGlobalEvent('mpJoinWorld', { url = url, name = tostring(w.name) })
 end
 
 local function worldsTab()
@@ -450,6 +455,17 @@ return {
         end,
         MP_Roster = function(data)
             roster = data.players or {}
+            -- Arriving somewhere completes any join in flight. The world list and the port
+            -- that marks "you are here" both belong to the world we LEFT, so they are
+            -- dropped rather than shown stale — the tab refetches next time it is opened.
+            if joiningWorld then
+                status = 'You are now in ' .. joiningWorld .. '.'
+                joiningWorld = nil
+                worlds = nil
+                worldsError = ''
+                myWorldPort = nil
+                if tab == 'worlds' then send('WorldList', {}) end
+            end
             render()
         end,
         MP_FriendList = function(data)
@@ -495,6 +511,18 @@ return {
                 mirror()
                 render()
             end
+        end,
+        -- Test-only: press "join" for a listed world by id, through the SAME joinWorld()
+        -- path the button uses (not a shortcut around it).
+        MP_SocialJoinById = function(data)
+            local want = tostring(data.id or '')
+            for _, w in ipairs(worlds or {}) do
+                if tostring(w.id) == want then
+                    joinWorld(w)
+                    return
+                end
+            end
+            mp.testSet('joinError', 'no such world: ' .. want)
         end,
         -- Test-only: the harness has no way to click a tab button.
         MP_SocialTab = function(data)

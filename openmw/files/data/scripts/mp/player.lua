@@ -374,6 +374,12 @@ local function pollHarness()
         -- Test hook: create a world through the same uplink the Worlds tab's button uses.
         -- The harness cannot type into the name field, so without this the create path
         -- could only be tested at the protocol level, never as the player experiences it.
+        -- Test hook: press the Worlds tab's "join" button for a world by id. The harness
+        -- cannot click, and the join path (disconnect + redial a different world) is the
+        -- one thing about the tab a player would notice most if it were broken.
+        local joinId = cmd:match('^worldjoin:([%w_-]+)$')
+        if joinId then core.sendGlobalEvent('mpSocialJoinById', { id = joinId }) end
+
         local wcId, wcMode = cmd:match('^worldcreate:([%w_-]+):(%a+)$')
         if wcId then
             core.sendGlobalEvent('mpSocial', { op = 'WorldCreate', id = wcId, mode = wcMode })
