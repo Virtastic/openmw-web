@@ -403,6 +403,13 @@ async function main(): Promise<void> {
       const name = `${NAME_PREFIX}${i}`;
       const t = Date.now();
       const client = await TestClient.connect(port);
+      // Honest capability. In standalone/--onecell the fleet DOES simulate — bot 0 holds the
+      // cell and streams synthesised actor poses — so it claims the capability. Under
+      // --attach it does not: a real browser client is the holder, and the bots are pure
+      // fan-out load that never send an ActorMoveBatch. Claiming it there would let a bot
+      // win the fitness election and freeze every NPC in the cell for the real players,
+      // which is exactly the failure s42 was reporting.
+      client.simulatesActors = !ATTACH;
       const { playerId } = await client.joinAsNew(name);
       const welcomeMs = Date.now() - t;
       const cell = ONECELL ? 0 : i % CELLS;

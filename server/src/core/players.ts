@@ -31,6 +31,9 @@ export interface Player {
   // right after Ready). poseVersion bumps on every accepted pose/cell update so the batch
   // broadcaster can do per-recipient change detection + force-include-on-visibility.
   cellKey?: string;
+  // Declared at Hello. Only a client that can actually simulate a cell's actors is eligible
+  // to hold authority for one; see Authority.bestCandidate.
+  simulatesActors?: boolean;
   pose?: PlayerPose;
   moveSeq: number; // last accepted PlayerMove envelope seq (stale-drop)
   poseVersion: number;

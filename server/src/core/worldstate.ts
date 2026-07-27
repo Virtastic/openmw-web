@@ -95,6 +95,11 @@ export class WorldState {
         doc.actorOverrides = snapshot;
         this.cells.markDirty(cellKey);
       },
+    }, {
+      // Only clients that declared they can simulate actors are eligible to hold a cell.
+      caps: {
+        canSimulate: (playerId) => this.roster.get(playerId)?.simulatesActors === true,
+      },
     });
   }
 

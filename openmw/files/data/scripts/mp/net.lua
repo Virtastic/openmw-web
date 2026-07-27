@@ -126,6 +126,12 @@ function net.onOpen()
         engineHash = mp.getEngineHash(),
         lserVersion = 0,
         manifest = buildManifest(),
+        -- We run a real engine, so we can hold cell actor authority. The server refuses to
+        -- hand a cell to anything that does not claim this: authority is otherwise elected
+        -- on network fitness, and a protocol-only client (a bot, a load tool) is a
+        -- near-perfect RTT candidate that simulates nothing, freezing every NPC in the cell
+        -- for everyone in it.
+        simulatesActors = true,
     })
     setState('HelloSent')
 end

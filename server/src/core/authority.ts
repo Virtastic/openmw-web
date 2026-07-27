@@ -113,6 +113,13 @@ export interface FitnessSource {
   get(playerId: number): PlayerFitness | undefined;
 }
 
+// Can this player's client actually simulate a cell's actors? Injected so Authority stays
+// standalone for the fuzz test. Default (no source) treats everyone as capable, which is the
+// pre-capability behaviour.
+export interface CapabilitySource {
+  canSimulate(playerId: number): boolean;
+}
+
 // One sample is a coin flip on a wifi link; the smoothing is what makes the signal usable
 // without either lagging a real degradation by minutes or chasing every spike.
 const RTT_ALPHA = 0.25; // ~10 samples to settle; at a 5 s probe that is ~50 s of memory
@@ -188,11 +195,15 @@ export interface AuthorityOptions {
   fitness?: FitnessSource; // tests inject; production reads the shared tracker
   now?: () => number; // tests drive the clock
   review?: boolean; // false: no periodic sweep (M7 weather reuses this class)
+  // Absent = everyone is treated as capable (the pre-capability behaviour, which the fuzz
+  // and tuning tests rely on).
+  caps?: CapabilitySource;
 }
 
 export class Authority {
   private cells = new Map<string, Cell>();
   private readonly fitness: FitnessSource;
+  private readonly caps: CapabilitySource | undefined;
   private readonly now: () => number;
   private reviewTimer?: NodeJS.Timeout;
 
@@ -201,6 +212,7 @@ export class Authority {
     opts: AuthorityOptions = {},
   ) {
     this.fitness = opts.fitness ?? playerFitness;
+    this.caps = opts.caps;
     this.now = opts.now ?? Date.now;
     if (opts.review !== false) this.scheduleReview();
   }
@@ -293,8 +305,21 @@ export class Authority {
   // function of state (the fuzz depends on this determinism).
   private bestCandidate(c: Cell, except: number | null): number | null {
     const now = this.now();
-    const pool = c.order.filter((id) => id !== except);
+    let pool = c.order.filter((id) => id !== except);
     if (pool.length === 0) return null;
+    // Only clients that can SIMULATE are eligible. Fitness measures whether a client can
+    // talk to us and says nothing about whether it can do the job: a protocol bot is a
+    // near-perfect RTT candidate with no engine at all, so pure-fitness election hands it
+    // the cell and every NPC freezes for everyone. Revoking a silent holder is not enough on
+    // its own — without this filter the cell just rotates through other clients that also
+    // produce nothing.
+    //
+    // Falls back to the unfiltered pool when NOBODY is capable, so a cell full of tools
+    // still has a holder for the rest of the M4 contract rather than going ownerless.
+    if (this.caps) {
+      const capable = pool.filter((id) => this.caps!.canSimulate(id));
+      if (capable.length > 0) pool = capable;
+    }
     const settled = pool.filter((id) => now - (c.enteredAt.get(id) ?? now) >= authorityTuning.settleMs);
     const from = settled.length > 0 ? settled : pool;
     let best = from[0]!;
@@ -336,6 +361,16 @@ export class Authority {
     const c = this.cell(cellKey);
     if (!c.order.includes(playerId)) c.order.push(playerId);
     if (!c.enteredAt.has(playerId)) c.enteredAt.set(playerId, this.now());
+    // A client that cannot simulate must not claim a dormant cell either. The election
+    // filter alone was not enough: onEnter grants a dormant cell DIRECTLY to the entrant
+    // without consulting bestCandidate, so the first bot through the door still took it.
+    // Leaving the cell dormant is strictly better than a holder that will never produce —
+    // same simulation either way, without the server believing the job is covered — and the
+    // next capable arrival claims it through this same path.
+    // No occupancy condition: the bot is usually FIRST through the door, which is exactly
+    // the case an `order.length > 1` guard would miss. There is nothing to report to them
+    // either — with no holder there is no epoch to quote — so this simply returns.
+    if (c.holderId === null && this.caps && !this.caps.canSimulate(playerId)) return;
     if (c.holderId === null) {
       // Fresh claim of a dormant/new cell: snapshot = in-memory last, else the doc
       // overrides (survives restart), else empty. No election to make — the entrant is the

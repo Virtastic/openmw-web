@@ -451,3 +451,30 @@ test('authority: an EMPTY cell never rotates on the liveness check', async () =>
   assert.equal(auth.holderOf('empty'), 1, 'an empty cell must not rotate its holder');
   assert.equal(rec.revokes.length, 0, 'no revoke should be issued for a cell with nothing to simulate');
 });
+
+test('authority: a client that cannot simulate never holds a cell', async () => {
+  const rec: Recorder = { grants: [], infos: [], revokes: [], overrides: new Map() };
+  // 1 cannot simulate (a protocol bot / load tool); 2 can.
+  const auth = new Authority({
+    grant: (playerId, cellKey, epoch, snapshot) => rec.grants.push({ playerId, cellKey, epoch, snapshot }),
+    info: (playerId, cellKey, holderId) => rec.infos.push({ playerId, cellKey, holderId }),
+    revoke: (playerId, cellKey, epoch) => rec.revokes.push({ playerId, cellKey, epoch }),
+    loadOverrides: async () => ({ actors: [] }),
+    foldOverrides: async () => {},
+  }, { review: false, caps: { canSimulate: (id) => id === 2 } });
+
+  // The incapable client arrives FIRST, so seniority and fitness both favour it. Without the
+  // capability filter it takes the cell and every NPC in it freezes for everyone — which is
+  // exactly what happened in s42, where 20 bots out-competed two real clients on RTT.
+  await auth.onEnter(1, 'cell');
+  await auth.onEnter(2, 'cell');
+  assert.equal(auth.holderOf('cell'), 2, 'authority went to a client that cannot simulate');
+
+  // And it must not be handed back when the capable one leaves — better ownerless than
+  // owned by something that will never produce a frame... except the cell then has nobody,
+  // so the fallback DOES apply and 1 holds it. Asserted explicitly so the trade-off is
+  // visible rather than accidental.
+  await auth.onLeave(2, 'cell', true);
+  assert.equal(auth.holderOf('cell'), 1,
+    'with nobody capable left, the cell falls back to any occupant rather than going ownerless');
+});

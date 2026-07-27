@@ -94,6 +94,8 @@ export class Connection implements Peer {
   private lastClientSeq = 0; // informational for the event tier
   private helloTimer?: NodeJS.Timeout;
   private contentHeld = false;
+  // Declared at Hello; carried onto the Player so cell-authority election can require it.
+  private simulatesActors = false;
   private engineHeld = false;
   private authing = false;
   private sessionToken = ''; // M8: parked as a resume ticket when an in-world session drops
@@ -494,6 +496,9 @@ export class Connection implements Peer {
   // ----------------------------------------------------------------- states
 
   private handleHello(msg: SessionHello): void {
+    // Absent = false. Only a client that explicitly claims it can simulate a cell's actors
+    // is ever eligible to hold authority for one.
+    this.simulatesActors = msg.simulatesActors === true;
     if (msg.proto !== 1) {
       this.disconnect('BAD_PROTO', `unsupported protocol version ${msg.proto}`);
       return;
@@ -703,6 +708,7 @@ export class Connection implements Peer {
     }
     this.account = account;
     this.player = this.ctx.roster.addAuthed(account.name, accountKey, account.rank, this, this.ip);
+    this.player.simulatesActors = this.simulatesActors;
     this.state = 'AUTHED';
     this.authing = false;
     const sessionToken = randomBytes(16).toString('hex');

@@ -440,8 +440,13 @@ function actors.reset()
     -- Detach all puppets on session loss.
     for key, p in pairs(puppetActors) do
         if p.obj:isValid() then
+            -- Send ONLY. Removing the script here destroys it before the queued MP_Detach is
+            -- delivered (events land next frame, removeScript takes effect at once), so the
+            -- puppet never runs the handler that re-enables AI — leaving mDisableAI set and
+            -- every puppeted NPC frozen for good after a disconnect. The same trap is
+            -- documented at the handoff site above; it just was not applied here. The puppet
+            -- removes itself via mpPuppetDetached once AI is back on.
             pcall(function() p.obj:sendEvent('MP_Detach', {}) end)
-            pcall(function() p.obj:removeScript('scripts/mp/puppet.lua') end)
         end
     end
     held = {}

@@ -24,6 +24,12 @@ export interface SessionHello {
   lserVersion: number;
   manifest: ManifestEntry[];
   resumeToken?: string;
+  // Does this client run a game engine that can SIMULATE a cell's actors? Cell authority is
+  // otherwise elected on network fitness alone, and a client that cannot simulate — a
+  // protocol bot, a headless tool — is a near-perfect candidate on RTT while producing
+  // nothing, which freezes every NPC in the cell for everyone. Absent = false, so anything
+  // that does not explicitly claim the capability is never handed the job.
+  simulatesActors?: boolean;
 }
 export interface SessionRegister {
   t: 'SessionRegister';
@@ -136,6 +142,7 @@ export function parseSessionMessage(text: string): ClientSessionMsg | null {
         lserVersion: num(o, 'lserVersion'),
         manifest: parseManifest(o),
         ...(typeof o['resumeToken'] === 'string' ? { resumeToken: o['resumeToken'] } : {}),
+        ...(o['simulatesActors'] === true ? { simulatesActors: true } : {}),
       };
     case 'SessionRegister':
       return {

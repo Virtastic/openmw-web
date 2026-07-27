@@ -32,6 +32,9 @@ type ActorBatchMsg = { seq: number; batch: ActorMoveBatch };
 type Inbox = { json: JsonMsg[]; events: EventMsg[]; batches: BatchMsg[]; actorBatches: ActorBatchMsg[] };
 
 export class TestClient {
+  // Overridden before hello() by callers that model a non-simulating participant.
+  simulatesActors = true;
+
   readonly inbox: Inbox = { json: [], events: [], batches: [], actorBatches: [] };
   readonly closed: Promise<{ code: number; reason: string }>;
   isClosed = false;
@@ -120,7 +123,14 @@ export class TestClient {
   }
 
   hello(manifest: ManifestEntry[] = MANIFEST, engineHash = 'abcdef123456'): void {
-    this.sendJson({ t: 'SessionHello', proto: 1, engineHash, lserVersion: 0, manifest });
+    // Default TRUE: a TestClient stands in for a real engine client in the server suite, and
+    // cell authority is only ever granted to something that claims it can simulate. Set
+    // false to model a protocol-only participant (a load bot that will never send an
+    // ActorMoveBatch) — see bots/soak.ts --attach.
+    this.sendJson({
+      t: 'SessionHello', proto: 1, engineHash, lserVersion: 0, manifest,
+      simulatesActors: this.simulatesActors,
+    });
   }
 
   register(account: string, password: string, extra: Record<string, unknown> = {}): void {
