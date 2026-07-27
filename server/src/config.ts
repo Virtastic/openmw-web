@@ -10,6 +10,21 @@ import { parse } from 'smol-toml';
 
 export interface Config {
   server: { name: string; motd: string; maxPlayers: number; password: string };
+  // Phase H: an on-demand headless OpenMW that holds cell authority so no player's browser
+  // simulates NPCs for everyone else. Off by default — it needs a native binary and game
+  // data on the server, which a self-hoster may not have; the existing client-authority
+  // path stays the fallback.
+  simPeer: {
+    enabled: boolean;
+    binary: string; // absolute path to the headless openmw
+    configDir: string; // --config (its own isolated openmw.cfg + settings.cfg)
+    userDataDir: string; // --user-data
+    startCell: string;
+    maxPeers: number; // hard cap; the reaper exists so this is rarely reached
+    idleReapMs: number; // reap a peer whose world has had no humans this long
+    startTimeoutMs: number;
+    restartBackoffMs: number;
+  };
   login: { allowRegistration: boolean; inviteCode: string; resumeWindowSec: number };
   content: { enforce: 'strict' | 'names' | 'off' };
   sharing: {
@@ -235,6 +250,17 @@ function validate(t: Tree): Config {
       motd: reqStr(t, 'server', 'motd'),
       maxPlayers: reqNum(t, 'server', 'maxPlayers'),
       password: reqStr(t, 'server', 'password'),
+    },
+    simPeer: {
+      enabled: reqBool(t, 'simPeer', 'enabled'),
+      binary: reqStr(t, 'simPeer', 'binary'),
+      configDir: reqStr(t, 'simPeer', 'configDir'),
+      userDataDir: reqStr(t, 'simPeer', 'userDataDir'),
+      startCell: reqStr(t, 'simPeer', 'startCell'),
+      maxPeers: reqNum(t, 'simPeer', 'maxPeers'),
+      idleReapMs: reqNum(t, 'simPeer', 'idleReapMs'),
+      startTimeoutMs: reqNum(t, 'simPeer', 'startTimeoutMs'),
+      restartBackoffMs: reqNum(t, 'simPeer', 'restartBackoffMs'),
     },
     login: {
       allowRegistration: reqBool(t, 'login', 'allowRegistration'),

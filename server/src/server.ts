@@ -45,6 +45,7 @@ import { IpConnTracker, IpRateLimiter } from './net/ratelimit';
 import { disconnectMsg } from './proto/session';
 import { log } from './log';
 import { metrics } from './metrics';
+import { SimPeerSupervisor } from './core/simpeer';
 
 export const VERSION = '0.1.0';
 
@@ -289,6 +290,28 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // Derived at scrape time from the roster, so no teardown path can strand the gauge.
   const unhookGauge = metrics.sessionsInWorld.addCollector(() => roster.inWorld().length);
 
+  // Phase H4: the on-demand simulation peer. Wired at ONE point rather than hooked into
+  // join/leave in connection.ts, because ensure()/markIdle() are idempotent by design and a
+  // periodic observation of the roster cannot drift out of sync with it the way paired
+  // hooks can (a missed leave would strand a peer forever — exactly the leak the reaper
+  // exists to prevent). Disabled by default; see [simPeer] in config.default.toml.
+  const simPeers = new SimPeerSupervisor({
+    settings: config.simPeer,
+    wsUrl: () => `ws://127.0.0.1:${port}/ws`,
+    password: config.server.password,
+  });
+  const WORLD_KEY = 'world'; // one world per process today; F3 (multi-world) is not built
+  const simPeerTick = setInterval(() => {
+    if (!config.simPeer.enabled) return;
+    // humansInWorld, NOT inWorld: the peer itself is in-world, so counting it would keep
+    // the world looking busy forever and the reaper would never fire.
+    if (roster.humansInWorld().length > 0) simPeers.ensure(WORLD_KEY);
+    else simPeers.markIdle(WORLD_KEY);
+    simPeers.sweep();
+  }, 5_000);
+  simPeerTick.unref();
+  metrics.simPeerRunning.addCollector(() => simPeers.running);
+
   const ipTracker = new IpConnTracker(config.limits.maxConnsPerIp);
   const connections = new Set<Connection>();
   // Same shape as the roster gauge: summed from the live sockets at scrape time, so a
@@ -358,6 +381,8 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       closed = true;
       unhookGauge();
       unhookBufferedGauge();
+      clearInterval(simPeerTick);
+      simPeers.stopAll(); // never leave an engine running after the server it fed is gone
       moveBroadcaster.stop();
       social.stop(); // pending presence timers would keep the process alive
       socialStore.close();

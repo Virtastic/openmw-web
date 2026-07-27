@@ -718,6 +718,9 @@ export class Connection implements Peer {
     this.player = this.ctx.roster.addAuthed(account.name, accountKey, account.rank, this, this.ip);
     this.player.simulatesActors = this.simulatesActors;
     this.player.system = this.isSystem;
+    // A sim peer owns no character: keep it out of players/ entirely rather than writing a
+    // doc that would be restored onto the next freshly spawned peer.
+    if (this.isSystem) this.ctx.players.markEphemeral(this.player.accountKey);
     this.state = 'AUTHED';
     this.authing = false;
     const sessionToken = randomBytes(16).toString('hex');

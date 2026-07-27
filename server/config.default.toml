@@ -263,3 +263,20 @@ clientSecret = ""
 redirectUri = ""
 issuer = ""
 scope = ""
+
+# Phase H — on-demand headless simulation peer.
+# A real (rendering-disabled) OpenMW that connects like a client and holds cell authority,
+# so NPCs are simulated on the operator's machine instead of in a player's browser. This is
+# what stops a modified client authoring NPC state for everyone else.
+# OFF by default: it needs a native openmw binary AND game data on the server, which a
+# self-hoster may not have. With it off, the existing client-authority election is unchanged.
+[simPeer]
+enabled = false
+binary = ""                       # absolute path to the headless-capable openmw
+configDir = ""                    # its own --config dir (isolated openmw.cfg + settings.cfg)
+userDataDir = ""                  # its own --user-data dir
+startCell = "Seyda Neen"
+maxPeers = 4                      # hard ceiling; measured cost is ~360 MB + ~9% of a core each
+idleReapMs = 120000               # reap a peer whose world has had no humans this long
+startTimeoutMs = 120000           # retail data load is slow; generous, and failure is non-fatal
+restartBackoffMs = 15000          # after a crash, wait before respawning (no hot crash loop)

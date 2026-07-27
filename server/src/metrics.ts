@@ -222,6 +222,16 @@ export const metrics = {
   // authoring NPC state for a cell it does not hold. A steady non-zero rate from one
   // player is a modified client, not a race — the ordinary causes (a handoff in flight,
   // a frame already queued when authority moved) are bursty and self-limiting.
+  // Phase H4 sim-peer lifecycle. simPeerRefused is the one to alert on: 'at_cap' means the
+  // box is full and somebody's world is running without a peer (falling back to client
+  // authority), which is a capacity signal rather than an error.
+  simPeerRunning: reg(new Gauge('omwmp_simpeer_running', 'Headless simulation peers currently up.')),
+  simPeerSpawned: reg(new Counter('omwmp_simpeer_spawned_total', 'Headless simulation peers started.', [])),
+  simPeerReaped: reg(new Counter('omwmp_simpeer_reaped_total', 'Sim peers stopped after going idle.', [])),
+  simPeerCrashed: reg(new Counter('omwmp_simpeer_crashed_total', 'Sim peers that exited unexpectedly.', [])),
+  simPeerRefused: reg(
+    new Counter('omwmp_simpeer_refused_total', 'Sim peer starts declined.', ['reason'])),
+
   actorBatchRejected: reg(
     new Counter('omwmp_actor_batch_rejected_total', 'Inbound ActorMoveBatch frames dropped.', ['reason'])),
   // kind: move | actor. Outbound lossy frames dropped because the socket's send queue was

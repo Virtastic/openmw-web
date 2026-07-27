@@ -52,6 +52,22 @@ const SWEEP_MS = 45_000;
 const EQUIP_DEBOUNCE_MS = 10_000;
 
 export class PlayerStore {
+  // Phase H: accounts that own no character. A sim peer connects as a client but has no
+  // inventory, stats or progress to keep — persisting a doc for it writes junk into
+  // players/ and, worse, would restore stale state onto a freshly spawned peer. Registered
+  // at join and cleared at leave.
+  private ephemeral = new Set<string>();
+
+  markEphemeral(key: string): void {
+    this.ephemeral.add(key);
+    this.cache.delete(key);
+    this.dirty.delete(key);
+  }
+
+  clearEphemeral(key: string): void {
+    this.ephemeral.delete(key);
+  }
+
   private readonly dir: string;
   private cache = new Map<string, PlayerDoc>(); // key = account nameLower
   private dirty = new Set<string>();
@@ -101,6 +117,7 @@ export class PlayerStore {
   // flush: 'now' writes immediately, 'debounced' waits EQUIP_DEBOUNCE_MS collapsing
   // bursts, 'sweep' leaves it to the 45 s sweep / next explicit flush.
   update(key: string, fn: (doc: PlayerDoc) => void, flush: 'now' | 'debounced' | 'sweep' = 'sweep'): void {
+    if (this.ephemeral.has(key)) return; // a sim peer has no character to save
     let doc = this.cache.get(key);
     if (!doc) {
       doc = {};
