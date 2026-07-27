@@ -217,3 +217,67 @@ test('shared: one account works across worlds; per-world state stays separate', 
     await b.close();
   }
 });
+
+test('rolling restart: worlds come back one at a time, emptiest first', async () => {
+  const { sup, spawned, counts } = harness({ maxWorlds: 5, startTimeoutMs: 5_000 });
+  sup.startPublic();                 // vvardenfell
+  sup.ensure('busy', 'private');
+  sup.ensure('quiet', 'private');
+  await sup.poll();
+  const portOf = (id: string): number => {
+    const s = spawned.find((x) => x.id === id)!;
+    return Number(s.args[s.args.indexOf('--port') + 1]);
+  };
+  counts.set(portOf('busy'), 9);     // populated
+  counts.set(portOf('quiet'), 0);
+  await sup.poll();
+
+  const spawnsBefore = spawned.length;
+  const r = await sup.rollingRestart({ readyTimeoutMs: 3_000 });
+
+  assert.equal(r.failed.length, 0, `nothing should fail: ${r.failed.join(',')}`);
+  assert.equal(r.restarted.length, 3, 'every world is restarted');
+  assert.equal(spawned.length, spawnsBefore + 3, 'each world is started exactly once more');
+  // Emptiest first: the busy world is restarted LAST, so its players are disturbed latest
+  // and an aborted rollout leaves the populated world untouched.
+  assert.equal(r.restarted[r.restarted.length - 1], 'busy',
+    `the busiest world must go last, order was ${r.restarted.join(' -> ')}`);
+  assert.equal(sup.running, 3, 'all three are up again');
+});
+
+test('rolling restart: a world that will not come back HALTS the rollout', async () => {
+  // One broken world must not become a full outage by restarting everything behind it.
+  const worldsDir = mkdtempSync(join(tmpdir(), 'omw-worlds-'));
+  const spawned: { id: string; args: string[]; child: FakeChild }[] = [];
+  const clock = 1_000_000;
+  const dead = new Set<string>();
+  const sup = new WorldSupervisor({
+    settings: {
+      worldsDir, serverEntry: '/f', nodeBin: '/n', basePort: 43000, maxWorlds: 5,
+      idleReapMs: 60_000, startTimeoutMs: 1_000, restartBackoffMs: 100, publicWorlds: [],
+      sharedDir: mkdtempSync(join(tmpdir(), 'omw-shared-')),
+    },
+    now: () => clock,
+    spawner: (id, args) => {
+      const child = new FakeChild();
+      spawned.push({ id, args, child });
+      return child as unknown as ChildProcess;
+    },
+    // Once restarted, 'broken' never answers /status again.
+    fetchStatus: async (port) => {
+      const rec = spawned.find((s) => Number(s.args[s.args.indexOf('--port') + 1]) === port);
+      if (rec && dead.has(rec.id)) return null;
+      return { playerCount: 0, maxPlayers: 32, name: 'w' };
+    },
+  });
+  sup.ensure('broken', 'private');
+  sup.ensure('healthy', 'private');
+  await sup.poll();
+  dead.add('broken');
+
+  const r = await sup.rollingRestart({ readyTimeoutMs: 300 });
+  assert.ok(r.failed.includes('broken'), 'the broken world is reported failed');
+  assert.ok(!r.restarted.includes('healthy'),
+    'the rollout must HALT rather than restart the healthy world behind a failure');
+  sup.stopAll();
+});

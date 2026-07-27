@@ -230,11 +230,71 @@ export class WorldSupervisor {
     w.child.kill('SIGTERM');
   }
 
+  // F4: restart worlds ONE AT A TIME so a deploy never takes the whole platform down.
+  // Each world drains gracefully (main.ts handles SIGTERM: SessionDisconnect SHUTDOWN then
+  // flush), and the next is not touched until the previous one is back and answering
+  // /status — otherwise "rolling" would just be a slower simultaneous outage.
+  //
+  // Empty worlds first, busiest last: the same total disruption, but the players least
+  // likely to notice absorb the early risk, and if the operator aborts midway the worlds
+  // still up are the populated ones.
+  async rollingRestart(opts: { readyTimeoutMs?: number } = {}): Promise<{ restarted: string[]; failed: string[] }> {
+    const readyTimeoutMs = opts.readyTimeoutMs ?? this.deps.settings.startTimeoutMs;
+    const order = [...this.worlds.values()]
+      .sort((a, b) => (a.lastStatus?.playerCount ?? 0) - (b.lastStatus?.playerCount ?? 0))
+      .map((w) => ({ id: w.id, mode: w.mode, owner: w.ownerAccount }));
+    const restarted: string[] = [];
+    const failed: string[] = [];
+
+    for (const w of order) {
+      log('info', 'world.rolling_restart', { id: w.id });
+      this.stop(w.id);
+      // Wait for the old process to actually exit before starting its replacement, or the
+      // two briefly share a data dir. Bounded by ATTEMPTS rather than by comparing the
+      // injected clock against real sleeps — mixing the two hangs forever whenever now()
+      // is frozen, which is exactly what a test does.
+      const goneTries = Math.max(1, Math.ceil(readyTimeoutMs / 100));
+      for (let i = 0; i < goneTries && this.worlds.has(w.id); i++) await delay(100);
+      if (this.worlds.has(w.id)) {
+        failed.push(w.id);
+        log('error', 'world.rolling_restart_stuck', { id: w.id });
+        continue; // leave it alone rather than starting a second copy
+      }
+      // A crash backoff from the stop would block the restart; this is a deliberate
+      // operator action, so clear it.
+      this.blockedUntil.delete(w.id);
+      if (!this.ensure(w.id, w.mode, w.owner)) {
+        failed.push(w.id);
+        continue;
+      }
+      const readyTries = Math.max(1, Math.ceil(readyTimeoutMs / 250));
+      let ready = false;
+      for (let i = 0; i < readyTries; i++) {
+        await this.poll();
+        if (this.get(w.id)?.up) { ready = true; break; }
+        await delay(250);
+      }
+      if (ready) restarted.push(w.id);
+      else {
+        failed.push(w.id);
+        // STOP the rollout: if one world will not come back, restarting the rest turns a
+        // single failure into a full outage. The operator decides what to do next.
+        log('error', 'world.rolling_restart_halted', { id: w.id, restarted: restarted.length });
+        break;
+      }
+    }
+    return { restarted, failed };
+  }
+
   stopAll(): void {
     if (this.pollTimer) clearInterval(this.pollTimer);
     this.pollTimer = undefined;
     for (const id of [...this.worlds.keys()]) this.stop(id);
   }
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
 }
 
 async function defaultFetchStatus(port: number): Promise<{ playerCount: number; maxPlayers: number; name: string } | null> {
