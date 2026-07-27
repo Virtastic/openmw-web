@@ -18,11 +18,14 @@ combat, quests, world state, ops), plus:
 | **G1** scaling | broadcaster spatial index — cost linear in population, not quadratic |
 | **G2** scaling | avatar render LOD — client cost bounded by a cap, not by population |
 | **M4** correctness | cell authority now requires a client that can actually SIMULATE (`simulatesActors`), plus a liveness guard that revokes a holder producing nothing |
+| **H** server-side simulation | a headless OpenMW (`OPENMW_HEADLESS=1`) connects as a system client and holds cell authority, spawned on demand and reaped when idle. NPCs are simulated on the operator's machine, not in a player's browser. ~360 MB + ~9% of a core per peer. OFF by default. |
 
 ## What is verified, and how
 
-- **316 server tests**, several negative-controlled (the control is broken deliberately to
+- **329 server tests**, several negative-controlled (the control is broken deliberately to
   confirm the test fails).
+- **Anti-cheat is now a test, not a claim**: a non-holder's forged `ActorMoveBatch` is
+  rejected, counted and relayed to nobody, while the real holder's still flows.
 - **32 browser scenarios** driving real headless clients against a real server.
 - **Pressure**: 24 bots / 6 cells / 12 min — no leaks, no drops, ping 1 ms mean, journal
   monotonic, no record-id collisions.
@@ -35,7 +38,8 @@ combat, quests, world state, ops), plus:
 
 | item | state |
 | --- | --- |
-| **D-cap-5** — split actor authority within a cell | Not built. The right next lever for combat-heavy crowds: one client simulating every NPC is what degrades aim fidelity at 20+ per cell. |
+| **D-cap-5** — split actor authority within a cell | Not built, and the premise is now WEAKER: with a sim peer holding the cell (Phase H), the holder is a dedicated machine rather than a player's browser, which was the original motivation. Confirm the need before building. |
+| **F3/F4** — multi-process gateway | **Not built.** Verified 2026-07-27: no gateway, no `child_process` in `server/src`, no `[worlds]` config. A task list marked this done; it was wrong and has been corrected. This is what a peer PER SESSION (private/party) depends on. |
 | **F2** — 256-player ceiling | Not measured. `wasm-build/measure-256.sh` runs it. Extrapolation says server-spread is fine and the wall is CLIENT MEMORY; that is a guess until run. |
 | **Upstream `DelayedAction`** errors | OpenMW's own menu scripts, present before our changes, harmless so far. |
 | **Human playtest** | `PLAYTEST.md` §10 + the social/LOD sections. Nothing automated can answer "does it feel right". |

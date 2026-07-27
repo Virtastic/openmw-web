@@ -62,6 +62,76 @@ Exit criteria: a headless build that loads a cell, ticks NPCs for a minute, and 
 RSS/CPU. If that cannot be reached in about a day, stop and reconsider — D-cap-5 (splitting
 authority across players) becomes the fallback, and the current model still works.
 
+---
+
+# RESULT: Phase H is BUILT and PROVEN (2026-07-27)
+
+All of H1-H4 landed. What follows below this banner is the original plan, kept for the
+reasoning; this section is what actually happened.
+
+**H1 — headless.** Yes. Two edits behind `OPENMW_HEADLESS=1`: hide the SDL window at
+`createWindow()` (a real GL context is still made, so `RenderingManager` constructs), and
+skip `renderingTraversals()` per frame (simulation runs in `updateTraversal()`, untouched).
+GL is paid once at init, zero per frame.
+
+**Measured cost, macOS/arm64, full retail data with BSAs registered, host load ~5:**
+
+| | RSS | CPU |
+| --- | --- | --- |
+| rendering baseline | 259 MB | ~15.5% of one core |
+| headless | 362 MB | ~8.8% of one core |
+
+So a peer is ~360 MB + ~9% of a core. On the 23 GB / 8-core VPS that is dozens of
+concurrent peers; one public-world peer is trivial.
+
+**H2 — native transport.** A dependency-free RFC 6455 client (`ws://` only; TLS is the
+browser edge's problem). The threading contract was the real work: `NetManager`'s callbacks
+mutate its state inline and are only safe because emscripten delivers them between frames,
+so the native side queues events on its reader thread and `WebSocket::poll()` — once per
+frame, no-op in the browser — fires them on the main thread.
+
+**H3 — peer as authority.** Needed no new protocol: the peer declares `simulatesActors` and
+wins the existing election. Plus a `system` identity (invisible in playerCount, /status,
+PlayerList and maxPlayers; join/leave suppressed so no client puppets it), fallback to a
+capable human if it dies, and the anti-cheat proof below.
+
+**H4 — orchestration.** `core/simpeer.ts`: spawner, hard cap, idle reaper, crash backoff.
+Wired at one point (a 5 s tick on `roster.humansInWorld()`), not paired join/leave hooks —
+a missed leave would strand a peer forever, which is the exact leak the reaper defends
+against. Proven with the real binary end to end:
+
+```
+human joins  -> simpeer.spawned -> peer connects, join_world system:true
+human leaves -> world idle
++20s         -> simpeer.reaped (idleMs=20003) -> SIGTERM -> clean leave, no orphan
+```
+
+## The anti-cheat claim, made concrete
+
+Previously an argument; now a negative-controlled test. A non-holder forging an
+`ActorMoveBatch` for a cell it does not own is **rejected**, **counted**
+(`omwmp_actor_batch_rejected_total{reason="not_holder"}`, so forgery is visible in
+`/metrics` instead of silent), and **relayed to nobody** — while the real holder's batch
+still reaches the same victim, proving the check discriminates rather than the stream being
+dead. Remove the holder check and it fails.
+
+## What is still NOT true, stated plainly
+
+- **"Public, private and party" maps to one world per process today.** A peer per SESSION
+  needs multi-world orchestration (F3), which is **not built** — verified 2026-07-27: there
+  is no gateway, no `child_process` in `server/src`, no `[worlds]` config. A task list
+  claimed otherwise and was corrected. What works now is a peer for THIS server's world,
+  on demand.
+- **Linux/displayless is unexercised.** The measurement is a macOS hidden window. A
+  headless box needs `SDL_VIDEODRIVER=offscreen` (or EGL/OSMesa) and that path has not been
+  run.
+- **Player self-movement is still client-authored** — deliberately (see H5). The peer makes
+  validating it possible for the first time; that is follow-on work, not done.
+- **The cost figure is one machine, one cell set.** It has not been measured with a busy
+  world, and per-peer cost is what H4's cap is sized from.
+
+---
+
 ### H1 result so far (build side proven; runtime pending)
 
 The native toolchain question is answered: OpenMW **configures and is compiling** natively on
