@@ -62,3 +62,9 @@ __pycache__/
 server/node_modules/
 server/dist/
 server/devdata/
+
+# Phase H native sim-peer build (H1 spike): OpenMW + double-Bullet + MyGUI, macOS-local
+build-native/
+build-bullet-native/
+build-mygui-native/
+deps/native/

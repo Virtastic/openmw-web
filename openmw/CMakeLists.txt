@@ -795,7 +795,10 @@ endif()
 set(CPACK_PACKAGE_FILE_NAME "${CPACK_PACKAGE_NAME}-${CPACK_PACKAGE_VERSION}-${CUSTOM_CPACK_OS_NAME}-${CUSTOM_CPACK_ARCHITECTURE}")
 
 # Apple bundling
-if (APPLE)
+# Guarded on USE_QT as well as APPLE: the block copies Qt plugins into the app bundle, which
+# only exist when the launcher/wizard are built. A tools-off build (e.g. the headless
+# multiplayer sim peer) has no Qt at all and previously failed configure right here.
+if (APPLE AND USE_QT)
     if(CMAKE_VERSION VERSION_LESS 3.19)
         message(FATAL_ERROR "macOS packaging requires CMake 3.19 or higher to sign macOS app bundles.")
     endif()
