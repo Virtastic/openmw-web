@@ -16,6 +16,7 @@ import { MSG_ACTOR_MOVE_BATCH, packEnvelope, nextBroadcastSeq } from '../proto/e
 import { Authority, type ActorSnapshot } from './authority';
 import { CellStore, emptyCellDoc, type CellDoc, type ContainerItems } from '../persist/cellstore';
 import { log } from '../log';
+import { metrics } from '../metrics';
 
 const MAX_RECORD_ID = 64;
 const MAX_COUNT = 10000;
@@ -269,8 +270,16 @@ export class WorldState {
         return;
       }
       const cellKey = player.cellKey;
-      if (!cellKey || this.authority.holderOf(cellKey) !== player.id || this.authority.currentEpoch(cellKey) !== epoch) {
-        return; // non-holder or stale epoch
+      if (!cellKey || this.authority.holderOf(cellKey) !== player.id) {
+        // The anti-cheat chokepoint: only the cell's holder may author its actors. Counted
+        // (not just dropped) so forgery is VISIBLE — a modified client trying to move
+        // everyone's NPCs shows up in /metrics instead of failing silently.
+        metrics.actorBatchRejected.inc({ reason: cellKey ? 'not_holder' : 'no_cell' });
+        return;
+      }
+      if (this.authority.currentEpoch(cellKey) !== epoch) {
+        metrics.actorBatchRejected.inc({ reason: 'stale_epoch' });
+        return;
       }
       // Liveness: this holder is demonstrably doing the job. Recorded only for ACCEPTED
       // frames, so a stale-epoch sender cannot keep a dead cell looking alive.

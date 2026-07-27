@@ -217,6 +217,13 @@ export const metrics = {
   // budget: msgs | bytes | login (these disconnect) | move_shed | actor_shed (these drop the
   // frame and keep the session — see Connection.onMessage).
   rateLimited: reg(new Counter('omwmp_rate_limited_total', 'Rate-limit trips, by which budget ran out.', ['budget'])),
+
+  // Actor batches dropped on arrival. 'not_holder' is the anti-cheat surface: a client
+  // authoring NPC state for a cell it does not hold. A steady non-zero rate from one
+  // player is a modified client, not a race — the ordinary causes (a handoff in flight,
+  // a frame already queued when authority moved) are bursty and self-limiting.
+  actorBatchRejected: reg(
+    new Counter('omwmp_actor_batch_rejected_total', 'Inbound ActorMoveBatch frames dropped.', ['reason'])),
   // kind: move | actor. Outbound lossy frames dropped because the socket's send queue was
   // over [limits] maxBufferedBytes; a rising rate means a client is not keeping up.
   backpressureDropped: reg(

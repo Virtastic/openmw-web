@@ -17,6 +17,7 @@ import { startServer } from '../src/server';
 import { TestClient, tmpDataDir } from './helpers';
 import { packEnvelope, packEvent } from '../src/proto/envelope';
 import { lserEncode, jsToL } from '../src/proto/lser';
+import { metrics } from '../src/metrics';
 
 // LSER wire tags (mirror of components/lua/serialization.cpp) — needed to hand-craft
 // payloads the client-side encoder deliberately refuses to produce.
@@ -220,4 +221,73 @@ test('adversarial: malformed and hostile input', async (t) => {
     assert.ok(grant, 'authority handed off after an abrupt holder disconnect');
     b.ws.close();
   });
+});
+
+// Phase H anti-cheat: the claim "a modified client can no longer author NPC state" made
+// concrete. The sim peer holds the cell; a second client forges an ActorMoveBatch for the
+// SAME cell with the holder's own epoch (the strongest forgery available to it — a wrong
+// epoch would be rejected by a check that predates this one).
+test('a non-holder forging ActorMoveBatch is rejected, counted, and reaches nobody', async () => {
+  const server = await startServer({ dataDir: tmpDataDir(), port: 0, host: '127.0.0.1' });
+  // try/finally, not a trailing close(): a failed assertion must still shut the server down.
+  // Without this a failure leaves the port listening and `node --test` waits for the event
+  // loop to drain — one broken assertion hung the whole suite for 49 minutes.
+  try {
+  const holder = await TestClient.connect(server.port);
+  await holder.joinAsNew('sim_peer');
+  holder.sendCellChange('91,91', 0, 0, 0);
+  const grant = await holder.waitEvent('ActorAuthorityGrant', () => true, 5000);
+  const epoch = (grant.value as { epoch: number }).epoch;
+  assert.equal(typeof epoch, 'number', 'the grant must carry a numeric epoch (guards this test against silently forging undefined)');
+
+  // A third party in the same cell: the one who WOULD receive the forgery if it were relayed.
+  const victim = await TestClient.connect(server.port);
+  await victim.joinAsNew('victim');
+  victim.sendCellChange('91,91', 0, 0, 0);
+  await victim.waitEvent('ActorAuthorityInfo', () => true, 5000);
+
+  const cheat = await TestClient.connect(server.port);
+  await cheat.joinAsNew('cheater');
+  cheat.sendCellChange('91,91', 0, 0, 0);
+  await cheat.waitEvent('ActorAuthorityInfo', () => true, 5000);
+
+  const rejectedBefore = metrics.actorBatchRejected.get({ reason: 'not_holder' }) ?? 0;
+  const victimBatchesBefore = victim.inbox.actorBatches.length;
+
+  // The forgery: teleport an NPC across the cell, using the real current epoch.
+  for (let i = 0; i < 5; i++) {
+    cheat.sendActorMoveBatch(epoch, [{
+      ref: { index: 42, contentFile: 0 },
+      pose: { x: 99999, y: 99999, z: 99999, yaw: 0, pitch: 0, flags: 0, animVel: 0, counter: 0 },
+    }]);
+  }
+  // POLL, do not sleep a fixed interval: handleActorMoveBatch defers through an async
+  // queue, so "have the frames been processed yet" is a condition to wait ON, not a
+  // duration to guess. A fixed 400ms passed alone and failed under full-suite load (0/5
+  // counted) — a flaky test asserting on the machine's speed rather than the behaviour.
+  const rejectedNow = () => (metrics.actorBatchRejected.get({ reason: 'not_holder' }) ?? 0) - rejectedBefore;
+  const deadline = Date.now() + 10_000;
+  while (rejectedNow() < 5 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 50));
+
+  // 1. Counted, so an operator can SEE forgery rather than it failing silently.
+  assert.equal(rejectedNow(), 5, 'every forged frame must be counted as not_holder');
+
+  // 2. Reached nobody: the victim received no actor bytes at all from the cheater.
+  assert.equal(victim.inbox.actorBatches.length, victimBatchesBefore,
+    'a forged batch must not be relayed to anyone');
+
+  // 3. NOT a blanket block on the cell — the real holder's batch still flows, so this
+  //    proves the holder check discriminates rather than the stream simply being dead.
+  holder.sendActorMoveBatch(epoch, [{
+    ref: { index: 42, contentFile: 0 },
+    pose: { x: 10, y: 20, z: 30, yaw: 0, pitch: 0, flags: 0, animVel: 0, counter: 0 },
+  }]);
+  const got = await victim.waitActorBatch(() => true, 5000);
+  assert.ok(got, "the real holder's batch must still be relayed");
+  assert.equal(got.batch.entries[0]?.pose.x, 10, 'and it is the holder-authored position, not the forged one');
+
+  for (const c of [holder, victim, cheat]) c.ws.close();
+  } finally {
+    await server.close();
+  }
 });
