@@ -140,6 +140,8 @@ You don't need to build anything to run your own instance. Every
 - **`openmw-web-src-<tag>.tar.gz`** is the exact source snapshot that built it (the
   GPLv3 Complete Corresponding Source).
 
+See [`CHANGELOG.md`](CHANGELOG.md) for what changed in each release.
+
 ## Building
 
 You will need **Emscripten 6.0.1** (Homebrew paths are assumed; adjust `EMSDK_BIN`),
