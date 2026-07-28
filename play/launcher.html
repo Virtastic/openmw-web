@@ -48,7 +48,14 @@
  }
  @keyframes ember{0%,100%{opacity:.82}50%{opacity:1}}
 
- .wrap{width:100%; max-width:940px; text-align:center}
+ .wrap{width:100%; max-width:1180px; text-align:center}
+ .brand{display:inline-flex; align-items:center; gap:10px; text-decoration:none; margin:0 auto 26px;
+   color:var(--gold); transition:color .16s ease}
+ .brand:hover{color:var(--gold-hi)}
+ .brand svg{width:30px; height:30px; fill:currentColor}
+ .brand span{font:600 17px/1 "Optima","Gill Sans",-apple-system,"Segoe UI",sans-serif;
+   letter-spacing:.28em; text-transform:uppercase; padding-left:.28em}
+ .brand:focus-visible{outline:2px solid var(--gold); outline-offset:4px; border-radius:5px}
 
  /* --- Masthead --- */
  .eyebrow{font-size:11.5px; letter-spacing:.26em; text-transform:uppercase; font-weight:600;
@@ -66,8 +73,8 @@
  .diamond{width:7px; height:7px; transform:rotate(45deg); border:1px solid var(--gold); flex:none}
 
  /* --- Choice cards, styled as inscribed artifact plaques --- */
- .cards{display:grid; grid-template-columns:1fr 1fr; gap:22px}
- @media (max-width:720px){ .cards{grid-template-columns:1fr} }
+ .cards{display:grid; grid-template-columns:repeat(3,1fr); gap:22px; align-items:stretch}
+ @media (max-width:900px){ .cards{grid-template-columns:1fr; max-width:440px; margin-left:auto; margin-right:auto} }
  .card{
    position:relative; padding:34px 30px 30px;
    background:linear-gradient(160deg,var(--panel-2),var(--panel));
@@ -242,6 +249,10 @@
   </nav>
 </header>
 <div class="wrap">
+  <a class="brand reveal d1" href="https://virtastic.app" target="_blank" rel="noopener" aria-label="Virtastic">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>
+    <span>Virtastic</span>
+  </a>
   <p class="eyebrow reveal d1">openmw-web</p>
   <h1 class="reveal d1">Morrowind in your browser</h1>
   <p class="deck reveal d2">Run the free sample world, or point the engine at your own copy of
