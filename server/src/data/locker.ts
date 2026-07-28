@@ -93,8 +93,17 @@ export async function loadVanillaManifest(dir: string): Promise<VanillaManifest>
 export class Locker {
   private readonly dir: string;
   private vanilla: VanillaManifest = { files: [] };
-  // sha256 -> true, for O(1) "is this a file we accept".
+  // sha256 -> true: an EXACT match against a known distribution (the strong path).
   private accepted = new Set<string>();
+  // Different retail distributions (Steam / GOG / disc / localized) ship byte-DIFFERENT
+  // copies of the same file, so an exact-hash gate built from one copy would reject a
+  // friend's legitimate copy from another store. So we also accept by (canonical filename +
+  // plausible size): nameLower -> the known sizes for that file. A movie renamed to
+  // Morrowind.esm is not ~79.8MB, so this still keeps the locker from becoming file hosting.
+  // Refusals are logged with name+size+hash so an operator can add a genuinely new copy.
+  private knownSizes = new Map<string, number[]>();
+  private acceptByNameAndSize = true;
+  private sizeTolerance = 0.05; // ±5% covers minor per-distribution differences
 
   constructor(private readonly settings: LockerSettings) {
     this.dir = join(settings.dataDir, 'locker');
@@ -112,13 +121,45 @@ export class Locker {
   // The set of files this deployment will accept: retail hashes plus any approved mod
   // files. Called at boot; an empty set means uploads are refused outright, which is the
   // correct behaviour for an operator who has not generated a manifest.
-  configureAccepted(vanilla: VanillaManifest, modHashes: Iterable<string> = []): void {
+  configureAccepted(
+    vanilla: VanillaManifest,
+    modHashes: Iterable<string> = [],
+    opts: { acceptByNameAndSize?: boolean } = {},
+  ): void {
     this.vanilla = vanilla;
     this.accepted = new Set([
       ...vanilla.files.map((f) => f.sha256.toLowerCase()),
       ...[...modHashes].map((h) => h.toLowerCase()),
     ]);
-    log('info', 'locker.accepted_configured', { vanilla: vanilla.files.length, total: this.accepted.size });
+    this.knownSizes = new Map();
+    for (const f of vanilla.files) {
+      const k = f.name.toLowerCase();
+      const sizes = this.knownSizes.get(k) ?? [];
+      if (!sizes.includes(f.size)) sizes.push(f.size);
+      this.knownSizes.set(k, sizes);
+    }
+    if (opts.acceptByNameAndSize !== undefined) this.acceptByNameAndSize = opts.acceptByNameAndSize;
+    log('info', 'locker.accepted_configured', {
+      vanilla: vanilla.files.length, hashes: this.accepted.size, names: this.knownSizes.size,
+      byNameAndSize: this.acceptByNameAndSize,
+    });
+  }
+
+  // Is this file one a legitimate Morrowind owner would have? Exact hash first (any known
+  // distribution), then name+plausible-size for a distribution we do not have on file.
+  private isAccepted(file: LockerFile): boolean {
+    if (this.accepted.has(file.sha256.toLowerCase())) return true;
+    if (!this.acceptByNameAndSize) return false;
+    const sizes = this.knownSizes.get(file.name.toLowerCase());
+    if (!sizes) return false;
+    const ok = sizes.some((s) => Math.abs(file.size - s) <= s * this.sizeTolerance);
+    if (ok) {
+      // A real copy we did not have the hash for — record it so the next identical upload
+      // takes the exact-hash fast path and the operator can see the spread of copies.
+      log('info', 'locker.accepted_new_copy', { name: file.name, size: file.size, sha256: file.sha256 });
+      this.accepted.add(file.sha256.toLowerCase());
+    }
+    return ok;
   }
 
   private attestPath(accountKey: string): string {
@@ -164,7 +205,10 @@ export class Locker {
   ): Promise<{ ok: true; url: string; key: string } | { ok: false; reason: UploadRefusal }> {
     if (!this.settings.storage) return { ok: false, reason: 'not-recognized' };
     if (!(await this.attestationOf(accountKey))) return { ok: false, reason: 'no-attestation' };
-    if (!this.accepted.has(file.sha256.toLowerCase())) return { ok: false, reason: 'not-recognized' };
+    if (!this.isAccepted(file)) {
+      log('warn', 'locker.refused_unrecognized', { account: accountKey, name: file.name, size: file.size, sha256: file.sha256 });
+      return { ok: false, reason: 'not-recognized' };
+    }
     const existing = await this.filesOf(accountKey);
     const used = existing.reduce((a, f) => a + f.size, 0);
     if (used + file.size > this.settings.maxBytesPerAccount) return { ok: false, reason: 'quota' };

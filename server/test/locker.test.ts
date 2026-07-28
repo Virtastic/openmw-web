@@ -59,6 +59,28 @@ test('only recognized game files are accepted — this is not general file hosti
   assert.deepEqual(await locker.authorizeUpload('alice', junk), { ok: false, reason: 'not-recognized' });
 });
 
+test('a different distribution of a known file is accepted by name+size, not exact hash', async () => {
+  // Steam/GOG/disc copies of Morrowind.esm differ byte-for-byte; a friend's legit copy has
+  // a hash we never saw. Same name, near-identical size -> accept. A movie renamed to
+  // Morrowind.esm has a wildly wrong size -> still refused.
+  const { locker } = mk();
+  await locker.attest('bob', [FILE], 'ip');
+  const gogCopy = { name: 'Morrowind.esm', size: 102, sha256: 'c'.repeat(64) }; // +2% size, unknown hash
+  assert.equal((await locker.authorizeUpload('bob', gogCopy)).ok, true, 'legit other distribution passes');
+
+  const warez = { name: 'Morrowind.esm', size: 900000, sha256: 'd'.repeat(64) }; // right name, absurd size
+  assert.deepEqual(await locker.authorizeUpload('bob', warez), { ok: false, reason: 'not-recognized' });
+});
+
+test('acceptByNameAndSize:false keeps the strict hash-only gate', async () => {
+  const storage = fakeStorage();
+  const locker = new Locker({ dataDir: tmpDataDir(), maxBytesPerAccount: 1000, storage });
+  locker.configureAccepted(VANILLA, [], { acceptByNameAndSize: false });
+  await locker.attest('carol', [FILE], 'ip');
+  const otherDist = { name: 'Morrowind.esm', size: 101, sha256: 'c'.repeat(64) };
+  assert.deepEqual(await locker.authorizeUpload('carol', otherDist), { ok: false, reason: 'not-recognized' });
+});
+
 test('keys are per-account and never deduplicated across accounts', async () => {
   const { locker, storage } = mk();
   await locker.attest('alice', [FILE], 'ip');

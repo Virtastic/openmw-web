@@ -65,7 +65,10 @@ export interface Config {
   // Phase 3.5 storage locker. S3 creds come from env (S3_ACCESS_KEY_ID/S3_SECRET_ACCESS_KEY);
   // endpoint/region/bucket are config. Empty endpoint = locker disabled, client falls back
   // to its own disk. maxBytesPerAccount caps one player's library.
-  locker: { endpoint: string; region: string; bucket: string; maxBytesPerAccount: number };
+  // acceptByNameAndSize (default true): also accept a known game file by name + plausible
+  // size when its exact hash is unknown, so Steam/GOG/disc/localized copies from different
+  // players all upload. Set false for a strict hash-only gate.
+  locker: { endpoint: string; region: string; bucket: string; maxBytesPerAccount: number; acceptByNameAndSize: boolean };
   rules: {
     respawnCellKey: string;
     respawnX: number;
@@ -229,6 +232,11 @@ function reqBool(t: Tree, sec: string, key: string): boolean {
   return typeof v === 'boolean' ? v : fail(`[${sec}].${key}`, 'a boolean');
 }
 
+function optBool(t: Tree, sec: string, key: string, dflt: boolean): boolean {
+  const v = (t[sec] as Tree | undefined)?.[key];
+  return typeof v === 'boolean' ? v : dflt;
+}
+
 function reqEnum<T extends string>(t: Tree, sec: string, key: string, allowed: readonly T[]): T {
   const v = (t[sec] as Tree | undefined)?.[key];
   if (typeof v === 'string' && (allowed as readonly string[]).includes(v)) return v as T;
@@ -357,6 +365,7 @@ function validate(t: Tree): Config {
       region: reqStr(t, 'locker', 'region'),
       bucket: reqStr(t, 'locker', 'bucket'),
       maxBytesPerAccount: reqNum(t, 'locker', 'maxBytesPerAccount'),
+      acceptByNameAndSize: optBool(t, 'locker', 'acceptByNameAndSize', true),
     },
     rules: {
       respawnCellKey: reqStr(t, 'rules', 'respawnCellKey'),

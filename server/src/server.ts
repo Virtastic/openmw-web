@@ -340,7 +340,9 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // The files the locker will accept: retail Morrowind by sha256 (operator-provided) plus
   // the always-on asset pack is a BSA served by us, not uploaded, so it is not in this set.
   // Empty vanilla manifest = uploads refused until the operator generates one (tools/).
-  locker.configureAccepted(await loadVanillaManifest(sharedDir));
+  locker.configureAccepted(await loadVanillaManifest(sharedDir), [], {
+    acceptByNameAndSize: config.locker.acceptByNameAndSize,
+  });
   const lockerSessions = new LockerSessionStore();
   let socialRef: Social | undefined; // read by quest party-credit (built above)
   const socialStore = new SocialStore(sharedDir);

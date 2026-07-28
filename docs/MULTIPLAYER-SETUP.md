@@ -64,8 +64,8 @@ per-GB egress charge, which matters because players stream their data every sess
 
 ## 3. The vanilla-manifest (so the locker accepts your retail files)
 
-The locker only accepts files whose sha256 matches a known-good list — that is what keeps
-it a backup locker and not general file hosting. Generate it from your own legal copy:
+The locker only accepts recognized game files — that is what keeps it a backup locker and
+not general file hosting. Generate the manifest from your own legal copy:
 
 ```bash
 node server/tools/gen-vanilla-manifest.mjs "/path/to/Morrowind/Data Files" \
@@ -75,6 +75,19 @@ node server/tools/gen-vanilla-manifest.mjs "/path/to/Morrowind/Data Files" \
 Then place `vanilla-manifest.json` in the server's **shared dir** (`--shared`, or `--data`
 for a single-world server). Until it exists the locker refuses every upload — the safe
 default.
+
+**Different distributions still connect.** Steam, GOG, disc, and localized copies of
+`Morrowind.esm`/`.bsa` differ byte-for-byte, so an exact-hash gate built from *your* copy
+would reject a friend's legitimate copy from a different store. So the locker accepts a
+file when either its exact sha256 is known **or** its filename matches a manifest entry and
+its size is within ±5% (a movie renamed to `Morrowind.esm` is nowhere near ~79.8MB, so it
+is still refused). A newly-seen legit copy is logged (`locker.accepted_new_copy`) and its
+hash remembered. To require exact hashes only, set `acceptByNameAndSize = false` under
+`[locker]` in the config.
+
+> The multiplayer content gate is name-based, so same-named files from different stores play
+> together fine; only genuinely different *records* (e.g. a different language ESM) would
+> desync, which is inherent to any content-sync system.
 
 ---
 
