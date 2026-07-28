@@ -23,6 +23,13 @@ const REASONS = new Set(['rest', 'wait', 'script']);
 // Morrowind's calendar (Sun's Dawn is 28 days; no leap years in-game).
 const MONTH_DAYS = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 
+// Phase 2.5: who may skip time, and by how much.
+//   'anyone'  M7 behaviour — any rest/wait advances the shared clock for everybody
+//   'party'   only a party leader (or a solo player in their own world) may skip
+//   'off'     nobody; time flows continuously (the public-world rule — one stranger
+//             must not be able to fast-forward a hundred people into the night)
+export type TimeSkipPolicy = 'anyone' | 'party' | 'off';
+
 export interface ClockCtx {
   state: WorldTimeState; // lives in the CellStore global doc; mutated in place
   save(): void; // schedule the atomic global.json write

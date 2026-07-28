@@ -59,6 +59,16 @@ pvp = false
 # guildhalls stay places you can stand still in. Party members never hit each other.
 pvpZone = "all"
 safeCells = []
+# Chat scope for plain say. Default "world": four friends spread across Vvardenfell must
+# be able to talk, and that is what a self-hosted server almost always is. A CROWDED
+# public deployment sets "proximity", where shouting across the province is exactly what
+# makes the chat box unreadable. "!" always sends global, "@" always sends to your party.
+sayScope = "world"
+# Resting advances the shared clock for EVERYONE, so who may do it is a world rule.
+# "anyone" (default, and right for a co-op session), "party" (only a leader decides for
+# the group), "off" (a public world: one stranger must not fast-forward a hundred people
+# into the night).
+timeSkip = "anyone"
 # Difficulty is surfaced in SessionWelcome.flags and applied CLIENT-side, in the victim's
 # own combat pipeline (the server never computes damage). Morrowind scale: -100..100.
 difficulty = 0

@@ -41,8 +41,10 @@ async function twoInCell(server: RunningServer, cellKey = '0,0') {
 }
 
 async function fence(from: TestClient, ...watchers: TestClient[]) {
+  // '!' = the GLOBAL tier. Plain say is proximity-scoped (Phase 2.5), and a fence whose
+  // watchers stand in other cells must not depend on hearing a neighbour.
   const text = `fence-${Math.random().toString(36).slice(2)}`;
-  from.sendEvent('ChatSend', { text });
+  from.sendEvent('ChatSend', { text: `!${text}` });
   for (const w of watchers) await w.waitEvent('ChatMessage', (v) => (v as { text?: string }).text === text);
 }
 

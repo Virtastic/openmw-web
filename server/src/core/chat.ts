@@ -6,13 +6,21 @@ import type { LValue } from '../proto/lser';
 import type { Player, Roster } from './players';
 import type { CommandRegistry, CommandContext } from './commands';
 import type { Moderation } from './moderation';
+import { cellsVisible } from './movement';
 import { log } from '../log';
 
 export const MAX_CHAT_CHARS = 1024;
 
 // Type alias (not interface) so it structurally satisfies JsLike's index signature.
 export type ChatMessageBody = {
-  channel: 'say' | 'server' | 'whisper';
+  // Phase 2.5 chat tiers:
+  //   say     proximity — everyone whose interest bubble you are in (the default)
+  //   party   your group, wherever they are (realm-independent: it must survive a member
+  //           hopping worlds mid-conversation, which is the whole point of party travel)
+  //   global  the whole world, rate-limited
+  //   server  announcements; never muted, never proximity-filtered
+  //   whisper one recipient
+  channel: 'say' | 'party' | 'global' | 'server' | 'whisper';
   from?: string;
   fromId?: number;
   text: string;
@@ -80,12 +88,49 @@ export function handleChatSend(
     return;
   }
   if (!hooks.onChat(player, trimmed)) return; // vetoed lines were never delivered, so never logged
-  recordChat(mod, player, 'say', trimmed);
-  broadcastChat(
-    ctx.roster,
-    { channel: 'say', from: player.name, fromId: player.id, text: trimmed },
-    ctx.isMuted,
-    player.accountKey,
-  );
-  log('info', 'chat.say', { from: player.name, chars: trimmed.length });
+  // Tier prefixes, mirroring how every MMO chat box works. Deliberately parsed here
+  // rather than as slash commands: '/p' would collide with the command registry, and a
+  // player typing '/party hello' expects a message, not a usage error.
+  let channel: 'say' | 'party' | 'global' = 'say';
+  let line = trimmed;
+  if (/^!/.test(trimmed)) {
+    channel = 'global';
+    line = trimmed.slice(1).trim();
+  } else if (/^@/.test(trimmed)) {
+    channel = 'party';
+    line = trimmed.slice(1).trim();
+  }
+  if (line === '') return; // a bare prefix is a typo, not a message
+
+  recordChat(mod, player, channel, line);
+  const msg: ChatMessageBody = { channel, from: player.name, fromId: player.id, text: line };
+  if (channel === 'party') {
+    const members = ctx.partyOf?.(player.accountKey) ?? [];
+    if (members.length === 0) {
+      serverWhisper(player, 'You are not in a party.');
+      return;
+    }
+    // Realm-independent BY CONSTRUCTION only within this world process; a member in
+    // another world receives it when the platform-level relay lands (their party
+    // membership is already shared state). Here: everyone co-resident and in the party.
+    for (const p of ctx.roster.inWorld()) {
+      if (!members.includes(p.accountKey)) continue;
+      if (p.accountKey !== player.accountKey && ctx.isMuted?.(p.accountKey, player.accountKey)) continue;
+      p.peer.sendEvent('ChatMessage', msg);
+    }
+  } else if (channel === 'say' && ctx.sayProximity === true) {
+    // PROXIMITY say — public worlds only. Shouting across the province is what makes a
+    // crowded public chat box unreadable. In a private or party world the opposite is
+    // true: four friends spread across Vvardenfell must be able to talk, so 'say' stays
+    // world-wide there and this scope follows the world's nature rather than a global
+    // preference (see [rules].sayScope).
+    for (const p of ctx.roster.inWorld()) {
+      if (p.accountKey !== player.accountKey && ctx.isMuted?.(p.accountKey, player.accountKey)) continue;
+      if (p.id !== player.id && !cellsVisible(p.cellKey, player.cellKey)) continue;
+      p.peer.sendEvent('ChatMessage', msg);
+    }
+  } else {
+    broadcastChat(ctx.roster, msg, ctx.isMuted, player.accountKey);
+  }
+  log('info', 'chat.' + channel, { from: player.name, chars: line.length });
 }

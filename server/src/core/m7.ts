@@ -43,6 +43,8 @@ export interface M7Ctx {
   // Phase 3.7: set after construction (WorldState and WorldM7 are mutually referential).
   // Used to push the restored cell truth to occupants right after a reset.
   world?: { sendCellSnapshot(cellKey: string, doc: CellDoc): void };
+  // Phase 2.5 time-skip policy. Absent = unrestricted (M7 behaviour).
+  maySkipTime?(player: Player): { may: boolean; why: string };
 }
 
 function str(v: LValue | undefined, max: number): string | undefined {
@@ -104,7 +106,21 @@ export class WorldM7 {
       return true;
     }
     switch (name) {
-      case 'WorldTimeRequest': this.clock.request(player.name, body); break;
+      case 'WorldTimeRequest': {
+        // Phase 2.5: sleeping advances the clock for EVERYONE, so who may do it is a
+        // world rule. Public worlds refuse outright (one stranger must not fast-forward a
+        // hundred people into the night); party worlds let the leader decide for the
+        // group; a solo world is unrestricted. Refusals are TOLD to the player — a Rest
+        // that silently does nothing gets pressed again and then reported as a bug.
+        const verdict = this.ctx.maySkipTime?.(player) ?? { may: true, why: '' };
+        if (!verdict.may) {
+          log('info', 'time.skip_refused', { from: player.name, why: verdict.why });
+          player.peer.sendEvent('WorldTimeRefused', { reason: verdict.why });
+          break;
+        }
+        this.clock.request(player.name, body);
+        break;
+      }
       case 'WorldRegionChange': this.weather.changeRegion(player, body); break;
       case 'WorldWeather': this.weather.handleWeather(player, body); break;
       case 'RecordCreate': this.recordCreate(player, body); break;

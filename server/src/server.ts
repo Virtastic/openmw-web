@@ -192,6 +192,18 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     records: recordStore,
     guiTimeoutMs: Math.round(config.gui.timeoutSec * 1000),
     isMapShared: () => hooks.shareFamily('map'),
+    // Public worlds never skip time; party worlds let the leader decide for the group.
+    maySkipTime: (player) => {
+      const policy = config.rules.timeSkip;
+      if (policy === 'anyone') return { may: true, why: '' };
+      if (policy === 'off') return { may: false, why: 'time does not skip in this world' };
+      const members = socialRef?.partyMembersOf(player.accountKey) ?? [];
+      if (members.length === 0) return { may: true, why: '' }; // solo: your world, your clock
+      const view = socialRef?.partyView(player.accountKey);
+      return view && view.leader === player.accountKey
+        ? { may: true, why: '' }
+        : { may: false, why: 'only your party leader can rest for the group' };
+    },
     // Phase 3.7: a reset hands the restored cell truth straight to whoever is standing
     // there, so it never needs the TES3MP kick-everyone workaround.
     world,
@@ -253,6 +265,10 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     // Mutes are enforced at DELIVERY (chat.ts), not in the client: a mute a modified
     // client can ignore is not a mute.
     isMuted: (listener, speaker) => socialRef?.isMuted(listener, speaker) ?? false,
+    partyOf: (accountKey) => socialRef?.partyMembersOf(accountKey) ?? [],
+    // Opt-in per deployment: a crowded public world wants proximity say, a co-op session
+    // very much does not (friends spread across the map must still be able to talk).
+    sayProximity: config.rules.sayScope === 'proximity',
     onCommand: (player, name, args) => hooks.command({ id: player.id, name: player.name, rank: player.rank }, name, args),
   };
 

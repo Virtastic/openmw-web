@@ -63,8 +63,10 @@ async function scenario(t: { after(fn: () => unknown): void }, pvp: boolean) {
 // Chat fences ride the same per-connection FIFO, so once a client sees the fence, any
 // combat frame that was going to reach it already has.
 async function fence(from: TestClient, ...watchers: TestClient[]) {
+  // '!' = the GLOBAL tier. Plain say is proximity-scoped (Phase 2.5), and a fence whose
+  // watchers stand in other cells must not depend on hearing a neighbour.
   const text = `fence-${Math.random().toString(36).slice(2)}`;
-  from.sendEvent('ChatSend', { text });
+  from.sendEvent('ChatSend', { text: `!${text}` });
   for (const w of watchers) await w.waitEvent('ChatMessage', (v) => (v as { text?: string }).text === text);
 }
 

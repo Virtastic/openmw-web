@@ -75,6 +75,13 @@ export interface Config {
     // its way through a dungeon without friendly fire is not a group.
     pvpZone: 'all' | 'wilderness' | 'none';
     safeCells: string[];
+    // Phase 2.5 chat scope for plain 'say'. Default 'world'; a crowded public deployment
+    // sets 'proximity'. '!' prefixes global and '@' party regardless of this.
+    sayScope: 'world' | 'proximity';
+    // Phase 2.5: who may rest/wait, since it advances the shared clock for everyone.
+    // 'anyone' (M7 behaviour), 'party' (leader only, or a solo player in their own
+    // world), 'off' (public worlds: time flows continuously).
+    timeSkip: 'anyone' | 'party' | 'off';
     difficulty: number;
   };
   engine: { enforce: 'warn' | 'refuse' | 'off' };
@@ -334,6 +341,8 @@ function validate(t: Tree): Config {
       pvp: reqBool(t, 'rules', 'pvp'),
       pvpZone: reqEnum(t, 'rules', 'pvpZone', ['all', 'wilderness', 'none'] as const),
       safeCells: reqStrArray(t, 'rules', 'safeCells'),
+      sayScope: reqEnum(t, 'rules', 'sayScope', ['world', 'proximity'] as const),
+      timeSkip: reqEnum(t, 'rules', 'timeSkip', ['anyone', 'party', 'off'] as const),
       difficulty: reqSignedNum(t, 'rules', 'difficulty'),
     },
     engine: { enforce: reqEnum(t, 'engine', 'enforce', ['warn', 'refuse', 'off'] as const) },
