@@ -174,7 +174,11 @@ export class LoginTicketStore {
   private readonly tickets = new Map<string, LoginTicket>();
   private readonly timer: NodeJS.Timeout;
 
-  constructor(private readonly ttlMs = 60_000) {
+  // 15 min, not 60 s: the ticket is redeemed by the MP client AFTER the game engine has loaded
+  // its content (streamed retail data can take minutes on a first play), so a 60 s ticket was
+  // always expired by connect time and the client fell back to the password ladder — which an
+  // SSO-only server refuses. Still single-use and fragment-delivered, so the longer TTL is cheap.
+  constructor(private readonly ttlMs = 15 * 60_000) {
     this.timer = setInterval(() => this.sweep(), 30_000);
     this.timer.unref();
   }

@@ -12,6 +12,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import { createServer as createNetServer } from 'node:net';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import * as nodePath from 'node:path';
 import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, randomBytes, sign as signBuf, type KeyObject } from 'node:crypto';
 import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -182,6 +184,11 @@ async function boot(
   override: DeepPartial<Config> = {},
   dataDir = tmpDataDir(),
 ): Promise<Harness> {
+  // An SSO (multiplayer) server refuses to boot without game data (server.ts). These tests
+  // exercise auth, not content, so stub the files detectGameData looks for — presence is all
+  // it checks. This keeps the production invariant ("no server without files") intact.
+  { const gd = nodePath.join(dataDir, 'gamedata'); mkdirSync(gd, { recursive: true });
+    for (const f of ['Morrowind.esm', 'Morrowind.bsa']) writeFileSync(nodePath.join(gd, f), ''); }
   const idp = new MockIdp('key-a');
   const idp2 = new MockIdp('key-b');
   await idp.start(await freePort());

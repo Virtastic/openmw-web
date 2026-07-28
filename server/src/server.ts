@@ -562,6 +562,15 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   const gameData = detectGameData(gameDataDir(opts.dataDir));
   log('info', 'gamedata.detect', { ok: gameData.ok, reason: gameData.reason });
 
+  // A multiplayer (SSO) server is authoritative over persistent state using its OWN copy of the
+  // game files — there is no "run without the files" mode. Refuse to boot without them: a server
+  // that cannot author the world it hosts is a broken deployment, not a degraded one. (Non-SSO
+  // test/dev servers are unaffected; the requirement is the multiplayer contract.)
+  if (config.auth.requireSso && !gameData.ok) {
+    throw new Error(`multiplayer server requires game data at ${gameDataDir(opts.dataDir)} — ${gameData.reason}. `
+      + 'Drop your Morrowind Data Files (Morrowind.esm/.bsa, and optionally Tribunal/Bloodmoon) there.');
+  }
+
   // Resolve simPeer.mode against reality. The config alone cannot know whether a peer can
   // actually run, so 'auto' is decided here and the outcome is ALWAYS logged — a server that
   // quietly falls back to client-simulated NPCs is how "why are the NPCs frozen" becomes a
