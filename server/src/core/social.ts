@@ -88,10 +88,14 @@ interface PendingInvite {
 }
 
 interface Party {
-  id: number;
+  key: string; // stable, opaque, platform-wide (persisted; survives world hops + handover)
   leader: AccountKey;
   members: Set<AccountKey>;
 }
+
+// A party untouched for this long dissolves on next load — the guard that lets membership
+// persist (required for cross-world travel) without restarts resurrecting dead groups.
+export const PARTY_STALE_MS = 24 * 60 * 60 * 1000;
 
 export class Social {
   private readonly d: SocialDeps;
@@ -101,12 +105,12 @@ export class Social {
   // Invites are session state and stay in memory: persisting them means resurrecting dead
   // invitations after a restart, pointing at a session that no longer exists.
   private readonly invites = new Map<AccountKey, PendingInvite[]>();
-  // Parties are SESSION state and stay in memory. Persisting them means restoring a party
-  // after a restart whose members are all offline and whose leader may never return — a
-  // group that exists on paper and cannot be left.
-  private readonly parties = new Map<number, Party>();
-  private readonly partyOf = new Map<AccountKey, number>();
-  private nextPartyId = 1;
+  // Parties PERSIST (socialstore) because travel moves members between world processes —
+  // the party has to exist wherever its members land, so the store is the truth and this
+  // map is a per-process cache hydrated on join. Staleness (PARTY_STALE_MS) is what keeps
+  // a restart from resurrecting groups whose members are gone for good.
+  private readonly parties = new Map<string, Party>();
+  private readonly partyOf = new Map<AccountKey, string>();
   private readonly maxParty = 8;
 
   constructor(deps: SocialDeps, tuning: SocialTuning = socialTuning) {
@@ -164,8 +168,34 @@ export class Social {
     }
   }
 
+  // Hydrate this process's party cache from the store: the member may have formed the
+  // party in another world. Stale parties dissolve here rather than coming back as
+  // zombies.
+  private loadParty(acct: AccountKey): void {
+    if (this.partyOf.has(acct)) return;
+    const row = this.d.store.partyOfAccount(acct);
+    if (!row) return;
+    const members = this.d.store.partyMembers(row.key);
+    if (members.length <= 1) {
+      this.d.store.partyDissolve(row.key);
+      return;
+    }
+    this.d.store.partySweepStale(this.d.now() - PARTY_STALE_MS);
+    if (!this.d.store.partyOfAccount(acct)) return; // it was stale and just dissolved
+    let party = this.parties.get(row.key);
+    if (!party) {
+      party = { key: row.key, leader: row.leader, members: new Set(members) };
+      this.parties.set(row.key, party);
+    }
+    for (const m of members) {
+      party.members.add(m);
+      this.partyOf.set(m, row.key);
+    }
+  }
+
   onJoin(player: Player): void {
     const acct = player.accountKey;
+    this.loadParty(acct);
     // Cancel a pending offline announcement: this is a reconnect inside the grace window,
     // so as far as friends are concerned they never left.
     const t = this.offlineTimers.get(acct);
@@ -194,7 +224,12 @@ export class Social {
       this.offlineTimers.delete(acct);
       // Re-check: the account may have come back on a different connection.
       if (this.onlinePlayer(acct)) return;
-      this.partyLeave(acct); // the grace window has lapsed: they really are gone
+      // Membership PERSISTS through going offline — the member may be mid-hop to another
+      // world (party travel), and being ejected because a reconnect took 20 seconds is
+      // exactly the Skyrim-Together complaint this design removes. They leave a party via
+      // PartyLeave, a kick, or the staleness sweep — never by a dropped socket.
+      const pk = this.partyOf.get(acct);
+      if (pk !== undefined) this.broadcastParty(pk);
       this.notifyFriends(acct, false);
     }, this.tuning.presenceGraceMs);
     timer.unref?.();
@@ -391,8 +426,8 @@ export class Social {
       : { leader: view.leader, members: view.members as unknown as never });
   }
 
-  private broadcastParty(id: number): void {
-    const party = this.parties.get(id);
+  private broadcastParty(key: string): void {
+    const party = this.parties.get(key);
     if (!party) return;
     for (const m of party.members) this.sendParty(m);
   }
@@ -408,13 +443,15 @@ export class Social {
     if (!target) return 'not_online';
     if (this.partyOf.has(targetAcct)) return 'already_in_party';
 
-    let id = this.partyOf.get(from);
-    if (id === undefined) {
-      id = this.nextPartyId++;
-      this.parties.set(id, { id, leader: from, members: new Set([from]) });
-      this.partyOf.set(from, id);
+    let key = this.partyOf.get(from);
+    if (key === undefined) {
+      // Stable platform-wide key: persisted, survives world hops and leader handover.
+      key = `p${this.d.now().toString(36)}${Math.floor(Math.random() * 36 ** 4).toString(36)}`;
+      this.parties.set(key, { key, leader: from, members: new Set([from]) });
+      this.partyOf.set(from, key);
+      this.d.store.partyCreate(key, from, this.d.now());
     }
-    const party = this.parties.get(id)!;
+    const party = this.parties.get(key)!;
     if (party.leader !== from) return 'not_leader';
     if (party.members.size >= this.maxParty) return 'party_full';
 
@@ -434,38 +471,45 @@ export class Social {
     if (!list.some((i) => i.from === fromAcct)) return 'no_request';
     if (this.d.store.blockedEitherWay(me, fromAcct)) return 'blocked';
     if (this.partyOf.has(me)) return 'already_in_party';
-    const id = this.partyOf.get(fromAcct);
-    const party = id !== undefined ? this.parties.get(id) : undefined;
+    const key = this.partyOf.get(fromAcct);
+    const party = key !== undefined ? this.parties.get(key) : undefined;
     if (!party) return 'not_in_party';
     if (party.members.size >= this.maxParty) return 'party_full';
     party.members.add(me);
-    this.partyOf.set(me, party.id);
+    this.partyOf.set(me, party.key);
+    this.d.store.partyAddMember(party.key, me, now);
     this.invites.set(me, list.filter((i) => i.from !== fromAcct));
-    this.broadcastParty(party.id);
+    this.broadcastParty(party.key);
     return 'ok';
   }
 
   partyLeave(acct: AccountKey): void {
-    const id = this.partyOf.get(acct);
-    if (id === undefined) return;
-    const party = this.parties.get(id);
+    const key = this.partyOf.get(acct);
+    if (key === undefined) return;
+    const party = this.parties.get(key);
     this.partyOf.delete(acct);
+    this.d.store.partyRemoveMember(acct);
     if (!party) return;
     party.members.delete(acct);
     // The leader leaving hands over rather than dissolving the group: everyone else being
     // silently ejected because one person left is worse than an arbitrary successor.
     if (party.leader === acct) {
       const next = [...party.members][0];
-      if (next) party.leader = next;
+      if (next) {
+        party.leader = next;
+        this.d.store.partySetLeader(key, next, this.d.now());
+      }
     }
     if (party.members.size <= 1) {
       for (const m of party.members) {
         this.partyOf.delete(m);
+        this.d.store.partyRemoveMember(m);
         this.sendParty(m);
       }
-      this.parties.delete(id);
+      this.parties.delete(key);
+      this.d.store.partyDissolve(key);
     } else {
-      this.broadcastParty(id);
+      this.broadcastParty(key);
     }
     this.sendParty(acct); // the leaver gets an empty party
   }
@@ -581,6 +625,15 @@ export class Social {
         this.partyLeave(player.accountKey);
         this.reply(player, 'PartyLeave', true, 'ok');
         return true;
+      // Party travel (plan 2.5.1): the leader moves the whole group between the party's
+      // campaign world and public. Async like WorldList/WorldCreate — the gateway is
+      // consulted off the session's hot path, and every member co-present in THIS world
+      // gets a PartyTravel event telling their client where to dial. Members elsewhere
+      // hydrate the party from the store when they arrive wherever they are going.
+      case 'PartyTravel': {
+        void this.partyTravel(player, str('target'));
+        return true;
+      }
       case 'InviteAccept': {
         const r = this.acceptInvite(player, str('acct'));
         if (r.ok) {
@@ -597,6 +650,68 @@ export class Social {
 
   private reply(player: Player, op: string, ok: boolean, detail: string): void {
     player.peer.sendEvent('SocialResult', { op, ok, detail });
+  }
+
+  // Leader-only. target 'party' = the group's own campaign world (created on first travel,
+  // owned by the CURRENT leader — the world persists under whoever led when it was first
+  // made, which is the plan's "persisted under the owner's account"); target 'public' =
+  // the platform's public world. The server only TELLS clients where to go — each member's
+  // client dials the new world itself and re-auths there (same character, per plan).
+  async partyTravel(player: Player, target: string): Promise<void> {
+    const from = player.accountKey;
+    const key = this.partyOf.get(from);
+    const party = key !== undefined ? this.parties.get(key) : undefined;
+    if (!party) {
+      this.reply(player, 'PartyTravel', false, 'not_in_party');
+      return;
+    }
+    if (party.leader !== from) {
+      this.reply(player, 'PartyTravel', false, 'not_leader');
+      return;
+    }
+    if (!this.worlds || !this.worlds.enabled) {
+      this.reply(player, 'PartyTravel', false, 'no_gateway');
+      return;
+    }
+
+    let dest: { id: string; mode: string; host: string; port: number } | undefined;
+    if (target === 'party') {
+      // World id derives from the party key: stable across hops, collision-free (the key
+      // is globally unique), and within the directory's id charset.
+      const r = await this.worlds.create(player, `party-${party.key}`, 'party');
+      if (!r.world) {
+        this.reply(player, 'PartyTravel', false, r.error ?? 'refused');
+        return;
+      }
+      dest = r.world;
+    } else if (target === 'public') {
+      const r = await this.worlds.list(player);
+      const pub = r.worlds.find((w) => w.mode === 'public' && w.up);
+      if (!pub) {
+        this.reply(player, 'PartyTravel', false, r.error ?? 'no_public_world');
+        return;
+      }
+      dest = pub;
+    } else {
+      this.reply(player, 'PartyTravel', false, 'bad_target');
+      return;
+    }
+
+    this.d.store.partyTouch(party.key, this.d.now());
+    // Fan out to every member co-present in THIS world (the offline/elsewhere ones keep
+    // their membership and can follow via the party panel when they see where it went).
+    for (const m of party.members) {
+      const p = this.onlinePlayer(m);
+      p?.peer.sendEvent('PartyTravel', {
+        target,
+        worldId: dest.id,
+        mode: dest.mode,
+        host: dest.host,
+        port: dest.port,
+        leaderName: player.name,
+      });
+    }
+    log('info', 'social.party_travel', { party: party.key, target, worldId: dest.id, leader: from });
   }
 
   // Returns the inviter's live position for the client to travel to, or a failure.

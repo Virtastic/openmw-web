@@ -65,12 +65,25 @@ export class SocialStore {
         PRIMARY KEY (fromAcct, toAcct)
       );
       CREATE INDEX IF NOT EXISTS friend_request_to ON friend_request(toAcct);
-      -- Presence mode is a per-account PREFERENCE, so it persists; party membership is
-      -- session state and deliberately does not (see social.ts).
+      -- Presence mode is a per-account PREFERENCE, so it persists.
       CREATE TABLE IF NOT EXISTS presence_pref (
         account TEXT PRIMARY KEY,
         mode    TEXT NOT NULL
       );
+      -- Party travel: membership PERSISTS (it must survive members hopping between world
+      -- processes — the party is a platform-level group, not one world's session state).
+      -- The restart-zombie concern that kept parties in memory is handled by updated_at +
+      -- partySweepStale: a party nobody has touched for a day dissolves on next load.
+      CREATE TABLE IF NOT EXISTS party (
+        key        TEXT PRIMARY KEY,
+        leader     TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS party_member (
+        account TEXT PRIMARY KEY,
+        party   TEXT NOT NULL REFERENCES party(key) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS party_member_party ON party_member(party);
     `);
   }
 
@@ -180,6 +193,55 @@ export class SocialStore {
 
   setPresenceMode(account: AccountKey, mode: string): void {
     this.db.prepare('INSERT OR REPLACE INTO presence_pref (account, mode) VALUES (?, ?)').run(account, mode);
+  }
+
+  // -------------------------------------------------------------------- party
+
+  partyCreate(key: string, leader: AccountKey, now: number): void {
+    this.db.prepare('INSERT OR REPLACE INTO party (key, leader, updated_at) VALUES (?, ?, ?)').run(key, leader, now);
+    this.db.prepare('INSERT OR REPLACE INTO party_member (account, party) VALUES (?, ?)').run(leader, key);
+  }
+
+  partyOfAccount(account: AccountKey): { key: string; leader: AccountKey } | undefined {
+    const row = this.db
+      .prepare('SELECT p.key AS key, p.leader AS leader FROM party_member m JOIN party p ON p.key = m.party WHERE m.account = ?')
+      .get(account) as { key: string; leader: string } | undefined;
+    return row;
+  }
+
+  partyMembers(key: string): AccountKey[] {
+    return (this.db.prepare('SELECT account FROM party_member WHERE party = ? ORDER BY account').all(key) as
+      { account: string }[]).map((r) => r.account);
+  }
+
+  partyAddMember(key: string, account: AccountKey, now: number): void {
+    this.db.prepare('INSERT OR REPLACE INTO party_member (account, party) VALUES (?, ?)').run(account, key);
+    this.partyTouch(key, now);
+  }
+
+  partyRemoveMember(account: AccountKey): void {
+    this.db.prepare('DELETE FROM party_member WHERE account = ?').run(account);
+  }
+
+  partySetLeader(key: string, leader: AccountKey, now: number): void {
+    this.db.prepare('UPDATE party SET leader = ?, updated_at = ? WHERE key = ?').run(leader, now, key);
+  }
+
+  partyDissolve(key: string): void {
+    // party_member rows go via ON DELETE CASCADE.
+    this.db.prepare('DELETE FROM party WHERE key = ?').run(key);
+  }
+
+  partyTouch(key: string, now: number): void {
+    this.db.prepare('UPDATE party SET updated_at = ? WHERE key = ?').run(now, key);
+  }
+
+  // Dissolve parties nobody has touched in ages — the guard against a restart resurrecting
+  // groups whose members are gone for good. Returns how many were dissolved.
+  partySweepStale(cutoff: number): number {
+    const stale = (this.db.prepare('SELECT key FROM party WHERE updated_at <= ?').all(cutoff) as { key: string }[]);
+    for (const r of stale) this.partyDissolve(r.key);
+    return stale.length;
   }
 
   sweepExpired(now: number): number {
