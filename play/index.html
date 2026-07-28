@@ -101,6 +101,11 @@
  #lkwiz .wz-btn:hover{filter:brightness(1.08)} #lkwiz .wz-btn[disabled]{opacity:.5;cursor:default;filter:none}
  #lkwiz .wz-note{margin:14px 0 0;min-height:18px;font-size:13px;line-height:1.5;color:#a5987e}
  #lkwiz .wz-note.err{color:#e0836a} #lkwiz .wz-note.ok{color:#a9c48a}
+ #lkwiz .wz-eula-lead{margin:22px 0 0;text-align:left;font-size:12.5px;line-height:1.55;color:#a5987e}
+ #lkwiz .wz-eula{margin:14px 0 4px;text-align:left;display:flex;flex-direction:column;gap:12px}
+ #lkwiz .wz-eula label{display:flex;gap:11px;align-items:flex-start;font-size:13px;line-height:1.5;
+   color:#c9bda0;cursor:pointer}
+ #lkwiz .wz-eula input{margin:1px 0 0;width:17px;height:17px;flex:none;accent-color:#c69a52;cursor:pointer}
  #lkwiz .wz-fine{margin:16px 0 0;font-size:11.5px;line-height:1.55;color:#6a5f4d}
 </style></head>
 <body>
@@ -138,14 +143,23 @@
   <div class="wz">
     <div class="wz-kick">Multiplayer &middot; one-time setup</div>
     <h2 class="wz-h" id="lkwiz-h">Add your Morrowind files</h2>
-    <p class="wz-p">Your game data lives in your account, so it follows you to any device. Pick your
-       Morrowind <b>Data Files</b> folder once — the files below upload to your private locker and
-       are verified. You only do this the first time.</p>
+    <p class="wz-p">Your game data lives in your account, so it follows you to any device. Choose your
+       Morrowind files once. They upload to your private locker and are verified. You only select
+       the files below, not a whole folder, and you only do this the first time.</p>
     <ul class="wz-list" id="lkwiz-list"></ul>
-    <button class="wz-btn" id="lkwiz-pick" type="button">Choose Data Files folder</button>
+    <p class="wz-eula-lead">The Elder Scrolls III: Morrowind is © Bethesda Softworks. We do not
+       provide the game. You may only upload files from a copy you legally own, as a private backup
+       for your own use. Please confirm:</p>
+    <div class="wz-eula" id="lkwiz-eula">
+      <label><input type="checkbox" id="eula-own"> <span>I have purchased a copy of The Elder Scrolls&nbsp;III: Morrowind.</span></label>
+      <label><input type="checkbox" id="eula-legal"> <span>The files I am uploading have been obtained legally and are my own.</span></label>
+      <label><input type="checkbox" id="eula-understand"> <span>I understand these are stored privately as backup copies for my own use only, that they are streamed back to no one but me, and that I will not share or redistribute them.</span></label>
+    </div>
+    <input type="file" id="lkwiz-file" accept=".esm,.esp,.bsa,.omwaddon" multiple style="display:none">
+    <button class="wz-btn" id="lkwiz-pick" type="button" disabled>Choose files</button>
     <p class="wz-note" id="lkwiz-note"></p>
-    <p class="wz-fine">These stay private to you and are never shared. By continuing you confirm they
-       are your own backup copies of a game you legally own.</p>
+    <p class="wz-fine">Select individual files (Cmd or Ctrl-click to pick several). No folder access is
+       requested. These stay private to you and are used only to stream your own game back to you.</p>
   </div>
 </div>
 <script>
@@ -1492,50 +1506,64 @@
            };
          })();
 
-         // Drive the wizard to completion: pick a folder, hash+attest, upload each needed file
-         // with live status, and resolve with the stored file list once every REQUIRED file is
-         // verified server-side. Optional files that are present are uploaded too.
+         // Drive the wizard to completion. The user first accepts the ownership terms (three
+         // checkboxes), which unlocks the file chooser. They pick individual files (no folder
+         // access is ever requested); selections accumulate so they can add files in batches.
+         // Once every REQUIRED file is present we hash + attest + upload each with live status,
+         // and resolve with the stored file list. Optional files that are present upload too.
          async function runWizard(needed, haveNames){
            return new Promise(function(resolve){
-             wiz.render(needed, haveNames); wiz.note(''); wiz.setPick('Choose Data Files folder', true); wiz.show();
-             wiz.onPick(async function(){
-               wiz.setPick('Choose Data Files folder', false);
-               var dir = await rememberedDir();
-               var ok = dir && (await dir.queryPermission({mode:'read'}))==='granted';
-               if (!ok){ try { dir = await window.showDirectoryPicker(); } catch(e){ wiz.note('No folder chosen. Pick your Morrowind Data Files folder to continue.','err'); wiz.setPick('Choose Data Files folder', true); return; } }
-               var picked=[]; try { await collectFiles(dir,'',picked); } catch(e){ wiz.note('Could not read that folder. Try again.','err'); wiz.setPick('Choose Data Files folder', true); return; }
-               var byName={}; picked.forEach(function(p){ byName[p.name.toLowerCase()]=p; });
-               var missing = needed.filter(function(f){ return f.required && haveNames.indexOf(f.name.toLowerCase())===-1 && !byName[f.name.toLowerCase()]; });
-               if (missing.length){ wiz.note('That folder is missing: '+missing.map(function(m){return m.name;}).join(', ')+'. Pick your full Morrowind Data Files folder.','err'); wiz.setPick('Choose a different folder', true); return; }
-               // Only upload what the server knows about and isn't already stored.
-               var toUpload = needed.filter(function(f){ return haveNames.indexOf(f.name.toLowerCase())===-1 && byName[f.name.toLowerCase()]; });
-               wiz.note('Reading files… keep this page open.','');
+             wiz.render(needed, haveNames); wiz.note('');
+             var fileInput=document.getElementById('lkwiz-file');
+             var pick=document.getElementById('lkwiz-pick');
+             var eula=document.getElementById('lkwiz-eula');
+             var boxes=['eula-own','eula-legal','eula-understand'].map(function(id){ return document.getElementById(id); });
+             boxes.forEach(function(b){ b.checked=false; });
+             pick.textContent='Choose files'; pick.disabled=true;
+             // The chooser stays locked until all ownership boxes are ticked.
+             boxes.forEach(function(b){ b.onchange=function(){ pick.disabled=!boxes.every(function(x){ return x.checked; }); }; });
+             var chosen={}; var uploading=false;
+             pick.onclick=function(){ if(!pick.disabled && !uploading) fileInput.click(); };
+             wiz.show();
+
+             fileInput.onchange=async function(){
+               Array.prototype.slice.call(fileInput.files||[]).forEach(function(f){ chosen[f.name.toLowerCase()]=f; });
+               fileInput.value=''; // let the same file be re-picked later if needed
+               needed.forEach(function(f){ if(chosen[f.name.toLowerCase()] && haveNames.indexOf(f.name.toLowerCase())===-1) wiz.set(f.name,'','ready'); });
+               var missing = needed.filter(function(f){ return f.required && haveNames.indexOf(f.name.toLowerCase())===-1 && !chosen[f.name.toLowerCase()]; });
+               if (missing.length){ wiz.note('Still need: '+missing.map(function(m){return m.name;}).join(', ')+'. Click Choose files to add them.','err'); pick.textContent='Add more files'; return; }
+               // All required files are present — begin the one-time upload.
+               uploading=true; pick.disabled=true; eula.style.display='none'; wiz.note('Reading files. Keep this page open.','');
+               var toUpload = needed.filter(function(f){ return haveNames.indexOf(f.name.toLowerCase())===-1 && chosen[f.name.toLowerCase()]; });
                var records=[];
-               for (const f of toUpload){ var p=byName[f.name.toLowerCase()]; wiz.set(f.name,'busy','reading…'); var file=await p.handle.getFile(); p.file=file; p.size=file.size; wiz.set(f.name,'busy','hashing…'); p.sha256=await hashFile(file); records.push({name:p.name,size:p.size,sha256:p.sha256}); }
+               for (const f of toUpload){ var file=chosen[f.name.toLowerCase()]; wiz.set(f.name,'busy','hashing…'); var sha=await hashFile(file); records.push({name:f.name,size:file.size,sha256:sha}); }
+               function stop(msg){ wiz.note(msg,'err'); uploading=false; eula.style.display=''; pick.disabled=false; pick.textContent='Try again'; }
                // Attest ownership BEFORE any byte leaves the machine.
                try { await api('/locker/attest',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({files:records})}); }
-               catch(e){ wiz.note('Could not reach the server. Try again.','err'); wiz.setPick('Try again', true); return; }
-               wiz.note('Uploading to your private locker…','');
+               catch(e){ return stop('Could not reach the server. Try again.'); }
+               wiz.note('Uploading to your private locker.','');
                var failed=[];
-               for (const f of toUpload){ var p=byName[f.name.toLowerCase()];
+               for (const rec of records){ var file=chosen[rec.name.toLowerCase()];
                  try {
-                   wiz.set(f.name,'busy','authorizing…');
-                   var au=await (await api('/locker/authorize-upload',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name:p.name,size:p.size,sha256:p.sha256})})).json();
-                   if(!au.ok){ wiz.set(f.name,'err',au.reason==='quota'?'over quota':'not accepted'); if(f.required)failed.push(f.name); continue; }
-                   wiz.set(f.name,'busy','uploading…');
-                   var put=await fetch(au.url,{method:'PUT',body:p.file});
-                   if(!put.ok){ wiz.set(f.name,'err','upload failed'); if(f.required)failed.push(f.name); continue; }
-                   wiz.set(f.name,'busy','verifying…');
-                   var conf=await (await api('/locker/uploaded',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name:p.name,size:p.size,sha256:p.sha256})})).json();
-                   if(conf&&conf.ok===false){ wiz.set(f.name,'err','not a valid file'); if(f.required)failed.push(f.name); continue; }
-                   wiz.set(f.name,'done','uploaded ✓');
-                 } catch(e){ wiz.set(f.name,'err','failed'); if(f.required)failed.push(f.name); }
+                   wiz.set(rec.name,'busy','authorizing…');
+                   var au=await (await api('/locker/authorize-upload',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(rec)})).json();
+                   if(!au.ok){ wiz.set(rec.name,'err',au.reason==='quota'?'over quota':'not accepted'); failed.push(rec.name); continue; }
+                   wiz.set(rec.name,'busy','uploading…');
+                   var put=await fetch(au.url,{method:'PUT',body:file});
+                   if(!put.ok){ wiz.set(rec.name,'err','upload failed'); failed.push(rec.name); continue; }
+                   wiz.set(rec.name,'busy','verifying…');
+                   var conf=await (await api('/locker/uploaded',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(rec)})).json();
+                   if(conf&&conf.ok===false){ wiz.set(rec.name,'err','not a valid file'); failed.push(rec.name); continue; }
+                   wiz.set(rec.name,'done','uploaded');
+                 } catch(e){ wiz.set(rec.name,'err','failed'); failed.push(rec.name); }
                }
-               if (failed.length){ wiz.note('Could not add: '+failed.join(', ')+'. Make sure they are genuine Morrowind files, then try again.','err'); wiz.setPick('Try again', true); return; }
-               wiz.note('All set — starting Morrowind…','ok');
+               // Only a REQUIRED failure blocks starting; an optional file that failed is skipped.
+               var reqFailed = failed.filter(function(n){ return (needed.find(function(x){return x.name===n;})||{}).required; });
+               if (reqFailed.length){ return stop('Could not add: '+reqFailed.join(', ')+'. Make sure they are genuine Morrowind files, then try again.'); }
+               wiz.note('All set. Starting Morrowind.','ok');
                var got; try { got=(await (await api('/locker/files')).json()).files; } catch(e){ got=null; }
                setTimeout(function(){ wiz.hide(); resolve(got||[]); }, 800);
-             });
+             };
            });
          }
 
