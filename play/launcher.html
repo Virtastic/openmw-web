@@ -364,8 +364,6 @@
     <h3 id="mp-title">Sign in to play together</h3>
     <div id="mp-providers" class="mp-providers"></div>
     <p class="note" id="mp-note"></p>
-    <p class="mp-fine"><a href="terms.html" target="_blank" rel="noopener">Terms</a> &middot; your own
-       game files only</p>
   </div>
 </div>
 
@@ -671,8 +669,11 @@
  // override it for local development, but no server field is ever shown to players.
  const DEFAULT_MP_SERVER = 'wss://morrowind.virtastic.app/ws';
  function mpServerUrl(){
-   return new URLSearchParams(location.search).get('mpserver')
-     || localStorage.getItem('omw-mp-url') || DEFAULT_MP_SERVER;
+   const override = new URLSearchParams(location.search).get('mpserver') || localStorage.getItem('omw-mp-url');
+   if (override) return override;
+   // Local dev: when the launcher itself is served from localhost, talk to a local server.
+   if (/^(localhost|127\.0\.0\.1)$/.test(location.hostname)) return 'ws://' + location.hostname + ':8080/ws';
+   return DEFAULT_MP_SERVER;
  }
 
  const mpBd = $('mp-bd');
