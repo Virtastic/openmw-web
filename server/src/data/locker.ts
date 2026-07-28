@@ -69,11 +69,41 @@ export interface LockerSettings {
     presignPut(key: string, contentLength: number): Promise<string>;
     presignGet(key: string): Promise<string>;
     delete(prefix: string): Promise<void>;
+    // Read the first `length` bytes of an object (server-side, signed) — the header sniff
+    // needs the bytes that actually landed, not the client's word for them.
+    getHead(key: string, length: number): Promise<Buffer>;
   };
 }
 
 const ATTEST_STATEMENT =
   'These are my own backup copies of files from my legally purchased game.';
+
+// Structural sniff of a file's first bytes: is this actually a Morrowind data file, or
+// arbitrary bytes wearing a Morrowind filename? Run server-side on the bytes that ACTUALLY
+// landed in the bucket (read back via storage.getHead), so — unlike name/size/hash, all of
+// which the client asserts — the client cannot lie about it. Offsets verified against real
+// Morrowind/Tribunal/Bloodmoon files. Not cryptographic (a forger could prepend a valid
+// header) but it defeats using the locker as general file storage, which is its whole job.
+export function sniffMorrowindFile(name: string, head: Buffer): boolean {
+  const ext = name.toLowerCase().match(/\.([a-z0-9]+)$/)?.[1] ?? '';
+  if (ext === 'esm' || ext === 'esp' || ext === 'omwaddon') {
+    // TES3 plugin: 'TES3' record tag at 0, first subrecord tag 'HEDR' at 16, and a format
+    // version float (1.2 or 1.3 across all official files) at 24.
+    if (head.length < 28) return false;
+    if (head.toString('latin1', 0, 4) !== 'TES3') return false;
+    if (head.toString('latin1', 16, 20) !== 'HEDR') return false;
+    const ver = head.readFloatLE(24);
+    return ver > 1.0 && ver < 1.5;
+  }
+  if (ext === 'bsa') {
+    // Morrowind BSA: u32 version == 0x100, then a hash-table offset and file count that a
+    // real archive always has above zero.
+    if (head.length < 12) return false;
+    if (head.readUInt32LE(0) !== 0x100) return false;
+    return head.readUInt32LE(4) > 0 && head.readUInt32LE(8) > 0;
+  }
+  return false;
+}
 
 // <sharedDir>/vanilla-manifest.json, else an empty set (uploads refused until an operator
 // generates one from their own legal copy — tools/gen-vanilla-manifest). A missing file is
@@ -147,19 +177,19 @@ export class Locker {
 
   // Is this file one a legitimate Morrowind owner would have? Exact hash first (any known
   // distribution), then name+plausible-size for a distribution we do not have on file.
+  //
+  // We deliberately do NOT remember an unknown hash that passed on name+size: "learning" it
+  // would let the FIRST uploader of a byte-mismatched file whitelist it permanently, so a
+  // single bad upload would open the exact-hash fast path for everyone. Name+size is only
+  // ever a per-upload decision; the exact-hash set only grows from the operator's manifest.
+  // The real content check on that path is the header sniff done on the UPLOADED bytes
+  // (verifyUploadedContent) — the client cannot lie about what actually landed in the bucket.
   private isAccepted(file: LockerFile): boolean {
     if (this.accepted.has(file.sha256.toLowerCase())) return true;
     if (!this.acceptByNameAndSize) return false;
     const sizes = this.knownSizes.get(file.name.toLowerCase());
     if (!sizes) return false;
-    const ok = sizes.some((s) => Math.abs(file.size - s) <= s * this.sizeTolerance);
-    if (ok) {
-      // A real copy we did not have the hash for — record it so the next identical upload
-      // takes the exact-hash fast path and the operator can see the spread of copies.
-      log('info', 'locker.accepted_new_copy', { name: file.name, size: file.size, sha256: file.sha256 });
-      this.accepted.add(file.sha256.toLowerCase());
-    }
-    return ok;
+    return sizes.some((s) => Math.abs(file.size - s) <= s * this.sizeTolerance);
   }
 
   private attestPath(accountKey: string): string {
@@ -227,11 +257,35 @@ export class Locker {
     return this.settings.storage.presignGet(`gamedata/${accountKey}/${name}`);
   }
 
-  async recordUploaded(accountKey: string, file: LockerFile): Promise<void> {
+  // Confirm an upload. Before recording it, sniff the bytes that ACTUALLY landed in the
+  // bucket: a file that passed name+size (or even hash) but whose real content is not a
+  // Morrowind file is deleted and refused here. This is the check the client cannot forge,
+  // because it reads back from storage rather than trusting the confirm request.
+  async recordUploaded(
+    accountKey: string,
+    file: LockerFile,
+  ): Promise<{ ok: true } | { ok: false; reason: UploadRefusal }> {
+    const key = `gamedata/${accountKey}/${file.name}`;
+    const storage = this.settings.storage;
+    if (storage) {
+      let head: Buffer;
+      try {
+        head = await storage.getHead(key, 32);
+      } catch (err) {
+        log('error', 'locker.head_read_failed', { account: accountKey, name: file.name, error: String(err) });
+        return { ok: false, reason: 'not-recognized' };
+      }
+      if (!sniffMorrowindFile(file.name, head)) {
+        log('warn', 'locker.rejected_bad_content', { account: accountKey, name: file.name, size: file.size });
+        await storage.delete(key); // do not keep bytes we refused
+        return { ok: false, reason: 'not-recognized' };
+      }
+    }
     const files = await this.filesOf(accountKey);
     const next = files.filter((f) => f.name !== file.name);
     next.push(file);
     await writeFile(this.manifestPath(accountKey), JSON.stringify({ files: next }, null, 2) + '\n', 'utf8');
+    return { ok: true };
   }
 
   async filesOf(accountKey: string): Promise<LockerFile[]> {

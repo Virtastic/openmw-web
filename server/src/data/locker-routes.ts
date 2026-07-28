@@ -101,8 +101,8 @@ export function lockerRoutes(deps: LockerRouteDeps) {
       if (req.method === 'POST' && url.pathname === '/locker/uploaded') {
         const file = parseFile((await readBody(req)) as unknown);
         if (!file) { json(res, 400, { error: 'bad_file' }); return true; }
-        await deps.locker.recordUploaded(accountKey, file);
-        json(res, 200, { ok: true });
+        const rec = await deps.locker.recordUploaded(accountKey, file);
+        json(res, 200, rec.ok ? { ok: true } : { ok: false, reason: rec.reason });
         return true;
       }
 

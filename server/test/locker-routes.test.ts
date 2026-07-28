@@ -17,6 +17,12 @@ function fakeStorage() {
     async presignPut(key: string) { return `https://s.invalid/${key}?put`; },
     async presignGet(key: string) { return `https://s.invalid/${key}?get`; },
     async delete() {},
+    // A valid TES3 header so the routed confirm-upload passes content sniffing.
+    async getHead() {
+      const b = Buffer.alloc(32);
+      b.write('TES3', 0, 'latin1'); b.write('HEDR', 16, 'latin1'); b.writeFloatLE(1.2, 24);
+      return b;
+    },
   };
 }
 

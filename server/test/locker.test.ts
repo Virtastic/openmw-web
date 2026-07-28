@@ -17,15 +17,27 @@ const VANILLA = {
   ],
 };
 
+// A valid 32-byte TES3 plugin header, so getHead-based content sniffing passes for .esm.
+function tes3Head(): Buffer {
+  const b = Buffer.alloc(32);
+  b.write('TES3', 0, 'latin1');
+  b.write('HEDR', 16, 'latin1');
+  b.writeFloatLE(1.2, 24);
+  return b;
+}
+
 function fakeStorage() {
   const puts: string[] = [];
   const gets: string[] = [];
   const deletes: string[] = [];
+  // What getHead returns for a key; default is a valid TES3 header so the happy path passes.
+  const heads = new Map<string, Buffer>();
   return {
-    puts, gets, deletes,
+    puts, gets, deletes, heads,
     async presignPut(key: string) { puts.push(key); return `https://storage.invalid/${key}?put`; },
     async presignGet(key: string) { gets.push(key); return `https://storage.invalid/${key}?get`; },
     async delete(prefix: string) { deletes.push(prefix); },
+    async getHead(key: string) { return heads.get(key) ?? tes3Head(); },
   };
 }
 
@@ -79,6 +91,24 @@ test('acceptByNameAndSize:false keeps the strict hash-only gate', async () => {
   await locker.attest('carol', [FILE], 'ip');
   const otherDist = { name: 'Morrowind.esm', size: 101, sha256: 'c'.repeat(64) };
   assert.deepEqual(await locker.authorizeUpload('carol', otherDist), { ok: false, reason: 'not-recognized' });
+});
+
+test('confirm-upload sniffs the actual bytes: arbitrary content wearing a game name is deleted', async () => {
+  const { locker, storage } = mk();
+  await locker.attest('mallory', [FILE], 'ip');
+  // Passed name+size (it is 100 bytes named Morrowind.esm), but what landed is not a TES3
+  // file — getHead returns junk. recordUploaded must refuse it and delete the object.
+  storage.heads.set('gamedata/mallory/Morrowind.esm', Buffer.from('not a real esm at all!!!!!!!!!!!!'));
+  const bad = await locker.recordUploaded('mallory', FILE);
+  assert.deepEqual(bad, { ok: false, reason: 'not-recognized' });
+  assert.ok(storage.deletes.includes('gamedata/mallory/Morrowind.esm'), 'refused bytes are deleted');
+  assert.deepEqual(await locker.filesOf('mallory'), [], 'nothing recorded');
+
+  // A real TES3 header (the fakeStorage default) is accepted and recorded.
+  storage.heads.delete('gamedata/mallory/Morrowind.esm');
+  const good = await locker.recordUploaded('mallory', FILE);
+  assert.deepEqual(good, { ok: true });
+  assert.equal((await locker.filesOf('mallory')).length, 1);
 });
 
 test('keys are per-account and never deduplicated across accounts', async () => {

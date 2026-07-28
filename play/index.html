@@ -1405,7 +1405,8 @@
              append('[locker] uploading '+f.name+'…');
              var put = await fetch(au.url, { method:'PUT', body:f.file });
              if (!put.ok){ append('[locker] upload failed for '+f.name+' ('+put.status+')','err'); continue; }
-             await api('/locker/uploaded',{ method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({ name:f.name, size:f.size, sha256:f.sha256 }) });
+             var conf = await (await api('/locker/uploaded',{ method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({ name:f.name, size:f.size, sha256:f.sha256 }) })).json();
+             if (conf && conf.ok===false){ append('[locker] rejected '+f.name+': '+conf.reason+' (the uploaded bytes are not a valid Morrowind file)','err'); continue; }
            }
            return (await (await api('/locker/files')).json()).files;
          }

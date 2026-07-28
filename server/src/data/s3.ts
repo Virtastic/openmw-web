@@ -121,6 +121,18 @@ export class S3Storage {
     return this.presign('GET', key);
   }
 
+  // First `length` bytes of an object, read server-side. Range is not in the signed headers
+  // (S3 does not require it to be) so a presigned GET + a Range request header suffices; the
+  // locker uses this to sniff an upload's real header, which the client cannot forge.
+  async getHead(key: string, length: number): Promise<Buffer> {
+    const res = await fetch(this.presign('GET', key), {
+      headers: { Range: `bytes=0-${Math.max(0, length - 1)}` },
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!res.ok) throw new Error(`getHead ${res.status}`);
+    return Buffer.from(await res.arrayBuffer());
+  }
+
   // Erasure. Listing is a signed GET on the bucket with a prefix; each object is then
   // deleted individually. Slower than a bulk delete and deliberately so — this runs on a
   // delete-my-data request, where being correct matters far more than being quick.
