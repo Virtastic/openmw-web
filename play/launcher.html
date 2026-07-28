@@ -168,6 +168,13 @@
 
  /* Multiplayer sign-in modal. */
  .mp-modal{max-width:440px; text-align:center}
+ .ob-field{display:block; margin:16px 0 0; text-align:left}
+ .ob-field span{display:block; font:600 10.5px/1 "Optima","Gill Sans",sans-serif; letter-spacing:.14em;
+   text-transform:uppercase; color:var(--faint); margin-bottom:7px}
+ .ob-field input{width:100%; box-sizing:border-box; padding:11px 13px; border-radius:5px;
+   background:rgba(8,6,3,.6); border:1px solid var(--line); color:var(--ink);
+   font:14px/1.2 -apple-system,"Segoe UI",sans-serif; transition:border-color .15s ease}
+ .ob-field input:focus{outline:none; border-color:var(--gold)}
  .mp-glyph{width:44px; height:44px; margin:2px auto 14px; color:var(--bronze-hi)}
  .mp-glyph svg{width:100%; height:100%; display:block}
  .mp-providers{display:flex; flex-direction:column; gap:9px; margin-top:22px}
@@ -380,6 +387,27 @@
     <h3 id="mp-title">Sign in to play together</h3>
     <div id="mp-providers" class="mp-providers"></div>
     <p class="note" id="mp-note"></p>
+  </div>
+</div>
+
+<!-- First-login onboarding: choose a public username (and confirm a contact email if we have
+     none). Shown once, after sign-in, before entering any world. -->
+<div class="modal-bd" id="ob-bd" role="dialog" aria-modal="true" aria-labelledby="ob-title">
+  <div class="modal mp-modal">
+    <div class="m-kicker">Multiplayer &middot; welcome</div>
+    <h3 id="ob-title">Choose your username</h3>
+    <p>This is your public name — how other players see you, and how friends add you. It is
+       letters and numbers only, and unique. Your real name is never shown.</p>
+    <label class="ob-field" id="ob-email-wrap">
+      <span>Email (for your account, never shown to anyone)</span>
+      <input id="ob-email" type="email" spellcheck="false" autocomplete="email" placeholder="you@example.com">
+    </label>
+    <label class="ob-field">
+      <span>Username</span>
+      <input id="ob-username" type="text" spellcheck="false" autocomplete="off" maxlength="20" placeholder="e.g. Nerevarine42">
+    </label>
+    <button id="ob-continue" class="btn btn-primary mp-primary" type="button">Continue <span class="arw">▸</span></button>
+    <p class="note" id="ob-note"></p>
   </div>
 </div>
 
@@ -759,6 +787,35 @@
    else firstLive.focus();
  }
 
+ // First-login onboarding modal: collect a unique public username (and email if we have none),
+ // POST it to the gateway, and resolve true once the server accepts it.
+ function runOnboarding(gwHttp, token, hasEmail){
+   return new Promise((resolve) => {
+     const bd = $('ob-bd'), emailWrap = $('ob-email-wrap'), note = $('ob-note'), btn = $('ob-continue');
+     emailWrap.style.display = hasEmail ? 'none' : 'block';
+     $('ob-email').value = ''; $('ob-username').value = ''; note.textContent = '';
+     bd.classList.add('show');
+     ($('ob-username')).focus();
+     btn.onclick = async () => {
+       const username = ($('ob-username').value || '').trim();
+       const email = ($('ob-email').value || '').trim();
+       if (username.length < 3){ note.textContent = 'Username must be at least 3 characters.'; note.className = 'note err'; return; }
+       btn.disabled = true; note.textContent = 'Saving…'; note.className = 'note muted';
+       let r;
+       try {
+         r = await (await fetch(gwHttp + '/auth/profile', { method:'POST',
+           headers: { 'content-type':'application/json', authorization: 'Bearer ' + token },
+           body: JSON.stringify({ username, email }) })).json();
+       } catch(e){ note.textContent = 'Could not reach the server. Try again.'; note.className = 'note err'; btn.disabled = false; return; }
+       btn.disabled = false;
+       if (r && r.ok){ bd.classList.remove('show'); resolve(true); return; }
+       note.textContent = (r && r.error) || 'Could not save. Try again.'; note.className = 'note err';
+     };
+     // Enter submits.
+     ['ob-username','ob-email'].forEach((id) => { $(id).onkeydown = (e) => { if (e.key === 'Enter'){ e.preventDefault(); btn.click(); } }; });
+   });
+ }
+
  // We are back from SSO if the fragment carries a ticket (or an error). Turn it into the
  // game launch: the data source is the LOCKER (?mplocker), decided in-game.
  // After SSO we are back HERE. The server we signed in to is the GATEWAY (it serves /auth,
@@ -781,6 +838,16 @@
    if (!gwUrl || !ac){ launcherError('Sign-in did not complete', 'Something was missing from the sign-in. Please try again.'); return; }
    const gwHttp = httpBaseOf(gwUrl);
    const account = decodeURIComponent(ac[1]);
+   const lockerToken = lk ? decodeURIComponent(lk[1]) : '';
+   // First-login onboarding: pick a public username (and a contact email if we have none) BEFORE
+   // entering any world, so a new player is never shown by their real name. Skipped once set.
+   try {
+     const st = await (await fetch(gwHttp + '/auth/profile', { headers: { authorization: 'Bearer ' + lockerToken } })).json();
+     if (st && st.needsProfile){
+       const ok = await runOnboarding(gwHttp, lockerToken, st.hasEmail);
+       if (!ok) return; // closed without finishing — do not enter a world unnamed
+     }
+   } catch(e){ /* if the check fails, proceed; the in-game gate is the backstop */ }
    // A new player lands in their own PRIVATE world — that is where character creation happens.
    // Party and public come after (a fresh character must be created in private first).
    let world;

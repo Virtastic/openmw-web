@@ -47,7 +47,7 @@ export const MAX_CHARACTERS = 8;
 
 // Public handle rules: tighter than account names (no spaces — it is a handle, not a
 // paragraph), case-insensitively unique, and never something that reads as staff.
-const USERNAME_RE = /^[A-Za-z0-9_-]{3,20}$/;
+const USERNAME_RE = /^[A-Za-z0-9]{3,20}$/; // letters and numbers only — the public handle
 const USERNAME_BLOCKLIST = new Set([
   'admin', 'administrator', 'moderator', 'mod', 'staff', 'gm', 'gamemaster',
   'system', 'server', 'owner', 'operator', 'support', 'virtastic', 'openmw',
