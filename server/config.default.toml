@@ -50,6 +50,11 @@ deathPenalty = "none"
 # M5: player-vs-player. false -> the pvp plugin drops CombatHit/CombatSpellHit aimed at
 # players (actor targets are unaffected). Swap the plugin for faction/team rules.
 pvp = false
+# Phase 3 zoning (only consulted when pvp = true). "all" keeps M5 behaviour; "wilderness"
+# allows it in exteriors only, minus safeCells, and never indoors — so towns, shops and
+# guildhalls stay places you can stand still in. Party members never hit each other.
+pvpZone = "all"
+safeCells = []
 # Difficulty is surfaced in SessionWelcome.flags and applied CLIENT-side, in the victim's
 # own combat pipeline (the server never computes damage). Morrowind scale: -100..100.
 difficulty = 0

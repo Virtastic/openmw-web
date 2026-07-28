@@ -788,6 +788,45 @@ async function main(): Promise<void> {
       );
     }
 
+    // --- PUBLIC-LAUNCH GATE (plan Phase 2.4) -------------------------------------------
+    // The public realm concentrates players in towns by design, and cell authority is a
+    // CLIENT. Before public opens, one crowded cell must hold these lines — not "look
+    // roughly fine", which is how TES3MP #701 (broken combat gamestate for non-authority
+    // clients under crowding) went unnoticed for years. Thresholds are per-step, so a
+    // ramp reports the N at which the world stops being playable rather than a verdict.
+    //
+    // Run: npm run soak -- --ramp --onecell --steps 8,16,24,32
+    // Override for a bigger box with GATE_* env; the defaults are what a 2-vCPU tier
+    // must sustain.
+    if (RAMP) {
+      const maxUndeliv = Number(process.env.GATE_UNDELIVERED_PCT ?? 2);
+      const maxPing = Number(process.env.GATE_PING_MS ?? 250);
+      const maxJoin = Number(process.env.GATE_JOIN_MS ?? 5000);
+      const maxRxKb = Number(process.env.GATE_RX_KB ?? 120);
+      let lastGood = 0;
+      for (const r of rows) {
+        const bad: string[] = [];
+        // Correctness first: a client that is not receiving the actor stream is watching
+        // a different fight from everyone else, which is the #701 failure exactly.
+        if (r.actorDropPct !== null && r.actorDropPct > maxUndeliv) bad.push(`undelivered ${r.actorDropPct.toFixed(1)}% > ${maxUndeliv}%`);
+        if (r.divergent !== null && r.divergent > 0) bad.push(`${r.divergent} divergent actor position(s)`);
+        if (r.alive < r.n) bad.push(`${r.n - r.alive} client(s) dropped`);
+        // Then playability.
+        if (Number.isFinite(r.pingMax) && r.pingMax > maxPing) bad.push(`ping max ${r.pingMax}ms > ${maxPing}ms`);
+        if (r.probeWelcomeMs > maxJoin) bad.push(`join ${r.probeWelcomeMs.toFixed(0)}ms > ${maxJoin}ms`);
+        if (r.rxKbMax > maxRxKb) bad.push(`per-client ${r.rxKbMax.toFixed(0)}KB/s > ${maxRxKb}KB/s`);
+        if (bad.length === 0) lastGood = r.n;
+        else console.log(`[gate] N=${r.n} FAILS: ${bad.join('; ')}`);
+      }
+      console.log(`[gate] highest N meeting the public-launch bar in ONE cell: ${lastGood}`);
+      // The gate is a measurement, not a build break: a workstation ramp that thrashes at
+      // 32 says nothing about the deploy tier. It fails the run only when even the FIRST
+      // step cannot hold the line, which is a real regression wherever it is measured.
+      if (lastGood === 0 && rows.length > 0) {
+        failures.push(`crowded-cell gate: even N=${rows[0]!.n} misses the public-launch bar`);
+      }
+    }
+
     console.log(`\n[soak] ramp table (layout=${LAYOUT})`);
     console.log('  N | alive | vis peers | RSS MB | CPU % | bot CPU % | rx KB/s/client | agg KB/s | PMB/s | poses/s | AMB/s | undeliv % | join ms | +1st batch | ping ms | move shed | actor shed | bp drop | buf KB | divergent | worst lag');
     for (const r of rows) {

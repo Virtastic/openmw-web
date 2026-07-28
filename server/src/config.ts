@@ -59,6 +59,12 @@ export interface Config {
     respawnZ: number;
     deathPenalty: 'none';
     pvp: boolean;
+    // Phase 3 PvP zoning. 'all' = anywhere pvp allows (M5 behaviour), 'wilderness' =
+    // exteriors only, minus safeCells and never in interiors (shops, homes, guildhalls),
+    // 'none' = nowhere. Party members are exempt everywhere: a group that cannot fight
+    // its way through a dungeon without friendly fire is not a group.
+    pvpZone: 'all' | 'wilderness' | 'none';
+    safeCells: string[];
     difficulty: number;
   };
   engine: { enforce: 'warn' | 'refuse' | 'off' };
@@ -312,6 +318,8 @@ function validate(t: Tree): Config {
       respawnZ: reqSignedNum(t, 'rules', 'respawnZ'),
       deathPenalty: reqEnum(t, 'rules', 'deathPenalty', ['none'] as const),
       pvp: reqBool(t, 'rules', 'pvp'),
+      pvpZone: reqEnum(t, 'rules', 'pvpZone', ['all', 'wilderness', 'none'] as const),
+      safeCells: reqStrArray(t, 'rules', 'safeCells'),
       difficulty: reqSignedNum(t, 'rules', 'difficulty'),
     },
     engine: { enforce: reqEnum(t, 'engine', 'enforce', ['warn', 'refuse', 'off'] as const) },

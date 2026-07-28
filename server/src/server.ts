@@ -201,6 +201,14 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     config,
     log,
     players: () => roster.inWorld().map((p) => ({ id: p.id, name: p.name, rank: p.rank })),
+    // Phase 3 rule helpers (PvP zoning + party friendly-fire exemption).
+    arePartied: (aId, bId) => {
+      const a = roster.get(aId);
+      const b = roster.get(bId);
+      if (!a || !b) return false;
+      return socialRef?.partyMembersOf(a.accountKey).includes(b.accountKey) ?? false;
+    },
+    cellOfPlayer: (playerId) => roster.get(playerId)?.cellKey,
     chat: (target, msg: ChatMessageBody) => {
       if (target === 'all') broadcastChat(roster, msg);
       else roster.get(target)?.peer.sendEvent('ChatMessage', msg);

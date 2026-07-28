@@ -51,6 +51,10 @@ export interface PluginApi {
   sendEvent(target: 'all' | number, name: string, body: JsLike): void;
   gui: PluginGui; // M7
   world: PluginWorld; // M7
+  // Phase 3 rule helpers. Optional so an embedder can supply a partial api in tests
+  // without every plugin needing to care.
+  arePartied?(aPlayerId: number, bPlayerId: number): boolean;
+  cellOfPlayer?(playerId: number): string | undefined;
 }
 
 export interface Plugin {
