@@ -59,6 +59,10 @@ interface World {
   startedAt: number;
   idleSince?: number;
   stopping: boolean;
+  // True once at least one player has ever connected. A world that has NEVER been reached gets a
+  // longer startup grace (a first-play client can spend minutes downloading its data before it
+  // connects); after someone has joined, the shorter idle-reap applies once they leave.
+  everConnected?: boolean;
   ownerAccount?: string;
   lastStatus?: { playerCount: number; connectedCount: number; maxPlayers: number; name: string };
 }
@@ -204,7 +208,7 @@ export class WorldSupervisor {
         // is players failing to join the world the lobby is advertising.
         if (w.mode !== 'public') {
           // Idle = nobody CONNECTED (loading / at chargen counts), not merely nobody in a cell.
-          if (st.connectedCount > 0) w.idleSince = undefined;
+          if (st.connectedCount > 0) { w.idleSince = undefined; w.everConnected = true; }
           else if (w.idleSince === undefined) w.idleSince = this.now();
         }
       } else {
@@ -214,12 +218,26 @@ export class WorldSupervisor {
     this.sweep();
   }
 
+  // A fresh world nobody has reached yet gets this long before the reaper touches it. A first-play
+  // client downloads its game data (hundreds of MB, minutes on a slow link) BEFORE it connects, so
+  // the reaper must not kill the world out from under a browser that is still loading toward it.
+  private static readonly STARTUP_GRACE_MS = 15 * 60_000;
+
   sweep(): void {
-    const cutoff = this.now() - this.deps.settings.idleReapMs;
+    const now = this.now();
+    const idleCutoff = now - this.deps.settings.idleReapMs;
     for (const w of [...this.worlds.values()]) {
       if (w.mode === 'public') continue; // second half of the deliberate guard; see poll()
-      if (w.idleSince !== undefined && w.idleSince <= cutoff) {
-        log('info', 'world.reaped', { id: w.id, idleMs: this.now() - w.idleSince });
+      if (!w.everConnected) {
+        // Never joined: keep it until the startup grace elapses, then reap a truly-stale spawn.
+        if (now - w.startedAt > WorldSupervisor.STARTUP_GRACE_MS) {
+          log('info', 'world.reaped', { id: w.id, reason: 'never_joined', ageMs: now - w.startedAt });
+          this.stop(w.id);
+        }
+        continue;
+      }
+      if (w.idleSince !== undefined && w.idleSince <= idleCutoff) {
+        log('info', 'world.reaped', { id: w.id, idleMs: now - w.idleSince });
         this.stop(w.id);
       }
     }

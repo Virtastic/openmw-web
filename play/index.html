@@ -257,7 +257,7 @@
  // device fine, but nothing is audible until we resume. Track every AudioContext the
  // engine creates and resume them all on the first click/keypress.
  (function(){
-   const audioCtxs = [];
+   const audioCtxs = window.__omwAudioCtxs = []; // exposed so a fatal handler can silence them
    ['AudioContext','webkitAudioContext'].forEach(function(k){
      const Orig = window[k];
      if (!Orig) return;
@@ -323,7 +323,16 @@
  })();
  // Full-screen fatal overlay: aborts, GPU context loss, unsupported browsers. The hidden dev
  // log is useless to end users — anything fatal must be VISIBLE with a way forward.
+ // Any hard/fatal error stops the engine so it does not keep burning a CPU core behind the
+ // overlay. Safe to call before the engine exists (guarded).
+ function killEngine(){
+   try { if (window.Module){ Module.__omwRunning = false;
+     if (typeof Module.pauseMainLoop === 'function') Module.pauseMainLoop();
+     else if (Module._emscripten_pause_main_loop) Module._emscripten_pause_main_loop(); } } catch(e){}
+   try { (window.__omwAudioCtxs||[]).forEach(function(c){ try { c.suspend(); } catch(e){} }); } catch(e){}
+ }
  function fatalOverlay(title, detail, showReload){
+   killEngine();
    try {
      var o = document.createElement('div');
      o.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(8,8,12,.96);color:#cdd6f4;'
@@ -1036,6 +1045,7 @@
              // a raw overlay + auto-redirect. The auto-redirect fired the browser's "Leave site?"
              // dialog; the button sets __omwAllowLeave so navigation is clean.
              function mpErrorModal(title, msg){
+               killEngine(); // top-level: stop the WASM render loop + audio so it stops eating CPU
                if (document.getElementById('mp-error-modal')) return;
                var wrap = document.createElement('div'); wrap.id = 'mp-error-modal';
                wrap.style.cssText = 'position:fixed;inset:0;z-index:10000;display:flex;align-items:center;'

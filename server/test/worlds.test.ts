@@ -84,16 +84,21 @@ test('worlds: the cap is enforced and refusal is explicit, not a crash', () => {
   assert.equal(spawned.length, 2);
 });
 
-test('worlds: an empty PRIVATE world is reaped; an empty PUBLIC world is not', async () => {
-  const { sup, advance } = harness();
+test('worlds: a JOINED-then-abandoned private world is reaped; a never-joined one survives the startup grace; public never', async () => {
+  const { sup, advance, counts } = harness();
   sup.startPublic();          // vvardenfell, public
-  sup.ensure('sess1', 'private');
-  await sup.poll();           // both empty
-  advance(61_000);
-  await sup.poll();
-  await tick();
+  const s1 = sup.ensure('sess1', 'private')!;
+  // Someone joins (connectedCount>0) then leaves — the idle reaper applies after they go.
+  counts.set(s1.port, 1); await sup.poll();                 // everConnected
+  counts.set(s1.port, 0); await sup.poll();                 // they left -> idle clock starts now
+  advance(61_000); await sup.poll(); await tick();          // idle window elapsed -> reaped
+  assert.equal(sup.get('sess1'), undefined, 'a joined-then-abandoned private session is reaped after the idle window');
+  // A brand-new world nobody has REACHED yet is NOT reaped inside the idle window: a first-play
+  // client may still be downloading its data (minutes) before it connects. The startup grace holds.
+  sup.ensure('sess2', 'private');
+  advance(61_000); await sup.poll(); await tick();
+  assert.ok(sup.get('sess2'), 'a never-joined world survives the startup grace (client may still be loading toward it)');
   assert.ok(sup.get('vvardenfell'), 'a public world must stay up when empty — that is the point of public');
-  assert.equal(sup.get('sess1'), undefined, 'an abandoned private session must be reaped');
 });
 
 test('worlds: a populated private world is never reaped', async () => {
