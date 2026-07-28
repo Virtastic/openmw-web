@@ -385,7 +385,12 @@ export class Connection implements Peer {
         this.handleReady();
         return;
       case 'CharacterCreate': {
-        this.requireState('AUTHED', msg.t);
+        // Valid both at the select screen (AUTHED) and from the in-game hub (IN_WORLD) —
+        // playing the new slot is a reconnect either way.
+        if (this.state !== 'AUTHED' && this.state !== 'IN_WORLD') {
+          this.requireState('AUTHED', msg.t);
+          return;
+        }
         this.handleCharacterCreate(msg);
         return;
       }

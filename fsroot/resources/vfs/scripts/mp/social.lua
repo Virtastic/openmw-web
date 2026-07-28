@@ -27,7 +27,7 @@ local U = require('scripts.mp.ui')
 -- while the player saw no window at all.
 local isOpen = false
 local element = nil
-local tab = 'players' -- players | friends | party | worlds
+local tab = 'players' -- players | friends | party | worlds | chars
 
 local roster = {} -- everyone in the world: {id, name}
 local friends = {} -- {acct, name, online, playerId, cellKey}
@@ -46,6 +46,12 @@ local worldsError = ''
 local worldDraft = ''
 local myWorldPort = nil -- so the world we are IN is marked rather than offered as a join
 local joiningWorld = nil -- name of the world a join is in flight to, nil = not switching
+
+-- Character slots. nil = not asked yet; the list comes from the global script's cache of
+-- Welcome/CharacterResult (MP_Characters). Switching is a reconnect with the selection.
+local characters = nil
+local activeCharId = ''
+local charDraft = ''
 
 -- There is no scroll container in this UI API, so a long list would simply run off the
 -- bottom of the screen. The world is designed for ~100 concurrent players, so the Players
@@ -202,7 +208,21 @@ local function partyTab()
             })
         end
         rows[#rows + 1] = U.interval
-        rows[#rows + 1] = U.row { U.button('leave party', function() send('PartyLeave', {}) end) }
+        -- Group travel: the whole party moves together. Leader-only server-side — a
+        -- non-leader pressing these gets a loud SocialResult rather than a silent nothing.
+        rows[#rows + 1] = U.row {
+            U.button('travel: party world', function()
+                status = 'Asking the party to travel...'
+                send('PartyTravel', { target = 'party' })
+                render()
+            end),
+            U.button('travel: public', function()
+                status = 'Asking the party to travel...'
+                send('PartyTravel', { target = 'public' })
+                render()
+            end),
+            U.button('leave party', function() send('PartyLeave', {}) end),
+        }
     end
 
     for acct, inv in pairs(invites) do
@@ -310,6 +330,49 @@ local function worldsTab()
     return rows
 end
 
+local function charsTab()
+    local rows = {}
+    if characters == nil then
+        rows[#rows + 1] = U.text('Loading characters...')
+        return rows
+    end
+    for _, ch in ipairs(characters) do
+        local here = ch.id == activeCharId
+        rows[#rows + 1] = personRow(tostring(ch.name), {
+            where = here and 'playing now' or nil,
+            actions = (not here) and {
+                { 'play', function()
+                    status = 'Switching to ' .. tostring(ch.name) .. '...'
+                    render()
+                    -- A switch is a reconnect with the selection; the world stays put.
+                    core.sendGlobalEvent('mpCharSwitch', { id = ch.id })
+                end },
+            } or nil,
+        })
+    end
+    rows[#rows + 1] = U.interval
+    rows[#rows + 1] = U.text('New character (name, then create):')
+    rows[#rows + 1] = U.row {
+        {
+            template = I.MWUI.templates.textEditLine,
+            props = { size = util.vector2(220, 22), text = charDraft },
+            events = {
+                textChanged = async:callback(function(text) charDraft = text end),
+            },
+        },
+        U.button('create', function()
+            if charDraft ~= '' then
+                core.sendGlobalEvent('mpCharCreate', { name = charDraft })
+                charDraft = ''
+                status = 'Creating character...'
+                render()
+            end
+        end),
+    }
+    rows[#rows + 1] = U.text('Each character has its own story, journal and solo world.')
+    return rows
+end
+
 local function tabBar()
     local function tabButton(key, label)
         -- The active tab is marked with the header colour rather than punctuation, so the
@@ -322,6 +385,9 @@ local function tabBar()
             if key == 'worlds' and worlds == nil and worldsError == '' then
                 send('WorldList', {})
             end
+            if key == 'chars' and characters == nil then
+                core.sendGlobalEvent('mpChars', {})
+            end
             render()
         end, { color = key == tab and I.MWUI.templates.textHeader.props.textColor or nil })
     end
@@ -330,6 +396,7 @@ local function tabBar()
         tabButton('friends', 'Friends (' .. #friends .. ')'),
         tabButton('party', 'Party (' .. #(party.members or {}) .. ')'),
         tabButton('worlds', worlds and ('Worlds (' .. #worlds .. ')') or 'Worlds'),
+        tabButton('chars', characters and ('Characters (' .. #characters .. ')') or 'Characters'),
     }
 end
 
@@ -354,6 +421,7 @@ render = function()
     local tabRows = (tab == 'friends' and friendsTab())
         or (tab == 'party' and partyTab())
         or (tab == 'worlds' and worldsTab())
+        or (tab == 'chars' and charsTab())
         or playersTab()
     -- Tab content and the privacy control each get their own bordered panel, mirroring how
     -- the settings screen groups controls, so the eye can find the sections.
@@ -527,13 +595,40 @@ return {
         -- Test-only: the harness has no way to click a tab button.
         MP_SocialTab = function(data)
             local which = tostring(data.tab or '')
-            if which == 'players' or which == 'friends' or which == 'party' or which == 'worlds' then
+            if which == 'players' or which == 'friends' or which == 'party' or which == 'worlds' or which == 'chars' then
                 tab = which
                 if which == 'worlds' and worlds == nil and worldsError == '' then
                     send('WorldList', {})
                 end
+                if which == 'chars' and characters == nil then
+                    core.sendGlobalEvent('mpChars', {})
+                end
                 if not isOpen then toggle() else render() end
             end
+        end,
+        -- Character slots: the account's slot list (asked for, or pushed after a create).
+        MP_Characters = function(data)
+            characters = data.characters or {}
+            activeCharId = tostring(data.active or '')
+            if data.ok == true then status = 'Character created.'
+            elseif data.ok == false then
+                status = data.error == 'full' and 'All character slots are used.'
+                    or data.error == 'badname' and 'That name cannot be used.'
+                    or 'Could not create the character.'
+            end
+            render()
+        end,
+        -- Party travel: the actual redial happens in the global script; this is the notice.
+        MP_PartyTravel = function(data)
+            local dest = tostring(data.worldId or 'another world')
+            status = (data.target == 'public')
+                and ('Your party is heading to ' .. dest .. '.')
+                or ('Your party is heading to its own world.')
+            render()
+        end,
+        MP_ProfileResult = function(data)
+            status = data.ok and 'Profile saved.' or ('Profile not saved: ' .. tostring(data.error or 'error'))
+            render()
         end,
         MP_WorldList = function(data)
             worlds = data.worlds or {}

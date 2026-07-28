@@ -682,6 +682,20 @@ local function start()
     end
 end
 
+-- Character slots + onboarding: net-level results push to the player script so the hub
+-- re-renders without polling (same global -> player direction as every MP_* relay).
+net.onCharacters = function(msg)
+    toPlayer('MP_Characters', {
+        characters = net.characters or {},
+        active = net.characterId or '',
+        ok = msg and msg.ok or nil,
+        error = msg and msg.error or nil,
+    })
+end
+net.onProfileResult = function(msg)
+    toPlayer('MP_ProfileResult', { ok = msg.ok == true, error = msg.error or '' })
+end
+
 local eventHandlers = {
     MP_TransportOpen = function() net.onOpen() end,
     MP_TransportClose = function() net.onClose() end,
@@ -705,6 +719,20 @@ local eventHandlers = {
     MP_PartyUpdate = function(data) toPlayer('MP_PartyUpdate', data) end,
     MP_PartyInviteReceived = function(data) toPlayer('MP_PartyInviteReceived', data) end,
     MP_SocialResult = function(data) toPlayer('MP_SocialResult', data) end,
+
+    -- Party travel: the leader moved the group. Like InviteAccepted this is an ACTION, so
+    -- it lives in the global context: build the destination URL and redial. The player
+    -- script is told first so the hub can show where the party went — and if we are
+    -- already dialled into that world (the leader's own client, or a repeat event), the
+    -- switch is skipped rather than bouncing the session.
+    MP_PartyTravel = function(data)
+        if not data.host or not data.port then return end
+        local url = 'ws://' .. tostring(data.host) .. ':' .. string.format('%d', data.port) .. '/ws'
+        toPlayer('MP_PartyTravel', data)
+        mp.testSet('partyTravelTo', tostring(data.worldId or ''))
+        if url == net.currentTarget() then return end
+        net.switchTo(url)
+    end,
 
     -- The server answers InviteAccept with the host's live position. Travelling is done
     -- here rather than trusting a client-side coordinate: the server is the only thing that
@@ -1115,7 +1143,8 @@ local eventHandlers = {
         local OPS = {
             FriendRequest = true, FriendAccept = true, FriendRemove = true,
             BlockAdd = true, BlockRemove = true, InviteSend = true, InviteAccept = true,
-            PartyInvite = true, PartyAccept = true, PartyLeave = true, PresenceMode = true,
+            PartyInvite = true, PartyAccept = true, PartyLeave = true, PartyTravel = true,
+            PresenceMode = true,
             -- F3 world browser. The server takes the ACCOUNT from the authenticated
             -- session, never from here, so a client cannot list or create sessions under
             -- someone else's identity.
@@ -1123,7 +1152,34 @@ local eventHandlers = {
         }
         local op = tostring(data.op or '')
         if not OPS[op] then return end
-        mp.sendEvent(op, { name = data.name, acct = data.acct, mode = data.mode, id = data.id })
+        mp.sendEvent(op, { name = data.name, acct = data.acct, mode = data.mode, id = data.id, target = data.target })
+    end,
+
+    -- Character slots (player UI -> here). The slot list lives on net (from Welcome /
+    -- CharacterResult); the hub asks for it, switches to another slot (redial with the
+    -- selection), or creates one (session-tier message, answered by CharacterResult).
+    mpChars = function()
+        toPlayer('MP_Characters', { characters = net.characters or {}, active = net.characterId or '' })
+    end,
+    mpCharSwitch = function(data)
+        local id = tostring(data.id or '')
+        if id == '' or id == net.characterId then return end
+        net.setCharacter(id)
+        net.switchTo(net.currentTarget())
+    end,
+    mpCharCreate = function(data)
+        local name = tostring(data.name or '')
+        if name == '' then return end
+        net.sendSession({ t = 'CharacterCreate', name = name })
+    end,
+    -- Onboarding profile submit (email + unique public handle).
+    mpProfileSetup = function(data)
+        net.sendSession({
+            t = 'ProfileSetup',
+            email = tostring(data.email or ''),
+            username = tostring(data.username or ''),
+            marketingOptIn = data.marketingOptIn == true,
+        })
     end,
 
     -- F3: switch worlds. A reconnect, not a page reload — mp.connect takes any URL, so the

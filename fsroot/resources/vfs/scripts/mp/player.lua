@@ -399,6 +399,16 @@ local function pollHarness()
             core.sendGlobalEvent('mpSocial', { op = 'WorldCreate', id = wcId, mode = wcMode })
         end
 
+        -- Character slots + party travel test hooks: the same uplinks the Characters tab
+        -- and the Party tab's travel buttons use.
+        local ccName = cmd:match('^charcreate:(.+)$')
+        if ccName then core.sendGlobalEvent('mpCharCreate', { name = ccName }) end
+        local csId = cmd:match('^charswitch:(%w+)$')
+        if csId then core.sendGlobalEvent('mpCharSwitch', { id = csId }) end
+        if cmd == 'chars' then core.sendGlobalEvent('mpChars', {}) end
+        local ptTarget = cmd:match('^partytravel:(%a+)$')
+        if ptTarget then core.sendGlobalEvent('mpSocial', { op = 'PartyTravel', target = ptTarget }) end
+
         local text = cmd:match('^chat:(.*)$')
         if text and text ~= '' then
             core.sendGlobalEvent('mpChatSend', { text = text })

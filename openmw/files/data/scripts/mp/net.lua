@@ -44,6 +44,15 @@ local lastSendTime = 0 -- real time; onUpdate dt pauses with the world, pings mu
 -- them back to the public world.
 local currentUrl = nil
 local function targetUrl() return currentUrl or mp.getUrl() end
+-- Character slots: which slot the NEXT auth should select. nil = server default (last
+-- played). Set by the character UI right before a switch-reconnect; cleared once the
+-- server confirms in Welcome so later reconnects fall back to the (now correct) default.
+local desiredCharId = nil
+function net.setCharacter(id)
+    desiredCharId = (type(id) == 'string' and id ~= '') and id or nil
+end
+-- Exposed for global.lua (character switch redials the world we are in).
+function net.currentTarget() return targetUrl() end
 
 -- Mirrored so a test can assert WHICH world the next dial would reach. Every reconnect path
 -- goes through targetUrl(), so this one value determines where a dropped player comes back
@@ -51,6 +60,9 @@ local function targetUrl() return currentUrl or mp.getUrl() end
 -- the public world mid-session.
 local function mirrorTarget() mp.testSet('dialTarget', targetUrl()) end
 
+-- While set (real time), connection failures keep retrying instead of turning terminal:
+-- covers the window where a freshly created world is still booting. Cleared on Joined.
+local switchDeadline = nil
 local reconnectAttempt = 0 -- reset on a successful Joined
 -- Monotonic and NEVER reset, unlike reconnectAttempt. A test that watches for a transient
 -- ("state left Joined") races the redial, which on localhost can complete between polls;
@@ -77,6 +89,15 @@ end
 local function send(msg)
     mp.sendJson(json.encode(msg))
     lastSendTime = core.getRealTime()
+end
+
+-- Session-tier sends initiated OUTSIDE this file (character create, profile setup — UI
+-- flows that global.lua relays). Only meaningful once authed; silently dropped otherwise
+-- so a stray click during a reconnect cannot corrupt the auth handshake.
+function net.sendSession(msg)
+    if net.state ~= 'Joined' and net.state ~= 'ProfileNeeded' then return false end
+    send(msg)
+    return true
 end
 
 local function buildManifest()
@@ -117,7 +138,10 @@ function net.start()
     -- M8: the ticket survives a PAGE RELOAD (mp.setResumeToken -> localStorage), which is
     -- the case §M8 is really about — a reloaded tab rejoins in place instead of re-authing.
     local token = mp.getResumeToken and mp.getResumeToken() or ''
-    if type(token) == 'string' and token ~= '' then
+    -- Character slots: an explicit switch must NEVER resume — resume pins the character
+    -- the old session was playing, which is exactly the one we are leaving. Fall through
+    -- to ticket/login, which carry the characterId selection.
+    if desiredCharId == nil and type(token) == 'string' and token ~= '' then
         authMode = 'resume'
         net.resumeToken = token
     end
@@ -150,6 +174,11 @@ function net.switchTo(url)
     reconnectAttempt = 0
     reconnectAt = nil
     reconnecting = false
+    -- Party travel / world join: the destination is often STILL BOOTING when we dial (the
+    -- gateway answers create before the world process listens). A refused socket inside
+    -- this window must keep retrying rather than dead-ending at Failed — that is the
+    -- normal arrival experience, not an error.
+    switchDeadline = core.getRealTime() + 60
     mp.disconnect()
     net.start()
     return true
@@ -236,6 +265,11 @@ function net.onClose()
             -- Clean close after joining (server restart, network drop): global.lua turns
             -- this into a "connection lost" notice via its wasJoined flag.
             setState('Offline')
+        elseif switchDeadline and core.getRealTime() < switchDeadline then
+            -- Mid-switch and the destination is not answering yet — it is booting. Keep
+            -- dialling on the normal backoff until the deadline; only then is it a failure.
+            scheduleReconnect()
+            return
         else
             -- Closed before ever joining (server down/unreachable, refused upgrade):
             -- a real player must see a failure, not silence.
@@ -269,6 +303,11 @@ dispatch.SessionHelloOk = function(msg)
             password = mp.getPassword(),
         }
     end
+    -- Character slots: an explicit selection rides every auth rung except resume (resume
+    -- pins the character server-side; overriding it would swap personas mid-reconnect).
+    if desiredCharId and auth.t ~= 'SessionResume' then
+        auth.characterId = desiredCharId
+    end
     send(auth)
     mp.testSet('authMode', authMode)
     setState('Authing')
@@ -291,7 +330,18 @@ dispatch.SessionWelcome = function(msg)
     net.flags = (type(msg.flags) == 'table' and msg.flags ~= json.null) and msg.flags or {}
     mp.testSet('pvp', tostring(net.flags.pvp == true))
     mp.testSet('playerId', tostring(msg.playerId))
-    send({ t = 'SessionReady' })
+    -- Character slots + onboarding profile: the account's slot list, which one this
+    -- session plays, and whether the server demands a completed profile before Ready.
+    switchDeadline = nil -- arrived: a later drop is a normal reconnect, not a boot wait
+    net.characters = (type(msg.characters) == 'table' and msg.characters ~= json.null) and msg.characters or {}
+    net.characterId = tostring(msg.characterId or '')
+    net.profile = (type(msg.profile) == 'table' and msg.profile ~= json.null) and msg.profile or {}
+    desiredCharId = nil -- confirmed (or refused before we got here); default is right now
+    if net.onCharacters then net.onCharacters() end
+    mp.testSet('characterId', net.characterId)
+    mp.testSet('characterCount', tostring(#net.characters))
+    mp.testSet('characters', json.encode(net.characters))
+    mp.testSet('profileRequired', tostring(net.profile.required == true))
     -- Back in the world: forget the backoff so the NEXT outage starts from 1s again rather
     -- than inheriting a 30s ceiling from an earlier bad patch.
     reconnectAttempt = 0
@@ -299,7 +349,39 @@ dispatch.SessionWelcome = function(msg)
     reconnecting = false
     mp.testSet('reconnectAttempt', '0')
     mp.testSet('reconnecting', 'false')
+    if net.profile.required == true then
+        -- The server will refuse Ready until email + username are set. Hold here; the
+        -- profile UI submits ProfileSetup and the ok reply below sends Ready for us.
+        setState('ProfileNeeded')
+        if net.onProfileNeeded then net.onProfileNeeded() end
+        return
+    end
+    send({ t = 'SessionReady' })
     setState('Joined')
+end
+
+-- Onboarding: answer to ProfileSetup. On success while we were holding at ProfileNeeded,
+-- complete the join. Failures surface to the UI via the callback.
+dispatch.ProfileResult = function(msg)
+    net.profileResult = msg
+    mp.testSet('profileOk', tostring(msg.ok == true))
+    if net.onProfileResult then net.onProfileResult(msg) end
+    if msg.ok == true and net.state == 'ProfileNeeded' then
+        net.profile.required = false
+        send({ t = 'SessionReady' })
+        setState('Joined')
+    end
+end
+
+-- Character slots: answer to CharacterCreate — carries the refreshed slot list.
+dispatch.CharacterResult = function(msg)
+    if type(msg.characters) == 'table' and msg.characters ~= json.null then
+        net.characters = msg.characters
+        mp.testSet('characterCount', tostring(#net.characters))
+        mp.testSet('characters', json.encode(net.characters))
+    end
+    mp.testSet('charCreateOk', tostring(msg.ok == true))
+    if net.onCharacters then net.onCharacters(msg) end
 end
 
 dispatch.SessionPong = function(msg)
