@@ -111,6 +111,12 @@ export function lockerRoutes(deps: LockerRouteDeps) {
         return true;
       }
 
+      // The upload wizard's checklist: which files the server expects, required vs optional.
+      if (req.method === 'GET' && url.pathname === '/locker/needed') {
+        json(res, 200, { files: deps.locker.requiredManifest() });
+        return true;
+      }
+
       if (req.method === 'GET' && url.pathname === '/locker/download') {
         const name = url.searchParams.get('name') ?? '';
         const dl = await deps.locker.authorizeDownload(accountKey, name);

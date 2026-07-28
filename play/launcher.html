@@ -155,6 +155,30 @@
  .btn-ghost{background:transparent; color:var(--gold); border-color:var(--bronze)}
  .btn-ghost:hover{border-color:var(--gold); color:var(--gold-hi); background:rgba(211,168,78,.10)}
  .btn:focus-visible{outline:2px solid var(--gold); outline-offset:3px}
+ .btn-primary{background:linear-gradient(180deg,var(--gold),var(--bronze)); color:#1a1207; border-color:var(--gold-hi)}
+ .btn-primary:hover{background:linear-gradient(180deg,var(--gold-hi),var(--gold)); color:#140e05}
+ .btn[disabled]{opacity:.5; cursor:default}
+
+ /* Multiplayer sign-in modal. */
+ .mp-modal{max-width:440px}
+ .mp-field{display:block; margin:20px 0 6px; text-align:left}
+ .mp-field span{display:block; font:600 10.5px/1 "Optima","Gill Sans",sans-serif; letter-spacing:.16em;
+   text-transform:uppercase; color:var(--faint); margin-bottom:7px}
+ .mp-field input{width:100%; box-sizing:border-box; padding:11px 13px; border-radius:5px;
+   background:rgba(8,6,3,.6); border:1px solid var(--line); color:var(--ink);
+   font:14px/1.2 ui-monospace,Menlo,Consolas,monospace; transition:border-color .15s ease}
+ .mp-field input:focus{outline:none; border-color:var(--gold)}
+ .mp-primary{width:100%; justify-content:center; margin-top:14px}
+ .mp-providers{display:flex; flex-direction:column; gap:9px; margin-top:16px}
+ .mp-prov{display:flex; align-items:center; justify-content:center; gap:11px; width:100%;
+   box-sizing:border-box; padding:12px 16px; border-radius:5px; cursor:pointer;
+   font:600 14px/1 "Optima","Gill Sans",-apple-system,"Segoe UI",sans-serif; letter-spacing:.01em;
+   background:#f6f4ee; color:#20242b; border:1px solid #d9d3c4;
+   transition:background .14s ease, transform .06s ease}
+ .mp-prov:hover{background:#fff} .mp-prov:active{transform:translateY(1px)}
+ .mp-prov:focus-visible{outline:2px solid var(--gold); outline-offset:2px}
+ .mp-prov svg{width:19px; height:19px; flex:none}
+ .mp-fine{font-size:11.5px; color:var(--faint); line-height:1.55; margin:16px 0 0}
 
  /* Action cue - the whole tile is clickable, so this is a text prompt, not a button. */
  .go{align-self:center; margin-top:10px; display:inline-flex; align-items:center; gap:8px;
@@ -335,6 +359,31 @@
   <div class="modal">
     <button class="m-close" id="modal-close" type="button" aria-label="Close">&times;</button>
     <div id="modal-body"></div>
+  </div>
+</div>
+
+<!-- Multiplayer sign-in. A themed tile, not a browser prompt(): pick the server, then pick
+     an identity provider ("Continue with Google"). The SSO redirect happens on button click. -->
+<div class="modal-bd" id="mp-bd" role="dialog" aria-modal="true" aria-labelledby="mp-title">
+  <div class="modal mp-modal">
+    <button class="m-close" id="mp-close" type="button" aria-label="Close">&times;</button>
+    <div class="m-kicker">Multiplayer</div>
+    <h3 id="mp-title">Sign in to play together</h3>
+    <p>Your character, saves, and game data live in your account — sign in once and they follow
+       you to any device. Multiplayer uses single sign-on only; there is no password to manage.</p>
+    <label class="mp-field">
+      <span>Server address</span>
+      <input id="mp-server" type="text" spellcheck="false" autocomplete="off"
+             placeholder="ws://127.0.0.1:8080/ws">
+    </label>
+    <div id="mp-providers" class="mp-providers"></div>
+    <button id="mp-connect" class="btn btn-primary mp-primary" type="button">
+      Find sign-in options <span class="arw">▸</span>
+    </button>
+    <p class="note" id="mp-note"></p>
+    <div class="m-hr"></div>
+    <p class="mp-fine">By signing in you confirm any game files you upload are your own backup
+       copies of a game you legally own. <a href="terms.html" target="_blank" rel="noopener">Terms</a>.</p>
   </div>
 </div>
 
@@ -611,40 +660,68 @@
    catch(e){ return null; }
  }
 
- async function mpStart(){
-   const url = prompt('Server address', MP.url || 'ws://127.0.0.1:8080/ws');
-   if (!url) return;
-   const http = httpBaseOf(url);
-   if (!http){ alert('That does not look like a server address (expected ws:// or wss://).'); return; }
-   localStorage.setItem('omw-mp-url', url);
-   // The game page reads the server URL back after the SSO redirect returns here.
-   localStorage.setItem('omw-mp-pending', url);
+ // Brand glyphs for the provider buttons (inline so the CSP stays strict — no remote assets).
+ const PROVIDER_ICONS = {
+   google: '<svg viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9 3.6l6.7-6.7C35.6 2.6 30.2 0 24 0 14.6 0 6.5 5.4 2.6 13.2l7.8 6.1C12.2 13.5 17.6 9.5 24 9.5z"/><path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.7c-.6 3-2.3 5.5-4.8 7.2l7.4 5.7C43.6 38 46.5 31.8 46.5 24.5z"/><path fill="#FBBC05" d="M10.4 28.7c-.5-1.4-.8-2.9-.8-4.7s.3-3.3.8-4.7l-7.8-6.1C1 16.4 0 20.1 0 24s1 7.6 2.6 10.8l7.8-6.1z"/><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.4-5.7c-2.1 1.4-4.8 2.2-8.5 2.2-6.4 0-11.8-4-13.6-9.8l-7.8 6.1C6.5 42.6 14.6 48 24 48z"/></svg>',
+   discord: '<svg viewBox="0 0 24 24" fill="#5865F2"><path d="M20.3 4.5A19.8 19.8 0 0 0 15.4 3l-.3.5c1.8.4 3.3 1 4.7 1.9-1.7-.8-3.5-1.3-5.4-1.5a20.4 20.4 0 0 0-4.8 0c-1.9.2-3.7.7-5.4 1.5 1.4-.9 2.9-1.5 4.7-1.9L8.6 3A19.8 19.8 0 0 0 3.7 4.5C1.2 8.2.4 11.8.8 15.4a19.9 19.9 0 0 0 6 3l.8-1.3c-.7-.3-1.4-.6-2-1l.5-.4a14.2 14.2 0 0 0 12 0l.5.4c-.6.4-1.3.7-2 1l.8 1.3a19.9 19.9 0 0 0 6-3c.5-4.2-.8-7.8-2.4-10.9zM9 13.5c-1 0-1.7-.9-1.7-1.9S8 9.7 9 9.7s1.7.9 1.7 1.9S10 13.5 9 13.5zm6 0c-1 0-1.7-.9-1.7-1.9S14 9.7 15 9.7s1.7.9 1.7 1.9S16 13.5 15 13.5z"/></svg>',
+   github: '<svg viewBox="0 0 24 24" fill="#1b1f23"><path d="M12 .5C5.7.5.5 5.7.5 12c0 5.1 3.3 9.4 7.9 10.9.6.1.8-.3.8-.6v-2c-3.2.7-3.9-1.5-3.9-1.5-.5-1.3-1.3-1.7-1.3-1.7-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.7 1.3 3.4 1 .1-.8.4-1.3.7-1.6-2.6-.3-5.3-1.3-5.3-5.7 0-1.3.5-2.3 1.2-3.1-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17.3 4.7 18.3 5 18.3 5c.6 1.6.2 2.8.1 3.1.8.8 1.2 1.8 1.2 3.1 0 4.4-2.7 5.4-5.3 5.7.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6 4.6-1.5 7.9-5.8 7.9-10.9C23.5 5.7 18.3.5 12 .5z"/></svg>',
+   microsoft: '<svg viewBox="0 0 24 24"><path fill="#F25022" d="M1 1h10.5v10.5H1z"/><path fill="#7FBA00" d="M12.5 1H23v10.5H12.5z"/><path fill="#00A4EF" d="M1 12.5h10.5V23H1z"/><path fill="#FFB900" d="M12.5 12.5H23V23H12.5z"/></svg>',
+ };
+ function providerLabel(p){ return p.charAt(0).toUpperCase()+p.slice(1); }
 
-   let providers;
-   try {
-     const r = await fetch(http + '/auth/providers', { mode:'cors' });
-     providers = await r.json();
-   } catch(e){
-     alert('Could not reach that server. Is it running, and does the address match?');
-     return;
-   }
-   const list = (providers && providers.providers) || [];
-   if (!list.length){
-     alert('This server has no single sign-on providers configured, so there is no way to '
-       + 'log in yet. (Multiplayer requires SSO.) Ask the operator to enable one.');
-     return;
-   }
-   // One provider: go straight in. Several: let the player pick.
-   let provider = list[0];
-   if (list.length > 1){
-     const pick = prompt('Sign in with which provider?\n' + list.join(', '), list[0]);
-     if (!pick) return;
-     provider = list.find(function(p){ return p.toLowerCase()===pick.toLowerCase(); }) || list[0];
-   }
-   // Round trip: the server sends us back HERE with #mpticket=... which the block below
-   // catches and turns into the game launch. return= is the launcher URL sans hash.
+ const mpBd = $('mp-bd');
+ function mpClose(){ mpBd.classList.remove('show'); }
+ function mpNote(msg, cls){ const n=$('mp-note'); n.textContent=msg||''; n.className='note'+(cls?' '+cls:''); }
+
+ function mpStart(){
+   $('mp-server').value = MP.url || 'ws://127.0.0.1:8080/ws';
+   $('mp-providers').innerHTML = '';
+   $('mp-connect').style.display = '';
+   mpNote('');
+   mpBd.classList.add('show');
+   $('mp-server').focus();
+ }
+
+ // Redirect into the chosen provider's SSO flow. The server returns us HERE with #mpticket.
+ function mpGoProvider(http, url, provider){
+   localStorage.setItem('omw-mp-url', url);
+   localStorage.setItem('omw-mp-pending', url); // the game reads this back after the redirect
    const back = location.origin + location.pathname;
    location.href = http + '/auth/' + encodeURIComponent(provider) + '/start?return=' + encodeURIComponent(back);
+ }
+
+ // Fetch the server's providers and render a "Continue with X" button per provider.
+ async function mpConnect(){
+   const url = ($('mp-server').value || '').trim();
+   const http = httpBaseOf(url);
+   if (!http){ mpNote('That does not look like a server address (expected ws:// or wss://).','err'); return; }
+   mpNote('Contacting the server…','muted');
+   $('mp-connect').disabled = true;
+   let list;
+   try {
+     const r = await fetch(http + '/auth/providers', { mode:'cors' });
+     list = ((await r.json()) || {}).providers || [];
+   } catch(e){
+     mpNote('Could not reach that server. Is it running, and is the address right?','err');
+     $('mp-connect').disabled = false; return;
+   }
+   $('mp-connect').disabled = false;
+   if (!list.length){
+     mpNote('This server has no sign-in providers configured yet. Ask the operator to enable one.','err');
+     return;
+   }
+   mpNote('');
+   $('mp-connect').style.display = 'none'; // replaced by the provider buttons
+   const box = $('mp-providers'); box.innerHTML = '';
+   list.forEach(function(p){
+     const key = p.toLowerCase();
+     const b = document.createElement('button');
+     b.type = 'button'; b.className = 'mp-prov';
+     b.innerHTML = (PROVIDER_ICONS[key]||'') + '<span>Continue with '+providerLabel(p)+'</span>';
+     b.addEventListener('click', function(){ mpNote('Redirecting to '+providerLabel(p)+'…','muted'); mpGoProvider(http, url, p); });
+     box.appendChild(b);
+   });
+   box.firstChild && box.firstChild.focus();
  }
 
  // We are back from SSO if the fragment carries a ticket (or an error). Turn it into the
@@ -672,6 +749,11 @@
  })();
  $('card-mp').addEventListener('click', mpStart);
  $('card-mp').addEventListener('keydown', (e)=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); mpStart(); } });
+ $('mp-connect').addEventListener('click', mpConnect);
+ $('mp-close').addEventListener('click', mpClose);
+ mpBd.addEventListener('click', (e)=>{ if(e.target===mpBd) mpClose(); });
+ $('mp-server').addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ e.preventDefault(); mpConnect(); } });
+ document.addEventListener('keydown', (e)=>{ if(e.key==='Escape' && mpBd.classList.contains('show')) mpClose(); });
 
  $('card-local').addEventListener('click', pickLocal);
  $('card-local').addEventListener('keydown', (e)=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); pickLocal(); } });

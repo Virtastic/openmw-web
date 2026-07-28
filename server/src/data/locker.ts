@@ -192,6 +192,24 @@ export class Locker {
     return sizes.some((s) => Math.abs(file.size - s) <= s * this.sizeTolerance);
   }
 
+  // The checklist the upload wizard renders: one entry per distinct game file the operator's
+  // manifest knows, with the base game marked required and the expansions optional (a player
+  // who owns only Morrowind must not be blocked on Tribunal/Bloodmoon). Sizes are the display
+  // hint; hashes are deliberately not exposed here.
+  requiredManifest(): { name: string; size: number; required: boolean }[] {
+    const CORE = new Set(['morrowind.esm', 'morrowind.bsa']);
+    const byName = new Map<string, { name: string; size: number }>();
+    for (const f of this.vanilla.files) {
+      const k = f.name.toLowerCase();
+      const prev = byName.get(k);
+      // If distributions differ in size, show the smallest (any real copy clears the ±5% gate).
+      if (!prev || f.size < prev.size) byName.set(k, { name: f.name, size: f.size });
+    }
+    return [...byName.values()]
+      .map((f) => ({ ...f, required: CORE.has(f.name.toLowerCase()) }))
+      .sort((a, b) => Number(b.required) - Number(a.required) || a.name.localeCompare(b.name));
+  }
+
   private attestPath(accountKey: string): string {
     return join(this.dir, `${encodeURIComponent(accountKey)}.attest.json`);
   }
