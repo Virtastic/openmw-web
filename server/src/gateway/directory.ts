@@ -21,6 +21,7 @@
 import { createServer, type Server, type ServerResponse } from 'node:http';
 import { log } from '../log';
 import type { WorldSupervisor, WorldMode } from './worlds';
+import type { HttpRoute } from '../net/http';
 
 export interface DirectoryDeps {
   worlds: WorldSupervisor;
@@ -30,6 +31,10 @@ export interface DirectoryDeps {
   // production the worlds sit behind the same public name on different ports/paths.
   publicHost: string;
   maxPerOwner: number;
+  // F3 front door: SSO (/auth/*) and locker (/locker/*). Tried before the /worlds routes so the
+  // browser has a single public endpoint for sign-in, upload, and world selection. Optional so
+  // a bare directory (no SSO/locker) still runs.
+  frontDoor?: HttpRoute;
 }
 
 export interface RunningDirectory {
@@ -47,6 +52,14 @@ export async function startDirectory(deps: DirectoryDeps): Promise<RunningDirect
   const server: Server = createServer((req, res) => {
     const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
     const path = url.pathname;
+
+    // Front door first: /auth/* and /locker/* are handled by the shared SSO + locker services.
+    if (deps.frontDoor && (path.startsWith('/auth/') || path.startsWith('/locker/'))) {
+      void Promise.resolve(deps.frontDoor(req, res, url)).then((claimed) => {
+        if (!claimed) { json(res, 404, { error: 'not found' }); }
+      }).catch(() => { if (!res.headersSent) json(res, 500, { error: 'internal' }); });
+      return;
+    }
 
     if (req.method === 'GET' && path === '/healthz') {
       json(res, 200, { ok: true, worlds: deps.worlds.running });

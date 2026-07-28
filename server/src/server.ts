@@ -3,8 +3,8 @@
 // Composition root: wires config, stores, gates, plugins, HTTP and WS into a running
 // server. main.ts is the CLI face; tests call startServer() directly.
 
-import { mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join, dirname } from 'node:path';
 import { WebSocket } from 'ws';
 import { loadConfig, type Config, type DeepPartial } from './config';
 import { AccountStore } from './core/accounts';
@@ -57,7 +57,7 @@ import { log } from './log';
 import { metrics } from './metrics';
 import { SimPeerSupervisor } from './core/simpeer';
 import { WorldBrowser } from './core/worldbrowser';
-import { detectGameData, findPeerBinary, gameDataDir } from './core/gamedata';
+import { detectGameData, findPeerBinary, gameDataDir, buildPeerCfg } from './core/gamedata';
 
 export const VERSION = '0.1.0';
 
@@ -110,7 +110,10 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   mkdirSync(opts.dataDir, { recursive: true });
   const sharedDir = opts.sharedDir ?? opts.dataDir;
   if (sharedDir !== opts.dataDir) mkdirSync(sharedDir, { recursive: true });
-  const config = loadConfig(opts.dataDir, opts.configOverride);
+  // F3: a gateway-spawned world has an empty data dir, so the operator's config + game data
+  // both live in the SHARED dir. loadConfig merges shared/config.toml; gamedata is resolved
+  // from the shared dir too (below) so 500MB of Morrowind is not copied per world.
+  const config = loadConfig(opts.dataDir, opts.configOverride, sharedDir);
   // M4 election tuning is read live by core/authority.ts, which WorldState builds without
   // ever seeing the config; push it before anything can elect.
   configureAuthority({
@@ -147,7 +150,9 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // (iss,sub) entry would hand a returning player a brand new empty account.
   const identities = new IdentityStore(sharedDir);
   await identities.ready();
-  const tickets = new LoginTicketStore();
+  // File-backed on the shared dir: the gateway front door mints the SSO ticket, and THIS
+  // (a different world process) must be able to claim it. Same dir = same tickets.
+  const tickets = new LoginTicketStore(15 * 60_000, sharedDir);
   const sessions = new SessionIndex();
   const oidc = new OidcService(config.auth);
   await cellStore.ready(); // netId ceiling must be loaded before any spawn
@@ -452,6 +457,9 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       }
       return false;
     },
+    // Chargen gate only when this world is spawned by a gateway (OMW_WORLD_ID set) and is not
+    // the private world — a standalone server has no other world to create the character in.
+    chargenGate: !!process.env.OMW_WORLD_ID && worldMode !== 'private',
     motd: () => motd,
   };
 
@@ -559,7 +567,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // connects (see connection.ts handleHello) — the server cannot DERIVE that list, because a
   // real client's includes engine-resource entries (builtin.omwscripts, *.omwgame) that no
   // data folder contains.
-  const gameData = detectGameData(gameDataDir(opts.dataDir));
+  const gameData = detectGameData(gameDataDir(sharedDir));
   log('info', 'gamedata.detect', { ok: gameData.ok, reason: gameData.reason });
 
   // A multiplayer (SSO) server is authoritative over persistent state using its OWN copy of the
@@ -601,6 +609,25 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       ? 'NPCs will be simulated by the server'
       : `${peerBlocker ?? 'mode is off'} — NPCs will be simulated by player clients`,
   });
+
+  // Per-world peer config. Each world process is its own dataDir, so its sim peer gets its own
+  // config + user-data dirs (default under the world's dataDir) — two worlds' peers must not
+  // share a userdata dir. The peer's openmw.cfg is GENERATED here from the detected game data
+  // (buildPeerCfg): data=, content= in load order, fallback-archive= per BSA, resources=.
+  if (config.simPeer.enabled && gameData.ok) {
+    const cfgDir = config.simPeer.configDir || join(opts.dataDir, 'peer-config');
+    const udDir = config.simPeer.userDataDir || join(opts.dataDir, 'peer-userdata');
+    mkdirSync(cfgDir, { recursive: true });
+    mkdirSync(udDir, { recursive: true });
+    // Resources ship beside the binary (…/bin/openmw -> …/share/openmw/resources); override
+    // via OMW_SIMPEER_RESOURCES if a build lays them out differently.
+    const resources = process.env.OMW_SIMPEER_RESOURCES
+      || join(dirname(config.simPeer.binary), '..', 'share', 'openmw', 'resources');
+    writeFileSync(join(cfgDir, 'openmw.cfg'), buildPeerCfg(gameData, resources));
+    config.simPeer.configDir = cfgDir;
+    config.simPeer.userDataDir = udDir;
+    log('info', 'simpeer.cfg_written', { configDir: cfgDir, resources });
+  }
 
   const simPeers = new SimPeerSupervisor({
     settings: config.simPeer,

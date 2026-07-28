@@ -756,7 +756,10 @@
 
  // We are back from SSO if the fragment carries a ticket (or an error). Turn it into the
  // game launch: the data source is the LOCKER (?mplocker), decided in-game.
- (function handleSsoReturn(){
+ // After SSO we are back HERE. The server we signed in to is the GATEWAY (it serves /auth,
+ // /locker, and the world directory). Ask the directory for THIS player's world, then launch
+ // the game pointed at that world's socket — with the gateway as the locker origin.
+ (async function handleSsoReturn(){
    const h = location.hash || '';
    const err = /[#&]mperror=([^&]+)/.exec(h);
    if (err){
@@ -767,14 +770,29 @@
    const tk = /[#&]mpticket=([^&]+)/.exec(h);
    if (!tk) return;
    const lk = /[#&]mplocker=([^&]+)/.exec(h);
-   const url = localStorage.getItem('omw-mp-pending') || localStorage.getItem('omw-mp-url');
+   const ac = /[#&]mpaccount=([^&]+)/.exec(h);
+   const gwUrl = localStorage.getItem('omw-mp-pending') || localStorage.getItem('omw-mp-url') || mpServerUrl();
    history.replaceState(null,'',location.pathname); // scrub the ticket from the address bar
-   if (!url) return;
-   const q = new URLSearchParams({ mp: url });
-   // Ticket AND locker token ride in the FRAGMENT (never query params): fragments are not
-   // logged, cached, or sent in a Referer, and both are credentials. index.html reads the
-   // ticket to authenticate the game session and the locker token to fetch game data.
-   const frag = '#mpticket=' + tk[1] + (lk ? '&mplocker=' + lk[1] : '');
+   if (!gwUrl || !ac){ alert('Sign-in did not complete. Please try again.'); return; }
+   const gwHttp = httpBaseOf(gwUrl);
+   const account = decodeURIComponent(ac[1]);
+   // A new player lands in their own PRIVATE world — that is where character creation happens.
+   // Party and public come after (a fresh character must be created in private first).
+   let world;
+   try {
+     let privId = 'priv-' + account.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,56);
+     if (privId === 'priv-') privId = 'priv-' + Math.abs([...account].reduce((a,c)=>(a*31+c.charCodeAt(0))|0,0));
+     const r = await fetch(gwHttp + '/worlds', { method:'POST', headers:{'content-type':'application/json'},
+       body: JSON.stringify({ mode:'private', id: privId, account }) });
+     world = await r.json();
+     if (!r.ok || !world.port) throw new Error(world.error || 'the server could not open your world');
+   } catch(e){ alert('Could not open your world: ' + (e && e.message || e) + '\nIs the multiplayer server running?'); return; }
+   const wsProto = /^wss:/.test(gwUrl) ? 'wss' : 'ws';
+   const worldWs = wsProto + '://' + world.host + ':' + world.port + '/ws';
+   // mp = the WORLD socket; locker = the GATEWAY (a different origin). Ticket + locker + account
+   // ride in the FRAGMENT (never query params): fragments are not logged, cached, or Referer'd.
+   const q = new URLSearchParams({ mp: worldWs, locker: gwHttp });
+   const frag = '#mpticket=' + tk[1] + (lk ? '&mplocker=' + lk[1] : '') + '&mpaccount=' + ac[1];
    location.href = 'index.html?' + q.toString() + frag;
  })();
  $('card-mp').addEventListener('click', mpStart);

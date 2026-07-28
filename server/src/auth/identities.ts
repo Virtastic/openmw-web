@@ -12,7 +12,7 @@
 // PRIVACY.md: an (iss,sub) pair IS personal data (it identifies a person at a provider).
 // It is erased with the account by persist/erase.ts.
 
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync, unlinkSync, readdirSync } from 'node:fs';
 import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
@@ -173,33 +173,53 @@ export interface LoginTicket {
 export class LoginTicketStore {
   private readonly tickets = new Map<string, LoginTicket>();
   private readonly timer: NodeJS.Timeout;
+  // F3 cross-process: the gateway mints a ticket, a DIFFERENT world process claims it. With a
+  // sharedDir set, each ticket is also a file under <sharedDir>/tickets/, so any process sharing
+  // that dir can verify it. base64url is filename-safe. Single-use is enforced by the unlink on
+  // claim (whoever deletes the file first wins).
+  private readonly dir?: string;
 
   // 15 min, not 60 s: the ticket is redeemed by the MP client AFTER the game engine has loaded
   // its content (streamed retail data can take minutes on a first play), so a 60 s ticket was
   // always expired by connect time and the client fell back to the password ladder — which an
   // SSO-only server refuses. Still single-use and fragment-delivered, so the longer TTL is cheap.
-  constructor(private readonly ttlMs = 15 * 60_000) {
+  constructor(private readonly ttlMs = 15 * 60_000, sharedDir?: string) {
+    if (sharedDir) { this.dir = join(sharedDir, 'tickets'); try { mkdirSync(this.dir, { recursive: true }); } catch { /* best effort */ } }
     this.timer = setInterval(() => this.sweep(), 30_000);
     this.timer.unref();
   }
 
+  private pathOf(ticket: string): string { return join(this.dir!, ticket + '.json'); }
+
   private sweep(): void {
     const now = Date.now();
     for (const [t, v] of this.tickets) if (v.expiresAt <= now) this.tickets.delete(t);
+    if (!this.dir) return;
+    try {
+      for (const f of readdirSync(this.dir)) {
+        const p = join(this.dir, f);
+        try { if ((JSON.parse(readFileSync(p, 'utf8')) as LoginTicket).expiresAt <= now) unlinkSync(p); }
+        catch { try { unlinkSync(p); } catch { /* gone */ } }
+      }
+    } catch { /* dir gone */ }
   }
 
   mint(accountKey: string, accountName: string): string {
     const ticket = randomBytes(32).toString('base64url'); // 256 bits: unguessable within 60 s
-    this.tickets.set(ticket, { accountKey, accountName, expiresAt: Date.now() + this.ttlMs });
+    const rec: LoginTicket = { accountKey, accountName, expiresAt: Date.now() + this.ttlMs };
+    this.tickets.set(ticket, rec);
+    if (this.dir) try { writeFileSync(this.pathOf(ticket), JSON.stringify(rec)); } catch { /* in-process memory still works */ }
     return ticket;
   }
 
-  // Single use: deleted on the first claim, valid or not.
+  // Single use: deleted on the first claim, valid or not. Falls through to the shared-dir file
+  // when the ticket was minted by another process (the gateway).
   claim(ticket: string): LoginTicket | undefined {
-    const found = this.tickets.get(ticket);
-    if (!found) return undefined;
+    let found = this.tickets.get(ticket);
     this.tickets.delete(ticket);
-    return found.expiresAt > Date.now() ? found : undefined;
+    if (!found && this.dir) { try { found = JSON.parse(readFileSync(this.pathOf(ticket), 'utf8')) as LoginTicket; } catch { /* not here */ } }
+    if (this.dir) try { unlinkSync(this.pathOf(ticket)); } catch { /* already claimed/expired */ }
+    return found && found.expiresAt > Date.now() ? found : undefined;
   }
 
   clear(): void {

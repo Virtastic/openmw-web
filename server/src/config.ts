@@ -445,8 +445,14 @@ function validate(t: Tree): Config {
 // Resolves both from src/ (tsx) and dist/ (bundle): ../config.default.toml.
 const DEFAULTS_URL = new URL('../config.default.toml', import.meta.url);
 
-export function loadConfig(dataDir: string, override?: DeepPartial<Config>): Config {
+export function loadConfig(dataDir: string, override?: DeepPartial<Config>, sharedDir?: string): Config {
   let tree = parse(readFileSync(DEFAULTS_URL, 'utf8')) as Tree;
+  // F3: one config.toml in the SHARED dir drives the gateway AND every world it spawns (worlds
+  // get empty data dirs). Merged first, so a world may still override with its own config.toml.
+  if (sharedDir && sharedDir !== dataDir) {
+    const sharedPath = join(sharedDir, 'config.toml');
+    if (existsSync(sharedPath)) tree = deepMerge(tree, parse(readFileSync(sharedPath, 'utf8')) as Tree);
+  }
   const operatorPath = join(dataDir, 'config.toml');
   if (existsSync(operatorPath)) {
     tree = deepMerge(tree, parse(readFileSync(operatorPath, 'utf8')) as Tree);

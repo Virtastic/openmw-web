@@ -14,6 +14,7 @@ import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WorldSupervisor } from './worlds';
 import { startDirectory } from './directory';
+import { buildFrontDoor } from './frontdoor';
 import { log } from '../log';
 
 const { values } = parseArgs({
@@ -64,9 +65,12 @@ const worlds = new WorldSupervisor({
 
 worlds.startPublic();
 worlds.startPolling();
+// The shared SSO + locker front door, on the same public port as the directory.
+const frontDoor = await buildFrontDoor(sharedDir);
 const directory = await startDirectory({
   worlds, host: '0.0.0.0', port, publicHost,
   maxPerOwner: Number(values['max-per-owner'] ?? 2),
+  frontDoor: frontDoor.route,
 });
 
 log('info', 'gateway.start', {

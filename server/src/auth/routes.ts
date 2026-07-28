@@ -178,8 +178,13 @@ export function createAuthRoutes(deps: AuthDeps, also?: HttpRoute): HttpRoute {
       sendText(res, 200, ticket);
       return true;
     }
+    // mpaccount (the (iss,sub) account key) lets the launcher pick THIS player's private world
+    // via the directory without a second round trip. It is the SSO identity key, not a secret,
+    // and the world's ticket auth is the real gate — a wrong value just makes an unjoinable world.
     redirect(res, returnTo(config.auth.returnUrl,
-      `mpticket=${encodeURIComponent(ticket)}` + (lockerToken ? `&mplocker=${encodeURIComponent(lockerToken)}` : '')));
+      `mpticket=${encodeURIComponent(ticket)}`
+      + (lockerToken ? `&mplocker=${encodeURIComponent(lockerToken)}` : '')
+      + `&mpaccount=${encodeURIComponent(resolved.accountKey)}`));
     return true;
   };
 

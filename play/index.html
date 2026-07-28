@@ -1455,7 +1455,14 @@
        // visit with an empty locker triggers a one-time upload from a folder you pick.
        function mountLockerMorrowind(){
          var TOKEN = window.__omwLockerToken || '';
-         var HTTP = (function(){ try { var u=new URL(ENV.OPENMW_MP_URL); return (u.protocol==='wss:'?'https:':'http:')+'//'+u.host; } catch(e){ return ''; } })();
+         // Locker origin: the GATEWAY (?locker=), which serves /auth + /locker and is a DIFFERENT
+         // origin than the world socket (?mp=). Falls back to the ws host for a standalone
+         // single-world server where the world serves the locker itself.
+         var HTTP = (function(){
+           var l = new URLSearchParams(location.search).get('locker');
+           if (l){ try { return new URL(l).origin; } catch(e){} }
+           try { var u=new URL(ENV.OPENMW_MP_URL); return (u.protocol==='wss:'?'https:':'http:')+'//'+u.host; } catch(e){ return ''; }
+         })();
          function api(path, opts){ opts=opts||{}; opts.headers=Object.assign({ authorization:'Bearer '+TOKEN }, opts.headers||{}); return fetch(HTTP+path, opts); }
          function bounce(msg){ append('[locker] '+msg,'err'); fatalOverlay('Multiplayer sign-in needed', msg+' Returning to the launcher…', false); setTimeout(function(){ location.href='launcher.html'; }, 2400); }
          try { StreamFS.init(); } catch(e){ return bounce('Streaming unavailable (needs a Chromium browser on desktop).'); }

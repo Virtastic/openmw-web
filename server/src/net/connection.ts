@@ -103,6 +103,10 @@ export interface ServerCtx {
   // World access control (F3): may this account be in THIS world at all? Private = owner
   // only, party = owner/members/admins. Checked at auth, after the account is resolved.
   mayJoinWorld(accountKey: string, rank: number): boolean;
+  // F3 chargen gate: true only for a GATEWAY-managed party/public world (where a separate
+  // private world exists for character creation). A standalone/single-world server is false —
+  // there is no other world to create the character in, so it must admit fresh characters.
+  chargenGate: boolean;
   // Phase 4: tell a client how many party members are standing with it, so the cell's
   // authority holder can scale the fight. Recomputed on join and on every cell change —
   // the number that matters is who is HERE, not who is in the party.
@@ -977,6 +981,15 @@ export class Connection implements Peer {
     if (!this.isSystem && !this.ctx.mayJoinWorld(accountKey, account.rank)) {
       log('info', 'conn.world_refused', { ip: this.ip, account: account.name });
       this.authFail(op, 'AUTH_FAILED', 'this world is private');
+      return;
+    }
+    // Chargen gate (F3): a gateway party/public world refuses a character that has not finished
+    // creation (no appearance yet). Creation happens in the player's PRIVATE world; only a
+    // fully-created character may go out into shared worlds. System peers are exempt.
+    if (!this.isSystem && this.ctx.chargenGate
+        && !(doc && (doc as { appearance?: unknown }).appearance)) {
+      log('info', 'conn.chargen_required', { ip: this.ip, account: account.name });
+      this.authFail(op, 'AUTH_FAILED', 'finish creating your character in your private world first');
       return;
     }
     metrics.auth.inc({ op, result: 'success' });
