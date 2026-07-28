@@ -96,6 +96,9 @@ export interface ServerCtx {
   tickets: LoginTicketStore;
   sessions: SessionIndex;
   attio: AttioHook; // onboarding CRM capture; inert when no API key is configured
+  // World access control (F3): may this account be in THIS world at all? Private = owner
+  // only, party = owner/members/admins. Checked at auth, after the account is resolved.
+  mayJoinWorld(accountKey: string, rank: number): boolean;
   motd(): string; // mutable at runtime via /motd
 }
 
@@ -882,8 +885,16 @@ export class Connection implements Peer {
   // the client stays wherever its boot URL dropped it instead of returning to where it was.
   private finishAuth(op: AuthOp, account: Account, doc?: PlayerDoc, forceRecord = false, char?: CharacterSummary): void {
     if (this.state !== 'HELLO_OK') return; // raced a disconnect while hashing
-    metrics.auth.inc({ op, result: 'success' });
     const accountKey = account.name.toLowerCase();
+    // World access control: knowing the port + valid credentials is NOT an invitation.
+    // A private world admits its owner (and admins); a party world admits the party.
+    // System peers are operator infrastructure and exempt.
+    if (!this.isSystem && !this.ctx.mayJoinWorld(accountKey, account.rank)) {
+      log('info', 'conn.world_refused', { ip: this.ip, account: account.name });
+      this.authFail(op, 'AUTH_FAILED', 'this world is private');
+      return;
+    }
+    metrics.auth.inc({ op, result: 'success' });
     const existing = this.ctx.roster.activeForAccount(accountKey);
     if (existing) {
       metrics.authSuperseded.inc();

@@ -63,10 +63,17 @@ export interface StartOptions {
   // Under the F3 gateway every world is pointed at one shared dir, which is what makes
   // "log in once, see your friends wherever they are, a ban means banned" true.
   //
-  // What deliberately does NOT move: cells, player docs and custom records stay PER WORLD.
-  // One account with a character per world is the safe shape — a character carried between
-  // worlds would let items be duplicated by joining a second world with the same inventory.
+  // What deliberately does NOT move: cells and custom records stay PER WORLD. Character
+  // docs DO live in the shared dir (character slots: one character follows its player
+  // across worlds; only positions inside the doc are world-scoped) — the dupe firewall is
+  // the public world's economy rules, not per-world inventories.
   sharedDir?: string;
+  // World identity/authorization, normally injected by the gateway via OMW_WORLD_* env;
+  // options take precedence so tests can run several differently-shaped worlds in one
+  // process without fighting over process.env.
+  worldId?: string;
+  worldMode?: string; // 'public' | 'private' | 'party'
+  worldOwner?: string; // accountKey; '' = unowned (public)
   configOverride?: DeepPartial<Config>; // tests
 }
 
@@ -102,7 +109,9 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // Character docs live in the SHARED dir so a character follows its player across worlds;
   // positions inside the doc are scoped by world id. The world's own players/ dir is the
   // pre-slot legacy location, read only during migration.
-  const worldId = process.env.OMW_WORLD_ID ?? 'default';
+  const worldId = opts.worldId ?? process.env.OMW_WORLD_ID ?? 'default';
+  const worldMode = opts.worldMode ?? process.env.OMW_WORLD_MODE ?? 'public';
+  const worldOwner = (opts.worldOwner ?? process.env.OMW_WORLD_OWNER ?? '').toLowerCase();
   const playerStore = new PlayerStore(sharedDir, worldId, join(opts.dataDir, 'players'));
   // Onboarding CRM capture. Env var wins over toml so the key can stay out of config files
   // in deployments; empty = inert.
@@ -290,6 +299,19 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     tickets,
     sessions,
     attio,
+    // Access control for non-public worlds. The gateway's listing filter is VISIBILITY;
+    // this is the authorization: private = owner only, party = owner or a current member
+    // of the party this world belongs to (worldId 'party-<partyKey>'), admins always
+    // (moderation must be able to enter anywhere). Public/default worlds admit everyone.
+    mayJoinWorld: (accountKey: string, rank: number): boolean => {
+      if (worldMode === 'public' || worldOwner === '') return true;
+      if (rank >= 1 || accountKey === worldOwner) return true;
+      if (worldMode === 'party') {
+        const partyKey = worldId.startsWith('party-') ? worldId.slice('party-'.length) : '';
+        if (partyKey !== '' && socialStore.partyOfAccount(accountKey)?.key === partyKey) return true;
+      }
+      return false;
+    },
     motd: () => motd,
   };
 

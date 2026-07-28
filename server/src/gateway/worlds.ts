@@ -155,7 +155,15 @@ export class WorldSupervisor {
     try {
       const spawner = this.deps.spawner
         ?? ((_id, a, env) => spawn(s.nodeBin, a, { env, stdio: 'ignore' }));
-      child = spawner(id, args, { ...process.env, OMW_WORLD_ID: id, OMW_WORLD_MODE: mode });
+      child = spawner(id, args, {
+        ...process.env,
+        OMW_WORLD_ID: id,
+        OMW_WORLD_MODE: mode,
+        // Access control: the world itself refuses accounts that do not belong (private =
+        // owner only; party = owner or current party members). The directory's listing
+        // filter is visibility, never authorization — this is the authorization.
+        OMW_WORLD_OWNER: ownerAccount ?? '',
+      });
     } catch (err) {
       log('error', 'world.spawn_failed', { id, error: String(err) });
       return null;
