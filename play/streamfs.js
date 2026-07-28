@@ -46,6 +46,9 @@
         const m = e.data;
         if (m.init) { ctrl = new Int32Array(m.ctrl); data = new Uint8Array(m.data); return; }
         if (m.mountLocal) { handles.set(m.mountLocal.id, m.mountLocal.handle); return; }
+        // A Blob (BSA from the Cache API) reads exactly like a File (slice + arrayBuffer), so it
+        // goes straight into the files map and the m.id read path below slices it locally.
+        if (m.mountBlob) { files.set(m.mountBlob.id, m.mountBlob.blob); return; }
         // m: {url|id, start, end, gen}
         try {
           let buf;
@@ -193,6 +196,18 @@
     mountLocal(path, handle, size) {
       const id = S.nextId++;
       S.worker.postMessage({ mountLocal: { id, handle } });
+      const src = { id };
+      return makeNode(path, size, function (buffer, offset, length, position) {
+        return readSync(src, 'id' + id, size, buffer, offset, length, position);
+      });
+    },
+
+    // Mount a Blob (e.g. a BSA held in the browser Cache API) at FS path `path`. Reads slice
+    // bytes from the Blob on demand — a LOCAL read (disk-backed Cache blob), so no network and
+    // no main-thread stall, unlike streaming from S3. The Blob is posted to the worker once.
+    mountBlob(path, blob, size) {
+      const id = S.nextId++;
+      S.worker.postMessage({ mountBlob: { id, blob } });
       const src = { id };
       return makeNode(path, size, function (buffer, offset, length, position) {
         return readSync(src, 'id' + id, size, buffer, offset, length, position);

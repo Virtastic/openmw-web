@@ -1653,6 +1653,10 @@
              if (!self.caches || !sha) return null;
              try { var c=await caches.open(LOCKER_CACHE); var hit=await c.match('https://locker.local/'+sha); return hit ? await hit.arrayBuffer() : null; } catch(e){ return null; }
            }
+           async function cacheGetBlob(sha){
+             if (!self.caches || !sha) return null;
+             try { var c=await caches.open(LOCKER_CACHE); var hit=await c.match('https://locker.local/'+sha); return hit ? await hit.blob() : null; } catch(e){ return null; }
+           }
            async function cachePut(sha, buf){
              if (!self.caches || !sha) return;
              try { var c=await caches.open(LOCKER_CACHE); await c.put('https://locker.local/'+sha, new Response(buf)); } catch(e){ /* quota — non-fatal */ }
@@ -1664,11 +1668,19 @@
            var mounted=[];
            for (const f of files){
              if (/\.bsa$/i.test(f.name)){
-               var dlb = await (await api('/locker/download?name='+encodeURIComponent(f.name))).json();
-               if (!dlb || !dlb.url){ append('[locker] cannot fetch '+f.name,'err'); continue; }
-               ldSet(null,'Preparing', f.name);
-               StreamFS.mount('/mwdata/'+f.name, dlb.url, f.size); // lazy: read on demand
-               mounted.push(f.name);
+               // Download the BSA ONCE into the local Cache, then read chunks from that local
+               // blob — no synchronous S3 streaming during gameplay, which is what stalled cell
+               // loads and timed out the MP handshake. Cached across sessions (keyed by sha256).
+               var blob = await cacheGetBlob(f.sha256);
+               if (blob){ ldSet(null,'Loading', f.name+' (cached)'); append('[locker] '+f.name+' from local cache'); }
+               else {
+                 var dlb = await (await api('/locker/download?name='+encodeURIComponent(f.name))).json();
+                 if (!dlb || !dlb.url){ append('[locker] cannot fetch '+f.name,'err'); continue; }
+                 var ab = await fetchFull(dlb.url, f.size, f.name); // full download with % progress
+                 await cachePut(f.sha256, ab);
+                 blob = (await cacheGetBlob(f.sha256)) || new Blob([ab]); // prefer disk-backed; ab freed after
+               }
+               StreamFS.mountBlob('/mwdata/'+f.name, blob, f.size); // LOCAL reads: no network, no stall
                fbarch.push(f.name);
              } else if (/\.(esm|esp|omwaddon)$/i.test(f.name)){
                var buf = await cacheGet(f.sha256);
