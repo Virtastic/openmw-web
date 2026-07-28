@@ -209,19 +209,10 @@ function net.onClose()
     -- PROTOCOL.md has no in-band "account already exists" reply: a failed SessionRegister is a
     -- SessionDisconnect(AUTH_FAILED) + close. Implement register-then-login-on-exists as one
     -- reconnect with SessionLoginRequest instead.
-    -- An SSO ticket is single-use and short-lived, so AUTH_FAILED means it is spent or
-    -- expired — never retry it. Drop to the password ladder, which is a no-op on a
-    -- password-less SSO account (the server refuses cleanly) and correct for everyone else.
-    if net.lastError == 'AUTH_FAILED' and authMode == 'ticket' and not triedTicket then
-        triedTicket = true
-        authMode = 'register'
-        net.loginTicket = nil
-        net.lastError = nil
-        if mp.connect(targetUrl()) then
-            setState('Connecting')
-            return
-        end
-    end
+    -- SSO ONLY: a login ticket is the only credential a real user has. If it fails (spent or
+    -- expired), we do NOT fall back to a password login — password auth for users is disabled
+    -- as an attack surface, and the SSO server refuses it anyway. Let it fall through to the
+    -- Failed state, which surfaces "sign in again" and stops. No password ladder for SSO.
     if net.lastError == 'AUTH_FAILED' and authMode == 'resume' and not triedResume then
         -- Expired/unknown ticket: forget it and fall back to the normal ladder.
         triedResume = true

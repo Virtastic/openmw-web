@@ -157,8 +157,10 @@ export class WorldSupervisor {
     const args = [s.serverEntry, '--data', dataDir, '--shared', s.sharedDir, '--port', String(port)];
     let child: ChildProcess;
     try {
+      // 'inherit': a world's logs flow through the gateway's stdout so `docker logs` shows every
+      // world (auth, joins, errors) in one place. Without it a world failure is invisible.
       const spawner = this.deps.spawner
-        ?? ((_id, a, env) => spawn(s.nodeBin, a, { env, stdio: 'ignore' }));
+        ?? ((_id, a, env) => spawn(s.nodeBin, a, { env, stdio: 'inherit' }));
       child = spawner(id, args, {
         ...process.env,
         OMW_WORLD_ID: id,

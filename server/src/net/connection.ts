@@ -724,11 +724,12 @@ export class Connection implements Peer {
       return false;
     }
     const want = this.ctx.config.server.password;
-    // [server].password is the SIM-PEER's shared secret (and, on a legacy password server, the
-    // account gate). An SSO ticket redemption NEVER carries it — the browser has no way to know
-    // it — so ticket auth is never gated on it. Gating it here is what broke SSO login. Only the
-    // password/register ladder and the sim peer present it.
-    if (op !== 'ticket' && want !== '' && serverPassword !== want) {
+    // [server].password is ONLY the sim-peer's shared secret. It is checked exclusively for a
+    // SYSTEM peer — never on a real user's auth attempt. Checking it against users would (a) make
+    // the sim-peer secret brute-forceable through the public login endpoint, and (b) surface a
+    // confusing "wrong server password" to SSO users. A user on an SSO server is refused later by
+    // handleLogin/handleRegister with a clean "single sign-on" message, before touching any secret.
+    if (this.isSystem && want !== '' && serverPassword !== want) {
       this.authFail(op, 'AUTH_FAILED', 'wrong server password');
       return false;
     }
