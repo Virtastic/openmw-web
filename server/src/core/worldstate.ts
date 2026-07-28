@@ -76,6 +76,25 @@ export class WorldState {
   // actor LOD striding. Cleared when the cell empties.
   private readonly actorBatchNo = new Map<string, number>();
 
+  // Phase 4: lowercased record ids of quest-critical items that must never deplete from a
+  // container (see containerOp). Loaded from the content table; empty = vanilla behaviour.
+  private questItems: ReadonlySet<string> = new Set();
+  // Phase 3 public economy: named/unique actors whose corpses drop nothing in a world
+  // that respawns everything, and whether this world enforces that rule at all.
+  private uniqueActors: ReadonlySet<string> = new Set();
+  private noDrop = false;
+
+  setQuestItems(ids: Iterable<string>): void {
+    this.questItems = new Set([...ids].map((s) => s.toLowerCase()));
+  }
+
+  // Public-realm rules: unique NPCs respawn (the world is stateless) and therefore must
+  // not be farmable. Off by default — a private or party campaign keeps vanilla loot.
+  setEconomyRules(opts: { uniqueActors: Iterable<string>; noDrop: boolean }): void {
+    this.uniqueActors = new Set([...opts.uniqueActors].map((s) => s.toLowerCase()));
+    this.noDrop = opts.noDrop;
+  }
+
   constructor(
     private readonly roster: Roster,
     private readonly cells: CellStore,
@@ -253,6 +272,14 @@ export class WorldState {
     // optional attribution for logs and future per-player stats.
     const killer = finite(body.get('killerPlayerId'));
     const killedRecordId = str(body.get('killedRecordId'), MAX_RECORD_ID);
+    // Phase 3 public economy: in a world that resets by construction, a named NPC is an
+    // infinite loot faucet. Killing Vivec with twenty strangers stays a spectacle; it is
+    // just not a payday. The corpse is stripped for EVERYONE in the cell (an event, not a
+    // per-player view) so no client can opt out of the rule by ignoring it.
+    if (this.noDrop && killedRecordId && this.uniqueActors.has(killedRecordId.toLowerCase())) {
+      this.relayCell(cellKey, 'ActorStripLoot', { ...objRefToJs(ref), cellKey, reason: 'unique' });
+      log('info', 'world.unique_no_drop', { refId: killedRecordId, cellKey });
+    }
     if (killedRecordId) {
       const count = this.cells.bumpKill(killedRecordId);
       for (const p of this.roster.inWorld()) p.peer.sendEvent('WorldKillCount', { refId: killedRecordId, count });
@@ -499,6 +526,16 @@ export class WorldState {
     if (op === 'take') {
       if (!item || item.n < n) {
         reply(false, 'gone', cont.stateSeq); // losing racer / stale client view
+        return;
+      }
+      // Phase 4: quest-critical items NEVER deplete. Morrowind puts exactly one Dwemer
+      // Puzzle Box in Arkngthand; with per-character journals the second player still
+      // needs to find one, and TES3MP's answer (it is simply gone) is the single most
+      // reported co-op quest break. The taker gets their copy, the container keeps its
+      // own, and no ContainerUpdate is relayed — nothing changed for anyone else.
+      if (this.questItems.has(itemId.toLowerCase())) {
+        reply(true, undefined, cont.stateSeq);
+        log('debug', 'world.quest_item_kept', { itemId, by: player.name, cellKey });
         return;
       }
       item.n -= n;

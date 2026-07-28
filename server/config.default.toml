@@ -74,6 +74,12 @@ regressAllowlist = []
 worldGlobals = []
 partyCredit = true
 
+[economy]
+# Public-realm rule: unique/named NPCs respawn there (the world is stateless), so their
+# corpses must drop nothing or every reset mints artifacts. Off for private/party
+# campaigns, which keep vanilla loot. Classification comes from content-table.json.
+noDrop = false
+
 [limits]
 msgsPerSec = 60                   # per-session message token bucket (burst = rate)
 moveMsgsPerSec = 40               # separate budget for the player's OWN PlayerMove frames; bypasses msgsPerSec

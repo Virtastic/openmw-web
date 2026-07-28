@@ -48,6 +48,10 @@ export interface Config {
     worldGlobals: string[];
     partyCredit: boolean;
   };
+  // Phase 3 public sandbox economy. Enabled on the public realm only: it resets by
+  // construction, so unique NPCs respawn — and a respawning unique that drops loot is an
+  // infinite artifact faucet. Private/party campaigns keep vanilla rules.
+  economy: { noDrop: boolean };
   rules: {
     respawnCellKey: string;
     respawnX: number;
@@ -300,6 +304,7 @@ function validate(t: Tree): Config {
       worldGlobals: reqStrArray(t, 'sharing', 'worldGlobals'),
       partyCredit: reqBool(t, 'sharing', 'partyCredit'),
     },
+    economy: { noDrop: reqBool(t, 'economy', 'noDrop') },
     rules: {
       respawnCellKey: reqStr(t, 'rules', 'respawnCellKey'),
       respawnX: reqSignedNum(t, 'rules', 'respawnX'),

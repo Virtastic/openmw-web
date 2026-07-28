@@ -9,6 +9,7 @@ import { WebSocket } from 'ws';
 import { loadConfig, type Config, type DeepPartial } from './config';
 import { AccountStore } from './core/accounts';
 import { AttioHook } from './integrations/attio';
+import { ContentTable } from './core/content-table';
 import { PlayerStore } from './persist/playerstore';
 import { CellStore } from './persist/cellstore';
 import { RecordStore } from './persist/recordstore';
@@ -139,6 +140,17 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   const resume = new ResumeStore(config.login.resumeWindowSec);
   const interest = interestFromLimits(config.limits);
   const world = new WorldState(roster, cellStore, interest);
+  // Phase 3/4 content classification (quest items, unique actors, notable items). Loaded
+  // from the SHARED dir so every world in a deployment classifies identically; missing =
+  // vanilla defaults, never a boot failure.
+  const contentTable = await ContentTable.load(sharedDir);
+  world.setQuestItems(contentTable.questItems);
+  world.setEconomyRules({
+    uniqueActors: contentTable.uniqueActors,
+    // The rule follows the WORLD's nature, not just the toml: a public realm resets by
+    // construction, which is exactly what makes droppable uniques a faucet.
+    noDrop: config.economy.noDrop || worldMode === 'public',
+  });
   const startedAt = Date.now();
   // At flush time the store pulls the freshest position from the live session, so pose
   // updates never need to dirty the doc.
