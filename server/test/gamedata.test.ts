@@ -114,3 +114,48 @@ test('a non-directory path is handled, not thrown on', () => {
   assert.match(r.reason, /not a directory/);
   mkdirSync(join(d, 'sub'), { recursive: true }); // keep tmp tidy-ish
 });
+
+// simPeer.mode resolution. The config alone cannot know whether a peer can run, so 'auto' is
+// decided at boot against what is actually present.
+test('simPeer mode: auto stays OFF without game data, and multiplayer is unaffected', async () => {
+  const { startServer } = await import('../src/server');
+  const { tmpDataDir } = await import('./helpers');
+  const s = await startServer({ dataDir: tmpDataDir(), port: 0, host: '127.0.0.1' });
+  try {
+    assert.equal(s.config.simPeer.enabled, false,
+      'no game data -> no peer; this is tier 1 and must remain a working multiplayer server');
+    assert.equal(s.config.simPeer.mode, 'auto', 'the configured MODE is unchanged');
+  } finally { await s.close(); }
+});
+
+test('simPeer mode: "on" REFUSES to boot when a peer cannot run', async () => {
+  // An operator who asked for server-side simulation should be told loudly, not handed a
+  // world that silently is not what they asked for.
+  const { startServer } = await import('../src/server');
+  const { tmpDataDir } = await import('./helpers');
+  await assert.rejects(
+    () => startServer({
+      dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
+      configOverride: { simPeer: { mode: 'on' } },
+    }),
+    /mode = "on" but a peer cannot run/,
+    'mode=on with no game data must fail at boot, naming what is missing');
+});
+
+test('simPeer mode: "off" stays off even with valid game data present', async () => {
+  const { startServer } = await import('../src/server');
+  const { tmpDataDir } = await import('./helpers');
+  const { mkdirSync, writeFileSync } = await import('node:fs');
+  const dir = tmpDataDir();
+  const gd = join(dir, 'gamedata');
+  mkdirSync(gd, { recursive: true });
+  for (const f of ['Morrowind.esm', 'Morrowind.bsa']) writeFileSync(join(gd, f), 'x');
+
+  const s = await startServer({
+    dataDir: dir, port: 0, host: '127.0.0.1',
+    configOverride: { simPeer: { mode: 'off', binary: '/usr/bin/true' } },
+  });
+  try {
+    assert.equal(s.config.simPeer.enabled, false, 'off means off, whatever is on disk');
+  } finally { await s.close(); }
+});

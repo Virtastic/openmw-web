@@ -212,3 +212,26 @@ test('sim peer: a content refusal is TERMINAL, not a crash to retry', async () =
   sup.ensure('world');
   assert.equal(spawned.length, 1, 'a permanently disabled peer is never respawned');
 });
+
+test('sim peer: one wedged before hello is reaped, one that reported hello is not', async () => {
+  // Without a start deadline a peer that never comes up sits there indefinitely holding
+  // ~360 MB: the idle reaper only counts players, and the crash backoff only fires on an
+  // EXIT that never arrives.
+  const { sup, spawned, advance } = harness({ startTimeoutMs: 30_000 });
+  sup.ensure('wedged');
+  sup.ensure('healthy');
+  assert.equal(spawned.length, 2);
+
+  sup.noteHello('healthy'); // only this one reaches hello
+
+  advance(10_000);
+  sup.sweep();
+  await tick();
+  assert.equal(sup.running, 2, 'nothing is reaped before the deadline');
+
+  advance(21_000); // past 30s since start
+  sup.sweep();
+  await tick();
+  assert.ok(sup.has('healthy'), 'a peer that reported hello is left alone');
+  assert.ok(!sup.has('wedged'), 'a peer that never reached hello is stopped');
+});

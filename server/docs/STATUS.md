@@ -92,6 +92,15 @@ was blocking: with multi-world worlds, a player could not log into their own pri
 with the account they made in the public world. Verify a "done" claim against the source
 before building on it.
 
+**The SERVER suite is load-sensitive too, not just the browser scenarios.**
+`auth.test.ts`, `admin.test.ts` and `worldtime.test.ts` fail above roughly host load 40 and
+pass below ~26 — measured repeatedly, and confirmed not to be any particular change by
+stashing and watching COMMITTED code fail identically. argon2id is deliberately CPU-heavy and
+`test/helpers.ts` bounds waits at 20 s. Do NOT raise that timeout to make a loaded box green:
+the bound exists to catch a genuine hang. Re-run when idle, exactly as for the scenarios.
+A file-level abort also shifts the reported test COUNT, so an odd total (e.g. 378 vs 377) is a
+symptom of this rather than a separate mystery.
+
 **Kill orphaned harness processes before trusting a measurement.** Stopping a background
 task kills the shell, not the child `node`. One harness ran for 20 hours competing with
 every gate, and a good share of what was written off as "the host is busy" was that. Check

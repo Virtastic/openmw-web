@@ -19,6 +19,8 @@ export interface Config {
   // self-hosted world is a complete, valid setup).
   gateway: { url: string };
   simPeer: {
+    mode: 'auto' | 'on' | 'off';
+    /** Derived at boot from mode + whether game data and a binary are actually present. */
     enabled: boolean;
     binary: string; // absolute path to the headless openmw
     configDir: string; // --config (its own isolated openmw.cfg + settings.cfg)
@@ -257,7 +259,10 @@ function validate(t: Tree): Config {
     },
     gateway: { url: reqStr(t, 'gateway', 'url') },
     simPeer: {
-      enabled: reqBool(t, 'simPeer', 'enabled'),
+      mode: reqEnum(t, 'simPeer', 'mode', ['auto', 'on', 'off'] as const),
+      // Resolved in startServer once the game data has been inspected; the raw config cannot
+      // know whether a peer is actually runnable.
+      enabled: false,
       binary: reqStr(t, 'simPeer', 'binary'),
       configDir: reqStr(t, 'simPeer', 'configDir'),
       userDataDir: reqStr(t, 'simPeer', 'userDataDir'),

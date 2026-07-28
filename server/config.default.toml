@@ -271,7 +271,12 @@ scope = ""
 # OFF by default: it needs a native openmw binary AND game data on the server, which a
 # self-hoster may not have. With it off, the existing client-authority election is unchanged.
 [simPeer]
-enabled = false
+# auto  = run a peer IF game data validates AND a binary is found. Silence is the right
+#         outcome for a self-hoster with neither; multiplayer is unaffected either way.
+# on    = the operator INTENDS server-side simulation: refuse to boot if it cannot run, so a
+#         misconfiguration is loud instead of silently falling back to client-simulated NPCs.
+# off   = never.
+mode = "auto"
 binary = ""                       # absolute path to the headless-capable openmw
 configDir = ""                    # its own --config dir (isolated openmw.cfg + settings.cfg)
 userDataDir = ""                  # its own --user-data dir

@@ -41,6 +41,9 @@ interface Peer {
   key: string;
   child: ChildProcess;
   startedAt: number;
+  // Set when the peer completes its SessionHello. Until then it is starting, and a peer that
+  // never gets here is wedged rather than working.
+  helloAt?: number;
   // When the world went empty of humans. undefined = humans present, so not reapable.
   idleSince?: number;
   stopping: boolean;
@@ -177,8 +180,31 @@ export class SimPeerSupervisor {
 
   // Reaps peers whose idle deadline has passed. Called on a timer by start(), and directly
   // by tests so reaping is assertable without waiting real seconds.
+  // Called when a system peer completes its hello. Distinguishes "still loading retail data"
+  // (normal, takes tens of seconds) from "wedged and never coming up".
+  noteHello(key: string): void {
+    const peer = this.peers.get(key);
+    if (peer && peer.helloAt === undefined) {
+      peer.helloAt = this.now();
+      log('info', 'simpeer.ready', { key, startupMs: peer.helloAt - peer.startedAt });
+    }
+  }
+
   sweep(): void {
     const cutoff = this.now() - this.deps.settings.idleReapMs;
+    // A peer that never reached hello is not simulating anything — it is a ~360 MB process
+    // holding a slot. Without this it would sit there indefinitely, because the idle reaper
+    // only counts players and the crash backoff only fires on an EXIT that never comes.
+    const startCutoff = this.now() - this.deps.settings.startTimeoutMs;
+    for (const peer of [...this.peers.values()]) {
+      if (peer.helloAt === undefined && peer.startedAt <= startCutoff) {
+        metrics.simPeerRefused.inc({ reason: 'start_timeout' });
+        log('error', 'simpeer.start_timeout', {
+          key: peer.key, waitedMs: this.now() - peer.startedAt,
+        });
+        this.stop(peer.key);
+      }
+    }
     for (const peer of [...this.peers.values()]) {
       if (peer.idleSince !== undefined && peer.idleSince <= cutoff) {
         metrics.simPeerReaped.inc({});

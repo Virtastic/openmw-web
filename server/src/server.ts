@@ -323,6 +323,29 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   const gameData = detectGameData(gameDataDir(opts.dataDir));
   log('info', 'gamedata.detect', { ok: gameData.ok, reason: gameData.reason });
 
+  // Resolve simPeer.mode against reality. The config alone cannot know whether a peer can
+  // actually run, so 'auto' is decided here and the outcome is ALWAYS logged — a server that
+  // quietly falls back to client-simulated NPCs is how "why are the NPCs frozen" becomes a
+  // three-week mystery.
+  const peerBlocker = !gameData.ok
+    ? `no usable game data (${gameData.reason})`
+    : !config.simPeer.binary
+      ? 'no [simPeer] binary configured'
+      : undefined;
+  if (config.simPeer.mode === 'on' && peerBlocker) {
+    // The operator asked for server-side simulation explicitly. Refusing to boot is kinder
+    // than starting a world that silently is not what they asked for.
+    throw new Error(`[simPeer] mode = "on" but a peer cannot run: ${peerBlocker}`);
+  }
+  config.simPeer.enabled = config.simPeer.mode !== 'off' && peerBlocker === undefined;
+  log('info', 'simpeer.tier', {
+    mode: config.simPeer.mode,
+    enabled: config.simPeer.enabled,
+    reason: config.simPeer.enabled
+      ? 'NPCs will be simulated by the server'
+      : `${peerBlocker ?? 'mode is off'} — NPCs will be simulated by player clients`,
+  });
+
   const simPeers = new SimPeerSupervisor({
     settings: config.simPeer,
     wsUrl: () => `ws://127.0.0.1:${port}/ws`,

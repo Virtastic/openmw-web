@@ -65,7 +65,7 @@ export interface ServerCtx {
   engine: EngineGate;
   // Phase H: present only when a sim peer is configured. Used to stop retrying a peer that
   // was refused for a reason retrying cannot fix.
-  simPeers?: { disablePermanently(reason: string): void };
+  simPeers?: { disablePermanently(reason: string): void; noteHello?(key: string): void };
   // Tier 2 (the server has its own valid game data). Only then may a sim peer's manifest be
   // pinned as the world's canonical content list.
   gameDataOk?: boolean;
@@ -555,8 +555,13 @@ export class Connection implements Peer {
     //
     // Pinned AFTER the peer's own check passes, so a peer that is itself misconfigured
     // cannot install a broken canonical list and lock everyone out.
-    if (this.isSystem && this.ctx.gameDataOk && !this.ctx.content.isAuthoritative) {
-      this.ctx.content.setAuthoritative(msg.manifest);
+    if (this.isSystem) {
+      // Tell the supervisor the peer is up, so the start deadline (which exists to catch a
+      // peer wedged before hello) stops applying to it.
+      this.ctx.simPeers?.noteHello?.('world');
+      if (this.ctx.gameDataOk && !this.ctx.content.isAuthoritative) {
+        this.ctx.content.setAuthoritative(msg.manifest);
+      }
     }
     // msg.resumeToken: reserved for M1 session resume ([login].resumeWindowSec); ignored.
     clearTimeout(this.helloTimer);
