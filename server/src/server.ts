@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { WebSocket } from 'ws';
 import { loadConfig, type Config, type DeepPartial } from './config';
 import { AccountStore } from './core/accounts';
+import { AttioHook } from './integrations/attio';
 import { PlayerStore } from './persist/playerstore';
 import { CellStore } from './persist/cellstore';
 import { RecordStore } from './persist/recordstore';
@@ -103,6 +104,13 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // pre-slot legacy location, read only during migration.
   const worldId = process.env.OMW_WORLD_ID ?? 'default';
   const playerStore = new PlayerStore(sharedDir, worldId, join(opts.dataDir, 'players'));
+  // Onboarding CRM capture. Env var wins over toml so the key can stay out of config files
+  // in deployments; empty = inert.
+  const attio = new AttioHook({
+    apiKey: process.env.ATTIO_API_KEY ?? config.integrations.attioApiKey,
+    baseUrl: config.integrations.attioBaseUrl,
+    dataDir: sharedDir,
+  });
   const cellStore = new CellStore(opts.dataDir);
   const recordStore = new RecordStore(opts.dataDir);
   const bans = new BanStore(sharedDir);
@@ -281,6 +289,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     moderation,
     tickets,
     sessions,
+    attio,
     motd: () => motd,
   };
 
@@ -454,6 +463,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       wss.close();
       await accounts.close();
       await playerStore.close();
+      await attio.close();
       await world.drain(); // let queued ops land before the final cell flush
       await cellStore.close();
       await recordStore.close();

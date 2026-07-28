@@ -155,6 +155,33 @@ async function erasePlayerDocs(dataDir: string, key: string): Promise<boolean> {
   return removed;
 }
 
+// Onboarding: the username index and any not-yet-sent CRM upserts name the account (the
+// queue even carries the email). Both are personal data; both go. Records already
+// delivered to the CRM are the operator's to purge per the takedown/deletion runbook.
+async function eraseByAccountField(dir: string, key: string): Promise<number> {
+  let names: string[];
+  try {
+    names = await readdir(dir);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return 0;
+    throw err;
+  }
+  let removed = 0;
+  for (const name of names.filter((n) => n.endsWith('.json'))) {
+    const path = join(dir, name);
+    try {
+      const doc = JSON.parse(await readFile(path, 'utf8')) as { accountKey?: unknown };
+      if (doc.accountKey === key) {
+        await rm(path, { force: true });
+        removed++;
+      }
+    } catch {
+      continue; // unreadable: leave it for the operator rather than deleting blind
+    }
+  }
+  return removed;
+}
+
 export async function deleteAccount(dataDir: string, name: string): Promise<EraseReport> {
   const key = name.toLowerCase();
   // Order matters: character docs are found VIA the account file, so erase them first.
@@ -167,6 +194,8 @@ export async function deleteAccount(dataDir: string, name: string): Promise<Eras
     chatLines: await eraseChatLines(dataDir, key),
     reports: await eraseReports(dataDir, key),
   };
+  await eraseByAccountField(join(dataDir, 'usernames'), key);
+  await eraseByAccountField(join(dataDir, 'integrations', 'attio-queue'), key);
   // An account ban keeps the name (and an ip ban an address); erasure lifts it. That is
   // the honest trade and it is documented: a ban cannot outlive the data it names.
   const bansPath = join(dataDir, 'bans.json');

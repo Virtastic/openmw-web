@@ -17,6 +17,13 @@ password = ""                     # non-empty -> Register/Login must carry a mat
 allowRegistration = true          # false -> SessionRegister is refused (AUTH_FAILED)
 inviteCode = ""                   # non-empty -> SessionRegister must carry a matching inviteCode
 resumeWindowSec = 300             # M1 (reserved): how long a dropped session may resume via resumeToken
+requireProfile = false            # true -> SessionReady is refused until email + username are set (ProfileSetup)
+
+[integrations]
+# Attio CRM capture: on profile completion the relay asserts a person record (email,
+# username, signup date, consent). Empty apiKey = disabled, nothing is queued or sent.
+attioApiKey = ""
+attioBaseUrl = "https://api.attio.com"
 
 [content]
 # "names"  - M0: name+size+order must match the first player's manifest (session-canonical)

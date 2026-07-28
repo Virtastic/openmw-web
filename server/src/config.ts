@@ -31,7 +31,9 @@ export interface Config {
     startTimeoutMs: number;
     restartBackoffMs: number;
   };
-  login: { allowRegistration: boolean; inviteCode: string; resumeWindowSec: number };
+  login: { allowRegistration: boolean; inviteCode: string; resumeWindowSec: number; requireProfile: boolean };
+  // Onboarding CRM capture (plan 2.1a). Empty apiKey = feature off, completely inert.
+  integrations: { attioApiKey: string; attioBaseUrl: string };
   content: { enforce: 'strict' | 'names' | 'off' };
   sharing: {
     journal: boolean;
@@ -276,6 +278,11 @@ function validate(t: Tree): Config {
       allowRegistration: reqBool(t, 'login', 'allowRegistration'),
       inviteCode: reqStr(t, 'login', 'inviteCode'),
       resumeWindowSec: reqNum(t, 'login', 'resumeWindowSec'),
+      requireProfile: reqBool(t, 'login', 'requireProfile'),
+    },
+    integrations: {
+      attioApiKey: reqStr(t, 'integrations', 'attioApiKey'),
+      attioBaseUrl: reqStr(t, 'integrations', 'attioBaseUrl'),
     },
     content: { enforce: reqEnum(t, 'content', 'enforce', ['strict', 'names', 'off'] as const) },
     sharing: {

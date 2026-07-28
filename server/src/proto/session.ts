@@ -68,6 +68,15 @@ export interface SessionLoginTicket {
 export interface SessionReady {
   t: 'SessionReady';
 }
+// Onboarding: one-time (and later, edit-profile) submission of the contact email and the
+// unique public handle. Valid in AUTHED and IN_WORLD. The email never travels back out to
+// anyone but this account's owner.
+export interface ProfileSetup {
+  t: 'ProfileSetup';
+  email: string;
+  username: string;
+  marketingOptIn?: boolean; // unchecked-by-default consent checkbox; absent = false
+}
 export interface SessionPing {
   t: 'SessionPing';
   clientTime: number;
@@ -79,6 +88,7 @@ export type ClientSessionMsg =
   | SessionLoginTicket
   | SessionResume
   | SessionReady
+  | ProfileSetup
   | SessionPing;
 
 export type DisconnectCode =
@@ -190,6 +200,18 @@ export function parseSessionMessage(text: string): ClientSessionMsg | null {
       return { t, token: str(o, 'token') };
     case 'SessionReady':
       return { t };
+    case 'ProfileSetup': {
+      const email = str(o, 'email');
+      const username = str(o, 'username');
+      if (email.length > 254) throw new SessionParseError('"email" too long');
+      if (username.length > 64) throw new SessionParseError('"username" too long');
+      return {
+        t,
+        email,
+        username,
+        ...(o['marketingOptIn'] === true ? { marketingOptIn: true } : {}),
+      };
+    }
     case 'SessionPing':
       return { t, clientTime: num(o, 'clientTime') };
     default:
@@ -244,6 +266,10 @@ export function welcome(
   // peers. Lets the client render a character list without another round trip.
   characters: WelcomeCharacter[] = [],
   characterId = '',
+  // Onboarding: whether this session must complete ProfileSetup before Ready, plus the
+  // owner's OWN current profile (this message goes only to the owner — the one place the
+  // email is allowed to appear).
+  profile: { required: boolean; username?: string; email?: string } = { required: false },
 ): string {
   return JSON.stringify({
     t: 'SessionWelcome',
@@ -255,7 +281,15 @@ export function welcome(
     serverSeq,
     characters,
     characterId,
+    profile,
   });
+}
+
+// Onboarding: answer to a ProfileSetup. `error` is a stable machine code the client can
+// map to UI copy ('badformat-email' | 'badformat-username' | 'reserved-word' | 'taken' |
+// 'cooldown').
+export function profileResult(ok: boolean, error?: string): string {
+  return JSON.stringify({ t: 'ProfileResult', ok, ...(error !== undefined ? { error } : {}) });
 }
 
 export function pong(clientTime: number, serverTime: number): string {

@@ -7,7 +7,8 @@
 import { randomBytes } from 'node:crypto';
 import type { WebSocket } from 'ws';
 import type { Config } from '../config';
-import type { AccountStore, Account, CharacterSummary } from '../core/accounts';
+import { validEmail, type AccountStore, type Account, type CharacterSummary } from '../core/accounts';
+import type { AttioHook } from '../integrations/attio';
 import type { ContentGate, EngineGate } from '../core/manifest';
 import type { Player, Peer, Roster } from '../core/players';
 import type { CommandRegistry, CommandContext } from '../core/commands';
@@ -38,6 +39,7 @@ import {
   welcome,
   pong,
   disconnectMsg,
+  profileResult,
   SessionParseError,
   type ClientSessionMsg,
   type SessionHello,
@@ -45,6 +47,7 @@ import {
   type SessionRegister,
   type SessionLoginRequest,
   type SessionLoginTicket,
+  type ProfileSetup,
   type DisconnectCode,
 } from '../proto/session';
 import { log } from '../log';
@@ -89,6 +92,7 @@ export interface ServerCtx {
   // minted, so redeeming one always fails.
   tickets: LoginTicketStore;
   sessions: SessionIndex;
+  attio: AttioHook; // onboarding CRM capture; inert when no API key is configured
   motd(): string; // mutable at runtime via /motd
 }
 
@@ -96,6 +100,7 @@ export class Connection implements Peer {
   state: SessionState = 'CONNECTED';
   player?: Player;
   private account?: Account;
+  private authedVia?: string; // which auth rung succeeded; recorded in the CRM upsert
   private outSeq = 0;
   private lastClientSeq = 0; // informational for the event tier
   private helloTimer?: NodeJS.Timeout;
@@ -365,9 +370,59 @@ export class Connection implements Peer {
         return;
       case 'SessionReady':
         this.requireState('AUTHED', msg.t);
+        // Onboarding gate: when the operator requires a profile, a session may not enter
+        // the world until email + username are set. The client saw profile.required in
+        // Welcome, so hitting this is a client bug or a bypass attempt — refuse, keep the
+        // session alive (it can still send ProfileSetup and then Ready again).
+        if (this.ctx.config.login.requireProfile && !this.isSystem && this.account
+          && (this.account.email === undefined || this.account.username === undefined)) {
+          this.sendText(profileResult(false, 'profile-required'));
+          return;
+        }
         this.handleReady();
         return;
+      case 'ProfileSetup':
+        if (this.state !== 'AUTHED' && this.state !== 'IN_WORLD') {
+          this.requireState('AUTHED', msg.t);
+          return;
+        }
+        this.handleProfileSetup(msg).catch((err) => {
+          log('error', 'conn.profile_error', { ip: this.ip, error: String(err) });
+          this.sendText(profileResult(false, 'internal'));
+        });
+        return;
     }
+  }
+
+  // Onboarding: validate + store email and the unique public handle; queue the CRM upsert
+  // off the hot path. A rename after the fact takes the same op (cooldown applies).
+  private async handleProfileSetup(msg: ProfileSetup): Promise<void> {
+    if (!this.account || this.isSystem) return;
+    if (!validEmail(msg.email)) {
+      this.sendText(profileResult(false, 'badformat-email'));
+      return;
+    }
+    const result = await this.ctx.accounts.setUsername(this.account, msg.username);
+    if (result !== 'ok') {
+      this.sendText(profileResult(false, result === 'badformat' ? 'badformat-username' : result));
+      return;
+    }
+    this.ctx.accounts.setEmail(this.account, msg.email, msg.marketingOptIn === true);
+    // The public handle IS the display name from now on; a session already in the roster
+    // updates live so nametags/chat pick it up on the next frame they render it.
+    if (this.player) this.player.name = this.account.username ?? this.player.name;
+    this.ctx.attio.enqueue({
+      email: msg.email,
+      username: this.account.username ?? msg.username,
+      accountKey: this.account.name.toLowerCase(),
+      signupAt: this.account.createdAt,
+      provider: this.authedVia ?? 'password',
+      marketingOptIn: msg.marketingOptIn === true,
+    });
+    log('info', 'player.profile_set', {
+      account: this.account.name, username: this.account.username ?? msg.username,
+    });
+    this.sendText(profileResult(true));
   }
 
   // Every auth exit funnels through here (or the success tally in finishAuth), so
@@ -802,7 +857,10 @@ export class Connection implements Peer {
       existing.peer.disconnect('SUPERSEDED', 'account logged in from another connection');
     }
     this.account = account;
-    this.player = this.ctx.roster.addAuthed(account.name, accountKey, account.rank, this, this.ip);
+    this.authedVia = op;
+    // Onboarding: the unique public handle is the display name everywhere once set; the
+    // account name remains the private login identifier.
+    this.player = this.ctx.roster.addAuthed(account.username ?? account.name, accountKey, account.rank, this, this.ip);
     // Character slots: every persistence path keys on charId from here on. System peers
     // keep the accountKey default (no character; marked ephemeral below).
     if (char) {
@@ -835,7 +893,14 @@ export class Connection implements Peer {
         lodNearMaxAvatars: this.ctx.config.limits.lodNearMaxAvatars,
       },
       (account.characters ?? []).map(({ id, name, lastPlayedAt }) => ({ id, name, lastPlayedAt })),
-      char?.id ?? ''),
+      char?.id ?? '',
+      {
+        required: this.ctx.config.login.requireProfile && !this.isSystem
+          && (account.email === undefined || account.username === undefined),
+        ...(account.username !== undefined ? { username: account.username } : {}),
+        // The owner's own email, in the one message that only the owner receives.
+        ...(account.email !== undefined ? { email: account.email } : {}),
+      }),
     );
     this.ctx.hooks.playerAuthed({ id: this.player.id, name: this.player.name, rank: this.player.rank });
     log('info', 'player.authed', { id: this.player.id, name: this.player.name, ip: this.ip });

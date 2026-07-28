@@ -33,9 +33,41 @@ export interface Account {
   banned?: boolean;
   // Absent on pre-slot accounts; the first authed session migrates them to one character.
   characters?: CharacterSummary[];
+  // Onboarding profile. email is CONTACT data: it must never appear in any wire payload
+  // or peer-visible surface — only the owner's own profile view and the CRM hook see it.
+  // username is the unique public handle shown everywhere in-game (nametags, chat,
+  // friends, admin views); account `name` remains the login identifier only.
+  email?: string;
+  username?: string;
+  marketingOptIn?: boolean;
+  usernameChangedAt?: string; // rename rate-limit anchor
 }
 
 export const MAX_CHARACTERS = 8;
+
+// Public handle rules: tighter than account names (no spaces — it is a handle, not a
+// paragraph), case-insensitively unique, and never something that reads as staff.
+const USERNAME_RE = /^[A-Za-z0-9_-]{3,20}$/;
+const USERNAME_BLOCKLIST = new Set([
+  'admin', 'administrator', 'moderator', 'mod', 'staff', 'gm', 'gamemaster',
+  'system', 'server', 'owner', 'operator', 'support', 'virtastic', 'openmw',
+]);
+// Deliberately loose: the point is catching typos ("a@b"), not RFC 5322 conformance.
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+export const USERNAME_RENAME_COOLDOWN_MS = 7 * 24 * 3600 * 1000;
+// After a rename the OLD handle stays reserved for its previous owner, so nobody can
+// snatch it and impersonate them while friends still know them by it.
+export const USERNAME_RESERVE_MS = 30 * 24 * 3600 * 1000;
+
+export function validUsername(username: string): 'ok' | 'badformat' | 'reserved-word' {
+  if (!USERNAME_RE.test(username)) return 'badformat';
+  if (USERNAME_BLOCKLIST.has(username.toLowerCase())) return 'reserved-word';
+  return 'ok';
+}
+
+export function validEmail(email: string): boolean {
+  return email.length <= 254 && EMAIL_RE.test(email);
+}
 
 const ARGON2_OPTS = { algorithm: Algorithm.Argon2id, memoryCost: 19456, timeCost: 2, parallelism: 1 };
 const NAME_RE = /^[A-Za-z0-9_ -]{2,24}$/;
@@ -50,9 +82,16 @@ export class AccountStore {
   private dirty = new Set<string>();
   private flushTimer: NodeJS.Timeout;
 
+  private readonly unamesDir: string;
+
   constructor(dataDir: string) {
     this.dir = join(dataDir, 'accounts');
+    // Username index: one JSON file per handle at usernames/<usernameLower>.json holding
+    // { accountKey, reservedUntil? }. File presence IS the uniqueness answer, exactly like
+    // the accounts dir itself; lives in the SHARED dir so a handle is unique platform-wide.
+    this.unamesDir = join(dataDir, 'usernames');
     mkdirSync(this.dir, { recursive: true });
+    mkdirSync(this.unamesDir, { recursive: true });
     this.flushTimer = setInterval(() => void this.flush(), 30_000);
     this.flushTimer.unref();
   }
@@ -151,6 +190,57 @@ export class AccountStore {
     const char = account.characters?.find((c) => c.id === charId);
     if (!char) return;
     char.lastPlayedAt = new Date().toISOString();
+    this.dirty.add(account.name.toLowerCase());
+  }
+
+  // Onboarding. Sets/changes the unique public handle. The index write is awaited (a
+  // uniqueness race must lose loudly, not eventually); the account itself rides the dirty
+  // queue like every other mutation.
+  async setUsername(
+    account: Account,
+    username: string,
+  ): Promise<'ok' | 'badformat' | 'reserved-word' | 'taken' | 'cooldown'> {
+    const valid = validUsername(username);
+    if (valid !== 'ok') return valid;
+    const accountKey = account.name.toLowerCase();
+    const usernameLower = username.toLowerCase();
+    const oldLower = account.username?.toLowerCase();
+    if (oldLower === usernameLower) {
+      // Case-only change of one's own handle: no uniqueness or cooldown question.
+      account.username = username;
+      this.dirty.add(accountKey);
+      return 'ok';
+    }
+    if (account.username !== undefined && account.usernameChangedAt !== undefined) {
+      const since = Date.now() - Date.parse(account.usernameChangedAt);
+      if (since < USERNAME_RENAME_COOLDOWN_MS) return 'cooldown';
+    }
+    const indexPath = join(this.unamesDir, `${encodeURIComponent(usernameLower)}.json`);
+    const existing = await readJson<{ accountKey: string; reservedUntil?: string }>(indexPath);
+    if (existing && existing.accountKey !== accountKey) {
+      const reserved = existing.reservedUntil !== undefined && Date.parse(existing.reservedUntil) > Date.now();
+      if (reserved || existing.reservedUntil === undefined) return 'taken';
+      // Reservation expired: the handle is free again.
+    }
+    await writeJsonAtomic(indexPath, { accountKey });
+    if (oldLower !== undefined) {
+      // Keep the old handle pointing at us as a time-boxed reservation: nobody can take it
+      // and impersonate the player their friends still know by that name.
+      const reservedUntil = new Date(Date.now() + USERNAME_RESERVE_MS).toISOString();
+      await writeJsonAtomic(join(this.unamesDir, `${encodeURIComponent(oldLower)}.json`), {
+        accountKey,
+        reservedUntil,
+      });
+    }
+    account.username = username;
+    account.usernameChangedAt = new Date().toISOString();
+    this.dirty.add(accountKey);
+    return 'ok';
+  }
+
+  setEmail(account: Account, email: string, marketingOptIn?: boolean): void {
+    account.email = email;
+    if (marketingOptIn !== undefined) account.marketingOptIn = marketingOptIn;
     this.dirty.add(account.name.toLowerCase());
   }
 
