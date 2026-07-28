@@ -1202,6 +1202,24 @@ local eventHandlers = {
         elseif op == 'party' then voice.syncParty(data.members)
         end
     end,
+    -- Phase 4 spawn replay: place the owed actor next to the player. Created locally
+    -- rather than through the object-sync path on purpose — it exists FOR THIS CHARACTER
+    -- (that is the whole point of replaying a one-shot), so broadcasting it would put a
+    -- second Staada in front of everyone who already killed theirs.
+    mpQuestSpawn = function(data)
+        local player = playerScript()
+        if not player or not data.recordId then return end
+        local ok, err = pcall(function()
+            local obj = world.createObject(data.recordId)
+            obj:teleport(player.cell, player.position + util.vector3(150, 150, 0))
+        end)
+        if ok then
+            print('[mp] quest spawn replayed: ' .. tostring(data.recordId))
+            notice('Something stirs nearby.')
+        else
+            print('[mp] quest spawn failed: ' .. tostring(err))
+        end
+    end,
     mpProfileSetup = function(data)
         net.sendSession({
             t = 'ProfileSetup',

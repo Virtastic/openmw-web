@@ -41,6 +41,12 @@ export interface AdminCtx {
   bans: BanStore;
   resume: ResumeStore;
   moderation: Moderation;
+  // Phase 4 quest repair (absent on worlds that do not load it).
+  questRepair?: {
+    inspect(charId: string): { journal: Record<string, number>; globals: Record<string, number> };
+    setStage(charId: string, questId: string, index: number, by: string): boolean;
+    clearSpawnCooldowns(charId: string, by: string): void;
+  };
   allowConsole: boolean;
   motd: () => string;
   setMotd(text: string): void;
@@ -122,6 +128,46 @@ export const ADMIN_COMMANDS: Record<string, AdminCommandSpec> = {
           `${doc.ts} ${doc.reporter.name} -> ${doc.target.name}` +
           ` @${doc.target.cellKey ?? '?'}: ${doc.reason.slice(0, 120)}  [${file}]`)
         .join('\n');
+    },
+  },
+  // Phase 4: the quest-unstick tool. Stuck quests are inevitable in a system covering
+  // 300+ vanilla quests written for one player — Skyrim Together shipped an F3 debugger
+  // for exactly this reason — so repair is a first-class feature, not an admission.
+  //
+  // Rank 0 for the READ: a player looking at their own quest state needs no permission,
+  // and is the fastest way for them to tell a moderator what is wrong.
+  quest: {
+    minRank: 0,
+    usage: '/quest [player] | /quest set <player> <questId> <index>',
+    help: 'inspect quest state, or (moderator) force a stage when a quest is stuck',
+    async run(ctx, actor, args) {
+      if (!ctx.questRepair) return 'Quest repair is not available on this world.';
+      const sub = args[0] ?? '';
+      if (sub === 'set') {
+        if (actor.rank < 1) return 'Only a moderator can force a quest stage.';
+        const [, who, questId, raw] = args;
+        if (!who || !questId || raw === undefined) return 'usage: /quest set <player> <questId> <index>';
+        const target = ctx.roster.findByName(who);
+        if (!target) return `${who} is not online.`;
+        const index = Number(raw);
+        if (!ctx.questRepair.setStage(target.charId, questId, index, actor.name)) {
+          return 'Index must be a whole number.';
+        }
+        // Cooldowns go too: the usual reason a stage is forced is that an encounter never
+        // appeared, and leaving the cooldown would block the retry.
+        ctx.questRepair.clearSpawnCooldowns(target.charId, actor.name);
+        return `Set ${target.name}'s ${questId} to ${index} (spawn cooldowns cleared).`;
+      }
+      const who = sub === '' ? actor.name : sub;
+      if (sub !== '' && actor.rank < 1 && who.toLowerCase() !== actor.name.toLowerCase()) {
+        return 'You can only inspect your own quests.';
+      }
+      const target = ctx.roster.findByName(who);
+      if (!target) return `${who} is not online.`;
+      const state = ctx.questRepair.inspect(target.charId);
+      const entries = Object.entries(state.journal).sort(([a], [b]) => a.localeCompare(b));
+      if (entries.length === 0) return `${target.name} has no journal entries.`;
+      return entries.slice(0, 40).map(([q, i]) => `${q} = ${i}`).join('\n');
     },
   },
   chatlog: {

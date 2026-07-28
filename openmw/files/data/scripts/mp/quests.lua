@@ -354,6 +354,17 @@ handlers.MP_GlobalVarSync = function(data)
     if n > 0 then print('[mp] restored ' .. tostring(n) .. ' character globals') end
 end
 
+-- Phase 4: a one-shot scripted encounter this character was owed. Morrowind fires these
+-- once (Azura's Staada, the Tribunal Fabricants), so a player who was not there — or who
+-- joined after the fight started — otherwise stands in an empty room with an active quest
+-- entry, which is the single most reported co-op quest break.
+handlers.MP_QuestSpawn = function(data)
+    if type(data.recordId) ~= 'string' then return end
+    core.sendGlobalEvent('mpQuestSpawn', {
+        recordId = data.recordId, questId = tostring(data.questId or ''),
+    })
+end
+
 handlers.MP_MemberVarUpdate = function(data)
     if type(data.name) ~= 'string' or type(data.value) ~= 'number' then return end
     local obj = data.ref

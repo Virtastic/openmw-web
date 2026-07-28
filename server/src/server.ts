@@ -13,6 +13,7 @@ import { AttioHook } from './integrations/attio';
 import { ContentTable } from './core/content-table';
 import { ModWhitelist } from './core/mod-whitelist';
 import { PartyRules } from './core/party-rules';
+import { QuestRepair } from './core/quest-repair';
 import { adminDashboardRoutes } from './net/admin-http';
 import { PlayerStore } from './persist/playerstore';
 import { CellStore } from './persist/cellstore';
@@ -148,6 +149,9 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   const resume = new ResumeStore(config.login.resumeWindowSec);
   const interest = interestFromLimits(config.limits);
   const world = new WorldState(roster, cellStore, interest);
+  // Phase 4: scripted-spawn replay + the unstick tool. Built early because both the admin
+  // command surface and the connection's cell-entry path need it.
+  const questRepair = new QuestRepair({ roster, players: playerStore });
   // Phase 3/4 content classification (quest items, unique actors, notable items). Loaded
   // from the SHARED dir so every world in a deployment classifies identically; missing =
   // vanilla defaults, never a boot failure.
@@ -176,6 +180,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   let hooks: HookBus;
   const moderation = new Moderation(sharedDir, config.moderation);
   const admin = new Admin({
+    questRepair,
     roster,
     accounts,
     bans,
@@ -340,6 +345,9 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     enabled: config.rules.partyScaling,
   });
   world.setPartyRules(partyRules);
+  // Phase 4: scripted-spawn replay + the unstick tool. Rules and whitelist come from the
+  // content table's sibling file when present; defaults cover the vanilla cases the
+  // community's own fix scripts had to special-case.
 
   const contentGate = new ContentGate(config.content.enforce);
   // Approved cosmetic mods (meshes/textures) may differ between players; record-bearing
@@ -378,6 +386,9 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     // (moderation must be able to enter anywhere). Public/default worlds admit everyone.
     // Phase 4: the holder scales the fight, so it needs the co-present count. Sent to the
     // player whose situation changed; the holder applies it to the cell it simulates.
+    // Phase 4: one-shot scripted encounters replayed for a character who was not there.
+    questSpawnsOnEntry: (player, cellKey) => questRepair.onCellEntry(player, cellKey),
+    questRepair,
     sendPartyScaling: (player) => {
       const s = partyRules.scalingFor(player);
       player.peer.sendEvent('PartyScaling', s === null

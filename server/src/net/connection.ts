@@ -107,6 +107,13 @@ export interface ServerCtx {
   // authority holder can scale the fight. Recomputed on join and on every cell change —
   // the number that matters is who is HERE, not who is in the party.
   sendPartyScaling?(player: Player): void;
+  // Phase 4: one-shot scripted spawns this character is owed on entering a cell.
+  questSpawnsOnEntry?(player: Player, cellKey: string): { recordId: string; questId: string }[];
+  questRepair?: {
+    inspect(charId: string): { journal: Record<string, number>; globals: Record<string, number> };
+    setStage(charId: string, questId: string, index: number, by: string): boolean;
+    clearSpawnCooldowns(charId: string, by: string): void;
+  };
   motd(): string; // mutable at runtime via /motd
 }
 
@@ -612,6 +619,14 @@ export class Connection implements Peer {
     const oldCell = player.cellKey;
     // Co-presence changed, so the scaling did too.
     queueMicrotask(() => this.ctx.sendPartyScaling?.(player));
+    // ...and this character may be owed a one-shot encounter that fired for somebody else
+    // before they ever got here.
+    queueMicrotask(() => {
+      const owed = this.ctx.questSpawnsOnEntry?.(player, cellKey) ?? [];
+      for (const spawn of owed) {
+        player.peer.sendEvent('QuestSpawn', { recordId: spawn.recordId, questId: spawn.questId, cellKey });
+      }
+    });
     player.cellKey = cellKey;
     const prev = player.pose;
     player.pose = {
