@@ -43,6 +43,8 @@ export interface Player {
   pose?: PlayerPose;
   moveSeq: number; // last accepted PlayerMove envelope seq (stale-drop)
   poseVersion: number;
+  // Phase 3.6: wall-clock of the last accepted pose, for the plausible-speed envelope.
+  lastPoseAt?: number;
 }
 
 export class Roster {

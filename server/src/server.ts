@@ -10,6 +10,7 @@ import { loadConfig, type Config, type DeepPartial } from './config';
 import { AccountStore } from './core/accounts';
 import { AttioHook } from './integrations/attio';
 import { ContentTable } from './core/content-table';
+import { adminDashboardRoutes } from './net/admin-http';
 import { PlayerStore } from './persist/playerstore';
 import { CellStore } from './persist/cellstore';
 import { RecordStore } from './persist/recordstore';
@@ -249,6 +250,9 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   registerAdminCommands(commands, admin);
   const commandCtx: CommandContext = {
     roster,
+    // Mutes are enforced at DELIVERY (chat.ts), not in the client: a mute a modified
+    // client can ignore is not a mute.
+    isMuted: (listener, speaker) => socialRef?.isMuted(listener, speaker) ?? false,
     onCommand: (player, name, args) => hooks.command({ id: player.id, name: player.name, rank: player.rank }, name, args),
   };
 
@@ -345,6 +349,65 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     motd: () => motd,
   };
 
+  // Phase 3.8 web dashboard. Bearer-gated and OFF unless a token is configured; it acts
+  // on accounts without being in the world, so it gets its own rotatable credential
+  // rather than piggybacking on someone's rank.
+  const adminRoutes = adminDashboardRoutes({
+    token: config.admin.dashboardToken,
+    overview: () => ({
+      world: { id: worldId, mode: worldMode },
+      maxPlayers: config.server.maxPlayers,
+      uptime: Math.round((Date.now() - startedAt) / 1000),
+      players: roster.humansInWorld().map((p) => ({
+        id: p.id,
+        name: p.name,
+        account: p.accountKey,
+        cellKey: p.cellKey ?? null,
+        rank: p.rank,
+        anomalies: moderation.anomaliesFor(p.accountKey),
+      })),
+    }),
+    reports: async (limit) => ({
+      reports: (await moderation.reports.list(Math.min(Math.max(1, limit || 20), 100))).map(({ doc }) => ({
+        ts: doc.ts,
+        reporter: doc.reporter.name,
+        target: doc.target.name,
+        reason: doc.reason,
+      })),
+    }),
+    action: async (kind, target, detail) => {
+      const online = target === '' ? undefined : roster.activeForAccount(target.toLowerCase());
+      switch (kind) {
+        case 'kick':
+          if (!online) return { ok: false, message: `${target} is not online` };
+          online.peer.disconnect('KICKED', detail || 'kicked by a moderator');
+          return { ok: true, message: `kicked ${target}` };
+        case 'ban':
+          bans.banAccount(target, 'dashboard', detail || 'banned by a moderator');
+          online?.peer.disconnect('BANNED', detail || 'banned by a moderator');
+          return { ok: true, message: `banned ${target}` };
+        case 'unban':
+          return { ok: bans.unbanAccount(target), message: `unban ${target}` };
+        case 'mute':
+        case 'unmute': {
+          // Server-side mute rides the same account-level list the voice/chat client
+          // controls use, so a moderator mute and a player mute mean the same thing.
+          socialRef?.setServerMuted(target.toLowerCase(), kind === 'mute');
+          return { ok: true, message: `${kind}d ${target}` };
+        }
+        case 'broadcast':
+          if (detail === '') return { ok: false, message: 'nothing to say' };
+          broadcastChat(roster, { channel: 'server', text: detail });
+          return { ok: true, message: 'broadcast sent' };
+        case 'resetCell':
+          await m7.resetCellNow(target);
+          return { ok: true, message: `reset ${target}` };
+        default:
+          return { ok: false, message: `unknown action ${kind}` };
+      }
+    },
+  });
+
   const httpServer = createHttpServer(() => ({
     name: config.server.name,
     motd,
@@ -376,7 +439,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     // SSO round trips draw from the same per-IP auth budget as Register/Login: one
     // attacker should not get a second, separate allowance by using the HTTP door.
     limiter: new IpRateLimiter(config.limits.loginPerMinPerIp),
-  }));
+  }, adminRoutes));
   // Derived at scrape time from the roster, so no teardown path can strand the gauge.
   const unhookGauge = metrics.sessionsInWorld.addCollector(() => roster.inWorld().length);
 

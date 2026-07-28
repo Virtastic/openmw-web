@@ -49,7 +49,9 @@ function returnTo(returnUrl: string, fragment: string): string {
   return `${base}#${fragment}`;
 }
 
-export function createAuthRoutes(deps: AuthDeps): HttpRoute {
+// `also` is chained AFTER the SSO routes: createHttpServer takes exactly one extra-route
+// hook, and threading a list through it would touch every caller for one composition.
+export function createAuthRoutes(deps: AuthDeps, also?: HttpRoute): HttpRoute {
   const { config, oidc, identities, tickets, sessions, accounts, bans, limiter } = deps;
 
   // A failure the player caused (or a provider refused) goes back to the game page as a
@@ -174,9 +176,8 @@ export function createAuthRoutes(deps: AuthDeps): HttpRoute {
   };
 
   return (req, res, url) => {
-    if (req.method !== 'GET') return false;
     const seg = url.pathname.split('/').filter((s) => s !== '');
-    if (seg[0] !== 'auth') return false;
+    if (req.method !== 'GET' || seg[0] !== 'auth') return also ? also(req, res, url) : false;
 
     if (seg.length === 2 && seg[1] === 'providers') {
       // Public and cheap, like /status: a client cannot render login buttons without it.
@@ -209,6 +210,6 @@ export function createAuthRoutes(deps: AuthDeps): HttpRoute {
       if (seg[2] === 'start') return startFlow(req, res, url, provider);
       if (seg[2] === 'callback') return callback(req, res, url, provider);
     }
-    return false;
+    return also ? also(req, res, url) : false;
   };
 }

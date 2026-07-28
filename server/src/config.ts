@@ -31,7 +31,17 @@ export interface Config {
     startTimeoutMs: number;
     restartBackoffMs: number;
   };
-  login: { allowRegistration: boolean; inviteCode: string; resumeWindowSec: number; requireProfile: boolean };
+  login: {
+    allowRegistration: boolean;
+    inviteCode: string;
+    resumeWindowSec: number;
+    requireProfile: boolean;
+    // The shipped client can auto-register with a FIXED, publicly known password
+    // (?mpauto=1, used by the browser harness). That is a test affordance, not a login
+    // method: on a real server it would let anyone create — and then take over — accounts
+    // by name. Off by default; the harness turns it on for its own servers.
+    allowHarnessAuth: boolean;
+  };
   // Onboarding CRM capture (plan 2.1a). Empty apiKey = feature off, completely inert.
   integrations: { attioApiKey: string; attioBaseUrl: string };
   content: { enforce: 'strict' | 'names' | 'off' };
@@ -73,7 +83,10 @@ export interface Config {
   gui: { timeoutSec: number };
   cellReset: { cells: string[]; intervalSec: number };
   // M8 ops.
-  admin: { owners: string[]; allowConsole: boolean };
+  // dashboardToken: bearer for the web admin dashboard (/admin). Empty = the whole
+  // dashboard is off, which is the right default for a self-hoster who only wants the
+  // in-game panel.
+  admin: { owners: string[]; allowConsole: boolean; dashboardToken: string };
   moderation: { chatLog: boolean; retentionDays: number; contextLines: number };
   limits: {
     msgsPerSec: number;
@@ -294,6 +307,7 @@ function validate(t: Tree): Config {
       inviteCode: reqStr(t, 'login', 'inviteCode'),
       resumeWindowSec: reqNum(t, 'login', 'resumeWindowSec'),
       requireProfile: reqBool(t, 'login', 'requireProfile'),
+      allowHarnessAuth: reqBool(t, 'login', 'allowHarnessAuth'),
     },
     integrations: {
       attioApiKey: reqStr(t, 'integrations', 'attioApiKey'),
@@ -332,6 +346,7 @@ function validate(t: Tree): Config {
     admin: {
       owners: reqStrArray(t, 'admin', 'owners'),
       allowConsole: reqBool(t, 'admin', 'allowConsole'),
+      dashboardToken: reqStr(t, 'admin', 'dashboardToken'),
     },
     moderation: {
       chatLog: reqBool(t, 'moderation', 'chatLog'),
@@ -392,5 +407,11 @@ export function loadConfig(dataDir: string, override?: DeepPartial<Config>): Con
     tree = deepMerge(tree, parse(readFileSync(operatorPath, 'utf8')) as Tree);
   }
   if (override) tree = deepMerge(tree, override as Tree);
+  // Worlds spawned by the gateway have no config.toml of their own, so the one flag the
+  // browser harness must be able to set on them travels in the environment it already
+  // controls. Deliberately env-only and single-purpose: production sets neither.
+  if (process.env.OMW_ALLOW_HARNESS_AUTH === '1') {
+    tree = deepMerge(tree, { login: { allowHarnessAuth: true } } as Tree);
+  }
   return validate(tree);
 }

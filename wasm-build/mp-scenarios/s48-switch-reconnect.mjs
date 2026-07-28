@@ -50,7 +50,12 @@ export default async function run(ctx) {
     join(ROOT, 'server', 'dist', 'gateway.mjs'),
     '--worlds', worldsDir, '--port', String(GW_PORT),
     '--base-port', String(GW_PORT + 200), '--public-host', '127.0.0.1', '--max-worlds', '4',
-  ], { stdio: 'ignore' });
+  ], {
+    stdio: 'ignore',
+    // Worlds this gateway spawns inherit it: the harness clients log in with the fixed
+    // ?mpauto=1 password, which real servers refuse by default.
+    env: { ...process.env, OMW_ALLOW_HARNESS_AUTH: '1' },
+  });
   const stopGw = () => { try { gw.kill('SIGTERM'); } catch { /* gone */ } };
 
   try {

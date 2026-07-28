@@ -18,6 +18,10 @@ allowRegistration = true          # false -> SessionRegister is refused (AUTH_FA
 inviteCode = ""                   # non-empty -> SessionRegister must carry a matching inviteCode
 resumeWindowSec = 300             # M1 (reserved): how long a dropped session may resume via resumeToken
 requireProfile = false            # true -> SessionReady is refused until email + username are set (ProfileSetup)
+# The shipped client's ?mpauto=1 harness mode logs in with a FIXED, publicly known
+# password. Leave false on anything reachable from the internet: it is a test affordance,
+# not an auth method. The browser harness enables it on the servers it starts itself.
+allowHarnessAuth = false
 
 [integrations]
 # Attio CRM capture: on profile completion the relay asserts a person record (email,
@@ -181,6 +185,10 @@ owners = []
 # every use is logged with actor, target and the full payload. Set false to remove the
 # capability from the server entirely.
 allowConsole = true
+# Bearer token for the web admin dashboard at /admin (live worlds, players, anomaly
+# counters, report queue, kick/ban/mute/broadcast). Empty = the dashboard is not served at
+# all, which is the right default: the in-game panel already covers a self-hosted world.
+dashboardToken = ""
 
 [moderation]
 # A4: durable chat log + /report inbox under <dataDir>/logs and <dataDir>/reports.

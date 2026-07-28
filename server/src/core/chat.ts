@@ -18,8 +18,22 @@ export type ChatMessageBody = {
   text: string;
 };
 
-export function broadcastChat(roster: Roster, msg: ChatMessageBody): void {
-  for (const p of roster.inWorld()) p.peer.sendEvent('ChatMessage', msg);
+// isMuted: Phase 3.8/2.5 — a listener who muted the speaker (or a moderator mute, which
+// is the same list under a server pseudo-muter) simply never receives the line. Enforced
+// HERE rather than client-side because a mute a modified client can ignore is not a mute.
+// Server lines (channel 'server') are never suppressed: they are announcements, not a
+// player talking.
+export function broadcastChat(
+  roster: Roster,
+  msg: ChatMessageBody,
+  isMuted?: (listenerAcct: string, speakerAcct: string) => boolean,
+  speakerAcct?: string,
+): void {
+  for (const p of roster.inWorld()) {
+    if (isMuted && speakerAcct !== undefined && p.accountKey !== speakerAcct
+      && isMuted(p.accountKey, speakerAcct)) continue;
+    p.peer.sendEvent('ChatMessage', msg);
+  }
 }
 
 export function serverWhisper(player: Player, text: string): void {
@@ -67,6 +81,11 @@ export function handleChatSend(
   }
   if (!hooks.onChat(player, trimmed)) return; // vetoed lines were never delivered, so never logged
   recordChat(mod, player, 'say', trimmed);
-  broadcastChat(ctx.roster, { channel: 'say', from: player.name, fromId: player.id, text: trimmed });
+  broadcastChat(
+    ctx.roster,
+    { channel: 'say', from: player.name, fromId: player.id, text: trimmed },
+    ctx.isMuted,
+    player.accountKey,
+  );
   log('info', 'chat.say', { from: player.name, chars: trimmed.length });
 }

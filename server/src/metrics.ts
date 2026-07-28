@@ -260,6 +260,11 @@ export const metrics = {
   // Counted apart from omwmp_auth_total because it is the outcome of the OTHER session:
   // the incoming auth still succeeded. Mirrors omwmp_disconnects_total{code="SUPERSEDED"}.
   authSuperseded: reg(new Counter('omwmp_auth_superseded_total', 'Live sessions displaced by a re-login.', [])),
+  // Phase 3.6 anti-cheat telemetry. Counted, never enforced: the client authors its own
+  // position, so these are the signal moderation acts on, not a physics engine.
+  implausibleMoves: reg(
+    new Counter('omwmp_implausible_moves_total', 'Pose updates exceeding the plausible-speed envelope.', []),
+  ),
   resumeNoPose: reg(
     new Counter('omwmp_resume_no_pose_total', 'Resumes that fell back to the stored doc position (rubber-band risk).', []),
   ),

@@ -61,6 +61,10 @@ export type SessionState = 'CONNECTED' | 'HELLO_OK' | 'AUTHED' | 'IN_WORLD' | 'C
 // omwmp_auth_total{op,...}. Kept apart from the message name so the label space is closed.
 type AuthOp = 'register' | 'login' | 'resume' | 'ticket';
 
+// Matches play/index.html's ?mpauto=1 harness login. Public by construction (it is in the
+// page source), so the SERVER decides whether it is acceptable — see refuseHarnessAuth.
+const HARNESS_PASSWORD = 'harness-pass-1';
+
 // Everything a connection needs from the composed server; kept as an interface so
 // connection.ts has no import cycle with server.ts.
 export interface ServerCtx {
@@ -550,6 +554,33 @@ export class Connection implements Peer {
       log('warn', 'conn.move_out_of_bounds', { ip: this.ip, player: player.name, x: pose.x, y: pose.y, z: pose.z });
       return;
     }
+    // Phase 3.6 plausibility envelope. The client authors its own position (the engine
+    // simulates locally), so this cannot PROVE honesty — it bounds how far a modified
+    // client can travel per unit time before the server notices and counts it. Deliberately
+    // generous: Morrowind has legitimate fast movement (levitate, slowfall, 100 Speed +
+    // Boots of Blinding Speed), and a false positive on a real player is worse than a
+    // cheat that has to move at merely-absurd speed. Same-cell only — a cell change IS a
+    // teleport by design (doors, travel, recall).
+    const prev = player.pose;
+    const now = Date.now();
+    if (prev && player.lastPoseAt !== undefined && !this.isSystem) {
+      const dt = Math.max(1, now - player.lastPoseAt) / 1000;
+      const dist = Math.hypot(pose.x - prev.x, pose.y - prev.y, pose.z - prev.z);
+      // Units/second. Vanilla sprint is ~600; levitate + fortify speed reaches a few
+      // thousand. 12000 is beyond anything the engine produces without console commands.
+      if (dist / dt > 12000 && dt < 5) {
+        metrics.implausibleMoves.inc();
+        this.ctx.moderation.noteAnomaly(player.accountKey, 'move');
+        log('warn', 'conn.move_implausible', {
+          player: player.name, account: player.accountKey,
+          speed: Math.round(dist / dt), dt: Math.round(dt * 1000),
+        });
+        // Counted, not dropped: rejecting the frame would rubber-band a legitimate player
+        // whose connection stalled and then delivered a batch late, which is common. The
+        // record is what moderation acts on.
+      }
+    }
+    player.lastPoseAt = now;
     player.moveSeq = seq;
     player.pose = pose;
     player.poseVersion++;
@@ -725,6 +756,7 @@ export class Connection implements Peer {
       return;
     }
     if (this.refuseIfBanned('register', msg.account)) return;
+    if (this.refuseHarnessAuth('register', msg.password)) return;
     const result = await this.ctx.accounts.register(msg.account, msg.password);
     if (result === 'badname') {
       this.authFail('register', 'AUTH_FAILED', 'account name must be 2-24 chars of A-Z a-z 0-9 _ - space');
@@ -739,6 +771,18 @@ export class Connection implements Peer {
     const rc = await this.resolveCharacter('register', result, msg.characterId);
     if (!rc) return;
     this.finishAuth('register', result, rc.doc, false, rc.char);
+  }
+
+  // The client ships a fixed harness password (?mpauto=1). Refusing it unless the
+  // operator opted in keeps a test affordance from being a public account-takeover path:
+  // without this, anyone can create an account under any free name and anyone else can
+  // then log into it, because the password is in the page source.
+  private refuseHarnessAuth(op: AuthOp, password: string): boolean {
+    if (this.ctx.config.login.allowHarnessAuth) return false;
+    if (password !== HARNESS_PASSWORD) return false;
+    log('warn', 'conn.harness_auth_refused', { ip: this.ip, op });
+    this.authFail(op, 'AUTH_FAILED', 'harness auth is disabled on this server');
+    return true;
   }
 
   // M8: a banned account is refused with BANNED at register, login and resume. Returns
@@ -828,6 +872,7 @@ export class Connection implements Peer {
       return;
     }
     if (this.refuseIfBanned('login', msg.account)) return;
+    if (this.refuseHarnessAuth('login', msg.password)) return;
     const account = await this.ctx.accounts.verifyLogin(msg.account, msg.password);
     if (!account) {
       this.authFail('login', 'AUTH_FAILED', 'unknown account or wrong password');

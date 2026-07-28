@@ -84,6 +84,16 @@ export class SocialStore {
         party   TEXT NOT NULL REFERENCES party(key) ON DELETE CASCADE
       );
       CREATE INDEX IF NOT EXISTS party_member_party ON party_member(party);
+      -- Mutes PERSIST: "I muted this person" must survive a relog, or the control is a
+      -- suggestion. muter = '@server' is a moderator mute (applies to everyone), which is
+      -- why this is one table rather than a per-player list — the lookup is identical.
+      CREATE TABLE IF NOT EXISTS mute (
+        muter TEXT NOT NULL,
+        muted TEXT NOT NULL,
+        since INTEGER NOT NULL,
+        PRIMARY KEY (muter, muted)
+      );
+      CREATE INDEX IF NOT EXISTS mute_muter ON mute(muter);
     `);
   }
 
@@ -193,6 +203,32 @@ export class SocialStore {
 
   setPresenceMode(account: AccountKey, mode: string): void {
     this.db.prepare('INSERT OR REPLACE INTO presence_pref (account, mode) VALUES (?, ?)').run(account, mode);
+  }
+
+  // --------------------------------------------------------------------- mutes
+
+  static readonly SERVER_MUTER = '@server';
+
+  addMute(muter: AccountKey, muted: AccountKey, now: number): void {
+    if (muter === muted) return;
+    this.db.prepare('INSERT OR IGNORE INTO mute (muter, muted, since) VALUES (?, ?, ?)').run(muter, muted, now);
+  }
+
+  removeMute(muter: AccountKey, muted: AccountKey): void {
+    this.db.prepare('DELETE FROM mute WHERE muter = ? AND muted = ?').run(muter, muted);
+  }
+
+  // True when `listener` should not hear/see `speaker`: either they muted them, or a
+  // moderator muted the speaker for everyone.
+  isMuted(listener: AccountKey, speaker: AccountKey): boolean {
+    return this.db
+      .prepare('SELECT 1 FROM mute WHERE muted = ? AND (muter = ? OR muter = ?)')
+      .get(speaker, listener, SocialStore.SERVER_MUTER) !== undefined;
+  }
+
+  mutesOf(muter: AccountKey): AccountKey[] {
+    return (this.db.prepare('SELECT muted FROM mute WHERE muter = ? ORDER BY since').all(muter) as
+      { muted: string }[]).map((r) => r.muted);
   }
 
   // -------------------------------------------------------------------- party

@@ -90,6 +90,10 @@ async function startGameServer(extraRules = '') {
   // sections we happen to have used.
   const sections = new Map([
     ['server', [`motd = "${motd}"`]],
+    // The browser clients log in via ?mpauto=1, whose password is fixed and public — real
+    // servers refuse it (see [login].allowHarnessAuth). These servers exist for exactly
+    // that traffic, so they opt in explicitly rather than the client being trusted.
+    ['login', ['allowHarnessAuth = true']],
     ['rules', ['respawnCellKey = "26,25"', 'respawnX = 216831.0', 'respawnY = 204909.0', 'respawnZ = 513.0']],
   ]);
   // Default section is `rules`: scenarios predating the merge export a bare key

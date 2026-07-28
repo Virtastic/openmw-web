@@ -9,7 +9,7 @@
 // is carried alongside, and only when the friend is actually online.
 
 import type { Player, Roster } from './players';
-import type { SocialStore, AccountKey } from './socialstore';
+import { SocialStore, type AccountKey } from './socialstore';
 import type { LValue, JsLike } from '../proto/lser';
 import type { WorldBrowser } from './worldbrowser';
 import { log } from '../log';
@@ -396,6 +396,33 @@ export class Social {
     return pa !== undefined && pa === this.partyOf.get(b);
   }
 
+  // ---------------------------------------------------------------------- mutes
+
+  // Player-level mute: persistent by design. A mute that evaporates on relog is not a
+  // control, it is a suggestion — and "I can silence this person" is the single thing that
+  // keeps an open voice/chat space usable.
+  mute(player: Player, targetAcct: AccountKey): SocialFailure | 'ok' {
+    if (targetAcct === player.accountKey) return 'self';
+    this.d.store.addMute(player.accountKey, targetAcct, this.d.now());
+    return 'ok';
+  }
+
+  unmute(player: Player, targetAcct: AccountKey): void {
+    this.d.store.removeMute(player.accountKey, targetAcct);
+  }
+
+  // Moderator mute: one row under the server pseudo-muter, so every listener's check is
+  // the same query and nobody has to remember to consult two lists.
+  setServerMuted(targetAcct: AccountKey, muted: boolean): void {
+    if (muted) this.d.store.addMute(SocialStore.SERVER_MUTER, targetAcct, this.d.now());
+    else this.d.store.removeMute(SocialStore.SERVER_MUTER, targetAcct);
+    log('info', 'social.server_mute', { account: targetAcct, muted });
+  }
+
+  isMuted(listener: AccountKey, speaker: AccountKey): boolean {
+    return this.d.store.isMuted(listener, speaker);
+  }
+
   // Phase 4: party membership for quest credit / loot rules. Hydrates from the store so a
   // member who formed the party in another world still counts here. Empty when solo.
   partyMembersOf(acct: AccountKey): AccountKey[] {
@@ -630,6 +657,15 @@ export class Social {
         this.reply(player, 'PartyAccept', r === 'ok', r);
         return true;
       }
+      case 'MuteAdd': {
+        const r = this.mute(player, str('acct'));
+        this.reply(player, 'MuteAdd', r === 'ok', r);
+        return true;
+      }
+      case 'MuteRemove':
+        this.unmute(player, str('acct'));
+        this.reply(player, 'MuteRemove', true, 'ok');
+        return true;
       case 'PartyLeave':
         this.partyLeave(player.accountKey);
         this.reply(player, 'PartyLeave', true, 'ok');

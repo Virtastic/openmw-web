@@ -230,6 +230,29 @@ export class ReportStore {
 export class Moderation {
   readonly chat: ChatLog;
   readonly reports: ReportStore;
+  // Phase 3.6: per-account anomaly tallies (implausible movement, capped hits, refused
+  // content). In memory by design — this is a LIVE signal a moderator reads next to the
+  // report queue ("this account tripped the speed envelope 400 times this session"), not
+  // evidence to keep forever about someone who may simply have had a bad connection.
+  private readonly anomalies = new Map<string, Map<string, number>>();
+
+  noteAnomaly(accountKey: string, kind: string): void {
+    const forAccount = this.anomalies.get(accountKey) ?? new Map<string, number>();
+    forAccount.set(kind, (forAccount.get(kind) ?? 0) + 1);
+    this.anomalies.set(accountKey, forAccount);
+  }
+
+  anomaliesFor(accountKey: string): Record<string, number> {
+    return Object.fromEntries(this.anomalies.get(accountKey) ?? []);
+  }
+
+  allAnomalies(): Record<string, Record<string, number>> {
+    return Object.fromEntries([...this.anomalies].map(([k, v]) => [k, Object.fromEntries(v)]));
+  }
+
+  forgetAnomalies(accountKey: string): void {
+    this.anomalies.delete(accountKey);
+  }
 
   constructor(dataDir: string, cfg: ModerationConfig) {
     this.chat = new ChatLog(dataDir, cfg);

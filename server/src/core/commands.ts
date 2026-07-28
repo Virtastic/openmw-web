@@ -12,6 +12,9 @@ import { log } from '../log';
 
 export interface CommandContext {
   roster: Roster;
+  // Phase 2.5: mute lookup for chat delivery (see chat.ts broadcastChat). Optional so a
+  // partial context in a test still constructs.
+  isMuted?(listenerAcct: string, speakerAcct: string): boolean;
   // Plugin hook: true = a plugin handled the command.
   onCommand(player: Player, name: string, args: string): boolean;
 }
