@@ -53,6 +53,14 @@ export async function startDirectory(deps: DirectoryDeps): Promise<RunningDirect
     const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
     const path = url.pathname;
 
+    // The game page is a DIFFERENT origin than this gateway, so every endpoint here is a
+    // cross-origin API. Set CORS on all responses and answer the preflight — without this the
+    // browser's POST /worlds (create-or-join) is blocked and shows only "Failed to fetch".
+    res.setHeader('access-control-allow-origin', req.headers.origin ?? '*');
+    res.setHeader('access-control-allow-methods', 'GET, POST, OPTIONS');
+    res.setHeader('access-control-allow-headers', 'content-type, authorization');
+    if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
+
     // Front door first: /auth/* and /locker/* are handled by the shared SSO + locker services.
     if (deps.frontDoor && (path.startsWith('/auth/') || path.startsWith('/locker/'))) {
       void Promise.resolve(deps.frontDoor(req, res, url)).then((claimed) => {

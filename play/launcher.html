@@ -390,6 +390,15 @@
 <script>
  'use strict';
  const $ = (id) => document.getElementById(id);
+ // Themed error dialog (reuses the .modal styling) instead of a raw browser alert().
+ function launcherError(title, msg){
+   const body = $('modal-body');
+   if (!body){ alert(title + ': ' + msg); return; }
+   body.innerHTML = '<div class="m-kicker">Multiplayer</div>'
+     + '<h3 id="modal-title">' + title + '</h3><p>' + msg + '</p>';
+   $('modal-bd').classList.add('show');
+   try { $('modal-close').focus(); } catch(e){}
+ }
  const hasFSA = typeof window.showDirectoryPicker === 'function';
 
  // --- Help modals: deep, docs-style detail per card, opened by the "?" icons. ---
@@ -764,7 +773,7 @@
    const err = /[#&]mperror=([^&]+)/.exec(h);
    if (err){
      history.replaceState(null,'',location.pathname);
-     alert('Sign-in failed: ' + decodeURIComponent(err[1]).replace(/_/g,' ') + '.');
+     launcherError('Sign-in failed', decodeURIComponent(err[1]).replace(/_/g,' ') + '. Please try again.');
      return;
    }
    const tk = /[#&]mpticket=([^&]+)/.exec(h);
@@ -773,7 +782,7 @@
    const ac = /[#&]mpaccount=([^&]+)/.exec(h);
    const gwUrl = localStorage.getItem('omw-mp-pending') || localStorage.getItem('omw-mp-url') || mpServerUrl();
    history.replaceState(null,'',location.pathname); // scrub the ticket from the address bar
-   if (!gwUrl || !ac){ alert('Sign-in did not complete. Please try again.'); return; }
+   if (!gwUrl || !ac){ launcherError('Sign-in did not complete', 'Something was missing from the sign-in. Please try again.'); return; }
    const gwHttp = httpBaseOf(gwUrl);
    const account = decodeURIComponent(ac[1]);
    // A new player lands in their own PRIVATE world — that is where character creation happens.
@@ -786,7 +795,7 @@
        body: JSON.stringify({ mode:'private', id: privId, account }) });
      world = await r.json();
      if (!r.ok || !world.port) throw new Error(world.error || 'the server could not open your world');
-   } catch(e){ alert('Could not open your world: ' + (e && e.message || e) + '\nIs the multiplayer server running?'); return; }
+   } catch(e){ launcherError('Could not open your world', (e && e.message || e) + '. The multiplayer server may be unreachable — please try again in a moment.'); return; }
    const wsProto = /^wss:/.test(gwUrl) ? 'wss' : 'ws';
    const worldWs = wsProto + '://' + world.host + ':' + world.port + '/ws';
    // mp = the WORLD socket; locker = the GATEWAY (a different origin). Ticket + locker + account
