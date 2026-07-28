@@ -578,6 +578,13 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     throw new Error(`[simPeer] mode = "on" but a peer cannot run: ${peerBlocker}`);
   }
   config.simPeer.enabled = config.simPeer.mode !== 'off' && peerBlocker === undefined;
+  // A sim peer on an SSO-only server authenticates with the shared server password (it is not
+  // a user and has no SSO identity). Without [server].password set, the peer could not log in
+  // AND the SSO-bypass for system peers would be unguarded — so refuse to boot, loudly.
+  if (config.simPeer.enabled && config.auth.requireSso && config.server.password === '') {
+    throw new Error('[simPeer] is enabled on an SSO-only server but [server].password is empty — '
+      + 'set a server password so the sim peer can authenticate (it is the peer\'s only credential)');
+  }
   log('info', 'simpeer.tier', {
     mode: config.simPeer.mode,
     enabled: config.simPeer.enabled,

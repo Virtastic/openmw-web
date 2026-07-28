@@ -768,9 +768,9 @@ export class Connection implements Peer {
   private async handleRegister(msg: SessionRegister): Promise<void> {
     if (!this.checkAuthGate('register', msg.serverPassword)) return;
     const cfg = this.ctx.config.login;
-    if (this.ctx.config.auth.requireSso) {
+    if (this.ctx.config.auth.requireSso && !this.systemAuthAllowed()) {
       // SSO-only server: there is nothing to register. Point them at the real door rather
-      // than a flat refusal.
+      // than a flat refusal. (A password-authenticated sim peer is exempt — see systemAuthAllowed.)
       this.authFail('register', 'AUTH_FAILED', 'this server uses single sign-on — no account/password');
       return;
     }
@@ -890,11 +890,20 @@ export class Connection implements Peer {
     }
   }
 
+  // A sim peer (isSystem, declared at hello) is infrastructure, not a user: it authenticates
+  // with the shared server password — verified in checkAuthGate — never SSO. So it is exempt
+  // from the SSO-only gate, but ONLY when a server password is actually configured. Without
+  // that, a stranger could set system=true in hello to bypass SSO; requiring the (secret,
+  // already-matched) password means only the operator's own peer clears this.
+  private systemAuthAllowed(): boolean {
+    return this.isSystem && this.ctx.config.server.password !== '';
+  }
+
   private async handleLogin(msg: SessionLoginRequest): Promise<void> {
     if (!this.checkAuthGate('login', msg.serverPassword)) return;
     // Phase B: an operator can turn the password path off entirely (SSO-only server).
     // Registration is gated separately by [login].allowRegistration.
-    if (this.ctx.config.auth.requireSso || !this.ctx.config.auth.allowPasswordLogin) {
+    if ((this.ctx.config.auth.requireSso || !this.ctx.config.auth.allowPasswordLogin) && !this.systemAuthAllowed()) {
       this.authFail('login', 'AUTH_FAILED', 'this server uses single sign-on — no account/password');
       return;
     }
