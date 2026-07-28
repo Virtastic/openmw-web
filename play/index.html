@@ -1594,20 +1594,45 @@
              try { files = await runWizard(needed, []); } catch(e){ return bounce('Upload failed: '+(e&&e.message||e)); }
              if (!files || !files.length) return bounce('No files were accepted. Make sure you picked a real Morrowind Data Files folder.');
            }
-           // Stream every stored file from a presigned URL. StreamFS.mount does HTTP Range,
-           // so nothing is downloaded until the engine actually reads it.
-           append('[locker] streaming '+files.length+' files from your library…');
+           // Content files (.esm/.esp) are read HEAVILY at load and during play — the engine
+           // walks the whole ESM into its record store. Streaming those over the network makes
+           // every read a synchronous round-trip that STALLS the main thread ("page unresponsive").
+           // So DOWNLOAD content files in full into memory (they total ~90MB) and only STREAM the
+           // big BSAs (meshes/textures, read a little at a time). This mirrors the retail path.
+           var LD = window.__omwLoading;
+           function ldSet(pct,label,detail){ if(LD) LD.set(pct,label,detail); }
+           async function fetchFull(url, size, name){
+             var r = await fetch(url);
+             if (!r.ok && r.status !== 206) throw new Error('HTTP '+r.status);
+             if (!r.body || !r.body.getReader) return await r.arrayBuffer();
+             var reader=r.body.getReader(), chunks=[], got=0, last=-5;
+             for(;;){ var x=await reader.read(); if(x.done) break; chunks.push(x.value); got+=x.value.length;
+               var pct = size ? Math.floor(got*100/size) : 0;
+               if (pct >= last+5){ last=pct; ldSet(pct,'Downloading', name+'  '+Math.round(got/1048576)+'MB'); }
+             }
+             var out=new Uint8Array(got), p=0; for(var i=0;i<chunks.length;i++){ out.set(chunks[i],p); p+=chunks[i].length; }
+             return out.buffer;
+           }
+           append('[locker] loading '+files.length+' files from your library…');
+           ldSet(null,'Loading your library');
            FS.mkdirTree('/mwdata');
            var fbarch=[], content=[], hasVideoBik=false;
            var mounted=[];
            for (const f of files){
              var dl = await (await api('/locker/download?name='+encodeURIComponent(f.name))).json();
              if (!dl || !dl.url){ append('[locker] cannot fetch '+f.name,'err'); continue; }
-             StreamFS.mount('/mwdata/'+f.name, dl.url, f.size);
-             mounted.push(f.name);
-             if (/\.bsa$/i.test(f.name)) fbarch.push(f.name);
-             else if (/\.(esm|esp|omwaddon)$/i.test(f.name)) content.push(f.name);
+             if (/\.bsa$/i.test(f.name)){
+               ldSet(null,'Preparing', f.name);
+               StreamFS.mount('/mwdata/'+f.name, dl.url, f.size); // lazy: read on demand
+               mounted.push(f.name);
+               fbarch.push(f.name);
+             } else if (/\.(esm|esp|omwaddon)$/i.test(f.name)){
+               var buf = await fetchFull(dl.url, f.size, f.name); // full download to memory
+               FS.writeFile('/mwdata/'+f.name, new Uint8Array(buf));
+               content.push(f.name);
+             }
            }
+           ldSet(null,'Starting Morrowind');
            // Presigned download URLs are minted with a 1h life; a play session is longer, and
            // StreamFS keeps reading Ranges against the SAME mounted URL for the whole session.
            // So re-sign every mounted file well before expiry and swap the fresh URL in. The
