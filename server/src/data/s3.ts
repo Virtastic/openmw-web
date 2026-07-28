@@ -71,10 +71,17 @@ export class S3Storage {
   // key cannot be pointed at another. Expiry is short by default: these are handed to a
   // browser, and a long-lived URL is a credential with no revocation.
   private presign(method: 'GET' | 'PUT' | 'DELETE', key: string, extraQuery: Record<string, string> = {}): string {
+    return this.signedUrl(method, this.objectPath(key), extraQuery);
+  }
+
+  // The signing core, over an EXPLICIT path. A bucket-level list is a different path than
+  // an object (no trailing slash, no key), and the signature must be computed over exactly
+  // the path the URL uses — the earlier version signed an object path and then string-
+  // replaced it, so the signature no longer matched (OVH answered 403).
+  private signedUrl(method: 'GET' | 'PUT' | 'DELETE', path: string, extraQuery: Record<string, string> = {}): string {
     const now = new Date();
     const { long, short } = amzDate(now);
     const credentialScope = `${short}/${this.s.region}/s3/aws4_request`;
-    const path = this.objectPath(key);
     const host = this.host();
 
     const query: Record<string, string> = {
@@ -117,11 +124,13 @@ export class S3Storage {
   // Erasure. Listing is a signed GET on the bucket with a prefix; each object is then
   // deleted individually. Slower than a bulk delete and deliberately so — this runs on a
   // delete-my-data request, where being correct matters far more than being quick.
+  // The path of a bucket-level operation (list): "/<bucket>" path-style, "/" virtual-host.
+  private bucketPath(): string {
+    return this.s.pathStyle === false ? '/' : `/${encodeURIComponent(this.s.bucket)}`;
+  }
+
   async delete(prefix: string): Promise<void> {
-    const listUrl = this.presign('GET', '', {
-      'list-type': '2',
-      prefix,
-    }).replace(this.objectPath(''), this.s.pathStyle === false ? '/' : `/${encodeURIComponent(this.s.bucket)}`);
+    const listUrl = this.signedUrl('GET', this.bucketPath(), { 'list-type': '2', prefix });
     try {
       const res = await fetch(listUrl, { signal: AbortSignal.timeout(30_000) });
       if (!res.ok) {
