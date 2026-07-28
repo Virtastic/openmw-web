@@ -1644,21 +1644,41 @@
              var out=new Uint8Array(got), p=0; for(var i=0;i<chunks.length;i++){ out.set(chunks[i],p); p+=chunks[i].length; }
              return out.buffer;
            }
+           // Content-addressed local cache: content files are keyed by their sha256, so a repeat
+           // visit reads them from the browser's Cache storage instead of re-downloading ~90MB
+           // from S3 every time. The hash comes from the locker manifest, so a re-uploaded (changed)
+           // file has a new hash -> cache miss -> re-download. Persists across sessions.
+           var LOCKER_CACHE = 'omw-locker-v1';
+           async function cacheGet(sha){
+             if (!self.caches || !sha) return null;
+             try { var c=await caches.open(LOCKER_CACHE); var hit=await c.match('https://locker.local/'+sha); return hit ? await hit.arrayBuffer() : null; } catch(e){ return null; }
+           }
+           async function cachePut(sha, buf){
+             if (!self.caches || !sha) return;
+             try { var c=await caches.open(LOCKER_CACHE); await c.put('https://locker.local/'+sha, new Response(buf)); } catch(e){ /* quota — non-fatal */ }
+           }
            append('[locker] loading '+files.length+' files from your library…');
            ldSet(null,'Loading your library');
            FS.mkdirTree('/mwdata');
            var fbarch=[], content=[], hasVideoBik=false;
            var mounted=[];
            for (const f of files){
-             var dl = await (await api('/locker/download?name='+encodeURIComponent(f.name))).json();
-             if (!dl || !dl.url){ append('[locker] cannot fetch '+f.name,'err'); continue; }
              if (/\.bsa$/i.test(f.name)){
+               var dlb = await (await api('/locker/download?name='+encodeURIComponent(f.name))).json();
+               if (!dlb || !dlb.url){ append('[locker] cannot fetch '+f.name,'err'); continue; }
                ldSet(null,'Preparing', f.name);
-               StreamFS.mount('/mwdata/'+f.name, dl.url, f.size); // lazy: read on demand
+               StreamFS.mount('/mwdata/'+f.name, dlb.url, f.size); // lazy: read on demand
                mounted.push(f.name);
                fbarch.push(f.name);
              } else if (/\.(esm|esp|omwaddon)$/i.test(f.name)){
-               var buf = await fetchFull(dl.url, f.size, f.name); // full download to memory
+               var buf = await cacheGet(f.sha256);
+               if (buf){ ldSet(null,'Loading', f.name+' (cached)'); append('[locker] '+f.name+' from local cache'); }
+               else {
+                 var dlc = await (await api('/locker/download?name='+encodeURIComponent(f.name))).json();
+                 if (!dlc || !dlc.url){ append('[locker] cannot fetch '+f.name,'err'); continue; }
+                 buf = await fetchFull(dlc.url, f.size, f.name); // full download to memory
+                 await cachePut(f.sha256, buf);
+               }
                FS.writeFile('/mwdata/'+f.name, new Uint8Array(buf));
                content.push(f.name);
              }
