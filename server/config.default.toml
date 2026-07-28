@@ -69,6 +69,11 @@ sayScope = "world"
 # the group), "off" (a public world: one stranger must not fast-forward a hundred people
 # into the night).
 timeSkip = "anyone"
+# Phase 4: scale hostile NPCs to the party members standing WITH you (sub-linear, because
+# a group's real advantage is action economy rather than raw numbers), and enable the
+# party loot rules (gold split on, roll-on-rare off — the leader toggles both). A solo
+# player is never affected: the rule keys on co-present members beyond the first.
+partyScaling = true
 # Difficulty is surfaced in SessionWelcome.flags and applied CLIENT-side, in the victim's
 # own combat pipeline (the server never computes damage). Morrowind scale: -100..100.
 difficulty = 0

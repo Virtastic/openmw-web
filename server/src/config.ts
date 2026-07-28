@@ -82,6 +82,10 @@ export interface Config {
     // 'anyone' (M7 behaviour), 'party' (leader only, or a solo player in their own
     // world), 'off' (public worlds: time flows continuously).
     timeSkip: 'anyone' | 'party' | 'off';
+    // Phase 4: scale hostile NPCs to the number of party members STANDING WITH YOU, and
+    // enable the party loot rules. Default on for party campaigns; a solo player is never
+    // affected because the rule keys on co-present members beyond the first.
+    partyScaling: boolean;
     difficulty: number;
   };
   engine: { enforce: 'warn' | 'refuse' | 'off' };
@@ -343,6 +347,7 @@ function validate(t: Tree): Config {
       safeCells: reqStrArray(t, 'rules', 'safeCells'),
       sayScope: reqEnum(t, 'rules', 'sayScope', ['world', 'proximity'] as const),
       timeSkip: reqEnum(t, 'rules', 'timeSkip', ['anyone', 'party', 'off'] as const),
+      partyScaling: reqBool(t, 'rules', 'partyScaling'),
       difficulty: reqSignedNum(t, 'rules', 'difficulty'),
     },
     engine: { enforce: reqEnum(t, 'engine', 'enforce', ['warn', 'refuse', 'off'] as const) },

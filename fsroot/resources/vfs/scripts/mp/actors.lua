@@ -11,6 +11,7 @@ local world = require('openmw.world')
 local mp = require('openmw.mp')
 
 local json = require('scripts.mp.json')
+local threat = require('scripts.mp.threat')
 
 local actors = {}
 
@@ -103,12 +104,32 @@ end
 local function broadcastCell(cellKey, epoch, cell, now)
     local batch = {}
     local live = cellActors(cellKey)
+    -- Phase 4: threat decays continuously, so a hit landed a minute ago stops owning the
+    -- fight. Cheap: a multiply per tracked (actor, player) pair, and only for actors in
+    -- the cell we are simulating.
+    threat.decay(now)
     for _, obj in ipairs(live) do
         local key = refKeyOf(obj)
         cell.actors[key] = cell.actors[key] or { deathNo = 0 }
         local tracked = cell.actors[key]
         tracked.obj = obj
         tracked.seen = now
+
+        -- Party scaling applies once, when the actor first enters combat: a member
+        -- arriving must not visibly inflate a health bar mid-fight.
+        if threat.scaling() and types.Actor.isInCombat and pcall(function() return types.Actor.isInCombat(obj) end) then
+            threat.applyScaling(obj, key, false)
+        end
+        -- Sticky aggro: retarget only when a challenger clears the margin, which is what
+        -- stops the enemy strobing between two players and hitting neither.
+        local want = threat.targetOf(key)
+        if want then
+            local target = nil
+            for _, p in ipairs(world.players) do
+                if p:isValid() and deps.playerIdOfFn and deps.playerIdOfFn(p) == want then target = p end
+            end
+            if target then pcall(function() types.Actor.setStance(obj, types.Actor.STANCE.Weapon) end) end
+        end
 
         batch[#batch + 1] = actorPose(obj)
 
@@ -205,6 +226,9 @@ actors.handlers = {}
 actors.handlers.MP_ActorAuthorityGrant = function(data)
     local cellKey = data.cellKey
     if not cellKey then return end
+    -- Inherit the outgoing holder's threat state: without it every fight in the cell
+    -- visibly forgets who it was angry at the moment authority moves.
+    if data.snapshot and data.snapshot.threat then threat.import(data.snapshot.threat) end
     -- Becoming holder: detach any puppets we had on these actors, apply the snapshot, and
     -- the engine's own AI resumes (mDisableAI cleared by MP_Detach).
     detachActorPuppetsInCell(cellKey)

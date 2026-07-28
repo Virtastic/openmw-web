@@ -423,6 +423,36 @@ export class Social {
     return this.d.store.isMuted(listener, speaker);
   }
 
+  // Phase 4 party rules the LEADER toggles for the group. Defaults chosen so a party that
+  // never opens the panel still behaves the way friends expect: gold splits (first-grab on
+  // gold is the one thing that reliably breeds resentment), rolling does not interrupt.
+  partySettings(acct: AccountKey): { goldSplit: boolean; rollOnRare: boolean } {
+    this.loadParty(acct);
+    const key = this.partyOf.get(acct);
+    if (key === undefined) return { goldSplit: false, rollOnRare: false };
+    return {
+      goldSplit: (this.d.store.partySetting(key, 'goldSplit') ?? 'true') === 'true',
+      rollOnRare: (this.d.store.partySetting(key, 'rollOnRare') ?? 'false') === 'true',
+    };
+  }
+
+  setPartySetting(player: Player, name: string, value: boolean): SocialFailure | 'ok' {
+    const key = this.partyOf.get(player.accountKey);
+    const party = key !== undefined ? this.parties.get(key) : undefined;
+    if (!party) return 'not_in_party';
+    if (party.leader !== player.accountKey) return 'not_leader';
+    if (name !== 'goldSplit' && name !== 'rollOnRare') return 'no_such_player';
+    this.d.store.setPartySetting(key!, name, value ? 'true' : 'false');
+    for (const m of party.members) this.sendParty(m);
+    return 'ok';
+  }
+
+  isPartyLeader(acct: AccountKey): boolean {
+    const key = this.partyOf.get(acct);
+    const party = key !== undefined ? this.parties.get(key) : undefined;
+    return party?.leader === acct;
+  }
+
   // Phase 4: party membership for quest credit / loot rules. Hydrates from the store so a
   // member who formed the party in another world still counts here. Empty when solo.
   partyMembersOf(acct: AccountKey): AccountKey[] {
@@ -688,6 +718,11 @@ export class Social {
           payload: typeof payload === 'string' ? payload : '',
         });
         this.reply(player, 'VoiceSignal', true, 'ok');
+        return true;
+      }
+      case 'PartySetting': {
+        const r = this.setPartySetting(player, str('name'), str('value') === 'true');
+        this.reply(player, 'PartySetting', r === 'ok', r);
         return true;
       }
       case 'MuteAdd': {

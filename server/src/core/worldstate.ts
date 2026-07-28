@@ -95,6 +95,14 @@ export class WorldState {
     this.noDrop = opts.noDrop;
   }
 
+  // Phase 4 party loot rules (gold split, roll-on-rare). Absent = vanilla free-for-all.
+  private partyRules?: import('./party-rules').PartyRules;
+  private goldIds = new Set(['gold_001', 'gold_005', 'gold_010', 'gold_025', 'gold_100']);
+
+  setPartyRules(rules: import('./party-rules').PartyRules): void {
+    this.partyRules = rules;
+  }
+
   constructor(
     private readonly roster: Roster,
     private readonly cells: CellStore,
@@ -539,8 +547,29 @@ export class WorldState {
         log('debug', 'world.quest_item_kept', { itemId, by: player.name, cellKey });
         return;
       }
+      // Phase 4: a notable item may be ROLLED for instead of taken outright (leader
+      // setting, off by default). The take is refused and everyone co-present is asked;
+      // the winner receives it when the roll settles.
+      if (this.partyRules?.shouldRoll(player, itemId)) {
+        const { rollId } = this.partyRules.startRoll(player, itemId);
+        reply(false, 'rolling', cont.stateSeq);
+        log('info', 'world.loot_roll', { itemId, rollId, by: player.name });
+        return;
+      }
       item.n -= n;
       if (item.n === 0) cont.items.splice(cont.items.indexOf(item), 1);
+      // Gold splits among co-present party members — the one drop where first-grab
+      // reliably breeds resentment. Everything else stays free-for-all.
+      if (this.goldIds.has(itemId.toLowerCase())) {
+        const split = this.partyRules?.splitGold(player, n);
+        if (split) {
+          for (const s of split) {
+            const p = this.roster.inWorld().find((x) => x.accountKey === s.acct);
+            p?.peer.sendEvent('LootShare', { itemId, n: s.share, from: player.name });
+          }
+          log('info', 'world.gold_split', { total: n, ways: split.length, by: player.name });
+        }
+      }
     } else {
       // put: always accepted except hard caps (conservation guard, not gameplay).
       if (item && item.n + n > MAX_COUNT) {

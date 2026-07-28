@@ -103,6 +103,10 @@ export interface ServerCtx {
   // World access control (F3): may this account be in THIS world at all? Private = owner
   // only, party = owner/members/admins. Checked at auth, after the account is resolved.
   mayJoinWorld(accountKey: string, rank: number): boolean;
+  // Phase 4: tell a client how many party members are standing with it, so the cell's
+  // authority holder can scale the fight. Recomputed on join and on every cell change —
+  // the number that matters is who is HERE, not who is in the party.
+  sendPartyScaling?(player: Player): void;
   motd(): string; // mutable at runtime via /motd
 }
 
@@ -606,6 +610,8 @@ export class Connection implements Peer {
       return;
     }
     const oldCell = player.cellKey;
+    // Co-presence changed, so the scaling did too.
+    queueMicrotask(() => this.ctx.sendPartyScaling?.(player));
     player.cellKey = cellKey;
     const prev = player.pose;
     player.pose = {
@@ -1003,6 +1009,7 @@ export class Connection implements Peer {
     syncStateOnJoin(this.ctx.stateCtx, this.player); // M2 late-joiner appearance/equipment sync
     this.ctx.quests.sendJournalSync(this.player); // M6 full journal state at join
     this.ctx.quests.sendGlobalSync(this.player); // Phase 4 character-shadowed quest globals
+    this.ctx.sendPartyScaling?.(this.player); // Phase 4 difficulty scaling for this cell
     this.ctx.m7.onJoinWorld(this.player); // M7 clock + weather + RecordsSync at join
     this.ctx.social.onJoin(this.player); // Phase C FriendList + presence to friends
     // M8 resume completeness: a rejoin-in-place gets everything a fresh join gets

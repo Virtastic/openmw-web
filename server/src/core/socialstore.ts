@@ -84,6 +84,14 @@ export class SocialStore {
         party   TEXT NOT NULL REFERENCES party(key) ON DELETE CASCADE
       );
       CREATE INDEX IF NOT EXISTS party_member_party ON party_member(party);
+      -- Leader-toggled party rules. Persisted with the party so a group's settings survive
+      -- the leader hopping worlds (or handing over).
+      CREATE TABLE IF NOT EXISTS party_setting (
+        party TEXT NOT NULL REFERENCES party(key) ON DELETE CASCADE,
+        name  TEXT NOT NULL,
+        value TEXT NOT NULL,
+        PRIMARY KEY (party, name)
+      );
       -- Mutes PERSIST: "I muted this person" must survive a relog, or the control is a
       -- suggestion. muter = '@server' is a moderator mute (applies to everyone), which is
       -- why this is one table rather than a per-player list — the lookup is identical.
@@ -266,6 +274,16 @@ export class SocialStore {
   partyDissolve(key: string): void {
     // party_member rows go via ON DELETE CASCADE.
     this.db.prepare('DELETE FROM party WHERE key = ?').run(key);
+  }
+
+  partySetting(key: string, name: string): string | undefined {
+    const row = this.db.prepare('SELECT value FROM party_setting WHERE party = ? AND name = ?').get(key, name) as
+      { value: string } | undefined;
+    return row?.value;
+  }
+
+  setPartySetting(key: string, name: string, value: string): void {
+    this.db.prepare('INSERT OR REPLACE INTO party_setting (party, name, value) VALUES (?, ?, ?)').run(key, name, value);
   }
 
   partyTouch(key: string, now: number): void {

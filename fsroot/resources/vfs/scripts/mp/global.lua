@@ -13,6 +13,7 @@ local world = require('openmw.world')
 local json = require('scripts.mp.json')
 local net = require('scripts.mp.net')
 local voice = require('scripts.mp.voice')
+local threat = require('scripts.mp.threat')
 local objects = require('scripts.mp.objects')
 local actors = require('scripts.mp.actors')
 local combat = require('scripts.mp.combat')
@@ -718,6 +719,15 @@ local eventHandlers = {
     MP_InviteReceived = function(data) toPlayer('MP_InviteReceived', data) end,
     MP_PresenceUpdate = function(data) toPlayer('MP_PresenceUpdate', data) end,
     MP_PartyUpdate = function(data) toPlayer('MP_PartyUpdate', data) end,
+    -- Phase 4: how many party members are standing with us. The cell's authority holder
+    -- applies it to the actors it simulates; a solo player gets 1x and nothing changes.
+    MP_PartyScaling = function(data)
+        threat.setScaling(data and data.members and data.members > 1 and {
+            hp = data.hp or 1, damage = data.damage or 1,
+            extraSpawns = data.extraSpawns or 0, members = data.members,
+        } or nil)
+        mp.testSet('partyScaling', json.encode(data or {}))
+    end,
     MP_PartyInviteReceived = function(data) toPlayer('MP_PartyInviteReceived', data) end,
     MP_SocialResult = function(data) toPlayer('MP_SocialResult', data) end,
     -- Party voice: signalling only (never audio). Handed straight to the JS mesh.

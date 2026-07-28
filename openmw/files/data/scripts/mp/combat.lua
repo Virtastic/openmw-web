@@ -15,6 +15,7 @@ local core = require('openmw.core')
 local types = require('openmw.types')
 local util = require('openmw.util')
 local mp = require('openmw.mp')
+local threat = require('scripts.mp.threat')
 
 local combat = {}
 
@@ -107,7 +108,19 @@ end
 
 combat.handlers = {}
 
+-- Phase 4: every hit an actor takes credits the DEALER's threat, which is the only way a
+-- summoner or a damage-over-time caster is visible to the AI at all — in vanilla their pet
+-- does the hitting and they are ignored entirely.
+local function creditThreat(data)
+    local ref = data.ref
+    local ok, valid = pcall(function() return ref and ref:isValid() end)
+    if not (ok and valid) then return end
+    local dmg = (data.damage and data.damage.health) or 0
+    if dmg > 0 and data.byId then threat.addDamage('o:' .. ref.id, data.byId, dmg) end
+end
+
 combat.handlers.MP_CombatHit = function(data)
+    creditThreat(data)
     local victim = resolveVictim(data)
     if not victim then return end
     local info = attackInfoFrom(data)

@@ -12,6 +12,7 @@ import { AccountStore } from './core/accounts';
 import { AttioHook } from './integrations/attio';
 import { ContentTable } from './core/content-table';
 import { ModWhitelist } from './core/mod-whitelist';
+import { PartyRules } from './core/party-rules';
 import { adminDashboardRoutes } from './net/admin-http';
 import { PlayerStore } from './persist/playerstore';
 import { CellStore } from './persist/cellstore';
@@ -328,6 +329,17 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       : {}),
   });
   socialRef = social;
+  // Phase 4 party rules: difficulty scaling, gold split and the roll. Keyed on
+  // CO-PRESENCE, so a member shopping elsewhere neither buffs your dungeon nor takes a
+  // cut of what you find in it.
+  const partyRules = new PartyRules({
+    roster,
+    partyOf: (acct) => social.partyMembersOf(acct),
+    settingsOf: (acct) => social.partySettings(acct),
+    isNotable: (recordId) => contentTable.isNotableItem(recordId),
+    enabled: config.rules.partyScaling,
+  });
+  world.setPartyRules(partyRules);
 
   const contentGate = new ContentGate(config.content.enforce);
   // Approved cosmetic mods (meshes/textures) may differ between players; record-bearing
@@ -364,6 +376,14 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     // this is the authorization: private = owner only, party = owner or a current member
     // of the party this world belongs to (worldId 'party-<partyKey>'), admins always
     // (moderation must be able to enter anywhere). Public/default worlds admit everyone.
+    // Phase 4: the holder scales the fight, so it needs the co-present count. Sent to the
+    // player whose situation changed; the holder applies it to the cell it simulates.
+    sendPartyScaling: (player) => {
+      const s = partyRules.scalingFor(player);
+      player.peer.sendEvent('PartyScaling', s === null
+        ? { members: 1, hp: 1, damage: 1, extraSpawns: 0 }
+        : { members: s.members, hp: s.hp, damage: s.damage, extraSpawns: s.extraSpawns });
+    },
     mayJoinWorld: (accountKey: string, rank: number): boolean => {
       if (worldMode === 'public' || worldOwner === '') return true;
       if (rank >= 1 || accountKey === worldOwner) return true;
