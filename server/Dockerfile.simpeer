@@ -1,0 +1,87 @@
+# Copyright (C) 2025-2026 Virtastic - https://virtastic.app
+# SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
+#
+# Linux native build of the Phase H simulation peer: OpenMW (our fork, with OPENMW_HEADLESS
+# and the mwmp transport) built with rendering disabled, for the tier-2 deploy target.
+#
+# An upstream OpenMW binary CANNOT be used — it has neither OPENMW_HEADLESS nor our mwmp
+# WebSocket transport, both of which are fork-local additions. So we build the fork.
+#
+# Linux is the easy platform for this: unlike macOS/brew, every dependency but one is
+# apt-installable. The exception is Bullet, which OpenMW wants in DOUBLE precision
+# (BulletConfig-float64.cmake) and Ubuntu ships single, so it is built from source here.
+#
+#   docker build -f server/Dockerfile.simpeer -t openmw-simpeer .
+# The result carries /usr/local/bin/openmw + its resources; run with OPENMW_HEADLESS=1.
+
+FROM ubuntu:24.04 AS build
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Toolchain + every OpenMW dependency that Ubuntu packages directly.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      build-essential cmake ninja-build git ca-certificates pkg-config \
+      libopenscenegraph-dev libsdl2-dev libopenal-dev \
+      libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libswresample-dev \
+      libboost-filesystem-dev libboost-program-options-dev libboost-system-dev libboost-iostreams-dev \
+      libbz2-dev liblz4-dev libz-dev \
+      libluajit-5.1-dev librecast-dev libsqlite3-dev \
+      libfreetype-dev libtinyxml-dev libyaml-cpp-dev libicu-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# MyGUI 3.4.3 from source: Ubuntu 24.04 ships 3.4.2 and OpenMW requires >= 3.4.3. Built with
+# MYGUI_DONT_USE_OBSOLETE=ON — without it the OpenMW link fails on `non-virtual thunk` symbols,
+# the exact wall the macOS build hit. Platform/demos/tools off; only the engine lib is needed.
+RUN git clone --depth 1 --branch MyGUI3.4.3 https://github.com/MyGUI/mygui.git /tmp/mygui \
+    && cmake -S /tmp/mygui -B /tmp/mygui/build -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+        -DMYGUI_DONT_USE_OBSOLETE=ON -DMYGUI_RENDERSYSTEM=1 \
+        -DMYGUI_BUILD_DEMOS=OFF -DMYGUI_BUILD_TOOLS=OFF -DMYGUI_BUILD_PLUGINS=OFF \
+        -DMYGUI_BUILD_UNITTESTS=OFF -DMYGUI_BUILD_TEST_APP=OFF \
+        -DCMAKE_INSTALL_PREFIX=/usr/local \
+    && cmake --build /tmp/mygui/build --target install \
+    && rm -rf /tmp/mygui
+
+# Double-precision Bullet from source — Ubuntu's libbullet-dev is single precision and
+# OpenMW's physics wants float64. Pinned to the same 3.x line the macOS peer used.
+RUN git clone --depth 1 --branch 3.25 https://github.com/bulletphysics/bullet3.git /tmp/bullet \
+    && cmake -S /tmp/bullet -B /tmp/bullet/build -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+        -DUSE_DOUBLE_PRECISION=ON -DBUILD_SHARED_LIBS=OFF \
+        -DBUILD_BULLET2_DEMOS=OFF -DBUILD_CPU_DEMOS=OFF -DBUILD_EXTRAS=OFF \
+        -DBUILD_UNIT_TESTS=OFF -DINSTALL_LIBS=ON -DCMAKE_INSTALL_PREFIX=/usr/local \
+    && cmake --build /tmp/bullet/build --target install \
+    && rm -rf /tmp/bullet
+
+# The engine source. Everything under openmw/ is the fork; the mp additions live in
+# apps/openmw/mwmp and the headless guards in apps/openmw/engine.cpp.
+COPY openmw /src/openmw
+
+# Tools OFF (no launcher/wizard/opencs): the peer never renders a menu, and turning them off
+# also avoids the Qt dependency. The APPLE-only bundling guard added for the macOS build does
+# not apply here.
+RUN cmake -S /src/openmw -B /build -G Ninja \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DBUILD_OPENMW=ON -DBUILD_LAUNCHER=OFF -DBUILD_WIZARD=OFF -DBUILD_OPENCS=OFF \
+      -DBUILD_BSATOOL=OFF -DBUILD_ESMTOOL=OFF -DBUILD_NIFTEST=OFF -DBUILD_BULLETOBJECTTOOL=OFF \
+      -DBUILD_ESSIMPORTER=OFF -DBUILD_MWINIIMPORTER=OFF -DBUILD_NAVMESHTOOL=OFF \
+      -DUSE_QT=OFF -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+    && cmake --build /build --target openmw \
+    && cmake --install /build --component openmw 2>/dev/null || cmake --build /build --target install
+
+# Runtime image: the binary, its resources, and the shared libs it links. No game data —
+# that is bring-your-own at the mount, exactly as documented in SELF_HOSTING.md.
+FROM ubuntu:24.04 AS runtime
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      libopenscenegraph161 libsdl2-2.0-0 libopenal1 \
+      libavcodec60 libavformat60 libavutil58 libswscale7 libswresample4 \
+      libluajit-5.1-2 libmygui.openmw librecast1 libsqlite3-0 libyaml-cpp0.8 libicu74 \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=build /usr/local/bin/openmw /usr/local/bin/openmw
+COPY --from=build /usr/local/share/openmw /usr/local/share/openmw
+COPY --from=build /usr/local/lib/libBullet*.so* /usr/local/lib/
+RUN ldconfig
+# SDL offscreen driver: a displayless box has no X11, so the hidden window from the macOS
+# path is replaced by SDL's offscreen video backend. Proven only by SDL docs so far.
+ENV SDL_VIDEODRIVER=offscreen
+ENTRYPOINT ["openmw"]
