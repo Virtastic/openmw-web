@@ -337,6 +337,23 @@ handlers.MP_GlobalVarUpdate = function(data)
     end
 end
 
+-- Phase 4: this CHARACTER's shadowed quest globals, restored at join. They never travel
+-- between players (that is what stops two party members at different stages overwriting
+-- each other), so this is the only way progress survives a relog or a world hop.
+handlers.MP_GlobalVarSync = function(data)
+    local n = 0
+    for name, value in pairs(data.globals or {}) do
+        if type(name) == 'string' and type(value) == 'number' and not TIME_GLOBALS[string.lower(name)] then
+            globals[name] = value
+            applying = true
+            local ok = pcall(function() globalStore()[name] = value end)
+            applying = false
+            if ok then n = n + 1 end
+        end
+    end
+    if n > 0 then print('[mp] restored ' .. tostring(n) .. ' character globals') end
+end
+
 handlers.MP_MemberVarUpdate = function(data)
     if type(data.name) ~= 'string' or type(data.value) ~= 'number' then return end
     local obj = data.ref

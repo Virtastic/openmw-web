@@ -39,6 +39,9 @@ export interface CellDoc {
   actorDeaths?: Record<string, number>;
   // M6: per-object MWScript locals, refKey -> {varName: value}.
   memberVars?: Record<string, Record<string, number>>;
+  // Phase 4: refKey -> false for objects a script DISABLED. Enabled is the vanilla
+  // default, so only disables are recorded (see WorldState.enabled).
+  enabled?: Record<string, false>;
 }
 
 export function emptyCellDoc(): CellDoc {

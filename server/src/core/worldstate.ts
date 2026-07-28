@@ -28,6 +28,7 @@ const WORLD_EVENTS = new Set([
   'ObjectDelete',
   'ObjectMove',
   'ObjectLock',
+  'ObjectEnabled',
   'DoorState',
   'ContainerOpen',
   'ContainerOpRequest',
@@ -151,6 +152,7 @@ export class WorldState {
       case 'ObjectDelete': this.enqueue(() => this.delete(player, body)); break;
       case 'ObjectMove': this.enqueue(() => this.move(player, body)); break;
       case 'ObjectLock': this.enqueue(() => this.lock(player, body)); break;
+      case 'ObjectEnabled': this.enqueue(() => this.enabled(player, body)); break;
       case 'DoorState': this.enqueue(() => this.door(player, body)); break;
       case 'ContainerOpen': this.enqueue(() => this.containerOpen(player, body)); break;
       case 'ContainerOpRequest': this.enqueue(() => this.containerOp(player, body)); break;
@@ -411,6 +413,29 @@ export class WorldState {
     });
   }
 
+  // Phase 4: enable/disable of a placed ref. Morrowind's quest scripts reveal and hide
+  // world objects constantly (the Ghostfence coming down, a quest NPC appearing, a door
+  // becoming real) — none of it was synced before this, so one player's scripted reveal
+  // was invisible to everyone else in the cell. Persisted like locks so a late joiner
+  // and a cell reload both see the current truth.
+  private async enabled(player: Player, body: LTable): Promise<void> {
+    const got = await this.docAndRef(player, body, 'ObjectEnabled');
+    if (!got) return;
+    const { doc, ref, cellKey } = got;
+    const on = body.get('enabled');
+    if (typeof on !== 'boolean') {
+      this.invalid(player, 'ObjectEnabled');
+      return;
+    }
+    const map = (doc.enabled ??= {});
+    // Enabled is the vanilla default: record only the DISABLED state, so the doc does not
+    // grow a row for every object a script ever touches.
+    if (on) delete map[ref.key];
+    else map[ref.key] = false;
+    this.cells.markDirty(cellKey);
+    this.relayCell(cellKey, 'ObjectEnabled', { ...objRefToJs(ref), cellKey, enabled: on, byId: player.id });
+  }
+
   private async door(player: Player, body: LTable): Promise<void> {
     const got = await this.docAndRef(player, body, 'DoorState');
     if (!got) return;
@@ -522,6 +547,9 @@ export class WorldState {
         containers: Object.fromEntries(
           Object.entries(doc.containers).map(([key, c]) => [key, { items: c.items.map((i) => ({ ...i })), stateSeq: c.stateSeq }]),
         ),
+        // Phase 4: refKeys a script disabled. Sent as a list because only disables are
+        // recorded — an absent key means enabled, the vanilla default.
+        disabled: Object.keys(doc.enabled ?? {}),
       });
     });
   }

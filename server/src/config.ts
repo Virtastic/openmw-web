@@ -42,6 +42,11 @@ export interface Config {
     crime: boolean;
     map: boolean;
     regressAllowlist: string[];
+    // Phase 4: mwscript globals that are WORLD state rather than a character's quest
+    // progress (added to the built-in conservative set); and whether co-present party
+    // members earn credit for objectives they were present and eligible for.
+    worldGlobals: string[];
+    partyCredit: boolean;
   };
   rules: {
     respawnCellKey: string;
@@ -292,6 +297,8 @@ function validate(t: Tree): Config {
       crime: reqBool(t, 'sharing', 'crime'),
       map: reqBool(t, 'sharing', 'map'),
       regressAllowlist: reqStrArray(t, 'sharing', 'regressAllowlist'),
+      worldGlobals: reqStrArray(t, 'sharing', 'worldGlobals'),
+      partyCredit: reqBool(t, 'sharing', 'partyCredit'),
     },
     rules: {
       respawnCellKey: reqStr(t, 'rules', 'respawnCellKey'),

@@ -24,6 +24,28 @@ const MAX_INDEX = 0x7fffffff;
 // M7 owns the clock: these never travel as GlobalVarUpdate.
 const TIME_GLOBALS = new Set(['gamehour', 'day', 'month', 'year', 'dayspassed']);
 
+// Phase 4: mwscript globals split into WORLD-SHARED and CHARACTER-SHADOWED.
+//
+// Morrowind gates most quests on globals, not on the journal index. With per-character
+// journals, relaying every global world-wide makes two party members at different stages
+// fight over the same variable through the 1 s diff sync — each client re-asserting its
+// own value, forever. So the default is INVERTED from M6: a global is character-shadowed
+// (stored on the character, never relayed) unless it describes the WORLD rather than a
+// character's progress.
+//
+// The world-shared set is deliberately small and conservative, because the failure modes
+// are asymmetric: wrongly sharing a progress global causes the ping-pong above and can
+// skip a player's quest; wrongly shadowing a world global only means it does not
+// propagate, which reads as vanilla single-player behaviour. Operators extend it via
+// [sharing].worldGlobals for total conversions that keep world state in globals.
+const WORLD_GLOBALS = new Set([
+  // Weather/environment the whole realm observes.
+  'weather', 'nextweather', 'weatherregion', 'currentweather',
+  // Blight/ash storm and the Ghostfence — realm-visible world state in vanilla.
+  'blightdisease', 'ghostfence', 'gamehourlast',
+  // Vampire clock and the werewolf state are per-character despite the naming; NOT here.
+]);
+
 export type ShareFamily = 'journal' | 'questVars' | 'factions' | 'crime' | 'map';
 
 export const QUEST_EVENTS = new Set([
@@ -43,6 +65,14 @@ export interface QuestCtx {
   isShared(family: ShareFamily): boolean;
   // Quest ids permitted to regress (operator config, surfaced via the plugin).
   regressAllowed(questId: string): boolean;
+  // Phase 4 party credit: the accountKeys of this player's party (empty when solo). Read
+  // through a function because Social is built after Quests and party membership changes
+  // constantly — a snapshot would go stale between events.
+  partyOf(accountKey: string): string[];
+  // Operator additions to the world-shared global set (total conversions).
+  worldGlobals?: string[];
+  // Party credit on/off (per-realm rule).
+  partyCredit?: boolean;
 }
 
 function tbl(v: LValue | undefined): LTable | undefined {
@@ -117,6 +147,11 @@ export class Quests {
     this.ctx.players.update(player.charId, (doc) => {
       (doc.journal ??= {})[questId] = idx;
     });
+    // Phase 4: party credit. Co-present party members who ALREADY STARTED this quest and
+    // are BEHIND this stage advance with it — they were there for the deed. Members who
+    // never started it get nothing (no spoiler-jumping them forward, the TES3MP shared-
+    // journal disease) and members already ahead get nothing (no rewind).
+    this.creditParty(player, questId, idx);
     if (!this.ctx.isShared('journal')) return; // individual mode: stored, never relayed
 
     const shared = this.ctx.cells.sharedQuest();
@@ -133,6 +168,31 @@ export class Quests {
     this.ctx.cells.saveShared();
     const out: JsLike = { questId, index: idx, ...(typeof actorRefId === 'string' ? { actorRefId } : {}) };
     this.relayAll(player.id, 'JournalEntry', out);
+  }
+
+  // Phase 4 party credit. Eligibility is deliberately narrow and checked per member:
+  //   * in the crediting player's party (membership, not proximity alone), and
+  //   * CO-PRESENT (cellsVisible) — you get credit for deeds you were there for, and
+  //   * has an existing journal entry for this quest (they started it themselves), and
+  //   * strictly behind the new index (never rewind, never leap someone who is ahead).
+  // The mirror of the TES3MP failure the community names most: nobody's log ever moves
+  // through content they did not participate in.
+  private creditParty(player: Player, questId: string, idx: number): void {
+    if (this.ctx.partyCredit === false) return;
+    const party = this.ctx.partyOf(player.accountKey);
+    if (party.length === 0) return;
+    for (const p of this.ctx.roster.inWorld()) {
+      if (p.id === player.id || p.system) continue;
+      if (!party.includes(p.accountKey)) continue;
+      if (!cellsVisible(p.cellKey, player.cellKey)) continue;
+      const theirs = this.ctx.players.getCached(p.charId)?.journal?.[questId];
+      if (theirs === undefined || theirs >= idx) continue; // not started, or already ahead
+      this.ctx.players.update(p.charId, (doc) => {
+        (doc.journal ??= {})[questId] = idx;
+      }, 'now'); // a credited stage must survive a disconnect the instant it is earned
+      p.peer.sendEvent('JournalEntry', { questId, index: idx, credited: true });
+      log('info', 'quest.party_credit', { questId, index: idx, to: p.name, from: player.name });
+    }
   }
 
   // Full journal state for a joining client: the shared map, or their own in individual
@@ -155,12 +215,24 @@ export class Quests {
       this.drop(player, 'GlobalVarUpdate', 'invalid shape');
       return;
     }
-    if (TIME_GLOBALS.has(name.toLowerCase())) {
+    const lower = name.toLowerCase();
+    if (TIME_GLOBALS.has(lower)) {
       // M7 owns the clock; accepting these here would fight WorldTime.
       log('debug', 'quest.time_global_dropped', { name, from: player.name });
       return;
     }
-    if (!this.ctx.isShared('questVars')) return; // individual mode: globals are local-only
+    // Phase 4: character-shadowed globals are the DEFAULT, and shadowing is PERSISTENCE,
+    // not relaying — so it happens whatever the questVars sharing policy says. Store on
+    // the character (a rejoin or world hop restores the player's own quest state) and
+    // relay to nobody: relaying is what makes two party members at different stages
+    // overwrite each other forever.
+    if (!this.isWorldGlobal(lower)) {
+      this.ctx.players.update(player.charId, (doc) => {
+        (doc.globals ??= {})[name] = value;
+      });
+      return;
+    }
+    if (!this.ctx.isShared('questVars')) return; // world global, but sharing is off
 
     const shared = this.ctx.cells.sharedQuest();
     const prev = shared.globals[name];
@@ -173,6 +245,19 @@ export class Quests {
     shared.globals[name] = { value, seq: nextSeq };
     this.ctx.cells.saveShared();
     this.relayAll(player.id, 'GlobalVarUpdate', { name, value, seq: nextSeq });
+  }
+
+  private isWorldGlobal(lowerName: string): boolean {
+    if (WORLD_GLOBALS.has(lowerName)) return true;
+    return (this.ctx.worldGlobals ?? []).some((g) => g.toLowerCase() === lowerName);
+  }
+
+  // A joining client gets its character's shadowed globals back, so quest state that never
+  // travels world-wide still survives a relog or a world hop.
+  sendGlobalSync(player: Player): void {
+    const globals = { ...(this.ctx.players.getCached(player.charId)?.globals ?? {}) };
+    if (Object.keys(globals).length === 0) return;
+    player.peer.sendEvent('GlobalVarSync', { globals });
   }
 
   // Per-object MWScript locals. The body carries no cellKey (it piggybacks on object

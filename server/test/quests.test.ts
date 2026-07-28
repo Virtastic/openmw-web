@@ -150,21 +150,33 @@ test('shared factions and crime relay', async (t) => {
   });
 });
 
+// Phase 4 changed the DEFAULT: a global is character-shadowed (per character, never
+// relayed) unless it describes the world, because relaying quest-progress globals makes
+// two party members at different stages overwrite each other forever. The seq/LWW
+// arbitration below still governs the globals that DO travel, so these tests declare a
+// pair of world globals to exercise it — and assert the new shadowing directly.
 test('global and member variables', async (t) => {
-  const { server } = await boot(t);
+  const { server } = await boot(t, { sharing: { worldGlobals: ['world_flag', 'seqless_var'] } });
   const { a, b } = await twoInCell(server);
 
-  await t.test('global var relays and echoes the accepted seq', async () => {
+  await t.test('a quest-progress global is character-shadowed, never relayed', async () => {
     a.sendEvent('GlobalVarUpdate', { name: 'nerevarine', value: 1, seq: 5 });
-    assert.deepEqual((await b.waitEvent('GlobalVarUpdate')).value, { name: 'nerevarine', value: 1, seq: 5 });
+    await fence(a, b);
+    assert.equal(b.inbox.events.filter((e) => e.name === 'GlobalVarUpdate').length, 0,
+      'quest progress must not travel between players (the TES3MP ping-pong)');
+  });
+
+  await t.test('world global relays and echoes the accepted seq', async () => {
+    a.sendEvent('GlobalVarUpdate', { name: 'world_flag', value: 1, seq: 5 });
+    assert.deepEqual((await b.waitEvent('GlobalVarUpdate')).value, { name: 'world_flag', value: 1, seq: 5 });
   });
 
   await t.test('stale and equal seq are dropped; higher seq wins', async () => {
-    a.sendEvent('GlobalVarUpdate', { name: 'nerevarine', value: 99, seq: 4 }); // stale
-    a.sendEvent('GlobalVarUpdate', { name: 'nerevarine', value: 98, seq: 5 }); // equal
+    a.sendEvent('GlobalVarUpdate', { name: 'world_flag', value: 99, seq: 4 }); // stale
+    a.sendEvent('GlobalVarUpdate', { name: 'world_flag', value: 98, seq: 5 }); // equal
     await fence(a, b);
     assert.equal(b.inbox.events.filter((e) => e.name === 'GlobalVarUpdate').length, 0);
-    a.sendEvent('GlobalVarUpdate', { name: 'nerevarine', value: 2, seq: 6 });
+    a.sendEvent('GlobalVarUpdate', { name: 'world_flag', value: 2, seq: 6 });
     assert.equal(((await b.waitEvent('GlobalVarUpdate')).value as { value: number }).value, 2);
   });
 

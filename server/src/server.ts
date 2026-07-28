@@ -253,10 +253,16 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     players: playerStore,
     isShared: (family) => hooks.shareFamily(family),
     regressAllowed: (questId) => hooks.journalRegress(questId),
+    // Social is built below; the party lookup is deferred so quest credit always reads
+    // live membership rather than a snapshot taken at boot.
+    partyOf: (accountKey) => socialRef?.partyMembersOf(accountKey) ?? [],
+    worldGlobals: config.sharing.worldGlobals,
+    partyCredit: config.sharing.partyCredit,
   });
 
   // Phase C. The store is opened here so its lifetime matches the server's; social.stop()
   // clears presence timers that would otherwise keep the process alive on shutdown.
+  let socialRef: Social | undefined; // read by quest party-credit (built above)
   const socialStore = new SocialStore(sharedDir);
   const social = new Social({
     store: socialStore,
@@ -272,6 +278,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       ? { worlds: new WorldBrowser({ gatewayUrl: config.gateway.url, ownPort: () => port }) }
       : {}),
   });
+  socialRef = social;
 
   const contentGate = new ContentGate(config.content.enforce);
 

@@ -47,6 +47,9 @@ export interface PlayerDoc {
   // M6: this player's own view. Always written (even in shared mode, so a family can be
   // switched to individual later without losing history); relayed only per [sharing].
   journal?: Record<string, number>; // questId -> highest index this player reported
+  // Phase 4: character-shadowed mwscript globals — quest progress variables that must NOT
+  // travel between players (see quests.ts WORLD_GLOBALS). Restored on join/world-hop.
+  globals?: Record<string, number>;
   factions?: Record<string, { rank: number; reputation?: number; expelled?: boolean }>;
   bounty?: number;
 }

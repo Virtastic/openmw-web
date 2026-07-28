@@ -396,6 +396,15 @@ export class Social {
     return pa !== undefined && pa === this.partyOf.get(b);
   }
 
+  // Phase 4: party membership for quest credit / loot rules. Hydrates from the store so a
+  // member who formed the party in another world still counts here. Empty when solo.
+  partyMembersOf(acct: AccountKey): AccountKey[] {
+    this.loadParty(acct);
+    const key = this.partyOf.get(acct);
+    const party = key !== undefined ? this.parties.get(key) : undefined;
+    return party ? [...party.members] : [];
+  }
+
   partyView(acct: AccountKey): PartyView | null {
     const id = this.partyOf.get(acct);
     if (id === undefined) return null;

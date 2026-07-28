@@ -66,6 +66,13 @@ map = true            # M7 WorldMapExplored; the toggle exists now so operators 
 # Quest ids whose journal index may legitimately go DOWN (some MW quests regress).
 # Everything else is arbitrated monotonic-max: a lagging client can never rewind a quest.
 regressAllowlist = []
+# Phase 4. Quest globals are CHARACTER-SHADOWED by default (stored per character, never
+# relayed) — relaying them makes two party members at different stages overwrite each
+# other forever. Only globals describing the WORLD are shared; add total-conversion ones
+# here. partyCredit: co-present party members who already started a quest and are behind
+# advance with the deed they witnessed (never jumped forward through unplayed content).
+worldGlobals = []
+partyCredit = true
 
 [limits]
 msgsPerSec = 60                   # per-session message token bucket (burst = rate)
