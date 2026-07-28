@@ -50,10 +50,18 @@ export default async function run(ctx) {
     join(ROOT, 'server', 'dist', 'gateway.mjs'),
     '--worlds', worldsDir,
     '--port', String(gwPort),
+    // Worlds this gateway spawns MUST share the launch world's data dir: accounts, friends
+    // and parties live there, and a world that cannot see them refuses the very players it
+    // was created for (world access control). A real deployment requirement, not a test
+    // detail — the gateway's own default sharedDir is a sibling of the worlds dir.
+    '--shared', ctx.serverDataDir,
     '--base-port', String(basePort),
     '--public-host', '127.0.0.1',
     '--max-worlds', '4',
-  ], { stdio: 'ignore' });
+  ], {
+    stdio: 'ignore',
+    env: { ...process.env, OMW_ALLOW_HARNESS_AUTH: '1' },
+  });
   const stopGw = () => { try { gw.kill('SIGTERM'); } catch { /* already gone */ } };
 
   try {
