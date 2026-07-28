@@ -319,6 +319,7 @@
          must stay one click away, and a login wall in front of the demo is exactly what
          kills a browser port's first impression. -->
     <div class="card actionable reveal d4" id="card-mp" role="button" tabindex="0">
+      <button class="help-btn" id="help-mp" type="button" aria-label="About multiplayer">?</button>
       <div class="glyph" aria-hidden="true">
         <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round">
           <circle cx="18" cy="18" r="6"/><circle cx="32" cy="22" r="5"/>
@@ -361,13 +362,10 @@
     <button class="m-close" id="mp-close" type="button" aria-label="Close">&times;</button>
     <div class="m-kicker">Multiplayer</div>
     <h3 id="mp-title">Sign in to play together</h3>
-    <p>Your character, saves, and game data live in your account — sign in once and they follow
-       you to any device. Multiplayer uses single sign-on only; there is no password to manage.</p>
     <div id="mp-providers" class="mp-providers"></div>
     <p class="note" id="mp-note"></p>
-    <div class="m-hr"></div>
-    <p class="mp-fine">By signing in you confirm any game files you upload are your own backup
-       copies of a game you legally own. <a href="terms.html" target="_blank" rel="noopener">Terms</a>.</p>
+    <p class="mp-fine"><a href="terms.html" target="_blank" rel="noopener">Terms</a> &middot; your own
+       game files only</p>
   </div>
 </div>
 
@@ -378,6 +376,21 @@
 
  // --- Help modals: deep, docs-style detail per card, opened by the "?" icons. ---
  const HELP = {
+   mp: `
+     <div class="m-kicker">Play together &middot; single sign-on</div>
+     <h3 id="modal-title">Multiplayer</h3>
+     <p>One account, one character, three ways to play — <b>solo</b> in your own private world,
+        in a <b>party</b> with friends, or in the shared <b>public</b> world. Your character and
+        progress follow you between all three, on any device.</p>
+     <h4>Signing in</h4>
+     <p>Multiplayer uses <b>single sign-on</b> (e.g. Continue with Google) — there's no password
+        to create or manage. Signing in is what lets your character and saves persist and sync.</p>
+     <h4>Your game data</h4>
+     <p>The first time, you upload your own <b>Data Files</b> once to your private, account-only
+        locker; after that they stream back to you on any device. They stay private to you and are
+        never shared — you confirm they're your own backup copies of a game you legally own.</p>
+     <div class="m-hr"></div>
+     <p style="margin-top:16px">Just press <b>Sign in</b> and choose a provider.</p>`,
    sample: `
      <div class="m-kicker">Free sample &middot; no download of the game</div>
      <h3 id="modal-title">The example world</h3>
@@ -481,7 +494,7 @@
    function close(){ bd.classList.remove('show'); }
    // The "?" buttons live inside clickable cards — stop the event so the card's start/pick handler
    // doesn't also fire (on both click and keyboard activation).
-   [['help-sample','sample'],['help-local','local']].forEach(([id,key])=>{
+   [['help-sample','sample'],['help-local','local'],['help-mp','mp']].forEach(([id,key])=>{
      const b=$(id); if(!b) return;
      b.addEventListener('click', e=>{ e.stopPropagation(); open(key); });
      b.addEventListener('keydown', e=>{ e.stopPropagation(); });
