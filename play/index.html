@@ -833,8 +833,18 @@
          var mpm = /[?&]mp=([^&]+)/.exec(location.search);
          if (mpm){
            var mpUrl = decodeURIComponent(mpm[1]);
+           // Same-origin-host gate: the multiplayer server (and the locker HTTP endpoints we
+           // derive from it, which carry the Bearer locker token) MUST live on the same host
+           // that served this page. Otherwise a crafted link like index.html?mp=ws://evil/ws
+           // could point an authenticated session — and its token — at an attacker's origin.
+           // Prod (morrowind.virtastic.app) and local (127.0.0.1) both satisfy this naturally;
+           // only a different external host is refused. The port may differ (game :8910, ws :8080).
+           var mpHostOk = false;
+           try { mpHostOk = new URL(mpUrl).hostname === location.hostname; } catch(e){}
            if (!/^wss?:\/\//.test(mpUrl)){
              append('[mp] ignored ?mp= — URL must be ws:// or wss://','err');
+           } else if (!mpHostOk){
+             append('[mp] refused ?mp= — the multiplayer server must be on this site ('+location.hostname+')','err');
            } else {
              window.__omwMPEnabled = true;
              ENV.OPENMW_MP_URL = mpUrl;
