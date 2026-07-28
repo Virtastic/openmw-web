@@ -47,7 +47,7 @@ import { log } from './log';
 import { metrics } from './metrics';
 import { SimPeerSupervisor } from './core/simpeer';
 import { WorldBrowser } from './core/worldbrowser';
-import { detectGameData, gameDataDir } from './core/gamedata';
+import { detectGameData, findPeerBinary, gameDataDir } from './core/gamedata';
 
 export const VERSION = '0.1.0';
 
@@ -327,10 +327,11 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // actually run, so 'auto' is decided here and the outcome is ALWAYS logged — a server that
   // quietly falls back to client-simulated NPCs is how "why are the NPCs frozen" becomes a
   // three-week mystery.
+  config.simPeer.binary = findPeerBinary(config.simPeer.binary);
   const peerBlocker = !gameData.ok
     ? `no usable game data (${gameData.reason})`
     : !config.simPeer.binary
-      ? 'no [simPeer] binary configured'
+      ? 'no [simPeer] binary configured and none found at the conventional paths'
       : undefined;
   if (config.simPeer.mode === 'on' && peerBlocker) {
     // The operator asked for server-side simulation explicitly. Refusing to boot is kinder

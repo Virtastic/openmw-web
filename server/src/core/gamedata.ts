@@ -145,6 +145,19 @@ export function buildPeerCfg(data: GameData, resourcesDir: string): string {
 }
 
 /** Conventional location: <dataDir>/gamedata — the operator drops their files here. */
+/**
+ * Resolve the sim-peer binary. An explicit [simPeer] binary always wins; an empty value
+ * probes the conventional install locations (the tier2 image puts it at /usr/local/bin).
+ * Returns '' when nothing is found — the caller logs the tier either way.
+ */
+export function findPeerBinary(configured: string, probe: (p: string) => boolean = existsSync): string {
+  if (configured) return configured;
+  for (const p of ['/usr/local/bin/openmw', '/usr/bin/openmw', '/opt/openmw/bin/openmw']) {
+    if (probe(p)) return p;
+  }
+  return '';
+}
+
 export function gameDataDir(dataDir: string): string {
   return join(dataDir, 'gamedata');
 }

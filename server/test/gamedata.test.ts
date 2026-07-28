@@ -101,6 +101,28 @@ test('the generated cfg has what the spike proved a peer needs', () => {
   assert.equal(content[content.length - 1], 'content=mp.omwscripts');
 });
 
+// Binary resolution. The tier2 image relies on the conventional-path probe; an operator
+// override must always win over it.
+test('findPeerBinary: explicit config wins without probing', async () => {
+  const { findPeerBinary } = await import('../src/core/gamedata');
+  const r = findPeerBinary('/custom/openmw', () => { throw new Error('must not probe'); });
+  assert.equal(r, '/custom/openmw');
+});
+
+test('findPeerBinary: empty config probes conventional paths in order', async () => {
+  const { findPeerBinary } = await import('../src/core/gamedata');
+  const probed: string[] = [];
+  const r = findPeerBinary('', (p) => { probed.push(p); return p === '/usr/bin/openmw'; });
+  assert.equal(r, '/usr/bin/openmw');
+  assert.deepEqual(probed, ['/usr/local/bin/openmw', '/usr/bin/openmw'],
+    'stops at the first hit');
+});
+
+test('findPeerBinary: nothing found is "", not a throw', async () => {
+  const { findPeerBinary } = await import('../src/core/gamedata');
+  assert.equal(findPeerBinary('', () => false), '');
+});
+
 test('gameDataDir is the conventional path under the data dir', () => {
   assert.equal(gameDataDir('/data'), '/data/gamedata');
 });

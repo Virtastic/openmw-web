@@ -103,3 +103,46 @@ RUN ldconfig
 # path is replaced by SDL's offscreen video backend. Proven only by SDL docs so far.
 ENV SDL_VIDEODRIVER=offscreen
 ENTRYPOINT ["openmw"]
+
+# ---------------------------------------------------------------------------------------
+# tier2: the node server AND the peer binary in one image. The SimPeerSupervisor spawns
+# the peer via child_process, so for server-authoritative NPCs in production both must
+# live in the same container — and the standard server image (node:22-alpine, musl)
+# cannot run this glibc binary, hence a glibc-based variant here rather than a change
+# to server/Dockerfile. Tier 1 deploys keep using the alpine image; this one is only
+# worth its ~1GB when the operator mounts game data.
+#   docker build -f server/Dockerfile.simpeer --target tier2 -t openmw-mp:tier2 .
+
+FROM node:22-bookworm-slim AS server-build
+WORKDIR /app
+COPY server/package.json server/package-lock.json ./
+RUN npm ci
+COPY server/tsconfig.json server/esbuild.mjs ./
+COPY server/src ./src
+COPY server/test ./test
+COPY server/config.default.toml ./
+RUN npm run build && npm test
+
+FROM runtime AS tier2
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates wget \
+    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+ENV NODE_ENV=production
+COPY server/package.json server/package-lock.json ./
+# Reinstalled here rather than copied: @node-rs/argon2 is a native module and the alpine
+# (musl) artifact would not load on glibc.
+RUN npm ci --omit=dev && npm cache clean --force
+COPY --from=server-build /app/dist ./dist
+COPY server/config.default.toml ./
+RUN useradd -m app && mkdir -p /data && chown app /data
+USER app
+EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
+  CMD wget -qO- http://127.0.0.1:8080/healthz || exit 1
+# simPeer mode=auto finds `openmw` on PATH (/usr/local/bin) and enables itself iff the
+# operator mounted valid game data at /data/gamedata. Same heap-cap reasoning as the
+# alpine image.
+ENTRYPOINT []
+CMD ["node", "--max-old-space-size=256", "dist/server.mjs", "--data", "/data"]
