@@ -1161,6 +1161,7 @@ local eventHandlers = {
             BlockAdd = true, BlockRemove = true, InviteSend = true, InviteAccept = true,
             PartyInvite = true, PartyAccept = true, PartyLeave = true, PartyTravel = true,
             PresenceMode = true, MuteAdd = true, MuteRemove = true, VoiceSignal = true,
+            ReportPlayer = true, PartySetting = true,
             -- F3 world browser. The server takes the ACCOUNT from the authenticated
             -- session, never from here, so a client cannot list or create sessions under
             -- someone else's identity.
@@ -1171,6 +1172,7 @@ local eventHandlers = {
         mp.sendEvent(op, {
             name = data.name, acct = data.acct, mode = data.mode, id = data.id,
             target = data.target, kind = data.kind, payload = data.payload,
+            reason = data.reason, voice = data.voice, value = data.value,
         })
     end,
 

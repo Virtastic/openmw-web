@@ -55,6 +55,14 @@ local charDraft = ''
 -- Party voice: off until the player asks for it (the browser mic prompt is the consent
 -- step). Push-to-talk is bound to V in the player script.
 local voiceOn = false
+-- Report flow: pick a target from a row, then type the reason. Kept as window state
+-- rather than a modal so the player can still see who is who while writing it.
+local reportTarget = nil
+local reportName = nil
+local reportDraft = ''
+-- An open loot roll, if any. Shown in the Party tab because that is where the group is.
+local rollId = nil
+local rollItem = nil
 
 -- There is no scroll container in this UI API, so a long list would simply run off the
 -- bottom of the screen. The world is designed for ~100 concurrent players, so the Players
@@ -137,10 +145,43 @@ local function playersTab()
                 -- means "I do not want to hear this person right now". Persistent, so it
                 -- survives a relog.
                 actions[#actions + 1] = { 'mute', function() send('MuteAdd', { acct = acct }) end }
+                -- One click to report. A flow that requires typing a slash command with
+                -- the right syntax is one nobody uses at the moment they need it.
+                actions[#actions + 1] = { 'report', function()
+                    reportTarget = acct
+                    reportName = p.name
+                    status = 'Type a reason, then press Enter.'
+                    render()
+                end }
                 actions[#actions + 1] = { 'block', function() send('BlockAdd', { name = p.name }) end }
                 rows[#rows + 1] = personRow(p.name, { actions = actions })
             end
         end
+    end
+    if reportTarget then
+        rows[#rows + 1] = U.interval
+        rows[#rows + 1] = U.text('Report ' .. tostring(reportName) .. ' - what happened?')
+        rows[#rows + 1] = {
+            template = I.MWUI.templates.textEditLine,
+            props = { size = util.vector2(320, 0), text = reportDraft },
+            events = {
+                textChanged = async:callback(function(text) reportDraft = text end),
+                keyPress = async:callback(function(e)
+                    if e.code == input.KEY.Enter and reportDraft ~= '' then
+                        send('ReportPlayer', { acct = reportTarget, reason = reportDraft })
+                        status = 'Report sent to the moderators.'
+                        reportTarget, reportName, reportDraft = nil, nil, ''
+                        render()
+                    end
+                end),
+            },
+        }
+        rows[#rows + 1] = U.row {
+            U.button('cancel', function()
+                reportTarget, reportName, reportDraft = nil, nil, ''
+                render()
+            end),
+        }
     end
     if others == 0 then
         rows[#rows + 1] = U.text('Nobody else is online right now.')
@@ -202,6 +243,8 @@ end
 local function partyTab()
     local rows = {}
     local members = party.members or {}
+    local myAcct = myName and string.lower(myName) or nil
+    local amLeader = myAcct ~= nil and party.leader == myAcct
     if #members == 0 then
         rows[#rows + 1] = U.text('You are not in a party.')
         rows[#rows + 1] = U.text('Invite someone from the Players or Friends tab to start one.')
@@ -217,6 +260,44 @@ local function partyTab()
         rows[#rows + 1] = U.interval
         -- Group travel: the whole party moves together. Leader-only server-side — a
         -- non-leader pressing these gets a loud SocialResult rather than a silent nothing.
+        -- Leader-only rules. Shown to everyone (so members know what is in force) but the
+        -- server refuses a non-leader, and the buttons say who may change them.
+        if rollId then
+            rows[#rows + 1] = U.interval
+            rows[#rows + 1] = U.text('Roll for ' .. tostring(rollItem) .. ':')
+            rows[#rows + 1] = U.row {
+                U.button('need', function()
+                    send('LootRollVote', { id = rollId, choice = 'need' })
+                    rollId, rollItem = nil, nil
+                    render()
+                end),
+                U.button('pass', function()
+                    send('LootRollVote', { id = rollId, choice = 'pass' })
+                    rollId, rollItem = nil, nil
+                    render()
+                end),
+            }
+            rows[#rows + 1] = U.interval
+        end
+        rows[#rows + 1] = U.text('Party rules' .. (amLeader and '' or ' (leader decides)'))
+        rows[#rows + 1] = U.row {
+            U.button((party.goldSplit ~= false) and 'gold: split' or 'gold: finders keepers', function()
+                if amLeader then
+                    send('PartySetting', { name = 'goldSplit', value = (party.goldSplit == false) and 'true' or 'false' })
+                else
+                    status = 'Only the party leader can change that.'
+                    render()
+                end
+            end),
+            U.button((party.rollOnRare == true) and 'rare: roll' or 'rare: free-for-all', function()
+                if amLeader then
+                    send('PartySetting', { name = 'rollOnRare', value = (party.rollOnRare ~= true) and 'true' or 'false' })
+                else
+                    status = 'Only the party leader can change that.'
+                    render()
+                end
+            end),
+        }
         rows[#rows + 1] = U.row {
             U.button(voiceOn and 'voice: on' or 'voice: off', function()
                 voiceOn = not voiceOn
@@ -639,6 +720,19 @@ return {
             render()
         end,
         -- Party travel: the actual redial happens in the global script; this is the notice.
+        -- Phase 4: a notable item dropped and the party is rolling for it.
+        MP_LootRoll = function(data)
+            rollId = tostring(data.rollId or '')
+            rollItem = tostring(data.itemId or '')
+            status = 'Roll for ' .. rollItem .. ' (from ' .. tostring(data.from) .. ')'
+            tab = 'party'
+            if not isOpen then toggle() else render() end
+        end,
+        MP_LootShare = function(data)
+            status = 'Party share: ' .. tostring(data.n) .. ' x ' .. tostring(data.itemId)
+                .. ' from ' .. tostring(data.from)
+            render()
+        end,
         MP_PartyTravel = function(data)
             local dest = tostring(data.worldId or 'another world')
             status = (data.target == 'public')

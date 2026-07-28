@@ -257,6 +257,24 @@
       <div class="note" id="local-note"></div>
       <div class="go" id="local-go">Choose Data Files <span class="arw">▸</span></div>
     </div>
+
+    <!-- Multiplayer. Deliberately the THIRD card, not the first: the single-player paths
+         must stay one click away, and a login wall in front of the demo is exactly what
+         kills a browser port's first impression. -->
+    <div class="card actionable reveal d4" id="card-mp" role="button" tabindex="0">
+      <div class="glyph" aria-hidden="true">
+        <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round">
+          <circle cx="18" cy="18" r="6"/><circle cx="32" cy="22" r="5"/>
+          <path d="M8 40c0-6 4.5-10 10-10s10 4 10 10"/><path d="M26 40c0-4.5 3.5-8 8-8s8 3.5 8 8"/>
+        </svg>
+      </div>
+      <div class="kicker">Play together</div>
+      <h2>Multiplayer</h2>
+      <p class="lead">Sign in, pick a character, and play solo, with friends, or in the public
+         world. Your character follows you between all three.</p>
+      <p class="micro">Needs an account so your character can be saved.</p>
+      <div class="go">Sign in <span class="arw">▸</span></div>
+    </div>
   </div>
 
   <footer class="reveal d5">
@@ -469,6 +487,47 @@
      note('Could not open that folder: '+(e && e.message || e),'err');
    }
  }
+
+ // --- multiplayer: sign in, choose a character, choose a mode -------------------------
+ // The whole flow is a thin client over ops the server already exposes (SessionRegister /
+ // SessionLoginRequest carry characterId; CharacterCreate adds a slot). It is kept OUT of
+ // the single-player paths on purpose: the demo must stay one click from the front page,
+ // because a login wall in front of it is what kills a browser port's first impression.
+ const MP = {
+   url: localStorage.getItem('omw-mp-url') || '',
+   account: localStorage.getItem('omw-mp-account') || '',
+ };
+
+ function mpStart(){
+   const url = prompt('Server address', MP.url || 'ws://127.0.0.1:8080/ws');
+   if (!url) return;
+   const account = prompt('Account name', MP.account || '');
+   if (!account) return;
+   const password = prompt('Password (it is sent only to this server)');
+   if (!password) return;
+   localStorage.setItem('omw-mp-url', url);
+   localStorage.setItem('omw-mp-account', account);
+   // The character picker lives IN the game (the Social hub's Characters tab) rather than
+   // here: it needs the account's slot list, which only arrives with SessionWelcome. The
+   // launcher's job is to get the player authenticated and into a world.
+   const q = new URLSearchParams({
+     mp: url,
+     name: account,
+     pass: password,
+   });
+   // Data source: a remembered install if there is one, else the sample world — so
+   // multiplayer never becomes a second, separate "where is your Morrowind" question.
+   idbGet(KEY).then((handle)=>{
+     if (handle) q.set('src','local'); else q.set('nomw','1');
+     location.href = 'index.html?' + q.toString();
+   }).catch(()=>{
+     q.set('nomw','1');
+     location.href = 'index.html?' + q.toString();
+   });
+ }
+ $('card-mp').addEventListener('click', mpStart);
+ $('card-mp').addEventListener('keydown', (e)=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); mpStart(); } });
+
  $('card-local').addEventListener('click', pickLocal);
  $('card-local').addEventListener('keydown', (e)=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); pickLocal(); } });
 

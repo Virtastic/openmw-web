@@ -327,6 +327,31 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     // stored keys on the account — names are mutable and reusable.
     resolveName: (name) => (accounts.existsNow(name) ? name.toLowerCase() : undefined),
     now: () => Date.now(),
+    // Phase 4: a vote in an open loot roll. The winner is decided server-side and told
+    // to the party, so a client cannot award itself the artifact.
+    lootVote: (player, rollId, choice) => {
+      const r = partyRules.vote(rollId, player.accountKey, choice);
+      if (!r.done) return true;
+      for (const acct of social.partyMembersOf(player.accountKey)) {
+        const p = roster.activeForAccount(acct);
+        p?.peer.sendEvent('LootRollResult', {
+          itemId: r.itemId,
+          winner: r.winner ?? '',
+          youWon: r.winner === acct,
+        });
+      }
+      return true;
+    },
+    // A4/3.8: the context-menu report writes to the same queue as /report.
+    report: (doc) => moderation.reports.write({
+      ts: new Date().toISOString(),
+      reporter: doc.reporter,
+      target: doc.target,
+      reason: doc.voice ? `[voice] ${doc.reason}` : doc.reason,
+      // The lines immediately before the report: without them a moderator reading the
+      // queue has an accusation and nothing to weigh it against.
+      context: moderation.chat.context(),
+    }),
     // F3: only when a gateway is configured. Without one the Worlds tab reports that this
     // is a standalone world, which is an honest answer and a valid setup.
     ...(config.gateway.url

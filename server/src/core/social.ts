@@ -52,6 +52,8 @@ export const DEFAULT_PRESENCE: PresenceMode = 'friends';
 
 export interface PartyView {
   leader: AccountKey;
+  goldSplit?: boolean;
+  rollOnRare?: boolean;
   members: { acct: AccountKey; name: string; online: boolean; playerId?: number; cellKey?: string }[];
 }
 
@@ -80,6 +82,15 @@ export interface SocialDeps {
   // F3: absent when no gateway is configured, in which case the Worlds tab says so rather
   // than pretending there is nothing to see.
   worlds?: WorldBrowser;
+  // A4/3.8: file a report into the moderation queue (the same store /report writes).
+  report?(doc: {
+    reporter: { id: number; account: string; name: string };
+    target: { id: number | null; account: string; name: string; cellKey: string | null };
+    reason: string;
+    voice: boolean;
+  }): Promise<unknown>;
+  // Phase 4: a vote in an open loot roll (the roll itself lives in PartyRules).
+  lootVote?(player: Player, rollId: string, choice: 'need' | 'pass'): boolean;
 }
 
 interface PendingInvite {
@@ -467,8 +478,13 @@ export class Social {
     if (id === undefined) return null;
     const party = this.parties.get(id);
     if (!party) return null;
+    const settings = this.partySettings(acct);
     return {
       leader: party.leader,
+      // Members see the rules in force even though only the leader may change them:
+      // "why did my gold split" should be answerable by looking at the panel.
+      goldSplit: settings.goldSplit,
+      rollOnRare: settings.rollOnRare,
       members: [...party.members].map((m) => {
         const p = this.onlinePlayer(m);
         return {
@@ -489,7 +505,12 @@ export class Social {
     const view = this.partyView(acct);
     p.peer.sendEvent('PartyUpdate', view === null
       ? { leader: '', members: [] as unknown as never }
-      : { leader: view.leader, members: view.members as unknown as never });
+      : {
+        leader: view.leader,
+        goldSplit: view.goldSplit === true,
+        rollOnRare: view.rollOnRare === true,
+        members: view.members as unknown as never,
+      });
   }
 
   private broadcastParty(key: string): void {
@@ -718,6 +739,44 @@ export class Social {
           payload: typeof payload === 'string' ? payload : '',
         });
         this.reply(player, 'VoiceSignal', true, 'ok');
+        return true;
+      }
+      // Phase 3.8: report from the player context menu. Same store and the same bounded
+      // reason as the /report command — this is the surface, not a second system. Being an
+      // event rather than a typed command is what makes it one click from the social hub,
+      // which is the difference between a report flow that gets used and one that does not.
+      case 'ReportPlayer': {
+        const targetAcct = str('acct');
+        const reason = str('reason').slice(0, 500);
+        if (targetAcct === player.accountKey) {
+          this.reply(player, 'ReportPlayer', false, 'self');
+          return true;
+        }
+        if (reason === '') {
+          this.reply(player, 'ReportPlayer', false, 'no_reason');
+          return true;
+        }
+        const target = this.onlinePlayer(targetAcct);
+        void this.d.report?.({
+          reporter: { id: player.id, account: player.accountKey, name: player.name },
+          target: {
+            id: target?.id ?? null,
+            account: targetAcct,
+            name: this.d.displayName(targetAcct) ?? targetAcct,
+            cellKey: target?.cellKey ?? null,
+          },
+          reason,
+          // Voice abuse is worth flagging separately: it leaves no chat-log trace, so a
+          // moderator reading the queue would otherwise have nothing to look at.
+          voice: str('voice') === 'true',
+        });
+        log('info', 'social.reported', { by: player.accountKey, target: targetAcct });
+        this.reply(player, 'ReportPlayer', true, 'ok');
+        return true;
+      }
+      case 'LootRollVote': {
+        const r = this.d.lootVote?.(player, str('id'), str('choice') === 'need' ? 'need' : 'pass');
+        this.reply(player, 'LootRollVote', r !== false, r === false ? 'no_roll' : 'ok');
         return true;
       }
       case 'PartySetting': {
