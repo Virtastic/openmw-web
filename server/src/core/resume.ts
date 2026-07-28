@@ -16,6 +16,10 @@ import type { PlayerPose } from '../proto/movement';
 export interface ResumeTicket {
   accountKey: string;
   accountName: string;
+  // Character slots: resume goes back to the SAME character the session was playing —
+  // never the default — or a reload mid-adventure would swap the player onto whichever
+  // character was last played somewhere else.
+  charId?: string;
   cellKey?: string;
   pose?: PlayerPose;
   expiresAt: number;

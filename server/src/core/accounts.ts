@@ -7,9 +7,20 @@
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { existsSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import { hash, verify, Algorithm } from '@node-rs/argon2';
 import { readJson, writeJsonAtomic } from '../persist/atomicjson';
 import { log } from '../log';
+
+// A character slot. The character — not the account — owns a PlayerDoc (inventory, stats,
+// journal), and its id is the PlayerStore key. Lives on the SHARED account record so the
+// same characters exist in every world; each world keeps only that character's position.
+export interface CharacterSummary {
+  id: string; // PlayerStore key; also the future private-world id
+  name: string; // display name in-world; defaults to the account name at migration
+  createdAt: string;
+  lastPlayedAt: string;
+}
 
 export interface Account {
   name: string; // display casing as registered
@@ -20,7 +31,11 @@ export interface Account {
   lastSeenAt: string;
   rank: number; // 0 = player, >=1 = admin (seeded by editing the JSON by hand in M0)
   banned?: boolean;
+  // Absent on pre-slot accounts; the first authed session migrates them to one character.
+  characters?: CharacterSummary[];
 }
+
+export const MAX_CHARACTERS = 8;
 
 const ARGON2_OPTS = { algorithm: Algorithm.Argon2id, memoryCost: 19456, timeCost: 2, parallelism: 1 };
 const NAME_RE = /^[A-Za-z0-9_ -]{2,24}$/;
@@ -107,6 +122,36 @@ export class AccountStore {
     const account = await this.get(name);
     if (!account || !account.pwHash) return null;
     return (await verify(account.pwHash, password)) ? account : null;
+  }
+
+  // Character slots. Mutations go through the dirty queue; callers hold a cached account
+  // (every auth path has just awaited get()).
+  //
+  // createCharacter is also the pre-slot migration step: an account with no characters[]
+  // gets its first slot named after the account, and the caller adopts any legacy
+  // account-keyed PlayerDoc under the new character id.
+  createCharacter(account: Account, name: string): CharacterSummary | 'full' {
+    const chars = (account.characters ??= []);
+    if (chars.length >= MAX_CHARACTERS) return 'full';
+    const now = new Date().toISOString();
+    const char: CharacterSummary = {
+      // 'c' + 24 hex chars: never collides with a legacy account-keyed doc (those are
+      // lowercased account names, capped at 24 chars total and allowed spaces).
+      id: `c${randomBytes(12).toString('hex')}`,
+      name,
+      createdAt: now,
+      lastPlayedAt: now,
+    };
+    chars.push(char);
+    this.dirty.add(account.name.toLowerCase());
+    return char;
+  }
+
+  touchCharacter(account: Account, charId: string): void {
+    const char = account.characters?.find((c) => c.id === charId);
+    if (!char) return;
+    char.lastPlayedAt = new Date().toISOString();
+    this.dirty.add(account.name.toLowerCase());
   }
 
   // M8: rank/ban mutations go through the dirty queue like lastSeen. The account must be

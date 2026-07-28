@@ -53,7 +53,7 @@ function handleAppearance(ctx: StateCtx, player: Player, body: LTable): boolean 
     isMale: body.get('isMale') === true,
   };
   if (!appearance.race || !appearance.head || !appearance.hair || !appearance.class || !appearance.name) return false;
-  ctx.store.update(player.accountKey, (doc) => (doc.appearance = appearance));
+  ctx.store.update(player.charId, (doc) => (doc.appearance = appearance));
   relayAll(ctx.roster, 'PlayerAppearance', { id: player.id, ...appearance });
   return true;
 }
@@ -73,7 +73,7 @@ function parseEquipment(body: LTable): Record<number, string> | undefined {
 function handleEquipment(ctx: StateCtx, player: Player, body: LTable): boolean {
   const slots = parseEquipment(body);
   if (!slots) return false;
-  ctx.store.update(player.accountKey, (doc) => (doc.equipment = slots), 'debounced');
+  ctx.store.update(player.charId, (doc) => (doc.equipment = slots), 'debounced');
   relayAll(ctx.roster, 'PlayerEquipment', { id: player.id, slots: equipmentToL(slots) });
   return true;
 }
@@ -103,7 +103,7 @@ function handleStatsDynamic(ctx: StateCtx, player: Player, body: LTable): boolea
   // an exploit at once. Being alive is still cheap (sweep), so this costs a write per death,
   // not per tick.
   const died = hp.c <= 0;
-  ctx.store.update(player.accountKey, (doc) => {
+  ctx.store.update(player.charId, (doc) => {
     doc.stats = { ...doc.stats, dynamic: { hp, mp, ft } };
   }, died ? 'now' : 'sweep');
   const msg = { id: player.id, hp, mp, ft };
@@ -128,7 +128,7 @@ function parseNumberMap(body: LTable): Record<string, number> | undefined {
 function handleNumberMap(ctx: StateCtx, player: Player, body: LTable, field: 'attributes' | 'skills'): boolean {
   const map = parseNumberMap(body);
   if (!map) return false;
-  ctx.store.update(player.accountKey, (doc) => {
+  ctx.store.update(player.charId, (doc) => {
     doc.stats = { ...doc.stats, [field]: map };
   });
   return true;
@@ -138,7 +138,7 @@ function handleLevel(ctx: StateCtx, player: Player, body: LTable): boolean {
   const level = finite(body.get('level'));
   if (level === undefined || !Number.isInteger(level) || level < 1 || level > 255) return false;
   // Level-up is a specced flush point.
-  ctx.store.update(player.accountKey, (doc) => (doc.stats = { ...doc.stats, level }), 'now');
+  ctx.store.update(player.charId, (doc) => (doc.stats = { ...doc.stats, level }), 'now');
   return true;
 }
 
@@ -158,7 +158,7 @@ function handleSpellbook(ctx: StateCtx, player: Player, body: LTable): boolean {
   const add = parseIdList(body.get('add'));
   const remove = parseIdList(body.get('remove'));
   if (add === undefined || remove === undefined) return false;
-  ctx.store.update(player.accountKey, (doc) => {
+  ctx.store.update(player.charId, (doc) => {
     const spells = new Set(doc.spells ?? []);
     for (const id of add) spells.add(id);
     for (const id of remove) spells.delete(id);
@@ -178,7 +178,7 @@ function handleInventory(ctx: StateCtx, player: Player, body: LTable): boolean {
     if (!id || n === undefined || !Number.isInteger(n) || n < 1 || n > MAX_COUNT) return false;
     out.push({ id, n });
   }
-  ctx.store.update(player.accountKey, (doc) => (doc.inventory = out));
+  ctx.store.update(player.charId, (doc) => (doc.inventory = out));
   return true;
 }
 
@@ -218,11 +218,11 @@ export function handleStateEvent(ctx: StateCtx, player: Player, name: string, va
 export function syncStateOnJoin(ctx: StateCtx, joiner: Player): void {
   for (const other of ctx.roster.inWorld()) {
     if (other.id === joiner.id) continue;
-    const doc = ctx.store.getCached(other.accountKey);
+    const doc = ctx.store.getCached(other.charId);
     if (doc?.appearance) joiner.peer.sendEvent('PlayerAppearance', { id: other.id, ...doc.appearance });
     if (doc?.equipment) joiner.peer.sendEvent('PlayerEquipment', { id: other.id, slots: equipmentToL(doc.equipment) });
   }
-  const own = ctx.store.getCached(joiner.accountKey);
+  const own = ctx.store.getCached(joiner.charId);
   if (!own) return;
   for (const other of ctx.roster.inWorld()) {
     if (other.id === joiner.id) continue;

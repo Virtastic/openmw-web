@@ -41,12 +41,14 @@ export interface SessionRegister {
   password: string;
   serverPassword?: string;
   inviteCode?: string; // not in PROTOCOL.md yet; required when [login].inviteCode is set
+  characterId?: string; // character slots: which character to play; absent = last played
 }
 export interface SessionLoginRequest {
   t: 'SessionLoginRequest';
   account: string;
   password: string;
   serverPassword?: string;
+  characterId?: string;
 }
 // M8: rejoin-in-place with a token parked when the previous session dropped. Sent in
 // HELLO_OK, i.e. AFTER Hello — a resume never bypasses the engine/content policy.
@@ -61,6 +63,7 @@ export interface SessionLoginTicket {
   t: 'SessionLoginTicket';
   ticket: string;
   serverPassword?: string;
+  characterId?: string;
 }
 export interface SessionReady {
   t: 'SessionReady';
@@ -123,6 +126,16 @@ function parseManifest(o: Json): ManifestEntry[] {
   });
 }
 
+// characterId on auth messages: optional, bounded, and shape-checked here so the handlers
+// never see a junk id. Malformed values are a parse error (client bug), not a silent skip.
+function charIdField(o: Json): { characterId?: string } {
+  const v = o['characterId'];
+  if (v === undefined) return {};
+  if (typeof v !== 'string' || v.length === 0 || v.length > 64)
+    throw new SessionParseError('"characterId" must be a string of 1-64 chars');
+  return { characterId: v };
+}
+
 // Returns null for well-formed JSON objects with an unknown "t" (ignored for forward
 // compatibility inside M0); throws SessionParseError on anything malformed.
 export function parseSessionMessage(text: string): ClientSessionMsg | null {
@@ -156,6 +169,7 @@ export function parseSessionMessage(text: string): ClientSessionMsg | null {
         password: str(o, 'password'),
         ...(typeof o['serverPassword'] === 'string' ? { serverPassword: o['serverPassword'] } : {}),
         ...(typeof o['inviteCode'] === 'string' ? { inviteCode: o['inviteCode'] } : {}),
+        ...(charIdField(o)),
       };
     case 'SessionLoginRequest':
       return {
@@ -163,12 +177,14 @@ export function parseSessionMessage(text: string): ClientSessionMsg | null {
         account: str(o, 'account'),
         password: str(o, 'password'),
         ...(typeof o['serverPassword'] === 'string' ? { serverPassword: o['serverPassword'] } : {}),
+        ...(charIdField(o)),
       };
     case 'SessionLoginTicket':
       return {
         t,
         ticket: str(o, 'ticket'),
         ...(typeof o['serverPassword'] === 'string' ? { serverPassword: o['serverPassword'] } : {}),
+        ...(charIdField(o)),
       };
     case 'SessionResume':
       return { t, token: str(o, 'token') };
@@ -205,6 +221,13 @@ export interface SessionFlags {
   lodNearMaxAvatars: number; // hard ceiling on fully-simulated avatars; 0 = radius only
 }
 
+// Character slots: what the client's select UI needs — never the whole doc.
+export interface WelcomeCharacter {
+  id: string;
+  name: string;
+  lastPlayedAt: string;
+}
+
 export function welcome(
   playerId: number,
   sessionToken: string,
@@ -217,6 +240,10 @@ export function welcome(
     pvp: false, difficulty: 0, renderLod: 'full',
     lodNearRadius: 4096, lodMidRadius: 8192, lodNearMaxAvatars: 0,
   },
+  // The account's character slots + which one this session is playing. Empty for system
+  // peers. Lets the client render a character list without another round trip.
+  characters: WelcomeCharacter[] = [],
+  characterId = '',
 ): string {
   return JSON.stringify({
     t: 'SessionWelcome',
@@ -226,6 +253,8 @@ export function welcome(
     flags,
     playerRecord: playerRecord ?? null,
     serverSeq,
+    characters,
+    characterId,
   });
 }
 

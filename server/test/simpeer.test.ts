@@ -172,7 +172,8 @@ test('sim peer: its account is ephemeral — no player doc is ever written', asy
     await peer.waitEvent('ActorAuthorityGrant', () => true, 5000);
 
     const human = await TestClient.connect(server.port);
-    await human.joinAsNew('realplayer');
+    const { welcome } = await human.joinAsNew('realplayer');
+    const humanCharId = welcome['characterId'] as string; // docs are keyed by character id
     human.sendCellChange('5,5', 1, 2, 3);
     await new Promise((r) => setTimeout(r, 200));
 
@@ -183,7 +184,7 @@ test('sim peer: its account is ephemeral — no player doc is ever written', asy
       `a sim peer must leave no player doc, found: ${files.join(', ')}`);
     // Control: the HUMAN in the same run is still persisted, so this proves the peer is
     // excluded rather than persistence being broken outright.
-    assert.ok(files.some((f) => f.startsWith('realplayer')),
+    assert.ok(files.includes(`${humanCharId}.json`),
       `a real player must still be persisted, found: ${files.join(', ')}`);
     peer.ws.close();
     human.ws.close();

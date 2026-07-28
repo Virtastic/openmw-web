@@ -212,7 +212,8 @@ test('death is written immediately, before any disconnect or sweep', async () =>
   const server = await startServer({ dataDir: dir, port: 0, host: '127.0.0.1' });
   try {
     const c = await TestClient.connect(server.port);
-    await c.joinAsNew('dying_player');
+    const { welcome } = await c.joinAsNew('dying_player');
+    const charId = welcome['characterId'] as string; // docs are keyed by character id now
     c.sendCellChange('7,7', 0, 0, 0);
 
     // Alive first: this rides the sweep, so it must NOT be on disk yet.
@@ -227,7 +228,7 @@ test('death is written immediately, before any disconnect or sweep', async () =>
     await new Promise((r) => setTimeout(r, 400));
 
     // STILL CONNECTED. No cleanup flush, no server.flush(), sweep is 45 s away.
-    const doc = JSON.parse(readFileSync(join(dir, 'players', 'dying_player.json'), 'utf8')) as
+    const doc = JSON.parse(readFileSync(join(dir, 'players', `${charId}.json`), 'utf8')) as
       { stats?: { dynamic?: { hp?: { c: number } } } };
     assert.equal(doc.stats?.dynamic?.hp?.c, 0,
       'death must hit the disk at once — a crash before the next sweep must not resurrect');

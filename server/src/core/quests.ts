@@ -114,7 +114,7 @@ export class Quests {
     }
     // The player's own journal records what THEY reported, even when the shared map
     // refuses it — §M6: non-monotonic updates are stored but not relayed.
-    this.ctx.players.update(player.accountKey, (doc) => {
+    this.ctx.players.update(player.charId, (doc) => {
       (doc.journal ??= {})[questId] = idx;
     });
     if (!this.ctx.isShared('journal')) return; // individual mode: stored, never relayed
@@ -140,7 +140,7 @@ export class Quests {
   sendJournalSync(player: Player): void {
     const quests = this.ctx.isShared('journal')
       ? { ...this.ctx.cells.sharedQuest().journal }
-      : { ...(this.ctx.players.getCached(player.accountKey)?.journal ?? {}) };
+      : { ...(this.ctx.players.getCached(player.charId)?.journal ?? {}) };
     player.peer.sendEvent('JournalSync', { quests });
   }
 
@@ -214,7 +214,7 @@ export class Quests {
       return;
     }
     const state = { rank, ...(reputation !== undefined ? { reputation } : {}), ...(expelled !== undefined ? { expelled } : {}) };
-    this.ctx.players.update(player.accountKey, (doc) => {
+    this.ctx.players.update(player.charId, (doc) => {
       (doc.factions ??= {})[factionId] = state;
     });
     if (!this.ctx.isShared('factions')) return;
@@ -231,7 +231,7 @@ export class Quests {
       this.drop(player, 'CrimeUpdate', 'invalid shape');
       return;
     }
-    this.ctx.players.update(player.accountKey, (doc) => (doc.bounty = bounty));
+    this.ctx.players.update(player.charId, (doc) => (doc.bounty = bounty));
     if (!this.ctx.isShared('crime')) return; // personal bounty
     const shared = this.ctx.cells.sharedQuest();
     shared.bounty = bounty;

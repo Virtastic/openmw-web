@@ -207,11 +207,12 @@ test('shared: one account works across worlds; per-world state stays separate', 
     assert.ok(existsSync(join(shared, 'accounts')), 'accounts belong to the shared dir');
     assert.ok(!existsSync(join(worldA, 'accounts')), 'and not to a world dir');
 
-    // But per-world game state stays per world: a character in each, so an item cannot be
-    // duplicated by carrying one inventory into a second world.
-    assert.ok(existsSync(join(worldA, 'players')) || existsSync(join(worldB, 'players')),
-      'player docs stay per world');
-    assert.ok(!existsSync(join(shared, 'players')), 'player docs must NOT be shared');
+    // Character slots: the character doc is SHARED too — one character follows the player
+    // across worlds (per the platform plan; the dupe firewall is the public no-drop
+    // economy, not per-world inventories). Only positions inside the doc are world-scoped.
+    assert.ok(existsSync(join(shared, 'players')), 'character docs belong to the shared dir');
+    assert.ok(!existsSync(join(worldA, 'players')) && !existsSync(join(worldB, 'players')),
+      'no per-world player docs are written anymore (world dirs keep only world state)');
   } finally {
     await a.close();
     await b.close();

@@ -23,6 +23,9 @@ export interface Player {
   id: number;
   name: string; // display casing
   accountKey: string; // nameLower
+  // Character slots: the PlayerStore key for this session's active character. Defaults to
+  // accountKey (system peers, tests); connection.ts sets the real character id at auth.
+  charId: string;
   rank: number;
   peer: Peer;
   ip: string; // M8: needed by /ipban; never leaves the server except into ban/log lines
@@ -101,6 +104,7 @@ export class Roster {
       id: this.allocId(),
       name,
       accountKey,
+      charId: accountKey,
       rank,
       peer,
       ip,

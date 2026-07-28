@@ -4,6 +4,7 @@
 // server. main.ts is the CLI face; tests call startServer() directly.
 
 import { mkdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { WebSocket } from 'ws';
 import { loadConfig, type Config, type DeepPartial } from './config';
 import { AccountStore } from './core/accounts';
@@ -97,7 +98,11 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     reviewMs: config.authority.reviewSec * 1000,
   });
   const accounts = new AccountStore(sharedDir);
-  const playerStore = new PlayerStore(opts.dataDir);
+  // Character docs live in the SHARED dir so a character follows its player across worlds;
+  // positions inside the doc are scoped by world id. The world's own players/ dir is the
+  // pre-slot legacy location, read only during migration.
+  const worldId = process.env.OMW_WORLD_ID ?? 'default';
+  const playerStore = new PlayerStore(sharedDir, worldId, join(opts.dataDir, 'players'));
   const cellStore = new CellStore(opts.dataDir);
   const recordStore = new RecordStore(opts.dataDir);
   const bans = new BanStore(sharedDir);
@@ -121,7 +126,10 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // At flush time the store pulls the freshest position from the live session, so pose
   // updates never need to dirty the doc.
   playerStore.setLivePositionProvider((key) => {
-    const p = roster.activeForAccount(key);
+    // Store keys are character ids now; a system peer's key is still its accountKey, so
+    // check both. Linear scan is fine: called only at flush points, roster is small.
+    const p = roster.activeForAccount(key)
+      ?? [...roster.inWorld()].find((pl) => pl.charId === key);
     return p?.cellKey && p.pose ? { cellKey: p.cellKey, x: p.pose.x, y: p.pose.y, z: p.pose.z } : undefined;
   });
 
@@ -289,8 +297,8 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       id: p.id,
       name: p.name,
       cellKey: p.cellKey ?? null,
-      ...(playerStore.getCached(p.accountKey)?.stats?.level !== undefined
-        ? { level: playerStore.getCached(p.accountKey)!.stats!.level }
+      ...(playerStore.getCached(p.charId)?.stats?.level !== undefined
+        ? { level: playerStore.getCached(p.charId)!.stats!.level }
         : {}),
     })),
     maxPlayers: config.server.maxPlayers,

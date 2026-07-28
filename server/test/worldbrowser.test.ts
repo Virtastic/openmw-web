@@ -8,7 +8,7 @@ import { WorldBrowser } from '../src/core/worldbrowser';
 import type { Player } from '../src/core/players';
 
 const player = (accountKey: string): Player => ({
-  id: 1, name: accountKey, accountKey, rank: 0,
+  id: 1, name: accountKey, accountKey, charId: accountKey, rank: 0,
   peer: { sendEvent() {}, sendBinary: () => true, sendBinaryFrame: () => true, disconnect() {} },
   ip: '', inWorld: true, moveSeq: 0, poseVersion: 0,
 });

@@ -133,11 +133,35 @@ async function unlinkIfPresent(path: string): Promise<boolean> {
   }
 }
 
+// Character slots: an account's PlayerDocs are keyed by character id, so the character
+// list must be read from the account file BEFORE the account file is unlinked. The legacy
+// account-keyed doc is removed too (pre-slot worlds, or a migration that kept the source).
+async function erasePlayerDocs(dataDir: string, key: string): Promise<boolean> {
+  let charIds: string[] = [];
+  try {
+    const account = JSON.parse(await readFile(join(dataDir, 'accounts', `${key}.json`), 'utf8')) as {
+      characters?: { id?: unknown }[];
+    };
+    charIds = (account.characters ?? [])
+      .map((c) => c.id)
+      .filter((id): id is string => typeof id === 'string');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+  }
+  let removed = await unlinkIfPresent(join(dataDir, 'players', `${key}.json`));
+  for (const id of charIds) {
+    if (await unlinkIfPresent(join(dataDir, 'players', `${id}.json`))) removed = true;
+  }
+  return removed;
+}
+
 export async function deleteAccount(dataDir: string, name: string): Promise<EraseReport> {
   const key = name.toLowerCase();
+  // Order matters: character docs are found VIA the account file, so erase them first.
+  const player = await erasePlayerDocs(dataDir, key);
   const report: EraseReport = {
     account: await unlinkIfPresent(join(dataDir, 'accounts', `${key}.json`)),
-    player: await unlinkIfPresent(join(dataDir, 'players', `${key}.json`)),
+    player,
     bans: false,
     identities: await eraseIdentities(dataDir, key),
     chatLines: await eraseChatLines(dataDir, key),

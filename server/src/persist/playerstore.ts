@@ -39,6 +39,11 @@ export interface PlayerDoc {
   };
   spells?: string[];
   position?: { cellKey: string; x: number; y: number; z: number };
+  // Character slots: one doc per CHARACTER, shared across worlds — but a position only
+  // makes sense in the world it was recorded in. positions is keyed by world id;
+  // `position` stays as this world's materialized view (set on load, folded back on
+  // flush) so every existing caller keeps working untouched.
+  positions?: Record<string, { cellKey: string; x: number; y: number; z: number }>;
   // M6: this player's own view. Always written (even in shared mode, so a family can be
   // switched to individual later without losing history); relayed only per [sharing].
   journal?: Record<string, number>; // questId -> highest index this player reported
@@ -76,8 +81,17 @@ export class PlayerStore {
   // Supplies the freshest position for online players at flush time.
   private livePosition: (key: string) => LivePosition | undefined = () => undefined;
 
-  constructor(dataDir: string) {
+  private readonly worldId: string;
+  private readonly legacyDir: string;
+
+  // dataDir: where docs live — under the F3 gateway this is the SHARED dir, so a character
+  // doc follows the player across worlds. worldId scopes positions. legacyDir: where the
+  // pre-slot per-world account-keyed docs live (the world's own data dir); used only by
+  // adoptLegacy during migration.
+  constructor(dataDir: string, worldId = 'default', legacyDir?: string) {
     this.dir = join(dataDir, 'players');
+    this.worldId = worldId;
+    this.legacyDir = legacyDir ?? this.dir;
     mkdirSync(this.dir, { recursive: true });
     this.sweepTimer = setInterval(() => void this.flushAll(), SWEEP_MS);
     this.sweepTimer.unref();
@@ -103,8 +117,45 @@ export class PlayerStore {
       for (const [k, v] of Object.entries(loaded.equipment)) eq[Number(k)] = v;
       loaded.equipment = eq;
     }
+    this.materializePosition(loaded);
     this.cache.set(key, loaded);
     return loaded;
+  }
+
+  // `position` in memory is always THIS world's position. A doc written by another world
+  // must not teleport the player here; absent an entry for this world the player gets the
+  // default spawn (no position at all).
+  private materializePosition(doc: PlayerDoc): void {
+    if (doc.positions) {
+      const mine = doc.positions[this.worldId];
+      if (mine) doc.position = { ...mine };
+      else delete doc.position;
+    }
+    // No positions map = pre-slot doc from this world's own dir; keep legacy position as-is.
+  }
+
+  // Character-slot migration: adopt a pre-slot account-keyed doc under a character id.
+  // Loads legacyDir/<accountKey>.json, rewrites it as <charId>.json with the legacy
+  // position scoped to this world. The legacy file is left in place (harmless, and safer
+  // if a rollback is ever needed). Returns the adopted doc, or undefined when there was
+  // no legacy doc (fresh account → fresh chargen).
+  async adoptLegacy(accountKey: string, charId: string): Promise<PlayerDoc | undefined> {
+    const existing = await this.get(charId);
+    if (existing) return existing; // already migrated (crash between write and account flush)
+    const legacy = await readJson<PlayerDoc>(join(this.legacyDir, `${accountKey}.json`));
+    if (!legacy) return undefined;
+    if (legacy.equipment) {
+      const eq: Record<number, string> = {};
+      for (const [k, v] of Object.entries(legacy.equipment)) eq[Number(k)] = v;
+      legacy.equipment = eq;
+    }
+    if (legacy.position && !legacy.positions) legacy.positions = { [this.worldId]: { ...legacy.position } };
+    this.materializePosition(legacy);
+    this.cache.set(charId, legacy);
+    this.dirty.add(charId);
+    await this.flushKey(charId);
+    log('info', 'players.adopted_legacy', { account: accountKey, char: charId });
+    return legacy;
   }
 
   // Synchronous view for fan-out paths (docs of connected players are always cached,
@@ -149,6 +200,9 @@ export class PlayerStore {
     if (!doc) return;
     const live = this.livePosition(key);
     if (live) doc.position = { ...live };
+    // Fold this world's position back into the per-world map before it hits disk, so a doc
+    // shared across worlds never clobbers another world's position with ours.
+    if (doc.position) (doc.positions ??= {})[this.worldId] = { ...doc.position };
     try {
       await timeFlush('players', () => writeJsonAtomic(this.path(key), doc));
     } catch (err) {

@@ -7,7 +7,7 @@
 import { randomBytes } from 'node:crypto';
 import type { WebSocket } from 'ws';
 import type { Config } from '../config';
-import type { AccountStore, Account } from '../core/accounts';
+import type { AccountStore, Account, CharacterSummary } from '../core/accounts';
 import type { ContentGate, EngineGate } from '../core/manifest';
 import type { Player, Peer, Roster } from '../core/players';
 import type { CommandRegistry, CommandContext } from '../core/commands';
@@ -240,12 +240,12 @@ export class Connection implements Peer {
       // Logout flush: capture the freshest position explicitly (the roster entry is
       // about to go away) and write the doc. Only players with an existing doc are
       // touched — a connect/quit without any state must not fabricate an empty snapshot.
-      const { accountKey, cellKey, pose } = this.player;
-      if (this.ctx.players.getCached(accountKey)) {
-        this.ctx.players.update(accountKey, (doc) => {
+      const { charId, cellKey, pose } = this.player;
+      if (this.ctx.players.getCached(charId)) {
+        this.ctx.players.update(charId, (doc) => {
           if (cellKey && pose) doc.position = { cellKey, x: pose.x, y: pose.y, z: pose.z };
         });
-        void this.ctx.players.flushKey(accountKey);
+        void this.ctx.players.flushKey(charId);
       }
       // M8: park a resume ticket BEFORE the roster slot goes, so a reconnect within
       // [login] resumeWindowSec can rejoin in place instead of paying argon2 again.
@@ -254,6 +254,7 @@ export class Connection implements Peer {
         this.ctx.resume.park(this.sessionToken, {
           accountKey: this.player.accountKey,
           accountName: this.player.name,
+          charId: this.player.charId,
           ...(this.player.cellKey ? { cellKey: this.player.cellKey } : {}),
           ...(this.player.pose ? { pose: this.player.pose } : {}),
         });
@@ -495,7 +496,7 @@ export class Connection implements Peer {
     };
     player.poseVersion++;
     // Cell change is a specced persistence flush point.
-    this.ctx.players.update(player.accountKey, (doc) => (doc.position = { cellKey, x, y, z }), 'now');
+    this.ctx.players.update(player.charId, (doc) => (doc.position = { cellKey, x, y, z }), 'now');
     log('info', 'player.cell_change', { id: player.id, cellKey });
     for (const p of this.ctx.roster.inWorld())
       p.peer.sendEvent('PlayerCellChange', { id: player.id, cellKey, x, y, z });
@@ -583,6 +584,44 @@ export class Connection implements Peer {
     return true;
   }
 
+  // Character slots. Resolves which character this session plays: an explicit characterId
+  // must belong to the account (refused otherwise — silently playing the wrong character is
+  // worse than a failed login); absent means last-played. An account with no slots yet is
+  // migrated here: its first character is created named after the account, adopting the
+  // legacy account-keyed PlayerDoc if this world has one. System peers never come through
+  // this path — a sim peer owns no character at all.
+  // Returns null after authFail.
+  private async resolveCharacter(
+    op: AuthOp,
+    account: Account,
+    requestedId?: string,
+  ): Promise<{ char?: CharacterSummary; doc?: PlayerDoc } | null> {
+    if (this.isSystem) return {};
+    const accountKey = account.name.toLowerCase();
+    if (!account.characters || account.characters.length === 0) {
+      const created = this.ctx.accounts.createCharacter(account, account.name);
+      if (created === 'full') {
+        this.authFail(op, 'AUTH_FAILED', 'no free character slot');
+        return null;
+      }
+      const doc = await this.ctx.players.adoptLegacy(accountKey, created.id);
+      return { char: created, doc };
+    }
+    let char: CharacterSummary | undefined;
+    if (requestedId !== undefined) {
+      char = account.characters.find((c) => c.id === requestedId);
+      if (!char) {
+        this.authFail(op, 'AUTH_FAILED', 'unknown character');
+        return null;
+      }
+    } else {
+      // length checked non-zero above, so the sort always yields one.
+      char = [...account.characters].sort((a, b) => b.lastPlayedAt.localeCompare(a.lastPlayedAt))[0]!;
+    }
+    const doc = await this.ctx.players.get(char.id);
+    return { char, doc };
+  }
+
   private async handleRegister(msg: SessionRegister): Promise<void> {
     if (!this.checkAuthGate('register', msg.serverPassword)) return;
     const cfg = this.ctx.config.login;
@@ -604,10 +643,11 @@ export class Connection implements Peer {
       this.authFail('register', 'AUTH_FAILED', 'account already exists');
       return;
     }
-    // A register can still have a doc (account file deleted by an operator but player
-    // doc kept, or supersede races); load for consistency with login.
-    const doc = await this.ctx.players.get(result.name.toLowerCase());
-    this.finishAuth('register', result, doc);
+    // A register can still adopt a doc (account file deleted by an operator but player
+    // doc kept); resolveCharacter's migration path handles exactly that.
+    const rc = await this.resolveCharacter('register', result, msg.characterId);
+    if (!rc) return;
+    this.finishAuth('register', result, rc.doc, false, rc.char);
   }
 
   // M8: a banned account is refused with BANNED at register, login and resume. Returns
@@ -644,7 +684,20 @@ export class Connection implements Peer {
       this.authFail('resume', 'AUTH_FAILED', 'account no longer available');
       return;
     }
-    const doc = await this.ctx.players.get(ticket.accountKey);
+    // Character slots: resume returns to the SAME character the session was playing. A
+    // pre-slot ticket (no charId) falls back to default resolution, which also migrates.
+    let char: CharacterSummary | undefined;
+    let doc: PlayerDoc | undefined;
+    if (ticket.charId !== undefined) {
+      char = account.characters?.find((c) => c.id === ticket.charId);
+      if (char) doc = await this.ctx.players.get(char.id);
+    }
+    if (!char && !this.isSystem) {
+      const rc = await this.resolveCharacter('resume', account);
+      if (!rc) return;
+      char = rc.char;
+      doc = rc.doc;
+    }
     this.resumed = ticket;
     log('info', 'player.resume', { account: account.name, ip: this.ip, cellKey: ticket.cellKey ?? null });
     // The Welcome's playerRecord is what the CLIENT teleports to, and the doc's position is
@@ -666,7 +719,7 @@ export class Connection implements Peer {
       });
       metrics.resumeNoPose.inc();
     }
-    this.finishAuth('resume', account, resumeDoc, true);
+    this.finishAuth('resume', account, resumeDoc, true, char);
     // Put the session back where it was BEFORE Ready, so the join path re-sends the cell
     // and re-claims authority for the cell the player is standing in.
     if (this.player) {
@@ -693,8 +746,9 @@ export class Connection implements Peer {
       if (this.state !== 'CLOSED') this.authFail('login', 'BANNED', 'account is banned');
       return;
     }
-    const doc = await this.ctx.players.get(account.name.toLowerCase());
-    this.finishAuth('login', account, doc);
+    const rc = await this.resolveCharacter('login', account, msg.characterId);
+    if (!rc) return;
+    this.finishAuth('login', account, rc.doc, false, rc.char);
   }
 
   // Phase B: redeem the one-time ticket the SSO callback handed the browser. The ticket is
@@ -728,16 +782,17 @@ export class Connection implements Peer {
       if (this.state !== 'CLOSED') this.authFail('ticket', 'BANNED', 'account is banned');
       return;
     }
-    const doc = await this.ctx.players.get(account.name.toLowerCase());
+    const rc = await this.resolveCharacter('ticket', account, msg.characterId);
+    if (!rc) return;
     log('info', 'player.sso_login', { account: account.name, ip: this.ip });
-    this.finishAuth('ticket', account, doc);
+    this.finishAuth('ticket', account, rc.doc, false, rc.char);
   }
 
   // forceRecord: send the doc even without an appearance. The appearance gate below exists
   // so a FRESH player still gets chargen — but a resumed player was in-world seconds ago and
   // must never be treated as fresh: withholding the record also withholds its position, so
   // the client stays wherever its boot URL dropped it instead of returning to where it was.
-  private finishAuth(op: AuthOp, account: Account, doc?: PlayerDoc, forceRecord = false): void {
+  private finishAuth(op: AuthOp, account: Account, doc?: PlayerDoc, forceRecord = false, char?: CharacterSummary): void {
     if (this.state !== 'HELLO_OK') return; // raced a disconnect while hashing
     metrics.auth.inc({ op, result: 'success' });
     const accountKey = account.name.toLowerCase();
@@ -748,11 +803,17 @@ export class Connection implements Peer {
     }
     this.account = account;
     this.player = this.ctx.roster.addAuthed(account.name, accountKey, account.rank, this, this.ip);
+    // Character slots: every persistence path keys on charId from here on. System peers
+    // keep the accountKey default (no character; marked ephemeral below).
+    if (char) {
+      this.player.charId = char.id;
+      this.ctx.accounts.touchCharacter(account, char.id);
+    }
     this.player.simulatesActors = this.simulatesActors;
     this.player.system = this.isSystem;
     // A sim peer owns no character: keep it out of players/ entirely rather than writing a
     // doc that would be restored onto the next freshly spawned peer.
-    if (this.isSystem) this.ctx.players.markEphemeral(this.player.accountKey);
+    if (this.isSystem) this.ctx.players.markEphemeral(this.player.charId);
     this.state = 'AUTHED';
     this.authing = false;
     const sessionToken = randomBytes(16).toString('hex');
@@ -772,7 +833,9 @@ export class Connection implements Peer {
         lodNearRadius: this.ctx.config.limits.lodNearRadius,
         lodMidRadius: this.ctx.config.limits.lodMidRadius,
         lodNearMaxAvatars: this.ctx.config.limits.lodNearMaxAvatars,
-      }),
+      },
+      (account.characters ?? []).map(({ id, name, lastPlayedAt }) => ({ id, name, lastPlayedAt })),
+      char?.id ?? ''),
     );
     this.ctx.hooks.playerAuthed({ id: this.player.id, name: this.player.name, rank: this.player.rank });
     log('info', 'player.authed', { id: this.player.id, name: this.player.name, ip: this.ip });
