@@ -176,5 +176,9 @@ export function s3FromEnv(cfg: {
   const secretAccessKey = process.env.S3_SECRET_ACCESS_KEY ?? '';
   if (cfg.endpoint === '' || cfg.bucket === '' || accessKeyId === '' || secretAccessKey === '') return undefined;
   log('info', 's3.configured', { endpoint: cfg.endpoint, bucket: cfg.bucket, region: cfg.region });
-  return new S3Storage({ ...cfg, accessKeyId, secretAccessKey });
+  // 1h: an upload PUT of a multi-hundred-MB file needs a comfortable window, and a download
+  // GET is streamed for a whole play session — the client renews each download URL well
+  // before this (StreamFS mounts one URL and reads Ranges against it for hours), so this is
+  // the safety margin, not the session bound. Still short enough that a leaked URL dies soon.
+  return new S3Storage({ ...cfg, accessKeyId, secretAccessKey, expirySec: 3600 });
 }

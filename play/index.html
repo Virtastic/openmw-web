@@ -1558,13 +1558,27 @@
            append('[locker] streaming '+files.length+' files from your library…');
            FS.mkdirTree('/mwdata');
            var fbarch=[], content=[], hasVideoBik=false;
+           var mounted=[];
            for (const f of files){
              var dl = await (await api('/locker/download?name='+encodeURIComponent(f.name))).json();
              if (!dl || !dl.url){ append('[locker] cannot fetch '+f.name,'err'); continue; }
              StreamFS.mount('/mwdata/'+f.name, dl.url, f.size);
+             mounted.push(f.name);
              if (/\.bsa$/i.test(f.name)) fbarch.push(f.name);
              else if (/\.(esm|esp|omwaddon)$/i.test(f.name)) content.push(f.name);
            }
+           // Presigned download URLs are minted with a 1h life; a play session is longer, and
+           // StreamFS keeps reading Ranges against the SAME mounted URL for the whole session.
+           // So re-sign every mounted file well before expiry and swap the fresh URL in. The
+           // engine read path is synchronous (can't re-sign on a 403), so this is pre-emptive.
+           setInterval(function(){
+             mounted.forEach(async function(name){
+               try {
+                 var r = await (await api('/locker/download?name='+encodeURIComponent(name))).json();
+                 if (r && r.url) StreamFS.setUrl('/mwdata/'+name, r.url);
+               } catch(e){ /* a missed renewal is retried on the next tick, well within the 1h window */ }
+             });
+           }, 30*60*1000); // every 30 min, vs the 1h URL life = 2x margin
            // Canonical GOTY load order first, then any extra plugins the player uploaded.
            var base=['Morrowind.esm','Tribunal.esm','Bloodmoon.esm'];
            var baseArch=['Morrowind.bsa','Tribunal.bsa','Bloodmoon.bsa'];
