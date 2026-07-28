@@ -307,18 +307,15 @@ export class Authority {
     const now = this.now();
     let pool = c.order.filter((id) => id !== except);
     if (pool.length === 0) return null;
-    // Only clients that can SIMULATE are eligible. Fitness measures whether a client can
-    // talk to us and says nothing about whether it can do the job: a protocol bot is a
-    // near-perfect RTT candidate with no engine at all, so pure-fitness election hands it
-    // the cell and every NPC freezes for everyone. Revoking a silent holder is not enough on
-    // its own — without this filter the cell just rotates through other clients that also
-    // produce nothing.
-    //
-    // Falls back to the unfiltered pool when NOBODY is capable, so a cell full of tools
-    // still has a holder for the rest of the M4 contract rather than going ownerless.
+    // SERVER-AUTHORITATIVE ONLY: eligibility is the sim peer, full stop (caps.canSimulate is
+    // true only for a system peer). There is deliberately NO fallback to the unfiltered pool:
+    // if the sim peer is not present in this cell, the cell has no holder and its actors wait
+    // for the server. A client is never handed authority, so NPC state can never be authored by
+    // a player's machine. (The old fallback existed to keep a cell owned when no client could
+    // simulate; that is exactly the client-authority mode we are removing.)
     if (this.caps) {
-      const capable = pool.filter((id) => this.caps!.canSimulate(id));
-      if (capable.length > 0) pool = capable;
+      pool = pool.filter((id) => this.caps!.canSimulate(id));
+      if (pool.length === 0) return null;
     }
     const settled = pool.filter((id) => now - (c.enteredAt.get(id) ?? now) >= authorityTuning.settleMs);
     const from = settled.length > 0 ? settled : pool;

@@ -107,6 +107,10 @@ export class WorldState {
     private readonly roster: Roster,
     private readonly cells: CellStore,
     private readonly interest?: InterestSettings,
+    // Multiplayer (SSO) servers are server-authoritative ONLY: the sim peer is the sole entity
+    // that may hold cell authority. Off (dev/test without SSO) keeps the legacy behaviour where
+    // a capable client can hold, so the existing authority-mechanism tests still exercise it.
+    private readonly serverAuthoritativeOnly = false,
   ) {
     this.authority = new Authority({
       grant: (playerId, cellKey, epoch, snapshot) =>
@@ -125,9 +129,19 @@ export class WorldState {
         this.cells.markDirty(cellKey);
       },
     }, {
-      // Only clients that declared they can simulate actors are eligible to hold a cell.
+      // SERVER-AUTHORITATIVE ONLY: the sole entity that may hold a cell's actor authority is
+      // the sim peer (a system peer). A normal client is NEVER eligible — even if it declares
+      // simulatesActors — so NPC simulation cannot be authored by a player's machine. Cells the
+      // sim peer does not cover simply have no holder and wait for the server (Authority returns
+      // no candidate); there is no client-simulation fallback. This is the single-mechanism model.
       caps: {
-        canSimulate: (playerId) => this.roster.get(playerId)?.simulatesActors === true,
+        canSimulate: (playerId) => {
+          const p = this.roster.get(playerId);
+          if (!p) return false;
+          // Server-authoritative MP: ONLY the sim peer (system) may hold. Legacy: any client
+          // that declared it can simulate. The gate is the multiplayer contract, not a knob.
+          return this.serverAuthoritativeOnly ? p.system === true : p.simulatesActors === true;
+        },
       },
     });
   }

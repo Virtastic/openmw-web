@@ -157,7 +157,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   let motd = config.server.motd;
   const resume = new ResumeStore(config.login.resumeWindowSec);
   const interest = interestFromLimits(config.limits);
-  const world = new WorldState(roster, cellStore, interest);
+  const world = new WorldState(roster, cellStore, interest, config.auth.requireSso);
   // Phase 4: scripted-spawn replay + the unstick tool. Built early because both the admin
   // command surface and the connection's cell-entry path need it.
   const questRepair = new QuestRepair({ roster, players: playerStore });

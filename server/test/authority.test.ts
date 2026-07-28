@@ -470,13 +470,13 @@ test('authority: a client that cannot simulate never holds a cell', async () => 
   await auth.onEnter(2, 'cell');
   assert.equal(auth.holderOf('cell'), 2, 'authority went to a client that cannot simulate');
 
-  // And it must not be handed back when the capable one leaves — better ownerless than
-  // owned by something that will never produce a frame... except the cell then has nobody,
-  // so the fallback DOES apply and 1 holds it. Asserted explicitly so the trade-off is
-  // visible rather than accidental.
+  // SERVER-AUTHORITATIVE ONLY: when the sole eligible occupant leaves, the cell goes
+  // OWNERLESS and its actors wait for the server. There is no fallback to an incapable
+  // client — that client-authority path has been removed. (Cell 1 stays present but never
+  // becomes holder.)
   await auth.onLeave(2, 'cell', true);
-  assert.equal(auth.holderOf('cell'), 1,
-    'with nobody capable left, the cell falls back to any occupant rather than going ownerless');
+  assert.equal(auth.holderOf('cell'), undefined,
+    'no eligible holder left -> the cell is ownerless and waits for the server, never a client');
 });
 
 test('authority: a capable occupant takes over when the holder leaves (peer/human fallback)', async () => {
