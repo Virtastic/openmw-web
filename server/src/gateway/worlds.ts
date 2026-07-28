@@ -60,13 +60,13 @@ interface World {
   idleSince?: number;
   stopping: boolean;
   ownerAccount?: string;
-  lastStatus?: { playerCount: number; maxPlayers: number; name: string };
+  lastStatus?: { playerCount: number; connectedCount: number; maxPlayers: number; name: string };
 }
 
 export interface WorldDeps {
   settings: WorldSettings;
   spawner?: (id: string, args: string[], env: NodeJS.ProcessEnv) => ChildProcess;
-  fetchStatus?: (port: number) => Promise<{ playerCount: number; maxPlayers: number; name: string } | null>;
+  fetchStatus?: (port: number) => Promise<{ playerCount: number; connectedCount: number; maxPlayers: number; name: string } | null>;
   now?: () => number;
 }
 
@@ -203,7 +203,8 @@ export class WorldSupervisor {
         // both breaks it. Do not delete one as dead code — a public world quietly vanishing
         // is players failing to join the world the lobby is advertising.
         if (w.mode !== 'public') {
-          if (st.playerCount > 0) w.idleSince = undefined;
+          // Idle = nobody CONNECTED (loading / at chargen counts), not merely nobody in a cell.
+          if (st.connectedCount > 0) w.idleSince = undefined;
           else if (w.idleSince === undefined) w.idleSince = this.now();
         }
       } else {
@@ -305,13 +306,14 @@ function delay(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-async function defaultFetchStatus(port: number): Promise<{ playerCount: number; maxPlayers: number; name: string } | null> {
+async function defaultFetchStatus(port: number): Promise<{ playerCount: number; connectedCount: number; maxPlayers: number; name: string } | null> {
   try {
     const r = await fetch(`http://127.0.0.1:${port}/status`, { signal: AbortSignal.timeout(2000) });
     if (!r.ok) return null;
-    const j = await r.json() as { playerCount?: number; maxPlayers?: number; name?: string };
+    const j = await r.json() as { playerCount?: number; connectedCount?: number; maxPlayers?: number; name?: string };
     return {
       playerCount: typeof j.playerCount === 'number' ? j.playerCount : 0,
+      connectedCount: typeof j.connectedCount === 'number' ? j.connectedCount : (typeof j.playerCount === 'number' ? j.playerCount : 0),
       maxPlayers: typeof j.maxPlayers === 'number' ? j.maxPlayers : 0,
       name: typeof j.name === 'string' ? j.name : `world:${port}`,
     };

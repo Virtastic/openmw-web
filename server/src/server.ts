@@ -530,6 +530,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     requiresPassword: config.server.password !== '',
     allowsRegistration: config.login.allowRegistration && config.login.inviteCode === '',
     playerCount: roster.humansInWorld().length,
+    connectedCount: roster.humanCount, // F3: keeps a world alive while a player is loading / at chargen
     pvp: config.rules.pvp,
     players: roster.humansInWorld().map((p) => ({
       id: p.id,

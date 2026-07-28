@@ -723,7 +723,7 @@
  });
  window.addEventListener('pagehide', function(){ if (window.__omwSync) window.__omwSync(); });
  (function(){
-   var guard = function(e){ e.preventDefault(); e.returnValue = ''; return ''; };
+   var guard = function(e){ if (window.__omwAllowLeave) return; e.preventDefault(); e.returnValue = ''; return ''; };
    var armed = false;
    setInterval(function(){
      var running = !!(window.Module && Module.__omwRunning);
@@ -1032,15 +1032,39 @@
                  default:            return 'The server could not be reached'+(code?' ('+code+')':'')+'.';
                }
              }
+             // A themed modal (matching the app) with an explicit "Go back" button, rather than
+             // a raw overlay + auto-redirect. The auto-redirect fired the browser's "Leave site?"
+             // dialog; the button sets __omwAllowLeave so navigation is clean.
+             function mpErrorModal(title, msg){
+               if (document.getElementById('mp-error-modal')) return;
+               var wrap = document.createElement('div'); wrap.id = 'mp-error-modal';
+               wrap.style.cssText = 'position:fixed;inset:0;z-index:10000;display:flex;align-items:center;'
+                 + 'justify-content:center;padding:24px;background:radial-gradient(140% 120% at 50% 0%,#181209,#000 72%);'
+                 + 'font-family:-apple-system,"Segoe UI",Roboto,sans-serif';
+               var box = document.createElement('div');
+               box.style.cssText = 'width:100%;max-width:440px;background:linear-gradient(160deg,#1e1711,#16110d);'
+                 + 'border:1px solid rgba(138,104,56,.5);border-radius:10px;padding:32px 34px;'
+                 + 'box-shadow:0 30px 90px rgba(0,0,0,.6);text-align:center';
+               box.innerHTML = '<div style="font:600 10.5px/1 Optima,sans-serif;letter-spacing:.22em;'
+                 + 'text-transform:uppercase;color:#7c705c">Multiplayer</div>'
+                 + '<h2 style="margin:8px 0 0;font-family:\'Hoefler Text\',Georgia,serif;font-weight:600;'
+                 + 'font-size:24px;color:#ece0c6">' + title + '</h2>'
+                 + '<p style="margin:12px 0 0;font-size:14px;line-height:1.6;color:#a5987e">' + msg + '</p>';
+               var btn = document.createElement('button');
+               btn.textContent = 'Go back to sign in';
+               btn.style.cssText = 'margin-top:22px;width:100%;box-sizing:border-box;padding:13px 20px;'
+                 + 'border-radius:6px;cursor:pointer;border:1px solid #eecb78;font:600 12.5px/1 Optima,"Gill Sans",sans-serif;'
+                 + 'letter-spacing:.12em;text-transform:uppercase;background:linear-gradient(180deg,#d3a84e,#8a6838);color:#1a1207';
+               btn.onclick = function(){ window.__omwAllowLeave = true; try { if (window.Module) Module.__omwRunning = false; } catch(e){} location.href = 'launcher.html'; };
+               box.appendChild(btn); wrap.appendChild(box); document.body.appendChild(wrap);
+             }
              (function(){
                var handled = false;
                setInterval(function(){
                  var s = window.__omwMP && window.__omwMP.state;
                  if (s === 'Failed' && !handled){
                    handled = true;
-                   fatalOverlay('Can’t join multiplayer',
-                     friendlyMpError(window.__omwMP.lastError) + ' Returning to sign in…', false);
-                   setTimeout(function(){ location.href = 'launcher.html'; }, 3800);
+                   mpErrorModal('Can’t join multiplayer', friendlyMpError(window.__omwMP.lastError));
                  }
                }, 1000);
              })();

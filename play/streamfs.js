@@ -25,8 +25,8 @@
 //   StreamFS.mountLocal('/mwdata/Morrowind.bsa', fileHandle, sizeBytes);
 (function () {
   'use strict';
-  const CHUNK = 2 * 1024 * 1024; // 2MB chunks
-  const LRU_MAX = 48;            // ~96MB resident chunk cache per file set
+  const CHUNK = 4 * 1024 * 1024; // 4MB chunks (fewer network round-trips when streaming BSAs from S3)
+  const LRU_MAX = 32;            // ~128MB resident chunk cache per file set
 
   // cache is a Map used as an LRU: insertion order IS the recency order (delete+set moves to end),
   // so eviction pops the first (oldest) key. No separate order array → O(1) hit path, no linear scan.

@@ -50,7 +50,7 @@ function harness(over: Partial<WorldSettings> = {}) {
       spawned.push({ id, args, child });
       return child as unknown as ChildProcess;
     },
-    fetchStatus: async (port) => ({ playerCount: counts.get(port) ?? 0, maxPlayers: 32, name: `w${port}` }),
+    fetchStatus: async (port) => ({ playerCount: counts.get(port) ?? 0, connectedCount: counts.get(port) ?? 0, maxPlayers: 32, name: `w${port}` }),
   });
   return { sup, spawned, counts, advance: (ms: number) => { clock += ms; } };
 }
@@ -268,7 +268,7 @@ test('rolling restart: a world that will not come back HALTS the rollout', async
     fetchStatus: async (port) => {
       const rec = spawned.find((s) => Number(s.args[s.args.indexOf('--port') + 1]) === port);
       if (rec && dead.has(rec.id)) return null;
-      return { playerCount: 0, maxPlayers: 32, name: 'w' };
+      return { playerCount: 0, connectedCount: 0, maxPlayers: 32, name: 'w' };
     },
   });
   sup.ensure('broken', 'private');

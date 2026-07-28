@@ -26,7 +26,7 @@ async function harness(maxWorlds = 5, maxPerOwner = 2) {
       sharedDir: mkdtempSync(join(tmpdir(), 'omw-shared-')),
     },
     spawner: () => new FakeChild() as unknown as ChildProcess,
-    fetchStatus: async (port) => ({ playerCount: 0, maxPlayers: 32, name: `w${port}` }),
+    fetchStatus: async (port) => ({ playerCount: 0, connectedCount: 0, maxPlayers: 32, name: `w${port}` }),
   });
   worlds.startPublic();
   await worlds.poll();

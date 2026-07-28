@@ -20,7 +20,11 @@ export interface StatusSnapshot {
   name: string;
   motd: string;
   players: { id: number; name: string; cellKey: string | null; level?: number }[];
-  playerCount: number;
+  playerCount: number; // humans IN A CELL — the lobby's "who's playing" number
+  // F3: humans CONNECTED (authed), whether in a cell yet or still at the menu / in character
+  // creation. The gateway reaps an idle world on THIS, not playerCount — otherwise a player
+  // creating a character (not in a cell yet) reads as idle and their world is killed under them.
+  connectedCount: number;
   maxPlayers: number;
   contentPolicy: 'names' | 'strict' | 'off';
   enginePolicy: 'warn' | 'refuse' | 'off';
