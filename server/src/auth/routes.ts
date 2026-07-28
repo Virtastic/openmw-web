@@ -22,7 +22,7 @@ import type { BanStore } from '../persist/banstore';
 import type { IpRateLimiter } from '../net/ratelimit';
 import { clientIp, isSecureRequest, readCookie, redirect, sendJson, sendText, setCookie, type HttpRoute } from '../net/http';
 import { OidcError, OidcService, isProviderId, type ProviderId } from './oidc';
-import { IdentityStore, LoginTicketStore, SessionIndex, resolveSsoAccount } from './identities';
+import { IdentityStore, LoginTicketStore, SessionIndex, LockerSessionStore, resolveSsoAccount } from './identities';
 import { log } from '../log';
 import { metrics } from '../metrics';
 
@@ -36,6 +36,7 @@ export interface AuthDeps {
   identities: IdentityStore;
   tickets: LoginTicketStore;
   sessions: SessionIndex;
+  lockerSessions?: LockerSessionStore; // Phase 3.5: minted at SSO login so the browser can upload before joining
   accounts: AccountStore;
   bans: BanStore;
   limiter: IpRateLimiter; // shares the operator's per-IP auth budget
@@ -52,7 +53,7 @@ function returnTo(returnUrl: string, fragment: string): string {
 // `also` is chained AFTER the SSO routes: createHttpServer takes exactly one extra-route
 // hook, and threading a list through it would touch every caller for one composition.
 export function createAuthRoutes(deps: AuthDeps, also?: HttpRoute): HttpRoute {
-  const { config, oidc, identities, tickets, sessions, accounts, bans, limiter } = deps;
+  const { config, oidc, identities, tickets, sessions, lockerSessions, accounts, bans, limiter } = deps;
 
   // A failure the player caused (or a provider refused) goes back to the game page as a
   // machine-readable code; the human-readable reason stays in the server log. Nothing the
@@ -163,6 +164,14 @@ export function createAuthRoutes(deps: AuthDeps, also?: HttpRoute): HttpRoute {
       return fail(res, 'banned', `banned account ${resolved.accountKey} attempted an SSO login`, ip);
 
     const ticket = tickets.mint(resolved.accountKey, resolved.accountName);
+    // Locker session cookie: lets this browser reach /locker/* to upload its game data
+    // before it joins any world. httpOnly + SameSite=Lax so JS cannot read it and it is
+    // not sent cross-site; scoped to /locker.
+    if (lockerSessions) {
+      setCookie(res, 'omw_locker', lockerSessions.mint(resolved.accountKey), {
+        maxAgeSec: 24 * 60 * 60, path: '/locker', secure: isSecureRequest(req),
+      });
+    }
     log('info', 'auth.sso_ok', { provider, account: resolved.accountName, created: resolved.created, ip });
     metrics.auth.inc({ op: 'sso', result: 'success' });
     if (config.auth.returnUrl === '') {

@@ -768,6 +768,12 @@ export class Connection implements Peer {
   private async handleRegister(msg: SessionRegister): Promise<void> {
     if (!this.checkAuthGate('register', msg.serverPassword)) return;
     const cfg = this.ctx.config.login;
+    if (this.ctx.config.auth.requireSso) {
+      // SSO-only server: there is nothing to register. Point them at the real door rather
+      // than a flat refusal.
+      this.authFail('register', 'AUTH_FAILED', 'this server uses single sign-on — no account/password');
+      return;
+    }
     if (!cfg.allowRegistration) {
       this.authFail('register', 'AUTH_FAILED', 'registration is disabled');
       return;
@@ -888,8 +894,8 @@ export class Connection implements Peer {
     if (!this.checkAuthGate('login', msg.serverPassword)) return;
     // Phase B: an operator can turn the password path off entirely (SSO-only server).
     // Registration is gated separately by [login].allowRegistration.
-    if (!this.ctx.config.auth.allowPasswordLogin) {
-      this.authFail('login', 'AUTH_FAILED', 'password login is disabled on this server');
+    if (this.ctx.config.auth.requireSso || !this.ctx.config.auth.allowPasswordLogin) {
+      this.authFail('login', 'AUTH_FAILED', 'this server uses single sign-on — no account/password');
       return;
     }
     if (this.refuseIfBanned('login', msg.account)) return;

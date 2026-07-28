@@ -208,6 +208,39 @@ export class LoginTicketStore {
 
 // sessionToken -> account, for the ONE thing that needs it over HTTP: proving who is
 // asking to link a provider. Entries live exactly as long as the socket.
+// Locker sessions: a browser needs to reach /locker/* to upload its game data BEFORE it
+// can join any world, so this auth is separate from the game's WebSocket session. Minted
+// at SSO login (auth/routes.ts) and delivered as an httpOnly cookie. TTL'd because it is a
+// standing credential to a private data store; the game ticket is single-use and short,
+// but the locker session must survive a multi-file upload.
+export class LockerSessionStore {
+  private readonly tokens = new Map<string, { accountKey: string; expiresAt: number }>();
+  constructor(private readonly ttlMs = 24 * 60 * 60 * 1000) {}
+
+  mint(accountKey: string): string {
+    this.sweep();
+    const token = randomBytes(32).toString('base64url');
+    this.tokens.set(token, { accountKey, expiresAt: Date.now() + this.ttlMs });
+    return token;
+  }
+
+  resolve(token: string): string | undefined {
+    if (token === '') return undefined;
+    const e = this.tokens.get(token);
+    if (!e || e.expiresAt <= Date.now()) { if (e) this.tokens.delete(token); return undefined; }
+    return e.accountKey;
+  }
+
+  revokeAccount(accountKey: string): void {
+    for (const [t, e] of [...this.tokens]) if (e.accountKey === accountKey) this.tokens.delete(t);
+  }
+
+  private sweep(): void {
+    const now = Date.now();
+    for (const [t, e] of [...this.tokens]) if (e.expiresAt <= now) this.tokens.delete(t);
+  }
+}
+
 export class SessionIndex {
   private readonly byToken = new Map<string, { accountKey: string; accountName: string }>();
 

@@ -648,6 +648,33 @@ test('password login is unaffected, and cannot be used against an SSO-only accou
   });
 });
 
+test('requireSso forces SSO-only: register AND password login are both refused', async (t) => {
+  const h = await boot(t, { auth: { requireSso: true } });
+
+  const c = await TestClient.connect(h.server.port);
+  c.hello();
+  await c.waitJson('SessionHelloOk');
+  c.register('Someone', 'hunter22');
+  const reg = await c.waitDisconnect('AUTH_FAILED');
+  assert.match(String(reg['detail']), /single sign-on/, 'register is refused and points at SSO');
+  c.close();
+
+  const c2 = await TestClient.connect(h.server.port);
+  c2.hello();
+  await c2.waitJson('SessionHelloOk');
+  c2.login('Someone', 'hunter22');
+  const log = await c2.waitDisconnect('AUTH_FAILED');
+  assert.match(String(log['detail']), /single sign-on/, 'password login is refused too');
+  c2.close();
+
+  // ...and SSO still lets you in.
+  const out = await ssoLogin(h, { sub: 'require-sso-1', nameHint: 'Legit' });
+  assert.ok(out.ticket, out.location);
+  const { client } = await joinWithTicket(h, out.ticket!);
+  assert.deepEqual(await onlineNames(h), ['Legit']);
+  client.close();
+});
+
 test('an SSO-only server can turn the password path off', async (t) => {
   const h = await boot(t, { auth: { allowPasswordLogin: false } });
 
@@ -657,7 +684,7 @@ test('an SSO-only server can turn the password path off', async (t) => {
     await c.waitJson('SessionHelloOk');
     c.login('Anyone', 'hunter22');
     const msg = await c.waitDisconnect('AUTH_FAILED');
-    assert.match(String(msg['detail']), /password login is disabled/);
+    assert.match(String(msg['detail']), /password login is disabled|single sign-on/);
     c.close();
   });
 

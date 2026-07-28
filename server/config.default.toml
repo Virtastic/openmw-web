@@ -98,6 +98,16 @@ regressAllowlist = []
 worldGlobals = []
 partyCredit = true
 
+[locker]
+# Storage locker: a player uploads their own Morrowind data once, streams it back on any
+# device. S3-compatible (AWS, Cloudflare R2, Backblaze, MinIO). Credentials come from the
+# env (S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY) so they stay out of config files. An empty
+# endpoint disables the locker and the client falls back to bring-your-own-disk.
+endpoint = ""                     # e.g. https://<accountid>.r2.cloudflarestorage.com
+region = "auto"                   # R2 uses "auto"; AWS uses the bucket region
+bucket = ""
+maxBytesPerAccount = 6442450944   # 6 GiB — Morrowind GOTY + a few mods
+
 [economy]
 # Public-realm rule: unique/named NPCs respawn there (the world is stateless), so their
 # corpses must drop nothing or every reset mints artifacts. Off for private/party
@@ -264,6 +274,11 @@ token = ""
 # Accounts are keyed on (issuer, subject). NEVER on email: email is mutable and providers
 # re-assign it, so keying on it would hand one player's character to another. No email
 # scope is requested at all.
+# SSO-only: the hosted multiplayer product requires it (a persistent cross-world character
+# needs a durable identity). When true, account+password register/login are refused and
+# only the SSO ticket path is accepted; the shipped launcher does SSO exclusively. A
+# self-hoster who wants passwords sets this false AND allowPasswordLogin true.
+requireSso = false
 allowPasswordLogin = true
 # Where the callback sends the browser back to — your game page. The result arrives in the
 # URL FRAGMENT (#mpticket=..., #mperror=..., #mplink=...) so it is never logged, cached or

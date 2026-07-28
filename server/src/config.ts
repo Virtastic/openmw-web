@@ -62,6 +62,10 @@ export interface Config {
   // construction, so unique NPCs respawn — and a respawning unique that drops loot is an
   // infinite artifact faucet. Private/party campaigns keep vanilla rules.
   economy: { noDrop: boolean };
+  // Phase 3.5 storage locker. S3 creds come from env (S3_ACCESS_KEY_ID/S3_SECRET_ACCESS_KEY);
+  // endpoint/region/bucket are config. Empty endpoint = locker disabled, client falls back
+  // to its own disk. maxBytesPerAccount caps one player's library.
+  locker: { endpoint: string; region: string; bucket: string; maxBytesPerAccount: number };
   rules: {
     respawnCellKey: string;
     respawnX: number;
@@ -157,6 +161,12 @@ export interface AuthProviderConfig {
 }
 
 export interface AuthConfig {
+  // Product default for the hosted multiplayer service is SSO-ONLY: a persistent character
+  // that follows you across worlds needs a durable identity, and passwords on a browser
+  // game are the weakest possible one. When true, SessionRegister and password
+  // SessionLoginRequest are refused — only the SSO ticket path is accepted. Self-hosters
+  // may set it false; the shipped launcher only ever does SSO.
+  requireSso: boolean;
   allowPasswordLogin: boolean;
   returnUrl: string; // the game page the callback sends the browser back to
   discord: AuthProviderConfig;
@@ -247,8 +257,10 @@ function validateAuth(t: Tree): AuthConfig {
       ? (auth['allowPasswordLogin'] as boolean)
       : fail('[auth].allowPasswordLogin', 'a boolean');
   const returnUrl = typeof auth['returnUrl'] === 'string' ? (auth['returnUrl'] as string) : fail('[auth].returnUrl', 'a string');
+  const requireSso = auth['requireSso'] === true;
   const cfg: AuthConfig = {
-    allowPasswordLogin,
+    requireSso,
+    allowPasswordLogin: requireSso ? false : allowPasswordLogin, // SSO-only forces password off
     returnUrl,
     discord: provider(auth, 'discord'),
     google: provider(auth, 'google'),
@@ -269,7 +281,11 @@ function validateAuth(t: Tree): AuthConfig {
     if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') fail('[auth].returnUrl', 'an absolute http(s) URL');
   }
   // An operator who turns every login path off has locked themselves out; say so now.
-  if (!allowPasswordLogin && !anyEnabled) fail('[auth].allowPasswordLogin', 'true unless an SSO provider is enabled');
+  if (!cfg.allowPasswordLogin && !anyEnabled) {
+    fail(requireSso ? '[auth].requireSso' : '[auth].allowPasswordLogin',
+      requireSso ? 'false unless an SSO provider is enabled (SSO-only with no provider locks everyone out)'
+                 : 'true unless an SSO provider is enabled');
+  }
   return cfg;
 }
 
@@ -336,6 +352,12 @@ function validate(t: Tree): Config {
       partyCredit: reqBool(t, 'sharing', 'partyCredit'),
     },
     economy: { noDrop: reqBool(t, 'economy', 'noDrop') },
+    locker: {
+      endpoint: reqStr(t, 'locker', 'endpoint'),
+      region: reqStr(t, 'locker', 'region'),
+      bucket: reqStr(t, 'locker', 'bucket'),
+      maxBytesPerAccount: reqNum(t, 'locker', 'maxBytesPerAccount'),
+    },
     rules: {
       respawnCellKey: reqStr(t, 'rules', 'respawnCellKey'),
       respawnX: reqSignedNum(t, 'rules', 'respawnX'),

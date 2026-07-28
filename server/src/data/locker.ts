@@ -75,6 +75,21 @@ export interface LockerSettings {
 const ATTEST_STATEMENT =
   'These are my own backup copies of files from my legally purchased game.';
 
+// <sharedDir>/vanilla-manifest.json, else an empty set (uploads refused until an operator
+// generates one from their own legal copy — tools/gen-vanilla-manifest). A missing file is
+// not an error: the locker simply accepts nothing, which is the safe default.
+export async function loadVanillaManifest(dir: string): Promise<VanillaManifest> {
+  try {
+    const doc = JSON.parse(await readFile(join(dir, 'vanilla-manifest.json'), 'utf8')) as VanillaManifest;
+    return { files: Array.isArray(doc.files) ? doc.files : [] };
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+      log('error', 'locker.bad_vanilla_manifest', { error: String(err) });
+    }
+    return { files: [] };
+  }
+}
+
 export class Locker {
   private readonly dir: string;
   private vanilla: VanillaManifest = { files: [] };

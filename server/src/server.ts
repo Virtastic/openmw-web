@@ -43,10 +43,14 @@ import { MoveBroadcaster, interestFromLimits } from './core/movement';
 import { configureAuthority } from './core/authority';
 import { Connection, type ServerCtx } from './net/connection';
 import { attachWss } from './net/ws';
-import { createHttpServer } from './net/http';
+import { createHttpServer, type HttpRoute } from './net/http';
 import { OidcService } from './auth/oidc';
 import { IdentityStore, LoginTicketStore, SessionIndex } from './auth/identities';
 import { createAuthRoutes } from './auth/routes';
+import { Locker, loadVanillaManifest } from './data/locker';
+import { s3FromEnv } from './data/s3';
+import { lockerRoutes } from './data/locker-routes';
+import { LockerSessionStore } from './auth/identities';
 import { IpConnTracker, IpRateLimiter } from './net/ratelimit';
 import { disconnectMsg } from './proto/session';
 import { log } from './log';
@@ -56,6 +60,16 @@ import { WorldBrowser } from './core/worldbrowser';
 import { detectGameData, findPeerBinary, gameDataDir } from './core/gamedata';
 
 export const VERSION = '0.1.0';
+
+// Compose extra HTTP route handlers into one: try each in order, first to claim wins.
+// createHttpServer/createAuthRoutes take a single `also` hook, and we have two (admin +
+// locker), so fold them here rather than threading a list through every caller.
+function chainRoutes(...routes: HttpRoute[]): HttpRoute {
+  return async (req, res, url) => {
+    for (const r of routes) { if (await r(req, res, url)) return true; }
+    return false;
+  };
+}
 
 
 export interface StartOptions {
@@ -312,6 +326,22 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
 
   // Phase C. The store is opened here so its lifetime matches the server's; social.stop()
   // clears presence timers that would otherwise keep the process alive on shutdown.
+  // Phase 3.5 storage locker. S3 creds from env; disabled (inert) when no endpoint/keys.
+  const lockerStorage = s3FromEnv({
+    endpoint: config.locker.endpoint,
+    region: config.locker.region,
+    bucket: config.locker.bucket,
+  });
+  const locker = new Locker({
+    dataDir: sharedDir,
+    maxBytesPerAccount: config.locker.maxBytesPerAccount,
+    ...(lockerStorage ? { storage: lockerStorage } : {}),
+  });
+  // The files the locker will accept: retail Morrowind by sha256 (operator-provided) plus
+  // the always-on asset pack is a BSA served by us, not uploaded, so it is not in this set.
+  // Empty vanilla manifest = uploads refused until the operator generates one (tools/).
+  locker.configureAccepted(await loadVanillaManifest(sharedDir));
+  const lockerSessions = new LockerSessionStore();
   let socialRef: Social | undefined; // read by quest party-credit (built above)
   const socialStore = new SocialStore(sharedDir);
   const social = new Social({
@@ -508,12 +538,13 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     identities,
     tickets,
     sessions,
+    lockerSessions,
     accounts,
     bans,
     // SSO round trips draw from the same per-IP auth budget as Register/Login: one
     // attacker should not get a second, separate allowance by using the HTTP door.
     limiter: new IpRateLimiter(config.limits.loginPerMinPerIp),
-  }, adminRoutes));
+  }, chainRoutes(adminRoutes, lockerRoutes({ locker, sessions: lockerSessions }))));
   // Derived at scrape time from the roster, so no teardown path can strand the gauge.
   const unhookGauge = metrics.sessionsInWorld.addCollector(() => roster.inWorld().length);
 
