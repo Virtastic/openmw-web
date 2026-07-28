@@ -20,7 +20,24 @@ export class ContentGate {
   // the server empties.
   private authoritative = false;
 
+  // Phase 3.5.2b: approved COSMETIC mod files (meshes/textures) are allowed to differ
+  // between players — they change what one player sees, nothing the simulation reads.
+  // Record-bearing plugins are NOT exempt: two players with different records disagree
+  // about the game itself. Without this exemption nobody could try a texture pack unless
+  // every friend installed it first, which is not a product decision anyone would choose.
+  private modWhitelist?: { lookupName(name: string): 'cosmetic' | 'content' | undefined };
+
   constructor(private readonly mode: 'strict' | 'names' | 'off') {}
+
+  setModWhitelist(wl: { lookupName(name: string): 'cosmetic' | 'content' | undefined }): void {
+    this.modWhitelist = wl;
+  }
+
+  // A manifest entry that is an approved cosmetic file may be present on one side and
+  // absent on the other without it being a mismatch.
+  private isCosmetic(name: string): boolean {
+    return this.modWhitelist?.lookupName(name) === 'cosmetic';
+  }
 
   get isAuthoritative(): boolean {
     return this.authoritative;
@@ -102,7 +119,14 @@ export class ContentGate {
     return null;
   }
 
-  private diff(want: ManifestEntry[], got: ManifestEntry[]): string | null {
+  private diff(rawWant: ManifestEntry[], rawGot: ManifestEntry[]): string | null {
+    // Approved COSMETIC files are removed from both sides before any comparison — set
+    // difference AND the positional walk below. They are allowed to differ by design, so
+    // one player running a texture pack must not shift every subsequent index and be
+    // reported as a load-order mismatch. `idx` is compared only among the files that
+    // remain, for the same reason.
+    const want = rawWant.filter((e) => !this.isCosmetic(e.name));
+    const got = rawGot.filter((e) => !this.isCosmetic(e.name));
     // Player-facing first: name the FILES that differ, because "load-order mismatch at
     // position 3" tells a player nothing they can act on. The positional detail below still
     // runs for anything the set difference cannot explain (pure reordering).
@@ -130,7 +154,9 @@ export class ContentGate {
       // server-side size would refuse every client. Same idiom as EngineGate's empty hash.
       if (w.size !== 0 && g.size !== 0 && w.size !== g.size)
         return `size mismatch for "${w.name}": expected ${w.size}, got ${g.size}`;
-      if (w.idx !== g.idx)
+      // Only meaningful when neither side had cosmetic entries filtered out of it: a
+      // removed cosmetic legitimately renumbers everything after it.
+      if (want.length === rawWant.length && got.length === rawGot.length && w.idx !== g.idx)
         return `load order differs for "${w.name}": expected position ${w.idx}, got ${g.idx}`;
     }
     return null;

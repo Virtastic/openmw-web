@@ -284,11 +284,11 @@ actors.handlers.MP_ActorStatsDynamic = function(data)
     end
 end
 
-actors.-- Phase 3 public economy: this corpse must carry nothing. Sent by the server for unique
+-- Phase 3 public economy: this corpse must carry nothing. Sent by the server for unique
 -- NPCs in a world that respawns them — killing a god stays a spectacle, it just is not a
 -- payday, and without this an infinite-respawn world mints artifacts forever. Applied by
 -- every client in the cell (an event, not a per-player view), so nobody can decline it.
-handlers.MP_ActorStripLoot = function(data)
+actors.handlers.MP_ActorStripLoot = function(data)
     local obj = data.ref
     local okValid, valid = pcall(function() return obj:isValid() end)
     if not (okValid and valid) then return end
@@ -299,7 +299,7 @@ handlers.MP_ActorStripLoot = function(data)
     end)
 end
 
-handlers.MP_ActorDeath = function(data)
+actors.handlers.MP_ActorDeath = function(data)
     local obj = data.ref and data.ref:isValid() and data.ref or nil
     if obj and puppetActors[refKeyOf(obj)] then
         pcall(function() obj:sendEvent('MP_Kill', {}) end)

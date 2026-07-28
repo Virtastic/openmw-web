@@ -129,7 +129,10 @@ async function startGameServer(extraRules = '') {
     throw new Error(e.message + '\nserver output:\n' + out.join(''));
   }
   return {
-    port, motd,
+    port,
+    // Scenarios that spawn a gateway must point it at THIS dir: accounts, friends and
+    // parties live here, and a world that cannot see them refuses its own members.
+    dataDir, motd,
     status: async () => (await fetch(`http://127.0.0.1:${port}/status`)).json(),
     // Abrupt death (no SessionDisconnect, no clean close) — for connection-lost scenarios.
     kill: () => { try { proc.kill('SIGKILL'); } catch {} },
@@ -316,6 +319,7 @@ for (const file of files) {
       // s42 attaches protocol bots to this same server (bots/soak.ts --attach) so a
       // scenario can put crowd load behind its real browser clients.
       serverPort: server.port,
+      serverDataDir: server.dataDir,
       serverStatus: server.status,
       serverKill: server.kill,
       sleep,

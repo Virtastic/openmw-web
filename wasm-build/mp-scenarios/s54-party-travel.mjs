@@ -43,6 +43,11 @@ export default async function run(ctx) {
   const gw = spawn(process.execPath, [
     join(ROOT, 'server', 'dist', 'gateway.mjs'),
     '--worlds', worldsDir, '--port', String(GW_PORT),
+    // The gateway's worlds MUST share the launch world's dir: accounts, friends and
+    // PARTIES live there, and a party world that cannot see the party refuses the members
+    // it exists for (world access control, plan 3.8). This is a real deployment
+    // requirement, not a test detail.
+    '--shared', ctx.serverDataDir,
     '--base-port', String(GW_PORT + 200), '--public-host', '127.0.0.1', '--max-worlds', '4',
   ], {
     stdio: 'ignore',

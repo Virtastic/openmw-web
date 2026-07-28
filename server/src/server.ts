@@ -4,12 +4,14 @@
 // server. main.ts is the CLI face; tests call startServer() directly.
 
 import { mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { WebSocket } from 'ws';
 import { loadConfig, type Config, type DeepPartial } from './config';
 import { AccountStore } from './core/accounts';
 import { AttioHook } from './integrations/attio';
 import { ContentTable } from './core/content-table';
+import { ModWhitelist } from './core/mod-whitelist';
 import { adminDashboardRoutes } from './net/admin-http';
 import { PlayerStore } from './persist/playerstore';
 import { CellStore } from './persist/cellstore';
@@ -54,6 +56,10 @@ import { WorldBrowser } from './core/worldbrowser';
 import { detectGameData, findPeerBinary, gameDataDir } from './core/gamedata';
 
 export const VERSION = '0.1.0';
+
+// The server package root (this file lives in src/ or dist/), used to find shipped data
+// files without depending on the process's working directory.
+const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 export interface StartOptions {
   dataDir: string;
@@ -324,6 +330,11 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   socialRef = social;
 
   const contentGate = new ContentGate(config.content.enforce);
+  // Approved cosmetic mods (meshes/textures) may differ between players; record-bearing
+  // plugins still must match. Missing manifest = vanilla-only, never a boot failure.
+  // Operator's own manifest first, then the one shipped with the server package.
+  const modWhitelist = await ModWhitelist.load(sharedDir, join(PACKAGE_ROOT, 'data'));
+  if (!modWhitelist.empty) contentGate.setModWhitelist(modWhitelist);
 
   const ctx: ServerCtx = {
     config,

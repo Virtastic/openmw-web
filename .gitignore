@@ -68,3 +68,7 @@ build-native/
 build-bullet-native/
 build-mygui-native/
 deps/native/
+
+# Mod archives are operator downloads, never repo content (docs/LEGAL.md §7). The
+# generated manifest (hashes only) IS committed; the mods themselves never are.
+/wasm-build/mod-src/
