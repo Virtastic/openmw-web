@@ -68,6 +68,13 @@ export interface SessionLoginTicket {
 export interface SessionReady {
   t: 'SessionReady';
 }
+// Character slots: create a new slot. Valid in AUTHED (the select screen) — the client
+// then reconnects (or Readies) with the new characterId. Selection itself is the
+// characterId on the auth messages; there is no separate select op.
+export interface CharacterCreate {
+  t: 'CharacterCreate';
+  name: string;
+}
 // Onboarding: one-time (and later, edit-profile) submission of the contact email and the
 // unique public handle. Valid in AUTHED and IN_WORLD. The email never travels back out to
 // anyone but this account's owner.
@@ -89,6 +96,7 @@ export type ClientSessionMsg =
   | SessionResume
   | SessionReady
   | ProfileSetup
+  | CharacterCreate
   | SessionPing;
 
 export type DisconnectCode =
@@ -200,6 +208,11 @@ export function parseSessionMessage(text: string): ClientSessionMsg | null {
       return { t, token: str(o, 'token') };
     case 'SessionReady':
       return { t };
+    case 'CharacterCreate': {
+      const name = str(o, 'name');
+      if (name.length > 64) throw new SessionParseError('"name" too long');
+      return { t, name };
+    }
     case 'ProfileSetup': {
       const email = str(o, 'email');
       const username = str(o, 'username');
@@ -288,6 +301,12 @@ export function welcome(
 // Onboarding: answer to a ProfileSetup. `error` is a stable machine code the client can
 // map to UI copy ('badformat-email' | 'badformat-username' | 'reserved-word' | 'taken' |
 // 'cooldown').
+// Character slots: answer to CharacterCreate — the refreshed slot list on success so the
+// select screen re-renders without a reconnect.
+export function characterResult(ok: boolean, characters: WelcomeCharacter[], error?: string): string {
+  return JSON.stringify({ t: 'CharacterResult', ok, characters, ...(error !== undefined ? { error } : {}) });
+}
+
 export function profileResult(ok: boolean, error?: string): string {
   return JSON.stringify({ t: 'ProfileResult', ok, ...(error !== undefined ? { error } : {}) });
 }

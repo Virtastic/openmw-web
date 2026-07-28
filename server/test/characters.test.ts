@@ -93,6 +93,56 @@ test('explicit characterId: own character is honored, foreign/unknown is refused
   await c3.waitDisconnect('AUTH_FAILED');
 });
 
+test('CharacterCreate: adds a slot, enforces name rules and the cap; new slot is playable', async (t) => {
+  const dataDir = tmpDataDir();
+  const server = await startServer({ dataDir, port: 0, host: '127.0.0.1' });
+  t.after(() => server.close());
+
+  const c = await TestClient.connect(server.port);
+  c.hello();
+  await c.waitJson('SessionHelloOk');
+  c.register('Alice', 'hunter22');
+  await c.waitJson('SessionWelcome'); // AUTHED (no Ready yet — the select screen state)
+
+  c.sendJson({ t: 'CharacterCreate', name: '!' });
+  let r = await c.waitJson('CharacterResult');
+  assert.deepEqual([r['ok'], r['error']], [false, 'badname']);
+
+  c.sendJson({ t: 'CharacterCreate', name: 'Drelas Arano' });
+  r = await c.waitJson('CharacterResult');
+  assert.equal(r['ok'], true);
+  const chars = r['characters'] as WelcomeChar[];
+  assert.equal(chars.length, 2);
+  const drelas = chars.find((x) => x.name === 'Drelas Arano')!;
+  c.close();
+
+  // The new slot is selectable and starts fresh (no playerRecord → chargen).
+  const c2 = await TestClient.connect(server.port);
+  c2.hello();
+  await c2.waitJson('SessionHelloOk');
+  c2.login('Alice', 'hunter22', { characterId: drelas.id });
+  const w2 = await c2.waitJson('SessionWelcome');
+  assert.equal(w2['characterId'], drelas.id);
+  assert.equal(w2['playerRecord'], null);
+  c2.close();
+
+  // Cap: fill the remaining slots, then one more is refused.
+  const c3 = await TestClient.connect(server.port);
+  c3.hello();
+  await c3.waitJson('SessionHelloOk');
+  c3.login('Alice', 'hunter22');
+  await c3.waitJson('SessionWelcome');
+  for (let i = 3; i <= 8; i++) {
+    c3.sendJson({ t: 'CharacterCreate', name: `Alt ${i}` });
+    const ri = await c3.waitJson('CharacterResult');
+    assert.equal(ri['ok'], true, `slot ${i} should fit`);
+  }
+  c3.sendJson({ t: 'CharacterCreate', name: 'One Too Many' });
+  const rf = await c3.waitJson('CharacterResult');
+  assert.deepEqual([rf['ok'], rf['error']], [false, 'full']);
+  c3.close();
+});
+
 test('shared character doc keeps per-world positions apart', async () => {
   const dataDir = tmpDataDir();
   const charId = 'c00112233445566778899aabb';

@@ -7,7 +7,7 @@
 import { randomBytes } from 'node:crypto';
 import type { WebSocket } from 'ws';
 import type { Config } from '../config';
-import { validEmail, type AccountStore, type Account, type CharacterSummary } from '../core/accounts';
+import { validEmail, validAccountName, type AccountStore, type Account, type CharacterSummary } from '../core/accounts';
 import type { AttioHook } from '../integrations/attio';
 import type { ContentGate, EngineGate } from '../core/manifest';
 import type { Player, Peer, Roster } from '../core/players';
@@ -40,6 +40,7 @@ import {
   pong,
   disconnectMsg,
   profileResult,
+  characterResult,
   SessionParseError,
   type ClientSessionMsg,
   type SessionHello,
@@ -48,6 +49,8 @@ import {
   type SessionLoginRequest,
   type SessionLoginTicket,
   type ProfileSetup,
+  type CharacterCreate,
+  type WelcomeCharacter,
   type DisconnectCode,
 } from '../proto/session';
 import { log } from '../log';
@@ -381,6 +384,11 @@ export class Connection implements Peer {
         }
         this.handleReady();
         return;
+      case 'CharacterCreate': {
+        this.requireState('AUTHED', msg.t);
+        this.handleCharacterCreate(msg);
+        return;
+      }
       case 'ProfileSetup':
         if (this.state !== 'AUTHED' && this.state !== 'IN_WORLD') {
           this.requireState('AUTHED', msg.t);
@@ -392,6 +400,26 @@ export class Connection implements Peer {
         });
         return;
     }
+  }
+
+  // Character slots: add a slot. The character NAME is the in-world persona (Morrowind
+  // rules: letters/digits/space and friends, like account names) — distinct from the
+  // account's unique username. Selection = reconnect (or first Ready) with the new id.
+  private handleCharacterCreate(msg: CharacterCreate): void {
+    if (!this.account || this.isSystem) return;
+    const slots = (): WelcomeCharacter[] =>
+      (this.account?.characters ?? []).map(({ id, name, lastPlayedAt }) => ({ id, name, lastPlayedAt }));
+    if (!validAccountName(msg.name)) {
+      this.sendText(characterResult(false, slots(), 'badname'));
+      return;
+    }
+    const created = this.ctx.accounts.createCharacter(this.account, msg.name);
+    if (created === 'full') {
+      this.sendText(characterResult(false, slots(), 'full'));
+      return;
+    }
+    log('info', 'player.character_created', { account: this.account.name, char: created.id, name: msg.name });
+    this.sendText(characterResult(true, slots()));
   }
 
   // Onboarding: validate + store email and the unique public handle; queue the CRM upsert
