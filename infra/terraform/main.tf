@@ -34,20 +34,6 @@ resource "cloudflare_record" "morrowind" {
   comment = "OpenMW-Web on the shared OVH VPS (managed by terraform)"
 }
 
-# DNS: mp.virtastic.app -> the same VPS, proxied. Fronts the openmw-mp multiplayer WebSocket
-# server (edge vhost deploy/openmw-mp.caddy). Deliberately matches NO cache rule below (different
-# host, and WS is never cached); Cloudflare passes WebSocket upgrades on proxied records, and the
-# server's 25s protocol pings keep connections inside Cloudflare's ~100s idle timeout.
-resource "cloudflare_record" "mp" {
-  zone_id = data.cloudflare_zone.this.id
-  name    = "mp"
-  type    = "A"
-  content = var.origin_ip
-  proxied = true
-  ttl     = 1 # 1 = automatic (required when proxied)
-  comment = "OpenMW-Web multiplayer server on the shared OVH VPS (managed by terraform)"
-}
-
 # NOTE: SSL mode (Full strict) and Rocket Loader (off) are set out-of-band via the Cloudflare API
 # (a one-time PATCH to /zones/<id>/settings/{ssl,rocket_loader}), NOT here. The
 # `cloudflare_zone_settings_override` resource reads ALL ~40 zone settings and errors if the token

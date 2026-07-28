@@ -32,6 +32,11 @@
   // so eviction pops the first (oldest) key. No separate order array → O(1) hit path, no linear scan.
   const S = { worker: null, ctrl: null, data: null, cache: new Map(), nextId: 1 };
 
+  // Streaming cost counters, exposed as window.__streamfsStats. Chunk misses block the main thread
+  // (see fetchChunkSync), so this is the only place the stall is observable. Two adds per read —
+  // cheap enough to leave always-on, unlike the flag-gated ?glcount/?perfstats probes.
+  const ST = { hits: 0, misses: 0, stallMs: 0, evictions: 0, bytes: 0 };
+
   function workerSource() {
     return `
       let ctrl, data;
@@ -72,6 +77,7 @@
     const hit = S.cache.get(cacheKey);
     if (hit) {
       S.cache.delete(cacheKey); S.cache.set(cacheKey, hit); // move-to-end (most-recently-used)
+      ST.hits++;
       return hit;
     }
     const gen = ++generation;
@@ -79,16 +85,23 @@
     // Spin until the worker signals completion. The worker thread runs independently, so
     // this terminates; local reads complete in ~1-5ms. (Atomics.wait is disallowed on
     // the main thread, so poll.)
+    //
+    // NB this BLOCKS the main thread for the whole worker round-trip. For a local file handle
+    // that is a disk read; for an HTTP source it is a network round-trip, so a miss here stalls
+    // the frame. ST.stallMs is what makes that cost visible (window.__streamfsStats) — an
+    // eviction-thrashing working set shows up as misses climbing without bytes growing.
     const t0 = performance.now();
     while (Atomics.load(S.ctrl, 0) !== gen) {
       if (performance.now() - t0 > 30000) throw new Error('streamfs: read timeout ' + cacheKey + '@' + start);
     }
+    ST.misses++; ST.stallMs += performance.now() - t0;
     const n = S.ctrl[1];
     if (n < 0) throw new Error('streamfs: read failed ' + cacheKey + '@' + start);
     const chunk = new Uint8Array(n);
     chunk.set(S.data.subarray(0, n));
     S.cache.set(cacheKey, chunk);
-    if (S.cache.size > LRU_MAX) S.cache.delete(S.cache.keys().next().value); // evict oldest
+    ST.bytes += n;
+    if (S.cache.size > LRU_MAX) { S.cache.delete(S.cache.keys().next().value); ST.evictions++; } // evict oldest
     return chunk;
   }
 
@@ -137,6 +150,10 @@
   }
 
   window.StreamFS = {
+    // Live streaming cost: misses each blocked the main thread for a worker round-trip.
+    // High misses + high evictions = the working set exceeds LRU_MAX and is thrashing.
+    stats() { return Object.assign({ cached: S.cache.size, lruMax: LRU_MAX }, ST); },
+
     init() {
       if (S.worker) return;
       if (!self.crossOriginIsolated) throw new Error('streamfs needs crossOriginIsolated (COOP/COEP)');
@@ -146,6 +163,7 @@
       S.data = new Uint8Array(dataBuf);
       S.worker = new Worker(URL.createObjectURL(new Blob([workerSource()], { type: 'text/javascript' })));
       S.worker.postMessage({ init: 1, ctrl: ctrlBuf, data: dataBuf });
+      try { Object.defineProperty(window, '__streamfsStats', { get: () => window.StreamFS.stats() }); } catch (e) {}
     },
 
     // Mount `url` (absolute-ized against the page) at FS path `path` with known byte size.

@@ -423,6 +423,64 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     if (!sHeadless)
         mViewer->renderingTraversals();
 
+#ifdef __EMSCRIPTEN__
+    // ?perfstats=1 (QA): expose the per-frame CPU phase split (Cull vs Draw traversal, ms) to JS
+    // as window.__omwPhase, WITHOUT the F3 stats HUD (which itself costs ~5ms and pollutes the
+    // measurement). "rest" = window.__frameMs - cull - draw (update/physics/AI/GUI/Lua). Collection
+    // is enabled once (takes effect from the next frame); GPU timer queries are omitted (unreliable
+    // on WebGL2). Zero cost when the flag is off.
+    {
+        static int s_perf = getenv("OPENMW_PERF_STATS") ? 1 : 0;
+        if (s_perf)
+        {
+            osgViewer::Viewer::Cameras cams;
+            mViewer->getCameras(cams);
+            static bool s_en = false;
+            if (!s_en)
+            {
+                for (osg::Camera* c : cams)
+                    if (c->getStats())
+                        c->getStats()->collectStats("rendering", true);
+                stats->collectStats("engine", true); // ScopedProfile subsystem buckets (*_time_taken)
+                s_en = true;
+            }
+            double cull = 0.0, draw = 0.0, v = 0.0;
+            for (osg::Camera* c : cams)
+            {
+                osg::Stats* cs = c->getStats();
+                if (!cs)
+                    continue;
+                if (cs->getAttribute(frameNumber, "Cull traversal time taken", v))
+                    cull += v;
+                if (cs->getAttribute(frameNumber, "Draw traversal time taken", v))
+                    draw += v;
+            }
+            // Rest-phase subsystem breakdown (engine ScopedProfile buckets, prefix + "_time_taken").
+            auto sub = [&](const char* key) { double x = 0.0; stats->getAttribute(frameNumber, key, x); return x * 1000.0; };
+            // clang-format off
+            // NB: no comma inside the EM_ASM code block — the C preprocessor would split it as a
+            // macro argument. Build the object with separate statements instead.
+            EM_ASM({
+                window.__omwPhase = {};
+                window.__omwPhase.cull = $0;
+                window.__omwPhase.draw = $1;
+                window.__omwPhase.physics = $2;
+                window.__omwPhase.mechanics = $3;
+                window.__omwPhase.world = $4;
+                window.__omwPhase.lua = $5;
+                window.__omwPhase.gui = $6;
+                window.__omwPhase.input = $7;
+                window.__omwPhase.sound = $8;
+                window.__omwPhase.script = $9;
+            },
+                cull * 1000.0, draw * 1000.0, sub("physics_time_taken"), sub("mechanics_time_taken"),
+                sub("world_time_taken"), sub("lua_time_taken"), sub("gui_time_taken"),
+                sub("input_time_taken"), sub("sound_time_taken"), sub("script_time_taken"));
+            // clang-format on
+        }
+    }
+#endif
+
     mLuaWorker->finishUpdate(frameStart, frameNumber, *stats);
 
     return true;
@@ -560,8 +618,25 @@ void OMW::Engine::setSkipMenu(bool skipMenu, bool newGame)
 void OMW::Engine::createWindow()
 {
     const int screen = Settings::video().mScreen;
+#ifdef __EMSCRIPTEN__
+    // The harness owns the canvas size (dpr + pixel budget, window.__renderW/H). Ignore any
+    // persisted [Video] resolution: on web the only resolution dial is the SCENE render scale
+    // ([Video] internal render scale, applied by the post-processor), and a small resolution
+    // persisted by the pre-scale scheme must not shrink the canvas — that would blur the GUI.
+    // clang-format off
+    const int width = EM_ASM_INT({
+        return Math.max(320, Math.round(window.__renderW || ((window.innerWidth || 1280) * (window.devicePixelRatio || 1))));
+    });
+    const int height = EM_ASM_INT({
+        return Math.max(240, Math.round(window.__renderH || ((window.innerHeight || 720) * (window.devicePixelRatio || 1))));
+    });
+    // clang-format on
+    Settings::video().mResolutionX.set(width);
+    Settings::video().mResolutionY.set(height);
+#else
     const int width = Settings::video().mResolutionX;
     const int height = Settings::video().mResolutionY;
+#endif
     const Settings::WindowMode windowMode = Settings::video().mWindowMode;
     const bool windowBorder = Settings::video().mWindowBorder;
     const SDLUtil::VSyncMode vsync = Settings::video().mVsyncMode;
@@ -647,7 +722,13 @@ void OMW::Engine::createWindow()
         SDL_GL_GetDrawableSize(mWindow, &dw, &dh);
         if (dw != w || dh != h)
         {
-            SDL_SetWindowSize(mWindow, width / (dw / w), height / (dh / h));
+            // width / (dw/w) == width * w / dw. Computed in floating point and rounded: as integer
+            // division, (dw/w) truncates a fractional device-pixel ratio (Windows 125%/150%, browser
+            // zoom) to 1, so the window was never scaled down and the drawable stayed oversized —
+            // and truncates to 0 when the drawable is smaller than the window, dividing by zero.
+            const int sw = dw > 0 ? static_cast<int>(static_cast<double>(width) * w / dw + 0.5) : width;
+            const int sh = dh > 0 ? static_cast<int>(static_cast<double>(height) * h / dh + 0.5) : height;
+            SDL_SetWindowSize(mWindow, sw, sh);
         }
 
 #ifndef __EMSCRIPTEN__
@@ -1093,6 +1174,20 @@ extern "C" EMSCRIPTEN_KEEPALIVE void omw_set_resolution(int w, int h)
     // with windowResized() when that does fire.
     Settings::video().mResolutionX.set(w);
     Settings::video().mResolutionY.set(h);
+}
+
+// Scene render-scale bridge (QA/harness; the Options resolution tiers set the same setting from
+// C++). Renders the 3D scene at `s` × the canvas resolution via the post-processor chain; the
+// canvas and GUI stay native. Dispatches the change immediately (mirrors SettingsWindow::apply()).
+extern "C" EMSCRIPTEN_KEEPALIVE void omw_set_render_scale(float s)
+{
+    if (!(s >= 0.2f && s <= 1.f))
+        return;
+    Settings::video().mInternalRenderScale.set(s);
+    // Only valid once the game is running (like omw_debug_look); boot-time seeding goes through
+    // the ?rs= settings layer instead.
+    MWBase::Environment::get().getWorld()->processChangedSettings(Settings::Manager::getPendingChanges());
+    Settings::Manager::resetPendingChanges();
 }
 
 // OS-clipboard -> SDL bridge: the harness's document 'paste' listener pushes the real browser

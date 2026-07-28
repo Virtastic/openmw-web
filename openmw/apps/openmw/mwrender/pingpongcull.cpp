@@ -18,7 +18,18 @@ namespace MWRender
         : mViewportStateset(nullptr)
         , mPostProcessor(pp)
     {
-        if (Stereo::getStereo())
+#ifdef __EMSCRIPTEN__
+        // Scene render-scale (web): like stereo, the scene renders at a resolution different from
+        // the window (renderWidth/renderHeight = a fraction of the canvas). Overriding the
+        // RenderStage viewport here — at the same place the scene FBO is bound — is the one spot
+        // that authoritatively controls the scene rasterization extent; the master camera (and the
+        // GUI, which sizes itself from it) stays at native canvas size. At scale 1 the override
+        // equals the camera viewport and is a no-op.
+        const bool needViewportOverride = true;
+#else
+        const bool needViewportOverride = Stereo::getStereo();
+#endif
+        if (needViewportOverride)
         {
             mViewportStateset = new osg::StateSet();
             mViewport = new osg::Viewport;
@@ -73,6 +84,20 @@ namespace MWRender
         {
             mViewport->setViewport(0, 0, mPostProcessor->renderWidth(), mPostProcessor->renderHeight());
             renderStage->setViewport(mViewport);
+#ifdef __EMSCRIPTEN__
+            {
+                static int rsDbgN = 0;
+                static const bool rsDbg = getenv("OPENMW_RS_DEBUG") != nullptr;
+                if (rsDbg && (rsDbgN++ % 120) == 0)
+                {
+                    const osg::Viewport* camVp = cv->getCurrentCamera()->getViewport();
+                    printf("[rs] cull: stageVp=%dx%d camVp=%dx%d\n",
+                        static_cast<int>(mViewport->width()), static_cast<int>(mViewport->height()),
+                        camVp ? static_cast<int>(camVp->width()) : -1,
+                        camVp ? static_cast<int>(camVp->height()) : -1);
+                }
+            }
+#endif
             cv->pushStateSet(mViewportStateset.get());
             traverse(node, cv);
             cv->popStateSet();

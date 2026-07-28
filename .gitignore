@@ -55,10 +55,10 @@ build-wasm.good/
 __pycache__/
 *.pyc
 
-# Multiplayer server working dirs. NOTE: do not ignore `server/` wholesale — the server
-# source IS tracked (server/src, test, Dockerfile, PROTOCOL.md, …). Build artifacts are
-# already handled by server/.gitignore (node_modules/, dist/, devdata/); a blanket
-# `server/` rule silently swallows new source files.
+# Multiplayer server working dirs. NOTE: do not ignore `server/` wholesale — main once
+# did ("prevent accidental commit", 18a171f) from before the server was real, and a
+# blanket rule now silently swallows new source files. The server source IS tracked
+# (server/src, test, Dockerfile, PROTOCOL.md, …); build artifacts are handled here.
 server/node_modules/
 server/dist/
 server/devdata/
@@ -72,3 +72,7 @@ deps/native/
 # Mod archives are operator downloads, never repo content (docs/LEGAL.md §7). The
 # generated manifest (hashes only) IS committed; the mods themselves never are.
 /wasm-build/mod-src/
+
+# Optional performance asset pack (built by wasm-build/build-assetpack.py from
+# third-party mod archives; never committed — see THIRD-PARTY-LICENSES.md).
+play/moddata/

@@ -656,11 +656,31 @@ namespace Shader
             // frame, so mHasMaterial==false means none upstream either). Desktop GL would apply the
             // fixed-function DEFAULT material here; without these uniforms the flat osg_FrontMaterial_*
             // read 0 and the surface renders black. Feed the GL defaults to keep parity.
-            writableStateSet->addUniform(new osg::Uniform("osg_FrontMaterial_emission", osg::Vec4f(0.f, 0.f, 0.f, 1.f)));
-            writableStateSet->addUniform(new osg::Uniform("osg_FrontMaterial_ambient", osg::Vec4f(0.2f, 0.2f, 0.2f, 1.f)));
-            writableStateSet->addUniform(new osg::Uniform("osg_FrontMaterial_diffuse", osg::Vec4f(0.8f, 0.8f, 0.8f, 1.f)));
-            writableStateSet->addUniform(new osg::Uniform("osg_FrontMaterial_specular", osg::Vec4f(0.f, 0.f, 0.f, 1.f)));
-            writableStateSet->addUniform(new osg::Uniform("osg_FrontMaterial_shininess", 0.f));
+            //
+            // PERF (web): the GL default material is IMMUTABLE and shared by every material-less object
+            // (a large fraction of the scene). Adding a fresh Uniform per stateset gives each draw a
+            // distinct uniform POINTER at the same location, so OSG's per-location upload dedup can
+            // never skip them — 5 identical glUniform uploads per default-material draw. Share ONE
+            // instance of each: consecutive default-material draws then hit the dedup fast-path (pointer
+            // + modifiedCount match → no re-upload). Pixel-identical (same constant values); safe to
+            // share because default material is never animated (a NiMaterialColorController requires an
+            // osg::Material, which is absent here). Magic-static init is thread-safe; the uniforms are
+            // read-only after construction.
+            static const osg::ref_ptr<osg::Uniform> sDefEmission
+                = new osg::Uniform("osg_FrontMaterial_emission", osg::Vec4f(0.f, 0.f, 0.f, 1.f));
+            static const osg::ref_ptr<osg::Uniform> sDefAmbient
+                = new osg::Uniform("osg_FrontMaterial_ambient", osg::Vec4f(0.2f, 0.2f, 0.2f, 1.f));
+            static const osg::ref_ptr<osg::Uniform> sDefDiffuse
+                = new osg::Uniform("osg_FrontMaterial_diffuse", osg::Vec4f(0.8f, 0.8f, 0.8f, 1.f));
+            static const osg::ref_ptr<osg::Uniform> sDefSpecular
+                = new osg::Uniform("osg_FrontMaterial_specular", osg::Vec4f(0.f, 0.f, 0.f, 1.f));
+            static const osg::ref_ptr<osg::Uniform> sDefShininess
+                = new osg::Uniform("osg_FrontMaterial_shininess", 0.f);
+            writableStateSet->addUniform(sDefEmission);
+            writableStateSet->addUniform(sDefAmbient);
+            writableStateSet->addUniform(sDefDiffuse);
+            writableStateSet->addUniform(sDefSpecular);
+            writableStateSet->addUniform(sDefShininess);
             addedState->addUniform("osg_FrontMaterial_emission");
             addedState->addUniform("osg_FrontMaterial_ambient");
             addedState->addUniform("osg_FrontMaterial_diffuse");

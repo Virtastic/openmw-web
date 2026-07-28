@@ -1386,6 +1386,15 @@ namespace MWRender
             {
                 updateProjection = true;
             }
+#ifdef __EMSCRIPTEN__
+            else if (it->first == "Video" && it->second == "internal render scale")
+            {
+                // Scene render-scale (web): rebuild the post-processor's FBO chain at the new
+                // fraction of the canvas. The canvas itself (and the GUI) does not change size.
+                if (mPostProcessor)
+                    mPostProcessor->resize();
+            }
+#endif
             else if (it->first == "Camera" && it->second == "viewing distance")
             {
                 setViewDistance(Settings::camera().mViewingDistance);

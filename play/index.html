@@ -1,6 +1,6 @@
-<!doctype html><html><head><!-- Copyright (C) 2025-2026 Virtastic - https://virtastic.app | SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web --><meta charset="utf-8"><title>OpenMW — Morrowind</title>
+<!doctype html><html><head><!-- Copyright (C) 2025-2026 Virtastic - https://virtastic.app | SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web --><meta charset="utf-8"><title>OpenMW-Web</title><script>/* Lock the tab title: the engine calls SDL_SetWindowTitle (document.title=...) on boot; shadow the property so those writes are ignored and the tab always reads OpenMW-Web. */(function(){var LOCK="OpenMW-Web";try{Object.defineProperty(document,"title",{configurable:true,get:function(){return LOCK},set:function(){}});}catch(e){}try{var t=document.getElementsByTagName("title")[0];if(t)t.textContent=LOCK;}catch(e){}})();</script>
 <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
-<link rel="icon" href="data:,"><!-- empty favicon: stop the browser's auto /favicon.ico request 404 -->
+<link rel="icon" type="image/png" href="data:image/png;base64,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"><!-- empty favicon: stop the browser's auto /favicon.ico request 404 -->
 <style>
  html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#000}
  /* Windowless: the canvas fills the entire browser viewport; its drawing buffer is driven
@@ -139,6 +139,25 @@
        try { ctx.getExtension('EXT_color_buffer_float'); } catch (e) {}
        try { ctx.getExtension('EXT_color_buffer_half_float'); } catch (e) {}
        try { ctx.getExtension('OES_texture_float_linear'); } catch (e) {}
+       // ?glcount=1 (QA): count GL calls per frame to attribute the Draw phase. Wrap a curated set
+       // of hot methods (draws + state changes + uniform uploads) with a counter. Pure diagnostic —
+       // the counter increment perturbs timing slightly but COUNTS are exact. window.__glCalls is the
+       // cumulative tally; the frame pump diffs it into window.__glPerFrame each frame.
+       if (/[?&]glcount=1\b/.test(location.search) && !ctx.__glCounted) {
+         ctx.__glCounted = true;
+         window.__glCalls = { total: 0, draw: 0 };
+         var C = window.__glCalls;
+         var DRAWS = ['drawElements','drawArrays','drawElementsInstanced','drawArraysInstanced','drawRangeElements'];
+         var METHS = DRAWS.concat(['useProgram','bindVertexArray','bindBuffer','bindBufferBase','bindTexture',
+           'activeTexture','bindFramebuffer','vertexAttribPointer','enableVertexAttribArray','disableVertexAttribArray',
+           'uniform1i','uniform1f','uniform2f','uniform3f','uniform4f','uniform1fv','uniform2fv','uniform3fv',
+           'uniform4fv','uniform1iv','uniformMatrix3fv','uniformMatrix4fv','uniformBlockBinding']);
+         METHS.forEach(function(name){
+           var fn = ctx[name]; if (typeof fn !== 'function') return;
+           var isDraw = DRAWS.indexOf(name) !== -1;
+           ctx[name] = function(){ C.total++; if (isDraw) C.draw++; C[name] = (C[name]||0)+1; return fn.apply(this, arguments); };
+         });
+       }
      }
      return ctx;
    };
@@ -518,24 +537,16 @@
        var w = cssW * dpr, h = cssH * dpr;   // device pixels (match the boot IIFE)
        var budget = window.__maxPixels || 4000000;
        var scale = Math.min(1, Math.sqrt(budget / (w * h)));
-       // New NATIVE (100%) render size for the resized window.
-       var nw = Math.max(320, Math.round(w * scale)), nh = Math.max(240, Math.round(h * scale));
-       // Preserve the player's chosen SCALE TIER across the resize: infer the integer divisor
-       // (1=native, 2=50%, 3=33% …) from the current drawing buffer vs. the PREVIOUS native
-       // (window.__renderW). The Options list only offers native/div tiers, so this is exact.
-       var prevNativeW = window.__renderW || nw;
-       var div = Math.max(1, Math.round(prevNativeW / Math.max(1, canvas.width)));
-       // New buffer = new native / div (native kept exact; downscales evened for FBO/codec sanity).
-       var rw = div === 1 ? nw : (Math.round(nw / div) & ~1);
-       var rh = div === 1 ? nh : (Math.round(nh / div) & ~1);
-       rw = Math.max(320, rw); rh = Math.max(240, rh);
-       // Update the native baseline so the Options list (built from __renderW/H) reflects the
-       // resized window on its next open, and the divisor stays inferable on the next resize.
-       window.__renderW = nw; window.__renderH = nh;
+       // New NATIVE (100%) render size for the resized window. The canvas is ALWAYS native now:
+       // the player's chosen resolution tier lives engine-side as the SCENE render scale
+       // ([Video] internal render scale, applied by the post-processor to its FBO chain), so it
+       // survives this resize automatically — and the GUI stays native-crisp at every tier.
+       var rw = Math.max(320, Math.round(w * scale)), rh = Math.max(240, Math.round(h * scale));
+       window.__renderW = rw; window.__renderH = rh;
        // Keep the GUI-scale ratio current for the new window (buffer px per CSS px).
        window.__guiScale = rw / cssW;
        if (rw === canvas.width && rh === canvas.height) return; // window unchanged -> nothing to do
-       append('[resize] ' + rw + 'x' + rh + ' (1/' + div + ' of ' + nw + 'x' + nh + ')');
+       append('[resize] ' + rw + 'x' + rh + ' (native; scene tier applies engine-side)');
        try { Module._omw_set_resolution(rw, rh); } catch(e){ append('[resize err] '+e,'err'); }
      }, 300);
    });
@@ -728,6 +739,10 @@
        // is a hard GPU sync (flush+wait) in WebGL — a per-frame stall. OFF => NEVER_CHECK_GL_ERRORS.
        // Also stops the residual "invalid enumerant after RenderBin::draw" warning at its checkpoint.
        if (!/[?&]noopt\b/.test(location.search)) ENV.OSG_GL_ERROR_CHECKING='OFF';
+       // ?rsdbg=1 (QA): engine logs the scene render-scale plumbing ([rs] lines — FBO/viewport sizes).
+       if (/[?&]rsdbg=1\b/.test(location.search)) ENV.OPENMW_RS_DEBUG='1';
+       // ?perfstats=1 (QA): engine pushes per-frame Cull/Draw ms to window.__omwPhase (no F3 HUD).
+       if (/[?&]perfstats=1\b/.test(location.search)) ENV.OPENMW_PERF_STATS='1';
        // NOTE: OPENMW_DECOMPRESS_TEXTURES removed — OSG now reports S3TC support (GLExtensions
        // patch), so DXT textures upload COMPRESSED via glCompressedTexImage2D (no CPU decompress).
        // USER CONFIG/DATA LIVE ON IDBFS: pointing XDG at the /userdata mount makes the
@@ -988,6 +1003,10 @@
            // ?aa=N (QA) sets [Video] antialiasing so scene MSAA can be exercised headlessly
            // (default off = 1:1 with desktop). Normal play leaves AA to the Options menu.
            (/[?&]aa=(\d+)/.test(location.search) ? 'antialiasing = ' + RegExp.$1 + '\n' : '') +
+           // ?rs=F (QA) seeds the SCENE render scale (0.2..1): the 3D scene renders at F x canvas
+           // and the post-processor upscales; GUI stays native. Same setting the Options
+           // resolution tiers write; a user's saved value overrides this defaults layer.
+           (/[?&]rs=(0?\.\d+|1(?:\.0+)?)/.test(location.search) ? 'internal render scale = ' + RegExp.$1 + '\n' : '') +
            '[Camera]\n' +
            'viewing distance = ' + ((/[?&]vd=(\d+)/.exec(location.search)||[])[1] || '16384') + '.0\n' +  // 2 cells: radial distant-terrain vista (paired with 'distant terrain=true' below). ?vd=N overrides (QA)
            'small feature culling pixel size = 3.0\n' +
@@ -1294,6 +1313,51 @@
        var __srcLocal = /[?&]src=local\b/.test(location.search);
        if (__srcLocal) mountLocalMorrowind();
 
+       // --- Optional performance asset pack (Morrowind Optimization Patch + Project Atlas) --------
+       // Shipped as ONE streamed BSA rather than ~3300 loose files: loose files would each need an
+       // await getFile() during the boot walk AND would thrash streamfs's 2MB-chunk / 48-slot LRU
+       // (a 40KB .nif costing a whole 2MB slice). A BSA is one mount and packs meshes contiguously.
+       //
+       // Priority, per components/vfs/registerarchives.cpp: ALL fallback-archive= BSAs register
+       // BEFORE any data= loose dir, and later-registered wins. So listing this pack LAST among the
+       // archives overrides vanilla meshes, while a player's own LOOSE replacers still beat it.
+       //
+       // Returns the archive's bare filename on success, or null. NEVER throws: a fallback-archive=
+       // line naming a file the VFS can't find is a HARD boot failure (registerarchives.cpp throws),
+       // so callers must only emit the cfg lines when this returns non-null.
+       // ?noassets=1 skips it, for A/B measurement.
+       var ASSET_PACK_NAME = 'openmw-web-assets.bsa';
+       async function mountAssetPack(){
+         if (/[?&]noassets\b/.test(location.search)) return null;
+         try {
+           // Idempotent (no-ops if already initialised). Required here because the server-hosted
+           // retail path only inits StreamFS under ?stream, and throws without cross-origin
+           // isolation — caught below so a non-isolated context just skips the pack.
+           StreamFS.init();
+           // Two candidates: moddata/ for a local/self-host tree, data/ for the deployed site where
+           // the read-only dataset volume mounts at /srv/data. First one that answers with a
+           // Content-Range wins, so the same build works in both without configuration.
+           var url = null, size = 0;
+           for (const cand of ['moddata/' + ASSET_PACK_NAME, 'data/' + ASSET_PACK_NAME]) {
+             try {
+               var r = await fetch(cand, { headers: { Range: 'bytes=0-0' } });
+               if (!r.ok && r.status !== 206) continue;
+               var cr = r.headers.get('Content-Range');
+               var n = cr ? parseInt(cr.split('/')[1], 10) : NaN;
+               if (n) { url = cand; size = n; break; }
+             } catch (e) { /* try the next candidate */ }
+           }
+           if (!url) throw new Error('not found (tried moddata/ and data/)');
+           FS.mkdirTree('/mods');
+           StreamFS.mount('/mods/' + ASSET_PACK_NAME, url, size);
+           append('[assets] ' + ASSET_PACK_NAME + ' mounted streaming (' + Math.round(size/1048576) + 'MB on demand)');
+           return ASSET_PACK_NAME;
+         } catch (e) {
+           append('[assets] pack unavailable, continuing without it: ' + (e && e.message || e));
+           return null;
+         }
+       }
+
        // --- Mount the user-picked Data Files folder (?src=local). Boot waits on 'mw-local'. ---
        function mountLocalMorrowind(){
          try { StreamFS.init(); }
@@ -1406,6 +1470,8 @@
            try { await window.__idbfsReady; await setupFolderSaves(dir); }
            catch(e){ append('[saves] folder-save setup skipped: '+(e&&e.message||e),'err'); }
 
+           var assetPack = await mountAssetPack();
+
            (function waitCfg(){
              if (FS.analyzePath('/openmw.cfg').exists){
                var cfg = FS.readFile('/openmw.cfg', {encoding:'utf8'}).split('\n').filter(function(l){
@@ -1413,7 +1479,12 @@
                      && !/^fallback=Movies_/.test(l);
                });
                cfg.push('data=/mwdata', 'config="/userdata/config/openmw"');
+               // data=/mods must exist for fallback-archive= to resolve: it takes a BARE FILENAME and
+               // is looked up by scanning the data= dirs (components/files/collections.cpp).
+               if (assetPack) cfg.push('data=/mods');
                fbarch.forEach(function(a){ cfg.push('fallback-archive='+a); });
+               // LAST among archives => highest BSA priority => overrides vanilla meshes.
+               if (assetPack) cfg.push('fallback-archive='+assetPack);
                content.forEach(function(c){ cfg.push('content='+c); });
                if (window.__omwMPEnabled) cfg.push('content=mp.omwscripts'); // ?mp= (M0 multiplayer)
                if (wantMovies)
@@ -1563,6 +1634,7 @@
            if (/[?&]novid\b/.test(location.search)){ append('[mw] videos skipped (?novid)'); window.__noMovies = true; return; }
            append('[mw] videos (40MB, played on the fly)…'); return grab('mwdata/mwvideo.tar').then(untarInto('video'));
          })
+         .then(function(){ return mountAssetPack().then(function(n){ window.__assetPack = n; }); })
          .then(function(){
            // Rewrite openmw.cfg once the preloaded copy is present in MEMFS. Full GOTY load order,
            // and replace the OpenMW example-suite movie names with Morrowind's real .bik files
@@ -1580,8 +1652,12 @@
                         // dir — Options changes, keybindings, Lua storage survive reloads. The
                         // baseline /settings.cfg (front of the chain) still applies as defaults.
                         'config="/userdata/config/openmw"',
-                        'fallback-archive=Morrowind.bsa', 'fallback-archive=Tribunal.bsa', 'fallback-archive=Bloodmoon.bsa',
-                        'content=Morrowind.esm', 'content=Tribunal.esm', 'content=Bloodmoon.esm');
+                        'fallback-archive=Morrowind.bsa', 'fallback-archive=Tribunal.bsa', 'fallback-archive=Bloodmoon.bsa');
+               // LAST among archives => highest BSA priority => overrides vanilla meshes. Gated on
+               // the mount having succeeded (a missing archive throws at startup). data=/mods is
+               // required for the bare filename to resolve (components/files/collections.cpp).
+               if (window.__assetPack) cfg.push('data=/mods', 'fallback-archive='+window.__assetPack);
+               cfg.push('content=Morrowind.esm', 'content=Tribunal.esm', 'content=Bloodmoon.esm');
                if (window.__omwMPEnabled) cfg.push('content=mp.omwscripts'); // ?mp= (M0 multiplayer)
                if (!window.__noMovies)
                  cfg.push('fallback=Movies_Company_Logo,bethesda logo.bik',
@@ -1655,6 +1731,8 @@
          try { if (Module._omw_pump_frame) Module._omw_pump_frame(); } catch(e){}
          var b = performance.now();
          __frames++; __accum += (b - a);
+         // ?glcount: exact GL calls THIS frame (cumulative delta bracketed by the pump).
+         if (window.__glCalls){ var gc = window.__glCalls; window.__glPerFrame = { total: gc.total - (window.__glLast||0), draw: gc.draw - (window.__glLastDraw||0) }; window.__glLast = gc.total; window.__glLastDraw = gc.draw; }
          var dt = b - __t0;
          if (dt >= 1000){ window.__fps = Math.round(__frames*1000/dt); window.__frameMs = +(__accum/__frames).toFixed(2); __frames = 0; __accum = 0; __t0 = b; }
          scheduleNext();

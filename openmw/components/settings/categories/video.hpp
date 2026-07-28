@@ -27,6 +27,11 @@ namespace Settings
         SettingValue<bool> mMinimizeOnFocusLoss{ mIndex, "Video", "minimize on focus loss" };
         SettingValue<bool> mWindowBorder{ mIndex, "Video", "window border" };
         SettingValue<int> mAntialiasing{ mIndex, "Video", "antialiasing", makeMaxSanitizerInt(0) };
+        // (Web build) Scene render scale: the 3D scene renders at this fraction of the canvas via the
+        // post-processor chain and its final pass upscales; the GUI stays at native canvas resolution
+        // so menus/text remain crisp at every tier. 1 = native. Driven by Options > Video > Resolution.
+        SettingValue<float> mInternalRenderScale{ mIndex, "Video", "internal render scale",
+            makeClampSanitizerFloat(0.2f, 1.f) };
         SettingValue<SDLUtil::VSyncMode> mVsyncMode{ mIndex, "Video", "vsync mode" };
         SettingValue<float> mFramerateLimit{ mIndex, "Video", "framerate limit", makeMaxSanitizerFloat(0) };
         SettingValue<float> mContrast{ mIndex, "Video", "contrast", makeMaxStrictSanitizerFloat(0) };

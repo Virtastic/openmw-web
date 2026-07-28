@@ -20,8 +20,9 @@ COPY deps/wasm /build/deps/wasm
 COPY deps/sysroot-extra /build/sysroot-extra
 # The prebuilt deps under deps/wasm carry absolute paths from the host machine where they were built
 # (deps/ is a maintainer artifact, not in the public repo). Pass that host checkout path as a build-arg
-# so the cmake/pkgconfig configs get rewritten to /build. Default is an inert placeholder (no personal
-# path in the file); maintainer passes: docker build --build-arg HOST_REPO_DIR=/path/to/your/checkout ...
+# so the cmake/pkgconfig configs get rewritten to the in-container /build. The default is an inert
+# placeholder that matches nothing (so the file carries no personal path); the maintainer passes the
+# real value: docker build --build-arg HOST_REPO_DIR=/path/to/your/checkout ...
 ARG HOST_REPO_DIR=__UNSET_HOST_REPO_DIR__
 # Stage the prebuilt ICU (-mt libs + libGL) into the sysroot lib dir, the ICU headers into the sysroot
 # include dir, fix the .pc prefixes, and rewrite the build-machine paths in the cmake/pkgconfig configs.
