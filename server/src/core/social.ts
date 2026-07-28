@@ -657,6 +657,39 @@ export class Social {
         this.reply(player, 'PartyAccept', r === 'ok', r);
         return true;
       }
+      // Phase 2.5 party voice: WebRTC signaling relayed between PARTY MEMBERS ONLY.
+      // The server never sees audio — it forwards offer/answer/ICE so two browsers can
+      // open a direct peer connection, which is why a mesh needs no media server. Being
+      // party-scoped is the access control: an SDP offer to a stranger is how a voice
+      // system becomes a way to force a connection on someone.
+      case 'VoiceSignal': {
+        const to = str('acct');
+        const members = this.partyMembersOf(player.accountKey);
+        if (!members.includes(to) || to === player.accountKey) {
+          this.reply(player, 'VoiceSignal', false, 'not_in_party');
+          return true;
+        }
+        if (this.d.store.isMuted(to, player.accountKey)) {
+          // A muted speaker is not told they are muted (that invites retaliation); the
+          // signal is simply not delivered, so no connection is ever offered.
+          this.reply(player, 'VoiceSignal', true, 'ok');
+          return true;
+        }
+        const target = this.onlinePlayer(to);
+        if (!target) {
+          this.reply(player, 'VoiceSignal', false, 'not_online');
+          return true;
+        }
+        const payload = body?.get('payload');
+        target.peer.sendEvent('VoiceSignal', {
+          fromAcct: player.accountKey,
+          fromName: player.name,
+          kind: str('kind'), // offer | answer | ice
+          payload: typeof payload === 'string' ? payload : '',
+        });
+        this.reply(player, 'VoiceSignal', true, 'ok');
+        return true;
+      }
       case 'MuteAdd': {
         const r = this.mute(player, str('acct'));
         this.reply(player, 'MuteAdd', r === 'ok', r);

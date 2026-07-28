@@ -39,6 +39,13 @@ local pendingOps = {} -- opId -> {op=, itemId=, n=, key=, obj=}
 local recentPickups = {} -- obj.id -> time (belt+braces beside the byId echo skip)
 local doorPending = {} -- obj.id -> {obj=, at=}
 local lockWatch = {} -- obj.id -> {obj=, locked=, level=, until_=}
+-- Phase 4: obj.id -> last seen `enabled`. Unlike locks, an enable/disable is not tied to
+-- an activation — a quest script flips it whenever it likes — so this is a low-rate poll
+-- of the player's own cell rather than a watch window. Entries double as the echo mute:
+-- a network apply writes the new value here before touching the object.
+local enableWatch = {}
+local nextEnablePoll = 0
+local ENABLE_POLL = 1.0 -- seconds; a reveal appearing within a second reads as instant
 local containerWatch = {} -- obj.id -> {obj=, last={id->n}, nextPoll=, until_=}
 local containerData = {} -- refKey -> {items={id->n}, seq=number} (server truth mirror)
 local lastMirror = 0
@@ -358,6 +365,19 @@ handlers.MP_ObjectLock = function(data)
     end
 end
 
+-- Phase 4: a script enabled or disabled a ref (the Ghostfence falling, a quest NPC
+-- appearing, a hidden door becoming real). Vanilla runs these locally on every client, but
+-- only the client whose script ran sees them once quest globals stop being world-relayed —
+-- so the change travels explicitly. enableWatch mutes the echo, exactly like locks.
+handlers.MP_ObjectEnabled = function(data)
+    if isOwnEcho(data) then return end
+    local obj = resolveBody(data)
+    if not (obj and obj:isValid()) then return end
+    local want = data.enabled ~= false
+    enableWatch[obj.id] = want -- record BEFORE applying: the poll must not re-report this
+    pcall(function() obj:setEnabled(want) end)
+end
+
 handlers.MP_DoorState = function(data)
     if isOwnEcho(data) then return end
     local obj = resolveBody(data)
@@ -429,6 +449,32 @@ handlers.MP_ContainerOpResult = function(data)
     mp.sendEvent('ResyncRequest', { cellKey = deps.ownCellKeyFn() })
 end
 
+-- Phase 3.7: authoritative full-cell REPLACE. Unlike WorldCellState (which layers server
+-- truth over what we have), this says "discard your view of this cell and adopt mine" —
+-- the primitive that makes a reset transparent to a player standing in the room instead
+-- of the TES3MP kick-or-desync. Re-enables everything we had disabled, restocks every
+-- container to the server's restored contents, then applies the normal state.
+handlers.MP_CellSnapshotReplace = function(data)
+    -- Anything disabled locally that the snapshot does not list is stale: turn it back on.
+    -- Walking the cell (rather than enableWatch) also catches objects a script disabled
+    -- before we started watching, which is exactly the state a reset has to undo.
+    local disabled = {}
+    for _, refKey in ipairs(data.disabled or {}) do disabled[refKey] = true end
+    local player = deps.playerFn()
+    local cell = player and player.cell
+    if cell then
+        for _, obj in ipairs(cell:getAll()) do
+            if obj:isValid() and not obj.enabled and not disabled[refKeyOfObj(obj)] then
+                enableWatch[obj.id] = true
+                pcall(function() obj:setEnabled(true) end)
+            end
+        end
+    end
+    -- Containers in the snapshot carry the RESTOCKED contents, so the normal state apply
+    -- (setContainerContents) refills the chest the player is standing in front of.
+    handlers.MP_WorldCellState(data)
+end
+
 handlers.MP_WorldCellState = function(data)
     for _, place in ipairs(data.placed or {}) do
         handlers.MP_ObjectPlace(place)
@@ -478,6 +524,16 @@ handlers.MP_WorldCellState = function(data)
         local obj = resolveRefKey(refKey)
         if obj then setContainerContents(obj, cont.items or {}) end
     end
+    -- Phase 4: refs a script disabled. Only disables are recorded server-side (enabled is
+    -- the vanilla default), so this list is authoritative for "hidden", and everything
+    -- absent from it keeps whatever the content files say.
+    for _, refKey in ipairs(data.disabled or {}) do
+        local obj = resolveRefKey(refKey)
+        if obj and obj:isValid() then
+            enableWatch[obj.id] = false
+            pcall(function() obj:setEnabled(false) end)
+        end
+    end
 end
 
 objects.handlers = handlers
@@ -485,6 +541,29 @@ objects.handlers = handlers
 -- ---------------------------------------------------------------- tick
 
 function objects.tick(now)
+    -- Phase 4: watch the player's cell for scripted enable/disable. Cheap (a boolean read
+    -- per object at 1 Hz) and only for the cell we are standing in, which is the only one
+    -- whose scripts are running for us anyway.
+    if now >= nextEnablePoll then
+        nextEnablePoll = now + ENABLE_POLL
+        local player = deps.playerFn()
+        local cell = player and player.cell
+        if cell then
+            for _, obj in ipairs(cell:getAll()) do
+                if obj:isValid() and not types.Player.objectIsInstance(obj) then
+                    local on = obj.enabled
+                    local was = enableWatch[obj.id]
+                    if was == nil then
+                        enableWatch[obj.id] = on -- first sighting: baseline, never reported
+                    elseif was ~= on then
+                        enableWatch[obj.id] = on
+                        sendAddressed('ObjectEnabled', obj, { enabled = on })
+                    end
+                end
+            end
+        end
+    end
+
     for id, pending in pairs(doorPending) do
         if now >= pending.at then
             doorPending[id] = nil
@@ -628,6 +707,8 @@ function objects.reset()
     recentPickups = {}
     doorPending = {}
     lockWatch = {}
+    enableWatch = {}
+    nextEnablePoll = 0
     containerWatch = {}
     containerData = {}
 end

@@ -803,6 +803,123 @@
              // Test/automation surface: Lua mirrors {state, playerId, lastChat, players} in
              // here via mp.testSet; sendChat feeds mp.testPollCommand.
              window.__omwMP = { state:'boot', sendChat:function(t){ Module.__omwMPCmd='chat:'+t; } };
+             // ---------------------------------------------------------------- party voice
+             // WebRTC lives in JS because the engine is WASM and getUserMedia/RTCPeerConnection
+             // are browser APIs; Lua drives it through this small surface. A MESH (each member
+             // connects directly to each other) is right for <=8 people and needs no media
+             // server at all — the relay only forwards offer/answer/ICE, and only between
+             // party members, so audio never touches our infrastructure.
+             //
+             // Push-to-talk is the DEFAULT and the track starts disabled: a voice feature that
+             // is hot the moment you join is how someone's room ends up broadcast to strangers.
+             (function(){
+               var peers = {};          // acct -> RTCPeerConnection
+               var localStream = null;
+               var talking = false;
+               var cfg = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+               // JS -> Lua goes through the single Module.__omwMPCmd slot, so signals are
+               // QUEUED and pumped one at a time: ICE candidates arrive in bursts and a
+               // bare assignment would silently overwrite the previous one, leaving a
+               // half-negotiated connection that looks like "voice just doesn't work".
+               var outbox = [];
+               function send(acct, kind, payload){
+                 outbox.push('voice:' + acct + ':' + kind + ':' + payload);
+               }
+               setInterval(function(){
+                 if (outbox.length && !Module.__omwMPCmd) Module.__omwMPCmd = outbox.shift();
+               }, 50);
+               // Lua -> JS: sequenced slots (voiceSig<N>) rather than one key, for the same
+               // reason in the other direction. `voiceSeq` is the high-water mark Lua has
+               // written; we consume everything we have not seen.
+               var seen = 0;
+               setInterval(function(){
+                 var mp = window.__omwMP || {};
+                 var seq = Number(mp.voiceSeq || 0);
+                 while (seen < seq) {
+                   seen++;
+                   var raw = mp['voiceSig' + seen];
+                   if (!raw) continue;
+                   try {
+                     var m = JSON.parse(raw);
+                     if (m.op === 'signal') window.__omwVoice.onSignal(m.acct, m.kind, m.payload);
+                     else if (m.op === 'offer') window.__omwVoice.offer(m.acct);
+                     else if (m.op === 'drop') window.__omwVoice.drop(m.acct);
+                     else if (m.op === 'dropAll') window.__omwVoice.dropAll();
+                     else if (m.op === 'enable') window.__omwVoice.enable();
+                     else if (m.op === 'talk') window.__omwVoice.setTalking(m.on);
+                   } catch (e) { /* a malformed slot must not wedge the pump */ }
+                 }
+               }, 100);
+               function pc(acct){
+                 if (peers[acct]) return peers[acct];
+                 var p = new RTCPeerConnection(cfg);
+                 p.onicecandidate = function(e){
+                   if (e.candidate) send(acct, 'ice', JSON.stringify(e.candidate));
+                 };
+                 p.ontrack = function(e){
+                   // One <audio> per peer, kept out of the DOM flow. Muting a player in-game
+                   // removes their element entirely rather than pausing it, so a muted peer
+                   // cannot be un-muted by anything running in the page.
+                   var el = document.getElementById('voice-' + acct);
+                   if (!el){
+                     el = document.createElement('audio');
+                     el.id = 'voice-' + acct;
+                     el.autoplay = true;
+                     el.style.display = 'none';
+                     document.body.appendChild(el);
+                   }
+                   el.srcObject = e.streams[0];
+                 };
+                 if (localStream) localStream.getTracks().forEach(function(t){ p.addTrack(t, localStream); });
+                 peers[acct] = p;
+                 return p;
+               }
+               window.__omwVoice = {
+                 // Called from Lua when the player enables voice; the browser prompt is the
+                 // consent step, which is why this is never done automatically at join.
+                 enable: async function(){
+                   if (localStream) return true;
+                   try {
+                     localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                   } catch (err) { return false; }
+                   localStream.getAudioTracks().forEach(function(t){ t.enabled = false; }); // PTT
+                   return true;
+                 },
+                 setTalking: function(on){
+                   talking = !!on;
+                   if (localStream) localStream.getAudioTracks().forEach(function(t){ t.enabled = talking; });
+                 },
+                 // Start a connection to a party member (the alphabetically-lower account
+                 // offers, so two members never both offer and glare).
+                 offer: async function(acct){
+                   if (!localStream) return;
+                   var p = pc(acct);
+                   var d = await p.createOffer();
+                   await p.setLocalDescription(d);
+                   send(acct, 'offer', JSON.stringify(d));
+                 },
+                 onSignal: async function(acct, kind, payload){
+                   var p = pc(acct);
+                   var data = payload ? JSON.parse(payload) : null;
+                   if (kind === 'offer'){
+                     await p.setRemoteDescription(data);
+                     var ans = await p.createAnswer();
+                     await p.setLocalDescription(ans);
+                     send(acct, 'answer', JSON.stringify(ans));
+                   } else if (kind === 'answer'){
+                     await p.setRemoteDescription(data);
+                   } else if (kind === 'ice' && data){
+                     try { await p.addIceCandidate(data); } catch (e) { /* pre-SRD candidate */ }
+                   }
+                 },
+                 drop: function(acct){
+                   if (peers[acct]){ peers[acct].close(); delete peers[acct]; }
+                   var el = document.getElementById('voice-' + acct);
+                   if (el) el.remove();
+                 },
+                 dropAll: function(){ Object.keys(peers).forEach(window.__omwVoice.drop); },
+               };
+             })();
              // Failure banner (DOM, not game UI): session failures must be visible to a real
              // player even if the in-game chat/notice layer never got a chance to render
              // (e.g. refused during load). Lua mirrors state/lastError via mp.testSet.

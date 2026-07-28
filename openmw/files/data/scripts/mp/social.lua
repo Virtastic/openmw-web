@@ -52,6 +52,9 @@ local joiningWorld = nil -- name of the world a join is in flight to, nil = not 
 local characters = nil
 local activeCharId = ''
 local charDraft = ''
+-- Party voice: off until the player asks for it (the browser mic prompt is the consent
+-- step). Push-to-talk is bound to V in the player script.
+local voiceOn = false
 
 -- There is no scroll container in this UI API, so a long list would simply run off the
 -- bottom of the screen. The world is designed for ~100 concurrent players, so the Players
@@ -130,6 +133,10 @@ local function playersTab()
                 if not inParty(acct) then
                     actions[#actions + 1] = { 'party', function() send('PartyInvite', { acct = acct }) end }
                 end
+                -- Mute is separate from block: block ends the relationship, mute just
+                -- means "I do not want to hear this person right now". Persistent, so it
+                -- survives a relog.
+                actions[#actions + 1] = { 'mute', function() send('MuteAdd', { acct = acct }) end }
                 actions[#actions + 1] = { 'block', function() send('BlockAdd', { name = p.name }) end }
                 rows[#rows + 1] = personRow(p.name, { actions = actions })
             end
@@ -210,6 +217,16 @@ local function partyTab()
         rows[#rows + 1] = U.interval
         -- Group travel: the whole party moves together. Leader-only server-side — a
         -- non-leader pressing these gets a loud SocialResult rather than a silent nothing.
+        rows[#rows + 1] = U.row {
+            U.button(voiceOn and 'voice: on' or 'voice: off', function()
+                voiceOn = not voiceOn
+                -- Enabling prompts the browser for the microphone: consent is the prompt,
+                -- which is why voice is never hot just because you joined a party.
+                core.sendGlobalEvent('mpVoice', { op = voiceOn and 'enable' or 'disable' })
+                status = voiceOn and 'Voice on (hold V to talk).' or 'Voice off.'
+                render()
+            end),
+        }
         rows[#rows + 1] = U.row {
             U.button('travel: party world', function()
                 status = 'Asking the party to travel...'
@@ -551,6 +568,9 @@ return {
             render()
         end,
         MP_PartyUpdate = function(data)
+            -- Keep the voice mesh exactly in step with the party the player can see:
+            -- someone who left the group must not still be connected to your microphone.
+            core.sendGlobalEvent('mpVoice', { op = 'party', members = data.members or {} })
             party = { leader = data.leader or '', members = data.members or {} }
             for _, m in ipairs(party.members) do invites[m.acct] = nil end
             mirror()

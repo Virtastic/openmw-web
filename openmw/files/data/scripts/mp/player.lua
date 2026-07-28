@@ -406,6 +406,18 @@ local function pollHarness()
         local csId = cmd:match('^charswitch:(%w+)$')
         if csId then core.sendGlobalEvent('mpCharSwitch', { id = csId }) end
         if cmd == 'chars' then core.sendGlobalEvent('mpChars', {}) end
+        -- Party voice: the JS mesh emits 'voice:<acct>:<kind>:<payload>' through the same
+        -- command channel the harness uses. Payload is SDP/ICE JSON and may contain
+        -- colons, so it is captured greedily as the remainder.
+        local vAcct, vKind, vPayload = cmd:match('^voice:([^:]+):([^:]+):(.*)$')
+        if vAcct then
+            core.sendGlobalEvent('mpSocial', {
+                op = 'VoiceSignal', acct = vAcct, kind = vKind, payload = vPayload,
+            })
+        end
+        local voiceOp = cmd:match('^voicectl:(%a+)$')
+        if voiceOp then core.sendGlobalEvent('mpVoice', { op = voiceOp }) end
+
         local ptTarget = cmd:match('^partytravel:(%a+)$')
         if ptTarget then core.sendGlobalEvent('mpSocial', { op = 'PartyTravel', target = ptTarget }) end
 
@@ -553,9 +565,16 @@ return {
         onQuestUpdate = function(questId, stage)
             core.sendGlobalEvent('mpQuestUpdate', { questId = questId, stage = stage })
         end,
+        onKeyRelease = function(key)
+            -- Push-to-talk release. Paired with onKeyPress below; PTT is the default so a
+            -- player is never transmitting because they forgot a toggle.
+            if key.symbol == 'v' then core.sendGlobalEvent('mpVoice', { op = 'talk', on = false }) end
+        end,
         onKeyPress = function(key)
             if key.symbol == 't' and not I.UI.getMode() then
                 toggleChat()
+            elseif key.symbol == 'v' and not I.UI.getMode() then
+                core.sendGlobalEvent('mpVoice', { op = 'talk', on = true })
             end
         end,
         onFrame = function() -- runs while paused too — the harness must not stall in menus

@@ -12,6 +12,7 @@ local world = require('openmw.world')
 
 local json = require('scripts.mp.json')
 local net = require('scripts.mp.net')
+local voice = require('scripts.mp.voice')
 local objects = require('scripts.mp.objects')
 local actors = require('scripts.mp.actors')
 local combat = require('scripts.mp.combat')
@@ -719,6 +720,11 @@ local eventHandlers = {
     MP_PartyUpdate = function(data) toPlayer('MP_PartyUpdate', data) end,
     MP_PartyInviteReceived = function(data) toPlayer('MP_PartyInviteReceived', data) end,
     MP_SocialResult = function(data) toPlayer('MP_SocialResult', data) end,
+    -- Party voice: signalling only (never audio). Handed straight to the JS mesh.
+    MP_VoiceSignal = function(data)
+        voice.onSignal(tostring(data.fromAcct or ''), tostring(data.kind or ''), tostring(data.payload or ''))
+        toPlayer('MP_VoiceSignal', data)
+    end,
 
     -- Party travel: the leader moved the group. Like InviteAccepted this is an ACTION, so
     -- it lives in the global context: build the destination URL and redial. The player
@@ -1144,7 +1150,7 @@ local eventHandlers = {
             FriendRequest = true, FriendAccept = true, FriendRemove = true,
             BlockAdd = true, BlockRemove = true, InviteSend = true, InviteAccept = true,
             PartyInvite = true, PartyAccept = true, PartyLeave = true, PartyTravel = true,
-            PresenceMode = true,
+            PresenceMode = true, MuteAdd = true, MuteRemove = true, VoiceSignal = true,
             -- F3 world browser. The server takes the ACCOUNT from the authenticated
             -- session, never from here, so a client cannot list or create sessions under
             -- someone else's identity.
@@ -1152,7 +1158,10 @@ local eventHandlers = {
         }
         local op = tostring(data.op or '')
         if not OPS[op] then return end
-        mp.sendEvent(op, { name = data.name, acct = data.acct, mode = data.mode, id = data.id, target = data.target })
+        mp.sendEvent(op, {
+            name = data.name, acct = data.acct, mode = data.mode, id = data.id,
+            target = data.target, kind = data.kind, payload = data.payload,
+        })
     end,
 
     -- Character slots (player UI -> here). The slot list lives on net (from Welcome /
@@ -1173,6 +1182,16 @@ local eventHandlers = {
         net.sendSession({ t = 'CharacterCreate', name = name })
     end,
     -- Onboarding profile submit (email + unique public handle).
+    -- Voice control from the social window (enable/disable, PTT) and the JS mesh's
+    -- outbound signalling, which arrives via player.lua's harness command channel.
+    mpVoice = function(data)
+        local op = tostring(data.op or '')
+        if op == 'enable' then voice.enable()
+        elseif op == 'disable' then voice.disable()
+        elseif op == 'talk' then voice.setTalking(data.on == true)
+        elseif op == 'party' then voice.syncParty(data.members)
+        end
+    end,
     mpProfileSetup = function(data)
         net.sendSession({
             t = 'ProfileSetup',
