@@ -167,8 +167,8 @@
  .btn[disabled]{opacity:.5; cursor:default}
 
  /* Multiplayer sign-in modal. */
- .mp-modal{max-width:440px}
- .mp-glyph{width:44px; height:44px; margin:2px 0 14px; color:var(--bronze-hi)}
+ .mp-modal{max-width:440px; text-align:center}
+ .mp-glyph{width:44px; height:44px; margin:2px auto 14px; color:var(--bronze-hi)}
  .mp-glyph svg{width:100%; height:100%; display:block}
  .mp-providers{display:flex; flex-direction:column; gap:9px; margin-top:22px}
  .mp-prov.soon{background:rgba(255,255,255,.04); color:var(--faint); border-color:var(--line);
@@ -374,7 +374,6 @@
      an identity provider ("Continue with Google"). The SSO redirect happens on button click. -->
 <div class="modal-bd" id="mp-bd" role="dialog" aria-modal="true" aria-labelledby="mp-title">
   <div class="modal mp-modal">
-    <button class="m-close" id="mp-close" type="button" aria-label="Close">&times;</button>
     <div class="mp-glyph" aria-hidden="true">
       <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round">
         <circle cx="18" cy="18" r="6"/><circle cx="32" cy="22" r="5"/>
@@ -780,8 +779,7 @@
  })();
  $('card-mp').addEventListener('click', mpStart);
  $('card-mp').addEventListener('keydown', (e)=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); mpStart(); } });
- $('mp-close').addEventListener('click', mpClose);
- mpBd.addEventListener('click', (e)=>{ if(e.target===mpBd) mpClose(); });
+ mpBd.addEventListener('click', (e)=>{ if(e.target===mpBd) mpClose(); }); // click outside to close
  document.addEventListener('keydown', (e)=>{ if(e.key==='Escape' && mpBd.classList.contains('show')) mpClose(); });
 
  $('card-local').addEventListener('click', pickLocal);
