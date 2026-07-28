@@ -804,6 +804,8 @@
                var lk = /[#&]mplink=([^&]+)/.exec(h);
                var er = /[#&]mperror=([^&]+)/.exec(h);
                if (tk) ENV.OPENMW_MP_TICKET = decodeURIComponent(tk[1]);
+               var lok = /[#&]mplocker=([^&]+)/.exec(h);
+               if (lok) window.__omwLockerToken = decodeURIComponent(lok[1]); // Bearer for /locker/*
                if (lk) append('[mp] linked ' + decodeURIComponent(lk[1]) + ' to your account');
                if (er) append('[mp] sign-in failed: ' + decodeURIComponent(er[1]), 'err');
                if (tk || lk || er) {
@@ -1311,7 +1313,9 @@
        // Otherwise fall through to the sample suite (?nomw) or the server-hosted retail
        // fetch below.
        var __srcLocal = /[?&]src=local\b/.test(location.search);
-       if (__srcLocal) mountLocalMorrowind();
+       var __mpLocker = /[?&]mplocker\b/.test(location.search);
+       if (__mpLocker) mountLockerMorrowind();       // MP: game data streams from your locker
+       else if (__srcLocal) mountLocalMorrowind();   // bring-your-own local folder (single-player)
 
        // --- Optional performance asset pack (Morrowind Optimization Patch + Project Atlas) --------
        // Shipped as ONE streamed BSA rather than ~3300 loose files: loose files would each need an
@@ -1356,6 +1360,109 @@
            append('[assets] pack unavailable, continuing without it: ' + (e && e.message || e));
            return null;
          }
+       }
+
+       // --- Multiplayer data locker: stream YOUR uploaded Morrowind from server-side storage.
+       // Multiplayer is SSO-only and locker-only by design (docs/LEGAL.md): the game data is
+       // your own, uploaded once, streamed back on any device via presigned URLs. First
+       // visit with an empty locker triggers a one-time upload from a folder you pick.
+       function mountLockerMorrowind(){
+         var TOKEN = window.__omwLockerToken || '';
+         var HTTP = (function(){ try { var u=new URL(ENV.OPENMW_MP_URL); return (u.protocol==='wss:'?'https:':'http:')+'//'+u.host; } catch(e){ return ''; } })();
+         function api(path, opts){ opts=opts||{}; opts.headers=Object.assign({ authorization:'Bearer '+TOKEN }, opts.headers||{}); return fetch(HTTP+path, opts); }
+         function bounce(msg){ append('[locker] '+msg,'err'); fatalOverlay('Multiplayer sign-in needed', msg+' Returning to the launcher…', false); setTimeout(function(){ location.href='launcher.html'; }, 2400); }
+         try { StreamFS.init(); } catch(e){ return bounce('Streaming unavailable (needs a Chromium browser on desktop).'); }
+         if (!TOKEN || !HTTP) return bounce('No locker session — sign in again.');
+         addRunDependency('mw-local');
+
+         // Incremental SHA-256 (Web Crypto has no streaming digest, and the .bsa is ~430MB —
+         // too large to hold as one ArrayBuffer on every machine). Compact, standard FIPS-180.
+         function Sha256(){ this.h=[0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19]; this.buf=new Uint8Array(64); this.len=0; this.tot=0; }
+         var K256=[0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2];
+         Sha256.prototype._blk=function(p){ var h=this.h,w=new Int32Array(64),i,a,b,c,d,e,f,g,hh,t1,t2,s0,s1,ch,maj; for(i=0;i<16;i++)w[i]=(p[i*4]<<24)|(p[i*4+1]<<16)|(p[i*4+2]<<8)|p[i*4+3]; for(i=16;i<64;i++){var x=w[i-15],y=w[i-2];s0=((x>>>7)|(x<<25))^((x>>>18)|(x<<14))^(x>>>3);s1=((y>>>17)|(y<<15))^((y>>>19)|(y<<13))^(y>>>10);w[i]=(w[i-16]+s0+w[i-7]+s1)|0;} a=h[0];b=h[1];c=h[2];d=h[3];e=h[4];f=h[5];g=h[6];hh=h[7]; for(i=0;i<64;i++){s1=((e>>>6)|(e<<26))^((e>>>11)|(e<<21))^((e>>>25)|(e<<7));ch=(e&f)^(~e&g);t1=(hh+s1+ch+K256[i]+w[i])|0;s0=((a>>>2)|(a<<30))^((a>>>13)|(a<<19))^((a>>>22)|(a<<10));maj=(a&b)^(a&c)^(b&c);t2=(s0+maj)|0;hh=g;g=f;f=e;e=(d+t1)|0;d=c;c=b;b=a;a=(t1+t2)|0;} h[0]=(h[0]+a)|0;h[1]=(h[1]+b)|0;h[2]=(h[2]+c)|0;h[3]=(h[3]+d)|0;h[4]=(h[4]+e)|0;h[5]=(h[5]+f)|0;h[6]=(h[6]+g)|0;h[7]=(h[7]+hh)|0; };
+         Sha256.prototype.update=function(u){ this.tot+=u.length; var off=0; if(this.len){ while(off<u.length&&this.len<64)this.buf[this.len++]=u[off++]; if(this.len===64){this._blk(this.buf);this.len=0;} } while(off+64<=u.length){this._blk(u.subarray(off,off+64));off+=64;} while(off<u.length)this.buf[this.len++]=u[off++]; };
+         Sha256.prototype.hex=function(){ var l=this.tot*8; this.buf[this.len++]=0x80; if(this.len>56){while(this.len<64)this.buf[this.len++]=0;this._blk(this.buf);this.len=0;} while(this.len<56)this.buf[this.len++]=0; var hi=Math.floor(l/0x100000000),lo=l>>>0; this.buf[56]=(hi>>>24)&255;this.buf[57]=(hi>>>16)&255;this.buf[58]=(hi>>>8)&255;this.buf[59]=hi&255;this.buf[60]=(lo>>>24)&255;this.buf[61]=(lo>>>16)&255;this.buf[62]=(lo>>>8)&255;this.buf[63]=lo&255; this._blk(this.buf); var o='',i,v; for(i=0;i<8;i++){v=this.h[i]>>>0;o+=('00000000'+v.toString(16)).slice(-8);} return o; };
+         async function hashFile(file){ var h=new Sha256(), rd=file.stream().getReader(); for(;;){ var r=await rd.read(); if(r.done)break; h.update(r.value); } return h.hex(); }
+
+         // Recursively collect the files we care about from a picked Data Files folder.
+         async function collectFiles(handle, prefix, out){
+           for await (const [name,h] of handle.entries()){
+             var rel = prefix ? prefix+'/'+name : name;
+             if (h.kind==='directory'){ await collectFiles(h, rel, out); }
+             else if (/\.(esm|esp|bsa|omwaddon)$/i.test(name)){ out.push({ rel:rel, name:name, handle:h }); }
+           }
+         }
+
+         async function uploadFrom(dir){
+           var files=[]; await collectFiles(dir,'',files);
+           if (!files.length){ bounce('That folder has no Morrowind data files (.esm/.bsa).'); return null; }
+           append('[locker] hashing '+files.length+' files (one-time)…');
+           var records=[];
+           for (const f of files){ var file=await f.handle.getFile(); f.file=file; f.sha256=await hashFile(file); f.size=file.size; records.push({ name:f.name, size:f.size, sha256:f.sha256 }); append('[locker]   '+f.name+' ('+Math.round(f.size/1048576)+'MB)'); }
+           // Attest ownership BEFORE any byte leaves the machine.
+           await api('/locker/attest',{ method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({ files:records }) });
+           for (const f of files){
+             var au = await (await api('/locker/authorize-upload',{ method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({ name:f.name, size:f.size, sha256:f.sha256 }) })).json();
+             if (!au.ok){ append('[locker] refused '+f.name+': '+au.reason+' (not a recognized retail file, or over quota)','err'); continue; }
+             append('[locker] uploading '+f.name+'…');
+             var put = await fetch(au.url, { method:'PUT', body:f.file });
+             if (!put.ok){ append('[locker] upload failed for '+f.name+' ('+put.status+')','err'); continue; }
+             await api('/locker/uploaded',{ method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({ name:f.name, size:f.size, sha256:f.sha256 }) });
+           }
+           return (await (await api('/locker/files')).json()).files;
+         }
+
+         (async function(){
+           var files;
+           try { files = (await (await api('/locker/files')).json()).files; }
+           catch(e){ return bounce('Could not reach your locker on the server.'); }
+           if (!files || !files.length){
+             // Empty locker: one-time upload. Reuse the launcher's remembered folder if any,
+             // else ask for one now.
+             append('[locker] your library is empty — pick your Morrowind Data Files to upload (once).');
+             var dir=null;
+             try { dir = await new Promise(function(res,rej){ var r=indexedDB.open('omw-launcher',1); r.onupgradeneeded=function(){ if(!r.result.objectStoreNames.contains('handles')) r.result.createObjectStore('handles'); }; r.onsuccess=function(){ try{ var t=r.result.transaction('handles','readonly').objectStore('handles').get('mwdata'); t.onsuccess=function(){res(t.result);}; t.onerror=function(){rej(t.error);}; }catch(e){rej(e);} }; r.onerror=function(){rej(r.error);}; }); } catch(e){}
+             var ok = dir && (await dir.queryPermission({mode:'read'})==='granted');
+             if (!ok){ try { dir = await window.showDirectoryPicker(); } catch(e){ return bounce('No folder chosen — cannot start multiplayer without your game data.'); } }
+             try { files = await uploadFrom(dir); } catch(e){ return bounce('Upload failed: '+(e&&e.message||e)); }
+             if (!files || !files.length) return bounce('No files were accepted. Make sure you picked a real Morrowind Data Files folder.');
+           }
+           // Stream every stored file from a presigned URL. StreamFS.mount does HTTP Range,
+           // so nothing is downloaded until the engine actually reads it.
+           append('[locker] streaming '+files.length+' files from your library…');
+           FS.mkdirTree('/mwdata');
+           var fbarch=[], content=[], hasVideoBik=false;
+           for (const f of files){
+             var dl = await (await api('/locker/download?name='+encodeURIComponent(f.name))).json();
+             if (!dl || !dl.url){ append('[locker] cannot fetch '+f.name,'err'); continue; }
+             StreamFS.mount('/mwdata/'+f.name, dl.url, f.size);
+             if (/\.bsa$/i.test(f.name)) fbarch.push(f.name);
+             else if (/\.(esm|esp|omwaddon)$/i.test(f.name)) content.push(f.name);
+           }
+           // Canonical GOTY load order first, then any extra plugins the player uploaded.
+           var base=['Morrowind.esm','Tribunal.esm','Bloodmoon.esm'];
+           var baseArch=['Morrowind.bsa','Tribunal.bsa','Bloodmoon.bsa'];
+           var extraContent=content.filter(function(c){ return base.indexOf(c)<0; });
+           var assetPack = await mountAssetPack();
+           (function waitCfg(){
+             if (FS.analyzePath('/openmw.cfg').exists){
+               var cfg = FS.readFile('/openmw.cfg',{encoding:'utf8'}).split('\n').filter(function(l){
+                 return !/^content=/.test(l) && !/^data=\/gamedata\s*$/.test(l) && !/^fallback-archive=/.test(l) && !/^fallback=Movies_/.test(l);
+               });
+               cfg.push('data=/mwdata','config="/userdata/config/openmw"');
+               if (assetPack) cfg.push('data=/mods');
+               baseArch.forEach(function(a){ if(fbarch.indexOf(a)>=0) cfg.push('fallback-archive='+a); });
+               fbarch.forEach(function(a){ if(baseArch.indexOf(a)<0) cfg.push('fallback-archive='+a); });
+               if (assetPack) cfg.push('fallback-archive='+assetPack); // LAST = overrides vanilla meshes
+               base.forEach(function(c){ if(content.indexOf(c)>=0) cfg.push('content='+c); });
+               extraContent.forEach(function(c){ cfg.push('content='+c); });
+               cfg.push('content=mp.omwscripts'); // multiplayer is always on this path
+               FS.writeFile('/openmw.cfg', cfg.join('\n'));
+               append('[locker] READY -> multiplayer with your library ('+content.join(' + ')+')');
+               removeRunDependency('mw-local');
+             } else { setTimeout(waitCfg, 25); }
+           })();
+         })().catch(function(e){ bounce('Unexpected error: '+(e&&e.message||e)); });
        }
 
        // --- Mount the user-picked Data Files folder (?src=local). Boot waits on 'mw-local'. ---

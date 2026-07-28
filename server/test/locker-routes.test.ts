@@ -32,22 +32,22 @@ async function boot(t: { after(fn: () => unknown): void }) {
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   t.after(() => server.close());
   const port = (server.address() as { port: number }).port;
-  const aliceCookie = `omw_locker=${sessions.mint('alice')}`;
-  return { base: `http://127.0.0.1:${port}`, aliceCookie, sessions };
+  const aliceAuth = `Bearer ${sessions.mint('alice')}`;
+  return { base: `http://127.0.0.1:${port}`, aliceAuth, sessions };
 }
 
 const FILE = { name: 'Morrowind.esm', size: 100, sha256: 'a'.repeat(64) };
-const call = (base: string, path: string, cookie: string, method = 'GET', body?: unknown) =>
+const call = (base: string, path: string, authz: string, method = 'GET', body?: unknown) =>
   fetch(`${base}${path}`, {
     method,
-    headers: { cookie, ...(body ? { 'content-type': 'application/json' } : {}) },
+    headers: { ...(authz ? { authorization: authz } : {}), ...(body ? { 'content-type': 'application/json' } : {}) },
     ...(body ? { body: JSON.stringify(body) } : {}),
   });
 
-test('no cookie = 401; the account is never taken from the body', async (t) => {
+test('no bearer token = 401; the account is never taken from the body', async (t) => {
   const { base } = await boot(t);
   assert.equal((await call(base, '/locker/files', '')).status, 401);
-  // Even a body naming "alice" gets nowhere without the cookie.
+  // Even a body naming "alice" gets nowhere without the token.
   const r = await fetch(`${base}/locker/authorize-upload`, {
     method: 'POST', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ ...FILE, account: 'alice' }),
@@ -56,56 +56,56 @@ test('no cookie = 401; the account is never taken from the body', async (t) => {
 });
 
 test('the full authorized flow: attest -> authorize -> confirm -> list -> download', async (t) => {
-  const { base, aliceCookie } = await boot(t);
+  const { base, aliceAuth } = await boot(t);
 
   // Upload is refused before an attestation exists.
-  let r = await call(base, '/locker/authorize-upload', aliceCookie, 'POST', FILE);
+  let r = await call(base, '/locker/authorize-upload', aliceAuth, 'POST', FILE);
   assert.deepEqual(await r.json(), { ok: false, reason: 'no-attestation' });
 
-  r = await call(base, '/locker/attest', aliceCookie, 'POST', { files: [FILE] });
+  r = await call(base, '/locker/attest', aliceAuth, 'POST', { files: [FILE] });
   const att = await r.json() as { ok: boolean; statement: string };
   assert.equal(att.ok, true);
   assert.match(att.statement, /legally purchased/);
 
-  r = await call(base, '/locker/authorize-upload', aliceCookie, 'POST', FILE);
+  r = await call(base, '/locker/authorize-upload', aliceAuth, 'POST', FILE);
   const auth = await r.json() as { ok: boolean; url: string; key: string };
   assert.equal(auth.ok, true);
   assert.equal(auth.key, 'gamedata/alice/Morrowind.esm', 'per-account prefix');
   assert.match(auth.url, /\?put$/);
 
-  await call(base, '/locker/uploaded', aliceCookie, 'POST', FILE);
-  const files = await (await call(base, '/locker/files', aliceCookie)).json() as { files: unknown[] };
+  await call(base, '/locker/uploaded', aliceAuth, 'POST', FILE);
+  const files = await (await call(base, '/locker/files', aliceAuth)).json() as { files: unknown[] };
   assert.equal(files.files.length, 1);
 
-  const dl = await (await call(base, '/locker/download?name=Morrowind.esm', aliceCookie)).json() as { url: string };
+  const dl = await (await call(base, '/locker/download?name=Morrowind.esm', aliceAuth)).json() as { url: string };
   assert.match(dl.url, /gamedata\/alice\/Morrowind\.esm\?get$/);
 });
 
 test('a file we do not recognize is refused — not general file hosting', async (t) => {
-  const { base, aliceCookie } = await boot(t);
-  await call(base, '/locker/attest', aliceCookie, 'POST', { files: [FILE] });
+  const { base, aliceAuth } = await boot(t);
+  await call(base, '/locker/attest', aliceAuth, 'POST', { files: [FILE] });
   const junk = { name: 'movie.mkv', size: 10, sha256: 'f'.repeat(64) };
-  const r = await call(base, '/locker/authorize-upload', aliceCookie, 'POST', junk);
+  const r = await call(base, '/locker/authorize-upload', aliceAuth, 'POST', junk);
   assert.deepEqual(await r.json(), { ok: false, reason: 'not-recognized' });
 });
 
 test('one account cannot reach another account library', async (t) => {
-  const { base, aliceCookie, sessions } = await boot(t);
-  await call(base, '/locker/attest', aliceCookie, 'POST', { files: [FILE] });
-  await call(base, '/locker/authorize-upload', aliceCookie, 'POST', FILE);
-  await call(base, '/locker/uploaded', aliceCookie, 'POST', FILE);
+  const { base, aliceAuth, sessions } = await boot(t);
+  await call(base, '/locker/attest', aliceAuth, 'POST', { files: [FILE] });
+  await call(base, '/locker/authorize-upload', aliceAuth, 'POST', FILE);
+  await call(base, '/locker/uploaded', aliceAuth, 'POST', FILE);
 
-  const bobCookie = `omw_locker=${sessions.mint('bob')}`;
-  const bobList = await (await call(base, '/locker/files', bobCookie)).json() as { files: unknown[] };
+  const bobAuth = `Bearer ${sessions.mint('bob')}`;
+  const bobList = await (await call(base, '/locker/files', bobAuth)).json() as { files: unknown[] };
   assert.deepEqual(bobList.files, [], "bob sees his own empty library, not alice's");
-  const bobDl = await call(base, '/locker/download?name=Morrowind.esm', bobCookie);
+  const bobDl = await call(base, '/locker/download?name=Morrowind.esm', bobAuth);
   assert.equal(bobDl.status, 404, "bob cannot name his way into alice's file");
 });
 
 test('path traversal in a filename is rejected', async (t) => {
-  const { base, aliceCookie } = await boot(t);
-  await call(base, '/locker/attest', aliceCookie, 'POST', { files: [FILE] });
+  const { base, aliceAuth } = await boot(t);
+  await call(base, '/locker/attest', aliceAuth, 'POST', { files: [FILE] });
   const evil = { name: '../bob/Morrowind.esm', size: 100, sha256: 'a'.repeat(64) };
-  const r = await call(base, '/locker/authorize-upload', aliceCookie, 'POST', evil);
+  const r = await call(base, '/locker/authorize-upload', aliceAuth, 'POST', evil);
   assert.equal(r.status, 400);
 });

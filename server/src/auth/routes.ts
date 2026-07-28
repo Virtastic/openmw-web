@@ -164,14 +164,12 @@ export function createAuthRoutes(deps: AuthDeps, also?: HttpRoute): HttpRoute {
       return fail(res, 'banned', `banned account ${resolved.accountKey} attempted an SSO login`, ip);
 
     const ticket = tickets.mint(resolved.accountKey, resolved.accountName);
-    // Locker session cookie: lets this browser reach /locker/* to upload its game data
-    // before it joins any world. httpOnly + SameSite=Lax so JS cannot read it and it is
-    // not sent cross-site; scoped to /locker.
-    if (lockerSessions) {
-      setCookie(res, 'omw_locker', lockerSessions.mint(resolved.accountKey), {
-        maxAgeSec: 24 * 60 * 60, path: '/locker', secure: isSecureRequest(req),
-      });
-    }
+    // Locker session token: lets this browser reach /locker/* to upload its game data
+    // before it joins any world. Delivered in the return FRAGMENT alongside the game
+    // ticket (never a query param — fragments are not logged/cached/Referer'd), because the
+    // game page is a different origin and a cookie could not be sent on its cross-origin
+    // fetch. The browser reads it and sends it as a Bearer header.
+    const lockerToken = lockerSessions ? lockerSessions.mint(resolved.accountKey) : '';
     log('info', 'auth.sso_ok', { provider, account: resolved.accountName, created: resolved.created, ip });
     metrics.auth.inc({ op: 'sso', result: 'success' });
     if (config.auth.returnUrl === '') {
@@ -180,7 +178,8 @@ export function createAuthRoutes(deps: AuthDeps, also?: HttpRoute): HttpRoute {
       sendText(res, 200, ticket);
       return true;
     }
-    redirect(res, returnTo(config.auth.returnUrl, `mpticket=${encodeURIComponent(ticket)}`));
+    redirect(res, returnTo(config.auth.returnUrl,
+      `mpticket=${encodeURIComponent(ticket)}` + (lockerToken ? `&mplocker=${encodeURIComponent(lockerToken)}` : '')));
     return true;
   };
 
@@ -190,6 +189,8 @@ export function createAuthRoutes(deps: AuthDeps, also?: HttpRoute): HttpRoute {
 
     if (seg.length === 2 && seg[1] === 'providers') {
       // Public and cheap, like /status: a client cannot render login buttons without it.
+      // CORS-open: the launcher is served from a different origin than the game server.
+      res.setHeader('access-control-allow-origin', req.headers.origin ?? '*');
       sendJson(res, 200, {
         providers: oidc.enabledProviders(),
         allowPasswordLogin: config.auth.allowPasswordLogin,

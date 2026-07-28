@@ -10,16 +10,15 @@
 //   POST /locker/erase             delete-my-data
 //
 // AUTH is a locker session, NOT the game's WebSocket session: the whole point is to upload
-// your data BEFORE you can join a world. The SSO callback mints a locker session and drops
-// it as an httpOnly cookie (auth/routes.ts), so these routes read the caller's account
-// from that cookie — never from the request body, which a client could forge.
+// your data BEFORE you can join a world. The SSO callback mints a locker session and hands
+// it to the browser in the login-return fragment; the browser sends it as a Bearer header.
+// A cookie would not work — the game page is a different origin than the server, and a
+// SameSite=Lax cookie is not sent on a cross-origin fetch. The account is read from the
+// token, NEVER from the request body, which a client could forge.
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Locker, LockerFile } from './locker';
-import { readCookie } from '../net/http';
 import { log } from '../log';
-
-const LOCKER_COOKIE = 'omw_locker';
 
 export interface LockerSessions {
   resolve(token: string): string | undefined; // token -> accountKey
@@ -59,11 +58,22 @@ function parseFile(v: unknown): LockerFile | undefined {
 export function lockerRoutes(deps: LockerRouteDeps) {
   return async (req: IncomingMessage, res: ServerResponse, url: URL): Promise<boolean> => {
     if (!url.pathname.startsWith('/locker/')) return false;
+    // The game page is served from a different origin than the server, so the locker is a
+    // cross-origin API: allow it, and allow the Authorization header the token rides in.
+    res.setHeader('access-control-allow-origin', req.headers.origin ?? '*');
+    res.setHeader('access-control-allow-headers', 'authorization, content-type');
+    res.setHeader('access-control-allow-methods', 'GET, POST, OPTIONS');
+    if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return true; }
     if (!deps.locker.enabled) {
       json(res, 503, { error: 'locker_disabled' }); // no storage configured
       return true;
     }
-    const accountKey = deps.sessions.resolve(readCookie(req, LOCKER_COOKIE) ?? '');
+    // Bearer token (minted at SSO login), not a cookie: the token is delivered in the
+    // login-return fragment and the browser sends it as a header, which is what a
+    // cross-origin fetch can actually do (a SameSite=Lax cookie would not be sent here).
+    const auth = req.headers.authorization ?? '';
+    const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+    const accountKey = deps.sessions.resolve(token);
     if (!accountKey) {
       json(res, 401, { error: 'sign_in_first' });
       return true;
@@ -131,4 +141,3 @@ function clientIp(req: IncomingMessage): string {
   return req.socket.remoteAddress ?? '';
 }
 
-export { LOCKER_COOKIE };

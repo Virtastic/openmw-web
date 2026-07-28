@@ -600,33 +600,76 @@
    account: localStorage.getItem('omw-mp-account') || '',
  };
 
- function mpStart(){
+ // Multiplayer is SSO-only, and game data comes from your server-side locker — never a
+ // password, never a bring-your-own folder. The launcher's job is: pick the server, do the
+ // single-sign-on round trip, then hand the game the one-time ticket. Character selection
+ // and any first-time data upload happen IN the game, where the account is known.
+ //
+ // ws:// -> http(s):// for the auth + locker HTTP endpoints, which live on the same host.
+ function httpBaseOf(wsUrl){
+   try { const u = new URL(wsUrl); return (u.protocol==='wss:'?'https:':'http:')+'//'+u.host; }
+   catch(e){ return null; }
+ }
+
+ async function mpStart(){
    const url = prompt('Server address', MP.url || 'ws://127.0.0.1:8080/ws');
    if (!url) return;
-   const account = prompt('Account name', MP.account || '');
-   if (!account) return;
-   const password = prompt('Password (it is sent only to this server)');
-   if (!password) return;
+   const http = httpBaseOf(url);
+   if (!http){ alert('That does not look like a server address (expected ws:// or wss://).'); return; }
    localStorage.setItem('omw-mp-url', url);
-   localStorage.setItem('omw-mp-account', account);
-   // The character picker lives IN the game (the Social hub's Characters tab) rather than
-   // here: it needs the account's slot list, which only arrives with SessionWelcome. The
-   // launcher's job is to get the player authenticated and into a world.
-   const q = new URLSearchParams({
-     mp: url,
-     name: account,
-     pass: password,
-   });
-   // Data source: a remembered install if there is one, else the sample world — so
-   // multiplayer never becomes a second, separate "where is your Morrowind" question.
-   idbGet(KEY).then((handle)=>{
-     if (handle) q.set('src','local'); else q.set('nomw','1');
-     location.href = 'index.html?' + q.toString();
-   }).catch(()=>{
-     q.set('nomw','1');
-     location.href = 'index.html?' + q.toString();
-   });
+   // The game page reads the server URL back after the SSO redirect returns here.
+   localStorage.setItem('omw-mp-pending', url);
+
+   let providers;
+   try {
+     const r = await fetch(http + '/auth/providers', { mode:'cors' });
+     providers = await r.json();
+   } catch(e){
+     alert('Could not reach that server. Is it running, and does the address match?');
+     return;
+   }
+   const list = (providers && providers.providers) || [];
+   if (!list.length){
+     alert('This server has no single sign-on providers configured, so there is no way to '
+       + 'log in yet. (Multiplayer requires SSO.) Ask the operator to enable one.');
+     return;
+   }
+   // One provider: go straight in. Several: let the player pick.
+   let provider = list[0];
+   if (list.length > 1){
+     const pick = prompt('Sign in with which provider?\n' + list.join(', '), list[0]);
+     if (!pick) return;
+     provider = list.find(function(p){ return p.toLowerCase()===pick.toLowerCase(); }) || list[0];
+   }
+   // Round trip: the server sends us back HERE with #mpticket=... which the block below
+   // catches and turns into the game launch. return= is the launcher URL sans hash.
+   const back = location.origin + location.pathname;
+   location.href = http + '/auth/' + encodeURIComponent(provider) + '/start?return=' + encodeURIComponent(back);
  }
+
+ // We are back from SSO if the fragment carries a ticket (or an error). Turn it into the
+ // game launch: the data source is the LOCKER (?mplocker), decided in-game.
+ (function handleSsoReturn(){
+   const h = location.hash || '';
+   const err = /[#&]mperror=([^&]+)/.exec(h);
+   if (err){
+     history.replaceState(null,'',location.pathname);
+     alert('Sign-in failed: ' + decodeURIComponent(err[1]).replace(/_/g,' ') + '.');
+     return;
+   }
+   const tk = /[#&]mpticket=([^&]+)/.exec(h);
+   if (!tk) return;
+   const lk = /[#&]mplocker=([^&]+)/.exec(h);
+   const url = localStorage.getItem('omw-mp-pending') || localStorage.getItem('omw-mp-url');
+   history.replaceState(null,'',location.pathname); // scrub the ticket from the address bar
+   if (!url) return;
+   const q = new URLSearchParams({ mp: url });
+   // Ticket AND locker token ride in the FRAGMENT (never query params): fragments are not
+   // logged, cached, or sent in a Referer, and both are credentials. index.html reads the
+   // ticket to authenticate the game session and the locker token to fetch game data.
+   const frag = '#mpticket=' + tk[1] + (lk ? '&mplocker=' + lk[1] : '');
+   location.href = 'index.html?' + q.toString() + frag;
+ })();
  $('card-mp').addEventListener('click', mpStart);
  $('card-mp').addEventListener('keydown', (e)=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); mpStart(); } });
 
