@@ -102,13 +102,20 @@ worth the fee. Schedule it before the feature leaves beta.
 
 ## 7. Mods
 
-We redistribute a mod only with the **author's explicit permission**; their licence terms
-are the operative right, and this community treats violating them as radioactive
-regardless of legality. Where permission is granted, our CDN copy is additionally
-download-gated behind a verified vanilla manifest.
+We ship exactly two mods, both mesh/texture optimizers with no Bethesda-asset
+redistribution concern of the §1 kind: **Morrowind Optimization Patch** and **Project
+Atlas**. They are bundled as a streamed BSA (`openmw-web-assets.bsa`) that overrides
+vanilla meshes only — no textures ripped from Bethesda's own data, and no ESP/ESM records.
+The BSA loads for every player who brings their own Morrowind, single-player and
+multiplayer alike; it does nothing on the free example world (nothing to override there).
 
-Mods that are **derivative of Bethesda assets** (upscaled or repacked textures) stay
-bring-your-own permanently: author permission does not clear §1's first pattern.
+Redistribution rests on the **authors' permission** for these two mods; their licence
+terms are the operative right, and this community treats violating them as radioactive
+regardless of legality. **Action item:** confirm redistribution permission from the MOP
+and Project Atlas authors before public launch.
+
+Any future mod that is **derivative of Bethesda assets** (upscaled or repacked textures)
+stays bring-your-own permanently: author permission does not clear §1's first pattern.
 
 ## 8. Takedown runbook
 
