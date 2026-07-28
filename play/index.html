@@ -1777,7 +1777,10 @@
        // --- Load REAL Morrowind data at runtime (esm + bsa + loose audio tar) ---
        // Fetched SEQUENTIALLY (not Promise.all) so peak JS-heap stays low, into MEMFS under
        // /mwdata, then the preloaded openmw.cfg is rewritten to load Morrowind. Boot waits.
-       if (!__srcLocal) try {
+       // Skipped for BOTH bring-your-own (__srcLocal) AND multiplayer (__mpLocker): those mount
+       // their own data (local folder / the S3 locker). Running this too would fetch server-hosted
+       // retail data that isn't there and fail the boot on top of a locker mount that succeeded.
+       if (!__srcLocal && !__mpLocker) try {
          // Diagnostic: ?nomw skips the 817MB Morrowind load and boots the tiny preloaded
          // example-suite instead — lets a light load verify the render path (S3TC/SIMD/resize).
          if (window.__FORCE_NOMW || /[?&]nomw\b/.test(location.search)){
