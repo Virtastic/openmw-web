@@ -32,7 +32,12 @@ export interface CellDoc {
   moved: Record<string, { x: number; y: number; z: number; rotZ: number }>; // content refs
   locks: Record<string, number | null>; // null = unlocked
   doors: Record<string, boolean>; // open?
-  containers: Record<string, { items: ContainerItems; stateSeq: number }>;
+  // `origin` is the FIRST-SEEN contents (the leveled-loot roll that became canonical).
+  // Kept so a reset can RESTOCK the container rather than merely forgetting it: a client
+  // already standing there has no idea what was originally inside, and TES3MP's answer —
+  // kick everyone, or let them desync — is the failure this exists to avoid. It also
+  // makes merchant gold come back, the other half of that same complaint.
+  containers: Record<string, { items: ContainerItems; stateSeq: number; origin?: ContainerItems }>;
   // M4: last actor snapshot folded when the cell went dormant ({actors:[...]}, JSON-safe),
   // and per-actor highest processed deathNo (dedup + death persistence).
   actorOverrides?: unknown;
@@ -207,10 +212,26 @@ export class CellStore {
 
   // Wipes every delta for a cell (M7 operator reset) and flushes it immediately, so a
   // crash right after a reset cannot resurrect the old doc from disk.
-  async resetCell(cellKey: string): Promise<void> {
-    this.cache.set(cellKey, emptyCellDoc());
+  // Reset to the content-file state. Containers are RESTOCKED to their first-seen roll
+  // rather than forgotten: a client standing in the cell cannot reconstruct what was
+  // originally inside, so "forget it" leaves them looking at a looted chest forever while
+  // the server thinks it is full. Returns the restored doc so the caller can push an
+  // authoritative snapshot to whoever is standing there (see WorldState.sendCellSnapshot).
+  async resetCell(cellKey: string): Promise<CellDoc> {
+    const before = this.cache.get(cellKey) ?? (await this.get(cellKey));
+    const doc = emptyCellDoc();
+    for (const [key, cont] of Object.entries(before.containers)) {
+      if (!cont.origin) continue; // pre-restock doc: nothing to restore it to
+      const items = cont.origin.map((i) => ({ ...i }));
+      // stateSeq keeps CLIMBING across a reset. A client that reconnects mid-reset must
+      // never see a lower seq than one it already applied, or its own staleness guard
+      // would reject the restock as an out-of-date frame.
+      doc.containers[key] = { items, stateSeq: cont.stateSeq + 1, origin: cont.origin.map((i) => ({ ...i })) };
+    }
+    this.cache.set(cellKey, doc);
     this.dirty.add(cellKey);
     await this.flushKey(cellKey);
+    return doc;
   }
 
   private path(cellKey: string): string {

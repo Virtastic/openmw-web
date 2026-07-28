@@ -144,9 +144,13 @@ export class Quests {
     }
     // The player's own journal records what THEY reported, even when the shared map
     // refuses it — §M6: non-monotonic updates are stored but not relayed.
+    // Phase 3.7: journal advances flush AT THE WRITE, not on the 45 s sweep. A verified
+    // TES3MP failure is a disconnect mid-quest permanently corrupting progression
+    // (Tribunal MQ, issue #268 — open since 2017): the stage was in memory and the crash
+    // took it. A quest step a player has earned must survive the next instant.
     this.ctx.players.update(player.charId, (doc) => {
       (doc.journal ??= {})[questId] = idx;
-    });
+    }, 'now');
     // Phase 4: party credit. Co-present party members who ALREADY STARTED this quest and
     // are BEHIND this stage advance with it — they were there for the deed. Members who
     // never started it get nothing (no spoiler-jumping them forward, the TES3MP shared-

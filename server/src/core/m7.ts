@@ -15,7 +15,7 @@ import type { Player, Roster } from './players';
 import { WorldClock } from './worldtime';
 import { WeatherRegions } from './weather';
 import { GuiRouter } from './gui';
-import type { CellStore } from '../persist/cellstore';
+import type { CellStore, CellDoc } from '../persist/cellstore';
 import { RecordStore, RECORD_KINDS, type RecordKind, type CustomRecord } from '../persist/recordstore';
 import { log } from '../log';
 
@@ -40,6 +40,9 @@ export interface M7Ctx {
   guiTimeoutMs: number;
   // M6 sharing policy, asked per relay (the `sharing` plugin answers from [sharing]).
   isMapShared(): boolean;
+  // Phase 3.7: set after construction (WorldState and WorldM7 are mutually referential).
+  // Used to push the restored cell truth to occupants right after a reset.
+  world?: { sendCellSnapshot(cellKey: string, doc: CellDoc): void };
 }
 
 function str(v: LValue | undefined, max: number): string | undefined {
@@ -197,7 +200,7 @@ export class WorldM7 {
   // Wipes the cell doc and tells every client to drop its local deltas and reload.
   async resetCellNow(cellKey: string): Promise<void> {
     if (!str(cellKey, MAX_CELL_KEY)) return;
-    await this.ctx.cells.resetCell(cellKey);
+    const restored = await this.ctx.cells.resetCell(cellKey);
     const entry = this.ctx.cells.worldM7().resets[cellKey];
     if (entry) {
       entry.lastResetMs = Date.now();
@@ -205,6 +208,10 @@ export class WorldM7 {
     }
     log('info', 'world.cell_reset', { cellKey });
     this.broadcast('WorldCellReset', { cellKey });
+    // ...and immediately hand anyone standing there the restored truth, so a reset is
+    // transparent instead of a kick (TES3MP #698). Order matters: WorldCellReset tells the
+    // client to drop its local view, the snapshot then refills it in the same tick.
+    this.ctx.world?.sendCellSnapshot(cellKey, restored);
   }
 
   private async sweepResets(): Promise<void> {

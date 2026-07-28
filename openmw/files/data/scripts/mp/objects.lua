@@ -449,6 +449,32 @@ handlers.MP_ContainerOpResult = function(data)
     mp.sendEvent('ResyncRequest', { cellKey = deps.ownCellKeyFn() })
 end
 
+-- Phase 3.7: authoritative full-cell REPLACE. Unlike WorldCellState (which layers server
+-- truth over what we have), this says "discard your view of this cell and adopt mine" —
+-- the primitive that makes a reset transparent to a player standing in the room instead
+-- of the TES3MP kick-or-desync. Re-enables everything we had disabled, restocks every
+-- container to the server's restored contents, then applies the normal state.
+handlers.MP_CellSnapshotReplace = function(data)
+    -- Anything disabled locally that the snapshot does not list is stale: turn it back on.
+    -- Walking the cell (rather than enableWatch) also catches objects a script disabled
+    -- before we started watching, which is exactly the state a reset has to undo.
+    local disabled = {}
+    for _, refKey in ipairs(data.disabled or {}) do disabled[refKey] = true end
+    local player = deps.playerFn()
+    local cell = player and player.cell
+    if cell then
+        for _, obj in ipairs(cell:getAll()) do
+            if obj:isValid() and not obj.enabled and not disabled[refKeyOfObj(obj)] then
+                enableWatch[obj.id] = true
+                pcall(function() obj:setEnabled(true) end)
+            end
+        end
+    end
+    -- Containers in the snapshot carry the RESTOCKED contents, so the normal state apply
+    -- (setContainerContents) refills the chest the player is standing in front of.
+    handlers.MP_WorldCellState(data)
+end
+
 handlers.MP_WorldCellState = function(data)
     for _, place in ipairs(data.placed or {}) do
         handlers.MP_ObjectPlace(place)

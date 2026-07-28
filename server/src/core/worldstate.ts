@@ -492,7 +492,8 @@ export class WorldState {
         this.invalid(player, 'ContainerOpen');
         return;
       }
-      cont = { items: contents, stateSeq: 1 };
+      // origin: a copy, not an alias — `items` is mutated in place by every take/put.
+      cont = { items: contents, stateSeq: 1, origin: contents.map((i) => ({ ...i })) };
       doc.containers[ref.key] = cont;
       this.cells.markDirty(cellKey);
     }
@@ -589,6 +590,32 @@ export class WorldState {
         disabled: Object.keys(doc.enabled ?? {}),
       });
     });
+  }
+
+  // Phase 3.7: authoritative full-cell resync applied IN PLACE by connected clients.
+  //
+  // This is the primitive TES3MP never had. Its protocol is delta-only, so a reset could
+  // not be rescinded on a client that had already applied the old deltas — the community's
+  // workaround is to KICK everyone in the cell (and issue #698 is that going wrong). We
+  // own both ends of the wire, so a reset can instead say "here is the truth, discard what
+  // you have for this cell": containers restocked, disabled objects re-enabled, spawned
+  // objects gone. Sent to everyone who can see the cell, including the resetter.
+  sendCellSnapshot(cellKey: string, doc: CellDoc): void {
+    for (const p of this.roster.inWorld()) {
+      if (!cellsVisible(p.cellKey, cellKey)) continue;
+      p.peer.sendEvent('CellSnapshotReplace', {
+        cellKey,
+        placed: Object.values(doc.placed).map((x) => ({ ...x })),
+        deleted: [...doc.deleted],
+        moved: { ...doc.moved },
+        doors: { ...doc.doors },
+        containers: Object.fromEntries(
+          Object.entries(doc.containers).map(([key, c]) => [key, { items: c.items.map((i) => ({ ...i })), stateSeq: c.stateSeq }]),
+        ),
+        disabled: Object.keys(doc.enabled ?? {}),
+      });
+    }
+    log('info', 'world.cell_snapshot_replace', { cellKey, containers: Object.keys(doc.containers).length });
   }
 
   // Cell-empty flush point: called when a cell may have lost its last occupant.

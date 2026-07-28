@@ -191,6 +191,9 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     records: recordStore,
     guiTimeoutMs: Math.round(config.gui.timeoutSec * 1000),
     isMapShared: () => hooks.shareFamily('map'),
+    // Phase 3.7: a reset hands the restored cell truth straight to whoever is standing
+    // there, so it never needs the TES3MP kick-everyone workaround.
+    world,
   });
   m7.clock.setTimeScale(config.time.scale); // config is operator truth for the scale
 
