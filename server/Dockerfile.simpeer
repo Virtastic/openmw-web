@@ -65,8 +65,10 @@ RUN cmake -S /src/openmw -B /build -G Ninja \
       -DBUILD_BSATOOL=OFF -DBUILD_ESMTOOL=OFF -DBUILD_NIFTEST=OFF -DBUILD_BULLETOBJECTTOOL=OFF \
       -DBUILD_ESSIMPORTER=OFF -DBUILD_MWINIIMPORTER=OFF -DBUILD_NAVMESHTOOL=OFF \
       -DUSE_QT=OFF -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
-    && cmake --build /build --target openmw \
-    && cmake --install /build --component openmw 2>/dev/null || cmake --build /build --target install
+    && cmake --build /build --target openmw
+# No `cmake --install`: OpenMW's install rules scatter (configs land, binary/resources do not
+# — verified: the first runtime build failed on it). The runtime stage copies straight from
+# the build tree instead, which is unambiguous.
 
 # Runtime image: the binary, its resources, and the shared libs it links. No game data —
 # that is bring-your-own at the mount, exactly as documented in SELF_HOSTING.md.
@@ -75,11 +77,27 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
       libopenscenegraph161 libsdl2-2.0-0 libopenal1 \
       libavcodec60 libavformat60 libavutil58 libswscale7 libswresample4 \
-      libluajit-5.1-2 libmygui.openmw librecast1 libsqlite3-0 libyaml-cpp0.8 libicu74 \
+      libluajit-5.1-2 librecast1 libsqlite3-0 libyaml-cpp0.8 libicu74 liblz4-1 \
+      libboost-program-options1.83.0 \
+      libegl1 libgl1 libgles2 libegl-mesa0 libgl1-mesa-dri \
     && rm -rf /var/lib/apt/lists/*
-COPY --from=build /usr/local/bin/openmw /usr/local/bin/openmw
-COPY --from=build /usr/local/share/openmw /usr/local/share/openmw
-COPY --from=build /usr/local/lib/libBullet*.so* /usr/local/lib/
+COPY --from=build /build/openmw /usr/local/bin/openmw
+# Engine resources (vfs, shaders, builtin.omwscripts, ...). The generated peer cfg points its
+# `resources=` line here.
+COPY --from=build /build/resources /usr/local/share/openmw/resources
+# The engine refuses to boot without defaults.bin in the global config dir (fatal, verified);
+# gamecontrollerdb.txt lives beside it.
+COPY --from=build /build/defaults.bin /build/gamecontrollerdb.txt /usr/local/etc/openmw/
+# The build tree's openmw.cfg is load-bearing, not boilerplate: it chains the user config dir
+# (`config="?userconfig?"` — without it `--config <dir>` is silently ignored and the engine
+# aborts with "No content file given", verified) and carries every `fallback=` GMST the
+# simulation reads (lighting, water, combat constants). Ship it as the global config with its
+# build-tree-relative paths rewritten.
+COPY --from=build /build/openmw.cfg /usr/local/etc/openmw/openmw.cfg
+RUN sed -i 's|=\./resources|=/usr/local/share/openmw/resources|' /usr/local/etc/openmw/openmw.cfg
+# Bullet is linked statically, but MyGUI (built from source — no Ubuntu package is new
+# enough) is a shared lib and must ride along.
+COPY --from=build /usr/local/lib/libMyGUIEngine.so* /usr/local/lib/
 RUN ldconfig
 # SDL offscreen driver: a displayless box has no X11, so the hidden window from the macOS
 # path is replaced by SDL's offscreen video backend. Proven only by SDL docs so far.
