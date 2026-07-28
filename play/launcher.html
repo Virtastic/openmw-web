@@ -161,15 +161,7 @@
 
  /* Multiplayer sign-in modal. */
  .mp-modal{max-width:440px}
- .mp-field{display:block; margin:20px 0 6px; text-align:left}
- .mp-field span{display:block; font:600 10.5px/1 "Optima","Gill Sans",sans-serif; letter-spacing:.16em;
-   text-transform:uppercase; color:var(--faint); margin-bottom:7px}
- .mp-field input{width:100%; box-sizing:border-box; padding:11px 13px; border-radius:5px;
-   background:rgba(8,6,3,.6); border:1px solid var(--line); color:var(--ink);
-   font:14px/1.2 ui-monospace,Menlo,Consolas,monospace; transition:border-color .15s ease}
- .mp-field input:focus{outline:none; border-color:var(--gold)}
- .mp-primary{width:100%; justify-content:center; margin-top:14px}
- .mp-providers{display:flex; flex-direction:column; gap:9px; margin-top:16px}
+ .mp-providers{display:flex; flex-direction:column; gap:9px; margin-top:22px}
  .mp-prov{display:flex; align-items:center; justify-content:center; gap:11px; width:100%;
    box-sizing:border-box; padding:12px 16px; border-radius:5px; cursor:pointer;
    font:600 14px/1 "Optima","Gill Sans",-apple-system,"Segoe UI",sans-serif; letter-spacing:.01em;
@@ -371,15 +363,7 @@
     <h3 id="mp-title">Sign in to play together</h3>
     <p>Your character, saves, and game data live in your account — sign in once and they follow
        you to any device. Multiplayer uses single sign-on only; there is no password to manage.</p>
-    <label class="mp-field">
-      <span>Server address</span>
-      <input id="mp-server" type="text" spellcheck="false" autocomplete="off"
-             placeholder="ws://127.0.0.1:8080/ws">
-    </label>
     <div id="mp-providers" class="mp-providers"></div>
-    <button id="mp-connect" class="btn btn-primary mp-primary" type="button">
-      Find sign-in options <span class="arw">▸</span>
-    </button>
     <p class="note" id="mp-note"></p>
     <div class="m-hr"></div>
     <p class="mp-fine">By signing in you confirm any game files you upload are your own backup
@@ -669,17 +653,24 @@
  };
  function providerLabel(p){ return p.charAt(0).toUpperCase()+p.slice(1); }
 
+ // The multiplayer server is a deployment constant, not something a player types. Operators
+ // set this one line for their build; a ?mpserver= query param or a remembered value can
+ // override it for local development, but no server field is ever shown to players.
+ const DEFAULT_MP_SERVER = 'wss://morrowind.virtastic.app/ws';
+ function mpServerUrl(){
+   return new URLSearchParams(location.search).get('mpserver')
+     || localStorage.getItem('omw-mp-url') || DEFAULT_MP_SERVER;
+ }
+
  const mpBd = $('mp-bd');
  function mpClose(){ mpBd.classList.remove('show'); }
  function mpNote(msg, cls){ const n=$('mp-note'); n.textContent=msg||''; n.className='note'+(cls?' '+cls:''); }
 
  function mpStart(){
-   $('mp-server').value = MP.url || 'ws://127.0.0.1:8080/ws';
    $('mp-providers').innerHTML = '';
-   $('mp-connect').style.display = '';
    mpNote('');
    mpBd.classList.add('show');
-   $('mp-server').focus();
+   mpLoadProviders(); // fetch and render the "Continue with X" buttons straight away
  }
 
  // Redirect into the chosen provider's SSO flow. The server returns us HERE with #mpticket.
@@ -690,28 +681,25 @@
    location.href = http + '/auth/' + encodeURIComponent(provider) + '/start?return=' + encodeURIComponent(back);
  }
 
- // Fetch the server's providers and render a "Continue with X" button per provider.
- async function mpConnect(){
-   const url = ($('mp-server').value || '').trim();
+ // Fetch the configured server's providers and render a "Continue with X" button per provider.
+ async function mpLoadProviders(){
+   const url = mpServerUrl();
    const http = httpBaseOf(url);
-   if (!http){ mpNote('That does not look like a server address (expected ws:// or wss://).','err'); return; }
-   mpNote('Contacting the server…','muted');
-   $('mp-connect').disabled = true;
+   if (!http){ mpNote('The multiplayer server is misconfigured. Contact the operator.','err'); return; }
+   mpNote('Connecting…','muted');
    let list;
    try {
      const r = await fetch(http + '/auth/providers', { mode:'cors' });
      list = ((await r.json()) || {}).providers || [];
    } catch(e){
-     mpNote('Could not reach that server. Is it running, and is the address right?','err');
-     $('mp-connect').disabled = false; return;
+     mpNote('Could not reach the multiplayer server. It may be down — try again shortly.','err');
+     return;
    }
-   $('mp-connect').disabled = false;
    if (!list.length){
-     mpNote('This server has no sign-in providers configured yet. Ask the operator to enable one.','err');
+     mpNote('Sign-in is not available yet. Ask the operator to enable a provider.','err');
      return;
    }
    mpNote('');
-   $('mp-connect').style.display = 'none'; // replaced by the provider buttons
    const box = $('mp-providers'); box.innerHTML = '';
    list.forEach(function(p){
      const key = p.toLowerCase();
@@ -749,10 +737,8 @@
  })();
  $('card-mp').addEventListener('click', mpStart);
  $('card-mp').addEventListener('keydown', (e)=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); mpStart(); } });
- $('mp-connect').addEventListener('click', mpConnect);
  $('mp-close').addEventListener('click', mpClose);
  mpBd.addEventListener('click', (e)=>{ if(e.target===mpBd) mpClose(); });
- $('mp-server').addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ e.preventDefault(); mpConnect(); } });
  document.addEventListener('keydown', (e)=>{ if(e.key==='Escape' && mpBd.classList.contains('show')) mpClose(); });
 
  $('card-local').addEventListener('click', pickLocal);
