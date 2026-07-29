@@ -52,7 +52,17 @@ function handleAppearance(ctx: StateCtx, player: Player, body: LTable): boolean 
     name: recordId(body.get('name')) ?? '',
     isMale: body.get('isMale') === true,
   };
-  if (!appearance.race || !appearance.head || !appearance.hair || !appearance.class || !appearance.name) return false;
+  // hair is OPTIONAL: bald/hairless heads are legal in the game data, and demanding it would
+  // permanently reject those characters' appearance. The rest identify the character and are
+  // required. Name the offending field when rejecting — a silent drop here is expensive:
+  // doc.appearance stays unset, which withholds playerRecord on every join (connection.ts),
+  // so inventory and position are never restored and the live client overwrites the doc.
+  // A boot path that sent name="" cost a player their quest items exactly this way.
+  const missing = (['race', 'head', 'class', 'name'] as const).filter((k) => !appearance[k]);
+  if (missing.length > 0) {
+    log('warn', 'state.appearance_incomplete', { from: player.name, missing: missing.join(',') });
+    return false;
+  }
   ctx.store.update(player.charId, (doc) => (doc.appearance = appearance));
   relayAll(ctx.roster, 'PlayerAppearance', { id: player.id, ...appearance });
   return true;

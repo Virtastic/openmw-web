@@ -20,7 +20,8 @@
  }
  /* Fixed top bar: Virtastic home (left) + social links (right). Transparent bar; only the links
     catch clicks so it never blocks content that scrolls under it. */
- .topbar{position:fixed; top:0; left:0; right:0; z-index:30; pointer-events:none;
+ /* z above the character-select page (z-70) so the bar stays visible there too. */
+ .topbar{position:fixed; top:0; left:0; right:0; z-index:80; pointer-events:none;
    display:flex; align-items:center; justify-content:space-between; padding:13px 22px}
  .topbar > *{pointer-events:auto}
  .topbar a{display:inline-flex; align-items:center; text-decoration:none; color:var(--bronze-hi);
@@ -175,6 +176,66 @@
    background:rgba(8,6,3,.6); border:1px solid var(--line); color:var(--ink);
    font:14px/1.2 -apple-system,"Segoe UI",sans-serif; transition:border-color .15s ease}
  .ob-field input:focus{outline:none; border-color:var(--gold)}
+ /* The Continue button is its own block below the fields — inline-flex with no top margin
+    let it butt against (and visually overlap) the last input. Clear separation instead. */
+ #ob-continue{display:inline-flex; margin:24px auto 2px}
+ /* Character select — a full screen of tiles, themed like the launcher hero. */
+ .cs-page{position:fixed; inset:0; z-index:70; display:none; overflow-y:auto;
+   background:radial-gradient(1100px 700px at 50% -10%, #241c11 0%, var(--ash) 55%) , var(--ash)}
+ .cs-page.show{display:flex}
+ .cs-wrap{margin:auto; width:min(880px, 92vw); padding:64px 0 48px; text-align:center; animation:pop .18s ease}
+ .cs-glyph{width:46px; height:46px; margin:0 auto 14px; color:var(--bronze-hi)}
+ .cs-glyph svg{width:100%; height:100%; display:block}
+ .cs-wrap h3{margin:6px 0 0; font-family:"Hoefler Text","Baskerville",Georgia,serif; font-weight:600;
+   font-size:34px; color:var(--ink)}
+ .cs-sub{margin:10px 0 0; color:var(--muted); font-size:14.5px}
+ .cs-grid{display:flex; flex-wrap:wrap; justify-content:center; gap:16px; margin:34px 0 8px}
+ .cs-tile{position:relative; width:230px; border:1px solid var(--line); border-radius:10px;
+   padding:24px 18px 20px; box-sizing:border-box; text-align:center;
+   background:linear-gradient(170deg,rgba(26,20,11,.9),rgba(12,9,5,.92));
+   cursor:pointer; transition:border-color .15s ease, transform .12s ease, box-shadow .15s ease}
+ .cs-tile:hover, .cs-tile:focus-visible{border-color:var(--gold); transform:translateY(-3px);
+   box-shadow:0 16px 38px rgba(0,0,0,.5); outline:none}
+ .cs-tile .ava{width:64px; height:64px; margin:0 auto 14px; border-radius:50%;
+   border:1px solid var(--bronze); background:radial-gradient(circle at 38% 30%, #2c2114, #150f08);
+   text-align:center; font:600 30px/64px "Hoefler Text","Baskerville",Georgia,serif; color:var(--gold);
+   text-shadow:0 1px 6px rgba(0,0,0,.8)}
+ .cs-tile:hover .ava{border-color:var(--gold)}
+ .cs-tile .nm{font-family:"Hoefler Text","Baskerville",Georgia,serif; font-size:20px; color:var(--ink);
+   font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+ .cs-tile .meta{margin-top:7px; font:600 10.5px/1.6 "Optima","Gill Sans",sans-serif; letter-spacing:.09em;
+   text-transform:uppercase; color:var(--faint)}
+ .cs-tile .lvl{color:var(--gold)}
+ .cs-tile.new{display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:187px;
+   color:var(--bronze-hi); border-style:dashed; background:transparent;
+   font:600 12.5px/1.4 "Optima","Gill Sans",sans-serif; letter-spacing:.12em; text-transform:uppercase}
+ .cs-tile .del{position:absolute; top:8px; right:8px; width:28px; height:28px; padding:0; border-radius:6px;
+   border:1px solid transparent; background:transparent; color:var(--faint); cursor:pointer; opacity:0;
+   display:flex; align-items:center; justify-content:center; transition:opacity .15s ease, color .15s ease, border-color .15s ease}
+ .cs-tile:hover .del, .cs-tile .del:focus-visible{opacity:1}
+ .cs-tile .del:hover{color:#e06c5a; border-color:rgba(224,108,90,.55); background:rgba(224,108,90,.10)}
+ .cs-tile .del svg{width:15px; height:15px; fill:currentColor; display:block}
+ /* The confirm modal must sit ABOVE the character-select page (z-70) and the top bar (z-80) —
+    as a plain .modal-bd (z-60) it opened behind them and looked like nothing happened. */
+ #cd-bd{z-index:95}
+ .cs-confirm .warn{color:#e06c5a}
+ .cd-x{position:absolute; top:12px; right:14px; width:32px; height:32px; padding:0; border:none;
+   background:transparent; color:var(--faint); font:300 26px/1 -apple-system,"Segoe UI",sans-serif;
+   cursor:pointer; border-radius:6px; transition:color .15s ease}
+ .cd-x:hover{color:var(--gold-hi)}
+ .cd-x:focus-visible{outline:2px solid var(--gold); outline-offset:2px}
+ .cs-tile.new .plus{font-size:34px; line-height:1; margin-bottom:10px; font-weight:400; color:var(--bronze)}
+ .cs-tile.new:hover{color:var(--gold-hi)} .cs-tile.new:hover .plus{color:var(--gold)}
+ .cs-entering{margin:60px auto; color:var(--muted); font-size:15px; animation:pop .3s ease}
+ .cs-entering .big{font-family:"Hoefler Text","Baskerville",Georgia,serif; font-size:26px; color:var(--ink);
+   margin-bottom:10px}
+ @keyframes csdots{0%,20%{content:''}40%{content:'.'}60%{content:'..'}80%,100%{content:'...'}}
+ .cs-entering .big::after{content:'...'; animation:csdots 1.6s infinite}
+ .cs-create{margin:14px auto 0; display:flex; gap:8px; max-width:420px}
+ .cs-create input{flex:1; box-sizing:border-box; padding:11px 13px; border-radius:5px; background:rgba(8,6,3,.6);
+   border:1px solid var(--line); color:var(--ink); font:14px/1.2 -apple-system,"Segoe UI",sans-serif}
+ .cs-create input:focus{outline:none; border-color:var(--gold)}
+ .cs-actions{display:flex; gap:10px; justify-content:center; margin-top:26px}
  .mp-glyph{width:44px; height:44px; margin:2px auto 14px; color:var(--bronze-hi)}
  .mp-glyph svg{width:100%; height:100%; display:block}
  .mp-providers{display:flex; flex-direction:column; gap:9px; margin-top:22px}
@@ -408,6 +469,43 @@
     </label>
     <button id="ob-continue" class="btn btn-primary mp-primary" type="button">Continue <span class="arw">▸</span></button>
     <p class="note" id="ob-note"></p>
+  </div>
+</div>
+
+<!-- Character select: a FULL SCREEN of tiles (not a modal), shown after login and whenever
+     the game exits back to the launcher (#characters). Launcher theme throughout. -->
+<div class="cs-page" id="cs-bd" role="dialog" aria-modal="true" aria-labelledby="cs-title">
+  <div class="cs-wrap">
+    <div class="cs-glyph" aria-hidden="true">
+      <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round">
+        <circle cx="18" cy="18" r="6"/><circle cx="32" cy="22" r="5"/>
+        <path d="M8 40c0-6 4.5-10 10-10s10 4 10 10"/><path d="M26 40c0-4.5 3.5-8 8-8s8 3.5 8 8"/>
+      </svg>
+    </div>
+    <div class="m-kicker">OpenMW-Web &middot; Multiplayer</div>
+    <h3 id="cs-title">Choose your character</h3>
+    <p class="cs-sub">Each character has their own story, journal and solo world.</p>
+    <div class="cs-grid" id="cs-grid"></div>
+    <p class="note" id="cs-note"></p>
+    <div class="cs-actions">
+      <button id="cs-back" class="btn btn-ghost" type="button">‹ Back to launcher</button>
+    </div>
+  </div>
+</div>
+
+<!-- Delete a character: permanent, so it asks first and names who is being deleted. -->
+<div class="modal-bd" id="cd-bd" role="dialog" aria-modal="true" aria-labelledby="cd-title">
+  <div class="modal mp-modal cs-confirm">
+    <button id="cd-cancel" class="cd-x" type="button" aria-label="Close">×</button>
+    <div class="m-kicker">Multiplayer</div>
+    <h3 id="cd-title">Delete this character?</h3>
+    <p><b id="cd-name"></b> and everything they have done will be
+       <span class="warn">permanently deleted</span>: their journal, inventory and progress.
+       This cannot be undone.</p>
+    <div class="cs-actions">
+      <button id="cd-confirm" class="btn btn-primary" type="button">Delete forever</button>
+    </div>
+    <p class="note" id="cd-note"></p>
   </div>
 </div>
 
@@ -816,6 +914,179 @@
    });
  }
 
+ // Character select — a launcher-styled tile screen. Lists slots (alias, level, last played)
+ // from GET /auth/characters and lets the player create one (alias -> POST). Resolves the
+ // chosen slot id, or null if they back out. Log out clears the resume token and reloads.
+ function runCharacterSelect(gwHttp, token){
+   return new Promise((resolve) => {
+     const bd = $('cs-bd'), grid = $('cs-grid'), note = $('cs-note');
+     const auth = { authorization: 'Bearer ' + token };
+     let max = 8;
+     // Resolves the whole character record: the boot needs the id AND whether this slot has
+     // ever been played (a fresh slot runs Morrowind's chargen; an existing one skips it).
+     // Picking a character KEEPS this screen up with an "Entering…" state until the game page
+     // takes over — hiding it early flashed the launcher hero for a beat.
+     const done = (ch) => {
+       if (!ch){ bd.classList.remove('show'); resolve(null); return; }
+       const wrap = bd.querySelector('.cs-wrap');
+       if (wrap) wrap.innerHTML = '<div class="cs-entering"><div class="big">Entering Vvardenfell</div>'
+         + 'Loading ' + String(ch.name||'your character').replace(/[&<>]/g,'') + ' — this can take a moment.</div>';
+       resolve(ch);
+     };
+     const clearCreate = () => { const w = bd.querySelector('.cs-create'); if (w) w.remove(); };
+     // New character: no alias prompt. Morrowind's own character creation asks for the name,
+     // and that name replaces the provisional slot label on the next listing.
+     let creating = false;
+     async function showCreate(){
+       if (creating) return;
+       creating = true;
+       note.textContent = 'Creating…'; note.className = 'note muted';
+       let r;
+       try { r = await (await fetch(gwHttp + '/auth/characters', { method:'POST',
+         headers:{ ...auth, 'content-type':'application/json' }, body: JSON.stringify({}) })).json(); }
+       catch(e){ note.textContent = 'Could not create the character.'; note.className = 'note err'; creating = false; return; }
+       if (!r.ok){ note.textContent = r.error || 'Could not create the character.'; note.className = 'note err'; creating = false; return; }
+       done(r.character); // straight into the game; the fresh slot runs chargen there
+     }
+     // Confirm-then-delete. Permanent, so the modal names the character and the tile list
+     // refreshes from the server afterwards rather than being patched locally.
+     function confirmDelete(c){
+       const cbd = $('cd-bd'), cnote = $('cd-note'), ok = $('cd-confirm'), cancel = $('cd-cancel');
+       $('cd-name').textContent = c.name;
+       cnote.textContent = ''; cnote.className = 'note';
+       ok.disabled = false;
+       const close = () => { cbd.classList.remove('show'); ok.onclick = null; cancel.onclick = null; };
+       cancel.onclick = close;
+       ok.onclick = async () => {
+         ok.disabled = true; cnote.textContent = 'Deleting…'; cnote.className = 'note muted';
+         let r;
+         try {
+           r = await (await fetch(gwHttp + '/auth/characters?id=' + encodeURIComponent(c.id),
+             { method: 'DELETE', headers: auth })).json();
+         } catch(e){ cnote.textContent = 'Could not reach the server.'; cnote.className = 'note err'; ok.disabled = false; return; }
+         if (!r.ok){ cnote.textContent = r.error || 'Could not delete.'; cnote.className = 'note err'; ok.disabled = false; return; }
+         close(); await load();
+       };
+       cbd.classList.add('show');
+       cancel.focus();
+     }
+
+     async function load(){
+       clearCreate(); note.textContent = '';
+       grid.innerHTML = '<div class="note muted">Loading…</div>';
+       let data;
+       try { data = await (await fetch(gwHttp + '/auth/characters', { headers: auth })).json(); }
+       catch(e){ grid.innerHTML = ''; note.textContent = 'Could not load your characters.'; note.className = 'note err'; return; }
+       max = data.max || 8;
+       const chars = data.characters || [];
+       grid.innerHTML = '';
+       chars.forEach((c) => {
+         const t = document.createElement('div'); t.className = 'cs-tile'; t.tabIndex = 0;
+         const last = c.lastPlayedAt ? new Date(c.lastPlayedAt).toLocaleDateString() : 'never';
+         // An unfinished slot restarts character creation on entry; say so instead of showing
+         // level/played stats it does not really have yet.
+         const meta = c.needsChargen
+           ? 'Creation unfinished &middot; click to continue'
+           : '<span class="lvl">Level ' + (c.level || 1) + '</span> &middot; played ' + last;
+         t.innerHTML = '<div class="ava"></div><div class="nm"></div>'
+           + '<div class="meta">' + meta + '</div>';
+         t.querySelector('.ava').textContent = (c.name || '?').trim().charAt(0).toUpperCase();
+         t.querySelector('.nm').textContent = c.name;
+         t.title = c.name;
+         t.onclick = () => done(c);
+         t.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' '){ e.preventDefault(); done(c); } };
+         // Delete (trash can, top-right). Stops the click from also selecting the character.
+         const del = document.createElement('button');
+         del.className = 'del'; del.type = 'button';
+         del.title = 'Delete ' + c.name; del.setAttribute('aria-label', 'Delete ' + c.name);
+         del.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6l1 2h4v2H4V5h4l1-2zm-3 6h12l-1 12H7L6 9zm4 2v8h2v-8h-2zm4 0v8h2v-8h-2z"/></svg>';
+         del.onclick = (e) => { e.stopPropagation(); confirmDelete(c); };
+         del.onkeydown = (e) => { e.stopPropagation(); };
+         t.appendChild(del);
+         grid.appendChild(t);
+       });
+       if (chars.length < max){
+         const nt = document.createElement('div'); nt.className = 'cs-tile new';
+         nt.innerHTML = '<div class="plus">+</div>New character';
+         nt.tabIndex = 0; nt.onclick = showCreate;
+         nt.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' '){ e.preventDefault(); showCreate(); } };
+         grid.appendChild(nt);
+       }
+       if (chars.length === 0) showCreate();
+     }
+     $('cs-back').onclick = () => done(null);
+     note.textContent = '';
+     bd.classList.add('show');
+     load();
+   });
+ }
+
+ // Open the player's private world and boot the game with a login ticket + chosen character.
+ // Shared by the fresh-SSO path and the #characters re-entry (Exit from the game).
+ async function bootGame(sess, ticket, chosenChar){
+   let world;
+   try {
+     // World ids are PUBLIC-ish: they label the world, travel in party/join flows, and name the
+     // world's data directory. This used to slug the account name, which for an SSO account is
+     // the person's REAL name — producing ids like "priv-jane-smith". Prefer the user-chosen
+     // public username (that is what onboarding collects it for) and fall back to an opaque
+     // hash, never to the account name.
+     const publicId = (sess.username || '').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,40)
+       || Math.abs([...sess.account].reduce((a,c)=>(a*31+c.charCodeAt(0))|0,0)).toString(36);
+     // PER CHARACTER, not per account. A world holds CELL state — looted containers, opened
+     // doors, moved objects — and the character screen promises "their own solo world". Keying
+     // this by account alone gave every character on the account the same cell deltas, so a
+     // chest one character emptied was already empty for the next. Player state (journal,
+     // inventory) was always per-character; only the world was not. doc.positions is keyed by
+     // world id, so per-character worlds are what that was already built for.
+     let privId = 'priv-' + publicId + '-' + String(chosenChar.id).slice(-8);
+     const r = await fetch(sess.gwHttp + '/worlds', { method:'POST', headers:{'content-type':'application/json'},
+       body: JSON.stringify({ mode:'private', id: privId, account: sess.account }) });
+     world = await r.json();
+     if (!r.ok || !world.port) throw new Error(world.error || 'the server could not open your world');
+   } catch(e){ launcherError('Could not open your world', (e && e.message || e) + '. The multiplayer server may be unreachable — please try again in a moment.'); return; }
+   const wsProto = /^wss:/.test(sess.gwUrl) ? 'wss' : 'ws';
+   const worldWs = wsProto + '://' + world.host + ':' + world.port + '/ws';
+   // mp = the WORLD socket; locker = the GATEWAY (a different origin). Ticket + locker + account
+   // ride in the FRAGMENT (never query params): fragments are not logged, cached, or Referer'd.
+   const q = new URLSearchParams({ mp: worldWs, locker: sess.gwHttp });
+   // mpnew=1 = this slot has never been played: boot runs Morrowind's own character creation.
+   // An existing character skips the title menu AND chargen — the server restores their state.
+   const frag = '#mpticket=' + encodeURIComponent(ticket)
+     + (sess.lockerToken ? '&mplocker=' + encodeURIComponent(sess.lockerToken) : '')
+     + '&mpaccount=' + encodeURIComponent(sess.account)
+     + '&mpchar=' + encodeURIComponent(chosenChar.id)
+     // The in-world name for this slot. Other players see it (it rides every
+     // PlayerAppearance), so it is the CHARACTER's name and never the account holder's.
+     + '&mpcharname=' + encodeURIComponent(chosenChar.name || 'Adventurer')
+     + (chosenChar.needsChargen ? '&mpnew=1' : '');
+   location.href = 'index.html?' + q.toString() + frag;
+ }
+
+ // Exit from the game lands on launcher.html#characters: show the character screen straight
+ // away from the stored session (no re-SSO), and mint a fresh single-use login ticket for the
+ // next boot (the original was spent). A dead/restarted gateway session = sign in again.
+ (async function charactersReentry(){
+   if (location.hash !== '#characters') return;
+   history.replaceState(null, '', location.pathname);
+   let sess = null;
+   try { sess = JSON.parse(sessionStorage.getItem('omw-mp-session') || 'null'); } catch(e){}
+   if (!sess || !sess.gwHttp || !sess.lockerToken) return; // no session — the normal launcher shows
+   const ch = await runCharacterSelect(sess.gwHttp, sess.lockerToken).catch(() => null);
+   if (!ch) return; // backed out to the launcher
+   try {
+     const r = await fetch(sess.gwHttp + '/auth/ticket', { method: 'POST',
+       headers: { authorization: 'Bearer ' + sess.lockerToken } });
+     if (r.status === 401) throw new Error('expired');
+     const { ticket } = await r.json();
+     if (!ticket) throw new Error('no ticket');
+     await bootGame(sess, ticket, ch);
+   } catch(e){
+     try { sessionStorage.removeItem('omw-mp-session'); } catch(_){}
+     launcherError('Session expired', 'Please sign in again to keep playing.');
+   }
+ })();
+
  // We are back from SSO if the fragment carries a ticket (or an error). Turn it into the
  // game launch: the data source is the LOCKER (?mplocker), decided in-game.
  // After SSO we are back HERE. The server we signed in to is the GATEWAY (it serves /auth,
@@ -839,33 +1110,40 @@
    const gwHttp = httpBaseOf(gwUrl);
    const account = decodeURIComponent(ac[1]);
    const lockerToken = lk ? decodeURIComponent(lk[1]) : '';
+   // Persist the session for the Exit -> character-select re-entry (#characters): the locker
+   // token is the SSO proof; /auth/ticket mints fresh boot tickets from it. sessionStorage =
+   // this tab only, gone when the tab closes.
+   try { sessionStorage.setItem('omw-mp-session', JSON.stringify({ gwHttp, gwUrl, account, lockerToken })); } catch(e){}
    // First-login onboarding: pick a public username (and a contact email if we have none) BEFORE
    // entering any world, so a new player is never shown by their real name. Skipped once set.
    try {
-     const st = await (await fetch(gwHttp + '/auth/profile', { headers: { authorization: 'Bearer ' + lockerToken } })).json();
+     let st = await (await fetch(gwHttp + '/auth/profile', { headers: { authorization: 'Bearer ' + lockerToken } })).json();
      if (st && st.needsProfile){
        const ok = await runOnboarding(gwHttp, lockerToken, st.hasEmail);
        if (!ok) return; // closed without finishing — do not enter a world unnamed
+       st = await (await fetch(gwHttp + '/auth/profile', { headers: { authorization: 'Bearer ' + lockerToken } })).json();
+     }
+     // Carry the PUBLIC username in the session: the world id is derived from it so that no
+     // id, directory or join link is ever built from the account's real name.
+     if (st && st.username) {
+       try {
+         const cur = JSON.parse(sessionStorage.getItem('omw-mp-session') || '{}');
+         cur.username = st.username;
+         sessionStorage.setItem('omw-mp-session', JSON.stringify(cur));
+       } catch(e){}
      }
    } catch(e){ /* if the check fails, proceed; the in-game gate is the backstop */ }
+   // Character select: pick or create a character (given an alias) on a launcher-styled tile
+   // screen BEFORE opening any world. Returns the chosen slot id, or null if they backed out.
+   let chosenChar = null;
+   try { chosenChar = await runCharacterSelect(gwHttp, lockerToken); }
+   catch(e){ chosenChar = null; }
+   if (!chosenChar) return; // backed out to the launcher
    // A new player lands in their own PRIVATE world — that is where character creation happens.
    // Party and public come after (a fresh character must be created in private first).
-   let world;
-   try {
-     let privId = 'priv-' + account.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,56);
-     if (privId === 'priv-') privId = 'priv-' + Math.abs([...account].reduce((a,c)=>(a*31+c.charCodeAt(0))|0,0));
-     const r = await fetch(gwHttp + '/worlds', { method:'POST', headers:{'content-type':'application/json'},
-       body: JSON.stringify({ mode:'private', id: privId, account }) });
-     world = await r.json();
-     if (!r.ok || !world.port) throw new Error(world.error || 'the server could not open your world');
-   } catch(e){ launcherError('Could not open your world', (e && e.message || e) + '. The multiplayer server may be unreachable — please try again in a moment.'); return; }
-   const wsProto = /^wss:/.test(gwUrl) ? 'wss' : 'ws';
-   const worldWs = wsProto + '://' + world.host + ':' + world.port + '/ws';
-   // mp = the WORLD socket; locker = the GATEWAY (a different origin). Ticket + locker + account
-   // ride in the FRAGMENT (never query params): fragments are not logged, cached, or Referer'd.
-   const q = new URLSearchParams({ mp: worldWs, locker: gwHttp });
-   const frag = '#mpticket=' + tk[1] + (lk ? '&mplocker=' + lk[1] : '') + '&mpaccount=' + ac[1];
-   location.href = 'index.html?' + q.toString() + frag;
+   let username = '';
+   try { username = (JSON.parse(sessionStorage.getItem('omw-mp-session') || '{}')).username || ''; } catch(e){}
+   await bootGame({ gwHttp, gwUrl, account, lockerToken, username }, decodeURIComponent(tk[1]), chosenChar);
  })();
  $('card-mp').addEventListener('click', mpStart);
  $('card-mp').addEventListener('keydown', (e)=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); mpStart(); } });
