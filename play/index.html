@@ -3089,7 +3089,19 @@
   // ================================ FEATURE TOUR ================================
   // Shown ONCE, the moment the character becomes ready (chargen finished = multiplayer,
   // chat and social just unlocked). Dots + Next walk through what is now available.
-  var SLIDES = [
+  // Two decks through ONE component: which slides and which "seen" key, nothing else differs.
+  var TOURS = {};
+  // Shown BEFORE chargen: what this is, and why the online parts are not there yet.
+  TOURS.intro = [
+    { t: 'Create your character first', g: '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><circle cx="24" cy="15" r="7"/><path d="M10 40c0-7.5 6-13 14-13s14 5.5 14 13"/></svg>',
+      b: 'Play through Morrowind\'s opening and choose your <b>race, class and birthsign</b>. Chat, friends, parties and the shared world unlock the moment creation is finished.' },
+    { t: 'Saved to your account', g: '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M10 14h28v20H10z"/><path d="M10 20h28"/><circle cx="16" cy="17" r="1.5"/></svg>',
+      b: 'Your character lives on the server, not in this browser. Progress, inventory and where you stood are kept for you — clearing site data cannot lose them.' },
+    { t: 'Play anywhere', g: '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><circle cx="24" cy="24" r="15"/><path d="M9 24h30M24 9c4 5 4 25 0 30M24 9c-4 5-4 25 0 30"/></svg>',
+      b: 'Sign in on any browser, on any machine, and pick the same character up where you left it. Nothing to install and nothing to carry with you.' },
+  ];
+  // Shown the moment creation finishes and multiplayer actually unlocks.
+  TOURS.unlocked = [
     { t: 'You are in the world', g: '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><circle cx="18" cy="18" r="6"/><circle cx="32" cy="22" r="5"/><path d="M8 40c0-6 4.5-10 10-10s10 4 10 10"/><path d="M26 40c0-4.5 3.5-8 8-8s8 3.5 8 8"/></svg>',
       b: 'Your character is saved to your account and follows you everywhere: solo, with your party, and in the shared world. Multiplayer is now unlocked.' },
     { t: 'Chat', g: '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M8 10h32v22H22l-8 8v-8H8z"/><path d="M14 18h20M14 24h14"/></svg>',
@@ -3099,24 +3111,37 @@
     { t: 'Play your way', g: '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><circle cx="24" cy="24" r="16"/><path d="M24 8v6M24 34v6M8 24h6M34 24h6"/><path d="M24 24l7-7"/></svg>',
       b: 'Play <b>Solo</b> in your own world, open it to your <b>Party</b>, or head to the shared <b>Public</b> world. Exit from the menu returns you to your characters.' },
   ];
-  var tourEl = document.getElementById('omw-tour'), tourIdx = 0, tourShown = false;
-  function tourSeen(){ try { return localStorage.getItem('omw-mp-tour') === '1'; } catch(e){ return true; } }
+  var tourEl = document.getElementById('omw-tour'), tourIdx = 0, tourDeck = TOURS.unlocked, tourKey = 'omw-mp-tour';
+  var tourShown = { intro: false, unlocked: false };
+  // Storage unavailable (private mode, blocked) reads as SEEN: a modal that cannot remember
+  // being dismissed would reappear on every single boot, which is worse than never showing.
+  function tourSeen(which){
+    try { return localStorage.getItem(which === 'intro' ? 'omw-mp-intro' : 'omw-mp-tour') === '1'; }
+    catch(e){ return true; }
+  }
   function renderTour(){
-    var s = SLIDES[tourIdx];
+    var s = tourDeck[tourIdx];
     document.getElementById('omw-tour-glyph').innerHTML = s.g;
     document.getElementById('omw-tour-title').textContent = s.t;
     document.getElementById('omw-tour-body').innerHTML = s.b;
-    document.getElementById('omw-tour-dots').innerHTML = SLIDES.map(function(_, i){
+    document.getElementById('omw-tour-dots').innerHTML = tourDeck.map(function(_, i){
       return '<span class="dot' + (i === tourIdx ? ' on' : '') + '"></span>'; }).join('');
-    document.getElementById('omw-tour-next').innerHTML = (tourIdx === SLIDES.length - 1) ? "Let's go ▸" : 'Next ▸';
+    document.getElementById('omw-tour-next').innerHTML = (tourIdx === tourDeck.length - 1) ? "Let's go ▸" : 'Next ▸';
   }
-  function openTour(){ if (tourShown) return; tourShown = true; tourIdx = 0; renderTour();
-    tourEl.classList.add('show'); uiHold(true); }
+  function openTour(which){
+    which = which || 'unlocked';
+    if (tourShown[which]) return;
+    tourShown[which] = true;
+    tourDeck = TOURS[which];
+    tourKey = which === 'intro' ? 'omw-mp-intro' : 'omw-mp-tour';
+    tourIdx = 0; renderTour();
+    tourEl.classList.add('show'); uiHold(true);
+  }
   function closeTour(){ if (!tourEl.classList.contains('show')) return;
     tourEl.classList.remove('show'); uiHold(false);
-    try { localStorage.setItem('omw-mp-tour', '1'); } catch(e){} }
+    try { localStorage.setItem(tourKey, '1'); } catch(e){} }
   document.getElementById('omw-tour-next').addEventListener('click', function(){
-    if (tourIdx < SLIDES.length - 1){ tourIdx++; renderTour(); } else closeTour(); });
+    if (tourIdx < tourDeck.length - 1){ tourIdx++; renderTour(); } else closeTour(); });
   document.getElementById('omw-tour-x').addEventListener('click', closeTour);
 
   // ---- poll the engine mirror: open signals, chat feed updates, live re-render ----
@@ -3136,8 +3161,11 @@
       ready = r;
       chatEl.style.display = ready ? '' : 'none';
       // The moment multiplayer unlocks, walk a first-timer through what just appeared.
-      if (ready && !tourSeen()) openTour();
+      if (ready && !tourSeen('unlocked')) openTour('unlocked');
     }
+    // Before creation: say WHY the online parts are missing, rather than leaving a player to
+    // wonder. Gated on being in-world so it lands on the game, not on a black boot screen.
+    if (!ready && (m.state || '') === 'Joined' && !tourSeen('intro')) openTour('intro');
     var oc = Number(m.openChat||0), os = Number(m.openSocial||0), cs = Number(m.chatSeq||0);
     if (!ready || Date.now() < suppressUntil){ seenOpenChat = oc; seenOpenSocial = os; }
     else {
