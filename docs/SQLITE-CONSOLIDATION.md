@@ -90,7 +90,18 @@ prove WAL first.
       reads a JSON file on purpose — it is the pre-slot account-keyed migration, not this one.
       `erase.ts` gained a row DELETE: a character doc is the bulk of what the server knows
       about a person, so missing it is a failed erasure, not a partial one.
-- [ ] Remaining: `accounts` (+`usernames`) and `locker`.
+- [x] **6. `accounts.ts`** — DONE, `accounts.db` (+ a `usernames` table whose PRIMARY KEY is
+      the real uniqueness constraint). This is also where the account key stops being a
+      FILENAME, which for an SSO account is the person's real name.
+- [x] **7. `locker.ts`** — DONE, `locker.db`. ONE ROW PER ACCOUNT, deliberately NOT content
+      addressed by hash: docs/LEGAL.md requires per-account copies with zero dedup. The
+      ATTESTATION stays a readable file — it is the DMCA evidence trail and "show me what this
+      user attested to" should stay a `cat`.
+- [x] **10.** `atomicjson.ts` is still used by the legacy import paths and by adoptLegacy, so
+      it stays until the JSON fallbacks are removed.
+
+**All nine stores are now SQLite.** Remaining cleanup (safe once a release has proven the DB):
+delete the legacy JSON/JSONL left on disk, and drop the import paths that read it.
 
 ### Note on step 4 (moderation)
 

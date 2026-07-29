@@ -23,6 +23,24 @@
 
 import { mkdirSync } from 'node:fs';
 import { readFile, writeFile, readdir } from 'node:fs/promises';
+import type { DatabaseSync } from 'node:sqlite';
+import { openDb } from '../persist/sqlite';
+
+const LOCKER_MIGRATIONS = [
+  {
+    name: '001-locker',
+    up: (db: DatabaseSync) => {
+      // ONE ROW PER ACCOUNT, holding that account's own file list. Deliberately NOT a
+      // content-addressed table keyed by hash: docs/LEGAL.md requires per-account copies with
+      // zero dedup, and a schema that joined accounts by file hash would be legally wrong as
+      // well as technically convenient.
+      db.exec(`CREATE TABLE locker_files (
+        accountKey TEXT PRIMARY KEY,
+        files      TEXT NOT NULL   -- JSON array of LockerFile
+      )`);
+    },
+  },
+];
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { log } from '../log';
@@ -140,6 +158,7 @@ export async function loadVanillaManifest(dir: string): Promise<VanillaManifest>
 
 export class Locker {
   private readonly dir: string;
+  private readonly db: DatabaseSync;
   private vanilla: VanillaManifest = { files: [] };
   // sha256 -> true: an EXACT match against a known distribution (the strong path).
   private accepted = new Set<string>();
@@ -155,6 +174,7 @@ export class Locker {
 
   constructor(private readonly settings: LockerSettings) {
     this.dir = join(settings.dataDir, 'locker');
+    this.db = openDb(join(settings.dataDir, 'locker.db'), LOCKER_MIGRATIONS);
     mkdirSync(this.dir, { recursive: true });
   }
 
@@ -289,6 +309,15 @@ export class Locker {
     return join(this.dir, `${encodeURIComponent(accountKey)}.files.json`);
   }
 
+  // The file list moved to locker.db. The ATTESTATION stays a readable file on purpose: it is
+  // the DMCA evidence trail (docs/LEGAL.md §4), and "show me exactly what this user attested
+  // to" should stay a cat, not a query.
+  private async writeFiles(accountKey: string, files: LockerFile[]): Promise<void> {
+    this.db
+      .prepare('INSERT OR REPLACE INTO locker_files (accountKey, files) VALUES (?, ?)')
+      .run(accountKey, JSON.stringify(files));
+  }
+
   // Recorded BEFORE any byte is accepted, with the statement the user actually saw. This
   // record — not a ToS clause — is the evidence trail (docs/LEGAL.md §4).
   async attest(accountKey: string, files: LockerFile[], ip: string): Promise<Attestation> {
@@ -386,7 +415,7 @@ export class Locker {
     const files = await this.filesOf(accountKey);
     const next = files.filter((f) => f.name !== file.name);
     next.push(file);
-    await writeFile(this.manifestPath(accountKey), JSON.stringify({ files: next }, null, 2) + '\n', 'utf8');
+    await this.writeFiles(accountKey, next);
     // Media pack: the content check the client cannot forge runs ASYNC (streaming ~300MB back
     // from storage and hashing every entry takes a minute; the wizard must not hang on it).
     // A pack that fails is deleted and struck from the account's list.
@@ -410,8 +439,7 @@ export class Locker {
       log('warn', 'locker.media_pack_rejected', { account: accountKey, reason, ...detail });
       try { await storage.delete(key); } catch { /* already gone is fine */ }
       const files = await this.filesOf(accountKey);
-      await writeFile(this.manifestPath(accountKey),
-        JSON.stringify({ files: files.filter((f) => f.name !== MEDIA_PACK) }, null, 2) + '\n', 'utf8');
+      await this.writeFiles(accountKey, files.filter((f) => f.name !== MEDIA_PACK));
     };
     let url: string;
     try { url = await storage.presignGet(key); } catch (err) { return fail('presign', { error: String(err) }); }
@@ -462,9 +490,22 @@ export class Locker {
   }
 
   async filesOf(accountKey: string): Promise<LockerFile[]> {
+    const row = this.db
+      .prepare('SELECT files FROM locker_files WHERE accountKey = ?')
+      .get(accountKey) as { files: string } | undefined;
+    if (row) {
+      try {
+        return JSON.parse(row.files) as LockerFile[];
+      } catch {
+        return [];
+      }
+    }
+    // Pre-SQLite fallback: adopt this account's JSON list on first read, then serve rows.
     try {
       const doc = JSON.parse(await readFile(this.manifestPath(accountKey), 'utf8')) as { files: LockerFile[] };
-      return doc.files ?? [];
+      const files = doc.files ?? [];
+      if (files.length > 0) await this.writeFiles(accountKey, files);
+      return files;
     } catch {
       return [];
     }
@@ -489,6 +530,9 @@ export class Locker {
   // Erasure (docs/LEGAL.md §5): the locker, its manifest and the attestation all go.
   async erase(accountKey: string): Promise<void> {
     await this.settings.storage?.delete(`gamedata/${accountKey}/`);
+    // The row goes entirely; the attestation file is truncated rather than deleted so the
+    // fact that an attestation existed is still visible to an operator after an erasure.
+    this.db.prepare('DELETE FROM locker_files WHERE accountKey = ?').run(accountKey);
     for (const p of [this.attestPath(accountKey), this.manifestPath(accountKey)]) {
       await writeFile(p, '', 'utf8').catch(() => undefined);
     }
@@ -497,9 +541,14 @@ export class Locker {
 
   async accounts(): Promise<string[]> {
     try {
-      return (await readdir(this.dir))
-        .filter((n) => n.endsWith('.files.json'))
-        .map((n) => decodeURIComponent(n.replace('.files.json', '')));
+      const rows = this.db.prepare('SELECT accountKey FROM locker_files').all() as
+        { accountKey: string }[];
+      const out = new Set(rows.map((r) => r.accountKey));
+      // Include any account whose list has not been adopted into the table yet.
+      for (const n of (await readdir(this.dir)).filter((x) => x.endsWith('.files.json'))) {
+        out.add(decodeURIComponent(n.replace('.files.json', '')));
+      }
+      return [...out];
     } catch {
       return [];
     }
