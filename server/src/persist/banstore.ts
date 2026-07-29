@@ -48,13 +48,11 @@ const MIGRATIONS = [
 export class BanStore {
   private readonly db: DatabaseSync;
   private doc: BansDoc = { accounts: {}, ips: {} };
-  private loaded: Promise<void>;
   private write: Promise<void> = Promise.resolve();
 
   constructor(dataDir: string) {
     this.db = openDb(join(dataDir, 'bans.db'), MIGRATIONS);
     this.load();
-    this.loaded = Promise.resolve();
   }
 
   private load(): void {
@@ -64,10 +62,6 @@ export class BanStore {
       const target = r.scope === 'ip' ? this.doc.ips : this.doc.accounts;
       target[r.key] = { by: r.by, at: r.at, reason: r.reason };
     }
-  }
-
-  ready(): Promise<void> {
-    return this.loaded;
   }
 
   isAccountBanned(name: string): BanEntry | undefined {
@@ -125,18 +119,6 @@ export class BanStore {
 
   private remove(scope: 'account' | 'ip', key: string): void {
     this.run(() => this.db.prepare('DELETE FROM bans WHERE scope = ? AND key = ?').run(scope, key));
-  }
-
-  private persistAll(): void {
-    this.run(() =>
-      tx(this.db, () => {
-        const stmt = this.db.prepare(
-          'INSERT OR REPLACE INTO bans (scope, key, by, at, reason) VALUES (?, ?, ?, ?, ?)',
-        );
-        for (const [k, e] of Object.entries(this.doc.accounts)) stmt.run('account', k, e.by, e.at, e.reason);
-        for (const [k, e] of Object.entries(this.doc.ips)) stmt.run('ip', k, e.by, e.at, e.reason);
-      }),
-    );
   }
 
   // Writes are synchronous in node:sqlite; the promise chain is kept so flush() still means

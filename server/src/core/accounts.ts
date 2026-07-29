@@ -1,8 +1,8 @@
 // Copyright (C) 2025-2026 Virtastic - https://virtastic.app
 // SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
-// Account store: one JSON file per account at <dataDir>/accounts/<nameLower>.json,
-// argon2id (OWASP 2024 baseline: m=19456 KiB, t=2, p=1). Mutations write through the
-// dirty queue; flush() drains it (SIGUSR1 / shutdown / 30 s timer).
+// Account store: <dataDir>/accounts.db, argon2id (OWASP 2024 baseline: m=19456 KiB, t=2,
+// p=1). Mutations write through the dirty queue; flush() drains it (SIGUSR1 / shutdown /
+// 30 s timer).
 
 import { join } from 'node:path';
 import { existsSync } from 'node:fs';
@@ -40,7 +40,7 @@ import { log } from '../log';
 // same characters exist in every world; each world keeps only that character's position.
 export interface CharacterSummary {
   id: string; // PlayerStore key; also the future private-world id
-  name: string; // display name in-world; defaults to the account name at migration
+  name: string; // display name in-world
   createdAt: string;
   lastPlayedAt: string;
   // True once Morrowind's character creation (race/class/sign) FINISHED for this slot. Until
@@ -121,10 +121,6 @@ export class AccountStore {
     }
   }
 
-  ready(): Promise<void> {
-    return Promise.resolve();
-  }
-
   // Write-through for the registration paths. An account that exists in memory but not in
   // storage means a crash right after signup loses it, and anything that looks the account up
   // from outside the process (erasure, another world) finds nothing.
@@ -134,12 +130,9 @@ export class AccountStore {
     this.keysOnDisk.add(key);
   }
 
-
-
   // Sync lookups for user-initiated, low-frequency actions (Phase C friend requests and
-  // blocks). Account files are named by the lowercased key, so file presence IS the
-  // existence answer — no read or parse. Kept separate from get() so nothing on a hot path
-  // is tempted to use a blocking stat.
+  // blocks). Answered from the key set loaded at boot, so no query and nothing on a hot path
+  // is tempted to block.
   existsNow(name: string): boolean {
     const key = name.toLowerCase();
     return this.cache.has(key) || this.keysOnDisk.has(key);
@@ -161,7 +154,7 @@ export class AccountStore {
     return loaded;
   }
 
-  // 'exists' | 'badname' | the new account. Uniqueness is case-insensitive (file name).
+  // 'exists' | 'badname' | the new account. Uniqueness is case-insensitive.
   async register(name: string, password: string): Promise<Account | 'exists' | 'badname'> {
     if (!validAccountName(name)) return 'badname';
     if (await this.get(name)) return 'exists';

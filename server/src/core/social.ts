@@ -728,13 +728,18 @@ export class Social {
         return true;
       }
       case 'PresenceMode': {
-        const r = this.setPresenceMode(player, str('mode'));
-        this.reply(player, 'PresenceMode', r === 'ok', r === 'ok' ? str('mode') : r);
+        // The client's generic social:<Op>:<arg> router puts the argument in `acct`, so accept
+        // either. Reading only `mode` meant every privacy change was refused with
+        // no_such_player, silently, forever.
+        const mode = str('mode') || str('acct');
+        const r = this.setPresenceMode(player, mode);
+        this.reply(player, 'PresenceMode', r === 'ok', r === 'ok' ? mode : r);
         return true;
       }
       case 'SetAvailability': {
-        const r = this.setAvailability(player, str('state'));
-        this.reply(player, 'SetAvailability', r === 'ok', r === 'ok' ? str('state') : r);
+        const state = str('state') || str('acct');
+        const r = this.setAvailability(player, state);
+        this.reply(player, 'SetAvailability', r === 'ok', r === 'ok' ? state : r);
         return true;
       }
       case 'JoinFriend': {

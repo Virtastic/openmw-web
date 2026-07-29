@@ -2914,24 +2914,10 @@
   var sEl = document.getElementById('omw-social'), sBody = document.getElementById('omw-social-body');
   var sNav = document.getElementById('omw-nav'), sAvail = document.getElementById('omw-avail');
   var sStatus = document.getElementById('omw-social-status');
-  // The engine acks a world switch with SocialResult, but social.lua does not mirror that to
-  // the page, so the browser cannot observe success (mirroring it needs a WASM relink). Until
-  // it does, a status line must not imply an operation is still running: it states what was
-  // REQUESTED and clears itself, rather than hanging on screen forever.
-  var sStatusText = '', sStatusTimer = null;
-  function setStatus(t, holdMs){
-    sStatusText = t || '';
-    sStatus.textContent = sStatusText;
-    if (sStatusTimer) { clearTimeout(sStatusTimer); sStatusTimer = null; }
-    if (sStatusText && holdMs !== 0) {
-      sStatusTimer = setTimeout(function(){
-        sStatusText = '';
-        sStatus.textContent = '';
-        sStatusTimer = null;
-        renderSocial(true);
-      }, holdMs || 4000);
-    }
-  }
+  // Set on request, REPLACED by the server's ack (the socialResult mirror below). No timer:
+  // the ack is the real signal, and a line that vanishes on a clock lies about both outcomes.
+  var sStatusText = '';
+  function setStatus(t){ sStatusText = t || ''; sStatus.textContent = sStatusText; }
   function setWhere(v){ lastWhere = v; try { localStorage.setItem('omw-where', v); } catch(e){} }
   function openSocial(){ if (socialOpen) return; socialOpen = true; sEl.classList.add('show'); uiHold(true); renderSocial(true); }
   function closeSocial(){ if (!socialOpen) return; socialOpen = false; sEl.classList.remove('show'); uiHold(false); }
@@ -3140,7 +3126,7 @@
           else if (res.op === 'SetWorldMode') setStatus(String(res.detail) === 'party'
             ? 'Your world is open to your party.' : 'Your world is solo again.');
         } else {
-          setStatus("Couldn't " + res.op + ': ' + (res.detail || 'refused') + '.', 8000);
+          setStatus("Couldn't " + res.op + ': ' + (res.detail || 'refused') + '.');
         }
       }
     }

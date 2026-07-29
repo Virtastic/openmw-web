@@ -150,11 +150,9 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   const cellStore = new CellStore(opts.dataDir);
   const recordStore = new RecordStore(opts.dataDir);
   const bans = new BanStore(sharedDir);
-  await bans.ready(); // the ban list must be authoritative before the listener opens
   // Phase B: the identity index must be complete before the listener opens too — a missed
   // (iss,sub) entry would hand a returning player a brand new empty account.
   const identities = new IdentityStore(sharedDir);
-  await identities.ready();
   // File-backed on the shared dir: the gateway front door mints the SSO ticket, and THIS
   // (a different world process) must be able to claim it. Same dir = same tickets.
   const tickets = new LoginTicketStore(15 * 60_000, sharedDir);

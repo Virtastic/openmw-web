@@ -95,15 +95,6 @@ export default async function run(ctx) {
     'pointer lock released when the overlay opened (a locked pointer eats every DOM click)');
   assert.equal(await a.eval(`getComputedStyle(document.getElementById('canvas')).pointerEvents`), 'none',
     'canvas is click-through while an overlay is open');
-  // NOTE: the engine's pointer-lock re-grab is NOT covered here, and deliberately so. Chrome
-  // refuses to re-lock for a cooldown after an API-driven exitPointerLock, so a re-lock attempt
-  // is denied in headless whether or not the product code blocks it — verified by running this
-  // step with the Element.prototype.requestPointerLock override disabled: it passed either way.
-  // Asserting on it would only manufacture false confidence. Logged as an observation instead;
-  // the in-page '[ui] click ...' diagnostic is what actually reports this from a real browser.
-  ctx.log('observation (not an assertion): pointerLockElement after a re-lock attempt = '
-    + await a.evalGesture(`(function(){ document.getElementById('canvas').requestPointerLock();
-        return String(!!document.pointerLockElement); })()`));
   // Switch tabs by clicking — proves controls inside the panel receive real input.
   let hit = await a.click('#omw-social [data-t="party"]');
   await a.waitFor(`document.querySelector('#omw-social [data-t="party"]').classList.contains('on')`,

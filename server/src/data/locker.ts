@@ -305,10 +305,7 @@ export class Locker {
     return out;
   }
 
-  // The file list moved to locker.db. The ATTESTATION stays a readable file on purpose: it is
-  // the DMCA evidence trail (docs/LEGAL.md §4), and "show me exactly what this user attested
-  // to" should stay a cat, not a query.
-  private async writeFiles(accountKey: string, files: LockerFile[]): Promise<void> {
+  private putFiles(accountKey: string, files: LockerFile[]): void {
     this.db
       .prepare('INSERT OR REPLACE INTO locker_files (accountKey, files) VALUES (?, ?)')
       .run(accountKey, JSON.stringify(files));
@@ -418,7 +415,7 @@ export class Locker {
     const files = await this.filesOf(accountKey);
     const next = files.filter((f) => f.name !== file.name);
     next.push(file);
-    await this.writeFiles(accountKey, next);
+    this.putFiles(accountKey, next);
     // Media pack: the content check the client cannot forge runs ASYNC (streaming ~300MB back
     // from storage and hashing every entry takes a minute; the wizard must not hang on it).
     // A pack that fails is deleted and struck from the account's list.
@@ -442,7 +439,7 @@ export class Locker {
       log('warn', 'locker.media_pack_rejected', { account: accountKey, reason, ...detail });
       try { await storage.delete(key); } catch { /* already gone is fine */ }
       const files = await this.filesOf(accountKey);
-      await this.writeFiles(accountKey, files.filter((f) => f.name !== MEDIA_PACK));
+      this.putFiles(accountKey, files.filter((f) => f.name !== MEDIA_PACK));
     };
     let url: string;
     try { url = await storage.presignGet(key); } catch (err) { return fail('presign', { error: String(err) }); }

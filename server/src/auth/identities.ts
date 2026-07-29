@@ -52,12 +52,10 @@ const IDENTITY_MIGRATIONS = [
 export class IdentityStore {
   private readonly db: DatabaseSync;
   private readonly byKey = new Map<string, IdentityRecord>();
-  private loaded: Promise<void>;
 
   constructor(dataDir: string) {
     this.db = openDb(join(dataDir, 'identities.db'), IDENTITY_MIGRATIONS);
     this.load();
-    this.loaded = Promise.resolve();
   }
 
   // Loaded once at boot: the whole index must be authoritative before the listener opens,
@@ -69,10 +67,6 @@ export class IdentityStore {
     for (const r of rows) {
       this.byKey.set(r.key, { iss: r.iss, sub: r.sub, accountKey: r.accountKey, linkedAt: r.linkedAt });
     }
-  }
-
-  ready(): Promise<void> {
-    return this.loaded;
   }
 
   get(iss: string, sub: string): IdentityRecord | undefined {

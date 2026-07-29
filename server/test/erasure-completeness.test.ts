@@ -24,7 +24,6 @@ test('deleting an account leaves no trace in any database', async (t) => {
   const dir = tmpDataDir();
 
   const accounts = new AccountStore(dir);
-  await accounts.ready();
   const account = await accounts.register('Victim', 'hunter22');
   assert.ok(typeof account !== 'string', 'fixture account was not created');
   const char = accounts.createCharacter(account, 'Hero');
@@ -33,17 +32,14 @@ test('deleting an account leaves no trace in any database', async (t) => {
   await accounts.flush();
 
   const players = new PlayerStore(dir);
-  await players.ready();
   players.update(char.id, (d) => { d.inventory = [{ id: 'gold_001', n: 9 }]; }, 'now');
   await players.flushAll();
 
   const bans = new BanStore(dir);
-  await bans.ready();
   bans.banAccount('Victim', 'admin', 'test');
   await bans.flush();
 
   const identities = new IdentityStore(dir);
-  await identities.ready();
   await identities.bind('https://provider', 'sub-1', 'victim');
 
   const chat = new ChatLog(dir, { chatLog: true, retentionDays: 14, contextLines: 5 });

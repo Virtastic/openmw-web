@@ -68,9 +68,6 @@ const HARNESS_PASSWORD = 'harness-pass-1';
 // it is public (tile label, PlayerAppearance, other players' screens) and must never be derived
 // from the account, whose SSO name is the person's real name.
 const DEFAULT_CHARACTER_NAME = 'Adventurer';
-// Frames kept for the byte-budget post-mortem. One second of traffic at the message cap is far
-// below this, so the window always covers the spike that did the damage.
-const TRAFFIC_WINDOW = 256;
 
 // Everything a connection needs from the composed server; kept as an interface so
 // connection.ts has no import cycle with server.ts.
@@ -149,8 +146,6 @@ export class Connection implements Peer {
   private authing = false;
   private sessionToken = ''; // M8: parked as a resume ticket when an in-world session drops
   private resumed?: ResumeTicket;
-  // Rolling frame log (type + size + time, no payload) used to explain a byte-budget kill.
-  private readonly trafficWindow: { at: number; bytes: number; type: string }[] = [];
   private readonly msgBucket: TokenBucket;
   private readonly byteBucket: TokenBucket;
   private readonly moveBucket: TokenBucket; // movement has its own budget (PROTOCOL.md M1)
@@ -340,34 +335,11 @@ export class Connection implements Peer {
     return 'text:' + (/"t"\s*:\s*"([A-Za-z0-9_]{1,40})"/.exec(head)?.[1] ?? '?');
   }
 
-  // The last second of traffic, grouped by frame type, biggest first.
-  private topTraffic(): string {
-    const cutoff = Date.now() - 1000;
-    const totals = new Map<string, { n: number; bytes: number }>();
-    for (const f of this.trafficWindow) {
-      if (f.at < cutoff) continue;
-      const cur = totals.get(f.type) ?? { n: 0, bytes: 0 };
-      cur.n += 1;
-      cur.bytes += f.bytes;
-      totals.set(f.type, cur);
-    }
-    return [...totals]
-      .sort((a, b) => b[1].bytes - a[1].bytes)
-      .slice(0, 5)
-      .map(([type, v]) => `${type} x${v.n} ${v.bytes}B`)
-      .join(', ');
-  }
-
   private onMessage(data: Buffer, isBinary: boolean): void {
     if (this.state === 'CLOSED') return;
     // PlayerMove and ActorMoveBatch frames bypass the general msg bucket, and draw from two
     // SEPARATE movement budgets (bytes still count against bytesPerSec).
     const binType = isBinary && data.byteLength >= 2 ? data.readUInt16LE(0) : -1;
-    // Cheap rolling record of what this session has been sending. A bare "byte rate limit
-    // exceeded" names no culprit, which made a real disconnect undiagnosable — the traffic
-    // that caused it is gone by the time anyone looks. Type only, never payload.
-    this.trafficWindow.push({ at: Date.now(), bytes: data.byteLength, type: this.frameLabel(data, isBinary, binType) });
-    if (this.trafficWindow.length > TRAFFIC_WINDOW) this.trafficWindow.shift();
     if (!this.byteBucket.take(data.byteLength)) {
       metrics.rateLimited.inc({ budget: 'bytes' });
       log('warn', 'conn.byte_budget_exceeded', {
@@ -377,7 +349,6 @@ export class Connection implements Peer {
         frameType: this.frameLabel(data, isBinary, binType),
         limitPerSec: this.ctx.config.limits.bytesPerSec,
         burst: this.ctx.config.limits.bytesBurst,
-        top: this.topTraffic(), // biggest contributors in the last second, by total bytes
       });
       this.disconnect('RATE', 'byte rate limit exceeded');
       return;

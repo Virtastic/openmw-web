@@ -111,10 +111,6 @@ export class PlayerStore {
     this.sweepTimer.unref();
   }
 
-  ready(): Promise<void> {
-    return Promise.resolve();
-  }
-
   setLivePositionProvider(fn: (key: string) => LivePosition | undefined): void {
     this.livePosition = fn;
   }

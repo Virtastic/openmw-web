@@ -131,20 +131,6 @@ export class RecordStore {
       .run(this.nextId);
   }
 
-  private persistAll(): void {
-    this.queue(() =>
-      tx(this.db, () => {
-        const stmt = this.db.prepare(
-          'INSERT OR REPLACE INTO records (recordNetId, kind, data, byAccount) VALUES (?, ?, ?, ?)',
-        );
-        for (const r of this.records) {
-          stmt.run(r.recordNetId, r.kind, JSON.stringify(r.data), r.byAccount ?? null);
-        }
-        this.putNextId();
-      }),
-    );
-  }
-
   private queue(fn: () => void): void {
     this.write = this.write.then(() =>
       timeFlush('records', async () => fn()).catch((err) =>
