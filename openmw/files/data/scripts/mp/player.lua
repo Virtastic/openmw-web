@@ -295,11 +295,18 @@ local function pollHarness()
         local sop, sarg = cmd:match('^social:([%a]+):(.*)$')
         if sop then
             local byName = (sop == 'FriendRequest' or sop == 'BlockAdd')
-            core.sendGlobalEvent('mpSocial', {
-                op = sop,
-                name = byName and sarg or nil,
-                acct = (not byName) and sarg or nil,
-            })
+            -- The arg does NOT always belong in name/acct. PresenceMode reads `mode` and
+            -- SetAvailability reads `state` on the server, so routing their argument into
+            -- `acct` meant the server saw an empty value and refused with no_such_player --
+            -- silently, because SocialResult is not surfaced. The privacy control had
+            -- therefore never worked. Route by what each op actually reads.
+            local FIELD = { PresenceMode = 'mode', SetAvailability = 'state' }
+            local field = FIELD[sop]
+            local body = { op = sop }
+            if field then body[field] = sarg
+            elseif byName then body.name = sarg
+            else body.acct = sarg end
+            core.sendGlobalEvent('mpSocial', body)
         end
 
         local uiWhich = cmd:match('^openui:(%a+)$')

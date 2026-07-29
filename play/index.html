@@ -934,6 +934,9 @@
                mpPass = 'harness-pass-1';
              }
              if (mpName) ENV.OPENMW_MP_NAME = decodeURIComponent(mpName);
+             // Remember it for the UI: the engine does not mirror a "who am I" value, and the
+             // social panel needs it to keep the player out of their own Players list.
+             if (mpName) window.__omwSelfName = decodeURIComponent(mpName);
              if (mpPass) ENV.OPENMW_MP_PASS = decodeURIComponent(mpPass);
              // SSO (Phase B): the server's /auth/<provider>/callback sends us back with the
              // one-time login ticket in the URL FRAGMENT — fragments are never sent to a
@@ -972,7 +975,7 @@
                // live client overwrites the saved doc. That is how quest items granted during
                // the tutorial disappeared on the next join.
                var mcn = /[#&]mpcharname=([^&]+)/.exec(h);
-               if (mcn) ENV.OPENMW_MP_NAME = decodeURIComponent(mcn[1]);
+               if (mcn) { ENV.OPENMW_MP_NAME = decodeURIComponent(mcn[1]); window.__omwSelfName = decodeURIComponent(mcn[1]); }
                if (lk) append('[mp] linked ' + decodeURIComponent(lk[1]) + ' to your account');
                if (er) append('[mp] sign-in failed: ' + decodeURIComponent(er[1]), 'err');
                if (tk || lk || er) {
@@ -2906,7 +2909,7 @@
   tx.addEventListener('keydown', function(e){ e.stopPropagation(); chatKey(e); });
 
   // ================================ SOCIAL ================================
-  var socialOpen = false, seenOpenSocial = 0, sTab = 'friends';
+  var socialOpen = false, seenOpenSocial = 0, sTab = 'friends', seenSocialResult = '';
   var lastWhere = (function(){ try { return localStorage.getItem('omw-where') || ''; } catch(e){ return ''; } })();
   var sEl = document.getElementById('omw-social'), sBody = document.getElementById('omw-social-body');
   var sNav = document.getElementById('omw-nav'), sAvail = document.getElementById('omw-avail');
@@ -2966,12 +2969,21 @@
     var avail = m.availability || 'online', presence = m.presenceMode || 'friends';
     var partyN = (party.members||[]).length;
     // header availability segmented
-    sAvail.replaceWith(sAvail = (function(){ var s = seg([['online','Online'],['offline','Offline']], avail, function(v){
-      cmd('where:'+v); setStatus(v==='offline' ? 'Going offline — solo, hidden from friends…' : 'Going online…');
-    }); s.id = 'omw-avail'; return s; })());
+    // NO Online/Offline toggle. It was redundant and, worse, compound: `where:offline` set
+    // availability AND flipped the world to private AND travelled you back to your own world,
+    // so one control silently did the PLAYING switcher's job as well as a visibility change.
+    // Where you play is the PLAYING row; who can see you is Settings -> Privacy. There is no
+    // "offline mode" — the server is always the authority.
+    sAvail.replaceWith(sAvail = (function(){ var s = el('span',''); s.id = 'omw-avail'; return s; })());
     // sidebar
     sNav.innerHTML = '';
-    [['friends','Friends', friends.length],['party','Party', partyN],['players','Players', Math.max(0, players.length-1)],['settings','Settings', null]]
+    // Count and list are derived from the SAME filtered set. They used to disagree: the count
+    // did players.length-1 (assuming we are in the list) while the list filtered on a selfName
+    // the engine never mirrors — so it filtered nobody. With one player online that read "0"
+    // next to your own row, and offered to friend/mute/block yourself.
+    var selfName = String(m.selfName || window.__omwSelfName || '').toLowerCase();
+    var otherPlayers = players.filter(function(p){ return String(p.name||'').toLowerCase() !== selfName; });
+    [['friends','Friends', friends.length],['party','Party', partyN],['players','Players', otherPlayers.length],['settings','Settings', null]]
       .forEach(function(t){
         var d = el('div','nv'+(sTab===t[0]?' on':''), esc(t[1]) + (t[2]!=null ? ' <span class="n">'+t[2]+'</span>' : ''));
         d.setAttribute('data-t', t[0]); // stable hook for the click regression test
@@ -3026,10 +3038,16 @@
         lb2.onclick = function(){ cmd('social:PartyLeave:'); setStatus('You left the party.'); }; lv.appendChild(lb2); sec.appendChild(lv); }
     } else if (sTab === 'players'){
       sec.appendChild(el('h3',null,'Players here'));
-      var self = m.selfName || '';
-      var others = players.filter(function(p){ return p.name !== self; });
+      var others = otherPlayers;
       if (!others.length) sec.appendChild(el('div','empty','Nobody else is here right now.'));
-      others.slice(0,50).forEach(function(p){ var acct = String(p.name||'').toLowerCase();
+      // The pane scrolls, but the render is capped so a crowded cell cannot build thousands of
+      // rows every poll. Say so rather than silently showing a truncated list.
+      var PLAYER_ROWS = 100;
+      if (others.length > PLAYER_ROWS) {
+        sec.appendChild(el('div','note','Showing the first ' + PLAYER_ROWS + ' of ' + others.length
+          + ' players here.'));
+      }
+      others.slice(0, PLAYER_ROWS).forEach(function(p){ var acct = String(p.name||'').toLowerCase();
         sec.appendChild(personRow(p.name, null, false, [
           ['add friend', function(){ cmd('social:FriendRequest:'+p.name); setStatus('Friend request sent.'); }, true],
           ['party', function(){ cmd('social:PartyInvite:'+acct); }],
@@ -3109,6 +3127,23 @@
       if (os > seenOpenSocial){ seenOpenSocial = os; socialOpen ? closeSocial() : openSocial(); }
     }
     if (cs > seenChatSeq){ seenChatSeq = cs; renderFeed(); }
+    // The engine mirrors the server's ack for every social action. Surface it: an action that
+    // silently does nothing is indistinguishable from a broken server, and a REFUSAL that says
+    // nothing is worse — the privacy control was refused on every click and looked fine.
+    var sr = m.socialResult || '';
+    if (sr !== seenSocialResult) {
+      seenSocialResult = sr;
+      var res = pj(sr);
+      if (res && res.op) {
+        if (res.ok === true) {
+          if (res.op === 'PresenceMode') setStatus('Now visible to: ' + res.detail + '.');
+          else if (res.op === 'SetWorldMode') setStatus(String(res.detail) === 'party'
+            ? 'Your world is open to your party.' : 'Your world is solo again.');
+        } else {
+          setStatus("Couldn't " + res.op + ': ' + (res.detail || 'refused') + '.', 8000);
+        }
+      }
+    }
     if (socialOpen) renderSocial();
   }, 150);
   // ---- keys: handled HERE, in JS, not round-tripped through the engine ----
