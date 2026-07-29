@@ -13,9 +13,40 @@
 // mid-record, and a failing append is LOGGED, never swallowed — a silently dead chat log is
 // worse than no chat log, because an operator would believe they had evidence.
 
-import { appendFile, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import type { DatabaseSync } from 'node:sqlite';
+import { readdir, readFile, rm } from 'node:fs/promises';
+import { openDb, tx } from '../persist/sqlite';
 import { log } from '../log';
+
+const MIGRATIONS = [
+  {
+    name: '001-moderation',
+    up: (db: DatabaseSync) => {
+      // tsMs alongside the ISO ts: every read is a time RANGE (last N minutes, older than
+      // retention), and an integer compare is the thing an index can actually use.
+      db.exec(`CREATE TABLE chat_lines (
+        id       INTEGER PRIMARY KEY AUTOINCREMENT,
+        tsMs     INTEGER NOT NULL,
+        ts       TEXT NOT NULL,
+        playerId INTEGER NOT NULL,
+        account  TEXT NOT NULL,
+        name     TEXT NOT NULL,
+        channel  TEXT NOT NULL,
+        text     TEXT NOT NULL
+      )`);
+      db.exec('CREATE INDEX chat_lines_ts ON chat_lines (tsMs)');
+      // Erasure and /chatlog both filter by person; without this they scan the whole log.
+      db.exec('CREATE INDEX chat_lines_account ON chat_lines (account)');
+      db.exec(`CREATE TABLE reports (
+        file   TEXT PRIMARY KEY,   -- stable id, kept in the old filename shape
+        tsMs   INTEGER NOT NULL,
+        doc    TEXT NOT NULL       -- the ReportDoc as JSON
+      )`);
+      db.exec('CREATE INDEX reports_ts ON reports (tsMs)');
+    },
+  },
+];
 
 export interface ChatLine {
   ts: string; // ISO 8601, UTC
@@ -73,19 +104,23 @@ function parseLines(raw: string): ChatLine[] {
 }
 
 export class ChatLog {
-  private readonly dir: string;
+  private readonly db: DatabaseSync;
   private readonly ring: ChatLine[] = [];
   private queue: Promise<void> = Promise.resolve();
-  private lastDay = '';
+  private readonly legacyDir: string;
 
   constructor(
     dataDir: string,
     private readonly cfg: ModerationConfig,
   ) {
-    this.dir = join(dataDir, 'logs');
+    this.db = openDb(join(dataDir, 'moderation.db'), MIGRATIONS);
+    this.legacyDir = join(dataDir, 'logs');
     // Prune at boot, not on a timer: a server that is restarted regularly (every deploy)
     // would otherwise only ever prune on the rare long-lived process.
-    if (cfg.chatLog) this.enqueue(() => this.prune());
+    if (cfg.chatLog) {
+      this.enqueue(() => this.importLegacy());
+      this.enqueue(() => this.prune());
+    }
   }
 
   private enqueue(fn: () => Promise<void>): void {
@@ -94,123 +129,132 @@ export class ChatLog {
     });
   }
 
+  // One-shot import of the pre-SQLite logs/chat-*.jsonl files, only when the table is empty.
+  // The files are LEFT on disk (an operator may already be shipping them somewhere) and are
+  // never re-imported, because the emptiness check only passes once.
+  private async importLegacy(): Promise<void> {
+    const any = this.db.prepare('SELECT 1 FROM chat_lines LIMIT 1').get();
+    if (any) return;
+    let names: string[];
+    try {
+      names = await readdir(this.legacyDir);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return;
+      throw err;
+    }
+    const files = names.filter((n) => /^chat-\d{4}-\d{2}-\d{2}\.jsonl$/.test(n)).sort();
+    if (files.length === 0) return;
+    let imported = 0;
+    for (const name of files) {
+      const raw = await readFile(join(this.legacyDir, name), 'utf8');
+      const lines = parseLines(raw);
+      tx(this.db, () => {
+        for (const l of lines) {
+          this.insert(l);
+          imported++;
+        }
+      });
+    }
+    if (imported > 0) log('info', 'chatlog.imported_from_jsonl', { lines: imported, files: files.length });
+  }
+
+  private insert(line: ChatLine): void {
+    this.db
+      .prepare(`INSERT INTO chat_lines (tsMs, ts, playerId, account, name, channel, text)
+                VALUES (?, ?, ?, ?, ?, ?, ?)`)
+      .run(Date.parse(line.ts), line.ts, line.playerId, line.account, line.name, line.channel, line.text);
+  }
+
   // Synchronous by design: the in-memory context ring must contain the line BEFORE the
   // /report that follows it in the same tick can read the ring.
   record(line: ChatLine): void {
     this.ring.push(line);
     if (this.ring.length > this.cfg.contextLines) this.ring.shift();
     if (!this.cfg.chatLog) return;
-    const day = dayKey(Date.parse(line.ts));
-    const rolled = this.lastDay !== '' && this.lastDay !== day;
-    this.lastDay = day;
-    this.enqueue(async () => {
-      await mkdir(this.dir, { recursive: true });
-      await appendFile(join(this.dir, `chat-${day}.jsonl`), JSON.stringify(line) + '\n', 'utf8');
-    });
-    if (rolled) this.enqueue(() => this.prune());
+    this.enqueue(async () => this.insert(line));
   }
 
   // Last N lines seen by THIS process. Used for report context: it is the cheapest correct
-  // answer and it cannot race a pending append.
+  // answer and it cannot race a pending write.
   context(): ChatLine[] {
     return [...this.ring];
   }
 
-  // Lets a caller (tests, /chatlog) observe everything recorded so far on disk.
+  // Lets a caller (tests, /chatlog) observe everything recorded so far.
   drain(): Promise<void> {
     return this.queue;
   }
 
-  // Reads back the last `minutes` of chat from the day files, optionally for one player.
-  // Disk-backed rather than ring-backed so it still answers after a restart.
+  // Reads back the last `minutes` of chat, optionally for one player. Backed by the table
+  // rather than the ring so it still answers after a restart.
   async readRecent(minutes: number, nameFilter?: string): Promise<ChatLine[]> {
     await this.drain();
-    const now = Date.now();
-    const cutoff = now - minutes * 60_000;
-    // Span the day files the window actually TOUCHES, not the number of whole days it is
-    // long. Files are keyed by UTC date (dayKey uses toISOString), so a short window can
-    // still straddle a UTC midnight: `floor(60min / 24h) + 1` says one file, while the
-    // window really covers two. That made /chatlog return nothing from before midnight —
-    // precisely when an admin is reviewing an incident that just happened. DAY_MS buckets
-    // align to UTC epoch days, so flooring each end gives the real file span.
-    const days = Math.min(
-      MAX_CONTEXT_SCAN_DAYS,
-      Math.floor(now / DAY_MS) - Math.floor(cutoff / DAY_MS) + 1,
+    // The scan is still bounded the way the day-file version was: a caller asking for a
+    // year of chat must not be able to pull the whole table into memory.
+    const cutoff = Math.max(
+      Date.now() - minutes * 60_000,
+      Date.now() - MAX_CONTEXT_SCAN_DAYS * DAY_MS,
     );
     const want = nameFilter?.toLowerCase();
-    const out: ChatLine[] = [];
-    for (let i = days - 1; i >= 0; i--) {
-      const path = join(this.dir, `chat-${dayKey(now - i * DAY_MS)}.jsonl`);
-      let raw: string;
-      try {
-        raw = await readFile(path, 'utf8');
-      } catch (err) {
-        if ((err as NodeJS.ErrnoException).code === 'ENOENT') continue; // no chat that day
-        throw err;
-      }
-      for (const line of parseLines(raw)) {
-        if (Date.parse(line.ts) < cutoff) continue;
-        if (want && line.name.toLowerCase() !== want && line.account !== want) continue;
-        out.push(line);
-      }
-    }
-    return out;
+    const rows = (
+      want === undefined
+        ? this.db
+            .prepare(`SELECT ts, playerId, account, name, channel, text FROM chat_lines
+                      WHERE tsMs >= ? ORDER BY id`)
+            .all(cutoff)
+        : this.db
+            .prepare(`SELECT ts, playerId, account, name, channel, text FROM chat_lines
+                      WHERE tsMs >= ? AND (LOWER(name) = ? OR account = ?) ORDER BY id`)
+            .all(cutoff, want, want)
+    ) as unknown as ChatLine[];
+    return rows;
   }
 
   async prune(): Promise<void> {
-    const oldest = dayKey(Date.now() - this.cfg.retentionDays * DAY_MS);
-    let names: string[];
-    try {
-      names = await readdir(this.dir);
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return; // nothing logged yet
-      throw err;
-    }
-    for (const name of names) {
-      const m = /^chat-(\d{4}-\d{2}-\d{2})\.jsonl$/.exec(name);
-      // Lexicographic compare is correct for ISO dates, and it never has to parse a
-      // filename an operator may have dropped in the directory by hand.
-      if (m && m[1]! < oldest) {
-        await rm(join(this.dir, name), { force: true });
-        log('info', 'chatlog.pruned', { file: name });
-      }
-    }
+    // Retention is counted in whole UTC DAYS, not exact milliseconds — that is the documented
+    // policy (it matches the backup retention in README.md) and it is what the day-file
+    // version enforced by comparing date strings. Flooring to the UTC midnight of the oldest
+    // kept day preserves it: a line from exactly retentionDays ago survives its whole day
+    // instead of being cut at the wall-clock instant the prune happens to run.
+    const cutoff = Date.parse(dayKey(Date.now() - this.cfg.retentionDays * DAY_MS));
+    const r = this.db.prepare('DELETE FROM chat_lines WHERE tsMs < ?').run(cutoff);
+    if (Number(r.changes) > 0) log('info', 'chatlog.pruned', { lines: Number(r.changes) });
   }
 }
 
 export class ReportStore {
-  private readonly dir: string;
+  private readonly db: DatabaseSync;
 
   constructor(
     dataDir: string,
     private readonly retentionDays: number,
   ) {
-    this.dir = join(dataDir, 'reports');
+    this.db = openDb(join(dataDir, 'moderation.db'), MIGRATIONS);
   }
 
+  // Returns the report's id. Kept in the old filename shape so existing callers, admin output
+  // and tests still have a stable, human-readable handle for one report.
   async write(doc: ReportDoc): Promise<string> {
-    await mkdir(this.dir, { recursive: true });
     const file = `${doc.ts.replace(/[:.]/g, '-')}-${safeName(doc.reporter.name)}.json`;
-    await writeFile(join(this.dir, file), JSON.stringify(doc, null, 2) + '\n', 'utf8');
+    this.db
+      .prepare('INSERT OR REPLACE INTO reports (file, tsMs, doc) VALUES (?, ?, ?)')
+      .run(file, Date.parse(doc.ts), JSON.stringify(doc));
     return file;
   }
 
-  // Newest first. A single unreadable report must not hide every other one, so a bad file
-  // is logged and skipped rather than failing the whole listing.
+  // Newest first. A single unreadable report must not hide every other one, so a bad row is
+  // logged and skipped rather than failing the whole listing.
   async list(limit = 20): Promise<{ file: string; doc: ReportDoc }[]> {
-    let names: string[];
-    try {
-      names = await readdir(this.dir);
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return [];
-      throw err;
-    }
+    const capped = Number.isFinite(limit) ? Math.max(0, Math.trunc(limit)) : -1;
+    const rows = this.db
+      .prepare('SELECT file, doc FROM reports ORDER BY file DESC LIMIT ?')
+      .all(capped === -1 ? -1 : capped) as { file: string; doc: string }[];
     const out: { file: string; doc: ReportDoc }[] = [];
-    for (const file of names.filter((n) => n.endsWith('.json')).sort().reverse().slice(0, limit)) {
+    for (const r of rows) {
       try {
-        out.push({ file, doc: JSON.parse(await readFile(join(this.dir, file), 'utf8')) as ReportDoc });
+        out.push({ file: r.file, doc: JSON.parse(r.doc) as ReportDoc });
       } catch (err) {
-        log('warn', 'reports.unreadable', { file, error: String(err) });
+        log('warn', 'reports.unreadable', { file: r.file, error: String(err) });
       }
     }
     return out;
@@ -218,12 +262,8 @@ export class ReportStore {
 
   async prune(): Promise<void> {
     const cutoff = Date.now() - this.retentionDays * DAY_MS;
-    for (const { file, doc } of await this.list(Number.MAX_SAFE_INTEGER)) {
-      if (Date.parse(doc.ts) < cutoff) {
-        await rm(join(this.dir, file), { force: true });
-        log('info', 'reports.pruned', { file });
-      }
-    }
+    const r = this.db.prepare('DELETE FROM reports WHERE tsMs < ?').run(cutoff);
+    if (Number(r.changes) > 0) log('info', 'reports.pruned', { reports: Number(r.changes) });
   }
 }
 

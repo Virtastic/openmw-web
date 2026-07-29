@@ -1,15 +1,21 @@
 // Copyright (C) 2025-2026 Virtastic - https://virtastic.app
 // SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
-// M8 ban list: <dataDir>/bans.json, atomic writes, loaded before the listener opens.
-// Two independent lists — accounts (by lowercased name) and IPs — because an account ban
-// is about a person and an IP ban is about a source. IP bans are checked at socket accept
-// (cheapest possible refusal); account bans at auth and at resume.
+// M8 ban list: <dataDir>/bans.db (SQLite). Two independent tables — accounts (by lowercased
+// name) and IPs — because an account ban is about a person and an IP ban is about a source.
+// IP bans are checked at socket accept (cheapest possible refusal); account bans at auth and
+// at resume.
 //
 // PRIVACY.md: an IP ban is the ONLY place this server persists an IP address. Lifting the
-// ban erases it.
+// ban erases it — a DELETE here, so the value is gone from the table rather than lingering in
+// a rewritten JSON blob.
+//
+// Migrated from bans.json (docs/SQLITE-CONSOLIDATION.md step 2). Reads stay in memory because
+// isIpBanned runs on every accept; SQLite is the durable side, not the read path.
 
 import { join } from 'node:path';
-import { readJson, writeJsonAtomic } from './atomicjson';
+import type { DatabaseSync } from 'node:sqlite';
+import { readJson } from './atomicjson';
+import { openDb, tx } from './sqlite';
 import { log } from '../log';
 import { timeFlush } from '../metrics';
 
@@ -24,17 +30,56 @@ interface BansDoc {
   ips: Record<string, BanEntry>;
 }
 
+const MIGRATIONS = [
+  {
+    name: '001-bans',
+    up: (db: DatabaseSync) => {
+      db.exec(`CREATE TABLE bans (
+        scope  TEXT NOT NULL,           -- 'account' | 'ip'
+        key    TEXT NOT NULL,           -- account nameLower, or the IP
+        by     TEXT NOT NULL,
+        at     TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        PRIMARY KEY (scope, key)
+      )`);
+    },
+  },
+];
+
 export class BanStore {
-  private readonly path: string;
+  private readonly db: DatabaseSync;
+  private readonly jsonPath: string;
   private doc: BansDoc = { accounts: {}, ips: {} };
   private loaded: Promise<void>;
   private write: Promise<void> = Promise.resolve();
 
   constructor(dataDir: string) {
-    this.path = join(dataDir, 'bans.json');
-    this.loaded = readJson<BansDoc>(this.path).then((d) => {
-      if (d) this.doc = { accounts: d.accounts ?? {}, ips: d.ips ?? {} };
-    });
+    this.db = openDb(join(dataDir, 'bans.db'), MIGRATIONS);
+    this.jsonPath = join(dataDir, 'bans.json');
+    this.loaded = this.load();
+  }
+
+  private async load(): Promise<void> {
+    const rows = this.db.prepare('SELECT scope, key, by, at, reason FROM bans').all() as
+      { scope: string; key: string; by: string; at: string; reason: string }[];
+    for (const r of rows) {
+      const target = r.scope === 'ip' ? this.doc.ips : this.doc.accounts;
+      target[r.key] = { by: r.by, at: r.at, reason: r.reason };
+    }
+    // One-shot import of the pre-SQLite file, only when the table is empty — a deployment must
+    // not need a manual step. The JSON is left on disk (not deleted) until a release has proven
+    // the DB, per the consolidation plan.
+    if (rows.length === 0) {
+      const old = await readJson<BansDoc>(this.jsonPath);
+      if (old && (Object.keys(old.accounts ?? {}).length || Object.keys(old.ips ?? {}).length)) {
+        this.doc = { accounts: old.accounts ?? {}, ips: old.ips ?? {} };
+        this.persistAll();
+        log('info', 'bans.imported_from_json', {
+          accounts: Object.keys(this.doc.accounts).length,
+          ips: Object.keys(this.doc.ips).length,
+        });
+      }
+    }
   }
 
   ready(): Promise<void> {
@@ -50,8 +95,10 @@ export class BanStore {
   }
 
   banAccount(name: string, by: string, reason: string): void {
-    this.doc.accounts[name.toLowerCase()] = { by, at: new Date().toISOString(), reason };
-    this.save();
+    const key = name.toLowerCase();
+    const entry = { by, at: new Date().toISOString(), reason };
+    this.doc.accounts[key] = entry;
+    this.put('account', key, entry);
   }
 
   // Returns false when nothing was lifted, so the caller can say so plainly.
@@ -59,19 +106,20 @@ export class BanStore {
     const key = name.toLowerCase();
     if (!this.doc.accounts[key]) return false;
     delete this.doc.accounts[key];
-    this.save();
+    this.remove('account', key);
     return true;
   }
 
   banIp(ip: string, by: string, reason: string): void {
-    this.doc.ips[ip] = { by, at: new Date().toISOString(), reason };
-    this.save();
+    const entry = { by, at: new Date().toISOString(), reason };
+    this.doc.ips[ip] = entry;
+    this.put('ip', ip, entry);
   }
 
   unbanIp(ip: string): boolean {
     if (!this.doc.ips[ip]) return false;
     delete this.doc.ips[ip];
-    this.save();
+    this.remove('ip', ip);
     return true;
   }
 
@@ -83,9 +131,35 @@ export class BanStore {
     return Object.keys(this.doc.ips);
   }
 
-  private save(): void {
+  private put(scope: 'account' | 'ip', key: string, e: BanEntry): void {
+    this.run(() =>
+      this.db
+        .prepare('INSERT OR REPLACE INTO bans (scope, key, by, at, reason) VALUES (?, ?, ?, ?, ?)')
+        .run(scope, key, e.by, e.at, e.reason),
+    );
+  }
+
+  private remove(scope: 'account' | 'ip', key: string): void {
+    this.run(() => this.db.prepare('DELETE FROM bans WHERE scope = ? AND key = ?').run(scope, key));
+  }
+
+  private persistAll(): void {
+    this.run(() =>
+      tx(this.db, () => {
+        const stmt = this.db.prepare(
+          'INSERT OR REPLACE INTO bans (scope, key, by, at, reason) VALUES (?, ?, ?, ?, ?)',
+        );
+        for (const [k, e] of Object.entries(this.doc.accounts)) stmt.run('account', k, e.by, e.at, e.reason);
+        for (const [k, e] of Object.entries(this.doc.ips)) stmt.run('ip', k, e.by, e.at, e.reason);
+      }),
+    );
+  }
+
+  // Writes are synchronous in node:sqlite; the promise chain is kept so flush() still means
+  // "every write this store issued has landed" for callers and tests that await it.
+  private run(fn: () => void): void {
     this.write = this.write.then(() =>
-      timeFlush('bans', () => writeJsonAtomic(this.path, this.doc)).catch((err) =>
+      timeFlush('bans', async () => fn()).catch((err) =>
         log('error', 'bans.flush_failed', { error: String(err) }),
       ),
     );

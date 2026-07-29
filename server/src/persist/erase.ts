@@ -17,11 +17,70 @@
 //     what to grep for instead of pretending it can rewrite an operator's log pipeline.
 
 import { readdir, rm, readFile, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { DatabaseSync } from 'node:sqlite';
 import { join } from 'node:path';
 
 // A4: the chat log is a per-line stream, so erasure REWRITES each day file without this
 // account's lines rather than deleting the file — one player's deletion request must not
 // destroy everyone else's conversation. Whole-file delete only happens if nothing is left.
+// Chat lines and reports live in moderation.db since the persistence consolidation. Erasure
+// must DELETE those rows: missing them would leave the account's own words, and every report
+// naming it, behind after an erase. The legacy files are still scrubbed below so an erase run
+// against either layout is complete.
+// SSO identities moved into identities.db. Same rule as the moderation and ban tables: the
+// rows must GO, or the next SSO login silently re-creates the account that was just erased.
+function eraseIdentitiesDb(dataDir: string, key: string): number {
+  const path = join(dataDir, 'identities.db');
+  if (!existsSync(path)) return 0;
+  const db = new DatabaseSync(path);
+  try {
+    return Number(db.prepare('DELETE FROM identities WHERE accountKey = ?').run(key).changes);
+  } catch (err) {
+    if (/no such table/i.test(String(err))) return 0;
+    throw err;
+  } finally {
+    db.close();
+  }
+}
+
+function eraseModerationDb(dataDir: string, key: string): { chatLines: number; reports: number } {
+  const path = join(dataDir, 'moderation.db');
+  if (!existsSync(path)) return { chatLines: 0, reports: 0 };
+  const db = new DatabaseSync(path);
+  try {
+    const chat = db.prepare('DELETE FROM chat_lines WHERE account = ?').run(key);
+    // Reports are stored as a JSON doc, so the account is matched inside it: reports FILED BY
+    // this account and reports ABOUT it both go, exactly as the file-based version did.
+    const rows = db.prepare('SELECT file, doc FROM reports').all() as { file: string; doc: string }[];
+    const del = db.prepare('DELETE FROM reports WHERE file = ?');
+    let reports = 0;
+    for (const r of rows) {
+      let doc: { reporter?: { account?: unknown }; target?: { account?: unknown; name?: unknown } };
+      try {
+        doc = JSON.parse(r.doc) as typeof doc;
+      } catch {
+        continue; // unreadable: leave it for the operator rather than deleting blind
+      }
+      const namesAccount =
+        doc.reporter?.account === key ||
+        doc.target?.account === key ||
+        (typeof doc.target?.name === 'string' && doc.target.name.toLowerCase() === key);
+      if (namesAccount) {
+        del.run(r.file);
+        reports++;
+      }
+    }
+    return { chatLines: Number(chat.changes), reports };
+  } catch (err) {
+    // A DB that predates these tables holds nothing about this account.
+    if (/no such table/i.test(String(err))) return { chatLines: 0, reports: 0 };
+    throw err;
+  } finally {
+    db.close();
+  }
+}
+
 async function eraseChatLines(dataDir: string, key: string): Promise<number> {
   const dir = join(dataDir, 'logs');
   let names: string[];
@@ -184,20 +243,40 @@ async function eraseByAccountField(dir: string, key: string): Promise<number> {
 
 export async function deleteAccount(dataDir: string, name: string): Promise<EraseReport> {
   const key = name.toLowerCase();
+  const dbErased = eraseModerationDb(dataDir, key);
   // Order matters: character docs are found VIA the account file, so erase them first.
   const player = await erasePlayerDocs(dataDir, key);
   const report: EraseReport = {
     account: await unlinkIfPresent(join(dataDir, 'accounts', `${key}.json`)),
     player,
     bans: false,
-    identities: await eraseIdentities(dataDir, key),
-    chatLines: await eraseChatLines(dataDir, key),
-    reports: await eraseReports(dataDir, key),
+    identities: eraseIdentitiesDb(dataDir, key) + (await eraseIdentities(dataDir, key)),
+    // Both layouts are summed: the DB rows plus anything still in the legacy files.
+    chatLines: dbErased.chatLines + (await eraseChatLines(dataDir, key)),
+    reports: dbErased.reports + (await eraseReports(dataDir, key)),
   };
   await eraseByAccountField(join(dataDir, 'usernames'), key);
   await eraseByAccountField(join(dataDir, 'integrations', 'attio-queue'), key);
   // An account ban keeps the name (and an ip ban an address); erasure lifts it. That is
   // the honest trade and it is documented: a ban cannot outlive the data it names.
+  // Bans live in bans.db (SQLite) since the persistence consolidation. Erasure must DELETE the
+  // row: a rewritten JSON blob was the old shape, and missing this would leave the banned name
+  // — and for an IP ban the only IP address this server persists — behind after an erase.
+  // The legacy bans.json is still scrubbed below for installs that have not booted the new
+  // store yet, so an erase run against either layout is complete.
+  const bansDbPath = join(dataDir, 'bans.db');
+  if (existsSync(bansDbPath)) {
+    const db = new DatabaseSync(bansDbPath);
+    try {
+      const r = db.prepare("DELETE FROM bans WHERE scope = 'account' AND key = ?").run(key);
+      if (Number(r.changes) > 0) report.bans = true;
+    } catch (err) {
+      // A DB that predates the table is not an erasure failure; nothing of this account is in it.
+      if (!/no such table/i.test(String(err))) throw err;
+    } finally {
+      db.close();
+    }
+  }
   const bansPath = join(dataDir, 'bans.json');
   try {
     const doc = JSON.parse(await readFile(bansPath, 'utf8')) as {

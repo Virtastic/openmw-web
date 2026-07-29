@@ -7,6 +7,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { DatabaseSync } from 'node:sqlite';
 import { join as pjoin } from 'node:path';
 import { startServer, type RunningServer } from '../src/server';
 import type { DeepPartial, Config } from '../src/config';
@@ -62,9 +63,36 @@ async function say(c: TestClient, text: string): Promise<void> {
 
 const today = (): string => new Date().toISOString().slice(0, 10);
 
-async function readChatLog(dataDir: string, day = today()): Promise<ChatLine[]> {
-  const raw = await readFile(pjoin(dataDir, 'logs', `chat-${day}.jsonl`), 'utf8');
-  return raw.split('\n').filter((l) => l.length > 0).map((l) => JSON.parse(l) as ChatLine);
+// Chat lives in moderation.db (the persistence consolidation), so the log is READ BACK by
+// query rather than by parsing a day file. Same assertions, different storage.
+function readChatLog(dataDir: string): ChatLine[] {
+  const db = new DatabaseSync(pjoin(dataDir, 'moderation.db'));
+  try {
+    return db
+      .prepare('SELECT ts, playerId, account, name, channel, text FROM chat_lines ORDER BY id')
+      .all() as unknown as ChatLine[];
+  } finally {
+    db.close();
+  }
+}
+
+function countChatLines(dataDir: string): number {
+  const db = new DatabaseSync(pjoin(dataDir, 'moderation.db'));
+  try {
+    return Number((db.prepare('SELECT COUNT(*) AS n FROM chat_lines').get() as { n: number }).n);
+  } finally {
+    db.close();
+  }
+}
+
+function listReports(dataDir: string): { file: string; doc: ReportDoc }[] {
+  const db = new DatabaseSync(pjoin(dataDir, 'moderation.db'));
+  try {
+    return (db.prepare('SELECT file, doc FROM reports ORDER BY file').all() as
+      { file: string; doc: string }[]).map((r) => ({ file: r.file, doc: JSON.parse(r.doc) as ReportDoc }));
+  } finally {
+    db.close();
+  }
 }
 
 test('chat lines land in the daily file with the documented shape', async (t) => {
@@ -74,7 +102,7 @@ test('chat lines land in the daily file with the documented shape', async (t) =>
   await slash(c, '/list', /Talker/);
   await server.flush(); // drains the chat log's append queue
 
-  const lines = await readChatLog(dataDir);
+  const lines = readChatLog(dataDir);
   const said = lines.find((l) => l.text === 'hello world');
   assert.ok(said, 'the spoken line is on disk');
   assert.deepEqual(Object.keys(said!).sort(), ['account', 'channel', 'name', 'playerId', 'text', 'ts']);
@@ -89,8 +117,8 @@ test('chat lines land in the daily file with the documented shape', async (t) =>
   assert.ok(cmd, '/list is in the log');
   assert.equal(cmd!.channel, 'command');
 
-  // The day file is named for today, and it is the ONLY chat file.
-  assert.deepEqual(await readdir(pjoin(dataDir, 'logs')), [`chat-${today()}.jsonl`]);
+  // Everything recorded is in the one table; there are no per-day files to rotate.
+  assert.equal(countChatLines(dataDir), lines.length);
   c.close();
   await c.closed;
 });
@@ -105,22 +133,20 @@ test('chatLog=false keeps the durable stream off entirely', async (t) => {
   await c.closed;
 });
 
-test('retention prunes day files older than retentionDays', async (t) => {
+test('retention prunes chat lines older than retentionDays', async (t) => {
   void t;
   const dataDir = tmpDataDir();
-  const dir = pjoin(dataDir, 'logs');
-  await mkdir(dir, { recursive: true });
-  const day = (back: number) => new Date(Date.now() - back * 86_400_000).toISOString().slice(0, 10);
-  for (const back of [0, 1, 3, 4, 30]) {
-    await writeFile(pjoin(dir, `chat-${day(back)}.jsonl`), '{"ts":"x","text":"x"}\n', 'utf8');
-  }
-  // A file an operator dropped in by hand must survive: the prune only matches its own glob.
-  await writeFile(pjoin(dir, 'notes.txt'), 'keep me', 'utf8');
-
+  const at = (back: number) => new Date(Date.now() - back * 86_400_000).toISOString();
   const log = new ChatLog(dataDir, { chatLog: true, retentionDays: 3, contextLines: 5 });
+  for (const back of [0, 1, 3, 4, 30]) {
+    log.record({ ts: at(back), playerId: 1, account: 'a', name: 'A', channel: 'say', text: `d${back}` });
+  }
+  await log.drain();
   await log.prune();
-  const left = (await readdir(dir)).sort();
-  assert.deepEqual(left, ['chat-' + day(0) + '.jsonl', 'chat-' + day(1) + '.jsonl', 'chat-' + day(3) + '.jsonl', 'notes.txt'].sort());
+  // Retention is a time window over rows now, not a day-file glob: everything inside the
+  // window survives and everything older is gone, with no rounding to whole files.
+  const kept = readChatLog(dataDir).map((l) => l.text).sort();
+  assert.deepEqual(kept, ['d0', 'd1', 'd3'].sort());
 });
 
 test('readRecent windows by minutes and filters by player', async (t) => {
@@ -171,10 +197,11 @@ test('/report writes a well-formed report with context', async (t) => {
   assert.match(await slash(reporter, '/report Griefer extortion in chat', /Report filed/), /Report filed against Griefer/);
   await server.flush();
 
-  const files = await readdir(pjoin(dataDir, 'reports'));
-  assert.equal(files.length, 1);
-  assert.match(files[0]!, /^\d{4}-\d{2}-\d{2}T[\d-]+Z-Reporter\.json$/, `unexpected report filename ${files[0]}`);
-  const doc = JSON.parse(await readFile(pjoin(dataDir, 'reports', files[0]!), 'utf8')) as ReportDoc;
+  const filed = listReports(dataDir);
+  assert.equal(filed.length, 1);
+  // The id keeps the old filename shape so an operator still has a readable handle per report.
+  assert.match(filed[0]!.file, /^\d{4}-\d{2}-\d{2}T[\d-]+Z-Reporter\.json$/, `unexpected report id ${filed[0]!.file}`);
+  const doc = filed[0]!.doc;
   assert.equal(doc.reporter.name, 'Reporter');
   assert.equal(doc.reporter.account, 'reporter');
   assert.equal(doc.target.name, 'Griefer');
@@ -190,16 +217,13 @@ test('/report writes a well-formed report with context', async (t) => {
     assert.match(await slash(reporter, '/report', /usage: \/report/), /usage: \/report/);
     assert.match(await slash(reporter, '/report Griefer', /usage: \/report/), /usage: \/report/);
     await server.flush();
-    assert.equal((await readdir(pjoin(dataDir, 'reports'))).length, 1);
+    assert.equal(listReports(dataDir).length, 1);
   });
 
   await t.test('an offline target is still reportable', async () => {
     assert.match(await slash(reporter, '/report Ghost logged off after griefing', /Report filed/), /Report filed/);
     await server.flush();
-    const all = await readdir(pjoin(dataDir, 'reports'));
-    const ghost = (await Promise.all(all.map(async (f) =>
-      JSON.parse(await readFile(pjoin(dataDir, 'reports', f), 'utf8')) as ReportDoc)))
-      .find((d) => d.target.name === 'Ghost');
+    const ghost = listReports(dataDir).map((r) => r.doc).find((d) => d.target.name === 'Ghost');
     assert.ok(ghost, 'a report naming an offline player is written');
     assert.equal(ghost!.target.id, null);
     assert.equal(ghost!.target.account, null);
@@ -277,16 +301,16 @@ test('erasure removes chat lines and reports naming the account', async (t) => {
   await server.flush();
   await server.close();
 
-  assert.equal((await readdir(pjoin(dataDir, 'reports'))).length, 2);
+  assert.equal(listReports(dataDir).length, 2);
   const report = await deleteAccount(dataDir, 'Erasable');
   assert.equal(report.account, true);
   assert.ok(report.chatLines >= 1, `expected chat lines removed, got ${report.chatLines}`);
   // Both reports name the account: one filed BY it, one ABOUT it.
   assert.equal(report.reports, 2);
-  assert.equal((await readdir(pjoin(dataDir, 'reports'))).length, 0);
+  assert.equal(listReports(dataDir).length, 0);
 
   // The bystander's conversation is untouched — one player's erasure is not everyone's.
-  const left = await readChatLog(dataDir);
+  const left = readChatLog(dataDir);
   assert.ok(left.some((l) => l.text === 'something the bystander said'), 'other players\' lines survive');
   assert.ok(!left.some((l) => l.account === 'erasable'), 'no line from the erased account remains');
 
@@ -306,7 +330,13 @@ test('an unreadable report does not hide the readable ones', async (t) => {
     reason: 'test',
     context: [],
   });
-  await writeFile(pjoin(dataDir, 'reports', 'zz-corrupt.json'), '{not json', 'utf8');
+  // A corrupt row (hand-edited, or a torn write on older storage) must not hide the rest.
+  {
+    const db = new DatabaseSync(pjoin(dataDir, 'moderation.db'));
+    db.prepare('INSERT INTO reports (file, tsMs, doc) VALUES (?, ?, ?)')
+      .run('zz-corrupt.json', Date.now(), '{not json');
+    db.close();
+  }
   const listed = await store.list();
   assert.equal(listed.length, 1);
   assert.equal(listed[0]!.doc.reason, 'test');

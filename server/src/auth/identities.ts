@@ -17,6 +17,8 @@ import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { readJson, writeJsonAtomic } from '../persist/atomicjson';
+import type { DatabaseSync } from 'node:sqlite';
+import { openDb } from '../persist/sqlite';
 import { validAccountName, type AccountStore } from '../core/accounts';
 import type { Identity, ProviderId } from './oidc';
 import { log } from '../log';
@@ -32,14 +34,32 @@ export interface IdentityRecord {
   linkedAt: string;
 }
 
+const IDENTITY_MIGRATIONS = [
+  {
+    name: '001-identities',
+    up: (db: DatabaseSync) => {
+      db.exec(`CREATE TABLE identities (
+        key        TEXT PRIMARY KEY,   -- sha256(iss|sub); never the raw subject
+        iss        TEXT NOT NULL,
+        sub        TEXT NOT NULL,
+        accountKey TEXT NOT NULL,
+        linkedAt   TEXT NOT NULL
+      )`);
+      // listForAccount and erasure both look up by account, not by identity key.
+      db.exec('CREATE INDEX identities_account ON identities (accountKey)');
+    },
+  },
+];
+
 export class IdentityStore {
-  private readonly dir: string;
+  private readonly db: DatabaseSync;
+  private readonly legacyDir: string;
   private readonly byKey = new Map<string, IdentityRecord>();
   private loaded: Promise<void>;
 
   constructor(dataDir: string) {
-    this.dir = join(dataDir, 'identities');
-    mkdirSync(this.dir, { recursive: true });
+    this.db = openDb(join(dataDir, 'identities.db'), IDENTITY_MIGRATIONS);
+    this.legacyDir = join(dataDir, 'identities');
     this.loaded = this.load();
   }
 
@@ -47,19 +67,44 @@ export class IdentityStore {
   // exactly like the ban list — a missed entry would silently create a SECOND account for
   // a player who already has one.
   private async load(): Promise<void> {
-    const names = await readdir(this.dir);
+    const rows = this.db.prepare('SELECT key, iss, sub, accountKey, linkedAt FROM identities').all() as
+      { key: string; iss: string; sub: string; accountKey: string; linkedAt: string }[];
+    for (const r of rows) {
+      this.byKey.set(r.key, { iss: r.iss, sub: r.sub, accountKey: r.accountKey, linkedAt: r.linkedAt });
+    }
+    if (rows.length === 0) await this.importLegacy();
+  }
+
+  // One-shot import of the per-identity JSON files, only when the table is empty. A failure
+  // here is LOUD for the same reason the old loader was: a lost identity does not fail a
+  // login, it hands the player a brand new empty account.
+  private async importLegacy(): Promise<void> {
+    let names: string[];
+    try {
+      names = await readdir(this.legacyDir);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return;
+      throw err;
+    }
+    const insert = this.db.prepare(
+      'INSERT OR REPLACE INTO identities (key, iss, sub, accountKey, linkedAt) VALUES (?, ?, ?, ?, ?)',
+    );
+    let imported = 0;
     for (const name of names) {
       if (!/^[0-9a-f]{64}\.json$/.test(name)) continue;
       try {
-        const rec = await readJson<IdentityRecord>(join(this.dir, name));
-        if (rec && typeof rec.iss === 'string' && typeof rec.sub === 'string' && typeof rec.accountKey === 'string')
-          this.byKey.set(name.slice(0, 64), rec);
+        const rec = await readJson<IdentityRecord>(join(this.legacyDir, name));
+        if (rec && typeof rec.iss === 'string' && typeof rec.sub === 'string' && typeof rec.accountKey === 'string') {
+          const key = name.slice(0, 64);
+          this.byKey.set(key, rec);
+          insert.run(key, rec.iss, rec.sub, rec.accountKey, rec.linkedAt ?? new Date().toISOString());
+          imported++;
+        }
       } catch (err) {
-        // Loud: a corrupt identity file means a player who cannot log in, and silently
-        // skipping it would instead hand them a brand new empty character.
         log('error', 'identities.load_failed', { file: name, error: String(err) });
       }
     }
+    if (imported > 0) log('info', 'identities.imported_from_json', { identities: imported });
   }
 
   ready(): Promise<void> {
@@ -75,8 +120,10 @@ export class IdentityStore {
     const rec: IdentityRecord = { iss, sub, accountKey, linkedAt: new Date().toISOString() };
     this.byKey.set(key, rec);
     // Written through immediately (not via a dirty queue): losing this write means the
-    // next login creates a duplicate account.
-    await writeJsonAtomic(join(this.dir, `${key}.json`), rec);
+    // next login creates a duplicate account. node:sqlite commits synchronously.
+    this.db
+      .prepare('INSERT OR REPLACE INTO identities (key, iss, sub, accountKey, linkedAt) VALUES (?, ?, ?, ?, ?)')
+      .run(key, rec.iss, rec.sub, rec.accountKey, rec.linkedAt);
   }
 
   listForAccount(accountKey: string): IdentityRecord[] {
@@ -137,6 +184,17 @@ export async function resolveSsoAccount(
   provider: ProviderId,
   identity: Identity,
 ): Promise<{ accountKey: string; accountName: string; created: boolean }> {
+  // Capture a provider-verified email as the account's contact address, but never overwrite
+  // one the user already has (their onboarding choice wins). Awaited-flushed by the caller.
+  const adoptEmail = async (accountKey: string): Promise<void> => {
+    if (!identity.email) return;
+    const acc = await accounts.get(accountKey);
+    if (acc && acc.email === undefined) {
+      accounts.setEmail(acc, identity.email);
+      await accounts.flush();
+    }
+  };
+
   const existing = identities.get(identity.iss, identity.sub);
   if (existing) {
     const account = await accounts.get(existing.accountKey);
@@ -147,8 +205,10 @@ export async function resolveSsoAccount(
       log('warn', 'identities.orphan_index', { accountKey: existing.accountKey, iss: identity.iss });
       const revived = await accounts.createSso(existing.accountKey);
       if (typeof revived === 'string') throw new Error(`cannot revive account ${existing.accountKey}: ${revived}`);
+      await adoptEmail(existing.accountKey);
       return { accountKey: existing.accountKey, accountName: revived.name, created: true };
     }
+    await adoptEmail(existing.accountKey);
     return { accountKey: existing.accountKey, accountName: account.name, created: false };
   }
   const name = await pickDisplayName(accounts, provider, identity.nameHint);
@@ -156,6 +216,7 @@ export async function resolveSsoAccount(
   if (typeof created === 'string') throw new Error(`cannot create SSO account ${name}: ${created}`);
   const accountKey = created.name.toLowerCase();
   await identities.bind(identity.iss, identity.sub, accountKey);
+  await adoptEmail(accountKey);
   return { accountKey, accountName: created.name, created: true };
 }
 
