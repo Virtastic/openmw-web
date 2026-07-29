@@ -64,6 +64,13 @@ type AuthOp = 'register' | 'login' | 'resume' | 'ticket';
 // Matches play/index.html's ?mpauto=1 harness login. Public by construction (it is in the
 // page source), so the SERVER decides whether it is acceptable — see refuseHarnessAuth.
 const HARNESS_PASSWORD = 'harness-pass-1';
+// Placeholder for a slot auto-created before character creation has run. Deliberately generic:
+// it is public (tile label, PlayerAppearance, other players' screens) and must never be derived
+// from the account, whose SSO name is the person's real name.
+const DEFAULT_CHARACTER_NAME = 'Adventurer';
+// Frames kept for the byte-budget post-mortem. One second of traffic at the message cap is far
+// below this, so the window always covers the spike that did the damage.
+const TRAFFIC_WINDOW = 256;
 
 // Everything a connection needs from the composed server; kept as an interface so
 // connection.ts has no import cycle with server.ts.
@@ -103,6 +110,11 @@ export interface ServerCtx {
   // World access control (F3): may this account be in THIS world at all? Private = owner
   // only, party = owner/members/admins. Checked at auth, after the account is resolved.
   mayJoinWorld(accountKey: string, rank: number): boolean;
+  // Owner-only in-place flip of THIS world between 'private' (solo) and 'party' (joinable by
+  // the owner's party). Public worlds are not flippable. Used by the where-am-I switcher.
+  setWorldMode(accountKey: string, rank: number, mode: string): 'ok' | 'not_owner' | 'bad_mode' | 'not_flippable';
+  // Spawn a fresh party guest at the leader's position (null when it should not apply).
+  guestSpawn(accountKey: string): { cellKey: string; x: number; y: number; z: number } | null;
   // F3 chargen gate: true only for a GATEWAY-managed party/public world (where a separate
   // private world exists for character creation). A standalone/single-world server is false —
   // there is no other world to create the character in, so it must admit fresh characters.
@@ -137,6 +149,8 @@ export class Connection implements Peer {
   private authing = false;
   private sessionToken = ''; // M8: parked as a resume ticket when an in-world session drops
   private resumed?: ResumeTicket;
+  // Rolling frame log (type + size + time, no payload) used to explain a byte-budget kill.
+  private readonly trafficWindow: { at: number; bytes: number; type: string }[] = [];
   private readonly msgBucket: TokenBucket;
   private readonly byteBucket: TokenBucket;
   private readonly moveBucket: TokenBucket; // movement has its own budget (PROTOCOL.md M1)
@@ -153,7 +167,12 @@ export class Connection implements Peer {
     private readonly onClosed: () => void,
   ) {
     this.msgBucket = new TokenBucket(ctx.config.limits.msgsPerSec);
-    this.byteBucket = new TokenBucket(ctx.config.limits.bytesPerSec);
+    // Byte budget gets a BURST allowance above the sustained rate. Entering a dense cell is
+    // legitimately bursty (the cell's container/object state goes up in one go), and with
+    // burst == rate a single such moment disconnected a real player mid-tutorial with
+    // "byte rate limit exceeded". Sustained throughput is still capped at bytesPerSec — the
+    // burst only absorbs a short spike, which is what a token bucket is for.
+    this.byteBucket = new TokenBucket(ctx.config.limits.bytesPerSec, ctx.config.limits.bytesBurst);
     this.moveBucket = new TokenBucket(ctx.config.limits.moveMsgsPerSec);
     this.actorMoveBucket = new TokenBucket(ctx.config.limits.actorMoveMsgsPerSec);
     this.helloTimer = setTimeout(() => {
@@ -313,13 +332,53 @@ export class Connection implements Peer {
 
   // --------------------------------------------------------------- receiving
 
+  // Label a frame by TYPE only — binary opcode, or the text message's "t" tag. Never any
+  // payload: this goes to logs, and the payload can carry chat and player state.
+  private frameLabel(data: Buffer, isBinary: boolean, binType: number): string {
+    if (isBinary) return 'bin:' + binType;
+    const head = data.toString('utf8', 0, Math.min(data.byteLength, 120));
+    return 'text:' + (/"t"\s*:\s*"([A-Za-z0-9_]{1,40})"/.exec(head)?.[1] ?? '?');
+  }
+
+  // The last second of traffic, grouped by frame type, biggest first.
+  private topTraffic(): string {
+    const cutoff = Date.now() - 1000;
+    const totals = new Map<string, { n: number; bytes: number }>();
+    for (const f of this.trafficWindow) {
+      if (f.at < cutoff) continue;
+      const cur = totals.get(f.type) ?? { n: 0, bytes: 0 };
+      cur.n += 1;
+      cur.bytes += f.bytes;
+      totals.set(f.type, cur);
+    }
+    return [...totals]
+      .sort((a, b) => b[1].bytes - a[1].bytes)
+      .slice(0, 5)
+      .map(([type, v]) => `${type} x${v.n} ${v.bytes}B`)
+      .join(', ');
+  }
+
   private onMessage(data: Buffer, isBinary: boolean): void {
     if (this.state === 'CLOSED') return;
     // PlayerMove and ActorMoveBatch frames bypass the general msg bucket, and draw from two
     // SEPARATE movement budgets (bytes still count against bytesPerSec).
     const binType = isBinary && data.byteLength >= 2 ? data.readUInt16LE(0) : -1;
+    // Cheap rolling record of what this session has been sending. A bare "byte rate limit
+    // exceeded" names no culprit, which made a real disconnect undiagnosable — the traffic
+    // that caused it is gone by the time anyone looks. Type only, never payload.
+    this.trafficWindow.push({ at: Date.now(), bytes: data.byteLength, type: this.frameLabel(data, isBinary, binType) });
+    if (this.trafficWindow.length > TRAFFIC_WINDOW) this.trafficWindow.shift();
     if (!this.byteBucket.take(data.byteLength)) {
       metrics.rateLimited.inc({ budget: 'bytes' });
+      log('warn', 'conn.byte_budget_exceeded', {
+        ip: this.ip,
+        player: this.player?.name,
+        frameBytes: data.byteLength,
+        frameType: this.frameLabel(data, isBinary, binType),
+        limitPerSec: this.ctx.config.limits.bytesPerSec,
+        burst: this.ctx.config.limits.bytesBurst,
+        top: this.topTraffic(), // biggest contributors in the last second, by total bytes
+      });
       this.disconnect('RATE', 'byte rate limit exceeded');
       return;
     }
@@ -542,6 +601,23 @@ export class Connection implements Peer {
     if (this.ctx.combat.handleEvent(this.player, name, value)) return; // M5 family
     if (this.ctx.world.handleEvent(this.player, name, value)) return; // M3/M4 family
     if (handleStateEvent(this.ctx.stateCtx, this.player, name, value)) return; // M2 family
+    if (name === 'ChargenComplete') {
+      // The client's engine reports CharGenState == -1 (race/class/sign done). Until this
+      // arrives the slot is provisional and an abandoned creation resets on next entry.
+      // Idempotent, and re-reported on every login — which self-migrates pre-flag slots.
+      void this.ctx.accounts.get(this.player.accountKey).then((account) => {
+        if (account && this.player) this.ctx.accounts.completeCharacter(account, this.player.charId);
+      });
+      return;
+    }
+    if (name === 'SetWorldMode') {
+      // The where-am-I switcher's Solo/Party flip for the OWNER of this world. Members change
+      // worlds by dialling elsewhere (JoinFriend / PartyTravel), not by flipping this one.
+      const mode = value instanceof Map && typeof value.get('mode') === 'string' ? (value.get('mode') as string) : '';
+      const r = this.ctx.setWorldMode(this.player.accountKey, this.player.rank, mode);
+      this.player.peer.sendEvent('SocialResult', { op: 'SetWorldMode', ok: r === 'ok', detail: r === 'ok' ? mode : r });
+      return;
+    }
     if (name !== 'ChatSend') {
       log('warn', 'conn.unknown_event_dropped', { ip: this.ip, name });
       metrics.protocolErrors.inc({ kind: 'unknown_event' });
@@ -751,7 +827,11 @@ export class Connection implements Peer {
     if (this.isSystem) return {};
     const accountKey = account.name.toLowerCase();
     if (!account.characters || account.characters.length === 0) {
-      const created = this.ctx.accounts.createCharacter(account, account.name);
+      // NEVER the account name. An SSO account name is the person's real name, and a character
+      // name is public: it labels the tile, rides every PlayerAppearance, and is what other
+      // players see in-world. This slot is auto-created before creation has run, so it gets a
+      // neutral placeholder and takes its real in-world name from chargen.
+      const created = this.ctx.accounts.createCharacter(account, DEFAULT_CHARACTER_NAME);
       if (created === 'full') {
         this.authFail(op, 'AUTH_FAILED', 'no free character slot');
         return null;
@@ -770,7 +850,31 @@ export class Connection implements Peer {
       // length checked non-zero above, so the sort always yields one.
       char = [...account.characters].sort((a, b) => b.lastPlayedAt.localeCompare(a.lastPlayedAt))[0]!;
     }
-    const doc = await this.ctx.players.get(char.id);
+    let doc = await this.ctx.players.get(char.id);
+    if (!char.completed && doc !== undefined) {
+      // Which unflagged docs really finished creation? Appearance/stats are useless signals —
+      // they poll every second and land MID-chargen. Trustworthy ones: any journal entry
+      // (chargen's own entry is written at release) or a saved position OUTSIDE the chargen
+      // cells. A doc still parked in the prison ship / census office with an empty journal is
+      // an abandoned creation.
+      const positions = [
+        ...(doc.position ? [doc.position] : []),
+        ...Object.values(doc.positions ?? {}),
+      ];
+      const hasJournal = doc.journal !== undefined && Object.keys(doc.journal).length > 0;
+      // Past the chargen cells (or holding a journal entry) means creation really finished, so
+      // flag the slot complete. Anything else is creation still IN PROGRESS.
+      //
+      // Player state is NEVER destroyed here. An earlier revision erased docs that looked
+      // "abandoned" (chargen cells + empty journal), but a refresh mid-creation is
+      // indistinguishable from abandonment, so that rule deleted live progress and dropped the
+      // player back at the name prompt. Resuming an in-progress creation in place is always
+      // correct: the doc restores position and stats, and Morrowind's own chargen picks up
+      // where it left off. The slot simply stays uncompleted until ChargenComplete arrives.
+      const finished = hasJournal
+        || positions.some((p) => !/census|prison ship/i.test(p.cellKey));
+      if (finished) this.ctx.accounts.completeCharacter(account, char.id);
+    }
     return { char, doc };
   }
 
@@ -1054,6 +1158,12 @@ export class Connection implements Peer {
     this.state = 'IN_WORLD';
     metrics.joinLatency.observe({}, (Date.now() - this.openedAt) / 1000);
     this.ctx.roster.joinWorld(this.player);
+    // Spawn-near-leader: a fresh (non-resume) party guest lands next to the world's owner.
+    // Reuses the invite-teleport client path (global.lua MP_InviteAccepted -> teleport).
+    if (!this.resumed) {
+      const near = this.ctx.guestSpawn(this.player.accountKey);
+      if (near) this.player.peer.sendEvent('InviteAccepted', near);
+    }
     syncStateOnJoin(this.ctx.stateCtx, this.player); // M2 late-joiner appearance/equipment sync
     this.ctx.quests.sendJournalSync(this.player); // M6 full journal state at join
     this.ctx.quests.sendGlobalSync(this.player); // Phase 4 character-shadowed quest globals

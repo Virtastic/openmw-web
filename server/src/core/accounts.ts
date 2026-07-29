@@ -20,6 +20,11 @@ export interface CharacterSummary {
   name: string; // display name in-world; defaults to the account name at migration
   createdAt: string;
   lastPlayedAt: string;
+  // True once Morrowind's character creation (race/class/sign) FINISHED for this slot. Until
+  // then the slot is provisional. Player state is never destroyed on the strength of this
+  // flag — an in-progress creation resumes in place — but the flag gates the multiplayer
+  // features that make no sense before a character exists.
+  completed?: boolean;
 }
 
 export interface Account {
@@ -184,6 +189,32 @@ export class AccountStore {
     chars.push(char);
     this.dirty.add(account.name.toLowerCase());
     return char;
+  }
+
+  // Marks creation finished for a slot. Written through IMMEDIATELY rather than riding the
+  // 30 s dirty sweep: finish creation, refresh inside that window, and the flag never reached
+  // disk — the slot then looked like an unfinished creation on the next login. It fires once
+  // per character, so the cost is nothing.
+  completeCharacter(account: Account, charId: string): void {
+    const char = account.characters?.find((c) => c.id === charId);
+    if (!char || char.completed) return;
+    char.completed = true;
+    this.dirty.add(account.name.toLowerCase());
+    void this.flush();
+  }
+
+  // Delete a character slot. The slot record goes; the character's PlayerDoc is erased by the
+  // caller (it owns the PlayerStore). Returns false when the id does not belong to this
+  // account — never trust a client-supplied id to name someone else's character.
+  deleteCharacter(account: Account, charId: string): boolean {
+    const chars = account.characters;
+    if (!chars) return false;
+    const i = chars.findIndex((c) => c.id === charId);
+    if (i < 0) return false;
+    chars.splice(i, 1);
+    this.dirty.add(account.name.toLowerCase());
+    void this.flush();
+    return true;
   }
 
   touchCharacter(account: Account, charId: string): void {

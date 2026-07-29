@@ -25,7 +25,11 @@ test('first auth creates a default character and reports it in Welcome', async (
   const { welcome } = await c.joinAsNew('Alice');
   const chars = welcome['characters'] as WelcomeChar[];
   assert.equal(chars.length, 1);
-  assert.equal(chars[0]!.name, 'Alice');
+  // NOT the account name. An SSO account name is the person's real name, and a character name
+  // is public — it labels the tile and rides every PlayerAppearance to other players. The
+  // auto-created slot therefore gets a neutral placeholder and is named for real by chargen.
+  assert.equal(chars[0]!.name, 'Adventurer');
+  assert.notEqual(chars[0]!.name, 'Alice');
   assert.match(chars[0]!.id, /^c[0-9a-f]{24}$/);
   assert.equal(welcome['characterId'], chars[0]!.id);
   c.close();
@@ -202,4 +206,47 @@ test('adoptLegacy: migrates once, scopes the legacy position to this world', asy
   const re = await again.adoptLegacy('bob', 'caabbccddeeff00112233445');
   assert.deepEqual(re?.appearance, APPEARANCE);
   await again.close();
+});
+
+// Regression: a player who FINISHED creation (race/class/sign chosen, appearance sent) but
+// whose ChargenComplete flag never reached the server must not lose the character. An earlier
+// revision inferred "abandoned creation" from "still in a chargen cell with no journal" and
+// ERASED the doc — one missed signal deleted a real character and dropped the player back at
+// the name prompt. Player state is never destroyed on load; the completion flag self-heals.
+test('finished chargen without the completion flag survives a relog — never erased', async (t) => {
+  const dataDir = tmpDataDir();
+  const server = await startServer({ dataDir, port: 0, host: '127.0.0.1' });
+  t.after(() => server.close());
+
+  const c = await TestClient.connect(server.port);
+  c.hello();
+  await c.waitJson('SessionHelloOk');
+  c.register('Nerevar', 'hunter22');
+  await c.waitJson('SessionWelcome');
+  c.sendJson({ t: 'SessionReady' });
+  await c.waitEvent('PlayerList');
+  // Creation finished: appearance exists. Still standing in a chargen cell with no journal
+  // entry, and no ChargenComplete was delivered — exactly the state that used to be wiped.
+  c.sendEvent('PlayerAppearance', {
+    race: 'dark elf', head: 'b_n_dark elf_m_head_01', hair: 'b_n_dark elf_m_hair_02',
+    isMale: true, class: 'nightblade', name: 'Nerevar',
+  });
+  await c.waitEvent('PlayerAppearance');
+  c.sendCellChange('Imperial Prison Ship', 5, 6, 7);
+  await c.waitEvent('PlayerCellChange');
+  c.close(); // the refresh / random quit
+  await new Promise((r) => setTimeout(r, 150)); // let the logout flush land
+
+  const c2 = await TestClient.connect(server.port);
+  c2.hello();
+  await c2.waitJson('SessionHelloOk');
+  c2.login('Nerevar', 'hunter22');
+  const w = await c2.waitJson('SessionWelcome');
+  const rec = w['playerRecord'] as
+    { appearance?: { name: string }; position?: { cellKey: string; x: number } } | null;
+  assert.notEqual(rec, null, 'the character was erased — the player restarts creation');
+  assert.equal(rec?.appearance?.name, 'Nerevar');
+  assert.equal(rec?.position?.cellKey, 'Imperial Prison Ship');
+  assert.equal(rec?.position?.x, 5);
+  c2.close();
 });
