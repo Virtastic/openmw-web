@@ -9,7 +9,32 @@ import { join } from 'node:path';
 import { existsSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { hash, verify, Algorithm } from '@node-rs/argon2';
-import { readJson, writeJsonAtomic } from '../persist/atomicjson';
+import { readJson } from '../persist/atomicjson';
+import type { DatabaseSync } from 'node:sqlite';
+import { readdir } from 'node:fs/promises';
+import { openDb, tx } from '../persist/sqlite';
+
+const ACCOUNT_MIGRATIONS = [
+  {
+    name: '001-accounts',
+    up: (db: DatabaseSync) => {
+      // Keyed by `key` (the lowercased login name). The JSON layout made that key a FILENAME,
+      // which for an SSO account is the person's real name sitting in a directory listing
+      // ("accounts/jane smith.json"). A column has no such problem: the display name is
+      // ordinary data and nothing about the storage exposes it.
+      db.exec(`CREATE TABLE accounts (key TEXT PRIMARY KEY, doc TEXT NOT NULL)`);
+      // Username uniqueness used to be "a file exists at usernames/<handle>.json". A PRIMARY
+      // KEY is the real constraint: the database refuses a duplicate outright instead of a
+      // racing caller winning by creating a file first.
+      db.exec(`CREATE TABLE usernames (
+        username      TEXT PRIMARY KEY,
+        accountKey    TEXT NOT NULL,
+        reservedUntil TEXT
+      )`);
+      db.exec('CREATE INDEX usernames_account ON usernames (accountKey)');
+    },
+  },
+];
 import { log } from '../log';
 
 // A character slot. The character — not the account — owns a PlayerDoc (inventory, stats,
@@ -88,8 +113,12 @@ export class AccountStore {
   private flushTimer: NodeJS.Timeout;
 
   private readonly unamesDir: string;
+  private readonly db: DatabaseSync;
+  private readonly keysOnDisk = new Set<string>(); // existsNow() without touching the disk
+  private readonly imported: Promise<void>;
 
   constructor(dataDir: string) {
+    this.db = openDb(join(dataDir, 'accounts.db'), ACCOUNT_MIGRATIONS);
     this.dir = join(dataDir, 'accounts');
     // Username index: one JSON file per handle at usernames/<usernameLower>.json holding
     // { accountKey, reservedUntil? }. File presence IS the uniqueness answer, exactly like
@@ -99,6 +128,56 @@ export class AccountStore {
     mkdirSync(this.unamesDir, { recursive: true });
     this.flushTimer = setInterval(() => void this.flush(), 30_000);
     this.flushTimer.unref();
+    for (const r of this.db.prepare('SELECT key FROM accounts').all() as { key: string }[]) {
+      this.keysOnDisk.add(r.key);
+    }
+    this.imported = this.importLegacy();
+  }
+
+  // One-shot import of accounts/*.json + usernames/*.json, only when the table is empty.
+  // Boot-time so a deployment needs no manual step; the JSON is left on disk until a release
+  // has proven the DB.
+  private async importLegacy(): Promise<void> {
+    if (this.keysOnDisk.size > 0) return;
+    const accounts: [string, string][] = [];
+    try {
+      for (const n of (await readdir(this.dir)).filter((x) => x.endsWith('.json'))) {
+        const doc = await readJson<Account>(join(this.dir, n));
+        if (doc) accounts.push([n.slice(0, -5), JSON.stringify(doc)]);
+      }
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+    }
+    const unames: [string, string, string | null][] = [];
+    try {
+      for (const n of (await readdir(this.unamesDir)).filter((x) => x.endsWith('.json'))) {
+        const doc = await readJson<{ accountKey: string; reservedUntil?: string }>(join(this.unamesDir, n));
+        if (doc?.accountKey) unames.push([decodeURIComponent(n.slice(0, -5)), doc.accountKey, doc.reservedUntil ?? null]);
+      }
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+    }
+    if (accounts.length === 0 && unames.length === 0) return;
+    tx(this.db, () => {
+      const a = this.db.prepare('INSERT OR REPLACE INTO accounts (key, doc) VALUES (?, ?)');
+      for (const [k, d] of accounts) { a.run(k, d); this.keysOnDisk.add(k); }
+      const u = this.db.prepare('INSERT OR REPLACE INTO usernames (username, accountKey, reservedUntil) VALUES (?, ?, ?)');
+      for (const [n, k, r] of unames) u.run(n, k, r);
+    });
+    log('info', 'accounts.imported_from_json', { accounts: accounts.length, usernames: unames.length });
+  }
+
+  ready(): Promise<void> {
+    return this.imported;
+  }
+
+  // Write-through for the registration paths. An account that exists in memory but not in
+  // storage means a crash right after signup loses it, and anything that looks the account up
+  // from outside the process (erasure, another world) finds nothing.
+  private writeNow(key: string, account: Account): void {
+    this.db.prepare('INSERT OR REPLACE INTO accounts (key, doc) VALUES (?, ?)')
+      .run(key, JSON.stringify(account));
+    this.keysOnDisk.add(key);
   }
 
   private path(nameLower: string): string {
@@ -111,7 +190,7 @@ export class AccountStore {
   // is tempted to use a blocking stat.
   existsNow(name: string): boolean {
     const key = name.toLowerCase();
-    return this.cache.has(key) || existsSync(this.path(key));
+    return this.cache.has(key) || this.keysOnDisk.has(key);
   }
 
   // Display casing for an account that may be offline; undefined when it is not cached.
@@ -123,7 +202,9 @@ export class AccountStore {
     const key = name.toLowerCase();
     const cached = this.cache.get(key);
     if (cached) return cached;
-    const loaded = await readJson<Account>(this.path(key));
+    const row = this.db.prepare('SELECT doc FROM accounts WHERE key = ?').get(key) as
+      { doc: string } | undefined;
+    const loaded = row ? (JSON.parse(row.doc) as Account) : undefined;
     if (loaded) this.cache.set(key, loaded);
     return loaded;
   }
@@ -142,7 +223,7 @@ export class AccountStore {
     };
     const key = name.toLowerCase();
     this.cache.set(key, account);
-    await writeJsonAtomic(this.path(key), account);
+    this.writeNow(key, account);
     return account;
   }
 
@@ -155,7 +236,7 @@ export class AccountStore {
     const account: Account = { name, createdAt: now, lastSeenAt: now, rank: 0 };
     const key = name.toLowerCase();
     this.cache.set(key, account);
-    await writeJsonAtomic(this.path(key), account);
+    this.writeNow(key, account);
     return account;
   }
 
@@ -246,23 +327,32 @@ export class AccountStore {
       const since = Date.now() - Date.parse(account.usernameChangedAt);
       if (since < USERNAME_RENAME_COOLDOWN_MS) return 'cooldown';
     }
-    const indexPath = join(this.unamesDir, `${encodeURIComponent(usernameLower)}.json`);
-    const existing = await readJson<{ accountKey: string; reservedUntil?: string }>(indexPath);
+    // Uniqueness is the table's PRIMARY KEY now, not "a file exists at this path".
+    const row = this.db
+      .prepare('SELECT accountKey, reservedUntil FROM usernames WHERE username = ?')
+      .get(usernameLower) as { accountKey: string; reservedUntil: string | null } | undefined;
+    const existing = row
+      ? { accountKey: row.accountKey, reservedUntil: row.reservedUntil ?? undefined }
+      : undefined;
     if (existing && existing.accountKey !== accountKey) {
       const reserved = existing.reservedUntil !== undefined && Date.parse(existing.reservedUntil) > Date.now();
       if (reserved || existing.reservedUntil === undefined) return 'taken';
       // Reservation expired: the handle is free again.
     }
-    await writeJsonAtomic(indexPath, { accountKey });
-    if (oldLower !== undefined) {
+    // The claim and the old handle's reservation are ONE transaction: a crash between them
+    // would either free a handle nobody can reclaim or leave two rows pointing at this
+    // account with no reservation window.
+    const reservedUntil =
+      oldLower !== undefined ? new Date(Date.now() + USERNAME_RESERVE_MS).toISOString() : undefined;
+    tx(this.db, () => {
+      const put = this.db.prepare(
+        'INSERT OR REPLACE INTO usernames (username, accountKey, reservedUntil) VALUES (?, ?, ?)',
+      );
+      put.run(usernameLower, accountKey, null);
       // Keep the old handle pointing at us as a time-boxed reservation: nobody can take it
       // and impersonate the player their friends still know by that name.
-      const reservedUntil = new Date(Date.now() + USERNAME_RESERVE_MS).toISOString();
-      await writeJsonAtomic(join(this.unamesDir, `${encodeURIComponent(oldLower)}.json`), {
-        accountKey,
-        reservedUntil,
-      });
-    }
+      if (oldLower !== undefined) put.run(oldLower, accountKey, reservedUntil ?? null);
+    });
     account.username = username;
     account.usernameChangedAt = new Date().toISOString();
     this.dirty.add(accountKey);
@@ -315,7 +405,7 @@ export class AccountStore {
       const account = this.cache.get(key);
       if (!account) continue;
       try {
-        await writeJsonAtomic(this.path(key), account);
+        this.writeNow(key, account);
       } catch (err) {
         this.dirty.add(key); // retry on the next flush
         log('error', 'accounts.flush_failed', { account: key, error: String(err) });

@@ -17,6 +17,7 @@ import * as nodePath from 'node:path';
 import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, randomBytes, sign as signBuf, type KeyObject } from 'node:crypto';
 import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { startServer, type RunningServer } from '../src/server';
 import type { DeepPartial, Config } from '../src/config';
 import { LoginTicketStore } from '../src/auth/identities';
@@ -296,7 +297,15 @@ async function refuseTicket(h: Harness, ticket: string, code: string): Promise<v
 
 async function accountNames(dataDir: string): Promise<string[]> {
   try {
-    return (await readdir(join(dataDir, 'accounts'))).filter((n) => n.endsWith('.json')).sort();
+    // Accounts are rows in accounts.db now. Kept in the ".json" shape so the assertions below
+    // still read as "which accounts exist"; only the source of truth changed.
+    const db = new DatabaseSync(join(dataDir, 'accounts.db'));
+    try {
+      return (db.prepare('SELECT key FROM accounts').all() as { key: string }[])
+        .map((r) => `${r.key}.json`).sort();
+    } finally {
+      db.close();
+    }
   } catch {
     return [];
   }

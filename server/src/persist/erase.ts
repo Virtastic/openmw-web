@@ -30,6 +30,44 @@ import { join } from 'node:path';
 // against either layout is complete.
 // SSO identities moved into identities.db. Same rule as the moderation and ban tables: the
 // rows must GO, or the next SSO login silently re-creates the account that was just erased.
+// The account row and every username it holds — including handles still RESERVED to it after
+// a rename — live in accounts.db. Leaving the row keeps the person's display name and email;
+// leaving a reservation keeps a handle pointing at an account that no longer exists.
+function eraseAccountDb(dataDir: string, key: string): boolean {
+  const path = join(dataDir, 'accounts.db');
+  if (!existsSync(path)) return false;
+  const db = new DatabaseSync(path);
+  try {
+    db.prepare('DELETE FROM usernames WHERE accountKey = ?').run(key);
+    return Number(db.prepare('DELETE FROM accounts WHERE key = ?').run(key).changes) > 0;
+  } catch (err) {
+    if (/no such table/i.test(String(err))) return false;
+    throw err;
+  } finally {
+    db.close();
+  }
+}
+
+// Read the account doc from wherever it actually lives. erasePlayerDocs needs the character
+// list BEFORE the account is erased — it is the only way to find that account's player
+// documents — and reading only the old JSON path silently found no characters and left every
+// character document on disk after an "erasure".
+function readAccountDoc(dataDir: string, key: string): { characters?: { id?: unknown }[] } | undefined {
+  const path = join(dataDir, 'accounts.db');
+  if (!existsSync(path)) return undefined;
+  const db = new DatabaseSync(path);
+  try {
+    const row = db.prepare('SELECT doc FROM accounts WHERE key = ?').get(key) as
+      { doc: string } | undefined;
+    return row ? (JSON.parse(row.doc) as { characters?: { id?: unknown }[] }) : undefined;
+  } catch (err) {
+    if (/no such table/i.test(String(err))) return undefined;
+    throw err;
+  } finally {
+    db.close();
+  }
+}
+
 function eraseIdentitiesDb(dataDir: string, key: string): number {
   const path = join(dataDir, 'identities.db');
   if (!existsSync(path)) return 0;
@@ -196,17 +234,17 @@ async function unlinkIfPresent(path: string): Promise<boolean> {
 // list must be read from the account file BEFORE the account file is unlinked. The legacy
 // account-keyed doc is removed too (pre-slot worlds, or a migration that kept the source).
 async function erasePlayerDocs(dataDir: string, key: string): Promise<boolean> {
-  let charIds: string[] = [];
-  try {
-    const account = JSON.parse(await readFile(join(dataDir, 'accounts', `${key}.json`), 'utf8')) as {
-      characters?: { id?: unknown }[];
-    };
-    charIds = (account.characters ?? [])
-      .map((c) => c.id)
-      .filter((id): id is string => typeof id === 'string');
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+  let doc = readAccountDoc(dataDir, key);
+  if (!doc) {
+    try {
+      doc = JSON.parse(await readFile(join(dataDir, 'accounts', `${key}.json`), 'utf8')) as typeof doc;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+    }
   }
+  const charIds = (doc?.characters ?? [])
+    .map((c) => c.id)
+    .filter((id): id is string => typeof id === 'string');
   // Player docs live in players.db since the persistence consolidation. Delete the ROWS as
   // well as any legacy file: a character document is the bulk of what this server knows about
   // a person (inventory, journal, position), so missing it is not a partial erasure, it is a
@@ -264,7 +302,7 @@ export async function deleteAccount(dataDir: string, name: string): Promise<Eras
   // Order matters: character docs are found VIA the account file, so erase them first.
   const player = await erasePlayerDocs(dataDir, key);
   const report: EraseReport = {
-    account: await unlinkIfPresent(join(dataDir, 'accounts', `${key}.json`)),
+    account: eraseAccountDb(dataDir, key) || (await unlinkIfPresent(join(dataDir, 'accounts', `${key}.json`))),
     player,
     bans: false,
     identities: eraseIdentitiesDb(dataDir, key) + (await eraseIdentities(dataDir, key)),
