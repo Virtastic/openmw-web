@@ -102,6 +102,9 @@ export function characterRoutes(
   accounts: AccountStore,
   lockerSessions: LockerSessionStore,
   players: PlayerStore,
+  // Deleting a character must also retire its solo world: the world id is derived from the
+  // character, so once the character is gone nothing can ever reach that world again.
+  onCharacterDeleted?: (owner: { accountKey: string; username?: string }, charId: string) => void,
 ): HttpRoute {
   return async (req, res, url) => {
     if (url.pathname !== '/auth/characters') return false;
@@ -124,6 +127,8 @@ export function characterRoutes(
       if (!accounts.deleteCharacter(account, id)) { sendJson(res, 200, { ok: false, error: 'No such character.' }); return true; }
       await accounts.flush();
       await players.erase(id);
+      onCharacterDeleted?.(
+        { accountKey: account.name.toLowerCase(), ...(account.username ? { username: account.username } : {}) }, id);
       log('info', 'frontdoor.character_deleted', { account: account.name, character: id });
       sendJson(res, 200, { ok: true });
       return true;
@@ -215,7 +220,10 @@ export interface FrontDoor {
 }
 
 // All state lives in the shared dir; the same files the world processes read and write.
-export async function buildFrontDoor(sharedDir: string): Promise<FrontDoor> {
+export async function buildFrontDoor(
+  sharedDir: string,
+  onCharacterDeleted?: (owner: { accountKey: string; username?: string }, charId: string) => void,
+): Promise<FrontDoor> {
   const config = loadConfig(sharedDir, undefined, sharedDir);
   const accounts = new AccountStore(sharedDir);
   const bans = new BanStore(sharedDir);
@@ -249,7 +257,7 @@ export async function buildFrontDoor(sharedDir: string): Promise<FrontDoor> {
   const players = new PlayerStore(sharedDir);
   const locker2 = lockerRoutes({ locker, sessions: lockerSessions });
   const profile = profileRoutes(accounts, lockerSessions);
-  const chars = characterRoutes(accounts, lockerSessions, players);
+  const chars = characterRoutes(accounts, lockerSessions, players, onCharacterDeleted);
   const reticket = ticketRoutes(accounts, lockerSessions, tickets);
   const also: HttpRoute = async (req, res, url) =>
     (await locker2(req, res, url)) || (await profile(req, res, url))

@@ -17,7 +17,7 @@
 // the same reason: a world per party is how a box runs out of memory if nothing reaps.
 
 import { spawn, type ChildProcess } from 'node:child_process';
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { log } from '../log';
 
@@ -261,6 +261,34 @@ export class WorldSupervisor {
     w.stopping = true;
     // SIGTERM so the world drains and flushes its stores; main.ts already handles it.
     w.child.kill('SIGTERM');
+  }
+
+  // A deleted character's solo world is dead weight: nobody can ever reach it again, because
+  // the id is derived from the character. Stop it and remove its data.
+  //
+  // The id is composed on the CLIENT (launcher.html) as priv-<username-slug>-<charId8>, so it
+  // is rebuilt here rather than matched on the suffix alone. A suffix is not enough to delete
+  // by: two accounts whose character ids share their last 8 characters would let one delete
+  // the other's world. Exact id, or nothing happens.
+  // ponytail: the real cure is the SERVER owning the world-id scheme; this mirrors it until
+  // then, and the mirror is one line to update if the scheme moves.
+  discardForCharacter(owner: { accountKey: string; username?: string }, charId: string): string[] {
+    if (!owner.username) return []; // no username, no derivable id — leave it to the reaper
+    const slug = owner.username.toLowerCase().replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '').slice(0, 40);
+    if (slug === '') return [];
+    const id = `priv-${slug}-${charId.slice(-8)}`;
+    const gone: string[] = [];
+    if (this.worlds.has(id)) { this.stop(id); gone.push(id); }
+    // Remove the data dir whether or not a process was running: a world nobody rejoined after
+    // a restart has a directory but no entry here, so stopping alone would leave it forever.
+    const dir = join(this.deps.settings.worldsDir, id);
+    if (existsSync(dir)) {
+      rmSync(dir, { recursive: true, force: true });
+      if (!gone.includes(id)) gone.push(id);
+    }
+    if (gone.length > 0) log('info', 'world.discarded', { charId, world: id });
+    return gone;
   }
 
   // F4: restart worlds ONE AT A TIME so a deploy never takes the whole platform down.

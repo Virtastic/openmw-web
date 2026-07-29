@@ -168,3 +168,27 @@ test('abandoned worlds do not count against the per-owner cap', async () => {
     assert.equal(next.status, 200, 'a new character must not be blocked by worlds nobody is in');
   } finally { await h.cleanup(); }
 });
+
+// A deleted character's solo world can never be reached again (the id derives from the
+// character), so it must be retired rather than left as a directory forever.
+test('deleting a character discards exactly that character\'s world', async () => {
+  const h = await harness(10, 4);
+  try {
+    const owner = { accountKey: 'player', username: 'Control' };
+    const charId = 'cffffffffffffffffbb0faaf4';
+    const mine = `priv-control-${charId.slice(-8)}`;
+    const theirs = `priv-someoneelse-${charId.slice(-8)}`; // same suffix, different account
+    for (const id of [mine, theirs]) {
+      const r = await fetch(`${h.base}/worlds`, {
+        method: 'POST', body: JSON.stringify({ id, mode: 'private', account: 'player' }),
+      });
+      assert.equal(r.status, 200);
+    }
+    const gone = h.worlds.discardForCharacter(owner, charId);
+    assert.deepEqual(gone, [mine], 'must discard the exact world, never one that merely shares a suffix');
+    assert.ok(h.worlds.list().some((w) => w.id === theirs), 'another account\'s world survived');
+
+    // No username -> the id cannot be derived, so nothing is deleted rather than guessed.
+    assert.deepEqual(h.worlds.discardForCharacter({ accountKey: 'player' }, charId), []);
+  } finally { await h.cleanup(); }
+});

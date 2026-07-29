@@ -66,7 +66,12 @@ const worlds = new WorldSupervisor({
 worlds.startPublic();
 worlds.startPolling();
 // The shared SSO + locker front door, on the same public port as the directory.
-const frontDoor = await buildFrontDoor(sharedDir);
+const frontDoor = await buildFrontDoor(sharedDir, (owner, charId) => {
+  // A deleted character's solo world can never be reached again — retire it rather than
+  // leaving a directory (and, until it is reaped, a process) behind for every character
+  // anyone ever deletes.
+  worlds.discardForCharacter(owner, charId);
+});
 const directory = await startDirectory({
   worlds, host: '0.0.0.0', port, publicHost,
   maxPerOwner: Number(values['max-per-owner'] ?? 2),
