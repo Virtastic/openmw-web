@@ -7,6 +7,7 @@
 local core = require('openmw.core')
 local mp = require('openmw.mp')
 local types = require('openmw.types')
+local I = require('openmw.interfaces')
 local util = require('openmw.util')
 local world = require('openmw.world')
 
@@ -1481,6 +1482,23 @@ eventHandlers.MP_ContainerOpResult = function(data)
     end
     baseOpResult(data)
 end
+
+-- Web loading screen: a cell load BLOCKS the emscripten main loop, so the browser cannot
+-- composite during it — OpenMW's own loading screen draws frames that never reach the screen
+-- and the tab looks frozen. The only thing that works is having the overlay already ON SCREEN
+-- before the block, so signal on door activation, which fires BEFORE the teleport.
+-- ponytail: teleport doors only — that is the freeze players actually hit (boat -> dock,
+-- entering a building). Widen to every cell boundary if the exteriors turn out to stall too.
+local cellLoadSeq = 0
+local function signalCellLoad()
+    cellLoadSeq = cellLoadSeq + 1
+    mp.testSet('cellLoad', tostring(cellLoadSeq))
+end
+I.Activation.addHandlerForType(types.Door, function(door, actor)
+    if actor ~= world.players[1] then return end
+    local ok, isTeleport = pcall(function() return types.Door.isTeleport(door) end)
+    if ok and isTeleport then signalCellLoad() end
+end)
 
 return {
     engineHandlers = {

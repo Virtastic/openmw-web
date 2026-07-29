@@ -2919,7 +2919,7 @@
 
   // ================================ SOCIAL ================================
   var socialOpen = false, seenOpenSocial = 0, sTab = 'friends', seenSocialResult = '';
-  var seenNetState = '', netHold = false;
+  var netHold = false;
   var lastWhere = (function(){ try { return localStorage.getItem('omw-where') || ''; } catch(e){ return ''; } })();
   var sEl = document.getElementById('omw-social'), sBody = document.getElementById('omw-social-body');
   var sNav = document.getElementById('omw-nav'), sAvail = document.getElementById('omw-avail');
@@ -3148,25 +3148,42 @@
         }
       }
     }
-    // ---- connection state: reconnect must PAUSE the game, not let you keep playing -------
+    // ---- connection state: reconnect must PAUSE the game -------------------------------
     // Moving while disconnected and re-syncing on return is a cheat vector, and a frozen-
-    // looking game is worse than a screen that says what is happening. Reuses the boot
-    // loading screen; uiHold puts the engine in Interface mode so input stops.
-    var st = m.state || '';
-    if (st !== seenNetState) {
-      var wasBlocking = seenNetState === 'Reconnecting' || seenNetState === 'Connecting';
-      seenNetState = st;
-      if (st === 'Reconnecting' || st === 'Connecting') {
-        if (!netHold) { netHold = true; uiHold(true); }
-        window.__omwLoading.show('Connection lost', 'Reconnecting…');
-      } else if (wasBlocking && (st === 'Joined' || st === 'Offline')) {
-        window.__omwLoading.hide();
-        if (netHold) { netHold = false; uiHold(false); }
-        if (st === 'Joined') setStatus('Reconnected.');
-      }
+    // looking game is worse than a screen that says what is happening. Reuses the boot loading
+    // screen; uiHold puts the engine in Interface mode so input stops.
+    // Only RECONNECTING counts — the first Connecting is boot, which has its own screen.
+    // Written as "state -> desired hold", not as transitions: the state machine passes through
+    // Authing on the way back to Joined, and a transition-matcher missed that and leaked the
+    // hold, leaving the canvas permanently click-through.
+    var wantHold = (m.state || '') === 'Reconnecting';
+    if (wantHold !== netHold) {
+      netHold = wantHold;
+      uiHold(wantHold);
+      if (wantHold) window.__omwLoading.show('Connection lost', 'Reconnecting…');
+      else { window.__omwLoading.hide(); setStatus('Reconnected.'); }
     }
     if (socialOpen) renderSocial();
   }, 150);
+  // A cell load blocks the emscripten main loop, so nothing repaints while it runs — not even
+  // OpenMW's own loading screen. The overlay therefore has to be UP before the block starts.
+  // The engine signals on door activation (one frame early); rAF is the only watcher fast
+  // enough to paint in that gap, which is why this is not on the 150ms mirror poll.
+  (function watchCellLoad(){
+    var seen = '', hideAt = 0;
+    (function tick(){
+      var v = (window.__omwMP || {}).cellLoad || '';
+      if (v && v !== seen) {
+        seen = v;
+        window.__omwLoading.show('Loading', 'Entering a new area…');
+        hideAt = Date.now() + 15000; // hard ceiling: never strand the player behind it
+      }
+      // The load is over once frames are flowing again — this callback running IS that proof.
+      if (hideAt && Date.now() > hideAt - 14400) { window.__omwLoading.hide(); hideAt = 0; }
+      requestAnimationFrame(tick);
+    })();
+  })();
+
   // ---- keys: handled HERE, in JS, not round-tripped through the engine ----
   // The overlays are DOM, so the browser is the natural owner of their hotkeys. Capture phase
   // on window fires BEFORE SDL's own listener (which hangs off the canvas), so stopping
