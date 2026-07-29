@@ -21,8 +21,7 @@
 // via presigned URLs — routing 4 GB through the relay would be pointless cost and would
 // make us the distributor in a way the presigned model does not.
 
-import { mkdirSync } from 'node:fs';
-import { readFile, writeFile, readdir } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import type { DatabaseSync } from 'node:sqlite';
 import { openDb } from '../persist/sqlite';
 
@@ -37,6 +36,14 @@ const LOCKER_MIGRATIONS = [
       db.exec(`CREATE TABLE locker_files (
         accountKey TEXT PRIMARY KEY,
         files      TEXT NOT NULL   -- JSON array of LockerFile
+      )`);
+      // The attestation is what the user actually agreed to before a byte was accepted — the
+      // DMCA evidence trail (docs/LEGAL.md §4). It is written by the SERVER at runtime, so it
+      // is a store like any other and belongs here. Erasure DELETEs the row: an erasure that
+      // leaves the record naming the person is not an erasure.
+      db.exec(`CREATE TABLE locker_attestations (
+        accountKey TEXT PRIMARY KEY,
+        doc        TEXT NOT NULL
       )`);
     },
   },
@@ -79,7 +86,7 @@ export type UploadRefusal =
   | 'quota';
 
 export interface LockerSettings {
-  dataDir: string; // where attestations and per-account manifests live
+  dataDir: string; // where locker.db (file lists + attestations) lives
   maxBytesPerAccount: number;
   // Object storage. Absent = the locker is disabled entirely and the client keeps using
   // its own disk (?src=local), which is the fallback posture in docs/LEGAL.md §8.
@@ -157,7 +164,6 @@ export async function loadVanillaManifest(dir: string): Promise<VanillaManifest>
 }
 
 export class Locker {
-  private readonly dir: string;
   private readonly db: DatabaseSync;
   private vanilla: VanillaManifest = { files: [] };
   // sha256 -> true: an EXACT match against a known distribution (the strong path).
@@ -173,9 +179,7 @@ export class Locker {
   private sizeTolerance = 0.05; // ±5% covers minor per-distribution differences
 
   constructor(private readonly settings: LockerSettings) {
-    this.dir = join(settings.dataDir, 'locker');
     this.db = openDb(join(settings.dataDir, 'locker.db'), LOCKER_MIGRATIONS);
-    mkdirSync(this.dir, { recursive: true });
   }
 
   get enabled(): boolean {
@@ -301,10 +305,6 @@ export class Locker {
     return out;
   }
 
-  private attestPath(accountKey: string): string {
-    return join(this.dir, `${encodeURIComponent(accountKey)}.attest.json`);
-  }
-
   // The file list moved to locker.db. The ATTESTATION stays a readable file on purpose: it is
   // the DMCA evidence trail (docs/LEGAL.md §4), and "show me exactly what this user attested
   // to" should stay a cat, not a query.
@@ -327,14 +327,21 @@ export class Locker {
       manifestHash,
       ip,
     };
-    await writeFile(this.attestPath(accountKey), JSON.stringify(doc, null, 2) + '\n', 'utf8');
+    this.db
+      .prepare('INSERT OR REPLACE INTO locker_attestations (accountKey, doc) VALUES (?, ?)')
+      .run(accountKey, JSON.stringify(doc));
     log('info', 'locker.attested', { account: accountKey, files: files.length, manifestHash });
     return doc;
   }
 
   async attestationOf(accountKey: string): Promise<Attestation | undefined> {
+    await Promise.resolve();
+    const row = this.db
+      .prepare('SELECT doc FROM locker_attestations WHERE accountKey = ?')
+      .get(accountKey) as { doc: string } | undefined;
+    if (!row) return undefined;
     try {
-      return JSON.parse(await readFile(this.attestPath(accountKey), 'utf8')) as Attestation;
+      return JSON.parse(row.doc) as Attestation;
     } catch {
       return undefined;
     }
@@ -518,10 +525,10 @@ export class Locker {
   // Erasure (docs/LEGAL.md §5): the locker, its manifest and the attestation all go.
   async erase(accountKey: string): Promise<void> {
     await this.settings.storage?.delete(`gamedata/${accountKey}/`);
-    // The row goes entirely; the attestation file is truncated rather than deleted so the
-    // fact that an attestation existed is still visible to an operator after an erasure.
+    // Both rows go. The attestation names the person, so keeping it after an erasure request
+    // would be keeping a record about someone who asked to be forgotten.
     this.db.prepare('DELETE FROM locker_files WHERE accountKey = ?').run(accountKey);
-    await writeFile(this.attestPath(accountKey), '', 'utf8').catch(() => undefined);
+    this.db.prepare('DELETE FROM locker_attestations WHERE accountKey = ?').run(accountKey);
     log('info', 'locker.erased', { account: accountKey });
   }
 

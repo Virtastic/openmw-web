@@ -16,6 +16,7 @@ import { BanStore } from '../src/persist/banstore';
 import { IdentityStore } from '../src/auth/identities';
 import { ChatLog, ReportStore } from '../src/core/moderation';
 import { deleteAccount } from '../src/persist/erase';
+import { Locker } from '../src/data/locker';
 import { tmpDataDir } from './helpers';
 
 test('deleting an account leaves no trace in any database', async (t) => {
@@ -59,6 +60,13 @@ test('deleting an account leaves no trace in any database', async (t) => {
     reason: 'r',
     context: [],
   });
+
+  // The locker attestation names the person and is written by the server, so it must go too.
+  const locker = new Locker({ dataDir: dir, maxBytesPerAccount: 1 });
+  await locker.attest('victim', [{ name: 'Morrowind.esm', size: 1, sha256: 'a'.repeat(64) }], '1.2.3.4');
+  assert.ok(await locker.attestationOf('victim'), 'fixture attestation was not written');
+  await locker.erase('victim');
+  assert.equal(await locker.attestationOf('victim'), undefined, 'erase left the attestation behind');
 
   const report = await deleteAccount(dir, 'Victim');
   assert.deepEqual(report, {
