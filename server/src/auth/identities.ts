@@ -219,9 +219,14 @@ export class LoginTicketStore {
   // SSO-only server refuses. Still single-use and fragment-delivered, so the longer TTL is cheap.
   constructor(private readonly ttlMs = 15 * 60_000, sharedDir?: string) {
     if (sharedDir) {
+      // LOUD on failure. Without this database a world cannot see tickets minted by the front
+      // door, so every SSO login to it fails with "expired or already used" — and swallowing
+      // the error made that indistinguishable from a genuinely stale ticket.
       try {
         this.db = openDb(join(sharedDir, 'tickets.db'), TICKET_MIGRATIONS);
-      } catch { /* best effort: in-process memory still works */ }
+      } catch (err) {
+        log('error', 'tickets.store_unavailable', { dir: sharedDir, error: String(err) });
+      }
     }
     this.timer = setInterval(() => this.sweep(), 30_000);
     this.timer.unref();
