@@ -1019,7 +1019,7 @@
  // Open the player's private world and boot the game with a login ticket + chosen character.
  // Shared by the fresh-SSO path and the #characters re-entry (Exit from the game).
  async function bootGame(sess, ticket, chosenChar){
-   let world;
+   let world, privId; // privId is read again below when building the boot fragment
    try {
      // World ids are PUBLIC-ish: they label the world, travel in party/join flows, and name the
      // world's data directory. This used to slug the account name, which for an SSO account is
@@ -1034,7 +1034,7 @@
      // chest one character emptied was already empty for the next. Player state (journal,
      // inventory) was always per-character; only the world was not. doc.positions is keyed by
      // world id, so per-character worlds are what that was already built for.
-     let privId = 'priv-' + publicId + '-' + String(chosenChar.id).slice(-8);
+     privId = 'priv-' + publicId + '-' + String(chosenChar.id).slice(-8);
      const r = await fetch(sess.gwHttp + '/worlds', { method:'POST', headers:{'content-type':'application/json'},
        body: JSON.stringify({ mode:'private', id: privId, account: sess.account }) });
      world = await r.json();
