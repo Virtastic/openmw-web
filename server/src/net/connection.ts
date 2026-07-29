@@ -116,6 +116,8 @@ export interface ServerCtx {
   // private world exists for character creation). A standalone/single-world server is false —
   // there is no other world to create the character in, so it must admit fresh characters.
   chargenGate: boolean;
+  // True in the PUBLIC world: character docs are read-only there (see markEphemeral below).
+  lobbyWorld: boolean;
   // Phase 4: tell a client how many party members are standing with it, so the cell's
   // authority holder can scale the fight. Recomputed on join and on every cell change —
   // the number that matters is who is HERE, not who is in the party.
@@ -1088,7 +1090,13 @@ export class Connection implements Peer {
     this.player.system = this.isSystem;
     // A sim peer owns no character: keep it out of players/ entirely rather than writing a
     // doc that would be restored onto the next freshly spawned peer.
-    if (this.isSystem) this.ctx.players.markEphemeral(this.player.charId);
+    // Nothing done in the PUBLIC world writes back to the character. It is a social lobby:
+    // its cells reset by construction, so every container in it is an infinite faucet, and
+    // noDrop only strips UNIQUE corpses. Rather than police each loot path, the doc is simply
+    // read-only here — you arrive with your gear, play, and leave with exactly what you had.
+    // Kills every dupe route at once, including ones nobody has thought of yet.
+    // ponytail: reuses the sim-peer ephemeral flag; broadcasts are unaffected, only writes.
+    if (this.isSystem || this.ctx.lobbyWorld) this.ctx.players.markEphemeral(this.player.charId);
     this.state = 'AUTHED';
     this.authing = false;
     const sessionToken = randomBytes(16).toString('hex');

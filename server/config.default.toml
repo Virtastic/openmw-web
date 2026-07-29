@@ -10,7 +10,7 @@ plugins = ["motd", "respawn", "death-penalty", "pvp", "sharing", "cell-reset", "
 [server]
 name = "openmw-mp"                # shown in SessionHelloOk and /status
 motd = "Welcome to openmw-mp."    # sent in SessionWelcome and as a server chat line on join
-maxPlayers = 16
+maxPlayers = 256
 password = ""                     # non-empty -> Register/Login must carry a matching serverPassword
 
 [login]

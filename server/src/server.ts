@@ -487,6 +487,10 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     // Chargen gate only when this world is spawned by a gateway (OMW_WORLD_ID set) and is not
     // the private world at boot — a standalone server has no other world to create the
     // character in, and a later flip to party must not retroactively force chargen on members.
+    // Lobby rule only for the GATEWAY-managed shared world (OMW_WORLD_ID set), same
+    // distinction chargenGate makes: a standalone single-world server defaults to 'public'
+    // and IS the player's real game, so it must still save.
+    lobbyWorld: !!process.env.OMW_WORLD_ID && worldModeAtBoot === 'public',
     chargenGate: !!process.env.OMW_WORLD_ID && worldModeAtBoot !== 'private',
     motd: () => motd,
   };
