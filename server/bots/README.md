@@ -27,3 +27,19 @@ npx tsx bots/lobby-bots.ts --port 9000 --names Ashka,Drels,Vera --tickets "$(cat
 Bots need a COMPLETED character with an appearance: the shared world refuses
 anyone still in creation, which is the right rule for players and just means a
 bot has to arrive pre-made.
+
+## Sweep
+
+`sweep.ts` plays as a real client and asserts every social feature end to end
+against a running server with bots present:
+
+```bash
+npx tsx bots/sweep.ts --port 9000 --ticket <t> --ticket2 <t> --bot Ashka
+```
+
+It is idempotent — a rerun finds you already friends / already partied and
+passes — except quest ids, which are fresh per run because a repeat of an index
+already recorded is non-monotonic and stored without relaying (M6).
+
+`--ticket2` is a second real player, needed because the server relays a journal
+entry to everyone EXCEPT its author.

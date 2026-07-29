@@ -116,7 +116,9 @@ async function bot(name: string): Promise<void> {
       case 'ChatMessage': {
         const text = String(v['text'] ?? '');
         const who = String(v['from'] ?? '');
-        if (!text || who.toLowerCase() === name.toLowerCase()) break; // never answer itself
+        // Answer PEOPLE only. Bots replying to bots is an infinite loop that floods the
+        // channel and drowns the message you are actually testing.
+        if (!text || roster.some((r) => r.toLowerCase() === who.toLowerCase())) break;
         console.log(`[${name}] <- ${who}: ${text}`);
         // Reply on the channel it arrived on, so party chat stays in the party.
         const channel = String(v['channel'] ?? 'global');
