@@ -11,14 +11,18 @@ const STEP = 30_000;
 export default async function run(ctx) {
   const a = await ctx.launchClient('slots-a', '');
 
-  // A fresh account: exactly one slot, active, named after the account.
+  // A fresh account: exactly one slot, active, with a NEUTRAL placeholder name.
   await a.waitFor("((window.__omwMP||{}).characterId||'') !== ''", STEP, 'Welcome carried a characterId');
   const firstId = String(await a.eval("(window.__omwMP||{}).characterId"));
   assert.match(firstId, /^c[0-9a-f]{24}$/, `default character id looks wrong: ${firstId}`);
   assert.equal(String(await a.eval("(window.__omwMP||{}).characterCount")), '1');
   const chars = JSON.parse(String(await a.eval("(window.__omwMP||{}).characters||'[]'")));
-  assert.equal(chars[0].name.toLowerCase(), a.name.toLowerCase(),
-    'the migrated/default slot is named after the account');
+  // NOT the account name. An SSO account name is the person's real name, and a character
+  // name is public — it labels the tile and rides every PlayerAppearance to other players.
+  // The auto-created slot gets a placeholder and takes its real name from chargen.
+  assert.notEqual(chars[0].name.toLowerCase(), a.name.toLowerCase(),
+    'the default slot must NOT be named after the account (that leaks the real name)');
+  assert.equal(chars[0].name, 'Adventurer', `unexpected placeholder name: ${chars[0].name}`);
   ctx.log(`  ok: one default character ${firstId}`);
 
   // Create a second slot from in-world (the Characters tab's create path).
