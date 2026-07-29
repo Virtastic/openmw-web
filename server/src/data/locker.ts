@@ -305,10 +305,6 @@ export class Locker {
     return join(this.dir, `${encodeURIComponent(accountKey)}.attest.json`);
   }
 
-  private manifestPath(accountKey: string): string {
-    return join(this.dir, `${encodeURIComponent(accountKey)}.files.json`);
-  }
-
   // The file list moved to locker.db. The ATTESTATION stays a readable file on purpose: it is
   // the DMCA evidence trail (docs/LEGAL.md §4), and "show me exactly what this user attested
   // to" should stay a cat, not a query.
@@ -500,15 +496,7 @@ export class Locker {
         return [];
       }
     }
-    // Pre-SQLite fallback: adopt this account's JSON list on first read, then serve rows.
-    try {
-      const doc = JSON.parse(await readFile(this.manifestPath(accountKey), 'utf8')) as { files: LockerFile[] };
-      const files = doc.files ?? [];
-      if (files.length > 0) await this.writeFiles(accountKey, files);
-      return files;
-    } catch {
-      return [];
-    }
+    return [];
   }
 
   // Verify a client's claimed content list against what it actually uploaded. This is what
@@ -533,9 +521,7 @@ export class Locker {
     // The row goes entirely; the attestation file is truncated rather than deleted so the
     // fact that an attestation existed is still visible to an operator after an erasure.
     this.db.prepare('DELETE FROM locker_files WHERE accountKey = ?').run(accountKey);
-    for (const p of [this.attestPath(accountKey), this.manifestPath(accountKey)]) {
-      await writeFile(p, '', 'utf8').catch(() => undefined);
-    }
+    await writeFile(this.attestPath(accountKey), '', 'utf8').catch(() => undefined);
     log('info', 'locker.erased', { account: accountKey });
   }
 
@@ -543,12 +529,7 @@ export class Locker {
     try {
       const rows = this.db.prepare('SELECT accountKey FROM locker_files').all() as
         { accountKey: string }[];
-      const out = new Set(rows.map((r) => r.accountKey));
-      // Include any account whose list has not been adopted into the table yet.
-      for (const n of (await readdir(this.dir)).filter((x) => x.endsWith('.files.json'))) {
-        out.add(decodeURIComponent(n.replace('.files.json', '')));
-      }
-      return [...out];
+      return rows.map((r) => r.accountKey);
     } catch {
       return [];
     }

@@ -9,12 +9,11 @@
 // ban erases it — a DELETE here, so the value is gone from the table rather than lingering in
 // a rewritten JSON blob.
 //
-// Migrated from bans.json (docs/SQLITE-CONSOLIDATION.md step 2). Reads stay in memory because
-// isIpBanned runs on every accept; SQLite is the durable side, not the read path.
+// Reads stay in memory because isIpBanned runs on every accept; SQLite is the durable side,
+// not the read path.
 
 import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
-import { readJson } from './atomicjson';
 import { openDb, tx } from './sqlite';
 import { log } from '../log';
 import { timeFlush } from '../metrics';
@@ -48,37 +47,22 @@ const MIGRATIONS = [
 
 export class BanStore {
   private readonly db: DatabaseSync;
-  private readonly jsonPath: string;
   private doc: BansDoc = { accounts: {}, ips: {} };
   private loaded: Promise<void>;
   private write: Promise<void> = Promise.resolve();
 
   constructor(dataDir: string) {
     this.db = openDb(join(dataDir, 'bans.db'), MIGRATIONS);
-    this.jsonPath = join(dataDir, 'bans.json');
-    this.loaded = this.load();
+    this.load();
+    this.loaded = Promise.resolve();
   }
 
-  private async load(): Promise<void> {
+  private load(): void {
     const rows = this.db.prepare('SELECT scope, key, by, at, reason FROM bans').all() as
       { scope: string; key: string; by: string; at: string; reason: string }[];
     for (const r of rows) {
       const target = r.scope === 'ip' ? this.doc.ips : this.doc.accounts;
       target[r.key] = { by: r.by, at: r.at, reason: r.reason };
-    }
-    // One-shot import of the pre-SQLite file, only when the table is empty — a deployment must
-    // not need a manual step. The JSON is left on disk (not deleted) until a release has proven
-    // the DB, per the consolidation plan.
-    if (rows.length === 0) {
-      const old = await readJson<BansDoc>(this.jsonPath);
-      if (old && (Object.keys(old.accounts ?? {}).length || Object.keys(old.ips ?? {}).length)) {
-        this.doc = { accounts: old.accounts ?? {}, ips: old.ips ?? {} };
-        this.persistAll();
-        log('info', 'bans.imported_from_json', {
-          accounts: Object.keys(this.doc.accounts).length,
-          ips: Object.keys(this.doc.ips).length,
-        });
-      }
     }
   }
 

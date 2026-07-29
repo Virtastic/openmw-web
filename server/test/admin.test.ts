@@ -7,6 +7,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { DatabaseSync } from 'node:sqlite';
 import { startServer, type RunningServer } from '../src/server';
 import type { DeepPartial, Config } from '../src/config';
 import { TestClient, tmpDataDir, MANIFEST } from './helpers';
@@ -414,8 +415,14 @@ test('erasure removes everything about an account', async (t) => {
 
   const report = await deleteAccount(dataDir, 'Forgettable');
   assert.deepEqual(report, { account: true, player: true, bans: true, identities: 0, chatLines: 0, reports: 0 });
-  assert.ok(!(await readdir(pjoin(dataDir, 'accounts'))).includes('forgettable.json'));
-  assert.ok(!(await readdir(pjoin(dataDir, 'players'))).includes('forgettable.json'));
+  // (the account row check above is the real assertion; there is no accounts directory)
+  {
+    // Player docs are rows; the directory does not exist any more.
+    const db = new DatabaseSync(pjoin(dataDir, 'players.db'));
+    const n = (db.prepare('SELECT COUNT(*) AS n FROM players').get() as { n: number }).n;
+    db.close();
+    assert.equal(n, 0, 'the erased account still has a player doc');
+  }
   // Idempotent: erasing again reports nothing left to erase rather than throwing.
   assert.deepEqual(await deleteAccount(dataDir, 'Forgettable'),
     { account: false, player: false, bans: false, identities: 0, chatLines: 0, reports: 0 });

@@ -836,8 +836,7 @@ export class Connection implements Peer {
         this.authFail(op, 'AUTH_FAILED', 'no free character slot');
         return null;
       }
-      const doc = await this.ctx.players.adoptLegacy(accountKey, created.id);
-      return { char: created, doc };
+      return { char: created };
     }
     let char: CharacterSummary | undefined;
     if (requestedId !== undefined) {

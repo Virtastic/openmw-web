@@ -15,7 +15,6 @@
 
 import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
-import { readdir, readFile, rm } from 'node:fs/promises';
 import { openDb, tx } from '../persist/sqlite';
 import { log } from '../log';
 
@@ -107,18 +106,15 @@ export class ChatLog {
   private readonly db: DatabaseSync;
   private readonly ring: ChatLine[] = [];
   private queue: Promise<void> = Promise.resolve();
-  private readonly legacyDir: string;
 
   constructor(
     dataDir: string,
     private readonly cfg: ModerationConfig,
   ) {
     this.db = openDb(join(dataDir, 'moderation.db'), MIGRATIONS);
-    this.legacyDir = join(dataDir, 'logs');
     // Prune at boot, not on a timer: a server that is restarted regularly (every deploy)
     // would otherwise only ever prune on the rare long-lived process.
     if (cfg.chatLog) {
-      this.enqueue(() => this.importLegacy());
       this.enqueue(() => this.prune());
     }
   }
@@ -127,35 +123,6 @@ export class ChatLog {
     this.queue = this.queue.then(fn).catch((err) => {
       log('error', 'chatlog.write_failed', { error: String(err) });
     });
-  }
-
-  // One-shot import of the pre-SQLite logs/chat-*.jsonl files, only when the table is empty.
-  // The files are LEFT on disk (an operator may already be shipping them somewhere) and are
-  // never re-imported, because the emptiness check only passes once.
-  private async importLegacy(): Promise<void> {
-    const any = this.db.prepare('SELECT 1 FROM chat_lines LIMIT 1').get();
-    if (any) return;
-    let names: string[];
-    try {
-      names = await readdir(this.legacyDir);
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return;
-      throw err;
-    }
-    const files = names.filter((n) => /^chat-\d{4}-\d{2}-\d{2}\.jsonl$/.test(n)).sort();
-    if (files.length === 0) return;
-    let imported = 0;
-    for (const name of files) {
-      const raw = await readFile(join(this.legacyDir, name), 'utf8');
-      const lines = parseLines(raw);
-      tx(this.db, () => {
-        for (const l of lines) {
-          this.insert(l);
-          imported++;
-        }
-      });
-    }
-    if (imported > 0) log('info', 'chatlog.imported_from_jsonl', { lines: imported, files: files.length });
   }
 
   private insert(line: ChatLine): void {

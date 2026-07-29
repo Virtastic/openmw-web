@@ -12,12 +12,9 @@
 //
 // Insertion order IS the RecordsSync order, so rows carry an explicit autoincrement `seq`
 // rather than relying on rowid ordering by accident.
-//
-// Migrated from world/records.json (docs/SQLITE-CONSOLIDATION.md step 3).
 
 import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
-import { readJson } from './atomicjson';
 import { openDb, tx } from './sqlite';
 import type { JsLike } from '../proto/lser';
 import { log } from '../log';
@@ -35,11 +32,6 @@ export interface CustomRecord {
   kind: RecordKind;
   data: JsLike;
   byAccount?: string; // informational: who authored it
-}
-
-interface RecordsDoc {
-  nextId: number;
-  records: CustomRecord[];
 }
 
 const MIGRATIONS = [
@@ -62,7 +54,6 @@ const MIGRATIONS = [
 
 export class RecordStore {
   private readonly db: DatabaseSync;
-  private readonly jsonPath: string;
   private records: CustomRecord[] = [];
   private byId = new Map<string, CustomRecord>();
   private nextId = 1;
@@ -71,7 +62,6 @@ export class RecordStore {
 
   constructor(dataDir: string) {
     this.db = openDb(join(dataDir, 'world', 'records.db'), MIGRATIONS);
-    this.jsonPath = join(dataDir, 'world', 'records.json');
     this.loaded = this.load();
   }
 
@@ -93,20 +83,6 @@ export class RecordStore {
       { v: number } | undefined;
     if (meta) this.nextId = meta.v;
 
-    // One-shot import of the pre-SQLite file, only when the table is empty. Boot-time so a
-    // deployment needs no manual step; the JSON stays on disk until a release proves the DB.
-    if (rows.length === 0 && meta === undefined) {
-      const old = await readJson<RecordsDoc>(this.jsonPath);
-      if (old && (old.records ?? []).length > 0) {
-        if (Number.isInteger(old.nextId) && old.nextId > 0) this.nextId = old.nextId;
-        for (const r of old.records) {
-          this.records.push(r);
-          this.byId.set(r.recordNetId, r);
-        }
-        this.persistAll();
-        log('info', 'records.imported_from_json', { records: this.records.length });
-      }
-    }
   }
 
   ready(): Promise<void> {

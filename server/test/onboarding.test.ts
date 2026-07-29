@@ -8,6 +8,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readdirSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
+import { existsSync } from 'node:fs';
 import { startServer } from '../src/server';
 import { AttioHook, type AttioUpsert } from '../src/integrations/attio';
 import { TestClient, tmpDataDir } from './helpers';
@@ -116,7 +118,27 @@ test('requireProfile gates Ready until the profile is complete', async (t) => {
 
 test('attio queue: durable, drains on success, survives outages, inert without a key', async () => {
   const dataDir = tmpDataDir();
-  const queueDir = join(dataDir, 'integrations', 'attio-queue');
+  // The outbox is a table now, not a directory of files.
+  const queued = (): { id: string; accountKey: string }[] => {
+    const path = join(dataDir, 'attio.db');
+    if (!existsSync(path)) return [];
+    const db = new DatabaseSync(path);
+    try {
+      return db.prepare('SELECT id, accountKey FROM attio_queue ORDER BY id').all() as
+        { id: string; accountKey: string }[];
+    } catch {
+      return []; // table not created: the hook was never enabled
+    } finally {
+      db.close();
+    }
+  };
+  const enqueue = (id: string, doc: AttioUpsert): void => {
+    const db = new DatabaseSync(join(dataDir, 'attio.db'));
+    db.exec('CREATE TABLE IF NOT EXISTS attio_queue (id TEXT PRIMARY KEY, accountKey TEXT NOT NULL, doc TEXT NOT NULL)');
+    db.prepare('INSERT OR REPLACE INTO attio_queue (id, accountKey, doc) VALUES (?, ?, ?)')
+      .run(id, doc.accountKey, JSON.stringify(doc));
+    db.close();
+  };
   const upsert: AttioUpsert = {
     email: 'x@example.com', username: 'X', accountKey: 'x',
     signupAt: new Date().toISOString(), provider: 'password', marketingOptIn: false,
@@ -131,7 +153,7 @@ test('attio queue: durable, drains on success, survives outages, inert without a
   off.enqueue(upsert);
   await off.close();
   assert.equal(calls, 0);
-  assert.throws(() => readdirSync(queueDir)); // dir never even created
+  assert.equal(queued().length, 0); // nothing queued at all
 
   // Outage: the item stays queued; recovery drains it.
   let fail = true;
@@ -143,27 +165,26 @@ test('attio queue: durable, drains on success, survives outages, inert without a
   hook.enqueue(upsert);
   await new Promise((r) => setTimeout(r, 50)); // let the async enqueue+flush settle
   await hook.flush();
-  assert.equal(readdirSync(queueDir).length, 1, 'failed upsert must stay queued');
+  assert.equal(queued().length, 1, 'failed upsert must stay queued');
   fail = false;
   await hook.flush();
-  assert.equal(readdirSync(queueDir).length, 0, 'recovered flush must drain the queue');
+  assert.equal(queued().length, 0, 'recovered flush must drain the queue');
   assert.ok(calls >= 2);
 
   // A queue entry from a previous run (crash durability) is picked up by a fresh hook.
-  mkdirSync(queueDir, { recursive: true });
-  writeFileSync(join(queueDir, '1-old.json'), JSON.stringify(upsert));
+  enqueue('1-old', upsert);
   const hook2 = new AttioHook({ apiKey: 'k', baseUrl: 'http://api', dataDir }, (async () =>
     new Response('{}', { status: 200 })) as typeof fetch);
   await hook2.flush();
-  assert.equal(readdirSync(queueDir).length, 0, 'boot flush must drain leftovers');
+  assert.equal(queued().length, 0, 'boot flush must drain leftovers');
   await hook.close();
   await hook2.close();
 
   // purgeAccount removes queued PII for delete-my-data.
-  writeFileSync(join(queueDir, '2-x.json'), JSON.stringify(upsert));
-  writeFileSync(join(queueDir, '3-y.json'), JSON.stringify({ ...upsert, accountKey: 'y' }));
+  enqueue('2-x', upsert);
+  enqueue('3-y', { ...upsert, accountKey: 'y' });
   await hook2.purgeAccount('x');
-  assert.deepEqual(readdirSync(queueDir), ['3-y.json']);
+  assert.deepEqual(queued().map((r) => r.id), ['3-y']);
 });
 
 test('signup succeeds while attio is down (never blocks the hot path)', async (t) => {
@@ -180,7 +201,9 @@ test('signup succeeds while attio is down (never blocks the hot path)', async (t
   profile(c, 'alice@example.com', 'AliceTheBrave');
   assert.equal((await c.waitJson('ProfileResult'))['ok'], true);
   await new Promise((r) => setTimeout(r, 100));
-  const queued = readdirSync(join(dataDir, 'integrations', 'attio-queue'));
-  assert.equal(queued.length, 1, 'undeliverable upsert must be durably queued');
+  const db = new DatabaseSync(join(dataDir, 'attio.db'));
+  const n = (db.prepare('SELECT COUNT(*) AS n FROM attio_queue').get() as { n: number }).n;
+  db.close();
+  assert.equal(n, 1, 'undeliverable upsert must be durably queued');
   c.close();
 });

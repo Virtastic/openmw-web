@@ -100,8 +100,15 @@ prove WAL first.
 - [x] **10.** `atomicjson.ts` is still used by the legacy import paths and by adoptLegacy, so
       it stays until the JSON fallbacks are removed.
 
-**All nine stores are now SQLite.** Remaining cleanup (safe once a release has proven the DB):
-delete the legacy JSON/JSONL left on disk, and drop the import paths that read it.
+**DONE — the server is SQLite ONLY.** There are no JSON stores, no import paths, and no
+fallbacks left. `persist/atomicjson.ts` is deleted. Two more stores went with the cleanup:
+login tickets (`tickets.db` — single-use is now enforced by the DELETE on claim rather than by
+whoever unlinks the file first) and the Attio outbox (`attio.db`; purging one account's queued
+upserts is a DELETE on a column instead of a scan-and-parse of every entry).
+
+The only `.json` files a running server touches now are INPUTS and EVIDENCE, not stores:
+`vanilla-manifest.json` and `content-table.json` are operator-supplied, and the per-account
+`*.attest.json` is the DMCA evidence trail, deliberately kept as a readable file.
 
 ### Note on step 4 (moderation)
 

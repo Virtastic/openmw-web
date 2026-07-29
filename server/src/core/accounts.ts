@@ -4,12 +4,10 @@
 // argon2id (OWASP 2024 baseline: m=19456 KiB, t=2, p=1). Mutations write through the
 // dirty queue; flush() drains it (SIGUSR1 / shutdown / 30 s timer).
 
-import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { existsSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { hash, verify, Algorithm } from '@node-rs/argon2';
-import { readJson } from '../persist/atomicjson';
 import type { DatabaseSync } from 'node:sqlite';
 import { readdir } from 'node:fs/promises';
 import { openDb, tx } from '../persist/sqlite';
@@ -107,68 +105,24 @@ export function validAccountName(name: string): boolean {
 }
 
 export class AccountStore {
-  private readonly dir: string;
   private cache = new Map<string, Account>(); // key = nameLower
   private dirty = new Set<string>();
   private flushTimer: NodeJS.Timeout;
 
-  private readonly unamesDir: string;
   private readonly db: DatabaseSync;
   private readonly keysOnDisk = new Set<string>(); // existsNow() without touching the disk
-  private readonly imported: Promise<void>;
 
   constructor(dataDir: string) {
     this.db = openDb(join(dataDir, 'accounts.db'), ACCOUNT_MIGRATIONS);
-    this.dir = join(dataDir, 'accounts');
-    // Username index: one JSON file per handle at usernames/<usernameLower>.json holding
-    // { accountKey, reservedUntil? }. File presence IS the uniqueness answer, exactly like
-    // the accounts dir itself; lives in the SHARED dir so a handle is unique platform-wide.
-    this.unamesDir = join(dataDir, 'usernames');
-    mkdirSync(this.dir, { recursive: true });
-    mkdirSync(this.unamesDir, { recursive: true });
     this.flushTimer = setInterval(() => void this.flush(), 30_000);
     this.flushTimer.unref();
     for (const r of this.db.prepare('SELECT key FROM accounts').all() as { key: string }[]) {
       this.keysOnDisk.add(r.key);
     }
-    this.imported = this.importLegacy();
-  }
-
-  // One-shot import of accounts/*.json + usernames/*.json, only when the table is empty.
-  // Boot-time so a deployment needs no manual step; the JSON is left on disk until a release
-  // has proven the DB.
-  private async importLegacy(): Promise<void> {
-    if (this.keysOnDisk.size > 0) return;
-    const accounts: [string, string][] = [];
-    try {
-      for (const n of (await readdir(this.dir)).filter((x) => x.endsWith('.json'))) {
-        const doc = await readJson<Account>(join(this.dir, n));
-        if (doc) accounts.push([n.slice(0, -5), JSON.stringify(doc)]);
-      }
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
-    }
-    const unames: [string, string, string | null][] = [];
-    try {
-      for (const n of (await readdir(this.unamesDir)).filter((x) => x.endsWith('.json'))) {
-        const doc = await readJson<{ accountKey: string; reservedUntil?: string }>(join(this.unamesDir, n));
-        if (doc?.accountKey) unames.push([decodeURIComponent(n.slice(0, -5)), doc.accountKey, doc.reservedUntil ?? null]);
-      }
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
-    }
-    if (accounts.length === 0 && unames.length === 0) return;
-    tx(this.db, () => {
-      const a = this.db.prepare('INSERT OR REPLACE INTO accounts (key, doc) VALUES (?, ?)');
-      for (const [k, d] of accounts) { a.run(k, d); this.keysOnDisk.add(k); }
-      const u = this.db.prepare('INSERT OR REPLACE INTO usernames (username, accountKey, reservedUntil) VALUES (?, ?, ?)');
-      for (const [n, k, r] of unames) u.run(n, k, r);
-    });
-    log('info', 'accounts.imported_from_json', { accounts: accounts.length, usernames: unames.length });
   }
 
   ready(): Promise<void> {
-    return this.imported;
+    return Promise.resolve();
   }
 
   // Write-through for the registration paths. An account that exists in memory but not in
@@ -180,9 +134,7 @@ export class AccountStore {
     this.keysOnDisk.add(key);
   }
 
-  private path(nameLower: string): string {
-    return join(this.dir, `${nameLower}.json`);
-  }
+
 
   // Sync lookups for user-initiated, low-frequency actions (Phase C friend requests and
   // blocks). Account files are named by the lowercased key, so file presence IS the

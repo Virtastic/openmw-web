@@ -209,13 +209,15 @@ test('shared: one account works across worlds; per-world state stays separate', 
     await b.flush();
 
     // Accounts live in the SHARED dir, not in either world.
-    assert.ok(existsSync(join(shared, 'accounts')), 'accounts belong to the shared dir');
-    assert.ok(!existsSync(join(worldA, 'accounts')), 'and not to a world dir');
+    // Accounts are one SQLite database in the SHARED dir, so every world process resolves the
+    // same account rather than each keeping its own copy.
+    assert.ok(existsSync(join(shared, 'accounts.db')), 'accounts belong to the shared dir');
+    assert.ok(!existsSync(join(worldA, 'accounts.db')), 'and not to a world dir');
 
     // Character slots: the character doc is SHARED too — one character follows the player
     // across worlds (per the platform plan; the dupe firewall is the public no-drop
     // economy, not per-world inventories). Only positions inside the doc are world-scoped.
-    assert.ok(existsSync(join(shared, 'players')), 'character docs belong to the shared dir');
+    assert.ok(existsSync(join(shared, 'players.db')), 'character docs belong to the shared dir');
     assert.ok(!existsSync(join(worldA, 'players')) && !existsSync(join(worldB, 'players')),
       'no per-world player docs are written anymore (world dirs keep only world state)');
   } finally {

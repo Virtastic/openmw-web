@@ -35,7 +35,13 @@ export function openDb(path: string, migrations: Migration[] = []): DatabaseSync
   db.exec('PRAGMA busy_timeout = 5000');
   // WAL: concurrent readers do not block the writer, and a crash mid-write cannot shear the
   // file. Multi-process readers/writers on one file is exactly what WAL is for.
-  db.exec('PRAGMA journal_mode = WAL');
+  //
+  // Setting it needs a brief EXCLUSIVE lock, and busy_timeout does NOT cover every lock
+  // conversion — a concurrent opener can still fail outright. Two things make that safe:
+  // the mode is PERSISTENT in the file, so it only has to be set once ever; and a contended
+  // attempt is retried rather than thrown. A two-process test caught both the ordering and
+  // this: one process died on the pragma and lost every write.
+  setWalMode(db);
   // FULL would fsync every commit (slow); NORMAL is the documented WAL pairing and still
   // crash-safe — a power loss can only lose the last commits, never corrupt the file.
   db.exec('PRAGMA synchronous = NORMAL');
@@ -64,6 +70,23 @@ export function openDb(path: string, migrations: Migration[] = []): DatabaseSync
     }
   }
   return db;
+}
+
+// Switch a database to WAL, tolerating a concurrent opener doing the same thing.
+function setWalMode(db: DatabaseSync, attempts = 5): void {
+  for (let i = 0; i < attempts; i++) {
+    const mode = (db.prepare('PRAGMA journal_mode').get() as { journal_mode: string }).journal_mode;
+    if (mode.toLowerCase() === 'wal') return; // already persistent in the file
+    try {
+      db.exec('PRAGMA journal_mode = WAL');
+      return;
+    } catch (err) {
+      if (!/lock|busy/i.test(String(err)) || i === attempts - 1) throw err;
+      // Spin briefly: the sibling holding the lock is mid-pragma, not mid-transaction.
+      const until = Date.now() + 50;
+      while (Date.now() < until) { /* short backoff */ }
+    }
+  }
 }
 
 // Run fn inside a transaction, rolling back if it throws. This is the point of the move off

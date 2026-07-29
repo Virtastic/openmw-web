@@ -43,33 +43,6 @@ test('first auth creates a default character and reports it in Welcome', async (
   c2.close();
 });
 
-test('pre-slot account: legacy account-keyed doc is adopted by the first character', async (t) => {
-  const dataDir = tmpDataDir();
-  // A pre-slot world left players/alice.json keyed by account name.
-  const playersDir = join(dataDir, 'players');
-  mkdirSync(playersDir, { recursive: true });
-  writeFileSync(join(playersDir, 'alice.json'), JSON.stringify({
-    appearance: APPEARANCE,
-    inventory: [{ id: 'gold_001', n: 77 }],
-    position: { cellKey: '3,-2', x: 1, y: 2, z: 3 },
-  }));
-
-  const server = await startServer({ dataDir, port: 0, host: '127.0.0.1' });
-  t.after(() => server.close());
-
-  const c = await TestClient.connect(server.port);
-  const { welcome } = await c.joinAsNew('Alice');
-  const chars = welcome['characters'] as WelcomeChar[];
-  assert.equal(chars.length, 1);
-  // The migrated doc IS the player record: appearance survives, so no fresh chargen.
-  const record = welcome['playerRecord'] as { appearance?: typeof APPEARANCE; inventory?: unknown };
-  assert.deepEqual(record?.appearance, APPEARANCE);
-  assert.deepEqual(record?.inventory, [{ id: 'gold_001', n: 77 }]);
-  // And the doc now lives under the character id.
-  // The adopted doc is now a row keyed by the new character id.
-  assert.ok(readPlayerDoc(dataDir, chars[0]!.id), 'the legacy doc was adopted under the character id');
-  c.close();
-});
 
 test('explicit characterId: own character is honored, foreign/unknown is refused', async (t) => {
   const dataDir = tmpDataDir();
@@ -179,35 +152,6 @@ test('shared character doc keeps per-world positions apart', async () => {
   await w2again.close();
 });
 
-test('adoptLegacy: migrates once, scopes the legacy position to this world', async () => {
-  const dataDir = tmpDataDir();
-  const legacyDir = join(dataDir, 'world1', 'players');
-  mkdirSync(legacyDir, { recursive: true });
-  writeFileSync(join(legacyDir, 'bob.json'), JSON.stringify({
-    appearance: APPEARANCE,
-    position: { cellKey: '2,2', x: 5, y: 5, z: 5 },
-  }));
-
-  const shared = join(dataDir, 'shared');
-  const store = new PlayerStore(shared, 'world1', legacyDir);
-  const adopted = await store.adoptLegacy('bob', 'caabbccddeeff00112233445');
-  assert.deepEqual(adopted?.appearance, APPEARANCE);
-  assert.deepEqual(adopted?.position, { cellKey: '2,2', x: 5, y: 5, z: 5 });
-  await store.close();
-
-  // From another world the same character has no position (it was world1's).
-  const other = new PlayerStore(shared, 'world2');
-  const doc = await other.get('caabbccddeeff00112233445');
-  assert.deepEqual(doc?.appearance, APPEARANCE);
-  assert.equal(doc?.position, undefined);
-  await other.close();
-
-  // Adopting again (crash between doc write and account flush) is a no-op, not a reset.
-  const again = new PlayerStore(shared, 'world1', legacyDir);
-  const re = await again.adoptLegacy('bob', 'caabbccddeeff00112233445');
-  assert.deepEqual(re?.appearance, APPEARANCE);
-  await again.close();
-});
 
 // Regression: a player who FINISHED creation (race/class/sign chosen, appearance sent) but
 // whose ChargenComplete flag never reached the server must not lose the character. An earlier

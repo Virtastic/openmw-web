@@ -12,11 +12,9 @@
 // PRIVACY.md: an (iss,sub) pair IS personal data (it identifies a person at a provider).
 // It is erased with the account by persist/erase.ts.
 
-import { mkdirSync, writeFileSync, readFileSync, unlinkSync, readdirSync } from 'node:fs';
 import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
-import { readJson, writeJsonAtomic } from '../persist/atomicjson';
 import type { DatabaseSync } from 'node:sqlite';
 import { openDb } from '../persist/sqlite';
 import { validAccountName, type AccountStore } from '../core/accounts';
@@ -53,58 +51,24 @@ const IDENTITY_MIGRATIONS = [
 
 export class IdentityStore {
   private readonly db: DatabaseSync;
-  private readonly legacyDir: string;
   private readonly byKey = new Map<string, IdentityRecord>();
   private loaded: Promise<void>;
 
   constructor(dataDir: string) {
     this.db = openDb(join(dataDir, 'identities.db'), IDENTITY_MIGRATIONS);
-    this.legacyDir = join(dataDir, 'identities');
-    this.loaded = this.load();
+    this.load();
+    this.loaded = Promise.resolve();
   }
 
   // Loaded once at boot: the whole index must be authoritative before the listener opens,
   // exactly like the ban list — a missed entry would silently create a SECOND account for
   // a player who already has one.
-  private async load(): Promise<void> {
+  private load(): void {
     const rows = this.db.prepare('SELECT key, iss, sub, accountKey, linkedAt FROM identities').all() as
       { key: string; iss: string; sub: string; accountKey: string; linkedAt: string }[];
     for (const r of rows) {
       this.byKey.set(r.key, { iss: r.iss, sub: r.sub, accountKey: r.accountKey, linkedAt: r.linkedAt });
     }
-    if (rows.length === 0) await this.importLegacy();
-  }
-
-  // One-shot import of the per-identity JSON files, only when the table is empty. A failure
-  // here is LOUD for the same reason the old loader was: a lost identity does not fail a
-  // login, it hands the player a brand new empty account.
-  private async importLegacy(): Promise<void> {
-    let names: string[];
-    try {
-      names = await readdir(this.legacyDir);
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return;
-      throw err;
-    }
-    const insert = this.db.prepare(
-      'INSERT OR REPLACE INTO identities (key, iss, sub, accountKey, linkedAt) VALUES (?, ?, ?, ?, ?)',
-    );
-    let imported = 0;
-    for (const name of names) {
-      if (!/^[0-9a-f]{64}\.json$/.test(name)) continue;
-      try {
-        const rec = await readJson<IdentityRecord>(join(this.legacyDir, name));
-        if (rec && typeof rec.iss === 'string' && typeof rec.sub === 'string' && typeof rec.accountKey === 'string') {
-          const key = name.slice(0, 64);
-          this.byKey.set(key, rec);
-          insert.run(key, rec.iss, rec.sub, rec.accountKey, rec.linkedAt ?? new Date().toISOString());
-          imported++;
-        }
-      } catch (err) {
-        log('error', 'identities.load_failed', { file: name, error: String(err) });
-      }
-    }
-    if (imported > 0) log('info', 'identities.imported_from_json', { identities: imported });
   }
 
   ready(): Promise<void> {
@@ -231,55 +195,79 @@ export interface LoginTicket {
 // The one-time credential that carries "this browser proved it owns (iss,sub)" across to
 // the game's WebSocket. Deliberately NOT the game session token and NOT a provider token:
 // 32 random bytes, <=60 s, single use, and it grants nothing but one auth attempt.
+const TICKET_MIGRATIONS = [
+  {
+    name: '001-tickets',
+    up: (db: DatabaseSync) => {
+      db.exec(`CREATE TABLE tickets (
+        ticket      TEXT PRIMARY KEY,
+        accountKey  TEXT NOT NULL,
+        accountName TEXT NOT NULL,
+        expiresAt   INTEGER NOT NULL
+      )`);
+      db.exec('CREATE INDEX tickets_expiry ON tickets (expiresAt)');
+    },
+  },
+];
+
 export class LoginTicketStore {
   private readonly tickets = new Map<string, LoginTicket>();
   private readonly timer: NodeJS.Timeout;
   // F3 cross-process: the gateway mints a ticket, a DIFFERENT world process claims it. With a
-  // sharedDir set, each ticket is also a file under <sharedDir>/tickets/, so any process sharing
-  // that dir can verify it. base64url is filename-safe. Single-use is enforced by the unlink on
-  // claim (whoever deletes the file first wins).
-  private readonly dir?: string;
+  // sharedDir set, tickets also live in <sharedDir>/tickets.db so any process sharing that dir
+  // can verify one. Single use is enforced by the DELETE on claim — whoever deletes the row
+  // first wins, which is the same race the unlink used to settle but decided by the database.
+  private readonly db?: DatabaseSync;
 
   // 15 min, not 60 s: the ticket is redeemed by the MP client AFTER the game engine has loaded
   // its content (streamed retail data can take minutes on a first play), so a 60 s ticket was
   // always expired by connect time and the client fell back to the password ladder — which an
   // SSO-only server refuses. Still single-use and fragment-delivered, so the longer TTL is cheap.
   constructor(private readonly ttlMs = 15 * 60_000, sharedDir?: string) {
-    if (sharedDir) { this.dir = join(sharedDir, 'tickets'); try { mkdirSync(this.dir, { recursive: true }); } catch { /* best effort */ } }
+    if (sharedDir) {
+      try {
+        this.db = openDb(join(sharedDir, 'tickets.db'), TICKET_MIGRATIONS);
+      } catch { /* best effort: in-process memory still works */ }
+    }
     this.timer = setInterval(() => this.sweep(), 30_000);
     this.timer.unref();
   }
 
-  private pathOf(ticket: string): string { return join(this.dir!, ticket + '.json'); }
-
   private sweep(): void {
     const now = Date.now();
     for (const [t, v] of this.tickets) if (v.expiresAt <= now) this.tickets.delete(t);
-    if (!this.dir) return;
     try {
-      for (const f of readdirSync(this.dir)) {
-        const p = join(this.dir, f);
-        try { if ((JSON.parse(readFileSync(p, 'utf8')) as LoginTicket).expiresAt <= now) unlinkSync(p); }
-        catch { try { unlinkSync(p); } catch { /* gone */ } }
-      }
-    } catch { /* dir gone */ }
+      this.db?.prepare('DELETE FROM tickets WHERE expiresAt <= ?').run(now);
+    } catch { /* another process may be sweeping the same rows */ }
   }
 
   mint(accountKey: string, accountName: string): string {
-    const ticket = randomBytes(32).toString('base64url'); // 256 bits: unguessable within 60 s
+    const ticket = randomBytes(32).toString('base64url'); // 256 bits: unguessable within the TTL
     const rec: LoginTicket = { accountKey, accountName, expiresAt: Date.now() + this.ttlMs };
     this.tickets.set(ticket, rec);
-    if (this.dir) try { writeFileSync(this.pathOf(ticket), JSON.stringify(rec)); } catch { /* in-process memory still works */ }
+    try {
+      this.db?.prepare('INSERT OR REPLACE INTO tickets (ticket, accountKey, accountName, expiresAt) VALUES (?, ?, ?, ?)')
+        .run(ticket, rec.accountKey, rec.accountName, rec.expiresAt);
+    } catch { /* in-process memory still works */ }
     return ticket;
   }
 
-  // Single use: deleted on the first claim, valid or not. Falls through to the shared-dir file
-  // when the ticket was minted by another process (the gateway).
+  // Single use: removed on the first claim, valid or not. Falls through to the shared DB when
+  // the ticket was minted by another process (the gateway).
   claim(ticket: string): LoginTicket | undefined {
     let found = this.tickets.get(ticket);
     this.tickets.delete(ticket);
-    if (!found && this.dir) { try { found = JSON.parse(readFileSync(this.pathOf(ticket), 'utf8')) as LoginTicket; } catch { /* not here */ } }
-    if (this.dir) try { unlinkSync(this.pathOf(ticket)); } catch { /* already claimed/expired */ }
+    if (!found && this.db) {
+      try {
+        const row = this.db
+          .prepare('SELECT accountKey, accountName, expiresAt FROM tickets WHERE ticket = ?')
+          .get(ticket) as LoginTicket | undefined;
+        if (row) found = { accountKey: row.accountKey, accountName: row.accountName, expiresAt: Number(row.expiresAt) };
+      } catch { /* not here */ }
+    }
+    try {
+      this.db?.prepare('DELETE FROM tickets WHERE ticket = ?').run(ticket);
+    } catch { /* already claimed/expired */ }
     return found && found.expiresAt > Date.now() ? found : undefined;
   }
 

@@ -6,20 +6,16 @@
 // plus a 45 s staggered sweep. Position coords are refreshed from the live pose at flush
 // time so move frames never dirty the doc.
 
-import { mkdirSync } from 'node:fs';
 import { unlink } from 'node:fs/promises';
 import { join } from 'node:path';
-import { readJson } from './atomicjson';
 import type { DatabaseSync } from 'node:sqlite';
-import { readdir } from 'node:fs/promises';
 import { openDb, tx } from './sqlite';
 
 const PLAYER_MIGRATIONS = [
   {
     name: '001-players',
     up: (db: DatabaseSync) => {
-      // key is the character id (or, for pre-slot worlds, the account key adoptLegacy
-      // migrates away from). The doc is stored whole: it is a snapshot the game reads and
+      // key is the character id. The doc is stored whole: it is a snapshot the game reads and
       // writes as a unit, and splitting inventory/journal into tables would buy nothing but
       // join cost on the hottest write path in the server.
       db.exec(`CREATE TABLE players (
@@ -96,7 +92,6 @@ export class PlayerStore {
     this.ephemeral.delete(key);
   }
 
-  private readonly dir: string;
   private cache = new Map<string, PlayerDoc>(); // key = account nameLower
   private dirty = new Set<string>();
   private debounce = new Map<string, NodeJS.Timeout>();
@@ -106,72 +101,34 @@ export class PlayerStore {
 
   private readonly worldId: string;
   private readonly db: DatabaseSync;
-  private readonly legacyDir: string;
 
   // dataDir: where docs live — under the F3 gateway this is the SHARED dir, so a character
-  // doc follows the player across worlds. worldId scopes positions. legacyDir: where the
-  // pre-slot per-world account-keyed docs live (the world's own data dir); used only by
-  // adoptLegacy during migration.
-  constructor(dataDir: string, worldId = 'default', legacyDir?: string) {
+  // doc follows the player across worlds. worldId scopes positions.
+  constructor(dataDir: string, worldId = 'default') {
     this.db = openDb(join(dataDir, 'players.db'), PLAYER_MIGRATIONS);
-    this.dir = join(dataDir, 'players');
     this.worldId = worldId;
-    this.legacyDir = legacyDir ?? this.dir;
-    mkdirSync(this.dir, { recursive: true });
     this.sweepTimer = setInterval(() => void this.flushAll(), SWEEP_MS);
     this.sweepTimer.unref();
-    this.imported = this.importLegacy();
-  }
-
-  // One-shot import of players/*.json, only when the table is empty. Boot-time so a
-  // deployment needs no manual step; the JSON is left on disk until a release proves the DB.
-  // NOTE: this is separate from adoptLegacy, which is the pre-slot account-keyed migration
-  // and deliberately still reads a JSON file from legacyDir.
-  private readonly imported: Promise<void>;
-  private async importLegacy(): Promise<void> {
-    if (this.db.prepare('SELECT 1 FROM players LIMIT 1').get()) return;
-    let names: string[] = [];
-    try {
-      names = (await readdir(this.dir)).filter((n) => n.endsWith('.json'));
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
-      return;
-    }
-    const docs: [string, string][] = [];
-    for (const n of names) {
-      const doc = await readJson<PlayerDoc>(join(this.dir, n));
-      if (doc) docs.push([n.slice(0, -5), JSON.stringify(doc)]);
-    }
-    if (docs.length === 0) return;
-    tx(this.db, () => {
-      const ins = this.db.prepare('INSERT OR REPLACE INTO players (key, doc) VALUES (?, ?)');
-      for (const [k, d] of docs) ins.run(k, d);
-    });
-    log('info', 'players.imported_from_json', { players: docs.length });
   }
 
   ready(): Promise<void> {
-    return this.imported;
+    return Promise.resolve();
   }
 
   setLivePositionProvider(fn: (key: string) => LivePosition | undefined): void {
     this.livePosition = fn;
   }
 
-  private path(key: string): string {
-    return join(this.dir, `${key}.json`);
-  }
 
-  // Character deletion: drop the cached copy FIRST so a pending sweep cannot rewrite the file
-  // we are about to unlink, then remove the doc. Missing file = already gone, not an error.
+
+  // Character deletion: drop the cached copy FIRST so a pending sweep cannot rewrite the row
+  // we are about to delete, then remove it. A missing row is already gone, not an error.
   async erase(key: string): Promise<void> {
     this.cache.delete(key);
     this.dirty.delete(key);
+    await Promise.resolve();
     try {
       this.db.prepare('DELETE FROM players WHERE key = ?').run(key);
-      await unlink(this.path(key)).catch((err: NodeJS.ErrnoException) => {
-        if (err.code !== 'ENOENT') throw err; // legacy file, if this install still has one
-      });
     } catch (err) {
       log('warn', 'playerstore.erase_failed', { key, error: String(err) });
     }
@@ -209,29 +166,6 @@ export class PlayerStore {
   }
 
   // Character-slot migration: adopt a pre-slot account-keyed doc under a character id.
-  // Loads legacyDir/<accountKey>.json, rewrites it as <charId>.json with the legacy
-  // position scoped to this world. The legacy file is left in place (harmless, and safer
-  // if a rollback is ever needed). Returns the adopted doc, or undefined when there was
-  // no legacy doc (fresh account → fresh chargen).
-  async adoptLegacy(accountKey: string, charId: string): Promise<PlayerDoc | undefined> {
-    const existing = await this.get(charId);
-    if (existing) return existing; // already migrated (crash between write and account flush)
-    const legacy = await readJson<PlayerDoc>(join(this.legacyDir, `${accountKey}.json`));
-    if (!legacy) return undefined;
-    if (legacy.equipment) {
-      const eq: Record<number, string> = {};
-      for (const [k, v] of Object.entries(legacy.equipment)) eq[Number(k)] = v;
-      legacy.equipment = eq;
-    }
-    if (legacy.position && !legacy.positions) legacy.positions = { [this.worldId]: { ...legacy.position } };
-    this.materializePosition(legacy);
-    this.cache.set(charId, legacy);
-    this.dirty.add(charId);
-    await this.flushKey(charId);
-    log('info', 'players.adopted_legacy', { account: accountKey, char: charId });
-    return legacy;
-  }
-
   // Synchronous view for fan-out paths (docs of connected players are always cached,
   // because login always calls get()).
   getCached(key: string): PlayerDoc | undefined {

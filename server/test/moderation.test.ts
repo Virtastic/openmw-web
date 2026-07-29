@@ -174,15 +174,17 @@ test('readRecent windows by minutes and filters by player', async (t) => {
   assert.deepEqual(wide, ['old ann', 'recent ann']);
 });
 
-test('a torn log line is skipped, not fatal', async (t) => {
+test('a crash mid-write cannot shear the chat log', async (t) => {
   void t;
   const dataDir = tmpDataDir();
-  const dir = pjoin(dataDir, 'logs');
-  await mkdir(dir, { recursive: true });
-  const good = JSON.stringify({ ts: new Date().toISOString(), playerId: 1, account: 'a', name: 'A', channel: 'say', text: 'ok' });
-  await writeFile(pjoin(dir, `chat-${today()}.jsonl`), `${good}\n{"ts":"2026-`, 'utf8'); // truncated tail
-  const log = new ChatLog(dataDir, { chatLog: true, retentionDays: 14, contextLines: 5 });
-  assert.deepEqual((await log.readRecent(60)).map((l) => l.text), ['ok']);
+  // The JSONL log could be torn by a kill mid-append, so parsing had to tolerate a truncated
+  // last line. A WAL commit cannot leave a half-row, so the equivalent property is simply that
+  // lines survive a reopen with nothing lost or mangled.
+  const first = new ChatLog(dataDir, { chatLog: true, retentionDays: 14, contextLines: 5 });
+  first.record({ ts: new Date().toISOString(), playerId: 1, account: 'a', name: 'A', channel: 'say', text: 'ok' });
+  await first.drain();
+  const reopened = new ChatLog(dataDir, { chatLog: true, retentionDays: 14, contextLines: 5 });
+  assert.deepEqual((await reopened.readRecent(60)).map((l) => l.text), ['ok']);
 });
 
 test('/report writes a well-formed report with context', async (t) => {

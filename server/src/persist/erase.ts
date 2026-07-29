@@ -119,97 +119,8 @@ function eraseModerationDb(dataDir: string, key: string): { chatLines: number; r
   }
 }
 
-async function eraseChatLines(dataDir: string, key: string): Promise<number> {
-  const dir = join(dataDir, 'logs');
-  let names: string[];
-  try {
-    names = await readdir(dir);
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return 0;
-    throw err;
-  }
-  let removed = 0;
-  for (const name of names.filter((n) => /^chat-\d{4}-\d{2}-\d{2}\.jsonl$/.test(n))) {
-    const path = join(dir, name);
-    const kept: string[] = [];
-    for (const line of (await readFile(path, 'utf8')).split('\n')) {
-      if (line.length === 0) continue;
-      let account: unknown;
-      try {
-        account = (JSON.parse(line) as { account?: unknown }).account;
-      } catch {
-        kept.push(line); // unparseable: keep it, it names nobody we can match
-        continue;
-      }
-      if (account === key) removed++;
-      else kept.push(line);
-    }
-    if (kept.length === 0) await rm(path, { force: true });
-    else await writeFile(path, kept.join('\n') + '\n', 'utf8');
-  }
-  return removed;
-}
 
-// Reports FILED BY the account carry their name; reports ABOUT it carry their name too, and
-// the attached context lines quote them. Both go: a half-erased report is not an erasure.
-async function eraseReports(dataDir: string, key: string): Promise<number> {
-  const dir = join(dataDir, 'reports');
-  let names: string[];
-  try {
-    names = await readdir(dir);
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return 0;
-    throw err;
-  }
-  let removed = 0;
-  for (const name of names.filter((n) => n.endsWith('.json'))) {
-    const path = join(dir, name);
-    let doc: { reporter?: { account?: unknown }; target?: { account?: unknown; name?: unknown } };
-    try {
-      doc = JSON.parse(await readFile(path, 'utf8')) as typeof doc;
-    } catch {
-      continue; // unreadable: leave it for the operator rather than deleting blind
-    }
-    const namesAccount =
-      doc.reporter?.account === key ||
-      doc.target?.account === key ||
-      (typeof doc.target?.name === 'string' && doc.target.name.toLowerCase() === key);
-    if (namesAccount) {
-      await rm(path, { force: true });
-      removed++;
-    }
-  }
-  return removed;
-}
 
-// Phase B: an (iss,sub) pair identifies a person AT A PROVIDER, so it is personal data and
-// goes with the account. Leaving it behind would also mean the next SSO login silently
-// re-created the erased account.
-async function eraseIdentities(dataDir: string, key: string): Promise<number> {
-  const dir = join(dataDir, 'identities');
-  let names: string[];
-  try {
-    names = await readdir(dir);
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return 0;
-    throw err;
-  }
-  let removed = 0;
-  for (const name of names.filter((n) => n.endsWith('.json'))) {
-    const path = join(dir, name);
-    let doc: { accountKey?: unknown };
-    try {
-      doc = JSON.parse(await readFile(path, 'utf8')) as typeof doc;
-    } catch {
-      continue; // unreadable: leave it for the operator rather than deleting blind
-    }
-    if (doc.accountKey === key) {
-      await rm(path, { force: true });
-      removed++;
-    }
-  }
-  return removed;
-}
 
 export interface EraseReport {
   account: boolean;
@@ -269,32 +180,6 @@ async function erasePlayerDocs(dataDir: string, key: string): Promise<boolean> {
   return removed;
 }
 
-// Onboarding: the username index and any not-yet-sent CRM upserts name the account (the
-// queue even carries the email). Both are personal data; both go. Records already
-// delivered to the CRM are the operator's to purge per the takedown/deletion runbook.
-async function eraseByAccountField(dir: string, key: string): Promise<number> {
-  let names: string[];
-  try {
-    names = await readdir(dir);
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return 0;
-    throw err;
-  }
-  let removed = 0;
-  for (const name of names.filter((n) => n.endsWith('.json'))) {
-    const path = join(dir, name);
-    try {
-      const doc = JSON.parse(await readFile(path, 'utf8')) as { accountKey?: unknown };
-      if (doc.accountKey === key) {
-        await rm(path, { force: true });
-        removed++;
-      }
-    } catch {
-      continue; // unreadable: leave it for the operator rather than deleting blind
-    }
-  }
-  return removed;
-}
 
 export async function deleteAccount(dataDir: string, name: string): Promise<EraseReport> {
   const key = name.toLowerCase();
@@ -302,16 +187,14 @@ export async function deleteAccount(dataDir: string, name: string): Promise<Eras
   // Order matters: character docs are found VIA the account file, so erase them first.
   const player = await erasePlayerDocs(dataDir, key);
   const report: EraseReport = {
-    account: eraseAccountDb(dataDir, key) || (await unlinkIfPresent(join(dataDir, 'accounts', `${key}.json`))),
+    account: eraseAccountDb(dataDir, key),
     player,
     bans: false,
-    identities: eraseIdentitiesDb(dataDir, key) + (await eraseIdentities(dataDir, key)),
+    identities: eraseIdentitiesDb(dataDir, key),
     // Both layouts are summed: the DB rows plus anything still in the legacy files.
-    chatLines: dbErased.chatLines + (await eraseChatLines(dataDir, key)),
-    reports: dbErased.reports + (await eraseReports(dataDir, key)),
+    chatLines: dbErased.chatLines,
+    reports: dbErased.reports,
   };
-  await eraseByAccountField(join(dataDir, 'usernames'), key);
-  await eraseByAccountField(join(dataDir, 'integrations', 'attio-queue'), key);
   // An account ban keeps the name (and an ip ban an address); erasure lifts it. That is
   // the honest trade and it is documented: a ban cannot outlive the data it names.
   // Bans live in bans.db (SQLite) since the persistence consolidation. Erasure must DELETE the
@@ -331,20 +214,6 @@ export async function deleteAccount(dataDir: string, name: string): Promise<Eras
     } finally {
       db.close();
     }
-  }
-  const bansPath = join(dataDir, 'bans.json');
-  try {
-    const doc = JSON.parse(await readFile(bansPath, 'utf8')) as {
-      accounts?: Record<string, unknown>;
-      ips?: Record<string, unknown>;
-    };
-    if (doc.accounts && Object.hasOwn(doc.accounts, key)) {
-      delete doc.accounts[key];
-      await writeFile(bansPath, JSON.stringify(doc, null, 2) + '\n', 'utf8');
-      report.bans = true;
-    }
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
   }
   return report;
 }

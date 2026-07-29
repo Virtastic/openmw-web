@@ -6,11 +6,8 @@
 // the counter is reserved in blocks — disk always holds a CEILING, so a crash skips at
 // most one block, it never hands out a duplicate.
 
-import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { readJson } from './atomicjson';
 import type { DatabaseSync } from 'node:sqlite';
-import { readdir } from 'node:fs/promises';
 import { openDb, tx } from './sqlite';
 
 const CELL_MIGRATIONS = [
@@ -139,8 +136,6 @@ interface GlobalDoc {
 
 export class CellStore {
   private readonly db: DatabaseSync;
-  private readonly cellsDir: string;
-  private readonly globalPath: string;
   private cache = new Map<string, CellDoc>();
   private dirty = new Set<string>();
   private sweepTimer: NodeJS.Timeout;
@@ -153,12 +148,10 @@ export class CellStore {
   private globalWrite: Promise<void> = Promise.resolve();
 
   constructor(dataDir: string) {
-    this.cellsDir = join(dataDir, 'world', 'cells');
-    this.globalPath = join(dataDir, 'world', 'global.json');
     this.db = openDb(join(dataDir, 'world', 'world.db'), CELL_MIGRATIONS);
     this.sweepTimer = setInterval(() => void this.flushAll(), SWEEP_MS);
     this.sweepTimer.unref();
-    this.globalLoaded = this.loadGlobal().then((g) => {
+    this.globalLoaded = Promise.resolve(this.loadGlobal()).then((g) => {
       if (g && Number.isInteger(g.nextNetIdCeiling) && g.nextNetIdCeiling > 0) {
         this.nextNetId = g.nextNetIdCeiling;
         this.netIdCeiling = g.nextNetIdCeiling;
@@ -204,32 +197,11 @@ export class CellStore {
     }
   }
 
-  // Reads the global row, importing the pre-SQLite world/global.json + world/cells/*.json
-  // once when the tables are empty. Boot-time so a deployment needs no manual step; the JSON
-  // is left on disk until a release has proven the DB.
-  private async loadGlobal(): Promise<GlobalDoc | undefined> {
+  // Reads the world's single global row (netId ceiling, kill tallies, shared quest/M7 state).
+  private loadGlobal(): GlobalDoc | undefined {
     const row = this.db.prepare('SELECT doc FROM world_global WHERE id = 1').get() as
       { doc: string } | undefined;
-    if (row) return JSON.parse(row.doc) as GlobalDoc;
-    const legacy = await readJson<GlobalDoc>(this.globalPath);
-    let cells = 0;
-    try {
-      const names = (await readdir(this.cellsDir)).filter((n) => n.endsWith('.json'));
-      const insert = this.db.prepare('INSERT OR REPLACE INTO cells (cellKey, doc) VALUES (?, ?)');
-      const docs: [string, string][] = [];
-      for (const name of names) {
-        const doc = await readJson<CellDoc>(join(this.cellsDir, name));
-        if (doc) docs.push([decodeURIComponent(name.slice(0, -5)), JSON.stringify(doc)]);
-      }
-      if (docs.length > 0) {
-        tx(this.db, () => { for (const [k, d] of docs) insert.run(k, d); });
-        cells = docs.length;
-      }
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
-    }
-    if (legacy || cells > 0) log('info', 'world.imported_from_json', { cells });
-    return legacy ?? undefined;
+    return row ? (JSON.parse(row.doc) as GlobalDoc) : undefined;
   }
 
   // Monotonic u32, restart-safe; never reused.
@@ -293,10 +265,7 @@ export class CellStore {
     return doc;
   }
 
-  private path(cellKey: string): string {
-    // Interior names can contain filesystem-hostile characters.
-    return join(this.cellsDir, `${encodeURIComponent(cellKey)}.json`);
-  }
+
 
   async get(cellKey: string): Promise<CellDoc> {
     const cached = this.cache.get(cellKey);

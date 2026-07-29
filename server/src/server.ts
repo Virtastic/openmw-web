@@ -139,7 +139,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   let worldMode = opts.worldMode ?? process.env.OMW_WORLD_MODE ?? 'public';
   const worldModeAtBoot = worldMode;
   const worldOwner = (opts.worldOwner ?? process.env.OMW_WORLD_OWNER ?? '').toLowerCase();
-  const playerStore = new PlayerStore(sharedDir, worldId, join(opts.dataDir, 'players'));
+  const playerStore = new PlayerStore(sharedDir, worldId);
   // Onboarding CRM capture. Env var wins over toml so the key can stay out of config files
   // in deployments; empty = inert.
   const attio = new AttioHook({

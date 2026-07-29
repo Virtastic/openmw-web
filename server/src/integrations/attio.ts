@@ -8,7 +8,7 @@
 //   1. Signup must NEVER fail or slow because the CRM is down: enqueue is a local file
 //      write; the network call happens off the hot path with retries.
 //   2. The queue is DURABLE: one JSON file per pending upsert under
-//      <sharedDir>/integrations/attio-queue/. A crash loses nothing; the next boot drains.
+//      attio.db. A crash loses nothing; the next boot drains.
 //   3. Feature-flagged: no API key -> completely inert (no queue writes either — an
 //      operator who never configured a CRM must not accumulate a hidden mailbox of PII).
 //
@@ -17,10 +17,10 @@
 // both (erase.ts) and the privacy policy must disclose CRM processing (plan 3.55).
 
 import { mkdirSync } from 'node:fs';
-import { readdir, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
-import { writeJsonAtomic } from '../persist/atomicjson';
+import type { DatabaseSync } from 'node:sqlite';
+import { openDb } from '../persist/sqlite';
 import { log } from '../log';
 
 export interface AttioUpsert {
@@ -41,8 +41,23 @@ export interface AttioSettings {
 const FLUSH_INTERVAL_MS = 60_000;
 const MAX_BATCH_PER_FLUSH = 20; // a boot after long downtime must not burst-hammer the API
 
+const ATTIO_MIGRATIONS = [
+  {
+    name: '001-attio-queue',
+    up: (db: DatabaseSync) => {
+      // An outbox of pending CRM upserts, not a store of record. id embeds the enqueue time so
+      // ORDER BY id drains oldest-first, the way the timestamped filenames used to sort.
+      db.exec(`CREATE TABLE attio_queue (
+        id         TEXT PRIMARY KEY,
+        accountKey TEXT NOT NULL,
+        doc        TEXT NOT NULL
+      )`);
+    },
+  },
+];
+
 export class AttioHook {
-  private readonly queueDir: string;
+  private readonly db: DatabaseSync;
   private readonly timer?: NodeJS.Timeout;
   private flushing = false;
 
@@ -51,9 +66,8 @@ export class AttioHook {
     // Injected for tests; the real one is global fetch.
     private readonly fetchFn: typeof fetch = fetch,
   ) {
-    this.queueDir = join(settings.dataDir, 'integrations', 'attio-queue');
+    this.db = openDb(join(settings.dataDir, 'attio.db'), ATTIO_MIGRATIONS);
     if (this.enabled) {
-      mkdirSync(this.queueDir, { recursive: true });
       this.timer = setInterval(() => void this.flush(), FLUSH_INTERVAL_MS);
       this.timer.unref();
     }
@@ -63,13 +77,19 @@ export class AttioHook {
     return this.settings.apiKey !== '';
   }
 
-  // Hot-path side: a single local file write, then an async kick. Never throws.
+  // Hot-path side: one local row insert, then an async kick. Never throws.
   enqueue(upsert: AttioUpsert): void {
     if (!this.enabled) return;
-    const name = `${Date.now()}-${randomBytes(4).toString('hex')}.json`;
-    writeJsonAtomic(join(this.queueDir, name), upsert)
-      .then(() => void this.flush())
-      .catch((err) => log('error', 'attio.enqueue_failed', { error: String(err) }));
+    try {
+      // id sorts by time, so the queue drains oldest-first exactly as the filename sort did.
+      this.db
+        .prepare('INSERT INTO attio_queue (id, accountKey, doc) VALUES (?, ?, ?)')
+        .run(`${Date.now()}-${randomBytes(4).toString('hex')}`, upsert.accountKey ?? '', JSON.stringify(upsert));
+    } catch (err) {
+      log('error', 'attio.enqueue_failed', { error: String(err) });
+      return;
+    }
+    void this.flush();
   }
 
   // Drains up to MAX_BATCH_PER_FLUSH queued upserts. A failed item stays queued for the
@@ -78,22 +98,19 @@ export class AttioHook {
     if (!this.enabled || this.flushing) return;
     this.flushing = true;
     try {
-      let names: string[];
-      try {
-        names = (await readdir(this.queueDir)).filter((n) => n.endsWith('.json')).sort();
-      } catch {
-        return; // queue dir gone (never enabled / erased) — nothing to do
-      }
-      for (const name of names.slice(0, MAX_BATCH_PER_FLUSH)) {
-        const path = join(this.queueDir, name);
+      const rows = this.db
+        .prepare('SELECT id, doc FROM attio_queue ORDER BY id LIMIT ?')
+        .all(MAX_BATCH_PER_FLUSH) as { id: string; doc: string }[];
+      const drop = this.db.prepare('DELETE FROM attio_queue WHERE id = ?');
+      for (const row of rows) {
         let upsert: AttioUpsert;
         try {
-          upsert = JSON.parse(await readFile(path, 'utf8')) as AttioUpsert;
+          upsert = JSON.parse(row.doc) as AttioUpsert;
         } catch {
-          await rm(path, { force: true }); // unreadable: drop rather than wedge the queue
+          drop.run(row.id); // unreadable: drop rather than wedge the queue
           continue;
         }
-        if (await this.send(upsert)) await rm(path, { force: true });
+        if (await this.send(upsert)) drop.run(row.id);
       }
     } finally {
       this.flushing = false;
@@ -145,20 +162,11 @@ export class AttioHook {
   // are the operator's to purge per their runbook; we stop what has not left the box.)
   async purgeAccount(accountKey: string): Promise<void> {
     if (!this.enabled) return;
-    let names: string[];
+    // accountKey is a column, so this is the whole job — no scan-and-parse of every entry.
     try {
-      names = (await readdir(this.queueDir)).filter((n) => n.endsWith('.json'));
-    } catch {
-      return;
-    }
-    for (const name of names) {
-      const path = join(this.queueDir, name);
-      try {
-        const upsert = JSON.parse(await readFile(path, 'utf8')) as AttioUpsert;
-        if (upsert.accountKey === accountKey) await rm(path, { force: true });
-      } catch {
-        // unreadable entries are dropped by flush(); leave them to it
-      }
+      this.db.prepare('DELETE FROM attio_queue WHERE accountKey = ?').run(accountKey);
+    } catch (err) {
+      log('error', 'attio.purge_failed', { error: String(err) });
     }
   }
 
