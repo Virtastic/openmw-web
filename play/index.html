@@ -2911,7 +2911,24 @@
   var sEl = document.getElementById('omw-social'), sBody = document.getElementById('omw-social-body');
   var sNav = document.getElementById('omw-nav'), sAvail = document.getElementById('omw-avail');
   var sStatus = document.getElementById('omw-social-status');
-  function setStatus(t){ sStatus.textContent = t || ''; }
+  // The engine acks a world switch with SocialResult, but social.lua does not mirror that to
+  // the page, so the browser cannot observe success (mirroring it needs a WASM relink). Until
+  // it does, a status line must not imply an operation is still running: it states what was
+  // REQUESTED and clears itself, rather than hanging on screen forever.
+  var sStatusText = '', sStatusTimer = null;
+  function setStatus(t, holdMs){
+    sStatusText = t || '';
+    sStatus.textContent = sStatusText;
+    if (sStatusTimer) { clearTimeout(sStatusTimer); sStatusTimer = null; }
+    if (sStatusText && holdMs !== 0) {
+      sStatusTimer = setTimeout(function(){
+        sStatusText = '';
+        sStatus.textContent = '';
+        sStatusTimer = null;
+        renderSocial(true);
+      }, holdMs || 4000);
+    }
+  }
   function setWhere(v){ lastWhere = v; try { localStorage.setItem('omw-where', v); } catch(e){} }
   function openSocial(){ if (socialOpen) return; socialOpen = true; sEl.classList.add('show'); uiHold(true); renderSocial(true); }
   function closeSocial(){ if (!socialOpen) return; socialOpen = false; sEl.classList.remove('show'); uiHold(false); }
@@ -2936,8 +2953,12 @@
     // destroyed and recreated ~7x/second. That silently ate focus, every typed character, and
     // any click that landed between two renders: the "it flashes and I can't click or type"
     // report. Measured before the fix: the input element was replaced 5 times in 2 seconds.
-    var sig = sTab + ' ' + [m.friends, m.party, m.players, m.friendRequests, m.invites,
-      m.availability, m.presenceMode, m.worldMode].join(' ');
+    // lastWhere and the status line are LOCAL state, but this render DRAWS them, so they
+    // belong in the signature. Leaving lastWhere out meant clicking Solo updated the variable,
+    // called renderSocial(), and then hit the unchanged-signature early return: the segment
+    // stayed on the old choice and the panel looked hung even though the switch had happened.
+    var sig = [sTab, lastWhere, sStatusText, m.friends, m.party, m.players, m.friendRequests,
+      m.invites, m.availability, m.presenceMode, m.worldMode].join(' ')
     if (!force && sig === lastSocialSig) return;
     lastSocialSig = sig;
     var friends = pj(m.friends)||[], party = pj(m.party)||{members:[]}, players = pj(m.players)||[];
@@ -2963,7 +2984,7 @@
     where.appendChild(el('span','lb','Playing'));
     where.appendChild(seg([['solo','Solo'],['party','Party'],['public','Public']], lastWhere, function(v){
       setWhere(v); cmd('where:'+v);
-      setStatus(v==='solo' ? 'Returning to your solo world…' : v==='party' ? 'Opening your world to your party…' : 'Heading to the shared world…');
+      setStatus(v==='solo' ? 'Switched to your solo world.' : v==='party' ? 'Your world is open to your party.' : 'Joining the shared world…');
       renderSocial();
     }));
     sBody.appendChild(where);
