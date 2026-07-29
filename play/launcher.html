@@ -1054,6 +1054,16 @@
      // The in-world name for this slot. Other players see it (it rides every
      // PlayerAppearance), so it is the CHARACTER's name and never the account holder's.
      + '&mpcharname=' + encodeURIComponent(chosenChar.name || 'Adventurer')
+     // Boot the engine straight into the cell this character logged out in. Without it the
+     // engine spawns at the game's DEFAULT start and the server teleports a moment later —
+     // real seconds standing somewhere you did not choose, next to whatever lives there.
+     // Only NAMED cells: --start takes a cell name, and an exterior grid ref ("-2,-9") is not
+     // one. Exteriors keep the teleport (and the loading screen that hides it).
+     + (function(){
+         var p = (chosenChar.positions || {})[privId];
+         var cell = p && p.cellKey;
+         return (cell && !/^-?\d+,\s*-?\d+$/.test(cell)) ? '&mpstart=' + encodeURIComponent(cell) : '';
+       })()
      + (chosenChar.needsChargen ? '&mpnew=1' : '');
    location.href = 'index.html?' + q.toString() + frag;
  }

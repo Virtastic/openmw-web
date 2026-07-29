@@ -340,7 +340,17 @@
      else if (/^\[mw\] loading Morrowind/.test(t))      set(null, 'Downloading');
    }
    function finish(){
-     if (done || !E()) return; done=true;
+     if (done || !E()) return;
+     // In multiplayer the engine spawns you at the DEFAULT start point and the server's saved
+     // position arrives moments later as a teleport. Hiding on the first engine frame showed
+     // that default spawn — "a strange place" — and then yanked you to where you actually
+     // quit. Stay up until the restore has landed (or given up), so the player only ever sees
+     // the place they left. ponytail: reuses the mirrors global.lua already publishes.
+     if (window.__omwAwaitRestore && window.__omwAwaitRestore()) {
+       setTimeout(finish, 200);
+       return;
+     }
+     done=true;
      el.classList.remove('indet'); fill.style.width='100%'; el.classList.add('hide');
      setTimeout(function(){ if (el) el.style.display='none'; }, 700);
    }
@@ -842,9 +852,13 @@
        //                           restores position/stats/inventory on auth (M2 record).
        // Hash read here works: this IIFE runs at script parse, before preRun scrubs it.
        if (/[?&]mp=/.test(location.search)) {
-         return /[#&]mpnew=1/.test(location.hash || '')
-           ? ['--skip-menu', '--new-game']
-           : ['--skip-menu'];
+         if (/[#&]mpnew=1/.test(location.hash || '')) return ['--skip-menu', '--new-game'];
+         // Returning character: start IN the cell they logged out of. Plain --skip-menu drops
+         // them at the game's default start until the server's record lands, which is a real
+         // window standing somewhere they did not choose. The server still teleports to the
+         // exact coordinates; this just makes the starting CELL the right one.
+         var ms = /[#&]mpstart=([^&]+)/.exec(location.hash || '');
+         return ms ? ['--skip-menu', '--start', decodeURIComponent(ms[1])] : ['--skip-menu'];
        }
      } catch (e) {}
      return [];
@@ -3169,6 +3183,36 @@
   // OpenMW's own loading screen. The overlay therefore has to be UP before the block starts.
   // The engine signals on door activation (one frame early); rAF is the only watcher fast
   // enough to paint in that gap, which is why this is not on the 150ms mirror poll.
+  // True while the server has a saved position for us that the engine has not reached yet.
+  // Only in multiplayer — single player has no server to wait on and would sit behind the
+  // screen for the whole timeout. Bounded from FIRST USE, not page load: the engine takes
+  // most of a minute to boot and would otherwise spend the budget before it could join.
+  // True while the server has a saved position the engine has not reached yet. Exteriors
+  // cannot be booted into by name (--start needs a cell NAME, not a grid ref), so for those
+  // the teleport still happens after spawn — this keeps the loading screen up over it so the
+  // player never sees, or is seen at, the default start.
+  var isMp = /[?&]mp=/.test(location.search);
+  var restoreDeadline = 0, joinedAt = 0;
+  window.__omwAwaitRestore = function(){
+    if (!isMp) return false;                                  // single player: nothing to wait on
+    if (restoreDeadline === 0) restoreDeadline = Date.now() + 20000;
+    if (Date.now() > restoreDeadline) return false;           // never strand the player
+    var mp = window.__omwMP || {};
+    if ((mp.state || '') !== 'Joined') return true;
+    if (joinedAt === 0) joinedAt = Date.now();
+    var raw = mp.restorePos;
+    // A character with NOTHING saved never publishes this — the restore simply does not run —
+    // so waiting on it outright left a fresh character stuck behind the screen (caught by s99).
+    // Give it a short grace after joining, then accept the default spawn as correct.
+    if (raw === undefined) return Date.now() - joinedAt < 2500;
+    if (raw === 'none') return false;
+    try {
+      var want = JSON.parse(raw), at = JSON.parse(mp.pose || 'null');
+      if (!at) return Date.now() - joinedAt < 2500;
+      return Math.hypot(at.x - want.x, at.y - want.y, at.z - want.z) > 250;
+    } catch (e) { return false; }
+  };
+
   (function watchCellLoad(){
     var seen = '', hideAt = 0;
     (function tick(){

@@ -144,7 +144,14 @@ export function characterRoutes(
           // client at CharGenState == -1). doc.appearance grandfathers pre-flag characters.
           // An abandoned creation therefore boots back INTO chargen (the world wipes its
           // partial doc at auth), never into a half-made character.
-          needsChargen: c.completed !== true && doc?.appearance === undefined };
+          needsChargen: c.completed !== true && doc?.appearance === undefined,
+          // Per-world saved positions, so the launcher can boot the engine STRAIGHT into the
+          // cell the character logged out in. Without it the engine spawns at the game's
+          // default start and the server teleports afterwards — which means real seconds
+          // standing somewhere you did not choose, next to whatever lives there.
+          // Raw map, not doc.position: this store has no world id, so position is not
+          // materialised here and only the caller knows which world it is about to open.
+          positions: doc?.positions ?? {} };
       }));
       sendJson(res, 200, { characters: withLevel, max: MAX_CHARACTERS });
       return true;
