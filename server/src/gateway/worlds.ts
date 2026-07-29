@@ -49,6 +49,9 @@ export interface WorldInfo {
   name: string;
   up: boolean;
   ownerAccount?: string; // private/party: who created it
+  // Played, and now empty — an abandoned session waiting to be reaped. Distinct from a world
+  // that was just created and has not been joined YET, which is still someone's live intent.
+  abandoned: boolean;
 }
 
 interface World {
@@ -98,6 +101,7 @@ export class WorldSupervisor {
       maxPlayers: w.lastStatus?.maxPlayers ?? 0,
       name: w.lastStatus?.name ?? w.id,
       up: w.lastStatus !== undefined,
+      abandoned: w.everConnected === true && w.idleSince !== undefined,
       ...(w.ownerAccount ? { ownerAccount: w.ownerAccount } : {}),
     }));
   }

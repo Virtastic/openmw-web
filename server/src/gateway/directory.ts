@@ -119,7 +119,15 @@ export async function startDirectory(deps: DirectoryDeps): Promise<RunningDirect
         // Per-owner cap: without it one account can exhaust maxWorlds and deny everyone
         // else. Counted over worlds this owner already has, and an existing world is a
         // re-join rather than a create, so it never trips on reconnect.
-        const mine = deps.worlds.list().filter((w) => w.ownerAccount === account);
+        //
+        // ABANDONED worlds do not count. A world id is per character, so deleting a character
+        // and creating another asks for a new world each time, and the played-then-left worlds
+        // behind you were still counted — which locked the account out with a 429 after two
+        // characters. They are reaped shortly anyway; they must not block a live session first.
+        // A world that was JUST created and not yet joined still counts, so the cap keeps
+        // doing its job of stopping one account exhausting maxWorlds.
+        const mine = deps.worlds.list()
+          .filter((w) => w.ownerAccount === account && !w.abandoned);
         if (!mine.some((w) => w.id === id) && mine.length >= deps.maxPerOwner) {
           json(res, 429, { error: `at most ${deps.maxPerOwner} sessions per account` });
           return;

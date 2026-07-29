@@ -142,3 +142,29 @@ test('directory: malformed input is rejected, not crashed on', async () => {
     assert.equal((await fetch(`${h.base}/healthz`)).status, 200, 'and the directory is still serving');
   } finally { await h.cleanup(); }
 });
+
+// Deleting a character and creating another asks for a NEW world each time (the id is per
+// character), and the played-then-left worlds behind you were still counted against the cap —
+// which locked the account out with a 429 after two characters.
+test('abandoned worlds do not count against the per-owner cap', async () => {
+  const h = await harness(10, 2);
+  try {
+    for (const id of ['c1', 'c2']) {
+      const r = await fetch(`${h.base}/worlds`, {
+        method: 'POST', body: JSON.stringify({ id, mode: 'private', account: 'player' }),
+      });
+      assert.equal(r.status, 200);
+    }
+    // Both were PLAYED and are now empty: what a deleted character leaves behind.
+    for (const w of (h.worlds as unknown as {
+      worlds: Map<string, { everConnected?: boolean; idleSince?: number }>;
+    }).worlds.values()) {
+      w.everConnected = true;
+      w.idleSince = Date.now();
+    }
+    const next = await fetch(`${h.base}/worlds`, {
+      method: 'POST', body: JSON.stringify({ id: 'c3', mode: 'private', account: 'player' }),
+    });
+    assert.equal(next.status, 200, 'a new character must not be blocked by worlds nobody is in');
+  } finally { await h.cleanup(); }
+});
