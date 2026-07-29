@@ -207,9 +207,26 @@ async function erasePlayerDocs(dataDir: string, key: string): Promise<boolean> {
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
   }
+  // Player docs live in players.db since the persistence consolidation. Delete the ROWS as
+  // well as any legacy file: a character document is the bulk of what this server knows about
+  // a person (inventory, journal, position), so missing it is not a partial erasure, it is a
+  // failed one. Both the legacy account-keyed doc and every character id are covered.
   let removed = await unlinkIfPresent(join(dataDir, 'players', `${key}.json`));
   for (const id of charIds) {
     if (await unlinkIfPresent(join(dataDir, 'players', `${id}.json`))) removed = true;
+  }
+  const playersDb = join(dataDir, 'players.db');
+  if (existsSync(playersDb)) {
+    const db = new DatabaseSync(playersDb);
+    try {
+      for (const k of [key, ...charIds]) {
+        if (Number(db.prepare('DELETE FROM players WHERE key = ?').run(k).changes) > 0) removed = true;
+      }
+    } catch (err) {
+      if (!/no such table/i.test(String(err))) throw err;
+    } finally {
+      db.close();
+    }
   }
   return removed;
 }

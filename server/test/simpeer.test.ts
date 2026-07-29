@@ -158,7 +158,7 @@ test('sim peer: a stale exit cannot reap the peer that replaced it', async () =>
 
 test('sim peer: its account is ephemeral — no player doc is ever written', async () => {
   const { startServer } = await import('../src/server');
-  const { TestClient, tmpDataDir } = await import('./helpers');
+  const { TestClient, tmpDataDir, listPlayerDocKeys } = await import('./helpers');
   const { existsSync, readdirSync } = await import('node:fs');
   const { join } = await import('node:path');
 
@@ -178,13 +178,12 @@ test('sim peer: its account is ephemeral — no player doc is ever written', asy
     await new Promise((r) => setTimeout(r, 200));
 
     await server.flush();
-    const playersDir = join(dir, 'players');
-    const files = existsSync(playersDir) ? readdirSync(playersDir) : [];
-    assert.ok(!files.some((f) => f.startsWith('simpeer_world')),
+    const files = listPlayerDocKeys(dir);
+    assert.ok(!files.some((f: string) => f.startsWith('simpeer_world')),
       `a sim peer must leave no player doc, found: ${files.join(', ')}`);
     // Control: the HUMAN in the same run is still persisted, so this proves the peer is
     // excluded rather than persistence being broken outright.
-    assert.ok(files.includes(`${humanCharId}.json`),
+    assert.ok(files.includes(humanCharId),
       `a real player must still be persisted, found: ${files.join(', ')}`);
     peer.ws.close();
     human.ws.close();

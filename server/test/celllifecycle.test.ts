@@ -12,7 +12,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { CellStore } from '../src/persist/cellstore';
 import { startServer } from '../src/server';
-import { TestClient, tmpDataDir } from './helpers';
+import { TestClient, tmpDataDir, readPlayerDoc } from './helpers';
 
 const REF = { __refnum: { index: 42, contentFile: 0 } };
 
@@ -83,7 +83,7 @@ test('a journal advance is durable immediately, not on the 45s sweep', async (t)
   a.sendEvent('JournalEntry', { questId: 'A1_1_FindSpymaster', index: 10 });
   await new Promise((r) => setTimeout(r, 400)); // no flush(), no sweep, still connected
 
-  const doc = JSON.parse(readFileSync(join(dataDir, 'players', `${charId}.json`), 'utf8')) as
+  const doc = readPlayerDoc(dataDir, charId) as
     { journal?: Record<string, number> };
   assert.equal(doc.journal?.A1_1_FindSpymaster, 10,
     'a quest stage must hit the disk at once — the Tribunal-MQ corruption is a crash before the sweep');

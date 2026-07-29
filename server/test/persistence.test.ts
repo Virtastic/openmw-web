@@ -9,7 +9,7 @@ import { readFileSync, writeFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { PlayerStore } from '../src/persist/playerstore';
 import { startServer } from '../src/server';
-import { TestClient, tmpDataDir } from './helpers';
+import { TestClient, tmpDataDir, readPlayerDoc } from './helpers';
 
 const APPEARANCE = { race: 'dark elf', head: 'b_n_dark elf_m_head_01', hair: 'b_n_dark elf_m_hair_02', isMale: true, class: 'nightblade', name: 'Drelas' };
 const EQUIP_SLOTS = new Map<number, string>([[0, 'iron_helmet'], [16, 'iron_longsword']]);
@@ -27,9 +27,9 @@ test('playerstore round-trip and atomicity', async () => {
   });
   await store.close();
 
-  // A crashed writer leaves only tmp litter; the doc itself must stay intact.
-  const playersDir = join(dataDir, 'players');
-  writeFileSync(join(playersDir, 'drelas.json.tmp-999-1'), '{"corrupt": tru'); // simulated mid-flush kill
+  // Durability across a restart. The tmp-file/rename dance this used to simulate belongs to
+  // the old JSON writer; SQLite's WAL is what makes a torn write impossible now, so the
+  // assertion is the one that actually matters: reopen the store and the doc is intact.
   const store2 = new PlayerStore(dataDir);
   const doc = await store2.get('drelas');
   assert.deepEqual(doc?.appearance, APPEARANCE);
@@ -38,9 +38,7 @@ test('playerstore round-trip and atomicity', async () => {
   assert.equal(doc?.stats?.level, 7);
   assert.deepEqual(doc?.spells, ['fire_bite']);
   assert.deepEqual(doc?.position, { cellKey: '3,-2', x: 1, y: 2, z: 3 });
-  // Only tmp litter + the real doc exist; the doc parses (rename was atomic).
-  assert.ok(readdirSync(playersDir).includes('drelas.json'));
-  assert.doesNotThrow(() => JSON.parse(readFileSync(join(playersDir, 'drelas.json'), 'utf8')));
+  assert.deepEqual(readPlayerDoc(dataDir, 'drelas')?.['spells'], ['fire_bite'], 'the row is readable outside the store');
   await store2.close();
 });
 
@@ -228,7 +226,7 @@ test('death is written immediately, before any disconnect or sweep', async () =>
     await new Promise((r) => setTimeout(r, 400));
 
     // STILL CONNECTED. No cleanup flush, no server.flush(), sweep is 45 s away.
-    const doc = JSON.parse(readFileSync(join(dir, 'players', `${charId}.json`), 'utf8')) as
+    const doc = readPlayerDoc(dir, charId) as
       { stats?: { dynamic?: { hp?: { c: number } } } };
     assert.equal(doc.stats?.dynamic?.hp?.c, 0,
       'death must hit the disk at once — a crash before the next sweep must not resurrect');

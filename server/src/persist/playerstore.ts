@@ -9,7 +9,26 @@
 import { mkdirSync } from 'node:fs';
 import { unlink } from 'node:fs/promises';
 import { join } from 'node:path';
-import { readJson, writeJsonAtomic } from './atomicjson';
+import { readJson } from './atomicjson';
+import type { DatabaseSync } from 'node:sqlite';
+import { readdir } from 'node:fs/promises';
+import { openDb, tx } from './sqlite';
+
+const PLAYER_MIGRATIONS = [
+  {
+    name: '001-players',
+    up: (db: DatabaseSync) => {
+      // key is the character id (or, for pre-slot worlds, the account key adoptLegacy
+      // migrates away from). The doc is stored whole: it is a snapshot the game reads and
+      // writes as a unit, and splitting inventory/journal into tables would buy nothing but
+      // join cost on the hottest write path in the server.
+      db.exec(`CREATE TABLE players (
+        key TEXT PRIMARY KEY,
+        doc TEXT NOT NULL
+      )`);
+    },
+  },
+];
 import { log } from '../log';
 import { timeFlush } from '../metrics';
 
@@ -86,6 +105,7 @@ export class PlayerStore {
   private livePosition: (key: string) => LivePosition | undefined = () => undefined;
 
   private readonly worldId: string;
+  private readonly db: DatabaseSync;
   private readonly legacyDir: string;
 
   // dataDir: where docs live — under the F3 gateway this is the SHARED dir, so a character
@@ -93,12 +113,45 @@ export class PlayerStore {
   // pre-slot per-world account-keyed docs live (the world's own data dir); used only by
   // adoptLegacy during migration.
   constructor(dataDir: string, worldId = 'default', legacyDir?: string) {
+    this.db = openDb(join(dataDir, 'players.db'), PLAYER_MIGRATIONS);
     this.dir = join(dataDir, 'players');
     this.worldId = worldId;
     this.legacyDir = legacyDir ?? this.dir;
     mkdirSync(this.dir, { recursive: true });
     this.sweepTimer = setInterval(() => void this.flushAll(), SWEEP_MS);
     this.sweepTimer.unref();
+    this.imported = this.importLegacy();
+  }
+
+  // One-shot import of players/*.json, only when the table is empty. Boot-time so a
+  // deployment needs no manual step; the JSON is left on disk until a release proves the DB.
+  // NOTE: this is separate from adoptLegacy, which is the pre-slot account-keyed migration
+  // and deliberately still reads a JSON file from legacyDir.
+  private readonly imported: Promise<void>;
+  private async importLegacy(): Promise<void> {
+    if (this.db.prepare('SELECT 1 FROM players LIMIT 1').get()) return;
+    let names: string[] = [];
+    try {
+      names = (await readdir(this.dir)).filter((n) => n.endsWith('.json'));
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+      return;
+    }
+    const docs: [string, string][] = [];
+    for (const n of names) {
+      const doc = await readJson<PlayerDoc>(join(this.dir, n));
+      if (doc) docs.push([n.slice(0, -5), JSON.stringify(doc)]);
+    }
+    if (docs.length === 0) return;
+    tx(this.db, () => {
+      const ins = this.db.prepare('INSERT OR REPLACE INTO players (key, doc) VALUES (?, ?)');
+      for (const [k, d] of docs) ins.run(k, d);
+    });
+    log('info', 'players.imported_from_json', { players: docs.length });
+  }
+
+  ready(): Promise<void> {
+    return this.imported;
   }
 
   setLivePositionProvider(fn: (key: string) => LivePosition | undefined): void {
@@ -115,10 +168,12 @@ export class PlayerStore {
     this.cache.delete(key);
     this.dirty.delete(key);
     try {
-      await unlink(this.path(key));
+      this.db.prepare('DELETE FROM players WHERE key = ?').run(key);
+      await unlink(this.path(key)).catch((err: NodeJS.ErrnoException) => {
+        if (err.code !== 'ENOENT') throw err; // legacy file, if this install still has one
+      });
     } catch (err) {
-      const code = (err as { code?: string }).code;
-      if (code !== 'ENOENT') log('warn', 'playerstore.erase_failed', { key, error: String(err) });
+      log('warn', 'playerstore.erase_failed', { key, error: String(err) });
     }
   }
 
@@ -126,7 +181,9 @@ export class PlayerStore {
   async get(key: string): Promise<PlayerDoc | undefined> {
     const cached = this.cache.get(key);
     if (cached) return cached;
-    const loaded = await readJson<PlayerDoc>(this.path(key));
+    const row = this.db.prepare('SELECT doc FROM players WHERE key = ?').get(key) as
+      { doc: string } | undefined;
+    const loaded = row ? (JSON.parse(row.doc) as PlayerDoc) : undefined;
     if (!loaded) return undefined;
     // JSON turned equipment slot keys into strings; normalize back to numbers.
     if (loaded.equipment) {
@@ -221,7 +278,10 @@ export class PlayerStore {
     // shared across worlds never clobbers another world's position with ours.
     if (doc.position) (doc.positions ??= {})[this.worldId] = { ...doc.position };
     try {
-      await timeFlush('players', () => writeJsonAtomic(this.path(key), doc));
+      await timeFlush('players', async () =>
+        this.db.prepare('INSERT OR REPLACE INTO players (key, doc) VALUES (?, ?)')
+          .run(key, JSON.stringify(doc)),
+      );
     } catch (err) {
       this.dirty.add(key); // retry on the next flush point
       log('error', 'players.flush_failed', { player: key, error: String(err) });

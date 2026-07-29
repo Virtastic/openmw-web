@@ -83,7 +83,14 @@ prove WAL first.
       exact milliseconds. The day-file prune compared date strings, so a line from exactly
       retentionDays ago survived its whole day; a naive `tsMs < now - days` silently tightened
       the documented policy and the test caught it at the boundary.
-- [ ] 5-10 below remain.
+- [x] **8. `playerstore.ts`** — DONE, now `players.db`. The doc is stored WHOLE: the game reads
+      and writes a character snapshot as a unit, and splitting inventory/journal into tables
+      would buy nothing but join cost on the hottest write path. Write-behind semantics (cell
+      change / level-up / logout / SIGTERM / 45 s sweep) are unchanged. `adoptLegacy` still
+      reads a JSON file on purpose — it is the pre-slot account-keyed migration, not this one.
+      `erase.ts` gained a row DELETE: a character doc is the bulk of what the server knows
+      about a person, so missing it is a failed erasure, not a partial one.
+- [ ] Remaining: `accounts` (+`usernames`) and `locker`.
 
 ### Note on step 4 (moderation)
 

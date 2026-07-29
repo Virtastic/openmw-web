@@ -1,3 +1,5 @@
+import { DatabaseSync } from 'node:sqlite';
+import { join as pathJoin } from 'node:path';
 // Copyright (C) 2025-2026 Virtastic - https://virtastic.app
 // SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
 // Test-side omw-mp/1 client: JSON session tier + binary event tier over a real ws socket.
@@ -246,5 +248,27 @@ export class TestClient {
 
   close(): void {
     this.ws.close();
+  }
+}
+
+// Player docs live in players.db since the persistence consolidation. Tests that used to
+// JSON.parse(players/<key>.json) go through here so only this helper knows the storage.
+export function readPlayerDoc(dataDir: string, key: string): Record<string, unknown> | undefined {
+  const db = new DatabaseSync(pathJoin(dataDir, 'players.db'));
+  try {
+    const row = db.prepare('SELECT doc FROM players WHERE key = ?').get(key) as
+      { doc: string } | undefined;
+    return row ? (JSON.parse(row.doc) as Record<string, unknown>) : undefined;
+  } finally {
+    db.close();
+  }
+}
+
+export function listPlayerDocKeys(dataDir: string): string[] {
+  const db = new DatabaseSync(pathJoin(dataDir, 'players.db'));
+  try {
+    return (db.prepare('SELECT key FROM players').all() as { key: string }[]).map((r) => r.key);
+  } finally {
+    db.close();
   }
 }

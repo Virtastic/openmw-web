@@ -10,7 +10,7 @@ import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { PlayerStore } from '../src/persist/playerstore';
 import { startServer } from '../src/server';
-import { TestClient, tmpDataDir } from './helpers';
+import { TestClient, tmpDataDir, readPlayerDoc } from './helpers';
 
 const APPEARANCE = { race: 'dark elf', head: 'h1', hair: 'a1', isMale: true, class: 'thief', name: 'Drelas' };
 
@@ -66,7 +66,8 @@ test('pre-slot account: legacy account-keyed doc is adopted by the first charact
   assert.deepEqual(record?.appearance, APPEARANCE);
   assert.deepEqual(record?.inventory, [{ id: 'gold_001', n: 77 }]);
   // And the doc now lives under the character id.
-  assert.ok(existsSync(join(playersDir, `${chars[0]!.id}.json`)));
+  // The adopted doc is now a row keyed by the new character id.
+  assert.ok(readPlayerDoc(dataDir, chars[0]!.id), 'the legacy doc was adopted under the character id');
   c.close();
 });
 
