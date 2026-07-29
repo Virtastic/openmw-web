@@ -226,11 +226,6 @@
  .cd-x:focus-visible{outline:2px solid var(--gold); outline-offset:2px}
  .cs-tile.new .plus{font-size:34px; line-height:1; margin-bottom:10px; font-weight:400; color:var(--bronze)}
  .cs-tile.new:hover{color:var(--gold-hi)} .cs-tile.new:hover .plus{color:var(--gold)}
- .cs-entering{margin:60px auto; color:var(--muted); font-size:15px; animation:pop .3s ease}
- .cs-entering .big{font-family:"Hoefler Text","Baskerville",Georgia,serif; font-size:26px; color:var(--ink);
-   margin-bottom:10px}
- @keyframes csdots{0%,20%{content:''}40%{content:'.'}60%{content:'..'}80%,100%{content:'...'}}
- .cs-entering .big::after{content:'...'; animation:csdots 1.6s infinite}
  .cs-create{margin:14px auto 0; display:flex; gap:8px; max-width:420px}
  .cs-create input{flex:1; box-sizing:border-box; padding:11px 13px; border-radius:5px; background:rgba(8,6,3,.6);
    border:1px solid var(--line); color:var(--ink); font:14px/1.2 -apple-system,"Segoe UI",sans-serif}
@@ -924,13 +919,13 @@
      let max = 8;
      // Resolves the whole character record: the boot needs the id AND whether this slot has
      // ever been played (a fresh slot runs Morrowind's chargen; an existing one skips it).
-     // Picking a character KEEPS this screen up with an "Entering…" state until the game page
-     // takes over — hiding it early flashed the launcher hero for a beat.
+     // The screen simply STAYS as it is until the game page takes over. It used to be replaced
+     // with an "Entering Vvardenfell / Loading <name>" state, which was wrong twice over: the
+     // navigation is usually immediate so it barely ever rendered, and the name it printed was
+     // the slot label — for an auto-created slot that was the ACCOUNT name, i.e. the person's
+     // real name on screen. The game page has its own loading UI; this needs none.
      const done = (ch) => {
        if (!ch){ bd.classList.remove('show'); resolve(null); return; }
-       const wrap = bd.querySelector('.cs-wrap');
-       if (wrap) wrap.innerHTML = '<div class="cs-entering"><div class="big">Entering Vvardenfell</div>'
-         + 'Loading ' + String(ch.name||'your character').replace(/[&<>]/g,'') + ' — this can take a moment.</div>';
        resolve(ch);
      };
      const clearCreate = () => { const w = bd.querySelector('.cs-create'); if (w) w.remove(); };
