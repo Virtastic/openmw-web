@@ -27,10 +27,15 @@ export type Migration = {
 export function openDb(path: string, migrations: Migration[] = []): DatabaseSync {
   mkdirSync(dirname(path), { recursive: true });
   const db = new DatabaseSync(path);
-  // WAL: concurrent readers do not block the writer, and a crash mid-write cannot shear the
-  // file. busy_timeout: wait for another process's write rather than throwing immediately.
-  db.exec('PRAGMA journal_mode = WAL');
+  // busy_timeout FIRST, before anything that can contend. Switching journal_mode to WAL takes
+  // a brief EXCLUSIVE lock, so if another process is mid-write at that moment a connection
+  // with no timeout set yet fails outright with "database is locked" — which is precisely what
+  // happens when a world process and the front door start together against the shared dir.
+  // A two-process concurrent-write test caught this: one process lost every write.
   db.exec('PRAGMA busy_timeout = 5000');
+  // WAL: concurrent readers do not block the writer, and a crash mid-write cannot shear the
+  // file. Multi-process readers/writers on one file is exactly what WAL is for.
+  db.exec('PRAGMA journal_mode = WAL');
   // FULL would fsync every commit (slow); NORMAL is the documented WAL pairing and still
   // crash-safe — a power loss can only lose the last commits, never corrupt the file.
   db.exec('PRAGMA synchronous = NORMAL');
