@@ -77,6 +77,10 @@ export const MAX_CHARACTERS = 8;
 // PlayerAppearance, other players' screens), so never derived from the account — an SSO
 // account name is the person's real name.
 export const DEFAULT_CHARACTER_NAME = 'Adventurer';
+// Every label a slot can carry before chargen names it. Two paths create slots (auth
+// auto-create and the launcher's "+ New character" tile) and they used different words, so a
+// rename that knew only one left half the characters showing a placeholder forever.
+const PLACEHOLDER_NAMES = new Set([DEFAULT_CHARACTER_NAME.toLowerCase(), 'new character']);
 
 // Public handle rules: tighter than account names (no spaces — it is a handle, not a
 // paragraph), case-insensitively unique, and never something that reads as staff.
@@ -253,7 +257,7 @@ export class AccountStore {
   // never overwritten. Flushed now: it is once per character and the tile shows it immediately.
   nameCharacter(account: Account, charId: string, name: string): void {
     const char = account.characters?.find((c) => c.id === charId);
-    if (!char || char.name === name || char.name !== DEFAULT_CHARACTER_NAME) return;
+    if (!char || char.name === name || !PLACEHOLDER_NAMES.has(char.name.toLowerCase())) return;
     char.name = name;
     this.dirty.add(account.name.toLowerCase());
     void this.flush();
