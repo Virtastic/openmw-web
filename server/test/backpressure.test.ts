@@ -112,7 +112,12 @@ test('the byte budget still disconnects, even on a movement frame', async (t) =>
     host: '127.0.0.1',
     // Bytes are checked before the frame type is dispatched, so an oversized PlayerMove
     // burst is still an abuse signal and must not be shed into silence.
-    configOverride: { limits: { ...ROOMY, bytesPerSec: 4096, moveMsgsPerSec: 10_000 } },
+    // bytesBurst is pinned to the rate here so the flood trips the budget promptly. In
+    // production the burst is deliberately larger than the rate (a dense cell's state lands
+    // in one spike); this test is about the budget still biting, not about burst sizing.
+    configOverride: {
+      limits: { ...ROOMY, bytesPerSec: 4096, bytesBurst: 4096, moveMsgsPerSec: 10_000 },
+    },
   });
   t.after(() => server.close());
 

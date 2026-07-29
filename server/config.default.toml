@@ -122,7 +122,11 @@ moveMsgsPerSec = 40               # separate budget for the player's OWN PlayerM
 # useful client tripped the limit first — so the actor stream gets its own. Nominal is 15 Hz;
 # 60 leaves room for a hitching client catching up and for a re-broadcast after a handoff.
 actorMoveMsgsPerSec = 60
-bytesPerSec = 65536               # per-session byte token bucket (burst = rate)
+bytesPerSec = 65536               # per-session sustained byte rate
+# Burst ceiling for the byte bucket. Entering a dense cell sends the cell's state in one go,
+# which is legitimately spiky; with burst == rate that spike disconnected a real player with
+# "byte rate limit exceeded" mid-tutorial. Sustained throughput is still bytesPerSec.
+bytesBurst = 262144               # 4x rate
 # Outbound backpressure. `ws` queues bytes a client has not read in SERVER memory with no
 # ceiling, so in a crowded cell one stalled reader grows RSS for everyone. Past the soft
 # limit only LOSSY frames (movement / actor batches) are dropped — a stale pose is corrected

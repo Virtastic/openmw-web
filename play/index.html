@@ -144,8 +144,9 @@
     <div class="wz-kick">Multiplayer &middot; one-time setup</div>
     <h2 class="wz-h" id="lkwiz-h">Add your Morrowind files</h2>
     <p class="wz-p">Your game data lives in your account, so it follows you to any device. Choose your
-       Morrowind files once. They upload to your private locker and are verified. You only select
-       the files below, not a whole folder, and you only do this the first time.</p>
+       Morrowind <b>Data Files</b> folder once and we find everything below inside it, including
+       music, videos and voices. It uploads to your private locker and is verified. You only do
+       this the first time.</p>
     <ul class="wz-list" id="lkwiz-list"></ul>
     <p class="wz-eula-lead">The Elder Scrolls III: Morrowind is © Bethesda Softworks. We do not
        provide the game. You may only upload files from a copy you legally own, as a private backup
@@ -156,10 +157,16 @@
       <label><input type="checkbox" id="eula-understand"> <span>I understand these are stored privately as backup copies for my own use only, that they are streamed back to no one but me, and that I will not share or redistribute them.</span></label>
     </div>
     <input type="file" id="lkwiz-file" accept=".esm,.esp,.bsa,.omwaddon" multiple style="display:none">
-    <button class="wz-btn" id="lkwiz-pick" type="button" disabled>Choose files</button>
+    <input type="file" id="lkwiz-dir" webkitdirectory style="display:none">
+    <button class="wz-btn" id="lkwiz-pick" type="button" disabled>Choose your Data Files folder</button>
+    <!-- No "pick files individually" path: the media alone is ~6,400 voice files, so hand-
+         selecting is not a real option. The folder read is targeted (plugins/archives at the
+         top level + the five media folders) and nothing else is even enumerated. -->
+    <button class="wz-btn" id="lkwiz-skip" type="button" style="display:none">Skip for now</button>
     <p class="wz-note" id="lkwiz-note"></p>
-    <p class="wz-fine">Select individual files (Cmd or Ctrl-click to pick several). No folder access is
-       requested. These stay private to you and are used only to stream your own game back to you.</p>
+    <p class="wz-fine">Your browser asks you to confirm the folder. Only Morrowind's own game files are
+       read from it — plugins, archives, music, videos and voices. Nothing else is touched or uploaded,
+       and what we store stays private to you, used only to stream your own game back to you.</p>
   </div>
 </div>
 <script>
@@ -265,9 +272,27 @@
      window[k].prototype = Orig.prototype;
    });
    function resumeAll(){ audioCtxs.forEach(function(c){ if(c.state==='suspended') c.resume(); }); }
-   ['pointerdown','keydown','touchstart','click'].forEach(function(ev){
+   window.__omwResumeAudio = resumeAll;
+   ['pointerdown','keydown','touchstart','click','pointerup','keyup'].forEach(function(ev){
      window.addEventListener(ev, resumeAll, {capture:true});
    });
+   // The engine creates its AudioContext LAZILY (when sound first plays), which can be long
+   // after the gesture that would have resumed it — and booting straight into the world with
+   // --skip-menu removed the title screen that used to guarantee an early click. So also poll:
+   // any context that shows up suspended after the player has interacted gets resumed. Stops
+   // once everything is running (and gives up after 2 min so it never spins forever).
+   var tries = 0, interacted = false;
+   ['pointerdown','keydown','touchstart'].forEach(function(ev){
+     window.addEventListener(ev, function(){ interacted = true; }, {capture:true});
+   });
+   var pump = setInterval(function(){
+     if (++tries > 240) { clearInterval(pump); return; }
+     if (!interacted) return;
+     resumeAll();
+     if (audioCtxs.length && audioCtxs.every(function(c){ return c.state === 'running'; })) clearInterval(pump);
+   }, 500);
+   // Pointer lock counts as engagement; the engine grabs it the moment you click into the game.
+   document.addEventListener('pointerlockchange', function(){ interacted = true; resumeAll(); });
  })();
  const hudEl = document.getElementById('hud');
  // Debug HUD is opt-in: ?hud=1 (or ?debug) shows the FPS/status bar + the log toggle (backtick) +
@@ -670,8 +695,19 @@
    //  - F5/Ctrl+R reload the page mid-game — block with a hint (use the menu to quit).
    //  - Ctrl/Cmd+W cannot be blocked by content JS; the dynamic beforeunload guard (below)
    //    intercepts the actual tab close instead.
+   function isEditable(el){
+     if (!el) return false;
+     var t = el.tagName;
+     return t === 'INPUT' || t === 'TEXTAREA' || t === 'SELECT' || el.isContentEditable === true;
+   }
    window.addEventListener('keydown', function(e){
      var mod = e.ctrlKey || e.metaKey;
+     // An HTML overlay (chat/social) owns the keyboard while it is open: none of the guards
+     // below may touch its keystrokes, and above all the focus-resilience line must not yank
+     // focus off its input. This handler is registered long before the overlay IIFE and on the
+     // same node+phase, so it runs FIRST — without this bail it stole the very first character
+     // typed into the chat field (the "it flashes and won't let me type" report).
+     if (window.__omwUiHold || isEditable(e.target)) return;
      if (e.key === 'Tab'){ e.preventDefault(); return; }
      if (mod && (e.key === 's' || e.key === 'S')){ e.preventDefault(); return; }
      if (e.key === 'F5' || (mod && (e.key === 'r' || e.key === 'R'))){
@@ -703,7 +739,10 @@
    // refused (request arrived before a user gesture), re-request it on the next click.
    canvas.addEventListener('pointerdown', function(){
      try {
-       if (window.Module && Module.__omwWantsMouseLock && document.pointerLockElement !== canvas) {
+       // __omwUiHold: an HTML overlay (chat/social) owns the mouse — never re-grab the lock
+       // out from under it; the overlay releases the hold when it closes.
+       if (window.Module && Module.__omwWantsMouseLock && !window.__omwUiHold
+           && document.pointerLockElement !== canvas) {
          // requestPointerLock() returns a promise in modern Chrome; it REJECTS if called too soon
          // after the user exited the lock (browser rate-limit) — swallow that so it doesn't surface
          // as an "unhandled rejection" in the console. The next click re-requests successfully.
@@ -785,6 +824,19 @@
      try {
        var m = /[?&]start=([^&]+)/.exec(location.search);
        if (m) return ['--skip-menu', '--start', decodeURIComponent(m[1])];
+       // Multiplayer boot: never show the title menu — the launcher's character loader IS the
+       // menu now. Keyed on ?mp= (survives a reload; the fragment gets scrubbed) so a reload
+       // rejoins straight in-world via the parked resume token instead of dead-ending at the
+       // title screen.
+       //   fresh slot  (#mpnew=1): --skip-menu --new-game -> the full Morrowind intro + chargen.
+       //   otherwise:              --skip-menu            -> straight into the world; the server
+       //                           restores position/stats/inventory on auth (M2 record).
+       // Hash read here works: this IIFE runs at script parse, before preRun scrubs it.
+       if (/[?&]mp=/.test(location.search)) {
+         return /[#&]mpnew=1/.test(location.hash || '')
+           ? ['--skip-menu', '--new-game']
+           : ['--skip-menu'];
+       }
      } catch (e) {}
      return [];
    })(),
@@ -894,9 +946,33 @@
                var tk = /[#&]mpticket=([^&]+)/.exec(h);
                var lk = /[#&]mplink=([^&]+)/.exec(h);
                var er = /[#&]mperror=([^&]+)/.exec(h);
-               if (tk) ENV.OPENMW_MP_TICKET = decodeURIComponent(tk[1]);
+               if (tk) {
+                 ENV.OPENMW_MP_TICKET = decodeURIComponent(tk[1]);
+                 // A fresh SSO ticket means a fresh session. Any resume token parked in
+                 // localStorage from a PREVIOUS session is stale, and the auth ladder tries a
+                 // parked resume token BEFORE the ticket — so a stale one makes the first join
+                 // fail ("resume token expired or unknown") and then dead-ends at the disabled
+                 // password path ("wrong server password"). Drop it so the ticket is used.
+                 try { localStorage.removeItem('omwmp:resume'); } catch(e){}
+               }
                var lok = /[#&]mplocker=([^&]+)/.exec(h);
                if (lok) window.__omwLockerToken = decodeURIComponent(lok[1]); // Bearer for /locker/*
+               // The character slot chosen on the launcher's tile screen; the engine reads it
+               // via mp.getBootCharacter() and auths into that slot (empty = last-played).
+               var mch = /[#&]mpchar=([^&]+)/.exec(h);
+               if (mch) ENV.OPENMW_MP_CHARACTER = decodeURIComponent(mch[1]);
+               // The CHARACTER's in-world name — never the account. mp.getName() reads this and
+               // identity.lua puts it in every PlayerAppearance broadcast, which other players
+               // see, so the signed-in person's real name must never reach it.
+               //
+               // It also must not be empty: the server rejects an appearance with any empty
+               // required field (playerstate.ts handleAppearance), so doc.appearance is never
+               // stored, which withholds playerRecord on every join (it is gated on
+               // doc.appearance) — inventory and position then silently never restore and the
+               // live client overwrites the saved doc. That is how quest items granted during
+               // the tutorial disappeared on the next join.
+               var mcn = /[#&]mpcharname=([^&]+)/.exec(h);
+               if (mcn) ENV.OPENMW_MP_NAME = decodeURIComponent(mcn[1]);
                if (lk) append('[mp] linked ' + decodeURIComponent(lk[1]) + ' to your account');
                if (er) append('[mp] sign-in failed: ' + decodeURIComponent(er[1]), 'err');
                if (tk || lk || er) {
@@ -1510,6 +1586,55 @@
          // ArrayBuffer (largest vanilla file ~310MB) is affordable on desktop Chrome.
          async function hashFile(file){ var buf=await file.arrayBuffer(); var d=await crypto.subtle.digest('SHA-256', buf); var b=new Uint8Array(d), o='',i; for(i=0;i<b.length;i++)o+=('00'+b[i].toString(16)).slice(-2); return o; }
 
+         // --- media pack: loose Sound/Music/Video/Fonts/Splash files ride as ONE USTAR blob.
+         // The Blob references the picked Files lazily (disk-backed), so building a ~300MB tar
+         // costs almost no memory; only the final hash reads it through once.
+         var MEDIA_DIR_RE = /^(Sound|Music|Video|Fonts|Splash)\//i;
+         var MEDIA_EXT_RE = /\.(mp3|wav|bik|fnt|tex|dds|tga|bmp|zip)$/i;
+         function tarHeader(name, size){
+           var h = new Uint8Array(512);
+           function put(s, off, len){ for (var i=0;i<s.length&&i<len;i++) h[off+i]=s.charCodeAt(i)&0xff; }
+           var nm = name, prefix = '';
+           if (nm.length > 100){ var cut = nm.lastIndexOf('/', 154); prefix = nm.slice(0, cut); nm = nm.slice(cut+1); }
+           put(nm, 0, 100);
+           put('0000644\0', 100, 8); put('0000000\0', 108, 8); put('0000000\0', 116, 8);
+           put(size.toString(8).padStart(11,'0')+'\0', 124, 12);
+           put('00000000000\0', 136, 12);
+           put('        ', 148, 8);          // checksum: spaces while summing
+           put('0', 156, 1);                  // regular file
+           put('ustar', 257, 5); put('00', 263, 2);
+           put(prefix, 345, 155);
+           var sum = 0; for (var j=0;j<512;j++) sum += h[j];
+           put(sum.toString(8).padStart(6,'0')+'\0 ', 148, 8);
+           return h;
+         }
+         function buildMediaTar(entries){ // entries: [{path, file}]
+           var parts = [], total = 0;
+           entries.forEach(function(e){
+             var pad = (512 - (e.file.size % 512)) % 512;
+             parts.push(tarHeader(e.path, e.file.size), e.file, new Uint8Array(pad));
+             total += 512 + e.file.size + pad;
+           });
+           parts.push(new Uint8Array(1024)); total += 1024;
+           return { blob: new Blob(parts), size: total };
+         }
+         async function uploadMediaPack(entries){
+           var built = buildMediaTar(entries);
+           wiz.set('media.tar','busy','packing '+entries.length+' files…');
+           var sha = await hashFile(built.blob); // one pass over ~300MB, pre-game so RAM is free
+           var rec = { name:'media.tar', size: built.size, sha256: sha };
+           wiz.set('media.tar','busy','authorizing…');
+           var au = await (await api('/locker/authorize-upload',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(rec)})).json();
+           if (!au.ok) throw new Error(au.reason==='quota'?'over quota':'not accepted');
+           wiz.set('media.tar','busy','uploading '+Math.round(built.size/1048576)+' MB…');
+           var put = await fetch(au.url,{method:'PUT',body:built.blob});
+           if (!put.ok) throw new Error('upload failed');
+           wiz.set('media.tar','busy','verifying…');
+           var conf = await (await api('/locker/uploaded',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(rec)})).json();
+           if (conf && conf.ok===false) throw new Error('not accepted');
+           wiz.set('media.tar','done','uploaded');
+         }
+
          // Recursively collect the files we care about from a picked Data Files folder.
          async function collectFiles(handle, prefix, out){
            for await (const [name,h] of handle.entries()){
@@ -1540,11 +1665,18 @@
              note:function(msg,cls){ noteEl.textContent=msg||''; noteEl.className='wz-note'+(cls?' '+cls:''); },
              render:function(needed,haveNames){
                list.innerHTML=''; rows={};
+               var LABEL={ 'sound/':'Voices', 'music/':'Music', 'video/':'Videos',
+                           'splash/':'Loading screens', 'fonts/':'Fonts', 'media.tar':'Voices' };
                needed.forEach(function(f){
-                 var key=f.name.toLowerCase(), done=haveNames.indexOf(key)!==-1;
+                 var key=f.name.toLowerCase();
+                 // Folder rows are satisfied by ANY file under that prefix; the pack by name.
+                 var done = key.slice(-1)==='/'
+                   ? haveNames.some(function(h){ return h.indexOf(key)===0; })
+                   : haveNames.indexOf(key)!==-1;
+                 var label = LABEL[key] || f.name;
                  var li=document.createElement('li'); li.className='wz-li'+(f.required?'':' opt')+(done?' done':'');
                  li.innerHTML='<span class="ic">'+(done?'✓':'')+'</span>'
-                   +'<span class="nm">'+f.name+'</span>'
+                   +'<span class="nm">'+label+'</span>'
                    +(f.required?'':'<span class="tag">optional</span>')
                    +'<span class="st">'+(done?'in your library':(Math.round(f.size/1048576)+' MB'))+'</span>';
                  list.appendChild(li);
@@ -1565,58 +1697,225 @@
          // access is ever requested); selections accumulate so they can add files in batches.
          // Once every REQUIRED file is present we hash + attest + upload each with live status,
          // and resolve with the stored file list. Optional files that are present upload too.
+         // ONE folder pick does everything: the player chooses their Data Files folder and we
+         // find the plugins, archives and media inside it ourselves. Nothing but Morrowind's
+         // own files is ever read or uploaded — the matching below is the whole allow-list,
+         // and the server re-checks every byte against its manifest regardless.
          async function runWizard(needed, haveNames){
            return new Promise(function(resolve){
-             wiz.render(needed, haveNames); wiz.note('');
+             var fileNeeded = needed.filter(function(f){ return !f.media; });
+             var mediaRow = needed.find(function(f){ return f.media; });
+             var have = haveNames.slice();
+             wiz.render(needed, have); wiz.note('');
              var fileInput=document.getElementById('lkwiz-file');
+             var dirInput=document.getElementById('lkwiz-dir');
              var pick=document.getElementById('lkwiz-pick');
+             var alt=null; // individual-file picker removed: hand-picking 6,400 media files is not viable
              var eula=document.getElementById('lkwiz-eula');
              var boxes=['eula-own','eula-legal','eula-understand'].map(function(id){ return document.getElementById(id); });
              boxes.forEach(function(b){ b.checked=false; });
-             pick.textContent='Choose files'; pick.disabled=true;
-             // The chooser stays locked until all ownership boxes are ticked.
-             boxes.forEach(function(b){ b.onchange=function(){ pick.disabled=!boxes.every(function(x){ return x.checked; }); }; });
-             var chosen={}; var uploading=false;
-             pick.onclick=function(){ if(!pick.disabled && !uploading) fileInput.click(); };
+             pick.textContent='Choose your Data Files folder'; pick.disabled=true;
+             if (alt) alt.style.display='none';
+             boxes.forEach(function(b){ b.onchange=function(){
+               var ok=boxes.every(function(x){ return x.checked; });
+               pick.disabled=!ok; if (alt) alt.style.display = ok ? '' : 'none';
+             }; });
+             var busy=false;
+             // TARGETED folder read. `<input webkitdirectory>` hands the page EVERY file in the
+             // folder — which is why the browser warns "upload 6,445 files" and why a mistyped
+             // folder would drag in whatever else lives there. showDirectoryPicker lets us walk
+             // only what we actually want: the plugins/archives at the top level and the five
+             // known media folders. Everything else in the folder is never even enumerated.
+             async function pickFolderTargeted(){
+               var root = await window.showDirectoryPicker({ id:'mwdata', mode:'read' });
+               var out = [], notFound = [];
+               // ASK FOR EXACTLY WHAT THE SERVER LISTED — by name, one handle at a time. The
+               // top level is never enumerated, so a stray mod, a save, or an unrelated file
+               // sitting next to Morrowind.esm is not merely filtered out, it is never seen.
+               for (const row of fileNeeded){
+                 var fh;
+                 try { fh = await root.getFileHandle(row.name); }
+                 catch(e){ notFound.push(row.name); continue; }
+                 var f = await fh.getFile(); f.__rel = row.name; out.push(f);
+               }
+               // Media: only the folders the server actually asked for ("Music/" -> Music),
+               // and inside them only the file types the game loads.
+               var wantDirs = needed.filter(function(r){ return r.name.slice(-1) === '/'; })
+                                    .map(function(r){ return r.name.slice(0, -1); });
+               if (needed.some(function(r){ return r.name === 'media.tar'; })) wantDirs.push('Sound');
+               for (const dir of wantDirs){
+                 var dh; try { dh = await root.getDirectoryHandle(dir); } catch(e){ notFound.push(dir+'/'); continue; }
+                 await (async function walk(handle, prefix){
+                   for await (const [name, h] of handle.entries()){
+                     var rel = prefix + '/' + name;
+                     if (h.kind === 'directory') await walk(h, rel);
+                     else if (MEDIA_EXT_RE.test(name)){
+                       var mf = await h.getFile(); mf.__rel = rel; out.push(mf);
+                     }
+                   }
+                 })(dh, dir);
+               }
+               return { files: out, notFound: notFound };
+             }
+             pick.onclick=async function(){
+               if (pick.disabled || busy) return;
+               if (!window.showDirectoryPicker){ dirInput.click(); return; } // older browser fallback
+               var res;
+               try { res = await pickFolderTargeted(); }
+               catch(e){ if (e && e.name === 'AbortError') return; wiz.note('Could not read that folder: '+(e&&e.message||e),'err'); return; }
+               var list = res.files;
+               if (!list.length){
+                 wiz.note('Nothing this server needs is in that folder. Pick the folder that holds Morrowind.esm (usually "Data Files").','err');
+                 return;
+               }
+               // Say up front what is not there, rather than discovering it after an upload.
+               if (res.notFound.length) wiz.note('Not in that folder: '+res.notFound.join(', ')+'. Continuing with what is.','err');
+               else wiz.note('Found everything this server needs ('+list.length+' files). Checking…','');
+               busy=true; pick.disabled=true;
+               ingest(list);
+             };
+             if (alt) alt.onclick=function(){ if(!busy) fileInput.click(); };
+
+             // A RETURNING player has already attested; they are here because the server needs
+             // files they have not uploaded yet. Skip the ownership checkboxes and go straight
+             // to the folder pick. Nothing here is skippable: every row is content this server
+             // loads, so a client without it cannot play the world the server is authoring.
+             if (have.length){
+               wiz.note('Your library is missing some of this server’s game files. Choose your Data Files folder to add them.','');
+               pick.disabled=false; eula.style.display='none';
+               if (alt) alt.style.display='';
+             }
              wiz.show();
 
-             fileInput.onchange=async function(){
-               Array.prototype.slice.call(fileInput.files||[]).forEach(function(f){ chosen[f.name.toLowerCase()]=f; });
-               fileInput.value=''; // let the same file be re-picked later if needed
-               needed.forEach(function(f){ if(chosen[f.name.toLowerCase()] && haveNames.indexOf(f.name.toLowerCase())===-1) wiz.set(f.name,'','ready'); });
-               var missing = needed.filter(function(f){ return f.required && haveNames.indexOf(f.name.toLowerCase())===-1 && !chosen[f.name.toLowerCase()]; });
-               if (missing.length){ wiz.note('Still need: '+missing.map(function(m){return m.name;}).join(', ')+'. Click Choose files to add them.','err'); pick.textContent='Add more files'; return; }
-               // All required files are present — begin the one-time upload.
-               uploading=true; pick.disabled=true; eula.style.display='none'; wiz.note('Reading files. Keep this page open.','');
-               var toUpload = needed.filter(function(f){ return haveNames.indexOf(f.name.toLowerCase())===-1 && chosen[f.name.toLowerCase()]; });
+             function stop(msg){ wiz.note(msg,'err'); busy=false; eula.style.display=''; pick.disabled=false; pick.textContent='Try again'; if (alt) alt.style.display=''; }
+             function done(){
+               wiz.note('All set. Starting Morrowind.','ok');
+               (async function(){
+                 var got; try { got=(await (await api('/locker/files')).json()).files; } catch(e){ got=null; }
+                 setTimeout(function(){ wiz.hide(); resolve(got||[]); }, 800);
+               })();
+             }
+
+             // Upload one already-hashed record with live per-row status. Returns true on success.
+             async function put(rec, file, row){
+               try {
+                 if (row) wiz.set(row,'busy','authorizing…');
+                 var au=await (await api('/locker/authorize-upload',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(rec)})).json();
+                 if(!au.ok){ if(row) wiz.set(row,'err',au.reason==='quota'?'over quota':'not accepted'); return false; }
+                 if (row) wiz.set(row,'busy','uploading…');
+                 var r=await fetch(au.url,{method:'PUT',body:file});
+                 if(!r.ok){ if(row) wiz.set(row,'err','upload failed'); return false; }
+                 if (row) wiz.set(row,'busy','verifying…');
+                 var conf=await (await api('/locker/uploaded',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(rec)})).json();
+                 if(conf&&conf.ok===false){ if(row) wiz.set(row,'err','not a valid file'); return false; }
+                 if (row) wiz.set(row,'done','uploaded');
+                 return true;
+               } catch(e){ if(row) wiz.set(row,'err','failed'); return false; }
+             }
+
+             // The single entry point for both pickers: classify what was handed to us, then
+             // upload core files, loose media (per-file) and voice (one pack).
+             async function ingest(list){
+               var core={}, loose=[], voice=[];
+               var wanted={}; fileNeeded.forEach(function(f){ wanted[f.name.toLowerCase()]=f.name; });
+               list.forEach(function(f){
+                 // __rel: set by the targeted showDirectoryPicker walk. webkitRelativePath:
+                 // the <input webkitdirectory> fallback. name: a plain multi-file pick.
+                 var rel=(f.__rel||f.webkitRelativePath||f.name||'').replace(/\\/g,'/');
+                 var base=rel.split('/').pop();
+                 var m=rel.match(/(?:^|\/)((?:Sound|Music|Video|Fonts|Splash)\/.+)$/i);
+                 if (m && MEDIA_EXT_RE.test(m[1])){
+                   if (/^Sound\//i.test(m[1])) voice.push({ path:m[1], file:f });
+                   else loose.push({ path:m[1], file:f });
+                 } else if (wanted[base.toLowerCase()] && /\.(esm|esp|bsa|omwaddon)$/i.test(base)){
+                   core[base.toLowerCase()]=f; // canonical spelling comes from the manifest
+                 }
+               });
+               // Did the picked folder cover everything the server needs? Plugin/archive rows
+               // must be present as files; media FOLDER rows are covered when the scan found
+               // anything under that prefix (or, for voice, any Sound/ file to pack).
+               var picked = loose.map(function(e){ return e.path.toLowerCase(); });
+               var missing = needed.filter(function(f){
+                 if (!f.required) return false;
+                 var k=f.name.toLowerCase();
+                 if (k === 'media.tar') return !voice.length && have.indexOf('media.tar')===-1;
+                 if (k.slice(-1) === '/'){
+                   return !picked.some(function(p){ return p.indexOf(k)===0; })
+                     && !have.some(function(h){ return h.indexOf(k)===0; });
+                 }
+                 return have.indexOf(k)===-1 && !core[k];
+               });
+               if (missing.length){
+                 wiz.note('That folder is missing: '+missing.map(function(m){return m.name;}).join(', ')
+                   +'. Pick the folder that holds Morrowind.esm (usually "Data Files").','err');
+                 busy=false; pick.disabled=false; if (alt) alt.style.display='';
+                 return;
+               }
+               busy=true; pick.disabled=true; eula.style.display='none'; if (alt) alt.style.display='none';
+
+               // Hash the core files first so ownership is attested over the real list.
                var records=[];
-               for (const f of toUpload){ var file=chosen[f.name.toLowerCase()]; wiz.set(f.name,'busy','hashing…'); var sha=await hashFile(file); records.push({name:f.name,size:file.size,sha256:sha}); }
-               function stop(msg){ wiz.note(msg,'err'); uploading=false; eula.style.display=''; pick.disabled=false; pick.textContent='Try again'; }
-               // Attest ownership BEFORE any byte leaves the machine.
+               for (const f of fileNeeded){
+                 var file=core[f.name.toLowerCase()];
+                 if (!file || have.indexOf(f.name.toLowerCase())!==-1) continue;
+                 wiz.set(f.name,'busy','hashing…');
+                 records.push({ name:f.name, size:file.size, sha256: await hashFile(file) });
+               }
                try { await api('/locker/attest',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({files:records})}); }
                catch(e){ return stop('Could not reach the server. Try again.'); }
-               wiz.note('Uploading to your private locker.','');
+
+               wiz.note('Uploading to your private locker. Keep this page open.','');
                var failed=[];
-               for (const rec of records){ var file=chosen[rec.name.toLowerCase()];
-                 try {
-                   wiz.set(rec.name,'busy','authorizing…');
-                   var au=await (await api('/locker/authorize-upload',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(rec)})).json();
-                   if(!au.ok){ wiz.set(rec.name,'err',au.reason==='quota'?'over quota':'not accepted'); failed.push(rec.name); continue; }
-                   wiz.set(rec.name,'busy','uploading…');
-                   var put=await fetch(au.url,{method:'PUT',body:file});
-                   if(!put.ok){ wiz.set(rec.name,'err','upload failed'); failed.push(rec.name); continue; }
-                   wiz.set(rec.name,'busy','verifying…');
-                   var conf=await (await api('/locker/uploaded',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(rec)})).json();
-                   if(conf&&conf.ok===false){ wiz.set(rec.name,'err','not a valid file'); failed.push(rec.name); continue; }
-                   wiz.set(rec.name,'done','uploaded');
-                 } catch(e){ wiz.set(rec.name,'err','failed'); failed.push(rec.name); }
+               for (const rec of records){
+                 if (!(await put(rec, core[rec.name.toLowerCase()], rec.name))) failed.push(rec.name);
                }
-               // Only a REQUIRED failure blocks starting; an optional file that failed is skipped.
-               var reqFailed = failed.filter(function(n){ return (needed.find(function(x){return x.name===n;})||{}).required; });
-               if (reqFailed.length){ return stop('Could not add: '+reqFailed.join(', ')+'. Make sure they are genuine Morrowind files, then try again.'); }
-               wiz.note('All set. Starting Morrowind.','ok');
-               var got; try { got=(await (await api('/locker/files')).json()).files; } catch(e){ got=null; }
-               setTimeout(function(){ wiz.hide(); resolve(got||[]); }, 800);
+               var reqFailed = failed.filter(function(n){ return (fileNeeded.find(function(x){return x.name===n;})||{}).required; });
+               if (reqFailed.length) return stop('Could not add: '+reqFailed.join(', ')+'. Make sure they are genuine Morrowind files, then try again.');
+
+               // Loose media (Music/Video/Splash/Fonts): per-file uploads, but the CHECKLIST
+               // shows one row per folder — so drive that row's status from its own files
+               // ("12/18 uploaded") and tick it when the folder is done. Without this the
+               // media rows sat blank while everything else showed progress.
+               if (loose.length){
+                 var byFolder = {};
+                 loose.forEach(function(e){
+                   var dir = e.path.split('/')[0] + '/';
+                   (byFolder[dir] = byFolder[dir] || []).push(e);
+                 });
+                 for (const dir of Object.keys(byFolder)){
+                   var group = byFolder[dir], okCount = 0, failCount = 0;
+                   for (var i=0;i<group.length;i++){
+                     var e=group[i];
+                     if (have.indexOf(e.path.toLowerCase())!==-1){ okCount++; continue; }
+                     wiz.set(dir,'busy',(i+1)+'/'+group.length+' uploading…');
+                     var ok = await put({ name:e.path, size:e.file.size, sha256: await hashFile(e.file) }, e.file, null);
+                     if (ok) okCount++; else failCount++;
+                   }
+                   if (okCount === 0) wiz.set(dir,'err','none accepted');
+                   else if (failCount) wiz.set(dir,'done',okCount+' of '+group.length+' added');
+                   else wiz.set(dir,'done','added');
+                 }
+               }
+               // Voice: thousands of tiny files, so one packed upload.
+               if (voice.length && mediaRow && have.indexOf('media.tar')===-1){
+                 try { await uploadMediaPack(voice); }
+                 catch(e){ wiz.set('media.tar','err','failed'); wiz.note('Voices could not be added ('+(e&&e.message||e)+') — starting without them.','err'); }
+               }
+               done();
+             }
+
+             dirInput.onchange=function(){
+               var list=Array.prototype.slice.call(dirInput.files||[]); dirInput.value='';
+               if (!list.length) return;
+               wiz.note('Reading your folder…',''); busy=true; pick.disabled=true;
+               ingest(list);
+             };
+             // Fallback for anyone who would rather not grant folder access.
+             fileInput.onchange=function(){
+               var list=Array.prototype.slice.call(fileInput.files||[]); fileInput.value='';
+               if (!list.length) return;
+               busy=true; pick.disabled=true;
+               ingest(list);
              };
            });
          }
@@ -1625,15 +1924,52 @@
            var files;
            try { files = (await (await api('/locker/files')).json()).files; }
            catch(e){ return bounce('Could not reach your locker on the server.'); }
+           // The wizard runs when the locker is EMPTY, and also when it is merely INCOMPLETE:
+           // an account that uploaded before the manifest knew about music/videos/voices has
+           // the plugins but none of the media, and would otherwise silently keep playing a
+           // silent game with no way to add them. Anything the server lists as needed and the
+           // account does not have re-opens the wizard, which now takes a single folder pick.
+           var have = (files||[]).map(function(f){ return f.name.toLowerCase(); });
+           var needed;
+           try {
+             var nres = await api('/locker/needed');
+             if (!nres.ok) throw new Error('HTTP '+nres.status);
+             needed = ((await nres.json()).files)||[];
+           }
+           catch(e){
+             // Silent failure here used to mean "no prompt, ever" — the account would keep
+             // playing half-installed with nothing said. Say it out loud instead.
+             needed=[];
+             append('[locker] could not read the required-file list: '+(e&&e.message||e),'err');
+           }
+           // A row ending in '/' is a media FOLDER (Music/, Video/…): satisfied when the locker
+           // holds anything under it. Everything else matches by exact name.
+           function satisfied(row){
+             var k=row.name.toLowerCase();
+             if (k.slice(-1) === '/') return have.some(function(h){ return h.indexOf(k)===0; });
+             return have.indexOf(k)!==-1;
+           }
+           var missing = needed.filter(function(f){ return !satisfied(f); });
            if (!files || !files.length){
-             // Empty locker: run the one-time upload wizard, driven by the server's needed list.
-             var needed;
-             try { needed = ((await (await api('/locker/needed')).json()).files)||[]; }
-             catch(e){ needed=[]; }
              if (!needed.length) return bounce('This server has no game manifest configured yet — ask the operator to add one.');
              append('[locker] first visit — showing the upload wizard.');
              try { files = await runWizard(needed, []); } catch(e){ return bounce('Upload failed: '+(e&&e.message||e)); }
              if (!files || !files.length) return bounce('No files were accepted. Make sure you picked a real Morrowind Data Files folder.');
+           } else if (missing.length){
+             append('[locker] have '+have.length+' of '+needed.length+' — missing: '
+               + missing.map(function(m){ return m.name; }).join(', '));
+             try { files = await runWizard(needed, have) || files; }
+             catch(e){
+               // Never swallow this: a wizard that fails to open leaves the player with a
+               // half-installed game and no explanation of why.
+               append('[locker] upload wizard failed to open: '+(e&&e.message||e),'err');
+               fatalOverlay('Your game files are incomplete',
+                 'This server needs: '+missing.map(function(m){ return m.name; }).join(', ')
+                 + '. The uploader could not open ('+(e&&e.message||e)+'). Reload to try again.', false);
+               return;
+             }
+           } else {
+             append('[locker] library complete ('+have.length+' items).');
            }
            // Content files (.esm/.esp) are read HEAVILY at load and during play — the engine
            // walks the whole ESM into its record store. Streaming those over the network makes
@@ -1671,6 +2007,43 @@
              if (!self.caches || !sha) return;
              try { var c=await caches.open(LOCKER_CACHE); await c.put('https://locker.local/'+sha, new Response(buf)); } catch(e){ /* quota — non-fatal */ }
            }
+           // USTAR reader for the voice pack — the mirror of the wizard's writer. Writes each
+           // entry into the engine FS at its retail relative path (Sound/Vo/...), creating
+           // directories as it goes. Returns how many files landed.
+           // ASYNC on purpose: 6,400 FS.writeFile calls in one loop pins the main thread long
+           // enough for Chrome to show "Page Unresponsive". Yield every batch so the browser
+           // can paint (and so the loading bar actually moves), and remember which directories
+           // exist rather than calling mkdirTree once per file.
+           async function untarInto(root, ab){
+             var u = new Uint8Array(ab), off = 0, n = 0, madeDirs = {};
+             var total = u.length, batch = 0;
+             function str(a, b){ var s=''; for (var i=a;i<b && u[off+i];i++) s+=String.fromCharCode(u[off+i]); return s; }
+             while (off + 512 <= u.length){
+               if (u[off] === 0) break;                     // end-of-archive
+               if (str(257,262) !== 'ustar') break;         // not a header: stop rather than guess
+               var nm = str(0,100), prefix = str(345,500);
+               var full = prefix ? prefix+'/'+nm : nm;
+               var size = parseInt(str(124,136).trim() || '0', 8) || 0;
+               var type = String.fromCharCode(u[off+156] || 48);
+               var body = off + 512;
+               if (type === '0' || type === '\0'){
+                 var path = root + '/' + full;
+                 var dir = path.slice(0, path.lastIndexOf('/'));
+                 try {
+                   if (!madeDirs[dir]){ FS.mkdirTree(dir); madeDirs[dir] = 1; }
+                   FS.writeFile(path, u.subarray(body, body + size));
+                   n++;
+                 } catch(e){ /* one bad entry must not abort the rest of the pack */ }
+               }
+               off = body + Math.ceil(size / 512) * 512;
+               if (++batch >= 150){
+                 batch = 0;
+                 ldSet(Math.floor(off * 100 / total), 'Unpacking voices', n + ' files');
+                 await new Promise(function(r){ setTimeout(r, 0); }); // let the browser breathe
+               }
+             }
+             return n;
+           }
            append('[locker] loading '+files.length+' files from your library…');
            ldSet(null,'Loading your library');
            FS.mkdirTree('/mwdata');
@@ -1703,6 +2076,39 @@
                }
                FS.writeFile('/mwdata/'+f.name, new Uint8Array(buf));
                content.push(f.name);
+             } else if (f.name === 'media.tar'){
+               // Voice pack: thousands of tiny files in one object. Fetch once (cached by
+               // sha256 like everything else), then unpack straight into the data dir so the
+               // engine finds Sound/Vo/... exactly where retail keeps it.
+               var tbuf = await cacheGet(f.sha256);
+               if (tbuf){ ldSet(null,'Loading','voices (cached)'); }
+               else {
+                 var dlt = await (await api('/locker/download?name=media.tar')).json();
+                 if (dlt && dlt.url){
+                   tbuf = await fetchFull(dlt.url, f.size, 'voices');
+                   await cachePut(f.sha256, tbuf);
+                 }
+               }
+               if (tbuf){
+                 var n = await untarInto('/mwdata', tbuf); // async: yields so the page stays alive
+                 append('[locker] unpacked '+n+' voice files');
+               }
+             } else if (/\//.test(f.name)){
+               // Loose media (Music/, Video/, Splash/, Fonts/): few and large, so they take
+               // the same per-file path as the plugins and land at their retail relative path.
+               var mbuf = await cacheGet(f.sha256);
+               if (!mbuf){
+                 var dlm = await (await api('/locker/download?name='+encodeURIComponent(f.name))).json();
+                 if (dlm && dlm.url){
+                   mbuf = await fetchFull(dlm.url, f.size, f.name);
+                   await cachePut(f.sha256, mbuf);
+                 }
+               }
+               if (mbuf){
+                 var mp = '/mwdata/'+f.name;
+                 FS.mkdirTree(mp.slice(0, mp.lastIndexOf('/')));
+                 FS.writeFile(mp, new Uint8Array(mbuf));
+               }
              }
            }
            ldSet(null,'Starting Morrowind');
@@ -2161,5 +2567,580 @@
       'Could not load the game engine (' + __ENGINE_DIR + 'openmw.js). Reload to try again.'); };
     document.body.appendChild(s);
   })();
+</script>
+<!-- ============================ MULTIPLAYER HTML OVERLAYS ============================
+     Social hub + chat, rendered in the DOM over the game canvas (the in-engine MyGUI windows
+     were removed). Talks to the running engine through the existing bridge: JS->Lua via the
+     single Module.__omwMPCmd slot (queued), Lua->JS via window.__omwMP[key] mirrors. Because
+     this is plain HTML served from play/, its look iterates with NO wasm rebuild. -->
+<style>
+#omw-chat, #omw-social{ --panel:#17130e; --panel-2:#211a12; --line:#3a2e1e; --line-soft:rgba(58,46,30,.45);
+  --bronze:#8a6838; --bronze-hi:#c69a4e; --gold:#d3a84e; --gold-hi:#e8c86a; --ink:#e9dcc3; --muted:#b9a888;
+  --faint:#8a7a5e; --c-say:#e9dcc3; --c-party:#8fe58f; --c-global:#f0d15a; --c-public:#f0d15a;
+  --c-whisper:#dd95f4; --c-server:#a89a80;
+  font:13.5px/1.45 "Optima","Gill Sans",-apple-system,"Segoe UI",sans-serif; }
+#omw-chat *, #omw-chat *::before, #omw-chat *::after{ box-sizing:border-box; }
+#omw-social *, #omw-social *::before, #omw-social *::after{ box-sizing:border-box; }
+
+/* ================= CHAT — MMO style, bottom-right ================= */
+#omw-chat{ position:fixed; right:14px; bottom:14px; width:440px; max-width:calc(100vw - 28px);
+  z-index:50; display:flex; flex-direction:column; color:var(--ink); pointer-events:none; }
+#omw-chat .feed{ height:190px; overflow:hidden; padding:4px 10px 6px; display:flex; flex-direction:column;
+  justify-content:flex-end; scrollbar-width:none; transition:background .18s ease, height .18s ease; }
+#omw-chat .feed::-webkit-scrollbar{ width:0; }
+#omw-chat .ln{ margin:1.5px 0; text-shadow:0 1px 2px rgba(0,0,0,.95), 0 0 6px rgba(0,0,0,.7);
+  word-wrap:break-word; opacity:.78; animation:omwln .25s ease; }
+@keyframes omwln{ from{ opacity:0; transform:translateY(3px);} to{ transform:none; } }
+#omw-chat .ln .tag{ font-weight:700; letter-spacing:.02em; }
+#omw-chat .ln .who{ font-weight:600; color:var(--ink); }
+#omw-chat .c-say{ color:var(--c-say); } #omw-chat .c-party{ color:var(--c-party); }
+#omw-chat .c-global{ color:var(--c-global); } #omw-chat .c-public{ color:var(--c-public); }
+#omw-chat .c-whisper{ color:var(--c-whisper); }
+#omw-chat .c-server{ color:var(--c-server); font-style:italic; }
+/* active (T): the feed becomes a real panel with scrollback + the compose bar below it */
+#omw-chat.active{ pointer-events:auto; }
+#omw-chat.active .feed{ height:250px; overflow-y:auto; justify-content:flex-start;
+  background:rgba(10,8,5,.92); border:1px solid var(--line); border-bottom:none; border-radius:8px 8px 0 0;
+  scrollbar-width:thin; scrollbar-color:var(--bronze) transparent; }
+#omw-chat.active .ln{ opacity:1; }
+#omw-chat .bar{ display:none; flex-direction:column; background:rgba(10,8,5,.96);
+  border:1px solid var(--line); border-top:1px solid var(--line-soft); border-radius:0 0 8px 8px; }
+#omw-chat.active .bar{ display:flex; }
+#omw-chat .chans{ display:flex; gap:2px; padding:6px 8px 0; }
+#omw-chat .chan{ padding:4px 10px 6px; cursor:pointer; font-size:11px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--faint); border-bottom:2px solid transparent; }
+#omw-chat .chan:hover{ color:var(--muted); }
+#omw-chat .chan.on{ color:var(--ink); }
+#omw-chat .chan.on[data-c="party"]{ border-color:var(--c-party); color:var(--c-party); }
+#omw-chat .chan.on[data-c="public"]{ border-color:var(--c-public); color:var(--c-public); }
+#omw-chat .chan.on[data-c="whisper"]{ border-color:var(--c-whisper); color:var(--c-whisper); }
+#omw-chat .r2{ display:flex; align-items:center; gap:7px; padding:7px 9px 9px; }
+#omw-chat .clab{ font-weight:700; font-size:12px; white-space:nowrap; }
+#omw-chat select.wto{ background:rgba(0,0,0,.45); border:1px solid var(--line); color:var(--c-whisper);
+  border-radius:4px; padding:6px 6px; font:inherit; font-size:12.5px; max-width:130px; }
+#omw-chat input.tx{ flex:1; min-width:0; background:rgba(0,0,0,.45); border:1px solid var(--line);
+  color:var(--ink); border-radius:4px; padding:7px 10px; font:inherit; }
+#omw-chat input.tx:focus, #omw-chat select.wto:focus{ outline:none; border-color:var(--gold); }
+#omw-chat .hint{ padding:0 10px 7px; font-size:10.5px; letter-spacing:.06em; color:var(--faint); }
+
+/* ================= SOCIAL — settings-style panel ================= */
+#omw-social{ position:fixed; inset:0; z-index:60; display:none; align-items:center; justify-content:center;
+  background:rgba(6,5,3,.55); -webkit-backdrop-filter:blur(2px); backdrop-filter:blur(2px); color:var(--ink); }
+#omw-social.show{ display:flex; }
+#omw-social .panel{ width:min(840px,94vw); height:min(580px,88vh); display:flex; flex-direction:column;
+  background:linear-gradient(160deg,var(--panel-2),var(--panel)); border:1px solid var(--bronze);
+  border-radius:10px; box-shadow:0 30px 80px rgba(0,0,0,.62); overflow:hidden; }
+#omw-social .hd{ display:flex; align-items:center; gap:14px; padding:16px 20px 14px;
+  border-bottom:1px solid var(--line-soft); }
+#omw-social .hd .ttl{ flex:1; }
+#omw-social .hd .kick{ font:600 10px/1 "Optima","Gill Sans",sans-serif; letter-spacing:.22em;
+  text-transform:uppercase; color:var(--faint); }
+#omw-social .hd h2{ margin:3px 0 0; font:600 22px/1.1 "Hoefler Text","Baskerville",Georgia,serif; }
+#omw-social .x{ background:transparent; border:1px solid var(--line); color:var(--muted); border-radius:5px;
+  padding:6px 11px; cursor:pointer; font:inherit; font-size:12px; }
+#omw-social .x:hover{ border-color:var(--gold); color:var(--gold-hi); }
+#omw-social .body{ flex:1; display:flex; min-height:0; }
+#omw-social .nav{ width:168px; flex:none; padding:12px 10px; border-right:1px solid var(--line-soft);
+  display:flex; flex-direction:column; gap:2px; background:rgba(0,0,0,.14); }
+#omw-social .nv{ display:flex; align-items:center; gap:8px; padding:9px 12px; border-radius:6px;
+  cursor:pointer; color:var(--muted); font-size:13.5px; border:1px solid transparent; }
+#omw-social .nv:hover{ color:var(--ink); background:rgba(211,168,78,.06); }
+#omw-social .nv.on{ color:var(--gold-hi); background:rgba(211,168,78,.10); border-color:rgba(138,104,56,.5); }
+#omw-social .nv .n{ margin-left:auto; font-size:11px; color:var(--faint); }
+#omw-social .content{ flex:1; overflow-y:auto; padding:16px 22px 20px; scrollbar-width:thin;
+  scrollbar-color:var(--bronze) transparent; }
+#omw-social .seg{ display:inline-flex; border:1px solid var(--line); border-radius:6px; overflow:hidden; }
+#omw-social .seg button{ background:transparent; color:var(--muted); border:none; padding:7px 15px;
+  cursor:pointer; font:inherit; font-size:12.5px; letter-spacing:.05em; }
+#omw-social .seg button:hover{ color:var(--ink); }
+#omw-social .seg button.on{ background:var(--gold); color:#1a1207; font-weight:600; }
+#omw-social .whererow{ display:flex; align-items:center; gap:12px; flex-wrap:wrap;
+  padding:12px 14px; margin-bottom:16px; border:1px solid var(--line-soft); border-radius:8px;
+  background:rgba(0,0,0,.16); }
+#omw-social .whererow .lb{ font:600 10.5px/1 "Optima","Gill Sans",sans-serif; letter-spacing:.14em;
+  text-transform:uppercase; color:var(--faint); }
+#omw-social h3{ margin:4px 0 10px; font:600 11px/1 "Optima","Gill Sans",sans-serif; letter-spacing:.16em;
+  text-transform:uppercase; color:var(--faint); }
+#omw-social .card{ border:1px solid rgba(198,154,78,.4); background:rgba(211,168,78,.07);
+  border-radius:8px; padding:10px 12px; margin-bottom:10px; display:flex; align-items:center; gap:8px; }
+#omw-social .row{ display:flex; align-items:center; gap:8px; padding:9px 4px;
+  border-bottom:1px solid var(--line-soft); }
+#omw-social .row:last-child{ border-bottom:none; }
+#omw-social .who{ flex:1; min-width:0; }
+#omw-social .who .nm{ font-size:15px; color:var(--ink); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+#omw-social .who .st{ font-size:11.5px; color:var(--faint); margin-top:1px; }
+#omw-social .who .st.on{ color:var(--c-party); }
+#omw-social .btn{ background:transparent; border:1px solid var(--line); color:var(--muted); border-radius:4px;
+  padding:5px 10px; cursor:pointer; font:inherit; font-size:12px; white-space:nowrap; }
+#omw-social .btn:hover{ border-color:var(--gold); color:var(--gold-hi); }
+#omw-social .btn.pri{ border-color:var(--bronze); color:var(--gold); }
+#omw-social .addrow{ display:flex; gap:8px; margin-top:12px; }
+#omw-social .addrow input{ flex:1; background:rgba(0,0,0,.35); border:1px solid var(--line); color:var(--ink);
+  padding:8px 11px; border-radius:5px; font:inherit; }
+#omw-social .addrow input:focus{ outline:none; border-color:var(--gold); }
+#omw-social .empty{ color:var(--faint); font-size:13px; padding:14px 4px; }
+#omw-social .ft{ padding:9px 20px; border-top:1px solid var(--line-soft); min-height:34px;
+  font-size:12px; color:var(--muted); }
+#omw-social .note{ color:var(--faint); font-size:12.5px; line-height:1.6; margin-top:8px; }
+
+/* ================= FEATURE TOUR — shown once, when the character is ready ================= */
+#omw-tour{ position:fixed; inset:0; z-index:70; display:none; align-items:center; justify-content:center;
+  background:rgba(6,5,3,.6); -webkit-backdrop-filter:blur(2px); backdrop-filter:blur(2px);
+  color:#e9dcc3; font:14px/1.6 "Optima","Gill Sans",-apple-system,"Segoe UI",sans-serif; }
+#omw-tour.show{ display:flex; }
+#omw-tour *{ box-sizing:border-box; }
+#omw-tour .panel{ position:relative; width:min(480px,92vw); padding:34px 36px 26px; text-align:center;
+  background:linear-gradient(160deg,#211a12,#17130e); border:1px solid #8a6838; border-radius:10px;
+  box-shadow:0 30px 80px rgba(0,0,0,.62); }
+#omw-tour .x{ position:absolute; top:10px; right:12px; width:32px; height:32px; border:none;
+  background:transparent; color:#8a7a5e; font:300 24px/1 sans-serif; cursor:pointer; }
+#omw-tour .x:hover{ color:#e8c86a; }
+#omw-tour .glyph{ width:44px; height:44px; margin:0 auto 12px; color:#c69a4e; }
+#omw-tour .glyph svg{ width:100%; height:100%; display:block; }
+#omw-tour .kick{ font:600 10px/1 "Optima","Gill Sans",sans-serif; letter-spacing:.22em;
+  text-transform:uppercase; color:#8a7a5e; }
+#omw-tour h2{ margin:6px 0 10px; font:600 24px/1.15 "Hoefler Text","Baskerville",Georgia,serif; color:#f4ecd9; }
+#omw-tour p{ margin:0; color:#b9a888; min-height:72px; }
+#omw-tour p b{ color:#e9dcc3; }
+#omw-tour .key{ display:inline-block; padding:1px 8px; border:1px solid #8a6838; border-radius:4px;
+  color:#e8c86a; font-weight:600; }
+#omw-tour .dots{ display:flex; gap:8px; justify-content:center; margin:20px 0 16px; }
+#omw-tour .dot{ width:7px; height:7px; border-radius:50%; background:#3a2e1e; transition:background .15s ease; }
+#omw-tour .dot.on{ background:#d3a84e; }
+#omw-tour .next{ display:inline-flex; align-items:center; gap:8px; padding:11px 24px; border-radius:4px;
+  border:1px solid #e8c86a; cursor:pointer; font:600 12.5px/1 "Optima","Gill Sans",sans-serif;
+  letter-spacing:.12em; text-transform:uppercase; color:#1a1207;
+  background:linear-gradient(180deg,#d3a84e,#8a6838); }
+#omw-tour .next:hover{ background:linear-gradient(180deg,#e8c86a,#d3a84e); }
+</style>
+<div id="omw-chat"><div class="feed" id="omw-feed"></div>
+  <div class="bar">
+    <div class="chans" id="omw-chans"></div>
+    <div class="r2"><span class="clab" id="omw-clab">[Public]</span>
+      <select class="wto" id="omw-wto" style="display:none"></select>
+      <input class="tx" id="omw-tx" maxlength="1024" placeholder="Type a message…"></div>
+    <div class="hint">Enter send &middot; Tab channel &middot; Esc close</div>
+  </div></div>
+<div id="omw-social"><div class="panel">
+  <div class="hd">
+    <div class="ttl"><div class="kick">Multiplayer</div><h2>Social</h2></div>
+    <span class="seg" id="omw-avail"></span>
+    <button class="x" id="omw-social-close">Close &nbsp;O</button>
+  </div>
+  <div class="body">
+    <div class="nav" id="omw-nav"></div>
+    <div class="content" id="omw-social-body"></div>
+  </div>
+  <div class="ft" id="omw-social-status"></div>
+</div></div>
+<div id="omw-tour"><div class="panel">
+  <button class="x" id="omw-tour-x" aria-label="Close">×</button>
+  <div class="glyph" id="omw-tour-glyph"></div>
+  <div class="kick">Multiplayer</div>
+  <h2 id="omw-tour-title"></h2>
+  <p id="omw-tour-body"></p>
+  <div class="dots" id="omw-tour-dots"></div>
+  <button class="next" id="omw-tour-next">Next ▸</button>
+</div></div>
+<script>
+(function(){
+  // ---- JS -> Lua: one queued command slot (bursts must not overwrite each other) ----
+  var outbox = [];
+  function cmd(s){ outbox.push(s); }
+  setInterval(function(){ if (outbox.length && window.Module && !Module.__omwMPCmd) Module.__omwMPCmd = outbox.shift(); }, 40);
+  function mpState(){ return window.__omwMP || {}; }
+  function pj(s){ try { return JSON.parse(s); } catch(e){ return null; } }
+  function esc(s){ return String(s==null?'':s).replace(/[&<>]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];}); }
+  function el(tag, cls, html){ var d = document.createElement(tag); if (cls) d.className = cls; if (html!=null) d.innerHTML = html; return d; }
+
+  // ---- cursor handshake: refcount overlays that need the mouse/keyboard freed ----
+  // A single exitPointerLock at open is NOT enough in real play: the engine re-grabs the lock
+  // (and refocuses the canvas) on its own schedule, which made overlay clicks land in the game
+  // and typing fall out of the input. So while any overlay is open we (a) flag the hold so the
+  // canvas click-to-relock helper stands down, (b) re-exit the lock the moment anything takes
+  // it, and (c) keep the chat input focused whenever focus falls back to the canvas/body.
+  // Why this is heavier than it looks. The engine is SDL-on-emscripten:
+  //   * it binds key handlers to window/document (specialHTMLTargets = [0, document, window]),
+  //     on the SAME nodes we do, so stopPropagation does not stop it — only
+  //     stopImmediatePropagation does (see the keydown shield below);
+  //   * it re-requests POINTER LOCK from inside the wasm on canvas mousedown, which no JS-side
+  //     flag of ours can veto. While the lock is held the cursor is captured by the canvas and
+  //     DOM clicks cannot land at all — that is why overlay buttons appeared dead.
+  // So while an overlay is open we make the canvas non-interactive: it stops being a hit-test
+  // target, SDL never gets a mousedown, never re-requests the lock, and every click goes to
+  // the overlay. Cheap, reversible, and it removes the focus/lock fight at the source.
+  var uiRefs = 0;
+  var canvasEl = document.getElementById('canvas');
+  function uiHold(on){ var was = uiRefs; uiRefs += on ? 1 : -1; if (uiRefs < 0) uiRefs = 0;
+    window.__omwUiHold = uiRefs > 0;
+    if (was === 0 && uiRefs > 0){
+      cmd('uimode:on');
+      if (canvasEl) canvasEl.style.pointerEvents = 'none';
+      try{ document.exitPointerLock && document.exitPointerLock(); }catch(e){}
+    } else if (was > 0 && uiRefs === 0){
+      cmd('uimode:off');
+      if (canvasEl) canvasEl.style.pointerEvents = '';
+    } }
+  // If the lock somehow lands while an overlay is up (a request already in flight when we
+  // opened), shed it — otherwise the cursor stays captured and nothing is clickable.
+  document.addEventListener('pointerlockchange', function(){
+    if (uiRefs > 0 && document.pointerLockElement){
+      try { document.exitPointerLock(); } catch(e){}
+    }
+  });
+  // THE click fix. SDL/emscripten registers its mouse handlers on document/window, NOT on the
+  // canvas — so canvas pointer-events:none does not stop the engine from seeing a click on the
+  // overlay, and its mousedown handler calls requestPointerLock(). The cursor is then captured
+  // by the game mid-overlay and every subsequent click dies (clicks "sometimes" working = the
+  // first one lands, the one that re-locks is the last that works).
+  //
+  // It cannot be fixed the way the keyboard was: stopImmediatePropagation at window-capture
+  // would also stop the event before it reached the panel's own buttons (the Enter trap).
+  // Instead deny the capability itself while an overlay is up — the engine may handle the
+  // click, it just cannot steal the cursor. Resolves rather than rejects: the caller may
+  // attach .then(), and an unhandled rejection every click is its own bug.
+  var _requestPointerLock = Element.prototype.requestPointerLock;
+  Element.prototype.requestPointerLock = function(){
+    if (window.__omwUiHold) return Promise.resolve();
+    return _requestPointerLock.apply(this, arguments);
+  };
+  // Focus shield. SDL's mouse handlers sit on document/window and call preventDefault() on
+  // mousedown — and moving focus to a clicked field is a DEFAULT ACTION, so that silently
+  // suppresses it. Symptom: activeElement stays BODY, the field never takes the caret, and
+  // typing goes nowhere, while buttons still work because they fire on `click`. Exactly the
+  // "can't click or type in the social box" report.
+  //
+  // Only the PRESS is withheld from SDL, never `click`: the panel's own handlers listen for
+  // click, and shielding that would break every button (the Enter trap, once more). Focus
+  // still lands because it is a default action, which propagation cannot stop.
+  ['pointerdown','mousedown','pointerup','mouseup'].forEach(function(type){
+    window.addEventListener(type, function(e){
+      if (!uiRefs) return;
+      if (e.target && e.target.closest && e.target.closest('#omw-social, #omw-chat'))
+        e.stopImmediatePropagation();
+    }, true);
+  });
+  // Click diagnostic. Pointer lock cannot be engaged in headless Chrome, so the overlay-click
+  // regression test cannot reproduce "the panel is open but clicks do nothing". This reports
+  // what the browser actually handed the click to, so the culprit is named rather than guessed.
+  window.addEventListener('pointerdown', function(e){
+    if (!uiRefs) return;
+    var top = document.elementFromPoint(e.clientX, e.clientY);
+    var id = top ? (top.id || top.tagName + (top.className ? '.' + String(top.className).split(' ')[0] : '')) : 'null';
+    var inOverlay = !!(top && top.closest && top.closest('#omw-social, #omw-chat'));
+    if (!inOverlay || document.pointerLockElement){
+      append('[ui] click at ' + Math.round(e.clientX) + ',' + Math.round(e.clientY)
+        + ' went to <' + id + '>'
+        + (document.pointerLockElement ? ' POINTER-LOCKED (cursor captured by the game)' : '')
+        + ' canvas pointer-events=' + (canvasEl ? getComputedStyle(canvasEl).pointerEvents : '?'), 'err');
+    }
+  }, true);
+
+  // ================================ CHAT ================================
+  // Player-facing channels are PARTY / PUBLIC / WHISPER (there are only two places to talk —
+  // your party and the shared world — plus direct whispers). "public" rides the wire as the
+  // server's 'global' channel; incoming 'say'/'global' both render as [Public].
+  var CHANS = ['party','public','whisper'];
+  var CLABEL = { party:'[Party]', public:'[Public]', whisper:'[Whisper]' };
+  var WIRE = { party:'party', public:'global', whisper:'whisper' };
+  var ready = false; // chargen done? overlays stay hidden until the character exists
+  var chChan = 'public', chWhisper = '', chatOpen = false, seenChatSeq = 0, seenOpenChat = 0;
+  var feed = document.getElementById('omw-feed'), chatEl = document.getElementById('omw-chat');
+  var chansEl = document.getElementById('omw-chans'), tx = document.getElementById('omw-tx');
+  var wto = document.getElementById('omw-wto'), clab = document.getElementById('omw-clab');
+  var IDLE_LINES = 8;
+  chatEl.style.display = 'none'; // hidden until chargen completes (the poll below reveals it)
+  function lineHtml(m){
+    var ch = m.channel || 'say';
+    if (ch === 'server') return '<div class="ln c-server">'+esc(m.text)+'</div>';
+    if (ch === 'global' || ch === 'say') ch = 'public'; // one shared world = one Public channel
+    var who = (ch === 'whisper')
+      ? (m.to ? ('to '+esc(m.to)) : esc(m.from||'?'))
+      : esc(m.from||'?');
+    return '<div class="ln c-'+ch+'"><span class="tag">'+(CLABEL[ch]||'')+'</span> '
+      + '<span class="who">'+who+':</span> '+esc(m.text)+'</div>';
+  }
+  function renderFeed(){
+    var log = pj(mpState().chatLog) || [];
+    var slice = chatOpen ? log : log.slice(-IDLE_LINES);
+    feed.innerHTML = slice.map(lineHtml).join('');
+    feed.scrollTop = feed.scrollHeight;
+  }
+  function renderChans(){
+    chansEl.innerHTML = CHANS.map(function(c){
+      return '<span class="chan'+(c===chChan?' on':'')+'" data-c="'+c+'">'+c+'</span>'; }).join('');
+    clab.textContent = CLABEL[chChan];
+    clab.style.color = 'var(--c-'+chChan+')';
+    wto.style.display = (chChan === 'whisper') ? '' : 'none';
+    if (chChan === 'whisper'){
+      var fr = (pj(mpState().friends)||[]).filter(function(f){return f.online;});
+      wto.innerHTML = fr.length ? fr.map(function(f){ return '<option value="'+esc(f.acct)+'">'+esc(f.name)+'</option>'; }).join('')
+        : '<option value="">(nobody online)</option>';
+      if (fr.length){ if (!chWhisper || !fr.some(function(f){return f.acct===chWhisper;})) chWhisper = fr[0].acct;
+        wto.value = chWhisper; }
+    }
+  }
+  chansEl.addEventListener('click', function(e){ var c = e.target.getAttribute('data-c'); if (c){ chChan = c; renderChans(); tx.focus(); } });
+  wto.addEventListener('change', function(){ chWhisper = wto.value; });
+  function openChat(){ if (chatOpen) return; chatOpen = true; chatEl.classList.add('active'); renderChans(); renderFeed(); uiHold(true);
+    // Focus now AND after the pointer-lock exit settles (it is async; the engine may pull
+    // focus back to the canvas in between — the guard interval then keeps it here).
+    setTimeout(function(){ tx.focus(); }, 0);
+    setTimeout(function(){ if (chatOpen) tx.focus(); }, 250); }
+  function closeChat(){ if (!chatOpen) return; chatOpen = false; chatEl.classList.remove('active'); renderFeed(); tx.blur(); uiHold(false); }
+  function sendChat(){
+    var t = tx.value.trim(); if (!t){ closeChat(); return; }
+    var to = (chChan === 'whisper') ? (chWhisper||'') : '';
+    cmd('chatx:'+(WIRE[chChan]||chChan)+':'+to+':'+t); tx.value = '';
+  }
+  // Named so the window-capture shield can run it directly. The shield must stop the event
+  // before it reaches this field (or SDL, listening on the same node, steals the keystroke),
+  // which also means this listener does NOT fire while an overlay is open — Enter/Tab/Escape
+  // would silently do nothing. The shield calls chatKey() itself; this listener stays for the
+  // case where the field is focused with no overlay hold.
+  function chatKey(e){
+    if (e.key === 'Enter'){ e.preventDefault(); sendChat(); }
+    else if (e.key === 'Escape'){ e.preventDefault(); closeChat(); }
+    else if (e.key === 'Tab'){ e.preventDefault(); chChan = CHANS[(CHANS.indexOf(chChan)+1)%CHANS.length]; renderChans(); }
+  }
+  tx.addEventListener('keydown', function(e){ e.stopPropagation(); chatKey(e); });
+
+  // ================================ SOCIAL ================================
+  var socialOpen = false, seenOpenSocial = 0, sTab = 'friends';
+  var lastWhere = (function(){ try { return localStorage.getItem('omw-where') || ''; } catch(e){ return ''; } })();
+  var sEl = document.getElementById('omw-social'), sBody = document.getElementById('omw-social-body');
+  var sNav = document.getElementById('omw-nav'), sAvail = document.getElementById('omw-avail');
+  var sStatus = document.getElementById('omw-social-status');
+  function setStatus(t){ sStatus.textContent = t || ''; }
+  function setWhere(v){ lastWhere = v; try { localStorage.setItem('omw-where', v); } catch(e){} }
+  function openSocial(){ if (socialOpen) return; socialOpen = true; sEl.classList.add('show'); uiHold(true); renderSocial(true); }
+  function closeSocial(){ if (!socialOpen) return; socialOpen = false; sEl.classList.remove('show'); uiHold(false); }
+  document.getElementById('omw-social-close').addEventListener('click', closeSocial);
+  sEl.addEventListener('mousedown', function(e){ if (e.target === sEl) closeSocial(); });
+  function seg(opts, cur, fn){ var s = el('span','seg'); opts.forEach(function(o){
+    var b = el('button', o[0]===cur?'on':null, o[1]); b.onclick = function(){ fn(o[0]); }; s.appendChild(b); }); return s; }
+  function personRow(name, st, online, actions){
+    var r = el('div','row');
+    var who = el('div','who'); who.appendChild(el('div','nm', esc(name)));
+    if (st) who.appendChild(el('div','st'+(online?' on':''), esc(st)));
+    r.appendChild(who);
+    (actions||[]).forEach(function(a){ var b = el('button','btn'+(a[2]?' pri':''),a[0]); b.onclick = a[1]; r.appendChild(b); });
+    return r;
+  }
+  var lastSocialSig = null;
+  function renderSocial(force){
+    if (!socialOpen) return;
+    var m = mpState();
+    // Re-render ONLY when something actually changed. The mirror poll called this every 150ms
+    // unconditionally, and the render rebuilds the panel's DOM — so the friend field was
+    // destroyed and recreated ~7x/second. That silently ate focus, every typed character, and
+    // any click that landed between two renders: the "it flashes and I can't click or type"
+    // report. Measured before the fix: the input element was replaced 5 times in 2 seconds.
+    var sig = sTab + ' ' + [m.friends, m.party, m.players, m.friendRequests, m.invites,
+      m.availability, m.presenceMode, m.worldMode].join(' ');
+    if (!force && sig === lastSocialSig) return;
+    lastSocialSig = sig;
+    var friends = pj(m.friends)||[], party = pj(m.party)||{members:[]}, players = pj(m.players)||[];
+    var reqs = pj(m.friendRequests)||[], invites = pj(m.invites)||[];
+    var avail = m.availability || 'online', presence = m.presenceMode || 'friends';
+    var partyN = (party.members||[]).length;
+    // header availability segmented
+    sAvail.replaceWith(sAvail = (function(){ var s = seg([['online','Online'],['offline','Offline']], avail, function(v){
+      cmd('where:'+v); setStatus(v==='offline' ? 'Going offline — solo, hidden from friends…' : 'Going online…');
+    }); s.id = 'omw-avail'; return s; })());
+    // sidebar
+    sNav.innerHTML = '';
+    [['friends','Friends', friends.length],['party','Party', partyN],['players','Players', Math.max(0, players.length-1)],['settings','Settings', null]]
+      .forEach(function(t){
+        var d = el('div','nv'+(sTab===t[0]?' on':''), esc(t[1]) + (t[2]!=null ? ' <span class="n">'+t[2]+'</span>' : ''));
+        d.setAttribute('data-t', t[0]); // stable hook for the click regression test
+        d.onclick = function(){ sTab = t[0]; renderSocial(); };
+        sNav.appendChild(d);
+      });
+    // content
+    sBody.innerHTML = '';
+    var where = el('div','whererow');
+    where.appendChild(el('span','lb','Playing'));
+    where.appendChild(seg([['solo','Solo'],['party','Party'],['public','Public']], lastWhere, function(v){
+      setWhere(v); cmd('where:'+v);
+      setStatus(v==='solo' ? 'Returning to your solo world…' : v==='party' ? 'Opening your world to your party…' : 'Heading to the shared world…');
+      renderSocial();
+    }));
+    sBody.appendChild(where);
+    var sec = el('div');
+    if (sTab === 'friends'){
+      reqs.forEach(function(q){ var c = el('div','card');
+        c.appendChild(el('div','who','<div class="nm">'+esc(q.name)+'</div><div class="st">wants to be your friend</div>'));
+        [['accept', function(){ cmd('social:FriendAccept:'+q.acct); }, true],
+         ['block', function(){ cmd('social:BlockAdd:'+q.name); }]].forEach(function(a){
+          var b = el('button','btn'+(a[2]?' pri':''),a[0]); b.onclick = a[1]; c.appendChild(b); });
+        sec.appendChild(c); });
+      invites.forEach(function(iv){ var c = el('div','card');
+        c.appendChild(el('div','who','<div class="nm">'+esc(iv.name)+'</div><div class="st">'
+          + (iv.kind==='party' ? 'invited you to their party' : 'invited you to join them')+'</div>'));
+        var b = el('button','btn pri','accept');
+        b.onclick = function(){ cmd('social:'+(iv.kind==='party'?'PartyAccept':'InviteAccept')+':'+iv.acct); };
+        c.appendChild(b); sec.appendChild(c); });
+      sec.appendChild(el('h3',null,'Friends'));
+      if (!friends.length) sec.appendChild(el('div','empty','No friends yet — add someone below, or from Players.'));
+      friends.forEach(function(f){
+        var acts = [];
+        if (f.online){ acts.push(['join', function(){ cmd('joinfriend:'+f.acct); setStatus('Joining '+f.name+'…'); }, true]);
+          acts.push(['whisper', function(){ closeSocial(); chChan='whisper'; chWhisper=f.acct; openChat(); renderChans(); }]);
+          acts.push(['party', function(){ cmd('social:PartyInvite:'+f.acct); setStatus('Party invite sent.'); }]); }
+        acts.push(['remove', function(){ cmd('social:FriendRemove:'+f.acct); }]);
+        sec.appendChild(personRow(f.name, f.online ? (f.cellKey || 'Online') : 'Offline', f.online, acts));
+      });
+      var add = el('div','addrow'); var ai = el('input'); ai.placeholder = 'Add a friend by their username';
+      var ab = el('button','btn pri','Add'); ab.onclick = function(){ if (ai.value.trim()){ cmd('social:FriendRequest:'+ai.value.trim()); setStatus('Friend request sent to '+ai.value.trim()+'.'); ai.value=''; } };
+      ai.onkeydown = function(e){ e.stopPropagation(); if (e.key === 'Enter') ab.onclick(); };
+      add.appendChild(ai); add.appendChild(ab); sec.appendChild(add);
+    } else if (sTab === 'party'){
+      sec.appendChild(el('h3',null,'Your party'));
+      var mem = party.members||[];
+      if (!mem.length) sec.appendChild(el('div','empty','You are not in a party. Invite a friend from the Friends tab to start one.'));
+      mem.forEach(function(p){ sec.appendChild(personRow(p.name,
+        p.acct===party.leader ? 'Party leader' : (p.online ? 'Online' : 'Offline'), p.online, [])); });
+      if (mem.length){ var lv = el('div','addrow'); var lb2 = el('button','btn','Leave party');
+        lb2.onclick = function(){ cmd('social:PartyLeave:'); setStatus('You left the party.'); }; lv.appendChild(lb2); sec.appendChild(lv); }
+    } else if (sTab === 'players'){
+      sec.appendChild(el('h3',null,'Players here'));
+      var self = m.selfName || '';
+      var others = players.filter(function(p){ return p.name !== self; });
+      if (!others.length) sec.appendChild(el('div','empty','Nobody else is here right now.'));
+      others.slice(0,50).forEach(function(p){ var acct = String(p.name||'').toLowerCase();
+        sec.appendChild(personRow(p.name, null, false, [
+          ['add friend', function(){ cmd('social:FriendRequest:'+p.name); setStatus('Friend request sent.'); }, true],
+          ['party', function(){ cmd('social:PartyInvite:'+acct); }],
+          ['mute', function(){ cmd('social:MuteAdd:'+acct); }],
+          ['block', function(){ cmd('social:BlockAdd:'+p.name); }]]));
+      });
+    } else {
+      sec.appendChild(el('h3',null,'Privacy'));
+      var pr = el('div','whererow');
+      pr.appendChild(el('span','lb','Visible to'));
+      pr.appendChild(seg([['public','Everyone'],['friends','Friends'],['party','Party'],['private','Nobody']], presence,
+        function(v){ cmd('social:PresenceMode:'+v); }));
+      sec.appendChild(pr);
+      sec.appendChild(el('div','note',
+        'Controls who can see where you are. <b>Nobody</b> also refuses invites.'
+        + '<br>Muted players stay muted across sessions; blocking someone removes and silences them everywhere.'));
+    }
+    sBody.appendChild(sec);
+  }
+
+  // ================================ FEATURE TOUR ================================
+  // Shown ONCE, the moment the character becomes ready (chargen finished = multiplayer,
+  // chat and social just unlocked). Dots + Next walk through what is now available.
+  var SLIDES = [
+    { t: 'You are in the world', g: '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><circle cx="18" cy="18" r="6"/><circle cx="32" cy="22" r="5"/><path d="M8 40c0-6 4.5-10 10-10s10 4 10 10"/><path d="M26 40c0-4.5 3.5-8 8-8s8 3.5 8 8"/></svg>',
+      b: 'Your character is saved to your account and follows you everywhere: solo, with your party, and in the shared world. Multiplayer is now unlocked.' },
+    { t: 'Chat', g: '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M8 10h32v22H22l-8 8v-8H8z"/><path d="M14 18h20M14 24h14"/></svg>',
+      b: 'Press <span class="key">T</span> to talk. <b>Party</b> reaches your group anywhere, <b>Public</b> the shared world, and <b>Whisper</b> one friend. Tab switches channels.' },
+    { t: 'Social', g: '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><circle cx="24" cy="16" r="7"/><path d="M10 40c0-7.5 6-13 14-13s14 5.5 14 13"/><path d="M36 12l6 6M42 12l-6 6"/></svg>',
+      b: 'Press <span class="key">O</span> for the Social panel: add friends, form a party, join a friend, and control who can see you.' },
+    { t: 'Play your way', g: '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><circle cx="24" cy="24" r="16"/><path d="M24 8v6M24 34v6M8 24h6M34 24h6"/><path d="M24 24l7-7"/></svg>',
+      b: 'Play <b>Solo</b> in your own world, open it to your <b>Party</b>, or head to the shared <b>Public</b> world. Exit from the menu returns you to your characters.' },
+  ];
+  var tourEl = document.getElementById('omw-tour'), tourIdx = 0, tourShown = false;
+  function tourSeen(){ try { return localStorage.getItem('omw-mp-tour') === '1'; } catch(e){ return true; } }
+  function renderTour(){
+    var s = SLIDES[tourIdx];
+    document.getElementById('omw-tour-glyph').innerHTML = s.g;
+    document.getElementById('omw-tour-title').textContent = s.t;
+    document.getElementById('omw-tour-body').innerHTML = s.b;
+    document.getElementById('omw-tour-dots').innerHTML = SLIDES.map(function(_, i){
+      return '<span class="dot' + (i === tourIdx ? ' on' : '') + '"></span>'; }).join('');
+    document.getElementById('omw-tour-next').innerHTML = (tourIdx === SLIDES.length - 1) ? "Let's go ▸" : 'Next ▸';
+  }
+  function openTour(){ if (tourShown) return; tourShown = true; tourIdx = 0; renderTour();
+    tourEl.classList.add('show'); uiHold(true); }
+  function closeTour(){ if (!tourEl.classList.contains('show')) return;
+    tourEl.classList.remove('show'); uiHold(false);
+    try { localStorage.setItem('omw-mp-tour', '1'); } catch(e){} }
+  document.getElementById('omw-tour-next').addEventListener('click', function(){
+    if (tourIdx < SLIDES.length - 1){ tourIdx++; renderTour(); } else closeTour(); });
+  document.getElementById('omw-tour-x').addEventListener('click', closeTour);
+
+  // ---- poll the engine mirror: open signals, chat feed updates, live re-render ----
+  // The SAME physical key can arrive twice: once here in JS (below) and once as a Lua signal
+  // (the engine's A_Social action also fires on O). The Lua one lands a frame later, so
+  // without this window it would immediately re-toggle what the keypress just did. After a
+  // JS-handled key we absorb pending signals instead of acting on them.
+  var suppressUntil = 0;
+  function suppressSignals(){ suppressUntil = Date.now() + 800; }
+  setInterval(function(){
+    var m = mpState();
+    // Chargen gate: no chat feed, no hotkeys, no panels until the character exists — there is
+    // nothing to do in multiplayer before race/class/sign are chosen. Signals are absorbed so
+    // a press during chargen doesn't pop a panel the moment it completes.
+    var r = (m.chargenDone === '1');
+    if (r !== ready){
+      ready = r;
+      chatEl.style.display = ready ? '' : 'none';
+      // The moment multiplayer unlocks, walk a first-timer through what just appeared.
+      if (ready && !tourSeen()) openTour();
+    }
+    var oc = Number(m.openChat||0), os = Number(m.openSocial||0), cs = Number(m.chatSeq||0);
+    if (!ready || Date.now() < suppressUntil){ seenOpenChat = oc; seenOpenSocial = os; }
+    else {
+      if (oc > seenOpenChat){ seenOpenChat = oc; chatOpen ? closeChat() : openChat(); }
+      if (os > seenOpenSocial){ seenOpenSocial = os; socialOpen ? closeSocial() : openSocial(); }
+    }
+    if (cs > seenChatSeq){ seenChatSeq = cs; renderFeed(); }
+    if (socialOpen) renderSocial();
+  }, 150);
+  // ---- keys: handled HERE, in JS, not round-tripped through the engine ----
+  // The overlays are DOM, so the browser is the natural owner of their hotkeys. Capture phase
+  // on window fires BEFORE SDL's own listener (which hangs off the canvas), so stopping
+  // propagation means the game never also acts on the key (T is Rest in vanilla). The Lua
+  // openChat/openSocial signals are still honoured by the poll above, so a rebound Social key
+  // keeps working — this is the direct path, not a replacement for it.
+  function typing(e){
+    var t = e.target;
+    return t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
+  }
+  window.addEventListener('keydown', function(e){
+    if (e.key === 'Escape'){
+      if (tourEl.classList.contains('show')){ e.preventDefault(); e.stopPropagation(); closeTour(); }
+      else if (chatOpen){ e.preventDefault(); e.stopPropagation(); suppressSignals(); closeChat(); }
+      else if (socialOpen){ e.preventDefault(); e.stopPropagation(); suppressSignals(); closeSocial(); }
+      return;
+    }
+    if (typing(e)){
+      // The player is typing in one of OUR fields, so the engine must not see the key at all.
+      // stopPropagation is NOT enough: emscripten attaches its key listeners to the SAME node
+      // (window) as this one, and stopPropagation only blocks OTHER nodes — same-node
+      // listeners still run. That is why characters vanished and the caret flickered (the
+      // engine kept pulling focus back to the canvas). stopImmediatePropagation blocks every
+      // remaining listener, including SDL's.
+      if (chatOpen || socialOpen) {
+        // Run the field's OWN key semantics first: stopImmediatePropagation below prevents the
+        // event from ever reaching the target, so Enter/Tab/Escape have to be driven from here
+        // (plain characters are unaffected — insertion is a default action, not a listener).
+        if (e.target === tx) chatKey(e);
+        else if (typeof e.target.onkeydown === 'function') e.target.onkeydown(e);
+        e.stopImmediatePropagation();
+      }
+      return;
+    }
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (!ready) return;               // no multiplayer UI until the character exists
+    var k = (e.key || '').toLowerCase();
+    if (k !== 't' && k !== 'o') return;
+    e.preventDefault(); e.stopPropagation(); suppressSignals();
+    // An impatient first-timer pressing the keys the tour is describing has understood it.
+    if (tourEl.classList.contains('show')) closeTour();
+    if (k === 't'){ chatOpen ? closeChat() : openChat(); }
+    else { socialOpen ? closeSocial() : openSocial(); }
+  }, true);
+  // Same shield for the rest of the key stream while typing in an overlay field: SDL also
+  // watches keypress/keyup, and a stray preventDefault there breaks text entry too.
+  ['keypress','keyup'].forEach(function(t){
+    window.addEventListener(t, function(e){
+      if ((chatOpen || socialOpen) && typing(e)) e.stopPropagation();
+    }, true);
+  });
+})();
 </script>
 </body></html>

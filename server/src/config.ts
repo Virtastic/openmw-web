@@ -111,6 +111,7 @@ export interface Config {
     moveMsgsPerSec: number;
     actorMoveMsgsPerSec: number;
     bytesPerSec: number;
+    bytesBurst: number;
     maxBufferedBytes: number;
     maxBufferedBytesHard: number;
     maxConnsPerIp: number;
@@ -235,6 +236,11 @@ function reqBool(t: Tree, sec: string, key: string): boolean {
 function optBool(t: Tree, sec: string, key: string, dflt: boolean): boolean {
   const v = (t[sec] as Tree | undefined)?.[key];
   return typeof v === 'boolean' ? v : dflt;
+}
+
+function optNum(t: Tree, sec: string, key: string, dflt: number): number {
+  const v = (t[sec] as Tree | undefined)?.[key];
+  return typeof v === 'number' && Number.isFinite(v) ? v : dflt;
 }
 
 function reqEnum<T extends string>(t: Tree, sec: string, key: string, allowed: readonly T[]): T {
@@ -403,6 +409,9 @@ function validate(t: Tree): Config {
       moveMsgsPerSec: reqNum(t, 'limits', 'moveMsgsPerSec'),
       actorMoveMsgsPerSec: reqNum(t, 'limits', 'actorMoveMsgsPerSec'),
       bytesPerSec: reqNum(t, 'limits', 'bytesPerSec'),
+      // Optional: absorbs a legitimate spike (entering a dense cell) without raising the
+      // sustained cap. Defaults to 4x the rate so configs written before it keep working.
+      bytesBurst: optNum(t, 'limits', 'bytesBurst', reqNum(t, 'limits', 'bytesPerSec') * 4),
       maxBufferedBytes: reqNum(t, 'limits', 'maxBufferedBytes'),
       maxBufferedBytesHard: reqNum(t, 'limits', 'maxBufferedBytesHard'),
       maxConnsPerIp: reqNum(t, 'limits', 'maxConnsPerIp'),

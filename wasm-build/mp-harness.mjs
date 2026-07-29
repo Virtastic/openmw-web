@@ -265,6 +265,47 @@ async function launchClient(name, mpPort, extraParams = '', opts = {}) {
       if (r.exceptionDetails) throw new Error(`eval(${expr}): ` + (r.exceptionDetails.exception?.description || r.exceptionDetails.text));
       return r.result.value;
     };
+    // A REAL key press via CDP (trusted browser input, identical to a physical key): the only
+    // honest way to test key-driven UI (T chat / O social) — synthetic KeyboardEvents are
+    // untrusted and some paths ignore them. `def` e.g. { key:'t', code:'KeyT', keyCode:84 }.
+    handle.key = async (def) => {
+      const base = { key: def.key, code: def.code,
+        windowsVirtualKeyCode: def.keyCode, nativeVirtualKeyCode: def.keyCode };
+      await bsend('Input.dispatchKeyEvent', { type: 'keyDown', text: def.text ?? def.key, ...base }, sessionId);
+      await bsend('Input.dispatchKeyEvent', { type: 'keyUp', ...base }, sessionId);
+    };
+    // eval WITH transient user activation. Gesture-gated APIs (requestPointerLock, fullscreen)
+    // are rejected outright from a plain Runtime.evaluate, which silently turns any test of
+    // them into a no-op that passes whether or not the code under test works.
+    handle.evalGesture = async (expr) => {
+      const r = await bsend('Runtime.evaluate',
+        { expression: expr, returnByValue: true, awaitPromise: true, userGesture: true }, sessionId);
+      if (r.exceptionDetails) return 'threw: ' + (r.exceptionDetails.exception?.description || r.exceptionDetails.text);
+      return r.result.value;
+    };
+    // A REAL mouse click at the element's on-screen centre, hit-tested by the browser exactly
+    // like a physical click. element.click() is NOT a substitute: it invokes the handler
+    // directly and bypasses hit-testing, so it passes even when the element is covered by the
+    // canvas, has pointer-events:none, or is behind a pointer lock — precisely the failures
+    // this is here to catch.
+    handle.click = async (selector) => {
+      const box = await handle.eval(
+        `(function(){ var el = document.querySelector(${JSON.stringify(selector)});
+           if (!el) return null; var r = el.getBoundingClientRect();
+           if (!r.width || !r.height) return null;
+           return JSON.stringify({ x: r.left + r.width/2, y: r.top + r.height/2 }); })()`);
+      if (!box) throw new Error(`click(${selector}): element missing or not laid out`);
+      const { x, y } = JSON.parse(box);
+      // What does the browser actually hand this click to? Names the covering element on failure.
+      const hit = await handle.eval(
+        `(function(){ var el = document.elementFromPoint(${x}, ${y});
+           return el ? (el.id || el.tagName + (el.className ? '.' + el.className : '')) : 'null'; })()`);
+      const base = { x, y, button: 'left', clickCount: 1, buttons: 1 };
+      await bsend('Input.dispatchMouseEvent', { type: 'mouseMoved', ...base, buttons: 0 }, sessionId);
+      await bsend('Input.dispatchMouseEvent', { type: 'mousePressed', ...base }, sessionId);
+      await bsend('Input.dispatchMouseEvent', { type: 'mouseReleased', ...base, buttons: 0 }, sessionId);
+      return hit;
+    };
     handle.waitFor = async (expr, timeoutMs = 5000, what = expr) => {
       const deadline = Date.now() + timeoutMs;
       while (Date.now() < deadline) {
