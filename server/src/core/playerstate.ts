@@ -23,6 +23,10 @@ export interface StateCtx {
   roster: Roster;
   store: PlayerStore;
   onPlayerDeath(player: Player): void;
+  // Chargen is the only place a character is really named, and the name arrives here in the
+  // appearance. Without this the slot keeps its placeholder forever and the character screen
+  // shows "Adventurer" next to a character the player named something else.
+  onCharacterNamed?(player: Player, name: string): void;
 }
 
 function tbl(v: LValue | undefined): LTable | undefined {
@@ -64,6 +68,7 @@ function handleAppearance(ctx: StateCtx, player: Player, body: LTable): boolean 
     return false;
   }
   ctx.store.update(player.charId, (doc) => (doc.appearance = appearance));
+  ctx.onCharacterNamed?.(player, appearance.name);
   relayAll(ctx.roster, 'PlayerAppearance', { id: player.id, ...appearance });
   return true;
 }

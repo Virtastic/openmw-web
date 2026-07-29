@@ -7,7 +7,7 @@
 import { randomBytes } from 'node:crypto';
 import type { WebSocket } from 'ws';
 import type { Config } from '../config';
-import { validEmail, validAccountName, type AccountStore, type Account, type CharacterSummary } from '../core/accounts';
+import { validEmail, validAccountName, DEFAULT_CHARACTER_NAME, type AccountStore, type Account, type CharacterSummary } from '../core/accounts';
 import type { AttioHook } from '../integrations/attio';
 import type { ContentGate, EngineGate } from '../core/manifest';
 import type { Player, Peer, Roster } from '../core/players';
@@ -64,10 +64,6 @@ type AuthOp = 'register' | 'login' | 'resume' | 'ticket';
 // Matches play/index.html's ?mpauto=1 harness login. Public by construction (it is in the
 // page source), so the SERVER decides whether it is acceptable — see refuseHarnessAuth.
 const HARNESS_PASSWORD = 'harness-pass-1';
-// Placeholder for a slot auto-created before character creation has run. Deliberately generic:
-// it is public (tile label, PlayerAppearance, other players' screens) and must never be derived
-// from the account, whose SSO name is the person's real name.
-const DEFAULT_CHARACTER_NAME = 'Adventurer';
 
 // Everything a connection needs from the composed server; kept as an interface so
 // connection.ts has no import cycle with server.ts.
@@ -116,6 +112,8 @@ export interface ServerCtx {
   // private world exists for character creation). A standalone/single-world server is false —
   // there is no other world to create the character in, so it must admit fresh characters.
   chargenGate: boolean;
+  // Called when the last player leaves, so a world can forget a runtime mode flip.
+  onWorldEmpty?(): void;
   // True in the PUBLIC world: character docs are read-only there (see markEphemeral below).
   lobbyWorld: boolean;
   // Phase 4: tell a client how many party members are standing with it, so the cell's
@@ -310,6 +308,7 @@ export class Connection implements Peer {
       // never see a flicker.
       this.ctx.social.onLeave(this.player);
       this.ctx.roster.remove(this.player);
+      if (this.ctx.roster.inWorld().length === 0) this.ctx.onWorldEmpty?.();
       // M6: drop every conversation this player held (same teardown as authority).
       this.ctx.quests.releaseDialogueLocks(this.player.id);
       // M7: relinquish weather authority and settle any dialog we owed this player an
@@ -1070,10 +1069,12 @@ export class Connection implements Peer {
       return;
     }
     metrics.auth.inc({ op, result: 'success' });
+    // One session per character: the newcomer wins and the sitting session is dropped with
+    // SUPERSEDED, which the client turns into "this character was opened elsewhere".
     const existing = this.ctx.roster.activeForAccount(accountKey);
     if (existing) {
       metrics.authSuperseded.inc();
-      existing.peer.disconnect('SUPERSEDED', 'account logged in from another connection');
+      existing.peer.disconnect('SUPERSEDED', 'this character was opened in another session');
     }
     this.account = account;
     this.authedVia = op;

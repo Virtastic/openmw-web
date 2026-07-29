@@ -344,7 +344,16 @@
      el.classList.remove('indet'); fill.style.width='100%'; el.classList.add('hide');
      setTimeout(function(){ if (el) el.style.display='none'; }, 700);
    }
-   return { set:set, fromLog:fromLog, done:finish };
+   // The SAME screen, reused for every later wait (world switch, reconnect, cell load) instead
+   // of a second loading UI. Clears the `done` latch so it can come back after boot.
+   function show(label, detail){
+     if (!E()) return;
+     done = false;
+     el.style.display = '';
+     el.classList.remove('hide');
+     set(null, label || 'Loading', detail == null ? '' : detail);
+   }
+   return { set:set, fromLog:fromLog, done:finish, show:show, hide:finish };
  })();
  // Full-screen fatal overlay: aborts, GPU context loss, unsupported browsers. The hidden dev
  // log is useless to end users — anything fatal must be VISIBLE with a way forward.
@@ -2910,6 +2919,7 @@
 
   // ================================ SOCIAL ================================
   var socialOpen = false, seenOpenSocial = 0, sTab = 'friends', seenSocialResult = '';
+  var seenNetState = '', netHold = false;
   var lastWhere = (function(){ try { return localStorage.getItem('omw-where') || ''; } catch(e){ return ''; } })();
   var sEl = document.getElementById('omw-social'), sBody = document.getElementById('omw-social-body');
   var sNav = document.getElementById('omw-nav'), sAvail = document.getElementById('omw-avail');
@@ -2981,7 +2991,15 @@
     var where = el('div','whererow');
     where.appendChild(el('span','lb','Playing'));
     where.appendChild(seg([['solo','Solo'],['party','Party'],['public','Public']], lastWhere, function(v){
-      setWhere(v); cmd('where:'+v);
+      setWhere(v);
+      cmd('where:' + v);
+      closeSocial();
+      // Solo <-> Party on your OWN world is an in-place flip (no reconnect); Public is a real
+      // redial that must re-sync with the world's sim peer. Either way the wait is real, so
+      // show it — the state watcher above hides it when the connection settles.
+      window.__omwLoading.show(v === 'public' ? 'Joining the shared world' : 'Switching world',
+        'Syncing with the server…');
+      setTimeout(function(){ if ((mpState().state || '') === 'Joined') window.__omwLoading.hide(); }, 2500);
       setStatus(v==='solo' ? 'Switched to your solo world.' : v==='party' ? 'Your world is open to your party.' : 'Joining the shared world…');
       renderSocial();
     }));
@@ -3128,6 +3146,23 @@
         } else {
           setStatus("Couldn't " + res.op + ': ' + (res.detail || 'refused') + '.');
         }
+      }
+    }
+    // ---- connection state: reconnect must PAUSE the game, not let you keep playing -------
+    // Moving while disconnected and re-syncing on return is a cheat vector, and a frozen-
+    // looking game is worse than a screen that says what is happening. Reuses the boot
+    // loading screen; uiHold puts the engine in Interface mode so input stops.
+    var st = m.state || '';
+    if (st !== seenNetState) {
+      var wasBlocking = seenNetState === 'Reconnecting' || seenNetState === 'Connecting';
+      seenNetState = st;
+      if (st === 'Reconnecting' || st === 'Connecting') {
+        if (!netHold) { netHold = true; uiHold(true); }
+        window.__omwLoading.show('Connection lost', 'Reconnecting…');
+      } else if (wasBlocking && (st === 'Joined' || st === 'Offline')) {
+        window.__omwLoading.hide();
+        if (netHold) { netHold = false; uiHold(false); }
+        if (st === 'Joined') setStatus('Reconnected.');
       }
     }
     if (socialOpen) renderSocial();

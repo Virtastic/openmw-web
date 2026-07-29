@@ -73,6 +73,11 @@ export interface Account {
 
 export const MAX_CHARACTERS = 8;
 
+// Placeholder for a slot auto-created before character creation has run. Public (tile label,
+// PlayerAppearance, other players' screens), so never derived from the account — an SSO
+// account name is the person's real name.
+export const DEFAULT_CHARACTER_NAME = 'Adventurer';
+
 // Public handle rules: tighter than account names (no spaces — it is a handle, not a
 // paragraph), case-insensitively unique, and never something that reads as staff.
 const USERNAME_RE = /^[A-Za-z0-9]{3,20}$/; // letters and numbers only — the public handle
@@ -241,6 +246,17 @@ export class AccountStore {
     this.dirty.add(account.name.toLowerCase());
     void this.flush();
     return true;
+  }
+
+  // Chargen is where a character is really named; the name reaches the server in the
+  // appearance. Only ever replaces the PLACEHOLDER, so a slot the player named themselves is
+  // never overwritten. Flushed now: it is once per character and the tile shows it immediately.
+  nameCharacter(account: Account, charId: string, name: string): void {
+    const char = account.characters?.find((c) => c.id === charId);
+    if (!char || char.name === name || char.name !== DEFAULT_CHARACTER_NAME) return;
+    char.name = name;
+    this.dirty.add(account.name.toLowerCase());
+    void this.flush();
   }
 
   touchCharacter(account: Account, charId: string): void {

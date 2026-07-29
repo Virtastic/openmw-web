@@ -304,6 +304,14 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   const stateCtx: StateCtx = {
     roster,
     store: playerStore,
+    // Chargen named the character: put that name on the slot, replacing the placeholder the
+    // slot was auto-created with. Only ever an upgrade — a slot the player already named is
+    // left alone.
+    onCharacterNamed: (player, name) => {
+      void accounts.get(player.accountKey).then((account) => {
+        if (account) accounts.nameCharacter(account, player.charId, name);
+      });
+    },
     onPlayerDeath: (player) => {
       log('info', 'player.death', { id: player.id, name: player.name });
       hooks.playerDeath({ id: player.id, name: player.name, rank: player.rank });
@@ -463,6 +471,15 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
         if (ownerParty !== undefined && socialStore.partyOfAccount(accountKey)?.key === ownerParty) return true;
       }
       return false;
+    },
+    // A world that empties reverts to how it booted. Without this, flipping your world to
+    // party once left it party FOREVER: the gateway reuses a running world as-is, so the next
+    // session silently rejoined a joinable world instead of the solo one it asked for.
+    onWorldEmpty: () => {
+      if (worldMode !== worldModeAtBoot) {
+        log('info', 'world.mode_reverted', { from: worldMode, to: worldModeAtBoot });
+        worldMode = worldModeAtBoot;
+      }
     },
     // Owner-only: flip this world between private (solo) and party (joinable by the owner's
     // party) without respawning it. Admins may flip too. Public worlds never flip.
