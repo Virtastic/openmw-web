@@ -18,108 +18,48 @@ local identity = require('scripts.mp.identity')
 
 local HISTORY_MAX = 8
 
-local history = {} -- array of display strings, newest last
-local chatElement = nil
-local draft = ''
-
-local function formatMessage(data)
-    local text = tostring(data.text or '')
-    if data.channel == 'server' then
-        return '* ' .. text
-    elseif data.channel == 'whisper' then
-        return '[whisper] ' .. tostring(data.from or '?') .. ': ' .. text
-    end
-    return tostring(data.from or '?') .. ': ' .. text
-end
-
-local function destroyChat()
-    if chatElement then
-        chatElement:destroy()
-        chatElement = nil
-    end
-end
-
-local function submit()
-    if draft ~= '' then
-        core.sendGlobalEvent('mpChatSend', { text = draft })
-        draft = ''
-    end
-    destroyChat()
-    I.UI.removeMode('Interface')
-end
-
-local function historyContent()
-    local lines = {}
-    for _, line in ipairs(history) do
-        lines[#lines + 1] = {
-            template = I.MWUI.templates.textNormal,
-            props = { text = line },
-        }
-    end
-    if #lines == 0 then
-        lines[1] = {
-            template = I.MWUI.templates.textNormal,
-            props = { text = '(no messages — click the line below, type, Enter to send)' },
-        }
-    end
-    return lines
-end
-
-local function createChat()
-    local rows = historyContent()
-    rows[#rows + 1] = { template = I.MWUI.templates.interval }
-    rows[#rows + 1] = {
-        template = I.MWUI.templates.textEditLine,
-        props = {
-            text = draft,
-            size = util.vector2(400, 0),
-        },
-        events = {
-            textChanged = async:callback(function(text) draft = text end),
-            keyPress = async:callback(function(e)
-                if e.code == input.KEY.Enter then submit() end
-            end),
-        },
-    }
-    chatElement = ui.create {
-        layer = 'Windows',
-        template = I.MWUI.templates.boxSolid,
-        props = {
-            position = util.vector2(40, 60),
-        },
-        content = ui.content {
-            {
-                type = ui.TYPE.Flex,
-                props = {
-                    horizontal = false,
-                    autoSize = true,
-                },
-                content = ui.content(rows),
-            },
-        },
-    }
-end
-
-local function toggleChat()
-    if chatElement then
-        destroyChat()
-        I.UI.removeMode('Interface')
-    else
-        I.UI.setMode('Interface', { windows = {} })
-        createChat()
-    end
-end
+-- Chat is presented by the HTML overlay (index.html), not MyGUI. This script is the BRIDGE:
+-- it keeps a rolling log of recent messages mirrored to JS (window.__omwMP.chatLog + a bumped
+-- chatSeq the overlay polls) and, on the T key, raises an openChat signal the overlay polls.
+-- Outgoing lines come back from the overlay as 'chatx:<channel>:<to>:<text>' commands, parsed
+-- in pollHarness. Raw fields are mirrored (channel/from/to/text) so the HTML formats/colours.
+local CHAT_LOG_MAX = 50
+local chatHistory = {}
+local chatSeq = 0
+local chatOpenSeq = 0
 
 local function pushMessage(data)
-    local line = formatMessage(data)
-    history[#history + 1] = line
-    if #history > HISTORY_MAX then table.remove(history, 1) end
-    mp.testSet('lastChatLine', line)
-    ui.showMessage(line)
-    if chatElement then
-        destroyChat()
-        createChat()
+    chatHistory[#chatHistory + 1] = {
+        channel = tostring(data.channel or 'say'),
+        from = data.from and tostring(data.from) or nil,
+        to = data.to and tostring(data.to) or nil,
+        text = tostring(data.text or ''),
+    }
+    if #chatHistory > CHAT_LOG_MAX then table.remove(chatHistory, 1) end
+    chatSeq = chatSeq + 1
+    mp.testSet('chatLog', json.encode(chatHistory))
+    -- testSet is (string, string) ONLY — a number here THROWS, and a throwing handler
+    -- disables its whole subsystem (this exact line killed chat + T until s99 caught it).
+    mp.testSet('chatSeq', tostring(chatSeq))
+    -- lastChatLine keeps its long-standing contract: the FORMATTED line as shown, carrying
+    -- the sender's attribution (s03-chat asserts on it). The HTML overlay renders from
+    -- chatLog's structured fields instead; this mirror is for the harness and legacy checks.
+    local ch = tostring(data.channel or 'say')
+    local line
+    if ch == 'server' then
+        line = '* ' .. tostring(data.text or '')
+    elseif ch == 'whisper' and data.to and data.to ~= '' then
+        line = '-> ' .. tostring(data.to) .. ': ' .. tostring(data.text or '')
+    else
+        line = tostring(data.from or '?') .. ': ' .. tostring(data.text or '')
     end
+    mp.testSet('lastChatLine', line)
+end
+
+-- T raises a signal; the HTML overlay owns the input, focus and cursor. No MyGUI window.
+local function toggleChat()
+    chatOpenSeq = chatOpenSeq + 1
+    mp.testSet('openChat', tostring(chatOpenSeq)) -- testSet takes strings only
 end
 
 -- --- M7: server-pushed GUI (PROTOCOL.md §M7 GuiMessageBox/GuiInputDialog/GuiListBox) ----
@@ -425,6 +365,33 @@ local function pollHarness()
         if text and text ~= '' then
             core.sendGlobalEvent('mpChatSend', { text = text })
         end
+
+        -- HTML overlays drive these through the same command channel. 'chatx:<channel>:<to>:
+        -- <text>' carries the chat channel selector + whisper target; text is greedy (may
+        -- contain colons). Empty `to` for non-whisper channels.
+        local cxCh, cxTo, cxText = cmd:match('^chatx:([%a]+):([^:]*):(.*)$')
+        if cxCh and cxText ~= '' then
+            core.sendGlobalEvent('mpChatSend', { text = cxText, channel = cxCh, to = cxTo })
+        end
+        -- Where-am-I switcher (solo/party/public/online/offline).
+        local whereMode = cmd:match('^where:(%a+)$')
+        if whereMode then core.sendGlobalEvent('mpWhere', { mode = whereMode }) end
+        -- Availability toggle.
+        local availState = cmd:match('^avail:(%a+)$')
+        if availState then core.sendGlobalEvent('mpSocial', { op = 'SetAvailability', state = availState }) end
+        -- Cross-world join a friend.
+        local jfAcct = cmd:match('^joinfriend:(.+)$')
+        if jfAcct then core.sendGlobalEvent('mpSocial', { op = 'JoinFriend', acct = jfAcct }) end
+        -- Owner in-place Solo<->Party flip of their own world.
+        local wmMode = cmd:match('^worldmode:(%a+)$')
+        if wmMode then core.sendGlobalEvent('mpSocial', { op = 'SetWorldMode', mode = wmMode }) end
+        -- Cursor handshake for the HTML overlays: when the overlay opens it asks the engine to
+        -- enter Interface mode (frees the mouse cursor + suspends game input, no pause); on
+        -- close it restores. This is what lets clicking/typing in the HTML panel not also drive
+        -- the game behind it.
+        local ui_mode = cmd:match('^uimode:(%a+)$')
+        if ui_mode == 'on' then I.UI.setMode('Interface', { windows = {} })
+        elseif ui_mode == 'off' then I.UI.removeMode('Interface') end
         if cmd == 'cam:3p' then -- visual scenarios: put own avatar in frame
             local camera = require('openmw.camera')
             camera.setMode(camera.MODE.ThirdPerson)
@@ -558,8 +525,23 @@ local function pollHarness()
     end
 end
 
+-- Multiplayer never pauses the LOCAL world when a menu is open. Pausing only your own client
+-- would freeze your view while the server-authoritative sim and every other player keep
+-- moving — and we want one uniform feel across private/party/public, so the pause menu, the
+-- Social hub, inventory, dialogue, the map, etc. all leave the world running. This flips the
+-- default in scripts/omw/ui.lua (every mode pauses) off for all modes. The modePause table it
+-- writes is per-session and not persisted, so we re-apply on every init and load. Only the MP
+-- content loads this script, so the offline demo/single-player still pauses as normal.
+local function disableMenuPause()
+    for _, mode in pairs(I.UI.MODE) do
+        I.UI.setPauseOnMode(mode, false)
+    end
+end
+
 return {
     engineHandlers = {
+        onInit = disableMenuPause,
+        onLoad = disableMenuPause,
         -- M6: the ONLY quest-layer signal that is player-context-only. Forward it to the
         -- global hub (scripts/mp/quests.lua), which owns the journal cache + echo guard.
         onQuestUpdate = function(questId, stage)

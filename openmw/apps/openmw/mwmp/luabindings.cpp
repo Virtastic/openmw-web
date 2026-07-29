@@ -151,6 +151,9 @@ namespace MWMP
         // Phase B SSO: a one-time login ticket the boot JS lifted out of the URL fragment
         // after the provider round trip. Empty when signing in with a password.
         api["getLoginTicket"] = []() { return getEnvString("OPENMW_MP_TICKET"); };
+        // The character slot chosen on the HTML pre-boot tile screen (index.html sets
+        // OPENMW_MP_CHARACTER from the #mpchar fragment). Empty = last-played default.
+        api["getBootCharacter"] = []() { return getEnvString("OPENMW_MP_CHARACTER"); };
         api["getEngineHash"] = []() { return getEnvString("OPENMW_MP_ENGINEHASH"); };
         api["vectorsEnabled"] = []() { return std::getenv("OPENMW_MP_VECTORS") != nullptr; };
         // Test seam for the multiplayer console gate. The harness cannot press a key (no SDL

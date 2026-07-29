@@ -68,6 +68,8 @@ namespace MWInput
 
         A_TogglePostProcessorHUD = 50,
 
+        A_Social = 51, // Multiplayer: open the Social hub (openmw-web). Forwarded to Lua.
+
         A_Last // Marker for the last item
     };
 }

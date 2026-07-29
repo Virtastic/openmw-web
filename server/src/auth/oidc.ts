@@ -30,12 +30,15 @@ export function isProviderId(s: string): s is ProviderId {
   return (PROVIDER_IDS as readonly string[]).includes(s);
 }
 
-// A verified identity. `nameHint` is only ever a *display* name claim — never an email;
-// see pickDisplayName() in identities.ts.
+// A verified identity. `nameHint` is only ever a *display* name claim — never shown as, or
+// confused with, the email (see pickDisplayName() in identities.ts). `email` is present only
+// when the provider returned a VERIFIED address for the requested email scope; it is stored as
+// contact info on the account and never appears on any peer-visible surface.
 export interface Identity {
   iss: string;
   sub: string;
   nameHint?: string;
+  email?: string;
 }
 
 export class OidcError extends Error {
@@ -68,16 +71,18 @@ const DEFAULTS: Record<ProviderId, ProviderDefaults> = {
   discord: {
     kind: 'oauth2',
     issuer: 'https://discord.com',
-    scope: 'identify',
+    scope: 'identify email',
     authorizeUrl: 'https://discord.com/oauth2/authorize',
     tokenUrl: 'https://discord.com/api/oauth2/token',
     userinfoUrl: 'https://discord.com/api/users/@me',
   },
-  // `openid profile` only: we key on sub and never want the email in the first place.
-  google: { kind: 'oidc', issuer: 'https://accounts.google.com', scope: 'openid profile' },
+  // We still KEY on sub (never email), but request the email scope so the account's contact
+  // email can be captured at login and the onboarding email step skipped. Only a provider-
+  // VERIFIED address is used (email_verified / Discord `verified`).
+  google: { kind: 'oidc', issuer: 'https://accounts.google.com', scope: 'openid profile email' },
   // The common endpoint's discovery issuer is templated per tenant; see matchIssuer().
-  microsoft: { kind: 'oidc', issuer: 'https://login.microsoftonline.com/common/v2.0', scope: 'openid profile' },
-  custom: { kind: 'oidc', issuer: '', scope: 'openid profile' },
+  microsoft: { kind: 'oidc', issuer: 'https://login.microsoftonline.com/common/v2.0', scope: 'openid profile email' },
+  custom: { kind: 'oidc', issuer: '', scope: 'openid profile email' },
 };
 
 interface Endpoints {
@@ -316,9 +321,14 @@ export class OidcService {
       });
       const sub = str(me, 'id');
       if (!sub) throw new OidcError('userinfo', 'userinfo carried no id');
-      // global_name/username are display handles; Discord's `email` is never requested.
+      // global_name/username are display handles. Discord's email is captured only when the
+      // account marks it verified.
       const nameHint = str(me, 'global_name') ?? str(me, 'username');
-      return { identity: { iss: ep.issuer, sub, ...(nameHint ? { nameHint } : {}) }, pending };
+      const email = (me as Record<string, unknown>).verified === true ? str(me, 'email') : undefined;
+      return {
+        identity: { iss: ep.issuer, sub, ...(nameHint ? { nameHint } : {}), ...(email ? { email } : {}) },
+        pending,
+      };
     }
 
     const idToken = str(token, 'id_token');
@@ -328,7 +338,13 @@ export class OidcService {
     const iss = str(claims, 'iss');
     if (!sub || !iss) throw new OidcError('idtoken', 'id_token has no sub/iss');
     const nameHint = str(claims, 'preferred_username') ?? str(claims, 'name') ?? str(claims, 'given_name');
-    return { identity: { iss, sub, ...(nameHint ? { nameHint } : {}) }, pending };
+    // Capture the email only when the provider asserts it is verified (Google/Microsoft send
+    // email_verified as a boolean, some IdPs as the string "true"). An unverified address is
+    // not trustworthy as contact data, so we drop it and onboarding still asks.
+    const verified = (claims as Record<string, unknown>).email_verified;
+    const emailClaim = str(claims, 'email');
+    const email = emailClaim && (verified === true || verified === 'true') ? emailClaim : undefined;
+    return { identity: { iss, sub, ...(nameHint ? { nameHint } : {}), ...(email ? { email } : {}) }, pending };
   }
 
   // ------------------------------------------------------------- id_token

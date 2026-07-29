@@ -70,6 +70,14 @@ export class SocialStore {
         account TEXT PRIMARY KEY,
         mode    TEXT NOT NULL
       );
+      -- Availability (Online/Offline) is a SEPARATE axis from presence: presence is "who may
+      -- see my location", availability is "am I reachable + where am I routed". Offline peels
+      -- the player into their solo world and hides them from friends' online lists. Persists
+      -- so a player who went Offline stays Offline across a reconnect until they choose Online.
+      CREATE TABLE IF NOT EXISTS availability_pref (
+        account TEXT PRIMARY KEY,
+        state   TEXT NOT NULL
+      );
       -- Party travel: membership PERSISTS (it must survive members hopping between world
       -- processes — the party is a platform-level group, not one world's session state).
       -- The restart-zombie concern that kept parties in memory is handled by updated_at +
@@ -211,6 +219,18 @@ export class SocialStore {
 
   setPresenceMode(account: AccountKey, mode: string): void {
     this.db.prepare('INSERT OR REPLACE INTO presence_pref (account, mode) VALUES (?, ?)').run(account, mode);
+  }
+
+  // ------------------------------------------------------------ availability
+
+  getAvailability(account: AccountKey): string | undefined {
+    const row = this.db.prepare('SELECT state FROM availability_pref WHERE account = ?').get(account) as
+      { state: string } | undefined;
+    return row?.state;
+  }
+
+  setAvailability(account: AccountKey, state: string): void {
+    this.db.prepare('INSERT OR REPLACE INTO availability_pref (account, state) VALUES (?, ?)').run(account, state);
   }
 
   // --------------------------------------------------------------------- mutes

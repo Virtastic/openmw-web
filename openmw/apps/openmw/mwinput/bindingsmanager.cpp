@@ -291,6 +291,8 @@ namespace MWInput
         defaultKeyBindings[A_QuickSave] = SDL_SCANCODE_F5;
         defaultKeyBindings[A_QuickLoad] = SDL_SCANCODE_F9;
         defaultKeyBindings[A_TogglePostProcessorHUD] = SDL_SCANCODE_F2;
+        // openmw-web: O ("Online") opens the Social hub. Free in vanilla; F is Ready Weapon.
+        defaultKeyBindings[A_Social] = SDL_SCANCODE_O;
 
         std::map<int, int> defaultMouseButtonBindings;
         defaultMouseButtonBindings[A_Inventory] = SDL_BUTTON_RIGHT;
@@ -436,6 +438,8 @@ namespace MWInput
     {
         switch (action)
         {
+            case A_Social:
+                return "Social"; // openmw-web multiplayer hub; no vanilla GMST, shown verbatim
             case A_Screenshot:
                 return "#{OMWEngine:Screenshot}";
             case A_ZoomIn:
@@ -579,7 +583,7 @@ namespace MWInput
             A_ToggleSpell, A_CycleSpellLeft, A_CycleSpellRight, A_CycleWeaponLeft, A_CycleWeaponRight, A_AutoMove,
             A_Jump, A_Inventory, A_Journal, A_Rest, A_Console, A_QuickSave, A_QuickLoad, A_ToggleHUD, A_Screenshot,
             A_QuickKeysMenu, A_QuickKey1, A_QuickKey2, A_QuickKey3, A_QuickKey4, A_QuickKey5, A_QuickKey6, A_QuickKey7,
-            A_QuickKey8, A_QuickKey9, A_QuickKey10, A_TogglePostProcessorHUD };
+            A_QuickKey8, A_QuickKey9, A_QuickKey10, A_TogglePostProcessorHUD, A_Social };
 
         return actions;
     }
@@ -590,7 +594,7 @@ namespace MWInput
             A_Jump, A_Inventory, A_Journal, A_Rest, A_QuickSave, A_QuickLoad, A_ToggleHUD, A_Screenshot,
             A_QuickKeysMenu, A_QuickKey1, A_QuickKey2, A_QuickKey3, A_QuickKey4, A_QuickKey5, A_QuickKey6, A_QuickKey7,
             A_QuickKey8, A_QuickKey9, A_QuickKey10, A_CycleSpellLeft, A_CycleSpellRight, A_CycleWeaponLeft,
-            A_CycleWeaponRight };
+            A_CycleWeaponRight, A_Social };
 
         return actions;
     }

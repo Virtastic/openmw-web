@@ -19,7 +19,14 @@ import { createReadStream } from 'node:fs';
 import { readdir, stat } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 
-const CORE = /\.(esm|esp|bsa|omwaddon)$/i; // the files the game loads; anything else is noise
+// The plugins/archives the game loads BY NAME (no directory: openmw.cfg lists them bare).
+const CORE = /\.(esm|esp|bsa|omwaddon)$/i;
+// Retail Morrowind keeps voice, music, videos, fonts and splashes as LOOSE FILES beside the
+// BSAs — they are NOT inside them. Omitting these is why a locker-only install has no music,
+// no intro video, and dialogue that auto-skips (there is no voice file to wait on). These are
+// matched by RELATIVE PATH, since the engine loads them by path and names repeat across dirs.
+const MEDIA_DIRS = /^(Sound|Music|Video|Fonts|Splash|BookArt|Icons|Textures|Meshes)([\\/]|$)/i;
+const MEDIA_EXT = /\.(mp3|wav|bik|fnt|tex|dds|tga|bmp|zip)$/i;
 
 async function sha256(path) {
   const h = createHash('sha256');
@@ -28,11 +35,14 @@ async function sha256(path) {
   });
 }
 
-async function walk(dir, out = []) {
+async function walk(dir, root, out = []) {
   for (const ent of await readdir(dir, { withFileTypes: true })) {
     const full = join(dir, ent.name);
-    if (ent.isDirectory()) await walk(full, out);
-    else if (ent.isFile() && CORE.test(ent.name)) out.push(full);
+    if (ent.isDirectory()) await walk(full, root, out);
+    else if (ent.isFile()) {
+      const rel = relative(root, full);
+      if (CORE.test(ent.name) || (MEDIA_DIRS.test(rel) && MEDIA_EXT.test(ent.name))) out.push(full);
+    }
   }
   return out;
 }
@@ -46,11 +56,14 @@ async function main() {
   const outIdx = process.argv.indexOf('--out');
   const out = outIdx !== -1 ? process.argv[outIdx + 1] : 'vanilla-manifest.json';
 
-  const files = await walk(src);
+  const files = await walk(src, src);
   const records = [];
   for (const f of files) {
     const size = (await stat(f)).size;
-    const name = relative(src, f).split(/[\\/]/).pop(); // bare filename: the game loads by name
+    const rel = relative(src, f).split(/[\\/]/).join('/');
+    // Plugins/archives are loaded BY NAME (openmw.cfg lists them bare); loose media is loaded
+    // BY PATH (Sound/Vo/..., Video/...), so media entries keep their relative path.
+    const name = CORE.test(f) ? rel.split('/').pop() : rel;
     const hash = await sha256(f);
     records.push({ name, size, sha256: hash });
     console.log(`${name}  ${(size / 1e6).toFixed(1)}MB  ${hash.slice(0, 12)}…`);

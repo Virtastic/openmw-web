@@ -7,6 +7,7 @@
 // time so move frames never dirty the doc.
 
 import { mkdirSync } from 'node:fs';
+import { unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { readJson, writeJsonAtomic } from './atomicjson';
 import { log } from '../log';
@@ -106,6 +107,19 @@ export class PlayerStore {
 
   private path(key: string): string {
     return join(this.dir, `${key}.json`);
+  }
+
+  // Character deletion: drop the cached copy FIRST so a pending sweep cannot rewrite the file
+  // we are about to unlink, then remove the doc. Missing file = already gone, not an error.
+  async erase(key: string): Promise<void> {
+    this.cache.delete(key);
+    this.dirty.delete(key);
+    try {
+      await unlink(this.path(key));
+    } catch (err) {
+      const code = (err as { code?: string }).code;
+      if (code !== 'ENOENT') log('warn', 'playerstore.erase_failed', { key, error: String(err) });
+    }
   }
 
   // undefined = no snapshot yet (fresh chargen). Loaded docs are cached as canonical.

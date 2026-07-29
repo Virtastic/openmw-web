@@ -132,7 +132,12 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // positions inside the doc are scoped by world id. The world's own players/ dir is the
   // pre-slot legacy location, read only during migration.
   const worldId = opts.worldId ?? process.env.OMW_WORLD_ID ?? 'default';
-  const worldMode = opts.worldMode ?? process.env.OMW_WORLD_MODE ?? 'public';
+  // Runtime-mutable: a character's Solo world flips to Party IN PLACE (the owner stays put,
+  // their world simply starts admitting party members) rather than the owner travelling to a
+  // separate party world. Only ever flips between 'private' and 'party'; a public world never
+  // flips. See SetWorldMode below and mayJoinWorld.
+  let worldMode = opts.worldMode ?? process.env.OMW_WORLD_MODE ?? 'public';
+  const worldModeAtBoot = worldMode;
   const worldOwner = (opts.worldOwner ?? process.env.OMW_WORLD_OWNER ?? '').toLowerCase();
   const playerStore = new PlayerStore(sharedDir, worldId, join(opts.dataDir, 'players'));
   // Onboarding CRM capture. Env var wins over toml so the key can stay out of config files
@@ -452,14 +457,39 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       if (worldMode === 'public' || worldOwner === '') return true;
       if (rank >= 1 || accountKey === worldOwner) return true;
       if (worldMode === 'party') {
-        const partyKey = worldId.startsWith('party-') ? worldId.slice('party-'.length) : '';
-        if (partyKey !== '' && socialStore.partyOfAccount(accountKey)?.key === partyKey) return true;
+        // Admit the OWNER's current party — resolved from live party membership, not the
+        // world id. This makes it work identically for a dedicated `party-<key>` world AND
+        // for a private world the owner flipped to party in place (id = priv-<owner>): in
+        // both, "who may join" is "whoever is in the owner's party".
+        const ownerParty = socialStore.partyOfAccount(worldOwner)?.key;
+        if (ownerParty !== undefined && socialStore.partyOfAccount(accountKey)?.key === ownerParty) return true;
       }
       return false;
     },
+    // Owner-only: flip this world between private (solo) and party (joinable by the owner's
+    // party) without respawning it. Admins may flip too. Public worlds never flip.
+    setWorldMode: (accountKey: string, rank: number, mode: string): 'ok' | 'not_owner' | 'bad_mode' | 'not_flippable' => {
+      if (worldModeAtBoot === 'public') return 'not_flippable';
+      if (rank < 1 && accountKey !== worldOwner) return 'not_owner';
+      if (mode !== 'private' && mode !== 'party') return 'bad_mode';
+      worldMode = mode;
+      log('info', 'world.mode_flip', { world: worldId, owner: worldOwner, mode });
+      return 'ok';
+    },
+    // Spawn-near-leader: when a NON-owner freshly joins a party world (a friend/party member
+    // dialling in — never the owner, never a resume-in-place), place them at the owner's live
+    // position so they land next to the leader rather than at some default corner. Returns null
+    // when it should not apply (not party, is the owner, owner not present/located yet).
+    guestSpawn: (accountKey: string): { cellKey: string; x: number; y: number; z: number } | null => {
+      if (worldMode !== 'party' || worldOwner === '' || accountKey === worldOwner) return null;
+      const owner = roster.activeForAccount(worldOwner);
+      if (!owner || !owner.cellKey || !owner.pose) return null;
+      return { cellKey: owner.cellKey, x: owner.pose.x, y: owner.pose.y, z: owner.pose.z };
+    },
     // Chargen gate only when this world is spawned by a gateway (OMW_WORLD_ID set) and is not
-    // the private world — a standalone server has no other world to create the character in.
-    chargenGate: !!process.env.OMW_WORLD_ID && worldMode !== 'private',
+    // the private world at boot — a standalone server has no other world to create the
+    // character in, and a later flip to party must not retroactively force chargen on members.
+    chargenGate: !!process.env.OMW_WORLD_ID && worldModeAtBoot !== 'private',
     motd: () => motd,
   };
 
@@ -595,7 +625,13 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     // than starting a world that silently is not what they asked for.
     throw new Error(`[simPeer] mode = "on" but a peer cannot run: ${peerBlocker}`);
   }
-  config.simPeer.enabled = config.simPeer.mode !== 'off' && peerBlocker === undefined;
+  // A PRIVATE world is one player alone in their own instance. The sim peer exists so a
+  // modified client cannot author NPC state in a world OTHER PEOPLE share — there is nobody
+  // to cheat in your solo world, so a second engine there is pure cost and pure risk: it
+  // holds cell authority over the very NPCs you are talking to (the census sequence during
+  // character creation is where that first bites). Party/public worlds still get one.
+  const soloWorld = worldModeAtBoot === 'private';
+  config.simPeer.enabled = config.simPeer.mode !== 'off' && peerBlocker === undefined && !soloWorld;
   // A sim peer on an SSO-only server authenticates with the shared server password (it is not
   // a user and has no SSO identity). Without [server].password set, the peer could not log in
   // AND the SSO-bypass for system peers would be unguarded — so refuse to boot, loudly.
@@ -608,7 +644,8 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     enabled: config.simPeer.enabled,
     reason: config.simPeer.enabled
       ? 'NPCs will be simulated by the server'
-      : `${peerBlocker ?? 'mode is off'} — NPCs will be simulated by player clients`,
+      : `${peerBlocker ?? (soloWorld ? 'solo (private) world — no peer needed' : 'mode is off')}`
+        + ' — NPCs will be simulated by player clients',
   });
 
   // Per-world peer config. Each world process is its own dataDir, so its sim peer gets its own

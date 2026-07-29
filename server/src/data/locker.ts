@@ -84,6 +84,9 @@ const ATTEST_STATEMENT =
 // which the client asserts — the client cannot lie about it. Offsets verified against real
 // Morrowind/Tribunal/Bloodmoon files. Not cryptographic (a forger could prepend a valid
 // header) but it defeats using the locker as general file storage, which is its whole job.
+// The one packed media object per account (voice/music/videos/fonts/splashes as a USTAR).
+export const MEDIA_PACK = 'media.tar';
+
 export function sniffMorrowindFile(name: string, head: Buffer): boolean {
   const ext = name.toLowerCase().match(/\.([a-z0-9]+)$/)?.[1] ?? '';
   if (ext === 'esm' || ext === 'esp' || ext === 'omwaddon') {
@@ -102,6 +105,21 @@ export function sniffMorrowindFile(name: string, head: Buffer): boolean {
     if (head.readUInt32LE(0) !== 0x100) return false;
     return head.readUInt32LE(4) > 0 && head.readUInt32LE(8) > 0;
   }
+  // Loose retail media (Video/, Music/, Splash/, Fonts/). These reach the locker only when
+  // the manifest already matched them by hash or name+size, so the sniff is the same
+  // "is this really that kind of file" backstop the plugins get — not the primary gate.
+  if (head.length < 4) return false;
+  const magic4 = head.toString('latin1', 0, 4);
+  if (ext === 'bik') return magic4.startsWith('BIK'); // Bink video: 'BIKb'/'BIKi'/...
+  if (ext === 'mp3') {
+    // MP3: an ID3 tag, or a raw MPEG audio frame sync (0xFF Ex/Fx).
+    return magic4.startsWith('ID3') || (head[0] === 0xff && (head[1]! & 0xe0) === 0xe0);
+  }
+  if (ext === 'wav') return magic4 === 'RIFF';
+  if (ext === 'dds') return magic4 === 'DDS ';
+  if (ext === 'bmp') return head.toString('latin1', 0, 2) === 'BM';
+  if (ext === 'tga') return true;  // TGA has no leading magic; the manifest match is the gate
+  if (ext === 'fnt' || ext === 'tex') return true; // Bethesda font/texture pairs, no magic
   return false;
 }
 
@@ -192,22 +210,75 @@ export class Locker {
     return sizes.some((s) => Math.abs(file.size - s) <= s * this.sizeTolerance);
   }
 
+  // Loose media splits by SHAPE, not by category:
+  //   Sound/**  ~6,400 files averaging 28 KB -> ONE packed upload (media.tar). Per-file would
+  //             be ~19k requests to upload and ~6.4k presigned GETs to load: latency-bound to
+  //             the point of being unusable, and a 6.4k-entry manifest per account.
+  //   Music/, Video/, Splash/, Fonts/  41 files, most of them megabytes -> the SAME per-file
+  //             path the ESM/BSA files already use. No new machinery, cached individually.
+  private static readonly PACKED_DIR = /^sound\//i;
+
+  private mediaEntries(): { name: string; size: number; sha256: string }[] {
+    return this.vanilla.files.filter((f) => Locker.PACKED_DIR.test(f.name));
+  }
+
+  // Loose media that uploads file-by-file (everything with a path that is not packed).
+  private looseMediaEntries(): { name: string; size: number; sha256: string }[] {
+    return this.vanilla.files.filter((f) => f.name.includes('/') && !Locker.PACKED_DIR.test(f.name));
+  }
+
+  private mediaBytes(): number {
+    return this.mediaEntries().reduce((a, f) => a + f.size, 0);
+  }
+
+  // The size ceiling for a media pack: the media bytes plus USTAR overhead (a 512-byte
+  // header per file + padding) with a little slack for distribution differences.
+  private mediaPackCap(): number {
+    const entries = this.mediaEntries();
+    return Math.ceil(entries.reduce((a, f) => a + f.size, 0) * 1.10) + entries.length * 1536 + 16_000_000;
+  }
+
   // The checklist the upload wizard renders: one entry per distinct game file the operator's
   // manifest knows, with the base game marked required and the expansions optional (a player
   // who owns only Morrowind must not be blocked on Tribunal/Bloodmoon). Sizes are the display
-  // hint; hashes are deliberately not exposed here.
-  requiredManifest(): { name: string; size: number; required: boolean }[] {
-    const CORE = new Set(['morrowind.esm', 'morrowind.bsa']);
+  // hint; hashes are deliberately not exposed here. Loose media collapses to one synthetic
+  // "media.tar" row (voice/music/videos) that the wizard builds from a folder pick.
+  // EVERYTHING the operator's manifest lists is required. The manifest IS this server's
+  // content set: a client missing Tribunal/Bloodmoon (or the media) cannot match the world
+  // the server authors, so "optional" was never a real category here — it just produced
+  // players with silent, half-loaded games. An operator who wants a Morrowind-only server
+  // generates a Morrowind-only manifest.
+  requiredManifest(): { name: string; size: number; required: boolean; media?: boolean }[] {
     const byName = new Map<string, { name: string; size: number }>();
     for (const f of this.vanilla.files) {
+      if (f.name.includes('/')) continue; // media is summarised as folder rows below
       const k = f.name.toLowerCase();
       const prev = byName.get(k);
       // If distributions differ in size, show the smallest (any real copy clears the ±5% gate).
       if (!prev || f.size < prev.size) byName.set(k, { name: f.name, size: f.size });
     }
-    return [...byName.values()]
-      .map((f) => ({ ...f, required: CORE.has(f.name.toLowerCase()) }))
-      .sort((a, b) => Number(b.required) - Number(a.required) || a.name.localeCompare(b.name));
+    const out: { name: string; size: number; required: boolean; media?: boolean }[] = [...byName.values()]
+      .map((f) => ({ ...f, required: true }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+
+    // Media as ONE ROW PER FOLDER rather than 6,443 rows nobody can read. These are REQUIRED:
+    // without them the game has no voice, no music and no videos, which is not "the game with
+    // an option turned off" — dialogue auto-skips and the intro never plays. The row name is
+    // the folder prefix ("Music/"); a locker satisfies it by holding any file under it (voice
+    // by holding the pack), and the wizard fills them all from one folder pick.
+    const folders = new Map<string, number>();
+    for (const f of this.looseMediaEntries()) {
+      const dir = f.name.split('/')[0]!;
+      folders.set(dir, (folders.get(dir) ?? 0) + f.size);
+    }
+    for (const [dir, size] of [...folders].sort((a, b) => a[0].localeCompare(b[0]))) {
+      out.push({ name: `${dir}/`, size, required: true, media: true });
+    }
+    const mediaBytes = this.mediaBytes();
+    if (mediaBytes > 0) {
+      out.push({ name: MEDIA_PACK, size: mediaBytes, required: true, media: true });
+    }
+    return out;
   }
 
   private attestPath(accountKey: string): string {
@@ -253,7 +324,16 @@ export class Locker {
   ): Promise<{ ok: true; url: string; key: string } | { ok: false; reason: UploadRefusal }> {
     if (!this.settings.storage) return { ok: false, reason: 'not-recognized' };
     if (!(await this.attestationOf(accountKey))) return { ok: false, reason: 'no-attestation' };
-    if (!this.isAccepted(file)) {
+    if (file.name === MEDIA_PACK) {
+      // The pack's own hash cannot be in the vanilla manifest (it is built client-side), so
+      // its gates are: the manifest must actually list media, and the size must be plausible
+      // for that media. The REAL check is verifyMediaPack after upload — every packed file is
+      // hashed against the manifest, and a pack with anything foreign in it is deleted.
+      if (this.mediaBytes() === 0 || file.size > this.mediaPackCap()) {
+        log('warn', 'locker.refused_media_pack', { account: accountKey, size: file.size, cap: this.mediaPackCap() });
+        return { ok: false, reason: 'not-recognized' };
+      }
+    } else if (!this.isAccepted(file)) {
       log('warn', 'locker.refused_unrecognized', { account: accountKey, name: file.name, size: file.size, sha256: file.sha256 });
       return { ok: false, reason: 'not-recognized' };
     }
@@ -288,12 +368,16 @@ export class Locker {
     if (storage) {
       let head: Buffer;
       try {
-        head = await storage.getHead(key, 32);
+        head = await storage.getHead(key, file.name === MEDIA_PACK ? 512 : 32);
       } catch (err) {
         log('error', 'locker.head_read_failed', { account: accountKey, name: file.name, error: String(err) });
         return { ok: false, reason: 'not-recognized' };
       }
-      if (!sniffMorrowindFile(file.name, head)) {
+      const sniffOk = file.name === MEDIA_PACK
+        // USTAR magic sits at offset 257 of the first header block.
+        ? head.length >= 262 && head.toString('latin1', 257, 262) === 'ustar'
+        : sniffMorrowindFile(file.name, head);
+      if (!sniffOk) {
         log('warn', 'locker.rejected_bad_content', { account: accountKey, name: file.name, size: file.size });
         await storage.delete(key); // do not keep bytes we refused
         return { ok: false, reason: 'not-recognized' };
@@ -303,7 +387,78 @@ export class Locker {
     const next = files.filter((f) => f.name !== file.name);
     next.push(file);
     await writeFile(this.manifestPath(accountKey), JSON.stringify({ files: next }, null, 2) + '\n', 'utf8');
+    // Media pack: the content check the client cannot forge runs ASYNC (streaming ~300MB back
+    // from storage and hashing every entry takes a minute; the wizard must not hang on it).
+    // A pack that fails is deleted and struck from the account's list.
+    if (file.name === MEDIA_PACK && storage) {
+      void this.verifyMediaPack(accountKey).catch((err) =>
+        log('error', 'locker.media_verify_crashed', { account: accountKey, error: String(err) }));
+    }
     return { ok: true };
+  }
+
+  // Stream the uploaded media.tar back from storage and prove every entry is a file the
+  // vanilla manifest knows (exact path + exact hash, or name+size tolerance when enabled).
+  // ANY foreign entry disqualifies the whole pack: delete it and unrecord it. This is what
+  // keeps the pack from being a tunnel around the per-file gate.
+  async verifyMediaPack(accountKey: string): Promise<void> {
+    const storage = this.settings.storage;
+    if (!storage) return;
+    const key = `gamedata/${accountKey}/${MEDIA_PACK}`;
+    const media = new Map(this.mediaEntries().map((f) => [f.name.toLowerCase(), f]));
+    const fail = async (reason: string, detail: Record<string, unknown> = {}): Promise<void> => {
+      log('warn', 'locker.media_pack_rejected', { account: accountKey, reason, ...detail });
+      try { await storage.delete(key); } catch { /* already gone is fine */ }
+      const files = await this.filesOf(accountKey);
+      await writeFile(this.manifestPath(accountKey),
+        JSON.stringify({ files: files.filter((f) => f.name !== MEDIA_PACK) }, null, 2) + '\n', 'utf8');
+    };
+    let url: string;
+    try { url = await storage.presignGet(key); } catch (err) { return fail('presign', { error: String(err) }); }
+    const r = await fetch(url).catch(() => undefined);
+    if (!r || !r.ok || !r.body) return fail('fetch', { status: r?.status });
+
+    // Incremental USTAR walk: 512-byte headers, content padded to 512, two zero blocks end.
+    const reader = r.body.getReader();
+    let buf = Buffer.alloc(0);
+    let done = false;
+    const need = async (n: number): Promise<boolean> => {
+      while (buf.length < n && !done) {
+        const x = await reader.read();
+        if (x.done) { done = true; break; }
+        buf = Buffer.concat([buf, Buffer.from(x.value)]);
+      }
+      return buf.length >= n;
+    };
+    let entries = 0;
+    for (;;) {
+      if (!(await need(512))) break;
+      const hdr = buf.subarray(0, 512);
+      if (hdr.every((b) => b === 0)) break; // end-of-archive
+      if (hdr.toString('latin1', 257, 262) !== 'ustar') return fail('bad_header', { entries });
+      const nameField = hdr.toString('latin1', 0, 100).replace(/\0.*$/, '');
+      const prefix = hdr.toString('latin1', 345, 500).replace(/\0.*$/, '');
+      const name = (prefix ? prefix + '/' + nameField : nameField).replace(/\\/g, '/');
+      const size = parseInt(hdr.toString('latin1', 124, 136).replace(/\0.*$/, '').trim() || '0', 8);
+      const typeflag = hdr.toString('latin1', 156, 157);
+      const padded = Math.ceil(size / 512) * 512;
+      if (!(await need(512 + padded))) return fail('truncated', { name, entries });
+      const content = buf.subarray(512, 512 + size);
+      if (typeflag === '0' || typeflag === '\0') {
+        entries++;
+        if (entries > 10_000) return fail('too_many_entries', {});
+        const want = media.get(name.toLowerCase());
+        if (!want) return fail('unknown_entry', { name });
+        const hash = createHash('sha256').update(content).digest('hex');
+        const hashOk = hash === want.sha256.toLowerCase();
+        const sizeOk = this.acceptByNameAndSize && Math.abs(size - want.size) <= want.size * this.sizeTolerance;
+        if (!hashOk && !sizeOk) return fail('entry_mismatch', { name, size });
+      } else if (typeflag !== '5') {
+        return fail('bad_typeflag', { name, typeflag }); // only files + directories belong here
+      }
+      buf = buf.subarray(512 + padded);
+    }
+    log('info', 'locker.media_pack_verified', { account: accountKey, entries });
   }
 
   async filesOf(accountKey: string): Promise<LockerFile[]> {

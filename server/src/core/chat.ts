@@ -23,6 +23,9 @@ export type ChatMessageBody = {
   channel: 'say' | 'party' | 'global' | 'server' | 'whisper';
   from?: string;
   fromId?: number;
+  // Whisper only: on the SENDER's echo copy, the recipient's display name, so the client can
+  // render "-> Name: text" instead of "Name: text". Absent on the recipient's copy.
+  to?: string;
   text: string;
 };
 
@@ -67,6 +70,41 @@ export function recordChat(mod: Moderation | undefined, player: Player, channel:
   });
 }
 
+// Whisper: a directed line to exactly one recipient (chosen from the friend dropdown, so
+// `to` is their account key). Delivered only if the recipient is co-resident in this world
+// process — cross-world whisper waits on the same platform relay party chat needs
+// (chat.ts party note). The recipient's mute of the sender silently drops their copy, but
+// the sender always gets their own echo so the UI never looks broken.
+function deliverWhisper(
+  ctx: CommandContext,
+  player: Player,
+  toAcct: string,
+  line: string,
+  mod?: Moderation,
+): void {
+  if (toAcct === '' || toAcct === player.accountKey) {
+    serverWhisper(player, 'Pick someone to whisper.');
+    return;
+  }
+  const target = ctx.roster.activeForAccount(toAcct);
+  if (!target || !target.inWorld) {
+    serverWhisper(player, 'That friend is not reachable from here.');
+    return;
+  }
+  recordChat(mod, player, 'whisper', line);
+  const muted = ctx.isMuted?.(target.accountKey, player.accountKey) === true;
+  if (!muted) {
+    target.peer.sendEvent('ChatMessage', {
+      channel: 'whisper', from: player.name, fromId: player.id, text: line,
+    } satisfies ChatMessageBody);
+  }
+  // Sender's echo carries `to` so the client renders it as an outgoing whisper.
+  player.peer.sendEvent('ChatMessage', {
+    channel: 'whisper', from: player.name, fromId: player.id, to: target.name, text: line,
+  } satisfies ChatMessageBody);
+  log('info', 'chat.whisper', { from: player.name, to: target.name, chars: line.length });
+}
+
 export function handleChatSend(
   ctx: CommandContext,
   commands: CommandRegistry,
@@ -80,6 +118,13 @@ export function handleChatSend(
     log('warn', 'chat.bad_body', { from: player.name });
     return;
   }
+  // The client's channel selector sends the chosen channel explicitly; a raw client (or a
+  // typed prefix) still works via the !/@ fallback below. `to` is the whisper recipient's
+  // ACCOUNT KEY (the friend dropdown carries accounts, never usernames — usernames change).
+  const explicitChannel = body instanceof Map && typeof body.get('channel') === 'string'
+    ? (body.get('channel') as string) : '';
+  const whisperTo = body instanceof Map && typeof body.get('to') === 'string'
+    ? (body.get('to') as string) : '';
   const trimmed = text.slice(0, MAX_CHAT_CHARS);
   if (trimmed.startsWith('/')) {
     // Record BEFORE dispatch: a command that disconnects the actor still leaves a trace.
@@ -88,12 +133,15 @@ export function handleChatSend(
     return;
   }
   if (!hooks.onChat(player, trimmed)) return; // vetoed lines were never delivered, so never logged
-  // Tier prefixes, mirroring how every MMO chat box works. Deliberately parsed here
-  // rather than as slash commands: '/p' would collide with the command registry, and a
-  // player typing '/party hello' expects a message, not a usage error.
-  let channel: 'say' | 'party' | 'global' = 'say';
+  // Channel resolution: an explicit channel from the selector wins; otherwise the !/@ MMO
+  // prefixes. '/p' would collide with the command registry and "/party hi" should be a
+  // message not a usage error, so tiers are parsed here rather than as slash commands.
+  let channel: 'say' | 'party' | 'global' | 'whisper' = 'say';
   let line = trimmed;
-  if (/^!/.test(trimmed)) {
+  if (explicitChannel === 'say' || explicitChannel === 'party'
+    || explicitChannel === 'global' || explicitChannel === 'whisper') {
+    channel = explicitChannel;
+  } else if (/^!/.test(trimmed)) {
     channel = 'global';
     line = trimmed.slice(1).trim();
   } else if (/^@/.test(trimmed)) {
@@ -102,6 +150,10 @@ export function handleChatSend(
   }
   if (line === '') return; // a bare prefix is a typo, not a message
 
+  if (channel === 'whisper') {
+    deliverWhisper(ctx, player, whisperTo, line, mod);
+    return;
+  }
   recordChat(mod, player, channel, line);
   const msg: ChatMessageBody = { channel, from: player.name, fromId: player.id, text: line };
   if (channel === 'party') {

@@ -1,10 +1,11 @@
 -- Multiplayer SOCIAL hub (Phase C/E): everyone playing, friends, party, and presence.
--- F opens it, or ESC -> Options -> Social.
+-- Opened by the Social key (default 'O', rebindable in Options -> Controls under both
+-- Mouse/Keyboard and Controller — it is a real engine action, MWInput::A_Social).
 --
--- Styled from the same MWUI templates the engine's own Options screen uses (see
--- scripts/mp/ui.lua) so it reads as part of the game rather than a debug overlay: bordered
--- transparent frame, GMST font colours, real padding and intervals, header text for
--- sections, and boxed controls instead of bare clickable strings.
+-- Built to read like the engine's own Options window (see scripts/mp/ui.lua): a large,
+-- centred, fixed-footprint frame with a title, a tab strip whose selected tab is filled, its
+-- content grouped into bordered panels, and a footer bar with the dismiss button — GMST font
+-- colours and real spacing throughout, so it is native by resemblance, not a debug overlay.
 --
 -- Identity on the wire is the ACCOUNT KEY (`acct`), never the player id: ids are
 -- per-session, so an id-keyed friend would vanish on every reconnect.
@@ -16,7 +17,6 @@ local input = require('openmw.input')
 local mp = require('openmw.mp')
 local I = require('openmw.interfaces')
 
-local storage = require('openmw.storage')
 
 local json = require('scripts.mp.json')
 local U = require('scripts.mp.ui')
@@ -35,6 +35,10 @@ local party = { leader = '', members = {} }
 local requests = {} -- acct -> name (incoming friend requests)
 local invites = {} -- acct -> {name=, kind='travel'|'party'}
 local presence = 'friends'
+-- Availability (Online/Offline) — a SEPARATE axis from presence (which is "who sees my
+-- location"). Offline peels you into your Solo world, hidden and unjoinable. Echoed back by
+-- the server on SetAvailability so the toggle reflects the real state.
+local availability = 'online'
 local status = ''
 local draft = ''
 local myName = nil
@@ -200,6 +204,12 @@ local function friendsTab()
     for _, f in ipairs(friends) do
         local actions = {}
         if f.online then
+            -- Cross-world "go where they are": public -> the shared world; party -> their party.
+            actions[#actions + 1] = { 'join', function()
+                send('JoinFriend', { acct = f.acct })
+                status = 'Joining ' .. tostring(f.name) .. '...'
+                render()
+            end }
             actions[#actions + 1] = { 'invite', function() send('InviteSend', { acct = f.acct }) end }
             if not inParty(f.acct) then
                 actions[#actions + 1] = { 'party', function() send('PartyInvite', { acct = f.acct }) end }
@@ -473,9 +483,8 @@ end
 
 local function tabBar()
     local function tabButton(key, label)
-        -- The active tab is marked with the header colour rather than punctuation, so the
-        -- bar reads like the game's own tabbed panels.
-        return U.button(label, function()
+        -- Filled (selected) vs outlined (inactive), like the Options window's tab strip.
+        return U.tab(label, key == tab, function()
             tab = key
             -- Ask the directory the first time the Worlds tab is opened, not on every
             -- render (render runs on every roster/presence event) and not at login (a
@@ -487,7 +496,7 @@ local function tabBar()
                 core.sendGlobalEvent('mpChars', {})
             end
             render()
-        end, { color = key == tab and I.MWUI.templates.textHeader.props.textColor or nil })
+        end)
     end
     return U.row {
         tabButton('players', 'Players (' .. math.max(0, #roster - 1) .. ')'),
@@ -498,61 +507,76 @@ local function tabBar()
     }
 end
 
+-- The where-am-I switcher lives at the TOP of the hub: Availability (Online/Offline) and the
+-- three where states (Solo / Party / Public — the one shared world). These drive world moves
+-- via the global router (mpWhere), which owns net.switchTo and the in-place Solo<->Party flip.
+local function where(mode) core.sendGlobalEvent('mpWhere', { mode = mode }) end
+
+local function switcherHeader()
+    local avail = U.row {
+        U.text('You are:'),
+        U.tab('Online', availability == 'online', function()
+            availability = 'online'; where('online'); status = 'Going online...'; render()
+        end),
+        U.tab('Offline', availability == 'offline', function()
+            availability = 'offline'; where('offline'); status = 'Going offline (solo, hidden)...'; render()
+        end),
+    }
+    local place = U.row {
+        U.text('Play in:'),
+        U.button('Solo', function() where('solo'); status = 'Switching to your solo world...'; render() end),
+        U.button('Party', function() where('party'); status = 'Opening your world to your party...'; render() end),
+        U.button('Public', function() where('public'); status = 'Heading to the shared world...'; render() end),
+    }
+    return U.column({
+        U.text('Where', { header = true }),
+        avail,
+        place,
+        U.text('Offline drops you into your solo world; Online returns you to where you were.'),
+    }, { spaced = true })
+end
+
 local function presenceBar()
     local items = { U.text('Visible to:') }
     for _, mode in ipairs(PRESENCE_MODES) do
-        items[#items + 1] = U.button(mode, function()
+        items[#items + 1] = U.tab(mode, mode == presence, function()
             send('PresenceMode', { mode = mode })
-        end, { color = mode == presence and I.MWUI.templates.textHeader.props.textColor or nil })
+        end)
     end
-    return U.column {
+    return U.column({
+        U.text('Privacy', { header = true }),
         U.row(items),
         U.text(PRESENCE_HELP[presence] or ''),
-    }
+    }, { spaced = true })
 end
 
--- Windows rebuild by destroy+create — there is no in-place update in this UI API — so every
--- state change re-renders the whole hub.
-render = function()
-    if not isOpen then return end
+-- Height floor for the content panel so the window keeps one size across every tab, the way
+-- the Options window never resizes when you move between Controls and Video.
+local CONTENT_MIN_H = 300
+-- Shared inner width so the tab content and the privacy panel line up to the same edges,
+-- inside the 720-wide window frame (leaving room for the frame border + padding).
+local PANEL_W = 690
+
+local function closeHub()
+    isOpen = false
     destroy()
-    local tabRows = (tab == 'friends' and friendsTab())
-        or (tab == 'party' and partyTab())
-        or (tab == 'worlds' and worldsTab())
-        or (tab == 'chars' and charsTab())
-        or playersTab()
-    -- Tab content and the privacy control each get their own bordered panel, mirroring how
-    -- the settings screen groups controls, so the eye can find the sections.
-    local body = { tabBar(), U.panel(tabRows), U.panel({ presenceBar() }) }
-    if status ~= '' then
-        body[#body + 1] = U.text(status)
-    end
-    body[#body + 1] = U.row { U.button('close', function()
-        isOpen = false
-        destroy()
-        I.UI.removeMode('Interface')
-    end) }
-
-    I.UI.setMode('Interface', { windows = {} })
-    element = ui.create(U.window('Social', body))
+    I.UI.removeMode('Interface')
 end
 
-local function toggle()
-    if isOpen then
-        isOpen = false
-        destroy()
-        I.UI.removeMode('Interface')
-    else
-        isOpen = true
-        myName = myName or mp.getName()
-        render()
-    end
-end
+-- The Social hub is now presented by the HTML overlay (index.html), not MyGUI. This script
+-- is the BRIDGE: it maintains social state from server events and MIRRORS it to JS via
+-- mirror() (window.__omwMP.friends/party/presenceMode/availability/...); the overlay reads
+-- that and sends ops back as commands (social:/where:/avail:/joinfriend:/...) parsed in
+-- player.lua's pollHarness. render() is a deliberate no-op so the old MyGUI window (and its
+-- tab builders, kept below but never called) never draws. The O key raises an openSocial
+-- signal the overlay polls; the overlay drives the cursor via uimode: commands.
+render = function() end
 
 local function mirror()
     mp.testSet('friends', json.encode(friends))
     mp.testSet('party', json.encode(party))
     mp.testSet('presenceMode', presence)
+    mp.testSet('availability', availability)
     local reqs, invs = {}, {}
     for acct, name in pairs(requests) do reqs[#reqs + 1] = { acct = acct, name = name } end
     for acct, inv in pairs(invites) do invs[#invs + 1] = { acct = acct, name = inv.name, kind = inv.kind } end
@@ -560,57 +584,31 @@ local function mirror()
     mp.testSet('invites', json.encode(invs))
 end
 
--- ESC -> Options -> Social. Registered as a settings PAGE so the engine's own settings UI
--- renders it: that is native by construction, rather than an imitation of native. The ESC
--- menu's own buttons are C++ ImageButtons backed by Morrowind's menu_*.dds art, so adding
--- one there would need matching artwork and would look MORE foreign without it.
---
--- The page carries the privacy control, which is a genuine setting and belongs somewhere
--- findable even when the hub is closed. The live lists stay in the hub (F) — a settings
--- screen is the wrong place for something that changes every few seconds.
-local PRESENCE_SETTING = 'SettingsPlayerOmwMpSocial'
-
-local function registerSettingsPage()
-    I.Settings.registerPage {
-        key = 'OmwMpSocial',
-        l10n = 'OmwMpSocial',
-        name = 'Social',
-        description = 'Multiplayer friends, party and privacy. Press F in game to open the Social hub.',
-    }
-    I.Settings.registerGroup {
-        key = PRESENCE_SETTING,
-        page = 'OmwMpSocial',
-        l10n = 'OmwMpSocial',
-        name = 'Privacy',
-        description = 'Who can see where you are, and who may invite you.',
-        permanentStorage = true,
-        settings = {
-            {
-                key = 'PresenceMode',
-                renderer = 'select',
-                name = 'Visible to',
-                description = 'public: anyone. friends: friends only. party: your party only.'
-                    .. ' private: nobody, and invites are refused.',
-                default = 'friends',
-                argument = { items = PRESENCE_MODES },
-            },
-        },
-    }
-    -- The SERVER is the authority on presence — it gates every disclosure — so the setting
-    -- is pushed to it rather than being applied locally. A client-side-only privacy control
-    -- would be decoration.
-    local section = storage.playerSection(PRESENCE_SETTING)
-    section:subscribe(async:callback(function(_, key)
-        if key == 'PresenceMode' then send('PresenceMode', { mode = section:get('PresenceMode') }) end
-    end))
+-- Raise the openSocial signal the HTML overlay polls. (isOpen/toggle semantics are gone with
+-- the MyGUI window; the overlay owns open/close.)
+local socialOpenSeq = 0
+local function toggle()
+    socialOpenSeq = socialOpenSeq + 1
+    mp.testSet('openSocial', tostring(socialOpenSeq)) -- testSet takes strings only
 end
+
+-- The Social hub used to also register a settings PAGE under Options -> Scripts (carrying a
+-- duplicate privacy control). That was removed: privacy now lives inside the hub itself, and
+-- a half-empty "Social" entry buried in the Scripts list only fragmented the feature. The hub
+-- is the one place for all of it, opened by the rebindable Social key or from wherever else.
+
+-- The Social key. It is a real engine input action (MWInput::A_Social, default 'O') so it
+-- shows up in Options -> Controls under BOTH Mouse/Keyboard and Controller and can be
+-- rebound there like any other control — not a hardcoded key. C++ forwards every action
+-- press to onInputAction below; input.ACTION.Social is that action's id.
+local SOCIAL_ACTION = input.ACTION and input.ACTION.Social
 
 return {
     engineHandlers = {
-        onInit = registerSettingsPage,
-        onLoad = registerSettingsPage,
-        onKeyPress = function(key)
-            if key.symbol == 'f' and not I.UI.getMode() then toggle() end
+        onInputAction = function(id)
+            if SOCIAL_ACTION == nil or id ~= SOCIAL_ACTION then return end
+            -- Raise the openSocial signal; the HTML overlay toggles itself open/closed.
+            toggle()
         end,
     },
     eventHandlers = {
@@ -789,12 +787,37 @@ return {
             if data.op == 'PresenceMode' and data.ok == true then
                 presence = tostring(data.detail)
                 status = 'Visibility set to ' .. presence .. '.'
+            elseif data.op == 'SetAvailability' and data.ok == true then
+                availability = tostring(data.detail)
+                status = availability == 'offline'
+                    and 'You are offline (solo, hidden).' or 'You are online.'
+            elseif data.op == 'SetWorldMode' and data.ok == true then
+                status = tostring(data.detail) == 'party'
+                    and 'Your world is open to your party.' or 'Your world is solo again.'
             else
                 status = tostring(data.op or '?') .. ': ' .. tostring(data.detail or '?')
                 if data.ok ~= true then ui.showMessage(status) end
             end
             mp.testSet('socialResult', json.encode({ op = data.op, ok = data.ok, detail = data.detail }))
             mirror()
+            render()
+        end,
+        -- Cross-world join result (the redial itself happens in global.lua on success).
+        MP_JoinFriend = function(data)
+            if data.ok == true then
+                status = 'Joining ' .. tostring(data.friendName or 'your friend') .. '...'
+            else
+                local why = {
+                    not_friends = 'You are not friends with them.',
+                    not_online = 'They are offline.',
+                    no_public_world = 'The shared world is not available.',
+                    party_full = 'Their party is full.',
+                    already_in_party = 'You are already in a party.',
+                    blocked = 'You cannot join them.',
+                }
+                status = why[tostring(data.error)] or ('Could not join: ' .. tostring(data.error or '?'))
+                ui.showMessage(status)
+            end
             render()
         end,
     },

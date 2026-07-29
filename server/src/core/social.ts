@@ -148,12 +148,16 @@ export class Social {
       // cellKey is gated by the SUBJECT's presence mode, not merely by friendship: a player
       // who set themselves to party-only or private stays hidden from friends too, which is
       // the entire point of choosing it.
-      const showWhere = p !== undefined && p.cellKey !== undefined && this.maySeeLocation(acct, f.account);
+      // Availability is a hard gate over connectedness: an Offline player is CONNECTED (they
+      // are off in their own solo world) but must read as offline to friends — hidden, and
+      // with no location, exactly as if disconnected.
+      const available = p !== undefined && this.isAvailable(f.account);
+      const showWhere = available && p.cellKey !== undefined && this.maySeeLocation(acct, f.account);
       out.push({
         acct: f.account,
         name: this.d.displayName(f.account) ?? f.account,
-        online: p !== undefined,
-        ...(p ? { playerId: p.id, ...(showWhere ? { cellKey: p.cellKey } : {}) } : {}),
+        online: available,
+        ...(available ? { playerId: p.id, ...(showWhere ? { cellKey: p.cellKey } : {}) } : {}),
       });
     }
     return out;
@@ -354,6 +358,8 @@ export class Social {
     if (this.d.store.blockedEitherWay(from, targetAcct)) return 'blocked';
     // 'private' means do not contact me, not just do not locate me.
     if (this.presenceMode(targetAcct) === 'private') return 'private';
+    // Offline players are unreachable by design (they're off in their solo world).
+    if (!this.isAvailable(targetAcct)) return 'not_online';
     const target = this.onlinePlayer(targetAcct);
     if (!target) return 'not_online';
     const now = this.d.now();
@@ -380,6 +386,33 @@ export class Social {
     // not whenever their next friend list happens to be rebuilt.
     this.sendFriendList(player);
     this.sendParty(player.accountKey);
+    for (const f of this.d.store.friendsOf(player.accountKey)) {
+      const p = this.onlinePlayer(f.account);
+      if (p) this.sendFriendList(p);
+    }
+    return 'ok';
+  }
+
+  // ------------------------------------------------------------ availability
+  // Online/Offline — a DIFFERENT axis from presence (see availability_pref). Offline hides
+  // the player from friends' online lists and refuses inbound invites/joins; the client
+  // pairs it with peeling into the solo world. Default Online.
+
+  availability(acct: AccountKey): 'online' | 'offline' {
+    return this.d.store.getAvailability(acct) === 'offline' ? 'offline' : 'online';
+  }
+
+  isAvailable(acct: AccountKey): boolean {
+    return this.availability(acct) !== 'offline';
+  }
+
+  setAvailability(player: Player, state: string): SocialFailure | 'ok' {
+    if (state !== 'online' && state !== 'offline') return 'no_such_player';
+    this.d.store.setAvailability(player.accountKey, state);
+    // Take effect immediately: refresh the player's own list, and push presence to friends so
+    // an Offline player vanishes from their online lists at once (not on the next rebuild).
+    this.sendFriendList(player);
+    this.notifyFriends(player.accountKey, state === 'online');
     for (const f of this.d.store.friendsOf(player.accountKey)) {
       const p = this.onlinePlayer(f.account);
       if (p) this.sendFriendList(p);
@@ -526,6 +559,7 @@ export class Social {
     if (targetAcct === from) return 'self';
     if (this.d.store.blockedEitherWay(from, targetAcct)) return 'blocked';
     if (this.presenceMode(targetAcct) === 'private') return 'private';
+    if (!this.isAvailable(targetAcct)) return 'not_online';
     const target = this.onlinePlayer(targetAcct);
     if (!target) return 'not_online';
     if (this.partyOf.has(targetAcct)) return 'already_in_party';
@@ -696,6 +730,15 @@ export class Social {
       case 'PresenceMode': {
         const r = this.setPresenceMode(player, str('mode'));
         this.reply(player, 'PresenceMode', r === 'ok', r === 'ok' ? str('mode') : r);
+        return true;
+      }
+      case 'SetAvailability': {
+        const r = this.setAvailability(player, str('state'));
+        this.reply(player, 'SetAvailability', r === 'ok', r === 'ok' ? str('state') : r);
+        return true;
+      }
+      case 'JoinFriend': {
+        void this.joinFriend(player, str('acct'));
         return true;
       }
       case 'PartyInvite': {
@@ -884,6 +927,50 @@ export class Social {
       });
     }
     log('info', 'social.party_travel', { party: party.key, target, worldId: dest.id, leader: from });
+  }
+
+  // "Join a friend": go where they are. The single shared public world makes this
+  // deterministic without the gateway tracking per-player location:
+  //   - Offline (peeled into their solo world) -> refused; a solo session is unjoinable.
+  //   - In a party -> auto-join that party (friends + space) and travel to its world.
+  //   - Otherwise (Online, no party) -> they're out in the one PUBLIC world; go there.
+  // Friendship is required both ways — you cannot chase a stranger across worlds.
+  async joinFriend(player: Player, targetAcct: AccountKey): Promise<void> {
+    const me = player.accountKey;
+    const fail = (detail: string): void => player.peer.sendEvent('JoinFriend', { ok: false, error: detail });
+    if (targetAcct === '' || targetAcct === me) return fail('self');
+    if (!this.d.store.areFriends(me, targetAcct)) return fail('not_friends');
+    if (this.d.store.blockedEitherWay(me, targetAcct)) return fail('blocked');
+    if (!this.isAvailable(targetAcct)) return fail('not_online');
+    if (!this.worlds || !this.worlds.enabled) return fail('no_gateway');
+    const friendName = this.d.displayName(targetAcct) ?? targetAcct;
+
+    const theirParty = this.partyOf.get(targetAcct);
+    if (theirParty !== undefined) {
+      const party = this.parties.get(theirParty);
+      if (!party) return fail('not_in_party');
+      if (this.partyOf.get(me) !== theirParty) {
+        if (this.partyOf.has(me)) return fail('already_in_party');
+        if (party.members.size >= this.maxParty) return fail('party_full');
+        party.members.add(me);
+        this.partyOf.set(me, party.key);
+        this.d.store.partyAddMember(party.key, me, this.d.now());
+        this.broadcastParty(party.key);
+      }
+      const r = await this.worlds.create(player, `party-${party.key}`, 'party');
+      if (!r.world) return fail(r.error ?? 'refused');
+      player.peer.sendEvent('JoinFriend', {
+        ok: true, worldId: r.world.id, mode: r.world.mode, host: r.world.host, port: r.world.port, friendName,
+      });
+      return;
+    }
+    // Online, no party -> the shared public world.
+    const r = await this.worlds.list(player);
+    const pub = r.worlds.find((w) => w.mode === 'public' && w.up);
+    if (!pub) return fail(r.error ?? 'no_public_world');
+    player.peer.sendEvent('JoinFriend', {
+      ok: true, worldId: pub.id, mode: pub.mode, host: pub.host, port: pub.port, friendName,
+    });
   }
 
   // Returns the inviter's live position for the client to travel to, or a failure.

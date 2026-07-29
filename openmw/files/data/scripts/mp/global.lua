@@ -12,6 +12,38 @@ local world = require('openmw.world')
 
 local json = require('scripts.mp.json')
 local net = require('scripts.mp.net')
+
+-- Where-am-I switcher state. `worldUrls.own` = this character's own world (Solo/Party — the
+-- same instance, mode-flipped in place); `worldUrls.public` = the one shared world, learned
+-- from the directory. `pendingFlip` defers a Solo<->Party flip until we are back in our own
+-- world (you cannot flip the public world).
+local worldUrls = {}
+local pendingFlip = nil
+local pendingPublic = false
+
+-- Chargen gate: multiplayer surfaces (chat, social, leaving your solo world) unlock only once
+-- character creation is DONE (race/class/sign chosen — mwscript CharGenState == -1). Mirrored
+-- to JS so the HTML overlays hide themselves until then; mpWhere refuses too. Never un-done:
+-- once true it stays true for the session (an existing character starts at -1 immediately).
+local chargenDone = false
+local chargenReported = false
+local function chargenTick()
+    if chargenDone and chargenReported then return end
+    if not chargenDone then
+        local ok, v = pcall(function() return world.mwscript.getGlobalVariables()['chargenstate'] end)
+        if ok and v == -1 then
+            chargenDone = true
+            mp.testSet('chargenDone', '1')
+        end
+    end
+    -- Tell the server creation FINISHED for this slot: until this lands the character is
+    -- provisional, and abandoning creation resets it instead of saving a half-made one.
+    -- Re-sent each session (idempotent) so pre-flag characters self-migrate.
+    if chargenDone and not chargenReported and net.state == 'Joined' then
+        mp.sendEvent('ChargenComplete', {})
+        chargenReported = true
+    end
+end
 local voice = require('scripts.mp.voice')
 local threat = require('scripts.mp.threat')
 local objects = require('scripts.mp.objects')
@@ -650,6 +682,15 @@ local function start()
             wasJoined = true
             notice('Connected to ' .. tostring(net.serverName or 'server')
                 .. ' as ' .. tostring(mp.getName() or '?'))
+            -- The world we FIRST land in at login is our own (the launcher puts us there). Cache
+            -- its URL so the where-am-I switcher can return here from Public.
+            if not worldUrls.own then worldUrls.own = net.currentTarget() end
+            -- A flip that had to wait for us to arrive back in our own world (e.g. "Party"
+            -- pressed while in Public) fires now that we are joined.
+            if pendingFlip and net.currentTarget() == worldUrls.own then
+                mp.sendEvent('SetWorldMode', { mode = pendingFlip })
+                pendingFlip = nil
+            end
             if net.playerRecord then
                 pendingRestore = net.playerRecord -- applied by restoreTick once the player exists
                 net.playerRecord = nil
@@ -713,7 +754,21 @@ local eventHandlers = {
     end,
     -- F3 world browser. Inbound server events land in the GLOBAL context and reach the
     -- window only if forwarded here — the social family's straight pass-through pattern.
-    MP_WorldList = function(data) toPlayer('MP_WorldList', data) end,
+    MP_WorldList = function(data)
+        toPlayer('MP_WorldList', data)
+        -- The switcher's "Public" leg asked for the directory so it could find the one shared
+        -- world and dial it. Remember its URL for next time and switch now.
+        if pendingPublic then
+            pendingPublic = false
+            for _, w in ipairs(data.worlds or {}) do
+                if w.mode == 'public' and w.up and w.host and w.port then
+                    worldUrls.public = 'ws://' .. tostring(w.host) .. ':' .. string.format('%d', w.port) .. '/ws'
+                    if net.currentTarget() ~= worldUrls.public then net.switchTo(worldUrls.public) end
+                    break
+                end
+            end
+        end
+    end,
     MP_WorldCreate = function(data) toPlayer('MP_WorldCreate', data) end,
     MP_FriendRequestReceived = function(data) toPlayer('MP_FriendRequestReceived', data) end,
     MP_InviteReceived = function(data) toPlayer('MP_InviteReceived', data) end,
@@ -761,6 +816,18 @@ local eventHandlers = {
         end)
         if not ok then print('[mp] invite teleport failed: ' .. tostring(err)) end
         mp.testSet('invitedTo', tostring(data.cellKey))
+    end,
+
+    -- "Join a friend": the server resolved where they are (their party world, or the one
+    -- public world) and told us where to dial. Like MP_PartyTravel this is an ACTION, so the
+    -- redial happens here; the hub is told first so it can show status or a failure.
+    MP_JoinFriend = function(data)
+        toPlayer('MP_JoinFriend', data)
+        if not data or data.ok ~= true or not data.host or not data.port then return end
+        local url = 'ws://' .. tostring(data.host) .. ':' .. string.format('%d', data.port) .. '/ws'
+        mp.testSet('joinFriendTo', tostring(data.worldId or ''))
+        if url == net.currentTarget() then return end
+        net.switchTo(url)
     end,
 
     MP_ChatMessage = function(data)
@@ -1162,6 +1229,9 @@ local eventHandlers = {
             PartyInvite = true, PartyAccept = true, PartyLeave = true, PartyTravel = true,
             PresenceMode = true, MuteAdd = true, MuteRemove = true, VoiceSignal = true,
             ReportPlayer = true, PartySetting = true,
+            -- Social UX: availability (Online/Offline), cross-world join, and the owner's
+            -- in-place Solo<->Party world flip.
+            SetAvailability = true, JoinFriend = true, SetWorldMode = true,
             -- F3 world browser. The server takes the ACCOUNT from the authenticated
             -- session, never from here, so a client cannot list or create sessions under
             -- someone else's identity.
@@ -1173,6 +1243,7 @@ local eventHandlers = {
             name = data.name, acct = data.acct, mode = data.mode, id = data.id,
             target = data.target, kind = data.kind, payload = data.payload,
             reason = data.reason, voice = data.voice, value = data.value,
+            state = data.state,
         })
     end,
 
@@ -1255,6 +1326,40 @@ local eventHandlers = {
         net.switchTo(url)
     end,
 
+    -- The where-am-I switcher (from the Social hub). Solo/Party flip our OWN world in place
+    -- (deferred until we are back in it if we are currently in Public); Public dials the one
+    -- shared world; Offline peels us home + hides us; Online restores us to where we last were.
+    mpWhere = function(data)
+        -- Nothing to do in multiplayer until the character exists: no leaving the solo world
+        -- (or flipping it joinable) mid-chargen. The server's own chargen gate backs this up.
+        if not chargenDone then
+            notice('Finish creating your character first.')
+            return
+        end
+        local mode = tostring(data.mode or '')
+        local inOwn = worldUrls.own ~= nil and net.currentTarget() == worldUrls.own
+        if mode == 'solo' then
+            if inOwn or not worldUrls.own then mp.sendEvent('SetWorldMode', { mode = 'private' })
+            else pendingFlip = 'private'; net.switchTo(worldUrls.own) end
+        elseif mode == 'party' then
+            if inOwn or not worldUrls.own then mp.sendEvent('SetWorldMode', { mode = 'party' })
+            else pendingFlip = 'party'; net.switchTo(worldUrls.own) end
+        elseif mode == 'public' then
+            if worldUrls.public and net.currentTarget() ~= worldUrls.public then net.switchTo(worldUrls.public)
+            elseif not worldUrls.public then pendingPublic = true; mp.sendEvent('WorldList', {}) end
+        elseif mode == 'offline' then
+            if not inOwn and worldUrls.own then worldUrls.lastOut = net.currentTarget() end
+            mp.sendEvent('SetAvailability', { state = 'offline' })
+            if inOwn or not worldUrls.own then mp.sendEvent('SetWorldMode', { mode = 'private' })
+            else pendingFlip = 'private'; net.switchTo(worldUrls.own) end
+        elseif mode == 'online' then
+            mp.sendEvent('SetAvailability', { state = 'online' })
+            if worldUrls.lastOut and net.currentTarget() ~= worldUrls.lastOut then
+                net.switchTo(worldUrls.lastOut); worldUrls.lastOut = nil
+            end
+        end
+    end,
+
     -- Script removal lives here because removeScript is bound on GObject only. Both senders
     -- have already done whatever had to happen first (puppet.lua re-enables AI before
     -- asking), and the event hop is exactly what guarantees that ordering.
@@ -1272,7 +1377,14 @@ local eventHandlers = {
 
     mpChatSend = function(data)
         if type(data.text) == 'string' and data.text ~= '' then
-            mp.sendEvent('ChatSend', { text = data.text })
+            -- Forward the channel selector's choice + whisper target, not just the text — the
+            -- server reads {channel, to} (say/party/global/whisper). Dropping them here would
+            -- silently flatten every message to 'say'.
+            mp.sendEvent('ChatSend', {
+                text = data.text,
+                channel = tostring(data.channel or 'say'),
+                to = tostring(data.to or ''),
+            })
         end
     end,
 
@@ -1395,6 +1507,7 @@ return {
             restoreTick()
             restorePositionTick(core.getRealTime())
             puppetTick()
+            chargenTick()
             if net.state == 'Joined' then
                 local now = core.getRealTime()
                 objects.tick(now)

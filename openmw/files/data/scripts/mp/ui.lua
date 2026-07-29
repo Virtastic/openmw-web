@@ -81,16 +81,23 @@ function M.column(items, opts)
 end
 
 -- A bordered inner panel, the way the settings screen groups related controls. Gives the
--- content a frame of its own instead of floating loose inside the window.
+-- content a frame of its own instead of floating loose inside the window. opts.width pins the
+-- panel to a fixed inner width so every panel in a window lines up to the same edge (the
+-- Options screen's groups all share one width) instead of each shrink-wrapping its content.
 function M.panel(items, opts)
     opts = opts or {}
+    local inner = items
+    if opts.width then
+        inner = { M.minWidth(opts.width) }
+        for _, it in ipairs(items) do inner[#inner + 1] = it end
+    end
     return {
         template = I.MWUI.templates.box,
         external = opts.grow and { grow = opts.grow } or nil,
         content = ui.content {
             {
                 template = I.MWUI.templates.padding,
-                content = ui.content { M.column(items, { spaced = true }) },
+                content = ui.content { M.column(inner, { spaced = true }) },
             },
         },
     }
@@ -100,6 +107,32 @@ end
 -- its longest line — a panel that resizes on every list change feels unfinished.
 function M.minWidth(px)
     return { props = { size = util.vector2(px, 0) } }
+end
+
+-- Same idea vertically: the Options screen keeps one size no matter which tab is open, so
+-- switching tabs never makes the whole window jump. A zero-width spacer of fixed height
+-- pins the content panel to a floor; shorter tabs pad up to it, taller ones grow past it.
+function M.minHeight(px)
+    return { props = { size = util.vector2(0, px) } }
+end
+
+-- A tab in a tab strip, styled like the game's own tabbed panels: the selected tab is a
+-- FILLED box (boxSolid) in the header colour, the rest are plain outlines. That solid/hollow
+-- contrast — not a colour change alone — is what makes the active tab obviously current, the
+-- way "Controls"/"Video" read as pressed in the Options window.
+function M.tab(label, active, onClick)
+    local inner = M.text(label, active and { color = I.MWUI.templates.textHeader.props.textColor } or {})
+    local box = {
+        template = active and I.MWUI.templates.boxSolid or I.MWUI.templates.box,
+        content = ui.content {
+            {
+                template = I.MWUI.templates.padding,
+                content = ui.content { inner },
+            },
+        },
+    }
+    if onClick then box.events = { mouseClick = async:callback(onClick) } end
+    return box
 end
 
 -- A clickable control that reads as a button: bordered box + padding, like the settings
@@ -133,16 +166,26 @@ function M.header(str)
 end
 
 -- The outer frame every MP window shares: transparent bordered box (so the world stays
--- visible behind it, as with the game's own menus), padded, with a title.
+-- visible behind it, as with the game's own menus), padded, titled, and — like the Options
+-- window — CENTRED on screen at a stable size rather than pinned to a corner and shrink-wrapped.
+--
+-- opts.width    fixed inner width (default 720, matching the roomy Options footprint)
+-- opts.footer   a layout placed under a rule at the bottom (e.g. status text + an OK button)
+-- opts.position if given, top-left anchor instead of centring (kept for callers that want it)
 function M.window(title, rows, opts)
     opts = opts or {}
     local body = { M.text(title, { header = true }) }
     for _, r in ipairs(rows) do body[#body + 1] = r end
-    body[#body + 1] = M.minWidth(opts.width or 460)
+    body[#body + 1] = M.minWidth(opts.width or 720)
+    if opts.footer then body[#body + 1] = opts.footer end
+    -- Centre with anchor+relativePosition so it sits mid-screen at any resolution, the way
+    -- the engine's own menus do, instead of the old fixed (80,60) corner offset.
+    local props = opts.position and { position = opts.position }
+        or { anchor = util.vector2(0.5, 0.5), relativePosition = util.vector2(0.5, 0.5) }
     return {
         layer = opts.layer or 'Windows',
         template = I.MWUI.templates.boxTransparentThick,
-        props = { position = opts.position or util.vector2(80, 60) },
+        props = props,
         content = ui.content {
             {
                 template = I.MWUI.templates.padding,

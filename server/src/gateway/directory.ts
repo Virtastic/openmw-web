@@ -57,7 +57,10 @@ export async function startDirectory(deps: DirectoryDeps): Promise<RunningDirect
     // cross-origin API. Set CORS on all responses and answer the preflight — without this the
     // browser's POST /worlds (create-or-join) is blocked and shows only "Failed to fetch".
     res.setHeader('access-control-allow-origin', req.headers.origin ?? '*');
-    res.setHeader('access-control-allow-methods', 'GET, POST, OPTIONS');
+    // DELETE: character deletion (/auth/characters). The directory answers ALL preflights on
+    // this port, so a method missing here is blocked by the browser before the front-door
+    // route ever sees it — which read as "could not reach the server" on the delete button.
+    res.setHeader('access-control-allow-methods', 'GET, POST, DELETE, OPTIONS');
     res.setHeader('access-control-allow-headers', 'content-type, authorization');
     if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
 

@@ -104,12 +104,24 @@ local function cellKeyOfObj(obj)
     return string.lower(cell.name)
 end
 
+-- Chargen sanctuary: the tutorial cells are LOCAL-ONLY. The prison ship and census office
+-- are driven by the chargen mwscripts (the release papers appearing on the desk, the doors,
+-- the boat), and the account's persisted world state must never replay over them — the first
+-- character taking the papers would otherwise delete them for every later character in the
+-- same world ("the papers never appear"). Nothing in these cells is reported out either: a
+-- tutorial prop has no business in shared world state.
+local function isChargenCell(cellKey)
+    local k = string.lower(tostring(cellKey or ''))
+    return (k:find('census', 1, true) ~= nil) or (k:find('prison ship', 1, true) ~= nil)
+end
+
 local function sendAddressed(eventName, obj, extra)
     local addr = addrOf(obj)
     if not addr then return false end
     extra = extra or {}
     for k, v in pairs(addr) do extra[k] = v end
     extra.cellKey = extra.cellKey or cellKeyOfObj(obj)
+    if isChargenCell(extra.cellKey) then return false end
     mp.sendEvent(eventName, extra)
     return true
 end
@@ -536,6 +548,16 @@ handlers.MP_WorldCellState = function(data)
     end
 end
 
+-- Inbound side of the chargen sanctuary: any server-pushed object state addressed to a
+-- tutorial cell is dropped before it can clobber the chargen script's props (the persisted
+-- "papers were taken" delta being the poster child). Ops without a cellKey pass through.
+for name, fn in pairs(handlers) do
+    handlers[name] = function(data)
+        if type(data) == 'table' and data.cellKey ~= nil and isChargenCell(data.cellKey) then return end
+        return fn(data)
+    end
+end
+
 objects.handlers = handlers
 
 -- ---------------------------------------------------------------- tick
@@ -648,6 +670,7 @@ function objects.tick(now)
 end
 
 function objects.sendContainerOp(obj, op, itemId, n)
+    if isChargenCell(cellKeyOfObj(obj)) then return nil end -- tutorial cells are local-only
     opCounter = opCounter + 1
     local addr = addrOf(obj)
     if not addr then return nil end

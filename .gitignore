@@ -76,3 +76,6 @@ deps/native/
 # Optional performance asset pack (built by wasm-build/build-assetpack.py from
 # third-party mod archives; never committed — see THIRD-PARTY-LICENSES.md).
 play/moddata/
+
+# local dev stack data (wasm-build/dev-local.sh)
+.dev-local/
