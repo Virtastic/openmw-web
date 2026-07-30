@@ -301,12 +301,43 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     onCommand: (player, name, args) => hooks.command({ id: player.id, name: player.name, rank: player.rank }, name, args),
   };
 
+  // Conservation on drop: judge against what the character last declared it holds. Undefined
+  // (no doc yet, or nothing declared) means "no basis to judge", never "guilty".
+  // QUARANTINE: an account that has declared impossible character state. Character data is
+  // client-authored (playerstate.ts) and the server can only detect, not prevent — so bound
+  // the blast radius instead: in the SHARED world such an account cannot hand anything to
+  // anyone (no drops, no container puts, no PvP). Their own campaign is untouched, because
+  // cheating there harms nobody.
+  //
+  // Movement anomalies are deliberately NOT counted: those fire on a stalled connection
+  // delivering a batch late, and punishing bad wifi is not the goal.
+  // NOT unowned_drop. ObjectSpawnRequest is the generic "place an object", not "drop from
+  // inventory" — scripts legitimately place things nobody carries (s31 spawns a CHEST). That
+  // signal is worth recording but it is NOT evidence of a declared-state cheat, and using it
+  // here would quarantine honest players through the same false positive that forced the
+  // earlier drop-enforcement backout. Re-add it once the protocol distinguishes the two.
+  const DECLARED_STATE_ANOMALIES = ['inventory_stack', 'inventory_breadth', 'level_jump'];
+  const isQuarantined = (accountKey: string): boolean => {
+    const seen = moderation.anomaliesFor(accountKey);
+    return DECLARED_STATE_ANOMALIES.some((k) => (seen[k] ?? 0) > 0);
+  };
+  world.setQuarantineCheck(isQuarantined);
+
+  world.setInventoryOracle((player, recordId) => {
+    const inv = playerStore.getCached(player.charId)?.inventory;
+    if (!inv) return undefined;
+    return inv.find((i) => i.id === recordId)?.n ?? 0;
+  });
+  world.setModerationNote((accountKey, kind) => moderation.noteAnomaly(accountKey, kind));
+
   const stateCtx: StateCtx = {
     roster,
     store: playerStore,
     // Chargen named the character: put that name on the slot, replacing the placeholder the
     // slot was auto-created with. Only ever an upgrade — a slot the player already named is
     // left alone.
+    // Same sink the movement envelope feeds: anomalies are what moderation acts on.
+    noteAnomaly: (accountKey, kind) => moderation.noteAnomaly(accountKey, kind),
     onCharacterNamed: (player, name) => {
       void accounts.get(player.accountKey).then((account) => {
         if (account) accounts.nameCharacter(account, player.charId, name);
@@ -323,8 +354,16 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     maxHitDamage: config.limits.maxHitDamage,
     holderOf: (cellKey) => world.holderOf(cellKey),
     epochOf: (cellKey) => world.epochOf(cellKey),
-    allowPlayerHit: (attacker, victimId, name) =>
-      hooks.playerHit({ id: attacker.id, name: attacker.name, rank: attacker.rank }, victimId, name),
+    allowPlayerHit: (attacker, victimId, name) => {
+      // A quarantined account cannot bring declared stats to bear on another player in the
+      // shared world. Checked before the plugin gate: this is not a rule an operator opts out
+      // of by swapping the pvp plugin.
+      if (worldModeAtBoot === 'public' && isQuarantined(attacker.accountKey)) {
+        metrics.containedActions.inc({ action: 'pvp' });
+        return false;
+      }
+      return hooks.playerHit({ id: attacker.id, name: attacker.name, rank: attacker.rank }, victimId, name);
+    },
   });
 
   const quests = new Quests({
@@ -333,11 +372,16 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     players: playerStore,
     isShared: (family) => hooks.shareFamily(family),
     regressAllowed: (questId) => hooks.journalRegress(questId),
-    // Social is built below; the party lookup is deferred so quest credit always reads
-    // live membership rather than a snapshot taken at boot.
-    partyOf: (accountKey) => socialRef?.partyMembersOf(accountKey) ?? [],
+    // Where a journal advance is persisted. The same distinction the lobby rule draws:
+    // a GATEWAY-managed public world is the shared lobby and persists nothing, while a
+    // standalone single-world server has no owner but IS the player's real game.
+    journalTarget: (player) => {
+      if (worldOwner !== '') return roster.activeForAccount(worldOwner)?.charId;
+      const isLobby = !!process.env.OMW_WORLD_ID && worldModeAtBoot === 'public';
+      return isLobby ? undefined : player.charId;
+    },
+    ownerCharId: () => (worldOwner === '' ? undefined : roster.activeForAccount(worldOwner)?.charId),
     worldGlobals: config.sharing.worldGlobals,
-    partyCredit: config.sharing.partyCredit,
   });
 
   // Phase C. The store is opened here so its lifetime matches the server's; social.stop()
@@ -365,10 +409,17 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   const social = new Social({
     store: socialStore,
     roster,
-    displayName: (acct) => accounts.cachedByKey(acct)?.name,
-    // Resolution is by display name because that is what a player types, but everything
-    // stored keys on the account — names are mutable and reusable.
-    resolveName: (name) => (accounts.existsNow(name) ? name.toLowerCase() : undefined),
+    // The USERNAME is the public handle (accounts.ts: "shown everywhere in-game — nametags,
+    // chat, friends, admin views"). account.name is the LOGIN IDENTIFIER, and for an SSO
+    // account it is the provider's name claim, i.e. the person's real name. Every social
+    // surface — party rows, friend rows, transition notices — reads this one resolver, so
+    // returning account.name here put real names on all of them at once.
+    // [login] requireProfile is off by default, so a username is not guaranteed. The fallback
+    // is the CHARACTER name, never account.name — a missing handle is a cosmetic gap, the
+    // login identifier is a privacy leak. Turn requireProfile on and the fallback goes unused.
+    displayName: (acct) => accounts.cachedByKey(acct)?.username ?? roster.activeForAccount(acct)?.name,
+    // Resolution must accept what players SEE, which is now the username.
+    resolveName: (name) => accounts.keyForUsername(name) ?? (accounts.existsNow(name) ? name.toLowerCase() : undefined),
     now: () => Date.now(),
     // Phase 4: a vote in an open loot roll. The winner is decided server-side and told
     // to the party, so a client cannot award itself the artifact.
@@ -489,6 +540,25 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       if (mode !== 'private' && mode !== 'party') return 'bad_mode';
       worldMode = mode;
       log('info', 'world.mode_flip', { world: worldId, owner: worldOwner, mode });
+      // mayJoinWorld only gates ARRIVAL. Flipping back to Solo therefore closed the door
+      // while leaving every guest standing inside — the party dissolved around them and they
+      // kept playing in someone else's private world. Closing means closing: tell each guest
+      // to go home (their client knows its own world and dials it), then drop anyone still
+      // here. The grace is for the switch to happen cleanly, not for them to keep playing.
+      if (mode === 'private') {
+        for (const conn of [...connections]) {
+          const p = conn.player;
+          if (!p || p.accountKey === worldOwner || p.rank >= 1) continue;
+          // The owner's CHARACTER name, off the live roster — never the account display
+          // name, which carries the signed-in person's real name.
+          p.peer.sendEvent('WorldClosed',
+            { reason: 'owner_went_solo', by: roster.activeForAccount(worldOwner)?.name ?? '' });
+          const t = setTimeout(() => {
+            if (connections.has(conn)) conn.disconnect('KICKED', 'this world is no longer open to your party');
+          }, 5000);
+          t.unref();
+        }
+      }
       return 'ok';
     },
     // Spawn-near-leader: when a NON-owner freshly joins a party world (a friend/party member
@@ -778,26 +848,39 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       simPeers.stopAll(); // never leave an engine running after the server it fed is gone
       moveBroadcaster.stop();
       social.stop(); // pending presence timers would keep the process alive
-      socialStore.close();
       await m7.stop();
       hooks.serverStop();
       for (const conn of [...connections]) conn.disconnect('SHUTDOWN', 'server shutting down');
       wss.close();
-      await accounts.close();
-      await playerStore.close();
-      await attio.close();
-      await world.drain(); // let queued ops land before the final cell flush
-      await cellStore.close();
-      await recordStore.close();
-      await bans.flush();
-      await moderation.flush();
-      resume.clear();
-      oidc.close();
-      tickets.clear();
+      // AFTER the disconnect loop, never before it: dropping a connection writes the player's
+      // presence back through Social, so closing this first made shutdown race its own
+      // teardown and throw "database is not open" from inside a hook that had already
+      // returned. A store outlives every writer to it.
+      // Stop the HTTP door BEFORE any store closes. An in-flight /auth/* request writes to
+      // the account store as it completes, so leaving the listener open until the end raced
+      // shutdown and surfaced as an intermittent "database is not open" thrown from a hook
+      // that had already returned.
       await new Promise<void>((resolve) => {
         httpServer.close(() => resolve());
         httpServer.closeAllConnections();
       });
+      // QUIESCE every writer, THEN close. Draining the world after closing the stores it
+      // writes through was the same bug in the other direction.
+      await world.drain();
+      await accounts.flush();
+      await playerStore.flushAll();
+      await bans.flush();
+      await moderation.flush();
+      // Now nothing is left to write. A store outlives every writer to it.
+      socialStore.close();
+      await accounts.close();
+      await playerStore.close();
+      await attio.close();
+      await cellStore.close();
+      await recordStore.close();
+      resume.clear();
+      oidc.close();
+      tickets.clear();
       log('info', 'server.stop', {});
     },
   };

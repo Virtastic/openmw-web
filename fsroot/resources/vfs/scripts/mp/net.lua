@@ -70,6 +70,13 @@ local function mirrorTarget() mp.testSet('dialTarget', targetUrl()) end
 -- covers the window where a freshly created world is still booting. Cleared on Joined.
 local switchDeadline = nil
 local reconnectAttempt = 0 -- reset on a successful Joined
+-- Have we EVER been in the world on this page? A drop after joining is worth retrying
+-- indefinitely (the character is in there, and the resume ticket rejoins in place). A server
+-- that was never reachable is a different situation: retrying it silently forever leaves the
+-- player staring at a boot screen with no explanation, which is the failure s90 exists to
+-- catch. Retry a few times, then say so.
+local everJoined = false
+local UNREACHABLE_ATTEMPTS = 3
 -- Monotonic and NEVER reset, unlike reconnectAttempt. A test that watches for a transient
 -- ("state left Joined") races the redial, which on localhost can complete between polls;
 -- a counter that only ever grows cannot be missed.
@@ -260,6 +267,25 @@ function net.onClose()
     -- long-lived socket). Previously this dead-ended at "reload the page to retry"; now we
     -- redial ourselves, and because the resume ticket is still parked the rejoin is in place
     -- (M8) — a blip should be invisible rather than a re-login.
+    -- ...but NOT for a terminal credential failure. AUTH_FAILED means the credential is
+    -- wrong, and no amount of redialling makes a wrong credential right. `reconnecting`
+    -- latches after ANY earlier redial (a rate-limit blip is enough), and once latched this
+    -- branch swallowed every later AUTH_FAILED — so a wrong password retried silently and
+    -- forever instead of saying "sign in again". The auth ladder above has already tried the
+    -- alternatives by the time we get here.
+    if net.lastError == 'AUTH_FAILED' then
+        net.lastErrorDetail = net.lastErrorDetail or 'sign in again'
+        mp.testSet('lastError', tostring(net.lastError) .. ' ' .. tostring(net.lastErrorDetail))
+        setState('Failed')
+        return
+    end
+    if not everJoined and reconnectAttempt >= UNREACHABLE_ATTEMPTS then
+        net.lastError = net.lastError or 'UNREACHABLE'
+        net.lastErrorDetail = net.lastErrorDetail or 'could not reach the server'
+        mp.testSet('lastError', tostring(net.lastError) .. ' ' .. tostring(net.lastErrorDetail))
+        setState('Failed')
+        return
+    end
     if net.state == 'Joined' or reconnecting then
         if net.resumeToken or (mp.getResumeToken and mp.getResumeToken() ~= '') then
             authMode = 'resume'
@@ -355,6 +381,10 @@ dispatch.SessionWelcome = function(msg)
     mp.testSet('characterCount', tostring(#net.characters))
     mp.testSet('characters', json.encode(net.characters))
     mp.testSet('profileRequired', tostring(net.profile.required == true))
+    -- SSO already captured the email; the picker only has to ask for a handle, and it needs
+    -- the address to send back with it (ProfileSetup takes both).
+    mp.testSet('profileEmail', tostring(net.profile.email or ''))
+    mp.testSet('profileUsername', tostring(net.profile.username or ''))
     -- Back in the world: forget the backoff so the NEXT outage starts from 1s again rather
     -- than inheriting a 30s ceiling from an earlier bad patch.
     reconnectAttempt = 0
@@ -370,14 +400,19 @@ dispatch.SessionWelcome = function(msg)
         return
     end
     send({ t = 'SessionReady' })
+    everJoined = true
     setState('Joined')
 end
 
 -- Onboarding: answer to ProfileSetup. On success while we were holding at ProfileNeeded,
 -- complete the join. Failures surface to the UI via the callback.
+local profileSeq = 0
 dispatch.ProfileResult = function(msg)
     net.profileResult = msg
     mp.testSet('profileOk', tostring(msg.ok == true))
+    mp.testSet('profileError', tostring(msg.error or ''))
+    profileSeq = profileSeq + 1
+    mp.testSet('profileSeq', tostring(profileSeq))
     if net.onProfileResult then net.onProfileResult(msg) end
     if msg.ok == true and net.state == 'ProfileNeeded' then
         net.profile.required = false

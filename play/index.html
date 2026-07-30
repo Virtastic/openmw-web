@@ -986,7 +986,11 @@
                // The character slot chosen on the launcher's tile screen; the engine reads it
                // via mp.getBootCharacter() and auths into that slot (empty = last-played).
                var mch = /[#&]mpchar=([^&]+)/.exec(h);
-               if (mch) ENV.OPENMW_MP_CHARACTER = decodeURIComponent(mch[1]);
+               // Also kept for the JS side: the onboarding modals are per-CHARACTER, and
+               // without this they were per-browser — dismissed once, never seen again on any
+               // character you made afterwards.
+               if (mch) { ENV.OPENMW_MP_CHARACTER = decodeURIComponent(mch[1]);
+                          window.__omwCharId = decodeURIComponent(mch[1]); }
                // The CHARACTER's in-world name — never the account. mp.getName() reads this and
                // identity.lua puts it in every PlayerAppearance broadcast, which other players
                // see, so the signed-in person's real name must never reach it.
@@ -1602,7 +1606,7 @@
          function api(path, opts){ opts=opts||{}; opts.headers=Object.assign({ authorization:'Bearer '+TOKEN }, opts.headers||{}); return fetch(HTTP+path, opts); }
          function bounce(msg){ append('[locker] '+msg,'err'); fatalOverlay('Multiplayer sign-in needed', msg+' Returning to the launcher…', false); setTimeout(function(){ location.href='launcher.html'; }, 2400); }
          try { StreamFS.init(); } catch(e){ return bounce('Streaming unavailable (needs a Chromium browser on desktop).'); }
-         if (!TOKEN || !HTTP) return bounce('No locker session — sign in again.');
+         if (!TOKEN || !HTTP) return bounce('No locker session. Please sign in again.');
          addRunDependency('mw-local');
 
          // Native SubtleCrypto over the whole file: it must match the server's node-crypto
@@ -1925,7 +1929,7 @@
                // Voice: thousands of tiny files, so one packed upload.
                if (voice.length && mediaRow && have.indexOf('media.tar')===-1){
                  try { await uploadMediaPack(voice); }
-                 catch(e){ wiz.set('media.tar','err','failed'); wiz.note('Voices could not be added ('+(e&&e.message||e)+') — starting without them.','err'); }
+                 catch(e){ wiz.set('media.tar','err','failed'); wiz.note('Voices could not be added ('+(e&&e.message||e)+'). Starting without them.','err'); }
                }
                done();
              }
@@ -1977,7 +1981,7 @@
            }
            var missing = needed.filter(function(f){ return !satisfied(f); });
            if (!files || !files.length){
-             if (!needed.length) return bounce('This server has no game manifest configured yet — ask the operator to add one.');
+             if (!needed.length) return bounce('This server has no game manifest configured yet. Ask the operator to add one.');
              append('[locker] first visit — showing the upload wizard.');
              try { files = await runWizard(needed, []); } catch(e){ return bounce('Upload failed: '+(e&&e.message||e)); }
              if (!files || !files.length) return bounce('No files were accepted. Make sure you picked a real Morrowind Data Files folder.');
@@ -2497,7 +2501,7 @@
            append('[mw load err] '+e,'err');
            fatalOverlay('Could not load Morrowind data',
              'A game file failed to download or unpack (' + (e && e.message || e) + '). '
-             + 'Check your connection and reload — your saves are safe.');
+             + 'Check your connection and reload. Your saves are safe.');
          });
        } catch(e){ if(!(e&&e.__skip)) append('[mw setup err] '+e,'err'); }
 
@@ -2512,7 +2516,7 @@
      fatalOverlay('The game hit a fatal error', String(w||'') +
        (String(w).toLowerCase().indexOf('memory') >= 0
         ? ' — the browser could not grow WebAssembly memory. Close other tabs/apps and reload.'
-        : ' — your saves are safe. Reloading may fix it.'));
+        : ' . Your saves are safe, and reloading may fix it.'));
    },
    setStatus: (t)=>{ if(t){ append('[status] '+t);
      // Emscripten reports the wasm/.data preload as "Downloading data... (x/y)" — feed the bar.
@@ -2710,6 +2714,25 @@
 #omw-social .note{ color:var(--faint); font-size:12.5px; line-height:1.6; margin-top:8px; }
 
 /* ================= FEATURE TOUR — shown once, when the character is ready ================= */
+/* Handle picker: same panel language as the onboarding modal. Above the BOOT LOADING SCREEN
+   (9000), not just the tour: the session holds at ProfileNeeded and never reaches Joined, so
+   the loading screen is still up when this appears and would swallow every click. */
+#omw-uname{ position:fixed; inset:0; z-index:9500; display:flex; align-items:center; justify-content:center;
+  background:rgba(8,7,5,.82); backdrop-filter:blur(3px); font:14px/1.6 "Optima","Gill Sans",sans-serif; }
+#omw-uname .panel{ position:relative; width:min(440px,92vw); padding:32px 34px 26px; text-align:center;
+  background:linear-gradient(180deg,#1a1712,#141110); border:1px solid #4a3c26; border-radius:3px; }
+#omw-uname .kick{ font:600 10px/1 "Optima","Gill Sans",sans-serif; letter-spacing:.22em;
+  text-transform:uppercase; color:#8a7a5a; margin-bottom:10px; }
+#omw-uname h2{ margin:6px 0 10px; font:600 24px/1.15 "Hoefler Text","Baskerville",Georgia,serif; color:#f4ecd9; }
+#omw-uname p{ margin:0 0 18px; color:#b9a888; }
+#omw-uname p b{ color:#e9dcc3; }
+#omw-uname input{ width:100%; padding:10px 12px; background:#0f0d0b; color:#f4ecd9;
+  border:1px solid #4a3c26; border-radius:2px; font:15px/1.4 ui-monospace,Menlo,monospace; outline:none; }
+#omw-uname input:focus{ border-color:#c69a4e; }
+#omw-uname .err{ min-height:18px; margin:8px 0 4px; font-size:12.5px; color:#d08a6a; }
+#omw-uname .go{ margin-top:6px; padding:9px 20px; background:#2a2118; color:#e8c86a;
+  border:1px solid #6b5433; border-radius:2px; font:600 13px/1 "Optima","Gill Sans",sans-serif; cursor:pointer; }
+#omw-uname .go:hover{ background:#342a1e; }
 #omw-tour{ position:fixed; inset:0; z-index:70; display:none; align-items:center; justify-content:center;
   background:rgba(6,5,3,.6); -webkit-backdrop-filter:blur(2px); backdrop-filter:blur(2px);
   color:#e9dcc3; font:14px/1.6 "Optima","Gill Sans",-apple-system,"Segoe UI",sans-serif; }
@@ -2842,7 +2865,7 @@
   ['pointerdown','mousedown','pointerup','mouseup'].forEach(function(type){
     window.addEventListener(type, function(e){
       if (!uiRefs) return;
-      if (e.target && e.target.closest && e.target.closest('#omw-social, #omw-chat'))
+      if (e.target && e.target.closest && e.target.closest('#omw-social, #omw-chat, #omw-uname'))
         e.stopImmediatePropagation();
     }, true);
   });
@@ -2853,7 +2876,7 @@
     if (!uiRefs) return;
     var top = document.elementFromPoint(e.clientX, e.clientY);
     var id = top ? (top.id || top.tagName + (top.className ? '.' + String(top.className).split(' ')[0] : '')) : 'null';
-    var inOverlay = !!(top && top.closest && top.closest('#omw-social, #omw-chat'));
+    var inOverlay = !!(top && top.closest && top.closest('#omw-social, #omw-chat, #omw-uname'));
     if (!inOverlay || document.pointerLockElement){
       append('[ui] click at ' + Math.round(e.clientX) + ',' + Math.round(e.clientY)
         + ' went to <' + id + '>'
@@ -2942,6 +2965,32 @@
   // the ack is the real signal, and a line that vanishes on a clock lies about both outcomes.
   var sStatusText = '';
   function setStatus(t){ sStatusText = t || ''; sStatus.textContent = sStatusText; }
+  // The server answers refusals with a CODE. Showing it raw ("Couldn't PartyInvite:
+  // party_full.") tells a player nothing about what to do next, and reads like a crash.
+  // Every code in core/social.ts SocialFailure plus the two travel/world ones.
+  var FAILURE = {
+    no_such_player: 'No player by that name. Check the spelling of their username.',
+    blocked: "You can't do that with this player.",
+    already_friends: "You're already friends.",
+    self: "That's you.",
+    too_many_requests: 'Too many pending requests. Wait for some to be answered first.',
+    no_request: 'That request has expired or was already answered.',
+    not_online: "They're not online right now.",
+    private: "Their world is set to Solo, so it isn't accepting anyone.",
+    not_in_party: "You're not in a party.",
+    not_leader: 'Only the party leader can do that.',
+    party_full: 'That party is full.',
+    already_in_party: "You're already in a party. Leave it first.",
+    not_travelled: "They're playing in their own world, which can't be joined from here yet.",
+    not_flippable: "The shared world can't be switched to Solo or Party.",
+    not_owner: "This isn't your world to change.",
+    no_public_world: 'The shared world is offline right now.',
+    no_gateway: 'World switching is unavailable on this server.',
+    bad_target: "That's not somewhere a party can go.",
+  };
+  function failureText(code, op){
+    return FAILURE[code] || ("Couldn't " + op + (code ? ': ' + code : '') + '.');
+  }
   function setWhere(v){ lastWhere = v; try { localStorage.setItem('omw-where', v); } catch(e){} }
   function openSocial(){ if (socialOpen) return; socialOpen = true; sEl.classList.add('show'); uiHold(true); renderSocial(true); }
   function closeSocial(){ if (!socialOpen) return; socialOpen = false; sEl.classList.remove('show'); uiHold(false); }
@@ -3005,6 +3054,28 @@
     var where = el('div','whererow');
     where.appendChild(el('span','lb','Playing'));
     where.appendChild(seg([['solo','Solo'],['party','Party'],['public','Public']], lastWhere, function(v){
+      // Leading a party changes what these buttons mean. Public takes the WHOLE party with you
+      // (PartyTravel fans a dial-out to every member), and Solo closes your world, which ends
+      // the party rather than stranding members in one. Both are other people's business, so
+      // both ask first. ponytail: native confirm, swap for a styled modal if it ever needs art.
+      // No self-account mirror exists, so resolve our own key out of the member list by name
+      // (the roster carries {name, acct}). Only the WARNING depends on this: the server is
+      // still the authority — PartyTravel answers not_leader and partyDisband no-ops.
+      var me = (party.members || []).filter(function(p){
+        return String(p.name || '').toLowerCase() === selfName; })[0];
+      var iLead = !!me && String(party.leader || '') !== '' && me.acct === party.leader && partyN > 1;
+      if (iLead && v === 'public') {
+        if (!confirm('You lead a party of ' + partyN + '. Moving to the shared world brings every member with you.\n\nContinue?')) return;
+        selfTravel = true; // we chose this; do not narrate it back to us as if it happened to us
+        setWhere(v); cmd('social:PartyTravel:public'); closeSocial();
+        window.__omwLoading.show('Moving the party', 'Syncing with the shared world…');
+        setTimeout(function(){ if ((mpState().state || '') === 'Joined') window.__omwLoading.hide(); }, 2500);
+        setStatus('Taking your party to the shared world…');
+        renderSocial();
+        return;
+      }
+      if (iLead && v === 'solo' &&
+          !confirm('You lead a party of ' + partyN + '. Going solo closes your world and disbands the party.\n\nContinue?')) return;
       setWhere(v);
       cmd('where:' + v);
       closeSocial();
@@ -3096,7 +3167,7 @@
     { t: 'Create your character first', g: '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><circle cx="24" cy="15" r="7"/><path d="M10 40c0-7.5 6-13 14-13s14 5.5 14 13"/></svg>',
       b: 'Play through Morrowind\'s opening and choose your <b>race, class and birthsign</b>. Chat, friends, parties and the shared world unlock the moment creation is finished.' },
     { t: 'Saved to your account', g: '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M10 14h28v20H10z"/><path d="M10 20h28"/><circle cx="16" cy="17" r="1.5"/></svg>',
-      b: 'Your character lives on the server, not in this browser. Progress, inventory and where you stood are kept for you — clearing site data cannot lose them.' },
+      b: 'Your character lives on the server, not in this browser. Progress, inventory and where you stood are kept for you, so clearing site data cannot lose them.' },
     { t: 'Play anywhere', g: '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><circle cx="24" cy="24" r="15"/><path d="M9 24h30M24 9c4 5 4 25 0 30M24 9c-4 5-4 25 0 30"/></svg>',
       b: 'Sign in on any browser, on any machine, and pick the same character up where you left it. Nothing to install and nothing to carry with you.' },
   ];
@@ -3115,8 +3186,17 @@
   var tourShown = { intro: false, unlocked: false };
   // Storage unavailable (private mode, blocked) reads as SEEN: a modal that cannot remember
   // being dismissed would reappear on every single boot, which is worse than never showing.
+  // Per CHARACTER, not per browser. These modals explain what just happened to the character
+  // in front of you — "create your character first", "you are in the world now" — so a flag
+  // shared across every character meant making a second one silently skipped both. The
+  // unsuffixed key is the fallback for a boot with no character id (last-played).
+  function tourKeyFor(which){
+    var base = which === 'intro' ? 'omw-mp-intro' : 'omw-mp-tour';
+    var id = window.__omwCharId || '';
+    return id ? base + ':' + id : base;
+  }
   function tourSeen(which){
-    try { return localStorage.getItem(which === 'intro' ? 'omw-mp-intro' : 'omw-mp-tour') === '1'; }
+    try { return localStorage.getItem(tourKeyFor(which)) === '1'; }
     catch(e){ return true; }
   }
   function renderTour(){
@@ -3128,21 +3208,159 @@
       return '<span class="dot' + (i === tourIdx ? ' on' : '') + '"></span>'; }).join('');
     document.getElementById('omw-tour-next').innerHTML = (tourIdx === tourDeck.length - 1) ? "Let's go ▸" : 'Next ▸';
   }
+  var tourPaused = false;
   function openTour(which){
     which = which || 'unlocked';
     if (tourShown[which]) return;
     tourShown[which] = true;
     tourDeck = TOURS[which];
-    tourKey = which === 'intro' ? 'omw-mp-intro' : 'omw-mp-tour';
+    tourKey = tourKeyFor(which);
     tourIdx = 0; renderTour();
-    tourEl.classList.add('show'); uiHold(true);
+    tourEl.classList.add('show');
+    // The intro appears BEFORE character creation, where you are alone in your own private
+    // world, so stopping the world is safe and a modal you cannot dismiss while something
+    // walks up to you is not. The unlock tour does not pause: by then you are in a live world
+    // and pausing only your own client would freeze your view while everyone else moves.
+    uiHold(true);
+    tourPaused = (which === 'intro');
+    if (tourPaused) cmd('pause:on');
   }
   function closeTour(){ if (!tourEl.classList.contains('show')) return;
-    tourEl.classList.remove('show'); uiHold(false);
-    try { localStorage.setItem(tourKey, '1'); } catch(e){} }
+    tourEl.classList.remove('show');
+    if (tourPaused) { tourPaused = false; cmd('pause:off'); }
+    uiHold(false);
+    // A notice has no key: it reports something that just happened, so "seen" is meaningless
+    // and writing one would make the next occurrence silent.
+    if (tourKey) { try { localStorage.setItem(tourKey, '1'); } catch(e){} } }
+
+  // Involuntary transitions get the SAME panel the onboarding modals use, as a single slide.
+  // Being moved between worlds, or losing the party you were in, is something that happens TO
+  // you: without a word it reads as the game glitching. Deliberately not a tour — no dots, no
+  // persistence, and it never suppresses a later one.
+  var GLYPH_WORLD = '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><circle cx="24" cy="24" r="15"/><path d="M9 24h30M24 9c4 5 4 25 0 30M24 9c-4 5-4 25 0 30"/></svg>';
+  var GLYPH_PARTY = '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><circle cx="18" cy="18" r="6"/><circle cx="32" cy="22" r="5"/><path d="M8 40c0-6 4.5-10 10-10s10 4 10 10"/><path d="M26 40c0-4.5 3.5-8 8-8s8 3.5 8 8"/></svg>';
+  function showNotice(title, body, glyph){
+    // Never talk over onboarding: those explain the same systems and are already on screen.
+    if (tourEl.classList.contains('show')) return;
+    tourDeck = [{ t: title, b: body, g: glyph || GLYPH_WORLD }];
+    tourKey = null;
+    tourIdx = 0; renderTour();
+    document.getElementById('omw-tour-dots').innerHTML = '';
+    document.getElementById('omw-tour-next').innerHTML = 'Got it';
+    tourEl.classList.add('show');
+    uiHold(true);
+    tourPaused = false;
+  }
   document.getElementById('omw-tour-next').addEventListener('click', function(){
     if (tourIdx < tourDeck.length - 1){ tourIdx++; renderTour(); } else closeTour(); });
   document.getElementById('omw-tour-x').addEventListener('click', closeTour);
+
+  // Watch the mirrors for things that were done TO this player and narrate them once each.
+  // All three are edge-triggered against a remembered value, never level-triggered, or the
+  // 150ms poll would reopen the modal forever.
+  var seenWorldClosed = null, seenTravelTo = null, wasInParty = false;
+  // Set when WE are the one who moved the party, so the leader is not told that someone
+  // moved them. Cleared once the resulting travel edge has been consumed.
+  var selfTravel = false;
+  function noticeWatch(m){
+    var wc = m.worldClosed == null ? '' : String(m.worldClosed);
+    if (seenWorldClosed === null) seenWorldClosed = wc;
+    else if (wc !== seenWorldClosed) {
+      seenWorldClosed = wc;
+      // The name is optional on purpose: the server sends it only when the owner is still
+      // visible, so the copy has to read correctly without one.
+      var by = esc(String(m.worldClosedBy || ''));
+      if (wc) showNotice('Returning to your own world',
+        (by ? '<b>' + by + '</b> has gone Solo, so their world is no longer open to the party.'
+            : 'The world you were in has gone Solo, so it is no longer open to the party.')
+        + ' You are being taken back to your own world. Nothing you did there is lost.',
+        GLYPH_WORLD);
+    }
+    var tt = m.partyTravelTo == null ? '' : String(m.partyTravelTo);
+    if (seenTravelTo === null) seenTravelTo = tt;
+    else if (tt !== seenTravelTo) {
+      seenTravelTo = tt;
+      var leadBy = esc(String(m.partyTravelBy || ''));
+      if (tt && !selfTravel) showNotice('Your party is moving',
+        (leadBy ? '<b>' + leadBy + '</b> has' : 'Your party leader has')
+        + ' taken the group to <b>' + (tt === 'vvardenfell' ? 'the shared world' : esc(tt))
+        + '</b>. You are travelling with them.',
+        GLYPH_PARTY);
+      selfTravel = false;
+    }
+    var party = pj(m.party) || {};
+    var inParty = ((party.members || []).length) > 0;
+    // Only the LOSS is worth a modal: joining one is something you just chose to do.
+    if (wasInParty && !inParty) showNotice('Your party has ended',
+      'You are no longer in a party. The leader disbanded it, or went Solo. You keep playing exactly where you are.',
+      GLYPH_PARTY);
+    wasInParty = inParty;
+  }
+
+  // Pick a public handle. The server refuses SessionReady until email + username are set
+  // ([login] requireProfile), and holds the session open so this can answer — but nothing
+  // ever asked the player, so the flag was unusable and player.name kept falling back to the
+  // account login name (an SSO account's name claim is the person's real name). SSO already
+  // captured the email, so this only has to ask for the handle.
+  var profileShown = false, seenProfileSeq = null;
+  function profileWatch(m){
+    if (String(m.profileRequired || '') === 'true' && !profileShown) { profileShown = true; askUsername(m); }
+    var ps = m.profileSeq == null ? '' : String(m.profileSeq);
+    if (seenProfileSeq === null) { seenProfileSeq = ps; return; }
+    if (ps === seenProfileSeq) return;
+    seenProfileSeq = ps;
+    var box = document.getElementById('omw-uname-err');
+    if (!box) return;
+    if (String(m.profileOk || '') === 'true') { closeUsername(); return; }
+    box.textContent = UNAME_ERR[String(m.profileError || '')] || 'That handle was refused. Try another.';
+  }
+  var UNAME_ERR = {
+    taken: 'That handle is already taken.',
+    'badformat-username': 'Letters, numbers, _ and - only. No spaces.',
+    'reserved-word': 'That handle is reserved.',
+    cooldown: 'You changed your handle too recently.',
+    'badformat-email': 'That email address is not valid.',
+  };
+  function closeUsername(){
+    var el = document.getElementById('omw-uname');
+    if (el) el.remove();
+    uiHold(false);
+  }
+  function askUsername(m){
+    // ProfileSetup needs email AND username. Signing in with a provider hands us the email
+    // already, so normally this asks for one thing — but an account created without one
+    // (password/harness) could never satisfy the gate, so ask when we have nothing.
+    var email = String(m.profileEmail || '');
+    var wrap = el('div', null,
+      '<div class="panel">'
+      + '<div class="kick">One more thing</div>'
+      + '<h2>Choose your handle</h2>'
+      + '<p>This is the name other players see: in chat, on your friends list and in your party. '
+      + 'It is <b>not</b> your character name and <b>not</b> the name on your sign-in account.</p>'
+      + '<input id="omw-uname-in" maxlength="24" placeholder="handle" autocomplete="off" spellcheck="false">'
+      + (email ? '' : '<input id="omw-uname-em" type="email" placeholder="email" autocomplete="off" style="margin-top:8px">')
+      + '<div id="omw-uname-err" class="err"></div>'
+      + '<button id="omw-uname-go" class="go">Continue ▸</button>'
+      + '</div>');
+    wrap.id = 'omw-uname';
+    document.body.appendChild(wrap);
+    uiHold(true);
+    var input = document.getElementById('omw-uname-in');
+    var emIn = document.getElementById('omw-uname-em');
+    var go = function(){
+      var v = String(input.value || '').trim();
+      var err = document.getElementById('omw-uname-err');
+      if (!v) { err.textContent = 'Pick a handle to continue.'; return; }
+      var em = email || String((emIn && emIn.value) || '').trim();
+      if (!em) { err.textContent = 'Enter an email address to continue.'; return; }
+      err.textContent = 'Checking…';
+      cmd('profile:' + em + ':' + v);
+    };
+    document.getElementById('omw-uname-go').onclick = go;
+    input.onkeydown = function(e){ e.stopPropagation(); if (e.key === 'Enter') go(); };
+    if (emIn) emIn.onkeydown = function(e){ e.stopPropagation(); if (e.key === 'Enter') go(); };
+    setTimeout(function(){ input.focus(); }, 50);
+  }
 
   // ---- poll the engine mirror: open signals, chat feed updates, live re-render ----
   // The SAME physical key can arrive twice: once here in JS (below) and once as a Lua signal
@@ -3163,6 +3381,8 @@
       // The moment multiplayer unlocks, walk a first-timer through what just appeared.
       if (ready && !tourSeen('unlocked')) openTour('unlocked');
     }
+    if (ready) noticeWatch(m);
+    profileWatch(m);
     // Before creation: say WHY the online parts are missing, rather than leaving a player to
     // wonder. Gated on being in-world so it lands on the game, not on a black boot screen.
     if (!ready && (m.state || '') === 'Joined' && !tourSeen('intro')) openTour('intro');
@@ -3186,7 +3406,7 @@
           else if (res.op === 'SetWorldMode') setStatus(String(res.detail) === 'party'
             ? 'Your world is open to your party.' : 'Your world is solo again.');
         } else {
-          setStatus("Couldn't " + res.op + ': ' + (res.detail || 'refused') + '.');
+          setStatus(failureText(String(res.detail || ''), String(res.op)));
         }
       }
     }
@@ -3221,8 +3441,30 @@
   // player never sees, or is seen at, the default start.
   var isMp = /[?&]mp=/.test(location.search);
   var restoreDeadline = 0, joinedAt = 0;
+  // The loading screen hides the default spawn, but it does not STOP it: until the restore
+  // lands the character is really standing at the game's start point in a running world, and
+  // that point has hostiles near it — "the first start position puts you near an enemy".
+  // Being hit behind a loading screen you cannot react to is the worst version of this.
+  // Freeze until we are actually where we logged out. Reuses the pause the intro modal added.
+  var restorePaused = false;
+  function restoreHold(want){
+    if (want === restorePaused) return;
+    restorePaused = want;
+    cmd(want ? 'pause:on' : 'pause:off');
+  }
   window.__omwAwaitRestore = function(){
+    var waiting = awaitRestore();
+    // Only pause once the session is Joined: before that the engine is not draining the
+    // command slot yet, so a pause:on would be silently dropped and — because restoreHold
+    // only acts on CHANGE — never retried. Nothing can hit us before we are in the world.
+    restoreHold(waiting && (window.__omwMP || {}).state === 'Joined');
+    return waiting;
+  };
+  function awaitRestore(){
     if (!isMp) return false;                                  // single player: nothing to wait on
+    // Held at ProfileNeeded: the server is waiting on the PLAYER, not on us. Keeping the boot
+    // screen up here hides the very picker that unblocks it.
+    if (String((window.__omwMP || {}).profileRequired || '') === 'true') return false;
     if (restoreDeadline === 0) restoreDeadline = Date.now() + 20000;
     if (Date.now() > restoreDeadline) return false;           // never strand the player
     var mp = window.__omwMP || {};

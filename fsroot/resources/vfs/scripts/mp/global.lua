@@ -797,10 +797,24 @@ local eventHandlers = {
     -- script is told first so the hub can show where the party went — and if we are
     -- already dialled into that world (the leader's own client, or a repeat event), the
     -- switch is skipped rather than bouncing the session.
+    -- The owner of the world we are standing in went Solo, so it is no longer open to us.
+    -- Dial our OWN world, which this client already knows; the server drops anyone still
+    -- here shortly after, so doing nothing would just become a disconnect.
+    MP_WorldClosed = function(data)
+        toPlayer('MP_WorldClosed', data)
+        -- Mirrored so the HTML overlay can say WHY the world just changed under the player.
+        mp.testSet('worldClosedBy', tostring(data.by or ''))
+        mp.testSet('worldClosed', tostring(data.reason or 'closed'))
+        if worldUrls.own and net.currentTarget() ~= worldUrls.own then
+            net.switchTo(worldUrls.own)
+        end
+    end,
+
     MP_PartyTravel = function(data)
         if not data.host or not data.port then return end
         local url = 'ws://' .. tostring(data.host) .. ':' .. string.format('%d', data.port) .. '/ws'
         toPlayer('MP_PartyTravel', data)
+        mp.testSet('partyTravelBy', tostring(data.leaderName or ''))
         mp.testSet('partyTravelTo', tostring(data.worldId or ''))
         if url == net.currentTarget() then return end
         net.switchTo(url)

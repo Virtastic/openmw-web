@@ -300,7 +300,7 @@ local function pollHarness()
             -- `acct` meant the server saw an empty value and refused with no_such_player --
             -- silently, because SocialResult is not surfaced. The privacy control had
             -- therefore never worked. Route by what each op actually reads.
-            local FIELD = { PresenceMode = 'mode', SetAvailability = 'state' }
+            local FIELD = { PresenceMode = 'mode', SetAvailability = 'state', PartyTravel = 'target' }
             local field = FIELD[sop]
             local body = { op = sop }
             if field then body[field] = sarg
@@ -386,6 +386,14 @@ local function pollHarness()
         -- Availability toggle.
         local availState = cmd:match('^avail:(%a+)$')
         if availState then core.sendGlobalEvent('mpSocial', { op = 'SetAvailability', state = availState }) end
+        -- Onboarding: pick the public handle. 'profile:<email>:<username>' — email first
+        -- because a username can never contain ':' (validUsername) while an email can't
+        -- either, and the email is echoed back from what the server already told us.
+        local pEmail, pUser = cmd:match('^profile:([^:]*):(.+)$')
+        if pUser then
+            core.sendGlobalEvent('mpProfileSetup', { email = pEmail, username = pUser })
+        end
+
         -- Cross-world join a friend.
         local jfAcct = cmd:match('^joinfriend:(.+)$')
         if jfAcct then core.sendGlobalEvent('mpSocial', { op = 'JoinFriend', acct = jfAcct }) end
@@ -399,6 +407,20 @@ local function pollHarness()
         local ui_mode = cmd:match('^uimode:(%a+)$')
         if ui_mode == 'on' then I.UI.setMode('Interface', { windows = {} })
         elseif ui_mode == 'off' then I.UI.removeMode('Interface') end
+        -- Opt-in pause for an overlay that must stop the world, used by the pre-chargen intro.
+        -- disableMenuPause() below turns pause OFF for every mode because pausing only your own
+        -- client while the server and everyone else keep moving is wrong in multiplayer. That
+        -- reasoning does not hold before character creation: you are alone in your own private
+        -- world, and a modal you cannot dismiss while something walks up to you is worse.
+        -- Paired with uimode, so the pause can never outlive the overlay that asked for it.
+        local pause_mode = cmd:match('^pause:(%a+)$')
+        if pause_mode == 'on' then
+            I.UI.setPauseOnMode('Interface', true)
+            I.UI.setMode('Interface', { windows = {} })
+        elseif pause_mode == 'off' then
+            I.UI.removeMode('Interface')
+            I.UI.setPauseOnMode('Interface', false)
+        end
         if cmd == 'cam:3p' then -- visual scenarios: put own avatar in frame
             local camera = require('openmw.camera')
             camera.setMode(camera.MODE.ThirdPerson)

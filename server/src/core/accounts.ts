@@ -152,6 +152,16 @@ export class AccountStore {
     return this.cache.get(key);
   }
 
+  // Username -> account key. Players type the PUBLIC HANDLE (it is what every social surface
+  // shows), so anything resolving a typed name has to accept it. Case-insensitive, straight
+  // off the uniqueness table that already owns the mapping.
+  keyForUsername(username: string): string | undefined {
+    const row = this.db
+      .prepare('SELECT accountKey FROM usernames WHERE username = ?')
+      .get(username.toLowerCase()) as { accountKey: string } | undefined;
+    return row?.accountKey;
+  }
+
   async get(name: string): Promise<Account | undefined> {
     const key = name.toLowerCase();
     const cached = this.cache.get(key);
