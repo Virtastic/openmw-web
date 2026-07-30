@@ -11,6 +11,15 @@
 //   node server/tools/gen-vanilla-manifest.mjs "/path/to/Morrowind/Data Files" \
 //        --out server/devdata/vanilla-manifest.json
 //
+// POINT IT AT A REAL Data Files TREE, never play/mwdata. That directory keeps the media as
+// pre-packed tars (mwvoice.tar, mwaudio.tar, mwvideo.tar…), not as the loose Sound/, Music/
+// and Video/ folders this scans — so it silently emits a manifest of SIX files. The server
+// then asks uploaders for the ESMs and BSAs only, everything installs "successfully", and
+// the game runs with no voice, no music and no intro. A manifest that covers a real install
+// has ~6,443 entries; six means you pointed it at the wrong tree.
+// (To rebuild from the tars anyway: extract them all into one directory alongside the
+// .esm/.bsa files and run this over that.)
+//
 // Then point the server's shared dir at that file (it looks for vanilla-manifest.json in
 // the --shared dir, or the --data dir for a single-world server).
 
