@@ -2801,9 +2801,14 @@
 #omw-social .hd .kick{ font:600 10px/1 "Optima","Gill Sans",sans-serif; letter-spacing:.22em;
   text-transform:uppercase; color:var(--faint); }
 #omw-social .hd h2{ margin:3px 0 0; font:600 22px/1.1 "Hoefler Text","Baskerville",Georgia,serif; }
-#omw-social .x{ background:transparent; border:1px solid var(--line); color:var(--muted); border-radius:5px;
-  padding:6px 11px; cursor:pointer; font:inherit; font-size:12px; }
-#omw-social .x:hover{ border-color:var(--gold); color:var(--gold-hi); }
+/* A corner X, not a labelled button: the panel is a window, and every other overlay here
+   closes the same way. The O shortcut lives in the tooltip rather than in the corner. */
+#omw-social .x{ background:transparent; border:none; color:var(--muted); border-radius:50%;
+  width:30px; height:30px; flex:none; display:flex; align-items:center; justify-content:center;
+  cursor:pointer; font:400 22px/1 -apple-system,"Segoe UI",Roboto,sans-serif;
+  transition:color .16s ease, background .16s ease; }
+#omw-social .x:hover{ color:var(--gold-hi); background:rgba(211,168,78,.12); }
+#omw-social .x:focus-visible{ outline:2px solid var(--gold); outline-offset:2px; }
 #omw-social .body{ flex:1; display:flex; min-height:0; }
 #omw-social .nav{ width:168px; flex:none; padding:12px 10px; border-right:1px solid var(--line-soft);
   display:flex; flex-direction:column; gap:2px; background:rgba(0,0,0,.14); }
@@ -2909,7 +2914,7 @@
   <div class="hd">
     <div class="ttl"><div class="kick">Multiplayer</div><h2>Social</h2></div>
     <span class="seg" id="omw-avail"></span>
-    <button class="x" id="omw-social-close">Close &nbsp;O</button>
+    <button class="x" id="omw-social-close" title="Close (O)" aria-label="Close (O)">&times;</button>
   </div>
   <div class="body">
     <div class="nav" id="omw-nav"></div>
@@ -3239,7 +3244,7 @@
         b.onclick = function(){ cmd('social:'+(iv.kind==='party'?'PartyAccept':'InviteAccept')+':'+iv.acct); };
         c.appendChild(b); sec.appendChild(c); });
       sec.appendChild(el('h3',null,'Friends'));
-      if (!friends.length) sec.appendChild(el('div','empty','No friends yet — add someone below, or from Players.'));
+      if (!friends.length) sec.appendChild(el('div','empty','No friends yet. Add someone below, or from Players.'));
       friends.forEach(function(f){
         var acts = [];
         if (f.online){ acts.push(['join', function(){ cmd('joinfriend:'+f.acct); setStatus('Joining '+f.name+'…'); }, true]);
