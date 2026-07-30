@@ -587,6 +587,9 @@ export class Connection implements Peer {
       // worlds by dialling elsewhere (JoinFriend / PartyTravel), not by flipping this one.
       const mode = value instanceof Map && typeof value.get('mode') === 'string' ? (value.get('mode') as string) : '';
       const r = this.ctx.setWorldMode(this.player.accountKey, this.player.rank, mode);
+      // Closing your world to Solo ends any party you lead — leaving members "in a party"
+      // whose world just stopped accepting them is the one state the switcher must not create.
+      if (r === 'ok' && mode === 'private') this.ctx.social.partyDisband(this.player.accountKey);
       this.player.peer.sendEvent('SocialResult', { op: 'SetWorldMode', ok: r === 'ok', detail: r === 'ok' ? mode : r });
       return;
     }
@@ -1080,6 +1083,13 @@ export class Connection implements Peer {
     this.authedVia = op;
     // Onboarding: the unique public handle is the display name everywhere once set; the
     // account name remains the private login identifier.
+    // player.name is PEER-VISIBLE (PlayerJoinWorld, nametags, chat) AND is how admin
+    // commands, bans and resume address a player. The `?? account.name` fallback therefore
+    // leaks the login identifier (an SSO account's name claim is the person's real name) to
+    // peers whenever no username is set — but removing it here breaks every name-based
+    // lookup at once. The fix is to guarantee a username: set [login] requireProfile = true,
+    // which refuses SessionReady until one exists, and this fallback becomes unreachable.
+    // ponytail: config guarantee, not a second name-resolution path.
     this.player = this.ctx.roster.addAuthed(account.username ?? account.name, accountKey, account.rank, this, this.ip);
     // Character slots: every persistence path keys on charId from here on. System peers
     // keep the accountKey default (no character; marked ephemeral below).
@@ -1097,7 +1107,10 @@ export class Connection implements Peer {
     // read-only here — you arrive with your gear, play, and leave with exactly what you had.
     // Kills every dupe route at once, including ones nobody has thought of yet.
     // ponytail: reuses the sim-peer ephemeral flag; broadcasts are unaffected, only writes.
-    if (this.isSystem || this.ctx.lobbyWorld) this.ctx.players.markEphemeral(this.player.charId);
+    if (this.isSystem) this.ctx.players.markEphemeral(this.player.charId);
+    // The lobby used to be fully ephemeral, which also threw away WHERE you were standing —
+    // so every return to the shared world respawned you at the default point. Position only.
+    else if (this.ctx.lobbyWorld) this.ctx.players.markPositionOnly(this.player.charId);
     this.state = 'AUTHED';
     this.authing = false;
     const sessionToken = randomBytes(16).toString('hex');
