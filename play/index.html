@@ -378,21 +378,41 @@
  function fatalOverlay(title, detail, showReload){
    killEngine();
    try {
+     // The SAME panel the multiplayer error modal uses. This used to be a monospace slab of
+     // terminal-grey text, which read like a stack trace at the exact moment a player needs a
+     // calm sentence — and it is what every fatal path in this file lands on, so fixing it
+     // here fixes all of them rather than eleven call sites.
+     if (document.getElementById('omw-fatal')) return;
      var o = document.createElement('div');
-     o.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(8,8,12,.96);color:#cdd6f4;'
-       + 'display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;'
-       + 'font:15px/1.5 ui-monospace,Menlo,monospace;text-align:center;padding:24px';
-     var h = document.createElement('div'); h.style.cssText='font-size:20px;color:#f38ba8'; h.textContent = title;
-     var d = document.createElement('div'); d.style.maxWidth='640px'; d.textContent = detail || '';
-     o.appendChild(h); o.appendChild(d);
+     o.id = 'omw-fatal';
+     o.style.cssText = 'position:fixed;inset:0;z-index:9999;display:flex;align-items:center;'
+       + 'justify-content:center;padding:24px;font-family:-apple-system,"Segoe UI",Roboto,sans-serif;'
+       + 'background:radial-gradient(140% 120% at 50% 0%,#181209,#000 72%)';
+     var box = document.createElement('div');
+     box.style.cssText = 'width:100%;max-width:460px;background:linear-gradient(160deg,#1e1711,#16110d);'
+       + 'border:1px solid rgba(138,104,56,.5);border-radius:10px;padding:32px 34px;'
+       + 'box-shadow:0 30px 90px rgba(0,0,0,.6);text-align:center';
+     var kick = document.createElement('div');
+     kick.style.cssText = 'font:600 10.5px/1 Optima,sans-serif;letter-spacing:.22em;'
+       + 'text-transform:uppercase;color:#7c705c';
+     kick.textContent = 'Multiplayer';
+     var h = document.createElement('h2');
+     h.style.cssText = 'margin:10px 0 10px;font:600 23px/1.2 "Hoefler Text",Baskerville,Georgia,serif;color:#f4ecd9';
+     h.textContent = title;
+     var d = document.createElement('p');
+     d.style.cssText = 'margin:0;color:#b9a888;font-size:14px;line-height:1.6';
+     d.textContent = detail || '';
+     box.appendChild(kick); box.appendChild(h); box.appendChild(d);
      if (showReload !== false){
        var b = document.createElement('button');
        b.textContent = 'Reload';
-       b.style.cssText = 'font:16px ui-monospace,Menlo,monospace;padding:8px 26px;cursor:pointer;'
-         + 'background:#313244;color:#cdd6f4;border:1px solid #585b70;border-radius:6px';
+       b.style.cssText = 'margin-top:22px;padding:9px 24px;background:#2a2118;color:#e8c86a;'
+         + 'border:1px solid #6b5433;border-radius:2px;cursor:pointer;'
+         + 'font:600 13px/1 Optima,"Gill Sans",sans-serif';
        b.addEventListener('click', function(){ location.reload(); });
-       o.appendChild(b);
+       box.appendChild(b);
      }
+     o.appendChild(box);
      document.body.appendChild(o);
    } catch(e){}
  }
@@ -1972,7 +1992,7 @@
            // silent game with no way to add them. Anything the server lists as needed and the
            // account does not have re-opens the wizard, which now takes a single folder pick.
            var have = (files||[]).map(function(f){ return f.name.toLowerCase(); });
-           var needed;
+           var needed, neededFailed = null;
            try {
              var nres = await api('/locker/needed');
              if (!nres.ok) throw new Error('HTTP '+nres.status);
@@ -1981,8 +2001,15 @@
            catch(e){
              // Silent failure here used to mean "no prompt, ever" — the account would keep
              // playing half-installed with nothing said. Say it out loud instead.
+             //
+             // And say the RIGHT thing: an empty list because the call FAILED is a different
+             // problem from an empty list the server actually returned. Collapsing the two
+             // reported an expired locker session as "this server has no game manifest
+             // configured", sending the player to bother an operator about a server that was
+             // configured correctly all along.
              needed=[];
-             append('[locker] could not read the required-file list: '+(e&&e.message||e),'err');
+             neededFailed = (e && e.message) || String(e);
+             append('[locker] could not read the required-file list: '+neededFailed,'err');
            }
            // A row ending in '/' is a media FOLDER (Music/, Video/…): satisfied when the locker
            // holds anything under it. Everything else matches by exact name.
@@ -1993,7 +2020,11 @@
            }
            var missing = needed.filter(function(f){ return !satisfied(f); });
            if (!files || !files.length){
-             if (!needed.length) return bounce('This server has no game manifest configured yet. Ask the operator to add one.');
+             if (!needed.length) {
+               return bounce(neededFailed
+                 ? 'Your sign-in could not be verified (' + neededFailed + '). Please sign in again.'
+                 : 'This server has no game manifest configured yet. Ask the operator to add one.');
+             }
              append('[locker] first visit — showing the upload wizard.');
              try { files = await runWizard(needed, []); } catch(e){ return bounce('Upload failed: '+(e&&e.message||e)); }
              if (!files || !files.length) return bounce('No files were accepted. Make sure you picked a real Morrowind Data Files folder.');
