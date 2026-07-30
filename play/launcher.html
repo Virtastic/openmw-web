@@ -1041,13 +1041,24 @@
      if (!r.ok || !world.port) throw new Error(world.error || 'the server could not open your world');
    } catch(e){ launcherError('Could not open your world', (e && e.message || e) + '. The multiplayer server may be unreachable — please try again in a moment.'); return; }
    const wsProto = /^wss:/.test(sess.gwUrl) ? 'wss' : 'ws';
-   const worldWs = wsProto + '://' + world.host + ':' + world.port + '/ws';
-   // mp = the WORLD socket; locker = the GATEWAY (a different origin). Ticket + locker + account
-   // ride in the FRAGMENT (never query params): fragments are not logged, cached, or Referer'd.
-   const q = new URLSearchParams({ mp: worldWs, locker: sess.gwHttp });
+   // PREFER the gateway path. Every world is its own process on its own port, and production
+   // publishes none of them — the edge reaches only the gateway — so a world is reachable by
+   // asking the gateway to splice us through (/w/<id>). Dialling world.port directly is the
+   // local-dev fallback, and it is also what used to put a raw ws://host:9001 in the address
+   // bar for players to poke at.
+   const gwAuthority = (function(){ try { return new URL(sess.gwUrl).host; } catch(e){ return null; } })();
+   const worldWs = (world.wsPath && gwAuthority)
+     ? wsProto + '://' + gwAuthority + world.wsPath
+     : wsProto + '://' + world.host + ':' + world.port + '/ws';
+   // EVERYTHING rides in the fragment now, mp and locker included. Fragments are not logged,
+   // cached or sent as a Referer, and they do not sit in the address bar inviting a player to
+   // retype the world address. The ticket is single-use and the server authorises every
+   // connection regardless — this is blast-radius, not a security boundary.
    // mpnew=1 = this slot has never been played: boot runs Morrowind's own character creation.
    // An existing character skips the title menu AND chargen — the server restores their state.
-   const frag = '#mpticket=' + encodeURIComponent(ticket)
+   const frag = '#mp=' + encodeURIComponent(worldWs)
+     + '&locker=' + encodeURIComponent(sess.gwHttp)
+     + '&mpticket=' + encodeURIComponent(ticket)
      + (sess.lockerToken ? '&mplocker=' + encodeURIComponent(sess.lockerToken) : '')
      + '&mpaccount=' + encodeURIComponent(sess.account)
      + '&mpchar=' + encodeURIComponent(chosenChar.id)
@@ -1065,7 +1076,8 @@
          return (cell && !/^-?\d+,\s*-?\d+$/.test(cell)) ? '&mpstart=' + encodeURIComponent(cell) : '';
        })()
      + (chosenChar.needsChargen ? '&mpnew=1' : '');
-   location.href = 'index.html?' + q.toString() + frag;
+   // No query string at all: the address bar shows plain index.html.
+   location.href = 'index.html' + frag;
  }
 
  // Exit from the game lands on launcher.html#characters: show the character screen straight

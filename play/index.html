@@ -828,6 +828,18 @@
  // "null function" crash). Unstamped (local dev / a raw git checkout) → falls back to flat root paths.
  var __ENGINE_VER = "__ENGINE_VERSION__";
  var __ENGINE_DIR = (__ENGINE_VER.charAt(0) === "_") ? "" : ("e/" + __ENGINE_VER + "/");
+ // Boot params live in the FRAGMENT, with the query kept as a fallback. A fragment is
+ // never logged by a proxy, never cached, and never sent as a Referer — and it does not
+ // sit in the address bar inviting a player to retype the world address. This is tidiness
+ // and blast-radius, NOT a security boundary: the server authorises every connection with
+ // a single-use ticket, and the same-origin-host gate below is what actually stops a
+ // crafted link pointing the client at somebody else's server.
+ function bootParam(name){
+   var re = new RegExp('[#&?]' + name + '=([^&]+)');
+   var m = re.exec(location.hash || '') || re.exec(location.search || '');
+   return m ? decodeURIComponent(m[1]) : null;
+     }
+ window.__omwBootParam = bootParam;
  var Module = {
    // openmw.wasm AND openmw.data both resolve through locateFile → load them from the versioned dir.
    locateFile: function(path){ return __ENGINE_DIR + path; },
@@ -851,7 +863,7 @@
        //   otherwise:              --skip-menu            -> straight into the world; the server
        //                           restores position/stats/inventory on auth (M2 record).
        // Hash read here works: this IIFE runs at script parse, before preRun scrubs it.
-       if (/[?&]mp=/.test(location.search)) {
+       if (bootParam('mp')) {
          if (/[#&]mpnew=1/.test(location.hash || '')) return ['--skip-menu', '--new-game'];
          // Returning character: start IN the cell they logged out of. Plain --skip-menu drops
          // them at the game's default start until the server's record lands, which is a real
@@ -914,9 +926,9 @@
        // content chain below) does the rest. WITHOUT ?mp= nothing here runs — singleplayer
        // is byte-for-byte unaffected.
        try {
-         var mpm = /[?&]mp=([^&]+)/.exec(location.search);
-         if (mpm){
-           var mpUrl = decodeURIComponent(mpm[1]);
+         var mpRaw = bootParam('mp');
+         if (mpRaw){
+           var mpUrl = mpRaw;
            // Same-origin-host gate: the multiplayer server (and the locker HTTP endpoints we
            // derive from it, which carry the Bearer locker token) MUST live on the same host
            // that served this page. Otherwise a crafted link like index.html?mp=ws://evil/ws
@@ -1599,7 +1611,7 @@
          // origin than the world socket (?mp=). Falls back to the ws host for a standalone
          // single-world server where the world serves the locker itself.
          var HTTP = (function(){
-           var l = new URLSearchParams(location.search).get('locker');
+           var l = (window.__omwBootParam ? window.__omwBootParam('locker') : null);
            if (l){ try { return new URL(l).origin; } catch(e){} }
            try { var u=new URL(ENV.OPENMW_MP_URL); return (u.protocol==='wss:'?'https:':'http:')+'//'+u.host; } catch(e){ return ''; }
          })();
@@ -3439,7 +3451,7 @@
   // cannot be booted into by name (--start needs a cell NAME, not a grid ref), so for those
   // the teleport still happens after spawn — this keeps the loading screen up over it so the
   // player never sees, or is seen at, the default start.
-  var isMp = /[?&]mp=/.test(location.search);
+  var isMp = !!(window.__omwBootParam && window.__omwBootParam('mp'));
   var restoreDeadline = 0, joinedAt = 0;
   // The loading screen hides the default spawn, but it does not STOP it: until the restore
   // lands the character is really standing at the game's start point in a running world, and
