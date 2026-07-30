@@ -270,13 +270,17 @@ function objects.onItemActive(item)
     if not player then return end
     local ok, dist = pcall(function() return (item.position - player.position):length() end)
     if not ok or dist > DROP_DETECT_RANGE then return end
-    objects.requestSpawn(item)
+    objects.requestSpawn(item, nil, nil, true) -- came OUT of our inventory: conservation applies
 end
 
 -- Register a locally-created runtime object with the server (drops, test chests). The
 -- local object stays; ObjectSpawnAck maps the issued netId onto it. `posOverride` is for
 -- objects whose teleport has not landed yet (deferred a frame -> position still NaN).
-function objects.requestSpawn(obj, posOverride, cellKeyOverride)
+-- fromInventory: this object came out of the local player's inventory (a drop), as opposed
+-- to being PLACED by a script or tool. The server can only apply "you cannot drop what you
+-- do not have" to the former — ObjectSpawnRequest is the generic place-an-object op, and
+-- refusing everything unowned wrongly blocked scripted containers nobody carries.
+function objects.requestSpawn(obj, posOverride, cellKeyOverride, fromInventory)
     tempCounter = tempCounter + 1
     pendingSpawns[tempCounter] = obj
     local pos = posOverride or obj.position
@@ -293,6 +297,7 @@ function objects.requestSpawn(obj, posOverride, cellKeyOverride)
         z = pos.z,
         rotZ = rotZ,
         count = math.max(obj.count or 1, 1), -- unplaced objects report count 0; server needs >=1
+        fromInventory = fromInventory == true,
     })
 end
 

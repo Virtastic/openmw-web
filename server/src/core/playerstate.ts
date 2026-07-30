@@ -10,6 +10,7 @@ import type { Player, Roster } from './players';
 import type { PlayerStore, PlayerAppearanceDoc, DynamicStatDoc } from '../persist/playerstore';
 import { cellsVisible } from './movement';
 import { log } from '../log';
+import { metrics } from '../metrics';
 
 const MAX_RECORD_ID = 64;
 const MAX_INVENTORY = 512;
@@ -27,6 +28,9 @@ export interface StateCtx {
   // appearance. Without this the slot keeps its placeholder forever and the character screen
   // shows "Adventurer" next to a character the player named something else.
   onCharacterNamed?(player: Player, name: string): void;
+  // Anti-cheat telemetry, same contract movement uses: the client authors its own character,
+  // so this is the SIGNAL moderation acts on, never a rejection.
+  noteAnomaly?(accountKey: string, kind: string): void;
 }
 
 function tbl(v: LValue | undefined): LTable | undefined {
@@ -152,6 +156,12 @@ function handleNumberMap(ctx: StateCtx, player: Player, body: LTable, field: 'at
 function handleLevel(ctx: StateCtx, player: Player, body: LTable): boolean {
   const level = finite(body.get('level'));
   if (level === undefined || !Number.isInteger(level) || level < 1 || level > 255) return false;
+  // A level moves by ONE at a time in Morrowind. Several at once is not a fast player, it is
+  // a declaration — same absurd-only bar as the movement envelope, same non-rejecting answer.
+  const had = ctx.store.getCached(player.charId)?.stats?.level;
+  if (had !== undefined && level - had >= 5) {
+    noteGain(ctx, player, 'level_jump', { from: had, to: level });
+  }
   // Level-up is a specced flush point.
   ctx.store.update(player.charId, (doc) => (doc.stats = { ...doc.stats, level }), 'now');
   return true;
@@ -182,6 +192,23 @@ function handleSpellbook(ctx: StateCtx, player: Player, body: LTable): boolean {
   return true;
 }
 
+// Deliberately absurd-only thresholds, exactly like the movement envelope: Morrowind has
+// legitimate bulk (a merchant's stock bought out, 400 arrows, a hoard moved in one go), and a
+// false positive on a real player is worse than a cheat that has to stay under the bar.
+// Containers ARE server-transactional (worldstate.containerOp conserves take/put), but
+// PlayerInventory bypasses them entirely and overwrites the doc, so this is the only place a
+// declared hoard is visible at all.
+// ponytail: heuristic, not a ledger. A real ledger needs purchase/barter to be server-side
+// first, otherwise every shopping trip is a false positive.
+const IMPLAUSIBLE_STACK = 5000;   // one item id gaining this much in a single declaration
+const IMPLAUSIBLE_DISTINCT = 100; // this many NEW item ids appearing at once
+
+function noteGain(ctx: StateCtx, player: Player, kind: string, detail: Record<string, unknown>): void {
+  metrics.implausibleGains.inc({ kind });
+  ctx.noteAnomaly?.(player.accountKey, kind);
+  log('warn', 'state.implausible_gain', { kind, player: player.name, account: player.accountKey, ...detail });
+}
+
 function handleInventory(ctx: StateCtx, player: Player, body: LTable): boolean {
   const items = tbl(body.get('items'));
   if (!items || items.size > MAX_INVENTORY) return false;
@@ -192,6 +219,20 @@ function handleInventory(ctx: StateCtx, player: Player, body: LTable): boolean {
     const n = t ? finite(t.get('n')) : undefined;
     if (!id || n === undefined || !Number.isInteger(n) || n < 1 || n > MAX_COUNT) return false;
     out.push({ id, n });
+  }
+  // Compare against what this character last declared, before overwriting it.
+  const prev = ctx.store.getCached(player.charId)?.inventory ?? [];
+  const before = new Map(prev.map((i) => [i.id, i.n]));
+  let newIds = 0;
+  for (const { id, n } of out) {
+    const had = before.get(id);
+    if (had === undefined) newIds++;
+    if (n - (had ?? 0) >= IMPLAUSIBLE_STACK) {
+      noteGain(ctx, player, 'inventory_stack', { item: id, from: had ?? 0, to: n });
+    }
+  }
+  if (newIds >= IMPLAUSIBLE_DISTINCT) {
+    noteGain(ctx, player, 'inventory_breadth', { newItems: newIds, total: out.length });
   }
   ctx.store.update(player.charId, (doc) => (doc.inventory = out));
   return true;

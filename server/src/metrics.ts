@@ -265,6 +265,18 @@ export const metrics = {
   implausibleMoves: reg(
     new Counter('omwmp_implausible_moves_total', 'Pose updates exceeding the plausible-speed envelope.', []),
   ),
+  implausibleGains: reg(
+    new Counter('omwmp_implausible_gains_total',
+      'Character-state declarations whose jump exceeds the plausible envelope.', ['kind']),
+  ),
+  unownedDrops: reg(
+    new Counter('omwmp_unowned_drops_total',
+      'ObjectSpawnRequests placing more of an item than the sender is believed to hold.', []),
+  ),
+  containedActions: reg(
+    new Counter('omwmp_contained_actions_total',
+      'Actions refused in the shared world because the account is quarantined.', ['action']),
+  ),
   resumeNoPose: reg(
     new Counter('omwmp_resume_no_pose_total', 'Resumes that fell back to the stored doc position (rubber-band risk).', []),
   ),

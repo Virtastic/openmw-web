@@ -103,6 +103,46 @@ export class WorldState {
     this.partyRules = rules;
   }
 
+  // Conservation on drop. ObjectSpawnRequest takes a recordId and a count and places them in
+  // the world for everyone — with no check that the sender owns any. That is the direct route
+  // for a modified client to put anything into the shared world, in front of 256 people, and
+  // it was completely unguarded (noDrop only strips unique-actor CORPSES).
+  //
+  // Injected: worldstate does not own character docs. Returns how many of `recordId` the
+  // player is believed to hold, or undefined when we have no doc to judge by (never punish
+  // missing information).
+  private heldCount?: (player: Player, recordId: string) => number | undefined;
+
+  setInventoryOracle(fn: (player: Player, recordId: string) => number | undefined): void {
+    this.heldCount = fn;
+  }
+
+  private moderationNote?: (accountKey: string, kind: string) => void;
+
+  setModerationNote(fn: (accountKey: string, kind: string) => void): void {
+    this.moderationNote = fn;
+  }
+
+  // CONTAINMENT. Character state is client-declared (playerstate.ts) and the server can only
+  // DETECT implausible declarations, not prevent them. So instead of trying to verify every
+  // item — which needs acquisition paths the server cannot yet see (barter, alchemy, world
+  // pickups) — bound the blast radius: an account that has declared impossible state cannot
+  // hand anything to anyone else in the SHARED world. They may still cheat their own
+  // campaign, which harms nobody.
+  //
+  // ponytail: quarantine the ACCOUNT, not the item. Per-item provenance needs the
+  // observability work first; this needs nothing new and protects strangers today.
+  private quarantined?: (accountKey: string) => boolean;
+
+  setQuarantineCheck(fn: (accountKey: string) => boolean): void {
+    this.quarantined = fn;
+  }
+
+  // Shared world only: `noDrop` is already "this world enforces public-economy rules".
+  private contained(player: Player): boolean {
+    return this.noDrop && this.quarantined?.(player.accountKey) === true;
+  }
+
   constructor(
     private readonly roster: Roster,
     private readonly cells: CellStore,
@@ -380,6 +420,50 @@ export class WorldState {
       this.invalid(player, 'ObjectSpawnRequest');
       return;
     }
+    // You cannot drop what you do not have. `held === undefined` means we have no doc to
+    // judge by, which is never treated as guilt.
+    //
+    // fromInventory distinguishes a DROP from a PLACEMENT. Without it this op is just
+    // "put an object in the world", which scripts and tools use for things nobody carries
+    // (s31 spawns a chest) — so conservation could only ever be counted, never enforced.
+    const fromInventory = body.get('fromInventory') === true;
+    // COUNTED, NOT REFUSED — and that is a measured decision, not caution.
+    //
+    // Refusing unowned spawns in the shared world was implemented and then backed out: this
+    // op is the generic "place an object", not "drop an item from my inventory". Scripts and
+    // tools legitimately spawn things nobody carries (s31 spawns a CHEST), so conservation
+    // refused them and the scenario broke. The protocol has no way to tell a drop from a
+    // placement, so enforcement needs a client change first — a distinct op, or a flag on the
+    // request saying this came out of an inventory.
+    //
+    // Until then this is the signal, and it is a sharp one: a drop of something the sender
+    // never declared has no innocent explanation for a real client.
+    const held = this.heldCount?.(player, recordId);
+    if (held !== undefined && held < count) {
+      metrics.unownedDrops.inc();
+      this.moderationNote?.(player.accountKey, 'unowned_drop');
+      log('warn', 'object.unowned_drop', {
+        player: player.name, account: player.accountKey, recordId, count, held,
+        fromInventory, refused: fromInventory && this.noDrop,
+      });
+      // STILL NOT REFUSED, and this was measured twice, not assumed.
+      //
+      // fromInventory fixed the first false positive (placements are no longer mistaken for
+      // drops), so refusal was tried again — and s30 failed: a player who picks something up
+      // and drops it immediately outruns their own 2 s inventory diff, so the server has not
+      // yet been told they hold it. That is ordinary play, not cheating.
+      //
+      // Enforcement therefore lives at the ACCOUNT level (containment, see contained()),
+      // which keys on declarations that have no innocent explanation. This stays a signal —
+      // now a precise one, since it can no longer fire on a scripted placement.
+      // ponytail: refuse here only once acquisition is reported per-event rather than by a
+      // 2 s snapshot diff; the race is the blocker, not the rule.
+    }
+    if (this.contained(player)) {
+      metrics.containedActions.inc({ action: 'drop' });
+      log('warn', 'contain.drop_refused', { player: player.name, account: player.accountKey, recordId });
+      return; // no ack, no placement: nothing they declared reaches the shared world
+    }
     const doc = await this.cells.get(cellKey);
     const netId = this.cells.allocNetId();
     const placed = { netId, recordId, cellKey, x, y, z, rotZ, count, byId: player.id };
@@ -543,6 +627,12 @@ export class WorldState {
       player.peer.sendEvent('ContainerOpResult', { opId, ok, ...(reason ? { reason } : {}), stateSeq });
     if (!cont) {
       reply(false, 'nostate', 0); // container never opened -> no canonical to transact on
+      return;
+    }
+    if (op === 'put' && this.contained(player)) {
+      metrics.containedActions.inc({ action: 'put' });
+      log('warn', 'contain.put_refused', { player: player.name, account: player.accountKey, itemId });
+      reply(false, 'contained', cont.stateSeq); // a container is how an item reaches someone else
       return;
     }
     const item = cont.items.find((i) => i.id === itemId);
