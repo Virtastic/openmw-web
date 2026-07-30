@@ -294,6 +294,25 @@ namespace MWLua
             bool allowChanges = object.isGObject() || object.isSelfObject();
             return Quests{ .mMutable = allowChanges };
         };
+
+        // Multiplayer: show another player's campaign in place of your own, then put yours
+        // back untouched. A guest in someone else's world must see THAT player's journal —
+        // their own entries must not leak through, and must return exactly as they were.
+        // Deferred through addAction like every other journal mutation here.
+        player["stashJournal"] = [context](const Object& object) {
+            verifyPlayer(object);
+            context.mLuaManager->addAction(
+                [] { MWBase::Environment::get().getJournal()->stash(); }, "stashJournalAction");
+        };
+        player["unstashJournal"] = [context](const Object& object) {
+            verifyPlayer(object);
+            context.mLuaManager->addAction(
+                [] { MWBase::Environment::get().getJournal()->unstash(); }, "unstashJournalAction");
+        };
+        player["isJournalStashed"] = [](const Object& object) {
+            verifyPlayer(object);
+            return MWBase::Environment::get().getJournal()->isStashed();
+        };
         sol::usertype<Quests> quests = lua.new_usertype<Quests>("Quests");
         quests[sol::meta_function::to_string] = [](const Quests& /*self*/) { return "Quests"; };
         quests[sol::meta_function::index] = [](const Quests& self, std::string_view questId) -> sol::optional<Quest> {

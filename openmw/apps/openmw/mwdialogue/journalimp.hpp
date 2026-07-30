@@ -14,6 +14,15 @@ namespace MWDialogue
         TQuestContainer mQuests;
         TTopicContainer mTopics;
 
+        // Multiplayer stash (see MWBase::Journal::stash). Session-only by design: the server
+        // holds the durable copy of a character's journal, so losing this to a crash costs
+        // nothing — the next login rebuilds from the server. That is what makes it impossible
+        // for a disconnect to leave a player holding someone else's campaign.
+        TEntryContainer mStashedJournal;
+        TQuestContainer mStashedQuests;
+        TTopicContainer mStashedTopics;
+        bool mStashed = false;
+
     private:
         Topic& getTopic(const ESM::RefId& id);
 
@@ -23,6 +32,10 @@ namespace MWDialogue
         Journal();
 
         void clear() override;
+
+        void stash() override;
+        void unstash() override;
+        bool isStashed() const override { return mStashed; }
 
         Quest* getQuestOrNull(const ESM::RefId& id) override;
         ///< Gets a pointer to the requested quest. Will return nullptr if the quest has not been started.

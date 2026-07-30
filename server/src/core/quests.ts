@@ -24,6 +24,18 @@ const MAX_INDEX = 0x7fffffff;
 // M7 owns the clock: these never travel as GlobalVarUpdate.
 const TIME_GLOBALS = new Set(['gamehour', 'day', 'month', 'year', 'dayspassed']);
 
+// CLIENT-OWNED globals: never stored, never restored. These describe engine-level state the
+// client is authoritative over, and GlobalVarSync applies stored values UNCONDITIONALLY —
+// there is no monotonicity check, because quest globals legitimately go both ways.
+//
+// chargenstate is the tutorial's own progress counter, and it counts DOWN to -1 ("creation
+// finished"), so no ordering rule can protect it. Storing it meant a rejoin could write an
+// older value back over a finished tutorial, and the Census door then correctly refused to
+// let the player out: "I gave the item and clicked duties, and it still says I have to do
+// it." The client already latches chargen completion on its own (global.lua chargenTick), so
+// there is nothing to restore here and everything to break.
+const CLIENT_GLOBALS = new Set(['chargenstate']);
+
 // Phase 4: mwscript globals split into WORLD-SHARED and CHARACTER-SHADOWED.
 //
 // Morrowind gates most quests on globals, not on the journal index. With per-character
@@ -65,14 +77,22 @@ export interface QuestCtx {
   isShared(family: ShareFamily): boolean;
   // Quest ids permitted to regress (operator config, surfaced via the plugin).
   regressAllowed(questId: string): boolean;
-  // Phase 4 party credit: the accountKeys of this player's party (empty when solo). Read
-  // through a function because Social is built after Quests and party membership changes
-  // constantly — a snapshot would go stale between events.
-  partyOf(accountKey: string): string[];
+  // Which character doc a journal advance is written to, or undefined for "persist nothing".
+  // Three cases, all decided in server.ts where world identity lives:
+  //   owned instance     -> the OWNER's doc. One log per instance; guests advance the
+  //                         campaign they are visiting and keep nothing of their own.
+  //   gateway-run public -> undefined. The lobby persists position and nothing else.
+  //   standalone server  -> the SENDER's own doc. No owner exists, but this IS the player's
+  //                         real game, so vanilla per-character journals apply.
+  // Read through a function because the owner may not be connected when an entry arrives.
+  journalTarget(player: Player): string | undefined;
+  // The OWNER's character doc when this instance is owned, else undefined. Used only to seed
+  // a fresh instance's log. Deliberately NOT journalTarget: on a standalone server that
+  // returns the sender's own doc for everyone, and seeding from it would inject the first
+  // joiner's history into the shared log the rest of the server then adopts.
+  ownerCharId(): string | undefined;
   // Operator additions to the world-shared global set (total conversions).
   worldGlobals?: string[];
-  // Party credit on/off (per-realm rule).
-  partyCredit?: boolean;
 }
 
 function tbl(v: LValue | undefined): LTable | undefined {
@@ -142,70 +162,85 @@ export class Quests {
       this.drop(player, 'JournalEntry', 'invalid shape');
       return;
     }
-    // The player's own journal records what THEY reported, even when the shared map
-    // refuses it — §M6: non-monotonic updates are stored but not relayed.
+    // ONE LOG PER INSTANCE, AND IT BELONGS TO THE OWNER.
+    //
+    // A guest advances the campaign they are visiting and keeps nothing of their own: their
+    // character doc is untouched for the whole visit, so an evening in a friend's world
+    // cannot move — or spoil — their own story. In your own Solo world you ARE the owner, so
+    // this is the same rule, not a special case. An unowned instance (the shared world)
+    // persists nothing, so entries there move the live map and no character at all.
+    //
+    // The doc write happens AFTER arbitration, never before: writing first let a stale
+    // client put 20 into the owner's save while the instance log correctly kept 40, and the
+    // two then disagreed permanently.
+    const ownerChar = this.ctx.journalTarget(player);
     // Phase 3.7: journal advances flush AT THE WRITE, not on the 45 s sweep. A verified
     // TES3MP failure is a disconnect mid-quest permanently corrupting progression
     // (Tribunal MQ, issue #268 — open since 2017): the stage was in memory and the crash
     // took it. A quest step a player has earned must survive the next instant.
-    this.ctx.players.update(player.charId, (doc) => {
-      (doc.journal ??= {})[questId] = idx;
-    }, 'now');
-    // Phase 4: party credit. Co-present party members who ALREADY STARTED this quest and
-    // are BEHIND this stage advance with it — they were there for the deed. Members who
-    // never started it get nothing (no spoiler-jumping them forward, the TES3MP shared-
-    // journal disease) and members already ahead get nothing (no rewind).
-    this.creditParty(player, questId, idx);
-    if (!this.ctx.isShared('journal')) return; // individual mode: stored, never relayed
+    const record = (): void => {
+      if (ownerChar === undefined) return;
+      this.ctx.players.update(ownerChar, (doc) => {
+        (doc.journal ??= {})[questId] = idx;
+      }, 'now');
+    };
+    if (!this.ctx.isShared('journal')) { record(); return; } // individual mode: never relayed
 
     const shared = this.ctx.cells.sharedQuest();
     const current = shared.journal[questId];
     const advances = current === undefined || idx > current;
     const regressing = !advances && idx < current;
     if (regressing && !this.ctx.regressAllowed(questId)) {
-      // Monotonic-max arbitration: a lagging client cannot rewind a shared quest.
+      // Monotonic-max arbitration: a lagging client cannot rewind the instance's campaign.
       log('debug', 'quest.journal_regress_blocked', { questId, have: current, got: idx, from: player.name });
       return;
     }
     if (!advances && !regressing) return; // identical index: nothing to do
     shared.journal[questId] = idx;
     this.ctx.cells.saveShared();
+    record();
     const out: JsLike = { questId, index: idx, ...(typeof actorRefId === 'string' ? { actorRefId } : {}) };
     this.relayAll(player.id, 'JournalEntry', out);
   }
 
-  // Phase 4 party credit. Eligibility is deliberately narrow and checked per member:
-  //   * in the crediting player's party (membership, not proximity alone), and
-  //   * CO-PRESENT (cellsVisible) — you get credit for deeds you were there for, and
-  //   * has an existing journal entry for this quest (they started it themselves), and
-  //   * strictly behind the new index (never rewind, never leap someone who is ahead).
-  // The mirror of the TES3MP failure the community names most: nobody's log ever moves
-  // through content they did not participate in.
-  private creditParty(player: Player, questId: string, idx: number): void {
-    if (this.ctx.partyCredit === false) return;
-    const party = this.ctx.partyOf(player.accountKey);
-    if (party.length === 0) return;
-    for (const p of this.ctx.roster.inWorld()) {
-      if (p.id === player.id || p.system) continue;
-      if (!party.includes(p.accountKey)) continue;
-      if (!cellsVisible(p.cellKey, player.cellKey)) continue;
-      const theirs = this.ctx.players.getCached(p.charId)?.journal?.[questId];
-      if (theirs === undefined || theirs >= idx) continue; // not started, or already ahead
-      this.ctx.players.update(p.charId, (doc) => {
-        (doc.journal ??= {})[questId] = idx;
-      }, 'now'); // a credited stage must survive a disconnect the instant it is earned
-      p.peer.sendEvent('JournalEntry', { questId, index: idx, credited: true });
-      log('info', 'quest.party_credit', { questId, index: idx, to: p.name, from: player.name });
-    }
-  }
+  // creditParty lived here and is GONE. It advanced co-present party members' OWN journals,
+  // which the instance-owned model forbids outright: a guest keeps nothing from a visit. Two
+  // systems advancing journals is how they end up disagreeing, so it is deleted rather than
+  // left switched off next to the new path.
 
   // Full journal state for a joining client: the shared map, or their own in individual
   // mode. Always sent (an empty map is a valid, meaningful answer).
   sendJournalSync(player: Player): void {
+    if (this.ctx.isShared('journal')) {
+      const shared = this.ctx.cells.sharedQuest();
+      // Seed a FRESH instance from the owner's campaign. Their world's cell store starts
+      // empty, so without this the owner would arrive in their own world to a blank journal
+      // and every guest would adopt that blank. Only ever seeds an empty map, so it cannot
+      // overwrite progress made here.
+      const ownerChar = this.ctx.ownerCharId();
+      if (ownerChar !== undefined && player.charId === ownerChar
+        && Object.keys(shared.journal).length === 0) {
+        const own = this.ctx.players.getCached(ownerChar)?.journal;
+        if (own && Object.keys(own).length > 0) {
+          Object.assign(shared.journal, own);
+          this.ctx.cells.saveShared();
+          log('info', 'quest.journal_seeded', { from: ownerChar, quests: Object.keys(own).length });
+        }
+      }
+    }
+    // Everyone in the instance reads the SAME log — the owner's. A guest is shown the
+    // campaign they are visiting; nothing here touches their own character doc.
     const quests = this.ctx.isShared('journal')
       ? { ...this.ctx.cells.sharedQuest().journal }
       : { ...(this.ctx.players.getCached(player.charId)?.journal ?? {}) };
-    player.peer.sendEvent('JournalSync', { quests });
+    // BORROWED: this sync carries a campaign that is not this character's own, so the client
+    // must set its own journal aside for the visit and put it back on the way home. The
+    // client cannot work this out for itself — it does not know who owns the instance.
+    // Driving it off the sync (rather than a "leaving" event) makes it self-correcting: this
+    // message is sent on EVERY join, so a missed transition repairs itself on the next one.
+    const owner = this.ctx.ownerCharId();
+    const borrowed = owner !== undefined && owner !== player.charId;
+    player.peer.sendEvent('JournalSync', { quests, borrowed });
   }
 
   // ---------------------------------------------------------------- globals
@@ -225,13 +260,25 @@ export class Quests {
       log('debug', 'quest.time_global_dropped', { name, from: player.name });
       return;
     }
+    if (CLIENT_GLOBALS.has(lower)) {
+      log('debug', 'quest.client_global_dropped', { name, from: player.name });
+      return;
+    }
     // Phase 4: character-shadowed globals are the DEFAULT, and shadowing is PERSISTENCE,
     // not relaying — so it happens whatever the questVars sharing policy says. Store on
     // the character (a rejoin or world hop restores the player's own quest state) and
     // relay to nobody: relaying is what makes two party members at different stages
     // overwrite each other forever.
     if (!this.isWorldGlobal(lower)) {
-      this.ctx.players.update(player.charId, (doc) => {
+      // The SAME target as the journal, and for the same reason. Morrowind gates most quests
+      // on globals rather than the journal index (see above), so shadowing these to the guest
+      // while the journal went to the owner advanced a guest's GATES without their log: they
+      // went home with globals saying "done" and a journal saying stage 10, which can leave
+      // a quest ungiveable or unfinishable in their own campaign. A guest's campaign is
+      // frozen in BOTH halves of the quest system or in neither.
+      const target = this.ctx.journalTarget(player);
+      if (target === undefined) return; // unowned instance: persists nothing
+      this.ctx.players.update(target, (doc) => {
         (doc.globals ??= {})[name] = value;
       });
       return;
@@ -260,6 +307,12 @@ export class Quests {
   // travels world-wide still survives a relog or a world hop.
   sendGlobalSync(player: Player): void {
     const globals = { ...(this.ctx.players.getCached(player.charId)?.globals ?? {}) };
+    // Filter on the way OUT too, not just on the way in: characters saved before
+    // CLIENT_GLOBALS existed already have a chargenstate on disk, and sending it would
+    // re-break exactly the players this fixes.
+    for (const k of Object.keys(globals)) {
+      if (CLIENT_GLOBALS.has(k.toLowerCase())) delete globals[k];
+    }
     if (Object.keys(globals).length === 0) return;
     player.peer.sendEvent('GlobalVarSync', { globals });
   }

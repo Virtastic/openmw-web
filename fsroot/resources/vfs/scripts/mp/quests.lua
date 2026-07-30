@@ -112,7 +112,19 @@ local function applyJournalEntry(questId, index)
         return false
     end
     applying = true
-    quest.stage = index -- deferred engine action (setQuestStageAction)
+    -- addJournalEntry writes the REAL entry text from the content records; quest.stage alone
+    -- only moves the index (mwdialogue/quest.cpp:52 — "The index must be set even if no
+    -- related journal entry was found"). MP boots as a fresh game and never loads a save, so
+    -- the engine journal starts EMPTY every session and is rebuilt from JournalSync: with
+    -- index-only, every player's journal read blank after a relog while their quests still
+    -- gated correctly. Repeats are safe — Topic::addEntry dedupes by info id.
+    local ok = pcall(function() quest:addJournalEntry(index) end)
+    if not ok then
+        -- No info record at this exact stage (common: the server stores the current index,
+        -- not every stage passed through). The index still has to land.
+        print('[mp] journal: no entry text for "' .. tostring(questId) .. '" @' .. tostring(index))
+    end
+    quest.stage = index -- belt and braces: never assume addEntry left the index where we want
     applying = false
     return true
 end
@@ -304,6 +316,29 @@ handlers.MP_JournalEntry = function(data)
 end
 
 handlers.MP_JournalSync = function(data)
+    -- THE single decision point for whose journal is on screen.
+    --
+    -- Driven off the SYNC, never off a "leaving" event: this message is sent on every join
+    -- (connection.ts handleReady), including a resume and a world switch, so a transition we
+    -- miss repairs itself on the next one instead of leaving a guest holding someone else's
+    -- campaign. Both engine calls are idempotent, so re-syncing the same world is a no-op.
+    local player = playerObj()
+    if player then
+        if data.borrowed == true then
+            -- Another player's campaign is about to be shown. Set ours aside WHOLE — entries,
+            -- quests and topics — so nothing of ours leaks through, not even quests we are
+            -- further along on than they are.
+            if not types.Player.isJournalStashed(player) then
+                types.Player.stashJournal(player)
+                print('[mp] journal: stashed own campaign for a visit')
+            end
+        elseif types.Player.isJournalStashed(player) then
+            -- Home. The borrowed set is discarded and ours moves back as the same objects,
+            -- so the restore is exact rather than a reconstruction.
+            types.Player.unstashJournal(player)
+            print('[mp] journal: restored own campaign')
+        end
+    end
     for questId, index in pairs(data.quests or {}) do
         local idx = asInt(index)
         if type(questId) == 'string' and idx then applyJournalEntry(questId, idx) end
@@ -461,6 +496,11 @@ local function mirror()
     local j = {}
     for id, idx in pairs(journal) do j[id] = idx end
     mp.testSet('journal', json.encode(j))
+    -- Whose campaign is on screen. Mirrored so a visit can be OBSERVED end to end rather
+    -- than inferred: the stash is engine-side state with no other outward signal.
+    local pl = playerObj()
+    mp.testSet('journalStashed',
+        tostring(pl ~= nil and types.Player.isJournalStashed(pl) == true))
     mp.testSet('journalSynced', tostring(journalSynced))
     mp.testSet('journalSent', string.format('%.0f', journalSent))
     -- The ENGINE's own journal (types.Player.quests pairs over MWBase::Journal), not our

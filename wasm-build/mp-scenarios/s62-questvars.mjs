@@ -48,12 +48,20 @@ export default async function run(ctx) {
   }
   ctx.log(`ok: ${Object.keys(gA).length} globals tracked, none of them the M7 clock`);
 
+  // Phase 4 INVERTED M6 here: a quest global is CHARACTER-SHADOWED by default and relayed
+  // to nobody. Only the small WORLD_GLOBALS set (weather, blight, ghostfence) travels. The
+  // reason is in quests.ts: relaying progress globals makes two party members at different
+  // stages overwrite each other through the 1s diff sync, forever — and can skip a quest.
+  // So the contract this pins is the OPPOSITE of "B receives it".
   await a.eval(`Module.__omwMPCmd='gvar:${GLOBAL}:${GLOBAL_VALUE}'`);
   const seesGlobal = (c) =>
     `Object.entries(JSON.parse((window.__omwMP||{}).globalVars||"{}")).some(([k,v])=>k.toLowerCase()===${JSON.stringify(GLOBAL.toLowerCase())}&&v===${GLOBAL_VALUE})`;
   await a.waitFor(seesGlobal(a), STEP_TIMEOUT, `A wrote ${GLOBAL}=${GLOBAL_VALUE}`);
-  await b.waitFor(seesGlobal(b), STEP_TIMEOUT, `B received ${GLOBAL}=${GLOBAL_VALUE}`);
-  ctx.log(`ok: GlobalVarUpdate ${GLOBAL}=${GLOBAL_VALUE} relayed`);
+  // Give the diff sync several rounds to (wrongly) deliver it before declaring it contained.
+  await ctx.sleep(6000);
+  assert.equal(await b.eval(seesGlobal(b)), false,
+    `${GLOBAL} is a progress global and must stay on A's character — B must never see it`);
+  ctx.log(`ok: ${GLOBAL}=${GLOBAL_VALUE} shadowed to A's character, not relayed`);
 
   // --- crime -------------------------------------------------------------------------
   await a.eval(`Module.__omwMPCmd='bounty:${BOUNTY}'`);
@@ -101,7 +109,11 @@ export default async function run(ctx) {
   const ka = globalKey(ga2, GLOBAL);
   ctx.log(`after settle: A ${GLOBAL}=${ga2[ka]} B ${GLOBAL}=${gb2[kb]}`);
   assert.equal(ga2[ka], GLOBAL_VALUE, 'A drifted: an applied update was echoed back');
-  assert.equal(gb2[kb], GLOBAL_VALUE, 'B drifted: an applied update was echoed back');
+  // B tracks the same 138 globals — it has this one at its own vanilla default. What must
+  // never happen is B taking A's VALUE. A shadowed global that leaks late is the same bug as
+  // one that leaks immediately, just harder to see.
+  assert.notEqual(gb2[kb], GLOBAL_VALUE,
+    `B took A's ${GLOBAL}=${GLOBAL_VALUE} — a character-shadowed global escaped to another player`);
   assert.equal(await a.eval('(window.__omwMP||{}).bounty'), String(BOUNTY), 'A bounty drifted');
   ctx.log('ok: echo guards held across globals/crime/factions');
 }
