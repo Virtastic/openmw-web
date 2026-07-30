@@ -47,7 +47,11 @@ function mintTicket(name: string): string {
     // A COMPLETED character: the shared world refuses anyone still in creation, which is the
     // right rule for players and just means a bot has to arrive pre-made.
     accounts.prepare('INSERT INTO accounts (key, doc) VALUES (?, ?)').run(key, JSON.stringify({
+      // email AND username: [login] requireProfile gates SessionReady on both, so a bot
+      // without an address would hold at ProfileNeeded forever waiting for a picker it has
+      // no UI to answer with.
       name, createdAt: now, lastSeenAt: now, rank: 0, username: name,
+      email: `${key}@bots.invalid`,
       characters: [{ id: `c${randomBytes(12).toString('hex')}`, name, createdAt: now, lastPlayedAt: now, completed: true }],
     }));
     accounts.prepare('INSERT OR REPLACE INTO usernames (username, accountKey, reservedUntil) VALUES (?, ?, NULL)')
@@ -144,5 +148,15 @@ async function bot(name: string): Promise<void> {
   setInterval(() => c.sendMove({ x: Math.random() * 200, y: Math.random() * 200, z: 0 }), 1000);
 }
 
-await Promise.all(roster.map((n) => bot(n).catch((e) => console.error(`[${n}] failed:`, e))));
-console.log(`\n${roster.length} bots online: ${roster.join(', ')}\nCtrl+C to stop.`);
+// Report what actually JOINED, not what was asked for. Printing "3 bots online" while all
+// three failed (single-use tickets already spent is the common case) sends you debugging the
+// server instead of re-minting — it cost exactly that once.
+const results = await Promise.all(roster.map((n) =>
+  bot(n).then(() => n).catch((e) => { console.error(`[${n}] failed:`, e); return null; })));
+const live = results.filter((n): n is string => n !== null);
+if (live.length === 0) {
+  console.error(`\nNO bots joined (${roster.length} attempted). Tickets are SINGLE-USE: mint`
+    + ' fresh ones and pass them with --tickets.');
+  process.exit(1);
+}
+console.log(`\n${live.length}/${roster.length} bots online: ${live.join(', ')}\nCtrl+C to stop.`);

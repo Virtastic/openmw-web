@@ -57,7 +57,11 @@ async function waitHttp(url, timeoutMs, what) {
 // --- omw-mp game server (one per scenario) ---------------------------------------------------
 // `extraRules` = additional keys for the [rules] table, e.g. a scenario that needs PvP on
 // (`export const serverRules = 'pvp = true'`). Config is deep-merged over the defaults.
-async function startGameServer(extraRules = '') {
+// serverEnv lets a scenario shape WORLD IDENTITY, which is env-driven (OMW_WORLD_OWNER /
+// OMW_WORLD_MODE / OMW_WORLD_ID) rather than config-driven, so it cannot be set through
+// serverRules. Exported as a function receiving the run id, because an owner is an ACCOUNT
+// NAME and account names carry the run-id suffix.
+async function startGameServer(extraRules = '', extraEnv = {}) {
   const dist = join(ROOT, 'server', 'dist', 'server.mjs');
   // Rebuild when dist is missing OR older than any source under src/. Checking only for
   // existence means a source change silently does not take effect: every scenario then runs
@@ -95,6 +99,13 @@ async function startGameServer(extraRules = '') {
     // that traffic, so they opt in explicitly rather than the client being trusted.
     ['login', ['allowHarnessAuth = true']],
     ['rules', ['respawnCellKey = "26,25"', 'respawnX = 216831.0', 'respawnY = 204909.0', 'respawnZ = 513.0']],
+    // EVERY browser client dials from 127.0.0.1, so the shipped per-IP defaults
+    // (maxConnsPerIp = 3, loginPerMinPerIp = 5) throttle the harness itself. s30 launches
+    // four clients and was intermittently losing the last one to the connection cap — which
+    // reads exactly like load flakiness, because whether it trips depends on how fast the
+    // previous client's socket is reaped. s42/s43 had each already discovered this and
+    // patched it locally; it belongs here, once, for every scenario.
+    ['limits', ['maxConnsPerIp = 64', 'loginPerMinPerIp = 100000']],
   ]);
   // Default section is `rules`: scenarios predating the merge export a bare key
   // (`serverRules = 'pvp = true'`) because the old writer appended straight after the
@@ -111,13 +122,20 @@ async function startGameServer(extraRules = '') {
       if (!sections.has(current)) sections.set(current, []);
       continue;
     }
-    sections.get(current).push(line);
+    // Last writer wins per KEY. Appending blindly emits the key twice in one table, which
+    // TOML rejects — and now that the harness itself sets [limits], every scenario that
+    // overrides them (s42, s43) would have hit exactly that.
+    const key = /^([A-Za-z0-9_-]+)\s*=/.exec(line)?.[1];
+    const bucket = sections.get(current);
+    const at = key ? bucket.findIndex((l) => new RegExp(`^${key}\\s*=`).test(l)) : -1;
+    if (at >= 0) bucket[at] = line; else bucket.push(line);
   }
   writeFileSync(join(dataDir, 'config.toml'),
     [...sections].map(([name, lines]) => `[${name}]\n${lines.join('\n')}\n`).join(''));
   const port = await freePort();
   const proc = spawn(process.execPath, [dist, '--data', dataDir, '--port', String(port)], {
     cwd: join(ROOT, 'server'), stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...process.env, ...extraEnv },
   });
   const out = [];
   proc.stdout.on('data', (d) => out.push(String(d)));
@@ -215,7 +233,11 @@ async function launchClient(name, mpPort, extraParams = '', opts = {}) {
     // for what is really just a slow launch.
     const t0 = Date.now();
     while (!wsUrl && Date.now() - t0 < 60_000) await sleep(100);
-    if (!wsUrl) throw new Error('Chrome CDP endpoint never came up (60s)');
+    // A launch that never printed its endpoint must still be cleaned up. Without this a
+    // failed launch leaked BOTH the stillborn Chrome and its profile dir — 62 of them had
+    // piled up under /var/folders from this session alone, and each leaked browser makes the
+    // next launch likelier to fail the same way.
+    if (!wsUrl) { handle.close(); throw new Error('Chrome CDP endpoint never came up (60s)'); }
 
     const browser = new WebSocket(wsUrl);
     await new Promise((res, rej) => {
@@ -308,12 +330,21 @@ async function launchClient(name, mpPort, extraParams = '', opts = {}) {
     };
     handle.waitFor = async (expr, timeoutMs = 5000, what = expr) => {
       const deadline = Date.now() + timeoutMs;
+      // An eval that keeps THROWING is a different failure from a condition that keeps being
+      // false, and swallowing it reported the two identically. When the page's execution
+      // context goes away (a reload, a navigation) every poll throws, and the timeout then
+      // blamed the condition — s30's bot-c looked hung on "state === Joined" while its own
+      // log showed it had reached Joined a minute earlier. Keep the last error and say so.
+      let lastErr = null, evalOk = false;
       while (Date.now() < deadline) {
-        try { if (await handle.eval(expr)) return; } catch {}
+        try { if (await handle.eval(expr)) return; evalOk = true; lastErr = null; }
+        catch (e) { lastErr = e; }
         await sleep(250);
       }
       const lua = handle.luaErrors();
       throw new Error(`[${name}] timeout (${timeoutMs}ms) waiting for: ${what}`
+        + (lastErr ? `\n--- EVAL NEVER SUCCEEDED (${evalOk ? 'context died mid-wait' : 'never once evaluated'})`
+            + ` — the condition may well have been TRUE; the page could not be read ---\n${lastErr}` : '')
         + (lua.length ? `\n--- LUA ERRORS (${lua.length}) — a throwing handler disables its whole subsystem ---\n`
             + [...new Set(lua)].slice(0, 5).join('\n') : '')
         + `\n--- last logs ---\n${handle.logTail()}`);
@@ -352,8 +383,9 @@ for (const file of files) {
   console.log(`\n=== scenario ${file} ===`);
   try {
     // Import first: a scenario may declare server rules it needs (e.g. pvp = true).
-    const { default: run, serverRules } = await import(pathToFileURL(join(SCENARIO_DIR, file)));
-    server = await startGameServer(serverRules);
+    const { default: run, serverRules, serverEnv } = await import(pathToFileURL(join(SCENARIO_DIR, file)));
+    const envForRun = typeof serverEnv === 'function' ? serverEnv(RUN_ID) : (serverEnv ?? {});
+    server = await startGameServer(serverRules, envForRun);
     await run({
       runId: RUN_ID,
       motd: server.motd,
@@ -372,7 +404,21 @@ for (const file of files) {
         // either one alone boots in ~20 s. Scenarios still run their clients in parallel
         // afterwards — only the expensive boot window is queued.
         const mine = bootQueue.then(() =>
-          launchClient(`${name}-${RUN_ID}`, server.port, extraParams, opts));
+          launchClient(`${name}-${RUN_ID}`, server.port, extraParams, {
+            // Each RESIDENT browser measurably slows the next boot: in s30 the four clients
+            // reached Joined in 3.8s, 10.6s, 14.2s and 88.6s. Against a flat 120s that last
+            // one is marginal, not generous, so it tipped over whenever the machine was a
+            // little busier — which reads as flakiness and is really contention.
+            // ponytail: linear allowance from the measurement above, not a guess. If boots
+            // ever get slower than this, the answer is fewer resident clients, not a bigger
+            // number here.
+            ...(opts ?? {}),
+            // Capped: the slowest LEGITIMATE boot measured was 88.6s, and the failure mode
+            // here is bimodal — a client either boots in tens of seconds or wedges forever —
+            // so a bigger number past this point only delays the report of a hang.
+            joinTimeoutMs: (opts ?? {}).joinTimeoutMs
+              ?? Math.min(180_000, JOIN_TIMEOUT_MS + clients.length * 30_000),
+          }));
         bootQueue = mine.catch(() => {}); // a failed boot must not wedge the queue
         const c = await mine;
         // Promise.all([launchClient, launchClient]) rejects as soon as ONE client fails,

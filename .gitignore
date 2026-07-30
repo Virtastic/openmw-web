@@ -79,3 +79,4 @@ play/moddata/
 
 # local dev stack data (wasm-build/dev-local.sh)
 .dev-local/
+.claude/settings.local.json

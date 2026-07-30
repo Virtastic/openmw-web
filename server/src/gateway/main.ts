@@ -54,7 +54,11 @@ const worlds = new WorldSupervisor({
     serverEntry,
     nodeBin: process.execPath,
     basePort: Number(values['base-port'] ?? 9000),
-    maxWorlds: Number(values['max-worlds'] ?? 8),
+    // Each world is an OpenMW server process plus its sim peer. 8 was a dev default and is
+    // the real scaling ceiling: one is the shared world, so it left room for only seven
+    // people playing Solo at once. Raise with --max-worlds once the per-instance memory has
+    // actually been measured on the target box.
+    maxWorlds: Number(values['max-worlds'] ?? 32),
     idleReapMs: 120_000,
     startTimeoutMs: 120_000,
     restartBackoffMs: 15_000,

@@ -22,7 +22,12 @@ export default async function run(ctx) {
   ctx.log('lastError:', JSON.stringify(lastError));
   assert.match(lastError, /AUTH_FAILED/, 'wrong password must surface AUTH_FAILED');
 
-  await imp.waitFor('!!document.getElementById("mp-banner")', 6000, 'DOM failure banner visible');
+  // The failure surface is a MODAL now (index.html mpErrorModal), not the old #mp-banner.
+  // What matters is unchanged: a real player must SEE why they could not get in.
+  await imp.waitFor('!!document.getElementById("mp-error-modal")', 8000,
+    'the failure modal is visible — silence here is the bug this scenario exists for');
+  const shown = await imp.eval('document.getElementById("mp-error-modal").textContent');
+  assert.match(shown, /sign in|password|join/i, 'the modal must explain the failure: ' + shown);
 
   const status = await ctx.serverStatus();
   assert.equal(status.players.length, 0, 'failed auth must not occupy a roster slot');

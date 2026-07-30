@@ -15,6 +15,17 @@ const ESC = { key: 'Escape', code: 'Escape', keyCode: 27, text: '' };
 export default async function run(ctx) {
   const a = await ctx.launchClient('bot-ov');
 
+  // The loading screen deliberately OUTLIVES state === "Joined": it stays up through the
+  // position-restore gate so a player never sees the default spawn before being put back
+  // where they logged out. It covers the whole viewport while it does, so driving the UI
+  // before it clears makes every click land on it — the intermittent
+  // "clicking the Party tab selected it (click landed on: loading)" failure. Wait for boot
+  // to actually finish, which is what a player does.
+  await a.waitFor(
+    `(function(){ var l = document.getElementById('loading');
+       return !l || l.style.display === 'none' || l.classList.contains('hide'); })()`,
+    20000, 'the boot loading screen cleared');
+
   // 0. The overlay DOM must exist (the IIFE at the end of index.html ran without dying).
   assert.equal(await a.eval(`!!document.getElementById('omw-chat') && !!document.getElementById('omw-social')`),
     true, 'overlay DOM missing — the overlay <script> did not run');
@@ -160,6 +171,31 @@ export default async function run(ctx) {
     'Enter actually delivered the message through the server');
   ctx.log('ok: Enter sends the typed message');
   await a.key(ESC);
+
+  // Transition notices: being moved between worlds, or losing your party, must SAY so.
+  // Driven through the same mirror the engine writes, so this exercises the real watcher.
+  await a.eval(`window.__omwMP.worldClosedBy = 'Ada'; window.__omwMP.worldClosed = 'owner_went_solo'`)
+  await a.waitFor(`document.getElementById('omw-tour').classList.contains('show')
+    && /Returning to your own world/.test(document.getElementById('omw-tour-title').textContent)`,
+    4000, 'being evicted from a world shows a notice');
+  // A notice must NOT be persisted: it reports an event, so the next one has to show too.
+  assert.equal(await a.eval(`document.getElementById('omw-tour-dots').innerHTML`), '',
+    'a notice must not render tour dots');
+  assert.match(await a.eval(`document.getElementById('omw-tour-body').textContent`), /Ada has gone Solo/,
+    'the notice must name who closed the world');
+  const noticeHit = await a.click('#omw-tour-next');
+  await a.waitFor(`!document.getElementById('omw-tour').classList.contains('show')`, 3000,
+    'the notice closed (click landed on: ' + noticeHit + ')');
+
+  await a.eval(`window.__omwMP.partyTravelBy = 'Ben'; window.__omwMP.partyTravelTo = 'vvardenfell'`)
+  await a.waitFor(`document.getElementById('omw-tour').classList.contains('show')
+    && /party is moving/i.test(document.getElementById('omw-tour-title').textContent)`,
+    4000, 'a leader moving the party shows a notice');
+  assert.match(await a.eval(`document.getElementById('omw-tour-body').textContent`), /Ben has taken the group/,
+    'the notice must name the leader who moved the party');
+  await a.click('#omw-tour-next');
+  await a.waitFor(`!document.getElementById('omw-tour').classList.contains('show')`, 3000, 'notice closed');
+  ctx.log('ok: transition notices fire and do not persist');
 
   const luaErrs = a.luaErrors();
   assert.equal(luaErrs.length, 0, 'Lua errors during run:\n' + luaErrs.join('\n'));
