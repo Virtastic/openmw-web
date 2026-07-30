@@ -34,11 +34,16 @@ class H(http.server.SimpleHTTPRequestHandler):
     protocol_version = 'HTTP/1.1'
 
     def send_head(self):
-        # Launcher gate: only the bare root serves the chooser. The match is on the FULL path
-        # incl. query, so anything with a query string — the launcher's own index.html?nomw /
-        # index.html?src=local links, plus dev URLs like ?debug — passes straight through to
-        # the game. Explicit /launcher.html and assets are likewise untouched.
-        if LAUNCHER and self.path in ('/', '/index.html'):
+        # Launcher gate: ONLY the bare root serves the chooser, which is exactly what the
+        # deployed edge does (infra/nginx.conf: `location = / { try_files /launcher.html; }`).
+        #
+        # /index.html used to be rewritten too, with a query string as the escape hatch. That
+        # made the gate depend on a query existing: the moment the launcher moved its boot
+        # params into the FRAGMENT (fragments never reach a server), the boot URL became a
+        # bare /index.html, was rewritten back to the launcher, and multiplayer looped between
+        # the two forever. Production was never affected, because nginx only ever matched `/`.
+        # Asking for /index.html explicitly means asking for the game.
+        if LAUNCHER and self.path == '/':
             self.path = '/launcher.html'
         # HTTP Range support (python's SimpleHTTPRequestHandler has none) — required for the
         # ?stream lazy-BSA mode (emscripten FS.createLazyFile reads the archives in chunks).
