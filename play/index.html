@@ -64,6 +64,34 @@
  }
 
  /* --- Storage-locker upload wizard (first multiplayer visit) --- */
+ /* "Where is my Data Files folder?" — the one step people actually get stuck on, so it gets
+    a proper sheet rather than a tooltip. Above the wizard (9100) since it opens from it. */
+ #lkhelp{position:fixed;inset:0;z-index:9200;display:none;align-items:flex-start;
+   justify-content:center;padding:24px;background:radial-gradient(140% 120% at 50% 0%,#181209,#000 70%);
+   overflow-y:auto;font-family:-apple-system,"Segoe UI",Roboto,sans-serif}
+ #lkhelp.show{display:flex}
+ #lkhelp .lkhelp-box{position:relative;width:100%;max-width:600px;margin:auto;
+   background:linear-gradient(160deg,#1e1711,#16110d);border:1px solid rgba(138,104,56,.5);
+   border-radius:10px;padding:34px 36px 30px;box-shadow:0 30px 90px rgba(0,0,0,.6)}
+ #lkhelp .lkhelp-x{position:absolute;top:12px;right:14px;width:30px;height:30px;border:none;
+   background:none;color:#7c705c;font-size:22px;line-height:1;cursor:pointer;border-radius:50%}
+ #lkhelp .lkhelp-x:hover{color:#e8c86a}
+ #lkhelp .lkhelp-h3{margin:22px 0 8px;font:600 15px/1.3 "Optima","Gill Sans",sans-serif;
+   letter-spacing:.04em;color:#e8c86a}
+ #lkhelp .lkhelp-ul{margin:0 0 4px;padding-left:18px;color:#b9a888;font-size:13.5px;line-height:1.75}
+ #lkhelp .lkhelp-ul li{margin-bottom:9px}
+ #lkhelp code{background:rgba(8,6,3,.55);border:1px solid rgba(138,104,56,.35);border-radius:3px;
+   padding:1px 5px;font:12.5px/1.5 ui-monospace,Menlo,monospace;color:#d8c9a8;
+   word-break:break-all}
+ #lkhelp .lkhelp-mut{color:#8a7a5a;font-size:12.5px}
+ #lkhelp .lkhelp-tip{color:#8a7a5a;font-size:13px;font-style:italic}
+ /* The "?" on the wizard header, same language as the launcher's card help icons. */
+ #lkwiz .wz-help{position:absolute;top:18px;right:18px;width:24px;height:24px;display:flex;
+   align-items:center;justify-content:center;border-radius:50%;border:1px solid #6b5433;
+   background:rgba(8,6,3,.5);color:#c69a52;font:600 13px/1 Georgia,"Times New Roman",serif;
+   cursor:pointer;transition:color .16s ease,border-color .16s ease,background .16s ease}
+ #lkwiz .wz-help:hover{color:#e8c86a;border-color:#e8c86a;background:rgba(211,168,78,.14)}
+ #lkwiz .wz{position:relative}
  #lkwiz{position:fixed;inset:0;z-index:9100;display:none;align-items:center;justify-content:center;
    padding:24px;background:radial-gradient(140% 120% at 50% 0%,#181209,#000 70%);overflow-y:auto;
    font-family:-apple-system,"Segoe UI",Roboto,sans-serif}
@@ -139,9 +167,57 @@
 <!-- First-visit storage-locker upload wizard. Shows which game files the account still needs,
      lets the player pick their Data Files folder once, and checks each off after the server
      verifies the uploaded bytes. Hidden unless the locker is empty on a multiplayer launch. -->
+<div id="lkhelp" role="dialog" aria-modal="true" aria-labelledby="lkhelp-h">
+  <div class="lkhelp-box">
+    <button class="lkhelp-x" id="lkhelp-close" type="button" aria-label="Close">&times;</button>
+    <div class="wz-kick">Finding your files</div>
+    <h2 class="wz-h" id="lkhelp-h">Where is my Data Files folder?</h2>
+    <p class="wz-p">Morrowind keeps everything the game needs in one folder called
+       <b>Data&nbsp;Files</b>. It holds <code>Morrowind.esm</code> and the <code>Music</code>,
+       <code>Sound</code> and <code>Video</code> folders. You are looking for that folder,
+       not the game's shortcut and not the installer.</p>
+
+    <h3 class="lkhelp-h3">Steam</h3>
+    <p class="wz-p">In Steam, right-click <b>The Elder Scrolls III: Morrowind</b> in your Library
+       and choose <b>Manage &rsaquo; Browse local files</b>. A window opens on the game folder;
+       <b>Data Files</b> is inside it. If you would rather navigate by hand, the usual location is:</p>
+    <ul class="lkhelp-ul">
+      <li><b>Windows</b><br><code>C:\Program Files (x86)\Steam\steamapps\common\Morrowind\Data Files</code></li>
+      <li><b>macOS</b><br><code>~/Library/Application Support/Steam/steamapps/common/Morrowind/Data Files</code></li>
+      <li><b>Linux</b><br><code>~/.steam/steam/steamapps/common/Morrowind/Data Files</code></li>
+    </ul>
+    <p class="wz-p lkhelp-tip">Installed to a second drive or a custom Steam library? Use
+       <b>Browse local files</b> rather than guessing the path, since Steam puts extra libraries
+       wherever you chose (often <code>D:\SteamLibrary\steamapps\common\Morrowind</code>).</p>
+
+    <h3 class="lkhelp-h3">GOG.com</h3>
+    <p class="wz-p">In <b>GOG Galaxy</b>, open Morrowind, click the gear beside <b>Play</b> and
+       choose <b>Manage installation &rsaquo; Show folder</b>. Without Galaxy, it is wherever the
+       offline installer put it. The usual location is:</p>
+    <ul class="lkhelp-ul">
+      <li><b>Windows</b><br><code>C:\GOG Games\Morrowind\Data Files</code><br>
+        <span class="lkhelp-mut">older installs: <code>C:\Program Files (x86)\GOG.com\Morrowind\Data Files</code></span></li>
+      <li><b>macOS</b><br>The GOG release ships as an app bundle. Right-click
+        <b>Morrowind.app</b> in Applications, choose <b>Show Package Contents</b>, then look in
+        <code>Contents/Resources/game/Data Files</code>.</li>
+      <li><b>Linux</b><br><code>~/GOG Games/Morrowind/game/Data Files</code></li>
+    </ul>
+
+    <h3 class="lkhelp-h3">How to tell you have the right folder</h3>
+    <p class="wz-p">It contains <code>Morrowind.esm</code>. If you own the expansions it also has
+       <code>Tribunal.esm</code> and <code>Bloodmoon.esm</code>, plus folders named
+       <code>Music</code>, <code>Sound</code> and <code>Video</code>. If you see
+       <code>Morrowind.exe</code> but no <code>.esm</code> files, you are one level too high:
+       open <b>Data Files</b> inside it.</p>
+    <p class="wz-p lkhelp-tip">Nothing leaves your machine except the files listed on the previous
+       screen, and they go only to your own account's private locker.</p>
+  </div>
+</div>
 <div id="lkwiz" role="dialog" aria-modal="true" aria-labelledby="lkwiz-h">
   <div class="wz">
     <div class="wz-kick">Multiplayer &middot; one-time setup</div>
+    <button class="wz-help" id="lkwiz-help" type="button"
+            aria-label="Where do I find my Data Files folder?">?</button>
     <h2 class="wz-h" id="lkwiz-h">Add your Morrowind files</h2>
     <p class="wz-p">Your game data lives in your account, so it follows you to any device. Choose your
        Morrowind <b>Data Files</b> folder once and we find everything below inside it, including
@@ -1715,6 +1791,22 @@
 
          // The upload wizard's view: a checklist keyed by lowercased filename, with a live
          // per-file status pill that ticks over pending -> busy -> done (or err).
+         // Help sheet: opened from the wizard's "?", closed by the X, the backdrop or Escape —
+         // the same three ways the launcher's card help closes, so it behaves as players expect.
+         (function(){
+           var hb=document.getElementById('lkwiz-help'), sheet=document.getElementById('lkhelp'),
+               x=document.getElementById('lkhelp-close');
+           if (!hb || !sheet) return;
+           function open(){ sheet.classList.add('show'); if (x) x.focus(); }
+           function close(){ sheet.classList.remove('show'); hb.focus(); }
+           hb.addEventListener('click', function(e){ e.stopPropagation(); open(); });
+           if (x) x.addEventListener('click', close);
+           sheet.addEventListener('click', function(e){ if (e.target === sheet) close(); });
+           document.addEventListener('keydown', function(e){
+             if (e.key === 'Escape' && sheet.classList.contains('show')) { e.stopPropagation(); close(); }
+           });
+         })();
+
          var wiz = (function(){
            var el=document.getElementById('lkwiz'), list=document.getElementById('lkwiz-list'),
                noteEl=document.getElementById('lkwiz-note'), pick=document.getElementById('lkwiz-pick');
