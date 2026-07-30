@@ -101,7 +101,7 @@ interface Party {
   // which is wrong the moment a leader takes the group to public (or never leaves their own
   // world at all). In-memory on purpose — it describes a live location, and after a restart
   // there is no group standing anywhere to point at.
-  at?: { id: string; mode: string; host: string; port: number };
+  at?: { id: string; mode: string; host: string; port: number; wsPath?: string };
   members: Set<AccountKey>;
 }
 
@@ -778,6 +778,7 @@ export class Social {
             myPort: this.worlds?.ownPort ?? 0,
             worlds: r.worlds.map((w) => ({
               id: w.id, mode: w.mode, name: w.name, host: w.host, port: w.port,
+              ...(w.wsPath ? { wsPath: w.wsPath } : {}),
               playerCount: w.playerCount, maxPlayers: w.maxPlayers, up: w.up,
             })),
           });
@@ -797,6 +798,7 @@ export class Social {
               world: {
                 id: r.world.id, mode: r.world.mode, name: r.world.name,
                 host: r.world.host, port: r.world.port,
+                ...(r.world.wsPath ? { wsPath: r.world.wsPath } : {}),
               },
             } : {}),
           });
@@ -992,7 +994,7 @@ export class Social {
     }
 
     this.d.store.partyTouch(party.key, this.d.now());
-    party.at = { id: dest.id, mode: dest.mode, host: dest.host, port: dest.port };
+    party.at = { id: dest.id, mode: dest.mode, host: dest.host, port: dest.port, wsPath: dest.wsPath };
     // Fan out to every member co-present in THIS world (the offline/elsewhere ones keep
     // their membership and can follow via the party panel when they see where it went).
     for (const m of party.members) {
@@ -1002,6 +1004,7 @@ export class Social {
         worldId: dest.id,
         mode: dest.mode,
         host: dest.host,
+        ...(dest.wsPath ? { wsPath: dest.wsPath } : {}),
         port: dest.port,
         leaderName: player.name,
       });
@@ -1044,6 +1047,7 @@ export class Social {
       if (!dest) return fail('not_travelled');
       player.peer.sendEvent('JoinFriend', {
         ok: true, worldId: dest.id, mode: dest.mode, host: dest.host, port: dest.port, friendName,
+        ...(dest.wsPath ? { wsPath: dest.wsPath } : {}),
       });
       return;
     }
@@ -1054,6 +1058,7 @@ export class Social {
     if (own) {
       player.peer.sendEvent('JoinFriend', {
         ok: true, worldId: own.id, mode: own.mode, host: own.host, port: own.port, friendName,
+        ...(own.wsPath ? { wsPath: own.wsPath } : {}),
       });
       return;
     }

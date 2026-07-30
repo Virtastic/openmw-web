@@ -357,6 +357,9 @@ local function joinWorld(w)
         render()
         return
     end
+    -- host:port only. Production publishes no world ports, so this legacy panel cannot reach
+    -- a world there; the HTML world browser goes through the global hub's worldUrlOf, which
+    -- prefers the gateway path. Left as-is rather than duplicating that rule in dead UI.
     local url = 'ws://' .. tostring(w.host) .. ':' .. string.format('%d', w.port) .. '/ws'
     joiningWorld = tostring(w.name)
     status = 'Joining ' .. joiningWorld .. '...'

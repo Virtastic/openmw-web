@@ -21,6 +21,9 @@ export interface WorldEntry {
   name: string;
   host: string;
   port: number;
+  // Path to dial on the GATEWAY origin instead of the world's own port. Production publishes
+  // no world ports at all (the edge reaches only :8080), so this is how a world is reachable.
+  wsPath?: string;
   playerCount: number;
   maxPlayers: number;
   up: boolean;

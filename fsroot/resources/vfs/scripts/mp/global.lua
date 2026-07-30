@@ -28,6 +28,27 @@ local pendingPublic = false
 -- once true it stays true for the session (an existing character starts at -1 immediately).
 local chargenDone = false
 local chargenReported = false
+-- Build the URL to dial for a world entry.
+--
+-- PREFER wsPath: production publishes NO world ports (the edge reaches only the gateway on
+-- 443, deploy/openmw-mp.caddy), so a world is reachable solely by asking the gateway to
+-- splice us through — `/w/<worldId>` on the origin we are already connected to. Falling back
+-- to host:port keeps a direct local connection working, where the ports ARE published.
+local function worldUrlOf(w)
+    if type(w) ~= 'table' then return nil end
+    if type(w.wsPath) == 'string' and w.wsPath ~= '' then
+        -- Same scheme and authority as the current connection: wss stays wss, so a page on
+        -- https never tries to open an insecure socket.
+        local cur = net.currentTarget() or ''
+        local scheme, authority = cur:match('^(wss?)://([^/]+)')
+        if scheme and authority then return scheme .. '://' .. authority .. w.wsPath end
+    end
+    if w.host and w.port then
+        return 'ws://' .. tostring(w.host) .. ':' .. string.format('%d', w.port) .. '/ws'
+    end
+    return nil
+end
+
 local function chargenTick()
     if chargenDone and chargenReported then return end
     if not chargenDone then
@@ -762,10 +783,13 @@ local eventHandlers = {
         if pendingPublic then
             pendingPublic = false
             for _, w in ipairs(data.worlds or {}) do
-                if w.mode == 'public' and w.up and w.host and w.port then
-                    worldUrls.public = 'ws://' .. tostring(w.host) .. ':' .. string.format('%d', w.port) .. '/ws'
-                    if net.currentTarget() ~= worldUrls.public then net.switchTo(worldUrls.public) end
-                    break
+                if w.mode == 'public' and w.up then
+                    local u = worldUrlOf(w)
+                    if u then
+                        worldUrls.public = u
+                        if net.currentTarget() ~= u then net.switchTo(u) end
+                        break
+                    end
                 end
             end
         end
@@ -811,8 +835,8 @@ local eventHandlers = {
     end,
 
     MP_PartyTravel = function(data)
-        if not data.host or not data.port then return end
-        local url = 'ws://' .. tostring(data.host) .. ':' .. string.format('%d', data.port) .. '/ws'
+        local url = worldUrlOf(data)
+        if not url then return end
         toPlayer('MP_PartyTravel', data)
         mp.testSet('partyTravelBy', tostring(data.leaderName or ''))
         mp.testSet('partyTravelTo', tostring(data.worldId or ''))
@@ -838,8 +862,9 @@ local eventHandlers = {
     -- redial happens here; the hub is told first so it can show status or a failure.
     MP_JoinFriend = function(data)
         toPlayer('MP_JoinFriend', data)
-        if not data or data.ok ~= true or not data.host or not data.port then return end
-        local url = 'ws://' .. tostring(data.host) .. ':' .. string.format('%d', data.port) .. '/ws'
+        if not data or data.ok ~= true then return end
+        local url = worldUrlOf(data)
+        if not url then return end
         mp.testSet('joinFriendTo', tostring(data.worldId or ''))
         if url == net.currentTarget() then return end
         net.switchTo(url)

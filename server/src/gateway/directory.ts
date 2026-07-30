@@ -19,6 +19,7 @@
 // caller-supplied account and why that is only a listing filter, never an access control.
 
 import { createServer, type Server, type ServerResponse } from 'node:http';
+import { connect as netConnect } from 'node:net';
 import { log } from '../log';
 import type { WorldSupervisor, WorldMode } from './worlds';
 import type { HttpRoute } from '../net/http';
@@ -49,6 +50,11 @@ function json(res: ServerResponse, code: number, body: unknown): void {
 }
 
 export async function startDirectory(deps: DirectoryDeps): Promise<RunningDirectory> {
+  // Clients prefer wsPath and dial it on THIS origin, so a world needs no published port.
+  // host/port stay in the payload for a direct local connection (and older clients).
+  const pub = <T extends { id: string }>(w: T): T & { host: string; wsPath: string } =>
+    ({ ...w, host: deps.publicHost, wsPath: `/w/${w.id}` });
+
   const server: Server = createServer((req, res) => {
     const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
     const path = url.pathname;
@@ -84,7 +90,7 @@ export async function startDirectory(deps: DirectoryDeps): Promise<RunningDirect
       const account = url.searchParams.get('account') ?? undefined;
       const list = deps.worlds.list().filter((w) =>
         w.mode === 'public' || (account !== undefined && w.ownerAccount === account));
-      json(res, 200, { worlds: list.map((w) => ({ ...w, host: deps.publicHost })) });
+      json(res, 200, { worlds: list.map(pub) });
       return;
     }
 
@@ -92,7 +98,7 @@ export async function startDirectory(deps: DirectoryDeps): Promise<RunningDirect
       const id = decodeURIComponent(path.slice('/worlds/'.length));
       const w = deps.worlds.get(id);
       if (!w) { json(res, 404, { error: 'no such world' }); return; }
-      json(res, 200, { ...w, host: deps.publicHost });
+      json(res, 200, pub(w));
       return;
     }
 
@@ -135,12 +141,51 @@ export async function startDirectory(deps: DirectoryDeps): Promise<RunningDirect
 
         const world = deps.worlds.ensure(id, mode as WorldMode, account);
         if (!world) { json(res, 503, { error: 'no capacity for another world right now' }); return; }
-        json(res, 200, { ...world, host: deps.publicHost });
+        json(res, 200, pub(world));
       });
       return;
     }
 
     json(res, 404, { error: 'not found' });
+  });
+
+  // WORLD TRAFFIC ON ONE PORT.
+  //
+  // Every world is its own process on its own port (basePort + n). Publishing 32 ports is
+  // unworkable in production: Cloudflare only proxies a fixed set, and the edge reaches this
+  // container over the docker network with NO published host ports at all (deploy/
+  // openmw-mp.caddy: `reverse_proxy openmw-mp:8080`). So worlds were simply unreachable
+  // outside local dev — the multi-world architecture had never actually worked in production.
+  //
+  // Fix: clients dial `/w/<worldId>` on the gateway and we splice them through to the world's
+  // loopback port. World ports never leave the container.
+  //
+  // A raw socket pipe, not a WebSocket library: this is a byte stream after the handshake, so
+  // re-framing it would cost CPU and add a place for the protocol to be subtly wrong. The
+  // original upgrade request is replayed verbatim and both directions are piped.
+  server.on('upgrade', (req, socket, head) => {
+    const path = (req.url ?? '').split('?')[0] ?? '';
+    const m = /^\/w\/([A-Za-z0-9][A-Za-z0-9_-]{0,63})$/.exec(path);
+    const world = m ? deps.worlds.get(m[1]!) : undefined;
+    if (!world || !world.up) {
+      // A world that is down must fail the handshake, not hang: the client's own retry ladder
+      // is what recovers, and it can only run if the socket closes.
+      socket.end('HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n');
+      return;
+    }
+    const upstream = netConnect({ host: '127.0.0.1', port: world.port }, () => {
+      // Replay the handshake byte for byte, including anything already buffered in `head`.
+      const headers = Object.entries(req.headers)
+        .map(([k, v]) => (Array.isArray(v) ? v.map((x) => `${k}: ${x}`).join('\r\n') : `${k}: ${v}`))
+        .join('\r\n');
+      upstream.write(`GET /ws HTTP/1.1\r\n${headers}\r\n\r\n`);
+      if (head?.length) upstream.write(head);
+      upstream.pipe(socket);
+      socket.pipe(upstream);
+    });
+    const bail = (): void => { try { upstream.destroy(); } catch { /* already gone */ } socket.destroy(); };
+    upstream.on('error', bail);
+    socket.on('error', bail);
   });
 
   await new Promise<void>((resolve) => server.listen(deps.port, deps.host, resolve));
