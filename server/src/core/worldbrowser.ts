@@ -77,6 +77,22 @@ export class WorldBrowser {
     return { worlds: Array.isArray(worlds) ? worlds as WorldEntry[] : [] };
   }
 
+  // The world another ACCOUNT owns, if it is up. Used to join a friend who never left their
+  // own world: this process cannot see into another world's roster, but the gateway knows
+  // who owns what. Reuses the existing /worlds?account= filter rather than adding a
+  // who-is-where endpoint — occupancy is not exposed, only "this account has a world".
+  // Safe to answer because the DESTINATION still authorizes: mayJoinWorld admits the owner's
+  // party and refuses everyone else, so knowing the address buys a stranger nothing. Callers
+  // must have already established a relationship (joinFriend checks areFriends first).
+  async ownerWorld(accountKey: string): Promise<WorldEntry | undefined> {
+    if (!this.enabled) return undefined;
+    const r = await this.call(`/worlds?account=${encodeURIComponent(accountKey)}`);
+    if (!r || typeof r !== 'object' || '__httpError' in r) return undefined;
+    const worlds = (r as { worlds?: unknown }).worlds;
+    if (!Array.isArray(worlds)) return undefined;
+    return (worlds as WorldEntry[]).find((w) => w.ownerAccount === accountKey && w.up);
+  }
+
   async create(player: Player, id: string, mode: string): Promise<{ world?: WorldEntry; error?: string }> {
     if (!this.enabled) return { error: 'no_gateway' };
     if (mode !== 'private' && mode !== 'party') return { error: 'bad_mode' };

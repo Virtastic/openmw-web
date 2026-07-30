@@ -1,10 +1,11 @@
 // Copyright (C) 2025-2026 Virtastic - https://virtastic.app
 // SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
-// s54 (party travel): two players form a party in the public world; the leader triggers
-// PartyTravel target=party. The gateway must spin up the party world, BOTH clients must
-// redial it (dialTarget moves; the world's /status sees two players), and a non-leader's
-// attempt must be refused. This is the plan's "party shifts between realms together",
-// end to end through real browsers.
+// s54 (party travel): two players form a party, and the leader moves the group. PUBLIC is
+// the only destination — the dedicated `party-<key>` world was removed, because a party is
+// together either in the leader's OWN world flipped to Party (leader keeps their world and
+// stays quest authority) or in the shared world. So: target=party must be REFUSED, a
+// non-leader must not be able to move anyone, and the leader moving to public must fan the
+// destination out to both members. End to end through real browsers.
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { mkdtempSync } from 'node:fs';
@@ -73,55 +74,35 @@ export default async function run(ctx) {
       STEP, 'party of two forms');
     ctx.log('  ok: party formed');
 
-    // A NON-leader may not move the group: B tries, and nothing must start.
-    await b.eval("Module.__omwMPCmd='partytravel:party'");
+    // A NON-leader may not move the group.
+    await b.eval("Module.__omwMPCmd='partytravel:public'");
     await ctx.sleep(2500);
-    const early = await (await fetch(`http://127.0.0.1:${GW_PORT}/worlds`)).json();
-    assert.equal(early.worlds.filter((w) => w.mode === 'party').length, 0,
-      'a non-leader must not be able to spawn the party world');
+    const refused = await b.eval(
+      "JSON.stringify((window.__omwMP||{}).lastSocialResult||'')");
+    ctx.log('  non-leader result: ' + refused);
+    assert.equal(await b.eval("(window.__omwMP||{}).partyTravelTo||''"), '',
+      'a non-leader must not be able to move the party');
     ctx.log('  ok: non-leader travel refused');
 
-    // The leader moves the group to the party world.
+    // The dedicated party world is gone: asking for it must be refused, and must not create
+    // a world at the gateway.
     await a.eval("Module.__omwMPCmd='partytravel:party'");
+    await ctx.sleep(3000);
+    const after = await (await fetch(`http://127.0.0.1:${GW_PORT}/worlds`)).json();
+    assert.equal(after.worlds.filter((w) => w.mode === 'party').length, 0,
+      'target=party must no longer spawn a party world');
+    ctx.log('  ok: dedicated party world is refused, none created');
 
-    // Diagnostics: did the PartyTravel event reach each client, and where would they dial?
-    await ctx.sleep(4000);
+    // The leader moves the group to the SHARED world: both members get the destination.
+    await a.eval("Module.__omwMPCmd='partytravel:public'");
     for (const [who, c] of [['A', a], ['B', b]]) {
+      await c.waitFor("((window.__omwMP||{}).partyTravelTo||'') !== ''", STEP,
+        `${who} received the party's destination`);
       const tt = await c.eval("(window.__omwMP||{}).partyTravelTo||''");
-      const dial = await c.eval("(window.__omwMP||{}).dialTarget||''");
-      const st = await c.eval("(window.__omwMP||{}).state||''");
-      ctx.log(`  ${who}: travelTo=${tt} dial=${dial} state=${st}`);
+      ctx.log(`  ${who}: travelTo=${tt}`);
     }
+    ctx.log('  ok: leader moved the whole party to the shared world');
 
-    // The party world must appear at the gateway and BOTH clients must arrive in it.
-    let partyPort = 0;
-    const upBy = Date.now() + 90_000;
-    while (Date.now() < upBy) {
-      const l = await (await fetch(`http://127.0.0.1:${GW_PORT}/worlds?account=${encodeURIComponent(a.name.toLowerCase())}`)).json();
-      const w = l.worlds.find((x) => x.mode === 'party');
-      if (w?.up) { partyPort = w.port; break; }
-      await ctx.sleep(1000);
-    }
-    assert.ok(partyPort > 0, 'the party world must come up at the gateway');
-    ctx.log(`  party world up on ${partyPort}`);
-
-    const bothBy = Date.now() + 90_000;
-    let count = 0;
-    while (Date.now() < bothBy) {
-      count = await playersIn(partyPort);
-      if (count >= 2) break;
-      await ctx.sleep(1000);
-    }
-    assert.equal(count, 2, `both party members must arrive in the party world, got ${count}`);
-    ctx.log('  ok: both members travelled together');
-
-    // Reconnect safety: each client's dial target must now be the party world.
-    for (const [who, c] of [['A', a], ['B', b]]) {
-      const dial = String(await c.eval("(window.__omwMP||{}).dialTarget||''"));
-      assert.ok(dial.includes(`:${partyPort}/`),
-        `${who}'s reconnect target must be the party world, got ${dial}`);
-    }
-    ctx.log('  ok: reconnects would return both members to the party world');
   } finally {
     stopGw();
   }

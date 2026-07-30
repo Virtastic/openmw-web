@@ -93,31 +93,29 @@ test('party travel: leader-only, fans out to co-present members with the destina
   makeParty(w);
 
   // A non-leader may not move the group.
-  await w.social.partyTravel(w.players.get('bob')!, 'party');
+  await w.social.partyTravel(w.players.get('bob')!, 'public');
   assert.equal(w.events('bob', 'SocialResult').filter((e) => e.body['op'] === 'PartyTravel'
     && e.body['detail'] === 'not_leader').length, 1);
 
-  // Leader travels to the party world: both members get the destination.
+  // PUBLIC is the only destination. A party is together either in the leader's own world
+  // flipped to Party or in the shared world; the old dedicated `party-<key>` world was a
+  // blank process with nobody's progress in it, so it is gone.
   await w.social.partyTravel(w.players.get('alice')!, 'party');
+  assert.equal(w.events('alice', 'SocialResult').filter((e) => e.body['op'] === 'PartyTravel'
+    && e.body['detail'] === 'bad_target').length, 1,
+    'a dedicated party world must no longer be reachable');
+  assert.equal(worlds.created.length, 0, 'party travel must never create a world');
+
+  // Leader travels to public: both members get the same destination, nothing is created.
+  await w.social.partyTravel(w.players.get('alice')!, 'public');
   const a = w.events('alice', 'PartyTravel');
   const b = w.events('bob', 'PartyTravel');
   assert.equal(a.length, 1);
   assert.equal(b.length, 1);
   assert.equal(a[0]!.body['worldId'], b[0]!.body['worldId']);
-  assert.ok(String(a[0]!.body['worldId']).startsWith('party-p'));
-  assert.equal(a[0]!.body['port'], 9001);
-  assert.equal(worlds.created.length, 1);
-
-  // Then to public: the existing public world, not a created one.
-  await w.social.partyTravel(w.players.get('alice')!, 'public');
-  const a2 = w.events('alice', 'PartyTravel');
-  assert.equal(a2.length, 2);
-  assert.equal(a2[1]!.body['worldId'], 'vvardenfell');
-  assert.equal(worlds.created.length, 1, 'public travel must not create a world');
-
-  // Repeat party travel reuses the SAME world id (the campaign world is stable).
-  await w.social.partyTravel(w.players.get('alice')!, 'party');
-  assert.equal(worlds.created[1], worlds.created[0]);
+  assert.equal(a[0]!.body['worldId'], 'vvardenfell');
+  assert.equal(a[0]!.body['port'], 8080);
+  assert.equal(worlds.created.length, 0, 'public travel must not create a world');
   w.close();
   store.close();
 });
@@ -198,5 +196,158 @@ test('offline grace never ejects a member; explicit leave and staleness do', () 
   assert.equal(w3.social.partyView('alice'), null, 'a stale party must not resurrect');
   assert.equal(store.partyOfAccount('alice'), undefined);
   w3.close();
+  store.close();
+});
+
+// Joining a party has to put you WITH the party. Accepting used to only change membership,
+// and joinFriend assumed every party lives in its own `party-<key>` world — so a group that
+// had gone to the shared world pulled joiners into an empty one instead.
+test('joining a party routes you to where the party actually is', async () => {
+  const store = new SocialStore(':memory:');
+  const worlds = fakeWorlds();
+  const w = harness(store, worlds);
+  const alice = w.add('alice', 'Alice');
+  const bob = w.add('bob', 'Bob');
+  w.social.onJoin(alice);
+  w.social.onJoin(bob);
+  assert.equal(w.social.partyInvite(alice, 'bob'), 'ok');
+
+  // Leader is standing right here: no dial, just land next to them.
+  w.social.handleEvent(bob, 'PartyAccept', new Map<string, string>([['acct', 'alice']]));
+  const near = w.events('bob', 'InviteAccepted');
+  assert.equal(near.length, 1, 'a co-present leader should teleport the joiner, not redial them');
+  assert.equal(near[0]!.body['cellKey'], '0,0');
+  assert.equal(near[0]!.body['x'], 1);
+  assert.equal(w.events('bob', 'PartyTravel').length, 0, 'no world hop when the leader is here');
+
+  // Group moves to the shared world, then a third player joins from somewhere the leader is not.
+  await w.social.partyTravel(alice, 'public');
+  const cara = w.add('cara', 'Cara');
+  w.social.onJoin(cara);
+  assert.equal(w.social.partyInvite(alice, 'cara'), 'ok');
+  w.remove('alice'); // leader no longer visible from this world
+  const createdBefore = worlds.created.length;
+  w.social.handleEvent(cara, 'PartyAccept', new Map<string, string>([['acct', 'alice']]));
+  const trav = w.events('cara', 'PartyTravel');
+  assert.equal(trav.length, 1, 'a joiner whose party is elsewhere got no destination');
+  assert.equal(trav[0]!.body['worldId'], 'vvardenfell',
+    'joiner was sent to a party world while the party was in the shared world');
+  assert.equal(worlds.created.length, createdBefore, 'routing must not create a world');
+  w.close();
+  store.close();
+});
+
+test('joinFriend follows the party to the shared world instead of making an empty one', async () => {
+  const store = new SocialStore(':memory:');
+  const worlds = fakeWorlds();
+  const w = harness(store, worlds);
+  makeParty(w);
+  const alice = w.players.get('alice')!;
+  await w.social.partyTravel(alice, 'public');
+  const createdBefore = worlds.created.length;
+
+  const dave = w.add('dave', 'Dave');
+  w.social.onJoin(dave);
+  store.addFriend('dave', 'alice', 1_700_000_000_000);
+  await w.social.joinFriend(dave, 'alice');
+  const jf = w.events('dave', 'JoinFriend');
+  assert.equal(jf.length, 1);
+  assert.equal(jf[0]!.body['ok'], true, 'joinFriend failed: ' + JSON.stringify(jf[0]!.body));
+  assert.equal(jf[0]!.body['worldId'], 'vvardenfell',
+    'joinFriend sent the player to a party world the party had already left');
+  assert.equal(worlds.created.length, createdBefore, 'no world should be created');
+  w.close();
+  store.close();
+});
+
+// Joining a friend who never left their own world. This world process cannot see into
+// another world's roster, so before the gateway lookup it dead-ended on 'not_travelled' —
+// which is most of the time, since a party that has not travelled is sitting in the leader's
+// own world. The destination still authorizes the arrival (mayJoinWorld); this only answers
+// WHERE they are.
+test('joinFriend reaches a friend sitting in their own world', async () => {
+  const store = new SocialStore(':memory:');
+  const worlds = fakeWorlds();
+  // The gateway knows who owns what; this world does not.
+  (worlds as unknown as { ownerWorld: (a: string) => Promise<unknown> }).ownerWorld =
+    async (acct: string) => (acct === 'alice'
+      ? { id: 'priv-alice', mode: 'party', name: 'p', host: 'h', port: 9100,
+          playerCount: 1, maxPlayers: 8, up: true, ownerAccount: 'alice' }
+      : undefined);
+  const w = harness(store, worlds);
+  const alice = w.add('alice', 'Alice');
+  w.social.onJoin(alice);
+  const dave = w.add('dave', 'Dave');
+  w.social.onJoin(dave);
+  store.addFriend('dave', 'alice', 1_700_000_000_000);
+
+  await w.social.joinFriend(dave, 'alice');
+  const jf = w.events('dave', 'JoinFriend');
+  assert.equal(jf.length, 1);
+  assert.equal(jf[0]!.body['ok'], true, 'joinFriend failed: ' + JSON.stringify(jf[0]!.body));
+  assert.equal(jf[0]!.body['worldId'], 'priv-alice',
+    'a friend in their own world must be reachable, not a dead end');
+  assert.equal(worlds.created.length, 0, 'no world may be created to reach someone');
+  w.close();
+  store.close();
+});
+
+// Invites cross worlds. They used to live in an in-memory Map, so an invite could only ever
+// reach someone already connected to the SAME world process — "invite your friend" worked
+// exactly when you did not need it. They now live in the shared store and are drained on
+// join, so the two "world processes" here share one SocialStore, as real worlds do.
+test('a party invite reaches a friend who is in another world', async () => {
+  const store = new SocialStore(':memory:');
+  const w1 = harness(store, fakeWorlds());   // world A: the leader
+  const w2 = harness(store, fakeWorlds());   // world B: the invitee
+  const alice = w1.add('alice', 'Alice');
+  w1.social.onJoin(alice);
+  const bob = w2.add('bob', 'Bob');
+  w2.social.onJoin(bob);
+
+  // Alice cannot see Bob at all: he is not in her roster.
+  assert.equal(w1.players.get('bob'), undefined, 'the fixture must model separate worlds');
+  assert.equal(w1.social.partyInvite(alice, 'bob'), 'ok',
+    'inviting someone in another world must be allowed — that is the normal case');
+
+  // Nothing was pushed to Bob's world by the sender's world...
+  assert.equal(w2.events('bob', 'PartyInviteReceived').length, 0);
+  // ...but the invite is in the shared mailbox, so HIS world delivers it when he joins.
+  w2.social.onJoin(bob);
+  const got = w2.events('bob', 'PartyInviteReceived');
+  assert.equal(got.length, 1, 'the invite never reached the other world');
+  assert.equal(got[0]!.body['fromAcct'], 'alice');
+
+  // And he can accept it from over there.
+  assert.equal(w2.social.partyAccept(bob, 'alice'), 'ok', 'accepting a cross-world invite failed');
+  // Single-use: accepting CONSUMES the mailbox row, so a replay finds no invite at all.
+  // ('no_request', not 'already_in_party' — the invite check runs first, which is what makes
+  // a replayed accept harmless rather than a second join attempt.)
+  assert.equal(w2.social.partyAccept(bob, 'alice'), 'no_request');
+  w1.close(); w2.close();
+  store.close();
+});
+
+test('an expired invite cannot be accepted, and a block drops it', async () => {
+  const store = new SocialStore(':memory:');
+  const w = harness(store, fakeWorlds());
+  const alice = w.add('alice', 'Alice');
+  const bob = w.add('bob', 'Bob');
+  w.social.onJoin(alice);
+  w.social.onJoin(bob);
+
+  assert.equal(w.social.partyInvite(alice, 'bob'), 'ok');
+  w.advance(3 * 60 * 1000); // past inviteTtlMs (2 min)
+  assert.equal(w.social.partyAccept(bob, 'alice'), 'no_request',
+    'an expired invite must not be acceptable');
+
+  // A fresh one, then a block: blocking must drop pending invites both ways.
+  w.advance(1000);
+  assert.equal(w.social.partyInvite(alice, 'bob'), 'ok');
+  w.social.block(bob, 'alice');
+  // Blocking DROPS the pending invite rather than merely refusing it later, so there is
+  // nothing left to accept. That is the stronger outcome: no row survives to be replayed.
+  assert.equal(w.social.partyAccept(bob, 'alice'), 'no_request');
+  w.close();
   store.close();
 });

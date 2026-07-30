@@ -319,11 +319,8 @@ local function partyTab()
             end),
         }
         rows[#rows + 1] = U.row {
-            U.button('travel: party world', function()
-                status = 'Asking the party to travel...'
-                send('PartyTravel', { target = 'party' })
-                render()
-            end),
+            -- No 'travel: party world' button: a party lives in the leader's own world
+            -- flipped to Party, or in the shared world. There is no third place to go.
             U.button('travel: public', function()
                 status = 'Asking the party to travel...'
                 send('PartyTravel', { target = 'public' })

@@ -65,6 +65,19 @@ export class SocialStore {
         PRIMARY KEY (fromAcct, toAcct)
       );
       CREATE INDEX IF NOT EXISTS friend_request_to ON friend_request(toAcct);
+      -- Party/world invites, persisted for the SAME reason friend requests are: worlds are
+      -- separate processes, so an in-memory invite could only ever reach someone already in
+      -- the sender's world. That made "invite your friend" work exactly when you did not
+      -- need it. One row per (from, to): re-inviting refreshes rather than stacking.
+      CREATE TABLE IF NOT EXISTS invite (
+        fromAcct TEXT NOT NULL,
+        toAcct   TEXT NOT NULL,
+        kind     TEXT NOT NULL, -- 'party' | 'world'
+        sent     INTEGER NOT NULL,
+        expires  INTEGER NOT NULL,
+        PRIMARY KEY (fromAcct, toAcct)
+      );
+      CREATE INDEX IF NOT EXISTS invite_to ON invite(toAcct);
       -- Presence mode is a per-account PREFERENCE, so it persists.
       CREATE TABLE IF NOT EXISTS presence_pref (
         account TEXT PRIMARY KEY,
@@ -209,6 +222,32 @@ export class SocialStore {
     return row.n;
   }
 
+  // ------------------------------------------------------------------ invites
+  // Same contract as requests above, including expiry-on-read.
+
+  addInvite(from: AccountKey, to: AccountKey, kind: string, now: number, ttlMs: number): void {
+    this.db
+      .prepare('INSERT OR REPLACE INTO invite (fromAcct, toAcct, kind, sent, expires) VALUES (?, ?, ?, ?, ?)')
+      .run(from, to, kind, now, now + ttlMs);
+  }
+
+  invitesFor(to: AccountKey, now: number): { from: AccountKey; kind: string }[] {
+    return (this.db
+      .prepare('SELECT fromAcct, kind FROM invite WHERE toAcct = ? AND expires > ? ORDER BY sent')
+      .all(to, now) as { fromAcct: string; kind: string }[])
+      .map((r) => ({ from: r.fromAcct, kind: r.kind }));
+  }
+
+  hasInvite(from: AccountKey, to: AccountKey, now: number): boolean {
+    return this.db
+      .prepare('SELECT 1 FROM invite WHERE fromAcct = ? AND toAcct = ? AND expires > ?')
+      .get(from, to, now) !== undefined;
+  }
+
+  removeInvite(from: AccountKey, to: AccountKey): void {
+    this.db.prepare('DELETE FROM invite WHERE fromAcct = ? AND toAcct = ?').run(from, to);
+  }
+
   // ------------------------------------------------------------ presence mode
 
   getPresenceMode(account: AccountKey): string | undefined {
@@ -319,9 +358,13 @@ export class SocialStore {
   }
 
   sweepExpired(now: number): number {
-    const before = this.db.prepare('SELECT COUNT(*) AS n FROM friend_request').get() as { n: number };
+    const count = (t: string): number =>
+      (this.db.prepare(`SELECT COUNT(*) AS n FROM ${t}`).get() as { n: number }).n;
+    const before = count('friend_request') + count('invite');
     this.db.prepare('DELETE FROM friend_request WHERE expires <= ?').run(now);
-    const after = this.db.prepare('SELECT COUNT(*) AS n FROM friend_request').get() as { n: number };
-    return before.n - after.n;
+    // Invites expire on the same sweep. Left out, a dead invite sits in the mailbox and is
+    // re-delivered on every join — expiry-on-read hides it, but it never goes away.
+    this.db.prepare('DELETE FROM invite WHERE expires <= ?').run(now);
+    return before - (count('friend_request') + count('invite'));
   }
 }
