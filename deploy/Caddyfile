@@ -48,11 +48,18 @@
 	# receive it; and a single origin means the launcher derives the server from location
 	# instead of carrying a baked-in hostname that is wrong in every deployment but one.
 	#
-	# Only the endpoints the client actually calls are exposed: the WebSocket, the SSO routes,
-	# the locker (the S3-backed game-data upload path — /locker/needed and friends), and the
-	# world directory. /admin, /metrics, /healthz and /status stay unreachable from the
-	# internet. Upstream is overridable because the container is named per environment.
-	@gateway path /ws /auth/* /locker/* /worlds /worlds/*
+	# Only the endpoints the client actually calls are exposed:
+	#   /w/*      the GAMEPLAY WebSocket. This is the one that matters: the directory hands
+	#             back wsPath=/w/<worldId> and the client dials it on THIS origin, which is
+	#             what lets every world run on an unpublished internal port. Miss this and
+	#             sign-in works and then the game cannot connect to anything.
+	#   /ws       only the base the launcher derives its HTTP origin from (httpBaseOf), plus a
+	#             local-dev direct-dial fallback. The gateway has no /ws route and answers 502
+	#             by design — proxied anyway so local dev behaves the same as production.
+	#   /auth/*   SSO.  /locker/*  S3-backed game-data upload.  /worlds  world directory.
+	# /admin, /metrics, /healthz and /status stay unreachable from the internet.
+	# Upstream is overridable because the container is named per environment.
+	@gateway path /w/* /ws /auth/* /locker/* /worlds /worlds/*
 	reverse_proxy @gateway {$MP_UPSTREAM:openmw-mp:8080}
 
 	# file_server handles Range natively (on the raw file) and, with `precompressed br`, serves
