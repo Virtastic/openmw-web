@@ -48,10 +48,11 @@
 	# receive it; and a single origin means the launcher derives the server from location
 	# instead of carrying a baked-in hostname that is wrong in every deployment but one.
 	#
-	# Only the endpoints the client actually calls are exposed: the WebSocket, the SSO/locker
-	# routes, and the world directory. /admin and /metrics stay unreachable from the internet.
-	# Upstream is overridable because the container is named differently per environment.
-	@gateway path /ws /auth/* /worlds
+	# Only the endpoints the client actually calls are exposed: the WebSocket, the SSO routes,
+	# the locker (the S3-backed game-data upload path — /locker/needed and friends), and the
+	# world directory. /admin, /metrics, /healthz and /status stay unreachable from the
+	# internet. Upstream is overridable because the container is named per environment.
+	@gateway path /ws /auth/* /locker/* /worlds /worlds/*
 	reverse_proxy @gateway {$MP_UPSTREAM:openmw-mp:8080}
 
 	# file_server handles Range natively (on the raw file) and, with `precompressed br`, serves
