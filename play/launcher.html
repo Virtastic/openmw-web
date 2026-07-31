@@ -863,6 +863,21 @@
    return (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws';
  }
 
+ // Read the signed-in session, ALWAYS deriving the gateway address rather than restoring it.
+ // Only the identity and the token are genuinely session state; an address is a property of
+ // where the page is being served from right now. Storing one is what let a sign-in from an
+ // earlier build keep dialling a port that build had guessed — and sessionStorage survives a
+ // reload, so it outlived every attempt to clear it from localStorage. Deriving here also
+ // migrates any session an older build already wrote, with no eviction step.
+ function mpSession(){
+   let s = null;
+   try { s = JSON.parse(sessionStorage.getItem('omw-mp-session') || 'null'); } catch(e){}
+   if (!s) return null;
+   s.gwUrl = mpServerUrl();
+   s.gwHttp = httpBaseOf(s.gwUrl);
+   return s;
+ }
+
  const mpBd = $('mp-bd');
  function mpClose(){ mpBd.classList.remove('show'); }
  function mpNote(msg, cls){ const n=$('mp-note'); n.textContent=msg||''; n.className='note'+(cls?' '+cls:''); }
@@ -1129,9 +1144,8 @@
  (async function charactersReentry(){
    if (location.hash !== '#characters') return;
    history.replaceState(null, '', location.pathname);
-   let sess = null;
-   try { sess = JSON.parse(sessionStorage.getItem('omw-mp-session') || 'null'); } catch(e){}
-   if (!sess || !sess.gwHttp || !sess.lockerToken) return; // no session, the normal launcher shows
+   const sess = mpSession();
+   if (!sess || !sess.lockerToken) return; // no session, the normal launcher shows
    const ch = await runCharacterSelect(sess.gwHttp, sess.lockerToken).catch(() => null);
    if (!ch) return; // backed out to the launcher
    try {
@@ -1173,7 +1187,8 @@
    // Persist the session for the Exit -> character-select re-entry (#characters): the locker
    // token is the SSO proof; /auth/ticket mints fresh boot tickets from it. sessionStorage =
    // this tab only, gone when the tab closes.
-   try { sessionStorage.setItem('omw-mp-session', JSON.stringify({ gwHttp, gwUrl, account, lockerToken })); } catch(e){}
+   // Deliberately NOT storing gwHttp/gwUrl — see mpSession(). They are derived on read.
+   try { sessionStorage.setItem('omw-mp-session', JSON.stringify({ account, lockerToken })); } catch(e){}
    // First-login onboarding: pick a public username (and a contact email if we have none) BEFORE
    // entering any world, so a new player is never shown by their real name. Skipped once set.
    try {
@@ -1189,6 +1204,9 @@
        try {
          const cur = JSON.parse(sessionStorage.getItem('omw-mp-session') || '{}');
          cur.username = st.username;
+         // Never write an address back: a read-modify-write would re-persist the stale
+         // gwHttp/gwUrl of a session an older build wrote, undoing the migration.
+         delete cur.gwHttp; delete cur.gwUrl;
          sessionStorage.setItem('omw-mp-session', JSON.stringify(cur));
        } catch(e){}
      }
