@@ -267,6 +267,11 @@ export class AccountStore {
   // never overwritten. Flushed now: it is once per character and the tile shows it immediately.
   nameCharacter(account: Account, charId: string, name: string): void {
     const char = account.characters?.find((c) => c.id === charId);
+    // Never accept a placeholder AS the name: the client used to send the session name, which
+    // before chargen is the slot label, so "New character" was written in as though the player
+    // had chosen it — and then this guard refused every later correction, because the slot no
+    // longer looked like a placeholder. Reject the placeholder on the way in as well as out.
+    if (PLACEHOLDER_NAMES.has(name.trim().toLowerCase())) return;
     if (!char || char.name === name || !PLACEHOLDER_NAMES.has(char.name.toLowerCase())) return;
     char.name = name;
     this.dirty.add(account.name.toLowerCase());
