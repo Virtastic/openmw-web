@@ -25,6 +25,7 @@ export type WorldMode = 'public' | 'private' | 'party';
 
 export interface WorldSettings {
   worldsDir: string; // per-world data dirs live under here
+  gatewayPort: number; // where spawned worlds reach the directory (--gateway)
   serverEntry: string; // path to the world server entry (dist/server.mjs)
   nodeBin: string;
   basePort: number;
@@ -158,7 +159,10 @@ export class WorldSupervisor {
       log('error', 'world.mkdir_failed', { id, error: String(err) });
       return null;
     }
-    const args = [s.serverEntry, '--data', dataDir, '--shared', s.sharedDir, '--port', String(port)];
+    // Tell the world where its gateway is. Without this the world browser is off and no
+    // client can ever discover — or switch to — another world.
+    const args = [s.serverEntry, '--data', dataDir, '--shared', s.sharedDir, '--port', String(port),
+      '--gateway', `http://127.0.0.1:${this.deps.settings.gatewayPort}`];
     let child: ChildProcess;
     try {
       // 'inherit': a world's logs flow through the gateway's stdout so `docker logs` shows every
@@ -222,6 +226,14 @@ export class WorldSupervisor {
       }
     }));
     this.sweep();
+    // RESURRECT A DEAD PUBLIC WORLD. startPublic() runs once at boot and the exit handler only
+    // records the crash, so a public world that died stayed dead until the whole gateway was
+    // restarted — the exact "quietly vanishing" failure the guard above is written to prevent,
+    // just reached by a different route. ensure() is idempotent and honours the restart
+    // backoff, so a world that keeps dying backs off instead of spinning.
+    for (const id of this.deps.settings.publicWorlds) {
+      if (!this.worlds.has(id)) this.ensure(id, 'public');
+    }
   }
 
   // A fresh world nobody has reached yet gets this long before the reaper touches it. A first-play

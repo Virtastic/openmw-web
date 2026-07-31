@@ -37,11 +37,28 @@ export function socketRttMs(ws: WebSocket): number | undefined {
   return rttState.get(ws)?.rttMs;
 }
 
+// Set by the gateway when it splices a client through to a world (gateway/directory.ts). The
+// gateway strips any client-supplied copy before stamping its own.
+export const CLIENT_IP_HEADER = 'x-omw-client-ip';
+
+const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
+
 export function clientIp(req: IncomingMessage): string {
+  const peer = req.socket.remoteAddress ?? 'unknown';
+  // TRUSTED ONLY FROM LOOPBACK. After the gateway's splice a world sees every client as
+  // 127.0.0.1, which silently turned per-IP connection limits into whole-world limits and
+  // stopped IP bans matching real addresses. The loopback check is the trust boundary: a
+  // remote client cannot reach a world except through the gateway, and the gateway drops any
+  // copy of this header the client sent.
+  if (LOOPBACK.has(peer)) {
+    const fwd = req.headers[CLIENT_IP_HEADER];
+    const v = Array.isArray(fwd) ? fwd[0] : fwd;
+    if (typeof v === 'string' && v.length > 0) return v;
+  }
   const cf = req.headers['cf-connecting-ip'];
   if (typeof cf === 'string' && cf.length > 0) return cf;
   if (Array.isArray(cf) && cf[0]) return cf[0];
-  return req.socket.remoteAddress ?? 'unknown';
+  return peer;
 }
 
 export function attachWss(

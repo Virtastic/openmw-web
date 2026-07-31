@@ -114,6 +114,8 @@ export class Social {
   private readonly tuning: SocialTuning;
   // acct -> timer that will announce them offline once the grace window lapses.
   private readonly offlineTimers = new Map<AccountKey, NodeJS.Timeout>();
+  // Latched by stop(). Guards against re-arming timers while the server is tearing down.
+  private stopped = false;
   // Invites live in the SHARED STORE (socialstore `invite`), not here. They used to be an
   // in-memory Map, which meant an invite could only ever reach someone already connected to
   // the SAME world process — so "invite your friend" worked exactly when you did not need
@@ -238,6 +240,13 @@ export class Social {
 
   onLeave(player: Player): void {
     const acct = player.accountKey;
+    // Shutdown closes the sockets, so onLeave fires for every connected player DURING
+    // teardown — after stop() has already drained the map. Scheduling here would arm a
+    // timer nothing will ever clear, and presenceGraceMs later it wakes up and calls
+    // notifyFriends against a closed SQLite handle ("database is not open", uncaught).
+    // unref() hides it in production (the process exits first) but under test the process
+    // stays alive and it kills whatever test is running.
+    if (this.stopped) return;
     // Invites deliberately SURVIVE a disconnect now: they live in the shared store so they
     // can reach another world, and binning them on logout would defeat that.
     // Party membership survives a brief drop, exactly like presence: being dropped from
@@ -262,7 +271,10 @@ export class Social {
   }
 
   // Test/shutdown hook: pending timers would otherwise hold a process open.
+  // Latches `stopped` so a socket closing later in teardown cannot arm a fresh timer —
+  // clearing the map is not enough on its own, since onLeave still runs after this.
   stop(): void {
+    this.stopped = true;
     for (const t of this.offlineTimers.values()) clearTimeout(t);
     this.offlineTimers.clear();
   }

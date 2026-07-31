@@ -20,6 +20,9 @@
 
 import { createServer, type Server, type ServerResponse } from 'node:http';
 import { connect as netConnect } from 'node:net';
+import { clientIp, CLIENT_IP_HEADER } from '../net/ws';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { log } from '../log';
 import type { WorldSupervisor, WorldMode } from './worlds';
 import type { HttpRoute } from '../net/http';
@@ -32,10 +35,19 @@ export interface DirectoryDeps {
   // production the worlds sit behind the same public name on different ports/paths.
   publicHost: string;
   maxPerOwner: number;
+  // Where world data dirs live. Used to revive a world that exists on disk but is not
+  // running: the directory's EXISTENCE is the proof it is a real world, which is what stops
+  // a dialled /w/priv-anything from spawning one.
+  worldsDir: string;
   // F3 front door: SSO (/auth/*) and locker (/locker/*). Tried before the /worlds routes so the
   // browser has a single public endpoint for sign-in, upload, and world selection. Optional so
   // a bare directory (no SSO/locker) still runs.
   frontDoor?: HttpRoute;
+  // Bearer token -> account key. POST /worlds spawns an OS process, so it must know WHO is
+  // asking: the account used to come from the request body, so anyone could spawn worlds
+  // under fabricated names until the global maxWorlds cap was gone, while every per-owner
+  // limit read as satisfied. Absent = no verifier wired, and world creation is refused.
+  resolveAccount?: (authorizationHeader: string) => string | undefined;
 }
 
 export interface RunningDirectory {
@@ -117,8 +129,12 @@ export async function startDirectory(deps: DirectoryDeps): Promise<RunningDirect
           json(res, 400, { error: 'mode must be private or party' });
           return;
         }
-        const account = parsed.account;
-        if (!account) { json(res, 400, { error: 'account required' }); return; }
+        // The SESSION says who this is, never the message. A client-supplied account here
+        // made the per-owner cap decorative: fabricate a new name per request and one caller
+        // exhausts every world slot on the host, each holding its slot for the full startup
+        // grace, locking real players out with 503s.
+        const account = deps.resolveAccount?.(req.headers.authorization ?? '');
+        if (!account) { json(res, 401, { error: 'sign_in_first' }); return; }
         const id = parsed.id && /^[a-z0-9][a-z0-9_-]{0,63}$/i.test(parsed.id) ? parsed.id : undefined;
         if (!id) { json(res, 400, { error: 'id must be [a-z0-9_-], 1-64 chars' }); return; }
 
@@ -166,7 +182,16 @@ export async function startDirectory(deps: DirectoryDeps): Promise<RunningDirect
   server.on('upgrade', (req, socket, head) => {
     const path = (req.url ?? '').split('?')[0] ?? '';
     const m = /^\/w\/([A-Za-z0-9][A-Za-z0-9_-]{0,63})$/.exec(path);
-    const world = m ? deps.worlds.get(m[1]!) : undefined;
+    let world = m ? deps.worlds.get(m[1]!) : undefined;
+    // RESTART A KNOWN WORLD ON DIAL. A private world is only started when the launcher asks
+    // for it, so after a gateway restart (or an idle reap) a client reconnecting to its own
+    // world found nothing here, got a 502, and retried forever — the world sat on disk the
+    // whole time. The world id encodes its owner and the world itself still authorises the
+    // arrival (mayJoinWorld), so bringing it back costs nothing a launcher request would not.
+    if (!world && m && /^priv-/.test(m[1]!) && existsSync(join(deps.worldsDir, m[1]!))) {
+      world = deps.worlds.ensure(m[1]!, 'private') ?? undefined;
+      if (world) log('info', 'world.revived_on_dial', { id: m[1] });
+    }
     if (!world || !world.up) {
       // A world that is down must fail the handshake, not hang: the client's own retry ladder
       // is what recovers, and it can only run if the socket closes.
@@ -174,11 +199,21 @@ export async function startDirectory(deps: DirectoryDeps): Promise<RunningDirect
       return;
     }
     const upstream = netConnect({ host: '127.0.0.1', port: world.port }, () => {
-      // Replay the handshake byte for byte, including anything already buffered in `head`.
+      // Replay the handshake byte for byte, including anything already buffered in `head` —
+      // but STAMP the real client address. After this splice the world sees a loopback socket,
+      // so without it every client behind the gateway shares one address: maxConnsPerIp
+      // becomes a whole-world cap (three sockets from one attacker locks everyone out) and IP
+      // bans stop matching anyone. cf-connecting-ip only exists on Cloudflare; this works for
+      // any front end.
+      //
+      // A client-supplied copy is DROPPED first, or the header would be a trivial way to forge
+      // an address and evade both the cap and a ban. The world only trusts it from loopback.
       const headers = Object.entries(req.headers)
+        .filter(([k]) => k.toLowerCase() !== CLIENT_IP_HEADER)
         .map(([k, v]) => (Array.isArray(v) ? v.map((x) => `${k}: ${x}`).join('\r\n') : `${k}: ${v}`))
         .join('\r\n');
-      upstream.write(`GET /ws HTTP/1.1\r\n${headers}\r\n\r\n`);
+      const realIp = clientIp(req);
+      upstream.write(`GET /ws HTTP/1.1\r\n${headers}\r\n${CLIENT_IP_HEADER}: ${realIp}\r\n\r\n`);
       if (head?.length) upstream.write(head);
       upstream.pipe(socket);
       socket.pipe(upstream);

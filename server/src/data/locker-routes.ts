@@ -27,6 +27,11 @@ export interface LockerSessions {
 export interface LockerRouteDeps {
   locker: Locker;
   sessions: LockerSessions;
+  // The content files the server's own worlds actually run, in load order. The launcher must
+  // enforce THIS, not its own idea of what Morrowind needs: the local-folder path treated the
+  // expansions as optional, so a base-game player was let all the way into character creation
+  // and only refused when they reached the shared world, which is far too late to be useful.
+  requiredContent?: () => string[];
 }
 
 function json(res: ServerResponse, code: number, body: unknown): void {
@@ -113,7 +118,12 @@ export function lockerRoutes(deps: LockerRouteDeps) {
 
       // The upload wizard's checklist: which files the server expects, required vs optional.
       if (req.method === 'GET' && url.pathname === '/locker/needed') {
-        json(res, 200, { files: deps.locker.requiredManifest() });
+        json(res, 200, {
+          files: deps.locker.requiredManifest(),
+          // What the world runs. A client missing any of these cannot join it, so the
+          // launcher refuses to start rather than letting them find out three screens later.
+          content: deps.requiredContent?.() ?? [],
+        });
         return true;
       }
 

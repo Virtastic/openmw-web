@@ -31,6 +31,19 @@ const { values } = parseArgs({
   },
 });
 
+// A bad --max-worlds must not silently become NaN and disable the cap that stops one box
+// spawning unbounded processes: Number('lots') is NaN, and every `>= maxWorlds` comparison
+// against NaN is false.
+function positiveInt(v: string | undefined, dflt: number, flag: string): number {
+  if (v === undefined) return dflt;
+  const n = Number(v);
+  if (!Number.isInteger(n) || n < 1) {
+    console.error(`invalid --${flag} ${v}: expected a positive integer`);
+    process.exit(2);
+  }
+  return n;
+}
+
 const worldsDir = resolve(values.worlds ?? './worlds');
 // Defaults to a sibling of the world dirs, so the common case needs no flag and shared
 // state never lands INSIDE a world dir (where reaping that world could take it away).
@@ -54,11 +67,14 @@ const worlds = new WorldSupervisor({
     serverEntry,
     nodeBin: process.execPath,
     basePort: Number(values['base-port'] ?? 9000),
-    // Each world is an OpenMW server process plus its sim peer. 8 was a dev default and is
-    // the real scaling ceiling: one is the shared world, so it left room for only seven
-    // people playing Solo at once. Raise with --max-worlds once the per-instance memory has
-    // actually been measured on the target box.
-    maxWorlds: Number(values['max-worlds'] ?? 32),
+    gatewayPort: port,
+    // WORLDS, each of which is a Node process PLUS up to [simPeer].maxPeers sim peers at
+    // ~450 MB each. 32 is a capacity number nobody has measured against a real box: at the
+    // current peer cost that is tens of gigabytes if every world fills its clusters. It is set
+    // where it is because one world is the shared one and the rest are per-character solo
+    // worlds, so a low cap locks players out of playing alone — but treat it as a placeholder
+    // and lower it to what the host actually has until the peer gets cheaper.
+    maxWorlds: positiveInt(values['max-worlds'], 32, 'max-worlds'),
     idleReapMs: 120_000,
     startTimeoutMs: 120_000,
     restartBackoffMs: 15_000,
@@ -77,9 +93,10 @@ const frontDoor = await buildFrontDoor(sharedDir, (owner, charId) => {
   worlds.discardForCharacter(owner, charId);
 });
 const directory = await startDirectory({
-  worlds, host: '0.0.0.0', port, publicHost,
+  worlds, host: '0.0.0.0', port, publicHost, worldsDir,
   maxPerOwner: Number(values['max-per-owner'] ?? 2),
   frontDoor: frontDoor.route,
+  resolveAccount: frontDoor.resolveAccount,
 });
 
 log('info', 'gateway.start', {

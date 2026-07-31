@@ -14,6 +14,7 @@
 // — the ticket grants exactly one auth attempt there, nothing more.
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { detectGameData, gameDataDir } from '../core/gamedata';
 import { loadConfig } from '../config';
 import { AccountStore, validEmail, validAccountName, MAX_CHARACTERS } from '../core/accounts';
 import { PlayerStore } from '../persist/playerstore';
@@ -217,6 +218,11 @@ export interface FrontDoor {
   // A single HttpRoute that handles /auth/* and /locker/*. Returns true when it claimed the
   // request; the directory handles everything else (/worlds, /healthz).
   route: HttpRoute;
+  // Bearer token -> account key, for routes OUTSIDE this door that still must know who is
+  // asking. POST /worlds is the one that matters: it used to take the account from the
+  // request BODY, so anyone could spawn worlds under fabricated names and exhaust the
+  // global cap while every per-owner limit read as satisfied.
+  resolveAccount(authorizationHeader: string): string | undefined;
 }
 
 // All state lives in the shared dir; the same files the world processes read and write.
@@ -255,7 +261,14 @@ export async function buildFrontDoor(
   // `also` is tried after the SSO routes: locker (/locker/*), profile (/auth/profile), then
   // characters (/auth/characters). Character stats live in the SHARED PlayerStore.
   const players = new PlayerStore(sharedDir);
-  const locker2 = lockerRoutes({ locker, sessions: lockerSessions });
+  // The launcher enforces the world's content requirement BEFORE the player starts, so it has
+  // to be told what that is. Same detection the sim peer's config is generated from, so the
+  // checklist and the world can never disagree.
+  const worldContent = detectGameData(gameDataDir(sharedDir));
+  const locker2 = lockerRoutes({
+    locker, sessions: lockerSessions,
+    requiredContent: () => (worldContent.ok ? worldContent.contentFiles : []),
+  });
   const profile = profileRoutes(accounts, lockerSessions);
   const chars = characterRoutes(accounts, lockerSessions, players, onCharacterDeleted);
   const reticket = ticketRoutes(accounts, lockerSessions, tickets);
@@ -267,5 +280,9 @@ export async function buildFrontDoor(
       limiter: new IpRateLimiter(config.limits.loginPerMinPerIp) },
     also,
   );
-  return { route };
+  return {
+    route,
+    resolveAccount: (auth: string) =>
+      lockerSessions.resolve(auth.startsWith('Bearer ') ? auth.slice(7) : ''),
+  };
 }

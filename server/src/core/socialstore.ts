@@ -126,7 +126,28 @@ export class SocialStore {
     `);
   }
 
+  // CLOSED IS A STATE, NOT A CLIFF. Social handlers await network work mid-flight (PartyTravel
+  // waits on the gateway's world list with a 3s timeout), so a shutdown that begins during one
+  // of those resumes into a synchronous write against a closed handle — which throws from a
+  // detached promise nobody is awaiting. There are 29 write sites; guarding the STORE is one
+  // change instead of 29, and "the server is going away" is the store's business, not each
+  // caller's.
+  private closed = false;
+
+  // Every mutation routes through here, so the closed check exists once.
+  private write(sql: string): { run: (...a: unknown[]) => unknown } {
+    if (this.closed) return { run: () => undefined };
+    return this.db.prepare(sql) as unknown as { run: (...a: unknown[]) => unknown };
+  }
+
+  /** True once close() has run. Writes after this point are dropped, not thrown. */
+  get isClosed(): boolean {
+    return this.closed;
+  }
+
   close(): void {
+    if (this.closed) return;
+    this.closed = true;
     this.db.close();
   }
 
@@ -152,12 +173,12 @@ export class SocialStore {
   addFriend(x: AccountKey, y: AccountKey, now: number): void {
     if (x === y) return; // self-friendship is meaningless and would violate CHECK(a < b)
     const [a, b] = SocialStore.pair(x, y);
-    this.db.prepare('INSERT OR IGNORE INTO friend (a, b, since) VALUES (?, ?, ?)').run(a, b, now);
+    this.write('INSERT OR IGNORE INTO friend (a, b, since) VALUES (?, ?, ?)').run(a, b, now);
   }
 
   removeFriend(x: AccountKey, y: AccountKey): void {
     const [a, b] = SocialStore.pair(x, y);
-    this.db.prepare('DELETE FROM friend WHERE a = ? AND b = ?').run(a, b);
+    this.write('DELETE FROM friend WHERE a = ? AND b = ?').run(a, b);
   }
 
   // ------------------------------------------------------------------- blocks
@@ -165,12 +186,12 @@ export class SocialStore {
   // Directional by nature: A blocking B is not B blocking A.
   addBlock(blocker: AccountKey, blocked: AccountKey, now: number): void {
     if (blocker === blocked) return;
-    this.db.prepare('INSERT OR IGNORE INTO block (blocker, blocked, since) VALUES (?, ?, ?)')
+    this.write('INSERT OR IGNORE INTO block (blocker, blocked, since) VALUES (?, ?, ?)')
       .run(blocker, blocked, now);
   }
 
   removeBlock(blocker: AccountKey, blocked: AccountKey): void {
-    this.db.prepare('DELETE FROM block WHERE blocker = ? AND blocked = ?').run(blocker, blocked);
+    this.write('DELETE FROM block WHERE blocker = ? AND blocked = ?').run(blocker, blocked);
   }
 
   // EITHER direction counts. A block must suppress interaction both ways, or the blocked
@@ -204,7 +225,7 @@ export class SocialStore {
   }
 
   removeRequest(from: AccountKey, to: AccountKey): void {
-    this.db.prepare('DELETE FROM friend_request WHERE fromAcct = ? AND toAcct = ?').run(from, to);
+    this.write('DELETE FROM friend_request WHERE fromAcct = ? AND toAcct = ?').run(from, to);
   }
 
   pendingFor(to: AccountKey, now: number): AccountKey[] {
@@ -245,7 +266,7 @@ export class SocialStore {
   }
 
   removeInvite(from: AccountKey, to: AccountKey): void {
-    this.db.prepare('DELETE FROM invite WHERE fromAcct = ? AND toAcct = ?').run(from, to);
+    this.write('DELETE FROM invite WHERE fromAcct = ? AND toAcct = ?').run(from, to);
   }
 
   // ------------------------------------------------------------ presence mode
@@ -257,7 +278,7 @@ export class SocialStore {
   }
 
   setPresenceMode(account: AccountKey, mode: string): void {
-    this.db.prepare('INSERT OR REPLACE INTO presence_pref (account, mode) VALUES (?, ?)').run(account, mode);
+    this.write('INSERT OR REPLACE INTO presence_pref (account, mode) VALUES (?, ?)').run(account, mode);
   }
 
   // ------------------------------------------------------------ availability
@@ -269,7 +290,7 @@ export class SocialStore {
   }
 
   setAvailability(account: AccountKey, state: string): void {
-    this.db.prepare('INSERT OR REPLACE INTO availability_pref (account, state) VALUES (?, ?)').run(account, state);
+    this.write('INSERT OR REPLACE INTO availability_pref (account, state) VALUES (?, ?)').run(account, state);
   }
 
   // --------------------------------------------------------------------- mutes
@@ -278,11 +299,11 @@ export class SocialStore {
 
   addMute(muter: AccountKey, muted: AccountKey, now: number): void {
     if (muter === muted) return;
-    this.db.prepare('INSERT OR IGNORE INTO mute (muter, muted, since) VALUES (?, ?, ?)').run(muter, muted, now);
+    this.write('INSERT OR IGNORE INTO mute (muter, muted, since) VALUES (?, ?, ?)').run(muter, muted, now);
   }
 
   removeMute(muter: AccountKey, muted: AccountKey): void {
-    this.db.prepare('DELETE FROM mute WHERE muter = ? AND muted = ?').run(muter, muted);
+    this.write('DELETE FROM mute WHERE muter = ? AND muted = ?').run(muter, muted);
   }
 
   // True when `listener` should not hear/see `speaker`: either they muted them, or a
@@ -301,8 +322,8 @@ export class SocialStore {
   // -------------------------------------------------------------------- party
 
   partyCreate(key: string, leader: AccountKey, now: number): void {
-    this.db.prepare('INSERT OR REPLACE INTO party (key, leader, updated_at) VALUES (?, ?, ?)').run(key, leader, now);
-    this.db.prepare('INSERT OR REPLACE INTO party_member (account, party) VALUES (?, ?)').run(leader, key);
+    this.write('INSERT OR REPLACE INTO party (key, leader, updated_at) VALUES (?, ?, ?)').run(key, leader, now);
+    this.write('INSERT OR REPLACE INTO party_member (account, party) VALUES (?, ?)').run(leader, key);
   }
 
   partyOfAccount(account: AccountKey): { key: string; leader: AccountKey } | undefined {
@@ -318,21 +339,21 @@ export class SocialStore {
   }
 
   partyAddMember(key: string, account: AccountKey, now: number): void {
-    this.db.prepare('INSERT OR REPLACE INTO party_member (account, party) VALUES (?, ?)').run(account, key);
+    this.write('INSERT OR REPLACE INTO party_member (account, party) VALUES (?, ?)').run(account, key);
     this.partyTouch(key, now);
   }
 
   partyRemoveMember(account: AccountKey): void {
-    this.db.prepare('DELETE FROM party_member WHERE account = ?').run(account);
+    this.write('DELETE FROM party_member WHERE account = ?').run(account);
   }
 
   partySetLeader(key: string, leader: AccountKey, now: number): void {
-    this.db.prepare('UPDATE party SET leader = ?, updated_at = ? WHERE key = ?').run(leader, now, key);
+    this.write('UPDATE party SET leader = ?, updated_at = ? WHERE key = ?').run(leader, now, key);
   }
 
   partyDissolve(key: string): void {
     // party_member rows go via ON DELETE CASCADE.
-    this.db.prepare('DELETE FROM party WHERE key = ?').run(key);
+    this.write('DELETE FROM party WHERE key = ?').run(key);
   }
 
   partySetting(key: string, name: string): string | undefined {
@@ -342,11 +363,11 @@ export class SocialStore {
   }
 
   setPartySetting(key: string, name: string, value: string): void {
-    this.db.prepare('INSERT OR REPLACE INTO party_setting (party, name, value) VALUES (?, ?, ?)').run(key, name, value);
+    this.write('INSERT OR REPLACE INTO party_setting (party, name, value) VALUES (?, ?, ?)').run(key, name, value);
   }
 
   partyTouch(key: string, now: number): void {
-    this.db.prepare('UPDATE party SET updated_at = ? WHERE key = ?').run(now, key);
+    this.write('UPDATE party SET updated_at = ? WHERE key = ?').run(now, key);
   }
 
   // Dissolve parties nobody has touched in ages — the guard against a restart resurrecting
@@ -361,10 +382,10 @@ export class SocialStore {
     const count = (t: string): number =>
       (this.db.prepare(`SELECT COUNT(*) AS n FROM ${t}`).get() as { n: number }).n;
     const before = count('friend_request') + count('invite');
-    this.db.prepare('DELETE FROM friend_request WHERE expires <= ?').run(now);
+    this.write('DELETE FROM friend_request WHERE expires <= ?').run(now);
     // Invites expire on the same sweep. Left out, a dead invite sits in the mailbox and is
     // re-delivered on every join — expiry-on-read hides it, but it never goes away.
-    this.db.prepare('DELETE FROM invite WHERE expires <= ?').run(now);
+    this.write('DELETE FROM invite WHERE expires <= ?').run(now);
     return before - (count('friend_request') + count('invite'));
   }
 }

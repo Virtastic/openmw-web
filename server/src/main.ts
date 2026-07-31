@@ -17,6 +17,11 @@ const { values } = parseArgs({
     shared: { type: 'string' },
     port: { type: 'string' },
     'delete-account': { type: 'string' },
+    // Where this world's clients can reach the world directory. The GATEWAY passes this when
+    // it spawns a world: a spawned world has no config.toml of its own, so gateway.url stayed
+    // "" and the in-game world browser was disabled — clicking Public asked for the world
+    // list, got no_gateway, and silently never switched.
+    gateway: { type: 'string' },
   },
 });
 
@@ -50,7 +55,11 @@ if (eraseTarget !== undefined) {
 // --shared: accounts, identities, friends and bans live here instead of in the world's own
 // data dir, so several worlds share one identity. Omitted = the data dir itself, which is
 // exactly the previous behaviour for anyone running a single world.
-const server = await startServer({ dataDir, port, ...(values.shared ? { sharedDir: values.shared } : {}) });
+const server = await startServer({
+  dataDir, port,
+  ...(values.shared ? { sharedDir: values.shared } : {}),
+  ...(values.gateway ? { configOverride: { gateway: { url: values.gateway } } } : {}),
+});
 
 let shuttingDown = false;
 async function shutdown(signal: string): Promise<void> {
