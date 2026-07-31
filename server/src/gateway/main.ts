@@ -48,6 +48,9 @@ const worldsDir = resolve(values.worlds ?? './worlds');
 // Defaults to a sibling of the world dirs, so the common case needs no flag and shared
 // state never lands INSIDE a world dir (where reaping that world could take it away).
 const sharedDir = resolve(values.shared ?? join(worldsDir, '..', 'shared'));
+// One config drives the gateway and every world it spawns; read it once, here, so the
+// capacity numbers below are derived from it rather than from parallel defaults.
+const config = loadConfig(sharedDir, undefined, sharedDir);
 const port = Number(values.port ?? 8080);
 // Default to the sibling server bundle, so a normal `dist/` layout needs no flag.
 const serverEntry = resolve(values['server-entry']
@@ -67,13 +70,17 @@ const worlds = new WorldSupervisor({
     nodeBin: process.execPath,
     basePort: Number(values['base-port'] ?? 9000),
     gatewayPort: port,
-    // WORLDS, each of which is a Node process PLUS up to [simPeer].maxPeers sim peers at
-    // ~450 MB each. 32 is a capacity number nobody has measured against a real box: at the
-    // current peer cost that is tens of gigabytes if every world fills its clusters. It is set
-    // where it is because one world is the shared one and the rest are per-character solo
-    // worlds, so a low cap locks players out of playing alone — but treat it as a placeholder
-    // and lower it to what the host actually has until the peer gets cheaper.
-    maxWorlds: positiveInt(values['max-worlds'], 32, 'max-worlds'),
+    // One world per player the server can hold, matching maxPlayers and maxPerOwner. A solo
+    // world is simply where a player is when they are not in a shared one, so a cap below
+    // maxPlayers means a server advertising N seats cannot seat N people playing alone — the
+    // previous 32 locked out the 33rd.
+    //
+    // This is NOT the memory governor, which is the mistake the old 32 was defending against:
+    // sim peers are capped SEPARATELY by [simPeer].maxPeers and are spawned on demand, not
+    // pinned one-per-world, so worlds do not multiply the ~450 MB peer cost. A world that
+    // nobody is in is not even running — worlds start on dial and are idle-reaped. Raise or
+    // lower [simPeer].maxPeers to size the host, not this.
+    maxWorlds: positiveInt(values['max-worlds'], config.server.maxPlayers, 'max-worlds'),
     idleReapMs: 120_000,
     startTimeoutMs: 120_000,
     restartBackoffMs: 15_000,
@@ -98,7 +105,7 @@ const directory = await startDirectory({
   // a cap below maxPlayers means a server advertising N seats cannot actually seat N people.
   // It was a standalone default of 2, which locked an account out after two characters and
   // read as an unexplained 429 mid-sign-in. --max-per-owner still overrides for a small host.
-  maxPerOwner: Number(values['max-per-owner'] ?? loadConfig(sharedDir, undefined, sharedDir).server.maxPlayers),
+  maxPerOwner: Number(values['max-per-owner'] ?? config.server.maxPlayers),
   frontDoor: frontDoor.route,
   resolveAccount: frontDoor.resolveAccount,
 });
