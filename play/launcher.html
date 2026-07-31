@@ -1093,8 +1093,13 @@
      // inventory) was always per-character; only the world was not. doc.positions is keyed by
      // world id, so per-character worlds are what that was already built for.
      privId = 'priv-' + publicId + '-' + String(chosenChar.id).slice(-8);
-     const r = await fetch(sess.gwHttp + '/worlds', { method:'POST', headers:{'content-type':'application/json'},
-       body: JSON.stringify({ mode:'private', id: privId, account: sess.account }) });
+     // The locker token is what identifies us: the server resolves the account from this
+     // header and IGNORES any account in the body, because a body-supplied name let one
+     // caller fabricate owners and exhaust every world slot. Sending it in the body only,
+     // as this did, is an unauthenticated request — the server answers 401 sign_in_first.
+     const r = await fetch(sess.gwHttp + '/worlds', { method:'POST',
+       headers:{ 'content-type':'application/json', authorization: 'Bearer ' + sess.lockerToken },
+       body: JSON.stringify({ mode:'private', id: privId }) });
      world = await r.json();
      if (!r.ok || !world.wsPath) throw new Error(world.error || 'the server could not open your world');
    } catch(e){ launcherError('Could not open your world', (e && e.message || e) + '. The multiplayer server may be unreachable, please try again in a moment.'); return; }
