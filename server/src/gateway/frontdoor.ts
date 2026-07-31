@@ -24,6 +24,7 @@ import { IdentityStore, LoginTicketStore, SessionIndex, LockerSessionStore } fro
 import { IpRateLimiter } from '../net/ratelimit';
 import { createAuthRoutes } from '../auth/routes';
 import { Locker, loadVanillaManifest } from '../data/locker';
+import { ensureVanillaManifest } from '../data/vanilla-manifest';
 import { s3FromEnv } from '../data/s3';
 import { lockerRoutes } from '../data/locker-routes';
 import type { HttpRoute } from '../net/http';
@@ -249,6 +250,11 @@ export async function buildFrontDoor(
     maxBytesPerAccount: config.locker.maxBytesPerAccount,
     ...(storage ? { storage } : {}),
   });
+  // Derive the allow-list from the operator's own game data when they have not supplied one.
+  // Without this the locker accepts nothing, every sign-in ends at "this server has no game
+  // manifest configured yet", and the only clue is a log line reading vanilla:0 — an
+  // operator-only step that nothing prompted for and nothing checked.
+  await ensureVanillaManifest(sharedDir, gameDataDir(sharedDir));
   locker.configureAccepted(await loadVanillaManifest(sharedDir), [], {
     acceptByNameAndSize: config.locker.acceptByNameAndSize,
   });
