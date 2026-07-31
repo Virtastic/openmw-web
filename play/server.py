@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Part of openmw-web.
-import http.server, socketserver, os, re
+import http.server, socketserver, os, re, socket, threading
 
 # Load play/.env (KEY=VALUE, # comments) WITHOUT clobbering real env vars, so the launcher
 # flag can live in a git-ignored file next to this server. Env always wins over .env.
@@ -30,8 +30,97 @@ HOST = os.environ.get('OPENMW_HOST', '127.0.0.1').strip() or '127.0.0.1'
 # data-chooser launcher instead of dropping straight into the game. Off = current behavior.
 LAUNCHER = os.environ.get('OPENMW_LAUNCHER', '').strip().lower() not in ('', '0', 'false', 'no')
 
+# --- Multiplayer gateway, on THIS origin ---------------------------------------------------
+# The game page and the MP server MUST share an origin: index.html refuses to hand its session
+# ticket to a gateway on a different hostname. In production the container's Caddy proxies
+# these paths (deploy/Caddyfile); locally this dev server has to do the same job, or the
+# launcher derives ws://127.0.0.1:8910/ws and finds nothing but a static file server.
+#
+# Relaying raw bytes rather than parsing and rebuilding a response handles plain HTTP and the
+# WebSocket upgrade with ONE code path — and /w/<worldId> is an upgrade, so a response-parsing
+# proxy would need the splice logic anyway.
+MP_UPSTREAM = os.environ.get('OPENMW_MP_UPSTREAM', '127.0.0.1:8080').strip()
+
+def _is_gateway_path(path):
+    p = path.split('?', 1)[0]
+    # /w/<id> is the gameplay socket, /ws is the launcher's origin base + local direct-dial
+    # fallback. /admin, /metrics, /healthz and /status are deliberately NOT forwarded.
+    return (p.startswith(('/w/', '/auth/', '/locker/', '/worlds/'))
+            or p in ('/worlds', '/ws'))
+
+
 class H(http.server.SimpleHTTPRequestHandler):
     protocol_version = 'HTTP/1.1'
+
+    def _relay_to_gateway(self):
+        """Splice this connection to the MP gateway, verbatim in both directions."""
+        host, _, port = MP_UPSTREAM.partition(':')
+        try:
+            up = socket.create_connection((host, int(port or 8080)), timeout=10)
+        except OSError as e:
+            # Match what the real gateway does for a world that is down: fail the handshake
+            # so the client's retry ladder can run, rather than hanging.
+            self.send_error(502, 'multiplayer gateway unreachable at %s (%s)' % (MP_UPSTREAM, e))
+            return
+        self.close_connection = True
+        try:
+            head = '%s %s HTTP/1.1\r\n' % (self.command, self.path)
+            for k, v in self.headers.items():
+                head += '%s: %s\r\n' % (k, v)
+            up.sendall((head + '\r\n').encode('latin-1'))
+            n = int(self.headers.get('Content-Length') or 0)
+            if n:
+                up.sendall(self.rfile.read(n))
+
+            down = self.connection
+
+            def pump(src, dst):
+                try:
+                    while True:
+                        b = src.recv(65536)
+                        if not b:
+                            break
+                        dst.sendall(b)
+                except OSError:
+                    pass
+                finally:
+                    for s in (src, dst):
+                        try:
+                            s.shutdown(socket.SHUT_RDWR)
+                        except OSError:
+                            pass
+
+            t = threading.Thread(target=pump, args=(up, down), daemon=True)
+            t.start()
+            pump(down, up)
+            t.join(timeout=5)
+        finally:
+            try:
+                up.close()
+            except OSError:
+                pass
+
+    # Every verb the gateway is reached with routes through the same relay. POST matters:
+    # creating or joining a private world is POST /worlds.
+    def do_GET(self):
+        if _is_gateway_path(self.path):
+            return self._relay_to_gateway()
+        return super().do_GET()
+
+    def do_HEAD(self):
+        if _is_gateway_path(self.path):
+            return self._relay_to_gateway()
+        return super().do_HEAD()
+
+    def do_POST(self):
+        if _is_gateway_path(self.path):
+            return self._relay_to_gateway()
+        self.send_error(501, 'Unsupported method (POST)')
+
+    def do_OPTIONS(self):
+        if _is_gateway_path(self.path):
+            return self._relay_to_gateway()
+        self.send_error(501, 'Unsupported method (OPTIONS)')
 
     def send_head(self):
         # Launcher gate: ONLY the bare root serves the chooser, which is exactly what the
@@ -111,4 +200,6 @@ class H(http.server.SimpleHTTPRequestHandler):
 socketserver.TCPServer.allow_reuse_address = True
 print(f"openmw-web: serving http://{HOST}:{PORT}/  "
       f"(local only; set OPENMW_HOST=0.0.0.0 to expose on your network)")
+print(f"           multiplayer paths (/w/ /auth/ /locker/ /worlds /ws) -> {MP_UPSTREAM}  "
+      f"(set OPENMW_MP_UPSTREAM to change)")
 socketserver.ThreadingTCPServer((HOST, PORT), H).serve_forever()
