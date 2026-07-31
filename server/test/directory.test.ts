@@ -32,7 +32,7 @@ async function harness(maxWorlds = 5, maxPerOwner = 2) {
   worlds.startPublic();
   await worlds.poll();
   const dir = await startDirectory({
-    worlds, host: '127.0.0.1', port: 0, publicHost: 'mp.example', maxPerOwner, worldsDir: wdir,
+    worlds, host: '127.0.0.1', port: 0, maxPerOwner, worldsDir: wdir,
     // Production resolves this from the locker session. Here the Bearer token IS the account,
     // so the tests exercise the same rule: who is asking comes from the verified session,
     // never from the request body (which anyone could fabricate to exhaust the world cap).
@@ -45,11 +45,15 @@ async function harness(maxWorlds = 5, maxPerOwner = 2) {
 test('directory: public worlds are listed to everyone, with the dialable host', async () => {
   const h = await harness();
   try {
-    const r = await (await fetch(`${h.base}/worlds`)).json() as { worlds: { id: string; host: string; port: number }[] };
+    const r = await (await fetch(`${h.base}/worlds`)).json() as
+      { worlds: (Record<string, unknown> & { id: string; wsPath: string })[] };
     assert.equal(r.worlds.length, 1);
     assert.equal(r.worlds[0]!.id, 'vvardenfell');
-    assert.equal(r.worlds[0]!.host, 'mp.example', 'the client must be told where to dial, not the internal bind host');
-    assert.ok(r.worlds[0]!.port > 0);
+    // The client is told a PATH on its own origin, never an address: an address here was a
+    // configured guess that defaulted to 127.0.0.1 — a remote player's own machine.
+    assert.equal(r.worlds[0]!.wsPath, '/w/vvardenfell');
+    assert.ok(!('host' in r.worlds[0]!), 'must not advertise a host');
+    assert.ok(!('port' in r.worlds[0]!), 'must not leak the world\'s internal port');
   } finally { await h.cleanup(); }
 });
 
@@ -77,9 +81,9 @@ test('directory: creating the same session twice re-joins rather than forking a 
   try {
     const body = JSON.stringify({ id: 'party7', mode: 'party', account: 'alice' });
     const as_alice = { method: 'POST', headers: { authorization: 'Bearer alice' }, body };
-    const a = await (await fetch(`${h.base}/worlds`, as_alice)).json() as { port: number };
-    const b = await (await fetch(`${h.base}/worlds`, as_alice)).json() as { port: number };
-    assert.equal(a.port, b.port, 'a reconnect must land in the SAME world, not a fresh one');
+    const a = await (await fetch(`${h.base}/worlds`, as_alice)).json() as { wsPath: string };
+    const b = await (await fetch(`${h.base}/worlds`, as_alice)).json() as { wsPath: string };
+    assert.equal(a.wsPath, b.wsPath, 'a reconnect must land in the SAME world, not a fresh one');
     assert.equal(h.worlds.running, 2, 'public + the one party world');
   } finally { await h.cleanup(); }
 });

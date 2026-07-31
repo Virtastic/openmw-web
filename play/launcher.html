@@ -1096,18 +1096,15 @@
      const r = await fetch(sess.gwHttp + '/worlds', { method:'POST', headers:{'content-type':'application/json'},
        body: JSON.stringify({ mode:'private', id: privId, account: sess.account }) });
      world = await r.json();
-     if (!r.ok || !world.port) throw new Error(world.error || 'the server could not open your world');
+     if (!r.ok || !world.wsPath) throw new Error(world.error || 'the server could not open your world');
    } catch(e){ launcherError('Could not open your world', (e && e.message || e) + '. The multiplayer server may be unreachable, please try again in a moment.'); return; }
+   // Every world is its own process on an internal port that NOTHING publishes, so the only
+   // reachable address is a path on this origin that the gateway splices through (/w/<id>).
+   // There is deliberately no address fallback: the server used to hand back a host it had
+   // been configured with, defaulting to 127.0.0.1 — which for a remote player is their own
+   // machine. A path we join to our OWN origin cannot be wrong for whoever is holding it.
    const wsProto = /^wss:/.test(sess.gwUrl) ? 'wss' : 'ws';
-   // PREFER the gateway path. Every world is its own process on its own port, and production
-   // publishes none of them — the edge reaches only the gateway — so a world is reachable by
-   // asking the gateway to splice us through (/w/<id>). Dialling world.port directly is the
-   // local-dev fallback, and it is also what used to put a raw ws://host:9001 in the address
-   // bar for players to poke at.
-   const gwAuthority = (function(){ try { return new URL(sess.gwUrl).host; } catch(e){ return null; } })();
-   const worldWs = (world.wsPath && gwAuthority)
-     ? wsProto + '://' + gwAuthority + world.wsPath
-     : wsProto + '://' + world.host + ':' + world.port + '/ws';
+   const worldWs = wsProto + '://' + location.host + world.wsPath;
    // EVERYTHING rides in the fragment now, mp and locker included. Fragments are not logged,
    // cached or sent as a Referer, and they do not sit in the address bar inviting a player to
    // retype the world address. The ticket is single-use and the server authorises every

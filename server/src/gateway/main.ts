@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
 // F3 entry point: run the world supervisor + directory.
 //
-//   node dist/gateway.mjs --worlds ./worlds --port 8080 --public-host mp.example
+//   node dist/gateway.mjs --worlds ./worlds --port 8080
 //
 // Separate from main.ts on purpose. A single world server must remain runnable on its own —
 // that is what a self-hoster runs, what every test boots, and what the browser gate drives.
@@ -21,7 +21,6 @@ const { values } = parseArgs({
   options: {
     worlds: { type: 'string' },
     port: { type: 'string' },
-    'public-host': { type: 'string' },
     'base-port': { type: 'string' },
     'max-worlds': { type: 'string' },
     'max-per-owner': { type: 'string' },
@@ -49,7 +48,6 @@ const worldsDir = resolve(values.worlds ?? './worlds');
 // state never lands INSIDE a world dir (where reaping that world could take it away).
 const sharedDir = resolve(values.shared ?? join(worldsDir, '..', 'shared'));
 const port = Number(values.port ?? 8080);
-const publicHost = values['public-host'] ?? '127.0.0.1';
 // Default to the sibling server bundle, so a normal `dist/` layout needs no flag.
 const serverEntry = resolve(values['server-entry']
   ?? join(dirname(fileURLToPath(import.meta.url)), 'server.mjs'));
@@ -93,14 +91,14 @@ const frontDoor = await buildFrontDoor(sharedDir, (owner, charId) => {
   worlds.discardForCharacter(owner, charId);
 });
 const directory = await startDirectory({
-  worlds, host: '0.0.0.0', port, publicHost, worldsDir,
+  worlds, host: '0.0.0.0', port, worldsDir,
   maxPerOwner: Number(values['max-per-owner'] ?? 2),
   frontDoor: frontDoor.route,
   resolveAccount: frontDoor.resolveAccount,
 });
 
 log('info', 'gateway.start', {
-  port: directory.port, worldsDir, sharedDir, publicHost, serverEntry,
+  port: directory.port, worldsDir, sharedDir, serverEntry,
 });
 
 let shuttingDown = false;

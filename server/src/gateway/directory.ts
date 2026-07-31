@@ -31,9 +31,6 @@ export interface DirectoryDeps {
   worlds: WorldSupervisor;
   host: string;
   port: number;
-  // The host clients should dial for a world. Not necessarily this process's host: in
-  // production the worlds sit behind the same public name on different ports/paths.
-  publicHost: string;
   maxPerOwner: number;
   // Where world data dirs live. Used to revive a world that exists on disk but is not
   // running: the directory's EXISTENCE is the proof it is a real world, which is what stops
@@ -62,10 +59,15 @@ function json(res: ServerResponse, code: number, body: unknown): void {
 }
 
 export async function startDirectory(deps: DirectoryDeps): Promise<RunningDirectory> {
-  // Clients prefer wsPath and dial it on THIS origin, so a world needs no published port.
-  // host/port stay in the payload for a direct local connection (and older clients).
-  const pub = <T extends { id: string }>(w: T): T & { host: string; wsPath: string } =>
-    ({ ...w, host: deps.publicHost, wsPath: `/w/${w.id}` });
+  // Clients dial wsPath on THIS origin — the only address they can reach, since a world's
+  // port is internal and never published. So the projection deliberately does NOT carry an
+  // address: `host` used to be a configured guess that defaulted to 127.0.0.1, which is a
+  // remote player's OWN machine, and `port` advertised an internal port to everyone.
+  // Nothing to configure, nothing to go stale, nothing leaked.
+  const pub = <T extends { id: string; port: number }>(w: T): Omit<T, 'port'> & { wsPath: string } => {
+    const { port: _internalPort, ...rest } = w;
+    return { ...rest, wsPath: `/w/${w.id}` };
+  };
 
   const server: Server = createServer((req, res) => {
     const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
@@ -226,7 +228,7 @@ export async function startDirectory(deps: DirectoryDeps): Promise<RunningDirect
   await new Promise<void>((resolve) => server.listen(deps.port, deps.host, resolve));
   const addr = server.address();
   const port = typeof addr === 'object' && addr !== null ? addr.port : deps.port;
-  log('info', 'directory.start', { port, publicHost: deps.publicHost });
+  log('info', 'directory.start', { port });
 
   return {
     port,
