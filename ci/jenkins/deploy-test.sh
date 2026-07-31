@@ -105,32 +105,35 @@ if [ "$HEALTHY" = "1" ]; then
     # logs rather than trusting a 200 from /healthz — the gateway answers /healthz happily
     # while the per-world process crash-loops underneath it.
     #
-    # Gate on simpeer.READY, not ready_to_spawn. ready_to_spawn only means the binary resolved
-    # and the game data parsed — "we could start it" — and it was emitted happily while the
-    # peer crashed two seconds into every start and respawned twenty seconds later, forever.
-    # simpeer.ready is emitted when the peer has connected back and said hello, which is the
-    # only evidence it actually runs. The peer starts lazily, so give it time to appear.
-    PEER=""
-    for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do
-      PEER=$($SSH "$TEST_HOST" "docker logs $NAME 2>&1 | grep -m1 'simpeer.ready\"'" || true)
-      [ -n "$PEER" ] && break
-      sleep 5
-    done
-    # '|| true' must live INSIDE the remote command: grep -c prints "0" and still exits 1 on
-    # no match, so an outer '|| echo 0' would emit "0\n0" and break the integer test below.
-    CRASH=$($SSH "$TEST_HOST" "docker logs $NAME 2>&1 | grep -c 'world.crashed' || true")
-    echo "    ${PEER:-<no simpeer.ready_to_spawn line>}"
-    # A peer that crashed and is between restarts also leaves no ready line, so report the
-    # crash reason when there is one — it is now captured from the peer's stderr.
-    CRASHED=$($SSH "$TEST_HOST" "docker logs $NAME 2>&1 | grep 'simpeer.crashed' | tail -1" || true)
-    [ -n "$CRASHED" ] && echo "    last crash: $CRASHED"
-    case "$PEER" in
-      *'simpeer.ready'*) echo "    sim peer active - server-authoritative NPCs" ;;
-      *) echo "FAILED: sim peer did not start. Check the image was built from"
-         echo "        server/Dockerfile.simpeer (the alpine server/Dockerfile has NO peer"
-         echo "        binary), and that /data/gamedata contains Morrowind.esm."
-         exit 1 ;;
-    esac
+    # What must be true is NOT "a peer is running": peers spawn lazily, only once a human is
+    # in the world, so an idle server correctly has none and demanding one fails every deploy
+    # to an empty server. What must be true is that the peer is not DYING. It crash-looped for
+    # a long time — two seconds up, twenty seconds down, forever, never once reaching ready —
+    # while the old gate reported success because it only asked whether the binary could be
+    # spawned. So: a crash is fatal, silence is fine, and ready is the happy case.
+    PEER=$($SSH "$TEST_HOST" "docker logs $NAME 2>&1 | grep -m1 'simpeer.ready\"'" || true)
+    PEERCRASH=$($SSH "$TEST_HOST" "docker logs $NAME 2>&1 | grep 'simpeer.crashed' | tail -1" || true)
+    SPAWNABLE=$($SSH "$TEST_HOST" "docker logs $NAME 2>&1 | grep -m1 'simpeer.ready_to_spawn'" || true)
+
+    if [ -z "$SPAWNABLE" ]; then
+      echo "FAILED: the server cannot spawn a sim peer at all. Check the image was built from"
+      echo "        server/Dockerfile.simpeer (the alpine server/Dockerfile has NO peer binary),"
+      echo "        and that /data/gamedata contains Morrowind.esm."
+      exit 1
+    fi
+    if [ -n "$PEERCRASH" ]; then
+      # The crash line now carries the peer's own fatal output, so this says WHY.
+      echo "    $PEERCRASH"
+      echo "FAILED: the sim peer is crashing. NPCs are unsimulated and cell authority flaps,"
+      echo "        which players see as rubber-banding shortly after entering a world."
+      exit 1
+    fi
+    if [ -n "$PEER" ]; then
+      echo "    sim peer active - server-authoritative NPCs"
+    else
+      echo "    sim peer spawnable, none running (expected: peers start when a player arrives)"
+    fi
+
     # A crash-looping world process still leaves the gateway healthy, so catch it explicitly.
     if [ "${CRASH:-0}" -gt 0 ]; then
       echo "    NOTE: $CRASH world.crashed event(s) in the log — check [server].password is set."
