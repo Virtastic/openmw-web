@@ -1,0 +1,45 @@
+openmw-web — play Morrowind in your browser
+===========================================
+
+TO START
+--------
+  Windows : double-click  "Start openmw-web.bat"
+  macOS   : double-click  "Start openmw-web.command"
+  Linux   : run           ./"Start openmw-web.command"
+
+Your browser opens automatically. Leave the black terminal window open while
+you play — closing it stops the game.
+
+To stop: close the terminal window, or press Ctrl+C in it.
+
+
+YOU NEED
+--------
+  * Desktop Google Chrome, Edge, or Brave. Firefox and Safari will not work.
+  * Python 3 — https://www.python.org/downloads/
+    (macOS usually has it already. On Windows, tick "Add python.exe to PATH"
+    during install.)
+
+
+ONCE IT OPENS
+-------------
+You get two choices:
+
+  Try the demo   - a small free world. Nothing else needed.
+  Your own copy  - point it at the "Data Files" folder of a Morrowind you own.
+                   Nothing is uploaded; the files are read from your disk.
+
+  Windows note: if your Morrowind is in Program Files (Steam installs there by
+  default), the browser will refuse to open it. Copy the "Data Files" folder to
+  your Documents or Desktop first, then pick that copy.
+
+
+IF SOMETHING GOES WRONG
+-----------------------
+  "Python was not found"     - install Python 3 (link above), then try again.
+  Nothing opens              - go to http://localhost:8910/ yourself.
+  Port already in use        - something else is on port 8910. Close it, or see
+                               SELF_HOSTING.md to change the port.
+  Blank page / weird errors  - you are probably not in Chrome. Check.
+
+More detail, and how to put this on a real web server: SELF_HOSTING.md

@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Part of openmw-web.
-import http.server, socketserver, os, re
+import http.server, socketserver, os, re, webbrowser
 
 # Load play/.env (KEY=VALUE, # comments) WITHOUT clobbering real env vars, so the launcher
 # flag can live in a git-ignored file next to this server. Env always wins over .env.
@@ -26,9 +26,11 @@ PORT = 8910
 # with directory listing and no auth, so it should not be exposed on a network. Set OPENMW_HOST=0.0.0.0
 # (and firewall the port) only if you deliberately want it reachable from other machines.
 HOST = os.environ.get('OPENMW_HOST', '127.0.0.1').strip() or '127.0.0.1'
-# When set (e.g. OPENMW_LAUNCHER=1 in env or play/.env), the bare site root serves the
-# data-chooser launcher instead of dropping straight into the game. Off = current behavior.
-LAUNCHER = os.environ.get('OPENMW_LAUNCHER', '').strip().lower() not in ('', '0', 'false', 'no')
+# The bare site root serves the data-chooser launcher, matching the deployed site (deploy/Caddyfile
+# rewrites "/" to launcher.html). ON by default: without it a fresh unzip drops the player straight
+# into the game with no way to pick the demo or point at their own Morrowind.
+# OPENMW_LAUNCHER=0 (env or play/.env) opts out and boots the game at "/".
+LAUNCHER = os.environ.get('OPENMW_LAUNCHER', '1').strip().lower() not in ('0', 'false', 'no', '')
 
 class H(http.server.SimpleHTTPRequestHandler):
     protocol_version = 'HTTP/1.1'
@@ -104,6 +106,23 @@ class H(http.server.SimpleHTTPRequestHandler):
         super().end_headers()
 
 socketserver.TCPServer.allow_reuse_address = True
-print(f"openmw-web: serving http://{HOST}:{PORT}/  "
+url = f"http://{HOST}:{PORT}/"
+# Bind BEFORE announcing, so a failure never prints "serving …" and then dies. Constructing the
+# server binds AND listens, so the browser can connect immediately afterwards — no sleep or
+# background thread needed. OPENMW_OPEN=0 to stay put (headless/QA runs).
+try:
+    srv = socketserver.ThreadingTCPServer((HOST, PORT), H)
+except OSError as e:
+    # Non-technical users double-click this; a raw traceback tells them nothing. The common
+    # case by far is a second copy already running, or the port taken by something else.
+    print(f"\nCould not start on port {PORT}: {e.strerror or e}\n")
+    print("Most likely openmw-web is already running — check your browser or")
+    print(f"other terminal windows, or just open  http://{HOST}:{PORT}/")
+    print(f"\nOtherwise, use a different port:   PORT=8911 python3 server.py")
+    raise SystemExit(1)
+print(f"openmw-web: serving {url}  "
       f"(local only; set OPENMW_HOST=0.0.0.0 to expose on your network)")
-socketserver.ThreadingTCPServer((HOST, PORT), H).serve_forever()
+if os.environ.get('OPENMW_OPEN', '1').strip().lower() not in ('0', 'false', 'no', ''):
+    print("opening your browser… (needs desktop Chrome/Chromium; OPENMW_OPEN=0 to skip)")
+    webbrowser.open(url)
+srv.serve_forever()

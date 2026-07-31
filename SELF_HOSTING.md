@@ -8,12 +8,14 @@ prebuilt engine and everything below. No compiler needed.
 
 ```bash
 unzip openmw-web-*.zip -d openmw-web && cd openmw-web
-python3 server.py          # http://localhost:8795 (override with PORT=…)
+python3 server.py          # http://localhost:8910 (override with PORT=…)
 ```
 
-Open the URL in **desktop Chrome/Chromium**. `?nomw` boots the bundled
-free demo world; the launcher (`launcher.html`) lets players stream their own
-legally-owned Morrowind data straight from disk.
+Open the URL in **desktop Chrome/Chromium**. The root (`/`) serves the
+data-chooser launcher, same as the live site: players pick either the bundled
+free demo world or their own legally-owned Morrowind data, streamed straight
+from disk. Set `OPENMW_LAUNCHER=0` to skip the chooser and boot the game
+directly at `/` instead.
 
 ## The serving contract
 
