@@ -820,6 +820,12 @@
    account: localStorage.getItem('omw-mp-account') || '',
  };
 
+ // Evict addresses stored by older builds. Both used to shadow the derived server, so a
+ // browser that had signed in once kept dialling whatever host that build guessed — long
+ // after the deployment it belonged to was gone. Harmless to run forever; drop it once no
+ // browser plausibly still carries one.
+ try { ['omw-mp-url', 'omw-mp-pending'].forEach(function(k){ localStorage.removeItem(k); }); } catch(e){}
+
  // Multiplayer is SSO-only, and game data comes from your server-side locker — never a
  // password, never a bring-your-own folder. The launcher's job is: pick the server, do the
  // single-sign-on round trip, then hand the game the one-time ticket. Character selection
@@ -869,8 +875,11 @@
  }
 
  // Redirect into the chosen provider's SSO flow. The server returns us HERE with #mpticket.
+ // Nothing is stashed across the redirect: the gateway is same-origin, so mpServerUrl()
+ // gives the same answer coming back as it did going out. A stored address only creates a
+ // way for a stale one to win — which it did, sending a returning sign-in at the port a
+ // previous build had guessed.
  function mpGoProvider(http, url, provider){
-   localStorage.setItem('omw-mp-pending', url); // the game reads this back after the redirect
    const back = location.origin + location.pathname;
    location.href = http + '/auth/' + encodeURIComponent(provider) + '/start?return=' + encodeURIComponent(back);
  }
@@ -1155,7 +1164,7 @@
    if (!tk) return;
    const lk = /[#&]mplocker=([^&]+)/.exec(h);
    const ac = /[#&]mpaccount=([^&]+)/.exec(h);
-   const gwUrl = localStorage.getItem('omw-mp-pending') || mpServerUrl();
+   const gwUrl = mpServerUrl();
    history.replaceState(null,'',location.pathname); // scrub the ticket from the address bar
    if (!gwUrl || !ac){ launcherError('Sign-in did not complete', 'Something was missing from the sign-in. Please try again.'); return; }
    const gwHttp = httpBaseOf(gwUrl);
