@@ -113,6 +113,94 @@ export class S3Storage {
     return `${new URL(this.s.endpoint).origin}${path}?${canonicalQuery}&X-Amz-Signature=${signature}`;
   }
 
+  // --- Bucket CORS -------------------------------------------------------------------------
+  // The browser PUTs upload bytes DIRECTLY to the bucket using a presigned URL, so the bucket
+  // must name this deployment's origin in its CORS policy. When it does not, the browser
+  // refuses the request before it is sent: the server logs a clean attestation and zero
+  // errors, the page shows every file "failed", and nothing anywhere says the word CORS. It
+  // is the least discoverable failure in the whole upload path.
+  //
+  // So the origin is DERIVED and self-registered rather than hand-copied into a console. Which
+  // origin? The one asking — a page can only be blocked on the origin it is served from, and
+  // the caller's Origin header is exactly that. The route only passes it after checking it
+  // matches the request's own Host, so a forged header cannot register a stranger's origin.
+  private corsEnsured = new Set<string>();
+
+  // Header-signed (not query-presigned): PutBucketCors is validated against Content-MD5, and
+  // a presigned URL leaves that header unsigned.
+  private async bucketRequest(method: 'GET' | 'PUT', body?: string): Promise<Response> {
+    const host = this.host();
+    const path = `/${encodeURIComponent(this.s.bucket)}/`;
+    const now = new Date();
+    const { long, short } = amzDate(now);
+    const payload = body ?? '';
+    const payloadHash = sha256Hex(payload);
+    const headers: Record<string, string> = {
+      host, 'x-amz-content-sha256': payloadHash, 'x-amz-date': long,
+    };
+    if (body !== undefined) headers['content-md5'] = createHash('md5').update(body).digest('base64');
+    const names = Object.keys(headers).sort();
+    const canonicalHeaders = names.map((n) => `${n}:${headers[n]!.trim()}\n`).join('');
+    const signedHeaders = names.join(';');
+    const canonicalRequest = [method, path, 'cors=', canonicalHeaders, signedHeaders, payloadHash].join('\n');
+    const credentialScope = `${short}/${this.s.region}/s3/aws4_request`;
+    const stringToSign = [ALGO, long, credentialScope, sha256Hex(canonicalRequest)].join('\n');
+    const kDate = hmac(`AWS4${this.s.secretAccessKey}`, short);
+    const kRegion = hmac(kDate, this.s.region);
+    const kService = hmac(kRegion, 's3');
+    const kSigning = hmac(kService, 'aws4_request');
+    const signature = createHmac('sha256', kSigning).update(stringToSign).digest('hex');
+    const auth = `${ALGO} Credential=${this.s.accessKeyId}/${credentialScope}, `
+      + `SignedHeaders=${signedHeaders}, Signature=${signature}`;
+    const { host: _drop, ...sendable } = headers;
+    return fetch(`${new URL(this.s.endpoint).origin}${path}?cors=`, {
+      method, headers: { ...sendable, Authorization: auth }, ...(body !== undefined ? { body } : {}),
+    });
+  }
+
+  /** Add `origin` to the bucket's CORS policy if absent. Additive and idempotent: every
+   *  existing origin, method and exposed header is preserved, so one deployment registering
+   *  itself never disturbs another sharing the bucket. */
+  async ensureCorsOrigin(origin: string): Promise<void> {
+    if (this.corsEnsured.has(origin)) return;
+    this.corsEnsured.add(origin);   // set first: a failure must not retry on every upload
+    try {
+      const cur = await this.bucketRequest('GET');
+      const xml = cur.status === 200 ? await cur.text() : '';
+      const origins = [...xml.matchAll(/<AllowedOrigin>([^<]+)<\/AllowedOrigin>/g)].map((m) => m[1]!);
+      if (origins.includes(origin)) return;
+      const methods = [...new Set([...xml.matchAll(/<AllowedMethod>([^<]+)<\/AllowedMethod>/g)]
+        .map((m) => m[1]!))];
+      const expose = [...new Set([...xml.matchAll(/<ExposeHeader>([^<]+)<\/ExposeHeader>/g)]
+        .map((m) => m[1]!))];
+      // Content-Range is required: the game streams its data back with Range requests.
+      for (const need of ['GET', 'PUT']) if (!methods.includes(need)) methods.push(need);
+      for (const need of ['Content-Range', 'Content-Length', 'ETag']) {
+        if (!expose.includes(need)) expose.push(need);
+      }
+      const body = '<CORSConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/">\n <CORSRule>\n'
+        + [...origins, origin].map((o) => `  <AllowedOrigin>${o}</AllowedOrigin>`).join('\n') + '\n'
+        + methods.map((m) => `  <AllowedMethod>${m}</AllowedMethod>`).join('\n') + '\n'
+        + '  <AllowedHeader>*</AllowedHeader>\n'
+        + expose.map((e) => `  <ExposeHeader>${e}</ExposeHeader>`).join('\n') + '\n'
+        + '  <MaxAgeSeconds>3600</MaxAgeSeconds>\n </CORSRule>\n</CORSConfiguration>\n';
+      const put = await this.bucketRequest('PUT', body);
+      if (put.ok) {
+        log('info', 'locker.cors_origin_added', { origin, total: origins.length + 1 });
+      } else {
+        // Most likely the credentials carry Object Read & Write but not PutBucketCors, which
+        // is exactly what docs/MULTIPLAYER-SETUP.md tells operators to create. Say what to do.
+        log('error', 'locker.cors_add_failed', {
+          origin, status: put.status,
+          fix: 'grant PutBucketCors to the S3 credentials, or add this origin to the bucket '
+             + 'CORS policy by hand — browser uploads from it are blocked until then',
+        });
+      }
+    } catch (err) {
+      log('error', 'locker.cors_add_failed', { origin, error: String(err) });
+    }
+  }
+
   async presignPut(key: string, _contentLength: number): Promise<string> {
     return this.presign('PUT', key);
   }

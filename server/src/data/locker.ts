@@ -92,6 +92,9 @@ export interface LockerSettings {
   // its own disk (?src=local), which is the fallback posture in docs/LEGAL.md §8.
   storage?: {
     presignPut(key: string, contentLength: number): Promise<string>;
+    /** Register a browser origin with the bucket's CORS policy. Optional: a storage backend
+     *  that is not a real S3 (tests, local disk) has no such concept. */
+    ensureCorsOrigin?(origin: string): Promise<void>;
     presignGet(key: string): Promise<string>;
     delete(prefix: string): Promise<void>;
     // Read the first `length` bytes of an object (server-side, signed) — the header sniff
@@ -216,6 +219,9 @@ export class Locker {
       byNameAndSize: this.acceptByNameAndSize,
     });
   }
+
+  /** The configured backend, for callers that must reach it directly (CORS registration). */
+  get storage(): LockerSettings['storage'] { return this.settings.storage; }
 
   // Is this file one a legitimate Morrowind owner would have? Exact hash first (any known
   // distribution), then name+plausible-size for a distribution we do not have on file.

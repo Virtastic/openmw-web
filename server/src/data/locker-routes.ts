@@ -18,6 +18,7 @@
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Locker, LockerFile } from './locker';
+import { isSecureRequest } from '../net/http';
 import { log } from '../log';
 
 export interface LockerSessions {
@@ -97,6 +98,21 @@ export function lockerRoutes(deps: LockerRouteDeps) {
       if (req.method === 'POST' && url.pathname === '/locker/authorize-upload') {
         const file = parseFile((await readBody(req)) as unknown);
         if (!file) { json(res, 400, { error: 'bad_file' }); return true; }
+        // Register THIS origin with the bucket before handing back a presigned URL. The
+        // browser PUTs straight to the bucket, so an unlisted origin is blocked client-side
+        // and the failure never reaches us — the page shows "failed" and the log stays clean.
+        //
+        // Trust the Origin header only when it matches the host the request arrived on. The
+        // page and this API are one origin by design, so a legitimate caller always matches;
+        // a forged header therefore cannot make us add somebody else's origin to the policy.
+        const claimed = req.headers.origin;
+        if (typeof claimed === 'string' && claimed !== '') {
+          const self = `${isSecureRequest(req) ? 'https' : 'http'}://${req.headers.host ?? ''}`;
+          const storage = deps.locker.storage;
+          if (claimed === self && storage && typeof storage.ensureCorsOrigin === 'function') {
+            await storage.ensureCorsOrigin(claimed);
+          }
+        }
         const r = await deps.locker.authorizeUpload(accountKey, file);
         if (!r.ok) { json(res, 200, { ok: false, reason: r.reason }); return true; }
         json(res, 200, { ok: true, url: r.url, key: r.key });
