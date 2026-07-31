@@ -800,6 +800,11 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // Empty regions cost nothing: the engine already unloads cells no anchor covers.
   const WORLD_KEY = 'world';
   let lastAnchors = '';
+  // Where the peer's avatar currently stands, and when it last moved. Moving it means a
+  // restart, so it is rate-limited.
+  let peerStandCell: string | undefined;
+  let lastPeerMove = 0;
+  const PEER_MOVE_COOLDOWN_MS = 20_000;
   // Cells the peer currently holds because they are anchored, so the set can be diffed rather
   // than re-entered every tick (re-entering bumps the epoch and forces a full re-sync).
   const claimed = new Set<string>();
@@ -814,21 +819,51 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       return;
     }
 
-    // Exterior cells only: an interior is its own island and the peer's own avatar covers the
-    // one it stands in. Deduped, and ordered so the string compare below is stable.
+    // Exterior cells become anchors. An INTERIOR cannot: Scene::setSimAnchors takes grid
+    // coordinates (osg::Vec2i) and isWithinActiveGrids compares them, so there is no way to
+    // name an interior in that list — and setSimAnchors early-returns unless the peer itself
+    // is standing outdoors. The only way a peer simulates an interior is to BE in it.
     const cells = [...new Set(humans.map((p) => p.cellKey!))].sort();
     const anchors: { x: number; y: number }[] = [];
+    const interiors: string[] = [];
     for (const cell of cells) {
       const e = parseExterior(cell);
       if (e) anchors.push({ x: e.x, y: e.y });
+      else interiors.push(cell);
     }
 
-    // The first anchor doubles as where the peer's avatar stands, so a cold start lands
-    // somewhere populated instead of at a default cell.
-    const first = humans.find((p) => parseExterior(p.cellKey!) !== null);
-    simPeers.ensure(WORLD_KEY, first
-      ? { cellKey: first.cellKey!, x: first.pose?.x ?? 0, y: first.pose?.y ?? 0, z: first.pose?.z ?? 0 }
-      : undefined);
+    // Where the peer's avatar must stand. An occupied interior WINS over an exterior, because
+    // the exterior is covered by an anchor from anywhere while the interior is covered only by
+    // presence. This is what unblocks Morrowind's opening: chargen happens entirely indoors
+    // (the prison ship, then the census office), so with the peer parked outside those rooms
+    // had no simulator at all — the guard delivered his line and stood there forever, and the
+    // quest could not advance because nothing was ticking his AI.
+    const wantStand = interiors[0]
+      ?? humans.find((p) => parseExterior(p.cellKey!) !== null)?.cellKey;
+    const standOccupant = wantStand !== undefined
+      ? humans.find((p) => p.cellKey === wantStand)
+      : undefined;
+    const standAnchor = wantStand !== undefined
+      ? { cellKey: wantStand, x: standOccupant?.pose?.x ?? 0,
+          y: standOccupant?.pose?.y ?? 0, z: standOccupant?.pose?.z ?? 0 }
+      : undefined;
+
+    // A RUNNING peer cannot be relocated — ensure() only cancels its idle reap — so following
+    // a player indoors means restarting it there. Only when the cell actually changes, and at
+    // most once per PEER_MOVE_COOLDOWN_MS, or a player walking a doorway would restart the
+    // simulation every tick. stop() is a clean SIGTERM and does not arm the crash backoff, so
+    // the next ensure() respawns immediately.
+    if (standAnchor && peerStandCell !== undefined && peerStandCell !== standAnchor.cellKey
+        && Date.now() - lastPeerMove > PEER_MOVE_COOLDOWN_MS) {
+      log('info', 'simpeer.follow', { from: peerStandCell, to: standAnchor.cellKey });
+      lastPeerMove = Date.now();
+      peerStandCell = undefined;
+      lastAnchors = '';            // force a resend once the new peer is up
+      claimed.clear();             // the old peer's claims die with it
+      simPeers.stop(WORLD_KEY);
+    }
+    simPeers.ensure(WORLD_KEY, standAnchor);
+    if (standAnchor) peerStandCell = standAnchor.cellKey;
 
     // Only on change: the peer re-runs its cell grid when the list moves, so resending an
     // identical list every 5 s would churn loads for nothing.

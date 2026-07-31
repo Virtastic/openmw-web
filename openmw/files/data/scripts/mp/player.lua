@@ -421,14 +421,22 @@ local function pollHarness()
         -- mode we are already in therefore sets a flag nobody ever reads — the overlay opened
         -- and the world kept running underneath it. Leaving the mode first makes the re-entry a
         -- real transition, which is what evaluates the flag.
+        -- Pause the WORLD directly rather than through UI modes. omw/ui.lua only recomputes
+        -- the pause when the mode stack CHANGES, and uimode:on has already put us in Interface
+        -- mode by the time this arrives — so setting modePause and re-entering the mode we are
+        -- already in set a flag nobody read, and the world kept running behind a modal the
+        -- player cannot dismiss without reading. Removing and re-entering the mode did not fix
+        -- it either.
+        --
+        -- 'Pause'/'Unpause' are the global events omw/worldeventhandlers.lua turns into
+        -- world.pause(tag)/world.unpause(tag) — the same call the mode machinery ends up making,
+        -- reached without depending on a transition happening at the right moment. The tag is
+        -- ours, so nothing else can unpause us and we cannot cancel anyone else's pause.
         local pause_mode = cmd:match('^pause:(%a+)$')
         if pause_mode == 'on' then
-            I.UI.setPauseOnMode('Interface', true)
-            I.UI.removeMode('Interface')
-            I.UI.setMode('Interface', { windows = {} })
+            core.sendGlobalEvent('Pause', 'mpintro')
         elseif pause_mode == 'off' then
-            I.UI.removeMode('Interface')
-            I.UI.setPauseOnMode('Interface', false)
+            core.sendGlobalEvent('Unpause', 'mpintro')
         end
         if cmd == 'cam:3p' then -- visual scenarios: put own avatar in frame
             local camera = require('openmw.camera')
