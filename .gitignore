@@ -75,3 +75,13 @@ wasm-build/mod-src/
 # e.g. a native bsatool build for verifying the asset pack.
 build-native/
 build-*-native/
+
+# Local databases, wherever they land. .dev-local/ already covers today's 33 files
+# (accounts, bans, identities, players, tickets, attio, …), but a service writing a
+# .db anywhere else must not be committable either — these hold real user records.
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
