@@ -1992,6 +1992,13 @@
                  if (row) wiz.set(row,'busy','verifying…');
                  var conf=await (await api('/locker/uploaded',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(rec)})).json();
                  if(conf&&conf.ok===false){ if(row) wiz.set(row,'err','not a valid file'); return false; }
+                 // Keep the bytes we just sent. The reader is keyed by the SAME sha, so this
+                 // turns the first play session's fetch into a cache hit instead of pulling
+                 // the whole library back out of S3 — the file is already on this machine and
+                 // was, until now, thrown away the moment the PUT succeeded. Best-effort: a
+                 // library larger than the browser's quota simply keeps the parts that fit,
+                 // and cachePut swallows QuotaExceeded (a cache miss only costs a download).
+                 try { await cachePut(rec.sha256, file); } catch(e){ /* non-fatal, see above */ }
                  if (row) wiz.set(row,'done','uploaded');
                  return true;
                } catch(e){ if(row) wiz.set(row,'err','failed'); return false; }
