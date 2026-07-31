@@ -1,0 +1,32 @@
+# BuildKit picks this up instead of .dockerignore when building with -f Dockerfile.builder.
+# The builder image BAKES IN the prebuilt cross-compiled dep tree, so unlike the main Dockerfile
+# (which gets deps from this image and must exclude them), deps/ MUST be in this context.
+.git
+.github
+openmw/.git-upstream
+archive
+source-mw
+content
+node_modules
+infra
+build-wasm
+build-wasm.good
+build-native
+build-bullet-native
+build-mygui-native
+deps/native
+wasm-build/mod-src
+play/mwdata
+play/moddata
+play/openmw.js
+play/openmw.wasm
+play/openmw.data
+play/openmw.js.br
+play/openmw.wasm.br
+play/openmw.data.br
+play/*.tar
+**/*.bak
+**/*.simd.bak
+*.7z
+*.zip
+.DS_Store

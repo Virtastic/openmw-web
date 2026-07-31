@@ -85,3 +85,9 @@ build-*-native/
 *.sqlite
 *.sqlite-wal
 *.sqlite-shm
+
+# Local-only working notes and CI. AGENTS.md documents this developer's own build/test
+# servers; ci/jenkins runs on that local Jenkins, not on the public GitHub runners
+# (.github/workflows/ is the public CI).
+AGENTS.md
+ci/
