@@ -15,6 +15,10 @@ build-wasm/
 *.wasm
 *.data
 *.bsa
+# Retail content files, by EXTENSION and not merely by directory: only *.bsa was listed, so an
+# .esm dropped anywhere outside fsroot/gamedata or play/mwdata would have been committed.
+*.esm
+*.esp
 *.tar
 *.7z
 *.zip

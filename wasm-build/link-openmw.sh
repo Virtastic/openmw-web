@@ -25,6 +25,16 @@
 set -euo pipefail
 
 ROOT="${ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
+# Emscripten runs on python3 from PATH and REQUIRES >= 3.10. macOS ships /usr/bin/python3 at
+# 3.9, and on a fresh login shell that can sit ahead of Homebrew's — at which point emcc dies
+# inside CMake's configure step with a traceback about sys.version_info, which reads like a
+# broken build rather than a broken PATH. Put Homebrew first so the build cannot inherit it.
+export PATH="/opt/homebrew/bin:$PATH"
+if ! python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)'; then
+  echo "emscripten needs python3 >= 3.10; PATH resolves to $(python3 --version 2>&1) at $(command -v python3)" >&2
+  exit 1
+fi
+
 EMSDK_BIN="${EMSDK_BIN:-/opt/homebrew/Cellar/emscripten/6.0.1/libexec}"
 SYSROOT="$EMSDK_BIN/cache/sysroot/lib/wasm32-emscripten"
 LIB="$ROOT/deps/wasm/lib"

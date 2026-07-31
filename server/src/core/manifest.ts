@@ -84,14 +84,14 @@ export class ContentGate {
   // names, because a client that cannot (or will not) hash is exactly the one most likely to
   // have been modified. Under 'names' the same client is fine; that is what names means.
   private diffHashes(want: ManifestEntry[], got: ManifestEntry[]): string | null {
-    const byName = new Map(got.map((e) => [e.name, e]));
+    const byName = new Map(got.map((e) => [ContentGate.key(e.name), e]));
     const unhashed: string[] = [];
     const tampered: string[] = [];
     for (const w of want) {
       // The server side may legitimately lack a hash (tier 1, or a file it cannot read).
       // Nothing to compare against, so nothing to refuse on.
       if (!w.sha256) continue;
-      const g = byName.get(w.name);
+      const g = byName.get(ContentGate.key(w.name));
       if (!g) continue; // diff() already reported the missing file, with a better message
       if (!g.sha256) unhashed.push(w.name);
       else if (g.sha256 !== w.sha256) tampered.push(w.name);
@@ -108,14 +108,20 @@ export class ContentGate {
     return null;
   }
 
+  // Content file names are case-INSENSITIVE: they come from a Windows-era game, OpenMW
+  // resolves them that way, and the client reports whatever case the player's filesystem
+  // happens to hold. Comparing raw strings produced the self-contradicting refusal "your game
+  // is missing Morrowind.esm; your game has extra content: morrowind.esm".
+  private static key(name: string): string { return name.toLowerCase(); }
+
   private diff(want: ManifestEntry[], got: ManifestEntry[]): string | null {
     // Player-facing first: name the FILES that differ, because "load-order mismatch at
     // position 3" tells a player nothing they can act on. The positional detail below still
     // runs for anything the set difference cannot explain (pure reordering).
-    const wantNames = new Set(want.map((e) => e.name));
-    const gotNames = new Set(got.map((e) => e.name));
-    const missing = want.filter((e) => !gotNames.has(e.name)).map((e) => e.name);
-    const extra = got.filter((e) => !wantNames.has(e.name)).map((e) => e.name);
+    const wantNames = new Set(want.map((e) => ContentGate.key(e.name)));
+    const gotNames = new Set(got.map((e) => ContentGate.key(e.name)));
+    const missing = want.filter((e) => !gotNames.has(ContentGate.key(e.name))).map((e) => e.name);
+    const extra = got.filter((e) => !wantNames.has(ContentGate.key(e.name))).map((e) => e.name);
     if (missing.length || extra.length) {
       const runs = want.map((e) => e.name).join(' + ');
       const parts: string[] = [];
@@ -129,7 +135,7 @@ export class ContentGate {
       const g = got[i];
       if (!w) return `unexpected extra content file "${g!.name}" at position ${i}`;
       if (!g) return `missing content file "${w.name}" at position ${i}`;
-      if (w.name !== g.name)
+      if (ContentGate.key(w.name) !== ContentGate.key(g.name))
         return `load order differs: expected "${w.name}" at position ${i}, got "${g.name}"`;
       // Size is only comparable when BOTH sides report one. Clients always send 0 because
       // Lua cannot read file sizes (net.lua buildManifest), so comparing against a real
