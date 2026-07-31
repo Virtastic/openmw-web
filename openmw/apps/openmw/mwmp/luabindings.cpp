@@ -3,6 +3,9 @@
 #include "luabindings.hpp"
 
 #include <cstdlib>
+#include <vector>
+
+#include <osg/Vec2i>
 #include <filesystem>
 #include <fstream>
 
@@ -249,6 +252,30 @@ namespace MWMP
         // Golden-vector dump (server codec tests): LSER-encode any serializable value -> base64.
         api["debugSerialize"] = [serializer = context.mSerializer](const sol::object& data) {
             return base64Encode(LuaUtil::serialize(data, serializer));
+        };
+
+        // SIM ANCHORS. The server tells this process which regions to keep simulated: one
+        // anchor per populated area, as {x, y} exterior cell coordinates. Only the sim peer is
+        // ever sent them — a normal client passes nothing and behaves exactly as before, with
+        // the player as the sole anchor.
+        //
+        // This is what lets ONE headless engine simulate several parts of the world. Without
+        // it a peer can only ever hold the region its own avatar stands in, so covering players
+        // spread across the map costs a whole ~450 MB engine process per region.
+        api["setSimAnchors"] = [](const sol::table& anchors) {
+            std::vector<osg::Vec2i> out;
+            out.reserve(anchors.size());
+            for (std::size_t i = 1; i <= anchors.size(); ++i)
+            {
+                const sol::optional<sol::table> a = anchors[i];
+                if (!a)
+                    continue;
+                const sol::optional<int> x = (*a)["x"];
+                const sol::optional<int> y = (*a)["y"];
+                if (x && y)
+                    out.emplace_back(*x, *y);
+            }
+            MWBase::Environment::get().getWorld()->setSimAnchors(out);
         };
 
         // Test/automation surface for wasm-build/mp-harness.mjs (PROTOCOL.md client contract).

@@ -1,6 +1,8 @@
 #include "actors.hpp"
 
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <optional>
 
 #include <components/esm3/esmreader.hpp>
@@ -1237,8 +1239,21 @@ namespace MWMechanics
         if (ptr == player)
             return;
 
-        const float dist
-            = (player.getRefData().getPosition().asVec3() - ptr.getRefData().getPosition().asVec3()).length();
+        // NEAREST ANCHOR, not just the player. On a normal client there are no anchors and this
+        // is exactly the vanilla check. On a headless sim peer the server supplies one anchor
+        // per populated region, and an actor stops processing only when it is far from ALL of
+        // them — which is what lets ONE peer simulate several parts of the world instead of
+        // needing a whole ~450 MB engine process per region.
+        const osg::Vec3f actorPos = ptr.getRefData().getPosition().asVec3();
+        float dist = (player.getRefData().getPosition().asVec3() - actorPos).length();
+        for (const osg::Vec3f& anchor : MWBase::Environment::get().getWorld()->getSimAnchorPositions())
+        {
+            // Anchors are cell centres at z=0; compare in the horizontal plane so an actor up a
+            // tower or down a cave is not judged out of range by height alone.
+            const float dx = anchor.x() - actorPos.x();
+            const float dy = anchor.y() - actorPos.y();
+            dist = std::min(dist, std::sqrt(dx * dx + dy * dy));
+        }
         const int actorsProcessingRange = Settings::game().mActorsProcessingRange;
         if (dist > actorsProcessingRange)
         {

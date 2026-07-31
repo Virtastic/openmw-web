@@ -189,6 +189,9 @@ namespace MWWorld
         WorldModel& getWorldModel() { return mWorldModel; }
         Scene& getWorldScene() { return *mWorldScene; }
 
+        std::vector<osg::Vec3f> getSimAnchorPositions() const override;
+        void setSimAnchors(const std::vector<osg::Vec2i>& anchors) override;
+
         // FIXME
         void addContainerScripts(const Ptr& reference, CellStore* cell) override;
         void removeContainerScripts(const Ptr& reference) override;

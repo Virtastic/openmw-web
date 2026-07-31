@@ -2,6 +2,7 @@
 // See WASM_ADAPTATIONS.md at the repository root for details of the changes.
 #include "scene.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <limits>
@@ -616,6 +617,44 @@ namespace MWWorld
             ESM::ExteriorCellLocation(cell.x(), cell.y(), mCurrentCell->getCell()->getWorldSpace()), changeEvent };
     }
 
+
+    // ------------------------------------------------ MP simulation anchors
+
+    void Scene::setSimAnchors(const std::vector<osg::Vec2i>& anchors)
+    {
+        if (mSimAnchors == anchors)
+            return;
+        mSimAnchors = anchors;
+        // Re-run the grid so newly anchored regions load and dropped ones unload. Cheap when
+        // nothing changed, which is the common case (the server resends the same list).
+        if (mCurrentCell != nullptr && mCurrentCell->getCell()->isExterior())
+            requestChangeCellGrid(mLastPlayerPos, mCurrentGridCenter, false);
+    }
+
+    bool Scene::isWithinActiveGrids(int x, int y) const
+    {
+        if (std::abs(mCurrentGridCenter.x() - x) <= mHalfGridSize
+            && std::abs(mCurrentGridCenter.y() - y) <= mHalfGridSize)
+            return true;
+        for (const osg::Vec2i& a : mSimAnchors)
+            if (std::abs(a.x() - x) <= mHalfGridSize && std::abs(a.y() - y) <= mHalfGridSize)
+                return true;
+        return false;
+    }
+
+    std::vector<osg::Vec3f> Scene::getSimAnchorPositions() const
+    {
+        std::vector<osg::Vec3f> out;
+        out.reserve(mSimAnchors.size());
+        for (const osg::Vec2i& a : mSimAnchors)
+        {
+            // Cell centre: the anchor is a grid coordinate, and mechanics wants world units.
+            out.emplace_back((a.x() + 0.5f) * Constants::CellSizeInUnits,
+                (a.y() + 0.5f) * Constants::CellSizeInUnits, 0.f);
+        }
+        return out;
+    }
+
     void Scene::changeCellGrid(const osg::Vec3f& pos, ESM::ExteriorCellLocation playerCellIndex, bool changeEvent)
     {
         const int halfGridSize
@@ -629,9 +668,20 @@ namespace MWWorld
             auto* cell = *iter++;
             if (cell->getCell()->isExterior() && cell->getCell()->getWorldSpace() == playerCellIndex.mWorldspace)
             {
+                // Keep a cell that any ANCHOR still covers, not just the player's own grid.
+                // mHalfGridSize is updated below, so compare against the size we are moving to.
                 const auto dx = std::abs(playerCellX - cell->getCell()->getGridX());
                 const auto dy = std::abs(playerCellY - cell->getCell()->getGridY());
-                if (dx > halfGridSize || dy > halfGridSize)
+                bool keep = dx <= halfGridSize && dy <= halfGridSize;
+                if (!keep)
+                    for (const osg::Vec2i& a : mSimAnchors)
+                        if (std::abs(a.x() - cell->getCell()->getGridX()) <= halfGridSize
+                            && std::abs(a.y() - cell->getCell()->getGridY()) <= halfGridSize)
+                        {
+                            keep = true;
+                            break;
+                        }
+                if (!keep)
                     unloadCell(cell, navigatorUpdateGuard.get());
             }
             else
@@ -665,13 +715,21 @@ namespace MWWorld
 
         std::size_t refsToLoad = 0;
         std::vector<std::pair<int, int>> cellsPositionsToLoad;
-        iterateOverCellsAround(playerCellX, playerCellY, mHalfGridSize, [&](int x, int y) {
+        const auto wantCell = [&](int x, int y) {
             const ESM::ExteriorCellLocation location(x, y, playerCellIndex.mWorldspace);
             if (isCellInCollection(location, mActiveCells))
                 return;
+            if (std::find(cellsPositionsToLoad.begin(), cellsPositionsToLoad.end(), std::pair<int, int>(x, y))
+                != cellsPositionsToLoad.end())
+                return;
             refsToLoad += mWorld.getWorldModel().getExterior(location).count();
             cellsPositionsToLoad.emplace_back(x, y);
-        });
+        };
+        iterateOverCellsAround(playerCellX, playerCellY, mHalfGridSize, wantCell);
+        // Each anchor gets the same grid the player does: this is the whole point — one engine
+        // holding several populated regions instead of one process per region.
+        for (const osg::Vec2i& a : mSimAnchors)
+            iterateOverCellsAround(a.x(), a.y(), mHalfGridSize, wantCell);
 
         Loading::Listener* loadingListener = MWBase::Environment::get().getWindowManager()->getLoadingScreen();
         Loading::ScopedLoad load(loadingListener);

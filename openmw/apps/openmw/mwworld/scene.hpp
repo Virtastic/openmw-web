@@ -119,6 +119,18 @@ namespace MWWorld
 
         osg::Vec2i mCurrentGridCenter;
 
+        // MP SIMULATION ANCHORS. Vanilla keeps ONE grid of active cells, centred on the player,
+        // and unloads everything else — so a headless sim peer could only ever simulate the one
+        // place its avatar stood. Serving players spread across the world then meant one ~450 MB
+        // peer process PER occupied cell, which does not scale past a handful of players.
+        //
+        // These are extra centres the server asks this process to keep active. Cells within
+        // mHalfGridSize of ANY anchor stay loaded; actors near any anchor keep processing. The
+        // marginal cost of an anchor is that region's cells (meshes, collision, navmesh) rather
+        // than a whole second engine, because the ESM store and every subsystem are shared.
+        // Empty of anchors — every normal client — this is exactly vanilla behaviour.
+        std::vector<osg::Vec2i> mSimAnchors;
+
         // Load and unload cells as necessary to create a cell grid with "X" and "Y" in the center
         void changeCellGrid(const osg::Vec3f& pos, ESM::ExteriorCellLocation playerCellIndex, bool changeEvent = true);
 
@@ -141,6 +153,16 @@ namespace MWWorld
             const DetourNavigator::UpdateGuard* navigatorUpdateGuard);
 
     public:
+        /// Extra cell-grid centres to keep active, in addition to the player's own grid.
+        /// Server-driven (the sim peer's world server sends the list); empty for a real client.
+        void setSimAnchors(const std::vector<osg::Vec2i>& anchors);
+
+        /// True when `cell` is within the active grid of the player or any simulation anchor.
+        bool isWithinActiveGrids(int x, int y) const;
+
+        /// World-space positions of the simulation anchors, for range checks in mechanics.
+        std::vector<osg::Vec3f> getSimAnchorPositions() const;
+
         Scene(MWWorld::World& world, MWRender::RenderingManager& rendering, MWPhysics::PhysicsSystem* physics,
             DetourNavigator::Navigator& navigator);
 
