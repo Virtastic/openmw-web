@@ -210,6 +210,36 @@ python3 server.py        # serves on http://localhost:8910 (override with PORT=.
 Then open the printed URL. To show the data-chooser launcher, enable it first (see
 [Enabling the launcher](#enabling-the-launcher)).
 
+### Multiplayer locally
+
+The game page and the multiplayer server share one origin — the page will not hand its
+session ticket to a server on a different hostname. `server.py` therefore proxies the
+server's paths (`/w/`, `/auth/`, `/locker/`, `/worlds`, `/ws`) to `OPENMW_MP_UPSTREAM`,
+which defaults to `127.0.0.1:8080`:
+
+```bash
+cd play
+OPENMW_MP_UPSTREAM=127.0.0.1:8080 OPENMW_LAUNCHER=1 python3 server.py
+```
+
+There is no "if localhost, use a different port" shortcut in the client, on purpose: a
+special case makes local behave differently from a real deployment, which is how a broken
+production setup can still pass local testing.
+
+So **something must be listening on that upstream** or multiplayer will not work locally.
+With nothing there you get a clean `502` on those paths and the launcher reports the
+server as unreachable — that is the correct signal, not a bug. Single-player (including
+the `?nomw` demo) does not use any of this and works with no server at all.
+
+If you change the launcher or the proxy, test the WebSocket explicitly — HTTP/2 cannot
+carry an upgrade, so a browser click alone will not tell you much:
+
+```bash
+curl -i -N --http1.1 -H 'Connection: Upgrade' -H 'Upgrade: websocket' \
+  -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' \
+  http://127.0.0.1:8910/w/<worldId>          # expect 101 Switching Protocols
+```
+
 ### Browser requirement
 
 Desktop Chrome or Chromium only. The build relies on features that, in practice, only
