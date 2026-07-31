@@ -31,6 +31,12 @@ local MAP_FLUSH = 5.0
 -- forward over a couple of seconds rather than teleporting it.
 local SLEW_FRACTION = 0.2
 local SLEW_MIN_HOURS = 0.02 -- below this the difference is engine jitter; leave it alone
+-- Above this, SNAP instead of slewing. Slew exists to absorb drift between two clocks that
+-- already agree; it is the wrong tool for ADOPTING a clock. Arriving in a world whose time is
+-- half a day from your own, a 20%-per-tick slew crawls — so two players standing next to each
+-- other saw one in daylight and one at night, for minutes. A jump that large is a new world,
+-- not drift.
+local SNAP_HOURS = 1.0
 -- An unexplained local jump this large means the ENGINE advanced time (rest/wait/script).
 local LOCAL_JUMP_HOURS = 0.05
 local MAX_REQUEST_HOURS = 30 * 24 -- server cap (worldtime.ts MAX_ADVANCE_HOURS)
@@ -42,6 +48,9 @@ local MONTH_DAYS = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 }
 -- --- state -------------------------------------------------------------------------------
 
 local target = nil -- last WorldTime body from the server
+-- False until this session has taken a world's clock as its own. Reset on every join, so
+-- switching worlds adopts the destination's time instead of dragging the old one along.
+local adoptedClock = false
 local targetAbs = nil -- ...as absolute game hours
 local lastLocalAbs = nil -- our own clock at the previous tick (jump detector baseline)
 local lastTickAt = nil
@@ -233,7 +242,8 @@ local function tickClock(now)
         if lastTickAt then targetAbs = targetAbs + (now - lastTickAt) * (timeScale or 0) / 3600 end
         local delta = targetAbs - localAbs
         if math.abs(delta) >= SLEW_MIN_HOURS then
-            local step = delta * SLEW_FRACTION
+            -- Big gap = we just arrived somewhere; take the world's time as given.
+            local step = (math.abs(delta) >= SNAP_HOURS) and delta or (delta * SLEW_FRACTION)
             local newAbs = localAbs + step
             if writeLocalTime(fromAbs(newAbs)) then
                 localAbs = newAbs
@@ -485,6 +495,19 @@ handlers.MP_WorldTime = function(data)
     target = data
     targetAbs = targetAbsOf(data)
     timeApplied = timeApplied + 1
+    -- ADOPT THE WORLD'S CLOCK OUTRIGHT ON ARRIVAL. The server's clock free-runs whether or
+    -- not anyone is connected, so a world left alone for an afternoon is game-DAYS ahead of
+    -- a client that just booted. Slewing that difference walks the sky through cycle after
+    -- cycle of day and night while the player stands there watching. Time of day is not
+    -- something to converge on — it is a fact about the world you just entered. Take it in
+    -- one step, then slew from there for the ordinary drift between two running clocks.
+    if not adoptedClock then
+        adoptedClock = true
+        local t = readLocalTime()
+        if t and writeLocalTime(fromAbs(targetAbs)) then
+            lastLocalAbs = targetAbs   -- ours, not a rest: keep the jump detector quiet
+        end
+    end
     if type(data.timeScale) == 'number' and data.timeScale ~= timeScale then
         timeScale = data.timeScale
         -- The server owns the rate too: match it so our free-run does not drift away
@@ -688,6 +711,7 @@ end
 function worldmp.reset()
     target = nil
     targetAbs = nil
+    adoptedClock = false -- next world's clock is adopted outright, not slewed towards
     lastLocalAbs = nil
     lastTickAt = nil
     timeRequests = 0

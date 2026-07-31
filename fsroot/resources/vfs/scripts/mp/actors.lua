@@ -15,7 +15,6 @@ local threat = require('scripts.mp.threat')
 
 local actors = {}
 
-local BROADCAST_HZ = 15
 local SNAPSHOT_SECONDS = 5
 -- How often a non-holder re-sweeps its cell for actors to puppet. Cheap (per-key
 -- idempotent) and must keep running: cell actors stream in after the cell-change event.
@@ -31,7 +30,6 @@ local holderOfCell = {} -- cellKey -> holderId (non-holder knowledge, from Actor
 local infoEpoch = {} -- cellKey -> epoch learned as a NON-holder (M5 actor targeting)
 local puppetActors = {} -- refKey -> { obj, cellKey } (NPCs we puppet as a non-holder)
 
-local lastBroadcast = 0
 local lastSnapshot = 0
 local lastMirror = 0
 local lastAttachSweep = 0
@@ -415,12 +413,17 @@ function actors.tick(now)
         end
     end
 
-    -- Holder broadcast loop.
-    if now - lastBroadcast >= 1 / BROADCAST_HZ then
-        lastBroadcast = now
-        for cellKey, cell in pairs(held) do
-            broadcastCell(cellKey, cell.epoch, cell, now)
-        end
+    -- Holder broadcast loop: EVERY frame. The rate is set by the peer's own framerate cap
+    -- (settings.cfg, written by the server), which is the only thing that should decide it.
+    --
+    -- There used to be a BROADCAST_HZ gate here, and it was a rate LIMITER for a 60fps browser
+    -- client holding a cell. No client can hold a cell any more — only the sim peer — so the
+    -- gate had nothing left to limit, and it actively hurt: a 66.7ms threshold checked on the
+    -- peer's 50ms frames only cleared every SECOND frame, so a "15 Hz" stream was really 10 Hz,
+    -- and the interpolator's 100ms render delay had no jitter margin left at that spacing.
+    -- One knob, on the server, instead of two that alias against each other.
+    for cellKey, cell in pairs(held) do
+        broadcastCell(cellKey, cell.epoch, cell, now)
     end
     if now - lastSnapshot >= SNAPSHOT_SECONDS then
         lastSnapshot = now

@@ -76,9 +76,29 @@ local worldmp = require('scripts.mp.world')
 local admin = require('scripts.mp.admin')
 
 local roster = {} -- array of {id=u16, name=string}, server order
+-- Monotonic across every "this was done TO you" event (world closed, party travelled). The UI
+-- compares THIS, not the payload: the payloads repeat verbatim, so value comparison could not
+-- tell a second occurrence from a stale mirror.
+local noticeSeq = 0
+-- What the world we are connected to says it is. SERVER-OWNED: the switcher used to render
+-- from a localStorage note of what was last clicked, so it could sit on "Public" while the
+-- connection was to your own world and no amount of clicking fixed it.
+local worldMode = 'solo'
 
 local function mirrorRoster()
     mp.testSet('players', json.encode(roster))
+    -- WHO WE ARE, by id. The UI used to filter itself out of the Players list by comparing
+    -- the roster name against the character name it was booted with — and those are two
+    -- different strings now that the roster carries USERNAMES, so players saw themselves
+    -- with add-friend/party/mute/block buttons. The connection id is the only identity both
+    -- sides agree on.
+    mp.testSet('selfId', tostring(net.playerId or ''))
+    -- WHICH WORLD WE ARE ACTUALLY IN. The switcher used to render from a localStorage value
+    -- of what the player last CLICKED, which survives reloads and reconnects — so after a
+    -- redial to your own world the panel still read "Public" and the whole UI lied about
+    -- where you were. The dialled target is the truth; publish it.
+    mp.testSet('whereNow', worldMode == 'public' and 'public'
+        or worldMode == 'party' and 'party' or 'solo')
     -- The social hub lists everyone currently playing, and the roster lives here. Forwarded
     -- rather than duplicated so there is one source of truth for who is online.
     local player = world.players[1]
@@ -720,17 +740,13 @@ local function start()
         elseif state == 'Failed' then
             local why = FAIL_TEXT[net.lastError] or net.lastError or 'connection failed'
             local detail = net.lastErrorDetail
-            notice('Multiplayer: ' .. why .. (detail and detail ~= '' and (' (' .. detail .. ')') or '')
-                .. ' — reload the page to retry')
-        elseif state == 'Reconnecting' then
-            -- We redial ourselves now (backoff + jitter in net.lua), and the parked resume
-            -- ticket means a short outage rejoins in place. Tell the player to wait, not to
-            -- reload — reloading would actually cost them more.
-            notice(string.format('Multiplayer: connection lost — reconnecting in %.0fs…',
-                net.nextRetrySeconds or 0))
-        elseif state == 'Offline' and wasJoined then
-            notice('Multiplayer: disconnected')
+            mp.testSet('netfail', why .. (detail and detail ~= '' and (' (' .. detail .. ')') or ''))
         end
+        -- CONNECTION STATE IS A MODAL, NOT CHAT. A drop repeats every backoff tick, so
+        -- narrating it in the chat log buried the actual conversation under a wall of
+        -- identical lines while the player stood in a world that was no longer live. The
+        -- UI mirrors this and puts one overlay up, held until we rejoin or give up.
+        mp.testSet('netstate', state)
         if state ~= 'Joined' then
             roster = {}
             mirrorRoster()
@@ -824,11 +840,39 @@ local eventHandlers = {
     -- The owner of the world we are standing in went Solo, so it is no longer open to us.
     -- Dial our OWN world, which this client already knows; the server drops anyone still
     -- here shortly after, so doing nothing would just become a disconnect.
+    -- WHERE TO SIMULATE. Sent only to the sim peer: one anchor per populated region, so a
+    -- single engine keeps several parts of the world active instead of one ~450MB process per
+    -- region. A normal client never receives this, and without anchors the engine behaves
+    -- exactly as it always has (the player is the only anchor).
+    MP_SimAnchors = function(data)
+        if not mp.setSimAnchors then return end
+        local out = {}
+        for _, a in ipairs((data and data.anchors) or {}) do
+            if a.x and a.y then out[#out + 1] = { x = math.floor(a.x), y = math.floor(a.y) } end
+        end
+        mp.setSimAnchors(out)
+    end,
+    -- The credential for the next world, minted by the one we are still connected to. The
+    -- pending switch is waiting on exactly this.
+    MP_TravelTicket = function(data)
+        net.travelTicket(tostring(data and data.ticket or ''))
+    end,
+    -- The world telling us what it IS. Authoritative, sent at join and on every flip.
+    MP_WorldMode = function(data)
+        local m = tostring(data and data.mode or '')
+        worldMode = (m == 'public' or m == 'party') and m or 'solo'
+        mirrorRoster()
+    end,
     MP_WorldClosed = function(data)
         toPlayer('MP_WorldClosed', data)
         -- Mirrored so the HTML overlay can say WHY the world just changed under the player.
         mp.testSet('worldClosedBy', tostring(data.by or ''))
         mp.testSet('worldClosed', tostring(data.reason or 'closed'))
+        -- A SEQUENCE, not the value. The reason is a constant ('owner_went_solo'), so the UI
+        -- deduping on the value alone silently swallowed the second and every later kick in a
+        -- session: the player was redialed with nothing on screen explaining why.
+        noticeSeq = noticeSeq + 1
+        mp.testSet('noticeSeq', tostring(noticeSeq))
         if worldUrls.own and net.currentTarget() ~= worldUrls.own then
             net.switchTo(worldUrls.own)
         end
@@ -840,6 +884,10 @@ local eventHandlers = {
         toPlayer('MP_PartyTravel', data)
         mp.testSet('partyTravelBy', tostring(data.leaderName or ''))
         mp.testSet('partyTravelTo', tostring(data.worldId or ''))
+        -- Same reason: the public world's id is a constant, so a second trip to it looked
+        -- identical to the first and was never announced.
+        noticeSeq = noticeSeq + 1
+        mp.testSet('noticeSeq', tostring(noticeSeq))
         if url == net.currentTarget() then return end
         net.switchTo(url)
     end,

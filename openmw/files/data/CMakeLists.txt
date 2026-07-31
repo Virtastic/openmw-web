@@ -129,6 +129,7 @@ set(BUILTIN_DATA_FILES
     mp.omwscripts
     scripts/mp/actors.lua
     scripts/mp/admin.lua
+    scripts/mp/adminui.lua
     scripts/mp/combat.lua
     scripts/mp/global.lua
     scripts/mp/identity.lua
@@ -140,7 +141,11 @@ set(BUILTIN_DATA_FILES
     scripts/mp/player.lua
     scripts/mp/puppet.lua
     scripts/mp/quests.lua
+    scripts/mp/social.lua
     scripts/mp/testkill.lua
+    scripts/mp/threat.lua
+    scripts/mp/ui.lua
+    scripts/mp/voice.lua
     scripts/mp/world.lua
 
     scripts/omw/activationhandlers.lua

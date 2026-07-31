@@ -458,7 +458,7 @@
      // terminal-grey text, which read like a stack trace at the exact moment a player needs a
      // calm sentence — and it is what every fatal path in this file lands on, so fixing it
      // here fixes all of them rather than eleven call sites.
-     if (document.getElementById('omw-fatal')) return;
+     if (document.getElementById('omw-fatal') || document.getElementById('mp-error-modal')) return;
      var o = document.createElement('div');
      o.id = 'omw-fatal';
      o.style.cssText = 'position:fixed;inset:0;z-index:9999;display:flex;align-items:center;'
@@ -482,9 +482,10 @@
      if (showReload !== false){
        var b = document.createElement('button');
        b.textContent = 'Reload';
-       b.style.cssText = 'margin-top:22px;padding:9px 24px;background:#2a2118;color:#e8c86a;'
-         + 'border:1px solid #6b5433;border-radius:2px;cursor:pointer;'
-         + 'font:600 13px/1 Optima,"Gill Sans",sans-serif';
+       b.style.cssText = 'margin-top:22px;width:100%;box-sizing:border-box;padding:13px 20px;'
+         + 'border-radius:6px;cursor:pointer;border:1px solid #eecb78;'
+         + 'font:600 12.5px/1 Optima,"Gill Sans",sans-serif;letter-spacing:.12em;text-transform:uppercase;'
+         + 'background:linear-gradient(180deg,#d3a84e,#8a6838);color:#1a1207';
        b.addEventListener('click', function(){ location.reload(); });
        box.appendChild(b);
      }
@@ -1260,7 +1261,7 @@
              // dialog; the button sets __omwAllowLeave so navigation is clean.
              function mpErrorModal(title, msg){
                killEngine(); // top-level: stop the WASM render loop + audio so it stops eating CPU
-               if (document.getElementById('mp-error-modal')) return;
+               if (document.getElementById('mp-error-modal') || document.getElementById('omw-fatal')) return;
                var wrap = document.createElement('div'); wrap.id = 'mp-error-modal';
                wrap.style.cssText = 'position:fixed;inset:0;z-index:10000;display:flex;align-items:center;'
                  + 'justify-content:center;padding:24px;background:radial-gradient(140% 120% at 50% 0%,#181209,#000 72%);'
@@ -3042,7 +3043,7 @@
   function lineHtml(m){
     var ch = m.channel || 'say';
     if (ch === 'server') return '<div class="ln c-server">'+esc(m.text)+'</div>';
-    if (ch === 'global' || ch === 'say') ch = 'public'; // one shared world = one Public channel
+    if (ch === 'global' || ch === 'say') ch = 'public'; // one public world = one Public channel
     var who = (ch === 'whisper')
       ? (m.to ? ('to '+esc(m.to)) : esc(m.from||'?'))
       : esc(m.from||'?');
@@ -3097,7 +3098,12 @@
   // ================================ SOCIAL ================================
   var socialOpen = false, seenOpenSocial = 0, sTab = 'friends', seenSocialResult = '';
   var netHold = false;
-  var lastWhere = (function(){ try { return localStorage.getItem('omw-where') || ''; } catch(e){ return ''; } })();
+  // NOT persisted, and not a guess. Which world you are in is the server's fact, delivered
+  // as the whereNow mirror; this is only the latest value of it. Keeping a localStorage copy
+  // meant the panel could assert "Public" while the connection was to your own world — and it
+  // survived reloads, so nothing could clear it. UI state that describes the server belongs
+  // to the server.
+  var lastWhere = '';
   var sEl = document.getElementById('omw-social'), sBody = document.getElementById('omw-social-body');
   var sNav = document.getElementById('omw-nav'), sAvail = document.getElementById('omw-avail');
   var sStatus = document.getElementById('omw-social-status');
@@ -3122,16 +3128,17 @@
     party_full: 'That party is full.',
     already_in_party: "You're already in a party. Leave it first.",
     not_travelled: "They're playing in their own world, which can't be joined from here yet.",
-    not_flippable: "The shared world can't be switched to Solo or Party.",
+    not_flippable: "The public world can't be switched to Solo or Party.",
     not_owner: "This isn't your world to change.",
-    no_public_world: 'The shared world is offline right now.',
+    no_public_world: 'The public world is offline right now.',
     no_gateway: 'World switching is unavailable on this server.',
     bad_target: "That's not somewhere a party can go.",
   };
   function failureText(code, op){
     return FAILURE[code] || ("Couldn't " + op + (code ? ': ' + code : '') + '.');
   }
-  function setWhere(v){ lastWhere = v; try { localStorage.setItem('omw-where', v); } catch(e){} }
+  // Optimistic only, and always overwritten by the next whereNow mirror. Nothing persists.
+  function setWhere(v){ lastWhere = v; }
   function openSocial(){ if (socialOpen) return; socialOpen = true; sEl.classList.add('show'); uiHold(true); renderSocial(true); }
   function closeSocial(){ if (!socialOpen) return; socialOpen = false; sEl.classList.remove('show'); uiHold(false); }
   document.getElementById('omw-social-close').addEventListener('click', closeSocial);
@@ -3159,7 +3166,7 @@
     // belong in the signature. Leaving lastWhere out meant clicking Solo updated the variable,
     // called renderSocial(), and then hit the unchanged-signature early return: the segment
     // stayed on the old choice and the panel looked hung even though the switch had happened.
-    var sig = [sTab, lastWhere, sStatusText, m.friends, m.party, m.players, m.friendRequests,
+    var sig = [sTab, lastWhere, String(m.whereNow || ''), sStatusText, m.friends, m.party, m.players, m.friendRequests,
       m.invites, m.availability, m.presenceMode, m.worldMode].join(' ')
     if (!force && sig === lastSocialSig) return;
     lastSocialSig = sig;
@@ -3181,7 +3188,13 @@
     // the engine never mirrors — so it filtered nobody. With one player online that read "0"
     // next to your own row, and offered to friend/mute/block yourself.
     var selfName = String(m.selfName || window.__omwSelfName || '').toLowerCase();
-    var otherPlayers = players.filter(function(p){ return String(p.name||'').toLowerCase() !== selfName; });
+    // Identity, not name: the roster carries usernames while __omwSelfName is the CHARACTER
+    // name, so a name compare let the player see themselves. Name stays as the fallback for
+    // the moment before the id mirror lands.
+    var selfId = m.selfId == null ? '' : String(m.selfId);
+    var otherPlayers = players.filter(function(p){
+      if (selfId && p.id != null) return String(p.id) !== selfId;
+      return String(p.name||'').toLowerCase() !== selfName; });
     [['friends','Friends', friends.length],['party','Party', partyN],['players','Players', otherPlayers.length],['settings','Settings', null]]
       .forEach(function(t){
         var d = el('div','nv'+(sTab===t[0]?' on':''), esc(t[1]) + (t[2]!=null ? ' <span class="n">'+t[2]+'</span>' : ''));
@@ -3191,6 +3204,11 @@
       });
     // content
     sBody.innerHTML = '';
+    // The switcher renders from where we ARE, not from what was last clicked: whereNow is
+    // the world actually dialled. Only solo-vs-party (a mode flip on the SAME world) still
+    // comes from local memory, because both look identical from the client's side.
+    var wn = m.whereNow == null ? '' : String(m.whereNow);
+    if (wn) lastWhere = wn;
     var where = el('div','whererow');
     where.appendChild(el('span','lb','Playing'));
     where.appendChild(seg([['solo','Solo'],['party','Party'],['public','Public']], lastWhere, function(v){
@@ -3205,12 +3223,19 @@
         return String(p.name || '').toLowerCase() === selfName; })[0];
       var iLead = !!me && String(party.leader || '') !== '' && me.acct === party.leader && partyN > 1;
       if (iLead && v === 'public') {
-        if (!confirm('You lead a party of ' + partyN + '. Moving to the shared world brings every member with you.\n\nContinue?')) return;
+        if (!confirm('You lead a party of ' + partyN + '. Moving to the public world brings every member with you.\n\nContinue?')) return;
         selfTravel = true; // we chose this; do not narrate it back to us as if it happened to us
         setWhere(v); cmd('social:PartyTravel:public'); closeSocial();
-        window.__omwLoading.show('Moving the party', 'Syncing with the shared world…');
-        setTimeout(function(){ if ((mpState().state || '') === 'Joined') window.__omwLoading.hide(); }, 2500);
-        setStatus('Taking your party to the shared world…');
+        window.__omwLoading.show('Moving the party', 'Syncing with the public world…');
+        // Hold the loading screen until the connection actually settles. The old fixed 2.5s
+      // timeout dropped the player into a world they had not joined yet, which is what made
+      // the panel narrate the join instead of the loading screen doing it.
+      (function poll(n){
+        if ((mpState().state || '') === 'Joined'){ window.__omwLoading.hide(); return; }
+        if (n > 120){ window.__omwLoading.hide(); return; }   // ~30s, then let the net layer's own error path speak
+        setTimeout(function(){ poll(n + 1); }, 250);
+      })(0);
+        setStatus('');
         renderSocial();
         return;
       }
@@ -3222,10 +3247,12 @@
       // Solo <-> Party on your OWN world is an in-place flip (no reconnect); Public is a real
       // redial that must re-sync with the world's sim peer. Either way the wait is real, so
       // show it — the state watcher above hides it when the connection settles.
-      window.__omwLoading.show(v === 'public' ? 'Joining the shared world' : 'Switching world',
+      window.__omwLoading.show(v === 'public' ? 'Joining the public world' : 'Switching world',
         'Syncing with the server…');
       setTimeout(function(){ if ((mpState().state || '') === 'Joined') window.__omwLoading.hide(); }, 2500);
-      setStatus(v==='solo' ? 'Switched to your solo world.' : v==='party' ? 'Your world is open to your party.' : 'Joining the shared world…');
+      // No status line for a world switch: the loading screen IS the progress indicator, and
+      // a second running commentary in the panel footer only contradicted it.
+      setStatus('');
       renderSocial();
     }));
     sBody.appendChild(where);
@@ -3305,7 +3332,7 @@
   // Shown BEFORE chargen: what this is, and why the online parts are not there yet.
   TOURS.intro = [
     { t: 'Create your character first', g: '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><circle cx="24" cy="15" r="7"/><path d="M10 40c0-7.5 6-13 14-13s14 5.5 14 13"/></svg>',
-      b: 'Play through Morrowind\'s opening and choose your <b>race, class and birthsign</b>. Chat, friends, parties and the shared world unlock the moment creation is finished.' },
+      b: 'Play through Morrowind\'s opening and choose your <b>race, class and birthsign</b>. Chat, friends, parties and the public world unlock the moment creation is finished.' },
     { t: 'Saved to your account', g: '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M10 14h28v20H10z"/><path d="M10 20h28"/><circle cx="16" cy="17" r="1.5"/></svg>',
       b: 'Your character lives on the server, not in this browser. Progress, inventory and where you stood are kept for you, so clearing site data cannot lose them.' },
     { t: 'Play anywhere', g: '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><circle cx="24" cy="24" r="15"/><path d="M9 24h30M24 9c4 5 4 25 0 30M24 9c-4 5-4 25 0 30"/></svg>',
@@ -3314,9 +3341,9 @@
   // Shown the moment creation finishes and multiplayer actually unlocks.
   TOURS.unlocked = [
     { t: 'You are in the world', g: '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><circle cx="18" cy="18" r="6"/><circle cx="32" cy="22" r="5"/><path d="M8 40c0-6 4.5-10 10-10s10 4 10 10"/><path d="M26 40c0-4.5 3.5-8 8-8s8 3.5 8 8"/></svg>',
-      b: 'Your character is saved to your account and follows you everywhere: solo, with your party, and in the shared world. Multiplayer is now unlocked.' },
+      b: 'Your character is saved to your account and follows you everywhere: solo, with your party, and in the public world. Multiplayer is now unlocked.' },
     { t: 'Chat', g: '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M8 10h32v22H22l-8 8v-8H8z"/><path d="M14 18h20M14 24h14"/></svg>',
-      b: 'Press <span class="key">T</span> to talk. <b>Party</b> reaches your group anywhere, <b>Public</b> the shared world, and <b>Whisper</b> one friend. Tab switches channels.' },
+      b: 'Press <span class="key">T</span> to talk. <b>Party</b> reaches your group anywhere, <b>Public</b> the public world, and <b>Whisper</b> one friend. Tab switches channels.' },
     { t: 'Social', g: '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><circle cx="24" cy="16" r="7"/><path d="M10 40c0-7.5 6-13 14-13s14 5.5 14 13"/><path d="M36 12l6 6M42 12l-6 6"/></svg>',
       b: 'Press <span class="key">O</span> for the Social panel: add friends, form a party, join a friend, and control who can see you.' },
     { t: 'Play your way', g: '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><circle cx="24" cy="24" r="16"/><path d="M24 8v6M24 34v6M8 24h6M34 24h6"/><path d="M24 24l7-7"/></svg>',
@@ -3398,34 +3425,61 @@
   // Watch the mirrors for things that were done TO this player and narrate them once each.
   // All three are edge-triggered against a remembered value, never level-triggered, or the
   // 150ms poll would reopen the modal forever.
-  var seenWorldClosed = null, seenTravelTo = null, wasInParty = false;
-  // Set when WE are the one who moved the party, so the leader is not told that someone
-  // moved them. Cleared once the resulting travel edge has been consumed.
+  // EDGE-TRIGGERED ON A SEQUENCE, not on the payload. The payloads repeat verbatim — the
+  // public world's id is a constant, so is the kick reason — so comparing values could not
+  // tell a second occurrence from an unchanged mirror, and every kick or trip after the first
+  // in a session was silently swallowed while the player really was redialed.
+  var seenNoticeSeq = null, wasInParty = false;
+  // Set when WE are the one who moved the party, so the leader is not told that someone moved
+  // them. Cleared on every notice edge, not only inside the branch that consumed it: it used
+  // to latch true whenever the edge never fired, suppressing the NEXT genuine notice.
   var selfTravel = false;
   function noticeWatch(m){
-    var wc = m.worldClosed == null ? '' : String(m.worldClosed);
-    if (seenWorldClosed === null) seenWorldClosed = wc;
-    else if (wc !== seenWorldClosed) {
-      seenWorldClosed = wc;
-      // The name is optional on purpose: the server sends it only when the owner is still
-      // visible, so the copy has to read correctly without one.
-      var by = esc(String(m.worldClosedBy || ''));
-      if (wc) showNotice('Returning to your own world',
-        (by ? '<b>' + by + '</b> has gone Solo, so their world is no longer open to the party.'
-            : 'The world you were in has gone Solo, so it is no longer open to the party.')
-        + ' You are being taken back to your own world. Nothing you did there is lost.',
-        GLYPH_WORLD);
+    var ns = m.netstate == null ? '' : String(m.netstate);
+    if (ns !== seenNetState){
+      seenNetState = ns;
+      // The same loading screen a world switch uses: you are not in a live world while the
+      // connection is down, so the game must not stay playable behind a chat line. It comes
+      // down when we rejoin, and the net layer's give-up lands on the error screen.
+      // ONE screen, held until we are actually in. Reacting only to 'Reconnecting' and
+      // 'Joined' let every state BETWEEN them (Offline, Connecting, HelloSent) fall through
+      // with no overlay — so a world switch, which cycles those repeatedly, flashed the
+      // screen on and off instead of covering the wait. Anything that is not Joined means
+      // the player is not in a live world, and the screen stays up.
+      if (ns && ns !== 'Joined' && ns !== 'Failed'){
+        if (!everJoinedOnce) { /* first boot: the normal loading screen already owns this */ }
+        else window.__omwLoading.show('Reconnecting', 'Putting you back in the world…');
+      } else if (ns === 'Joined'){
+        everJoinedOnce = true;
+        window.__omwLoading.hide();
+        resumePointerLock();
+      }
+      // Failed has exactly ONE owner: the mpErrorModal watcher below. Handling it here too
+      // stacked two different-looking modals on the same event.
     }
-    var tt = m.partyTravelTo == null ? '' : String(m.partyTravelTo);
-    if (seenTravelTo === null) seenTravelTo = tt;
-    else if (tt !== seenTravelTo) {
-      seenTravelTo = tt;
-      var leadBy = esc(String(m.partyTravelBy || ''));
-      if (tt && !selfTravel) showNotice('Your party is moving',
-        (leadBy ? '<b>' + leadBy + '</b> has' : 'Your party leader has')
-        + ' taken the group to <b>' + (tt === 'vvardenfell' ? 'the shared world' : esc(tt))
-        + '</b>. You are travelling with them.',
-        GLYPH_PARTY);
+    var seq = m.noticeSeq == null ? '' : String(m.noticeSeq);
+    if (seenNoticeSeq === null) { seenNoticeSeq = seq; }
+    else if (seq !== seenNoticeSeq) {
+      seenNoticeSeq = seq;
+      var wc = m.worldClosed == null ? '' : String(m.worldClosed);
+      var tt = m.partyTravelTo == null ? '' : String(m.partyTravelTo);
+      if (wc) {
+        // The name is optional on purpose: the server sends it only when the owner is still
+        // visible, so the copy has to read correctly without one.
+        var by = esc(String(m.worldClosedBy || ''));
+        showNotice('Returning to your own world',
+          (by ? '<b>' + by + '</b> has gone Solo, so their world is no longer open to the party.'
+              : 'The world you were in has gone Solo, so it is no longer open to the party.')
+          + ' You are being taken back to your own world. Nothing you did there is lost.',
+          GLYPH_WORLD);
+      } else if (tt && !selfTravel) {
+        var leadBy = esc(String(m.partyTravelBy || ''));
+        showNotice('Your party is moving',
+          (leadBy ? '<b>' + leadBy + '</b> has' : 'Your party leader has')
+          + ' taken the group to <b>' + (tt === 'vvardenfell' ? 'the public world' : esc(tt))
+          + '</b>. You are travelling with them.',
+          GLYPH_PARTY);
+      }
       selfTravel = false;
     }
     var party = pj(m.party) || {};

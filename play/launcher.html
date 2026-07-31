@@ -733,6 +733,25 @@
    };
  }
 
+ // Which of the WORLD's content files this folder does not have. The server states its own
+ // load order (/locker/needed -> content); anything it lists that we lack is a hard stop.
+ // Empty on any failure: an unreachable gateway must not block a player from starting, and
+ // the world's own check still refuses a genuinely mismatched client.
+ async function missingWorldContent(scan){
+   try {
+     const base = httpBaseOf(mpServerUrl());
+     if (!base) return [];
+     const r = await fetch(base+'/locker/needed', { credentials:'include' });
+     if (!r.ok) return [];
+     const want = (await r.json()).content || [];
+     const have = { 'morrowind.esm':true, 'tribunal.esm':!!scan.tribunal, 'bloodmoon.esm':!!scan.bloodmoon };
+     return want.filter(function(n){
+       const k = String(n).toLowerCase();
+       return k in have && !have[k];   // only judge files we can actually detect
+     });
+   } catch(e){ return []; }
+ }
+
  // Set once the folder is validated + remembered but the player still needs to confirm starting
  // with missing assets — a second click on the card then starts anyway.
  let confirmStart = false;
@@ -751,6 +770,18 @@
      // Grant read permission while we still hold the user gesture, then remember the handle.
      if ((await dir.requestPermission({ mode:'readwrite' })) !== 'granted'){
        note('Edit access was declined. It’s needed so your saved games can be written to the folder, reopen the picker and choose “Edit files”.','err');
+       return;
+     }
+     // CONTENT THE WORLD RUNS IS NOT OPTIONAL. A world's content list is fixed by the server,
+     // so a player missing any of it cannot join — this used to let a base-game copy through,
+     // and they only found out after sign-in, chargen and a loading screen, as a raw
+     // BAD_CONTENT refusal. Check it here, where the fix is "pick a complete folder".
+     const lackContent = await missingWorldContent(scan);
+     if (lackContent.length){
+       note('This server runs Morrowind + '+lackContent.join(' + ').replace(/\.esm/gi,'')
+            +', so every player needs '+(lackContent.length>1?'those expansions':'that expansion')
+            +' installed. Your folder does not have '+lackContent.join(', ')
+            +'. Install '+(lackContent.length>1?'them':'it')+' and pick the folder again.','err');
        return;
      }
      await idbSet(KEY, dir);

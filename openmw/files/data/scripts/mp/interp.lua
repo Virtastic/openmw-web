@@ -5,7 +5,13 @@
 local Interp = {}
 Interp.__index = Interp
 
-local RENDER_DELAY = 0.1 -- seconds behind the newest snapshot
+-- Seconds behind the newest snapshot. THE LARGEST SINGLE LATENCY ITEM in the system: unlike
+-- every rate upstream of it, this is unconditionally additive to what the player sees. 75 ms
+-- is safe only because actor frames now arrive on a stable ~50 ms cadence (the peer broadcasts
+-- every frame at its framerate cap, with no aliasing gate). The floor is one packet interval
+-- plus the delivery hop plus jitter; go lower only with evidence that arrivals are steadier,
+-- or puppets clamp to the newest sample and stall on a laggy link instead of interpolating.
+local RENDER_DELAY = 0.075
 local MAX_SNAPSHOTS = 16 -- ~1s of history at 15 Hz
 
 function Interp.new()

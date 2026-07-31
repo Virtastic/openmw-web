@@ -69,6 +69,12 @@ local function mirrorTarget() mp.testSet('dialTarget', targetUrl()) end
 -- While set (real time), connection failures keep retrying instead of turning terminal:
 -- covers the window where a freshly created world is still booting. Cleared on Joined.
 local switchDeadline = nil
+-- Bounds the wait for a travel ticket, so a wedged world cannot strand a world switch.
+local ticketDeadline = nil
+-- True from the moment a world switch is requested until we ARRIVE somewhere. Kept because a
+-- switch must authenticate with its travel ticket, never with a resume token belonging to the
+-- world we are leaving.
+local switching = false
 local reconnectAttempt = 0 -- reset on a successful Joined
 -- Have we EVER been in the world on this page? A drop after joining is worth retrying
 -- indefinitely (the character is in there, and the resume ticket rejoins in place). A server
@@ -159,14 +165,25 @@ function net.start()
     -- Character slots: an explicit switch must NEVER resume — resume pins the character
     -- the old session was playing, which is exactly the one we are leaving. Fall through
     -- to ticket/login, which carry the characterId selection.
-    if desiredCharId == nil and type(token) == 'string' and token ~= '' then
+    -- A resume token belongs to the world that issued it: it lives in THAT process's memory,
+    -- so presenting it to the world we are switching to is always refused. Skipping it here
+    -- keeps the switch on the ticket it was given, instead of spending an attempt to learn
+    -- what we already know.
+    if desiredCharId == nil and not switching
+        and type(token) == 'string' and token ~= '' then
         authMode = 'resume'
         net.resumeToken = token
     end
     -- An SSO ticket outranks the password ladder but NOT a parked resume ticket: resuming
     -- rejoins in place and costs the server nothing, whereas redeeming burns the one-use
     -- ticket. Both are tried before falling back to register/login.
-    local ticket = mp.getLoginTicket and mp.getLoginTicket() or ''
+    -- A travel ticket minted for THIS hop outranks the boot-time env ticket, which is
+    -- single-use and was spent on the first join. Re-reading the env here would overwrite
+    -- the fresh credential with the dead one and refuse every world switch.
+    local ticket = net.loginTicket
+    if not ticket or ticket == '' then
+        ticket = mp.getLoginTicket and mp.getLoginTicket() or ''
+    end
     if authMode ~= 'resume' and type(ticket) == 'string' and ticket ~= '' then
         authMode = 'ticket'
         net.loginTicket = ticket
@@ -185,8 +202,41 @@ end
 -- auth ladder: arriving at a new world is a fresh connection attempt, and carrying an
 -- exponential delay (or a spent resume token) over from the old one would make the first
 -- join look broken.
+-- CHANGING WORLD MEANS AUTHENTICATING AGAIN, and we need a credential BEFORE we hang up.
+-- Every world is its own process: the resume table is in that process's memory and the SSO
+-- login ticket is single-use and already spent, so dialling a second world with what we hold
+-- is a guaranteed AUTH_FAILED. Ask the world we are still connected to for the next hop's
+-- ticket, and dial once it answers. If it never does, dial anyway rather than stranding the
+-- player — the destination will refuse us and the normal error path explains why.
+local pendingSwitch = nil
+
+function net.travelTicket(ticket)
+    if type(ticket) == 'string' and ticket ~= '' then
+        net.loginTicket = ticket
+        if mp.setLoginTicket then mp.setLoginTicket(ticket) end
+    end
+    local url = pendingSwitch
+    pendingSwitch = nil
+    if url then net.dialNow(url) end
+end
+
 function net.switchTo(url)
     if type(url) ~= 'string' or url == '' then return false end
+    -- Already connected: get a fresh ticket first. Not connected (nothing to ask), dial now.
+    if net.state == 'Joined' and pendingSwitch == nil then
+        switching = true
+        pendingSwitch = url
+        mp.sendEvent('RequestTravelTicket', {})
+        -- Never wait forever on a world that may be wedged.
+        ticketDeadline = core.getRealTime() + 5
+        return true
+    end
+    return net.dialNow(url)
+end
+
+function net.dialNow(url)
+    if type(url) ~= 'string' or url == '' then return false end
+    switching = true
     currentUrl = url
     mirrorTarget()
     reconnectAttempt = 0
@@ -242,7 +292,14 @@ function net.onClose()
         net.resumeToken = nil
         if mp.setResumeToken then mp.setResumeToken('') end
         net.lastError = nil
-        local ticket = mp.getLoginTicket and mp.getLoginTicket() or ''
+        -- The TRAVEL ticket (minted for this hop by the world we just left) outranks the
+        -- boot-time env ticket, which is single-use and was spent on the first join. Reading
+        -- the env here is what made every world switch fail: resume was refused by a world
+        -- that had never seen us, and the fallback then presented the dead credential.
+        local ticket = net.loginTicket
+        if not ticket or ticket == '' then
+            ticket = mp.getLoginTicket and mp.getLoginTicket() or ''
+        end
         if type(ticket) == 'string' and ticket ~= '' then
             authMode = 'ticket'
             net.loginTicket = ticket
@@ -342,6 +399,15 @@ dispatch.SessionHelloOk = function(msg)
             password = mp.getPassword(),
         }
     end
+    -- THE SIM PEER'S SHARED SECRET. The server gates a SYSTEM peer on msg.serverPassword —
+    -- a field distinct from the user password above — and this client never sent it, so the
+    -- check compared '' against the configured secret and refused every peer with "wrong
+    -- server password". The peer booted, loaded the world, failed auth and sat there: server
+    -- authoritative NPC simulation was never actually running. Only a system peer sends this;
+    -- a real user has no server password and is never checked against one.
+    if mp.isSystem() then
+        auth.serverPassword = mp.getPassword()
+    end
     -- Character slots: an explicit selection rides every auth rung except resume (resume
     -- pins the character server-side; overriding it would swap personas mid-reconnect).
     if desiredCharId and auth.t ~= 'SessionResume' then
@@ -372,6 +438,10 @@ dispatch.SessionWelcome = function(msg)
     -- Character slots + onboarding profile: the account's slot list, which one this
     -- session plays, and whether the server demands a completed profile before Ready.
     switchDeadline = nil -- arrived: a later drop is a normal reconnect, not a boot wait
+    switching = false    -- arrived: a later drop IS a normal reconnect, so resume applies again
+    -- The ticket that got us in is now SPENT. Holding it would make the next reconnect retry
+    -- a dead credential; a plain reconnect resumes, and a world switch mints a fresh one.
+    net.loginTicket = nil
     net.characters = (type(msg.characters) == 'table' and msg.characters ~= json.null) and msg.characters or {}
     net.characterId = tostring(msg.characterId or '')
     net.profile = (type(msg.profile) == 'table' and msg.profile ~= json.null) and msg.profile or {}
@@ -466,6 +536,15 @@ function net.tick()
     -- NOT connected. Real time throughout — onUpdate dt pauses with the world, and a paused
     -- tab must still redial.
     local now = core.getRealTime()
+    -- The world we asked for a travel ticket never answered. Dial anyway: being refused at
+    -- the destination with a clear error beats sitting in a world the player asked to leave.
+    if pendingSwitch and ticketDeadline and now >= ticketDeadline then
+        ticketDeadline = nil
+        local url = pendingSwitch
+        pendingSwitch = nil
+        net.dialNow(url)
+        return
+    end
     if reconnectAt and now >= reconnectAt then
         reconnectAt = nil
         if mp.connect(targetUrl()) then
