@@ -150,6 +150,10 @@ export class Connection implements Peer {
   private simulatesActors = false;
   private isSystem = false;
   private engineHeld = false;
+  // Set by resolveCharacter when this connection's character is genuinely still in
+  // Morrowind's opening sequence, so authenticate() can withhold persistence until it
+  // finishes. Evidence-based: see resolveCharacter, not the `completed` flag.
+  private creationInProgress = false;
   private authing = false;
   private sessionToken = ''; // M8: parked as a resume ticket when an in-world session drops
   private resumed?: ResumeTicket;
@@ -583,6 +587,10 @@ export class Connection implements Peer {
       // The client's engine reports CharGenState == -1 (race/class/sign done). Until this
       // arrives the slot is provisional and an abandoned creation resets on next entry.
       // Idempotent, and re-reported on every login — which self-migrates pre-flag slots.
+      // Creation is over, so this character may be saved from here on. Clearing the flag set
+      // at auth is what re-enables persistence — without it the first real session after
+      // chargen would also be discarded.
+      if (this.player) this.ctx.players.allowSaves(this.player.charId);
       const done = this.ctx.accounts.get(this.player.accountKey).then((account) => {
         if (account && this.player) this.ctx.accounts.completeCharacter(account, this.player.charId);
       });
@@ -867,6 +875,8 @@ export class Connection implements Peer {
       char = [...account.characters].sort((a, b) => b.lastPlayedAt.localeCompare(a.lastPlayedAt))[0]!;
     }
     let doc = await this.ctx.players.get(char.id);
+    // A slot that has never been played has nothing to restore and has not finished creation.
+    if (!char.completed && doc === undefined) this.creationInProgress = true;
     if (!char.completed && doc !== undefined) {
       // Which unflagged docs really finished creation? Appearance/stats are useless signals —
       // they poll every second and land MID-chargen. Trustworthy ones: any journal entry
@@ -890,6 +900,9 @@ export class Connection implements Peer {
       const finished = hasJournal
         || positions.some((p) => !/census|prison ship/i.test(p.cellKey));
       if (finished) this.ctx.accounts.completeCharacter(account, char.id);
+      // Remember it: authenticate() suppresses persistence while creation is genuinely in
+      // progress, and this is the only place with the evidence to tell.
+      else this.creationInProgress = true;
     }
     return { char, doc };
   }
@@ -1153,6 +1166,17 @@ export class Connection implements Peer {
     // The lobby used to be fully ephemeral, which also threw away WHERE you were standing —
     // so every return to the shared world respawned you at the default point. Position only.
     else if (this.ctx.lobbyWorld) this.ctx.players.markPositionOnly(this.player.charId);
+    // A character still IN character creation is not saved. Morrowind's opening is a scripted
+    // sequence — the census office, the paperwork, the race/class/birthsign prompts — and a doc
+    // captured partway through restores a half-built character into a script that has already
+    // moved past the step that built it. What comes back is not the state that was saved.
+    //
+    // Gate on creationInProgress, NOT on `completed`: slots predating that flag are finished
+    // but unflagged, and suppressing THEM would discard real characters. resolveCharacter
+    // works out which is which from evidence (a journal entry, or a position outside the
+    // chargen cells) and self-migrates the flag; this reuses that answer rather than
+    // second-guessing it. Cleared when ChargenComplete arrives (below).
+    else if (this.creationInProgress) this.ctx.players.suppressSaves(this.player.charId);
     this.state = 'AUTHED';
     this.authing = false;
     const sessionToken = randomBytes(16).toString('hex');

@@ -99,6 +99,20 @@ export class PlayerStore {
     this.positionOnly.add(key);
   }
 
+  // Withhold the DISK WRITE while a character is still in Morrowind's opening sequence. The
+  // in-memory doc is built normally — quests, stats and position all work for the session —
+  // only nothing reaches players/ until creation finishes. Suppressing the doc itself instead
+  // (markEphemeral) also stops it forming, which breaks state sync for the very characters
+  // this is meant to protect.
+  //
+  // Why withhold at all: a doc captured partway through a scripted sequence restores a
+  // half-built character into a script that has already moved past the step that built it, so
+  // what comes back is not what was saved. Cleared by allowSaves() on ChargenComplete.
+  private creating = new Set<string>();
+
+  suppressSaves(key: string): void { this.creating.add(key); }
+  allowSaves(key: string): void { this.creating.delete(key); }
+
   clearEphemeral(key: string): void {
     this.ephemeral.delete(key);
   }
@@ -210,6 +224,9 @@ export class PlayerStore {
   }
 
   async flushKey(key: string): Promise<void> {
+    // Still in character creation: keep the doc in memory and leave the dirty flag set, so the
+    // first flush after ChargenComplete writes everything that happened meanwhile.
+    if (this.creating.has(key)) return;
     if (!this.dirty.has(key)) return;
     this.dirty.delete(key);
     const pending = this.debounce.get(key);
