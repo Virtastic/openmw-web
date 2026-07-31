@@ -139,6 +139,46 @@ curl -i -N --http1.1 -H 'Connection: Upgrade' -H 'Upgrade: websocket' \
 
 HTTP/2 cannot carry a WebSocket upgrade — without `--http1.1` you get a misleading 404/502.
 
+### Simulation authority: one peer, every occupied cell
+
+**Authority belongs to the sim peer. Never to a player.** A cell simulated by a client is a
+bug, not a fallback — a modified client would author NPC state for everyone in it.
+
+One peer covers the whole world, not one peer per region. A peer is a full OpenMW instance
+(one ESM store, one physics world, one navmesh, one AI tick), and the server hands it a list
+of ANCHORS: regions to keep loaded and ticking. Everything happens inside a single coherent
+simulation, so there is nothing to reconcile between regions. A process per region was tried
+and abandoned — it is also unsolvable in principle, because N simulations of one world have
+to agree with each other.
+
+Anchors come in two kinds, and the difference is not cosmetic:
+
+| | How it is held | Peer must stand there? |
+|---|---|---|
+| **Exterior** | grid coordinate (`osg::Vec2i`), 3x3 block per anchor | no |
+| **Interior** | cell NAME | no (since the interior-anchoring change) |
+
+Interiors used to be impossible to anchor: `Scene::setSimAnchors` took only grid coordinates,
+and an interior has none. A peer could therefore simulate exactly one room — the one its own
+avatar stood in — so **every indoor player was in a cell nothing simulated**. Morrowind's
+opening is entirely indoors, which is why chargen stalled at the census office with the guard
+frozen mid-line: no simulator, no AI tick, no quest progression.
+
+What makes interiors work, all three needed together:
+
+- `Scene` keeps `mSimAnchorInteriors` loaded AND exempts them from the unload sweep in
+  `changeCellGrid`. Without the exemption, any exterior grid change dropped every held room —
+  so one player walking a cell boundary outdoors froze another player's NPCs indoors.
+- `MWMechanics::Actors` skips the processing-range cull for actors in a held interior.
+  Distance across a door is meaningless (the room may be a mile away in world units), so the
+  range check culled precisely the NPCs the server asked for. They are not distance-faded
+  either, for the same reason.
+- `setSimAnchors(anchors, interiors)` takes the second list; `SimAnchors` carries it;
+  `global.lua` forwards it; `server.ts` sends every occupied cell.
+
+`simpeer.anchors` logs `exteriors: N, interiors: M` — that is the fastest check that a room is
+actually held.
+
 ### There are no tiers
 
 "Tier 1" / "tier 2" is dead vocabulary from an older design and is being stripped out. There is
