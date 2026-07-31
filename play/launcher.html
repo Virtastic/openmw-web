@@ -76,6 +76,9 @@
  /* --- Choice cards, styled as inscribed artifact plaques --- */
  .cards{display:grid; grid-template-columns:repeat(3,1fr); gap:22px; align-items:stretch}
  @media (max-width:900px){ .cards{grid-template-columns:1fr; max-width:440px; margin-left:auto; margin-right:auto} }
+ /* [hidden] must win over this: .card sets display:flex, which outranks the browser's
+    default [hidden]{display:none} and left a 'hidden' card fully visible. */
+ .card[hidden]{display:none !important}
  .card{
    position:relative; padding:34px 30px 30px;
    background:linear-gradient(160deg,var(--panel-2),var(--panel));
@@ -390,6 +393,31 @@
       <div class="go" id="local-go">Choose Data Files <span class="arw">▸</span></div>
     </div>
 
+    <!-- Shown INSTEAD of the folder picker when this server hosts its own copy of the game.
+         The two are mutually exclusive on purpose: offering both would present a choice the
+         player cannot meaningfully make, and the hosted copy is the one that works with no
+         setup. Hidden until the probe below confirms the data is actually there, so a server
+         without it never advertises a card that would dead-end. -->
+    <div class="card actionable reveal d4" id="card-hosted" role="button" tabindex="0" hidden>
+      <button class="help-btn" id="help-hosted" type="button" aria-label="About playing this server's copy">?</button>
+      <div class="glyph" aria-hidden="true">
+        <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round">
+          <rect x="8" y="10" width="32" height="9" rx="2"/>
+          <rect x="8" y="21" width="32" height="9" rx="2"/>
+          <circle cx="13.5" cy="14.5" r="1.4" fill="currentColor" stroke="none"/>
+          <circle cx="13.5" cy="25.5" r="1.4" fill="currentColor" stroke="none"/>
+          <path d="M24 32v6M18 38h12"/>
+        </svg>
+      </div>
+      <div class="kicker">Hosted here</div>
+      <h2>Play this server's copy</h2>
+      <p class="lead">This server hosts Morrowind, so you can play the full game with
+         <b>nothing to install and no folder to pick</b>. Files are read from the server as the
+         world needs them, not downloaded up front, and your saves stay in this browser.</p>
+      <div class="note" id="hosted-note"></div>
+      <div class="go" id="hosted-go">Play now <span class="arw">▸</span></div>
+    </div>
+
     <!-- Multiplayer. Deliberately the THIRD card, not the first: the single-player paths
          must stay one click away, and a login wall in front of the demo is exactly what
          kills a browser port's first impression. -->
@@ -557,6 +585,30 @@
         (~50&nbsp;MB, cached afterwards). Best on a Chromium browser (Chrome, Edge, Brave) on desktop.</p>
      <div class="m-hr"></div>
      <p style="margin-top:16px">Just press <b>Start the demo</b>: no setup needed.</p>`,
+   hosted: `
+     <div class="m-kicker">This server &middot; nothing to install</div>
+     <h3 id="modal-title">Play this server's copy</h3>
+     <p>This server hosts its own copy of Morrowind, so you can play the full game without
+        owning a copy on this machine and without picking a folder.</p>
+
+     <h4>What actually happens</h4>
+     <p>Nothing is uploaded and nothing is installed. The game files are read from the server
+        <b>on demand, in small pieces</b> — the engine asks for the few megabytes it needs as
+        you move through the world, rather than downloading the whole game up front. What you
+        do fetch is cached by the browser, so a second visit starts much faster.</p>
+
+     <h4>Your saves</h4>
+     <p>Saves are written in your browser, on this machine. They are yours and they are not
+        sent anywhere. Clearing site data clears them, so export anything you care about.</p>
+
+     <h4>If you own Morrowind</h4>
+     <p>Pointing at your own <b>Data&nbsp;Files</b> folder is still the better experience — your
+        mods and expansions load, and nothing streams over the network. That option appears
+        here whenever this server has no copy of its own.</p>
+
+     <div class="m-hr"></div>
+     <p style="margin-top:16px">Availability is the server operator's choice, not a setting you
+        control: this card only appears when a copy is actually present.</p>`,
    local: `
      <div class="m-kicker">Your copy &middot; nothing is uploaded</div>
      <h3 id="modal-title">Bring your own Morrowind</h3>
@@ -638,7 +690,7 @@
    function close(){ bd.classList.remove('show'); }
    // The "?" buttons live inside clickable cards — stop the event so the card's start/pick handler
    // doesn't also fire (on both click and keyboard activation).
-   [['help-sample','sample'],['help-local','local'],['help-mp','mp']].forEach(([id,key])=>{
+   [['help-sample','sample'],['help-local','local'],['help-mp','mp'],['help-hosted','hosted']].forEach(([id,key])=>{
      const b=$(id); if(!b) return;
      b.addEventListener('click', e=>{ e.stopPropagation(); open(key); });
      b.addEventListener('keydown', e=>{ e.stopPropagation(); });
@@ -1238,6 +1290,33 @@
    card.classList.remove('actionable'); card.classList.add('disabled');
    note('Needs a Chromium browser (Chrome/Edge/Brave) on desktop.','muted');
  }
+
+ // --- Does THIS server host its own copy of the game? -------------------------------------
+ // Whether a server ships game data is the operator's choice and can change without the page
+ // changing, so it is detected rather than baked in. A one-byte Range request is enough: it
+ // proves the file is present AND that the host answers 206, which the streaming reader needs
+ // — a host that 200s the whole file would appear fine here and then pull the entire game on
+ // first read. Cheap enough to run on every load.
+ //
+ // Found  -> offer the hosted copy and HIDE the folder picker: with data on the server the
+ //           picker is the strictly worse path, and showing both asks the player to decide
+ //           something they have no basis to decide.
+ // Absent -> leave the folder picker exactly as it was. This must fail silently: a server
+ //           without data is the normal case, not an error.
+ (async function detectHostedData(){
+   let ok = false;
+   try {
+     const r = await fetch('mwdata/Morrowind.esm', { headers: { Range: 'bytes=0-0' } });
+     ok = r.status === 206;
+   } catch(e){ ok = false; }
+   if (!ok) return;
+   $('card-local').hidden = true;
+   $('card-hosted').hidden = false;
+   const go = () => { location.href = 'index.html?src=hosted'; };
+   $('card-hosted').addEventListener('click', go);
+   $('card-hosted').addEventListener('keydown', (e)=>{
+     if(e.key==='Enter'||e.key===' '){ e.preventDefault(); go(); } });
+ })();
 
  // --- return-visit fast path ---
  (async function(){

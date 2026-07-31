@@ -15,6 +15,7 @@ import { fileURLToPath } from 'node:url';
 import { WorldSupervisor } from './worlds';
 import { startDirectory } from './directory';
 import { buildFrontDoor } from './frontdoor';
+import { loadConfig } from '../config';
 import { log } from '../log';
 
 const { values } = parseArgs({
@@ -92,7 +93,12 @@ const frontDoor = await buildFrontDoor(sharedDir, (owner, charId) => {
 });
 const directory = await startDirectory({
   worlds, host: '0.0.0.0', port, worldsDir,
-  maxPerOwner: Number(values['max-per-owner'] ?? 2),
+  // One private world per player the server can hold. These are the SAME quantity seen from
+  // two directions — a solo world is where a player is when they are not in a shared one — so
+  // a cap below maxPlayers means a server advertising N seats cannot actually seat N people.
+  // It was a standalone default of 2, which locked an account out after two characters and
+  // read as an unexplained 429 mid-sign-in. --max-per-owner still overrides for a small host.
+  maxPerOwner: Number(values['max-per-owner'] ?? loadConfig(sharedDir, undefined, sharedDir).server.maxPlayers),
   frontDoor: frontDoor.route,
   resolveAccount: frontDoor.resolveAccount,
 });

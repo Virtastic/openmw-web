@@ -451,7 +451,10 @@
      else if (Module._emscripten_pause_main_loop) Module._emscripten_pause_main_loop(); } } catch(e){}
    try { (window.__omwAudioCtxs||[]).forEach(function(c){ try { c.suspend(); } catch(e){} }); } catch(e){}
  }
- function fatalOverlay(title, detail, showReload){
+ // opts: { kicker, actionLabel, actionHref } — the default is the multiplayer-styled
+ // panel with a Reload button, which is what every pre-existing caller wants.
+ function fatalOverlay(title, detail, showReload, opts){
+   opts = opts || {};
    killEngine();
    try {
      // The SAME panel the multiplayer error modal uses. This used to be a monospace slab of
@@ -471,7 +474,7 @@
      var kick = document.createElement('div');
      kick.style.cssText = 'font:600 10.5px/1 Optima,sans-serif;letter-spacing:.22em;'
        + 'text-transform:uppercase;color:#7c705c';
-     kick.textContent = 'Multiplayer';
+     kick.textContent = opts.kicker || 'Multiplayer';
      var h = document.createElement('h2');
      h.style.cssText = 'margin:10px 0 10px;font:600 23px/1.2 "Hoefler Text",Baskerville,Georgia,serif;color:#f4ecd9';
      h.textContent = title;
@@ -479,14 +482,16 @@
      d.style.cssText = 'margin:0;color:#b9a888;font-size:14px;line-height:1.6';
      d.textContent = detail || '';
      box.appendChild(kick); box.appendChild(h); box.appendChild(d);
-     if (showReload !== false){
+     if (showReload !== false || opts.actionLabel){
        var b = document.createElement('button');
-       b.textContent = 'Reload';
+       b.textContent = opts.actionLabel || 'Reload';
        b.style.cssText = 'margin-top:22px;width:100%;box-sizing:border-box;padding:13px 20px;'
          + 'border-radius:6px;cursor:pointer;border:1px solid #eecb78;'
          + 'font:600 12.5px/1 Optima,"Gill Sans",sans-serif;letter-spacing:.12em;text-transform:uppercase;'
          + 'background:linear-gradient(180deg,#d3a84e,#8a6838);color:#1a1207';
-       b.addEventListener('click', function(){ location.reload(); });
+       b.addEventListener('click', function(){
+         if (opts.actionHref) location.href = opts.actionHref; else location.reload();
+       });
        box.appendChild(b);
      }
      o.appendChild(box);
@@ -2600,7 +2605,26 @@
            return grab('mwdata/' + name).then(writeRaw('/mwdata/' + name));
          }
          append('[mw] loading Morrowind (cached after first run)…');
-         grab('mwdata/Morrowind.esm').then(writeRaw('/mwdata/Morrowind.esm'))
+         // Confirm the server actually HAS the game before committing to the load. Whether a
+         // host stages game data is the operator's choice, so its absence is an ordinary
+         // configuration, not a crash — and without this check it surfaced as a 404 mid-chain
+         // and a loading bar that stopped moving with no explanation. A one-byte Range request
+         // settles it, and also proves 206 support, which the streaming reads depend on.
+         fetch('mwdata/Morrowind.esm', { headers: { Range: 'bytes=0-0' } })
+         .then(function(r){
+           if (r.status === 206 || r.status === 200) return;
+           throw new Error('absent');
+         }, function(){ throw new Error('absent'); })
+         .catch(function(){
+           fatalOverlay('No game data on this server',
+             'This server does not host a copy of Morrowind, so there is nothing here to play. '
+             + 'Go back and either start the free example world, or point the launcher at your '
+             + 'own Data Files folder.',
+             false,
+             { kicker: 'Game data', actionLabel: 'Back to the launcher', actionHref: 'launcher.html' });
+           throw new Error('no server game data');   // stop the chain; the overlay is the outcome
+         })
+         .then(function(){ return grab('mwdata/Morrowind.esm').then(writeRaw('/mwdata/Morrowind.esm')); })
          .then(function(){ append('[mw] esm ok; bsa (310MB)…'); return addBsa('Morrowind.bsa'); })
          .then(function(){ append('[mw] bsa ok; sound+music (81MB)…'); return grab('mwdata/mwaudio.tar').then(untarInto('audio')); })
          .then(function(){ append('[mw] voice (111MB)…'); return grab('mwdata/mwvoice.tar').then(untarInto('voice')); })
