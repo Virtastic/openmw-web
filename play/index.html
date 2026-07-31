@@ -1030,14 +1030,21 @@
            // derive from it, which carry the Bearer locker token) MUST live on the same host
            // that served this page. Otherwise a crafted link like index.html?mp=ws://evil/ws
            // could point an authenticated session — and its token — at an attacker's origin.
-           // Prod (morrowind.virtastic.app) and local (127.0.0.1) both satisfy this naturally;
-           // only a different external host is refused. The port may differ (game :8910, ws :8080).
+           // Compare HOST (hostname:port), not hostname. The server is reached through this
+           // origin's own proxy, so a differing port is just as wrong as a differing name —
+           // and far more likely, because it is what a stale link from an older build carries.
+           // Matching on hostname alone let ws://127.0.0.1:8080 through on a page served from
+           // :8910, which then failed later as an opaque HTTP 401 instead of being refused here.
            var mpHostOk = false;
-           try { mpHostOk = new URL(mpUrl).hostname === location.hostname; } catch(e){}
+           try { mpHostOk = new URL(mpUrl).host === location.host; } catch(e){}
            if (!/^wss?:\/\//.test(mpUrl)){
              append('[mp] ignored ?mp= — URL must be ws:// or wss://','err');
            } else if (!mpHostOk){
-             append('[mp] refused ?mp= — the multiplayer server must be on this site ('+location.hostname+')','err');
+             // Name the mismatch: a stale bookmark is the usual cause and is otherwise invisible.
+             append('[mp] refused ?mp= — the multiplayer server must be on this exact origin. '
+                    + 'This page is ' + location.host + ' but the link points at '
+                    + (function(){ try { return new URL(mpUrl).host; } catch(e){ return mpUrl; } })()
+                    + '. Open the launcher fresh instead of reusing an old link.','err');
            } else {
              window.__omwMPEnabled = true;
              ENV.OPENMW_MP_URL = mpUrl;
