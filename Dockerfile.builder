@@ -13,7 +13,9 @@
 # (For a fully-from-source rebuild of the deps instead of prebuilt, see wasm-build/build-deps.sh.)
 # TODO if the toolchain changes: repin the emscripten/emsdk tag to match (emcc --version).
 FROM emscripten/emsdk:6.0.1
-RUN apt-get update && apt-get install -y --no-install-recommends ninja-build brotli git pkg-config && rm -rf /var/lib/apt/lists/*
+# rsync: link-openmw.sh syncs the MP Lua scripts into the VFS before linking. Without it the
+# build dies at the link step with a bare exit 127 after ~7 min of compiling.
+RUN apt-get update && apt-get install -y --no-install-recommends ninja-build brotli git pkg-config rsync && rm -rf /var/lib/apt/lists/*
 ENV ROOT=/build EM_LIBEXEC=/emsdk/upstream/emscripten
 WORKDIR /build
 COPY deps/wasm /build/deps/wasm
