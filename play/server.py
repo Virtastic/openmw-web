@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Part of openmw-web.
-import http.server, socketserver, os, re, webbrowser
+import http.server, socketserver, os, re, io, json, webbrowser
 
 # Load play/.env (KEY=VALUE, # comments) WITHOUT clobbering real env vars, so the launcher
 # flag can live in a git-ignored file next to this server. Env always wins over .env.
@@ -42,6 +42,30 @@ class H(http.server.SimpleHTTPRequestHandler):
         # the game. Explicit /launcher.html and assets are likewise untouched.
         if LAUNCHER and self.path in ('/', '/index.html'):
             self.path = '/launcher.html'
+        # Self-host path: list whatever is actually in mwdata/ so the game page can load a real
+        # "Data Files" folder copied there as-is. That lets a host ship the game data WITH the
+        # server — the player just opens the page, nothing to upload and no launcher step — and
+        # it removes the pre-packed .tar archives, which existed only in the maintainer's tree
+        # and which no retail install could ever supply.
+        if self.path.split('?', 1)[0] == '/mwdata-manifest.json':
+            root = os.path.join(os.getcwd(), 'mwdata')
+            out = []
+            for dirpath, _, names in os.walk(root):
+                for n in names:
+                    if n.startswith('.') or n.endswith('.br'):
+                        continue  # dotfiles and brotli siblings aren't game data
+                    p = os.path.join(dirpath, n)
+                    try:
+                        out.append({'p': os.path.relpath(p, root).replace(os.sep, '/'),
+                                    's': os.path.getsize(p)})
+                    except OSError:
+                        pass
+            body = json.dumps(out).encode()
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            return io.BytesIO(body)
         # HTTP Range support (python's SimpleHTTPRequestHandler has none) — required for the
         # ?stream lazy-BSA mode (emscripten FS.createLazyFile reads the archives in chunks).
         rng = self.headers.get('Range')

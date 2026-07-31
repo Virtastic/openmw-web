@@ -1089,6 +1089,42 @@
        var __srcLocal = /[?&]src=local\b/.test(location.search);
        if (__srcLocal) mountLocalMorrowind();
 
+       // Build the openmw.cfg load order from the game files that are ACTUALLY present.
+       // `rootFiles` maps lowercased top-level filename -> its real on-disk name.
+       //
+       // Shared by both data paths (the launcher's picked folder and a server-hosted mwdata/) so
+       // they can't drift: naming a content file or archive the VFS doesn't have is a HARD startup
+       // failure, so a base-game-only copy must never be handed content=Tribunal.esm. Expansions
+       // are optional by construction here.
+       //
+       // Mods dropped alongside are picked up too: extra .esm load as masters after the official
+       // ones, then .esp plugins, both alphabetical, and mod .bsa archives get registered. A
+       // precise custom load order still needs a desktop mod manager. ?nomods=1 plays vanilla.
+       function buildLoadOrder(rootFiles){
+         var masters=['morrowind.esm','tribunal.esm','bloodmoon.esm'];
+         var archives=['morrowind.bsa','tribunal.bsa','bloodmoon.bsa'];
+         var content=[], fbarch=[];
+         masters.forEach(function(m){ if(rootFiles.has(m)) content.push(rootFiles.get(m)); });
+         archives.forEach(function(a){ if(rootFiles.has(a)) fbarch.push(rootFiles.get(a)); });
+
+         var official=new Set(masters.concat(archives)), modEsm=[], modEsp=[], modBsa=[];
+         if (!/[?&]nomods=1\b/.test(location.search))
+           rootFiles.forEach(function(orig, lower){
+             if (official.has(lower)) return;
+             if (/\.esm$/.test(lower)) modEsm.push(orig);
+             else if (/\.esp$/.test(lower)) modEsp.push(orig);
+             else if (/\.bsa$/.test(lower)) modBsa.push(orig);
+           });
+         var byName=function(a,b){ return a.toLowerCase()<b.toLowerCase()?-1:1; };
+         modEsm.sort(byName); modEsp.sort(byName); modBsa.sort(byName);
+         modBsa.forEach(function(a){ fbarch.push(a); });
+         modEsm.forEach(function(c){ content.push(c); });
+         modEsp.forEach(function(c){ content.push(c); });
+         var mods=modEsm.concat(modEsp);
+         if (mods.length) append('[data] + '+mods.length+' mod plugin(s): '+mods.join(', '));
+         return { content: content, fbarch: fbarch };
+       }
+
        // --- Optional performance asset pack (Morrowind Optimization Patch + Project Atlas) --------
        // Shipped as ONE streamed BSA rather than ~3300 loose files: loose files would each need an
        // await getFile() during the boot walk AND would thrash streamfs's 2MB-chunk / 48-slot LRU
@@ -1210,32 +1246,9 @@
              __log('[local] intro video (.bik in Video/) '+(hasVideoBik?'FOUND':'NOT found'));
            } catch(e){ console.log('[local] tree summary failed: '+e); }
 
-           // Build the load order. Official masters first (fixed canonical order)…
-           var masters=['morrowind.esm','tribunal.esm','bloodmoon.esm'];
-           var archives=['morrowind.bsa','tribunal.bsa','bloodmoon.bsa'];
-           var content=[], fbarch=[];
-           masters.forEach(function(m){ if(rootFiles.has(m)) content.push(rootFiles.get(m)); });
-           archives.forEach(function(a){ if(rootFiles.has(a)) fbarch.push(rootFiles.get(a)); });
-
-           // …then any USER MODS dropped in the folder: extra .esm load as masters (after the
-           // official ones), then .esp plugins; both alphabetical. Mod .bsa archives are registered
-           // too. This covers "I put some mods in Data Files"; a precise custom load order still
-           // needs a desktop mod manager. ?nomods=1 ignores them (play vanilla).
-           var official=new Set(masters.concat(archives)), modEsm=[], modEsp=[], modBsa=[];
-           if (!/[?&]nomods=1\b/.test(location.search))
-             rootFiles.forEach(function(orig, lower){
-               if (official.has(lower)) return;
-               if (/\.esm$/.test(lower)) modEsm.push(orig);
-               else if (/\.esp$/.test(lower)) modEsp.push(orig);
-               else if (/\.bsa$/.test(lower)) modBsa.push(orig);
-             });
-           var byName=function(a,b){ return a.toLowerCase()<b.toLowerCase()?-1:1; };
-           modEsm.sort(byName); modEsp.sort(byName); modBsa.sort(byName);
-           modBsa.forEach(function(a){ fbarch.push(a); });
-           modEsm.forEach(function(c){ content.push(c); });
-           modEsp.forEach(function(c){ content.push(c); });
-           var mods=modEsm.concat(modEsp);
-           if (mods.length) append('[local] + '+mods.length+' mod plugin(s): '+mods.join(', '));
+           // Build the load order from what's present (shared with the server-hosted mwdata/ path).
+           var lo = buildLoadOrder(rootFiles);
+           var content = lo.content, fbarch = lo.fbarch;
 
            var wantMovies = hasVideoBik && !/[?&]novid\b/.test(location.search);
 
@@ -1390,24 +1403,52 @@
            return grab('mwdata/' + name).then(writeRaw('/mwdata/' + name));
          }
          append('[mw] loading Morrowind (cached after first run)…');
-         grab('mwdata/Morrowind.esm').then(writeRaw('/mwdata/Morrowind.esm'))
-         .then(function(){ append('[mw] esm ok; bsa (310MB)…'); return addBsa('Morrowind.bsa'); })
-         .then(function(){ append('[mw] bsa ok; sound+music (81MB)…'); return grab('mwdata/mwaudio.tar').then(untarInto('audio')); })
-         .then(function(){ append('[mw] voice (111MB)…'); return grab('mwdata/mwvoice.tar').then(untarInto('voice')); })
-         .then(function(){ append('[mw] splash+fonts (33MB)…'); return grab('mwdata/mwextra.tar').then(untarInto('extra')); })
-         .then(function(){ append('[mw] Tribunal (65MB)…'); return grab('mwdata/Tribunal.esm').then(writeRaw('/mwdata/Tribunal.esm')); })
-         .then(function(){ return addBsa('Tribunal.bsa'); })
-         .then(function(){ append('[mw] Bloodmoon (121MB)…'); return grab('mwdata/Bloodmoon.esm').then(writeRaw('/mwdata/Bloodmoon.esm')); })
-         .then(function(){ return addBsa('Bloodmoon.bsa'); })
-         .then(function(){ append('[mw] Bloodmoon sounds (28MB)…'); return grab('mwdata/mwbmsound.tar').then(untarInto('bm-sound')); })
+         // DISCOVER what the host actually put in mwdata/, instead of demanding a fixed file list.
+         // A self-host can drop a real "Data Files" folder there and it just works — base game
+         // only, with expansions, with mods, whatever they own. The old hardcoded chain also
+         // required pre-packed .tar archives that exist in NO retail install, so anyone with a
+         // normal copy hit "file not found" with no way to satisfy it.
+         //
+         // Everything is StreamFS-mounted (lazy HTTP Range reads), so nothing is resident up
+         // front — a strict improvement on grab()+writeRaw(), which held whole files in MEMFS.
+         // .tar entries are still unpacked, for previously-packed datasets.
+         window.__mwRootFiles = new Map(); window.__mwHasVideoBik = false;
+         fetch('mwdata-manifest.json')
+         .then(function(r){ if (!r.ok) throw new Error('no manifest (HTTP '+r.status+')'); return r.json(); })
+         .then(function(list){
+           if (!list.length) throw new Error('mwdata/ is empty — copy your Morrowind "Data Files" into it');
+           try { StreamFS.init(); } catch(e){ append('[mw] streamfs unavailable: '+e,'err'); }
+           var tars = [], bytes = 0;
+           list.forEach(function(f){
+             bytes += f.s;
+             var lower = f.p.toLowerCase();
+             if (/\.tar$/.test(lower)) { tars.push(f.p); return; }
+             if (lower.indexOf('/') < 0) window.__mwRootFiles.set(lower, f.p);   // top level = load order
+             if (/^video\/.*\.bik$/.test(lower)) window.__mwHasVideoBik = true;
+             var dir = f.p.lastIndexOf('/');
+             if (dir > 0) { try { FS.mkdirTree('/mwdata/' + f.p.slice(0, dir)); } catch(e){} }
+             try { StreamFS.mount('/mwdata/' + f.p, 'mwdata/' + f.p, f.s); }
+             catch(e){ append('[mw] mount failed '+f.p+': '+e, 'err'); }
+           });
+           append('[mw] mounted '+(list.length-tars.length)+' files from mwdata/ ('
+                  +Math.round(bytes/1048576)+'MB, streamed on demand)');
+           return tars.reduce(function(p, name){   // legacy packed sets: each holds many loose files
+             return p.then(function(){
+               append('[mw] unpacking '+name+'…');
+               return grab('mwdata/'+name).then(untarInto(name.replace(/\.tar$/,'')));
+             });
+           }, Promise.resolve());
+         })
          .then(function(){
-           // Videos ON BY DEFAULT (?novid to opt out). Playback is cooperative under
-           // emscripten (WindowManager::playVideo starts the decode pthreads and returns;
-           // Engine::frame drives updateVideoPlayback each tick) — the old blocking-loop
-           // futex deadlock is fixed. The original .bik files play in-engine via the native
-           // Bink decoder (FFmpeg --enable-decoder=bink); nothing is transcoded.
-           if (/[?&]novid\b/.test(location.search)){ append('[mw] videos skipped (?novid)'); window.__noMovies = true; return; }
-           append('[mw] videos (40MB, played on the fly)…'); return grab('mwdata/mwvideo.tar').then(untarInto('video'));
+           // Videos play from whatever is mounted (loose Video/*.bik, or an unpacked mwvideo.tar).
+           // Playback is cooperative under emscripten (WindowManager::playVideo starts the decode
+           // pthreads and returns; Engine::frame drives updateVideoPlayback each tick) — the old
+           // blocking-loop futex deadlock is fixed. Originals play via the native Bink decoder
+           // (FFmpeg --enable-decoder=bink); nothing is transcoded.
+           var haveVideo = window.__mwHasVideoBik;
+           try { haveVideo = haveVideo || FS.readdir('/mwdata/video').some(function(n){ return /\.bik$/i.test(n); }); } catch(e){}
+           if (!haveVideo) append('[mw] no Video/*.bik found — intro movies disabled');
+           window.__noMovies = !haveVideo || /[?&]novid\b/.test(location.search);
          })
          .then(function(){ return mountAssetPack().then(function(n){ window.__assetPack = n; }); })
          .then(function(){
@@ -1427,12 +1468,17 @@
                         // dir — Options changes, keybindings, Lua storage survive reloads. The
                         // baseline /settings.cfg (front of the chain) still applies as defaults.
                         'config="/userdata/config/openmw"',
-                        'fallback-archive=Morrowind.bsa', 'fallback-archive=Tribunal.bsa', 'fallback-archive=Bloodmoon.bsa');
+                        );
+               // Load order from what was ACTUALLY found, same rules as the launcher path: naming
+               // a content file or archive the VFS doesn't have is a hard startup failure, so a
+               // base-game-only copy must never be handed content=Tribunal.esm.
+               var lo = buildLoadOrder(window.__mwRootFiles);
+               lo.fbarch.forEach(function(a){ cfg.push('fallback-archive='+a); });
                // LAST among archives => highest BSA priority => overrides vanilla meshes. Gated on
                // the mount having succeeded (a missing archive throws at startup). data=/mods is
                // required for the bare filename to resolve (components/files/collections.cpp).
                if (window.__assetPack) cfg.push('data=/mods', 'fallback-archive='+window.__assetPack);
-               cfg.push('content=Morrowind.esm', 'content=Tribunal.esm', 'content=Bloodmoon.esm');
+               lo.content.forEach(function(c){ cfg.push('content='+c); });
                if (!window.__noMovies)
                  cfg.push('fallback=Movies_Company_Logo,bethesda logo.bik',
                           'fallback=Movies_Morrowind_Logo,mw_logo.bik',
