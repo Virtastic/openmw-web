@@ -42,6 +42,18 @@
 	@html path *.html
 	header @html Cache-Control "no-cache"
 
+	# --- Multiplayer gateway, on THIS origin -------------------------------------------------
+	# The game and the gateway are one origin on purpose. index.html only hands its session
+	# ticket to a gateway whose hostname matches the page's, so a separate mp.* host can never
+	# receive it; and a single origin means the launcher derives the server from location
+	# instead of carrying a baked-in hostname that is wrong in every deployment but one.
+	#
+	# Only the endpoints the client actually calls are exposed: the WebSocket, the SSO/locker
+	# routes, and the world directory. /admin and /metrics stay unreachable from the internet.
+	# Upstream is overridable because the container is named differently per environment.
+	@gateway path /ws /auth/* /worlds
+	reverse_proxy @gateway {$MP_UPSTREAM:openmw-mp:8080}
+
 	# file_server handles Range natively (on the raw file) and, with `precompressed br`, serves
 	# <file>.br as Content-Encoding: br + the base file's Content-Type when the client accepts br.
 	file_server {

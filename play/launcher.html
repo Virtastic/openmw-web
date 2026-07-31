@@ -817,7 +817,6 @@
  // the single-player paths on purpose: the demo must stay one click from the front page,
  // because a login wall in front of it is what kills a browser port's first impression.
  const MP = {
-   url: localStorage.getItem('omw-mp-url') || '',
    account: localStorage.getItem('omw-mp-account') || '',
  };
 
@@ -841,16 +840,21 @@
  };
  function providerLabel(p){ return p.charAt(0).toUpperCase()+p.slice(1); }
 
- // The multiplayer server is a deployment constant, not something a player types. Operators
- // set this one line for their build; a ?mpserver= query param or a remembered value can
- // override it for local development, but no server field is ever shown to players.
- const DEFAULT_MP_SERVER = 'wss://morrowind.virtastic.app/ws';
+ // The multiplayer server is not something a player types, and it is not a per-environment
+ // constant either: it lives behind the SAME origin as the game, because the site's Caddy
+ // reverse-proxies /ws and /auth/* to the gateway. Deriving it from location is what makes
+ // production, the dev preview and a self-host all work with zero configuration — a baked-in
+ // hostname points every deployment at whichever one it was built for. It is also what
+ // index.html's ticket handover already demands: that guard refuses a gateway whose hostname
+ // differs from the page's, so a separate mp.* origin could never have worked.
+ //
+ // ?mpserver= still overrides, for pointing a page at a gateway that is not its own origin
+ // (local dev against a remote server). Deliberately NOT read back from localStorage: a
+ // remembered address outlives the deployment it was for and silently shadows this.
  function mpServerUrl(){
-   const override = new URLSearchParams(location.search).get('mpserver') || localStorage.getItem('omw-mp-url');
+   const override = new URLSearchParams(location.search).get('mpserver');
    if (override) return override;
-   // Local dev: when the launcher itself is served from localhost, talk to a local server.
-   if (/^(localhost|127\.0\.0\.1)$/.test(location.hostname)) return 'ws://' + location.hostname + ':8080/ws';
-   return DEFAULT_MP_SERVER;
+   return (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws';
  }
 
  const mpBd = $('mp-bd');
@@ -866,7 +870,6 @@
 
  // Redirect into the chosen provider's SSO flow. The server returns us HERE with #mpticket.
  function mpGoProvider(http, url, provider){
-   localStorage.setItem('omw-mp-url', url);
    localStorage.setItem('omw-mp-pending', url); // the game reads this back after the redirect
    const back = location.origin + location.pathname;
    location.href = http + '/auth/' + encodeURIComponent(provider) + '/start?return=' + encodeURIComponent(back);
@@ -1152,7 +1155,7 @@
    if (!tk) return;
    const lk = /[#&]mplocker=([^&]+)/.exec(h);
    const ac = /[#&]mpaccount=([^&]+)/.exec(h);
-   const gwUrl = localStorage.getItem('omw-mp-pending') || localStorage.getItem('omw-mp-url') || mpServerUrl();
+   const gwUrl = localStorage.getItem('omw-mp-pending') || mpServerUrl();
    history.replaceState(null,'',location.pathname); // scrub the ticket from the address bar
    if (!gwUrl || !ac){ launcherError('Sign-in did not complete', 'Something was missing from the sign-in. Please try again.'); return; }
    const gwHttp = httpBaseOf(gwUrl);
