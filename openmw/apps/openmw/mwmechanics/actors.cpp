@@ -5,6 +5,8 @@
 #include <cmath>
 #include <optional>
 
+#include <osg/Vec3f>
+
 #include <components/esm3/esmreader.hpp>
 #include <components/esm3/esmwriter.hpp>
 

@@ -9,6 +9,9 @@
 #include <string_view>
 #include <vector>
 
+#include <osg/Vec2i>
+#include <osg/Vec3f>
+
 #include <components/misc/rng.hpp>
 #include <components/vfs/pathutil.hpp>
 

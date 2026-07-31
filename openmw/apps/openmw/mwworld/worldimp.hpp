@@ -2,6 +2,8 @@
 #define GAME_MWWORLD_WORLDIMP_H
 
 #include <osg/Timer>
+#include <osg/Vec2i>
+#include <osg/Vec3f>
 #include <osg/ref_ptr>
 
 #include <components/debug/debuglog.hpp>
