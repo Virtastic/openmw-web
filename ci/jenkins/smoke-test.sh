@@ -46,6 +46,15 @@ B_ROOT=$(get "$BASE/"); B_IDX=$(get "$BASE/index.html"); B_NOMW=$(get "$BASE/ind
 is_launcher "$B_ROOT" && pass "/ serves the launcher" || fail "/ serves the launcher" "the chooser is missing"
 is_launcher "$B_IDX"  && fail "/index.html serves the game" "rewritten to the launcher -> multiplayer loops on 'Creating...'" || pass "/index.html serves the game"
 is_launcher "$B_NOMW" && fail "?nomw serves the game" "rewritten to the launcher" || pass "/index.html?nomw serves the game"
+# The gate that keeps a bare /index.html from booting into whatever data the host serves
+# lives in the PAGE, because only the client can see the fragment multiplayer arrives on.
+# curl always gets the game HTML back, so assert the gate script is present rather than
+# inferring it from the response.
+if grep -q "location.replace('launcher.html')" <<<"$B_IDX"; then
+  pass "bare /index.html gated to the launcher (client-side)"
+else
+  fail "bare /index.html gated to the launcher" "missing: a visitor who types the URL boots straight into the host's game data"
+fi
 
 # 3. The multiplayer gateway must be reachable ON THIS ORIGIN. The page refuses to hand its
 #    session ticket to another hostname, so a gateway on a second origin can never be used.

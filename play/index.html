@@ -493,6 +493,23 @@
      document.body.appendChild(o);
    } catch(e){}
  }
+ // LAUNCHER GATE. Reaching the game page with no boot parameters at all means nobody chose
+ // anything: no demo, no folder, no sign-in. Send them to the chooser instead of booting into
+ // whatever data the host happens to serve — on a host that stages retail Morrowind under
+ // /mwdata, booting bare hands a visitor the full game.
+ //
+ // This lives HERE, not in the web server, and that placement is the whole point: multiplayer
+ // arrives as index.html#mp=... and a FRAGMENT NEVER REACHES A SERVER. Any server-side rule
+ // therefore sees a bare /index.html, rewrites it to the launcher, and the two bounce off each
+ // other forever (it presents as a character screen stuck on "Creating..."). Only the client
+ // can see the fragment, so only the client can tell "launched into multiplayer" from
+ // "typed the URL".
+ if (location.pathname.endsWith('/index.html')
+     && (location.search === '' || location.search === '?')
+     && !/[#&](mp|mpticket|characters)=?/.test(location.hash || '')) {
+   location.replace('launcher.html');
+   throw new Error('redirecting to launcher');   // stop this script; the navigation is queued
+ }
  // Hard requirement check: this build uses pthreads (SharedArrayBuffer), which needs
  // cross-origin isolation and a capable browser. Fail with a CLEAR message, not a cryptic
  // instantiation error (Safari/iOS and non-isolated hosts land here).
