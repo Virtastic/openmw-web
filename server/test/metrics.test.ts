@@ -5,6 +5,7 @@
 // it is switched on and correctly authenticated.
 
 import { test } from 'node:test';
+const PEER_PASS = 'peer-secret-1'; // grants only ever go to the sim peer
 import assert from 'node:assert/strict';
 import { startServer } from '../src/server';
 import { Counter, Histogram, Gauge, metrics, renderMetrics, resetMetrics } from '../src/metrics';
@@ -81,13 +82,14 @@ test('metrics: counters move through a real session', async (t) => {
   // Every bot dials from 127.0.0.1: without headroom the per-IP cap and the login limiter
   // would fire during setup and make the assertions below lie about what happened.
   resetMetrics();
-  const server = await startServer({
+  const server = await startServer({ requireGameData: false,
     dataDir: tmpDataDir(),
     port: 0,
     host: '127.0.0.1',
     configOverride: {
       limits: { maxConnsPerIp: 200, loginPerMinPerIp: 10_000 },
       metrics: { enabled: true, token: TOKEN },
+      server: { password: PEER_PASS },
     },
   });
   t.after(() => server.close());
@@ -105,26 +107,37 @@ test('metrics: counters move through a real session', async (t) => {
   await b.waitDisconnect('AUTH_FAILED');
   await b.closed;
 
-  // 3. alice takes a cell (authority grant) and is then kicked by the server.
+  // 3. a cell is taken (authority grant) and alice is then kicked by the server. The grant
+  // goes to the SIM PEER — a player never receives one — so the peer is what moves the
+  // cell_authority counter this test samples.
+  const gp = await TestClient.simPeer(server.port, PEER_PASS, 'metrics_peer');
+  gp.sendCellChange('26,25', 1, 2, 3);
+  await gp.waitEvent('ActorAuthorityGrant');
   a.sendCellChange('26,25', 1, 2, 3);
-  await a.waitEvent('ActorAuthorityGrant');
+  await a.waitEvent('ActorAuthorityInfo');
   const text = renderMetrics();
 
   await t.test('connection and auth series', () => {
-    assert.equal(sample(text, 'omwmp_connections_opened_total'), 2);
-    assert.equal(sample(text, 'omwmp_auth_total{op="register",result="success"}'), 1);
+    // 3 = alice + the wrong-password attempt + the SIM PEER. The peer is a real connection and
+    // a real registration, so it counts here; it is only excluded from the PLAYER-facing
+    // surfaces (roster, playerCount, maxPlayers), which sessions_in_world below asserts.
+    assert.equal(sample(text, 'omwmp_connections_opened_total'), 3);
+    assert.equal(sample(text, 'omwmp_auth_total{op="register",result="success"}'), 2);
     assert.equal(sample(text, 'omwmp_auth_total{op="login",result="AUTH_FAILED"}'), 1);
     assert.equal(sample(text, 'omwmp_auth_total{op="login",result="success"}'), undefined);
   });
 
   await t.test('join latency is observed once, in-world gauge reads the roster', () => {
-    assert.equal(sample(text, 'omwmp_join_latency_seconds_count'), 1);
-    assert.equal(sample(text, 'omwmp_join_latency_seconds_bucket{le="+Inf"}'), 1);
+    assert.equal(sample(text, 'omwmp_join_latency_seconds_count'), 2); // alice + the peer
+    assert.equal(sample(text, 'omwmp_join_latency_seconds_bucket{le="+Inf"}'), 2);
     assert.ok((sample(text, 'omwmp_join_latency_seconds_sum') ?? -1) >= 0);
+    // ONE: the peer is infrastructure and must never appear as a player in the world.
     assert.equal(sample(text, 'omwmp_sessions_in_world'), 1);
   });
 
   await t.test('cell authority grant is tallied', () => {
+    // ONE: entering a cell claims that cell. The peer also holds every ANCHORED cell, but
+    // those are granted by the 5 s simPeerTick from the live roster, not by this entry.
     assert.equal(sample(text, 'omwmp_cell_authority_total{kind="grant"}'), 1);
   });
 
@@ -179,12 +192,12 @@ test('metrics: counters move through a real session', async (t) => {
 
 test('metrics: /metrics endpoint access control', async (t) => {
   await t.test('404 (not 401) while disabled, so the route is invisible', async () => {
-    const server = await startServer({ dataDir: tmpDataDir(), port: 0, host: '127.0.0.1' });
+    const server = await startServer({ requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1' });
     t.after(() => server.close());
     const res = await fetch(`http://127.0.0.1:${server.port}/metrics`);
     assert.equal(res.status, 404);
     // An enabled endpoint with no token is still off: there is no unauthenticated mode.
-    const noToken = await startServer({
+    const noToken = await startServer({ requireGameData: false,
       dataDir: tmpDataDir(),
       port: 0,
       host: '127.0.0.1',
@@ -195,7 +208,7 @@ test('metrics: /metrics endpoint access control', async (t) => {
   });
 
   await t.test('401 on a missing or wrong bearer, 200 + text on the right one', async () => {
-    const server = await startServer({
+    const server = await startServer({ requireGameData: false,
       dataDir: tmpDataDir(),
       port: 0,
       host: '127.0.0.1',
@@ -221,7 +234,7 @@ test('metrics: /metrics endpoint access control', async (t) => {
   });
 
   await t.test('/status stays public and unauthenticated', async () => {
-    const server = await startServer({
+    const server = await startServer({ requireGameData: false,
       dataDir: tmpDataDir(),
       port: 0,
       host: '127.0.0.1',

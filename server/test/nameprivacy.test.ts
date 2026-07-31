@@ -12,7 +12,7 @@ import { TestClient, tmpDataDir } from './helpers';
 
 test('social payloads name a player by username, never by the account login name', async (t) => {
   const dataDir = tmpDataDir();
-  const server = await startServer({ dataDir, port: 0, host: '127.0.0.1' });
+  const server = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1' });
   t.after(() => server.close());
 
   const a = await TestClient.connect(server.port);

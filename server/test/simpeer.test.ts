@@ -4,6 +4,8 @@
 // the reaper — the part that decides whether per-session peers are affordable or an OOM —
 // is asserted directly instead of by waiting minutes for a real engine to idle out.
 import test from 'node:test';
+// The peer's only credential; an empty [server].password refuses every system connection.
+const PEER_PASS = 'peer-secret-1';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import type { ChildProcess } from 'node:child_process';
@@ -163,10 +165,11 @@ test('sim peer: its account is ephemeral — no player doc is ever written', asy
   const { join } = await import('node:path');
 
   const dir = tmpDataDir();
-  const server = await startServer({ dataDir: dir, port: 0, host: '127.0.0.1' });
+  const server = await startServer({ requireGameData: false, configOverride: { server: { password: PEER_PASS } }, dataDir: dir, port: 0, host: '127.0.0.1' });
   try {
     const peer = await TestClient.connect(server.port);
     peer.system = true;
+    peer.serverPassword = PEER_PASS;
     await peer.joinAsNew('simpeer_world');
     peer.sendCellChange('5,5', 1, 2, 3); // the kind of update that would normally persist
     await peer.waitEvent('ActorAuthorityGrant', () => true, 5000);

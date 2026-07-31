@@ -18,7 +18,7 @@ type WelcomeChar = { id: string; name: string; lastPlayedAt: string };
 
 test('first auth creates a default character and reports it in Welcome', async (t) => {
   const dataDir = tmpDataDir();
-  const server = await startServer({ dataDir, port: 0, host: '127.0.0.1' });
+  const server = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1' });
   t.after(() => server.close());
 
   const c = await TestClient.connect(server.port);
@@ -46,7 +46,7 @@ test('first auth creates a default character and reports it in Welcome', async (
 
 test('explicit characterId: own character is honored, foreign/unknown is refused', async (t) => {
   const dataDir = tmpDataDir();
-  const server = await startServer({ dataDir, port: 0, host: '127.0.0.1' });
+  const server = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1' });
   t.after(() => server.close());
 
   const c = await TestClient.connect(server.port);
@@ -73,7 +73,7 @@ test('explicit characterId: own character is honored, foreign/unknown is refused
 
 test('CharacterCreate: adds a slot, enforces name rules and the cap; new slot is playable', async (t) => {
   const dataDir = tmpDataDir();
-  const server = await startServer({ dataDir, port: 0, host: '127.0.0.1' });
+  const server = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1' });
   t.after(() => server.close());
 
   const c = await TestClient.connect(server.port);
@@ -160,7 +160,7 @@ test('shared character doc keeps per-world positions apart', async () => {
 // the name prompt. Player state is never destroyed on load; the completion flag self-heals.
 test('finished chargen without the completion flag survives a relog — never erased', async (t) => {
   const dataDir = tmpDataDir();
-  const server = await startServer({ dataDir, port: 0, host: '127.0.0.1' });
+  const server = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1' });
   t.after(() => server.close());
 
   const c = await TestClient.connect(server.port);

@@ -10,7 +10,7 @@ import { startServer } from '../src/server';
 import { TestClient, tmpDataDir } from './helpers';
 
 async function trio(t: { after(fn: () => unknown): void }) {
-  const server = await startServer({
+  const server = await startServer({ requireGameData: false,
     dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
     configOverride: { limits: { maxConnsPerIp: 16 } },
   });

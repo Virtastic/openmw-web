@@ -1,8 +1,17 @@
 // Copyright (C) 2025-2026 Virtastic - https://virtastic.app
 // SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
-// M4 authority state machine: unit invariants + a randomized fuzz driving enter/leave/
-// disconnect across many cells and players, asserting the authority invariants after
-// every step.
+// Actor-authority state machine: unit invariants plus a randomized fuzz driving
+// enter/leave/disconnect across many cells and players.
+//
+// THE CONTRACT THIS FILE EXISTS TO PIN: only the sim peer ever holds a cell. A player's
+// browser never simulates NPCs for anyone else, so a cell with players in it but no peer has
+// NO holder and waits — it does not fall back to whoever is nearest.
+//
+// This file used to test an ELECTION between competing clients (RTT/shed fitness, degrade
+// gates, anti-flap cooldowns, settle bias, handoff to the next-best client). All of that only
+// had meaning while several connections could hold a cell; with exactly one eligible holder
+// there is nothing to rank and nothing to hand off to, so those cases are gone rather than
+// rewritten. What survives is claim/info/dormancy, peer-only eligibility, and liveness.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -11,8 +20,6 @@ import {
   authorityTuning,
   type AuthoritySenders,
   type ActorSnapshot,
-  type FitnessSource,
-  type PlayerFitness,
 } from '../src/core/authority';
 
 // A mirror of what the senders observe, so tests can assert grant/info/revoke traffic.
@@ -23,7 +30,11 @@ interface Recorder {
   overrides: Map<string, ActorSnapshot>;
 }
 
-function makeAuthority(): { auth: Authority; rec: Recorder } {
+const PEER = 1; // the sim peer's player id throughout this file
+
+function makeAuthority(
+  opts: { canSimulate?: (id: number) => boolean; review?: boolean; now?: () => number } = {},
+): { auth: Authority; rec: Recorder } {
   const rec: Recorder = { grants: [], infos: [], revokes: [], overrides: new Map() };
   const senders: AuthoritySenders = {
     grant: (playerId, cellKey, epoch, snapshot) => rec.grants.push({ playerId, cellKey, epoch, snapshot }),
@@ -32,251 +43,117 @@ function makeAuthority(): { auth: Authority; rec: Recorder } {
     loadOverrides: async (cellKey) => rec.overrides.get(cellKey) ?? { actors: [] },
     foldOverrides: async (cellKey, snapshot) => void rec.overrides.set(cellKey, snapshot),
   };
-  return { auth: new Authority(senders), rec };
+  const auth = new Authority(senders, {
+    review: opts.review ?? false,
+    caps: { canSimulate: opts.canSimulate ?? ((id) => id === PEER) },
+    ...(opts.now ? { now: opts.now } : {}),
+  });
+  return { auth, rec };
 }
 
-test('authority: claim, contested entry, info, handoff, dormancy', async () => {
+test('authority: the peer claims, players are informed, empty cells go dormant', async () => {
   const { auth, rec } = makeAuthority();
-  await auth.onEnter(1, 'a'); // claims
-  assert.equal(auth.holderOf('a'), 1);
-  assert.equal(auth.currentEpoch('a'), 1);
-  assert.deepEqual(rec.grants.at(-1), { playerId: 1, cellKey: 'a', epoch: 1, snapshot: { actors: [] } });
 
-  await auth.onEnter(2, 'a'); // contested -> info to 2
-  assert.equal(auth.holderOf('a'), 1);
-  assert.deepEqual(rec.infos.at(-1), { playerId: 2, cellKey: 'a', holderId: 1 });
-
-  await auth.onEnter(3, 'a');
-  auth.setSnapshot('a', { actors: [{ ref: 'x' }] }); // holder pushes a snapshot
-
-  await auth.onLeave(1, 'a', true); // holder leaves -> revoke + handoff to longest-present (2)
-  assert.deepEqual(rec.revokes.at(-1), { playerId: 1, cellKey: 'a', epoch: 1 });
-  assert.equal(auth.holderOf('a'), 2);
-  assert.equal(auth.currentEpoch('a'), 2);
-  assert.deepEqual(rec.grants.at(-1)!.snapshot, { actors: [{ ref: 'x' }] }); // lastSnapshot handed over
-
-  await auth.onLeave(2, 'a', true); // -> 3
-  assert.equal(auth.holderOf('a'), 3);
-  assert.equal(auth.currentEpoch('a'), 3);
-
-  await auth.onLeave(3, 'a', false); // last one disconnects -> dormant, snapshot folded, no revoke
-  assert.equal(auth.holderOf('a'), undefined);
-  assert.equal(auth.currentEpoch('a'), undefined);
-  assert.deepEqual(rec.overrides.get('a'), { actors: [{ ref: 'x' }] });
-  assert.equal(rec.revokes.filter((r) => r.playerId === 3).length, 0);
-
-  // Re-claim a dormant cell: grant carries the folded overrides, epoch keeps climbing.
-  await auth.onEnter(9, 'a');
-  assert.equal(auth.holderOf('a'), 9);
-  assert.equal(auth.currentEpoch('a'), 4);
-  assert.deepEqual(rec.grants.at(-1)!.snapshot, { actors: [{ ref: 'x' }] });
-});
-
-// ------------------------------------------------------------ fitness election
-// A fake fitness source + a driven clock, so election is exercised as a pure function of
-// (score, age) rather than by sleeping. `review: false` kills the self-timer: these tests
-// call reviewAll() explicitly, so a sweep can never land between assertions.
-function makeTuned(): {
-  auth: Authority;
-  rec: Recorder;
-  rtt: Map<number, number>;
-  tick: (ms: number) => void;
-} {
-  const rec: Recorder = { grants: [], infos: [], revokes: [], overrides: new Map() };
-  const rtt = new Map<number, number>();
-  const fitness: FitnessSource = {
-    get: (id): PlayerFitness | undefined => {
-      const r = rtt.get(id);
-      return r === undefined ? undefined : { rttMs: r, shedRate: 0, samples: 10 };
-    },
-  };
-  let clock = 1_000_000;
-  const senders: AuthoritySenders = {
-    grant: (playerId, cellKey, epoch, snapshot) => rec.grants.push({ playerId, cellKey, epoch, snapshot }),
-    info: (playerId, cellKey, holderId) => rec.infos.push({ playerId, cellKey, holderId }),
-    revoke: (playerId, cellKey, epoch) => rec.revokes.push({ playerId, cellKey, epoch }),
-    loadOverrides: async (cellKey) => rec.overrides.get(cellKey) ?? { actors: [] },
-    foldOverrides: async (cellKey, snapshot) => void rec.overrides.set(cellKey, snapshot),
-  };
-  const auth = new Authority(senders, { fitness, now: () => clock, review: false });
-  return { auth, rec, rtt, tick: (ms) => void (clock += ms) };
-}
-
-const SETTLED = () => authorityTuning.settleMs + 1;
-
-test('authority: handoff picks the fittest settled candidate, not the longest-present', async () => {
-  const { auth, rec, rtt, tick } = makeTuned();
-  rtt.set(1, 30); // holder
-  rtt.set(2, 300); // longest-present remainder, but a bad link
-  rtt.set(3, 25); // fittest
-  await auth.onEnter(1, 'a');
+  // A player arrives first. It does NOT take the cell — it cannot simulate.
   await auth.onEnter(2, 'a');
+  assert.equal(auth.holderOf('a'), undefined, 'a player must never be granted a cell');
+  assert.equal(rec.grants.length, 0);
+
+  // The peer arrives and takes it; the player is told who holds it (needed to address actors).
+  await auth.onEnter(PEER, 'a');
+  assert.equal(auth.holderOf('a'), PEER);
+  assert.equal(rec.grants.at(-1)?.playerId, PEER);
+  assert.ok(rec.infos.some((i) => i.playerId === 2 && i.cellKey === 'a' && i.holderId === PEER));
+
+  // A second player entering a held cell gets Info, never Grant.
+  const grantsBefore = rec.grants.length;
   await auth.onEnter(3, 'a');
-  tick(SETTLED()); // everyone is settled, so seniority no longer shields 2
+  assert.equal(rec.grants.length, grantsBefore, 'entering a held cell must not grant');
+  assert.equal(rec.infos.at(-1)?.holderId, PEER);
 
-  await auth.onLeave(1, 'a', true);
-  assert.equal(auth.holderOf('a'), 3, 'fittest remaining wins the forced handoff');
-  assert.equal(auth.currentEpoch('a'), 2, 'epoch advances exactly once');
-  assert.equal(rec.grants.at(-1)!.playerId, 3);
-  // The epoch moved: every remaining non-holder is told, in the same turn.
-  assert.deepEqual(
-    rec.infos.filter((i) => i.holderId === 3).map((i) => i.playerId),
-    [2],
-  );
-});
-
-test('authority: a just-arrived candidate is not elected while a settled one exists', async () => {
-  const { auth, rtt, tick } = makeTuned();
-  rtt.set(1, 30);
-  rtt.set(2, 200);
-  await auth.onEnter(1, 'a');
-  await auth.onEnter(2, 'a');
-  tick(SETTLED());
-  rtt.set(3, 1); // a perfect link that just walked in — and may walk straight out
-  await auth.onEnter(3, 'a');
-
-  await auth.onLeave(1, 'a', true);
-  assert.equal(auth.holderOf('a'), 2, 'unsettled 3 is held back despite the better score');
-
-  // With no settled candidate left, the newcomer is electable: an occupied cell must
-  // always have a holder.
+  // Everyone leaves: the cell is dormant, and its epoch survives for the next claim.
+  const epochHeld = rec.grants.at(-1)!.epoch;
   await auth.onLeave(2, 'a', true);
-  assert.equal(auth.holderOf('a'), 3);
+  await auth.onLeave(3, 'a', true);
+  await auth.onLeave(PEER, 'a', true);
+  assert.equal(auth.holderOf('a'), undefined, 'an empty cell is dormant');
+
+  await auth.onEnter(PEER, 'a');
+  assert.ok(rec.grants.at(-1)!.epoch > epochHeld, 'epoch is monotonic across dormancy');
 });
 
-test('authority: ties and near-ties keep the incumbent', async () => {
-  const { auth, rec, rtt, tick } = makeTuned();
-  rtt.set(1, authorityTuning.degradeScoreMs + 50); // bad enough to open the degrade gate
-  rtt.set(2, authorityTuning.degradeScoreMs + 50); // exactly as bad
-  await auth.onEnter(1, 'a');
-  await auth.onEnter(2, 'a');
-  tick(SETTLED());
-  const epoch = auth.currentEpoch('a');
+test('authority: a cell full of players and no peer stays ownerless', async () => {
+  const { auth, rec } = makeAuthority();
 
-  tick(authorityTuning.sustainMs + 1);
-  auth.reviewAll();
-  assert.equal(auth.holderOf('a'), 1, 'an exact tie is not "clearly better"');
-
-  // Better, but only by a jitter-sized margin: still not worth a snapshot + re-sync.
-  rtt.set(2, authorityTuning.degradeScoreMs + 50 - (authorityTuning.improveMs - 1));
-  auth.reviewAll();
-  assert.equal(auth.holderOf('a'), 1);
-  // ...and better absolutely but not by the ratio (both links are hopeless anyway).
-  rtt.set(1, 4000);
-  rtt.set(2, 3200); // 800 ms better, but 3200 > 4000 * 0.75
-  auth.reviewAll();
-  assert.equal(auth.holderOf('a'), 1);
-  assert.equal(auth.currentEpoch('a'), epoch, 'no epoch churn while the incumbent stands');
-  assert.equal(rec.revokes.length, 0);
+  // Six players, none of them able to simulate. Under the old client-authority model the
+  // first through the door took the cell and simulated its NPCs for everyone.
+  for (const id of [2, 3, 4, 5, 6, 7]) await auth.onEnter(id, 'cell');
+  assert.equal(auth.holderOf('cell'), undefined,
+    'players alone in a cell must never produce a holder');
+  assert.equal(rec.grants.length, 0, 'no grant may be issued to a player, ever');
 });
 
-test('authority: a degrading holder is replaced only after the sustained window', async () => {
-  const { auth, rec, rtt, tick } = makeTuned();
-  rtt.set(1, 20);
-  rtt.set(2, 20);
-  await auth.onEnter(1, 'a');
-  await auth.onEnter(2, 'a');
-  tick(SETTLED());
+test('authority: when the peer leaves, the cell goes ownerless rather than falling back', async () => {
+  const { auth } = makeAuthority();
+  await auth.onEnter(PEER, 'cell');
+  await auth.onEnter(2, 'cell');
+  assert.equal(auth.holderOf('cell'), PEER);
 
-  rtt.set(1, 900); // holder's link falls over
-  auth.reviewAll();
-  assert.equal(auth.holderOf('a'), 1, 'one bad sample must not move authority');
-
-  tick(authorityTuning.sustainMs - 1);
-  auth.reviewAll();
-  assert.equal(auth.holderOf('a'), 1, 'still inside the sustain window');
-
-  // Recovery resets the clock: the gate is on a CONTINUOUS bad stretch, not a total.
-  rtt.set(1, 20);
-  auth.reviewAll(); // clears badSince
-  rtt.set(1, 900);
-  auth.reviewAll(); // re-arms it, from NOW
-  tick(authorityTuning.sustainMs - 1);
-  auth.reviewAll();
-  assert.equal(auth.holderOf('a'), 1, 'recovery re-armed the window');
-
-  tick(2);
-  auth.reviewAll();
-  assert.equal(auth.holderOf('a'), 2, 'sustained degradation hands off');
-  assert.equal(auth.currentEpoch('a'), 2);
-  assert.deepEqual(rec.revokes.at(-1), { playerId: 1, cellKey: 'a', epoch: 1 }); // revoked at the OLD epoch
-  assert.equal(rec.grants.at(-1)!.playerId, 2);
-  assert.deepEqual(
-    rec.infos.filter((i) => i.holderId === 2).map((i) => i.playerId),
-    [1],
-    'the displaced holder is told who took over',
-  );
+  // The fallback to "the next capable occupant" WAS the client-authority model. Its absence
+  // is the point: the actors wait for the server to come back, they do not change hands.
+  await auth.onLeave(PEER, 'cell', true);
+  assert.equal(auth.holderOf('cell'), undefined,
+    'a cell must never fall back to a player when the peer leaves');
 });
 
-test('authority: jitter across the degrade threshold produces no handoff at all', async () => {
-  const { auth, rec, rtt, tick } = makeTuned();
-  rtt.set(2, 20); // a permanently better candidate is always sitting right there
-  rtt.set(3, 20);
-  await auth.onEnter(1, 'a');
-  await auth.onEnter(2, 'a');
-  await auth.onEnter(3, 'a');
-  tick(SETTLED());
+test('authority: the peer reclaims a cell with the snapshot intact', async () => {
+  const { auth, rec } = makeAuthority();
+  await auth.onEnter(PEER, 'cell');
+  const snap: ActorSnapshot = { actors: [{ ref: 'guard', x: 5 }] } as unknown as ActorSnapshot;
+  auth.setSnapshot('cell', snap);
 
-  // The realistic case: the holder's link wobbles either side of the gate. Because every
-  // good sample re-arms the sustain window, a wobble never accumulates into a handoff —
-  // only a genuinely persistent degradation does.
-  for (let i = 0; i < 200; i++) {
-    rtt.set(1, i % 2 === 0 ? authorityTuning.degradeScoreMs + 400 : authorityTuning.degradeScoreMs - 10);
-    tick(20_000); // 20 s per step: without the reset, 200 steps is 66 sustain windows
-    auth.reviewAll();
-  }
-  assert.equal(auth.holderOf('a'), 1, 'jitter never unseats the incumbent');
-  assert.equal(auth.currentEpoch('a'), 1, 'and never burns an epoch');
-  assert.equal(rec.revokes.length, 0);
+  await auth.onLeave(PEER, 'cell', false); // peer crashed / disconnected
+  assert.equal(auth.holderOf('cell'), undefined);
+
+  await auth.onEnter(PEER, 'cell'); // restarted and came back
+  assert.deepEqual(rec.grants.at(-1)?.snapshot, snap,
+    'the returning peer resumes from the last known actor state, not from nothing');
 });
 
-test('authority: flapping RTT does not produce repeated handoffs', async () => {
-  const { auth, rec, rtt, tick } = makeTuned();
-  await auth.onEnter(1, 'a');
-  await auth.onEnter(2, 'a');
-  await auth.onEnter(3, 'a');
-  tick(SETTLED());
+test('authority: a silent peer is reported but KEEPS the cell', async () => {
+  let now = 1_000_000;
+  const { auth } = makeAuthority({ now: () => now });
+  await auth.onEnter(PEER, 'cell');
+  await auth.onEnter(2, 'cell');
+  // A cell with actors in it: silence here means the peer is not simulating.
+  auth.setSnapshot('cell', { actors: [{ ref: 'guard' }] } as unknown as ActorSnapshot);
 
-  // A pathological series: whoever currently holds authority is always the worst, and by a
-  // margin that clears both improvement gates. Without damping this is one handoff per
-  // review — the exact failure mode that costs a snapshot + re-sync every time.
-  let seed = 12345;
-  const rnd = (m: number) => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) % m);
-  for (let i = 0; i < 400; i++) {
-    const holder = auth.holderOf('a')!;
-    for (const p of [1, 2, 3]) rtt.set(p, p === holder ? 700 + rnd(200) : 20 + rnd(30));
-    tick(5_000);
-    auth.reviewAll();
-  }
-
-  const handoffs = rec.revokes.length;
-  // 400 reviews * 5 s = 2000 s of pure flapping. The cooldown alone caps re-elections at
-  // one per cooldownMs; assert well inside that so the bound is meaningful, not tautological.
-  const ceiling = Math.ceil((400 * 5_000) / authorityTuning.cooldownMs) + 1;
-  assert.ok(handoffs <= ceiling, `${handoffs} handoffs exceeds the damped ceiling ${ceiling}`);
-  assert.ok(handoffs > 0, 'damping must not mean "never hand off"');
-  // Epoch churn is the real cost, and it tracks handoffs exactly.
-  assert.equal(auth.currentEpoch('a'), 1 + handoffs);
-});
-
-test('authority: a lone holder is never re-elected, however bad its link', async () => {
-  const { auth, rec, rtt, tick } = makeTuned();
-  rtt.set(1, 5000);
-  await auth.onEnter(1, 'a');
-  tick(SETTLED() + authorityTuning.sustainMs + 1);
+  now += authorityTuning.actorSilenceMs * 3;
   auth.reviewAll();
-  assert.equal(auth.holderOf('a'), 1, 'nobody to hand to: a bad holder beats no holder');
-  assert.equal(rec.revokes.length, 0);
+
+  // Revoking would remove the NPCs as well as freeze them, and there is nobody to hand the
+  // cell to. The peer keeps it; the operator gets a loud log line.
+  assert.equal(auth.holderOf('cell'), PEER,
+    'a silent peer must keep the cell — there is no one to hand it to');
+});
+
+test('authority: an empty cell never reports a silent holder', async () => {
+  let now = 1_000_000;
+  const { auth } = makeAuthority({ now: () => now });
+  await auth.onEnter(PEER, 'cell');
+  // No snapshot => no actors => silence is correct, not a fault.
+  now += authorityTuning.actorSilenceMs * 3;
+  auth.reviewAll();
+  assert.equal(auth.holderOf('cell'), PEER);
 });
 
 test('authority fuzz: invariants hold across random enter/leave/disconnect', async () => {
   const CELLS = ['0,0', '0,1', '1,0', 'interiorcave'];
-  const PLAYERS = [1, 2, 3, 4, 5];
+  const PLAYERS = [PEER, 2, 3, 4, 5]; // PEER is the only one that can simulate
   const { auth, rec } = makeAuthority();
 
-  // Test-side mirror of ground truth: which cell each player currently occupies.
   const at = new Map<number, string>();
-  const maxEpoch = new Map<string, number>(); // to assert strict monotonicity from grants
+  const maxEpoch = new Map<string, number>();
 
   let seed = 0xC0FFEE;
   const rnd = (m: number) => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) % m);
@@ -285,26 +162,25 @@ test('authority fuzz: invariants hold across random enter/leave/disconnect', asy
     for (const cell of CELLS) {
       const occupants = [...at.entries()].filter(([, c]) => c === cell).map(([p]) => p);
       const holder = auth.holderOf(cell);
-      if (occupants.length === 0) {
-        assert.equal(holder, undefined, `empty cell ${cell} must be dormant`);
+      if (holder !== undefined) {
+        // THE invariant: if anything holds a cell, it is the peer, and it is in that cell.
+        assert.equal(holder, PEER, `cell ${cell} held by ${holder}, only the peer may hold`);
+        assert.ok(occupants.includes(PEER), `holder of ${cell} must occupy it`);
       } else {
-        // Exactly one holder, and it is one of the occupants.
-        assert.notEqual(holder, undefined, `occupied cell ${cell} must have a holder`);
-        assert.ok(occupants.includes(holder!), `holder ${holder} of ${cell} must occupy it`);
+        // Ownerless is legal — and REQUIRED whenever the peer is not present.
+        assert.ok(!occupants.includes(PEER) || occupants.length === 0,
+          `cell ${cell} has the peer in it but no holder`);
       }
-      // Occupant set matches the authority's order list (as a set).
       assert.deepEqual(new Set(auth.occupants(cell)), new Set(occupants), `occupancy mismatch ${cell}`);
     }
-    // Strict epoch monotonicity is asserted per-grant in assertGrantMonotonic().
   };
 
-  // Record the max granted epoch per cell as grants arrive; assert each new grant strictly
-  // exceeds the previous max for that cell.
   const assertGrantMonotonic = (before: number) => {
     for (let i = before; i < rec.grants.length; i++) {
       const g = rec.grants[i]!;
       const prev = maxEpoch.get(g.cellKey) ?? 0;
       assert.ok(g.epoch > prev, `grant epoch ${g.epoch} on ${g.cellKey} must exceed prev ${prev}`);
+      assert.equal(g.playerId, PEER, 'every grant must go to the peer');
       maxEpoch.set(g.cellKey, g.epoch);
     }
   };
@@ -313,19 +189,15 @@ test('authority fuzz: invariants hold across random enter/leave/disconnect', asy
     const p = PLAYERS[rnd(PLAYERS.length)]!;
     const before = rec.grants.length;
     const here = at.get(p);
-    // 0/1: move or enter; 2: leave to nowhere (disconnect); 3: cell-change
     const action = rnd(4);
     if (here === undefined) {
-      // offline -> connect into a random cell
       const cell = CELLS[rnd(CELLS.length)]!;
       await auth.onEnter(p, cell);
       at.set(p, cell);
     } else if (action === 2) {
-      // disconnect
       await auth.onLeave(p, here, false);
       at.delete(p);
     } else {
-      // cell-change to a (possibly same) cell
       const cell = CELLS[rnd(CELLS.length)]!;
       if (cell !== here) {
         await auth.onLeave(p, here, true);
@@ -337,175 +209,9 @@ test('authority fuzz: invariants hold across random enter/leave/disconnect', asy
     checkInvariants();
   }
 
-  // Handoff happens within the single onLeave turn: never a window with occupants but no
-  // holder (already asserted every step). Final drain: disconnect everyone, all dormant.
   for (const [p, cell] of [...at.entries()]) {
     await auth.onLeave(p, cell, false);
     at.delete(p);
   }
   for (const cell of CELLS) assert.equal(auth.holderOf(cell), undefined);
-});
-
-test('authority: two players entering one dormant cell produce exactly one holder', async () => {
-  const { auth, rec } = makeAuthority();
-  // The two calls are deliberately NOT awaited in sequence. onEnter checks
-  // `holderId === null`, then AWAITS the snapshot load, then assigns the holder — so two
-  // entrants in the same tick can both observe a dormant cell and both be granted. Every
-  // other test in this file enters players one at a time and therefore cannot see it.
-  //
-  // This is the launch-day case, not a curiosity: the await is only reached when the cell
-  // has no cached snapshot (`c.lastSnapshot ?? await ...`), i.e. on a fresh or just-restarted
-  // server — exactly when a crowd arrives at once.
-  await Promise.all([auth.onEnter(1, 'fresh'), auth.onEnter(2, 'fresh')]);
-
-  assert.equal(rec.grants.length, 1,
-    `at most one Grant may be issued for a dormant cell, got ${JSON.stringify(rec.grants)}`);
-  const holder = auth.holderOf('fresh');
-  assert.ok(holder === 1 || holder === 2, `holder must be one of the entrants, got ${String(holder)}`);
-  assert.equal(rec.grants[0]!.playerId, holder, 'the granted player must be the recorded holder');
-  // Epoch must advance once, not once per entrant: non-holders address actors by epoch, so
-  // a double bump silently invalidates the epoch the other client was just told to use.
-  assert.equal(auth.currentEpoch('fresh'), 1, 'a single claim must bump the epoch exactly once');
-  // The loser learns who holds it.
-  const loser = holder === 1 ? 2 : 1;
-  assert.ok(rec.infos.some((i) => i.playerId === loser && i.holderId === holder),
-    `the other entrant must be told the holder, got ${JSON.stringify(rec.infos)}`);
-});
-
-test('authority: a holder that produces no actor frames loses the cell', async () => {
-  const rec: Recorder = { grants: [], infos: [], revokes: [], overrides: new Map() };
-  let clock = 1_000_000;
-  const auth = new Authority({
-    grant: (playerId, cellKey, epoch, snapshot) => rec.grants.push({ playerId, cellKey, epoch, snapshot }),
-    info: (playerId, cellKey, holderId) => rec.infos.push({ playerId, cellKey, holderId }),
-    revoke: (playerId, cellKey, epoch) => rec.revokes.push({ playerId, cellKey, epoch }),
-    // The cell HAS an NPC. That is the precondition for the liveness check: a cell with
-    // nothing to simulate legitimately produces no frames (see the empty-cell test below).
-    loadOverrides: async () => ({ actors: [{ ref: { __refnum: { index: 1, contentFile: 0 } } }] }),
-    foldOverrides: async () => {},
-  }, { now: () => clock, review: false });
-
-  await auth.onEnter(1, 'cell');
-  await auth.onEnter(2, 'cell');
-  assert.equal(auth.holderOf('cell'), 1);
-
-  // Player 1 holds the cell and produces nothing, while looking PERFECT on fitness — which
-  // is the whole point. A protocol bot, or a real client that is loading, minimised or
-  // wedged, has excellent RTT and simulates nothing; election on fitness alone hands it the
-  // cell and every NPC in it then freezes for everyone.
-  clock += authorityTuning.actorSilenceMs + 1_000;
-  auth.reviewAll();
-
-  assert.equal(auth.holderOf('cell'), 2, 'a silent holder must lose the cell');
-  assert.ok(rec.revokes.some((r) => r.playerId === 1), 'the silent holder must be revoked');
-});
-
-test('authority: a productive holder is never unseated by the liveness check', async () => {
-  const rec: Recorder = { grants: [], infos: [], revokes: [], overrides: new Map() };
-  let clock = 1_000_000;
-  const auth = new Authority({
-    grant: (playerId, cellKey, epoch, snapshot) => rec.grants.push({ playerId, cellKey, epoch, snapshot }),
-    info: (playerId, cellKey, holderId) => rec.infos.push({ playerId, cellKey, holderId }),
-    revoke: (playerId, cellKey, epoch) => rec.revokes.push({ playerId, cellKey, epoch }),
-    loadOverrides: async () => ({ actors: [{ ref: { __refnum: { index: 1, contentFile: 0 } } }] }),
-    foldOverrides: async () => {},
-  }, { now: () => clock, review: false });
-
-  await auth.onEnter(1, 'cell');
-  await auth.onEnter(2, 'cell');
-
-  // Frames keep arriving, so the silence clock keeps resetting. Without that reset the check
-  // would be a rotating handoff costing a snapshot and a full re-sync every interval.
-  for (let i = 0; i < 5; i++) {
-    clock += authorityTuning.actorSilenceMs - 1_000;
-    auth.noteActorFrame('cell');
-    auth.reviewAll();
-  }
-  assert.equal(auth.holderOf('cell'), 1, 'a working holder was unseated');
-  assert.equal(rec.revokes.length, 0, 'no revoke should have been issued');
-});
-
-test('authority: an EMPTY cell never rotates on the liveness check', async () => {
-  const rec: Recorder = { grants: [], infos: [], revokes: [], overrides: new Map() };
-  let clock = 1_000_000;
-  const auth = new Authority({
-    grant: (playerId, cellKey, epoch, snapshot) => rec.grants.push({ playerId, cellKey, epoch, snapshot }),
-    info: (playerId, cellKey, holderId) => rec.infos.push({ playerId, cellKey, holderId }),
-    revoke: (playerId, cellKey, epoch) => rec.revokes.push({ playerId, cellKey, epoch }),
-    loadOverrides: async () => ({ actors: [] }), // nothing to simulate
-    foldOverrides: async () => {},
-  }, { now: () => clock, review: false });
-
-  await auth.onEnter(1, 'empty');
-  await auth.onEnter(2, 'empty');
-
-  // A cell with no NPCs correctly produces no actor frames — most interiors, and plenty of
-  // exteriors. The first version of the liveness check did not test for this and would have
-  // revoked the holder of every empty cell on a timer, churning authority (and a snapshot
-  // plus a full re-sync per client) forever. Caught by the existing degradation tests, which
-  // is why this now has a test of its own rather than relying on them noticing again.
-  for (let i = 0; i < 5; i++) {
-    clock += authorityTuning.actorSilenceMs * 2;
-    auth.reviewAll();
-  }
-  assert.equal(auth.holderOf('empty'), 1, 'an empty cell must not rotate its holder');
-  assert.equal(rec.revokes.length, 0, 'no revoke should be issued for a cell with nothing to simulate');
-});
-
-test('authority: a client that cannot simulate never holds a cell', async () => {
-  const rec: Recorder = { grants: [], infos: [], revokes: [], overrides: new Map() };
-  // 1 cannot simulate (a protocol bot / load tool); 2 can.
-  const auth = new Authority({
-    grant: (playerId, cellKey, epoch, snapshot) => rec.grants.push({ playerId, cellKey, epoch, snapshot }),
-    info: (playerId, cellKey, holderId) => rec.infos.push({ playerId, cellKey, holderId }),
-    revoke: (playerId, cellKey, epoch) => rec.revokes.push({ playerId, cellKey, epoch }),
-    loadOverrides: async () => ({ actors: [] }),
-    foldOverrides: async () => {},
-  }, { review: false, caps: { canSimulate: (id) => id === 2 } });
-
-  // The incapable client arrives FIRST, so seniority and fitness both favour it. Without the
-  // capability filter it takes the cell and every NPC in it freezes for everyone — which is
-  // exactly what happened in s42, where 20 bots out-competed two real clients on RTT.
-  await auth.onEnter(1, 'cell');
-  await auth.onEnter(2, 'cell');
-  assert.equal(auth.holderOf('cell'), 2, 'authority went to a client that cannot simulate');
-
-  // SERVER-AUTHORITATIVE ONLY: when the sole eligible occupant leaves, the cell goes
-  // OWNERLESS and its actors wait for the server. There is no fallback to an incapable
-  // client — that client-authority path has been removed. (Cell 1 stays present but never
-  // becomes holder.)
-  await auth.onLeave(2, 'cell', true);
-  assert.equal(auth.holderOf('cell'), undefined,
-    'no eligible holder left -> the cell is ownerless and waits for the server, never a client');
-});
-
-test('authority: a capable occupant takes over when the holder leaves (peer/human fallback)', async () => {
-  const rec: Recorder = { grants: [], infos: [], revokes: [], overrides: new Map() };
-  // Both can simulate; 1 is the sim peer (fitter — localhost), 2 is a human on a real link.
-  const fitness = {
-    get: (id: number) => (id === 1
-      ? { rttMs: 1, shedRate: 0, samples: 10 }   // peer: near-zero RTT
-      : { rttMs: 80, shedRate: 0, samples: 10 }), // human: ordinary link
-  };
-  const auth = new Authority({
-    grant: (playerId, cellKey, epoch, snapshot) => rec.grants.push({ playerId, cellKey, epoch, snapshot }),
-    info: (playerId, cellKey, holderId) => rec.infos.push({ playerId, cellKey, holderId }),
-    revoke: (playerId, cellKey, epoch) => rec.revokes.push({ playerId, cellKey, epoch }),
-    loadOverrides: async () => ({ actors: [{ ref: { __refnum: { index: 1, contentFile: 0 } } }] }),
-    foldOverrides: async () => {},
-  }, { fitness, review: false, caps: { canSimulate: () => true } });
-
-  // Human arrives first, peer second. On fitness the peer is the better holder, but the M4
-  // handoff is not automatic on entry — the human legitimately holds until it degrades or
-  // leaves. What matters for the sim-peer story is the FALLBACK: when the holder leaves,
-  // authority must pass to the other capable occupant, not evaporate.
-  await auth.onEnter(2, 'cell'); // human claims (only occupant)
-  await auth.onEnter(1, 'cell'); // peer joins
-  const holder = auth.holderOf('cell');
-  assert.ok(holder === 1 || holder === 2, 'someone must hold it');
-
-  // The holder leaves. The cell must NOT go ownerless while a capable occupant remains.
-  await auth.onLeave(holder!, 'cell', true);
-  const after = auth.holderOf('cell');
-  assert.ok(after !== null && after !== holder, `authority must fall back to the remaining occupant, got ${String(after)}`);
 });

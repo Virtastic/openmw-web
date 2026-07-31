@@ -39,6 +39,11 @@ export class TestClient {
   // Phase H: a headless sim peer sets this; the server then keeps it out of the player
   // list, playerCount and maxPlayers. Default false = an ordinary human client.
   system = false;
+  // Set by simPeer(); tests assert the peer is the cell holder by id.
+  playerId = 0;
+  // The sim peer's shared secret. Rides every auth message when set, exactly as the real peer
+  // does — `system` is client-declared, so this is the only thing that makes it believable.
+  serverPassword = '';
 
   readonly inbox: Inbox = { json: [], events: [], batches: [], actorBatches: [] };
   readonly closed: Promise<{ code: number; reason: string }>;
@@ -140,11 +145,16 @@ export class TestClient {
   }
 
   register(account: string, password: string, extra: Record<string, unknown> = {}): void {
-    this.sendJson({ t: 'SessionRegister', account, password, ...extra });
+    this.sendJson({
+      t: 'SessionRegister', account, password,
+      ...(this.serverPassword ? { serverPassword: this.serverPassword } : {}),
+      ...extra,
+    });
   }
 
   login(account: string, password: string, extra: Record<string, unknown> = {}): void {
-    this.sendJson({ t: 'SessionLoginRequest', account, password, ...extra });
+    this.sendJson({ t: 'SessionLoginRequest', account, password,
+      ...(this.serverPassword ? { serverPassword: this.serverPassword } : {}), ...extra });
   }
 
   private async waitFor<T>(pick: () => T | undefined, what: string, timeoutMs: number): Promise<T> {
@@ -233,6 +243,24 @@ export class TestClient {
     const w = await this.waitJson('SessionWelcome');
     this.sendJson({ t: 'SessionReady' });
     return { playerId: w['playerId'] as number, welcome: w };
+  }
+
+  // A SIM PEER: the only thing allowed to hold cell authority. Production runs exactly this
+  // shape — one system peer plus N players — so any test that needs a cell simulated must
+  // stand one up rather than electing a player, which is the mode that no longer exists.
+  // The server must have been started with this same [server].password: an empty one now
+  // refuses every system connection, because `system` is a client-declared flag and an unset
+  // password is not permission to be believed.
+  static async simPeer(port: number, serverPassword: string, name = 'simpeer-world'): Promise<TestClient> {
+    const c = await TestClient.connect(port);
+    c.system = true;
+    c.hello();
+    await c.waitJson('SessionHelloOk');
+    c.sendJson({ t: 'SessionRegister', account: name, password: serverPassword, serverPassword });
+    const w = await c.waitJson('SessionWelcome');
+    c.playerId = w['playerId'] as number;
+    c.sendJson({ t: 'SessionReady' });
+    return c;
   }
 
   // Log in to an account that already exists — the cross-world identity case: a player who

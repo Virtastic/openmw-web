@@ -39,7 +39,7 @@ test('resetCell restocks containers to their first-seen contents, climbing state
 
 test('a reset hands standing players the restored truth instead of kicking them', async (t) => {
   const dataDir = tmpDataDir();
-  const server = await startServer({
+  const server = await startServer({ requireGameData: false,
     dataDir, port: 0, host: '127.0.0.1',
     configOverride: { cellReset: { cells: ['0,0'], intervalSec: 0 } }, // registered, manual only
   });
@@ -71,7 +71,7 @@ test('a reset hands standing players the restored truth instead of kicking them'
 
 test('a journal advance is durable immediately, not on the 45s sweep', async (t) => {
   const dataDir = tmpDataDir();
-  const server = await startServer({ dataDir, port: 0, host: '127.0.0.1' });
+  const server = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1' });
   t.after(() => server.close());
 
   const a = await TestClient.connect(server.port);

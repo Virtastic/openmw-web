@@ -11,6 +11,9 @@
 //   3. State writes are attributed to the authenticated sender, never to an id in the body.
 
 import { test } from 'node:test';
+// The sim peer's only credential. `system` is client-declared, so an empty [server].password
+// refuses every peer — a real server must set one.
+const PEER_PASS = 'peer-secret-1';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { startServer } from '../src/server';
@@ -38,11 +41,14 @@ test('adversarial: malformed and hostile input', async (t) => {
   // (5/min) would reject the churn and multi-client cases long before the code under test
   // runs — and a starved limiter makes every later subtest fail misleadingly. Both limits
   // are covered on their own terms by ratelimit.test.ts.
-  const server = await startServer({
+  const server = await startServer({ requireGameData: false,
     dataDir: tmpDataDir(),
     port: 0,
     host: '127.0.0.1',
-    configOverride: { limits: { maxConnsPerIp: 200, loginPerMinPerIp: 10_000 } },
+    configOverride: {
+      limits: { maxConnsPerIp: 200, loginPerMinPerIp: 10_000 },
+      server: { password: PEER_PASS },
+    },
   });
   t.after(() => server.close());
 
@@ -205,21 +211,26 @@ test('adversarial: malformed and hostile input', async (t) => {
     assert.equal(await settled(), before, 'no sessions leaked across 30 connect/disconnect cycles');
   });
 
-  await t.test('abrupt holder disconnect mid-operation hands off authority', async () => {
-    const a = await TestClient.connect(server.port);
-    await a.joinAsNew('midop_a');
-    a.sendCellChange('77,77', 0, 0, 0);
-    await a.waitEvent('ActorAuthorityGrant', () => true, 5000);
+  await t.test('an abrupt PEER death never hands the cell to a player', async () => {
+    // The peer holds; a player stands in the same cell.
+    const peer = await TestClient.simPeer(server.port, PEER_PASS, 'midop_peer');
+    peer.sendCellChange('77,77', 0, 0, 0);
+    await peer.waitEvent('ActorAuthorityGrant', () => true, 5000);
 
-    const b = await TestClient.connect(server.port);
-    await b.joinAsNew('midop_b');
-    b.sendCellChange('77,77', 0, 0, 0);
-    await b.waitEvent('ActorAuthorityInfo', () => true, 5000);
+    const player = await TestClient.connect(server.port);
+    await player.joinAsNew('midop_player');
+    player.sendCellChange('77,77', 0, 0, 0);
+    await player.waitEvent('ActorAuthorityInfo', () => true, 5000);
 
-    a.ws.terminate(); // hard kill, no close handshake — the real "player alt-F4'd" case
-    const grant = await b.waitEvent('ActorAuthorityGrant', () => true, 8000);
-    assert.ok(grant, 'authority handed off after an abrupt holder disconnect');
-    b.ws.close();
+    // Hard kill, no close handshake — the real "the peer process died" case. This used to
+    // hand the cell to the next occupant; a player inheriting it is precisely the
+    // client-authority model, so the cell must go ownerless and wait for the peer instead.
+    peer.ws.terminate();
+    await assert.rejects(
+      player.waitEvent('ActorAuthorityGrant', () => true, 2500),
+      'a player must never be granted a cell, not even when the peer dies',
+    );
+    player.ws.close();
   });
 });
 
@@ -228,13 +239,17 @@ test('adversarial: malformed and hostile input', async (t) => {
 // SAME cell with the holder's own epoch (the strongest forgery available to it — a wrong
 // epoch would be rejected by a check that predates this one).
 test('a non-holder forging ActorMoveBatch is rejected, counted, and reaches nobody', async () => {
-  const server = await startServer({ dataDir: tmpDataDir(), port: 0, host: '127.0.0.1' });
+  const server = await startServer({
+    requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
+    configOverride: { server: { password: PEER_PASS } },
+  });
   // try/finally, not a trailing close(): a failed assertion must still shut the server down.
   // Without this a failure leaves the port listening and `node --test` waits for the event
   // loop to drain — one broken assertion hung the whole suite for 49 minutes.
   try {
-  const holder = await TestClient.connect(server.port);
-  await holder.joinAsNew('sim_peer');
+  // The holder is the SIM PEER — the only thing that can hold a cell. A player standing in
+  // the cell is by definition a non-holder, which is exactly the forgery this asserts on.
+  const holder = await TestClient.simPeer(server.port, PEER_PASS);
   holder.sendCellChange('91,91', 0, 0, 0);
   const grant = await holder.waitEvent('ActorAuthorityGrant', () => true, 5000);
   const epoch = (grant.value as { epoch: number }).epoch;

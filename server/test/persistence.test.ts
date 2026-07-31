@@ -44,7 +44,7 @@ test('playerstore round-trip and atomicity', async () => {
 
 test('m2 state sync end to end', async (t) => {
   const dataDir = tmpDataDir();
-  const server = await startServer({ dataDir, port: 0, host: '127.0.0.1' });
+  const server = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1' });
   t.after(() => server.close());
 
   let a = await TestClient.connect(server.port);
@@ -207,7 +207,7 @@ test('m2 state sync end to end', async (t) => {
 // STILL CONNECTED: no disconnect flush has run, so only an immediate write can have landed.
 test('death is written immediately, before any disconnect or sweep', async () => {
   const dir = tmpDataDir();
-  const server = await startServer({ dataDir: dir, port: 0, host: '127.0.0.1' });
+  const server = await startServer({ requireGameData: false, dataDir: dir, port: 0, host: '127.0.0.1' });
   try {
     const c = await TestClient.connect(server.port);
     const { welcome } = await c.joinAsNew('dying_player');

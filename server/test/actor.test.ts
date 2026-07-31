@@ -5,6 +5,9 @@
 // re-grant.
 
 import test from 'node:test';
+// The sim peer's credential: `system` is client-declared, so an empty [server].password
+// refuses every peer.
+const PEER_PASS = 'peer-secret-1';
 import assert from 'node:assert/strict';
 import { packActorMoveBatch, unpackActorMoveBatch, type ActorEntry } from '../src/proto/movement';
 import { startServer, type RunningServer } from '../src/server';
@@ -28,15 +31,17 @@ test('ActorMoveBatch codec round-trips', () => {
 
 test('actor authority and relay end to end', async (t) => {
   const dataDir = tmpDataDir();
-  let server: RunningServer = await startServer({ dataDir, port: 0, host: '127.0.0.1' });
+  const cfg = { configOverride: { server: { password: PEER_PASS } } };
+  let server: RunningServer = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1', ...cfg });
   t.after(() => server.close());
 
-  const a = await TestClient.connect(server.port);
-  const { playerId: aId } = await a.joinAsNew('Alice');
-  await a.waitEvent('PlayerList');
+  // THE HOLDER IS THE SIM PEER. A player cannot hold a cell, so the thing that streams actor
+  // state here has to be the peer — which is also what production does.
+  const a = await TestClient.simPeer(server.port, PEER_PASS, 'Alice');
+  const aId = a.playerId;
 
   let epochA = 0;
-  await t.test('first entrant is granted authority', async () => {
+  await t.test('the sim peer is granted authority on entry', async () => {
     a.sendCellChange('0,0', 0, 0, 0);
     await a.waitEvent('PlayerCellChange');
     const grant = await a.waitEvent('ActorAuthorityGrant');
@@ -50,7 +55,7 @@ test('actor authority and relay end to end', async (t) => {
   const { playerId: bId } = await b.joinAsNew('Bob');
   await b.waitEvent('PlayerList');
 
-  await t.test('second entrant to a held cell gets Info, not Grant', async () => {
+  await t.test('a player entering a held cell gets Info, never Grant', async () => {
     b.sendCellChange('0,0', 0, 0, 0);
     await b.waitEvent('PlayerCellChange');
     const info = await b.waitEvent('ActorAuthorityInfo');
@@ -72,7 +77,7 @@ test('actor authority and relay end to end', async (t) => {
     assert.equal(a.inbox.actorBatches.length, 0);
 
     // Bob (non-holder) tries to send an actor batch -> dropped, Alice sees nothing.
-    b.sendActorMoveBatch(epochA, [REF_ENTRY]);
+    b.sendActorMoveBatch(epochA, [REF_ENTRY]); // a player forging actor state
     a.sendActorMoveBatch(epochA, [{ ...REF_ENTRY, pose: { ...REF_ENTRY.pose, x: 55 } }]);
     const next = await b.waitActorBatch();
     assert.equal(next.batch.entries[0]!.pose.x, 55); // Alice's, not Bob's echo
@@ -85,7 +90,7 @@ test('actor authority and relay end to end', async (t) => {
     assert.equal((stats.value as { epoch: number }).epoch, epochA);
     // Wrong epoch -> silently dropped.
     a.sendEvent('ActorStatsDynamic', { cellKey: '0,0', epoch: epochA + 99, ref: ACTOR_REF, hp: { c: 0, b: 20 }, mp: { c: 1, b: 2 }, ft: { c: 3, b: 4 } });
-    a.sendEvent('ChatSend', { text: 'sfence' });
+    b.sendEvent('ChatSend', { text: 'sfence' });
     await b.waitEvent('ChatMessage', (v) => (v as { text?: string }).text === 'sfence');
     assert.equal(b.inbox.events.filter((e) => e.name === 'ActorStatsDynamic').length, 0);
   });
@@ -96,7 +101,8 @@ test('actor authority and relay end to end', async (t) => {
     await c.waitEvent('PlayerList');
     c.sendCellChange('40,40', 0, 0, 0); // far from 0,0
     await c.waitEvent('PlayerCellChange');
-    await c.waitEvent('ActorAuthorityGrant'); // Cara holds her own far cell
+    // No peer covers 40,40, so nothing holds it — a player never gets a grant. The point of
+    // the test is unchanged: no actor traffic from 0,0 reaches her.
     c.inbox.actorBatches.length = 0;
     a.sendActorMoveBatch(epochA, [REF_ENTRY]);
     await b.waitActorBatch();
@@ -113,12 +119,12 @@ test('actor authority and relay end to end', async (t) => {
     assert.equal((death.value as { deathNo: number }).deathNo, 1);
     const kc = await b.waitEvent('WorldKillCount');
     assert.deepEqual(kc.value, { refId: 'cliffracer', count: 1 });
-    await a.waitEvent('WorldKillCount'); // broadcast reaches the holder too
+    await a.waitEvent('WorldKillCount'); // the broadcast reaches the peer too
 
     // Duplicate (same ref+deathNo) -> no relay, no tally bump.
     b.inbox.events.length = 0;
     a.sendEvent('ActorDeath', { cellKey: '0,0', epoch: epochA, ref: ACTOR_REF, killerPlayerId: aId, deathNo: 1, killedRecordId: 'cliffracer' });
-    a.sendEvent('ChatSend', { text: 'dfence' });
+    b.sendEvent('ChatSend', { text: 'dfence' });
     await b.waitEvent('ChatMessage', (v) => (v as { text?: string }).text === 'dfence');
     assert.equal(b.inbox.events.filter((e) => e.name === 'ActorDeath' || e.name === 'WorldKillCount').length, 0);
 
@@ -154,11 +160,9 @@ test('actor authority and relay end to end', async (t) => {
     await a.closed;
     await b.closed;
     await server.close();
-    server = await startServer({ dataDir, port: 0, host: '127.0.0.1' });
+    server = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1', ...cfg });
 
-    const d = await TestClient.connect(server.port);
-    await d.joinAsNew('Dagoth');
-    await d.waitEvent('PlayerList');
+    const d = await TestClient.simPeer(server.port, PEER_PASS, 'Dagoth');
     d.sendCellChange('7,7', 0, 0, 0);
     await d.waitEvent('PlayerCellChange');
     const grant = await d.waitEvent('ActorAuthorityGrant');
@@ -177,17 +181,18 @@ test('actor authority and relay end to end', async (t) => {
 // show — the client's stale-drop is `seq <= last -> drop` over a cursor SHARED by 0x0101
 // and 0x0200, so a repeated or regressing seq on any socket silently mutes both families.
 test('shared ActorMoveBatch frame decodes independently for every recipient', async (t) => {
-  const server = await startServer({
+  const server = await startServer({ requireGameData: false,
     dataDir: tmpDataDir(),
     port: 0,
     host: '127.0.0.1',
-    configOverride: { limits: { maxConnsPerIp: 8 } }, // 4 sockets, all from 127.0.0.1
+    configOverride: {
+      limits: { maxConnsPerIp: 8 }, // 4 sockets, all from 127.0.0.1
+      server: { password: PEER_PASS },
+    },
   });
   t.after(() => server.close());
 
-  const holder = await TestClient.connect(server.port);
-  await holder.joinAsNew('Holder');
-  await holder.waitEvent('PlayerList');
+  const holder = await TestClient.simPeer(server.port, PEER_PASS, 'Holder');
   holder.sendCellChange('5,5', 0, 0, 0);
   await holder.waitEvent('PlayerCellChange');
   const grant = await holder.waitEvent('ActorAuthorityGrant');

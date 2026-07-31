@@ -27,6 +27,7 @@ const tick = () => new Promise((r) => setImmediate(r));
 function harness(over: Partial<WorldSettings> = {}) {
   const settings: WorldSettings = {
     worldsDir: mkdtempSync(join(tmpdir(), 'omw-worlds-')),
+    gatewayPort: 8080,
     serverEntry: '/fake/server.mjs',
     nodeBin: '/fake/node',
     basePort: 40000,
@@ -134,7 +135,7 @@ test('worlds: a world that stops answering /status is reported down, not silentl
   const { sup } = harness();
   const dead = new WorldSupervisor({
     settings: {
-      worldsDir: mkdtempSync(join(tmpdir(), 'omw-worlds-')), serverEntry: '/f', nodeBin: '/n',
+      worldsDir: mkdtempSync(join(tmpdir(), 'omw-worlds-')), serverEntry: '/f', nodeBin: '/n', gatewayPort: 8080,
       basePort: 41000, maxWorlds: 2, idleReapMs: 60_000, startTimeoutMs: 1000,
       restartBackoffMs: 1000, publicWorlds: [],
       sharedDir: mkdtempSync(join(tmpdir(), 'omw-shared-')),
@@ -192,8 +193,8 @@ test('shared: one account works across worlds; per-world state stays separate', 
   const shared = tmpDataDir();
   const worldA = tmpDataDir();
   const worldB = tmpDataDir();
-  const a = await startServer({ dataDir: worldA, sharedDir: shared, port: 0, host: '127.0.0.1' });
-  const b = await startServer({ dataDir: worldB, sharedDir: shared, port: 0, host: '127.0.0.1' });
+  const a = await startServer({ requireGameData: false, dataDir: worldA, sharedDir: shared, port: 0, host: '127.0.0.1' });
+  const b = await startServer({ requireGameData: false, dataDir: worldB, sharedDir: shared, port: 0, host: '127.0.0.1' });
   try {
     // Register in world A only.
     const c1 = await TestClient.connect(a.port);
@@ -261,7 +262,7 @@ test('rolling restart: a world that will not come back HALTS the rollout', async
   const dead = new Set<string>();
   const sup = new WorldSupervisor({
     settings: {
-      worldsDir, serverEntry: '/f', nodeBin: '/n', basePort: 43000, maxWorlds: 5,
+      worldsDir, serverEntry: '/f', nodeBin: '/n', gatewayPort: 8080, basePort: 43000, maxWorlds: 5,
       idleReapMs: 60_000, startTimeoutMs: 1_000, restartBackoffMs: 100, publicWorlds: [],
       sharedDir: mkdtempSync(join(tmpdir(), 'omw-shared-')),
     },

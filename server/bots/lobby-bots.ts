@@ -34,6 +34,12 @@ const count = names.length || Number(arg('--bots', '3'));
 const roster = names.length ? names : Array.from({ length: count }, (_, i) => `Bot${i + 1}`);
 
 const dataDir = arg('--data', '/tmp/omw-local-data');
+// WHERE TO STAND. A bot with no cell is in no cell: invisible to everyone and out of range
+// for say/local chat. Waiting to learn a cell from someone else's movement only works if a
+// human happens to walk across a cell boundary while the bots are up — which is how three
+// bots sat "online" and unseeable. Default to Seyda Neen, where chargen leaves you.
+const startCell = arg('--cell', '-2,-9');
+const startPos = arg('--at', '-12288,-69632,0').split(',').map(Number);
 const preMinted = arg('--tickets', '').split(',').filter(Boolean);
 
 // Create the account if it is new, then mint a single-use login ticket for it — exactly the
@@ -98,6 +104,19 @@ async function bot(name: string): Promise<void> {
   });
   console.log(`[${name}] in world`);
 
+  // FOLLOW THE PLAYER. Bots used to sit at the origin sending random poses, which means they
+  // are in whatever cell the server defaults to and you never see them. Nobody wants to test
+  // against players they cannot find.
+  //
+  // PlayerCellChange is relayed to EVERY in-world player (playerstate.ts), so a bot learns
+  // where you are without knowing a single coordinate — which also means this keeps working
+  // wherever chargen drops you, rather than hardcoding Seyda Neen and hoping.
+  let follow: { cellKey: string; x: number; y: number; z: number } | null = null;
+  let myCell = '';
+  const isBot = (who: string): boolean => roster.some((r) => r.toLowerCase() === who.toLowerCase());
+  // Stand a few paces off so three bots are not inside each other or inside you.
+  const offset = (): number => (Math.random() - 0.5) * 260;
+
   // TestClient queues events in `inbox`; drain it rather than adding a callback to a helper
   // the whole test suite shares.
   let cursor = 0;
@@ -133,10 +152,32 @@ async function bot(name: string): Promise<void> {
         }), 700);
         break;
       }
+      // Where the humans are. Both carry a pose; PlayerCellChange is the one that crosses
+      // cells, which is what actually gets a bot into the room with you.
+      case 'PlayerCellChange':
+      case 'PlayerMove': {
+        const who = String(v['name'] ?? '');
+        if (who && isBot(who)) break;      // following each other converges them on nothing
+        const cell = String(v['cellKey'] ?? '');
+        const x = Number(v['x']), y = Number(v['y']), z = Number(v['z']);
+        if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) break;
+        follow = { cellKey: cell || follow?.cellKey || '', x, y, z };
+        if (follow.cellKey && follow.cellKey !== myCell) {
+          myCell = follow.cellKey;
+          c.sendCellChange(myCell, x + offset(), y + offset(), z);
+          console.log(`[${name}] following ${who || 'a player'} into ${myCell}`);
+        }
+        break;
+      }
       default:
         break;
     }
   };
+  // Take the starting cell immediately, before any event arrives.
+  myCell = startCell;
+  c.sendCellChange(myCell, startPos[0]! + offset(), startPos[1]! + offset(), startPos[2] ?? 0);
+  follow = { cellKey: myCell, x: startPos[0]!, y: startPos[1]!, z: startPos[2] ?? 0 };
+
   setInterval(() => {
     for (; cursor < c.inbox.events.length; cursor++) {
       const e = c.inbox.events[cursor]!;
@@ -145,7 +186,14 @@ async function bot(name: string): Promise<void> {
   }, 200);
 
   // A pose every second: without movement the bot is not a visible player to anyone else.
-  setInterval(() => c.sendMove({ x: Math.random() * 200, y: Math.random() * 200, z: 0 }), 1000);
+  // Once a player is known, mill about NEAR THEM instead of at the origin.
+  setInterval(() => {
+    if (follow) {
+      c.sendMove({ x: follow.x + offset(), y: follow.y + offset(), z: follow.z });
+      return;
+    }
+    c.sendMove({ x: Math.random() * 200, y: Math.random() * 200, z: 0 });
+  }, 1000);
 }
 
 // Report what actually JOINED, not what was asked for. Printing "3 bots online" while all

@@ -18,7 +18,7 @@ import { SUBPROTOCOL } from '../src/net/ws';
 
 test('a world is reachable through the gateway port, and a missing one fails fast', async (t) => {
   const dataDir = tmpDataDir();
-  const world = await startServer({ dataDir, port: 0, host: '127.0.0.1', worldId: 'w1' });
+  const world = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1', worldId: 'w1' });
   t.after(() => world.close());
 
   // A supervisor that reports our already-running world rather than spawning one.

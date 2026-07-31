@@ -12,7 +12,7 @@ import { TestClient, tmpDataDir } from './helpers';
 
 test('owner flips private->party in place; their party member is then admitted; a member cannot flip', async (t) => {
   const shared = tmpDataDir();
-  const pub = await startServer({ dataDir: tmpDataDir(), sharedDir: shared, port: 0, host: '127.0.0.1' });
+  const pub = await startServer({ requireGameData: false, dataDir: tmpDataDir(), sharedDir: shared, port: 0, host: '127.0.0.1' });
   t.after(() => pub.close());
   for (const name of ['Alice', 'Bob']) {
     const c = await TestClient.connect(pub.port);
@@ -29,7 +29,7 @@ test('owner flips private->party in place; their party member is then admitted; 
   store.close();
 
   // Alice's PRIVATE world (her solo instance). Owner = alice.
-  const world = await startServer({
+  const world = await startServer({ requireGameData: false,
     dataDir: tmpDataDir(), sharedDir: shared, port: 0, host: '127.0.0.1',
     worldId: 'priv-alice', worldMode: 'private', worldOwner: 'alice',
   });
@@ -66,7 +66,7 @@ test('owner flips private->party in place; their party member is then admitted; 
 });
 
 test('a public world is not flippable', async (t) => {
-  const pub = await startServer({ dataDir: tmpDataDir(), port: 0, host: '127.0.0.1' });
+  const pub = await startServer({ requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1' });
   t.after(() => pub.close());
   const c = await TestClient.connect(pub.port);
   await c.joinAsNew('Zoe');
@@ -82,7 +82,7 @@ test('a public world is not flippable', async (t) => {
 // them — the party dissolved around them and they carried on playing in someone else's game.
 test('flipping back to Solo evicts the guests who are already inside', async (t) => {
   const shared = tmpDataDir();
-  const pub = await startServer({ dataDir: tmpDataDir(), sharedDir: shared, port: 0, host: '127.0.0.1' });
+  const pub = await startServer({ requireGameData: false, dataDir: tmpDataDir(), sharedDir: shared, port: 0, host: '127.0.0.1' });
   t.after(() => pub.close());
   for (const name of ['Ada', 'Ben']) {
     const c = await TestClient.connect(pub.port);
@@ -96,7 +96,7 @@ test('flipping back to Solo evicts the guests who are already inside', async (t)
   store.partyAddMember('pk2', 'ben', Date.now());
   store.close();
 
-  const world = await startServer({
+  const world = await startServer({ requireGameData: false,
     dataDir: tmpDataDir(), sharedDir: shared, port: 0, host: '127.0.0.1',
     worldId: 'priv-ada', worldMode: 'party', worldOwner: 'ada',
   });

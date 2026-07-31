@@ -102,7 +102,7 @@ test('visibility matrix', () => {
 });
 
 test('movement relay over real clients', async (t) => {
-  const server = await startServer({ dataDir: tmpDataDir(), port: 0, host: '127.0.0.1' });
+  const server = await startServer({ requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1' });
   t.after(() => server.close());
 
   const a = await TestClient.connect(server.port);
@@ -185,7 +185,7 @@ test('movement relay over real clients', async (t) => {
 // Was a kick; movement now SHEDS (see backpressure.test.ts). Kicking a player for a burst
 // of self-correcting absolute poses cost more than the frames it saved.
 test('movement budget shed', async (t) => {
-  const server = await startServer({
+  const server = await startServer({ requireGameData: false,
     dataDir: tmpDataDir(),
     port: 0,
     host: '127.0.0.1',
@@ -572,7 +572,7 @@ test('spatial index: per-recipient work depends on LOCAL density, not world popu
 // visibility; a stationary player never bumps poseVersion again, so if that one send is
 // missed there is no second chance and the two never see each other.
 test('two stationary players in one cell each receive the other', async (t) => {
-  const server = await startServer({ dataDir: tmpDataDir(), port: 0, host: '127.0.0.1' });
+  const server = await startServer({ requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1' });
   t.after(() => server.close());
 
   const a = await TestClient.connect(server.port);
@@ -600,7 +600,7 @@ test('two stationary players in one cell each receive the other', async (t) => {
 // B's puppet of A can then only come from a force-included pose in a move batch. This is
 // the exact shape of the s10/s20 failures, where A always sees B and B never sees A.
 test('a player who joins AFTER someone already settled still receives their pose', async (t) => {
-  const server = await startServer({ dataDir: tmpDataDir(), port: 0, host: '127.0.0.1' });
+  const server = await startServer({ requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1' });
   t.after(() => server.close());
 
   const a = await TestClient.connect(server.port);

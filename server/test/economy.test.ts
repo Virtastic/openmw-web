@@ -5,6 +5,7 @@
 // NPC's corpse is stripped (an infinite-respawn world must not mint artifacts).
 
 import test from 'node:test';
+const PEER_PASS = 'peer-secret-1'; // the peer's credential; players cannot hold cells
 import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -35,7 +36,7 @@ test('content table: defaults classify, a file overrides, a missing file is perm
 
 test('quest items never deplete: two players can each take the Puzzle Box', async (t) => {
   const dataDir = tmpDataDir();
-  const server = await startServer({ dataDir, port: 0, host: '127.0.0.1' });
+  const server = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1' });
   t.after(() => server.close());
 
   const a = await TestClient.connect(server.port);
@@ -91,18 +92,17 @@ test('quest items never deplete: two players can each take the Puzzle Box', asyn
 
 test('public no-drop: a unique NPC corpse is stripped for the whole cell', async (t) => {
   const dataDir = tmpDataDir();
-  const server = await startServer({
+  const server = await startServer({ requireGameData: false,
     dataDir, port: 0, host: '127.0.0.1',
     worldMode: 'public',
-    configOverride: { economy: { noDrop: true } },
+    configOverride: { economy: { noDrop: true }, server: { password: PEER_PASS } },
   });
   t.after(() => server.close());
 
-  const a = await TestClient.connect(server.port);
-  await a.joinAsNew('Alice');
-  await a.waitEvent('PlayerList');
+  // Actor events are holder-only and epoch-guarded, and only the sim peer can hold — so the
+  // sender of those events is the peer, not a player.
+  const a = await TestClient.simPeer(server.port, PEER_PASS, 'Alice');
   a.sendCellChange('0,0', 0, 0, 0);
-  // Actor events are holder-only and epoch-guarded: Alice takes cell authority first.
   const grant = await a.waitEvent('ActorAuthorityGrant');
   const epoch = (grant.value as { epoch: number }).epoch;
   const b = await TestClient.connect(server.port);

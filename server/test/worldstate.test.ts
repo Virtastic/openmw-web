@@ -24,7 +24,7 @@ test('refKey forms round-trip', () => {
 
 test('world objects and containers end to end', async (t) => {
   const dataDir = tmpDataDir();
-  let server: RunningServer = await startServer({ dataDir, port: 0, host: '127.0.0.1' });
+  let server: RunningServer = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1' });
   t.after(() => server.close());
 
   const a = await TestClient.connect(server.port);
@@ -184,7 +184,7 @@ test('world objects and containers end to end', async (t) => {
     await a.closed;
     await b.closed;
     await server.close();
-    server = await startServer({ dataDir, port: 0, host: '127.0.0.1' });
+    server = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1' });
 
     const d = await TestClient.connect(server.port);
     d.hello();

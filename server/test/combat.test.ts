@@ -5,6 +5,8 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+// The sim peer holds the cells; players attack INTO a simulation they do not own.
+const PEER_PASS = 'peer-secret-1';
 import { startServer } from '../src/server';
 import type { JsLike } from '../src/proto/lser';
 import { TestClient, tmpDataDir } from './helpers';
@@ -26,22 +28,30 @@ function hitBody(target: JsLike, health = 25) {
 // Brings up a server plus three in-world clients: two in cell "0,0" (attacker + victim,
 // attacker holds authority since it entered first) and one far away in "40,40".
 async function scenario(t: { after(fn: () => unknown): void }, pvp: boolean) {
-  const server = await startServer({
+  const server = await startServer({ requireGameData: false,
     dataDir: tmpDataDir(),
     port: 0,
     host: '127.0.0.1',
     // Every client shares 127.0.0.1, so the per-IP cap must not gate the scenario.
-    configOverride: { rules: { pvp }, limits: { maxConnsPerIp: 16 } },
+    configOverride: { rules: { pvp }, limits: { maxConnsPerIp: 16 }, server: { password: PEER_PASS } },
   });
   t.after(() => server.close());
+
+  // The PEER holds 0,0 (and, being a peer, the 3x3 around it — which covers nothing else
+  // used here). Combatants are ordinary players addressing actors they do not own, which is
+  // the real shape: a player never holds the cell it is fighting in.
+  const peer = await TestClient.simPeer(server.port, PEER_PASS);
+  peer.sendCellChange('0,0', 0, 0, 0);
+  const grant = await peer.waitEvent('ActorAuthorityGrant',
+    (v) => (v as { cellKey: string }).cellKey === '0,0');
+  const epoch = (grant.value as { epoch: number }).epoch;
 
   const atk = await TestClient.connect(server.port);
   const { playerId: atkId, welcome } = await atk.joinAsNew('Attacker');
   await atk.waitEvent('PlayerList');
   atk.sendCellChange('0,0', 0, 0, 0);
   await atk.waitEvent('PlayerCellChange');
-  const grant = await atk.waitEvent('ActorAuthorityGrant');
-  const epoch = (grant.value as { epoch: number }).epoch;
+  await atk.waitEvent('ActorAuthorityInfo');
 
   const vic = await TestClient.connect(server.port);
   const { playerId: vicId } = await vic.joinAsNew('Victim');
@@ -55,9 +65,10 @@ async function scenario(t: { after(fn: () => unknown): void }, pvp: boolean) {
   await far.waitEvent('PlayerList');
   far.sendCellChange('40,40', 0, 0, 0);
   await far.waitEvent('PlayerCellChange');
-  await far.waitEvent('ActorAuthorityGrant');
+  // No grant, and no Info: 40,40 is far outside the peer's footprint, so that cell simply has
+  // no holder. The point of `far` is that it is out of range, which is unchanged.
 
-  return { server, atk, vic, far, atkId, vicId, epoch, welcome };
+  return { server, peer, atk, vic, far, atkId, vicId, epoch, welcome };
 }
 
 // Chat fences ride the same per-connection FIFO, so once a client sees the fence, any
@@ -71,7 +82,7 @@ async function fence(from: TestClient, ...watchers: TestClient[]) {
 }
 
 test('combat routing with pvp enabled', async (t) => {
-  const { server, atk, vic, far, atkId, vicId, epoch, welcome } = await scenario(t, true);
+  const { server, peer, atk, vic, far, atkId, vicId, epoch, welcome } = await scenario(t, true);
 
   await t.test('player target reaches the victim only', async () => {
     atk.sendEvent('CombatHit', hitBody({ playerId: vicId }));
@@ -86,9 +97,10 @@ test('combat routing with pvp enabled', async (t) => {
   });
 
   await t.test('actor target reaches the authority holder only', async () => {
-    // Victim (a non-holder in 0,0) attacks an actor; only the holder (attacker) gets it.
+    // A player attacks an actor; only the cell's holder — the sim peer — gets it. Both
+    // combatants are non-holders now, which is the only shape that exists.
     vic.sendEvent('CombatHit', hitBody({ ref: ACTOR_REF, cellKey: '0,0', epoch }));
-    const got = await atk.waitEvent('CombatHit');
+    const got = await peer.waitEvent('CombatHit');
     assert.equal((got.value as { attackerId: number }).attackerId, vicId);
     await fence(vic, vic, far);
     assert.equal(vic.inbox.events.filter((e) => e.name === 'CombatHit').length, 0);
@@ -98,21 +110,21 @@ test('combat routing with pvp enabled', async (t) => {
   await t.test('stale epoch and dormant cell are dropped', async () => {
     vic.sendEvent('CombatHit', hitBody({ ref: ACTOR_REF, cellKey: '0,0', epoch: epoch + 99 }));
     vic.sendEvent('CombatHit', hitBody({ ref: ACTOR_REF, cellKey: 'nobody-here', epoch: 1 }));
-    await fence(vic, atk);
-    assert.equal(atk.inbox.events.filter((e) => e.name === 'CombatHit').length, 0);
+    await fence(vic, peer);
+    assert.equal(peer.inbox.events.filter((e) => e.name === 'CombatHit').length, 0);
   });
 
   await t.test('non-holder may omit epoch; proximity is the presence proof', async () => {
     // The common case: a non-holder attacks an NPC in a cell someone else simulates.
     // It has no Grant, so it quotes no epoch — the hit must still reach the holder.
     vic.sendEvent('CombatHit', hitBody({ ref: ACTOR_REF, cellKey: '0,0' }));
-    const got = await atk.waitEvent('CombatHit');
+    const got = await peer.waitEvent('CombatHit');
     assert.equal((got.value as { attackerId: number }).attackerId, vicId);
     // But a distant player cannot reach into the cell, epoch or not.
     far.sendEvent('CombatHit', hitBody({ ref: ACTOR_REF, cellKey: '0,0' }));
     far.sendEvent('CombatHit', hitBody({ ref: ACTOR_REF, cellKey: '0,0', epoch }));
-    await fence(far, atk);
-    assert.equal(atk.inbox.events.filter((e) => e.name === 'CombatHit').length, 0);
+    await fence(far, peer);
+    assert.equal(peer.inbox.events.filter((e) => e.name === 'CombatHit').length, 0);
   });
 
   await t.test('ActorAuthorityInfo carries the live epoch', async () => {
@@ -123,9 +135,9 @@ test('combat routing with pvp enabled', async (t) => {
     await late.waitEvent('PlayerList');
     late.sendCellChange('0,0', 0, 0, 0);
     const info = await late.waitEvent('ActorAuthorityInfo');
-    assert.deepEqual(info.value, { cellKey: '0,0', holderId: atkId, epoch });
+    assert.deepEqual(info.value, { cellKey: '0,0', holderId: peer.playerId, epoch });
     late.sendEvent('CombatHit', hitBody({ ref: ACTOR_REF, cellKey: '0,0', epoch: (info.value as { epoch: number }).epoch }));
-    await atk.waitEvent('CombatHit');
+    await peer.waitEvent('CombatHit');
     late.close();
     await late.closed;
   });
@@ -203,7 +215,7 @@ test('combat routing with pvp enabled', async (t) => {
 });
 
 test('pvp gate blocks player targets but not actor targets', async (t) => {
-  const { atk, vic, epoch, vicId, welcome } = await scenario(t, false);
+  const { peer, atk, vic, epoch, vicId, welcome } = await scenario(t, false);
 
   await t.test('player-targeted hit is vetoed by the pvp plugin', async () => {
     atk.sendEvent('CombatHit', hitBody({ playerId: vicId }));
@@ -217,7 +229,7 @@ test('pvp gate blocks player targets but not actor targets', async (t) => {
 
   await t.test('actor-targeted hit still routes to the holder', async () => {
     vic.sendEvent('CombatHit', hitBody({ ref: ACTOR_REF, cellKey: '0,0', epoch }));
-    const got = await atk.waitEvent('CombatHit');
+    const got = await peer.waitEvent('CombatHit');
     assert.equal((got.value as { damage: { health: number } }).damage.health, 25);
   });
 

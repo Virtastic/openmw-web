@@ -15,7 +15,7 @@ import { TestClient, tmpDataDir, readPlayerDoc } from './helpers';
 
 test('an absurd declared hoard is recorded as an anomaly, and still stored', async (t) => {
   const dataDir = tmpDataDir();
-  const server = await startServer({ dataDir, port: 0, host: '127.0.0.1',
+  const server = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1',
     configOverride: { metrics: { enabled: true, token: 'tok' } } });
   t.after(() => server.close());
 
@@ -59,7 +59,7 @@ test('an absurd declared hoard is recorded as an anomaly, and still stored', asy
 test('in your OWN world an unowned drop is counted, not refused', async (t) => {
   const dataDir = tmpDataDir();
   // worldMode 'private' -> noDrop off: your own campaign, where a bad drop harms nobody.
-  const server = await startServer({ dataDir, port: 0, host: '127.0.0.1',
+  const server = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1',
     worldMode: 'private', worldOwner: 'dropper',
     configOverride: { metrics: { enabled: true, token: 'tok' } } });
   t.after(() => server.close());
@@ -101,7 +101,7 @@ test('in your OWN world an unowned drop is counted, not refused', async (t) => {
 // Both halves are asserted here; losing either one is a regression.
 test('placements and drops both land; the drop is merely recorded', async (t) => {
   const dataDir = tmpDataDir();
-  const server = await startServer({ dataDir, port: 0, host: '127.0.0.1',
+  const server = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1',
     configOverride: { economy: { noDrop: true } } }); // what the public world runs with
   t.after(() => server.close());
 
@@ -144,7 +144,7 @@ test('placements and drops both land; the drop is merely recorded', async (t) =>
 // not the item: per-item provenance needs acquisition paths the server cannot yet see.
 test('a quarantined account cannot put anything into the shared world', async (t) => {
   const dataDir = tmpDataDir();
-  const server = await startServer({ dataDir, port: 0, host: '127.0.0.1',
+  const server = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1',
     configOverride: { economy: { noDrop: true }, metrics: { enabled: true, token: 'tok' } } });
   t.after(() => server.close());
 
@@ -182,7 +182,7 @@ test('a quarantined account cannot put anything into the shared world', async (t
 test('containment does NOT apply in your own world', async (t) => {
   const dataDir = tmpDataDir();
   // noDrop off = not the shared world. Your own campaign, your own business.
-  const server = await startServer({ dataDir, port: 0, host: '127.0.0.1',
+  const server = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1',
     worldMode: 'private', worldOwner: 'cheat2' });
   t.after(() => server.close());
 

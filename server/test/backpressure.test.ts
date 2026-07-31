@@ -5,6 +5,7 @@
 // dropped WITHOUT touching its neighbours.
 
 import test from 'node:test';
+const PEER_PASS = 'peer-secret-1'; // only the sim peer can hold a cell and stream actors
 import assert from 'node:assert/strict';
 import { startServer } from '../src/server';
 import { Connection } from '../src/net/connection';
@@ -25,34 +26,33 @@ const counter = (budget: string): number => metrics.rateLimited.get({ budget }) 
 
 test('movement budgets shed; abuse budgets still disconnect', async (t) => {
   resetMetrics();
-  const server = await startServer({
+  const server = await startServer({ requireGameData: false,
     dataDir: tmpDataDir(),
     port: 0,
     host: '127.0.0.1',
     // Tiny movement budgets so a handful of frames overruns them; msgsPerSec is left
     // generous so the join handshake is not what trips.
-    configOverride: { limits: { ...ROOMY, actorMoveMsgsPerSec: 5, moveMsgsPerSec: 5 } },
+    configOverride: { limits: { ...ROOMY, actorMoveMsgsPerSec: 5, moveMsgsPerSec: 5 }, server: { password: PEER_PASS } },
   });
   t.after(() => server.close());
 
   await t.test('holder over the actor budget sheds and stays connected', async () => {
-    const holder = await TestClient.connect(server.port);
-    await holder.joinAsNew('shed_holder');
-    await holder.waitEvent('PlayerList');
-    const peer = await TestClient.connect(server.port);
-    await peer.joinAsNew('shed_peer');
-    await peer.waitEvent('PlayerList');
+    // The holder is the sim peer; `watcher` is an ordinary player receiving the stream.
+    const holder = await TestClient.simPeer(server.port, PEER_PASS, 'shed_holder');
+    const watcher = await TestClient.connect(server.port);
+    await watcher.joinAsNew('shed_watcher');
+    await watcher.waitEvent('PlayerList');
 
     holder.sendCellChange('90,90', 0, 0, 0);
     const grant = await holder.waitEvent('ActorAuthorityGrant');
     const epoch = (grant.value as { epoch: number }).epoch;
-    peer.sendCellChange('90,90', 0, 0, 0);
-    await peer.waitEvent('ActorAuthorityInfo');
+    watcher.sendCellChange('90,90', 0, 0, 0);
+    await watcher.waitEvent('ActorAuthorityInfo');
 
     const before = counter('actor_shed');
     for (let i = 0; i < 60; i++) holder.sendActorMoveBatch(epoch, [REF_ENTRY]);
     // The first batches are under budget and must still relay; the rest are shed.
-    await peer.waitActorBatch();
+    await watcher.waitActorBatch();
     assert.ok(counter('actor_shed') > before, 'actor overrun did not register as a shed');
 
     // The mechanism under test: the session survives, so the cell keeps its authority.
@@ -63,8 +63,8 @@ test('movement budgets shed; abuse budgets still disconnect', async (t) => {
     assert.equal(metrics.disconnects.get({ code: 'RATE' }) ?? 0, 0);
 
     holder.close();
-    peer.close();
-    await Promise.all([holder.closed, peer.closed]);
+    watcher.close();
+    await Promise.all([holder.closed, watcher.closed]);
   });
 
   await t.test('own-pose overrun sheds too', async () => {
@@ -88,11 +88,11 @@ test('movement budgets shed; abuse budgets still disconnect', async (t) => {
 });
 
 test('the message budget still disconnects', async (t) => {
-  const server = await startServer({
+  const server = await startServer({ requireGameData: false,
     dataDir: tmpDataDir(),
     port: 0,
     host: '127.0.0.1',
-    configOverride: { limits: { ...ROOMY, msgsPerSec: 10 } },
+    configOverride: { limits: { ...ROOMY, msgsPerSec: 10 }, server: { password: PEER_PASS } },
   });
   t.after(() => server.close());
 
@@ -106,7 +106,7 @@ test('the message budget still disconnects', async (t) => {
 });
 
 test('the byte budget still disconnects, even on a movement frame', async (t) => {
-  const server = await startServer({
+  const server = await startServer({ requireGameData: false,
     dataDir: tmpDataDir(),
     port: 0,
     host: '127.0.0.1',
@@ -132,11 +132,11 @@ test('the byte budget still disconnects, even on a movement frame', async (t) =>
 
 test('a stalled reader is shed, then dropped, without touching its neighbours', async (t) => {
   resetMetrics();
-  const server = await startServer({
+  const server = await startServer({ requireGameData: false,
     dataDir: tmpDataDir(),
     port: 0,
     host: '127.0.0.1',
-    configOverride: { limits: { ...ROOMY, maxBufferedBytes: 262_144, maxBufferedBytesHard: 1_048_576 } },
+    configOverride: { limits: { ...ROOMY, maxBufferedBytes: 262_144, maxBufferedBytesHard: 1_048_576 }, server: { password: PEER_PASS } },
   });
   t.after(() => server.close());
 
@@ -149,9 +149,8 @@ test('a stalled reader is shed, then dropped, without touching its neighbours', 
     Connection.bufferedAmountReader = undefined;
   });
 
-  const alice = await TestClient.connect(server.port);
-  await alice.joinAsNew('stalled_alice');
-  await alice.waitEvent('PlayerList');
+  // The holder streams the actor frames that back up on a stalled reader, so it is the peer.
+  const alice = await TestClient.simPeer(server.port, PEER_PASS, 'stalled_alice');
   const bob = await TestClient.connect(server.port);
   await bob.joinAsNew('stalled_bob');
   await bob.waitEvent('PlayerList');

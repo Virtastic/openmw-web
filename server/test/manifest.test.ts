@@ -4,6 +4,8 @@
 // owns the world's data, so the canonical list is pinned and clients are measured against
 // it rather than against whichever stranger connected first).
 import test from 'node:test';
+// The peer's only credential; an empty [server].password refuses every system connection.
+const PEER_PASS = 'peer-secret-1';
 import assert from 'node:assert/strict';
 import { ContentGate } from '../src/core/manifest';
 import type { ManifestEntry } from '../src/proto/session';
@@ -127,11 +129,12 @@ test('e2e: the sim peer pins the world content list and mismatched players are r
   mkdirSync(gd, { recursive: true });
   for (const f of ['Morrowind.esm', 'Morrowind.bsa']) writeFileSync(join(gd, f), 'x');
 
-  const server = await startServer({ dataDir: dir, port: 0, host: '127.0.0.1' });
+  const server = await startServer({ requireGameData: false, configOverride: { server: { password: PEER_PASS } }, dataDir: dir, port: 0, host: '127.0.0.1' });
   try {
     // The peer connects first and declares the world's content.
     const peer = await TestClient.connect(server.port);
     peer.system = true;
+    peer.serverPassword = PEER_PASS;
     await peer.joinAsNew('simpeer_world');
 
     // A player with the SAME content joins normally.

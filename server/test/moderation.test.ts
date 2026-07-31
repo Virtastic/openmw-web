@@ -23,7 +23,7 @@ async function boot(t: { after(fn: () => unknown): void }, override?: DeepPartia
     // reasons unrelated to what they assert (see adversarial.test.ts).
     limits: { maxConnsPerIp: 64, loginPerMinPerIp: 240, ...override?.limits },
   };
-  const server = await startServer({ dataDir, port: 0, host: '127.0.0.1', configOverride });
+  const server = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1', configOverride });
   t.after(() => server.close());
   return { server, dataDir };
 }

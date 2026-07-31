@@ -9,7 +9,7 @@ import { TestClient, tmpDataDir, MANIFEST } from './helpers';
 
 test('session flow end to end', async (t) => {
   const dataDir = tmpDataDir();
-  let server: RunningServer = await startServer({
+  let server: RunningServer = await startServer({ requireGameData: false,
     dataDir,
     port: 0,
     host: '127.0.0.1',
@@ -132,7 +132,7 @@ test('session flow end to end', async (t) => {
 
   await t.test('accounts persist across a server restart', async () => {
     await server.close();
-    server = await startServer({ dataDir, port: 0, host: '127.0.0.1' });
+    server = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1' });
     const c = await TestClient.connect(server.port);
     c.hello(MANIFEST);
     await c.waitJson('SessionHelloOk');

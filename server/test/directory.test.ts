@@ -17,9 +17,10 @@ class FakeChild extends EventEmitter {
 }
 
 async function harness(maxWorlds = 5, maxPerOwner = 2) {
+  const wdir = mkdtempSync(join(tmpdir(), 'omw-dir-'));
   const worlds = new WorldSupervisor({
     settings: {
-      worldsDir: mkdtempSync(join(tmpdir(), 'omw-dir-')),
+      worldsDir: wdir, gatewayPort: 8080,
       serverEntry: '/fake/server.mjs', nodeBin: '/fake/node',
       basePort: 42000, maxWorlds, idleReapMs: 60_000, startTimeoutMs: 1000,
       restartBackoffMs: 1000, publicWorlds: ['vvardenfell'],
@@ -31,7 +32,11 @@ async function harness(maxWorlds = 5, maxPerOwner = 2) {
   worlds.startPublic();
   await worlds.poll();
   const dir = await startDirectory({
-    worlds, host: '127.0.0.1', port: 0, publicHost: 'mp.example', maxPerOwner,
+    worlds, host: '127.0.0.1', port: 0, publicHost: 'mp.example', maxPerOwner, worldsDir: wdir,
+    // Production resolves this from the locker session. Here the Bearer token IS the account,
+    // so the tests exercise the same rule: who is asking comes from the verified session,
+    // never from the request body (which anyone could fabricate to exhaust the world cap).
+    resolveAccount: (auth: string) => (auth.startsWith('Bearer ') ? auth.slice(7) : undefined),
   });
   const base = `http://127.0.0.1:${dir.port}`;
   return { worlds, dir, base, cleanup: async () => { await dir.close(); worlds.stopAll(); } };
@@ -52,7 +57,7 @@ test('directory: a private world is NOT listed to another account', async () => 
   const h = await harness();
   try {
     const created = await (await fetch(`${h.base}/worlds`, {
-      method: 'POST', body: JSON.stringify({ id: 'alices-game', mode: 'private', account: 'alice' }),
+      method: 'POST', headers: { authorization: 'Bearer alice' }, body: JSON.stringify({ id: 'alices-game', mode: 'private', account: 'alice' }),
     })).json() as { id: string };
     assert.equal(created.id, 'alices-game');
 
@@ -71,8 +76,9 @@ test('directory: creating the same session twice re-joins rather than forking a 
   const h = await harness();
   try {
     const body = JSON.stringify({ id: 'party7', mode: 'party', account: 'alice' });
-    const a = await (await fetch(`${h.base}/worlds`, { method: 'POST', body })).json() as { port: number };
-    const b = await (await fetch(`${h.base}/worlds`, { method: 'POST', body })).json() as { port: number };
+    const as_alice = { method: 'POST', headers: { authorization: 'Bearer alice' }, body };
+    const a = await (await fetch(`${h.base}/worlds`, as_alice)).json() as { port: number };
+    const b = await (await fetch(`${h.base}/worlds`, as_alice)).json() as { port: number };
     assert.equal(a.port, b.port, 'a reconnect must land in the SAME world, not a fresh one');
     assert.equal(h.worlds.running, 2, 'public + the one party world');
   } finally { await h.cleanup(); }
@@ -82,7 +88,7 @@ test('directory: a client cannot conjure a public world', async () => {
   const h = await harness();
   try {
     const r = await fetch(`${h.base}/worlds`, {
-      method: 'POST', body: JSON.stringify({ id: 'fake-official', mode: 'public', account: 'mallory' }),
+      method: 'POST', headers: { authorization: 'Bearer mallory' }, body: JSON.stringify({ id: 'fake-official', mode: 'public', account: 'mallory' }),
     });
     assert.equal(r.status, 400, 'public worlds are operator config, not client-creatable');
     const list = await (await fetch(`${h.base}/worlds`)).json() as { worlds: { id: string }[] };
@@ -96,17 +102,17 @@ test('directory: one account cannot exhaust the platform', async () => {
   try {
     for (const id of ['s1', 's2']) {
       const r = await fetch(`${h.base}/worlds`, {
-        method: 'POST', body: JSON.stringify({ id, mode: 'private', account: 'greedy' }),
+        method: 'POST', headers: { authorization: 'Bearer greedy' }, body: JSON.stringify({ id, mode: 'private', account: 'greedy' }),
       });
       assert.equal(r.status, 200);
     }
     const third = await fetch(`${h.base}/worlds`, {
-      method: 'POST', body: JSON.stringify({ id: 's3', mode: 'private', account: 'greedy' }),
+      method: 'POST', headers: { authorization: 'Bearer greedy' }, body: JSON.stringify({ id: 's3', mode: 'private', account: 'greedy' }),
     });
     assert.equal(third.status, 429, 'the third session for one account must be refused');
     // Another account is unaffected — the cap is per owner, not global starvation.
     const other = await fetch(`${h.base}/worlds`, {
-      method: 'POST', body: JSON.stringify({ id: 's4', mode: 'private', account: 'someone-else' }),
+      method: 'POST', headers: { authorization: 'Bearer someone-else' }, body: JSON.stringify({ id: 's4', mode: 'private', account: 'someone-else' }),
     });
     assert.equal(other.status, 200, 'a different account must still be able to play');
   } finally { await h.cleanup(); }
@@ -116,11 +122,11 @@ test('directory: when the platform is full, the refusal is explicit', async () =
   const h = await harness(2, 10); // 1 public + room for exactly 1 more
   try {
     const ok = await fetch(`${h.base}/worlds`, {
-      method: 'POST', body: JSON.stringify({ id: 'first', mode: 'private', account: 'a' }),
+      method: 'POST', headers: { authorization: 'Bearer a' }, body: JSON.stringify({ id: 'first', mode: 'private', account: 'a' }),
     });
     assert.equal(ok.status, 200);
     const full = await fetch(`${h.base}/worlds`, {
-      method: 'POST', body: JSON.stringify({ id: 'second', mode: 'private', account: 'b' }),
+      method: 'POST', headers: { authorization: 'Bearer b' }, body: JSON.stringify({ id: 'second', mode: 'private', account: 'b' }),
     });
     assert.equal(full.status, 503, 'a player must be told the box is full, not left hanging');
   } finally { await h.cleanup(); }
@@ -129,16 +135,24 @@ test('directory: when the platform is full, the refusal is explicit', async () =
 test('directory: malformed input is rejected, not crashed on', async () => {
   const h = await harness();
   try {
+    const auth = { authorization: 'Bearer a' };
     const cases: [string, number][] = [
-      [JSON.stringify({ mode: 'private', account: 'a' }), 400],           // no id
-      [JSON.stringify({ id: '../../etc/passwd', mode: 'private', account: 'a' }), 400], // path traversal
-      [JSON.stringify({ id: 'ok', mode: 'private' }), 400],               // no account
+      [JSON.stringify({ mode: 'private' }), 400],                    // no id
+      [JSON.stringify({ id: '../../etc/passwd', mode: 'private' }), 400], // path traversal
       ['not json at all', 400],
     ];
     for (const [body, want] of cases) {
-      const r = await fetch(`${h.base}/worlds`, { method: 'POST', body });
+      const r = await fetch(`${h.base}/worlds`, { method: 'POST', headers: auth, body });
       assert.equal(r.status, want, `body ${body.slice(0, 40)} must be rejected`);
     }
+
+    // Spawning a world starts an OS process, so it takes a verified session. An account named
+    // in the BODY is ignored entirely — that is what let one caller fabricate a new owner per
+    // request and exhaust every world slot while the per-owner cap read as satisfied.
+    const unauth = await fetch(`${h.base}/worlds`, {
+      method: 'POST', body: JSON.stringify({ id: 'ok', mode: 'private', account: 'someone-else' }),
+    });
+    assert.equal(unauth.status, 401, 'world creation without a session must be refused');
     assert.equal((await fetch(`${h.base}/healthz`)).status, 200, 'and the directory is still serving');
   } finally { await h.cleanup(); }
 });
@@ -151,7 +165,7 @@ test('abandoned worlds do not count against the per-owner cap', async () => {
   try {
     for (const id of ['c1', 'c2']) {
       const r = await fetch(`${h.base}/worlds`, {
-        method: 'POST', body: JSON.stringify({ id, mode: 'private', account: 'player' }),
+        method: 'POST', headers: { authorization: 'Bearer player' }, body: JSON.stringify({ id, mode: 'private', account: 'player' }),
       });
       assert.equal(r.status, 200);
     }
@@ -163,7 +177,7 @@ test('abandoned worlds do not count against the per-owner cap', async () => {
       w.idleSince = Date.now();
     }
     const next = await fetch(`${h.base}/worlds`, {
-      method: 'POST', body: JSON.stringify({ id: 'c3', mode: 'private', account: 'player' }),
+      method: 'POST', headers: { authorization: 'Bearer player' }, body: JSON.stringify({ id: 'c3', mode: 'private', account: 'player' }),
     });
     assert.equal(next.status, 200, 'a new character must not be blocked by worlds nobody is in');
   } finally { await h.cleanup(); }
@@ -180,7 +194,7 @@ test('deleting a character discards exactly that character\'s world', async () =
     const theirs = `priv-someoneelse-${charId.slice(-8)}`; // same suffix, different account
     for (const id of [mine, theirs]) {
       const r = await fetch(`${h.base}/worlds`, {
-        method: 'POST', body: JSON.stringify({ id, mode: 'private', account: 'player' }),
+        method: 'POST', headers: { authorization: 'Bearer player' }, body: JSON.stringify({ id, mode: 'private', account: 'player' }),
       });
       assert.equal(r.status, 200);
     }

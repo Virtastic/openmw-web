@@ -20,7 +20,7 @@ async function boot(t: { after(fn: () => unknown): void }, override?: DeepPartia
     // reasons unrelated to what they assert.
     limits: { maxConnsPerIp: 64, loginPerMinPerIp: 240, ...override?.limits },
   };
-  const server = await startServer({ dataDir, port: 0, host: '127.0.0.1', configOverride });
+  const server = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1', configOverride });
   t.after(() => server.close());
   return { server, dataDir };
 }
@@ -170,7 +170,7 @@ test('bans', async (t) => {
   await t.test('the ban survives a restart and re-registration is refused too', async () => {
     await server.flush();
     await server.close();
-    const restarted = await startServer({
+    const restarted = await startServer({ requireGameData: false,
       dataDir, port: 0, host: '127.0.0.1',
       configOverride: { time: { scale: 0 }, limits: { maxConnsPerIp: 64, loginPerMinPerIp: 240 } },
     });
@@ -250,7 +250,13 @@ test('session resume', async (t) => {
     await back.waitEvent('RecordsSync');
     const cellState = (await back.waitEvent('WorldCellState')).value as { cellKey: string };
     assert.equal(cellState.cellKey, '7,7', 'the cell it left off in is replayed');
-    await back.waitEvent('ActorAuthorityGrant', (v) => (v as { cellKey: string }).cellKey === '7,7');
+    // NO grant: resume replays the cell the player left off in, but a player never holds a
+    // cell — only the sim peer does. Waiting for one here was inherited from the old
+    // client-authority model, where the resumed client took its cell back on the way in.
+    await assert.rejects(
+      back.waitEvent('ActorAuthorityGrant', () => true, 1200),
+      'a resumed player is re-synced, not granted authority',
+    );
     // Peers are told where the resumed player is.
     const seen = (await peer.waitEvent('PlayerCellChange', (v) =>
       (v as { cellKey: string }).cellKey === '7,7')).value as { x: number };

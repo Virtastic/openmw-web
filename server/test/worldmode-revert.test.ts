@@ -9,7 +9,7 @@ import { startServer } from '../src/server';
 import { TestClient, tmpDataDir } from './helpers';
 
 test('a private world reverts to private once the last player leaves', async (t) => {
-  const server = await startServer({
+  const server = await startServer({ requireGameData: false,
     dataDir: tmpDataDir(), port: 0, host: '127.0.0.1', worldMode: 'private',
   });
   t.after(() => server.close());

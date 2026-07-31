@@ -15,7 +15,7 @@ test('private world: owner in, stranger refused; party world: members in', async
   const shared = tmpDataDir();
 
   // Accounts are created once in a public world sharing the dir.
-  const pub = await startServer({ dataDir: tmpDataDir(), sharedDir: shared, port: 0, host: '127.0.0.1' });
+  const pub = await startServer({ requireGameData: false, dataDir: tmpDataDir(), sharedDir: shared, port: 0, host: '127.0.0.1' });
   t.after(() => pub.close());
   for (const name of ['Alice', 'Bob', 'Carol']) {
     const c = await TestClient.connect(pub.port);
@@ -25,7 +25,7 @@ test('private world: owner in, stranger refused; party world: members in', async
   await pub.flush();
 
   // Alice's private world.
-  const priv = await startServer({
+  const priv = await startServer({ requireGameData: false,
     dataDir: tmpDataDir(), sharedDir: shared, port: 0, host: '127.0.0.1',
     worldId: 'alice-solo', worldMode: 'private', worldOwner: 'alice',
   });
@@ -48,7 +48,7 @@ test('private world: owner in, stranger refused; party world: members in', async
   store.partyAddMember('pkey123', 'bob', Date.now());
   store.close();
 
-  const partyWorld = await startServer({
+  const partyWorld = await startServer({ requireGameData: false,
     dataDir: tmpDataDir(), sharedDir: shared, port: 0, host: '127.0.0.1',
     worldId: 'party-pkey123', worldMode: 'party', worldOwner: 'alice',
   });

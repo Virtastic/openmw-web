@@ -20,7 +20,7 @@ function profile(c: TestClient, email: string, username: string, optIn = false):
 
 test('ProfileSetup: validates, stores, and makes the username the display name', async (t) => {
   const dataDir = tmpDataDir();
-  const server = await startServer({ dataDir, port: 0, host: '127.0.0.1' });
+  const server = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1' });
   t.after(() => server.close());
 
   const c = await TestClient.connect(server.port);
@@ -67,7 +67,7 @@ test('ProfileSetup: validates, stores, and makes the username the display name',
 
 test('username uniqueness is case-insensitive and cross-account', async (t) => {
   const dataDir = tmpDataDir();
-  const server = await startServer({ dataDir, port: 0, host: '127.0.0.1' });
+  const server = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1' });
   t.after(() => server.close());
 
   const a = await TestClient.connect(server.port);
@@ -91,7 +91,7 @@ test('username uniqueness is case-insensitive and cross-account', async (t) => {
 
 test('requireProfile gates Ready until the profile is complete', async (t) => {
   const dataDir = tmpDataDir();
-  const server = await startServer({
+  const server = await startServer({ requireGameData: false,
     dataDir, port: 0, host: '127.0.0.1',
     configOverride: { login: { requireProfile: true } },
   });
@@ -189,7 +189,7 @@ test('attio queue: durable, drains on success, survives outages, inert without a
 
 test('signup succeeds while attio is down (never blocks the hot path)', async (t) => {
   const dataDir = tmpDataDir();
-  const server = await startServer({
+  const server = await startServer({ requireGameData: false,
     dataDir, port: 0, host: '127.0.0.1',
     // Key set but pointing at a dead endpoint: enqueue works, delivery fails, auth is fine.
     configOverride: { integrations: { attioApiKey: 'k', attioBaseUrl: 'http://127.0.0.1:1' } },

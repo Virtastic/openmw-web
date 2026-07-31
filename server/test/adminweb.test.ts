@@ -14,7 +14,7 @@ const TOKEN = 'dash-token-under-test';
 
 async function boot(t: { after(fn: () => unknown): void }, override = {}) {
   const dataDir = tmpDataDir();
-  const server = await startServer({
+  const server = await startServer({ requireGameData: false,
     dataDir, port: 0, host: '127.0.0.1',
     configOverride: { admin: { dashboardToken: TOKEN }, ...override },
   });
@@ -50,7 +50,7 @@ test('dashboard: page is public, api needs the bearer, unknown action refused', 
 
 test('dashboard is entirely absent when no token is configured', async (t) => {
   const dataDir = tmpDataDir();
-  const server = await startServer({ dataDir, port: 0, host: '127.0.0.1' }); // default: empty token
+  const server = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1' }); // default: empty token
   t.after(() => server.close());
   const r = await fetch(`http://127.0.0.1:${server.port}/admin`);
   assert.equal(r.status, 404, 'an operator who never set a token has no dashboard at all');
@@ -137,7 +137,7 @@ test('muted chat is never delivered to the muter', async (t) => {
 
 test('the shipped harness password is refused unless the operator opts in', async (t) => {
   const dataDir = tmpDataDir();
-  const server = await startServer({ dataDir, port: 0, host: '127.0.0.1' }); // allowHarnessAuth defaults false
+  const server = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1' }); // allowHarnessAuth defaults false
   t.after(() => server.close());
 
   const c = await TestClient.connect(server.port);
@@ -149,7 +149,7 @@ test('the shipped harness password is refused unless the operator opts in', asyn
 
   // With the opt-in it works — which is what the browser harness relies on.
   const dataDir2 = tmpDataDir();
-  const server2 = await startServer({
+  const server2 = await startServer({ requireGameData: false,
     dataDir: dataDir2, port: 0, host: '127.0.0.1',
     configOverride: { login: { allowHarnessAuth: true } },
   });

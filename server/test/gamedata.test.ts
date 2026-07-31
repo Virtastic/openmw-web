@@ -137,34 +137,21 @@ test('a non-directory path is handled, not thrown on', () => {
   mkdirSync(join(d, 'sub'), { recursive: true }); // keep tmp tidy-ish
 });
 
-// simPeer.mode resolution. The config alone cannot know whether a peer can run, so 'auto' is
-// decided at boot against what is actually present.
-test('simPeer mode: auto stays OFF without game data, and multiplayer is unaffected', async () => {
+// THE SIM PEER IS MANDATORY. There is no mode to resolve: a deployment either runs its own
+// simulation or refuses to start, because a server with no peer has no eligible cell holder
+// and its NPCs never move for anyone. What used to live here tested the 'auto'/'on'/'off'
+// knob and the tier-1 fallback to client-simulated NPCs; both are gone.
+test('a real deployment refuses to boot without game data', async () => {
   const { startServer } = await import('../src/server');
   const { tmpDataDir } = await import('./helpers');
-  const s = await startServer({ dataDir: tmpDataDir(), port: 0, host: '127.0.0.1' });
-  try {
-    assert.equal(s.config.simPeer.enabled, false,
-      'no game data -> no peer; this is tier 1 and must remain a working multiplayer server');
-    assert.equal(s.config.simPeer.mode, 'auto', 'the configured MODE is unchanged');
-  } finally { await s.close(); }
-});
-
-test('simPeer mode: "on" REFUSES to boot when a peer cannot run', async () => {
-  // An operator who asked for server-side simulation should be told loudly, not handed a
-  // world that silently is not what they asked for.
-  const { startServer } = await import('../src/server');
-  const { tmpDataDir } = await import('./helpers');
+  // requireGameData omitted: this is the production path, where the check is live.
   await assert.rejects(
-    () => startServer({
-      dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
-      configOverride: { simPeer: { mode: 'on' } },
-    }),
-    /mode = "on" but a peer cannot run/,
-    'mode=on with no game data must fail at boot, naming what is missing');
+    () => startServer({ dataDir: tmpDataDir(), port: 0, host: '127.0.0.1' }),
+    /no usable game data/,
+    'booting without game data must fail loudly, naming what is missing');
 });
 
-test('simPeer mode: "off" stays off even with valid game data present', async () => {
+test('a real deployment refuses to boot without a server password for the peer', async () => {
   const { startServer } = await import('../src/server');
   const { tmpDataDir } = await import('./helpers');
   const { mkdirSync, writeFileSync } = await import('node:fs');
@@ -173,11 +160,14 @@ test('simPeer mode: "off" stays off even with valid game data present', async ()
   mkdirSync(gd, { recursive: true });
   for (const f of ['Morrowind.esm', 'Morrowind.bsa']) writeFileSync(join(gd, f), 'x');
 
-  const s = await startServer({
-    dataDir: dir, port: 0, host: '127.0.0.1',
-    configOverride: { simPeer: { mode: 'off', binary: '/usr/bin/true' } },
-  });
-  try {
-    assert.equal(s.config.simPeer.enabled, false, 'off means off, whatever is on disk');
-  } finally { await s.close(); }
+  // Game data and a binary present, but no [server].password: the peer's only credential.
+  // An empty password now refuses every system connection, so booting would produce a world
+  // whose peer can never authenticate -- exactly the silent failure this check exists for.
+  await assert.rejects(
+    () => startServer({
+      dataDir: dir, port: 0, host: '127.0.0.1',
+      configOverride: { simPeer: { binary: '/usr/bin/true' }, server: { password: '' } },
+    }),
+    /password is empty/,
+    'no server password must fail at boot, not at the peer\'s first login attempt');
 });

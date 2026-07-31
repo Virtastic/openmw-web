@@ -1,5 +1,7 @@
 
 import test from 'node:test';
+// The peer's only credential; an empty [server].password refuses every system connection.
+const PEER_PASS = 'peer-secret-1';
 import assert from 'node:assert/strict';
 import { startServer } from '../src/server';
 import { TestClient, tmpDataDir } from './helpers';
@@ -8,8 +10,11 @@ test('a system peer is invisible on every human-facing surface', async (t) => {
   // maxPlayers 1 makes the exemption unmissable: a human plus a system peer must both be
   // in world, because the peer does not consume the single slot.
   const server = await startServer({
-    dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
-    configOverride: { server: { maxPlayers: 1 }, limits: { maxConnsPerIp: 16 } },
+    requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
+    configOverride: {
+      server: { maxPlayers: 1, password: PEER_PASS },
+      limits: { maxConnsPerIp: 16 },
+    },
   });
   t.after(() => server.close());
 
@@ -22,6 +27,7 @@ test('a system peer is invisible on every human-facing surface', async (t) => {
 
   const peer = await TestClient.connect(server.port);
   peer.system = true;
+    peer.serverPassword = PEER_PASS;
   const { playerId: peerId } = await peer.joinAsNew('simpeer'); // must NOT be refused SERVER_FULL despite maxPlayers 1
   await peer.waitEvent('PlayerList');
   // Let any (erroneous) join broadcast reach the human before we check.

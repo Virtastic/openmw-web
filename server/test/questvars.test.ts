@@ -13,7 +13,7 @@ import { TestClient, tmpDataDir, readPlayerDoc } from './helpers';
 
 test('chargenstate is never stored, and never restored to a rejoining player', async (t) => {
   const dataDir = tmpDataDir();
-  const server = await startServer({
+  const server = await startServer({ requireGameData: false,
     dataDir, port: 0, host: '127.0.0.1',
     configOverride: { limits: { maxConnsPerIp: 16 } },
   });

@@ -12,7 +12,7 @@ test('the shared public world never writes to the character doc', async (t) => {
   const dataDir = tmpDataDir();
 
   // Own world first: that is where a character is made and where progress is real.
-  const solo = await startServer({ dataDir, port: 0, host: '127.0.0.1', worldMode: 'private' });
+  const solo = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1', worldMode: 'private' });
   const a = await TestClient.connect(solo.port);
   const { welcome } = await a.joinAsNew('Looter');
   const charId = String(welcome['characterId']);
@@ -31,7 +31,7 @@ test('the shared public world never writes to the character doc', async (t) => {
   // Same character in the gateway-managed shared world: loot all it likes, nothing sticks.
   process.env.OMW_WORLD_ID = 'vvardenfell';
   t.after(() => { delete process.env.OMW_WORLD_ID; });
-  const lobby = await startServer({ dataDir, port: 0, host: '127.0.0.1', worldMode: 'public' });
+  const lobby = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1', worldMode: 'public' });
   t.after(() => lobby.close());
   const b = await TestClient.connect(lobby.port);
   b.hello();
@@ -55,7 +55,7 @@ test('the shared public world never writes to the character doc', async (t) => {
 // back to the shared world respawned you at the default point instead of where you logged out.
 test('the lobby records position per-world without touching the rest of the character', async (t) => {
   const dataDir = tmpDataDir();
-  const solo = await startServer({ dataDir, port: 0, host: '127.0.0.1', worldMode: 'private' });
+  const solo = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1', worldMode: 'private' });
   const a = await TestClient.connect(solo.port);
   const { welcome } = await a.joinAsNew('Wanderer');
   const charId = String(welcome['characterId']);
@@ -75,7 +75,7 @@ test('the lobby records position per-world without touching the rest of the char
 
   process.env.OMW_WORLD_ID = 'vvardenfell';
   t.after(() => { delete process.env.OMW_WORLD_ID; });
-  const lobby = await startServer({ dataDir, port: 0, host: '127.0.0.1', worldMode: 'public' });
+  const lobby = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1', worldMode: 'public' });
   t.after(() => lobby.close());
   const b = await TestClient.connect(lobby.port);
   b.hello();

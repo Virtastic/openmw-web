@@ -25,7 +25,7 @@ async function boot(t: { after(fn: () => unknown): void }, override?: DeepPartia
     // for reasons that have nothing to do with what they assert.
     limits: { maxConnsPerIp: 16, loginPerMinPerIp: 60, ...override?.limits },
   };
-  const server = await startServer({ dataDir, port: 0, host: '127.0.0.1', configOverride });
+  const server = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1', configOverride });
   t.after(() => server.close());
   return { server, dataDir };
 }
@@ -122,7 +122,7 @@ test('server-owned clock', async (t) => {
     await server.flush();
     await server.close();
 
-    const restarted = await startServer({
+    const restarted = await startServer({ requireGameData: false,
       dataDir, port: 0, host: '127.0.0.1',
       configOverride: { time: { scale: 0 }, limits: { maxConnsPerIp: 16, loginPerMinPerIp: 60 } },
     });
@@ -297,7 +297,7 @@ test('server-issued custom records', async (t) => {
     await a.closed; await b.closed;
     await server.flush();
     await server.close();
-    const restarted = await startServer({
+    const restarted = await startServer({ requireGameData: false,
       dataDir, port: 0, host: '127.0.0.1',
       configOverride: { time: { scale: 0 }, limits: { maxConnsPerIp: 16, loginPerMinPerIp: 60 } },
     });
@@ -354,7 +354,7 @@ test('operator cell resets', async (t) => {
     await server.close();
     // No cell-reset plugin and no [cellReset] config: anything still scheduled came off
     // disk, not from a re-registration.
-    const restarted = await startServer({
+    const restarted = await startServer({ requireGameData: false,
       dataDir, port: 0, host: '127.0.0.1',
       configOverride: {
         plugins: ['motd'], time: { scale: 0 },

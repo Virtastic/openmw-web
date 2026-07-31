@@ -217,7 +217,7 @@ async function boot(
       google: { ...provider(idp2, 'google'), ...override.auth?.google },
     },
   };
-  const server = await startServer({ dataDir, port, host: '127.0.0.1', configOverride });
+  const server = await startServer({ requireGameData: false, dataDir, port, host: '127.0.0.1', configOverride });
   t.after(async () => {
     await server.close();
     await idp.stop();

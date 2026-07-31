@@ -17,7 +17,7 @@ const NPC2_REF = { __refnum: { index: 301, contentFile: 0 } };
 async function boot(t: { after(fn: () => unknown): void }, override?: DeepPartial<Config>, dataDir = tmpDataDir()) {
   // All test clients share 127.0.0.1; the per-IP cap is not what these tests exercise.
   const configOverride = { ...override, limits: { ...override?.limits, maxConnsPerIp: 16 } };
-  const server = await startServer({ dataDir, port: 0, host: '127.0.0.1', configOverride });
+  const server = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1', configOverride });
   t.after(() => server.close());
   return { server, dataDir };
 }
