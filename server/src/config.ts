@@ -10,17 +10,16 @@ import { parse } from 'smol-toml';
 
 export interface Config {
   server: { name: string; motd: string; maxPlayers: number; password: string };
-  // Phase H: an on-demand headless OpenMW that holds cell authority so no player's browser
-  // simulates NPCs for everyone else. Off by default — it needs a native binary and game
-  // data on the server, which a self-hoster may not have; the existing client-authority
-  // path stays the fallback.
+  // A headless OpenMW the server runs itself. It holds cell authority for every world, and
+  // it is the ONLY thing permitted to simulate NPCs — a player's browser never does it for
+  // anyone else. Mandatory: a server that cannot start one refuses to boot (see server.ts),
+  // because the alternative is a world whose NPCs never move while it reports itself healthy.
   // F3: where this world's clients can find the world directory. Empty = no gateway, and
   // the in-game world browser simply reports that there is nothing to browse (a single
   // self-hosted world is a complete, valid setup).
   gateway: { url: string };
   simPeer: {
-    mode: 'auto' | 'on' | 'off';
-    /** Derived at boot from mode + whether game data and a binary are actually present. */
+    /** Always true once boot succeeds; boot fails otherwise. Kept so call sites read clearly. */
     enabled: boolean;
     binary: string; // absolute path to the headless openmw
     configDir: string; // --config (its own isolated openmw.cfg + settings.cfg)
@@ -135,18 +134,12 @@ export interface Config {
     // Hard ceiling on fully-simulated avatars per client. 0 = no cap (radius alone).
     lodNearMaxAvatars: number;
   };
-  // M4 cell actor-authority election (see core/authority.ts). All in ms except probeSec.
+  // Cell actor authority (see core/authority.ts). The sim peer is the only eligible holder,
+  // so what remains is the RTT probe cadence and a liveness check on the peer itself.
   authority: {
     rttProbeSec: number;
     reviewSec: number;
-    unknownRttMs: number;
-    shedPenaltyMs: number;
-    improveMs: number;
-    improveRatio: number;
-    degradeScoreMs: number;
-    sustainSec: number;
-    cooldownSec: number;
-    settleSec: number;
+    actorSilenceSec: number;
   };
   metrics: { enabled: boolean; token: string };
   // Phase B SSO. Password login stays on by default, so a self-hoster who never touches
@@ -261,7 +254,14 @@ function provider(auth: Tree, id: string): AuthProviderConfig {
     return typeof v === 'string' ? v : fail(`[auth.${id}].${key}`, 'a string');
   };
   const enabled = typeof p['enabled'] === 'boolean' ? (p['enabled'] as boolean) : fail(`[auth.${id}].enabled`, 'a boolean');
-  return { enabled, clientId: s('clientId'), clientSecret: s('clientSecret'), redirectUri: s('redirectUri'), issuer: s('issuer'), scope: s('scope') };
+  // The client secret may come from the env instead of the file, matching the rule the
+  // locker already follows ("credentials come from the env so they stay out of config
+  // files"). Without this an operator has to put a live OAuth secret in config.toml and
+  // then ship that file around. Env wins when set; the TOML value stays the fallback so
+  // existing configs keep working. Provider id is upper-cased: OMW_OIDC_GOOGLE_SECRET.
+  const envSecret = process.env[`OMW_OIDC_${id.toUpperCase()}_SECRET`];
+  const clientSecret = envSecret !== undefined && envSecret !== '' ? envSecret : s('clientSecret');
+  return { enabled, clientId: s('clientId'), clientSecret, redirectUri: s('redirectUri'), issuer: s('issuer'), scope: s('scope') };
 }
 
 function validateAuth(t: Tree): AuthConfig {
@@ -320,7 +320,6 @@ function validate(t: Tree): Config {
     fail('[limits].interestRadius', '0 or >= [limits].lodMidRadius');
   // A ratio above 1 would let a WORSE candidate pass the "clearly better" gate, i.e. turn
   // the damping into a handoff generator. Refuse it at boot rather than flap in production.
-  if (reqNum(t, 'authority', 'improveRatio') > 1) fail('[authority].improveRatio', '<= 1');
   return {
     server: {
       name: reqStr(t, 'server', 'name'),
@@ -330,7 +329,6 @@ function validate(t: Tree): Config {
     },
     gateway: { url: reqStr(t, 'gateway', 'url') },
     simPeer: {
-      mode: reqEnum(t, 'simPeer', 'mode', ['auto', 'on', 'off'] as const),
       // Resolved in startServer once the game data has been inspected; the raw config cannot
       // know whether a peer is actually runnable.
       enabled: false,
@@ -433,14 +431,7 @@ function validate(t: Tree): Config {
     authority: {
       rttProbeSec: reqNum(t, 'authority', 'rttProbeSec'),
       reviewSec: reqNum(t, 'authority', 'reviewSec'),
-      unknownRttMs: reqNum(t, 'authority', 'unknownRttMs'),
-      shedPenaltyMs: reqNum(t, 'authority', 'shedPenaltyMs'),
-      improveMs: reqNum(t, 'authority', 'improveMs'),
-      improveRatio: reqNum(t, 'authority', 'improveRatio'),
-      degradeScoreMs: reqNum(t, 'authority', 'degradeScoreMs'),
-      sustainSec: reqNum(t, 'authority', 'sustainSec'),
-      cooldownSec: reqNum(t, 'authority', 'cooldownSec'),
-      settleSec: reqNum(t, 'authority', 'settleSec'),
+      actorSilenceSec: reqNum(t, 'authority', 'actorSilenceSec'),
     },
     metrics: {
       enabled: reqBool(t, 'metrics', 'enabled'),

@@ -61,6 +61,9 @@ export interface SimPeerDeps {
 
 export class SimPeerSupervisor {
   private peers = new Map<string, Peer>();
+  // key -> where that peer must stand. Survives a crash-restart so a respawned peer returns
+  // to the cluster it was covering rather than to a default cell.
+  private anchors = new Map<string, { cellKey: string; x: number; y: number; z: number }>();
   private blockedUntil = new Map<string, number>();
   // Set once a peer is refused for a reason that will not change on retry (bad content, bad
   // engine hash). Distinct from blockedUntil, which is a temporary crash backoff.
@@ -95,9 +98,19 @@ export class SimPeerSupervisor {
 
   // Called when a human is present in `key`'s world. Idempotent: it either starts the peer,
   // or clears an existing peer's idle deadline so the reaper leaves it alone.
-  ensure(key: string): void {
+  // `anchor` is the exterior cell this peer must simulate around. One peer covers a 3x3
+  // block (see loadedCells), so a world with players spread further apart needs one peer per
+  // cluster — which is why ensure() takes a key AND a place to stand, rather than one global
+  // peer parked wherever [simPeer].startCell happened to point.
+  /** Live peer keys, so the caller can idle the clusters nobody occupies any more. */
+  keys(): string[] {
+    return [...this.peers.keys()];
+  }
+
+  ensure(key: string, anchor?: { cellKey: string; x: number; y: number; z: number }): void {
     if (!this.deps.settings.enabled) return;
     if (this.permanentlyDisabled !== undefined) return;
+    if (anchor) this.anchors.set(key, anchor);
     const existing = this.peers.get(key);
     if (existing) {
       existing.idleSince = undefined; // humans are back; cancel any pending reap
@@ -131,17 +144,30 @@ export class SimPeerSupervisor {
 
   private start(key: string): void {
     const s = this.deps.settings;
+    // NO --new-game. It sets mNewGame, and engine.cpp calls newGame(!mNewGame), so passing it
+    // makes `bypass` FALSE — and worldimp.cpp only honours --start when bypass is true. With
+    // it, every peer ignored --start and booted into the character-creation cell: the peer was
+    // simulating the Imperial Prison Ship while holding authority over nothing any player
+    // could see. --skip-menu alone leaves mNewGame false, so bypass is true and --start works.
+    //
+    // --start takes the anchor's cell key directly: findExteriorPosition falls back to parsing
+    // "x,y" when the string matches no named cell, which is exactly our cellKey format.
+    const anchor = this.anchors.get(key);
     const args = [
       '--config', s.configDir,
       '--replace', 'config',
       '--user-data', s.userDataDir,
-      '--skip-menu', '--new-game',
-      '--start', s.startCell,
+      '--skip-menu',
+      '--start', anchor?.cellKey ?? s.startCell,
       '--no-sound',
     ];
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       OPENMW_HEADLESS: '1',
+      // engine.cpp only forces SingleThreaded under __EMSCRIPTEN__, so a native peer keeps a
+      // draw thread parked forever in ThreadSafeQueue::takeFront() drawing nothing. OSG reads
+      // this env var itself (ViewerBase.cpp), so no patch is needed.
+      OSG_THREADING: 'SingleThreaded',
       OPENMW_MP_SYSTEM: '1', // keeps it out of the player list / count / maxPlayers
       OPENMW_MP_URL: this.deps.wsUrl(),
       OPENMW_MP_NAME: `simpeer-${key}`,
@@ -158,7 +184,7 @@ export class SimPeerSupervisor {
     const peer: Peer = { key, child, startedAt: this.now(), stopping: false };
     this.peers.set(key, peer);
     metrics.simPeerSpawned.inc({});
-    log('info', 'simpeer.spawned', { key, pid: child.pid ?? -1 });
+    log('info', 'simpeer.spawned', { key, pid: child.pid ?? -1, cell: anchor?.cellKey ?? s.startCell });
 
     child.on('exit', (code, signal) => {
       // Only act if this is still the CURRENT peer for the key: a stop() followed by a

@@ -17,7 +17,6 @@ import { handleChatSend } from '../core/chat';
 import type { Social } from '../core/social';
 import type { Moderation } from '../core/moderation';
 import { TokenBucket, IpRateLimiter } from './ratelimit';
-import { playerFitness } from '../core/authority';
 import { socketRttMs } from './ws';
 import { MSG_EVENT, MSG_PLAYER_MOVE, MSG_PLAYER_MOVE_BATCH, MSG_ACTOR_MOVE_BATCH, ProtoError, unpackEnvelope, unpackEvent, packEvent, packEnvelope, nextBroadcastSeq } from '../proto/envelope';
 import { unpackMove } from '../proto/movement';
@@ -98,6 +97,12 @@ export interface ServerCtx {
   // Phase B SSO. Both are always present; SSO being disabled just means no ticket is ever
   // minted, so redeeming one always fails.
   tickets: LoginTicketStore;
+  // Register a fire-and-forget promise so shutdown can wait for it. A background write that
+  // outlives close() lands on a closed database: it throws an unhandled rejection AND loses
+  // the write. ChargenComplete is the one that hurts — the flag it sets is what the shared
+  // world's "has this character been created" gate reads, so a player who finishes creation
+  // exactly as the server restarts is left unable to join, with nothing explaining why.
+  track?: (p: Promise<unknown>) => void;
   sessions: SessionIndex;
   attio: AttioHook; // onboarding CRM capture; inert when no API key is configured
   // World access control (F3): may this account be in THIS world at all? Private = owner
@@ -108,6 +113,8 @@ export interface ServerCtx {
   setWorldMode(accountKey: string, rank: number, mode: string): 'ok' | 'not_owner' | 'bad_mode' | 'not_flippable';
   // Spawn a fresh party guest at the leader's position (null when it should not apply).
   guestSpawn(accountKey: string): { cellKey: string; x: number; y: number; z: number } | null;
+  // What this world IS, right now. Sent at join so the client never has to infer it.
+  worldMode(): string;
   // F3 chargen gate: true only for a GATEWAY-managed party/public world (where a separate
   // private world exists for character creation). A standalone/single-world server is false —
   // there is no other world to create the character in, so it must admit fresh characters.
@@ -179,7 +186,6 @@ export class Connection implements Peer {
     // itself lives in net/ws.ts (ping stamp echo); this only attaches it to a playerId.
     ws.on('pong', () => {
       const rtt = socketRttMs(ws);
-      if (rtt !== undefined && this.player) playerFitness.sampleRtt(this.player.id, rtt);
     });
     ws.on('close', () => this.cleanup());
   }
@@ -233,14 +239,14 @@ export class Connection implements Peer {
       }
       if (buffered > maxBufferedBytes) {
         metrics.backpressureDropped.inc({ kind: type === MSG_ACTOR_MOVE_BATCH ? 'actor' : 'move' });
-        if (this.player) playerFitness.noteShed(this.player.id, true);
         return false;
       }
-      // M4: a client that cannot drain is a poor authority candidate even at a good RTT,
-      // so the shed rate feeds the same fitness score.
-      if (this.player) playerFitness.noteShed(this.player.id, false);
     }
-    this.ws.send(frame);
+    // Binary frames are already compact and mostly incompressible (packed poses/floats), so
+    // per-message deflate buys nothing on them — but permessage-deflate allocates a ~256 KB
+    // zlib context PER SOCKET, which is ~19 MB at 64 players. Skipping it is a memory fix
+    // that happens to shave a little latency too.
+    this.ws.send(frame, { compress: false });
     return true;
   }
 
@@ -289,7 +295,7 @@ export class Connection implements Peer {
         this.ctx.players.update(charId, (doc) => {
           if (cellKey && pose) doc.position = { cellKey, x: pose.x, y: pose.y, z: pose.z };
         });
-        void this.ctx.players.flushKey(charId);
+        this.ctx.track?.(this.ctx.players.flushKey(charId));
       }
       // M8: park a resume ticket BEFORE the roster slot goes, so a reconnect within
       // [login] resumeWindowSec can rejoin in place instead of paying argon2 again.
@@ -316,10 +322,10 @@ export class Connection implements Peer {
       this.ctx.m7.onDisconnect(this.player.id);
       // M4: relinquish authority (no Revoke — socket is gone) before the cell may flush.
       if (this.player.cellKey) {
-        this.ctx.world.authorityLeave(this.player.id, this.player.cellKey, false);
+        this.ctx.world.authorityLeaveAll(this.player.id, this.player.cellKey, false,
+          this.player.system === true);
         this.ctx.world.onCellVacated(this.player.cellKey);
       }
-      playerFitness.forget(this.player.id); // ids are recycled by the roster: never inherit fitness
       this.ctx.hooks.playerDisconnect({ id: this.player.id, name: this.player.name, rank: this.player.rank });
       this.ctx.accounts.touchLastSeen(this.player.accountKey);
     }
@@ -577,9 +583,27 @@ export class Connection implements Peer {
       // The client's engine reports CharGenState == -1 (race/class/sign done). Until this
       // arrives the slot is provisional and an abandoned creation resets on next entry.
       // Idempotent, and re-reported on every login — which self-migrates pre-flag slots.
-      void this.ctx.accounts.get(this.player.accountKey).then((account) => {
+      const done = this.ctx.accounts.get(this.player.accountKey).then((account) => {
         if (account && this.player) this.ctx.accounts.completeCharacter(account, this.player.charId);
       });
+      this.ctx.track?.(done);
+      void done;
+      return;
+    }
+    if (name === 'RequestTravelTicket') {
+      // CHANGING WORLD MEANS AUTHENTICATING AGAIN. Every world is its own process with its own
+      // in-memory resume table, and the SSO login ticket is single-use and already spent on the
+      // first join — so a client dialling a second world had NO credential and was refused
+      // AUTH_FAILED every time. Under SSO-only there was no fallback, which made Public
+      // unreachable. This world already knows who this connection is, so it mints the next
+      // hop's ticket into the SHARED store the destination world reads.
+      //
+      // The account comes from the SESSION, never from the message: a client that could name
+      // its own account here could mint a ticket for somebody else. Single-use and short-lived,
+      // exactly like the one the front door issues after SSO.
+      const ticket = this.ctx.tickets.mint(this.player.accountKey, this.player.name);
+      log('info', 'travel.ticket_minted', { id: this.player.id });
+      this.player.peer.sendEvent('TravelTicket', { ticket });
       return;
     }
     if (name === 'SetWorldMode') {
@@ -702,7 +726,7 @@ export class Connection implements Peer {
     this.ctx.world.sendCellState(player, cellKey);
     // M4: hand off / claim authority. Leave the old cell before claiming the new one.
     if (oldCell && oldCell !== cellKey) {
-      this.ctx.world.authorityLeave(player.id, oldCell, true);
+      this.ctx.world.authorityLeaveAll(player.id, oldCell, true, player.system === true);
       this.ctx.world.onCellVacated(oldCell);
       // M6: walking out of the cell ends any conversation started there.
       this.ctx.quests.releaseDialogueLocks(player.id, oldCell);
@@ -741,6 +765,19 @@ export class Connection implements Peer {
       return;
     }
     this.engineHeld = true;
+    // Tier 2: the sim peer runs the SERVER's own game data, and its content list is computed
+    // by the same engine code as every player's client — so it IS the world's truth. Pin it
+    // BEFORE checking, because checking first meant a client that connected earlier had
+    // already installed its own list as canonical (tier-1 adopt-first), the peer was then
+    // measured against that stranger's list, failed, and disabled itself permanently. The
+    // world then had no authority at all and every later player was judged by whoever
+    // happened to arrive first.
+    //
+    // Safe because it is gated on gameDataOk — the server's data validated on disk — and a
+    // world configured [simPeer] mode = "on" refuses to boot at all if that validation fails.
+    if (this.isSystem && this.ctx.gameDataOk && !this.ctx.content.isAuthoritative) {
+      this.ctx.content.setAuthoritative(msg.manifest);
+    }
     const contentCheck = this.ctx.content.check(msg.manifest);
     if (!contentCheck.ok) {
       this.refuseSetup('BAD_CONTENT', contentCheck.detail);
@@ -754,14 +791,11 @@ export class Connection implements Peer {
     //
     // Pinned AFTER the peer's own check passes, so a peer that is itself misconfigured
     // cannot install a broken canonical list and lock everyone out.
-    if (this.isSystem) {
-      // Tell the supervisor the peer is up, so the start deadline (which exists to catch a
-      // peer wedged before hello) stops applying to it.
-      this.ctx.simPeers?.noteHello?.('world');
-      if (this.ctx.gameDataOk && !this.ctx.content.isAuthoritative) {
-        this.ctx.content.setAuthoritative(msg.manifest);
-      }
-    }
+    // NOT marked ready here. Hello happens BEFORE authentication, so a peer that failed to
+    // authenticate still cleared the start deadline and logged "simpeer.ready" — which is
+    // exactly how a peer that never once authenticated ran for weeks looking healthy while
+    // simulating nothing. Readiness is now signalled from handleReady, after it is actually
+    // in the world.
     // msg.resumeToken: reserved for M1 session resume ([login].resumeWindowSec); ignored.
     clearTimeout(this.helloTimer);
     this.state = 'HELLO_OK';
@@ -780,8 +814,16 @@ export class Connection implements Peer {
     // the sim-peer secret brute-forceable through the public login endpoint, and (b) surface a
     // confusing "wrong server password" to SSO users. A user on an SSO server is refused later by
     // handleLogin/handleRegister with a clean "single sign-on" message, before touching any secret.
-    if (this.isSystem && want !== '' && serverPassword !== want) {
-      this.authFail(op, 'AUTH_FAILED', 'wrong server password');
+    // FAIL CLOSED. `system` is a CLIENT-DECLARED flag in SessionHello, and this is the only
+    // thing standing between declaring it and holding cell authority for every NPC in the
+    // world. The old `want !== ''` skipped the check entirely when no server password was
+    // configured — which is the shipped default — so any registered client could send
+    // {system:true} and be believed. An unset password is not permission; it means no peer
+    // can authenticate here at all.
+    if (this.isSystem && (want === '' || serverPassword !== want)) {
+      this.authFail(op, 'AUTH_FAILED',
+        want === '' ? 'this server has no [server].password, so no peer can authenticate'
+          : 'wrong server password');
       return false;
     }
     return true;
@@ -1175,6 +1217,19 @@ export class Connection implements Peer {
       this.ctx.world.sendCellState(this.player, cellKey);
       this.ctx.world.authorityEnter(this.player, cellKey);
     }
+    // WHERE EVERYONE ELSE IS. Position is only ever RELAYED, so a joiner learned about the
+    // players already in the world when one of them next moved — a player standing still was
+    // invisible indefinitely, and a joiner who never moved was invisible to them. Send the
+    // occupancy we already track, in the same PlayerCellChange shape the client handles, so
+    // both directions are populated at join instead of on the next twitch.
+    for (const p of this.ctx.roster.inWorld()) {
+      if (p.id === this.player.id || !p.cellKey) continue;
+      this.player.peer.sendEvent('PlayerCellChange',
+        { id: p.id, cellKey: p.cellKey, x: p.pose?.x ?? 0, y: p.pose?.y ?? 0, z: p.pose?.z ?? 0 });
+    }
+    // The peer is in the world: authenticated, content-checked, joined. THIS is ready.
+    if (this.isSystem) this.ctx.simPeers?.noteHello?.('world');
+    this.player.peer.sendEvent('WorldMode', { mode: this.ctx.worldMode() });
     this.ctx.hooks.playerJoinWorld({ id: this.player.id, name: this.player.name, rank: this.player.rank });
   }
 }

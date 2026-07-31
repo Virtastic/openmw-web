@@ -26,6 +26,27 @@ export function parseExterior(cellKey: string): { x: number; y: number } | null 
   return m ? { x: parseInt(m[1]!, 10), y: parseInt(m[2]!, 10) } : null;
 }
 
+// The cells one sim peer may claim: ONLY the cell it stands in.
+//
+// It is tempting to claim the 3x3 block the engine has LOADED, and this did. That is wrong,
+// and wrong in the worst direction. OpenMW hard-clamps `[Game] actors processing range` to
+// 7168 units (components/settings/categories/game.hpp — capped deliberately, bug #1876) while
+// an exterior cell is 8192 units wide (Constants::CellSizeInUnits). A peer therefore cannot
+// tick actors across a whole neighbouring cell no matter what it has loaded: most of that
+// block is outside its processing radius. Claiming it anyway produces a cell with a holder
+// that never simulates it — players standing there watch frozen NPCs while the server reports
+// the cell as healthily held, and authority.silent_peer cannot catch it because the peer IS
+// producing frames, just for other cells.
+//
+// An unheld cell is visible and fixable. A silently unsimulated one is neither.
+//
+// ponytail: one cell per peer, so coverage costs peers. Widening this needs the peer placed
+// at the cell CENTRE (half-diagonal 5793 < 7168, so the anchor is fully covered) and a real
+// measurement of what its processing radius reaches — not an assumption about what is loaded.
+export function loadedCells(cellKey: string): string[] {
+  return [cellKey];
+}
+
 export function cellsVisible(a: string | undefined, b: string | undefined): boolean {
   if (a === undefined || b === undefined) return false;
   if (a === b) return true;
@@ -51,10 +72,6 @@ export interface InterestSettings {
   midStride: number;
   farStride: number;
 }
-
-// Nominal cadence of a holder's ActorMoveBatch stream — the same 15 Hz the pose tick runs
-// at, so actor tiering reuses the pose strides rather than inventing a second schedule.
-export const ACTOR_STREAM_INTERVAL_MS = BATCH_INTERVAL_MS;
 
 function stride(hz: number, intervalMs: number): number {
   return Math.max(1, Math.round(1000 / hz / intervalMs));

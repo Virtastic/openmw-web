@@ -10,7 +10,7 @@
 import { lToJs, type LTable, type LValue, type JsLike } from '../proto/lser';
 import { parseObjRef, objRefToJs, netRefKey, type ObjRef } from '../proto/ref';
 import type { Player, Roster } from './players';
-import { cellsVisible, lodStride, parseExterior, MAX_ABS_COORD, type InterestSettings } from './movement';
+import { cellsVisible, lodStride, parseExterior, MAX_ABS_COORD, type InterestSettings, loadedCells} from './movement';
 import { unpackActorMoveBatch } from '../proto/movement';
 import { MSG_ACTOR_MOVE_BATCH, packEnvelope, nextBroadcastSeq } from '../proto/envelope';
 import { Authority, type ActorSnapshot } from './authority';
@@ -150,7 +150,6 @@ export class WorldState {
     // Multiplayer (SSO) servers are server-authoritative ONLY: the sim peer is the sole entity
     // that may hold cell authority. Off (dev/test without SSO) keeps the legacy behaviour where
     // a capable client can hold, so the existing authority-mechanism tests still exercise it.
-    private readonly serverAuthoritativeOnly = false,
   ) {
     this.authority = new Authority({
       grant: (playerId, cellKey, epoch, snapshot) =>
@@ -178,9 +177,12 @@ export class WorldState {
         canSimulate: (playerId) => {
           const p = this.roster.get(playerId);
           if (!p) return false;
-          // Server-authoritative MP: ONLY the sim peer (system) may hold. Legacy: any client
-          // that declared it can simulate. The gate is the multiplayer contract, not a knob.
-          return this.serverAuthoritativeOnly ? p.system === true : p.simulatesActors === true;
+          // ONLY the sim peer may hold a cell. Not a knob: it was tied to auth.requireSso,
+          // which has nothing to do with who simulates NPCs — so a non-SSO server silently
+          // fell back to letting a PLAYER'S BROWSER author NPC state for everyone, which is
+          // the exact thing server authority exists to prevent. A cell the peer does not
+          // cover simply has no holder and waits for it.
+          return p.system === true;
         },
       },
     });
@@ -259,12 +261,27 @@ export class WorldState {
   // ------------------------------------------------------- authority (M4)
 
   // Called from the PlayerCellChange path (enqueued so contested entry serializes here).
+  // A PLAYER occupies exactly the cell it stands in. THE SIM PEER occupies every cell it has
+  // loaded — itself plus the eight exterior neighbours — because that is what a running engine
+  // actually simulates. Without this the peer held ONE cell per world and every other occupied
+  // cell had no holder at all, so NPCs were frozen for anyone who walked a cell away from
+  // wherever the peer happened to be standing.
   authorityEnter(player: Player, cellKey: string): void {
-    this.enqueue(() => this.authority.onEnter(player.id, cellKey));
+    const cells = player.system ? loadedCells(cellKey) : [cellKey];
+    this.enqueue(async () => {
+      for (const c of cells) await this.authority.onEnter(player.id, c);
+    });
   }
 
   // Cell change out or disconnect. Captured id/cell because the roster entry may already
   // be gone by the time the queued turn runs.
+  // Mirrors authorityEnter: a peer releases its whole footprint, not just the anchor cell,
+  // or cells it has walked out of would keep it listed as their holder forever.
+  authorityLeaveAll(playerId: number, cellKey: string, connected: boolean, system: boolean): void {
+    const cells = system ? loadedCells(cellKey) : [cellKey];
+    for (const c of cells) this.authorityLeave(playerId, c, connected);
+  }
+
   authorityLeave(playerId: number, cellKey: string, connected: boolean): void {
     this.enqueue(() => this.authority.onLeave(playerId, cellKey, connected));
   }

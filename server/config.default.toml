@@ -11,7 +11,12 @@ plugins = ["motd", "respawn", "death-penalty", "pvp", "sharing", "cell-reset", "
 name = "openmw-mp"                # shown in SessionHelloOk and /status
 motd = "Welcome to openmw-mp."    # sent in SessionWelcome and as a server chat line on join
 maxPlayers = 256
-password = ""                     # non-empty -> Register/Login must carry a matching serverPassword
+# THE SIM PEER'S CREDENTIAL, and nothing else — it is never checked against a player. `system`
+# is a flag the CLIENT sets in SessionHello, so this is the only thing separating "I am the
+# server's own simulator" from any registered account claiming to be. An EMPTY value refuses
+# every system connection rather than skipping the check, and a server that intends to run
+# (i.e. every server: the peer is mandatory) refuses to boot without one.
+password = ""
 
 [login]
 allowRegistration = true          # false -> SessionRegister is refused (AUTH_FAILED)
@@ -99,6 +104,10 @@ worldGlobals = []
 partyCredit = true
 
 [locker]
+# Accept an upload whose sha256 is unknown but whose name and size match a known retail file
+# within a tolerance, backed by a header sniff of the uploaded bytes. true because legitimate
+# retail distributions differ; set false to accept ONLY exact hashes from vanilla-manifest.json.
+acceptByNameAndSize = true
 # Storage locker: a player uploads their own Morrowind data once, streams it back on any
 # device. S3-compatible (AWS, Cloudflare R2, Backblaze, MinIO). Credentials come from the
 # env (S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY) so they stay out of config files. An empty
@@ -232,30 +241,17 @@ retentionDays = 14
 contextLines = 20
 
 [authority]
-# M4 cell actor authority: ONE client per cell simulates every NPC there and streams
-# ActorMoveBatch to the rest, on top of playing the game itself. It is the heaviest seat in
-# the room, so it is elected on measured fitness rather than on who arrived first.
-# Fitness is the SERVER's own round-trip measurement (WebSocket ping/pong with an echoed
-# stamp) plus the client's outbound shed rate. A client-reported latency is never used: it
-# would let a modified client seize or dodge the role at will.
+# Cell actor authority: ONE connection per cell simulates every NPC there and streams
+# ActorMoveBatch to the rest. That connection is ALWAYS the sim peer — never a player. A
+# player's browser does not simulate NPCs for anyone else, so there is no election, no
+# fitness scoring and no handoff: the peer holds every cell it occupies, and a cell it has
+# not reached waits for it.
 rttProbeSec = 5        # ping cadence; ~6 B/s/player. The 50 s keepalive deadline is unchanged.
-reviewSec = 10         # how often a cell re-checks its holder (cheap: a scan of held cells)
-unknownRttMs = 200     # score for a player with no sample yet — never a free promotion
-shedPenaltyMs = 500    # a 100%-shed client is scored 500 ms worse than a clean one
-# A challenger must beat the incumbent by BOTH margins. Absolute margin ignores jitter;
-# the ratio stops "350 vs 400 ms" (both unplayable) from counting as an improvement.
-improveMs = 40
-improveRatio = 0.75    # must be <= 1
-# Degradation gate. The holder must sit above degradeScoreMs continuously for sustainSec
-# before it is even a candidate for replacement — a single bad sample proves nothing. After
-# any re-election the cell is frozen for cooldownSec: a handoff costs a snapshot plus a
-# re-sync for everyone in the cell, so a flapping holder is worse than a mediocre one.
-degradeScoreMs = 250
-sustainSec = 30
-cooldownSec = 60
-# A player who just walked in may be about to walk out; below this age they are not
-# electable while any settled occupant exists.
-settleSec = 20
+reviewSec = 10         # how often a held cell is checked for liveness (cheap: a scan)
+# The peer has held a cell with NPCs in it this long without producing a single actor frame:
+# it is not simulating. Reported loudly (authority.silent_peer) and left holding the cell —
+# there is nobody to hand it to, and revoking would remove the NPCs as well as freeze them.
+actorSilenceSec = 15
 
 [metrics]
 # Prometheus text-format scrape endpoint at GET /metrics. OFF by default: the numbers are
@@ -338,17 +334,24 @@ scope = ""
 # OFF by default: it needs a native openmw binary AND game data on the server, which a
 # self-hoster may not have. With it off, the existing client-authority election is unchanged.
 [simPeer]
-# auto  = run a peer IF game data validates AND a binary is found. Silence is the right
-#         outcome for a self-hoster with neither; multiplayer is unaffected either way.
-# on    = the operator INTENDS server-side simulation: refuse to boot if it cannot run, so a
-#         misconfiguration is loud instead of silently falling back to client-simulated NPCs.
-# off   = never.
-mode = "auto"
+# The sim peer is MANDATORY and always on: it is the only thing permitted to simulate NPCs,
+# so there is no mode to choose. A server that cannot run one refuses to boot rather than
+# starting a world whose NPCs never move. It needs game data in <sharedDir>/gamedata, a
+# headless openmw binary, and [server].password (its only credential).
 binary = ""                       # absolute path to the headless-capable openmw
 configDir = ""                    # its own --config dir (isolated openmw.cfg + settings.cfg)
 userDataDir = ""                  # its own --user-data dir
 startCell = "Seyda Neen"
-maxPeers = 4                      # hard ceiling; measured cost is ~360 MB + ~9% of a core each
+# Hard ceiling on peers per world. One peer covers the 3x3 block it has loaded, so this is
+# also the number of separated player groups a world can simulate at once; beyond it the
+# furthest clusters go unsimulated and simpeer.clusters_over_cap says so.
+# Measured ~450 MB RSS and ~17% of a core each WITH the generated settings.cfg. Treat that as
+# a floor, not a figure: it was measured on a peer that was accidentally parked in a small
+# interior, so a peer actually simulating a populated exterior block will cost more.
+# TWO, not four: node is ~330 MB and the container budget does not fit four ~450 MB peers,
+# least of all during the 120 s idle-reap overlap when a cluster splits. Over the cap the
+# warning fires honestly; over the memory limit the OOM killer takes the whole world down.
+maxPeers = 2
 idleReapMs = 120000               # reap a peer whose world has had no humans this long
 startTimeoutMs = 120000           # retail data load is slow; generous, and failure is non-fatal
 restartBackoffMs = 15000          # after a crash, wait before respawning (no hot crash loop)

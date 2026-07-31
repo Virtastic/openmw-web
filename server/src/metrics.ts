@@ -291,7 +291,7 @@ export const metrics = {
   joinLatency: reg(
     new Histogram('omwmp_join_latency_seconds', 'Socket accept to IN_WORLD.', [], SECONDS_JOIN),
   ),
-  sessionsInWorld: reg(new Gauge('omwmp_sessions_in_world', 'Sessions currently in world (read from the roster).')),
+  sessionsInWorld: reg(new Gauge('omwmp_sessions_in_world', 'PLAYERS currently in world (the sim peer is infrastructure and is not counted).')),
   // Server-side memory held for clients that have not read it yet; the thing the shed above
   // is defending. Sampled from the live sockets at scrape time.
   outboundBuffered: reg(

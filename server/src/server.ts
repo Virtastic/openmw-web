@@ -57,7 +57,8 @@ import { log } from './log';
 import { metrics } from './metrics';
 import { SimPeerSupervisor } from './core/simpeer';
 import { WorldBrowser } from './core/worldbrowser';
-import { detectGameData, findPeerBinary, gameDataDir, buildPeerCfg } from './core/gamedata';
+import { parseExterior } from './core/movement';
+import { detectGameData, findPeerBinary, gameDataDir, buildPeerCfg, buildPeerSettings } from './core/gamedata';
 
 export const VERSION = '0.1.0';
 
@@ -73,6 +74,13 @@ function chainRoutes(...routes: HttpRoute[]): HttpRoute {
 
 
 export interface StartOptions {
+  /**
+   * In-process callers only (the test suite). false = do not refuse to boot without game
+   * data, a peer binary and a server password. NOT a config key and NOT an env var, so a
+   * real deployment cannot reach it: production always runs its own simulation or refuses
+   * to start. A server built with false has no sim peer, so its cells have no holder.
+   */
+  requireGameData?: boolean;
   dataDir: string;
   port: number;
   host?: string;
@@ -114,18 +122,10 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // both live in the SHARED dir. loadConfig merges shared/config.toml; gamedata is resolved
   // from the shared dir too (below) so 500MB of Morrowind is not copied per world.
   const config = loadConfig(opts.dataDir, opts.configOverride, sharedDir);
-  // M4 election tuning is read live by core/authority.ts, which WorldState builds without
-  // ever seeing the config; push it before anything can elect.
+  // Read live by core/authority.ts, which WorldState builds without ever seeing the config.
   configureAuthority({
-    unknownRttMs: config.authority.unknownRttMs,
-    shedPenaltyMs: config.authority.shedPenaltyMs,
-    improveMs: config.authority.improveMs,
-    improveRatio: config.authority.improveRatio,
-    degradeScoreMs: config.authority.degradeScoreMs,
-    sustainMs: config.authority.sustainSec * 1000,
-    cooldownMs: config.authority.cooldownSec * 1000,
-    settleMs: config.authority.settleSec * 1000,
     reviewMs: config.authority.reviewSec * 1000,
+    actorSilenceMs: config.authority.actorSilenceSec * 1000,
   });
   const accounts = new AccountStore(sharedDir);
   // Character docs live in the SHARED dir so a character follows its player across worlds;
@@ -138,6 +138,18 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // flips. See SetWorldMode below and mayJoinWorld.
   let worldMode = opts.worldMode ?? process.env.OMW_WORLD_MODE ?? 'public';
   const worldModeAtBoot = worldMode;
+
+  // Background writes still in flight. close() drains these BEFORE shutting the stores, so a
+  // fire-and-forget write can never land on a closed database — which both throws an unhandled
+  // rejection and LOSES the write. ChargenComplete is the one that hurts: the flag it sets is
+  // what the shared world's "has this character been created" gate reads, so a player who
+  // finishes creation exactly as the server restarts is left unable to join the public world
+  // with nothing on screen explaining why. Self-pruning, so it cannot grow without bound.
+  const inFlight = new Set<Promise<unknown>>();
+  const track = (p: Promise<unknown>): void => {
+    inFlight.add(p);
+    void p.catch(() => undefined).finally(() => inFlight.delete(p));
+  };
   const worldOwner = (opts.worldOwner ?? process.env.OMW_WORLD_OWNER ?? '').toLowerCase();
   const playerStore = new PlayerStore(sharedDir, worldId);
   // Onboarding CRM capture. Env var wins over toml so the key can stay out of config files
@@ -165,7 +177,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   let motd = config.server.motd;
   const resume = new ResumeStore(config.login.resumeWindowSec);
   const interest = interestFromLimits(config.limits);
-  const world = new WorldState(roster, cellStore, interest, config.auth.requireSso);
+  const world = new WorldState(roster, cellStore, interest);
   // Phase 4: scripted-spawn replay + the unstick tool. Built early because both the admin
   // command surface and the connection's cell-entry path need it.
   const questRepair = new QuestRepair({ roster, players: playerStore });
@@ -339,9 +351,12 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     // Same sink the movement envelope feeds: anomalies are what moderation acts on.
     noteAnomaly: (accountKey, kind) => moderation.noteAnomaly(accountKey, kind),
     onCharacterNamed: (player, name) => {
-      void accounts.get(player.accountKey).then((account) => {
+      // TRACKED: this writes the name the player typed in chargen onto their slot. Untracked,
+      // a shutdown landing between the read and the write both loses the name and throws from
+      // a detached promise onto a closed database — the same shape as the ChargenComplete bug.
+      track(accounts.get(player.accountKey).then((account) => {
         if (account) accounts.nameCharacter(account, player.charId, name);
-      });
+      }));
     },
     onPlayerDeath: (player) => {
       log('info', 'player.death', { id: player.id, name: player.name });
@@ -493,6 +508,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     resume,
     moderation,
     tickets,
+    track,
     sessions,
     attio,
     // Access control for non-public worlds. The gateway's listing filter is VISIBILITY;
@@ -534,12 +550,17 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     },
     // Owner-only: flip this world between private (solo) and party (joinable by the owner's
     // party) without respawning it. Admins may flip too. Public worlds never flip.
+    worldMode: (): string => worldMode,
     setWorldMode: (accountKey: string, rank: number, mode: string): 'ok' | 'not_owner' | 'bad_mode' | 'not_flippable' => {
       if (worldModeAtBoot === 'public') return 'not_flippable';
       if (rank < 1 && accountKey !== worldOwner) return 'not_owner';
       if (mode !== 'private' && mode !== 'party') return 'bad_mode';
       worldMode = mode;
       log('info', 'world.mode_flip', { world: worldId, owner: worldOwner, mode });
+      // The UI must never GUESS which world it is in. It used to render Solo/Party/Public from
+      // a localStorage note of what the player last clicked, which survived reloads and
+      // reconnects and so could claim you were somewhere you were not. The server owns this.
+      for (const conn of connections) conn.player?.peer.sendEvent('WorldMode', { mode });
       // mayJoinWorld only gates ARRIVAL. Flipping back to Solo therefore closed the door
       // while leaving every guest standing inside — the party dissolved around them and they
       // kept playing in someone else's private world. Closing means closing: tell each guest
@@ -676,7 +697,11 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     limiter: new IpRateLimiter(config.limits.loginPerMinPerIp),
   }, chainRoutes(adminRoutes, lockerRoutes({ locker, sessions: lockerSessions }))));
   // Derived at scrape time from the roster, so no teardown path can strand the gauge.
-  const unhookGauge = metrics.sessionsInWorld.addCollector(() => roster.inWorld().length);
+  // humansInWorld, not inWorld: the sim peer is infrastructure. Counting it here would make
+  // every world look like it has a player in it — the reason maxPlayers and the roster exclude
+  // it too — and an operator reading this gauge for capacity would be reading one peer per
+  // cluster as load.
+  const unhookGauge = metrics.sessionsInWorld.addCollector(() => roster.humansInWorld().length);
 
   // Phase H4: the on-demand simulation peer. Wired at ONE point rather than hooked into
   // join/leave in connection.ts, because ensure()/markIdle() are idempotent by design and a
@@ -690,51 +715,38 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   const gameData = detectGameData(gameDataDir(sharedDir));
   log('info', 'gamedata.detect', { ok: gameData.ok, reason: gameData.reason });
 
-  // A multiplayer (SSO) server is authoritative over persistent state using its OWN copy of the
-  // game files — there is no "run without the files" mode. Refuse to boot without them: a server
-  // that cannot author the world it hosts is a broken deployment, not a degraded one. (Non-SSO
-  // test/dev servers are unaffected; the requirement is the multiplayer contract.)
-  if (config.auth.requireSso && !gameData.ok) {
-    throw new Error(`multiplayer server requires game data at ${gameDataDir(opts.dataDir)} — ${gameData.reason}. `
-      + 'Drop your Morrowind Data Files (Morrowind.esm/.bsa, and optionally Tribunal/Bloodmoon) there.');
+  // THE SIM PEER IS NOT OPTIONAL. There is exactly one mode: the server runs its own headless
+  // engine, and that engine is the only thing allowed to simulate NPCs. What used to be "tier
+  // 1" — no game data, NPCs simulated by whichever player's browser was nearest — is gone,
+  // because a player's machine authoring NPC state for everyone else is precisely the thing
+  // server authority exists to prevent. Without a peer, cells have no eligible holder at all
+  // and NPCs never move for anyone, so booting in that state would be shipping a broken world
+  // that reports itself healthy. Refuse instead, and say exactly which piece is missing.
+  // opts.requireGameData is a CODE-level seam for in-process callers (the test suite builds
+  // dozens of servers and cannot ship 500MB of retail data). Deliberately not a config key and
+  // not an env var: an operator cannot reach it, so a real deployment can never opt out of
+  // running its own simulation. This is not tier 1 returning through the back door — a server
+  // built this way has no peer, so its cells simply have no holder.
+  if (!gameData.ok && opts.requireGameData !== false) {
+    throw new Error(`no usable game data at ${gameDataDir(sharedDir)} — ${gameData.reason}. `
+      + 'Drop your Morrowind Data Files (Morrowind.esm/.bsa, and Tribunal/Bloodmoon if you own '
+      + 'them) there: the server simulates the world itself and needs its own copy.');
   }
-
-  // Resolve simPeer.mode against reality. The config alone cannot know whether a peer can
-  // actually run, so 'auto' is decided here and the outcome is ALWAYS logged — a server that
-  // quietly falls back to client-simulated NPCs is how "why are the NPCs frozen" becomes a
-  // three-week mystery.
   config.simPeer.binary = findPeerBinary(config.simPeer.binary);
-  const peerBlocker = !gameData.ok
-    ? `no usable game data (${gameData.reason})`
-    : !config.simPeer.binary
-      ? 'no [simPeer] binary configured and none found at the conventional paths'
-      : undefined;
-  if (config.simPeer.mode === 'on' && peerBlocker) {
-    // The operator asked for server-side simulation explicitly. Refusing to boot is kinder
-    // than starting a world that silently is not what they asked for.
-    throw new Error(`[simPeer] mode = "on" but a peer cannot run: ${peerBlocker}`);
+  if (!config.simPeer.binary && opts.requireGameData !== false) {
+    throw new Error('no sim-peer binary: set [simPeer].binary, or install the headless openmw '
+      + 'build at one of the conventional paths. The server cannot simulate NPCs without it.');
   }
-  // A PRIVATE world is one player alone in their own instance. The sim peer exists so a
-  // modified client cannot author NPC state in a world OTHER PEOPLE share — there is nobody
-  // to cheat in your solo world, so a second engine there is pure cost and pure risk: it
-  // holds cell authority over the very NPCs you are talking to (the census sequence during
-  // character creation is where that first bites). Party/public worlds still get one.
-  const soloWorld = worldModeAtBoot === 'private';
-  config.simPeer.enabled = config.simPeer.mode !== 'off' && peerBlocker === undefined && !soloWorld;
-  // A sim peer on an SSO-only server authenticates with the shared server password (it is not
-  // a user and has no SSO identity). Without [server].password set, the peer could not log in
-  // AND the SSO-bypass for system peers would be unguarded — so refuse to boot, loudly.
-  if (config.simPeer.enabled && config.auth.requireSso && config.server.password === '') {
-    throw new Error('[simPeer] is enabled on an SSO-only server but [server].password is empty — '
-      + 'set a server password so the sim peer can authenticate (it is the peer\'s only credential)');
+  // The peer is not a user and has no SSO identity, so the shared server password is its only
+  // credential — and an empty one now refuses every system connection (see checkAuthGate).
+  if (config.server.password === '' && opts.requireGameData !== false) {
+    throw new Error('[server].password is empty — set one so the sim peer can authenticate. '
+      + 'It is the peer\'s only credential, and an unset password refuses all peers.');
   }
-  log('info', 'simpeer.tier', {
-    mode: config.simPeer.mode,
-    enabled: config.simPeer.enabled,
-    reason: config.simPeer.enabled
-      ? 'NPCs will be simulated by the server'
-      : `${peerBlocker ?? (soloWorld ? 'solo (private) world — no peer needed' : 'mode is off')}`
-        + ' — NPCs will be simulated by player clients',
+  config.simPeer.enabled = gameData.ok && config.simPeer.binary !== '';
+  log('info', 'simpeer.ready_to_spawn', {
+    binary: config.simPeer.binary,
+    content: gameData.contentFiles.join(', '),
   });
 
   // Per-world peer config. Each world process is its own dataDir, so its sim peer gets its own
@@ -751,6 +763,8 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     const resources = process.env.OMW_SIMPEER_RESOURCES
       || join(dirname(config.simPeer.binary), '..', 'share', 'openmw', 'resources');
     writeFileSync(join(cfgDir, 'openmw.cfg'), buildPeerCfg(gameData, resources));
+    // Pace the peer. Headless means nothing else will.
+    writeFileSync(join(cfgDir, 'settings.cfg'), buildPeerSettings());
     config.simPeer.configDir = cfgDir;
     config.simPeer.userDataDir = udDir;
     log('info', 'simpeer.cfg_written', { configDir: cfgDir, resources });
@@ -763,13 +777,78 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   });
   ctx.simPeers = simPeers;
   ctx.gameDataOk = gameData.ok;
-  const WORLD_KEY = 'world'; // one world per process today; F3 (multi-world) is not built
+  // ONE PEER, MANY ANCHORS. A peer can only simulate around a point — vanilla keeps one grid
+  // of active cells centred on the player and unloads the rest — so covering players spread
+  // across the world used to mean one ~450 MB engine process per occupied cell. At 200 players
+  // in 40 places that is 40 processes and ~18 GB, which is not a tuning problem, it is a wall.
+  //
+  // The engine now takes a LIST of anchors (mwmp setSimAnchors -> Scene::setSimAnchors): every
+  // anchor keeps its own grid of cells loaded, and an actor stops processing only when it is
+  // far from ALL of them. The marginal cost of a region becomes that region's cells — meshes,
+  // collision, navmesh — instead of a whole second engine, because the ESM store and every
+  // subsystem are shared. Same 40 regions land in one process at ~1-3 GB.
+  //
+  // ponytail: one anchor per occupied CELL, deduped. Not clustered any smarter than that,
+  // because anchors are cheap now — the expensive thing was processes, and there is one.
+  // Empty regions cost nothing: the engine already unloads cells no anchor covers.
+  const WORLD_KEY = 'world';
+  let lastAnchors = '';
+  // Cells the peer currently holds because they are anchored, so the set can be diffed rather
+  // than re-entered every tick (re-entering bumps the epoch and forces a full re-sync).
+  const claimed = new Set<string>();
   const simPeerTick = setInterval(() => {
     if (!config.simPeer.enabled) return;
-    // humansInWorld, NOT inWorld: the peer itself is in-world, so counting it would keep
-    // the world looking busy forever and the reaper would never fire.
-    if (roster.humansInWorld().length > 0) simPeers.ensure(WORLD_KEY);
-    else simPeers.markIdle(WORLD_KEY);
+    // humansInWorld, NOT inWorld: the peer itself is in-world, so counting it would keep the
+    // world looking busy forever and the reaper would never fire.
+    const humans = roster.humansInWorld().filter((p) => p.cellKey !== undefined);
+    if (humans.length === 0) {
+      simPeers.markIdle(WORLD_KEY);
+      simPeers.sweep();
+      return;
+    }
+
+    // Exterior cells only: an interior is its own island and the peer's own avatar covers the
+    // one it stands in. Deduped, and ordered so the string compare below is stable.
+    const cells = [...new Set(humans.map((p) => p.cellKey!))].sort();
+    const anchors: { x: number; y: number }[] = [];
+    for (const cell of cells) {
+      const e = parseExterior(cell);
+      if (e) anchors.push({ x: e.x, y: e.y });
+    }
+
+    // The first anchor doubles as where the peer's avatar stands, so a cold start lands
+    // somewhere populated instead of at a default cell.
+    const first = humans.find((p) => parseExterior(p.cellKey!) !== null);
+    simPeers.ensure(WORLD_KEY, first
+      ? { cellKey: first.cellKey!, x: first.pose?.x ?? 0, y: first.pose?.y ?? 0, z: first.pose?.z ?? 0 }
+      : undefined);
+
+    // Only on change: the peer re-runs its cell grid when the list moves, so resending an
+    // identical list every 5 s would churn loads for nothing.
+    const key = JSON.stringify(anchors);
+    if (key !== lastAnchors) {
+      lastAnchors = key;
+      const peerPlayer = roster.inWorld().find((p) => p.system === true);
+      if (peerPlayer) {
+        peerPlayer.peer.sendEvent('SimAnchors', { anchors });
+        // AUTHORITY FOLLOWS THE ANCHORS. The peer keeps these cells loaded and ticks their
+        // actors, so it must also HOLD them — otherwise the cells players are standing in have
+        // no holder and their NPCs are frozen anyway, which was the whole bug. Claiming a cell
+        // the peer does NOT anchor would be the opposite error: a healthy-looking holder over a
+        // region it never simulates, which nothing can detect from the outside.
+        const want = new Set(cells);
+        for (const gone of [...claimed].filter((c) => !want.has(c))) {
+          world.authorityLeave(peerPlayer.id, gone, true);
+          claimed.delete(gone);
+        }
+        for (const c of want) {
+          if (claimed.has(c)) continue;
+          world.authorityEnter(peerPlayer, c);
+          claimed.add(c);
+        }
+      }
+      log('info', 'simpeer.anchors', { count: anchors.length });
+    }
     simPeers.sweep();
   }, 5_000);
   simPeerTick.unref();
@@ -830,6 +909,9 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     config,
     api,
     flush: async () => {
+      // Drain background writes first: they WRITE, so they must finish before the flush that
+      // is supposed to persist everything, let alone before the stores close.
+      while (inFlight.size) await Promise.allSettled([...inFlight]);
       await accounts.flush();
       await playerStore.flushAll();
       await world.drain();
@@ -867,6 +949,12 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       // QUIESCE every writer, THEN close. Draining the world after closing the stores it
       // writes through was the same bug in the other direction.
       await world.drain();
+      // Background writes registered with track(). This drain existed only in flush(), which
+      // the real SIGTERM/SIGINT path never calls (main.ts goes close() -> process.exit), so a
+      // tracked write could still be running when the stores closed under it — losing the
+      // write and throwing from a detached promise. ChargenComplete is the one that hurts:
+      // its flag is what the shared world's "character created" gate reads.
+      while (inFlight.size) await Promise.allSettled([...inFlight]);
       await accounts.flush();
       await playerStore.flushAll();
       await bans.flush();
