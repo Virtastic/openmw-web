@@ -61,3 +61,17 @@ server/
 # Optional performance asset pack (built by wasm-build/build-assetpack.py from
 # third-party mod archives; never committed — see THIRD-PARTY-LICENSES.md).
 play/moddata/
+
+# Extracted third-party mod archives (MOP / Project Atlas sources for
+# wasm-build/build-assetpack.py). Bethesda-derived meshes and textures — must
+# never be committed, same rule as play/mwdata/ and fsroot/gamedata/.
+wasm-build/mod-src/
+
+# Local dev state that is not part of this project: account/ban databases,
+# identities, and config that may hold secrets.
+.dev-local/
+
+# Native (non-WASM) CMake build trees — artifacts, same as build-wasm/ above.
+# e.g. a native bsatool build for verifying the asset pack.
+build-native/
+build-*-native/
