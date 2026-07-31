@@ -282,9 +282,28 @@ function validateAuth(t: Tree): AuthConfig {
     custom: provider(auth, 'custom'),
   };
   const anyEnabled = [cfg.discord, cfg.google, cfg.microsoft, cfg.custom].some((p) => p.enabled);
-  // Fail boot rather than redirect a player into a dead end: with no return URL the
-  // callback has nowhere to hand the login ticket.
-  if (anyEnabled && returnUrl === '') fail('[auth].returnUrl', 'set when any provider is enabled');
+  // Empty is now the RECOMMENDED setting: the callback derives its return target from the
+  // origin the browser actually used, so one build serves any hostname. Setting it pins the
+  // permitted origin — useful when several names front one deployment, and a liability
+  // otherwise, because a stale value silently redirects every sign-in to somebody else's
+  // machine and is invisible from the client.
+  if (anyEnabled && returnUrl !== '') {
+    let pinned: URL | null = null;
+    try { pinned = new URL(returnUrl); } catch { pinned = null; }
+    // A loopback pin on a real deployment is the exact failure that shipped once: sign-in
+    // from the public site redirected to 127.0.0.1. Refuse to boot rather than repeat it.
+    if (pinned && /^(localhost|127\.0\.0\.1|\[::1\])$/i.test(pinned.hostname)) {
+      fail('[auth].returnUrl',
+        'a non-loopback origin, or empty to derive it from the request. It currently pins '
+        + `${pinned.origin}, so EVERY sign-in would be redirected there regardless of which `
+        + 'host the player came from.');
+    }
+    if (pinned && (pinned.search !== '' || pinned.hash !== '')) {
+      fail('[auth].returnUrl',
+        'an origin and path only — no query string or fragment. The launcher builds the game '
+        + 'URL itself, and the login ticket is appended as a fragment.');
+    }
+  }
   if (returnUrl !== '') {
     let parsed: URL;
     try {
