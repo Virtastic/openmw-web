@@ -14,7 +14,7 @@
 // told every player "this server has no game manifest configured yet".
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { readdir, stat, writeFile, access } from 'node:fs/promises';
+import { readdir, stat, writeFile, access, rename } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import { log } from '../log';
 import type { VanillaManifest } from './locker';
@@ -85,7 +85,13 @@ export async function ensureVanillaManifest(sharedDir: string, dataFilesDir: str
         reason: 'no game files found — uploads will be refused until a manifest exists' });
       return false;
     }
-    await writeFile(out, JSON.stringify(manifest, null, 2) + '\n');
+    // The world process and the front door both run this and neither sees the file until one
+    // finishes, so on a fresh server they generate concurrently. Write to a private temp path
+    // and rename: rename is atomic, so a reader sees either no file or a complete one, never
+    // two interleaved writes of the same JSON.
+    const tmp = `${out}.${process.pid}.tmp`;
+    await writeFile(tmp, JSON.stringify(manifest, null, 2) + '\n');
+    await rename(tmp, out);
     log('info', 'locker.manifest_generated', { path: out, files: manifest.files.length });
     return true;
   } catch (err) {

@@ -39,7 +39,15 @@ case "$WHAT" in
     #
     # MP_UPSTREAM points the Caddyfile's /ws + /auth proxy at the gateway container, which is
     # named per-environment (openmw-mp in production, openmw-mp-test here).
-    RUN_ARGS="-p ${PORT}:8080 -v /opt/morrowind-test/mwdata:/srv/mwdata:ro \
+    # NO /srv/mwdata MOUNT. Caddy serves everything under /srv, so staging retail Morrowind
+    # there published it: /mwdata/Morrowind.bsa and friends were downloadable by anyone, with
+    # no launcher, no sign-in and no gate. Nothing in the code decided that — the files being
+    # present was the whole cause, which is why production (which never mounted it) was clean.
+    #
+    # Testing does not need it: ?nomw runs the example world, ?src=local runs a folder from
+    # this machine, and multiplayer streams from the player's own locker. Re-adding this mount
+    # re-publishes the game.
+    RUN_ARGS="-p ${PORT}:8080 \
       -v /opt/morrowind-test/data:/srv/data:ro -e MP_UPSTREAM=openmw-mp-test:8080"
     HEALTH_PATH="/"
     ;;
