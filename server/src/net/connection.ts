@@ -154,6 +154,9 @@ export class Connection implements Peer {
   // Morrowind's opening sequence, so authenticate() can withhold persistence until it
   // finishes. Evidence-based: see resolveCharacter, not the `completed` flag.
   private creationInProgress = false;
+  // Set when this connection is playing a character that has no slot yet: the slot is
+  // written on ChargenComplete (adoptCharacter), not when the launcher asks for an id.
+  private provisionalCharId: string | undefined;
   private authing = false;
   private sessionToken = ''; // M8: parked as a resume ticket when an in-world session drops
   private resumed?: ResumeTicket;
@@ -591,6 +594,20 @@ export class Connection implements Peer {
       // at auth is what re-enables persistence — without it the first real session after
       // chargen would also be discarded.
       if (this.player) this.ctx.players.allowSaves(this.player.charId);
+      // Creation finished, so the character exists from here on. Until this point no slot was
+      // written at all — nothing to reap if the player had quit instead.
+      if (this.provisionalCharId !== undefined && this.player) {
+        const id = this.provisionalCharId;
+        const label = this.player.name;
+        this.provisionalCharId = undefined;
+        this.creationInProgress = false;
+        this.ctx.track?.(this.ctx.accounts.get(this.player.accountKey).then((account) => {
+          if (!account) return;
+          const r = this.ctx.accounts.adoptCharacter(account, id, label);
+          if (r === 'full') log('warn', 'character.adopt_full', { account: account.name, charId: id });
+          else if (r !== 'exists') log('info', 'character.created', { account: account.name, charId: id });
+        }));
+      }
       const done = this.ctx.accounts.get(this.player.accountKey).then((account) => {
         if (account && this.player) this.ctx.accounts.completeCharacter(account, this.player.charId);
       });
@@ -867,8 +884,19 @@ export class Connection implements Peer {
     if (requestedId !== undefined) {
       char = account.characters.find((c) => c.id === requestedId);
       if (!char) {
-        this.authFail(op, 'AUTH_FAILED', 'unknown character');
-        return null;
+        // No slot behind this id means creation is in flight: the launcher hands out a
+        // provisional id and the slot is only written when chargen FINISHES, so an abandoned
+        // creation leaves nothing to hide or delete. Accept it and carry it as provisional.
+        // Safe: the id only ever names a character on THIS authenticated account, and the
+        // MAX_CHARACTERS cap is enforced when the slot is actually written (adoptCharacter).
+        if (!/^c[0-9a-f]{24}$/.test(requestedId)) {
+          this.authFail(op, 'AUTH_FAILED', 'unknown character');
+          return null;
+        }
+        this.provisionalCharId = requestedId;
+        this.creationInProgress = true;
+        return { char: { id: requestedId, name: DEFAULT_CHARACTER_NAME,
+          createdAt: new Date().toISOString(), lastPlayedAt: new Date().toISOString() }, doc: undefined };
       }
     } else {
       // length checked non-zero above, so the sort always yields one.

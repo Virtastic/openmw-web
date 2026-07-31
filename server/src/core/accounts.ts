@@ -219,6 +219,30 @@ export class AccountStore {
   // createCharacter is also the pre-slot migration step: an account with no characters[]
   // gets its first slot named after the account, and the caller adopts any legacy
   // account-keyed PlayerDoc under the new character id.
+  /** An id for a character that does not exist yet. The slot is only written once creation
+   *  FINISHES (adoptCharacter), so a player who quits during Morrowind's opening leaves
+   *  nothing behind — no tile, no row, no doc. Nothing to hide and nothing to delete, which
+   *  matters because the one signal that says "creation finished" is client-reported and can
+   *  go missing: an earlier revision deleted real characters by treating its absence as proof
+   *  of abandonment (see the regression test in characters.test.ts). */
+  provisionalCharacterId(): string {
+    return `c${randomBytes(12).toString('hex')}`;
+  }
+
+  /** Write a provisional character into the account, now that creation has finished. Same cap
+   *  as createCharacter — the check has to happen HERE, since nothing was reserved up front. */
+  adoptCharacter(account: Account, charId: string, name: string): CharacterSummary | 'full' | 'exists' {
+    const chars = (account.characters ??= []);
+    if (chars.some((c) => c.id === charId)) return 'exists';
+    if (chars.length >= MAX_CHARACTERS) return 'full';
+    const now = new Date().toISOString();
+    const char: CharacterSummary = { id: charId, name, createdAt: now, lastPlayedAt: now, completed: true };
+    chars.push(char);
+    this.dirty.add(account.name.toLowerCase());
+    void this.flush();
+    return char;
+  }
+
   createCharacter(account: Account, name: string): CharacterSummary | 'full' {
     const chars = (account.characters ??= []);
     if (chars.length >= MAX_CHARACTERS) return 'full';

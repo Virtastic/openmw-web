@@ -175,11 +175,20 @@ export function characterRoutes(
         sendJson(res, 200, { ok: false, error: '2-24 characters: letters, numbers, spaces, - or _.' });
         return true;
       }
-      const r = accounts.createCharacter(account, label);
-      if (r === 'full') { sendJson(res, 200, { ok: false, error: `You already have ${MAX_CHARACTERS} characters.` }); return true; }
-      await accounts.flush(); // so a joining world sees the new slot immediately
-      log('info', 'frontdoor.character_created', { account: account.name, character: r.name, id: r.id });
-      sendJson(res, 200, { ok: true, character: { id: r.id, name: r.name, createdAt: r.createdAt, lastPlayedAt: r.lastPlayedAt, level: 1, needsChargen: true } });
+      // Hand back an id WITHOUT writing a slot. The character starts existing when creation
+      // finishes (ChargenComplete -> adoptCharacter in the world), so quitting during
+      // Morrowind's opening leaves no tile, no row and no doc — there is nothing to hide and
+      // nothing to delete. That matters because the completion signal is client-reported and
+      // can go missing; an earlier design deleted real characters by treating its absence as
+      // proof of abandonment.
+      if ((account.characters ?? []).length >= MAX_CHARACTERS) {
+        sendJson(res, 200, { ok: false, error: `You already have ${MAX_CHARACTERS} characters.` });
+        return true;
+      }
+      const id = accounts.provisionalCharacterId();
+      const now = new Date().toISOString();
+      log('info', 'frontdoor.character_provisional', { account: account.name, id });
+      sendJson(res, 200, { ok: true, character: { id, name: label, createdAt: now, lastPlayedAt: now, level: 1, needsChargen: true } });
       return true;
     }
     sendJson(res, 405, { error: 'method_not_allowed' });
