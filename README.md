@@ -253,9 +253,28 @@ location /play/ {
 }
 ```
 
+If you are also running the multiplayer server, it must be reachable **on the same origin
+as the game page** — the page will not hand its session ticket to a server on a different
+hostname, so a separate `mp.example.com` cannot work. Reverse-proxy these paths from the
+same vhost that serves `play/` to the gateway, and leave everything else on the static
+handler:
+
+```nginx
+# the gameplay WebSocket: the server hands clients /w/<worldId> and they dial it here
+location /w/  { proxy_pass http://gateway:8080; proxy_http_version 1.1;
+                proxy_set_header Upgrade $http_upgrade; proxy_set_header Connection upgrade; }
+location /auth/   { proxy_pass http://gateway:8080; }   # single sign-on
+location /locker/ { proxy_pass http://gateway:8080; }   # game-data upload
+location /worlds  { proxy_pass http://gateway:8080; }   # world directory
+```
+
+Do not expose `/admin` or `/metrics`. `/w/` is the one that matters: without it sign-in
+succeeds and then the game cannot connect to any world.
+
 On static hosts (Netlify, Cloudflare Pages, GitHub Pages via a proxy, and so on), set
 the same three headers through the host's headers config (for example a Netlify
-`_headers` file). When using the bundled retail path, the first load downloads the
+`_headers` file). Those hosts serve files only, so they cannot host the multiplayer
+server — it needs a real origin you control. When using the bundled retail path, the first load downloads the
 Morrowind assets once; they are cached in the browser (Cache API plus IDBFS), so
 later loads are fast. The in-page HUD shows live per-file download progress.
 
