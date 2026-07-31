@@ -17,6 +17,53 @@ free demo world or their own legally-owned Morrowind data, streamed straight
 from disk. Set `OPENMW_LAUNCHER=0` to skip the chooser and boot the game
 directly at `/` instead.
 
+## Serving your own Morrowind with the site
+
+If you own Morrowind and want the game to *come with* your server — so players
+open the page and start, with nothing to pick and nothing to upload — copy the
+contents of your `Data Files` folder into a `mwdata/` folder next to
+`server.py`:
+
+```
+openmw-web/
+├── server.py
+├── index.html
+└── mwdata/
+    ├── Morrowind.esm
+    ├── Morrowind.bsa
+    ├── Fonts/  Music/  Sound/  Splash/  Video/
+    └── …plus Tribunal/Bloodmoon and any mods, if you have them
+```
+
+Then start the server with the chooser turned off, so `/` boots straight into
+the game:
+
+```bash
+OPENMW_LAUNCHER=0 python3 server.py
+```
+
+(Leave it on if you'd rather players still got the choice — the chooser's own
+"bring your own copy" option keeps working either way.)
+
+The server lists whatever is actually in `mwdata/` and the page loads exactly
+that, so:
+
+- **The base game on its own is enough.** Expansions are optional — nothing
+  breaks if you don't own them.
+- **Mods work.** Extra `.esm`/`.esp`/`.bsa` dropped in are picked up
+  automatically (alphabetically; `?nomods=1` plays vanilla). A precise custom
+  load order still needs a desktop mod manager.
+- **Nothing is repacked.** Copy the folder as-is; there are no archives to
+  build. Files are read in chunks over HTTP Range as the engine needs them, so
+  the browser never downloads the whole 1.5 GB up front.
+
+Your server needs **Range request** support for this (`server.py` has it; the
+nginx and Caddy configs below are fine as written).
+
+> **Do not put Morrowind data in a public release or a public web root you don't
+> control.** You may serve your own copy to yourself; redistributing Bethesda's
+> game data is a different thing entirely. See *Licensing notes for hosts*.
+
 ## The serving contract
 
 The engine is multi-threaded WASM, which requires **cross-origin isolation**.

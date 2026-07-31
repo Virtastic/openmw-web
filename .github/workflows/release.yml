@@ -90,10 +90,12 @@ jobs:
           # double-click it (verified that python3 -m zipfile carries the bit through to unzip).
           cp -p play/server.py play/.env.example play/START-HERE.txt dist/web/
           cp -p "play/Start openmw-web.command" "play/Start openmw-web.bat" dist/web/
-          cp LICENSE NOTICE AUTHORS.md THIRD-PARTY-LICENSES.md SELF_HOSTING.md dist/web/
+          cp LICENSE NOTICE AUTHORS.md THIRD-PARTY-LICENSES.md SELF_HOSTING.md CHANGELOG.md dist/web/
           cp fsroot/gamedata/CREDITS-DEMO-DATA.txt fsroot/gamedata/ExampleSuiteAuthors.txt fsroot/gamedata/LinksToLicenses.txt dist/web/
           # No proprietary content may ever appear in a release asset (recurse — engine is under e/).
-          ! find dist/web -type f | grep -qiE 'morrowind\.(esm|bsa)|tribunal|bloodmoon|mwdata'
+          # Named titles, ANY .bsa/.esm/.esp (the asset pack is openmw-web-assets.bsa, which the
+          # old title-based pattern would have missed), and the data dirs themselves.
+          ! find dist/web -type f | grep -qiE 'morrowind\.(esm|bsa)|tribunal|bloodmoon|\.(bsa|esm|esp)$|/(mwdata|moddata)/'
           # python3 -m zipfile: the runner has no `zip` binary. Run from inside web/ so entries land at
           # the zip root (unzip → serve, no nested dir). '*' recurses into e/ but skips dotfiles, so pass
           # .env.example explicitly.

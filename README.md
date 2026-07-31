@@ -134,9 +134,15 @@ You don't need to build anything to run your own instance. Every
 [release](https://github.com/Virtastic/openmw-web/releases) ships two archives:
 
 - **`openmw-web-<tag>.zip`** holds the prebuilt engine (`openmw.js/.wasm/.data` plus
-  brotli variants), the web front-end, and a ready-to-run dev server. Unzip it, run
-  `python3 server.py`, and open Chrome. See
+  brotli variants), the web front-end, and a ready-to-run dev server. Unzip it and
+  double-click `Start openmw-web` — it checks for Python, starts the server, and
+  opens your browser. (`python3 server.py` still works.) See
   [`SELF_HOSTING.md`](SELF_HOSTING.md) for production servers.
+- Own Morrowind and want it served *with* the site, so players have nothing to pick
+  and nothing to upload? Copy your `Data Files` into a `mwdata/` folder next to
+  `server.py` and run it with `OPENMW_LAUNCHER=0`. It loads whatever is actually
+  there — base game alone, expansions, mods. See
+  [`SELF_HOSTING.md`](SELF_HOSTING.md#serving-your-own-morrowind-with-the-site).
 - **`openmw-web-src-<tag>.tar.gz`** is the exact source snapshot that built it (the
   GPLv3 Complete Corresponding Source).
 

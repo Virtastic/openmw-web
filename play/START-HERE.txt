@@ -33,6 +33,12 @@ You get two choices:
   default), the browser will refuse to open it. Copy the "Data Files" folder to
   your Documents or Desktop first, then pick that copy.
 
+  Tired of picking it every time, or running this for other people on your
+  network? Copy the CONTENTS of your "Data Files" folder into a folder named
+  "mwdata" next to this file. The game then loads straight away with nothing to
+  choose. Works with just the base game; expansions and mods are picked up if
+  you have them. Details in SELF_HOSTING.md.
+
 
 IF SOMETHING GOES WRONG
 -----------------------
