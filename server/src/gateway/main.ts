@@ -77,9 +77,9 @@ const worlds = new WorldSupervisor({
     //
     // This is NOT the memory governor, which is the mistake the old 32 was defending against:
     // sim peers are capped SEPARATELY by [simPeer].maxPeers and are spawned on demand, not
-    // pinned one-per-world, so worlds do not multiply the ~450 MB peer cost. A world that
-    // nobody is in is not even running — worlds start on dial and are idle-reaped. Raise or
-    // lower [simPeer].maxPeers to size the host, not this.
+    // pinned one-per-world, so worlds do not multiply the peer's cost. A world nobody is in
+    // is not even running — worlds start on dial and are idle-reaped. Size a host with
+    // [simPeer].maxPeers, measured on that host; do not budget from a number in a comment.
     maxWorlds: positiveInt(values['max-worlds'], config.server.maxPlayers, 'max-worlds'),
     idleReapMs: 120_000,
     startTimeoutMs: 120_000,

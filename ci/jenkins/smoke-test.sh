@@ -64,11 +64,24 @@ grep -q '"providers"' <<<"$P" && pass "/auth/providers proxied ($P)" || fail "/a
 
 # 4. The gameplay socket. HTTP/2 cannot carry an upgrade, so --http1.1 is mandatory here;
 #    without it this returns a misleading 404/502.
-WID=$(get "$BASE/worlds" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p' | head -1)
+# Worlds start a moment AFTER the gateway answers /healthz, so a deploy that restarts it
+# races this check. Retry briefly rather than reporting a red gate for a server that is
+# merely still coming up — a gate that cries wolf is one people learn to ignore.
+WID=""
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  WID=$(get "$BASE/worlds" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p' | head -1)
+  [ -n "$WID" ] && break
+  sleep 3
+done
 if [ -n "$WID" ]; then
-  WS=$(code --http1.1 -H 'Connection: Upgrade' -H 'Upgrade: websocket' \
-        -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' "$BASE/w/$WID")
-  [ "$WS" = "101" ] && pass "/w/$WID upgrades (101)" || fail "/w/$WID upgrades" "got $WS; the game can sign in and then reach no world"
+  WS=000
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    WS=$(code --http1.1 -H 'Connection: Upgrade' -H 'Upgrade: websocket' \
+          -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' "$BASE/w/$WID")
+    [ "$WS" = "101" ] && break
+    sleep 3   # 502 here usually means the world process is still starting
+  done
+  [ "$WS" = "101" ] && pass "/w/$WID upgrades (101)" || fail "/w/$WID upgrades" "got $WS after retries; the game can sign in and then reach no world"
 else
   fail "/worlds lists a world" "no world id in the directory response"
 fi
