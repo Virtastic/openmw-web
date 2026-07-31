@@ -2346,7 +2346,26 @@
                cfg.push('content=mp.omwscripts'); // multiplayer is always on this path
                FS.writeFile('/openmw.cfg', cfg.join('\n'));
                append('[locker] READY -> multiplayer with your library ('+content.join(' + ')+')');
-               removeRunDependency('mw-local');
+               // SETTLE DELAY — a stopgap for a race, not a fix, and it should be deleted once
+               // the real gate exists. The server hands a player control BEFORE the simulation
+               // peer holds authority over their cell: measured 5.2s on a warm box (join at
+               // t+0.0, simpeer.ready at t+5.2). Walk in that window and the peer arrives,
+               // takes authority and asserts its own view of where you are — which is the
+               // rubber-banding. Holding the loading screen covers the gap.
+               //
+               // WHY THIS IS THE WRONG SHAPE: it is a guess against a variable. Peer startup
+               // was 2.0s on a warm cache; a cold start or a busier host will exceed this, and
+               // then the snap happens AFTER the loading screen clears, with nothing on screen
+               // to explain it. It also makes every fast join wait for the slowest case.
+               //
+               // THE REAL FIX: the server already knows the moment authority exists — it logs
+               // simpeer.ready and calls noteHello('world') (connection.ts). Broadcast that to
+               // humans in-world, hold the loading screen on it instead of on a clock, and keep
+               // a timeout so a peer that never starts cannot strand the player here forever.
+               var SETTLE_MS = 8000;
+               append('[mp] waiting ' + (SETTLE_MS/1000) + 's for the world to settle…');
+               setTimeout(function(){ removeRunDependency('mw-local'); }, SETTLE_MS);
+               return;
              } else { setTimeout(waitCfg, 25); }
            })();
          })().catch(function(e){ bounce('Unexpected error: '+(e&&e.message||e)); });
