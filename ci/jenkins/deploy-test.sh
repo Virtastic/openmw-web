@@ -105,17 +105,27 @@ if [ "$HEALTHY" = "1" ]; then
     # logs rather than trusting a 200 from /healthz — the gateway answers /healthz happily
     # while the per-world process crash-loops underneath it.
     #
-    # Gate on simpeer.ready_to_spawn: it is emitted only after the peer BINARY resolved and
-    # the game data parsed, which is exactly the pair that silently degraded before. Do not
-    # gate on '"enabled":true' — that was an older log shape that no longer exists, and
-    # matching it fails every deploy including correct ones.
-    PEER=$($SSH "$TEST_HOST" "docker logs $NAME 2>&1 | grep -m1 'simpeer.ready_to_spawn'" || true)
+    # Gate on simpeer.READY, not ready_to_spawn. ready_to_spawn only means the binary resolved
+    # and the game data parsed — "we could start it" — and it was emitted happily while the
+    # peer crashed two seconds into every start and respawned twenty seconds later, forever.
+    # simpeer.ready is emitted when the peer has connected back and said hello, which is the
+    # only evidence it actually runs. The peer starts lazily, so give it time to appear.
+    PEER=""
+    for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do
+      PEER=$($SSH "$TEST_HOST" "docker logs $NAME 2>&1 | grep -m1 'simpeer.ready\"'" || true)
+      [ -n "$PEER" ] && break
+      sleep 5
+    done
     # '|| true' must live INSIDE the remote command: grep -c prints "0" and still exits 1 on
     # no match, so an outer '|| echo 0' would emit "0\n0" and break the integer test below.
     CRASH=$($SSH "$TEST_HOST" "docker logs $NAME 2>&1 | grep -c 'world.crashed' || true")
     echo "    ${PEER:-<no simpeer.ready_to_spawn line>}"
+    # A peer that crashed and is between restarts also leaves no ready line, so report the
+    # crash reason when there is one — it is now captured from the peer's stderr.
+    CRASHED=$($SSH "$TEST_HOST" "docker logs $NAME 2>&1 | grep 'simpeer.crashed' | tail -1" || true)
+    [ -n "$CRASHED" ] && echo "    last crash: $CRASHED"
     case "$PEER" in
-      *'"binary"'*) echo "    sim peer active - server-authoritative NPCs" ;;
+      *'simpeer.ready'*) echo "    sim peer active - server-authoritative NPCs" ;;
       *) echo "FAILED: sim peer did not start. Check the image was built from"
          echo "        server/Dockerfile.simpeer (the alpine server/Dockerfile has NO peer"
          echo "        binary), and that /data/gamedata contains Morrowind.esm."

@@ -2,6 +2,8 @@
 // See WASM_ADAPTATIONS.md at the repository root for details of the changes.
 #include "globalmap.hpp"
 
+#include <cstdlib>
+
 #include <osg/Geometry>
 #include <osg/Group>
 #include <osg/Image>
@@ -267,6 +269,16 @@ namespace MWRender
 
     void GlobalMap::render()
     {
+        // The simulation peer runs headless and draws nothing, so it has no global map to
+        // build. It must still not DIE trying: ImageManager returns the shared 8x8 warning
+        // image for every texture under OPENMW_HEADLESS (deliberately — mechanics, physics and
+        // navigation never read pixels), and the LUT validation below rejects 8x8 and throws.
+        // The peer then crash-looped on startup, taking cell authority with it, while the
+        // deploy reported success because it only checked that the binary could be spawned.
+        static const bool sHeadless = std::getenv("OPENMW_HEADLESS") != nullptr;
+        if (sHeadless)
+            return;
+
         const MWWorld::ESMStore& esmStore = *MWBase::Environment::get().getESMStore();
 
         // get the size of the world

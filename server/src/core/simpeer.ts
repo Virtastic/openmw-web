@@ -186,6 +186,13 @@ export class SimPeerSupervisor {
     metrics.simPeerSpawned.inc({});
     log('info', 'simpeer.spawned', { key, pid: child.pid ?? -1, cell: anchor?.cellKey ?? s.startCell });
 
+    // Keep only the tail: a peer logs verbosely at startup and the useful part is the last
+    // thing it said before dying. Bounded so a chatty peer cannot grow this without limit.
+    let stderrTail = '';
+    child.stderr?.on('data', (chunk: Buffer) => {
+      stderrTail = (stderrTail + chunk.toString()).slice(-4000);
+    });
+
     child.on('exit', (code, signal) => {
       // Only act if this is still the CURRENT peer for the key: a stop() followed by a
       // restart must not have the old process's exit reap the new one.
@@ -199,7 +206,15 @@ export class SimPeerSupervisor {
       // crashes on startup (bad data path, missing esm) cannot spin the CPU.
       metrics.simPeerCrashed.inc({});
       this.blockedUntil.set(key, this.now() + this.deps.settings.restartBackoffMs);
-      log('error', 'simpeer.crashed', { key, code: code ?? -1, signal: signal ?? '' });
+      // The reason, not just the fact. Without this the only evidence of a peer dying on
+      // startup was a spawn/crash pair repeating forever with no cause attached.
+      const lines = stderrTail.split('\n').filter((l) => l.trim() !== '');
+      const fatal = lines.filter((l) => /fatal|error|exception|terminate/i.test(l)).slice(-3);
+      log('error', 'simpeer.crashed', {
+        key, code: code ?? -1, signal: signal ?? '',
+        ...(fatal.length > 0 ? { fatal: fatal.join(' | ') } : {}),
+        ...(fatal.length === 0 && lines.length > 0 ? { lastOutput: lines.slice(-2).join(' | ') } : {}),
+      });
     });
     child.on('error', (err) => log('error', 'simpeer.child_error', { key, error: String(err) }));
   }
@@ -264,5 +279,8 @@ export class SimPeerSupervisor {
 }
 
 function defaultSpawner(binary: string): Spawner {
-  return (_key, env, args) => spawn(binary, args, { env, stdio: 'ignore', detached: false });
+  // 'ignore' discarded the peer's stderr, so a peer that crash-looped every 20 seconds left
+  // no trace of WHY — the fatal line only appeared by running the exact command by hand. Pipe
+  // it and surface the tail on exit: a supervised child that can die must not die silently.
+  return (_key, env, args) => spawn(binary, args, { env, stdio: ['ignore', 'ignore', 'pipe'], detached: false });
 }
