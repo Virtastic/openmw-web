@@ -47,6 +47,7 @@ import { createHttpServer, type HttpRoute } from './net/http';
 import { OidcService } from './auth/oidc';
 import { IdentityStore, LoginTicketStore, SessionIndex } from './auth/identities';
 import { createAuthRoutes } from './auth/routes';
+import { ensureVanillaManifest } from './data/vanilla-manifest';
 import { Locker, loadVanillaManifest } from './data/locker';
 import { s3FromEnv } from './data/s3';
 import { lockerRoutes } from './data/locker-routes';
@@ -412,9 +413,15 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     maxBytesPerAccount: config.locker.maxBytesPerAccount,
     ...(lockerStorage ? { storage: lockerStorage } : {}),
   });
-  // The files the locker will accept: retail Morrowind by sha256 (operator-provided) plus
-  // the always-on asset pack is a BSA served by us, not uploaded, so it is not in this set.
-  // Empty vanilla manifest = uploads refused until the operator generates one (tools/).
+  // The files the locker will accept: retail Morrowind by sha256, derived from the operator's
+  // own game data when they have not supplied a manifest. The asset pack is a BSA served by
+  // us, not uploaded, so it is not in this set.
+  //
+  // Both this process and the front door do this, and both must: whichever starts first
+  // generates and the other reads the file (the check is a cheap access()). Wiring only one
+  // of them left a world process configured with vanilla:0 whenever it won the race, which
+  // refuses every upload while the front door looks correctly configured.
+  await ensureVanillaManifest(sharedDir, gameDataDir(sharedDir));
   locker.configureAccepted(await loadVanillaManifest(sharedDir), [], {
     acceptByNameAndSize: config.locker.acceptByNameAndSize,
   });
