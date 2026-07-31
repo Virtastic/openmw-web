@@ -6,7 +6,12 @@
 # That also means uncommitted work builds exactly as it sits on disk.
 set -euo pipefail
 
-BUILDER="${BUILDER:-jenkins-vm}"
+# Deployment values come from ci/jenkins/config.env (gitignored — this repo is public).
+# Environment wins, so a CI job can override without touching the file.
+_cfg="$(dirname "$0")/config.env"
+# shellcheck disable=SC1090
+[ -f "$_cfg" ] && . "$_cfg"
+BUILDER="${BUILDER:?set BUILDER in ci/jenkins/config.env (see config.env.example)}"
 DEST="${DEST:-morrowind-src}"
 
 cd "$(dirname "$0")/../.."   # repo root
@@ -42,6 +47,6 @@ ssh "$BUILDER" "
 "
 
 echo "==> done. commit $(git rev-parse --short HEAD 2>/dev/null || echo unknown)$(git diff --quiet 2>/dev/null || echo ' (dirty)')"
-echo "    now trigger a job at http://192.168.1.130:8080/"
+echo "    now trigger a job on the build server's Jenkins (BUILDER=$BUILDER)"
 echo "      OpenMW-Web-Engine-WASM   ~13 min   engine + statics"
 echo "      OpenMW-Web-MP-Server     ~1 min    gateway + sim peer (longer if openmw/ changed)"

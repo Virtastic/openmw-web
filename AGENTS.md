@@ -8,17 +8,20 @@ The developer laptop is underpowered for this codebase and locks up under engine
 
 ## Where things run
 
-| Host | Address | Role |
+| Host | Reached as | Role |
 |---|---|---|
-| Proxmox host | `192.168.1.106` (`ssh proxmox`) | Hypervisor. Threadripper 1950X, 32 threads, 62GB RAM. |
-| Build server | `192.168.1.130` (`ssh jenkins-vm`) | Jenkins + Docker. All builds and relinks happen here. |
-| Test app server | `192.168.1.131` (`ssh test-vm`) | Hosts the app for testing. Deploy target. |
-| AI VM | `192.168.1.132` (`ssh ai-vm`) | Local model inference (CPU). |
+| Hypervisor | `ssh proxmox` | Proxmox. Hosts the VMs below. |
+| Build server | `ssh $BUILDER` | Jenkins + Docker. All builds and relinks happen here. |
+| Test app server | `$TEST_HOST` | Hosts the app for testing. Deploy target. |
+| AI VM | `ssh ai-vm` | Local model inference. |
 
-DNS namespace for these boxes is `*.dev.virtastic.app`:
-`jenkins.dev.virtastic.app`, `morrowind.dev.virtastic.app`, `ai.dev.virtastic.app`.
+**Addresses are NOT in this file — this repo is public.** The real values live in
+`ci/jenkins/config.env` (gitignored; copy `config.env.example` and fill it in), and the
+scripts read them from there or from the environment. Host aliases like `proxmox` /
+`ai-vm` are whatever you put in your own `~/.ssh/config`.
 
-Each VM: 10 vCPU, 8GB RAM floor / 24GB ceiling (ballooning), 120GB thin disk on an NVMe pool.
+Sizing that matters for builds: each VM wants ~10 vCPU and enough RAM to hold a WASM link
+step (8GB floor, 24GB ceiling with ballooning works), on an NVMe-backed pool.
 
 ---
 
@@ -53,7 +56,7 @@ Sync local changes to it, then trigger a build.
 ./ci/jenkins/sync-to-builder.sh
 
 # 2. build + deploy to the test server
-#    Jenkins UI:  http://192.168.1.130:8080/
+#    Jenkins UI:  http://<build server>:8080/   (BUILDER in ci/jenkins/config.env)
 #      OpenMW-Web-MP-Server     ~1 min    gateway + sim peer, then deploy
 #      OpenMW-Web-Engine-WASM   ~13 min   WASM engine: full compile, then deploy
 ```

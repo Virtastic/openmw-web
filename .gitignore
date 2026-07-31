@@ -84,3 +84,6 @@ play/moddata/
 # local dev stack data (wasm-build/dev-local.sh)
 .dev-local/
 .claude/settings.local.json
+
+# Local deployment values (hosts, users, key paths). The repo is public.
+ci/jenkins/config.env

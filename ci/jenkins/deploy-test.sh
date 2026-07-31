@@ -8,8 +8,14 @@
 set -euo pipefail
 
 WHAT="${1:?usage: deploy-test.sh engine|server}"
-TEST_HOST="${TEST_HOST:-testapp@192.168.1.131}"
-SSH_KEY="${SSH_KEY:-/var/jenkins_home/.ssh/id_ed25519}"
+
+# Deployment values come from ci/jenkins/config.env (gitignored — this repo is public).
+# Environment wins, so a CI job can override without touching the file.
+_cfg="$(dirname "$0")/config.env"
+# shellcheck disable=SC1090
+[ -f "$_cfg" ] && . "$_cfg"
+TEST_HOST="${TEST_HOST:?set TEST_HOST in ci/jenkins/config.env (see config.env.example)}"
+SSH_KEY="${SSH_KEY:?set SSH_KEY in ci/jenkins/config.env (see config.env.example)}"
 SSH="ssh -i $SSH_KEY -o BatchMode=yes -o StrictHostKeyChecking=accept-new"
 
 # Both containers share a user-defined network so Caddy can reach the gateway by container
@@ -125,7 +131,7 @@ if [ "$HEALTHY" = "1" ]; then
   # whether a player can sign in and reach a world: every check in smoke-test.sh is a bug that
   # shipped green. Run it against the public origin, because half the contract (TLS, the edge
   # forwarding X-Forwarded-Proto, the launcher gate) only exists out there.
-  SMOKE_URL="${SMOKE_URL:-https://morrowind.dev.virtastic.app}"
+  SMOKE_URL="${SMOKE_URL-}"   # empty = skip the gate; see config.env.example
   if [ -n "$SMOKE_URL" ]; then
     echo "==> contract check against $SMOKE_URL"
     if ! "$(dirname "$0")/smoke-test.sh" "$SMOKE_URL"; then

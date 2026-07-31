@@ -2,7 +2,7 @@
 # Post-deploy contract test. Run against a DEPLOYED origin; fails the deploy if the site is
 # serving something a player cannot actually use.
 #
-# Usage: smoke-test.sh https://morrowind.dev.virtastic.app
+# Usage: smoke-test.sh https://your-deployed-origin
 #
 # Why this exists: every check below is a bug that actually shipped, was invisible from
 # /healthz, and cost hours to find. A 200 from the front page proves almost nothing — the
