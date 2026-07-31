@@ -51,6 +51,28 @@ jobs:
           sudo mkdir -p /opt/morrowind/data
           sudo cp docker-compose.prod.yml /opt/morrowind/docker-compose.prod.yml
 
+      # Performance asset pack (MOP + Project Atlas). It goes on the READ-ONLY DATA VOLUME
+      # (/opt/morrowind/data -> /srv/data), never into the image: it is 114MB and changes far less
+      # often than the engine, so baking it in would add it to every 13-minute rebuild and to every
+      # image layer. index.html probes moddata/ then data/, so /srv/data/ is found with no code
+      # change. Gitignored, so it comes from the runner's canonical tree like the demo data.
+      # FATAL if absent: shipping a deploy that silently lacks it means production and the release
+      # bundle are different builds.
+      - name: Stage performance asset pack onto the data volume
+        run: |
+          SRC="$HOME/morrowind-src/play/moddata/openmw-web-assets.bsa"
+          test -f "$SRC" \
+            || { echo "FATAL: $SRC missing on the runner (build it with wasm-build/build-assetpack.py)." >&2; exit 1; }
+          # Copy only when it actually differs, so a redeploy doesn't rewrite 114MB for nothing.
+          if ! sudo cmp -s "$SRC" /opt/morrowind/data/openmw-web-assets.bsa; then
+            sudo cp "$SRC" /opt/morrowind/data/openmw-web-assets.bsa.tmp
+            sudo mv /opt/morrowind/data/openmw-web-assets.bsa.tmp /opt/morrowind/data/openmw-web-assets.bsa
+            echo "asset pack updated ($(du -m "$SRC" | cut -f1) MB)"
+          else
+            echo "asset pack already current"
+          fi
+          sudo chmod 0644 /opt/morrowind/data/openmw-web-assets.bsa
+
       # Drop the vhost into the shared edge's sites dir (imported by /opt/edge/Caddyfile).
       - name: Install edge vhost
         run: sudo cp deploy/morrowind.caddy /opt/edge/sites/morrowind.caddy
@@ -73,6 +95,13 @@ jobs:
           docker run --rm --network nostalgia curlimages/curl:latest \
             -fsS -D - -o /dev/null http://morrowind:8080/ \
             | tee /dev/stderr | grep -qi '^cross-origin-opener-policy: same-origin'
+          # The asset pack must actually be SERVED, not merely present on the volume — a wrong mount
+          # or permissions would otherwise pass silently, since index.html degrades gracefully when
+          # it can't find it. Range-probe it the same way the page does, and require a byte count.
+          docker run --rm --network nostalgia curlimages/curl:latest \
+            -fsS -D - -o /dev/null -H 'Range: bytes=0-0' http://morrowind:8080/data/openmw-web-assets.bsa \
+            | tee /dev/stderr | grep -qiE '^content-range: bytes 0-0/[0-9]{8,}' \
+            || { echo "FATAL: asset pack not served at /data/openmw-web-assets.bsa" >&2; exit 1; }
 
       # Real end-to-end gate for the config THIS deploy controls: the shared edge (TLS with the origin
       # cert + sec_headers + reverse_proxy to the container). We hit the edge DIRECTLY via --resolve to

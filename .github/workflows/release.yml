@@ -62,6 +62,14 @@ jobs:
             test -f "fsroot/gamedata/$f" || { echo "FATAL: fsroot/gamedata/$f missing — demo attribution incomplete." >&2; exit 1; }
           done
           echo "staged $(find fsroot/gamedata -type f | wc -l) demo files"
+          # Performance asset pack (MOP + Project Atlas, built by wasm-build/build-assetpack.py).
+          # Gitignored like the demo data, so it comes from the runner's canonical tree. FATAL if
+          # absent: a release that silently omits it is a different bundle than the one we tested.
+          test -f "$HOME/morrowind-src/play/moddata/openmw-web-assets.bsa" \
+            || { echo "FATAL: openmw-web-assets.bsa missing on the runner (build it with wasm-build/build-assetpack.py)." >&2; exit 1; }
+          mkdir -p play/moddata
+          cp "$HOME/morrowind-src/play/moddata/openmw-web-assets.bsa" play/moddata/
+          echo "staged asset pack ($(du -m play/moddata/openmw-web-assets.bsa | cut -f1) MB)"
 
       - name: Build engine image
         run: DOCKER_BUILDKIT=1 docker build --network=host -t morrowind:release -f Dockerfile .
@@ -91,11 +99,17 @@ jobs:
           cp -p play/server.py play/.env.example play/START-HERE.txt dist/web/
           cp -p "play/Start openmw-web.command" "play/Start openmw-web.bat" dist/web/
           cp LICENSE NOTICE AUTHORS.md THIRD-PARTY-LICENSES.md SELF_HOSTING.md CHANGELOG.md dist/web/
+          # Performance asset pack — index.html probes moddata/ then data/ for it.
+          mkdir -p dist/web/moddata
+          cp play/moddata/openmw-web-assets.bsa dist/web/moddata/
           cp fsroot/gamedata/CREDITS-DEMO-DATA.txt fsroot/gamedata/ExampleSuiteAuthors.txt fsroot/gamedata/LinksToLicenses.txt dist/web/
           # No proprietary content may ever appear in a release asset (recurse — engine is under e/).
-          # Named titles, ANY .bsa/.esm/.esp (the asset pack is openmw-web-assets.bsa, which the
-          # old title-based pattern would have missed), and the data dirs themselves.
-          ! find dist/web -type f | grep -qiE 'morrowind\.(esm|bsa)|tribunal|bloodmoon|\.(bsa|esm|esp)$|/(mwdata|moddata)/'
+          # Rejects named titles, ANY .bsa/.esm/.esp, and the data dirs — EXCEPT the one archive we
+          # ship deliberately (the asset pack). Allow-list it by exact path first, so a stray
+          # Morrowind.bsa dropped into moddata/ is still caught.
+          find dist/web -type f | grep -v '^dist/web/moddata/openmw-web-assets\.bsa$' > /tmp/rel-files.txt
+          ! grep -qiE 'morrowind\.(esm|bsa)|tribunal|bloodmoon|\.(bsa|esm|esp)$|/(mwdata|moddata)/' /tmp/rel-files.txt
+          test -f dist/web/moddata/openmw-web-assets.bsa || { echo "FATAL: asset pack missing from the bundle." >&2; exit 1; }
           # python3 -m zipfile: the runner has no `zip` binary. Run from inside web/ so entries land at
           # the zip root (unzip → serve, no nested dir). '*' recurses into e/ but skips dotfiles, so pass
           # .env.example explicitly.

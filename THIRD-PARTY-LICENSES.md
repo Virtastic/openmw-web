@@ -44,9 +44,27 @@ this repo; they are fetched/built locally (see the README).
 | OpenAL (Emscripten's Web Audio implementation) | Part of Emscripten (MIT / University of Illinois NCSA) | https://emscripten.org/ |
 | Emscripten ports & runtime | MIT / University of Illinois NCSA | https://emscripten.org/ |
 
+## Performance asset pack
+
+`moddata/openmw-web-assets.bsa` bundles two community mods that optimise the
+game's meshes and textures. Both are used with credit, as their authors ask.
+They are **not** part of the GPLv3 engine — they carry their own terms, listed
+below — and they do nothing unless you supply your own copy of Morrowind.
+
+| Mod | Authors | Source |
+|---|---|---|
+| Morrowind Optimization Patch | Axeljk, Borok, Daemacht, Endoran, Greatness7, Half11, Hemaris, Lamb Shark, Melchior Dahrk, Nich, Remiros, Revenorror, Sophie, Stele, Vegetto | https://www.nexusmods.com/morrowind/mods/45384 |
+| Project Atlas | Melchior Dahrk and the Project Atlas team | https://www.nexusmods.com/morrowind/mods/45399 |
+
+The archive contains only the modules needed for the optimisation: MOP's `00
+Core`, and Project Atlas's `00 Core` plus its vanilla-resolution atlases.
+Rebuild it from the upstream downloads with
+[`wasm-build/build-assetpack.py`](wasm-build/build-assetpack.py).
+
 ## Game data
 
-No Morrowind game data is included or distributed here. *The Elder Scrolls* and
-*Morrowind* are trademarks of ZeniMax Media / Bethesda Softworks; this project is
-not affiliated with or endorsed by them. See [`LICENSE`](LICENSE) and the README
-for details.
+No Morrowind game data is included or distributed here — the asset pack above
+replaces meshes in a copy of the game you already own, and is useless without
+it. *The Elder Scrolls* and *Morrowind* are trademarks of ZeniMax Media /
+Bethesda Softworks; this project is not affiliated with or endorsed by them.
+See [`LICENSE`](LICENSE) and the README for details.

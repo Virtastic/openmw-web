@@ -36,11 +36,16 @@ Nothing here changes the hosted site at morrowind.virtastic.app.
   skip).
 - **`START-HERE.txt`** in the download: what to click, why it must be Chrome,
   and the Steam/`Program Files` gotcha.
-- **Optional performance asset pack.** Where a host provides it, mesh and
-  texture optimisations cut draw calls by around a quarter — measured 1193 → 885
-  draw calls and 9.2 ms → 7.7 ms per frame in a Balmora interior. Interiors gain
-  most. Not included in the download; it is built from third-party mods and
-  supplied separately by whoever runs the server.
+- **Performance asset pack, included in the download.** Mesh and texture
+  optimisations from the Morrowind Optimization Patch and Project Atlas, packed
+  into a single archive the engine reads on demand. Measured in a Balmora
+  interior: **1193 → 885 draw calls** and **9.2 ms → 7.7 ms** per frame, roughly
+  a quarter off both. Interiors gain most, since they get no distant-object
+  batching. It only applies to your own copy of the game; it costs nothing until
+  a mesh is actually read, and `?noassets=1` turns it off.
+
+  Credit: the Morrowind Optimization Patch contributors and the Project Atlas
+  team — see `THIRD-PARTY-LICENSES.md`.
 
 ### Changed
 
