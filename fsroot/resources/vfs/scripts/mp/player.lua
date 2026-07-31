@@ -413,9 +413,18 @@ local function pollHarness()
         -- reasoning does not hold before character creation: you are alone in your own private
         -- world, and a modal you cannot dismiss while something walks up to you is worse.
         -- Paired with uimode, so the pause can never outlive the overlay that asked for it.
+        --
+        -- The removeMode before setMode is LOAD-BEARING. uimode:on has already put us in
+        -- Interface mode by the time this arrives, and pause is only recomputed when the mode
+        -- actually CHANGES: omw/ui.lua sums modePause across the stack inside a handler that
+        -- returns early when oldMode == newMode. Setting the flag and re-calling setMode on the
+        -- mode we are already in therefore sets a flag nobody ever reads — the overlay opened
+        -- and the world kept running underneath it. Leaving the mode first makes the re-entry a
+        -- real transition, which is what evaluates the flag.
         local pause_mode = cmd:match('^pause:(%a+)$')
         if pause_mode == 'on' then
             I.UI.setPauseOnMode('Interface', true)
+            I.UI.removeMode('Interface')
             I.UI.setMode('Interface', { windows = {} })
         elseif pause_mode == 'off' then
             I.UI.removeMode('Interface')
