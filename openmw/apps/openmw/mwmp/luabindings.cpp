@@ -262,7 +262,11 @@ namespace MWMP
         // This is what lets ONE headless engine simulate several parts of the world. Without
         // it a peer can only ever hold the region its own avatar stands in, so covering players
         // spread across the map costs a whole ~450 MB engine process per region.
-        api["setSimAnchors"] = [](const sol::table& anchors) {
+        // `interiors` is a second, optional list of interior cell NAMES. An interior has no
+        // grid coordinate, so it cannot ride in the anchor list — and without it a peer could
+        // only ever simulate the one room its own avatar stood in, which left every indoor
+        // player unsimulated (Morrowind's opening is entirely indoors).
+        api["setSimAnchors"] = [](const sol::table& anchors, const sol::optional<sol::table>& interiors) {
             std::vector<osg::Vec2i> out;
             out.reserve(anchors.size());
             for (std::size_t i = 1; i <= anchors.size(); ++i)
@@ -275,7 +279,18 @@ namespace MWMP
                 if (x && y)
                     out.emplace_back(*x, *y);
             }
-            MWBase::Environment::get().getWorld()->setSimAnchors(out);
+            std::vector<ESM::RefId> rooms;
+            if (interiors)
+            {
+                rooms.reserve(interiors->size());
+                for (std::size_t i = 1; i <= interiors->size(); ++i)
+                {
+                    const sol::optional<std::string> name = (*interiors)[i];
+                    if (name && !name->empty())
+                        rooms.push_back(ESM::RefId::stringRefId(*name));
+                }
+            }
+            MWBase::Environment::get().getWorld()->setSimAnchors(out, rooms);
         };
 
         // Test/automation surface for wasm-build/mp-harness.mjs (PROTOCOL.md client contract).

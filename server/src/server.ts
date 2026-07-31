@@ -800,11 +800,6 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // Empty regions cost nothing: the engine already unloads cells no anchor covers.
   const WORLD_KEY = 'world';
   let lastAnchors = '';
-  // Where the peer's avatar currently stands, and when it last moved. Moving it means a
-  // restart, so it is rate-limited.
-  let peerStandCell: string | undefined;
-  let lastPeerMove = 0;
-  const PEER_MOVE_COOLDOWN_MS = 20_000;
   // Cells the peer currently holds because they are anchored, so the set can be diffed rather
   // than re-entered every tick (re-entering bumps the epoch and forces a full re-sync).
   const claimed = new Set<string>();
@@ -819,10 +814,15 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       return;
     }
 
-    // Exterior cells become anchors. An INTERIOR cannot: Scene::setSimAnchors takes grid
-    // coordinates (osg::Vec2i) and isWithinActiveGrids compares them, so there is no way to
-    // name an interior in that list — and setSimAnchors early-returns unless the peer itself
-    // is standing outdoors. The only way a peer simulates an interior is to BE in it.
+    // EVERY occupied cell is covered, interior or exterior, by ONE peer. Exteriors anchor by
+    // grid coordinate; interiors anchor by NAME, because an interior has no coordinate. Both
+    // are held without the peer standing in them, so 200 players spread across the map are all
+    // simulated from a single process.
+    //
+    // This is what makes authority the peer's, always. Before interiors could be anchored, a
+    // player indoors was in a cell nothing simulated — the peer could only cover the one room
+    // it stood in — so an indoor quest simply never advanced. Chargen is entirely indoors,
+    // which is why it stalled at the census office every time.
     const cells = [...new Set(humans.map((p) => p.cellKey!))].sort();
     const anchors: { x: number; y: number }[] = [];
     const interiors: string[] = [];
@@ -832,47 +832,21 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       else interiors.push(cell);
     }
 
-    // Where the peer's avatar must stand. An occupied interior WINS over an exterior, because
-    // the exterior is covered by an anchor from anywhere while the interior is covered only by
-    // presence. This is what unblocks Morrowind's opening: chargen happens entirely indoors
-    // (the prison ship, then the census office), so with the peer parked outside those rooms
-    // had no simulator at all — the guard delivered his line and stood there forever, and the
-    // quest could not advance because nothing was ticking his AI.
-    const wantStand = interiors[0]
-      ?? humans.find((p) => parseExterior(p.cellKey!) !== null)?.cellKey;
-    const standOccupant = wantStand !== undefined
-      ? humans.find((p) => p.cellKey === wantStand)
-      : undefined;
-    const standAnchor = wantStand !== undefined
-      ? { cellKey: wantStand, x: standOccupant?.pose?.x ?? 0,
-          y: standOccupant?.pose?.y ?? 0, z: standOccupant?.pose?.z ?? 0 }
-      : undefined;
-
-    // A RUNNING peer cannot be relocated — ensure() only cancels its idle reap — so following
-    // a player indoors means restarting it there. Only when the cell actually changes, and at
-    // most once per PEER_MOVE_COOLDOWN_MS, or a player walking a doorway would restart the
-    // simulation every tick. stop() is a clean SIGTERM and does not arm the crash backoff, so
-    // the next ensure() respawns immediately.
-    if (standAnchor && peerStandCell !== undefined && peerStandCell !== standAnchor.cellKey
-        && Date.now() - lastPeerMove > PEER_MOVE_COOLDOWN_MS) {
-      log('info', 'simpeer.follow', { from: peerStandCell, to: standAnchor.cellKey });
-      lastPeerMove = Date.now();
-      peerStandCell = undefined;
-      lastAnchors = '';            // force a resend once the new peer is up
-      claimed.clear();             // the old peer's claims die with it
-      simPeers.stop(WORLD_KEY);
-    }
-    simPeers.ensure(WORLD_KEY, standAnchor);
-    if (standAnchor) peerStandCell = standAnchor.cellKey;
+    // The peer's avatar has to stand somewhere, but it no longer matters WHERE: everything it
+    // must simulate is anchored. Prefer an exterior so a cold start lands somewhere sensible.
+    const first = humans.find((p) => parseExterior(p.cellKey!) !== null) ?? humans[0];
+    simPeers.ensure(WORLD_KEY, first
+      ? { cellKey: first.cellKey!, x: first.pose?.x ?? 0, y: first.pose?.y ?? 0, z: first.pose?.z ?? 0 }
+      : undefined);
 
     // Only on change: the peer re-runs its cell grid when the list moves, so resending an
     // identical list every 5 s would churn loads for nothing.
-    const key = JSON.stringify(anchors);
+    const key = JSON.stringify([anchors, interiors]);
     if (key !== lastAnchors) {
       lastAnchors = key;
       const peerPlayer = roster.inWorld().find((p) => p.system === true);
       if (peerPlayer) {
-        peerPlayer.peer.sendEvent('SimAnchors', { anchors });
+        peerPlayer.peer.sendEvent('SimAnchors', { anchors, interiors });
         // AUTHORITY FOLLOWS THE ANCHORS. The peer keeps these cells loaded and ticks their
         // actors, so it must also HOLD them — otherwise the cells players are standing in have
         // no holder and their NPCs are frozen anyway, which was the whole bug. Claiming a cell
@@ -889,7 +863,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
           claimed.add(c);
         }
       }
-      log('info', 'simpeer.anchors', { count: anchors.length });
+      log('info', 'simpeer.anchors', { exteriors: anchors.length, interiors: interiors.length });
     }
     simPeers.sweep();
   }, 5_000);

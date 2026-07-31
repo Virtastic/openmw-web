@@ -579,6 +579,9 @@ namespace MWBase
         /// Empty for a normal client, where the player is the only anchor. Mechanics uses it so
         /// actors near ANY anchor keep processing, instead of only those near the player.
         virtual std::vector<osg::Vec3f> getSimAnchorPositions() const = 0;
+        /// True when this cell is an interior held for the server; its actors must keep
+        /// processing regardless of how far the local player is.
+        virtual bool isAnchoredInterior(const MWWorld::CellStore* cell) const = 0;
 
         /// MP: set those centres. Server-driven; see MWWorld::Scene::setSimAnchors.
         virtual void setSimAnchors(const std::vector<osg::Vec2i>& anchors) = 0;

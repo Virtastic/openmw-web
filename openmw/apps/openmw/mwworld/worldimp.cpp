@@ -2726,14 +2726,20 @@ namespace MWWorld
         return ESM::RefId();
     }
 
+    bool World::isAnchoredInterior(const MWWorld::CellStore* cell) const
+    {
+        return mWorldScene->isAnchoredInterior(cell);
+    }
+
     std::vector<osg::Vec3f> World::getSimAnchorPositions() const
     {
         return mWorldScene->getSimAnchorPositions();
     }
 
-    void World::setSimAnchors(const std::vector<osg::Vec2i>& anchors)
+    void World::setSimAnchors(
+        const std::vector<osg::Vec2i>& anchors, const std::vector<ESM::RefId>& interiors)
     {
-        mWorldScene->setSimAnchors(anchors);
+        mWorldScene->setSimAnchors(anchors, interiors);
     }
 
     ESM::RefId World::findExteriorPosition(std::string_view nameId, ESM::Position& pos)

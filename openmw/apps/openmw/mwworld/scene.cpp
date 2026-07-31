@@ -620,15 +620,58 @@ namespace MWWorld
 
     // ------------------------------------------------ MP simulation anchors
 
-    void Scene::setSimAnchors(const std::vector<osg::Vec2i>& anchors)
+    void Scene::setSimAnchors(
+        const std::vector<osg::Vec2i>& anchors, const std::vector<ESM::RefId>& interiors)
     {
-        if (mSimAnchors == anchors)
+        const bool exteriorsChanged = mSimAnchors != anchors;
+        const bool interiorsChanged = mSimAnchorInteriors != interiors;
+        if (!exteriorsChanged && !interiorsChanged)
             return;
         mSimAnchors = anchors;
+
+        if (interiorsChanged)
+        {
+            // Unload interiors that are no longer anchored — unless the local player is
+            // standing in one, which is its own reason to stay.
+            for (auto iter = mActiveCells.begin(); iter != mActiveCells.end();)
+            {
+                CellStore* cell = *iter++;
+                if (cell->getCell()->isExterior() || cell == mCurrentCell)
+                    continue;
+                const ESM::RefId id = cell->getCell()->getId();
+                const bool stillWanted
+                    = std::find(interiors.begin(), interiors.end(), id) != interiors.end();
+                const bool wasHeld = std::find(mSimAnchorInteriors.begin(), mSimAnchorInteriors.end(), id)
+                    != mSimAnchorInteriors.end();
+                if (wasHeld && !stillWanted)
+                    unloadCell(cell, nullptr);
+            }
+            mSimAnchorInteriors = interiors;
+
+            // Load interiors newly anchored. Loading one does NOT make it current: the local
+            // player stays where they are, and this process simply also ticks that room. That
+            // is the whole point — a peer can hold a hundred rooms it is not standing in.
+            for (const ESM::RefId& id : mSimAnchorInteriors)
+            {
+                CellStore& cell = mWorld.getWorldModel().getCell(id);
+                if (std::find(mActiveCells.begin(), mActiveCells.end(), &cell) != mActiveCells.end())
+                    continue;
+                loadCell(cell, nullptr, false, osg::Vec3f(0.f, 0.f, 0.f), nullptr);
+            }
+        }
+
         // Re-run the grid so newly anchored regions load and dropped ones unload. Cheap when
         // nothing changed, which is the common case (the server resends the same list).
-        if (mCurrentCell != nullptr && mCurrentCell->getCell()->isExterior())
+        if (exteriorsChanged && mCurrentCell != nullptr && mCurrentCell->getCell()->isExterior())
             requestChangeCellGrid(mLastPlayerPos, mCurrentGridCenter, false);
+    }
+
+    bool Scene::isAnchoredInterior(const MWWorld::CellStore* cell) const
+    {
+        if (cell == nullptr || cell->getCell()->isExterior())
+            return false;
+        return std::find(mSimAnchorInteriors.begin(), mSimAnchorInteriors.end(), cell->getCell()->getId())
+            != mSimAnchorInteriors.end();
     }
 
     bool Scene::isWithinActiveGrids(int x, int y) const
@@ -684,8 +727,14 @@ namespace MWWorld
                 if (!keep)
                     unloadCell(cell, navigatorUpdateGuard.get());
             }
-            else
+            else if (!isAnchoredInterior(cell))
+            {
+                // An anchored interior is held for the server and must survive the player's
+                // own grid moving. Without this exemption every exterior grid change silently
+                // dropped every room the peer was holding, so an indoor player's NPCs froze the
+                // moment anyone outdoors walked across a cell boundary.
                 unloadCell(cell, navigatorUpdateGuard.get());
+            }
         }
 
         const DetourNavigator::CellGridBounds cellGridBounds{

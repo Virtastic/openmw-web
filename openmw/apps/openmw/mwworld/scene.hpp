@@ -131,6 +131,14 @@ namespace MWWorld
         // Empty of anchors — every normal client — this is exactly vanilla behaviour.
         std::vector<osg::Vec2i> mSimAnchors;
 
+        // Interiors held for the server, by cell name. An interior has NO grid coordinate, so
+        // it cannot be expressed in mSimAnchors — which is why a peer used to be able to
+        // simulate an interior only by standing in it, and why Morrowind's opening (entirely
+        // indoors) had no simulator at all unless the peer happened to be in that exact room.
+        // These are kept loaded and their actors keep processing regardless of where this
+        // process's own player stands, exactly like an exterior anchor.
+        std::vector<ESM::RefId> mSimAnchorInteriors;
+
         // Load and unload cells as necessary to create a cell grid with "X" and "Y" in the center
         void changeCellGrid(const osg::Vec3f& pos, ESM::ExteriorCellLocation playerCellIndex, bool changeEvent = true);
 
@@ -155,7 +163,14 @@ namespace MWWorld
     public:
         /// Extra cell-grid centres to keep active, in addition to the player's own grid.
         /// Server-driven (the sim peer's world server sends the list); empty for a real client.
-        void setSimAnchors(const std::vector<osg::Vec2i>& anchors);
+        /// `interiors` are held by name — an interior has no grid coordinate to anchor on.
+        void setSimAnchors(
+            const std::vector<osg::Vec2i>& anchors, const std::vector<ESM::RefId>& interiors = {});
+
+        /// True when `cell` is an interior this process is holding for the server. Actors there
+        /// must keep processing however far the local player is, because "distance" is
+        /// meaningless across a door.
+        bool isAnchoredInterior(const MWWorld::CellStore* cell) const;
 
         /// True when `cell` is within the active grid of the player or any simulation anchor.
         bool isWithinActiveGrids(int x, int y) const;

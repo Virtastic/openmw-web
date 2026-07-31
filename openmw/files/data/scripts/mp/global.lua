@@ -850,7 +850,14 @@ local eventHandlers = {
         for _, a in ipairs((data and data.anchors) or {}) do
             if a.x and a.y then out[#out + 1] = { x = math.floor(a.x), y = math.floor(a.y) } end
         end
-        mp.setSimAnchors(out)
+        -- Interiors come as NAMES: they have no grid coordinate, so they cannot ride in the
+        -- anchor list. Held exactly like an exterior anchor — the peer keeps the room loaded
+        -- and ticks its actors without standing in it.
+        local rooms = {}
+        for _, name in ipairs((data and data.interiors) or {}) do
+            if type(name) == 'string' and name ~= '' then rooms[#rooms + 1] = name end
+        end
+        mp.setSimAnchors(out, rooms)
     end,
     -- The credential for the next world, minted by the one we are still connected to. The
     -- pending switch is waiting on exactly this.
