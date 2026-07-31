@@ -407,7 +407,12 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     mViewer->eventTraversal();
     mViewer->updateTraversal();
 
-    // update focus object for GUI
+    // HEADLESS: this is a full IntersectionVisitor descent of the scene graph, every frame,
+    // for the sole purpose of deciding which object a crosshair is over so the GUI can draw a
+    // tooltip. The sim peer has no crosshair and no GUI. Purely presentational — it has no
+    // effect on AI, physics or scripts — so skipping it changes nothing about the simulation.
+    static const bool sHeadless = std::getenv("OPENMW_HEADLESS") != nullptr;
+    if (!sHeadless)
     {
         ScopedProfile<UserStatsType::Focus> profile(frameStart, frameNumber, *timer, *stats);
         mWorld->updateFocusObject();
@@ -419,7 +424,6 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     // H1 sim-peer spike: simulation (AI, physics, scripts) ran in updateTraversal() above;
     // drawing is this call alone. Skipping it is the entire headless saving — GL is paid
     // once at init and zero per frame. allowUpdate/finishUpdate stay paired around it.
-    static const bool sHeadless = std::getenv("OPENMW_HEADLESS") != nullptr;
     if (!sHeadless)
         mViewer->renderingTraversals();
 

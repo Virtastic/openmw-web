@@ -97,7 +97,7 @@ namespace MWScript
                 {
                     if (dialogue.mType == ESM::Dialogue::Type::Journal)
                     {
-                        for (const auto& journalInfo : dialogue.mInfoOrder.getOrderedInfo())
+                        for (const auto& journalInfo : dialogue.mInfo) // was mInfoOrder: that copy is moved out at setUp()
                         {
                             if (journalInfo.mQuestStatus != ESM::DialInfo::QS_Name)
                                 journal->addEntry(dialogue.mId, journalInfo.mData.mJournalIndex, playerPtr);
@@ -105,7 +105,7 @@ namespace MWScript
                     }
                     else if (dialogue.mType == ESM::Dialogue::Type::Topic)
                     {
-                        for (const auto& topicInfo : dialogue.mInfoOrder.getOrderedInfo())
+                        for (const auto& topicInfo : dialogue.mInfo) // was mInfoOrder: that copy is moved out at setUp()
                         {
                             journal->addTopic(dialogue.mId, topicInfo.mId, playerPtr);
                         }

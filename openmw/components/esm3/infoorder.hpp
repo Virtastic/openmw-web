@@ -84,9 +84,15 @@ namespace ESM
             }
         }
 
+        // MOVE, do not copy. This used to copy-ASSIGN mOrderedInfo into `info` and then keep
+        // its own copy alive forever: every dialogue INFO record in the game existed twice,
+        // ~37k records for ~21 MB of duplicate resident heap, in the browser client as well as
+        // the sim peer. Nothing reads mOrderedInfo after setUp() except the journal/topic
+        // enumeration in mwscript, which is repointed at Dialogue::mInfo.
         void extractOrderedInfo(std::list<T>& info)
         {
-            info = mOrderedInfo;
+            info = std::move(mOrderedInfo);
+            mOrderedInfo.clear();
             mInfoPositions.clear();
         }
 
