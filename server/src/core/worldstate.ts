@@ -277,6 +277,21 @@ export class WorldState {
     // actors and disables their AI, so Morrowind's own scripts — the only thing that advances
     // chargenstate — run in the peer's world, where creation is already finished. The guard
     // never comes for you because on the peer he already did.
+    // AND IT MUST REVOKE, NOT ONLY REFUSE. The filter below stops the peer CLAIMING a cell a
+    // chargen player already stands in. It does nothing about the reverse order — peer first,
+    // player second — which used to be nearly impossible (the peer was only started once a
+    // human was already in a cell, so their chargen state was known before it could claim
+    // anything) and became the common case the moment the peer started booting on CONNECT.
+    // It now spawns into Seyda Neen while the player is still loading, claims it, and the
+    // player then walks into their own creation sequence with the guard already puppeted and
+    // his AI switched off: he stands there, the escort never fires, and the player is stuck.
+    if (!player.system && player.inChargen === true) {
+      const holder = this.authority.holderOf(cellKey);
+      if (holder !== undefined && this.roster.get(holder)?.system === true) {
+        log('info', 'authority.chargen_evict', { cellKey, holder, player: player.name });
+        this.authorityLeave(holder, cellKey, true);
+      }
+    }
     const cells = (player.system ? loadedCells(cellKey) : [cellKey])
       .filter((c) => !isChargenCell(c) && !this.hasPlayerInChargen(c));
     if (cells.length === 0) return;

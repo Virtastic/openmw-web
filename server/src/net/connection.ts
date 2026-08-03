@@ -758,6 +758,13 @@ export class Connection implements Peer {
       if (player.system === true && p.id !== player.id) continue;
       p.peer.sendEvent('PlayerCellChange', { id: player.id, cellKey, x, y, z });
     }
+    // A HUMAN LANDING SOMEWHERE NEW IS THE MOMENT THE ANCHOR SET IS WRONG. Waiting for the
+    // next 5s tick meant a player could arrive in a cell the peer does not hold and be handed
+    // control anyway — the loading screen had already cleared, because readiness only says a
+    // peer is IN THE WORLD, not that it holds this particular cell. That gap is the tail of
+    // the rubber-banding: up to five seconds of moving around an unsimulated cell before the
+    // peer catches up and corrects you.
+    if (player.system !== true) this.ctx.onPeerJoined?.();
     // M3: entering a cell always yields its delta doc; the vacated cell may flush.
     this.ctx.world.sendCellState(player, cellKey);
     // M4: hand off / claim authority. Leave the old cell before claiming the new one.

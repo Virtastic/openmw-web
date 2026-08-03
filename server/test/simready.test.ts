@@ -86,3 +86,10 @@ test('the sim peer is not sent its own readiness', async (t) => {
   ]);
   assert.equal(got, 'none');
 });
+
+// NOT TESTED HERE, and the reason is worth recording: the chargen EVICTION path
+// (worldstate.authorityEnter -> authority.chargen_evict) cannot be reached from this harness.
+// inChargen is set by the character-slot resolution in connection.ts, and a harness-registered
+// account never goes through it, so a TestClient always looks like a finished character no
+// matter what it does. Reproducing it needs a fixture that mints an incomplete character slot.
+// Until then the eviction is covered only by the live server's own logs.
