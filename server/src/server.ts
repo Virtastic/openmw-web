@@ -574,6 +574,12 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
         for (const conn of [...connections]) {
           const p = conn.player;
           if (!p || p.accountKey === worldOwner || p.rank >= 1) continue;
+          // NEVER THE SIM PEER. "Guests" means people; the peer is this world's own
+          // simulator, and evicting it on a flip to Solo threw away authority over every
+          // cell the owner was standing in — so going Solo froze the NPCs, stalled the join
+          // behind a fresh 2-4s peer boot, and rubber-banded the player when it came back.
+          // It is not in the party, so no door is being closed on it.
+          if (p.system === true) continue;
           // The owner's CHARACTER name, off the live roster — never the account display
           // name, which carries the signed-in person's real name.
           p.peer.sendEvent('WorldClosed',

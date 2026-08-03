@@ -52,6 +52,12 @@ local playerId = nil -- set for remote-player puppets
 local actorKey = nil -- set for M4 NPC puppets (refKey the holder addresses)
 local interp = Interp.new()
 local lastSnapReq = 0
+-- Steering hysteresis. STEER_START must stay comfortably above the distance a puppet can
+-- cover in one frame at run speed, or stopping and starting chatter across the boundary and
+-- the actor jitters on the spot.
+local STEER_STOP = 4    -- within this, hold position and just face the right way
+local STEER_START = 24  -- must have drifted this far before steering resumes
+local steering = false
 local stuckSince = nil
 -- Has this puppet been PUT on its authoritative position yet, as opposed to having walked
 -- toward it? Until the peer took this cell the engine's own AI was driving this actor, so at
@@ -204,8 +210,19 @@ local function onUpdate(dt)
         return
     end
 
-    -- Stuck: steering toward a moving target without progressing (wedged on geometry).
-    if dist2d > 16 then
+    -- HYSTERESIS, not bang-bang at a 4-unit line. This used to be "further than 4 units? full
+    -- speed toward it, otherwise stop". At run speed a single frame covers well over 4 units,
+    -- so the puppet shot PAST its target, the bearing flipped ~180 degrees, and it sprinted
+    -- back — then past again. That is the walk-forward-spin-around-walk-backward players see,
+    -- and it never settles because the target keeps advancing into the same overshoot.
+    if steering and dist2d <= STEER_STOP then steering = false end
+    if not steering and dist2d >= STEER_START then steering = true end
+
+    -- Stuck: steering toward a moving target without progressing (wedged on geometry). Only
+    -- meaningful while we are actually STEERING — with hysteresis a puppet legitimately holds
+    -- still anywhere below STEER_START, and counting that as "wedged" fires a teleport at a
+    -- puppet that is behaving exactly as intended.
+    if steering and dist2d > 16 then
         if lastProgressPos and (pos - lastProgressPos):length() < 1 then
             stuckSince = stuckSince or now
             if now - stuckSince > STUCK_SECONDS then
@@ -222,17 +239,21 @@ local function onUpdate(dt)
     end
 
     local curYaw = self.rotation:getYaw()
-    if dist2d > 4 then
+    if steering then
         -- Steer toward the target point (MW yaw: 0 = +Y, clockwise positive).
         self.controls.yawChange = shortestArc(math.atan(dx, dy) - curYaw)
-        self.controls.movement = 1
+        -- Full speed while there is ground to cover, easing to a walk over the last stretch.
+        -- Floored so it always closes the gap rather than creeping forever.
+        self.controls.movement = math.max(0.25, math.min(1, dist2d / 96))
     else
         -- Close enough: hold position, face the remote player's actual heading.
         self.controls.movement = 0
         self.controls.yawChange = shortestArc((target.yaw or curYaw) - curYaw)
     end
     self.controls.sideMovement = 0
-    self.controls.run = bit(target.flags, 0)
+    -- Mirror the remote player's run flag, but never while closing the last few units: running
+    -- is what turns a small correction into an overshoot.
+    self.controls.run = bit(target.flags, 0) and steering and dist2d > STEER_START
     self.controls.sneak = bit(target.flags, 1)
     local jumpEdge = bit(target.flags, 2)
     self.controls.jump = jumpEdge and not prevJump

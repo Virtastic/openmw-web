@@ -606,11 +606,29 @@ local function restoreTick()
     local inventory = types.Actor.inventory(player)
     local granted = 0
     -- Server doc shape: inventory is a flat [{id,n},...] array (persist/playerstore.ts).
+    --
+    -- RECONCILE, NEVER RE-GRANT. This used to create the whole stored inventory outright, on
+    -- the assumption that a restore lands in an empty character. It does not on a WORLD
+    -- SWITCH: the engine keeps the same player actor, with everything already in it, so every
+    -- Solo->Public->Solo trip added another full copy of the doc — 261 gold became 783 in two
+    -- switches. Grant only the shortfall, using the same countOf idiom as the puppet grant
+    -- path above.
+    --
+    -- Deliberately does NOT remove a surplus. The doc is written behind a debounce, so a
+    -- player holding MORE than it records is the ordinary case of having picked something up
+    -- since the last flush — treating that as a dupe to be confiscated would destroy real
+    -- items to fix a cosmetic count. This stops the growth; it does not heal an inventory
+    -- already inflated by the old behaviour.
     for _, entry in ipairs(record.inventory or {}) do
-        local ok, item = pcall(function() return world.createObject(entry.id, entry.n or 1) end)
-        if ok then
-            item:moveInto(inventory)
-            granted = granted + 1
+        local want = entry.n or 1
+        local okc, have = pcall(function() return inventory:countOf(entry.id) end)
+        local short = want - ((okc and have) or 0)
+        if short > 0 then
+            local ok, item = pcall(function() return world.createObject(entry.id, short) end)
+            if ok then
+                item:moveInto(inventory)
+                granted = granted + 1
+            end
         end
     end
     mp.testSet('restorePos', record.position and json.encode(record.position) or 'none')
@@ -1508,6 +1526,13 @@ local eventHandlers = {
             return
         end
         local mode = tostring(data.mode or '')
+        -- THE LATEST CLICK WINS. pendingFlip queues a mode change to apply once we are back in
+        -- our own world, and nothing used to clear it when the player chose something else in
+        -- the meantime. A queued 'private' from an earlier Solo click then fired on the next
+        -- join and overrode the Party the player had just asked for — the server logged
+        -- mode_flip party immediately followed by mode_flip private, and the switcher snapped
+        -- back to Solo with no explanation.
+        pendingFlip = nil
         local inOwn = worldUrls.own ~= nil and net.currentTarget() == worldUrls.own
         if mode == 'solo' then
             if inOwn or not worldUrls.own then mp.sendEvent('SetWorldMode', { mode = 'private' })
