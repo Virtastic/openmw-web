@@ -787,6 +787,12 @@ local function start()
         -- UI mirrors this and puts one overlay up, held until we rejoin or give up.
         mp.testSet('netstate', state)
         if state ~= 'Joined' then
+            -- The NEXT world has its own peer, which has to come up before it holds anything.
+            -- Leaving this at '1' from the world we just left meant a switch never waited:
+            -- the loading screen saw a stale "ready", cleared, and dropped the player into an
+            -- unsimulated world to rubber-band exactly as they did on a first join. The new
+            -- world's own SimReady answers this on arrival.
+            mp.testSet('simReady', '0')
             roster = {}
             mirrorRoster()
             despawnAllPuppets()

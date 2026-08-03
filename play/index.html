@@ -3142,6 +3142,30 @@
   function cmd(s){ outbox.push(s); }
   setInterval(function(){ if (outbox.length && window.Module && !Module.__omwMPCmd) Module.__omwMPCmd = outbox.shift(); }, 40);
   function mpState(){ return window.__omwMP || {}; }
+
+  // Hold the loading screen until the world we just moved to is BOTH joined and actually
+  // being simulated. Joined alone is not enough: the destination world's sim peer needs a
+  // couple of seconds to come up and take the cells, and moving during that window is what
+  // rubber-bands the player when it arrives and asserts its own view of where they are —
+  // the same race the first-join gate closes (watchCellLoad). global.lua clears simReady the
+  // moment the connection leaves Joined, so this can never be satisfied by the world we left.
+  //
+  // The ceiling is not optional: a peer that never starts must not strand anyone behind this.
+  function holdUntilSimulated(ceilingMs){
+    var until = Date.now() + (ceilingMs || 30000), said = false;
+    (function poll(){
+      var st = window.__omwMP || {};
+      if ((st.state || '') === 'Joined' && st.simReady === '1'){ window.__omwLoading.hide(); return; }
+      if (Date.now() > until){ window.__omwLoading.hide(); return; }  // let the net layer's own error path speak
+      if (!said && (st.state || '') === 'Joined'){
+        said = true;
+        window.__omwLoading.show('Almost there', 'Waiting for the world to be simulated…');
+      }
+      setTimeout(poll, 250);
+    })();
+  }
+
+
   function pj(s){ try { return JSON.parse(s); } catch(e){ return null; } }
   function esc(s){ return String(s==null?'':s).replace(/[&<>]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];}); }
   function el(tag, cls, html){ var d = document.createElement(tag); if (cls) d.className = cls; if (html!=null) d.innerHTML = html; return d; }
@@ -3433,11 +3457,7 @@
         // Hold the loading screen until the connection actually settles. The old fixed 2.5s
       // timeout dropped the player into a world they had not joined yet, which is what made
       // the panel narrate the join instead of the loading screen doing it.
-      (function poll(n){
-        if ((mpState().state || '') === 'Joined'){ window.__omwLoading.hide(); return; }
-        if (n > 120){ window.__omwLoading.hide(); return; }   // ~30s, then let the net layer's own error path speak
-        setTimeout(function(){ poll(n + 1); }, 250);
-      })(0);
+      holdUntilSimulated(30000);
         setStatus('');
         renderSocial();
         return;
@@ -3452,7 +3472,7 @@
       // show it — the state watcher above hides it when the connection settles.
       window.__omwLoading.show(v === 'public' ? 'Joining the public world' : 'Switching world',
         'Syncing with the server…');
-      setTimeout(function(){ if ((mpState().state || '') === 'Joined') window.__omwLoading.hide(); }, 2500);
+      holdUntilSimulated(30000);
       // No status line for a world switch: the loading screen IS the progress indicator, and
       // a second running commentary in the panel footer only contradicted it.
       setStatus('');
