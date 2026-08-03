@@ -80,6 +80,11 @@ local roster = {} -- array of {id=u16, name=string}, server order
 -- compares THIS, not the payload: the payloads repeat verbatim, so value comparison could not
 -- tell a second occurrence from a stale mirror.
 local noticeSeq = 0
+-- Said once per session, not once per join: a world switch and every reconnect re-enter the
+-- Joined state, and repeating the banner buried the actual conversation.
+local announcedConnect = false
+-- Last party roster we told the player about, so membership changes can be diffed.
+local partySeen = {}
 -- What the world we are connected to says it is. SERVER-OWNED: the switcher used to render
 -- from a localStorage note of what was last clicked, so it could sit on "Public" while the
 -- connection was to your own world and no amount of clicking fixed it.
@@ -731,9 +736,15 @@ local function start()
     net.onStateChanged = function(state)
         print('[mp] session state: ' .. state)
         if state == 'Joined' then
+            -- ONCE PER SESSION, not once per join. A world switch and every reconnect come
+            -- back through here, so this repeated the same three lines each time and pushed
+            -- the actual conversation off the top of the log.
+            if not announcedConnect then
+                announcedConnect = true
+                notice('Connected to ' .. tostring(net.serverName or 'the server')
+                    .. ' as ' .. tostring(mp.getName() or '?'))
+            end
             wasJoined = true
-            notice('Connected to ' .. tostring(net.serverName or 'server')
-                .. ' as ' .. tostring(mp.getName() or '?'))
             -- The world we FIRST land in at login is our own (the launcher puts us there). Cache
             -- its URL so the where-am-I switcher can return here from Public.
             if not worldUrls.own then worldUrls.own = net.currentTarget() end
@@ -824,7 +835,30 @@ local eventHandlers = {
     MP_FriendRequestReceived = function(data) toPlayer('MP_FriendRequestReceived', data) end,
     MP_InviteReceived = function(data) toPlayer('MP_InviteReceived', data) end,
     MP_PresenceUpdate = function(data) toPlayer('MP_PresenceUpdate', data) end,
-    MP_PartyUpdate = function(data) toPlayer('MP_PartyUpdate', data) end,
+    MP_PartyUpdate = function(data)
+        toPlayer('MP_PartyUpdate', data)
+        -- WHO IS IN YOUR PARTY, narrated by diffing against the last view. The server sends
+        -- the whole party on every change, so without a diff this would either say nothing or
+        -- repeat the full roster each time.
+        local now = {}
+        for _, m in ipairs((data and data.members) or {}) do
+            if m.name then now[tostring(m.name)] = true end
+        end
+        local count = 0
+        for name in pairs(now) do
+            count = count + 1
+            if not partySeen[name] and name ~= tostring(mp.getName() or '') then
+                notice(name .. ' joined your party.')
+            end
+        end
+        for name in pairs(partySeen) do
+            if not now[name] and name ~= tostring(mp.getName() or '') then
+                notice(name .. ' left your party.')
+            end
+        end
+        if count == 0 and next(partySeen) ~= nil then notice('Your party has disbanded.') end
+        partySeen = now
+    end,
     -- Phase 4: how many party members are standing with us. The cell's authority holder
     -- applies it to the actors it simulates; a solo player gets 1x and nothing changes.
     MP_PartyScaling = function(data)
@@ -877,8 +911,18 @@ local eventHandlers = {
     -- The world telling us what it IS. Authoritative, sent at join and on every flip.
     MP_WorldMode = function(data)
         local m = tostring(data and data.mode or '')
+        local was = worldMode
         worldMode = (m == 'public' or m == 'party') and m or 'solo'
         mirrorRoster()
+        -- Which world you are in is invisible otherwise — the scenery is identical — and it
+        -- decides who can see you. Announced on CHANGE only; the server also sends this at
+        -- join, which is not a transition worth narrating.
+        if was ~= nil and was ~= worldMode then
+            local where = worldMode == 'public' and 'the public world'
+                or worldMode == 'party' and 'your world, open to your party'
+                or 'your own world (solo)'
+            notice('You are now in ' .. where .. '.')
+        end
     end,
     MP_WorldClosed = function(data)
         toPlayer('MP_WorldClosed', data)
@@ -946,13 +990,19 @@ local eventHandlers = {
         end
         roster[#roster + 1] = { id = data.id, name = data.name }
         mirrorRoster()
-        toPlayer('MP_UiChatMessage', { channel = 'server', text = tostring(data.name) .. ' joined' })
+        -- Not your own arrival: you know you just joined, and on a world switch the server
+        -- re-announces every occupant including you.
+        if data.id ~= net.playerId then
+            toPlayer('MP_UiChatMessage',
+                { channel = 'server', text = tostring(data.name) .. ' joined the world.' })
+        end
     end,
 
     MP_PlayerLeaveWorld = function(data)
         for i, p in ipairs(roster) do
             if p.id == data.id then
-                toPlayer('MP_UiChatMessage', { channel = 'server', text = tostring(p.name) .. ' left' })
+                toPlayer('MP_UiChatMessage',
+                    { channel = 'server', text = tostring(p.name) .. ' left the world.' })
                 table.remove(roster, i)
                 break
             end
