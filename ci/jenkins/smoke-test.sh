@@ -61,6 +61,13 @@ fi
 P=$(get "$BASE/auth/providers")
 grep -q '"providers"' <<<"$P" && pass "/auth/providers proxied ($P)" || fail "/auth/providers proxied" "got: ${P:0:120}"
 [ "$(code "$BASE/locker/needed")" = "401" ] && pass "/locker/* proxied (401 = reachable)" || fail "/locker/* proxied" "expected 401; a 404 means Caddy never forwards it, so uploads die"
+# Savegames ride the same door. A 404 here is the Caddyfile missing /saves, and the symptom
+# is silent: the game plays fine and every save is simply never uploaded.
+[ "$(code "$BASE/saves")" = "401" ] && pass "/saves proxied (401 = reachable)" || fail "/saves proxied" "expected 401; a 404 means Caddy never forwards it, so saves never leave the browser"
+# An unsigned blob URL must never be served, whichever storage backend is configured
+# (403 = filesystem storage refusing a forged token, 503 = S3, which mints its own URLs).
+_blob="$(code "$BASE/locker/blob/forged/gamedata/x")"
+{ [ "$_blob" = "403" ] || [ "$_blob" = "503" ]; } && pass "forged blob URL refused ($_blob)" || fail "forged blob URL refused" "got $_blob, expected 403 or 503"
 
 # 4. The gameplay socket. HTTP/2 cannot carry an upgrade, so --http1.1 is mandatory here;
 #    without it this returns a misleading 404/502.
