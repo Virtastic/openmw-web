@@ -62,7 +62,7 @@ import { WorldBrowser } from './core/worldbrowser';
 import { parseExterior, isChargenCell } from './core/movement';
 import { detectGameData, findPeerBinary, gameDataDir, buildPeerCfg, buildPeerSettings } from './core/gamedata';
 
-export const VERSION = '0.1.0';
+export const VERSION = '1.1.0';
 
 // Compose extra HTTP route handlers into one: try each in order, first to claim wins.
 // createHttpServer/createAuthRoutes take a single `also` hook, and we have two (admin +
