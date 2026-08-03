@@ -26,3 +26,8 @@ const common = {
 
 await build({ ...common, entryPoints: ['src/main.ts'], outfile: 'dist/server.mjs' });
 await build({ ...common, entryPoints: ['src/gateway/main.ts'], outfile: 'dist/gateway.mjs' });
+// The harnesses' server (src/testhost.ts): main.ts refuses to boot without game data and a
+// peer, which is right for a deployment and fatal for a test that has neither. Built here so
+// `npm run build` keeps it in step with the source the tests are checking; deliberately not
+// referenced by any Dockerfile.
+await build({ ...common, entryPoints: ['src/testhost.ts'], outfile: 'dist/testhost.mjs' });

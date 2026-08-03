@@ -56,8 +56,11 @@ export default async function run(ctx) {
     // detail — the gateway's own default sharedDir is a sibling of the worlds dir.
     '--shared', ctx.serverDataDir,
     '--base-port', String(basePort),
-    '--public-host', '127.0.0.1',
     '--max-worlds', '4',
+    // Worlds this gateway spawns must boot WITHOUT real game data, a peer binary or a
+    // server password — a harness has none of those. server.mjs refuses on all three, so
+    // every spawned world died and the scenario saw only an empty world list.
+    '--server-entry', join(ROOT, 'server', 'dist', 'testhost.mjs'),
   ], {
     stdio: 'ignore',
     env: { ...process.env, OMW_ALLOW_HARNESS_AUTH: '1' },

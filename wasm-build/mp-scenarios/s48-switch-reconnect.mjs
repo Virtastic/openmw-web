@@ -49,7 +49,11 @@ export default async function run(ctx) {
   const gw = spawn(process.execPath, [
     join(ROOT, 'server', 'dist', 'gateway.mjs'),
     '--worlds', worldsDir, '--port', String(GW_PORT),
-    '--base-port', String(GW_PORT + 200), '--public-host', '127.0.0.1', '--max-worlds', '4',
+    '--base-port', String(GW_PORT + 200), '--max-worlds', '4',
+    // Worlds this gateway spawns must boot WITHOUT real game data, a peer binary or a server
+    // password — a harness has none. server.mjs refuses on all three, so every spawned world
+    // died and the scenario saw only an empty world list.
+    '--server-entry', join(ROOT, 'server', 'dist', 'testhost.mjs'),
   ], {
     stdio: 'ignore',
     // Worlds this gateway spawns inherit it: the harness clients log in with the fixed

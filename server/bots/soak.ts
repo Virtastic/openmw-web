@@ -336,8 +336,13 @@ function trimInboxes(bots: Bot[]): void {
 }
 
 async function main(): Promise<void> {
-  const dist = join(ROOT, 'dist', 'server.mjs');
-  if (!existsSync(dist)) throw new Error('run `npm run build` first (dist/server.mjs missing)');
+  // testhost.mjs, NOT server.mjs: main.ts refuses to boot without game data, a peer binary
+  // and a server password, so spawning it here failed at "server never became healthy" from
+  // the moment that mandate landed. src/testhost.ts is the same server via the code-only
+  // requireGameData seam. NOTE it has no sim peer, so an attached run measures the SERVER
+  // under player load — actor authority needs a scenario that stands a peer up itself.
+  const dist = join(ROOT, 'dist', 'testhost.mjs');
+  if (!existsSync(dist)) throw new Error('run `npm run build` first (dist/testhost.mjs missing)');
 
   // --attach <port>: drive an ALREADY-RUNNING server instead of spawning one, so the
   // browser scenario harness can put bot load on the same server its real clients are on.

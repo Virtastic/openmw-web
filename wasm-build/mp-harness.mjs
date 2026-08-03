@@ -62,7 +62,13 @@ async function waitHttp(url, timeoutMs, what) {
 // serverRules. Exported as a function receiving the run id, because an owner is an ACCOUNT
 // NAME and account names carry the run-id suffix.
 async function startGameServer(extraRules = '', extraEnv = {}) {
-  const dist = join(ROOT, 'server', 'dist', 'server.mjs');
+  // testhost.mjs, NOT server.mjs. main.ts refuses to boot without real game data, a peer
+  // binary and a server password (the tier-2 mandate) — right for a deployment, fatal for a
+  // harness whose whole point is a throwaway data dir with none of those. When that landed,
+  // every scenario here died at "server never became healthy" and stayed dead, which is how a
+  // round of regressions reached a player instead of a test run. src/testhost.ts is the same
+  // server started through the code-only requireGameData seam.
+  const dist = join(ROOT, 'server', 'dist', 'testhost.mjs');
   // Rebuild when dist is missing OR older than any source under src/. Checking only for
   // existence means a source change silently does not take effect: every scenario then runs
   // against the previous build and reports confident, wrong results — a server-side feature
@@ -141,7 +147,7 @@ async function startGameServer(extraRules = '', extraEnv = {}) {
   proc.stdout.on('data', (d) => out.push(String(d)));
   proc.stderr.on('data', (d) => out.push(String(d)));
   try {
-    await waitHttp(`http://127.0.0.1:${port}/healthz`, 10_000, 'omw-mp /healthz');
+    await waitHttp(`http://127.0.0.1:${port}/healthz`, 45_000, 'omw-mp /healthz');
   } catch (e) {
     try { proc.kill('SIGKILL'); } catch {}
     throw new Error(e.message + '\nserver output:\n' + out.join(''));
