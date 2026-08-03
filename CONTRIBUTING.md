@@ -23,6 +23,17 @@ PRs are welcome. A few ground rules:
 - Build instructions are in the [README](README.md). A PR that can't be built
   isn't dead on arrival — CI/deploy runs are maintainer-only, so a maintainer
   will build and test your change.
+- The multiplayer server (`server/`) is TypeScript on Node and, unlike the
+  engine, is quick to work on — no Emscripten toolchain needed:
+
+  ```bash
+  cd server && npm install && npx tsc --noEmit && npm test
+  ```
+
+  Changes there are expected to come with a test. The suite is fast and runs on
+  plain `node --test`; anything touching authority, per-account isolation or the
+  protocol needs one, because those are the places where a bug is a security
+  bug rather than a glitch.
 
 ## What maintainers handle
 
