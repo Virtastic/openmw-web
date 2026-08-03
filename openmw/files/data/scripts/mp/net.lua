@@ -71,6 +71,8 @@ local function mirrorTarget() mp.testSet('dialTarget', targetUrl()) end
 local switchDeadline = nil
 -- Bounds the wait for a travel ticket, so a wedged world cannot strand a world switch.
 local ticketDeadline = nil
+-- One retry of RequestTravelTicket before we give up and dial without a ticket.
+local ticketRetried = false
 -- True from the moment a world switch is requested until we ARRIVE somewhere. Kept because a
 -- switch must authenticate with its travel ticket, never with a resume token belonging to the
 -- world we are leaving.
@@ -224,6 +226,8 @@ function net.travelTicket(ticket)
     end
     local url = pendingSwitch
     pendingSwitch = nil
+    ticketDeadline = nil
+    ticketRetried = false
     if url then net.dialNow(url) end
 end
 
@@ -233,6 +237,7 @@ function net.switchTo(url)
     if net.state == 'Joined' and pendingSwitch == nil then
         switching = true
         pendingSwitch = url
+        ticketRetried = false
         mp.sendEvent('RequestTravelTicket', {})
         -- Never wait forever on a world that may be wedged.
         ticketDeadline = core.getRealTime() + 5
@@ -552,12 +557,27 @@ function net.tick()
     -- NOT connected. Real time throughout — onUpdate dt pauses with the world, and a paused
     -- tab must still redial.
     local now = core.getRealTime()
-    -- The world we asked for a travel ticket never answered. Dial anyway: being refused at
-    -- the destination with a clear error beats sitting in a world the player asked to leave.
+    -- The world we asked for a travel ticket has not answered yet. Ask ONCE more before
+    -- giving up: the request is cheap and the world is often merely busy.
+    --
+    -- What must NOT happen is dialling with the ticket we are still holding. It is spent —
+    -- it is what got us into THIS world — so the destination answers "login ticket expired or
+    -- already used", the reconnect ladder retries the same dead credential, and the player
+    -- sees a switch that silently does nothing. That was the actual behaviour: six identical
+    -- AUTH_FAILEDs in the server log for one click on Public. Clearing it first means the
+    -- ladder falls through to a real credential, and a genuine failure surfaces as one.
     if pendingSwitch and ticketDeadline and now >= ticketDeadline then
+        if not ticketRetried then
+            ticketRetried = true
+            ticketDeadline = now + 5
+            mp.sendEvent('RequestTravelTicket', {})
+            return
+        end
         ticketDeadline = nil
+        ticketRetried = false
         local url = pendingSwitch
         pendingSwitch = nil
+        net.loginTicket = nil -- never dial with a credential we know is dead
         net.dialNow(url)
         return
     end
