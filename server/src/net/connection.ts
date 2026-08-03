@@ -880,6 +880,55 @@ export class Connection implements Peer {
   // legacy account-keyed PlayerDoc if this world has one. System peers never come through
   // this path — a sim peer owns no character at all.
   // Returns null after authFail.
+  // IS THIS SLOT STILL BEING CREATED? The single fact the chargen sanctuary turns on, and it
+  // used to be computed in resolveCharacter ONLY. The resume path skips that function whenever
+  // its ticket already names a character — the common case — so creationInProgress stayed at
+  // its default of false and every resumed session claimed to have finished creation. The peer
+  // then anchored the cell, puppeted the guard, and the escort never ran. Shared, so a future
+  // auth path cannot quietly opt out of it again.
+  private applyCreationState(account: Account, char: CharacterSummary, doc: PlayerDoc | undefined): void {
+    // A slot that has never been played has nothing to restore and has not finished creation.
+      if (!char.completed && doc === undefined) this.creationInProgress = true;
+      if (!char.completed && doc !== undefined) {
+        // Which unflagged docs really finished creation? Appearance/stats are useless signals —
+        // they poll every second and land MID-chargen. Trustworthy ones: any journal entry
+        // (chargen's own entry is written at release) or a saved position OUTSIDE the chargen
+        // cells. A doc still parked in the prison ship / census office with an empty journal is
+        // an abandoned creation.
+        const positions = [
+          ...(doc.position ? [doc.position] : []),
+          ...Object.values(doc.positions ?? {}),
+        ];
+        const hasJournal = doc.journal !== undefined && Object.keys(doc.journal).length > 0;
+        // Past the chargen cells (or holding a journal entry) means creation really finished, so
+        // flag the slot complete. Anything else is creation still IN PROGRESS.
+        //
+        // Player state is NEVER destroyed here. An earlier revision erased docs that looked
+        // "abandoned" (chargen cells + empty journal), but a refresh mid-creation is
+        // indistinguishable from abandonment, so that rule deleted live progress and dropped the
+        // player back at the name prompt. Resuming an in-progress creation in place is always
+        // correct: the doc restores position and stats, and Morrowind's own chargen picks up
+        // where it left off. The slot simply stays uncompleted until ChargenComplete arrives.
+        // POSITION IS NOT EVIDENCE, and assuming it was is what broke the opening. Chargen is
+        // not confined to the two named rooms: between them you are escorted across ORDINARY
+        // SEYDA NEEN EXTERIOR, so "standing outside a chargen cell" describes the escort exactly
+        // as well as it describes a finished character. The moment a player stepped off the
+        // prison ship this marked their slot complete, inChargen went false on the next auth,
+        // the peer anchored that exterior, and the guard was puppeted with his AI off — he never
+        // walks up, never escorts, and the sequence stops there.
+        //
+        // The journal is real evidence and is enough on its own: chargen's own entry is written
+        // AT RELEASE, so a slot holding any entry is past creation, and one mid-escort holds
+        // none. Everything else waits for ChargenComplete, which is what actually knows.
+        const finished = hasJournal;
+        void positions;
+        if (finished) this.ctx.accounts.completeCharacter(account, char.id);
+        // Remember it: authenticate() suppresses persistence while creation is genuinely in
+        // progress, and this is the only place with the evidence to tell.
+        else this.creationInProgress = true;
+      }
+  }
+
   private async resolveCharacter(
     op: AuthOp,
     account: Account,
@@ -921,47 +970,8 @@ export class Connection implements Peer {
       // length checked non-zero above, so the sort always yields one.
       char = [...account.characters].sort((a, b) => b.lastPlayedAt.localeCompare(a.lastPlayedAt))[0]!;
     }
-    let doc = await this.ctx.players.get(char.id);
-    // A slot that has never been played has nothing to restore and has not finished creation.
-    if (!char.completed && doc === undefined) this.creationInProgress = true;
-    if (!char.completed && doc !== undefined) {
-      // Which unflagged docs really finished creation? Appearance/stats are useless signals —
-      // they poll every second and land MID-chargen. Trustworthy ones: any journal entry
-      // (chargen's own entry is written at release) or a saved position OUTSIDE the chargen
-      // cells. A doc still parked in the prison ship / census office with an empty journal is
-      // an abandoned creation.
-      const positions = [
-        ...(doc.position ? [doc.position] : []),
-        ...Object.values(doc.positions ?? {}),
-      ];
-      const hasJournal = doc.journal !== undefined && Object.keys(doc.journal).length > 0;
-      // Past the chargen cells (or holding a journal entry) means creation really finished, so
-      // flag the slot complete. Anything else is creation still IN PROGRESS.
-      //
-      // Player state is NEVER destroyed here. An earlier revision erased docs that looked
-      // "abandoned" (chargen cells + empty journal), but a refresh mid-creation is
-      // indistinguishable from abandonment, so that rule deleted live progress and dropped the
-      // player back at the name prompt. Resuming an in-progress creation in place is always
-      // correct: the doc restores position and stats, and Morrowind's own chargen picks up
-      // where it left off. The slot simply stays uncompleted until ChargenComplete arrives.
-      // POSITION IS NOT EVIDENCE, and assuming it was is what broke the opening. Chargen is
-      // not confined to the two named rooms: between them you are escorted across ORDINARY
-      // SEYDA NEEN EXTERIOR, so "standing outside a chargen cell" describes the escort exactly
-      // as well as it describes a finished character. The moment a player stepped off the
-      // prison ship this marked their slot complete, inChargen went false on the next auth,
-      // the peer anchored that exterior, and the guard was puppeted with his AI off — he never
-      // walks up, never escorts, and the sequence stops there.
-      //
-      // The journal is real evidence and is enough on its own: chargen's own entry is written
-      // AT RELEASE, so a slot holding any entry is past creation, and one mid-escort holds
-      // none. Everything else waits for ChargenComplete, which is what actually knows.
-      const finished = hasJournal;
-      void positions;
-      if (finished) this.ctx.accounts.completeCharacter(account, char.id);
-      // Remember it: authenticate() suppresses persistence while creation is genuinely in
-      // progress, and this is the only place with the evidence to tell.
-      else this.creationInProgress = true;
-    }
+    const doc = await this.ctx.players.get(char.id);
+    this.applyCreationState(account, char, doc);
     return { char, doc };
   }
 
@@ -1052,7 +1062,11 @@ export class Connection implements Peer {
     let doc: PlayerDoc | undefined;
     if (ticket.charId !== undefined) {
       char = account.characters?.find((c) => c.id === ticket.charId);
-      if (char) doc = await this.ctx.players.get(char.id);
+      if (char) {
+        doc = await this.ctx.players.get(char.id);
+        // THIS is the line whose absence stalled every resumed character's opening.
+        this.applyCreationState(account, char, doc);
+      }
     }
     if (!char && !this.isSystem) {
       const rc = await this.resolveCharacter('resume', account);
