@@ -84,8 +84,13 @@ export async function startDirectory(deps: DirectoryDeps): Promise<RunningDirect
     res.setHeader('access-control-allow-headers', 'content-type, authorization');
     if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
 
-    // Front door first: /auth/* and /locker/* are handled by the shared SSO + locker services.
-    if (deps.frontDoor && (path.startsWith('/auth/') || path.startsWith('/locker/'))) {
+    // Front door first: /auth/*, /locker/* and /saves are handled by the shared SSO, locker
+    // and savegame services. This list is the real router — a path the front door implements
+    // but that is missing HERE falls through to the 404 below, which is how server-side saves
+    // reached the gateway and were answered "not found" with the locker working fine beside
+    // them. Add the prefix here as well as mounting the route.
+    if (deps.frontDoor && (path.startsWith('/auth/') || path.startsWith('/locker/')
+        || path === '/saves' || path.startsWith('/saves/'))) {
       void Promise.resolve(deps.frontDoor(req, res, url)).then((claimed) => {
         if (!claimed) { json(res, 404, { error: 'not found' }); }
       }).catch(() => { if (!res.headersSent) json(res, 500, { error: 'internal' }); });

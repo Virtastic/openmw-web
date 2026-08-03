@@ -210,3 +210,33 @@ test('deleting a character discards exactly that character\'s world', async () =
     assert.deepEqual(h.worlds.discardForCharacter({ accountKey: 'player' }, charId), []);
   } finally { await h.cleanup(); }
 });
+
+// The directory's prefix list IS the router: a path the front door implements but that is
+// missing here falls through to the directory's own 404, with no error anywhere to explain
+// it. That is exactly how /saves behaved on the live dev server while /locker/* worked
+// beside it — the game played fine and every save silently never left the browser.
+test('every front-door path reaches the front door, not the directory 404', async () => {
+  const h = await harness();
+  const seen: string[] = [];
+  const dir2 = await startDirectory({
+    worlds: h.worlds, host: '127.0.0.1', port: 0, maxPerOwner: 2,
+    worldsDir: mkdtempSync(join(tmpdir(), 'omw-dir2-')),
+    resolveAccount: () => undefined,
+    frontDoor: (_req, res, url) => {
+      seen.push(url.pathname);
+      res.writeHead(401, { 'content-type': 'application/json' });
+      res.end('{}');
+      return true;
+    },
+  });
+  try {
+    for (const p of ['/auth/providers', '/locker/files', '/locker/blob/t/k', '/saves', '/saves/download']) {
+      const r = await fetch(`http://127.0.0.1:${dir2.port}${p}`);
+      assert.equal(r.status, 401, `${p} never reached the front door`);
+    }
+    assert.equal(seen.length, 5);
+  } finally {
+    await dir2.close();
+    await h.cleanup();
+  }
+});
