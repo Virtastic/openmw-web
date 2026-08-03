@@ -75,6 +75,11 @@ export interface ServerCtx {
   // Phase H: present only when a sim peer is configured. Used to stop retrying a peer that
   // was refused for a reason retrying cannot fix.
   simPeers?: { disablePermanently(reason: string): void; noteHello?(key: string): void };
+  /** Is the world actually being SIMULATED — the peer holding cells, not merely connected?
+   *  Clients hold their loading screen on this. */
+  simReady?(): boolean;
+  /** Run an anchor/claim pass now instead of waiting for the next periodic one. */
+  onPeerJoined?(): void;
   // Tier 2 (the server has its own valid game data). Only then may a sim peer's manifest be
   // pinned as the world's canonical content list.
   gameDataOk?: boolean;
@@ -1294,7 +1299,27 @@ export class Connection implements Peer {
         { id: p.id, cellKey: p.cellKey, x: p.pose?.x ?? 0, y: p.pose?.y ?? 0, z: p.pose?.z ?? 0 });
     }
     // The peer is in the world: authenticated, content-checked, joined. THIS is ready.
-    if (this.isSystem) this.ctx.simPeers?.noteHello?.('world');
+    if (this.isSystem) {
+      this.ctx.simPeers?.noteHello?.('world');
+      // Put it to work NOW rather than on the next 5s tick: until it has been given anchors
+      // it holds nothing, and every player already here is watching a loading screen until
+      // it does. That pass is also what announces readiness — server.ts owns the signal,
+      // because only it knows which cells the peer actually claimed.
+      this.ctx.onPeerJoined?.();
+      // Tell everyone already waiting. A player who joined while the peer was still booting
+      // is behind a loading screen for exactly this moment; without the push they would sit
+      // out the client's ceiling instead, which is the fixed-delay guess all over again.
+      for (const p of this.ctx.roster.inWorld()) {
+        if (p.system === true) continue; // it is the subject of the announcement
+        p.peer.sendEvent('SimReady', { ready: true });
+      }
+    } else {
+      // A human joining an already-simulated world gets the answer immediately, so the
+      // common case never holds at all. Absent (no peer configured — a test server, or
+      // single-player) means nothing will ever simulate for them: say ready and let them
+      // play, rather than holding a screen forever for something that is not coming.
+      this.player.peer.sendEvent('SimReady', { ready: this.ctx.simReady?.() ?? true });
+    }
     this.player.peer.sendEvent('WorldMode', { mode: this.ctx.worldMode() });
     this.ctx.hooks.playerJoinWorld({ id: this.player.id, name: this.player.name, rank: this.player.rank });
   }

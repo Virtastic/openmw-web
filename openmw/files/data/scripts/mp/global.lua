@@ -909,6 +909,15 @@ local eventHandlers = {
         net.travelTicket(tostring(data and data.ticket or ''))
     end,
     -- The world telling us what it IS. Authoritative, sent at join and on every flip.
+    -- Does the simulation peer hold authority yet? Mirrored to JS, where the loading screen
+    -- waits on it. Nothing in Lua acts on this: the engine is perfectly happy simulating
+    -- locally in the meantime — the problem is purely that letting the PLAYER move during
+    -- that window means the peer arrives, takes the cell and corrects them, which is the
+    -- rubber-banding. Holding the screen is what makes the correction unobservable.
+    MP_SimReady = function(data)
+        mp.testSet('simReady', (data and data.ready) and '1' or '0')
+    end,
+
     MP_WorldMode = function(data)
         local m = tostring(data and data.mode or '')
         local was = worldMode

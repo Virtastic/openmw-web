@@ -2478,25 +2478,18 @@
                cfg.push('content=mp.omwscripts'); // multiplayer is always on this path
                FS.writeFile('/openmw.cfg', cfg.join('\n'));
                append('[locker] READY -> multiplayer with your library ('+content.join(' + ')+')');
-               // SETTLE DELAY — a stopgap for a race, not a fix, and it should be deleted once
-               // the real gate exists. The server hands a player control BEFORE the simulation
-               // peer holds authority over their cell: measured 5.2s on a warm box (join at
-               // t+0.0, simpeer.ready at t+5.2). Walk in that window and the peer arrives,
-               // takes authority and asserts its own view of where you are — which is the
-               // rubber-banding. Holding the loading screen covers the gap.
+               // The 8s SETTLE DELAY that used to sit here is gone. It was meant to cover the
+               // window where the player has control but the simulation peer does not yet hold
+               // their cell — walk in it and the peer arrives, asserts its own view of where
+               // you are, and you rubber-band. But it wrapped removeRunDependency, which is a
+               // BOOT gate: the whole 8s elapsed before the engine even started, let alone
+               // connected, so it covered none of that window and simply taxed every join.
                //
-               // WHY THIS IS THE WRONG SHAPE: it is a guess against a variable. Peer startup
-               // was 2.0s on a warm cache; a cold start or a busier host will exceed this, and
-               // then the snap happens AFTER the loading screen clears, with nothing on screen
-               // to explain it. It also makes every fast join wait for the slowest case.
-               //
-               // THE REAL FIX: the server already knows the moment authority exists — it logs
-               // simpeer.ready and calls noteHello('world') (connection.ts). Broadcast that to
-               // humans in-world, hold the loading screen on it instead of on a clock, and keep
-               // a timeout so a peer that never starts cannot strand the player here forever.
-               var SETTLE_MS = 8000;
-               append('[mp] waiting ' + (SETTLE_MS/1000) + 's for the world to settle…');
-               setTimeout(function(){ removeRunDependency('mw-local'); }, SETTLE_MS);
+               // That window is now closed at both ends: the server starts the peer when a
+               // player CONNECTS rather than when one reaches a cell (server.ts simPeerTick),
+               // and it announces readiness with SimReady, which the loading screen waits on
+               // (watchCellLoad below). An event, not a clock — the wait is a variable.
+               removeRunDependency('mw-local');
                return;
              } else { setTimeout(waitCfg, 25); }
            })();
@@ -3888,16 +3881,32 @@
   };
 
   (function watchCellLoad(){
-    var seen = '', hideAt = 0;
+    var seen = '', hideAt = 0, saidWaiting = false;
     (function tick(){
-      var v = (window.__omwMP || {}).cellLoad || '';
+      var st = window.__omwMP || {};
+      var v = st.cellLoad || '';
       if (v && v !== seen) {
         seen = v;
         window.__omwLoading.show('Loading', 'Entering a new area…');
         hideAt = Date.now() + 15000; // hard ceiling: never strand the player behind it
+        saidWaiting = false;
       }
       // The load is over once frames are flowing again — this callback running IS that proof.
-      if (hideAt && Date.now() > hideAt - 14400) { window.__omwLoading.hide(); hideAt = 0; }
+      if (hideAt && Date.now() > hideAt - 14400) {
+        // ...unless the world is not being simulated yet. The server hands over control
+        // before the sim peer holds the player's cell; move in that gap and the peer takes
+        // authority and corrects the position, which is the rubber-banding on first join.
+        // Absent key = a server that predates SimReady, or single-player: never hold.
+        var ready = st.simReady;
+        if (ready === undefined || ready === '1' || Date.now() > hideAt) {
+          window.__omwLoading.hide(); hideAt = 0; saidWaiting = false;
+        } else if (!saidWaiting) {
+          // Say why the wait continues rather than leaving a stalled "Entering a new area".
+          // Once only: this runs every frame.
+          saidWaiting = true;
+          window.__omwLoading.show('Loading', 'Waiting for the world to be simulated…');
+        }
+      }
       requestAnimationFrame(tick);
     })();
   })();

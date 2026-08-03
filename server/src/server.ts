@@ -812,14 +812,35 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // Cells the peer currently holds because they are anchored, so the set can be diffed rather
   // than re-entered every tick (re-entering bumps the epoch and forces a full re-sync).
   const claimed = new Set<string>();
-  const simPeerTick = setInterval(() => {
+  // Is the world actually being SIMULATED? Read live from the roster rather than kept as
+  // state: a peer can arrive, die and be respawned, and the roster is the only thing that is
+  // right at every moment. It also stays correct for an operator running their own peer
+  // instead of one this supervisor spawned — bookkeeping about who we spawned would call
+  // that world unsimulated forever and hold every join behind a loading screen.
+  ctx.simReady = () => roster.inWorld().some((p) => p.system === true);
+  const simPeerPass = (): void => {
     if (!config.simPeer.enabled) return;
     // humansInWorld, NOT inWorld: the peer itself is in-world, so counting it would keep the
     // world looking busy forever and the reaper would never fire.
     const humans = roster.humansInWorld().filter((p) => p.cellKey !== undefined);
-    if (humans.length === 0) {
+    // START THE PEER WHEN A HUMAN CONNECTS, NOT WHEN ONE REACHES A CELL. humanCount counts
+    // authed players who are still loading or in character creation; the peer takes 2-4s to
+    // become ready (simpeer.ready startupMs), so waiting for a cell meant the player was
+    // handed control BEFORE anything held authority over where they stood. They would walk,
+    // the peer would arrive, take the cell and assert its own view of their position — the
+    // rubber-banding on first join — and every actor there would be puppeted mid-stride.
+    // Booting it against the loading client spends that startup on time the player is
+    // already waiting through.
+    if (roster.humanCount === 0) {
       simPeers.markIdle(WORLD_KEY);
       simPeers.sweep();
+      return;
+    }
+    if (humans.length === 0) {
+      // Someone is here but nobody has landed in a cell yet: get the process up, and leave
+      // the anchor set alone — there is nothing legitimate to anchor to yet, and claiming
+      // cells for a player still in chargen is precisely what must not happen.
+      simPeers.ensure(WORLD_KEY, undefined);
       return;
     }
 
@@ -899,7 +920,11 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       log('info', 'simpeer.anchors', { exteriors: anchors.length, interiors: interiors.length });
     }
     simPeers.sweep();
-  }, 5_000);
+  };
+  const simPeerTick = setInterval(simPeerPass, 5_000);
+  // A peer finishing its hello should not wait up to a full tick to be put to work —
+  // that is 5s of the player holding a loading screen for no reason.
+  ctx.onPeerJoined = () => simPeerPass();
   simPeerTick.unref();
   metrics.simPeerRunning.addCollector(() => simPeers.running);
 

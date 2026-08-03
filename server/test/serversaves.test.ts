@@ -183,10 +183,14 @@ test('an upload past its signed length is cut off and leaves no file', async () 
     assert.notEqual(status, 200);
     const path = join(dir, 'locker-blobs', 'saves', 'alice', 'Small.omwsave');
     assert.equal(existsSync(path), false, 'refused bytes were kept');
-    // The client sees the reset before the server has finished cleaning up after it.
-    const tmp = `${path}.${process.pid}.tmp`;
-    for (let i = 0; i < 50 && existsSync(tmp); i++) await new Promise((r) => setTimeout(r, 20));
-    assert.equal(existsSync(tmp), false, 'temp file left behind');
+    // The client sees the reset before the server has finished cleaning up after it, so this
+    // waits rather than sampling. Budget is generous on purpose: under a full-suite run the
+    // cleanup can lose the CPU for a while, and a tight bound here fails for load rather than
+    // for the thing it is testing.
+    const strays = () => readdirSync(join(dir, 'locker-blobs', 'saves', 'alice'))
+      .filter((f) => f.startsWith('Small.omwsave') && f.endsWith('.tmp'));
+    for (let i = 0; i < 250 && strays().length > 0; i++) await new Promise((r) => setTimeout(r, 20));
+    assert.deepEqual(strays(), [], 'temp file left behind');
   } finally {
     await h.close();
   }

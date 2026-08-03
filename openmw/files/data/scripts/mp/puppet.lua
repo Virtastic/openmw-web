@@ -53,6 +53,15 @@ local actorKey = nil -- set for M4 NPC puppets (refKey the holder addresses)
 local interp = Interp.new()
 local lastSnapReq = 0
 local stuckSince = nil
+-- Has this puppet been PUT on its authoritative position yet, as opposed to having walked
+-- toward it? Until the peer took this cell the engine's own AI was driving this actor, so at
+-- attach it stands wherever that left it — anywhere up to the tier's snap threshold (128
+-- units near) away from where the server says it is. Steering that gap instead of closing it
+-- is what players see as an NPC twitching on the spot for a second before it "starts
+-- working": the steer/hold boundary is 4 units, and a target that keeps moving pushes the
+-- actor back and forth across it. The first target after attach therefore TELEPORTS, at any
+-- distance; every later correction keeps the existing distance and cooldown rules.
+local placed = false
 local lastProgressPos = nil
 local prevJump = false
 local tier = TIER_NEAR -- last tier stamped on a pose; near until told otherwise
@@ -77,9 +86,12 @@ local function bit(flags, n) -- flags arrive as LSER doubles; pure-arithmetic bi
     return math.floor((flags or 0) / 2 ^ n) % 2 >= 1
 end
 
-local function requestSnap(target, why)
+local function requestSnap(target, why, force)
     local now = core.getRealTime()
-    if now - lastSnapReq < (SNAP_COOLDOWN_BY_TIER[tier] or SNAP_COOLDOWN) then return end
+    -- `force` skips the cooldown for the first placement only (see placed, below): there is
+    -- no previous teleport to let land, and losing this one to a cooldown left over from a
+    -- past life of this script is exactly the case we cannot afford to miss.
+    if not force and now - lastSnapReq < (SNAP_COOLDOWN_BY_TIER[tier] or SNAP_COOLDOWN) then return end
     lastSnapReq = now
     core.sendGlobalEvent('mpSnapRequest',
         { id = playerId, actorKey = actorKey, x = target.x, y = target.y, z = target.z, why = why })
@@ -163,6 +175,16 @@ local function onUpdate(dt)
     local dz = target.z - pos.z
     local dist2d = math.sqrt(dx * dx + dy * dy)
     local dist3d = math.sqrt(dx * dx + dy * dy + dz * dz)
+
+    -- First placement after attach: teleport onto the authoritative position rather than
+    -- walking to it. Distance-independent on purpose — the common case is a SMALL gap, which
+    -- is precisely the one the distance rule below would let through to the steering code.
+    if not placed then
+        placed = true
+        requestSnap(target, 'attach', true)
+        zeroControls()
+        return
+    end
 
     if dist3d > (SNAP_BY_TIER[tier] or SNAP_DISTANCE) then
         requestSnap(target, 'distance')
