@@ -20,7 +20,7 @@ import { TokenBucket, IpRateLimiter } from './ratelimit';
 import { socketRttMs } from './ws';
 import { MSG_EVENT, MSG_PLAYER_MOVE, MSG_PLAYER_MOVE_BATCH, MSG_ACTOR_MOVE_BATCH, ProtoError, unpackEnvelope, unpackEvent, packEvent, packEnvelope, nextBroadcastSeq } from '../proto/envelope';
 import { unpackMove } from '../proto/movement';
-import { MAX_ABS_COORD } from '../core/movement';
+import { MAX_ABS_COORD , isChargenCell } from '../core/movement';
 import { handleStateEvent, syncStateOnJoin, type StateCtx } from '../core/playerstate';
 import type { WorldState } from '../core/worldstate';
 import type { Combat } from '../core/combat';
@@ -926,7 +926,7 @@ export class Connection implements Peer {
       // correct: the doc restores position and stats, and Morrowind's own chargen picks up
       // where it left off. The slot simply stays uncompleted until ChargenComplete arrives.
       const finished = hasJournal
-        || positions.some((p) => !/census|prison ship/i.test(p.cellKey));
+        || positions.some((p) => !isChargenCell(p.cellKey));
       if (finished) this.ctx.accounts.completeCharacter(account, char.id);
       // Remember it: authenticate() suppresses persistence while creation is genuinely in
       // progress, and this is the only place with the evidence to tell.

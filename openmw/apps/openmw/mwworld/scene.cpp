@@ -653,10 +653,25 @@ namespace MWWorld
             // is the whole point — a peer can hold a hundred rooms it is not standing in.
             for (const ESM::RefId& id : mSimAnchorInteriors)
             {
-                CellStore& cell = mWorld.getWorldModel().getCell(id);
-                if (std::find(mActiveCells.begin(), mActiveCells.end(), &cell) != mActiveCells.end())
+                // GUARDED: these names originate in a client-reported cellKey and arrive over
+                // the network. WorldModel::getCell THROWS on an id no content file defines, and
+                // this runs inside the SimAnchors event handler — one renamed or mistyped cell
+                // would kill the sim peer, which then crash-loops through its restart backoff
+                // and nobody's cell gets simulated at all. Skip the bad name and keep going.
+                CellStore* cell = nullptr;
+                try
+                {
+                    cell = &mWorld.getWorldModel().getCell(id);
+                }
+                catch (const std::exception& e)
+                {
+                    Log(Debug::Warning) << "Sim anchor names no such cell, ignoring: " << id
+                                        << " (" << e.what() << ")";
                     continue;
-                loadCell(cell, nullptr, false, osg::Vec3f(0.f, 0.f, 0.f), nullptr);
+                }
+                if (std::find(mActiveCells.begin(), mActiveCells.end(), cell) != mActiveCells.end())
+                    continue;
+                loadCell(*cell, nullptr, false, osg::Vec3f(0.f, 0.f, 0.f), nullptr);
             }
         }
 

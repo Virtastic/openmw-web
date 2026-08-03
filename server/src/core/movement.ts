@@ -21,6 +21,25 @@ export const MAX_ABS_COORD = 512000;
 
 const EXTERIOR_RE = /^(-?\d+),(-?\d+)$/;
 
+// THE CHARGEN SANCTUARY. Morrowind's opening — the Imperial Prison Ship and the Census and
+// Excise Office — is driven entirely by Morrowind.esm's own mwscripts, and the engine writes
+// `chargenstate` exactly once (worldimp.cpp): every step toward -1 is those scripts running.
+// Anything that stops them running on the PLAYER'S machine stalls character creation forever.
+//
+// So these cells are local-only, in two independent senses that happen to share this test:
+//   - persisted world state never replays into them (a first character taking the release
+//     papers must not delete them for every later one), and
+//   - the sim peer never simulates them: holding one makes the client attach puppets over the
+//     chargen actors and disable their AI, after which nobody advances the sequence at all.
+//
+// Matched by NAME because that is all either side has in common: the client reports a cellKey
+// string and the server has no cell records. The same test exists in scripts/mp/objects.lua;
+// keep the two in step.
+export function isChargenCell(cellKey: string | undefined): boolean {
+  const k = String(cellKey ?? '').toLowerCase();
+  return k.includes('census') || k.includes('prison ship');
+}
+
 export function parseExterior(cellKey: string): { x: number; y: number } | null {
   const m = EXTERIOR_RE.exec(cellKey);
   return m ? { x: parseInt(m[1]!, 10), y: parseInt(m[2]!, 10) } : null;

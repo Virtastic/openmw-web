@@ -61,7 +61,13 @@ local function snapAppearance()
         hair = orFallback(rec.hair, 'hair'),
         isMale = rec.isMale == true,
         class = orFallback(rec.class, 'class'),
-        name = mp.getName(),
+        -- The name the player typed in Morrowind's own character creation, read from their
+        -- NPC record — i.e. out of the character itself. mp.getName() is the SESSION name,
+        -- which before chargen is the slot's placeholder label ("New character"), and sending
+        -- that made the server store "New character" as the character's name and the tile
+        -- screen show it forever. Fall back to the session name only while the record has no
+        -- name yet (pre-chargen), so a slot always has something to display.
+        name = (rec.name ~= nil and rec.name ~= '') and rec.name or mp.getName(),
     }
 end
 

@@ -407,36 +407,32 @@ local function pollHarness()
         local ui_mode = cmd:match('^uimode:(%a+)$')
         if ui_mode == 'on' then I.UI.setMode('Interface', { windows = {} })
         elseif ui_mode == 'off' then I.UI.removeMode('Interface') end
-        -- Opt-in pause for an overlay that must stop the world, used by the pre-chargen intro.
-        -- disableMenuPause() below turns pause OFF for every mode because pausing only your own
-        -- client while the server and everyone else keep moving is wrong in multiplayer. That
-        -- reasoning does not hold before character creation: you are alone in your own private
-        -- world, and a modal you cannot dismiss while something walks up to you is worse.
-        -- Paired with uimode, so the pause can never outlive the overlay that asked for it.
+        -- NO-OP ON PURPOSE. This used to try to stop the world behind the pre-chargen intro
+        -- modal, first through UI modes (which never took effect: omw/ui.lua only recomputes
+        -- the pause when the mode stack CHANGES, and uimode:on has already entered Interface
+        -- mode by the time this arrives) and then through the 'Pause'/'Unpause' global events,
+        -- which DID take effect — and that is the problem.
         --
-        -- The removeMode before setMode is LOAD-BEARING. uimode:on has already put us in
-        -- Interface mode by the time this arrives, and pause is only recomputed when the mode
-        -- actually CHANGES: omw/ui.lua sums modePause across the stack inside a handler that
-        -- returns early when oldMode == newMode. Setting the flag and re-calling setMode on the
-        -- mode we are already in therefore sets a flag nobody ever reads — the overlay opened
-        -- and the world kept running underneath it. Leaving the mode first makes the re-entry a
-        -- real transition, which is what evaluates the flag.
-        -- Pause the WORLD directly rather than through UI modes. omw/ui.lua only recomputes
-        -- the pause when the mode stack CHANGES, and uimode:on has already put us in Interface
-        -- mode by the time this arrives — so setting modePause and re-entering the mode we are
-        -- already in set a flag nobody read, and the world kept running behind a modal the
-        -- player cannot dismiss without reading. Removing and re-entering the mode did not fix
-        -- it either.
+        -- A real pause stops executeLocalScripts (engine.cpp:311), and the opening is driven
+        -- entirely by Morrowind.esm's own mwscripts: the engine writes chargenstate exactly
+        -- once (worldimp.cpp:336-342) and every decrement toward -1 is done by those scripts.
+        -- Pausing therefore freezes character creation itself, and world-paused is also the
+        -- first gate in playercontrols.lua's controlsAllowed(), so the player cannot move.
         --
-        -- 'Pause'/'Unpause' are the global events omw/worldeventhandlers.lua turns into
-        -- world.pause(tag)/world.unpause(tag) — the same call the mode machinery ends up making,
-        -- reached without depending on a transition happening at the right moment. The tag is
-        -- ours, so nothing else can unpause us and we cannot cancel anyone else's pause.
+        -- It is also unsafe as built: two independent callers share the tag 'mpintro' — the
+        -- intro tour (index.html) and restoreHold's position-restore freeze — and restoreHold
+        -- acts only on CHANGE while being polled solely from the loading screen's finish(),
+        -- which stops polling once awaitRestore() returns false. Either caller's pause:off
+        -- clears the other's pause, and a stopped poll leaves it set forever.
+        --
+        -- Accepted and dropped rather than left half-working. If the intro genuinely needs the
+        -- world held, it needs its own tag per caller and a release that cannot be skipped —
+        -- a design pass, not another retry. uimode:on already blocks movement via
+        -- I.UI.getMode(), which is what the modal actually needs.
         local pause_mode = cmd:match('^pause:(%a+)$')
-        if pause_mode == 'on' then
-            core.sendGlobalEvent('Pause', 'mpintro')
-        elseif pause_mode == 'off' then
-            core.sendGlobalEvent('Unpause', 'mpintro')
+        if pause_mode == 'on' or pause_mode == 'off' then
+            -- ponytail: accepted and ignored so callers do not error; delete the callers too
+            -- if the intro stops asking for it.
         end
         if cmd == 'cam:3p' then -- visual scenarios: put own avatar in frame
             local camera = require('openmw.camera')

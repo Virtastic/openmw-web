@@ -58,7 +58,7 @@ import { log } from './log';
 import { metrics } from './metrics';
 import { SimPeerSupervisor } from './core/simpeer';
 import { WorldBrowser } from './core/worldbrowser';
-import { parseExterior } from './core/movement';
+import { parseExterior, isChargenCell } from './core/movement';
 import { detectGameData, findPeerBinary, gameDataDir, buildPeerCfg, buildPeerSettings } from './core/gamedata';
 
 export const VERSION = '0.1.0';
@@ -823,7 +823,21 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     // player indoors was in a cell nothing simulated — the peer could only cover the one room
     // it stood in — so an indoor quest simply never advanced. Chargen is entirely indoors,
     // which is why it stalled at the census office every time.
-    const cells = [...new Set(humans.map((p) => p.cellKey!))].sort();
+    // CHARGEN CELLS ARE NEVER SIMULATED BY THE PEER, and this is not an optimisation.
+    //
+    // The peer boots with --start and no --new-game, so its own chargenstate is -1 (creation
+    // finished, worldimp.cpp:336-342). The opening is driven entirely by Morrowind.esm's
+    // mwscripts on the actors in the prison ship and census office, and the engine writes
+    // chargenstate exactly once — every step toward -1 is those scripts running. The moment
+    // the peer holds one of those cells, the client receives ActorAuthorityInfo, attaches
+    // puppets over every actor there (actors.lua) and puppet.lua disables their AI. The
+    // scripts then run only in the peer's world, where the tutorial is already over, so
+    // nobody advances the sequence and character creation stalls forever.
+    //
+    // Unheld is the CORRECT state here: with no holder the client never attaches puppets and
+    // keeps running its own local AI, which is exactly what the opening needs. This mirrors
+    // the sanctuary objects.lua already applies to world state in the same cells.
+    const cells = [...new Set(humans.map((p) => p.cellKey!))].sort().filter((c) => !isChargenCell(c));
     const anchors: { x: number; y: number }[] = [];
     const interiors: string[] = [];
     for (const cell of cells) {
@@ -843,9 +857,13 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     // identical list every 5 s would churn loads for nothing.
     const key = JSON.stringify([anchors, interiors]);
     if (key !== lastAnchors) {
-      lastAnchors = key;
       const peerPlayer = roster.inWorld().find((p) => p.system === true);
       if (peerPlayer) {
+        // Recorded as sent ONLY once it has been. Assigning before this check meant that if
+        // the peer was still booting (measured 2-5s) on the tick the set changed, the send and
+        // the claim were skipped while the set was marked delivered — and for a lone player
+        // standing still it never changes again, so that session got no anchors at all.
+        lastAnchors = key;
         peerPlayer.peer.sendEvent('SimAnchors', { anchors, interiors });
         // AUTHORITY FOLLOWS THE ANCHORS. The peer keeps these cells loaded and ticks their
         // actors, so it must also HOLD them — otherwise the cells players are standing in have

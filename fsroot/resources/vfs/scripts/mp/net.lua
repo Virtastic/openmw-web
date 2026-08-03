@@ -75,6 +75,13 @@ local ticketDeadline = nil
 -- switch must authenticate with its travel ticket, never with a resume token belonging to the
 -- world we are leaving.
 local switching = false
+-- The next close is OURS. dialNow hangs up the old world before dialling the new one, and
+-- onClose cannot otherwise tell that close apart from a real drop: it only sees state ==
+-- 'Joined' and reports "connection lost", which is what greeted players creating a character
+-- (creating one opens a private world, which is a switch). Scoped to a single close rather
+-- than keyed on `switching`, because `switching` stays true until we ARRIVE — so a new
+-- connection that fails on the way must still be reported.
+local closingForSwitch = false
 local reconnectAttempt = 0 -- reset on a successful Joined
 -- Have we EVER been in the world on this page? A drop after joining is worth retrying
 -- indefinitely (the character is in there, and the resume ticket rejoins in place). A server
@@ -247,6 +254,8 @@ function net.dialNow(url)
     -- this window must keep retrying rather than dead-ending at Failed — that is the
     -- normal arrival experience, not an error.
     switchDeadline = core.getRealTime() + 60
+    -- We are about to hang up on purpose; the close this causes is not a loss.
+    closingForSwitch = true
     mp.disconnect()
     net.start()
     return true
@@ -274,6 +283,13 @@ function net.onOpen()
 end
 
 function net.onClose()
+    -- Our own hang-up, one line above in dialNow. Say nothing and schedule nothing: net.start()
+    -- is already dialling the new world and will drive the state from here. Consumed on use, so
+    -- only THIS close is excused.
+    if closingForSwitch then
+        closingForSwitch = false
+        return
+    end
     -- PROTOCOL.md has no in-band "account already exists" reply: a failed SessionRegister is a
     -- SessionDisconnect(AUTH_FAILED) + close. Implement register-then-login-on-exists as one
     -- reconnect with SessionLoginRequest instead.

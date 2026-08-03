@@ -249,6 +249,14 @@ local adminUiPending = 0
 -- (and force-includes a pose when someone enters the bubble), so the authoritative spawn
 -- trigger is simply "first MP_MoveBatch entry for a rostered id"; PlayerCellChange handles
 -- teleports and despawns.
+-- Same sanctuary objects.lua and the server apply: the opening is driven by Morrowind's own
+-- scripts on the actors in these cells, so nothing of ours belongs in them. Kept in step with
+-- isChargenCell in scripts/mp/objects.lua and server/src/core/movement.ts.
+local function isChargenCell(cellKey)
+    local k = string.lower(tostring(cellKey or ''))
+    return (k:find('census', 1, true) ~= nil) or (k:find('prison ship', 1, true) ~= nil)
+end
+
 local PUPPET_TEMPLATE_ID = 'villager_00' -- demo NPC record (race "Imperial"), neutral kit
 
 local puppets = {} -- id -> {obj=GameObject, name=string}
@@ -403,7 +411,9 @@ local function spawnPuppet(id, pose)
     if puppets[id] then return end
     local cellArg = destCellArg()
     if not cellArg then return end
-    local name = rosterName(id) or ('player ' .. tostring(id))
+    -- %d, not tostring(): ids arrive through the JSON decoder as Lua floats, so tostring(2.0)
+    -- is "2.0" and the fallback name rendered in the crosshair tooltip as "player 2.0".
+    local name = rosterName(id) or string.format('player %d', math.floor(tonumber(id) or 0))
     local recordId = puppetRecordId(id, name)
     if not recordId then return end
     local obj = world.createObject(recordId)
@@ -1021,7 +1031,14 @@ local eventHandlers = {
             local e = entryBuf[i]
             if e.id ~= net.playerId then
                 lastPose[e.id] = { x = e.x, y = e.y, z = e.z }
-                if not puppets[e.id] then spawnPuppet(e.id, e) end
+                -- NEVER into the chargen cells. spawnPuppet places a puppet in the LOCAL
+                -- player's own cell (destCellArg), and this path has no cell test of its own —
+                -- MP_PlayerCellChange checks visibility, a move batch does not. That is how a
+                -- stranger materialises in your Imperial Prison Ship mid-character-creation,
+                -- standing among the actors whose scripts drive the opening.
+                if not puppets[e.id] and not isChargenCell(ownCellKeyCache) then
+                    spawnPuppet(e.id, e)
+                end
                 local p = puppets[e.id]
                 if p and p.obj:isValid() then
                     local d2 = d2Buf[i]
