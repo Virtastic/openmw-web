@@ -251,6 +251,25 @@ export class LoginTicketStore {
     return ticket;
   }
 
+  /** Read a ticket WITHOUT spending it. Exists so the caller can run its refusals — world
+   *  access, the chargen gate — before committing the credential. Consuming first meant any
+   *  refusal after the claim burned the ticket, and the client's reconnect ladder then retried
+   *  a credential that could never work again: one click on Public produced six identical
+   *  "login ticket expired or already used" refusals and a switch that silently did nothing.
+   *  ALWAYS pair with claim() on the success path; a peek alone is not single-use. */
+  peek(ticket: string): LoginTicket | undefined {
+    let found = this.tickets.get(ticket);
+    if (!found && this.db) {
+      try {
+        const row = this.db
+          .prepare('SELECT accountKey, accountName, expiresAt FROM tickets WHERE ticket = ?')
+          .get(ticket) as LoginTicket | undefined;
+        if (row) found = { accountKey: row.accountKey, accountName: row.accountName, expiresAt: Number(row.expiresAt) };
+      } catch { /* not here */ }
+    }
+    return found && found.expiresAt > Date.now() ? found : undefined;
+  }
+
   // Single use: removed on the first claim, valid or not. Falls through to the shared DB when
   // the ticket was minted by another process (the gateway).
   claim(ticket: string): LoginTicket | undefined {

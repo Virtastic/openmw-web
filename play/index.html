@@ -3431,6 +3431,8 @@
     // the engine never mirrors — so it filtered nobody. With one player online that read "0"
     // next to your own row, and offered to friend/mute/block yourself.
     var selfName = String(m.selfName || window.__omwSelfName || '').toLowerCase();
+    // Same value, display casing kept: the Players tab renders your own row from it.
+    var selfDisplay = String(m.selfName || window.__omwSelfName || '');
     // Identity, not name: the roster carries usernames while __omwSelfName is the CHARACTER
     // name, so a name compare let the player see themselves. Name stays as the fallback for
     // the moment before the id mirror lands.
@@ -3438,7 +3440,7 @@
     var otherPlayers = players.filter(function(p){
       if (selfId && p.id != null) return String(p.id) !== selfId;
       return String(p.name||'').toLowerCase() !== selfName; });
-    [['friends','Friends', friends.length],['party','Party', partyN],['players','Players', otherPlayers.length],['settings','Settings', null]]
+    [['friends','Friends', friends.length],['party','Party', partyN],['players','Players', otherPlayers.length + (selfDisplay ? 1 : 0)],['settings','Settings', null]]
       .forEach(function(t){
         var d = el('div','nv'+(sTab===t[0]?' on':''), esc(t[1]) + (t[2]!=null ? ' <span class="n">'+t[2]+'</span>' : ''));
         d.setAttribute('data-t', t[0]); // stable hook for the click regression test
@@ -3533,8 +3535,24 @@
         lb2.onclick = function(){ cmd('social:PartyLeave:'); setStatus('You left the party.'); }; lv.appendChild(lb2); sec.appendChild(lv); }
     } else if (sTab === 'players'){
       sec.appendChild(el('h3',null,'Players here'));
+      // YOU FIRST. The list is built from the roster, which excludes you — correct for the
+      // wire (you do not need to be told where you are), wrong for a panel titled "Players
+      // here": alone in a solo world it said "Nobody else is here right now" and showed an
+      // empty list, which reads as the roster being broken rather than as the world being
+      // empty. Your own row is rendered from what the client already knows about itself, so
+      // it costs nothing and cannot disagree with the server about anyone else.
+      var me = selfDisplay;
+      if (me) {
+        var meRow = personRow(me, 'You', true, []);
+        meRow.classList.add('self');
+        sec.appendChild(meRow);
+      }
       var others = otherPlayers;
-      if (!others.length) sec.appendChild(el('div','empty','Nobody else is here right now.'));
+      if (!others.length) {
+        sec.appendChild(el('div','empty', me
+          ? 'No one else is here right now.'
+          : 'Nobody else is here right now.'));
+      }
       // The pane scrolls, but the render is capped so a crowded cell cannot build thousands of
       // rows every poll. Say so rather than silently showing a truncated list.
       var PLAYER_ROWS = 100;

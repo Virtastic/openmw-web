@@ -1151,7 +1151,11 @@ export class Connection implements Peer {
       this.authFail('ticket', 'AUTH_FAILED', 'malformed login ticket');
       return;
     }
-    const claimed = this.ctx.tickets.claim(msg.ticket); // single use, <=60 s
+    // PEEK, then spend it only once the join is committed. Claiming here burned the ticket on
+    // every refusal below — world access, the chargen gate — and the client's reconnect ladder
+    // then retried a credential that could never work again. One click on Public produced six
+    // identical "already used" refusals and a switch that appeared to do nothing at all.
+    const claimed = this.ctx.tickets.peek(msg.ticket); // <=60 s, not spent yet
     if (!claimed) {
       this.authFail('ticket', 'AUTH_FAILED', 'login ticket expired or already used');
       return;
@@ -1172,6 +1176,10 @@ export class Connection implements Peer {
     if (!rc) return;
     log('info', 'player.sso_login', { account: account.name, ip: this.ip });
     this.finishAuth('ticket', account, rc.doc, false, rc.char);
+    // Committed (or refused). Spend it ONLY on success, so a refusal leaves the player with a
+    // credential they can still use — on the world they came from, or on a retry here.
+    if (this.state === 'AUTHED') this.ctx.tickets.claim(msg.ticket);
+    else log('info', 'conn.ticket_kept', { reason: 'join refused', account: account.name });
   }
 
   // forceRecord: send the doc even without an appearance. The appearance gate below exists
