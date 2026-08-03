@@ -3155,27 +3155,41 @@
   //
   // The ceiling is not optional: a peer that never starts must not strand anyone behind this.
   function holdUntilSimulated(ceilingMs){
-    var until = Date.now() + (ceilingMs || 30000), said = false;
-    // MINIMUM VISIBLE TIME. Two separate problems, both of which read to a player as "the
-    // loading screen flashed and then I rubber-banded for ten seconds".
+    // A SETTLING GRACE AFTER READY, not a floor before it.
     //
-    // 1. The gate used to pass on its FIRST poll. At the instant of the click we are still
-    //    joined to the world we are leaving and simReady is still '1' from it, so
-    //    "joined AND simulated" was trivially true before the disconnect had even started.
-    //    Clearing simReady when the connection drops was too late — the screen was long gone.
-    //    So the stale flag is cleared HERE, synchronously, before anything can read it.
-    // 2. Even a correct gate that clears in 200ms is a flash. A switch is a real journey and
-    //    should look like one, so the screen stays up for a floor of 3s regardless.
-    var minUntil = Date.now() + 3000;
+    // "Ready" means the destination world has a peer holding cells — it does NOT mean the
+    // client has finished streaming the cell in, that the actors around you have had their
+    // first pose, or that your own position has stopped being corrected. Hiding the screen on
+    // that instant drops the player into the exact few seconds of settling they were being
+    // held back from, which is what the rubber-banding is.
+    //
+    // An earlier attempt put a 3s floor on the START of the switch instead. That is not the
+    // same thing and mostly did nothing: when readiness arrives quickly the floor has already
+    // elapsed, so the screen still cleared the moment the world said ready.
+    var GRACE_MS = 5000;
+    var until = Date.now() + (ceilingMs || 30000), said = false, readyAt = 0;
+    // simReady still describes the world being LEFT until the disconnect lands, so clear it
+    // synchronously — otherwise the first poll passes on stale state and nothing waits at all.
     try { if (window.__omwMP) window.__omwMP.simReady = '0'; } catch (e) {}
     (function poll(){
       var st = window.__omwMP || {};
       var ready = (st.state || '') === 'Joined' && st.simReady === '1';
-      if (ready && Date.now() >= minUntil){ window.__omwLoading.hide(); return; }
-      if (Date.now() > until){ window.__omwLoading.hide(); return; }  // let the net layer's own error path speak
-      if (!said && (st.state || '') === 'Joined'){
-        said = true;
-        window.__omwLoading.show('Almost there', 'Waiting for the world to be simulated…');
+      if (!ready) {
+        readyAt = 0;   // lost it again (a redial, a peer restart): the grace starts over
+      } else if (!readyAt) {
+        readyAt = Date.now();
+        window.__omwLoading.show('Almost there', 'Settling the world…');
+      }
+      // Once ready, the grace runs to completion — the ceiling below only bounds the WAIT for
+      // readiness, and cutting the grace short would hand back the seconds it exists to cover.
+      if (readyAt) {
+        if (Date.now() - readyAt >= GRACE_MS) { window.__omwLoading.hide(); return; }
+      } else {
+        if (Date.now() > until) { window.__omwLoading.hide(); return; } // let the net layer speak
+        if (!said && (st.state || '') === 'Joined') {
+          said = true;
+          window.__omwLoading.show('Almost there', 'Waiting for the world to be simulated…');
+        }
       }
       setTimeout(poll, 250);
     })();
