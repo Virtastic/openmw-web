@@ -4,6 +4,54 @@ All notable changes to openmw-web are documented here.
 
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-08-03
+
+Multiplayer. Morrowind is a single-player game, so this is not a port of anything
+upstream — it is a server that owns the shared world and a client that asks it what
+happened. 268 commits since 1.0.2.
+
+Single-player is unchanged and still needs no server: the example world and the
+bring-your-own-Morrowind path work exactly as they did.
+
+### Added
+
+- **Play together, three ways.** *Solo* is your own world. *Party* puts your group in
+  one world. *Public* is a shared world with strangers in it. You switch from inside
+  the game and your character comes with you — no restart, no re-picking your data.
+
+- **The server simulates the world, not the clients.** NPCs, combat, loot and cell
+  state are owned by a headless copy of the engine running server-side, holding
+  authority over the cells players are actually standing in. A modified client can
+  lie about its own input and gets nowhere: it cannot author what an NPC did, conjure
+  an item, or vouch for its own damage.
+
+- **Sign in with Google, Discord or Microsoft.** There is no password to phish or
+  leak, because there is no password. Only `openid profile` is requested — never an
+  email scope — and your public handle is a username you pick, never the name your
+  provider hands over.
+
+- **Your own game data, your own copy.** Upload your Morrowind files once to a private
+  locker and stream them back on any device. Every account stores its own bytes with
+  no deduplication between accounts, gated on an ownership attestation and a check of
+  what actually landed. The reasoning is written down in `docs/LEGAL.md`.
+
+- **Savegames on the server.** Sign in and your saves follow you: clear your browser,
+  move to another machine, and the same game is there. The upload happens when you
+  click Save and at no other time — no autosave, no background snapshots.
+
+- **The social layer that makes a world habitable.** Friends and presence, parties
+  with loot rolls, whisper, mute and block, and in-game reporting that hands a
+  moderator the surrounding chat rather than a bare accusation.
+
+- **Self-hosting a server takes an OAuth app and about ten minutes**
+  (`docs/MULTIPLAYER-SETUP.md`). Object storage is optional: with no S3 bucket
+  configured, lockers and savegames are stored in a folder on the server.
+
+### Changed
+
+- Saves now go to whichever of the three places fits how you are playing — your own
+  folder, the server, or browser storage. `README.md` spells out which is which.
+
 ## [1.0.2] - 2026-07-31
 
 Mostly about the downloadable bundle: it behaves like the live site now, it can
@@ -115,6 +163,7 @@ playable in a desktop browser.
 - Self-host bundle and GPLv3 Complete Corresponding Source published with the
   release.
 
+[1.1.0]: https://github.com/Virtastic/openmw-web/releases/tag/v1.1.0
 [1.0.2]: https://github.com/Virtastic/openmw-web/releases/tag/v1.0.2
 [1.0.1]: https://github.com/Virtastic/openmw-web/releases/tag/v1.0.1
 [1.0.0]: https://github.com/Virtastic/openmw-web/releases/tag/v1.0.0

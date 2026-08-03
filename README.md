@@ -26,6 +26,12 @@ cross-compiled with Emscripten so the whole engine runs client-side in a desktop
 browser. There are no plugins and no streaming service. The engine runs locally and
 reads game data from your machine.
 
+**New in 1.1.0: multiplayer.** Morrowind is a single-player game, so this is a real
+addition rather than a port — a server that owns the shared world, and a client that
+asks it what happened. Play solo, invite a party, or step into a public world with
+strangers in it. See [Multiplayer](#multiplayer) below, and
+[`docs/MULTIPLAYER-SETUP.md`](docs/MULTIPLAYER-SETUP.md) to run your own.
+
 The `openmw/` tree tracks upstream
 [`OpenMW/openmw`](https://github.com/OpenMW/openmw) at commit
 `bc1d9c97a3881bb961a0b74e6e49bbba772b86a1` (recorded in
@@ -52,12 +58,20 @@ launcher enabled there are two ways in:
   [Troubleshooting](#troubleshooting) below.
 
 Settings and keybindings persist in the browser (IndexedDB) and survive reloads.
-Saves persist too. On the bring-your-own path they are written to an
-`openmw-web-saves` folder on disk inside the folder you picked (real files, via the
-File System Access API), so they survive clearing browser data and can be backed up
-like any other file. The example-world path keeps saves in browser storage
-(IndexedDB). A themed loading screen shows real download and mount progress on the
-way in.
+Saves persist too, and where they land depends on how you are playing:
+
+- **Bring your own Morrowind** — written to an `openmw-web-saves` folder on disk
+  inside the folder you picked (real files, via the File System Access API), so they
+  survive clearing browser data and can be backed up like any other file.
+- **Signed in to a server** — saved to the server as well, so a cleared browser or a
+  different machine picks the same game back up. The upload happens when you click
+  Save in the game and at no other time: there is no autosave and no background
+  snapshotting.
+- **The example world, offline** — browser storage (IndexedDB) only. Durable in
+  practice, but the browser may evict it under storage pressure, so use the in-game
+  backup if a run matters to you.
+
+A themed loading screen shows real download and mount progress on the way in.
 
 ### Tuning for your GPU
 
@@ -103,6 +117,43 @@ launcher finds `Data Files` inside it).
 or `Video` folders that live inside `Data Files` (they are not stored in the `.bsa`).
 A normal Steam or GOG install has them.
 
+## Multiplayer
+
+Morrowind has no multiplayer, so none of this is a port of something upstream — it is a
+server that owns the shared world and a client that asks it what happened.
+
+**Three ways to play, switched from inside the game.** *Solo* is your own world, no one
+else in it. *Party* puts your group in one world together. *Public* is a shared world
+with strangers in it. Switching moves your character; it does not restart the game.
+
+**The server decides.** NPCs, combat resolution, loot and cell state are simulated
+server-side by a headless copy of the engine that holds authority over the cells players
+are standing in. A modified client can lie about its own input and gets nowhere: it
+cannot author what an NPC did, spawn an item, or vouch for its own damage. Character
+state (position, inventory, stats, journal, faction standing) lives in the server's own
+per-character document, written behind a debounce and flushed on cell change, level-up
+and logout.
+
+**Sign-in is SSO only** — Google, Discord or Microsoft. There is no password to phish,
+reuse or leak, because there is no password. Only `openid profile` is requested; the
+email scope never is. Your public handle is a username you choose, never the provider's
+name claim.
+
+**You bring your own game data.** A player uploads their own Morrowind files once to a
+private storage locker and streams them back on any device. Each account holds its own
+copy with no deduplication between accounts, uploads are gated on an ownership
+attestation and a per-file content check, and nothing is ever shared between players.
+This is deliberate and the reasoning is written down in [`docs/LEGAL.md`](docs/LEGAL.md).
+
+**Also there:** friends and presence, parties with loot rolls, whisper, mute and block,
+in-game reporting with chat context for moderators, an admin surface, and server-side
+savegames. Running your own server needs an OAuth app and about ten minutes:
+[`docs/MULTIPLAYER-SETUP.md`](docs/MULTIPLAYER-SETUP.md). Storage is optional — with no
+S3 bucket configured, lockers and saves go to a folder on the server.
+
+For running the server on your own machine while developing, see
+[Multiplayer locally](#multiplayer-locally).
+
 ## What's in this repo
 
 This is a code-only repo. Large binaries (game assets, dependency source caches, and
@@ -118,6 +169,8 @@ rebuilt locally.
 | `wasm-build/x11_stubs.c` | Signature-exact X11 no-op stubs that osgViewer links against |
 | `wasm-build/patches/osg-emscripten.patch` | All OSG source fixes for WebGL2/emscripten |
 | `play/` | Browser front-end: `launcher.html`, `index.html`, `openmw.js` loader, `server.py` dev server |
+| `server/` | The multiplayer server (TypeScript, Node): world gateway, SSO, storage locker, savegames, and the authority model |
+| `deploy/` | Container and reverse-proxy config for a real deployment |
 | `fsroot/` | Virtual filesystem config and mount layout for the WASM runtime (the demo dataset itself, `fsroot/gamedata/`, is gitignored; see below) |
 
 ### Not included (kept local)

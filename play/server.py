@@ -47,8 +47,8 @@ def _is_gateway_path(path):
     p = path.split('?', 1)[0]
     # /w/<id> is the gameplay socket, /ws is the launcher's origin base + local direct-dial
     # fallback. /admin, /metrics, /healthz and /status are deliberately NOT forwarded.
-    return (p.startswith(('/w/', '/auth/', '/locker/', '/worlds/'))
-            or p in ('/worlds', '/ws'))
+    return (p.startswith(('/w/', '/auth/', '/locker/', '/saves/', '/worlds/'))
+            or p in ('/worlds', '/ws', '/saves'))
 
 
 class H(http.server.SimpleHTTPRequestHandler):
