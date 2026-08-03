@@ -87,3 +87,7 @@ play/moddata/
 
 # Local deployment values (hosts, users, key paths). The repo is public.
 ci/jenkins/config.env
+
+# Engine logs from a local Oblivion run — build output, not source.
+oblivion-play/
+openmw-oblivion-wt/
