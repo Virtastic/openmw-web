@@ -25,12 +25,12 @@
 //   StreamFS.mountLocal('/mwdata/Morrowind.bsa', fileHandle, sizeBytes);
 (function () {
   'use strict';
-  const CHUNK = 2 * 1024 * 1024; // 2MB chunks
-  const LRU_MAX = 48;            // ~96MB resident chunk cache per file set
+  const CHUNK = 4 * 1024 * 1024; // 4MB chunks (fewer network round-trips when streaming BSAs from S3)
+  const LRU_MAX = 32;            // ~128MB resident chunk cache per file set
 
   // cache is a Map used as an LRU: insertion order IS the recency order (delete+set moves to end),
   // so eviction pops the first (oldest) key. No separate order array → O(1) hit path, no linear scan.
-  const S = { worker: null, ctrl: null, data: null, cache: new Map(), nextId: 1 };
+  const S = { worker: null, ctrl: null, data: null, cache: new Map(), nextId: 1, urlSrcs: new Map() };
 
   // Streaming cost counters, exposed as window.__streamfsStats. Chunk misses block the main thread
   // (see fetchChunkSync), so this is the only place the stall is observable. Two adds per read —
@@ -46,6 +46,9 @@
         const m = e.data;
         if (m.init) { ctrl = new Int32Array(m.ctrl); data = new Uint8Array(m.data); return; }
         if (m.mountLocal) { handles.set(m.mountLocal.id, m.mountLocal.handle); return; }
+        // A Blob (BSA from the Cache API) reads exactly like a File (slice + arrayBuffer), so it
+        // goes straight into the files map and the m.id read path below slices it locally.
+        if (m.mountBlob) { files.set(m.mountBlob.id, m.mountBlob.blob); return; }
         // m: {url|id, start, end, gen}
         try {
           let buf;
@@ -170,9 +173,21 @@
     mount(path, url, size) {
       const abs = new URL(url, location.href).href;
       const src = { url: abs };
+      // Registered so the URL can be refreshed later (presigned locker URLs expire): the cache
+      // key stays `abs` (stable across renewals — the bytes are the same file), only src.url
+      // changes, so a re-signed URL is used for future Range fetches without dropping the cache.
+      S.urlSrcs.set(path, src);
       return makeNode(path, size, function (buffer, offset, length, position) {
         return readSync(src, abs, size, buffer, offset, length, position);
       });
+    },
+
+    // Swap in a freshly-signed URL for an already-mounted path. The read path is synchronous
+    // (it blocks on the worker), so it cannot re-sign on a 403; instead the app renews each
+    // locker URL on a timer, before expiry, by calling this.
+    setUrl(path, url) {
+      const src = S.urlSrcs.get(path);
+      if (src) src.url = new URL(url, location.href).href;
     },
 
     // Mount a local `FileSystemFileHandle` at FS path `path` with known byte size. The handle
@@ -181,6 +196,18 @@
     mountLocal(path, handle, size) {
       const id = S.nextId++;
       S.worker.postMessage({ mountLocal: { id, handle } });
+      const src = { id };
+      return makeNode(path, size, function (buffer, offset, length, position) {
+        return readSync(src, 'id' + id, size, buffer, offset, length, position);
+      });
+    },
+
+    // Mount a Blob (e.g. a BSA held in the browser Cache API) at FS path `path`. Reads slice
+    // bytes from the Blob on demand — a LOCAL read (disk-backed Cache blob), so no network and
+    // no main-thread stall, unlike streaming from S3. The Blob is posted to the worker once.
+    mountBlob(path, blob, size) {
+      const id = S.nextId++;
+      S.worker.postMessage({ mountBlob: { id, blob } });
       const src = { id };
       return makeNode(path, size, function (buffer, offset, length, position) {
         return readSync(src, 'id' + id, size, buffer, offset, length, position);

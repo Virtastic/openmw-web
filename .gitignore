@@ -15,6 +15,10 @@ build-wasm/
 *.wasm
 *.data
 *.bsa
+# Retail content files, by EXTENSION and not merely by directory: only *.bsa was listed, so an
+# .esm dropped anywhere outside fsroot/gamedata or play/mwdata would have been committed.
+*.esm
+*.esp
 *.tar
 *.7z
 *.zip
@@ -55,8 +59,23 @@ build-wasm.good/
 __pycache__/
 *.pyc
 
-# Local multiplayer server (Node; not part of the web client)
-server/
+# Multiplayer server working dirs. NOTE: do not ignore `server/` wholesale — main once
+# did ("prevent accidental commit", 18a171f) from before the server was real, and a
+# blanket rule now silently swallows new source files. The server source IS tracked
+# (server/src, test, Dockerfile, PROTOCOL.md, …); build artifacts are handled here.
+server/node_modules/
+server/dist/
+server/devdata/
+
+# Phase H native sim-peer build (H1 spike): OpenMW + double-Bullet + MyGUI, macOS-local
+build-native/
+build-bullet-native/
+build-mygui-native/
+deps/native/
+
+# Mod archives that feed the streamed asset pack (built by wasm-build/build-assetpack.py)
+# are third-party downloads, never repo content (docs/LEGAL.md §7).
+/wasm-build/mod-src/
 
 # Optional performance asset pack (built by wasm-build/build-assetpack.py from
 # third-party mod archives; never committed — see THIRD-PARTY-LICENSES.md).
@@ -67,9 +86,10 @@ play/moddata/
 # never be committed, same rule as play/mwdata/ and fsroot/gamedata/.
 wasm-build/mod-src/
 
-# Local dev state that is not part of this project: account/ban databases,
-# identities, and config that may hold secrets.
+# Local dev stack data (wasm-build/dev-local.sh): account/ban databases, identities,
+# and config that may hold secrets.
 .dev-local/
+.claude/settings.local.json
 
 # Native (non-WASM) CMake build trees — artifacts, same as build-wasm/ above.
 # e.g. a native bsatool build for verifying the asset pack.
@@ -86,8 +106,11 @@ build-*-native/
 *.sqlite-wal
 *.sqlite-shm
 
-# Local-only working notes and CI. AGENTS.md documents this developer's own build/test
-# servers; ci/jenkins runs on that local Jenkins, not on the public GitHub runners
-# (.github/workflows/ is the public CI).
-AGENTS.md
-ci/
+# Local deployment values (hosts, users, key paths). The SCRIPTS in ci/jenkins are
+# tracked — they are part of how this project is built — but the values they read are
+# one developer's own machines, and this repo is public.
+ci/jenkins/config.env
+
+# Engine logs from a local Oblivion run — build output, not source.
+oblivion-play/
+openmw-oblivion-wt/

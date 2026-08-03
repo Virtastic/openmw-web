@@ -76,6 +76,101 @@ Reload gets the latest build (server sends no-cache). Toggle the dev log with th
 - [ ] Console stays clean (no new error classes appearing over time)
 - [ ] Tab-out / tab-back; close tab and reopen → save intact
 
+## 9. Multiplayer (M0 — needs a human; the harness can't drive SDL keys)
+- [ ] `?nomw&mp=ws://localhost:8080/ws&name=You&pass=x` (server: `cd server && npm run dev`):
+      MOTD chat message appears in-game shortly after load
+- [ ] T opens the chat window; click the input line (no programmatic focus API in 0.52 Lua —
+      known UX gap), type, Enter sends; a second tab (different `name=`) sees it
+- [ ] Without `?mp=` absolutely nothing multiplayer-related appears (boot log, content chain)
+- [ ] Error paths look human: server not running → red top banner "could not reach the server";
+      wrong `pass=` for an existing name → banner names the auth failure; kill the server while
+      playing → in-game "connection lost — reload the page to retry" message (no banner)
+- [ ] "Connected to <server> as <name>" pops shortly after the world loads
+
+## 10. Multiplayer co-op (M1–M8 — two browsers, ideally two machines)
+
+Everything below is covered by the automated suite (`node wasm-build/mp-harness.mjs`), so this
+pass is about how it *feels*, not whether it functions. Use two tabs/windows with different
+`name=`; the shared-NPC items need retail data (`play/mwdata/`) because the Example Suite demo
+ships no NPC placements at all.
+
+- [ ] You can see the other player move, run, jump — motion is smooth, not teleporting
+- [ ] They look like their actual character (race/face/hair), and equipment changes show up
+- [ ] Their health bar behaviour matches what's happening to them
+- [ ] Drop an item; the other player can pick it up; it's gone for you. Both quit and rejoin —
+      the world still agrees
+- [ ] Open the same chest together and grab the same item: exactly one of you gets it, no dupe,
+      and the loser's inventory snaps back rather than silently keeping a ghost copy
+- [ ] Doors and locks: one opens, both see it
+- [ ] Retail: NPCs walk the same patrol on both screens. Kill one — it dies for both and the
+      shared kill tally agrees (this gates `GetDeadCount` quests)
+- [ ] Retail: close the tab of whoever is simulating a cell — the other player takes over within
+      a couple of seconds and the NPCs keep moving (NOT frozen)
+- [ ] Fight something together: damage lands, it dies once, both of you get credit
+- [ ] PvP is off by default — attacking each other does nothing until `[rules] pvp = true`
+- [ ] Advance a quest; the other player's journal updates and they can continue it
+- [ ] Talk to an NPC while the other tries the same NPC — they're told you're busy with it
+- [ ] Rest: the clock advances for BOTH of you, weather agrees
+- [ ] Reload your page mid-session — you rejoin in place without re-entering a password
+- [ ] Latency feels acceptable on a real network (the local soak is 24 players at ~4 ms mean)
+
+### Social hub styling and ESC → Options → Social
+The hub is built from the same MWUI templates as the game's own Options screen, so it should
+read as part of the game. Automation can prove the flows work and can screenshot them; only
+a person can say whether it LOOKS right next to the real menus.
+
+- [ ] Open the Social hub (F) with a real menu open behind it — do the border, transparency
+      and font colour match, or does it read as a bolt-on?
+- [ ] ESC → Options → **Social** exists and renders like every other settings page. Changing
+      "Visible to" there takes effect immediately (check a friend's view).
+- [ ] Tab bar: the active tab is legible as active. Counts update as people join and leave.
+- [ ] With 20+ players online, does the Players tab stay usable, or does it need scrolling
+      and/or a filter? (No scroll container exists yet — this is the check that decides
+      whether one is needed.)
+- [ ] Party: invite, accept, see members and their locations, leave. The leader leaving
+      should hand over, not disband.
+- [ ] Privacy: set `private`, and confirm a FRIEND can no longer see your location and
+      cannot invite you. Set `party`, and confirm only party members can.
+
+### Multiplayer windows (F = friends, G = admin)
+`s46-ui-flow` already drives these flows headlessly and writes a screenshot at each step, so
+the checks below are the ones it genuinely **cannot** make. It found three bugs a state-only
+test could not see (windows that never rendered at all, `#` in a name eaten as a MyGUI colour
+code, replies burying the player in screen messages) — assume it catches that class and
+concentrate on judgement.
+
+- [ ] **F and G actually open the windows.** The harness cannot inject SDL keys, so the
+      automated run opens them by event. The key bindings themselves are untested.
+- [ ] Neither key fires while another UI is open, or while typing in chat (T).
+- [ ] Clicking a row does what the label says: `[invite]`, `[unfriend]`, `[accept]`,
+      `[block]`, `[join]`.
+- [ ] The text field accepts a click, then typing, then Enter. (0.52 Lua cannot focus it
+      programmatically, so a click is required — is that discoverable?)
+- [ ] Text is legible at your resolution and the window does not run off-screen with a long
+      friends list or many players.
+- [ ] Accepting an invite lands you next to your friend and the world looks right afterwards
+      (no missing cell, no fall-through).
+
+### Avatar render LOD (the part automation cannot judge)
+Distant players are deliberately degraded so a crowded cell stays playable: past
+`[limits] lodNearMaxAvatars` (default 12) an avatar stops walking and is repositioned in
+occasional jumps, up to ~2048 units from where it really is. Frame cost is measured and
+the drift is bounded by a test — **whether it looks acceptable is a human judgement, and
+it is the only open question about this feature.**
+
+- [ ] Walk with a friend at normal distance: they animate smoothly, no jumping. (They are
+      inside the near cap, so any stutter here is a real bug, not LOD.)
+- [ ] Watch a player across a town square, then across a full cell — expect visible
+      jumping. Judge: reads as "far away and low detail", or as broken/teleporting?
+- [ ] Stand in a crowd of 10+ and watch the ones at the back. The nearest 12 should look
+      normal; note if the boundary between smooth and jumpy is distracting.
+- [ ] Walk toward, then away from, a degraded player. Promotion to smooth and demotion
+      back should not visibly snap or freeze mid-stride.
+- [ ] With `[limits] renderLod = "full"`, everything is smooth but a crowd costs ~1.2 ms
+      per avatar. Compare the two and say which you would ship.
+- [ ] Combat with a player near the cap boundary: does hit feedback still line up with
+      where they appear to be? (Degraded avatars are *drawn* up to 2048 units off.)
+
 ## Known open (already triaged — not bugs to re-report)
 - Some textures skip mipmaps (`glGenerateMipmap` warning) → slight distant shimmer — OSG fix pending
 - No MSAA → jagged edges vs desktop — enhancement, deferred

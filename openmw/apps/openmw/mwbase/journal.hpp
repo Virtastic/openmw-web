@@ -44,6 +44,17 @@ namespace MWBase
 
         virtual void clear() = 0;
 
+        /// Multiplayer: move the whole journal aside so a borrowed campaign can be shown in
+        /// its place, and put it back untouched afterwards. A guest in another player's world
+        /// sees THAT player's journal; their own must not leak through and must return
+        /// exactly as it was. Moving the containers (rather than deleting and re-adding
+        /// entries) is what makes the restore lossless — only the final quest index is known
+        /// to the server, so a rebuild would collapse a player's history to one entry each.
+        /// Both are idempotent: stash() while stashed must never clobber the real stash.
+        virtual void stash() = 0;
+        virtual void unstash() = 0;
+        virtual bool isStashed() const = 0;
+
         virtual ~Journal() = default;
 
         virtual MWDialogue::Quest& getOrStartQuest(const ESM::RefId& id) = 0;

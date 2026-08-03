@@ -1,0 +1,28 @@
+{
+  "name": "openmw-mp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Relay/validator/persister server for openmw-web multiplayer (omw-mp/1, M0)",
+  "license": "GPL-3.0-or-later",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "build": "node esbuild.mjs",
+    "test": "tsc --noEmit && node --import tsx --test --test-concurrency=2 test/*.test.ts",
+    "start": "node dist/server.mjs",
+    "lser-dump": "tsx src/proto/lser-dump.ts",
+    "soak": "tsx bots/soak.ts"
+  },
+  "dependencies": {
+    "@node-rs/argon2": "^2.0.2",
+    "smol-toml": "^1.3.1",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/ws": "^8.5.13",
+    "esbuild": "^0.25.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

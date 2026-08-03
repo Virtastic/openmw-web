@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Part of openmw-web.
-import http.server, socketserver, os, re, io, json, webbrowser
+import http.server, socketserver, os, re, io, json, socket, threading, webbrowser
 
 # Load play/.env (KEY=VALUE, # comments) WITHOUT clobbering real env vars, so the launcher
 # flag can live in a git-ignored file next to this server. Env always wins over .env.
@@ -32,15 +32,109 @@ HOST = os.environ.get('OPENMW_HOST', '127.0.0.1').strip() or '127.0.0.1'
 # OPENMW_LAUNCHER=0 (env or play/.env) opts out and boots the game at "/".
 LAUNCHER = os.environ.get('OPENMW_LAUNCHER', '1').strip().lower() not in ('0', 'false', 'no', '')
 
+# --- Multiplayer gateway, on THIS origin ---------------------------------------------------
+# The game page and the MP server MUST share an origin: index.html refuses to hand its session
+# ticket to a gateway on a different hostname. In production the container's Caddy proxies
+# these paths (deploy/Caddyfile); locally this dev server has to do the same job, or the
+# launcher derives ws://127.0.0.1:8910/ws and finds nothing but a static file server.
+#
+# Relaying raw bytes rather than parsing and rebuilding a response handles plain HTTP and the
+# WebSocket upgrade with ONE code path — and /w/<worldId> is an upgrade, so a response-parsing
+# proxy would need the splice logic anyway.
+MP_UPSTREAM = os.environ.get('OPENMW_MP_UPSTREAM', '127.0.0.1:8080').strip()
+
+def _is_gateway_path(path):
+    p = path.split('?', 1)[0]
+    # /w/<id> is the gameplay socket, /ws is the launcher's origin base + local direct-dial
+    # fallback. /admin, /metrics, /healthz and /status are deliberately NOT forwarded.
+    return (p.startswith(('/w/', '/auth/', '/locker/', '/worlds/'))
+            or p in ('/worlds', '/ws'))
+
+
 class H(http.server.SimpleHTTPRequestHandler):
     protocol_version = 'HTTP/1.1'
 
+    def _relay_to_gateway(self):
+        """Splice this connection to the MP gateway, verbatim in both directions."""
+        host, _, port = MP_UPSTREAM.partition(':')
+        try:
+            up = socket.create_connection((host, int(port or 8080)), timeout=10)
+        except OSError as e:
+            # Match what the real gateway does for a world that is down: fail the handshake
+            # so the client's retry ladder can run, rather than hanging.
+            self.send_error(502, 'multiplayer gateway unreachable at %s (%s)' % (MP_UPSTREAM, e))
+            return
+        self.close_connection = True
+        try:
+            head = '%s %s HTTP/1.1\r\n' % (self.command, self.path)
+            for k, v in self.headers.items():
+                head += '%s: %s\r\n' % (k, v)
+            up.sendall((head + '\r\n').encode('latin-1'))
+            n = int(self.headers.get('Content-Length') or 0)
+            if n:
+                up.sendall(self.rfile.read(n))
+
+            down = self.connection
+
+            def pump(src, dst):
+                try:
+                    while True:
+                        b = src.recv(65536)
+                        if not b:
+                            break
+                        dst.sendall(b)
+                except OSError:
+                    pass
+                finally:
+                    for s in (src, dst):
+                        try:
+                            s.shutdown(socket.SHUT_RDWR)
+                        except OSError:
+                            pass
+
+            t = threading.Thread(target=pump, args=(up, down), daemon=True)
+            t.start()
+            pump(down, up)
+            t.join(timeout=5)
+        finally:
+            try:
+                up.close()
+            except OSError:
+                pass
+
+    # Every verb the gateway is reached with routes through the same relay. POST matters:
+    # creating or joining a private world is POST /worlds.
+    def do_GET(self):
+        if _is_gateway_path(self.path):
+            return self._relay_to_gateway()
+        return super().do_GET()
+
+    def do_HEAD(self):
+        if _is_gateway_path(self.path):
+            return self._relay_to_gateway()
+        return super().do_HEAD()
+
+    def do_POST(self):
+        if _is_gateway_path(self.path):
+            return self._relay_to_gateway()
+        self.send_error(501, 'Unsupported method (POST)')
+
+    def do_OPTIONS(self):
+        if _is_gateway_path(self.path):
+            return self._relay_to_gateway()
+        self.send_error(501, 'Unsupported method (OPTIONS)')
+
     def send_head(self):
-        # Launcher gate: only the bare root serves the chooser. The match is on the FULL path
-        # incl. query, so anything with a query string — the launcher's own index.html?nomw /
-        # index.html?src=local links, plus dev URLs like ?debug — passes straight through to
-        # the game. Explicit /launcher.html and assets are likewise untouched.
-        if LAUNCHER and self.path in ('/', '/index.html'):
+        # Launcher gate: ONLY the bare root serves the chooser, which is exactly what the
+        # deployed edge does (infra/nginx.conf: `location = / { try_files /launcher.html; }`).
+        #
+        # /index.html used to be rewritten too, with a query string as the escape hatch. That
+        # made the gate depend on a query existing: the moment the launcher moved its boot
+        # params into the FRAGMENT (fragments never reach a server), the boot URL became a
+        # bare /index.html, was rewritten back to the launcher, and multiplayer looped between
+        # the two forever. Production was never affected, because nginx only ever matched `/`.
+        # Asking for /index.html explicitly means asking for the game.
+        if LAUNCHER and self.path == '/':
             self.path = '/launcher.html'
         # Self-host path: list whatever is actually in mwdata/ so the game page can load a real
         # "Data Files" folder copied there as-is. That lets a host ship the game data WITH the
@@ -146,6 +240,8 @@ except OSError as e:
     raise SystemExit(1)
 print(f"openmw-web: serving {url}  "
       f"(local only; set OPENMW_HOST=0.0.0.0 to expose on your network)")
+print(f"           multiplayer paths (/w/ /auth/ /locker/ /worlds /ws) -> {MP_UPSTREAM}  "
+      f"(set OPENMW_MP_UPSTREAM to change)")
 if os.environ.get('OPENMW_OPEN', '1').strip().lower() not in ('0', 'false', 'no', ''):
     print("opening your browser… (needs desktop Chrome/Chromium; OPENMW_OPEN=0 to skip)")
     webbrowser.open(url)

@@ -13,6 +13,11 @@
 #include <components/vfs/pathutil.hpp>
 #include <components/widgets/imagebutton.hpp>
 
+#ifdef __EMSCRIPTEN__
+#include <cstdlib>
+#include <emscripten.h>
+#endif
+
 #include "../mwbase/environment.hpp"
 #include "../mwbase/statemanager.hpp"
 #include "../mwbase/windowmanager.hpp"
@@ -172,6 +177,21 @@ namespace MWGui
 
     void MainMenu::onExitConfirmed()
     {
+#ifdef __EMSCRIPTEN__
+        // openmw-web multiplayer: Exit returns to the launcher's character-select screen,
+        // not a dead engine tab. __omwAllowLeave disarms the beforeunload guard; the
+        // launcher's #characters entry shows the tile screen from the stored session.
+        if (std::getenv("OPENMW_MP_URL") != nullptr)
+        {
+            EM_ASM({
+                window.__omwAllowLeave = true;
+                if (typeof Module !== 'undefined')
+                    Module.__omwRunning = false;
+                window.location.href = 'launcher.html#characters';
+            });
+            return;
+        }
+#endif
         MWBase::Environment::get().getStateManager()->requestQuit();
     }
 

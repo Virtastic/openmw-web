@@ -13,6 +13,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import zlib from 'node:zlib';
 
+// The server on :8795 MUST send COOP/COEP:
+//   Cross-Origin-Opener-Policy: same-origin
+//   Cross-Origin-Embedder-Policy: require-corp
+// or the engine's SharedArrayBuffer worker transfer throws
+// "DataCloneError: ... requires self.crossOriginIsolated", the boot never signals, and this
+// reports FAIL with frameOk:true — which reads exactly like a product regression and is not
+// one. `python3 -m http.server` does NOT send them. See SELF_HOSTING.md for the real
+// deployment headers (infra/nginx.conf, deploy/Caddyfile).
 const URL = process.argv[2] || 'http://localhost:8795/index.html?nomw&skipintro=1';
 const SECONDS = Number(process.argv[3] || 45);
 const LABEL = process.argv[4] || 'smoke';
@@ -216,6 +224,10 @@ let contextLost = false;
   console.log('screenshot:', shotPath);
   console.log('bootSignal:', bootOk, '| abort:', abort, '| frameOk:', frameOk);
   try { writeFileSync('/tmp/omw-' + LABEL + '-alllogs.txt', logs.join('\n')); } catch {}
+  // Golden-vector capture (&mpvectors=1): the MPVECTOR lines print early in the boot log and
+  // would fall out of the 40-line tail below — echo them all for wasm-build/mp-vectors.mjs.
+  const vectorLines = logs.filter((l) => l.includes('MPVECTOR'));
+  if (vectorLines.length) { console.log('--- MPVECTOR lines ---'); console.log(vectorLines.join('\n')); }
   console.log('--- last 40 log lines ---');
   console.log(logs.slice(-40).join('\n'));
   if (errors.length) { console.log('--- errors ---'); console.log(errors.slice(-20).join('\n')); }

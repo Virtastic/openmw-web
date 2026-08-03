@@ -62,6 +62,79 @@
    #loading::before,#loading .ld-glyph{animation:none}
    #loading.indet .ld-fill{animation:none;width:100%}
  }
+
+ /* --- Storage-locker upload wizard (first multiplayer visit) --- */
+ /* "Where is my Data Files folder?" — the one step people actually get stuck on, so it gets
+    a proper sheet rather than a tooltip. Above the wizard (9100) since it opens from it. */
+ #lkhelp{position:fixed;inset:0;z-index:9200;display:none;align-items:flex-start;
+   justify-content:center;padding:24px;background:radial-gradient(140% 120% at 50% 0%,#181209,#000 70%);
+   overflow-y:auto;font-family:-apple-system,"Segoe UI",Roboto,sans-serif}
+ #lkhelp.show{display:flex}
+ #lkhelp .lkhelp-box{position:relative;width:100%;max-width:600px;margin:auto;
+   background:linear-gradient(160deg,#1e1711,#16110d);border:1px solid rgba(138,104,56,.5);
+   border-radius:10px;padding:34px 36px 30px;box-shadow:0 30px 90px rgba(0,0,0,.6)}
+ #lkhelp .lkhelp-x{position:absolute;top:12px;right:14px;width:30px;height:30px;border:none;
+   background:none;color:#7c705c;font-size:22px;line-height:1;cursor:pointer;border-radius:50%}
+ #lkhelp .lkhelp-x:hover{color:#e8c86a}
+ #lkhelp .lkhelp-h3{margin:22px 0 8px;font:600 15px/1.3 "Optima","Gill Sans",sans-serif;
+   letter-spacing:.04em;color:#e8c86a}
+ #lkhelp .lkhelp-ul{margin:0 0 4px;padding-left:18px;color:#b9a888;font-size:13.5px;line-height:1.75}
+ #lkhelp .lkhelp-ul li{margin-bottom:9px}
+ #lkhelp code{background:rgba(8,6,3,.55);border:1px solid rgba(138,104,56,.35);border-radius:3px;
+   padding:1px 5px;font:12.5px/1.5 ui-monospace,Menlo,monospace;color:#d8c9a8;
+   word-break:break-all}
+ #lkhelp .lkhelp-mut{color:#8a7a5a;font-size:12.5px}
+ #lkhelp .lkhelp-tip{color:#8a7a5a;font-size:13px;font-style:italic}
+ /* The "?" on the wizard header, same language as the launcher's card help icons. */
+ #lkwiz .wz-help{position:absolute;top:18px;right:18px;width:24px;height:24px;display:flex;
+   align-items:center;justify-content:center;border-radius:50%;border:1px solid #6b5433;
+   background:rgba(8,6,3,.5);color:#c69a52;font:600 13px/1 Georgia,"Times New Roman",serif;
+   cursor:pointer;transition:color .16s ease,border-color .16s ease,background .16s ease}
+ #lkwiz .wz-help:hover{color:#e8c86a;border-color:#e8c86a;background:rgba(211,168,78,.14)}
+ #lkwiz .wz{position:relative}
+ #lkwiz{position:fixed;inset:0;z-index:9100;display:none;align-items:center;justify-content:center;
+   padding:24px;background:radial-gradient(140% 120% at 50% 0%,#181209,#000 70%);overflow-y:auto;
+   font-family:-apple-system,"Segoe UI",Roboto,sans-serif}
+ #lkwiz.show{display:flex}
+ #lkwiz .wz{width:100%;max-width:560px;margin:auto;
+   background:linear-gradient(160deg,#1e1711,#16110d);border:1px solid rgba(138,104,56,.5);
+   border-radius:10px;padding:34px 36px 30px;box-shadow:0 30px 90px rgba(0,0,0,.6)}
+ #lkwiz .wz-kick{font:600 10.5px/1 "Optima","Gill Sans",sans-serif;letter-spacing:.22em;
+   text-transform:uppercase;color:#7c705c}
+ #lkwiz .wz-h{margin:6px 0 0;font-family:"Hoefler Text","Baskerville",Georgia,serif;font-weight:600;
+   font-size:25px;color:#ece0c6}
+ #lkwiz .wz-p{margin:8px 0 0;font-size:14px;line-height:1.6;color:#a5987e}
+ #lkwiz .wz-list{list-style:none;margin:22px 0 0;padding:0}
+ #lkwiz .wz-li{display:flex;align-items:center;gap:13px;padding:11px 13px;border-radius:7px;
+   border:1px solid rgba(58,46,32,.8);background:rgba(8,6,3,.4);margin-bottom:8px}
+ #lkwiz .wz-li .ic{width:22px;height:22px;flex:none;border-radius:50%;display:flex;align-items:center;
+   justify-content:center;border:1.5px solid #3a2e20;color:#7c705c;font-size:13px;transition:all .2s ease}
+ #lkwiz .wz-li .nm{flex:1;font:600 14px/1.2 ui-monospace,Menlo,Consolas,monospace;color:#ece0c6}
+ #lkwiz .wz-li .st{font-size:12px;color:#7c705c;text-align:right;min-width:74px}
+ #lkwiz .wz-li .tag{font:600 9.5px/1 "Optima",sans-serif;letter-spacing:.12em;text-transform:uppercase;
+   color:#6a5f4d;border:1px solid #3a2e20;border-radius:3px;padding:3px 6px;margin-left:2px}
+ #lkwiz .wz-li.opt .nm{color:#a5987e}
+ #lkwiz .wz-li.busy{border-color:rgba(198,154,82,.55)}
+ #lkwiz .wz-li.busy .ic{border-color:#c69a52;color:#c69a52;animation:ldSpin 1.1s linear infinite}
+ #lkwiz .wz-li.done{border-color:rgba(169,196,138,.5)}
+ #lkwiz .wz-li.done .ic{border-color:#a9c48a;background:#a9c48a;color:#101008}
+ #lkwiz .wz-li.done .st{color:#a9c48a}
+ #lkwiz .wz-li.err .ic{border-color:#e0836a;color:#e0836a}
+ #lkwiz .wz-li.err .st{color:#e0836a}
+ #lkwiz .wz-btn{display:inline-flex;align-items:center;justify-content:center;gap:9px;width:100%;
+   box-sizing:border-box;margin-top:20px;padding:13px 20px;border-radius:6px;cursor:pointer;border:1px solid;
+   font:600 12.5px/1 "Optima","Gill Sans",sans-serif;letter-spacing:.12em;text-transform:uppercase;
+   background:linear-gradient(180deg,#d3a84e,#8a6838);color:#1a1207;border-color:#eecb78;
+   transition:filter .15s ease}
+ #lkwiz .wz-btn:hover{filter:brightness(1.08)} #lkwiz .wz-btn[disabled]{opacity:.5;cursor:default;filter:none}
+ #lkwiz .wz-note{margin:14px 0 0;min-height:18px;font-size:13px;line-height:1.5;color:#a5987e}
+ #lkwiz .wz-note.err{color:#e0836a} #lkwiz .wz-note.ok{color:#a9c48a}
+ #lkwiz .wz-eula-lead{margin:22px 0 0;text-align:left;font-size:12.5px;line-height:1.55;color:#a5987e}
+ #lkwiz .wz-eula{margin:14px 0 4px;text-align:left;display:flex;flex-direction:column;gap:12px}
+ #lkwiz .wz-eula label{display:flex;gap:11px;align-items:flex-start;font-size:13px;line-height:1.5;
+   color:#c9bda0;cursor:pointer}
+ #lkwiz .wz-eula input{margin:1px 0 0;width:17px;height:17px;flex:none;accent-color:#c69a52;cursor:pointer}
+ #lkwiz .wz-fine{margin:16px 0 0;font-size:11.5px;line-height:1.55;color:#6a5f4d}
 </style></head>
 <body>
 <canvas id="canvas" oncontextmenu="event.preventDefault()" tabindex="0"></canvas>
@@ -88,6 +161,88 @@
     <div class="ld-detail" id="ld-detail"></div>
     <div class="ld-credit">OpenMW-Web by <a href="https://virtastic.app" target="_blank" rel="noopener">Virtastic</a>
       &middot; GPLv3 &middot; <a href="https://github.com/Virtastic/openmw-web" target="_blank" rel="noopener">Source</a></div>
+  </div>
+</div>
+
+<!-- First-visit storage-locker upload wizard. Shows which game files the account still needs,
+     lets the player pick their Data Files folder once, and checks each off after the server
+     verifies the uploaded bytes. Hidden unless the locker is empty on a multiplayer launch. -->
+<div id="lkhelp" role="dialog" aria-modal="true" aria-labelledby="lkhelp-h">
+  <div class="lkhelp-box">
+    <button class="lkhelp-x" id="lkhelp-close" type="button" aria-label="Close">&times;</button>
+    <div class="wz-kick">Finding your files</div>
+    <h2 class="wz-h" id="lkhelp-h">Where is my Data Files folder?</h2>
+    <p class="wz-p">Morrowind keeps everything the game needs in one folder called
+       <b>Data&nbsp;Files</b>. It holds <code>Morrowind.esm</code> and the <code>Music</code>,
+       <code>Sound</code> and <code>Video</code> folders. You are looking for that folder,
+       not the game's shortcut and not the installer.</p>
+
+    <h3 class="lkhelp-h3">Steam</h3>
+    <p class="wz-p">In Steam, right-click <b>The Elder Scrolls III: Morrowind</b> in your Library
+       and choose <b>Manage &rsaquo; Browse local files</b>. A window opens on the game folder;
+       <b>Data Files</b> is inside it. If you would rather navigate by hand, the usual location is:</p>
+    <ul class="lkhelp-ul">
+      <li><b>Windows</b><br><code>C:\Program Files (x86)\Steam\steamapps\common\Morrowind\Data Files</code></li>
+      <li><b>macOS</b><br><code>~/Library/Application Support/Steam/steamapps/common/Morrowind/Data Files</code></li>
+      <li><b>Linux</b><br><code>~/.steam/steam/steamapps/common/Morrowind/Data Files</code></li>
+    </ul>
+    <p class="wz-p lkhelp-tip">Installed to a second drive or a custom Steam library? Use
+       <b>Browse local files</b> rather than guessing the path, since Steam puts extra libraries
+       wherever you chose (often <code>D:\SteamLibrary\steamapps\common\Morrowind</code>).</p>
+
+    <h3 class="lkhelp-h3">GOG.com</h3>
+    <p class="wz-p">In <b>GOG Galaxy</b>, open Morrowind, click the gear beside <b>Play</b> and
+       choose <b>Manage installation &rsaquo; Show folder</b>. Without Galaxy, it is wherever the
+       offline installer put it. The usual location is:</p>
+    <ul class="lkhelp-ul">
+      <li><b>Windows</b><br><code>C:\GOG Games\Morrowind\Data Files</code><br>
+        <span class="lkhelp-mut">older installs: <code>C:\Program Files (x86)\GOG.com\Morrowind\Data Files</code></span></li>
+      <li><b>macOS</b><br>The GOG release ships as an app bundle. Right-click
+        <b>Morrowind.app</b> in Applications, choose <b>Show Package Contents</b>, then look in
+        <code>Contents/Resources/game/Data Files</code>.</li>
+      <li><b>Linux</b><br><code>~/GOG Games/Morrowind/game/Data Files</code></li>
+    </ul>
+
+    <h3 class="lkhelp-h3">How to tell you have the right folder</h3>
+    <p class="wz-p">It contains <code>Morrowind.esm</code>. If you own the expansions it also has
+       <code>Tribunal.esm</code> and <code>Bloodmoon.esm</code>, plus folders named
+       <code>Music</code>, <code>Sound</code> and <code>Video</code>. If you see
+       <code>Morrowind.exe</code> but no <code>.esm</code> files, you are one level too high:
+       open <b>Data Files</b> inside it.</p>
+    <p class="wz-p lkhelp-tip">Nothing leaves your machine except the files listed on the previous
+       screen, and they go only to your own account's private locker.</p>
+  </div>
+</div>
+<div id="lkwiz" role="dialog" aria-modal="true" aria-labelledby="lkwiz-h">
+  <div class="wz">
+    <div class="wz-kick">Multiplayer &middot; one-time setup</div>
+    <button class="wz-help" id="lkwiz-help" type="button"
+            aria-label="Where do I find my Data Files folder?">?</button>
+    <h2 class="wz-h" id="lkwiz-h">Add your Morrowind files</h2>
+    <p class="wz-p">Your game data lives in your account, so it follows you to any device. Choose your
+       Morrowind <b>Data Files</b> folder once and we find everything below inside it, including
+       music, videos and voices. It uploads to your private locker and is verified. You only do
+       this the first time.</p>
+    <ul class="wz-list" id="lkwiz-list"></ul>
+    <p class="wz-eula-lead">The Elder Scrolls III: Morrowind is © Bethesda Softworks. We do not
+       provide the game. You may only upload files from a copy you legally own, as a private backup
+       for your own use. Please confirm:</p>
+    <div class="wz-eula" id="lkwiz-eula">
+      <label><input type="checkbox" id="eula-own"> <span>I have purchased a copy of The Elder Scrolls&nbsp;III: Morrowind.</span></label>
+      <label><input type="checkbox" id="eula-legal"> <span>The files I am uploading have been obtained legally and are my own.</span></label>
+      <label><input type="checkbox" id="eula-understand"> <span>I understand these are stored privately as backup copies for my own use only, that they are streamed back to no one but me, and that I will not share or redistribute them.</span></label>
+    </div>
+    <input type="file" id="lkwiz-file" accept=".esm,.esp,.bsa,.omwaddon" multiple style="display:none">
+    <input type="file" id="lkwiz-dir" webkitdirectory style="display:none">
+    <button class="wz-btn" id="lkwiz-pick" type="button" disabled>Choose your Data Files folder</button>
+    <!-- No "pick files individually" path: the media alone is ~6,400 voice files, so hand-
+         selecting is not a real option. The folder read is targeted (plugins/archives at the
+         top level + the five media folders) and nothing else is even enumerated. -->
+    <button class="wz-btn" id="lkwiz-skip" type="button" style="display:none">Skip for now</button>
+    <p class="wz-note" id="lkwiz-note"></p>
+    <p class="wz-fine">Your browser asks you to confirm the folder. Only Morrowind's own game files are
+       read from it — plugins, archives, music, videos and voices. Nothing else is touched or uploaded,
+       and what we store stays private to you, used only to stream your own game back to you.</p>
   </div>
 </div>
 <script>
@@ -185,7 +340,7 @@
  // device fine, but nothing is audible until we resume. Track every AudioContext the
  // engine creates and resume them all on the first click/keypress.
  (function(){
-   const audioCtxs = [];
+   const audioCtxs = window.__omwAudioCtxs = []; // exposed so a fatal handler can silence them
    ['AudioContext','webkitAudioContext'].forEach(function(k){
      const Orig = window[k];
      if (!Orig) return;
@@ -193,9 +348,27 @@
      window[k].prototype = Orig.prototype;
    });
    function resumeAll(){ audioCtxs.forEach(function(c){ if(c.state==='suspended') c.resume(); }); }
-   ['pointerdown','keydown','touchstart','click'].forEach(function(ev){
+   window.__omwResumeAudio = resumeAll;
+   ['pointerdown','keydown','touchstart','click','pointerup','keyup'].forEach(function(ev){
      window.addEventListener(ev, resumeAll, {capture:true});
    });
+   // The engine creates its AudioContext LAZILY (when sound first plays), which can be long
+   // after the gesture that would have resumed it — and booting straight into the world with
+   // --skip-menu removed the title screen that used to guarantee an early click. So also poll:
+   // any context that shows up suspended after the player has interacted gets resumed. Stops
+   // once everything is running (and gives up after 2 min so it never spins forever).
+   var tries = 0, interacted = false;
+   ['pointerdown','keydown','touchstart'].forEach(function(ev){
+     window.addEventListener(ev, function(){ interacted = true; }, {capture:true});
+   });
+   var pump = setInterval(function(){
+     if (++tries > 240) { clearInterval(pump); return; }
+     if (!interacted) return;
+     resumeAll();
+     if (audioCtxs.length && audioCtxs.every(function(c){ return c.state === 'running'; })) clearInterval(pump);
+   }, 500);
+   // Pointer lock counts as engagement; the engine grabs it the moment you click into the game.
+   document.addEventListener('pointerlockchange', function(){ interacted = true; resumeAll(); });
  })();
  const hudEl = document.getElementById('hud');
  // Debug HUD is opt-in: ?hud=1 (or ?debug) shows the FPS/status bar + the log toggle (backtick) +
@@ -243,33 +416,104 @@
      else if (/^\[mw\] loading Morrowind/.test(t))      set(null, 'Downloading');
    }
    function finish(){
-     if (done || !E()) return; done=true;
+     if (done || !E()) return;
+     // In multiplayer the engine spawns you at the DEFAULT start point and the server's saved
+     // position arrives moments later as a teleport. Hiding on the first engine frame showed
+     // that default spawn — "a strange place" — and then yanked you to where you actually
+     // quit. Stay up until the restore has landed (or given up), so the player only ever sees
+     // the place they left. ponytail: reuses the mirrors global.lua already publishes.
+     if (window.__omwAwaitRestore && window.__omwAwaitRestore()) {
+       setTimeout(finish, 200);
+       return;
+     }
+     done=true;
      el.classList.remove('indet'); fill.style.width='100%'; el.classList.add('hide');
      setTimeout(function(){ if (el) el.style.display='none'; }, 700);
    }
-   return { set:set, fromLog:fromLog, done:finish };
+   // The SAME screen, reused for every later wait (world switch, reconnect, cell load) instead
+   // of a second loading UI. Clears the `done` latch so it can come back after boot.
+   function show(label, detail){
+     if (!E()) return;
+     done = false;
+     el.style.display = '';
+     el.classList.remove('hide');
+     set(null, label || 'Loading', detail == null ? '' : detail);
+   }
+   return { set:set, fromLog:fromLog, done:finish, show:show, hide:finish };
  })();
  // Full-screen fatal overlay: aborts, GPU context loss, unsupported browsers. The hidden dev
  // log is useless to end users — anything fatal must be VISIBLE with a way forward.
- function fatalOverlay(title, detail, showReload){
+ // Any hard/fatal error stops the engine so it does not keep burning a CPU core behind the
+ // overlay. Safe to call before the engine exists (guarded).
+ function killEngine(){
+   try { if (window.Module){ Module.__omwRunning = false;
+     if (typeof Module.pauseMainLoop === 'function') Module.pauseMainLoop();
+     else if (Module._emscripten_pause_main_loop) Module._emscripten_pause_main_loop(); } } catch(e){}
+   try { (window.__omwAudioCtxs||[]).forEach(function(c){ try { c.suspend(); } catch(e){} }); } catch(e){}
+ }
+ // opts: { kicker, actionLabel, actionHref } — the default is the multiplayer-styled
+ // panel with a Reload button, which is what every pre-existing caller wants.
+ function fatalOverlay(title, detail, showReload, opts){
+   opts = opts || {};
+   killEngine();
    try {
+     // The SAME panel the multiplayer error modal uses. This used to be a monospace slab of
+     // terminal-grey text, which read like a stack trace at the exact moment a player needs a
+     // calm sentence — and it is what every fatal path in this file lands on, so fixing it
+     // here fixes all of them rather than eleven call sites.
+     if (document.getElementById('omw-fatal') || document.getElementById('mp-error-modal')) return;
      var o = document.createElement('div');
-     o.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(8,8,12,.96);color:#cdd6f4;'
-       + 'display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;'
-       + 'font:15px/1.5 ui-monospace,Menlo,monospace;text-align:center;padding:24px';
-     var h = document.createElement('div'); h.style.cssText='font-size:20px;color:#f38ba8'; h.textContent = title;
-     var d = document.createElement('div'); d.style.maxWidth='640px'; d.textContent = detail || '';
-     o.appendChild(h); o.appendChild(d);
-     if (showReload !== false){
+     o.id = 'omw-fatal';
+     o.style.cssText = 'position:fixed;inset:0;z-index:9999;display:flex;align-items:center;'
+       + 'justify-content:center;padding:24px;font-family:-apple-system,"Segoe UI",Roboto,sans-serif;'
+       + 'background:radial-gradient(140% 120% at 50% 0%,#181209,#000 72%)';
+     var box = document.createElement('div');
+     box.style.cssText = 'width:100%;max-width:460px;background:linear-gradient(160deg,#1e1711,#16110d);'
+       + 'border:1px solid rgba(138,104,56,.5);border-radius:10px;padding:32px 34px;'
+       + 'box-shadow:0 30px 90px rgba(0,0,0,.6);text-align:center';
+     var kick = document.createElement('div');
+     kick.style.cssText = 'font:600 10.5px/1 Optima,sans-serif;letter-spacing:.22em;'
+       + 'text-transform:uppercase;color:#7c705c';
+     kick.textContent = opts.kicker || 'Multiplayer';
+     var h = document.createElement('h2');
+     h.style.cssText = 'margin:10px 0 10px;font:600 23px/1.2 "Hoefler Text",Baskerville,Georgia,serif;color:#f4ecd9';
+     h.textContent = title;
+     var d = document.createElement('p');
+     d.style.cssText = 'margin:0;color:#b9a888;font-size:14px;line-height:1.6';
+     d.textContent = detail || '';
+     box.appendChild(kick); box.appendChild(h); box.appendChild(d);
+     if (showReload !== false || opts.actionLabel){
        var b = document.createElement('button');
-       b.textContent = 'Reload';
-       b.style.cssText = 'font:16px ui-monospace,Menlo,monospace;padding:8px 26px;cursor:pointer;'
-         + 'background:#313244;color:#cdd6f4;border:1px solid #585b70;border-radius:6px';
-       b.addEventListener('click', function(){ location.reload(); });
-       o.appendChild(b);
+       b.textContent = opts.actionLabel || 'Reload';
+       b.style.cssText = 'margin-top:22px;width:100%;box-sizing:border-box;padding:13px 20px;'
+         + 'border-radius:6px;cursor:pointer;border:1px solid #eecb78;'
+         + 'font:600 12.5px/1 Optima,"Gill Sans",sans-serif;letter-spacing:.12em;text-transform:uppercase;'
+         + 'background:linear-gradient(180deg,#d3a84e,#8a6838);color:#1a1207';
+       b.addEventListener('click', function(){
+         if (opts.actionHref) location.href = opts.actionHref; else location.reload();
+       });
+       box.appendChild(b);
      }
+     o.appendChild(box);
      document.body.appendChild(o);
    } catch(e){}
+ }
+ // LAUNCHER GATE. Reaching the game page with no boot parameters at all means nobody chose
+ // anything: no demo, no folder, no sign-in. Send them to the chooser instead of booting into
+ // whatever data the host happens to serve — on a host that stages retail Morrowind under
+ // /mwdata, booting bare hands a visitor the full game.
+ //
+ // This lives HERE, not in the web server, and that placement is the whole point: multiplayer
+ // arrives as index.html#mp=... and a FRAGMENT NEVER REACHES A SERVER. Any server-side rule
+ // therefore sees a bare /index.html, rewrites it to the launcher, and the two bounce off each
+ // other forever (it presents as a character screen stuck on "Creating..."). Only the client
+ // can see the fragment, so only the client can tell "launched into multiplayer" from
+ // "typed the URL".
+ if (location.pathname.endsWith('/index.html')
+     && (location.search === '' || location.search === '?')
+     && !/[#&](mp|mpticket|characters)=?/.test(location.hash || '')) {
+   location.replace('launcher.html');
+   throw new Error('redirecting to launcher');   // stop this script; the navigation is queued
  }
  // Hard requirement check: this build uses pthreads (SharedArrayBuffer), which needs
  // cross-origin isolation and a capable browser. Fail with a CLEAR message, not a cryptic
@@ -589,8 +833,19 @@
    //  - F5/Ctrl+R reload the page mid-game — block with a hint (use the menu to quit).
    //  - Ctrl/Cmd+W cannot be blocked by content JS; the dynamic beforeunload guard (below)
    //    intercepts the actual tab close instead.
+   function isEditable(el){
+     if (!el) return false;
+     var t = el.tagName;
+     return t === 'INPUT' || t === 'TEXTAREA' || t === 'SELECT' || el.isContentEditable === true;
+   }
    window.addEventListener('keydown', function(e){
      var mod = e.ctrlKey || e.metaKey;
+     // An HTML overlay (chat/social) owns the keyboard while it is open: none of the guards
+     // below may touch its keystrokes, and above all the focus-resilience line must not yank
+     // focus off its input. This handler is registered long before the overlay IIFE and on the
+     // same node+phase, so it runs FIRST — without this bail it stole the very first character
+     // typed into the chat field (the "it flashes and won't let me type" report).
+     if (window.__omwUiHold || isEditable(e.target)) return;
      if (e.key === 'Tab'){ e.preventDefault(); return; }
      if (mod && (e.key === 's' || e.key === 'S')){ e.preventDefault(); return; }
      if (e.key === 'F5' || (mod && (e.key === 'r' || e.key === 'R'))){
@@ -622,7 +877,10 @@
    // refused (request arrived before a user gesture), re-request it on the next click.
    canvas.addEventListener('pointerdown', function(){
      try {
-       if (window.Module && Module.__omwWantsMouseLock && document.pointerLockElement !== canvas) {
+       // __omwUiHold: an HTML overlay (chat/social) owns the mouse — never re-grab the lock
+       // out from under it; the overlay releases the hold when it closes.
+       if (window.Module && Module.__omwWantsMouseLock && !window.__omwUiHold
+           && document.pointerLockElement !== canvas) {
          // requestPointerLock() returns a promise in modern Chrome; it REJECTS if called too soon
          // after the user exited the lock (browser rate-limit) — swallow that so it doesn't surface
          // as an "unhandled rejection" in the console. The next click re-requests successfully.
@@ -651,7 +909,7 @@
  });
  window.addEventListener('pagehide', function(){ if (window.__omwSync) window.__omwSync(); });
  (function(){
-   var guard = function(e){ e.preventDefault(); e.returnValue = ''; return ''; };
+   var guard = function(e){ if (window.__omwAllowLeave) return; e.preventDefault(); e.returnValue = ''; return ''; };
    var armed = false;
    setInterval(function(){
      var running = !!(window.Module && Module.__omwRunning);
@@ -689,6 +947,18 @@
  // "null function" crash). Unstamped (local dev / a raw git checkout) → falls back to flat root paths.
  var __ENGINE_VER = "__ENGINE_VERSION__";
  var __ENGINE_DIR = (__ENGINE_VER.charAt(0) === "_") ? "" : ("e/" + __ENGINE_VER + "/");
+ // Boot params live in the FRAGMENT, with the query kept as a fallback. A fragment is
+ // never logged by a proxy, never cached, and never sent as a Referer — and it does not
+ // sit in the address bar inviting a player to retype the world address. This is tidiness
+ // and blast-radius, NOT a security boundary: the server authorises every connection with
+ // a single-use ticket, and the same-origin-host gate below is what actually stops a
+ // crafted link pointing the client at somebody else's server.
+ function bootParam(name){
+   var re = new RegExp('[#&?]' + name + '=([^&]+)');
+   var m = re.exec(location.hash || '') || re.exec(location.search || '');
+   return m ? decodeURIComponent(m[1]) : null;
+     }
+ window.__omwBootParam = bootParam;
  var Module = {
    // openmw.wasm AND openmw.data both resolve through locateFile → load them from the versioned dir.
    locateFile: function(path){ return __ENGINE_DIR + path; },
@@ -704,6 +974,23 @@
      try {
        var m = /[?&]start=([^&]+)/.exec(location.search);
        if (m) return ['--skip-menu', '--start', decodeURIComponent(m[1])];
+       // Multiplayer boot: never show the title menu — the launcher's character loader IS the
+       // menu now. Keyed on ?mp= (survives a reload; the fragment gets scrubbed) so a reload
+       // rejoins straight in-world via the parked resume token instead of dead-ending at the
+       // title screen.
+       //   fresh slot  (#mpnew=1): --skip-menu --new-game -> the full Morrowind intro + chargen.
+       //   otherwise:              --skip-menu            -> straight into the world; the server
+       //                           restores position/stats/inventory on auth (M2 record).
+       // Hash read here works: this IIFE runs at script parse, before preRun scrubs it.
+       if (bootParam('mp')) {
+         if (/[#&]mpnew=1/.test(location.hash || '')) return ['--skip-menu', '--new-game'];
+         // Returning character: start IN the cell they logged out of. Plain --skip-menu drops
+         // them at the game's default start until the server's record lands, which is a real
+         // window standing somewhere they did not choose. The server still teleports to the
+         // exact coordinates; this just makes the starting CELL the right one.
+         var ms = /[#&]mpstart=([^&]+)/.exec(location.hash || '');
+         return ms ? ['--skip-menu', '--start', decodeURIComponent(ms[1])] : ['--skip-menu'];
+       }
      } catch (e) {}
      return [];
    })(),
@@ -753,6 +1040,308 @@
        ENV.XDG_DATA_HOME='/userdata/data-home';
        ENV.XDG_CACHE_HOME='/home/web_user/.cache';
        FS.mkdirTree('/home/web_user/.cache/openmw');
+       // --- Multiplayer (M0, server/PROTOCOL.md): ?mp=<ws(s)://…> arms the omw-mp/1 client.
+       // The engine sees it via ENV; the Lua session driver (mp.omwscripts, appended to the
+       // content chain below) does the rest. WITHOUT ?mp= nothing here runs — singleplayer
+       // is byte-for-byte unaffected.
+       try {
+         var mpRaw = bootParam('mp');
+         if (mpRaw){
+           var mpUrl = mpRaw;
+           // Same-origin-host gate: the multiplayer server (and the locker HTTP endpoints we
+           // derive from it, which carry the Bearer locker token) MUST live on the same host
+           // that served this page. Otherwise a crafted link like index.html?mp=ws://evil/ws
+           // could point an authenticated session — and its token — at an attacker's origin.
+           // Compare HOST (hostname:port), not hostname. The server is reached through this
+           // origin's own proxy, so a differing port is just as wrong as a differing name —
+           // and far more likely, because it is what a stale link from an older build carries.
+           // Matching on hostname alone let ws://127.0.0.1:8080 through on a page served from
+           // :8910, which then failed later as an opaque HTTP 401 instead of being refused here.
+           var mpHostOk = false;
+           try { mpHostOk = new URL(mpUrl).host === location.host; } catch(e){}
+           if (!/^wss?:\/\//.test(mpUrl)){
+             append('[mp] ignored ?mp= — URL must be ws:// or wss://','err');
+           } else if (!mpHostOk){
+             // Name the mismatch: a stale bookmark is the usual cause and is otherwise invisible.
+             append('[mp] refused ?mp= — the multiplayer server must be on this exact origin. '
+                    + 'This page is ' + location.host + ' but the link points at '
+                    + (function(){ try { return new URL(mpUrl).host; } catch(e){ return mpUrl; } })()
+                    + '. Open the launcher fresh instead of reusing an old link.','err');
+           } else {
+             window.__omwMPEnabled = true;
+             ENV.OPENMW_MP_URL = mpUrl;
+             // NOTE ON URL FLAGS — deliberately NOT blocked here, and the reasoning matters.
+             //
+             // ?start=<cell> is a boot-time teleport, so blocking it looks attractive. But a
+             // URL flag is one edit away from being re-added: anyone who can type ?start can
+             // delete the block, so client-side refusal buys close to nothing. It also breaks
+             // the test harness, which uses ?start to place scenario clients in retail cells.
+             //
+             // The console gate (ActionManager::toggleConsole) is worth having by the same
+             // reasoning inverted: bypassing THAT requires rebuilding the WASM engine, which
+             // is a real barrier rather than a text edit.
+             //
+             // Position is therefore enforced where it actually can be — server-side movement
+             // validation (speed/teleport/no-clip), which the sim peer makes possible for the
+             // first time and which is NOT yet implemented. Until it is, treat player position
+             // as client-authored and say so rather than implying a URL block secures it.
+             var mpName = (/[?&]name=([^&]+)/.exec(location.search)||[])[1];
+             var mpPass = (/[?&]pass=([^&]+)/.exec(location.search)||[])[1];
+             // Harness mode: &mpauto=1&mpuser=<account> auto-registers/logs in with the
+             // fixed harness password (wasm-build/mp-harness.mjs).
+             if (/[?&]mpauto=1\b/.test(location.search)){
+               var mpUser = (/[?&]mpuser=([^&]+)/.exec(location.search)||[])[1];
+               mpName = mpUser || mpName || 'harness';
+               mpPass = 'harness-pass-1';
+             }
+             if (mpName) ENV.OPENMW_MP_NAME = decodeURIComponent(mpName);
+             // Remember it for the UI: the engine does not mirror a "who am I" value, and the
+             // social panel needs it to keep the player out of their own Players list.
+             if (mpName) window.__omwSelfName = decodeURIComponent(mpName);
+             if (mpPass) ENV.OPENMW_MP_PASS = decodeURIComponent(mpPass);
+             // SSO (Phase B): the server's /auth/<provider>/callback sends us back with the
+             // one-time login ticket in the URL FRAGMENT — fragments are never sent to a
+             // server, logged, or put in a Referer, which is exactly why it is not a query
+             // param. Read it, then CLEAR the hash immediately so a reload or a bookmarked
+             // URL cannot replay it (it is single-use and 60s-lived, but a stale ticket in
+             // someone's history is still avoidable).
+             try {
+               var h = location.hash || '';
+               var tk = /[#&]mpticket=([^&]+)/.exec(h);
+               var lk = /[#&]mplink=([^&]+)/.exec(h);
+               var er = /[#&]mperror=([^&]+)/.exec(h);
+               if (tk) {
+                 ENV.OPENMW_MP_TICKET = decodeURIComponent(tk[1]);
+                 // A fresh SSO ticket means a fresh session. Any resume token parked in
+                 // localStorage from a PREVIOUS session is stale, and the auth ladder tries a
+                 // parked resume token BEFORE the ticket — so a stale one makes the first join
+                 // fail ("resume token expired or unknown") and then dead-ends at the disabled
+                 // password path ("wrong server password"). Drop it so the ticket is used.
+                 try { localStorage.removeItem('omwmp:resume'); } catch(e){}
+               }
+               var lok = /[#&]mplocker=([^&]+)/.exec(h);
+               if (lok) window.__omwLockerToken = decodeURIComponent(lok[1]); // Bearer for /locker/*
+               // The character slot chosen on the launcher's tile screen; the engine reads it
+               // via mp.getBootCharacter() and auths into that slot (empty = last-played).
+               var mch = /[#&]mpchar=([^&]+)/.exec(h);
+               // Also kept for the JS side: the onboarding modals are per-CHARACTER, and
+               // without this they were per-browser — dismissed once, never seen again on any
+               // character you made afterwards.
+               if (mch) { ENV.OPENMW_MP_CHARACTER = decodeURIComponent(mch[1]);
+                          window.__omwCharId = decodeURIComponent(mch[1]); }
+               // The CHARACTER's in-world name — never the account. mp.getName() reads this and
+               // identity.lua puts it in every PlayerAppearance broadcast, which other players
+               // see, so the signed-in person's real name must never reach it.
+               //
+               // It also must not be empty: the server rejects an appearance with any empty
+               // required field (playerstate.ts handleAppearance), so doc.appearance is never
+               // stored, which withholds playerRecord on every join (it is gated on
+               // doc.appearance) — inventory and position then silently never restore and the
+               // live client overwrites the saved doc. That is how quest items granted during
+               // the tutorial disappeared on the next join.
+               var mcn = /[#&]mpcharname=([^&]+)/.exec(h);
+               if (mcn) { ENV.OPENMW_MP_NAME = decodeURIComponent(mcn[1]); window.__omwSelfName = decodeURIComponent(mcn[1]); }
+               if (lk) append('[mp] linked ' + decodeURIComponent(lk[1]) + ' to your account');
+               if (er) append('[mp] sign-in failed: ' + decodeURIComponent(er[1]), 'err');
+               if (tk || lk || er) {
+                 history.replaceState(null, '', location.pathname + location.search);
+               }
+             } catch(e){ append('[mp sso err] ' + e, 'err'); }
+             // SessionHello engineHash: the 12-hex wasm content hash stamped by
+             // version-engine.sh; unstamped local dev sends '' (server may not pin).
+             if (/^[0-9a-f]{12}$/.test(__ENGINE_VER)) ENV.OPENMW_MP_ENGINEHASH = __ENGINE_VER;
+             // &mpvectors=1 (dev): dump LSER golden vectors for the server codec tests.
+             if (/[?&]mpvectors=1\b/.test(location.search)) ENV.OPENMW_MP_VECTORS='1';
+             // Test/automation surface: Lua mirrors {state, playerId, lastChat, players} in
+             // here via mp.testSet; sendChat feeds mp.testPollCommand.
+             window.__omwMP = { state:'boot', sendChat:function(t){ Module.__omwMPCmd='chat:'+t; } };
+             // ---------------------------------------------------------------- party voice
+             // WebRTC lives in JS because the engine is WASM and getUserMedia/RTCPeerConnection
+             // are browser APIs; Lua drives it through this small surface. A MESH (each member
+             // connects directly to each other) is right for <=8 people and needs no media
+             // server at all — the relay only forwards offer/answer/ICE, and only between
+             // party members, so audio never touches our infrastructure.
+             //
+             // Push-to-talk is the DEFAULT and the track starts disabled: a voice feature that
+             // is hot the moment you join is how someone's room ends up broadcast to strangers.
+             (function(){
+               var peers = {};          // acct -> RTCPeerConnection
+               var localStream = null;
+               var talking = false;
+               var cfg = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+               // JS -> Lua goes through the single Module.__omwMPCmd slot, so signals are
+               // QUEUED and pumped one at a time: ICE candidates arrive in bursts and a
+               // bare assignment would silently overwrite the previous one, leaving a
+               // half-negotiated connection that looks like "voice just doesn't work".
+               var outbox = [];
+               function send(acct, kind, payload){
+                 outbox.push('voice:' + acct + ':' + kind + ':' + payload);
+               }
+               setInterval(function(){
+                 if (outbox.length && !Module.__omwMPCmd) Module.__omwMPCmd = outbox.shift();
+               }, 50);
+               // Lua -> JS: sequenced slots (voiceSig<N>) rather than one key, for the same
+               // reason in the other direction. `voiceSeq` is the high-water mark Lua has
+               // written; we consume everything we have not seen.
+               var seen = 0;
+               setInterval(function(){
+                 var mp = window.__omwMP || {};
+                 var seq = Number(mp.voiceSeq || 0);
+                 while (seen < seq) {
+                   seen++;
+                   var raw = mp['voiceSig' + seen];
+                   if (!raw) continue;
+                   try {
+                     var m = JSON.parse(raw);
+                     if (m.op === 'signal') window.__omwVoice.onSignal(m.acct, m.kind, m.payload);
+                     else if (m.op === 'offer') window.__omwVoice.offer(m.acct);
+                     else if (m.op === 'drop') window.__omwVoice.drop(m.acct);
+                     else if (m.op === 'dropAll') window.__omwVoice.dropAll();
+                     else if (m.op === 'enable') window.__omwVoice.enable();
+                     else if (m.op === 'talk') window.__omwVoice.setTalking(m.on);
+                   } catch (e) { /* a malformed slot must not wedge the pump */ }
+                 }
+               }, 100);
+               function pc(acct){
+                 if (peers[acct]) return peers[acct];
+                 var p = new RTCPeerConnection(cfg);
+                 p.onicecandidate = function(e){
+                   if (e.candidate) send(acct, 'ice', JSON.stringify(e.candidate));
+                 };
+                 p.ontrack = function(e){
+                   // One <audio> per peer, kept out of the DOM flow. Muting a player in-game
+                   // removes their element entirely rather than pausing it, so a muted peer
+                   // cannot be un-muted by anything running in the page.
+                   var el = document.getElementById('voice-' + acct);
+                   if (!el){
+                     el = document.createElement('audio');
+                     el.id = 'voice-' + acct;
+                     el.autoplay = true;
+                     el.style.display = 'none';
+                     document.body.appendChild(el);
+                   }
+                   el.srcObject = e.streams[0];
+                 };
+                 if (localStream) localStream.getTracks().forEach(function(t){ p.addTrack(t, localStream); });
+                 peers[acct] = p;
+                 return p;
+               }
+               window.__omwVoice = {
+                 // Called from Lua when the player enables voice; the browser prompt is the
+                 // consent step, which is why this is never done automatically at join.
+                 enable: async function(){
+                   if (localStream) return true;
+                   try {
+                     localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                   } catch (err) { return false; }
+                   localStream.getAudioTracks().forEach(function(t){ t.enabled = false; }); // PTT
+                   return true;
+                 },
+                 setTalking: function(on){
+                   talking = !!on;
+                   if (localStream) localStream.getAudioTracks().forEach(function(t){ t.enabled = talking; });
+                 },
+                 // Start a connection to a party member (the alphabetically-lower account
+                 // offers, so two members never both offer and glare).
+                 offer: async function(acct){
+                   if (!localStream) return;
+                   var p = pc(acct);
+                   var d = await p.createOffer();
+                   await p.setLocalDescription(d);
+                   send(acct, 'offer', JSON.stringify(d));
+                 },
+                 onSignal: async function(acct, kind, payload){
+                   var p = pc(acct);
+                   var data = payload ? JSON.parse(payload) : null;
+                   if (kind === 'offer'){
+                     await p.setRemoteDescription(data);
+                     var ans = await p.createAnswer();
+                     await p.setLocalDescription(ans);
+                     send(acct, 'answer', JSON.stringify(ans));
+                   } else if (kind === 'answer'){
+                     await p.setRemoteDescription(data);
+                   } else if (kind === 'ice' && data){
+                     try { await p.addIceCandidate(data); } catch (e) { /* pre-SRD candidate */ }
+                   }
+                 },
+                 drop: function(acct){
+                   if (peers[acct]){ peers[acct].close(); delete peers[acct]; }
+                   var el = document.getElementById('voice-' + acct);
+                   if (el) el.remove();
+                 },
+                 dropAll: function(){ Object.keys(peers).forEach(window.__omwVoice.drop); },
+               };
+             })();
+             // Multiplayer is the ONLY way to play here (SSO-only, server-authoritative), so a
+             // failed session is a dead end — never leave the player parked in the single-player
+             // menu behind a red DOM banner. Show the app's themed error screen and return them
+             // to the launcher to sign in again. Lua mirrors state/lastError via mp.testSet.
+             function friendlyMpError(code){
+               switch(code){
+                 case 'AUTH_FAILED': return 'Your sign-in could not be verified, or it expired during loading. Please sign in again.';
+                 case 'BANNED':      return 'This account is not allowed on the server.';
+                 case 'BAD_CONTENT': return 'Your game files do not match the server.';
+                 case 'FULL':        return 'The server is full right now. Try again shortly.';
+                 default:            return 'The server could not be reached'+(code?' ('+code+')':'')+'.';
+               }
+             }
+             // A themed modal (matching the app) with an explicit "Go back" button, rather than
+             // a raw overlay + auto-redirect. The auto-redirect fired the browser's "Leave site?"
+             // dialog; the button sets __omwAllowLeave so navigation is clean.
+             function mpErrorModal(title, msg){
+               killEngine(); // top-level: stop the WASM render loop + audio so it stops eating CPU
+               if (document.getElementById('mp-error-modal') || document.getElementById('omw-fatal')) return;
+               var wrap = document.createElement('div'); wrap.id = 'mp-error-modal';
+               wrap.style.cssText = 'position:fixed;inset:0;z-index:10000;display:flex;align-items:center;'
+                 + 'justify-content:center;padding:24px;background:radial-gradient(140% 120% at 50% 0%,#181209,#000 72%);'
+                 + 'font-family:-apple-system,"Segoe UI",Roboto,sans-serif';
+               var box = document.createElement('div');
+               box.style.cssText = 'width:100%;max-width:440px;background:linear-gradient(160deg,#1e1711,#16110d);'
+                 + 'border:1px solid rgba(138,104,56,.5);border-radius:10px;padding:32px 34px;'
+                 + 'box-shadow:0 30px 90px rgba(0,0,0,.6);text-align:center';
+               box.innerHTML = '<div style="font:600 10.5px/1 Optima,sans-serif;letter-spacing:.22em;'
+                 + 'text-transform:uppercase;color:#7c705c">Multiplayer</div>'
+                 + '<h2 style="margin:8px 0 0;font-family:\'Hoefler Text\',Georgia,serif;font-weight:600;'
+                 + 'font-size:24px;color:#ece0c6">' + title + '</h2>'
+                 + '<p style="margin:12px 0 0;font-size:14px;line-height:1.6;color:#a5987e">' + msg + '</p>';
+               var btn = document.createElement('button');
+               btn.textContent = 'Go back to sign in';
+               btn.style.cssText = 'margin-top:22px;width:100%;box-sizing:border-box;padding:13px 20px;'
+                 + 'border-radius:6px;cursor:pointer;border:1px solid #eecb78;font:600 12.5px/1 Optima,"Gill Sans",sans-serif;'
+                 + 'letter-spacing:.12em;text-transform:uppercase;background:linear-gradient(180deg,#d3a84e,#8a6838);color:#1a1207';
+               btn.onclick = function(){ window.__omwAllowLeave = true; try { if (window.Module) Module.__omwRunning = false; } catch(e){} location.href = 'launcher.html'; };
+               box.appendChild(btn); wrap.appendChild(box); document.body.appendChild(wrap);
+             }
+             (function(){
+               var handled = false;
+               setInterval(function(){
+                 var s = window.__omwMP && window.__omwMP.state;
+                 if (s === 'Failed' && !handled){
+                   handled = true;
+                   mpErrorModal('Can’t join multiplayer', friendlyMpError(window.__omwMP.lastError));
+                 }
+               }, 1000);
+             })();
+             // Content chain: the retail and ?src=local paths rewrite /openmw.cfg and append
+             // content=mp.omwscripts themselves (they strip all content= lines first). The
+             // ?nomw demo boots the BAKED cfg unrewritten, so append to it here — demo mode
+             // only, or this would race the other writers.
+             if ((window.__FORCE_NOMW || /[?&]nomw\b/.test(location.search))
+                 && !/[?&]src=local\b/.test(location.search)){
+               addRunDependency('mp-cfg');
+               (function waitMpCfg(){
+                 if (FS.analyzePath('/openmw.cfg').exists){
+                   var mpCfg = FS.readFile('/openmw.cfg', {encoding:'utf8'});
+                   if (!/^content=mp\.omwscripts$/m.test(mpCfg))
+                     FS.writeFile('/openmw.cfg', mpCfg + '\ncontent=mp.omwscripts');
+                   removeRunDependency('mp-cfg');
+                 } else { setTimeout(waitMpCfg, 25); }
+               })();
+             }
+             append('[mp] multiplayer armed -> '+mpUrl);
+           }
+         }
+       } catch(e){ append('[mp setup err] '+e,'err'); }
        // Performance-tuned settings (merged over defaults). Biggest levers for the WASM build:
        //  - viewing distance: fewer cells/objects culled+drawn (default 7168)
        //  - water reflection detail 0 + small rtt: water no longer re-renders the whole scene
@@ -1025,6 +1614,100 @@
        window.__setupFolderSaves = setupFolderSaves;
        window.__mirrorSaves = mirrorSavesToFolder;
 
+       // --- Server-backed saves ----------------------------------------------------------------
+       // The same mirror as above with the SERVER standing in for the folder, for the modes that
+       // have no folder: the server holds the game data (locker, or operator-hosted retail), so it
+       // holds the saves too. Without this, saves lived only in IndexedDB — navigator.storage
+       // .persist() is a request, not a promise, so an eviction took the character with it, and
+       // there was no way to continue the same game on another machine.
+       //
+       // The player still decides WHEN: the engine calls __omwSyncfs() immediately after writing a
+       // save (statemanagerimp.cpp), and __omwSync pushes from the same place. Clicking Save in the
+       // game uploads; nothing else does. No autosave, no background snapshots.
+       // The locker origin: the GATEWAY (?locker=), which serves /auth, /locker and /saves — a
+       // different origin than the world socket (?mp=). Falls back to the ws host for a
+       // standalone single-world server that serves them itself.
+       function lockerHttpBase(){
+         var l = (window.__omwBootParam ? window.__omwBootParam('locker') : null);
+         if (l){ try { return new URL(l).origin; } catch(e){} }
+         try { var u=new URL(ENV.OPENMW_MP_URL); return (u.protocol==='wss:'?'https:':'http:')+'//'+u.host; }
+         catch(e){ return ''; }
+       }
+       window.__lockerHttpBase = lockerHttpBase;
+       var __srvSaves = false, __srvMirrored = {}, __srvMirroring = false, __srvAgain = false;
+       function srvApi(path, opts){
+         opts = opts || {};
+         opts.headers = Object.assign({ authorization: 'Bearer ' + (window.__omwLockerToken||'') },
+                                      opts.headers || {});
+         return fetch(lockerHttpBase() + path, opts);
+       }
+       // mirror IN: server -> MEMFS. Server wins on a slot this browser has never seen or has an
+       // older copy of, which is what makes a second machine (or a cleared browser) work.
+       async function setupServerSaves(){
+         var list;
+         try {
+           var r = await srvApi('/saves');
+           if (r.status === 503) return;                  // operator has no storage configured
+           if (!r.ok) { append('[saves] server saves unavailable ('+r.status+')','err'); return; }
+           list = (await r.json()).files || [];
+         } catch(e){ append('[saves] could not reach server saves: '+e,'err'); return; }
+         __srvSaves = true;
+         FS.mkdirTree(__SAVES_DIR);
+         var pulled = 0;
+         for (var i=0;i<list.length;i++){
+           var f = list[i], path = __SAVES_DIR+'/'+f.name, local = null;
+           try { local = FS.stat(path).mtime.getTime(); } catch(e){}
+           if (local !== null && local >= f.mtime){ __srvMirrored[f.name] = local; continue; }
+           try {
+             var d = await srvApi('/saves/download?name='+encodeURIComponent(f.name));
+             if (!d.ok) continue;
+             var bytes = new Uint8Array(await (await fetch((await d.json()).url)).arrayBuffer());
+             FS.writeFile(path, bytes);
+             __srvMirrored[f.name] = FS.stat(path).mtime.getTime();
+             pulled++;
+           } catch(e){ append('[saves] downloading '+f.name+' failed: '+e,'err'); }
+         }
+         append('[saves] '+(pulled ? ('restored '+pulled+' save(s) from') : 'saving to')+' the server');
+         if (pulled) { try { window.__omwSyncfs(); } catch(e){} }
+       }
+       // mirror OUT: MEMFS -> server. mtime-diffed so an unchanged save is never re-uploaded (these
+       // are megabytes each), and coalesced like the folder mirror and syncfs.
+       async function mirrorSavesToServer(){
+         if (!__srvSaves || __srvMirroring){ if(__srvSaves) __srvAgain=true; return; }
+         __srvMirroring = true;
+         try {
+           var names=[], live={};
+           try { names=FS.readdir(__SAVES_DIR).filter(function(n){ return /\.omwsave$/i.test(n); }); } catch(e){}
+           for (var i=0;i<names.length;i++){
+             var n=names[i], st; try { st=FS.stat(__SAVES_DIR+'/'+n); } catch(e){ continue; }
+             live[n]=1; var mt=st.mtime.getTime();
+             if (__srvMirrored[n]===mt) continue;
+             try {
+               var data=FS.readFile(__SAVES_DIR+'/'+n);
+               var au=await (await srvApi('/saves/authorize-upload', { method:'POST',
+                 body: JSON.stringify({ name:n, size:data.length }) })).json();
+               if (!au.ok){
+                 append('[saves] server refused '+n+(au.reason==='quota'?' — out of space':''),'err');
+                 __srvMirrored[n]=mt;                     // do not retry every 15s on a hard refusal
+                 continue;
+               }
+               var put=await fetch(au.url, { method:'PUT', body:data });
+               if (!put.ok) throw new Error('PUT '+put.status);
+               await srvApi('/saves/uploaded', { method:'POST',
+                 body: JSON.stringify({ name:n, size:data.length, mtime:mt }) });
+               __srvMirrored[n]=mt;
+             } catch(e){ append('[saves] uploading '+n+' failed: '+e,'err'); }
+           }
+           for (var d in __srvMirrored){
+             if (live[d]) continue;                       // deleted in-game: delete it there too
+             try { await srvApi('/saves/delete', { method:'POST', body: JSON.stringify({ name:d }) }); } catch(e){}
+             delete __srvMirrored[d];
+           }
+         } catch(e){ append('[saves] mirror to server failed: '+e,'err'); }
+         __srvMirroring=false;
+         if (__srvAgain){ __srvAgain=false; mirrorSavesToServer(); }
+       }
+
        // Persist saves/config across reloads: mount IndexedDB-backed IDBFS at /userdata
        // and load its contents before the engine starts (via a run dependency so boot waits).
        try {
@@ -1072,6 +1755,7 @@
              try { if (Module._omw_save_settings && Module.__omwRunning !== undefined) Module._omw_save_settings(); } catch(e){}
              window.__omwSyncfs();
              try { mirrorSavesToFolder(); } catch(e){}    // push new/changed saves out to disk (?src=local)
+             try { mirrorSavesToServer(); } catch(e){}    // ...or up to the server (locker / hosted data)
            };
            setInterval(window.__omwSync, 15000);
          } else {
@@ -1087,7 +1771,19 @@
        // Otherwise fall through to the sample suite (?nomw) or the server-hosted retail
        // fetch below.
        var __srcLocal = /[?&]src=local\b/.test(location.search);
-       if (__srcLocal) mountLocalMorrowind();
+       // The locker token rides in the URL FRAGMENT (captured to __omwLockerToken above), not
+       // the query string — so key the locker path off the captured token, never location.search.
+       var __mpLocker = !!window.__omwLockerToken;
+       if (__mpLocker) mountLockerMorrowind();       // MP: game data streams from your locker
+       else if (__srcLocal) mountLocalMorrowind();   // bring-your-own local folder (single-player)
+
+       // Server-backed saves need an account, so they follow the locker session token. NOT in
+       // ?src=local: there the player's own folder is authoritative and running both mirrors
+       // would have two writers for one slot. Waits for the IDBFS reconcile, or it would race
+       // it and see its own restored files wiped.
+       if (window.__omwLockerToken && !__srcLocal) {
+         window.__idbfsReady.then(setupServerSaves).catch(function(e){ append('[saves] '+e,'err'); });
+       }
 
        // Build the openmw.cfg load order from the game files that are ACTUALLY present.
        // `rootFiles` maps lowercased top-level filename -> its real on-disk name.
@@ -1168,6 +1864,643 @@
            append('[assets] pack unavailable, continuing without it: ' + (e && e.message || e));
            return null;
          }
+       }
+
+       // --- Multiplayer data locker: stream YOUR uploaded Morrowind from server-side storage.
+       // Multiplayer is SSO-only and locker-only by design (docs/LEGAL.md): the game data is
+       // your own, uploaded once, streamed back on any device via presigned URLs. First
+       // visit with an empty locker triggers a one-time upload from a folder you pick.
+       function mountLockerMorrowind(){
+         var TOKEN = window.__omwLockerToken || '';
+         var HTTP = lockerHttpBase();   // shared with the server-save mirror
+         function api(path, opts){ opts=opts||{}; opts.headers=Object.assign({ authorization:'Bearer '+TOKEN }, opts.headers||{}); return fetch(HTTP+path, opts); }
+         function bounce(msg){ append('[locker] '+msg,'err'); fatalOverlay('Multiplayer sign-in needed', msg+' Returning to the launcher…', false); setTimeout(function(){ location.href='launcher.html'; }, 2400); }
+         try { StreamFS.init(); } catch(e){ return bounce('Streaming unavailable (needs a Chromium browser on desktop).'); }
+         if (!TOKEN || !HTTP) return bounce('No locker session. Please sign in again.');
+         addRunDependency('mw-local');
+
+         // Native SubtleCrypto over the whole file: it must match the server's node-crypto
+         // sha256 byte-for-byte or the locker refuses the upload. (The old hand-rolled
+         // incremental Sha256 disagreed with node — a one-byte mismatch refuses everything.)
+         // Hashing runs in the upload step before the game heap loads, so a full-file
+         // ArrayBuffer (largest vanilla file ~310MB) is affordable on desktop Chrome.
+         async function hashFile(file){ var buf=await file.arrayBuffer(); var d=await crypto.subtle.digest('SHA-256', buf); var b=new Uint8Array(d), o='',i; for(i=0;i<b.length;i++)o+=('00'+b[i].toString(16)).slice(-2); return o; }
+
+         // --- media pack: loose Sound/Music/Video/Fonts/Splash files ride as ONE USTAR blob.
+         // The Blob references the picked Files lazily (disk-backed), so building a ~300MB tar
+         // costs almost no memory; only the final hash reads it through once.
+         var MEDIA_DIR_RE = /^(Sound|Music|Video|Fonts|Splash)\//i;
+         var MEDIA_EXT_RE = /\.(mp3|wav|bik|fnt|tex|dds|tga|bmp|zip)$/i;
+         function tarHeader(name, size){
+           var h = new Uint8Array(512);
+           function put(s, off, len){ for (var i=0;i<s.length&&i<len;i++) h[off+i]=s.charCodeAt(i)&0xff; }
+           var nm = name, prefix = '';
+           if (nm.length > 100){ var cut = nm.lastIndexOf('/', 154); prefix = nm.slice(0, cut); nm = nm.slice(cut+1); }
+           put(nm, 0, 100);
+           put('0000644\0', 100, 8); put('0000000\0', 108, 8); put('0000000\0', 116, 8);
+           put(size.toString(8).padStart(11,'0')+'\0', 124, 12);
+           put('00000000000\0', 136, 12);
+           put('        ', 148, 8);          // checksum: spaces while summing
+           put('0', 156, 1);                  // regular file
+           put('ustar', 257, 5); put('00', 263, 2);
+           put(prefix, 345, 155);
+           var sum = 0; for (var j=0;j<512;j++) sum += h[j];
+           put(sum.toString(8).padStart(6,'0')+'\0 ', 148, 8);
+           return h;
+         }
+         function buildMediaTar(entries){ // entries: [{path, file}]
+           var parts = [], total = 0;
+           entries.forEach(function(e){
+             var pad = (512 - (e.file.size % 512)) % 512;
+             parts.push(tarHeader(e.path, e.file.size), e.file, new Uint8Array(pad));
+             total += 512 + e.file.size + pad;
+           });
+           parts.push(new Uint8Array(1024)); total += 1024;
+           return { blob: new Blob(parts), size: total };
+         }
+         async function uploadMediaPack(entries){
+           var built = buildMediaTar(entries);
+           wiz.set('media.tar','busy','packing '+entries.length+' files…');
+           var sha = await hashFile(built.blob); // one pass over ~300MB, pre-game so RAM is free
+           var rec = { name:'media.tar', size: built.size, sha256: sha };
+           wiz.set('media.tar','busy','authorizing…');
+           var au = await (await api('/locker/authorize-upload',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(rec)})).json();
+           if (!au.ok) throw new Error(au.reason==='quota'?'over quota':'not accepted');
+           wiz.set('media.tar','busy','uploading '+Math.round(built.size/1048576)+' MB…');
+           var put = await fetch(au.url,{method:'PUT',body:built.blob});
+           if (!put.ok) throw new Error('upload failed');
+           wiz.set('media.tar','busy','verifying…');
+           var conf = await (await api('/locker/uploaded',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(rec)})).json();
+           if (conf && conf.ok===false) throw new Error('not accepted');
+           wiz.set('media.tar','done','uploaded');
+         }
+
+         // Recursively collect the files we care about from a picked Data Files folder.
+         async function collectFiles(handle, prefix, out){
+           for await (const [name,h] of handle.entries()){
+             var rel = prefix ? prefix+'/'+name : name;
+             if (h.kind==='directory'){ await collectFiles(h, rel, out); }
+             else if (/\.(esm|esp|bsa|omwaddon)$/i.test(name)){ out.push({ rel:rel, name:name, handle:h }); }
+           }
+         }
+
+         // The launcher may have remembered a Data Files folder handle; reuse it silently.
+         async function rememberedDir(){
+           try {
+             return await new Promise(function(res,rej){ var r=indexedDB.open('omw-launcher',1); r.onupgradeneeded=function(){ if(!r.result.objectStoreNames.contains('handles')) r.result.createObjectStore('handles'); }; r.onsuccess=function(){ try{ var t=r.result.transaction('handles','readonly').objectStore('handles').get('mwdata'); t.onsuccess=function(){res(t.result);}; t.onerror=function(){rej(t.error);}; }catch(e){rej(e);} }; r.onerror=function(){rej(r.error);}; });
+           } catch(e){ return null; }
+         }
+
+         // The upload wizard's view: a checklist keyed by lowercased filename, with a live
+         // per-file status pill that ticks over pending -> busy -> done (or err).
+         // Help sheet: opened from the wizard's "?", closed by the X, the backdrop or Escape —
+         // the same three ways the launcher's card help closes, so it behaves as players expect.
+         (function(){
+           var hb=document.getElementById('lkwiz-help'), sheet=document.getElementById('lkhelp'),
+               x=document.getElementById('lkhelp-close');
+           if (!hb || !sheet) return;
+           function open(){ sheet.classList.add('show'); if (x) x.focus(); }
+           function close(){ sheet.classList.remove('show'); hb.focus(); }
+           hb.addEventListener('click', function(e){ e.stopPropagation(); open(); });
+           if (x) x.addEventListener('click', close);
+           sheet.addEventListener('click', function(e){ if (e.target === sheet) close(); });
+           document.addEventListener('keydown', function(e){
+             if (e.key === 'Escape' && sheet.classList.contains('show')) { e.stopPropagation(); close(); }
+           });
+         })();
+
+         var wiz = (function(){
+           var el=document.getElementById('lkwiz'), list=document.getElementById('lkwiz-list'),
+               noteEl=document.getElementById('lkwiz-note'), pick=document.getElementById('lkwiz-pick');
+           var rows={};
+           return {
+             show:function(){ el.classList.add('show'); },
+             hide:function(){ el.classList.remove('show'); },
+             onPick:function(cb){ pick.onclick=cb; },
+             setPick:function(label,enabled){ pick.textContent=label; pick.disabled=!enabled; },
+             note:function(msg,cls){ noteEl.textContent=msg||''; noteEl.className='wz-note'+(cls?' '+cls:''); },
+             render:function(needed,haveNames){
+               list.innerHTML=''; rows={};
+               var LABEL={ 'sound/':'Voices', 'music/':'Music', 'video/':'Videos',
+                           'splash/':'Loading screens', 'fonts/':'Fonts', 'media.tar':'Voices' };
+               needed.forEach(function(f){
+                 var key=f.name.toLowerCase();
+                 // Folder rows are satisfied by ANY file under that prefix; the pack by name.
+                 var done = key.slice(-1)==='/'
+                   ? haveNames.some(function(h){ return h.indexOf(key)===0; })
+                   : haveNames.indexOf(key)!==-1;
+                 var label = LABEL[key] || f.name;
+                 var li=document.createElement('li'); li.className='wz-li'+(f.required?'':' opt')+(done?' done':'');
+                 li.innerHTML='<span class="ic">'+(done?'✓':'')+'</span>'
+                   +'<span class="nm">'+label+'</span>'
+                   +(f.required?'':'<span class="tag">optional</span>')
+                   +'<span class="st">'+(done?'in your library':(Math.round(f.size/1048576)+' MB'))+'</span>';
+                 list.appendChild(li);
+                 rows[key]={li:li,req:f.required,ic:li.querySelector('.ic'),st:li.querySelector('.st')};
+               });
+             },
+             set:function(name,state,text){
+               var r=rows[name.toLowerCase()]; if(!r) return;
+               r.li.className='wz-li'+(r.req?'':' opt')+(state?' '+state:'');
+               r.ic.textContent = state==='done'?'✓':(state==='err'?'!':'');
+               if(text!=null) r.st.textContent=text;
+             }
+           };
+         })();
+
+         // Drive the wizard to completion. The user first accepts the ownership terms (three
+         // checkboxes), which unlocks the file chooser. They pick individual files (no folder
+         // access is ever requested); selections accumulate so they can add files in batches.
+         // Once every REQUIRED file is present we hash + attest + upload each with live status,
+         // and resolve with the stored file list. Optional files that are present upload too.
+         // ONE folder pick does everything: the player chooses their Data Files folder and we
+         // find the plugins, archives and media inside it ourselves. Nothing but Morrowind's
+         // own files is ever read or uploaded — the matching below is the whole allow-list,
+         // and the server re-checks every byte against its manifest regardless.
+         async function runWizard(needed, haveNames){
+           return new Promise(function(resolve){
+             var fileNeeded = needed.filter(function(f){ return !f.media; });
+             var mediaRow = needed.find(function(f){ return f.media; });
+             var have = haveNames.slice();
+             wiz.render(needed, have); wiz.note('');
+             var fileInput=document.getElementById('lkwiz-file');
+             var dirInput=document.getElementById('lkwiz-dir');
+             var pick=document.getElementById('lkwiz-pick');
+             var alt=null; // individual-file picker removed: hand-picking 6,400 media files is not viable
+             var eula=document.getElementById('lkwiz-eula');
+             var boxes=['eula-own','eula-legal','eula-understand'].map(function(id){ return document.getElementById(id); });
+             boxes.forEach(function(b){ b.checked=false; });
+             pick.textContent='Choose your Data Files folder'; pick.disabled=true;
+             if (alt) alt.style.display='none';
+             boxes.forEach(function(b){ b.onchange=function(){
+               var ok=boxes.every(function(x){ return x.checked; });
+               pick.disabled=!ok; if (alt) alt.style.display = ok ? '' : 'none';
+             }; });
+             var busy=false;
+             // TARGETED folder read. `<input webkitdirectory>` hands the page EVERY file in the
+             // folder — which is why the browser warns "upload 6,445 files" and why a mistyped
+             // folder would drag in whatever else lives there. showDirectoryPicker lets us walk
+             // only what we actually want: the plugins/archives at the top level and the five
+             // known media folders. Everything else in the folder is never even enumerated.
+             async function pickFolderTargeted(){
+               var root = await window.showDirectoryPicker({ id:'mwdata', mode:'read' });
+               var out = [], notFound = [];
+               // ASK FOR EXACTLY WHAT THE SERVER LISTED — by name, one handle at a time. The
+               // top level is never enumerated, so a stray mod, a save, or an unrelated file
+               // sitting next to Morrowind.esm is not merely filtered out, it is never seen.
+               for (const row of fileNeeded){
+                 var fh;
+                 try { fh = await root.getFileHandle(row.name); }
+                 catch(e){ notFound.push(row.name); continue; }
+                 var f = await fh.getFile(); f.__rel = row.name; out.push(f);
+               }
+               // Media: only the folders the server actually asked for ("Music/" -> Music),
+               // and inside them only the file types the game loads.
+               var wantDirs = needed.filter(function(r){ return r.name.slice(-1) === '/'; })
+                                    .map(function(r){ return r.name.slice(0, -1); });
+               if (needed.some(function(r){ return r.name === 'media.tar'; })) wantDirs.push('Sound');
+               for (const dir of wantDirs){
+                 var dh; try { dh = await root.getDirectoryHandle(dir); } catch(e){ notFound.push(dir+'/'); continue; }
+                 await (async function walk(handle, prefix){
+                   for await (const [name, h] of handle.entries()){
+                     var rel = prefix + '/' + name;
+                     if (h.kind === 'directory') await walk(h, rel);
+                     else if (MEDIA_EXT_RE.test(name)){
+                       var mf = await h.getFile(); mf.__rel = rel; out.push(mf);
+                     }
+                   }
+                 })(dh, dir);
+               }
+               return { files: out, notFound: notFound };
+             }
+             pick.onclick=async function(){
+               if (pick.disabled || busy) return;
+               if (!window.showDirectoryPicker){ dirInput.click(); return; } // older browser fallback
+               var res;
+               try { res = await pickFolderTargeted(); }
+               catch(e){ if (e && e.name === 'AbortError') return; wiz.note('Could not read that folder: '+(e&&e.message||e),'err'); return; }
+               var list = res.files;
+               if (!list.length){
+                 wiz.note('Nothing this server needs is in that folder. Pick the folder that holds Morrowind.esm (usually "Data Files").','err');
+                 return;
+               }
+               // Say up front what is not there, rather than discovering it after an upload.
+               if (res.notFound.length) wiz.note('Not in that folder: '+res.notFound.join(', ')+'. Continuing with what is.','err');
+               else wiz.note('Found everything this server needs ('+list.length+' files). Checking…','');
+               busy=true; pick.disabled=true;
+               ingest(list);
+             };
+             if (alt) alt.onclick=function(){ if(!busy) fileInput.click(); };
+
+             // A RETURNING player has already attested; they are here because the server needs
+             // files they have not uploaded yet. Skip the ownership checkboxes and go straight
+             // to the folder pick. Nothing here is skippable: every row is content this server
+             // loads, so a client without it cannot play the world the server is authoring.
+             if (have.length){
+               wiz.note('Your library is missing some of this server’s game files. Choose your Data Files folder to add them.','');
+               pick.disabled=false; eula.style.display='none';
+               if (alt) alt.style.display='';
+             }
+             wiz.show();
+
+             function stop(msg){ wiz.note(msg,'err'); busy=false; eula.style.display=''; pick.disabled=false; pick.textContent='Try again'; if (alt) alt.style.display=''; }
+             function done(){
+               wiz.note('All set. Starting Morrowind.','ok');
+               (async function(){
+                 var got; try { got=(await (await api('/locker/files')).json()).files; } catch(e){ got=null; }
+                 setTimeout(function(){ wiz.hide(); resolve(got||[]); }, 800);
+               })();
+             }
+
+             // Upload one already-hashed record with live per-row status. Returns true on success.
+             async function put(rec, file, row){
+               try {
+                 if (row) wiz.set(row,'busy','authorizing…');
+                 var au=await (await api('/locker/authorize-upload',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(rec)})).json();
+                 if(!au.ok){ if(row) wiz.set(row,'err',au.reason==='quota'?'over quota':'not accepted'); return false; }
+                 if (row) wiz.set(row,'busy','uploading…');
+                 var r=await fetch(au.url,{method:'PUT',body:file});
+                 if(!r.ok){ if(row) wiz.set(row,'err','upload failed'); return false; }
+                 if (row) wiz.set(row,'busy','verifying…');
+                 var conf=await (await api('/locker/uploaded',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(rec)})).json();
+                 if(conf&&conf.ok===false){ if(row) wiz.set(row,'err','not a valid file'); return false; }
+                 // Keep the bytes we just sent. The reader is keyed by the SAME sha, so this
+                 // turns the first play session's fetch into a cache hit instead of pulling
+                 // the whole library back out of S3 — the file is already on this machine and
+                 // was, until now, thrown away the moment the PUT succeeded. Best-effort: a
+                 // library larger than the browser's quota simply keeps the parts that fit,
+                 // and cachePut swallows QuotaExceeded (a cache miss only costs a download).
+                 try { await cachePut(rec.sha256, file); } catch(e){ /* non-fatal, see above */ }
+                 if (row) wiz.set(row,'done','uploaded');
+                 return true;
+               } catch(e){ if(row) wiz.set(row,'err','failed'); return false; }
+             }
+
+             // The single entry point for both pickers: classify what was handed to us, then
+             // upload core files, loose media (per-file) and voice (one pack).
+             async function ingest(list){
+               var core={}, loose=[], voice=[];
+               var wanted={}; fileNeeded.forEach(function(f){ wanted[f.name.toLowerCase()]=f.name; });
+               list.forEach(function(f){
+                 // __rel: set by the targeted showDirectoryPicker walk. webkitRelativePath:
+                 // the <input webkitdirectory> fallback. name: a plain multi-file pick.
+                 var rel=(f.__rel||f.webkitRelativePath||f.name||'').replace(/\\/g,'/');
+                 var base=rel.split('/').pop();
+                 var m=rel.match(/(?:^|\/)((?:Sound|Music|Video|Fonts|Splash)\/.+)$/i);
+                 if (m && MEDIA_EXT_RE.test(m[1])){
+                   if (/^Sound\//i.test(m[1])) voice.push({ path:m[1], file:f });
+                   else loose.push({ path:m[1], file:f });
+                 } else if (wanted[base.toLowerCase()] && /\.(esm|esp|bsa|omwaddon)$/i.test(base)){
+                   core[base.toLowerCase()]=f; // canonical spelling comes from the manifest
+                 }
+               });
+               // Did the picked folder cover everything the server needs? Plugin/archive rows
+               // must be present as files; media FOLDER rows are covered when the scan found
+               // anything under that prefix (or, for voice, any Sound/ file to pack).
+               var picked = loose.map(function(e){ return e.path.toLowerCase(); });
+               var missing = needed.filter(function(f){
+                 if (!f.required) return false;
+                 var k=f.name.toLowerCase();
+                 if (k === 'media.tar') return !voice.length && have.indexOf('media.tar')===-1;
+                 if (k.slice(-1) === '/'){
+                   return !picked.some(function(p){ return p.indexOf(k)===0; })
+                     && !have.some(function(h){ return h.indexOf(k)===0; });
+                 }
+                 return have.indexOf(k)===-1 && !core[k];
+               });
+               if (missing.length){
+                 wiz.note('That folder is missing: '+missing.map(function(m){return m.name;}).join(', ')
+                   +'. Pick the folder that holds Morrowind.esm (usually "Data Files").','err');
+                 busy=false; pick.disabled=false; if (alt) alt.style.display='';
+                 return;
+               }
+               busy=true; pick.disabled=true; eula.style.display='none'; if (alt) alt.style.display='none';
+
+               // Hash the core files first so ownership is attested over the real list.
+               var records=[];
+               for (const f of fileNeeded){
+                 var file=core[f.name.toLowerCase()];
+                 if (!file || have.indexOf(f.name.toLowerCase())!==-1) continue;
+                 wiz.set(f.name,'busy','hashing…');
+                 records.push({ name:f.name, size:file.size, sha256: await hashFile(file) });
+               }
+               try { await api('/locker/attest',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({files:records})}); }
+               catch(e){ return stop('Could not reach the server. Try again.'); }
+
+               wiz.note('Uploading to your private locker. Keep this page open.','');
+               var failed=[];
+               for (const rec of records){
+                 if (!(await put(rec, core[rec.name.toLowerCase()], rec.name))) failed.push(rec.name);
+               }
+               var reqFailed = failed.filter(function(n){ return (fileNeeded.find(function(x){return x.name===n;})||{}).required; });
+               if (reqFailed.length) return stop('Could not add: '+reqFailed.join(', ')+'. Make sure they are genuine Morrowind files, then try again.');
+
+               // Loose media (Music/Video/Splash/Fonts): per-file uploads, but the CHECKLIST
+               // shows one row per folder — so drive that row's status from its own files
+               // ("12/18 uploaded") and tick it when the folder is done. Without this the
+               // media rows sat blank while everything else showed progress.
+               if (loose.length){
+                 var byFolder = {};
+                 loose.forEach(function(e){
+                   var dir = e.path.split('/')[0] + '/';
+                   (byFolder[dir] = byFolder[dir] || []).push(e);
+                 });
+                 for (const dir of Object.keys(byFolder)){
+                   var group = byFolder[dir], okCount = 0, failCount = 0;
+                   for (var i=0;i<group.length;i++){
+                     var e=group[i];
+                     if (have.indexOf(e.path.toLowerCase())!==-1){ okCount++; continue; }
+                     wiz.set(dir,'busy',(i+1)+'/'+group.length+' uploading…');
+                     var ok = await put({ name:e.path, size:e.file.size, sha256: await hashFile(e.file) }, e.file, null);
+                     if (ok) okCount++; else failCount++;
+                   }
+                   if (okCount === 0) wiz.set(dir,'err','none accepted');
+                   else if (failCount) wiz.set(dir,'done',okCount+' of '+group.length+' added');
+                   else wiz.set(dir,'done','added');
+                 }
+               }
+               // Voice: thousands of tiny files, so one packed upload.
+               if (voice.length && mediaRow && have.indexOf('media.tar')===-1){
+                 try { await uploadMediaPack(voice); }
+                 catch(e){ wiz.set('media.tar','err','failed'); wiz.note('Voices could not be added ('+(e&&e.message||e)+'). Starting without them.','err'); }
+               }
+               done();
+             }
+
+             dirInput.onchange=function(){
+               var list=Array.prototype.slice.call(dirInput.files||[]); dirInput.value='';
+               if (!list.length) return;
+               wiz.note('Reading your folder…',''); busy=true; pick.disabled=true;
+               ingest(list);
+             };
+             // Fallback for anyone who would rather not grant folder access.
+             fileInput.onchange=function(){
+               var list=Array.prototype.slice.call(fileInput.files||[]); fileInput.value='';
+               if (!list.length) return;
+               busy=true; pick.disabled=true;
+               ingest(list);
+             };
+           });
+         }
+
+         (async function(){
+           var files;
+           try { files = (await (await api('/locker/files')).json()).files; }
+           catch(e){ return bounce('Could not reach your locker on the server.'); }
+           // The wizard runs when the locker is EMPTY, and also when it is merely INCOMPLETE:
+           // an account that uploaded before the manifest knew about music/videos/voices has
+           // the plugins but none of the media, and would otherwise silently keep playing a
+           // silent game with no way to add them. Anything the server lists as needed and the
+           // account does not have re-opens the wizard, which now takes a single folder pick.
+           var have = (files||[]).map(function(f){ return f.name.toLowerCase(); });
+           var needed, neededFailed = null;
+           try {
+             var nres = await api('/locker/needed');
+             if (!nres.ok) throw new Error('HTTP '+nres.status);
+             needed = ((await nres.json()).files)||[];
+           }
+           catch(e){
+             // Silent failure here used to mean "no prompt, ever" — the account would keep
+             // playing half-installed with nothing said. Say it out loud instead.
+             //
+             // And say the RIGHT thing: an empty list because the call FAILED is a different
+             // problem from an empty list the server actually returned. Collapsing the two
+             // reported an expired locker session as "this server has no game manifest
+             // configured", sending the player to bother an operator about a server that was
+             // configured correctly all along.
+             needed=[];
+             neededFailed = (e && e.message) || String(e);
+             append('[locker] could not read the required-file list: '+neededFailed,'err');
+           }
+           // A row ending in '/' is a media FOLDER (Music/, Video/…): satisfied when the locker
+           // holds anything under it. Everything else matches by exact name.
+           function satisfied(row){
+             var k=row.name.toLowerCase();
+             if (k.slice(-1) === '/') return have.some(function(h){ return h.indexOf(k)===0; });
+             return have.indexOf(k)!==-1;
+           }
+           var missing = needed.filter(function(f){ return !satisfied(f); });
+           if (!files || !files.length){
+             if (!needed.length) {
+               return bounce(neededFailed
+                 ? 'Your sign-in could not be verified (' + neededFailed + '). Please sign in again.'
+                 : 'This server has no game manifest configured yet. Ask the operator to add one.');
+             }
+             append('[locker] first visit — showing the upload wizard.');
+             try { files = await runWizard(needed, []); } catch(e){ return bounce('Upload failed: '+(e&&e.message||e)); }
+             if (!files || !files.length) return bounce('No files were accepted. Make sure you picked a real Morrowind Data Files folder.');
+           } else if (missing.length){
+             append('[locker] have '+have.length+' of '+needed.length+' — missing: '
+               + missing.map(function(m){ return m.name; }).join(', '));
+             try { files = await runWizard(needed, have) || files; }
+             catch(e){
+               // Never swallow this: a wizard that fails to open leaves the player with a
+               // half-installed game and no explanation of why.
+               append('[locker] upload wizard failed to open: '+(e&&e.message||e),'err');
+               fatalOverlay('Your game files are incomplete',
+                 'This server needs: '+missing.map(function(m){ return m.name; }).join(', ')
+                 + '. The uploader could not open ('+(e&&e.message||e)+'). Reload to try again.', false);
+               return;
+             }
+           } else {
+             append('[locker] library complete ('+have.length+' items).');
+           }
+           // Content files (.esm/.esp) are read HEAVILY at load and during play — the engine
+           // walks the whole ESM into its record store. Streaming those over the network makes
+           // every read a synchronous round-trip that STALLS the main thread ("page unresponsive").
+           // So DOWNLOAD content files in full into memory (they total ~90MB) and only STREAM the
+           // big BSAs (meshes/textures, read a little at a time). This mirrors the retail path.
+           var LD = window.__omwLoading;
+           function ldSet(pct,label,detail){ if(LD) LD.set(pct,label,detail); }
+           async function fetchFull(url, size, name){
+             var r = await fetch(url);
+             if (!r.ok && r.status !== 206) throw new Error('HTTP '+r.status);
+             if (!r.body || !r.body.getReader) return await r.arrayBuffer();
+             var reader=r.body.getReader(), chunks=[], got=0, last=-5;
+             for(;;){ var x=await reader.read(); if(x.done) break; chunks.push(x.value); got+=x.value.length;
+               var pct = size ? Math.floor(got*100/size) : 0;
+               if (pct >= last+5){ last=pct; ldSet(pct,'Downloading', name+'  '+Math.round(got/1048576)+'MB'); }
+             }
+             var out=new Uint8Array(got), p=0; for(var i=0;i<chunks.length;i++){ out.set(chunks[i],p); p+=chunks[i].length; }
+             return out.buffer;
+           }
+           // Content-addressed local cache: content files are keyed by their sha256, so a repeat
+           // visit reads them from the browser's Cache storage instead of re-downloading ~90MB
+           // from S3 every time. The hash comes from the locker manifest, so a re-uploaded (changed)
+           // file has a new hash -> cache miss -> re-download. Persists across sessions.
+           var LOCKER_CACHE = 'omw-locker-v1';
+           async function cacheGet(sha){
+             if (!self.caches || !sha) return null;
+             try { var c=await caches.open(LOCKER_CACHE); var hit=await c.match('https://locker.local/'+sha); return hit ? await hit.arrayBuffer() : null; } catch(e){ return null; }
+           }
+           async function cacheGetBlob(sha){
+             if (!self.caches || !sha) return null;
+             try { var c=await caches.open(LOCKER_CACHE); var hit=await c.match('https://locker.local/'+sha); return hit ? await hit.blob() : null; } catch(e){ return null; }
+           }
+           async function cachePut(sha, buf){
+             if (!self.caches || !sha) return;
+             try { var c=await caches.open(LOCKER_CACHE); await c.put('https://locker.local/'+sha, new Response(buf)); } catch(e){ /* quota — non-fatal */ }
+           }
+           // USTAR reader for the voice pack — the mirror of the wizard's writer. Writes each
+           // entry into the engine FS at its retail relative path (Sound/Vo/...), creating
+           // directories as it goes. Returns how many files landed.
+           // ASYNC on purpose: 6,400 FS.writeFile calls in one loop pins the main thread long
+           // enough for Chrome to show "Page Unresponsive". Yield every batch so the browser
+           // can paint (and so the loading bar actually moves), and remember which directories
+           // exist rather than calling mkdirTree once per file.
+           async function untarInto(root, ab){
+             var u = new Uint8Array(ab), off = 0, n = 0, madeDirs = {};
+             var total = u.length, batch = 0;
+             function str(a, b){ var s=''; for (var i=a;i<b && u[off+i];i++) s+=String.fromCharCode(u[off+i]); return s; }
+             while (off + 512 <= u.length){
+               if (u[off] === 0) break;                     // end-of-archive
+               if (str(257,262) !== 'ustar') break;         // not a header: stop rather than guess
+               var nm = str(0,100), prefix = str(345,500);
+               var full = prefix ? prefix+'/'+nm : nm;
+               var size = parseInt(str(124,136).trim() || '0', 8) || 0;
+               var type = String.fromCharCode(u[off+156] || 48);
+               var body = off + 512;
+               if (type === '0' || type === '\0'){
+                 var path = root + '/' + full;
+                 var dir = path.slice(0, path.lastIndexOf('/'));
+                 try {
+                   if (!madeDirs[dir]){ FS.mkdirTree(dir); madeDirs[dir] = 1; }
+                   FS.writeFile(path, u.subarray(body, body + size));
+                   n++;
+                 } catch(e){ /* one bad entry must not abort the rest of the pack */ }
+               }
+               off = body + Math.ceil(size / 512) * 512;
+               if (++batch >= 150){
+                 batch = 0;
+                 ldSet(Math.floor(off * 100 / total), 'Unpacking voices', n + ' files');
+                 await new Promise(function(r){ setTimeout(r, 0); }); // let the browser breathe
+               }
+             }
+             return n;
+           }
+           append('[locker] loading '+files.length+' files from your library…');
+           ldSet(null,'Loading your library');
+           FS.mkdirTree('/mwdata');
+           var fbarch=[], content=[], hasVideoBik=false;
+           var mounted=[];
+           for (const f of files){
+             if (/\.bsa$/i.test(f.name)){
+               // Download the BSA ONCE into the local Cache, then read chunks from that local
+               // blob — no synchronous S3 streaming during gameplay, which is what stalled cell
+               // loads and timed out the MP handshake. Cached across sessions (keyed by sha256).
+               var blob = await cacheGetBlob(f.sha256);
+               if (blob){ ldSet(null,'Loading', f.name+' (cached)'); append('[locker] '+f.name+' from local cache'); }
+               else {
+                 var dlb = await (await api('/locker/download?name='+encodeURIComponent(f.name))).json();
+                 if (!dlb || !dlb.url){ append('[locker] cannot fetch '+f.name,'err'); continue; }
+                 var ab = await fetchFull(dlb.url, f.size, f.name); // full download with % progress
+                 await cachePut(f.sha256, ab);
+                 blob = (await cacheGetBlob(f.sha256)) || new Blob([ab]); // prefer disk-backed; ab freed after
+               }
+               StreamFS.mountBlob('/mwdata/'+f.name, blob, f.size); // LOCAL reads: no network, no stall
+               fbarch.push(f.name);
+             } else if (/\.(esm|esp|omwaddon)$/i.test(f.name)){
+               var buf = await cacheGet(f.sha256);
+               if (buf){ ldSet(null,'Loading', f.name+' (cached)'); append('[locker] '+f.name+' from local cache'); }
+               else {
+                 var dlc = await (await api('/locker/download?name='+encodeURIComponent(f.name))).json();
+                 if (!dlc || !dlc.url){ append('[locker] cannot fetch '+f.name,'err'); continue; }
+                 buf = await fetchFull(dlc.url, f.size, f.name); // full download to memory
+                 await cachePut(f.sha256, buf);
+               }
+               FS.writeFile('/mwdata/'+f.name, new Uint8Array(buf));
+               content.push(f.name);
+             } else if (f.name === 'media.tar'){
+               // Voice pack: thousands of tiny files in one object. Fetch once (cached by
+               // sha256 like everything else), then unpack straight into the data dir so the
+               // engine finds Sound/Vo/... exactly where retail keeps it.
+               var tbuf = await cacheGet(f.sha256);
+               if (tbuf){ ldSet(null,'Loading','voices (cached)'); }
+               else {
+                 var dlt = await (await api('/locker/download?name=media.tar')).json();
+                 if (dlt && dlt.url){
+                   tbuf = await fetchFull(dlt.url, f.size, 'voices');
+                   await cachePut(f.sha256, tbuf);
+                 }
+               }
+               if (tbuf){
+                 var n = await untarInto('/mwdata', tbuf); // async: yields so the page stays alive
+                 append('[locker] unpacked '+n+' voice files');
+               }
+             } else if (/\//.test(f.name)){
+               // Loose media (Music/, Video/, Splash/, Fonts/): few and large, so they take
+               // the same per-file path as the plugins and land at their retail relative path.
+               var mbuf = await cacheGet(f.sha256);
+               if (!mbuf){
+                 var dlm = await (await api('/locker/download?name='+encodeURIComponent(f.name))).json();
+                 if (dlm && dlm.url){
+                   mbuf = await fetchFull(dlm.url, f.size, f.name);
+                   await cachePut(f.sha256, mbuf);
+                 }
+               }
+               if (mbuf){
+                 var mp = '/mwdata/'+f.name;
+                 FS.mkdirTree(mp.slice(0, mp.lastIndexOf('/')));
+                 FS.writeFile(mp, new Uint8Array(mbuf));
+               }
+             }
+           }
+           ldSet(null,'Starting Morrowind');
+           // Presigned download URLs are minted with a 1h life; a play session is longer, and
+           // StreamFS keeps reading Ranges against the SAME mounted URL for the whole session.
+           // So re-sign every mounted file well before expiry and swap the fresh URL in. The
+           // engine read path is synchronous (can't re-sign on a 403), so this is pre-emptive.
+           setInterval(function(){
+             mounted.forEach(async function(name){
+               try {
+                 var r = await (await api('/locker/download?name='+encodeURIComponent(name))).json();
+                 if (r && r.url) StreamFS.setUrl('/mwdata/'+name, r.url);
+               } catch(e){ /* a missed renewal is retried on the next tick, well within the 1h window */ }
+             });
+           }, 30*60*1000); // every 30 min, vs the 1h URL life = 2x margin
+           // Canonical GOTY load order first, then any extra plugins the player uploaded.
+           var base=['Morrowind.esm','Tribunal.esm','Bloodmoon.esm'];
+           var baseArch=['Morrowind.bsa','Tribunal.bsa','Bloodmoon.bsa'];
+           var extraContent=content.filter(function(c){ return base.indexOf(c)<0; });
+           var assetPack = await mountAssetPack();
+           (function waitCfg(){
+             if (FS.analyzePath('/openmw.cfg').exists){
+               var cfg = FS.readFile('/openmw.cfg',{encoding:'utf8'}).split('\n').filter(function(l){
+                 return !/^content=/.test(l) && !/^data=\/gamedata\s*$/.test(l) && !/^fallback-archive=/.test(l) && !/^fallback=Movies_/.test(l);
+               });
+               cfg.push('data=/mwdata','config="/userdata/config/openmw"');
+               if (assetPack) cfg.push('data=/mods');
+               baseArch.forEach(function(a){ if(fbarch.indexOf(a)>=0) cfg.push('fallback-archive='+a); });
+               fbarch.forEach(function(a){ if(baseArch.indexOf(a)<0) cfg.push('fallback-archive='+a); });
+               if (assetPack) cfg.push('fallback-archive='+assetPack); // LAST = overrides vanilla meshes
+               base.forEach(function(c){ if(content.indexOf(c)>=0) cfg.push('content='+c); });
+               extraContent.forEach(function(c){ cfg.push('content='+c); });
+               cfg.push('content=mp.omwscripts'); // multiplayer is always on this path
+               FS.writeFile('/openmw.cfg', cfg.join('\n'));
+               append('[locker] READY -> multiplayer with your library ('+content.join(' + ')+')');
+               // SETTLE DELAY — a stopgap for a race, not a fix, and it should be deleted once
+               // the real gate exists. The server hands a player control BEFORE the simulation
+               // peer holds authority over their cell: measured 5.2s on a warm box (join at
+               // t+0.0, simpeer.ready at t+5.2). Walk in that window and the peer arrives,
+               // takes authority and asserts its own view of where you are — which is the
+               // rubber-banding. Holding the loading screen covers the gap.
+               //
+               // WHY THIS IS THE WRONG SHAPE: it is a guess against a variable. Peer startup
+               // was 2.0s on a warm cache; a cold start or a busier host will exceed this, and
+               // then the snap happens AFTER the loading screen clears, with nothing on screen
+               // to explain it. It also makes every fast join wait for the slowest case.
+               //
+               // THE REAL FIX: the server already knows the moment authority exists — it logs
+               // simpeer.ready and calls noteHello('world') (connection.ts). Broadcast that to
+               // humans in-world, hold the loading screen on it instead of on a clock, and keep
+               // a timeout so a peer that never starts cannot strand the player here forever.
+               var SETTLE_MS = 8000;
+               append('[mp] waiting ' + (SETTLE_MS/1000) + 's for the world to settle…');
+               setTimeout(function(){ removeRunDependency('mw-local'); }, SETTLE_MS);
+               return;
+             } else { setTimeout(waitCfg, 25); }
+           })();
+         })().catch(function(e){ bounce('Unexpected error: '+(e&&e.message||e)); });
        }
 
        // --- Mount the user-picked Data Files folder (?src=local). Boot waits on 'mw-local'. ---
@@ -1275,6 +2608,7 @@
                // LAST among archives => highest BSA priority => overrides vanilla meshes.
                if (assetPack) cfg.push('fallback-archive='+assetPack);
                content.forEach(function(c){ cfg.push('content='+c); });
+               if (window.__omwMPEnabled) cfg.push('content=mp.omwscripts'); // ?mp= (M0 multiplayer)
                if (wantMovies)
                  cfg.push('fallback=Movies_Company_Logo,bethesda logo.bik',
                           'fallback=Movies_Morrowind_Logo,mw_logo.bik',
@@ -1290,7 +2624,10 @@
        // --- Load REAL Morrowind data at runtime (esm + bsa + loose audio tar) ---
        // Fetched SEQUENTIALLY (not Promise.all) so peak JS-heap stays low, into MEMFS under
        // /mwdata, then the preloaded openmw.cfg is rewritten to load Morrowind. Boot waits.
-       if (!__srcLocal) try {
+       // Skipped for BOTH bring-your-own (__srcLocal) AND multiplayer (__mpLocker): those mount
+       // their own data (local folder / the S3 locker). Running this too would fetch server-hosted
+       // retail data that isn't there and fail the boot on top of a locker mount that succeeded.
+       if (!__srcLocal && !__mpLocker) try {
          // Diagnostic: ?nomw skips the 817MB Morrowind load and boots the tiny preloaded
          // example-suite instead — lets a light load verify the render path (S3TC/SIMD/resize).
          if (window.__FORCE_NOMW || /[?&]nomw\b/.test(location.search)){
@@ -1403,6 +2740,18 @@
            return grab('mwdata/' + name).then(writeRaw('/mwdata/' + name));
          }
          append('[mw] loading Morrowind (cached after first run)…');
+         // Whether a host stages game data is the OPERATOR'S choice, so its absence is an
+         // ordinary configuration and not a crash. Without this it surfaced as a 404 mid-chain
+         // and a loading bar that simply stopped moving, explaining nothing.
+         function noGameData(why){
+           fatalOverlay('No game data on this server',
+             'This server does not host a copy of Morrowind, so there is nothing here to play. '
+             + 'Go back and either start the free example world, or point the launcher at your '
+             + 'own Data Files folder.',
+             false,
+             { kicker: 'Game data', actionLabel: 'Back to the launcher', actionHref: 'launcher.html' });
+           throw new Error(why);   // stop the chain; the overlay is the outcome
+         }
          // DISCOVER what the host actually put in mwdata/, instead of demanding a fixed file list.
          // A self-host can drop a real "Data Files" folder there and it just works — base game
          // only, with expansions, with mods, whatever they own. The old hardcoded chain also
@@ -1414,9 +2763,10 @@
          // .tar entries are still unpacked, for previously-packed datasets.
          window.__mwRootFiles = new Map(); window.__mwHasVideoBik = false;
          fetch('mwdata-manifest.json')
-         .then(function(r){ if (!r.ok) throw new Error('no manifest (HTTP '+r.status+')'); return r.json(); })
+         .then(function(r){ if (!r.ok) return noGameData('no manifest (HTTP '+r.status+')'); return r.json(); },
+               function(){ return noGameData('no manifest'); })
          .then(function(list){
-           if (!list.length) throw new Error('mwdata/ is empty — copy your Morrowind "Data Files" into it');
+           if (!list.length) noGameData('mwdata/ is empty');
            try { StreamFS.init(); } catch(e){ append('[mw] streamfs unavailable: '+e,'err'); }
            var tars = [], bytes = 0;
            list.forEach(function(f){
@@ -1479,6 +2829,7 @@
                // required for the bare filename to resolve (components/files/collections.cpp).
                if (window.__assetPack) cfg.push('data=/mods', 'fallback-archive='+window.__assetPack);
                lo.content.forEach(function(c){ cfg.push('content='+c); });
+               if (window.__omwMPEnabled) cfg.push('content=mp.omwscripts'); // ?mp= (M0 multiplayer)
                if (!window.__noMovies)
                  cfg.push('fallback=Movies_Company_Logo,bethesda logo.bik',
                           'fallback=Movies_Morrowind_Logo,mw_logo.bik',
@@ -1496,7 +2847,7 @@
            append('[mw load err] '+e,'err');
            fatalOverlay('Could not load Morrowind data',
              'A game file failed to download or unpack (' + (e && e.message || e) + '). '
-             + 'Check your connection and reload — your saves are safe.');
+             + 'Check your connection and reload. Your saves are safe.');
          });
        } catch(e){ if(!(e&&e.__skip)) append('[mw setup err] '+e,'err'); }
 
@@ -1511,7 +2862,7 @@
      fatalOverlay('The game hit a fatal error', String(w||'') +
        (String(w).toLowerCase().indexOf('memory') >= 0
         ? ' — the browser could not grow WebAssembly memory. Close other tabs/apps and reload.'
-        : ' — your saves are safe. Reloading may fix it.'));
+        : ' . Your saves are safe, and reloading may fix it.'));
    },
    setStatus: (t)=>{ if(t){ append('[status] '+t);
      // Emscripten reports the wasm/.data preload as "Downloading data... (x/y)" — feed the bar.
@@ -1592,5 +2943,1016 @@
       'Could not load the game engine (' + __ENGINE_DIR + 'openmw.js). Reload to try again.'); };
     document.body.appendChild(s);
   })();
+</script>
+<!-- ============================ MULTIPLAYER HTML OVERLAYS ============================
+     Social hub + chat, rendered in the DOM over the game canvas (the in-engine MyGUI windows
+     were removed). Talks to the running engine through the existing bridge: JS->Lua via the
+     single Module.__omwMPCmd slot (queued), Lua->JS via window.__omwMP[key] mirrors. Because
+     this is plain HTML served from play/, its look iterates with NO wasm rebuild. -->
+<style>
+#omw-chat, #omw-social{ --panel:#17130e; --panel-2:#211a12; --line:#3a2e1e; --line-soft:rgba(58,46,30,.45);
+  --bronze:#8a6838; --bronze-hi:#c69a4e; --gold:#d3a84e; --gold-hi:#e8c86a; --ink:#e9dcc3; --muted:#b9a888;
+  --faint:#8a7a5e; --c-say:#e9dcc3; --c-party:#8fe58f; --c-global:#f0d15a; --c-public:#f0d15a;
+  --c-whisper:#dd95f4; --c-server:#a89a80;
+  font:13.5px/1.45 "Optima","Gill Sans",-apple-system,"Segoe UI",sans-serif; }
+#omw-chat *, #omw-chat *::before, #omw-chat *::after{ box-sizing:border-box; }
+#omw-social *, #omw-social *::before, #omw-social *::after{ box-sizing:border-box; }
+
+/* ================= CHAT — MMO style, bottom-right ================= */
+#omw-chat{ position:fixed; right:14px; bottom:14px; width:440px; max-width:calc(100vw - 28px);
+  z-index:50; display:flex; flex-direction:column; color:var(--ink); pointer-events:none; }
+#omw-chat .feed{ height:190px; overflow:hidden; padding:4px 10px 6px; display:flex; flex-direction:column;
+  justify-content:flex-end; scrollbar-width:none; transition:background .18s ease, height .18s ease; }
+#omw-chat .feed::-webkit-scrollbar{ width:0; }
+#omw-chat .ln{ margin:1.5px 0; text-shadow:0 1px 2px rgba(0,0,0,.95), 0 0 6px rgba(0,0,0,.7);
+  word-wrap:break-word; opacity:.78; animation:omwln .25s ease; }
+@keyframes omwln{ from{ opacity:0; transform:translateY(3px);} to{ transform:none; } }
+#omw-chat .ln .tag{ font-weight:700; letter-spacing:.02em; }
+#omw-chat .ln .who{ font-weight:600; color:var(--ink); }
+#omw-chat .c-say{ color:var(--c-say); } #omw-chat .c-party{ color:var(--c-party); }
+#omw-chat .c-global{ color:var(--c-global); } #omw-chat .c-public{ color:var(--c-public); }
+#omw-chat .c-whisper{ color:var(--c-whisper); }
+#omw-chat .c-server{ color:var(--c-server); font-style:italic; }
+/* active (T): the feed becomes a real panel with scrollback + the compose bar below it */
+#omw-chat.active{ pointer-events:auto; }
+#omw-chat.active .feed{ height:250px; overflow-y:auto; justify-content:flex-start;
+  background:rgba(10,8,5,.92); border:1px solid var(--line); border-bottom:none; border-radius:8px 8px 0 0;
+  scrollbar-width:thin; scrollbar-color:var(--bronze) transparent; }
+#omw-chat.active .ln{ opacity:1; }
+#omw-chat .bar{ display:none; flex-direction:column; background:rgba(10,8,5,.96);
+  border:1px solid var(--line); border-top:1px solid var(--line-soft); border-radius:0 0 8px 8px; }
+#omw-chat.active .bar{ display:flex; }
+#omw-chat .chans{ display:flex; gap:2px; padding:6px 8px 0; }
+#omw-chat .chan{ padding:4px 10px 6px; cursor:pointer; font-size:11px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--faint); border-bottom:2px solid transparent; }
+#omw-chat .chan:hover{ color:var(--muted); }
+#omw-chat .chan.on{ color:var(--ink); }
+#omw-chat .chan.on[data-c="party"]{ border-color:var(--c-party); color:var(--c-party); }
+#omw-chat .chan.on[data-c="public"]{ border-color:var(--c-public); color:var(--c-public); }
+#omw-chat .chan.on[data-c="whisper"]{ border-color:var(--c-whisper); color:var(--c-whisper); }
+#omw-chat .r2{ display:flex; align-items:center; gap:7px; padding:7px 9px 9px; }
+#omw-chat .clab{ font-weight:700; font-size:12px; white-space:nowrap; }
+#omw-chat select.wto{ background:rgba(0,0,0,.45); border:1px solid var(--line); color:var(--c-whisper);
+  border-radius:4px; padding:6px 6px; font:inherit; font-size:12.5px; max-width:130px; }
+#omw-chat input.tx{ flex:1; min-width:0; background:rgba(0,0,0,.45); border:1px solid var(--line);
+  color:var(--ink); border-radius:4px; padding:7px 10px; font:inherit; }
+#omw-chat input.tx:focus, #omw-chat select.wto:focus{ outline:none; border-color:var(--gold); }
+#omw-chat .hint{ padding:0 10px 7px; font-size:10.5px; letter-spacing:.06em; color:var(--faint); }
+
+/* ================= SOCIAL — settings-style panel ================= */
+#omw-social{ position:fixed; inset:0; z-index:60; display:none; align-items:center; justify-content:center;
+  background:rgba(6,5,3,.55); -webkit-backdrop-filter:blur(2px); backdrop-filter:blur(2px); color:var(--ink); }
+#omw-social.show{ display:flex; }
+#omw-social .panel{ width:min(840px,94vw); height:min(580px,88vh); display:flex; flex-direction:column;
+  background:linear-gradient(160deg,var(--panel-2),var(--panel)); border:1px solid var(--bronze);
+  border-radius:10px; box-shadow:0 30px 80px rgba(0,0,0,.62); overflow:hidden; }
+#omw-social .hd{ display:flex; align-items:center; gap:14px; padding:16px 20px 14px;
+  border-bottom:1px solid var(--line-soft); }
+#omw-social .hd .ttl{ flex:1; }
+#omw-social .hd .kick{ font:600 10px/1 "Optima","Gill Sans",sans-serif; letter-spacing:.22em;
+  text-transform:uppercase; color:var(--faint); }
+#omw-social .hd h2{ margin:3px 0 0; font:600 22px/1.1 "Hoefler Text","Baskerville",Georgia,serif; }
+/* A corner X, not a labelled button: the panel is a window, and every other overlay here
+   closes the same way. The O shortcut lives in the tooltip rather than in the corner. */
+#omw-social .x{ background:transparent; border:none; color:var(--muted); border-radius:50%;
+  width:30px; height:30px; flex:none; display:flex; align-items:center; justify-content:center;
+  cursor:pointer; font:400 22px/1 -apple-system,"Segoe UI",Roboto,sans-serif;
+  transition:color .16s ease, background .16s ease; }
+#omw-social .x:hover{ color:var(--gold-hi); background:rgba(211,168,78,.12); }
+#omw-social .x:focus-visible{ outline:2px solid var(--gold); outline-offset:2px; }
+#omw-social .body{ flex:1; display:flex; min-height:0; }
+#omw-social .nav{ width:168px; flex:none; padding:12px 10px; border-right:1px solid var(--line-soft);
+  display:flex; flex-direction:column; gap:2px; background:rgba(0,0,0,.14); }
+#omw-social .nv{ display:flex; align-items:center; gap:8px; padding:9px 12px; border-radius:6px;
+  cursor:pointer; color:var(--muted); font-size:13.5px; border:1px solid transparent; }
+#omw-social .nv:hover{ color:var(--ink); background:rgba(211,168,78,.06); }
+#omw-social .nv.on{ color:var(--gold-hi); background:rgba(211,168,78,.10); border-color:rgba(138,104,56,.5); }
+#omw-social .nv .n{ margin-left:auto; font-size:11px; color:var(--faint); }
+#omw-social .content{ flex:1; overflow-y:auto; padding:16px 22px 20px; scrollbar-width:thin;
+  scrollbar-color:var(--bronze) transparent; }
+#omw-social .seg{ display:inline-flex; border:1px solid var(--line); border-radius:6px; overflow:hidden; }
+#omw-social .seg button{ background:transparent; color:var(--muted); border:none; padding:7px 15px;
+  cursor:pointer; font:inherit; font-size:12.5px; letter-spacing:.05em; }
+#omw-social .seg button:hover{ color:var(--ink); }
+#omw-social .seg button.on{ background:var(--gold); color:#1a1207; font-weight:600; }
+#omw-social .whererow{ display:flex; align-items:center; gap:12px; flex-wrap:wrap;
+  padding:12px 14px; margin-bottom:16px; border:1px solid var(--line-soft); border-radius:8px;
+  background:rgba(0,0,0,.16); }
+#omw-social .whererow .lb{ font:600 10.5px/1 "Optima","Gill Sans",sans-serif; letter-spacing:.14em;
+  text-transform:uppercase; color:var(--faint); }
+#omw-social h3{ margin:4px 0 10px; font:600 11px/1 "Optima","Gill Sans",sans-serif; letter-spacing:.16em;
+  text-transform:uppercase; color:var(--faint); }
+#omw-social .card{ border:1px solid rgba(198,154,78,.4); background:rgba(211,168,78,.07);
+  border-radius:8px; padding:10px 12px; margin-bottom:10px; display:flex; align-items:center; gap:8px; }
+#omw-social .row{ display:flex; align-items:center; gap:8px; padding:9px 4px;
+  border-bottom:1px solid var(--line-soft); }
+#omw-social .row:last-child{ border-bottom:none; }
+#omw-social .who{ flex:1; min-width:0; }
+#omw-social .who .nm{ font-size:15px; color:var(--ink); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+#omw-social .who .st{ font-size:11.5px; color:var(--faint); margin-top:1px; }
+#omw-social .who .st.on{ color:var(--c-party); }
+#omw-social .btn{ background:transparent; border:1px solid var(--line); color:var(--muted); border-radius:4px;
+  padding:5px 10px; cursor:pointer; font:inherit; font-size:12px; white-space:nowrap; }
+#omw-social .btn:hover{ border-color:var(--gold); color:var(--gold-hi); }
+#omw-social .btn.pri{ border-color:var(--bronze); color:var(--gold); }
+#omw-social .addrow{ display:flex; gap:8px; margin-top:12px; }
+#omw-social .addrow input{ flex:1; background:rgba(0,0,0,.35); border:1px solid var(--line); color:var(--ink);
+  padding:8px 11px; border-radius:5px; font:inherit; }
+#omw-social .addrow input:focus{ outline:none; border-color:var(--gold); }
+#omw-social .empty{ color:var(--faint); font-size:13px; padding:14px 4px; }
+#omw-social .ft{ padding:9px 20px; border-top:1px solid var(--line-soft); min-height:34px;
+  font-size:12px; color:var(--muted); }
+#omw-social .note{ color:var(--faint); font-size:12.5px; line-height:1.6; margin-top:8px; }
+
+/* ================= FEATURE TOUR — shown once, when the character is ready ================= */
+/* Handle picker: same panel language as the onboarding modal. Above the BOOT LOADING SCREEN
+   (9000), not just the tour: the session holds at ProfileNeeded and never reaches Joined, so
+   the loading screen is still up when this appears and would swallow every click. */
+#omw-uname{ position:fixed; inset:0; z-index:9500; display:flex; align-items:center; justify-content:center;
+  background:rgba(8,7,5,.82); backdrop-filter:blur(3px); font:14px/1.6 "Optima","Gill Sans",sans-serif; }
+#omw-uname .panel{ position:relative; width:min(440px,92vw); padding:32px 34px 26px; text-align:center;
+  background:linear-gradient(180deg,#1a1712,#141110); border:1px solid #4a3c26; border-radius:3px; }
+#omw-uname .kick{ font:600 10px/1 "Optima","Gill Sans",sans-serif; letter-spacing:.22em;
+  text-transform:uppercase; color:#8a7a5a; margin-bottom:10px; }
+#omw-uname h2{ margin:6px 0 10px; font:600 24px/1.15 "Hoefler Text","Baskerville",Georgia,serif; color:#f4ecd9; }
+#omw-uname p{ margin:0 0 18px; color:#b9a888; }
+#omw-uname p b{ color:#e9dcc3; }
+#omw-uname input{ width:100%; padding:10px 12px; background:#0f0d0b; color:#f4ecd9;
+  border:1px solid #4a3c26; border-radius:2px; font:15px/1.4 ui-monospace,Menlo,monospace; outline:none; }
+#omw-uname input:focus{ border-color:#c69a4e; }
+#omw-uname .err{ min-height:18px; margin:8px 0 4px; font-size:12.5px; color:#d08a6a; }
+#omw-uname .go{ margin-top:6px; padding:9px 20px; background:#2a2118; color:#e8c86a;
+  border:1px solid #6b5433; border-radius:2px; font:600 13px/1 "Optima","Gill Sans",sans-serif; cursor:pointer; }
+#omw-uname .go:hover{ background:#342a1e; }
+#omw-tour{ position:fixed; inset:0; z-index:70; display:none; align-items:center; justify-content:center;
+  background:rgba(6,5,3,.6); -webkit-backdrop-filter:blur(2px); backdrop-filter:blur(2px);
+  color:#e9dcc3; font:14px/1.6 "Optima","Gill Sans",-apple-system,"Segoe UI",sans-serif; }
+#omw-tour.show{ display:flex; }
+#omw-tour *{ box-sizing:border-box; }
+#omw-tour .panel{ position:relative; width:min(480px,92vw); padding:34px 36px 26px; text-align:center;
+  background:linear-gradient(160deg,#211a12,#17130e); border:1px solid #8a6838; border-radius:10px;
+  box-shadow:0 30px 80px rgba(0,0,0,.62); }
+#omw-tour .x{ position:absolute; top:10px; right:12px; width:32px; height:32px; border:none;
+  background:transparent; color:#8a7a5e; font:300 24px/1 sans-serif; cursor:pointer; }
+#omw-tour .x:hover{ color:#e8c86a; }
+#omw-tour .glyph{ width:44px; height:44px; margin:0 auto 12px; color:#c69a4e; }
+#omw-tour .glyph svg{ width:100%; height:100%; display:block; }
+#omw-tour .kick{ font:600 10px/1 "Optima","Gill Sans",sans-serif; letter-spacing:.22em;
+  text-transform:uppercase; color:#8a7a5e; }
+#omw-tour h2{ margin:6px 0 10px; font:600 24px/1.15 "Hoefler Text","Baskerville",Georgia,serif; color:#f4ecd9; }
+#omw-tour p{ margin:0; color:#b9a888; min-height:72px; }
+#omw-tour p b{ color:#e9dcc3; }
+#omw-tour .key{ display:inline-block; padding:1px 8px; border:1px solid #8a6838; border-radius:4px;
+  color:#e8c86a; font-weight:600; }
+#omw-tour .dots{ display:flex; gap:8px; justify-content:center; margin:20px 0 16px; }
+#omw-tour .dot{ width:7px; height:7px; border-radius:50%; background:#3a2e1e; transition:background .15s ease; }
+#omw-tour .dot.on{ background:#d3a84e; }
+#omw-tour .next{ display:inline-flex; align-items:center; gap:8px; padding:11px 24px; border-radius:4px;
+  border:1px solid #e8c86a; cursor:pointer; font:600 12.5px/1 "Optima","Gill Sans",sans-serif;
+  letter-spacing:.12em; text-transform:uppercase; color:#1a1207;
+  background:linear-gradient(180deg,#d3a84e,#8a6838); }
+#omw-tour .next:hover{ background:linear-gradient(180deg,#e8c86a,#d3a84e); }
+</style>
+<div id="omw-chat"><div class="feed" id="omw-feed"></div>
+  <div class="bar">
+    <div class="chans" id="omw-chans"></div>
+    <div class="r2"><span class="clab" id="omw-clab">[Public]</span>
+      <select class="wto" id="omw-wto" style="display:none"></select>
+      <input class="tx" id="omw-tx" maxlength="1024" placeholder="Type a message…"></div>
+    <div class="hint">Enter send &middot; Tab channel &middot; Esc close</div>
+  </div></div>
+<div id="omw-social"><div class="panel">
+  <div class="hd">
+    <div class="ttl"><div class="kick">Multiplayer</div><h2>Social</h2></div>
+    <span class="seg" id="omw-avail"></span>
+    <button class="x" id="omw-social-close" title="Close (O)" aria-label="Close (O)">&times;</button>
+  </div>
+  <div class="body">
+    <div class="nav" id="omw-nav"></div>
+    <div class="content" id="omw-social-body"></div>
+  </div>
+  <div class="ft" id="omw-social-status"></div>
+</div></div>
+<div id="omw-tour"><div class="panel">
+  <button class="x" id="omw-tour-x" aria-label="Close">×</button>
+  <div class="glyph" id="omw-tour-glyph"></div>
+  <div class="kick">Multiplayer</div>
+  <h2 id="omw-tour-title"></h2>
+  <p id="omw-tour-body"></p>
+  <div class="dots" id="omw-tour-dots"></div>
+  <button class="next" id="omw-tour-next">Next ▸</button>
+</div></div>
+<script>
+(function(){
+  // ---- JS -> Lua: one queued command slot (bursts must not overwrite each other) ----
+  var outbox = [];
+  function cmd(s){ outbox.push(s); }
+  setInterval(function(){ if (outbox.length && window.Module && !Module.__omwMPCmd) Module.__omwMPCmd = outbox.shift(); }, 40);
+  function mpState(){ return window.__omwMP || {}; }
+  function pj(s){ try { return JSON.parse(s); } catch(e){ return null; } }
+  function esc(s){ return String(s==null?'':s).replace(/[&<>]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];}); }
+  function el(tag, cls, html){ var d = document.createElement(tag); if (cls) d.className = cls; if (html!=null) d.innerHTML = html; return d; }
+
+  // ---- cursor handshake: refcount overlays that need the mouse/keyboard freed ----
+  // A single exitPointerLock at open is NOT enough in real play: the engine re-grabs the lock
+  // (and refocuses the canvas) on its own schedule, which made overlay clicks land in the game
+  // and typing fall out of the input. So while any overlay is open we (a) flag the hold so the
+  // canvas click-to-relock helper stands down, (b) re-exit the lock the moment anything takes
+  // it, and (c) keep the chat input focused whenever focus falls back to the canvas/body.
+  // Why this is heavier than it looks. The engine is SDL-on-emscripten:
+  //   * it binds key handlers to window/document (specialHTMLTargets = [0, document, window]),
+  //     on the SAME nodes we do, so stopPropagation does not stop it — only
+  //     stopImmediatePropagation does (see the keydown shield below);
+  //   * it re-requests POINTER LOCK from inside the wasm on canvas mousedown, which no JS-side
+  //     flag of ours can veto. While the lock is held the cursor is captured by the canvas and
+  //     DOM clicks cannot land at all — that is why overlay buttons appeared dead.
+  // So while an overlay is open we make the canvas non-interactive: it stops being a hit-test
+  // target, SDL never gets a mousedown, never re-requests the lock, and every click goes to
+  // the overlay. Cheap, reversible, and it removes the focus/lock fight at the source.
+  var uiRefs = 0;
+  var canvasEl = document.getElementById('canvas');
+  function uiHold(on){ var was = uiRefs; uiRefs += on ? 1 : -1; if (uiRefs < 0) uiRefs = 0;
+    window.__omwUiHold = uiRefs > 0;
+    if (was === 0 && uiRefs > 0){
+      cmd('uimode:on');
+      if (canvasEl) canvasEl.style.pointerEvents = 'none';
+      try{ document.exitPointerLock && document.exitPointerLock(); }catch(e){}
+    } else if (was > 0 && uiRefs === 0){
+      cmd('uimode:off');
+      if (canvasEl) canvasEl.style.pointerEvents = '';
+    } }
+  // If the lock somehow lands while an overlay is up (a request already in flight when we
+  // opened), shed it — otherwise the cursor stays captured and nothing is clickable.
+  document.addEventListener('pointerlockchange', function(){
+    if (uiRefs > 0 && document.pointerLockElement){
+      try { document.exitPointerLock(); } catch(e){}
+    }
+  });
+  // THE click fix. SDL/emscripten registers its mouse handlers on document/window, NOT on the
+  // canvas — so canvas pointer-events:none does not stop the engine from seeing a click on the
+  // overlay, and its mousedown handler calls requestPointerLock(). The cursor is then captured
+  // by the game mid-overlay and every subsequent click dies (clicks "sometimes" working = the
+  // first one lands, the one that re-locks is the last that works).
+  //
+  // It cannot be fixed the way the keyboard was: stopImmediatePropagation at window-capture
+  // would also stop the event before it reached the panel's own buttons (the Enter trap).
+  // Instead deny the capability itself while an overlay is up — the engine may handle the
+  // click, it just cannot steal the cursor. Resolves rather than rejects: the caller may
+  // attach .then(), and an unhandled rejection every click is its own bug.
+  var _requestPointerLock = Element.prototype.requestPointerLock;
+  Element.prototype.requestPointerLock = function(){
+    if (window.__omwUiHold) return Promise.resolve();
+    return _requestPointerLock.apply(this, arguments);
+  };
+  // Focus shield. SDL's mouse handlers sit on document/window and call preventDefault() on
+  // mousedown — and moving focus to a clicked field is a DEFAULT ACTION, so that silently
+  // suppresses it. Symptom: activeElement stays BODY, the field never takes the caret, and
+  // typing goes nowhere, while buttons still work because they fire on `click`. Exactly the
+  // "can't click or type in the social box" report.
+  //
+  // Only the PRESS is withheld from SDL, never `click`: the panel's own handlers listen for
+  // click, and shielding that would break every button (the Enter trap, once more). Focus
+  // still lands because it is a default action, which propagation cannot stop.
+  ['pointerdown','mousedown','pointerup','mouseup'].forEach(function(type){
+    window.addEventListener(type, function(e){
+      if (!uiRefs) return;
+      if (e.target && e.target.closest && e.target.closest('#omw-social, #omw-chat, #omw-uname'))
+        e.stopImmediatePropagation();
+    }, true);
+  });
+  // Click diagnostic. Pointer lock cannot be engaged in headless Chrome, so the overlay-click
+  // regression test cannot reproduce "the panel is open but clicks do nothing". This reports
+  // what the browser actually handed the click to, so the culprit is named rather than guessed.
+  window.addEventListener('pointerdown', function(e){
+    if (!uiRefs) return;
+    var top = document.elementFromPoint(e.clientX, e.clientY);
+    var id = top ? (top.id || top.tagName + (top.className ? '.' + String(top.className).split(' ')[0] : '')) : 'null';
+    var inOverlay = !!(top && top.closest && top.closest('#omw-social, #omw-chat, #omw-uname'));
+    if (!inOverlay || document.pointerLockElement){
+      append('[ui] click at ' + Math.round(e.clientX) + ',' + Math.round(e.clientY)
+        + ' went to <' + id + '>'
+        + (document.pointerLockElement ? ' POINTER-LOCKED (cursor captured by the game)' : '')
+        + ' canvas pointer-events=' + (canvasEl ? getComputedStyle(canvasEl).pointerEvents : '?'), 'err');
+    }
+  }, true);
+
+  // ================================ CHAT ================================
+  // Player-facing channels are PARTY / PUBLIC / WHISPER (there are only two places to talk —
+  // your party and the shared world — plus direct whispers). "public" rides the wire as the
+  // server's 'global' channel; incoming 'say'/'global' both render as [Public].
+  var CHANS = ['party','public','whisper'];
+  var CLABEL = { party:'[Party]', public:'[Public]', whisper:'[Whisper]' };
+  var WIRE = { party:'party', public:'global', whisper:'whisper' };
+  var ready = false; // chargen done? overlays stay hidden until the character exists
+  var chChan = 'public', chWhisper = '', chatOpen = false, seenChatSeq = 0, seenOpenChat = 0;
+  var feed = document.getElementById('omw-feed'), chatEl = document.getElementById('omw-chat');
+  var chansEl = document.getElementById('omw-chans'), tx = document.getElementById('omw-tx');
+  var wto = document.getElementById('omw-wto'), clab = document.getElementById('omw-clab');
+  var IDLE_LINES = 8;
+  chatEl.style.display = 'none'; // hidden until chargen completes (the poll below reveals it)
+  function lineHtml(m){
+    var ch = m.channel || 'say';
+    if (ch === 'server') return '<div class="ln c-server">'+esc(m.text)+'</div>';
+    if (ch === 'global' || ch === 'say') ch = 'public'; // one public world = one Public channel
+    var who = (ch === 'whisper')
+      ? (m.to ? ('to '+esc(m.to)) : esc(m.from||'?'))
+      : esc(m.from||'?');
+    return '<div class="ln c-'+ch+'"><span class="tag">'+(CLABEL[ch]||'')+'</span> '
+      + '<span class="who">'+who+':</span> '+esc(m.text)+'</div>';
+  }
+  function renderFeed(){
+    var log = pj(mpState().chatLog) || [];
+    var slice = chatOpen ? log : log.slice(-IDLE_LINES);
+    feed.innerHTML = slice.map(lineHtml).join('');
+    feed.scrollTop = feed.scrollHeight;
+  }
+  function renderChans(){
+    chansEl.innerHTML = CHANS.map(function(c){
+      return '<span class="chan'+(c===chChan?' on':'')+'" data-c="'+c+'">'+c+'</span>'; }).join('');
+    clab.textContent = CLABEL[chChan];
+    clab.style.color = 'var(--c-'+chChan+')';
+    wto.style.display = (chChan === 'whisper') ? '' : 'none';
+    if (chChan === 'whisper'){
+      var fr = (pj(mpState().friends)||[]).filter(function(f){return f.online;});
+      wto.innerHTML = fr.length ? fr.map(function(f){ return '<option value="'+esc(f.acct)+'">'+esc(f.name)+'</option>'; }).join('')
+        : '<option value="">(nobody online)</option>';
+      if (fr.length){ if (!chWhisper || !fr.some(function(f){return f.acct===chWhisper;})) chWhisper = fr[0].acct;
+        wto.value = chWhisper; }
+    }
+  }
+  chansEl.addEventListener('click', function(e){ var c = e.target.getAttribute('data-c'); if (c){ chChan = c; renderChans(); tx.focus(); } });
+  wto.addEventListener('change', function(){ chWhisper = wto.value; });
+  function openChat(){ if (chatOpen) return; chatOpen = true; chatEl.classList.add('active'); renderChans(); renderFeed(); uiHold(true);
+    // Focus now AND after the pointer-lock exit settles (it is async; the engine may pull
+    // focus back to the canvas in between — the guard interval then keeps it here).
+    setTimeout(function(){ tx.focus(); }, 0);
+    setTimeout(function(){ if (chatOpen) tx.focus(); }, 250); }
+  function closeChat(){ if (!chatOpen) return; chatOpen = false; chatEl.classList.remove('active'); renderFeed(); tx.blur(); uiHold(false); }
+  function sendChat(){
+    var t = tx.value.trim(); if (!t){ closeChat(); return; }
+    var to = (chChan === 'whisper') ? (chWhisper||'') : '';
+    cmd('chatx:'+(WIRE[chChan]||chChan)+':'+to+':'+t); tx.value = '';
+  }
+  // Named so the window-capture shield can run it directly. The shield must stop the event
+  // before it reaches this field (or SDL, listening on the same node, steals the keystroke),
+  // which also means this listener does NOT fire while an overlay is open — Enter/Tab/Escape
+  // would silently do nothing. The shield calls chatKey() itself; this listener stays for the
+  // case where the field is focused with no overlay hold.
+  function chatKey(e){
+    if (e.key === 'Enter'){ e.preventDefault(); sendChat(); }
+    else if (e.key === 'Escape'){ e.preventDefault(); closeChat(); }
+    else if (e.key === 'Tab'){ e.preventDefault(); chChan = CHANS[(CHANS.indexOf(chChan)+1)%CHANS.length]; renderChans(); }
+  }
+  tx.addEventListener('keydown', function(e){ e.stopPropagation(); chatKey(e); });
+
+  // ================================ SOCIAL ================================
+  var socialOpen = false, seenOpenSocial = 0, sTab = 'friends', seenSocialResult = '';
+  var netHold = false;
+  // NOT persisted, and not a guess. Which world you are in is the server's fact, delivered
+  // as the whereNow mirror; this is only the latest value of it. Keeping a localStorage copy
+  // meant the panel could assert "Public" while the connection was to your own world — and it
+  // survived reloads, so nothing could clear it. UI state that describes the server belongs
+  // to the server.
+  var lastWhere = '';
+  var sEl = document.getElementById('omw-social'), sBody = document.getElementById('omw-social-body');
+  var sNav = document.getElementById('omw-nav'), sAvail = document.getElementById('omw-avail');
+  var sStatus = document.getElementById('omw-social-status');
+  // Set on request, REPLACED by the server's ack (the socialResult mirror below). No timer:
+  // the ack is the real signal, and a line that vanishes on a clock lies about both outcomes.
+  var sStatusText = '';
+  function setStatus(t){ sStatusText = t || ''; sStatus.textContent = sStatusText; }
+  // The server answers refusals with a CODE. Showing it raw ("Couldn't PartyInvite:
+  // party_full.") tells a player nothing about what to do next, and reads like a crash.
+  // Every code in core/social.ts SocialFailure plus the two travel/world ones.
+  var FAILURE = {
+    no_such_player: 'No player by that name. Check the spelling of their username.',
+    blocked: "You can't do that with this player.",
+    already_friends: "You're already friends.",
+    self: "That's you.",
+    too_many_requests: 'Too many pending requests. Wait for some to be answered first.',
+    no_request: 'That request has expired or was already answered.',
+    not_online: "They're not online right now.",
+    private: "Their world is set to Solo, so it isn't accepting anyone.",
+    not_in_party: "You're not in a party.",
+    not_leader: 'Only the party leader can do that.',
+    party_full: 'That party is full.',
+    already_in_party: "You're already in a party. Leave it first.",
+    not_travelled: "They're playing in their own world, which can't be joined from here yet.",
+    not_flippable: "The public world can't be switched to Solo or Party.",
+    not_owner: "This isn't your world to change.",
+    no_public_world: 'The public world is offline right now.',
+    no_gateway: 'World switching is unavailable on this server.',
+    bad_target: "That's not somewhere a party can go.",
+  };
+  function failureText(code, op){
+    return FAILURE[code] || ("Couldn't " + op + (code ? ': ' + code : '') + '.');
+  }
+  // Optimistic only, and always overwritten by the next whereNow mirror. Nothing persists.
+  function setWhere(v){ lastWhere = v; }
+  function openSocial(){ if (socialOpen) return; socialOpen = true; sEl.classList.add('show'); uiHold(true); renderSocial(true); }
+  function closeSocial(){ if (!socialOpen) return; socialOpen = false; sEl.classList.remove('show'); uiHold(false); }
+  document.getElementById('omw-social-close').addEventListener('click', closeSocial);
+  sEl.addEventListener('mousedown', function(e){ if (e.target === sEl) closeSocial(); });
+  function seg(opts, cur, fn){ var s = el('span','seg'); opts.forEach(function(o){
+    var b = el('button', o[0]===cur?'on':null, o[1]); b.onclick = function(){ fn(o[0]); }; s.appendChild(b); }); return s; }
+  function personRow(name, st, online, actions){
+    var r = el('div','row');
+    var who = el('div','who'); who.appendChild(el('div','nm', esc(name)));
+    if (st) who.appendChild(el('div','st'+(online?' on':''), esc(st)));
+    r.appendChild(who);
+    (actions||[]).forEach(function(a){ var b = el('button','btn'+(a[2]?' pri':''),a[0]); b.onclick = a[1]; r.appendChild(b); });
+    return r;
+  }
+  var lastSocialSig = null;
+  function renderSocial(force){
+    if (!socialOpen) return;
+    var m = mpState();
+    // Re-render ONLY when something actually changed. The mirror poll called this every 150ms
+    // unconditionally, and the render rebuilds the panel's DOM — so the friend field was
+    // destroyed and recreated ~7x/second. That silently ate focus, every typed character, and
+    // any click that landed between two renders: the "it flashes and I can't click or type"
+    // report. Measured before the fix: the input element was replaced 5 times in 2 seconds.
+    // lastWhere and the status line are LOCAL state, but this render DRAWS them, so they
+    // belong in the signature. Leaving lastWhere out meant clicking Solo updated the variable,
+    // called renderSocial(), and then hit the unchanged-signature early return: the segment
+    // stayed on the old choice and the panel looked hung even though the switch had happened.
+    var sig = [sTab, lastWhere, String(m.whereNow || ''), sStatusText, m.friends, m.party, m.players, m.friendRequests,
+      m.invites, m.availability, m.presenceMode, m.worldMode].join(' ')
+    if (!force && sig === lastSocialSig) return;
+    lastSocialSig = sig;
+    var friends = pj(m.friends)||[], party = pj(m.party)||{members:[]}, players = pj(m.players)||[];
+    var reqs = pj(m.friendRequests)||[], invites = pj(m.invites)||[];
+    var avail = m.availability || 'online', presence = m.presenceMode || 'friends';
+    var partyN = (party.members||[]).length;
+    // header availability segmented
+    // NO Online/Offline toggle. It was redundant and, worse, compound: `where:offline` set
+    // availability AND flipped the world to private AND travelled you back to your own world,
+    // so one control silently did the PLAYING switcher's job as well as a visibility change.
+    // Where you play is the PLAYING row; who can see you is Settings -> Privacy. There is no
+    // "offline mode" — the server is always the authority.
+    sAvail.replaceWith(sAvail = (function(){ var s = el('span',''); s.id = 'omw-avail'; return s; })());
+    // sidebar
+    sNav.innerHTML = '';
+    // Count and list are derived from the SAME filtered set. They used to disagree: the count
+    // did players.length-1 (assuming we are in the list) while the list filtered on a selfName
+    // the engine never mirrors — so it filtered nobody. With one player online that read "0"
+    // next to your own row, and offered to friend/mute/block yourself.
+    var selfName = String(m.selfName || window.__omwSelfName || '').toLowerCase();
+    // Identity, not name: the roster carries usernames while __omwSelfName is the CHARACTER
+    // name, so a name compare let the player see themselves. Name stays as the fallback for
+    // the moment before the id mirror lands.
+    var selfId = m.selfId == null ? '' : String(m.selfId);
+    var otherPlayers = players.filter(function(p){
+      if (selfId && p.id != null) return String(p.id) !== selfId;
+      return String(p.name||'').toLowerCase() !== selfName; });
+    [['friends','Friends', friends.length],['party','Party', partyN],['players','Players', otherPlayers.length],['settings','Settings', null]]
+      .forEach(function(t){
+        var d = el('div','nv'+(sTab===t[0]?' on':''), esc(t[1]) + (t[2]!=null ? ' <span class="n">'+t[2]+'</span>' : ''));
+        d.setAttribute('data-t', t[0]); // stable hook for the click regression test
+        d.onclick = function(){ sTab = t[0]; renderSocial(); };
+        sNav.appendChild(d);
+      });
+    // content
+    sBody.innerHTML = '';
+    // The switcher renders from where we ARE, not from what was last clicked: whereNow is
+    // the world actually dialled. Only solo-vs-party (a mode flip on the SAME world) still
+    // comes from local memory, because both look identical from the client's side.
+    var wn = m.whereNow == null ? '' : String(m.whereNow);
+    if (wn) lastWhere = wn;
+    var where = el('div','whererow');
+    where.appendChild(el('span','lb','Playing'));
+    where.appendChild(seg([['solo','Solo'],['party','Party'],['public','Public']], lastWhere, function(v){
+      // Leading a party changes what these buttons mean. Public takes the WHOLE party with you
+      // (PartyTravel fans a dial-out to every member), and Solo closes your world, which ends
+      // the party rather than stranding members in one. Both are other people's business, so
+      // both ask first. ponytail: native confirm, swap for a styled modal if it ever needs art.
+      // No self-account mirror exists, so resolve our own key out of the member list by name
+      // (the roster carries {name, acct}). Only the WARNING depends on this: the server is
+      // still the authority — PartyTravel answers not_leader and partyDisband no-ops.
+      var me = (party.members || []).filter(function(p){
+        return String(p.name || '').toLowerCase() === selfName; })[0];
+      var iLead = !!me && String(party.leader || '') !== '' && me.acct === party.leader && partyN > 1;
+      if (iLead && v === 'public') {
+        if (!confirm('You lead a party of ' + partyN + '. Moving to the public world brings every member with you.\n\nContinue?')) return;
+        selfTravel = true; // we chose this; do not narrate it back to us as if it happened to us
+        setWhere(v); cmd('social:PartyTravel:public'); closeSocial();
+        window.__omwLoading.show('Moving the party', 'Syncing with the public world…');
+        // Hold the loading screen until the connection actually settles. The old fixed 2.5s
+      // timeout dropped the player into a world they had not joined yet, which is what made
+      // the panel narrate the join instead of the loading screen doing it.
+      (function poll(n){
+        if ((mpState().state || '') === 'Joined'){ window.__omwLoading.hide(); return; }
+        if (n > 120){ window.__omwLoading.hide(); return; }   // ~30s, then let the net layer's own error path speak
+        setTimeout(function(){ poll(n + 1); }, 250);
+      })(0);
+        setStatus('');
+        renderSocial();
+        return;
+      }
+      if (iLead && v === 'solo' &&
+          !confirm('You lead a party of ' + partyN + '. Going solo closes your world and disbands the party.\n\nContinue?')) return;
+      setWhere(v);
+      cmd('where:' + v);
+      closeSocial();
+      // Solo <-> Party on your OWN world is an in-place flip (no reconnect); Public is a real
+      // redial that must re-sync with the world's sim peer. Either way the wait is real, so
+      // show it — the state watcher above hides it when the connection settles.
+      window.__omwLoading.show(v === 'public' ? 'Joining the public world' : 'Switching world',
+        'Syncing with the server…');
+      setTimeout(function(){ if ((mpState().state || '') === 'Joined') window.__omwLoading.hide(); }, 2500);
+      // No status line for a world switch: the loading screen IS the progress indicator, and
+      // a second running commentary in the panel footer only contradicted it.
+      setStatus('');
+      renderSocial();
+    }));
+    sBody.appendChild(where);
+    var sec = el('div');
+    if (sTab === 'friends'){
+      reqs.forEach(function(q){ var c = el('div','card');
+        c.appendChild(el('div','who','<div class="nm">'+esc(q.name)+'</div><div class="st">wants to be your friend</div>'));
+        [['accept', function(){ cmd('social:FriendAccept:'+q.acct); }, true],
+         ['block', function(){ cmd('social:BlockAdd:'+q.name); }]].forEach(function(a){
+          var b = el('button','btn'+(a[2]?' pri':''),a[0]); b.onclick = a[1]; c.appendChild(b); });
+        sec.appendChild(c); });
+      invites.forEach(function(iv){ var c = el('div','card');
+        c.appendChild(el('div','who','<div class="nm">'+esc(iv.name)+'</div><div class="st">'
+          + (iv.kind==='party' ? 'invited you to their party' : 'invited you to join them')+'</div>'));
+        var b = el('button','btn pri','accept');
+        b.onclick = function(){ cmd('social:'+(iv.kind==='party'?'PartyAccept':'InviteAccept')+':'+iv.acct); };
+        c.appendChild(b); sec.appendChild(c); });
+      sec.appendChild(el('h3',null,'Friends'));
+      if (!friends.length) sec.appendChild(el('div','empty','No friends yet. Add someone below, or from Players.'));
+      friends.forEach(function(f){
+        var acts = [];
+        if (f.online){ acts.push(['join', function(){ cmd('joinfriend:'+f.acct); setStatus('Joining '+f.name+'…'); }, true]);
+          acts.push(['whisper', function(){ closeSocial(); chChan='whisper'; chWhisper=f.acct; openChat(); renderChans(); }]);
+          acts.push(['party', function(){ cmd('social:PartyInvite:'+f.acct); setStatus('Party invite sent.'); }]); }
+        acts.push(['remove', function(){ cmd('social:FriendRemove:'+f.acct); }]);
+        sec.appendChild(personRow(f.name, f.online ? (f.cellKey || 'Online') : 'Offline', f.online, acts));
+      });
+      var add = el('div','addrow'); var ai = el('input'); ai.placeholder = 'Add a friend by their username';
+      var ab = el('button','btn pri','Add'); ab.onclick = function(){ if (ai.value.trim()){ cmd('social:FriendRequest:'+ai.value.trim()); setStatus('Friend request sent to '+ai.value.trim()+'.'); ai.value=''; } };
+      ai.onkeydown = function(e){ e.stopPropagation(); if (e.key === 'Enter') ab.onclick(); };
+      add.appendChild(ai); add.appendChild(ab); sec.appendChild(add);
+    } else if (sTab === 'party'){
+      sec.appendChild(el('h3',null,'Your party'));
+      var mem = party.members||[];
+      if (!mem.length) sec.appendChild(el('div','empty','You are not in a party. Invite a friend from the Friends tab to start one.'));
+      mem.forEach(function(p){ sec.appendChild(personRow(p.name,
+        p.acct===party.leader ? 'Party leader' : (p.online ? 'Online' : 'Offline'), p.online, [])); });
+      if (mem.length){ var lv = el('div','addrow'); var lb2 = el('button','btn','Leave party');
+        lb2.onclick = function(){ cmd('social:PartyLeave:'); setStatus('You left the party.'); }; lv.appendChild(lb2); sec.appendChild(lv); }
+    } else if (sTab === 'players'){
+      sec.appendChild(el('h3',null,'Players here'));
+      var others = otherPlayers;
+      if (!others.length) sec.appendChild(el('div','empty','Nobody else is here right now.'));
+      // The pane scrolls, but the render is capped so a crowded cell cannot build thousands of
+      // rows every poll. Say so rather than silently showing a truncated list.
+      var PLAYER_ROWS = 100;
+      if (others.length > PLAYER_ROWS) {
+        sec.appendChild(el('div','note','Showing the first ' + PLAYER_ROWS + ' of ' + others.length
+          + ' players here.'));
+      }
+      others.slice(0, PLAYER_ROWS).forEach(function(p){ var acct = String(p.name||'').toLowerCase();
+        sec.appendChild(personRow(p.name, null, false, [
+          ['add friend', function(){ cmd('social:FriendRequest:'+p.name); setStatus('Friend request sent.'); }, true],
+          ['party', function(){ cmd('social:PartyInvite:'+acct); }],
+          ['mute', function(){ cmd('social:MuteAdd:'+acct); }],
+          ['block', function(){ cmd('social:BlockAdd:'+p.name); }]]));
+      });
+    } else {
+      sec.appendChild(el('h3',null,'Privacy'));
+      var pr = el('div','whererow');
+      pr.appendChild(el('span','lb','Visible to'));
+      pr.appendChild(seg([['public','Everyone'],['friends','Friends'],['party','Party'],['private','Nobody']], presence,
+        function(v){ cmd('social:PresenceMode:'+v); }));
+      sec.appendChild(pr);
+      sec.appendChild(el('div','note',
+        'Controls who can see where you are. <b>Nobody</b> also refuses invites.'
+        + '<br>Muted players stay muted across sessions; blocking someone removes and silences them everywhere.'));
+    }
+    sBody.appendChild(sec);
+  }
+
+  // ================================ FEATURE TOUR ================================
+  // Shown ONCE, the moment the character becomes ready (chargen finished = multiplayer,
+  // chat and social just unlocked). Dots + Next walk through what is now available.
+  // Two decks through ONE component: which slides and which "seen" key, nothing else differs.
+  var TOURS = {};
+  // Shown BEFORE chargen: what this is, and why the online parts are not there yet.
+  TOURS.intro = [
+    { t: 'Create your character first', g: '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><circle cx="24" cy="15" r="7"/><path d="M10 40c0-7.5 6-13 14-13s14 5.5 14 13"/></svg>',
+      b: 'Play through Morrowind\'s opening and choose your <b>race, class and birthsign</b>. Chat, friends, parties and the public world unlock the moment creation is finished.' },
+    { t: 'Saved to your account', g: '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M10 14h28v20H10z"/><path d="M10 20h28"/><circle cx="16" cy="17" r="1.5"/></svg>',
+      b: 'Your character lives on the server, not in this browser. Progress, inventory and where you stood are kept for you, so clearing site data cannot lose them.' },
+    { t: 'Play anywhere', g: '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><circle cx="24" cy="24" r="15"/><path d="M9 24h30M24 9c4 5 4 25 0 30M24 9c-4 5-4 25 0 30"/></svg>',
+      b: 'Sign in on any browser, on any machine, and pick the same character up where you left it. Nothing to install and nothing to carry with you.' },
+  ];
+  // Shown the moment creation finishes and multiplayer actually unlocks.
+  TOURS.unlocked = [
+    { t: 'You are in the world', g: '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><circle cx="18" cy="18" r="6"/><circle cx="32" cy="22" r="5"/><path d="M8 40c0-6 4.5-10 10-10s10 4 10 10"/><path d="M26 40c0-4.5 3.5-8 8-8s8 3.5 8 8"/></svg>',
+      b: 'Your character is saved to your account and follows you everywhere: solo, with your party, and in the public world. Multiplayer is now unlocked.' },
+    { t: 'Chat', g: '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M8 10h32v22H22l-8 8v-8H8z"/><path d="M14 18h20M14 24h14"/></svg>',
+      b: 'Press <span class="key">T</span> to talk. <b>Party</b> reaches your group anywhere, <b>Public</b> the public world, and <b>Whisper</b> one friend. Tab switches channels.' },
+    { t: 'Social', g: '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><circle cx="24" cy="16" r="7"/><path d="M10 40c0-7.5 6-13 14-13s14 5.5 14 13"/><path d="M36 12l6 6M42 12l-6 6"/></svg>',
+      b: 'Press <span class="key">O</span> for the Social panel: add friends, form a party, join a friend, and control who can see you.' },
+    { t: 'Play your way', g: '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><circle cx="24" cy="24" r="16"/><path d="M24 8v6M24 34v6M8 24h6M34 24h6"/><path d="M24 24l7-7"/></svg>',
+      b: 'Play <b>Solo</b> in your own world, open it to your <b>Party</b>, or head to the shared <b>Public</b> world. Exit from the menu returns you to your characters.' },
+  ];
+  var tourEl = document.getElementById('omw-tour'), tourIdx = 0, tourDeck = TOURS.unlocked, tourKey = 'omw-mp-tour';
+  var tourShown = { intro: false, unlocked: false };
+  // Storage unavailable (private mode, blocked) reads as SEEN: a modal that cannot remember
+  // being dismissed would reappear on every single boot, which is worse than never showing.
+  // Per CHARACTER, not per browser. These modals explain what just happened to the character
+  // in front of you — "create your character first", "you are in the world now" — so a flag
+  // shared across every character meant making a second one silently skipped both. The
+  // unsuffixed key is the fallback for a boot with no character id (last-played).
+  function tourKeyFor(which){
+    var base = which === 'intro' ? 'omw-mp-intro' : 'omw-mp-tour';
+    var id = window.__omwCharId || '';
+    return id ? base + ':' + id : base;
+  }
+  function tourSeen(which){
+    try { return localStorage.getItem(tourKeyFor(which)) === '1'; }
+    catch(e){ return true; }
+  }
+  function renderTour(){
+    var s = tourDeck[tourIdx];
+    document.getElementById('omw-tour-glyph').innerHTML = s.g;
+    document.getElementById('omw-tour-title').textContent = s.t;
+    document.getElementById('omw-tour-body').innerHTML = s.b;
+    document.getElementById('omw-tour-dots').innerHTML = tourDeck.map(function(_, i){
+      return '<span class="dot' + (i === tourIdx ? ' on' : '') + '"></span>'; }).join('');
+    document.getElementById('omw-tour-next').innerHTML = (tourIdx === tourDeck.length - 1) ? "Let's go ▸" : 'Next ▸';
+  }
+  var tourPaused = false;
+  function openTour(which){
+    which = which || 'unlocked';
+    if (tourShown[which]) return;
+    tourShown[which] = true;
+    tourDeck = TOURS[which];
+    tourKey = tourKeyFor(which);
+    tourIdx = 0; renderTour();
+    tourEl.classList.add('show');
+    // The intro appears BEFORE character creation, where you are alone in your own private
+    // world, so stopping the world is safe and a modal you cannot dismiss while something
+    // walks up to you is not. The unlock tour does not pause: by then you are in a live world
+    // and pausing only your own client would freeze your view while everyone else moves.
+    uiHold(true);
+    tourPaused = (which === 'intro');
+    if (tourPaused) cmd('pause:on');
+  }
+  function closeTour(){ if (!tourEl.classList.contains('show')) return;
+    tourEl.classList.remove('show');
+    if (tourPaused) { tourPaused = false; cmd('pause:off'); }
+    uiHold(false);
+    // A notice has no key: it reports something that just happened, so "seen" is meaningless
+    // and writing one would make the next occurrence silent.
+    if (tourKey) { try { localStorage.setItem(tourKey, '1'); } catch(e){} } }
+
+  // Involuntary transitions get the SAME panel the onboarding modals use, as a single slide.
+  // Being moved between worlds, or losing the party you were in, is something that happens TO
+  // you: without a word it reads as the game glitching. Deliberately not a tour — no dots, no
+  // persistence, and it never suppresses a later one.
+  var GLYPH_WORLD = '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><circle cx="24" cy="24" r="15"/><path d="M9 24h30M24 9c4 5 4 25 0 30M24 9c-4 5-4 25 0 30"/></svg>';
+  var GLYPH_PARTY = '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><circle cx="18" cy="18" r="6"/><circle cx="32" cy="22" r="5"/><path d="M8 40c0-6 4.5-10 10-10s10 4 10 10"/><path d="M26 40c0-4.5 3.5-8 8-8s8 3.5 8 8"/></svg>';
+  function showNotice(title, body, glyph){
+    // Never talk over onboarding: those explain the same systems and are already on screen.
+    if (tourEl.classList.contains('show')) return;
+    tourDeck = [{ t: title, b: body, g: glyph || GLYPH_WORLD }];
+    tourKey = null;
+    tourIdx = 0; renderTour();
+    document.getElementById('omw-tour-dots').innerHTML = '';
+    document.getElementById('omw-tour-next').innerHTML = 'Got it';
+    tourEl.classList.add('show');
+    uiHold(true);
+    tourPaused = false;
+  }
+  document.getElementById('omw-tour-next').addEventListener('click', function(){
+    if (tourIdx < tourDeck.length - 1){ tourIdx++; renderTour(); } else closeTour(); });
+  document.getElementById('omw-tour-x').addEventListener('click', closeTour);
+
+  // Watch the mirrors for things that were done TO this player and narrate them once each.
+  // All three are edge-triggered against a remembered value, never level-triggered, or the
+  // 150ms poll would reopen the modal forever.
+  // EDGE-TRIGGERED ON A SEQUENCE, not on the payload. The payloads repeat verbatim — the
+  // public world's id is a constant, so is the kick reason — so comparing values could not
+  // tell a second occurrence from an unchanged mirror, and every kick or trip after the first
+  // in a session was silently swallowed while the player really was redialed.
+  var seenNoticeSeq = null, wasInParty = false;
+  // Set when WE are the one who moved the party, so the leader is not told that someone moved
+  // them. Cleared on every notice edge, not only inside the branch that consumed it: it used
+  // to latch true whenever the edge never fired, suppressing the NEXT genuine notice.
+  var selfTravel = false;
+  function noticeWatch(m){
+    var ns = m.netstate == null ? '' : String(m.netstate);
+    if (ns !== seenNetState){
+      seenNetState = ns;
+      // The same loading screen a world switch uses: you are not in a live world while the
+      // connection is down, so the game must not stay playable behind a chat line. It comes
+      // down when we rejoin, and the net layer's give-up lands on the error screen.
+      // ONE screen, held until we are actually in. Reacting only to 'Reconnecting' and
+      // 'Joined' let every state BETWEEN them (Offline, Connecting, HelloSent) fall through
+      // with no overlay — so a world switch, which cycles those repeatedly, flashed the
+      // screen on and off instead of covering the wait. Anything that is not Joined means
+      // the player is not in a live world, and the screen stays up.
+      if (ns && ns !== 'Joined' && ns !== 'Failed'){
+        if (!everJoinedOnce) { /* first boot: the normal loading screen already owns this */ }
+        else window.__omwLoading.show('Reconnecting', 'Putting you back in the world…');
+      } else if (ns === 'Joined'){
+        everJoinedOnce = true;
+        window.__omwLoading.hide();
+        resumePointerLock();
+      }
+      // Failed has exactly ONE owner: the mpErrorModal watcher below. Handling it here too
+      // stacked two different-looking modals on the same event.
+    }
+    var seq = m.noticeSeq == null ? '' : String(m.noticeSeq);
+    if (seenNoticeSeq === null) { seenNoticeSeq = seq; }
+    else if (seq !== seenNoticeSeq) {
+      seenNoticeSeq = seq;
+      var wc = m.worldClosed == null ? '' : String(m.worldClosed);
+      var tt = m.partyTravelTo == null ? '' : String(m.partyTravelTo);
+      if (wc) {
+        // The name is optional on purpose: the server sends it only when the owner is still
+        // visible, so the copy has to read correctly without one.
+        var by = esc(String(m.worldClosedBy || ''));
+        showNotice('Returning to your own world',
+          (by ? '<b>' + by + '</b> has gone Solo, so their world is no longer open to the party.'
+              : 'The world you were in has gone Solo, so it is no longer open to the party.')
+          + ' You are being taken back to your own world. Nothing you did there is lost.',
+          GLYPH_WORLD);
+      } else if (tt && !selfTravel) {
+        var leadBy = esc(String(m.partyTravelBy || ''));
+        showNotice('Your party is moving',
+          (leadBy ? '<b>' + leadBy + '</b> has' : 'Your party leader has')
+          + ' taken the group to <b>' + (tt === 'vvardenfell' ? 'the public world' : esc(tt))
+          + '</b>. You are travelling with them.',
+          GLYPH_PARTY);
+      }
+      selfTravel = false;
+    }
+    var party = pj(m.party) || {};
+    var inParty = ((party.members || []).length) > 0;
+    // Only the LOSS is worth a modal: joining one is something you just chose to do.
+    if (wasInParty && !inParty) showNotice('Your party has ended',
+      'You are no longer in a party. The leader disbanded it, or went Solo. You keep playing exactly where you are.',
+      GLYPH_PARTY);
+    wasInParty = inParty;
+  }
+
+  // Pick a public handle. The server refuses SessionReady until email + username are set
+  // ([login] requireProfile), and holds the session open so this can answer — but nothing
+  // ever asked the player, so the flag was unusable and player.name kept falling back to the
+  // account login name (an SSO account's name claim is the person's real name). SSO already
+  // captured the email, so this only has to ask for the handle.
+  var profileShown = false, seenProfileSeq = null;
+  function profileWatch(m){
+    if (String(m.profileRequired || '') === 'true' && !profileShown) { profileShown = true; askUsername(m); }
+    var ps = m.profileSeq == null ? '' : String(m.profileSeq);
+    if (seenProfileSeq === null) { seenProfileSeq = ps; return; }
+    if (ps === seenProfileSeq) return;
+    seenProfileSeq = ps;
+    var box = document.getElementById('omw-uname-err');
+    if (!box) return;
+    if (String(m.profileOk || '') === 'true') { closeUsername(); return; }
+    box.textContent = UNAME_ERR[String(m.profileError || '')] || 'That handle was refused. Try another.';
+  }
+  var UNAME_ERR = {
+    taken: 'That handle is already taken.',
+    'badformat-username': 'Letters, numbers, _ and - only. No spaces.',
+    'reserved-word': 'That handle is reserved.',
+    cooldown: 'You changed your handle too recently.',
+    'badformat-email': 'That email address is not valid.',
+  };
+  function closeUsername(){
+    var el = document.getElementById('omw-uname');
+    if (el) el.remove();
+    uiHold(false);
+  }
+  function askUsername(m){
+    // ProfileSetup needs email AND username. Signing in with a provider hands us the email
+    // already, so normally this asks for one thing — but an account created without one
+    // (password/harness) could never satisfy the gate, so ask when we have nothing.
+    var email = String(m.profileEmail || '');
+    var wrap = el('div', null,
+      '<div class="panel">'
+      + '<div class="kick">One more thing</div>'
+      + '<h2>Choose your handle</h2>'
+      + '<p>This is the name other players see: in chat, on your friends list and in your party. '
+      + 'It is <b>not</b> your character name and <b>not</b> the name on your sign-in account.</p>'
+      + '<input id="omw-uname-in" maxlength="24" placeholder="handle" autocomplete="off" spellcheck="false">'
+      + (email ? '' : '<input id="omw-uname-em" type="email" placeholder="email" autocomplete="off" style="margin-top:8px">')
+      + '<div id="omw-uname-err" class="err"></div>'
+      + '<button id="omw-uname-go" class="go">Continue ▸</button>'
+      + '</div>');
+    wrap.id = 'omw-uname';
+    document.body.appendChild(wrap);
+    uiHold(true);
+    var input = document.getElementById('omw-uname-in');
+    var emIn = document.getElementById('omw-uname-em');
+    var go = function(){
+      var v = String(input.value || '').trim();
+      var err = document.getElementById('omw-uname-err');
+      if (!v) { err.textContent = 'Pick a handle to continue.'; return; }
+      var em = email || String((emIn && emIn.value) || '').trim();
+      if (!em) { err.textContent = 'Enter an email address to continue.'; return; }
+      err.textContent = 'Checking…';
+      cmd('profile:' + em + ':' + v);
+    };
+    document.getElementById('omw-uname-go').onclick = go;
+    input.onkeydown = function(e){ e.stopPropagation(); if (e.key === 'Enter') go(); };
+    if (emIn) emIn.onkeydown = function(e){ e.stopPropagation(); if (e.key === 'Enter') go(); };
+    setTimeout(function(){ input.focus(); }, 50);
+  }
+
+  // ---- poll the engine mirror: open signals, chat feed updates, live re-render ----
+  // The SAME physical key can arrive twice: once here in JS (below) and once as a Lua signal
+  // (the engine's A_Social action also fires on O). The Lua one lands a frame later, so
+  // without this window it would immediately re-toggle what the keypress just did. After a
+  // JS-handled key we absorb pending signals instead of acting on them.
+  var suppressUntil = 0;
+  function suppressSignals(){ suppressUntil = Date.now() + 800; }
+  setInterval(function(){
+    var m = mpState();
+    // Chargen gate: no chat feed, no hotkeys, no panels until the character exists — there is
+    // nothing to do in multiplayer before race/class/sign are chosen. Signals are absorbed so
+    // a press during chargen doesn't pop a panel the moment it completes.
+    var r = (m.chargenDone === '1');
+    if (r !== ready){
+      ready = r;
+      chatEl.style.display = ready ? '' : 'none';
+      // The moment multiplayer unlocks, walk a first-timer through what just appeared.
+      if (ready && !tourSeen('unlocked')) openTour('unlocked');
+    }
+    if (ready) noticeWatch(m);
+    profileWatch(m);
+    // Before creation: say WHY the online parts are missing, rather than leaving a player to
+    // wonder. Gated on being in-world so it lands on the game, not on a black boot screen.
+    if (!ready && (m.state || '') === 'Joined' && !tourSeen('intro')) openTour('intro');
+    var oc = Number(m.openChat||0), os = Number(m.openSocial||0), cs = Number(m.chatSeq||0);
+    if (!ready || Date.now() < suppressUntil){ seenOpenChat = oc; seenOpenSocial = os; }
+    else {
+      if (oc > seenOpenChat){ seenOpenChat = oc; chatOpen ? closeChat() : openChat(); }
+      if (os > seenOpenSocial){ seenOpenSocial = os; socialOpen ? closeSocial() : openSocial(); }
+    }
+    if (cs > seenChatSeq){ seenChatSeq = cs; renderFeed(); }
+    // The engine mirrors the server's ack for every social action. Surface it: an action that
+    // silently does nothing is indistinguishable from a broken server, and a REFUSAL that says
+    // nothing is worse — the privacy control was refused on every click and looked fine.
+    var sr = m.socialResult || '';
+    if (sr !== seenSocialResult) {
+      seenSocialResult = sr;
+      var res = pj(sr);
+      if (res && res.op) {
+        if (res.ok === true) {
+          if (res.op === 'PresenceMode') setStatus('Now visible to: ' + res.detail + '.');
+          else if (res.op === 'SetWorldMode') setStatus(String(res.detail) === 'party'
+            ? 'Your world is open to your party.' : 'Your world is solo again.');
+        } else {
+          setStatus(failureText(String(res.detail || ''), String(res.op)));
+        }
+      }
+    }
+    // ---- connection state: reconnect must PAUSE the game -------------------------------
+    // Moving while disconnected and re-syncing on return is a cheat vector, and a frozen-
+    // looking game is worse than a screen that says what is happening. Reuses the boot loading
+    // screen; uiHold puts the engine in Interface mode so input stops.
+    // Only RECONNECTING counts — the first Connecting is boot, which has its own screen.
+    // Written as "state -> desired hold", not as transitions: the state machine passes through
+    // Authing on the way back to Joined, and a transition-matcher missed that and leaked the
+    // hold, leaving the canvas permanently click-through.
+    var wantHold = (m.state || '') === 'Reconnecting';
+    if (wantHold !== netHold) {
+      netHold = wantHold;
+      uiHold(wantHold);
+      if (wantHold) window.__omwLoading.show('Connection lost', 'Reconnecting…');
+      else { window.__omwLoading.hide(); setStatus('Reconnected.'); }
+    }
+    if (socialOpen) renderSocial();
+  }, 150);
+  // A cell load blocks the emscripten main loop, so nothing repaints while it runs — not even
+  // OpenMW's own loading screen. The overlay therefore has to be UP before the block starts.
+  // The engine signals on door activation (one frame early); rAF is the only watcher fast
+  // enough to paint in that gap, which is why this is not on the 150ms mirror poll.
+  // True while the server has a saved position for us that the engine has not reached yet.
+  // Only in multiplayer — single player has no server to wait on and would sit behind the
+  // screen for the whole timeout. Bounded from FIRST USE, not page load: the engine takes
+  // most of a minute to boot and would otherwise spend the budget before it could join.
+  // True while the server has a saved position the engine has not reached yet. Exteriors
+  // cannot be booted into by name (--start needs a cell NAME, not a grid ref), so for those
+  // the teleport still happens after spawn — this keeps the loading screen up over it so the
+  // player never sees, or is seen at, the default start.
+  var isMp = !!(window.__omwBootParam && window.__omwBootParam('mp'));
+  var restoreDeadline = 0, joinedAt = 0;
+  // The loading screen hides the default spawn, but it does not STOP it: until the restore
+  // lands the character is really standing at the game's start point in a running world, and
+  // that point has hostiles near it — "the first start position puts you near an enemy".
+  // Being hit behind a loading screen you cannot react to is the worst version of this.
+  // Freeze until we are actually where we logged out. Reuses the pause the intro modal added.
+  var restorePaused = false;
+  function restoreHold(want){
+    if (want === restorePaused) return;
+    restorePaused = want;
+    cmd(want ? 'pause:on' : 'pause:off');
+  }
+  window.__omwAwaitRestore = function(){
+    var waiting = awaitRestore();
+    // Only pause once the session is Joined: before that the engine is not draining the
+    // command slot yet, so a pause:on would be silently dropped and — because restoreHold
+    // only acts on CHANGE — never retried. Nothing can hit us before we are in the world.
+    restoreHold(waiting && (window.__omwMP || {}).state === 'Joined');
+    return waiting;
+  };
+  function awaitRestore(){
+    if (!isMp) return false;                                  // single player: nothing to wait on
+    // Held at ProfileNeeded: the server is waiting on the PLAYER, not on us. Keeping the boot
+    // screen up here hides the very picker that unblocks it.
+    if (String((window.__omwMP || {}).profileRequired || '') === 'true') return false;
+    if (restoreDeadline === 0) restoreDeadline = Date.now() + 20000;
+    if (Date.now() > restoreDeadline) return false;           // never strand the player
+    var mp = window.__omwMP || {};
+    if ((mp.state || '') !== 'Joined') return true;
+    if (joinedAt === 0) joinedAt = Date.now();
+    var raw = mp.restorePos;
+    // A character with NOTHING saved never publishes this — the restore simply does not run —
+    // so waiting on it outright left a fresh character stuck behind the screen (caught by s99).
+    // Give it a short grace after joining, then accept the default spawn as correct.
+    if (raw === undefined) return Date.now() - joinedAt < 2500;
+    if (raw === 'none') return false;
+    try {
+      var want = JSON.parse(raw), at = JSON.parse(mp.pose || 'null');
+      if (!at) return Date.now() - joinedAt < 2500;
+      return Math.hypot(at.x - want.x, at.y - want.y, at.z - want.z) > 250;
+    } catch (e) { return false; }
+  };
+
+  (function watchCellLoad(){
+    var seen = '', hideAt = 0;
+    (function tick(){
+      var v = (window.__omwMP || {}).cellLoad || '';
+      if (v && v !== seen) {
+        seen = v;
+        window.__omwLoading.show('Loading', 'Entering a new area…');
+        hideAt = Date.now() + 15000; // hard ceiling: never strand the player behind it
+      }
+      // The load is over once frames are flowing again — this callback running IS that proof.
+      if (hideAt && Date.now() > hideAt - 14400) { window.__omwLoading.hide(); hideAt = 0; }
+      requestAnimationFrame(tick);
+    })();
+  })();
+
+  // ---- keys: handled HERE, in JS, not round-tripped through the engine ----
+  // The overlays are DOM, so the browser is the natural owner of their hotkeys. Capture phase
+  // on window fires BEFORE SDL's own listener (which hangs off the canvas), so stopping
+  // propagation means the game never also acts on the key (T is Rest in vanilla). The Lua
+  // openChat/openSocial signals are still honoured by the poll above, so a rebound Social key
+  // keeps working — this is the direct path, not a replacement for it.
+  function typing(e){
+    var t = e.target;
+    return t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
+  }
+  window.addEventListener('keydown', function(e){
+    if (e.key === 'Escape'){
+      if (tourEl.classList.contains('show')){ e.preventDefault(); e.stopPropagation(); closeTour(); }
+      else if (chatOpen){ e.preventDefault(); e.stopPropagation(); suppressSignals(); closeChat(); }
+      else if (socialOpen){ e.preventDefault(); e.stopPropagation(); suppressSignals(); closeSocial(); }
+      return;
+    }
+    if (typing(e)){
+      // The player is typing in one of OUR fields, so the engine must not see the key at all.
+      // stopPropagation is NOT enough: emscripten attaches its key listeners to the SAME node
+      // (window) as this one, and stopPropagation only blocks OTHER nodes — same-node
+      // listeners still run. That is why characters vanished and the caret flickered (the
+      // engine kept pulling focus back to the canvas). stopImmediatePropagation blocks every
+      // remaining listener, including SDL's.
+      if (chatOpen || socialOpen) {
+        // Run the field's OWN key semantics first: stopImmediatePropagation below prevents the
+        // event from ever reaching the target, so Enter/Tab/Escape have to be driven from here
+        // (plain characters are unaffected — insertion is a default action, not a listener).
+        if (e.target === tx) chatKey(e);
+        else if (typeof e.target.onkeydown === 'function') e.target.onkeydown(e);
+        e.stopImmediatePropagation();
+      }
+      return;
+    }
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (!ready) return;               // no multiplayer UI until the character exists
+    var k = (e.key || '').toLowerCase();
+    if (k !== 't' && k !== 'o') return;
+    e.preventDefault(); e.stopPropagation(); suppressSignals();
+    // An impatient first-timer pressing the keys the tour is describing has understood it.
+    if (tourEl.classList.contains('show')) closeTour();
+    if (k === 't'){ chatOpen ? closeChat() : openChat(); }
+    else { socialOpen ? closeSocial() : openSocial(); }
+  }, true);
+  // Same shield for the rest of the key stream while typing in an overlay field: SDL also
+  // watches keypress/keyup, and a stray preventDefault there breaks text entry too.
+  ['keypress','keyup'].forEach(function(t){
+    window.addEventListener(t, function(e){
+      if ((chatOpen || socialOpen) && typing(e)) e.stopPropagation();
+    }, true);
+  });
+})();
 </script>
 </body></html>

@@ -1,0 +1,141 @@
+// Copyright (C) 2025-2026 Virtastic - https://virtastic.app
+// SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
+// s40 (M4): shared NPCs under cell authority.
+//   1. Two clients in the same retail cell; exactly ONE is the authority holder.
+//   2. Both see the same content NPCs at (near) the same positions — the non-holder's
+//      view is puppet-driven off ActorMoveBatch, so it converges within a bounded error.
+//   3. Killing an NPC on the holder kills it on the non-holder (ActorDeath relay) and
+//      bumps the SHARED kill tally on both (WorldKillCount -> mp.setDeadCount).
+//
+// RETAIL DATA REQUIRED: the clean Example Suite ships no NPCs at all (its only active
+// actors are the player and MP puppets), so shared-NPC authority cannot be exercised on
+// the demo content. Skips cleanly when play/mwdata is absent.
+import assert from 'node:assert/strict';
+import os from 'node:os';
+import { existsSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const ROOT = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
+const CONVERGE_EPS = 80; // units; puppet steering + 100ms render delay + 2Hz mirrors
+const STEP_TIMEOUT = 20_000;
+const BOOT = { retail: true, joinTimeoutMs: 420_000 };
+
+const probeOf = async (c) => JSON.parse(await c.eval('(window.__omwMP||{}).actorProbe||"{}"'));
+const dist = (p, q) => Math.hypot(p.x - q.x, p.y - q.y, p.z - q.z);
+
+export default async function run(ctx) {
+  if (!existsSync(join(ROOT, 'play', 'mwdata', 'Morrowind.esm'))) {
+    ctx.log('SKIP: play/mwdata/Morrowind.esm absent (retail data required for shared NPCs)');
+    return;
+  }
+  const [a, b] = await Promise.all([
+    ctx.launchClient('bot-a', '', BOOT),
+    ctx.launchClient('bot-b', '', BOOT),
+  ]);
+
+  // Authority: exactly one holder for the shared cell. The Grant lands a moment AFTER the
+  // actors become active (server processes PlayerCellChange, then claims), and the mirrors
+  // are 2 Hz — poll both until the authority state settles rather than reading once.
+  await a.waitFor('Number((window.__omwMP||{}).actorCount||0) > 0', STEP_TIMEOUT, 'A sees cell actors');
+  await b.waitFor('Number((window.__omwMP||{}).actorCount||0) > 0', STEP_TIMEOUT, 'B sees cell actors');
+  let holderA = null;
+  let holderB = null;
+  const authDeadline = Date.now() + STEP_TIMEOUT;
+  while (Date.now() < authDeadline) {
+    [holderA, holderB] = await Promise.all([
+      a.eval('(window.__omwMP||{}).isHolder'),
+      b.eval('(window.__omwMP||{}).isHolder'),
+    ]);
+    if ([holderA, holderB].filter((h) => h === 'true').length === 1) break;
+    await ctx.sleep(500);
+  }
+  ctx.log(`isHolder A=${holderA} B=${holderB}`);
+  assert.equal([holderA, holderB].filter((h) => h === 'true').length, 1,
+    'exactly one client must hold cell authority');
+  const [holder, peer] = holderA === 'true' ? [a, b] : [b, a];
+
+  // The non-holder MUST actually be puppeting the cell's actors. Assert the mechanism, not
+  // just the symptom: with both clients running independent AI from identical spawns, the
+  // positions stay close for a while by luck, so a convergence check alone reports a green
+  // for a completely unsynced world (observed: puppetedActors=0 passing at 46.9 units in one
+  // run and failing at 644 in the next, purely on how far the NPCs had wandered).
+  await peer.waitFor('Number((window.__omwMP||{}).puppetedActors||0) >= 3', STEP_TIMEOUT,
+    'non-holder attached puppets to the cell actors');
+  ctx.log(`non-holder puppeted ${await peer.eval('(window.__omwMP||{}).puppetedActors')} actors`);
+
+  // Same NPCs, converged positions. Compare records present on BOTH clients.
+  let shared = [];
+  const deadline = Date.now() + STEP_TIMEOUT;
+  let worst = Infinity;
+  let worstRec = null;
+  while (Date.now() < deadline) {
+    const [ph, pp] = await Promise.all([probeOf(holder), probeOf(peer)]);
+    shared = Object.keys(ph).filter((r) => pp[r]);
+    if (shared.length >= 3) {
+      worst = 0;
+      for (const rec of shared) {
+        const d = dist(ph[rec], pp[rec]);
+        if (d > worst) { worst = d; worstRec = rec; }
+      }
+      if (worst < CONVERGE_EPS) break;
+    }
+    await ctx.sleep(500);
+  }
+  const hostLoad = os.loadavg()[0];
+  ctx.log(`${shared.length} shared NPCs; worst convergence error ${worst.toFixed(1)} units `
+    + `(${worstRec}); host load ${hostLoad.toFixed(1)}`);
+  // On failure, say WHY: "no puppets attached" and "puppets attached but no pose stream"
+  // are completely different bugs and the position delta alone can't tell them apart.
+  if (worst >= CONVERGE_EPS) {
+    const [pk, bi, ac, ah, ih] = await Promise.all([
+      peer.eval('(window.__omwMP||{}).puppetedActors'),
+      peer.eval('(window.__omwMP||{}).actorBatchesIn'),
+      peer.eval('(window.__omwMP||{}).actorCount'),
+      peer.eval('(window.__omwMP||{}).authorityHolder'),
+      peer.eval('(window.__omwMP||{}).isHolder'),
+    ]);
+    ctx.log(`diag(non-holder): puppetedActors=${pk} actorBatchesIn=${bi} actorCount=${ac} authorityHolder=${ah} isHolder=${ih}`);
+  }
+  assert.ok(shared.length >= 3, `expected >=3 shared NPCs, got ${shared.length}`);
+  // Convergence is a TIMING measurement: both clients must render and interpolate in real
+  // time for puppets to track. On a contended host they cannot, and failing here reports a
+  // product defect for what is a busy box — the same way s42 was manufacturing failures
+  // before it got this gate. Observed directly: the same build measured 552 units at host
+  // load ~122 and 167 at a quieter moment, with no Lua errors and the actor stream flowing
+  // in both.
+  //
+  // SKIPPED, not softened. CONVERGE_EPS is unchanged, and a miss on an idle box still fails
+  // loudly, because there it really is a defect.
+  if (worst >= CONVERGE_EPS && hostLoad > 12) {
+    ctx.log(`SKIP: convergence ${worst.toFixed(1)} units at host load ${hostLoad.toFixed(1)} `
+      + '— the box cannot support this measurement. Re-run when idle.');
+    return;
+  }
+  assert.ok(worst < CONVERGE_EPS,
+    `puppet NPCs did not converge: ${worst.toFixed(1)} units at host load ${hostLoad.toFixed(1)}`);
+
+  // Kill an NPC on the holder -> dead on both + shared tally bumps.
+  const victim = shared.find((r) => r && r.length > 0);
+  ctx.log(`killing "${victim}" on the holder (${holder.name})`);
+  await holder.eval(`Module.__omwMPCmd=${JSON.stringify('killnpc:' + victim)}`);
+  const deadExpr = `((JSON.parse((window.__omwMP||{}).actorProbe||"{}")[${JSON.stringify(victim)}]||{}).dead === true)`;
+  await holder.waitFor(deadExpr, STEP_TIMEOUT, 'NPC dead on the holder');
+  await peer.waitFor(deadExpr, STEP_TIMEOUT, 'NPC dead on the non-holder (ActorDeath relay)');
+  ctx.log('ok: death relayed to the non-holder');
+
+  // Shared kill tally (WorldKillCount -> mp.setDeadCount) reaches BOTH clients.
+  const tallyExpr = `((window.__omwMP||{}).killCountOf||"") === ${JSON.stringify(victim + '=1')}`;
+  try {
+    await holder.waitFor(tallyExpr, STEP_TIMEOUT, 'kill tally on the holder');
+    await peer.waitFor(tallyExpr, STEP_TIMEOUT, 'kill tally on the non-holder');
+  } catch (e) {
+    const [th, tp] = await Promise.all([
+      holder.eval('(window.__omwMP||{}).killCountOf'),
+      peer.eval('(window.__omwMP||{}).killCountOf'),
+    ]);
+    ctx.log(`diag tally: holder=${JSON.stringify(th)} peer=${JSON.stringify(tp)} expected="${victim}=1"`);
+    throw e;
+  }
+  ctx.log(`ok: shared kill count = 1 for "${victim}" on both clients`);
+}

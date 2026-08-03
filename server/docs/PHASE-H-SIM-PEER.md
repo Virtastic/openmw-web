@@ -1,0 +1,276 @@
+<!-- Copyright (C) 2025-2026 Virtastic - https://virtastic.app -->
+<!-- SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web -->
+# Phase H — server-side simulation (headless authority peer)
+
+**Goal.** Actor simulation moves off players' browsers and onto a machine the operator
+controls, for public worlds, private sessions and parties alike, spun up on demand.
+
+**Why it is worth doing.** It fixes a whole class of problem at the root rather than
+mitigating it: no player carries anyone else's load, no election or handoff, no frozen NPCs
+when someone's tab is loading — and, most importantly, **a modified client can no longer
+author NPC state for everyone else**, which is the single largest anti-cheat hole in the
+current design.
+
+**Why it is not free.** Simulating Morrowind requires Morrowind's engine and data. This is
+not a server rewrite; it is running a real OpenMW instance with rendering disabled. TES3MP
+kept simulation on clients for exactly this reason, so treat "just make the server
+authoritative" as a claim to be proven, not assumed.
+
+---
+
+## H1 — SPIKE FIRST (gating, ~1 day)
+
+**Nothing below is worth planning in detail until this answers yes.**
+
+0. **Can the repo even build OpenMW natively?** `deps/` currently holds only the wasm
+   sysroot and there is no `build-native`. A native build needs OSG, Bullet, MyGUI, ICU and
+   friends first, which on this machine is hours, not minutes. Budget it, or evaluate
+   running the EXISTING wasm build under Node instead (it hits the same GL question, so the
+   crux below is unchanged either way).
+1. **Can OpenMW initialise without a GL context?** It is not built for headless operation and
+   much of its startup assumes a window and a renderer. Options in increasing desperation:
+   an offscreen context (EGL/OSMesa), a null OSG graphics context, or patching the render
+   path out of the boot sequence. The spike's job is to find which is needed and how invasive
+   it is.
+2. **Does it still simulate with no renderer?** AI, pathfinding, physics and MWScript must
+   run. A build that boots headless but does not tick actors is worthless.
+3. **What does it cost?** RSS and CPU for one instance simulating one world's active cells.
+   This number decides whether per-session peers are affordable at all (see H4).
+
+### What a first read of the engine suggests (analysis, NOT proof)
+
+Two things make this look more tractable than "OpenMW has no headless mode" implies, and the
+spike should test them directly rather than starting from scratch:
+
+- **The frame is already three separable traversals.** `engine.cpp` runs
+  `mViewer->eventTraversal()`, `updateTraversal()`, then `renderingTraversals()`. The world,
+  physics and AI tick in the update traversal; drawing is the third call. A headless mode may
+  be as narrow as *skipping the third* — simulation without any GPU work per frame.
+- **The GL dependency is concentrated at INIT, not per frame.** `createWindow()` runs early in
+  `prepareEngine()` and everything that matters — Lua, `MWWorld::World`, physics, the script
+  manager — is constructed after it. So the likely shape is: a HIDDEN window with a real
+  (software) GL context so `RenderingManager` can construct, then skip rendering every frame.
+
+If that holds, the patch is small and targeted rather than deep surgery on the render path.
+It also means the peer pays for a GL context once at startup and no per-frame draw cost,
+which matters a great deal for the per-peer cost in H4.
+
+**Treat all of the above as a hypothesis to falsify.** It is a read of the call order, not a
+working build, and this project has already had one confident mechanism turn out wrong.
+
+Exit criteria: a headless build that loads a cell, ticks NPCs for a minute, and reports its
+RSS/CPU. If that cannot be reached in about a day, stop and reconsider — D-cap-5 (splitting
+authority across players) becomes the fallback, and the current model still works.
+
+---
+
+# RESULT: Phase H is BUILT and PROVEN (2026-07-27)
+
+All of H1-H4 landed. What follows below this banner is the original plan, kept for the
+reasoning; this section is what actually happened.
+
+**H1 — headless.** Yes. Two edits behind `OPENMW_HEADLESS=1`: hide the SDL window at
+`createWindow()` (a real GL context is still made, so `RenderingManager` constructs), and
+skip `renderingTraversals()` per frame (simulation runs in `updateTraversal()`, untouched).
+GL is paid once at init, zero per frame.
+
+**Measured cost, macOS/arm64, full retail data with BSAs registered, host load ~5:**
+
+| | RSS | CPU |
+| --- | --- | --- |
+| rendering baseline | 259 MB | ~15.5% of one core |
+| headless | 362 MB | ~8.8% of one core |
+
+So a peer is ~360 MB + ~9% of a core. On the 23 GB / 8-core VPS that is dozens of
+concurrent peers; one public-world peer is trivial.
+
+**H2 — native transport.** A dependency-free RFC 6455 client (`ws://` only; TLS is the
+browser edge's problem). The threading contract was the real work: `NetManager`'s callbacks
+mutate its state inline and are only safe because emscripten delivers them between frames,
+so the native side queues events on its reader thread and `WebSocket::poll()` — once per
+frame, no-op in the browser — fires them on the main thread.
+
+**H3 — peer as authority.** Needed no new protocol: the peer declares `simulatesActors` and
+wins the existing election. Plus a `system` identity (invisible in playerCount, /status,
+PlayerList and maxPlayers; join/leave suppressed so no client puppets it), fallback to a
+capable human if it dies, and the anti-cheat proof below.
+
+**H4 — orchestration.** `core/simpeer.ts`: spawner, hard cap, idle reaper, crash backoff.
+Wired at one point (a 5 s tick on `roster.humansInWorld()`), not paired join/leave hooks —
+a missed leave would strand a peer forever, which is the exact leak the reaper defends
+against. Proven with the real binary end to end:
+
+```
+human joins  -> simpeer.spawned -> peer connects, join_world system:true
+human leaves -> world idle
++20s         -> simpeer.reaped (idleMs=20003) -> SIGTERM -> clean leave, no orphan
+```
+
+## The anti-cheat claim, made concrete
+
+Previously an argument; now a negative-controlled test. A non-holder forging an
+`ActorMoveBatch` for a cell it does not own is **rejected**, **counted**
+(`omwmp_actor_batch_rejected_total{reason="not_holder"}`, so forgery is visible in
+`/metrics` instead of silent), and **relayed to nobody** — while the real holder's batch
+still reaches the same victim, proving the check discriminates rather than the stream being
+dead. Remove the holder check and it fails.
+
+## Content validation (added 2026-07-27)
+
+The server can now own its world's content list rather than adopting whichever stranger
+connects first. Worth recording HOW, because the obvious approach does not work.
+
+**A server cannot derive the content list.** Captured from a real client:
+`builtin.omwscripts#0, openmw-template.omwgame#1, land.esp#2, examplesuite.omwaddon#3,
+mp.omwscripts#4`. Entries 0 and 1 live in the ENGINE's resources, not in any data folder, so
+neither a directory scan nor an `openmw.cfg` parse can reproduce them — both would refuse
+100% of clients. Two successive plan drafts proposed exactly that; a one-line temporary log
+plus one `s01` run killed the idea before it was built.
+
+**So the sim peer reports it.** The peer is a real engine running the server's data, so its
+list is computed by the same code as every player's client — correct by construction. It is
+pinned only after the peer's OWN content check passes, so a misconfigured peer cannot install
+a broken canonical and lock everyone out.
+
+**`strict` now means something.** It compares per-file sha256 in addition to names and order,
+which is the difference between "you must have the same mod list" and "you must have the same
+files". Archives are deliberately excluded: content files are ~90 MB and already read in full
+at load, while BSAs are ~471 MB streamed on demand, so hashing them would force a full
+download to protect meshes and textures. NOT usable yet — no client sends hashes until the
+`mp.getContentHashes` engine binding exists, so enabling strict today refuses everyone.
+
+## What is still NOT true, stated plainly
+
+- **"Public, private and party" maps to one world per process today.** A peer per SESSION
+  needs multi-world orchestration (F3), which is **not built** — verified 2026-07-27: there
+  is no gateway, no `child_process` in `server/src`, no `[worlds]` config. A task list
+  claimed otherwise and was corrected. What works now is a peer for THIS server's world,
+  on demand.
+- **Linux/displayless is unexercised.** The measurement is a macOS hidden window. A
+  headless box needs `SDL_VIDEODRIVER=offscreen` (or EGL/OSMesa) and that path has not been
+  run.
+- **Player self-movement is still client-authored** — deliberately (see H5). The peer makes
+  validating it possible for the first time; that is follow-on work, not done.
+- **The cost figure is one machine, one cell set.** It has not been measured with a busy
+  world, and per-peer cost is what H4's cap is sized from.
+
+---
+
+### H1 result so far (build side proven; runtime pending)
+
+The native toolchain question is answered: OpenMW **configures and is compiling** natively on
+this machine (macOS/arm64), tools off. What it took, all local and gitignored:
+- double-precision Bullet from `deps/src/bullet3` (brew's is single; OpenMW rejects it),
+- MyGUI 3.4.3 from `deps/src/mygui` (no brew formula),
+- one upstream CMake guard: the macOS Qt-plugin bundling block ran under `if (APPLE)` and had
+  to become `if (APPLE AND USE_QT)`, since a tools-off build has no Qt targets. Committed.
+
+### The headless patch, located precisely (to apply once the binary runs)
+
+Reading `apps/openmw/engine.cpp` confirms the two-part hypothesis and pins where each part
+lives, so the patch is small and targeted rather than exploratory:
+
+1. **Init** — `createWindow()` (line ~555) creates the SDL window and a real GL context, and
+   everything that simulates (`MWWorld::World`, physics, Lua, scripts) is built AFTER it in
+   `prepareEngine()`. A `--headless` path creates the window `SDL_WINDOW_HIDDEN` and keeps a
+   real (software) GL context, so `RenderingManager` still constructs. No renderer teardown,
+   no null-context surgery.
+2. **Per frame** — the frame is `eventTraversal()` / `updateTraversal()` / then
+   `renderingTraversals()` at engine.cpp:407-419 (and the emscripten path at 249-251).
+   Simulation is the update traversal; drawing is `renderingTraversals()`. Headless simply
+   does not call the third. Under `--headless` the peer pays for a GL context ONCE and does
+   zero per-frame GPU work — which is the property H4's per-peer cost depends on.
+
+Still to prove at runtime, in order: (a) the hidden-window context actually creates under a
+software GL on a machine with no display attached (the real deployment target); if not, fall
+back to an EGL/OSMesa surfaceless context. (b) NPCs actually tick with the third traversal
+skipped. (c) RSS/CPU for one instance holding one world's active cells.
+
+## H2 — native WebSocket transport
+
+`apps/openmw/mwmp/websocket.cpp` wraps the **emscripten** WebSocket API; on native builds
+every method is a deliberate no-op so the tree still compiles for desktop. A headless peer
+therefore cannot connect at all today.
+
+Add a native implementation behind the same `MWMP::WebSocket` interface (IXWebSocket or
+Boost.Beast; the interface is already narrow — open, send text, send binary, close, four
+callbacks). The browser path must be left exactly as it is: it is proven, and this is
+additive.
+
+## H3 — the peer as an authority client
+
+The peer connects like any other client and **needs no new protocol**: cell authority already
+requires `simulatesActors: true` (added when protocol-only bots were found winning elections
+and freezing cells). A local peer declares it, has near-zero RTT, and wins every election
+through the existing fitness path.
+
+What it does need:
+
+- **A system identity.** Not in the player list, not kickable, not counted against
+  `maxPlayers`, exempt from the idle/AFK paths.
+- **Preference, not a guarantee.** If the peer dies, the existing election must still fall
+  back to a capable player client. The peer is an upgrade, not a hard dependency — a
+  self-hoster with no game data on the server must still get a working game.
+- **Liveness already covered.** A peer that stops producing loses its cells through the
+  guard that already exists.
+
+## H4 — on-demand orchestration (public, private, party)
+
+This is the requirement that makes Phase H big, and it revives E1.
+
+| mode | peer lifetime |
+| --- | --- |
+| public world | one long-lived peer, started with the world |
+| private session | started when the session is created, reaped when empty |
+| party | same as private, keyed on the party |
+
+**Cost per peer is the deciding number and it is currently unknown** — H1 measures it. A full
+OpenMW instance with game data loaded is likely hundreds of MB, so "one per party" may be
+affordable at ten sessions and not at a hundred. Design the reaper before the spawner:
+per-user session caps and idle reaping are day-one requirements, because the cost model goes
+from one process to N.
+
+Cheaper variants to price if the per-peer cost is high:
+- **One peer, many worlds** — a single instance simulating several sessions' cells, if the
+  engine can hold multiple worlds at once (it probably cannot; check before assuming).
+- **Peer only for the public world**, with private/party sessions keeping client authority.
+  Most of the anti-cheat value lives in the public world anyway.
+
+## H5 — what this buys for anti-cheat, precisely
+
+Worth being exact, because "server authoritative" is often claimed too broadly.
+
+**Closed by this work:**
+- NPC positions, AI state and deaths stop being author-able by a player's client.
+- Actor combat resolution moves to the operator's machine: M5 routes actor hits to the
+  authority holder, and the holder becomes the peer.
+
+**Not closed, and not by this alone:**
+- **Player self-movement stays client-authored.** That is deliberate — it is what makes the
+  game feel responsive, and making the server authoritative over input is a much larger
+  change that would hurt play more than it helps. The peer *can* now validate it (it has
+  collision and speed data), so speed/teleport/no-clip checks become possible for the first
+  time; that is a follow-on, not part of H3.
+- Client-reported player stats and inventory remain trusted within the existing plausibility
+  caps.
+
+So: this closes the largest hole and makes a second class of check possible. It does not make
+the game cheat-proof, and the docs should not claim it does.
+
+## Sequencing
+
+1. **H1 spike** — gating. Everything else is speculative until it lands.
+2. **H2 native transport** — well-understood, can proceed in parallel once H1 looks viable.
+3. **H3 peer identity + preference + fallback** — small, mostly server-side.
+4. **H4 orchestration** — sized by H1's cost number; reaper before spawner.
+5. **H5 movement validation** — separate follow-on, only once the peer is real.
+
+## Verification
+
+- A cell's NPCs are simulated with **no player holding authority**.
+- Killing the peer falls back to a player client within the existing handoff window, and
+  killing it again while a player holds it changes nothing.
+- A modified client's forged `ActorMoveBatch` is ignored (it is not the holder), which is
+  the anti-cheat claim made concrete rather than asserted.
+- Cost per peer published like every other capacity figure: measured on an idle box, with
+  the host load recorded.

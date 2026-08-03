@@ -9,6 +9,9 @@
 #include <string_view>
 #include <vector>
 
+#include <osg/Vec2i>
+#include <osg/Vec3f>
+
 #include <components/misc/rng.hpp>
 #include <components/vfs/pathutil.hpp>
 
@@ -571,6 +574,20 @@ namespace MWBase
         /// Export scene graph to a file and return the filename.
         /// \param ptr object to export scene graph for (if empty, export entire scene graph)
         virtual std::filesystem::path exportSceneGraph(const MWWorld::Ptr& ptr) = 0;
+
+        /// MP: extra cell-grid centres this process is keeping simulated, in world units.
+        /// Empty for a normal client, where the player is the only anchor. Mechanics uses it so
+        /// actors near ANY anchor keep processing, instead of only those near the player.
+        virtual std::vector<osg::Vec3f> getSimAnchorPositions() const = 0;
+        /// True when this cell is an interior held for the server; its actors must keep
+        /// processing regardless of how far the local player is.
+        virtual bool isAnchoredInterior(const MWWorld::CellStore* cell) const = 0;
+
+        /// MP: set those centres. Server-driven; see MWWorld::Scene::setSimAnchors.
+        /// Exteriors anchor by grid coordinate, interiors by cell id — an interior has no
+        /// coordinate, so the two lists cannot be merged.
+        virtual void setSimAnchors(const std::vector<osg::Vec2i>& anchors,
+            const std::vector<ESM::RefId>& interiors) = 0;
 
         /// Preload VFX associated with this effect list
         virtual void preloadEffects(const ESM::EffectList* effectList) = 0;

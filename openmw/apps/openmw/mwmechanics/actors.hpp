@@ -106,6 +106,10 @@ namespace MWMechanics
         int countDeaths(const ESM::RefId& id) const;
         ///< Return the number of deaths for actors with the given ID.
 
+        // Added by Virtastic (OpenMW-Web MP): set the shared kill tally for a record id so a
+        // networked WorldKillCount can satisfy GetDeadCount quest gates on every client.
+        void setDeaths(const ESM::RefId& id, int count) { mDeathCount[id] = count; }
+
         bool isAttackPreparing(const MWWorld::Ptr& ptr) const;
         bool isRunning(const MWWorld::Ptr& ptr) const;
         bool isSneaking(const MWWorld::Ptr& ptr) const;

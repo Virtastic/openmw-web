@@ -1,0 +1,119 @@
+name: deploy-mp (mp.virtastic.app)
+
+# Deploys the openmw-mp multiplayer server to the OVH VPS via the same self-hosted runner as
+# deploy-ovh.yml. Path-filtered: server pushes deploy in ~1 min without touching the ~13-min
+# engine build, and vice versa. The runner executes ON the VPS with docker access.
+#
+# Prereqs on the box (one-time): the shared `edge-caddy` container + `nostalgia` network,
+# /opt/edge/certs/virtastic.{crt,key}, and the terraform `mp` DNS record applied
+# (infra/terraform/main.tf). Persistent state lives in /opt/openmw-mp/data — this workflow
+# NEVER touches that dir's contents.
+on:
+  push:
+    branches: [ovhcloud]
+    paths:
+      - 'server/**'
+      - 'deploy/openmw-mp.caddy'
+      - '.github/workflows/deploy-mp.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-ovh-mp
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    # Public-repo hardening: never run on forks or PR-triggered events — this job
+    # executes on the production VPS runner.
+    if: github.repository == 'Virtastic/openmw-web' && github.event_name != 'pull_request'
+    runs-on: [self-hosted, ovh, virtastic]
+    steps:
+      - uses: actions/checkout@v4
+
+      # Hard gate: the test stage runs typecheck + the full unit/integration suite inside the
+      # build. A red suite never reaches the box. --network=host: npm ci needs egress, which
+      # the default build bridge lacks here (same reason as deploy-ovh.yml).
+      - name: Test gate
+        run: DOCKER_BUILDKIT=1 docker build --network=host --target test -f server/Dockerfile server/
+
+      - name: Build image
+        run: DOCKER_BUILDKIT=1 docker build --network=host -t openmw-mp:ovh -f server/Dockerfile server/
+
+      - name: Sync compose to /opt/openmw-mp
+        run: |
+          sudo mkdir -p /opt/openmw-mp/data
+          sudo cp server/docker-compose.prod.yml /opt/openmw-mp/docker-compose.prod.yml
+
+      # Drop the vhost into the shared edge's sites dir (imported by /opt/edge/Caddyfile).
+      - name: Install edge vhost
+        run: sudo cp deploy/openmw-mp.caddy /opt/edge/sites/openmw-mp.caddy
+
+      # Drain BEFORE the swap. `compose up -d` on a changed image recreates the container,
+      # which kills connected players mid-session with no warning frame. `compose stop`
+      # sends SIGTERM and honours stop_grace_period (30s), and the server's SIGTERM path
+      # broadcasts SessionDisconnect SHUTDOWN to every session and flushes all state before
+      # exiting — so players see "server shutting down" and reconnect cleanly instead of
+      # having the socket vanish. Timeout is one second under the grace period so compose,
+      # not us, owns the SIGKILL. First deploy (no container yet) is a no-op.
+      - name: Drain connected players
+        env:
+          COMPOSE_FILE: /opt/openmw-mp/docker-compose.prod.yml
+        run: |
+          set -e
+          if [ -n "$(docker ps -q -f name='^openmw-mp$')" ]; then
+            docker compose -f "$COMPOSE_FILE" stop -t 29 openmw-mp
+            echo "drained: previous container stopped gracefully"
+          else
+            echo "no running container to drain"
+          fi
+
+      - name: Start / update container
+        run: docker compose -f /opt/openmw-mp/docker-compose.prod.yml up -d
+
+      # Validate, then restart the shared edge to apply (admin API disabled -> no `caddy
+      # reload`; restart re-reads the Caddyfile, ~3s blip). Validate first to protect the
+      # co-tenant sites.
+      - name: Apply edge config
+        run: |
+          docker exec edge-caddy caddy validate --config /etc/caddy/Caddyfile
+          docker restart edge-caddy
+
+      # Gate 1 — container liveness on the shared network.
+      - name: Health check (container)
+        run: |
+          sleep 4
+          docker run --rm --network nostalgia curlimages/curl:latest \
+            -fsS http://openmw-mp:8080/healthz | grep -q ok
+
+      # Gate 2 — protocol-level: a real omw-mp/1 hello through the container's WS endpoint.
+      # Zero-dep bot (Node's global WebSocket) run inside the freshly built image, so it needs
+      # no node on the runner and no extra deps.
+      - name: Health check (protocol)
+        run: |
+          docker run --rm --network nostalgia \
+            -v "$PWD/server/bots:/bots:ro" \
+            openmw-mp:ovh node /bots/healthcheck.mjs ws://openmw-mp:8080/ws
+
+      # Gate 3 — the edge path THIS deploy controls: TLS with the origin cert + sec_headers +
+      # reverse_proxy + a real WebSocket 101 upgrade. Hit the edge directly via --resolve to
+      # 127.0.0.1 (bypasses Cloudflare, same rationale as deploy-ovh.yml); -k because the edge
+      # presents the Cloudflare Origin CA cert. The upgrade MUST carry the omw-mp.1 subprotocol
+      # or the server rejects the handshake.
+      - name: Health check (edge, bypassing Cloudflare)
+        run: |
+          set -e
+          E() { curl -sS -k --resolve mp.virtastic.app:443:127.0.0.1 "$@"; }
+          for i in $(seq 1 12); do
+            E -f -o /dev/null https://mp.virtastic.app/healthz && break
+            echo "edge not ready yet ($i)…"; sleep 3
+          done
+          E -f https://mp.virtastic.app/status | tee /dev/stderr | grep -q '"name"'
+          code=$(E -o /dev/null -w '%{http_code}' --http1.1 \
+            -H "Connection: Upgrade" -H "Upgrade: websocket" \
+            -H "Sec-WebSocket-Version: 13" -H "Sec-WebSocket-Key: aGVhbHRoY2hlY2sxNg==" \
+            -H "Sec-WebSocket-Protocol: omw-mp.1" \
+            https://mp.virtastic.app/ws)
+          test "$code" = 101 || { echo "FATAL: WS upgrade at the edge returned HTTP $code (want 101)" >&2; exit 1; }
+          echo "edge health OK (101 upgrade + status)"
+
+      # No Cloudflare purge: nothing this service serves is cacheable.

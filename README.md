@@ -216,6 +216,36 @@ python3 server.py        # serves on http://localhost:8910 (override with PORT=.
 Then open the printed URL. To show the data-chooser launcher, enable it first (see
 [Enabling the launcher](#enabling-the-launcher)).
 
+### Multiplayer locally
+
+The game page and the multiplayer server share one origin — the page will not hand its
+session ticket to a server on a different hostname. `server.py` therefore proxies the
+server's paths (`/w/`, `/auth/`, `/locker/`, `/worlds`, `/ws`) to `OPENMW_MP_UPSTREAM`,
+which defaults to `127.0.0.1:8080`:
+
+```bash
+cd play
+OPENMW_MP_UPSTREAM=127.0.0.1:8080 OPENMW_LAUNCHER=1 python3 server.py
+```
+
+There is no "if localhost, use a different port" shortcut in the client, on purpose: a
+special case makes local behave differently from a real deployment, which is how a broken
+production setup can still pass local testing.
+
+So **something must be listening on that upstream** or multiplayer will not work locally.
+With nothing there you get a clean `502` on those paths and the launcher reports the
+server as unreachable — that is the correct signal, not a bug. Single-player (including
+the `?nomw` demo) does not use any of this and works with no server at all.
+
+If you change the launcher or the proxy, test the WebSocket explicitly — HTTP/2 cannot
+carry an upgrade, so a browser click alone will not tell you much:
+
+```bash
+curl -i -N --http1.1 -H 'Connection: Upgrade' -H 'Upgrade: websocket' \
+  -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' \
+  http://127.0.0.1:8910/w/<worldId>          # expect 101 Switching Protocols
+```
+
 ### Browser requirement
 
 Desktop Chrome or Chromium only. The build relies on features that, in practice, only
@@ -259,9 +289,28 @@ location /play/ {
 }
 ```
 
+If you are also running the multiplayer server, it must be reachable **on the same origin
+as the game page** — the page will not hand its session ticket to a server on a different
+hostname, so a separate `mp.example.com` cannot work. Reverse-proxy these paths from the
+same vhost that serves `play/` to the gateway, and leave everything else on the static
+handler:
+
+```nginx
+# the gameplay WebSocket: the server hands clients /w/<worldId> and they dial it here
+location /w/  { proxy_pass http://gateway:8080; proxy_http_version 1.1;
+                proxy_set_header Upgrade $http_upgrade; proxy_set_header Connection upgrade; }
+location /auth/   { proxy_pass http://gateway:8080; }   # single sign-on
+location /locker/ { proxy_pass http://gateway:8080; }   # game-data upload
+location /worlds  { proxy_pass http://gateway:8080; }   # world directory
+```
+
+Do not expose `/admin` or `/metrics`. `/w/` is the one that matters: without it sign-in
+succeeds and then the game cannot connect to any world.
+
 On static hosts (Netlify, Cloudflare Pages, GitHub Pages via a proxy, and so on), set
 the same three headers through the host's headers config (for example a Netlify
-`_headers` file). When using the bundled retail path, the first load downloads the
+`_headers` file). Those hosts serve files only, so they cannot host the multiplayer
+server — it needs a real origin you control. When using the bundled retail path, the first load downloads the
 Morrowind assets once; they are cached in the browser (Cache API plus IDBFS), so
 later loads are fast. The in-page HUD shows live per-file download progress.
 

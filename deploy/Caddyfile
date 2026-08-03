@@ -25,14 +25,19 @@
 	@wasm path *.wasm *.wasm.br
 	header @wasm Content-Type application/wasm
 
-	# Launcher gate: ONLY the bare "/" or "/index.html" with NO query string → the demo/upload
-	# chooser. The launcher then navigates to index.html?nomw (demo) / ?src=local (upload) etc., and
-	# those MUST pass through to the game — so the query-string guard is essential (without it,
-	# index.html?nomw gets rewritten back to the launcher and the demo just "reloads" the chooser).
-	@bareroot {
-		path / /index.html
-		expression `{http.request.uri.query} == ""`
-	}
+	# Launcher gate: ONLY the bare "/" serves the chooser. Asking for /index.html explicitly
+	# means asking for the GAME.
+	#
+	# /index.html used to be rewritten too, guarded by "has no query string". That guard broke
+	# the moment the launcher moved its boot parameters into the FRAGMENT — fragments never
+	# reach a server, so the multiplayer boot URL arrives as a bare /index.html, gets rewritten
+	# back to the launcher, and the two bounce between each other forever. The symptom is a
+	# character screen that sits on "Creating…" while the server logs a world starting
+	# perfectly. play/server.py fixed this; this file did not, so it only ever bit the
+	# deployed site.
+	#
+	# Matching "/" alone needs no query guard: index.html?nomw and ?src=local are not "/".
+	@bareroot path /
 	rewrite @bareroot /launcher.html
 
 	# Caching: the engine binaries are content-built and effectively immutable; the HTML is the only
@@ -41,6 +46,34 @@
 	header @immutable Cache-Control "public, max-age=31536000, immutable"
 	@html path *.html
 	header @html Cache-Control "no-cache"
+
+	# --- Multiplayer gateway, on THIS origin -------------------------------------------------
+	# The game and the gateway are one origin on purpose. index.html only hands its session
+	# ticket to a gateway whose hostname matches the page's, so a separate mp.* host can never
+	# receive it; and a single origin means the launcher derives the server from location
+	# instead of carrying a baked-in hostname that is wrong in every deployment but one.
+	#
+	# Only the endpoints the client actually calls are exposed:
+	#   /w/*      the GAMEPLAY WebSocket. This is the one that matters: the directory hands
+	#             back wsPath=/w/<worldId> and the client dials it on THIS origin, which is
+	#             what lets every world run on an unpublished internal port. Miss this and
+	#             sign-in works and then the game cannot connect to anything.
+	#   /ws       only the base the launcher derives its HTTP origin from (httpBaseOf), plus a
+	#             local-dev direct-dial fallback. The gateway has no /ws route and answers 502
+	#             by design — proxied anyway so local dev behaves the same as production.
+	#   /auth/*   SSO.  /locker/*  S3-backed game-data upload.  /worlds  world directory.
+	# /admin, /metrics, /healthz and /status stay unreachable from the internet.
+	# Upstream is overridable because the container is named per environment.
+	#   /saves/*  server-side savegames (same auth and storage as the locker).
+	@gateway path /w/* /ws /auth/* /locker/* /saves /saves/* /worlds /worlds/*
+	reverse_proxy @gateway {$MP_UPSTREAM:openmw-mp:8080} {
+		# Preserve the ORIGINAL scheme from the public edge. Caddy defaults X-Forwarded-Proto
+		# to the scheme of the hop IT received — which is plain http, because the edge
+		# terminates TLS and reaches this container over the docker network. Without this the
+		# gateway derives an http:// return URL for a site that only works in a secure
+		# context, quietly downgrading every sign-in redirect.
+		header_up X-Forwarded-Proto {http.request.header.X-Forwarded-Proto}
+	}
 
 	# file_server handles Range natively (on the raw file) and, with `precompressed br`, serves
 	# <file>.br as Content-Encoding: br + the base file's Content-Type when the client accepts br.

@@ -265,7 +265,19 @@ Honest boundaries of the port. None are correctness bugs; each is a documented t
 
 Files changed from upstream OpenMW base `bc1d9c97a3881bb961a0b74e6e49bbba772b86a1` as of 2026-07-13. Each carries a "Modified by Virtastic" notice.
 
+New (non-upstream) additions, not listed below: `openmw/apps/openmw/mwmp/` (omw-mp/1
+multiplayer client transport — WebSocket wrapper, NetManager, `openmw.mp` Lua package) and
+`openmw/files/data/mp.omwscripts` + `openmw/files/data/scripts/mp/` (the multiplayer Lua
+scripts; mirrored into `fsroot/resources/vfs/` for the web preload).
+
+`mwmp/luabindings.cpp` calls into unmodified upstream engine interfaces where multiplayer
+needs a surface vanilla Lua does not expose; no upstream file is patched for these:
+`MechanicsManager::setPlayerRace/setPlayerClass/resurrect/countDeaths/setDeaths` (M2/M4),
+`WindowManager::executeInConsole` (M8 `ConsoleCommand`) and
+`WindowManager::addVisitedLocation` (M7 `WorldMapExplored`).
+
 - `openmw/CMakeLists.txt`
+- `openmw/apps/openmw/CMakeLists.txt` — add_openmw_dir(mwmp …)
 - `openmw/apps/openmw/engine.cpp`
 - `openmw/apps/openmw/main.cpp`
 - `openmw/apps/openmw/mwgui/charactercreation.cpp`
@@ -277,6 +289,7 @@ Files changed from upstream OpenMW base `bc1d9c97a3881bb961a0b74e6e49bbba772b86a
 - `openmw/apps/openmw/mwgui/videowidget.hpp`
 - `openmw/apps/openmw/mwgui/windowmanagerimp.cpp`
 - `openmw/apps/openmw/mwgui/windowmanagerimp.hpp`
+- `openmw/apps/openmw/mwlua/luabindings.cpp` — register the `openmw.mp` package
 - `openmw/apps/openmw/mwlua/luamanagerimp.cpp`
 - `openmw/apps/openmw/mwlua/worker.cpp`
 - `openmw/apps/openmw/mwmechanics/pathfinding.cpp`
@@ -354,6 +367,7 @@ Files changed from upstream OpenMW base `bc1d9c97a3881bb961a0b74e6e49bbba772b86a
 - `openmw/extern/osg-ffmpeg-videoplayer/include/osg-ffmpeg-videoplayer/videostate.hpp`
 - `openmw/extern/osg-ffmpeg-videoplayer/videoplayer.cpp`
 - `openmw/extern/osg-ffmpeg-videoplayer/videostate.cpp`
+- `openmw/files/data/CMakeLists.txt` — list the mp.omwscripts scripts
 - `openmw/files/data/mygui/openmw_settings_window.layout`
 - `openmw/files/data/shaders/adjustments.omwfx`
 - `openmw/files/data/shaders/bloomlinear.omwfx`

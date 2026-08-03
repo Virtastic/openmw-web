@@ -407,7 +407,12 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     mViewer->eventTraversal();
     mViewer->updateTraversal();
 
-    // update focus object for GUI
+    // HEADLESS: this is a full IntersectionVisitor descent of the scene graph, every frame,
+    // for the sole purpose of deciding which object a crosshair is over so the GUI can draw a
+    // tooltip. The sim peer has no crosshair and no GUI. Purely presentational — it has no
+    // effect on AI, physics or scripts — so skipping it changes nothing about the simulation.
+    static const bool sHeadless = std::getenv("OPENMW_HEADLESS") != nullptr;
+    if (!sHeadless)
     {
         ScopedProfile<UserStatsType::Focus> profile(frameStart, frameNumber, *timer, *stats);
         mWorld->updateFocusObject();
@@ -416,7 +421,11 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     // if there is a separate Lua thread, it starts the update now
     mLuaWorker->allowUpdate(frameStart, frameNumber, *stats);
 
-    mViewer->renderingTraversals();
+    // H1 sim-peer spike: simulation (AI, physics, scripts) ran in updateTraversal() above;
+    // drawing is this call alone. Skipping it is the entire headless saving — GL is paid
+    // once at init and zero per frame. allowUpdate/finishUpdate stay paired around it.
+    if (!sHeadless)
+        mViewer->renderingTraversals();
 
 #ifdef __EMSCRIPTEN__
     // ?perfstats=1 (QA): expose the per-frame CPU phase split (Cull vs Draw traversal, ms) to JS
@@ -674,6 +683,13 @@ void OMW::Engine::createWindow()
         checkSDLError(SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 1));
         checkSDLError(SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, antialiasing));
     }
+
+    // H1 sim-peer spike (Phase H): create the window HIDDEN and never render (frame()
+    // skips renderingTraversals). A real GL context is still created so RenderingManager
+    // constructs normally — the saving is per-frame, not at init. On a displayless Linux
+    // box this becomes SDL_VIDEODRIVER=offscreen instead of a hidden window.
+    if (std::getenv("OPENMW_HEADLESS") != nullptr)
+        flags |= SDL_WINDOW_HIDDEN;
 
     osg::ref_ptr<SDLUtil::GraphicsWindowSDL2> graphicsWindow;
     while (!graphicsWindow || !graphicsWindow->valid())

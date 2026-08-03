@@ -1,0 +1,111 @@
+# openmw-mp — what the server stores
+
+This document describes **everything** an `openmw-mp` server keeps about a player, where it
+lives, how long it stays, and how to erase it. It is written for the operator: you are the
+data controller for the server you run, and this is the inventory you need to answer a
+player who asks "what do you have on me, and can you delete it?".
+
+Nothing here is sent anywhere else. The server has no telemetry, no analytics, no outbound
+network calls of any kind.
+
+## Stored data
+
+Everything lives under the data directory (`--data`, `/data` in the container).
+
+| What | Where | Why |
+|---|---|---|
+| Account name (as registered, plus a lowercased key used as the filename) | `accounts/<name>.json` | identifies the account across sessions |
+| Password hash — argon2id, OWASP 2024 baseline (m=19456 KiB, t=2, p=1) | `accounts/<name>.json` | authentication. The password itself is never stored and never logged |
+| `createdAt` / `lastSeenAt` timestamps, rank (0-3), banned flag | `accounts/<name>.json` | moderation and operator visibility |
+| Character document: appearance, equipment, inventory, stats, spells, position, journal, factions, bounty | `players/<name>.json` | the character has to exist between sessions |
+| Ban entries: banned account name, or **IP address** for an IP ban, plus who banned, when, and the reason | `bans.json` | enforcing bans across reconnects |
+| **SSO identity**: the provider's issuer URL and your opaque subject id at that provider (e.g. a Discord/Google/Microsoft user id), plus when it was linked | `identities/<sha256>.json` | recognising you on your next single sign-on. **No email address is stored, and none is requested** — the server asks only for `openid profile` (Discord: `identify`) and keys accounts on `(issuer, subject)`, because email is mutable and providers re-assign it. Provider access/refresh/ID tokens are never stored: the code exchange happens server-side and the tokens are discarded once the identity is read |
+| World state: cell deltas, containers, custom records, clock, weather | `world/` | shared world; keyed to cells and objects, **not** to people. The only per-player trace is a transient session `playerId` on objects a player spawned, which is a per-session number and not an identifier |
+| Chat log: every chat line and every slash command a player typed, with timestamp, account key, display name, session playerId and channel | `logs/chat-YYYY-MM-DD.jsonl` | moderation evidence. Public play needs an answer to "what was actually said". Off with `[moderation] chatLog = false` |
+| Reports: who reported whom, the reason text, the reported player's cell at the time, and the last `[moderation] contextLines` chat lines (which quote **other** players) | `reports/<ts>-<reporter>.json` | acting on a `/report` requires the surrounding conversation; a reason alone is not actionable |
+| Session/resume tokens | memory only | never written to disk; discarded on restart and when the window (`[login] resumeWindowSec`) expires |
+
+**IP addresses**: the server holds a client's IP only for the lifetime of the connection
+(per-IP connection and auth-attempt limits). It is written to durable storage in exactly one
+case — an **IP ban** — and it is written to your **logs** (see below). Lifting the ban erases
+the address.
+
+## Logs
+
+The server writes single-line JSON to **stdout** and never manages log files itself, so
+retention is whatever your process supervisor does with that stream. Log lines include IP
+addresses (connection open/refuse, auth, bans), account and display names, chat text,
+admin actions, and — for `/console` — the full script that was sent to a client.
+
+**Recommended: 14 days.** With systemd:
+
+```
+# /etc/systemd/journald.conf.d/openmw-mp.conf
+[Journal]
+MaxRetentionSec=14day
+```
+
+With Docker, cap the json-file driver (size-based, roughly a fortnight of a small server):
+
+```yaml
+logging:
+  driver: json-file
+  options: { max-size: "10m", max-file: "3" }
+```
+
+If you promise players a retention period, configure it — this file cannot enforce it for you.
+
+### Chat logs and reports (the one log stream the server *does* manage)
+
+Unlike stdout, `logs/chat-*.jsonl` and `reports/*.json` are written and pruned by the server
+itself. Retention is `[moderation] retentionDays` (**default 14**, matching the recommended
+log and backup retention); pruning runs at boot and when the day rolls over, so a server that
+is restarted regularly prunes regularly. Tell your players these exist — a chat log they did
+not know about is the part operators get wrong.
+
+Note the reports directory contains a **third party's** words: the context lines quote whoever
+was talking at the time, not only the reporter and the target. Treat the directory as
+restricted; `/reports` and `/chatlog` are rank 1 for the same reason.
+
+## Erasure
+
+To honour a deletion request, stop the server (or run against its data directory while the
+account is offline) and:
+
+```sh
+node dist/server.mjs --data /data --delete-account "Player Name"
+```
+
+This removes:
+
+- `accounts/<name>.json` (name, password hash if any, timestamps, rank);
+- every `identities/<sha256>.json` linking that account to a login provider — an
+  (issuer, subject) pair identifies a person *at that provider*, so it goes with the
+  account. Removing it also stops the next SSO login from silently re-creating them;
+- `players/<name>.json` (the whole character);
+- any ban entry naming that account — a ban cannot outlive the data it names, so re-ban by
+  IP first if you need the block to stick;
+- **every chat line from that account** in `logs/chat-*.jsonl`. Day files are rewritten
+  without those lines rather than deleted, so one player's erasure does not destroy
+  everyone else's conversation (a file left with no lines at all is removed);
+- **every report filed by or about that account** in `reports/`. This does delete reports
+  *other* players filed about them — the alternative is keeping a dossier on someone who
+  asked to be forgotten. Back the directory up first if you are erasing someone you may
+  still need to ban.
+
+The command prints what it removed, e.g.
+`account=true character=true banEntry=false chatLines=37 reports=2`.
+
+It deliberately does **not** rewrite world state (it contains no personal data) and cannot
+rewrite your stdout logs — chat text appears there too, and that stream is yours to purge. After erasing, purge the name from rotated logs, e.g.
+`journalctl --vacuum-time=1s` for a full wipe, or grep the name out of archived files.
+
+## Retention summary
+
+- Accounts and characters: kept until the account is erased. Operators who want to expire
+  dormant accounts can delete files older than a chosen `lastSeenAt` — the server treats a
+  missing account as "never registered".
+- Bans: kept until lifted with `/unban`.
+- Chat logs and reports: `[moderation] retentionDays`, default 14 days, pruned by the server.
+- Resume tokens: at most `[login] resumeWindowSec` (default 300 s), memory only.
+- Logs: your retention policy; 14 days recommended above.

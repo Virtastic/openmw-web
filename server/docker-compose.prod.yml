@@ -1,0 +1,33 @@
+# Production compose for the openmw-mp multiplayer server on the shared OVH VPS.
+# Deployed by .github/workflows/deploy-mp.yml to /opt/openmw-mp/docker-compose.prod.yml.
+# Same house rules as the morrowind service: joins the shared `nostalgia` network and
+# publishes NO host ports — only the shared edge Caddy reaches it (see deploy/openmw-mp.caddy).
+services:
+  openmw-mp:
+    image: openmw-mp:ovh
+    container_name: openmw-mp
+    restart: unless-stopped
+    networks:
+      - shared
+    volumes:
+      # All persistent state (accounts, players, world, config.toml overrides, logs).
+      # The deploy workflow never touches this dir's contents.
+      - /opt/openmw-mp/data:/data
+      # Tier 2 (optional): the operator's OWN game data, read-only. An empty or absent
+      # dir is tier 1 — full multiplayer, NPCs simulated by player clients. With valid
+      # data AND the tier2 image (openmw-mp:tier2, built from Dockerfile.simpeer) the
+      # server runs a headless sim peer per world. Game data is bring-your-own and is
+      # never bundled or deployed by any workflow.
+      - /opt/openmw-mp/gamedata:/data/gamedata:ro
+    environment:
+      - NODE_ENV=production
+    # Sized for tier 2: node server (heap-capped at 256 MB) + one headless sim peer
+    # (~310 MB measured with retail data) + slack. A tier 1 deploy (alpine image, no
+    # peer) fits the old 384m; a runaway leak still trips well before the box cares.
+    mem_limit: 1536m
+    # SIGTERM triggers a full persistence flush; give it time before SIGKILL.
+    stop_grace_period: 30s
+networks:
+  shared:
+    external: true
+    name: nostalgia

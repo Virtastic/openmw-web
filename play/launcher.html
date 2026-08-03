@@ -20,7 +20,8 @@
  }
  /* Fixed top bar: Virtastic home (left) + social links (right). Transparent bar; only the links
     catch clicks so it never blocks content that scrolls under it. */
- .topbar{position:fixed; top:0; left:0; right:0; z-index:30; pointer-events:none;
+ /* z above the character-select page (z-70) so the bar stays visible there too. */
+ .topbar{position:fixed; top:0; left:0; right:0; z-index:80; pointer-events:none;
    display:flex; align-items:center; justify-content:space-between; padding:13px 22px}
  .topbar > *{pointer-events:auto}
  .topbar a{display:inline-flex; align-items:center; text-decoration:none; color:var(--bronze-hi);
@@ -48,7 +49,14 @@
  }
  @keyframes ember{0%,100%{opacity:.82}50%{opacity:1}}
 
- .wrap{width:100%; max-width:940px; text-align:center}
+ .wrap{width:100%; max-width:1180px; text-align:center}
+ .brand{display:inline-flex; align-items:center; gap:10px; text-decoration:none; margin:0 auto 26px;
+   color:var(--gold); transition:color .16s ease}
+ .brand:hover{color:var(--gold-hi)}
+ .brand svg{width:30px; height:30px; fill:currentColor}
+ .brand span{font:600 17px/1 "Optima","Gill Sans",-apple-system,"Segoe UI",sans-serif;
+   letter-spacing:.28em; text-transform:uppercase; padding-left:.28em}
+ .brand:focus-visible{outline:2px solid var(--gold); outline-offset:4px; border-radius:5px}
 
  /* --- Masthead --- */
  .eyebrow{font-size:11.5px; letter-spacing:.26em; text-transform:uppercase; font-weight:600;
@@ -66,8 +74,11 @@
  .diamond{width:7px; height:7px; transform:rotate(45deg); border:1px solid var(--gold); flex:none}
 
  /* --- Choice cards, styled as inscribed artifact plaques --- */
- .cards{display:grid; grid-template-columns:1fr 1fr; gap:22px}
- @media (max-width:720px){ .cards{grid-template-columns:1fr} }
+ .cards{display:grid; grid-template-columns:repeat(3,1fr); gap:22px; align-items:stretch}
+ @media (max-width:900px){ .cards{grid-template-columns:1fr; max-width:440px; margin-left:auto; margin-right:auto} }
+ /* [hidden] must win over this: .card sets display:flex, which outranks the browser's
+    default [hidden]{display:none} and left a 'hidden' card fully visible. */
+ .card[hidden]{display:none !important}
  .card{
    position:relative; padding:34px 30px 30px;
    background:linear-gradient(160deg,var(--panel-2),var(--panel));
@@ -155,6 +166,93 @@
  .btn-ghost{background:transparent; color:var(--gold); border-color:var(--bronze)}
  .btn-ghost:hover{border-color:var(--gold); color:var(--gold-hi); background:rgba(211,168,78,.10)}
  .btn:focus-visible{outline:2px solid var(--gold); outline-offset:3px}
+ .btn-primary{background:linear-gradient(180deg,var(--gold),var(--bronze)); color:#1a1207; border-color:var(--gold-hi)}
+ .btn-primary:hover{background:linear-gradient(180deg,var(--gold-hi),var(--gold)); color:#140e05}
+ .btn[disabled]{opacity:.5; cursor:default}
+
+ /* Multiplayer sign-in modal. */
+ .mp-modal{max-width:440px; text-align:center}
+ .ob-field{display:block; margin:16px 0 0; text-align:left}
+ .ob-field span{display:block; font:600 10.5px/1 "Optima","Gill Sans",sans-serif; letter-spacing:.14em;
+   text-transform:uppercase; color:var(--faint); margin-bottom:7px}
+ .ob-field input{width:100%; box-sizing:border-box; padding:11px 13px; border-radius:5px;
+   background:rgba(8,6,3,.6); border:1px solid var(--line); color:var(--ink);
+   font:14px/1.2 -apple-system,"Segoe UI",sans-serif; transition:border-color .15s ease}
+ .ob-field input:focus{outline:none; border-color:var(--gold)}
+ /* The Continue button is its own block below the fields — inline-flex with no top margin
+    let it butt against (and visually overlap) the last input. Clear separation instead. */
+ #ob-continue{display:inline-flex; margin:24px auto 2px}
+ /* Character select — a full screen of tiles, themed like the launcher hero. */
+ .cs-page{position:fixed; inset:0; z-index:70; display:none; overflow-y:auto;
+   background:radial-gradient(1100px 700px at 50% -10%, #241c11 0%, var(--ash) 55%) , var(--ash)}
+ .cs-page.show{display:flex}
+ .cs-wrap{margin:auto; width:min(880px, 92vw); padding:64px 0 48px; text-align:center; animation:pop .18s ease}
+ .cs-glyph{width:46px; height:46px; margin:0 auto 14px; color:var(--bronze-hi)}
+ .cs-glyph svg{width:100%; height:100%; display:block}
+ .cs-wrap h3{margin:6px 0 0; font-family:"Hoefler Text","Baskerville",Georgia,serif; font-weight:600;
+   font-size:34px; color:var(--ink)}
+ .cs-sub{margin:10px 0 0; color:var(--muted); font-size:14.5px}
+ .cs-grid{display:flex; flex-wrap:wrap; justify-content:center; gap:16px; margin:34px 0 8px}
+ .cs-tile{position:relative; width:230px; border:1px solid var(--line); border-radius:10px;
+   padding:24px 18px 20px; box-sizing:border-box; text-align:center;
+   background:linear-gradient(170deg,rgba(26,20,11,.9),rgba(12,9,5,.92));
+   cursor:pointer; transition:border-color .15s ease, transform .12s ease, box-shadow .15s ease}
+ .cs-tile:hover, .cs-tile:focus-visible{border-color:var(--gold); transform:translateY(-3px);
+   box-shadow:0 16px 38px rgba(0,0,0,.5); outline:none}
+ .cs-tile .ava{width:64px; height:64px; margin:0 auto 14px; border-radius:50%;
+   border:1px solid var(--bronze); background:radial-gradient(circle at 38% 30%, #2c2114, #150f08);
+   text-align:center; font:600 30px/64px "Hoefler Text","Baskerville",Georgia,serif; color:var(--gold);
+   text-shadow:0 1px 6px rgba(0,0,0,.8)}
+ .cs-tile:hover .ava{border-color:var(--gold)}
+ .cs-tile .nm{font-family:"Hoefler Text","Baskerville",Georgia,serif; font-size:20px; color:var(--ink);
+   font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+ .cs-tile .meta{margin-top:7px; font:600 10.5px/1.6 "Optima","Gill Sans",sans-serif; letter-spacing:.09em;
+   text-transform:uppercase; color:var(--faint)}
+ .cs-tile .lvl{color:var(--gold)}
+ .cs-tile.new{display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:187px;
+   color:var(--bronze-hi); border-style:dashed; background:transparent;
+   font:600 12.5px/1.4 "Optima","Gill Sans",sans-serif; letter-spacing:.12em; text-transform:uppercase}
+ .cs-tile .del{position:absolute; top:8px; right:8px; width:28px; height:28px; padding:0; border-radius:6px;
+   border:1px solid transparent; background:transparent; color:var(--faint); cursor:pointer; opacity:0;
+   display:flex; align-items:center; justify-content:center; transition:opacity .15s ease, color .15s ease, border-color .15s ease}
+ .cs-tile:hover .del, .cs-tile .del:focus-visible{opacity:1}
+ .cs-tile .del:hover{color:#e06c5a; border-color:rgba(224,108,90,.55); background:rgba(224,108,90,.10)}
+ .cs-tile .del svg{width:15px; height:15px; fill:currentColor; display:block}
+ /* The confirm modal must sit ABOVE the character-select page (z-70) and the top bar (z-80) —
+    as a plain .modal-bd (z-60) it opened behind them and looked like nothing happened. */
+ #cd-bd{z-index:95}
+ .cs-confirm .warn{color:#e06c5a}
+ .cd-x{position:absolute; top:12px; right:14px; width:32px; height:32px; padding:0; border:none;
+   background:transparent; color:var(--faint); font:300 26px/1 -apple-system,"Segoe UI",sans-serif;
+   cursor:pointer; border-radius:6px; transition:color .15s ease}
+ .cd-x:hover{color:var(--gold-hi)}
+ .cd-x:focus-visible{outline:2px solid var(--gold); outline-offset:2px}
+ .cs-tile.new .plus{font-size:34px; line-height:1; margin-bottom:10px; font-weight:400; color:var(--bronze)}
+ .cs-tile.new:hover{color:var(--gold-hi)} .cs-tile.new:hover .plus{color:var(--gold)}
+ .cs-create{margin:14px auto 0; display:flex; gap:8px; max-width:420px}
+ .cs-create input{flex:1; box-sizing:border-box; padding:11px 13px; border-radius:5px; background:rgba(8,6,3,.6);
+   border:1px solid var(--line); color:var(--ink); font:14px/1.2 -apple-system,"Segoe UI",sans-serif}
+ .cs-create input:focus{outline:none; border-color:var(--gold)}
+ .cs-actions{display:flex; gap:10px; justify-content:center; margin-top:26px}
+ .mp-glyph{width:44px; height:44px; margin:2px auto 14px; color:var(--bronze-hi)}
+ .mp-glyph svg{width:100%; height:100%; display:block}
+ .mp-providers{display:flex; flex-direction:column; gap:9px; margin-top:22px}
+ .mp-prov.soon{background:rgba(255,255,255,.04); color:var(--faint); border-color:var(--line);
+   cursor:default; position:relative}
+ .mp-prov.soon:hover{background:rgba(255,255,255,.04); transform:none}
+ .mp-prov.soon svg{opacity:.4}
+ .mp-prov .soon-tag{position:absolute; right:14px; font:600 9px/1 "Optima",sans-serif;
+   letter-spacing:.14em; text-transform:uppercase; color:var(--faint); border:1px solid var(--line);
+   border-radius:3px; padding:3px 6px}
+ .mp-prov{display:flex; align-items:center; justify-content:center; gap:11px; width:100%;
+   box-sizing:border-box; padding:12px 16px; border-radius:5px; cursor:pointer;
+   font:600 14px/1 "Optima","Gill Sans",-apple-system,"Segoe UI",sans-serif; letter-spacing:.01em;
+   background:#f6f4ee; color:#20242b; border:1px solid #d9d3c4;
+   transition:background .14s ease, transform .06s ease}
+ .mp-prov:hover{background:#fff} .mp-prov:active{transform:translateY(1px)}
+ .mp-prov:focus-visible{outline:2px solid var(--gold); outline-offset:2px}
+ .mp-prov svg{width:19px; height:19px; flex:none}
+ .mp-fine{font-size:11.5px; color:var(--faint); line-height:1.55; margin:16px 0 0}
 
  /* Action cue - the whole tile is clickable, so this is a text prompt, not a button. */
  .go{align-self:center; margin-top:10px; display:inline-flex; align-items:center; gap:8px;
@@ -226,10 +324,10 @@
   </nav>
 </header>
 <div class="wrap">
-  <p class="eyebrow reveal d1">openmw-web</p>
+  <div class="brand reveal d1"><span>OpenMW-Web</span></div>
   <h1 class="reveal d1">Morrowind in your browser</h1>
-  <p class="deck reveal d2">Run the free sample world, or point the engine at your own copy of
-    Morrowind. Everything runs on your machine. Nothing is uploaded.</p>
+  <p class="deck reveal d2">Play the free sample world, bring your own copy of Morrowind, or sign in
+    to play multiplayer with friends. The single-player modes run entirely on your machine.</p>
   <div class="rule reveal d2"><span class="diamond"></span></div>
 
   <!-- Return-visit fast path: shown when a previously-picked folder is remembered. -->
@@ -291,11 +389,51 @@
       <p class="lead">Point to the <b>Data Files</b> folder from a legal install. Files stream straight
          from your disk on demand, with no multi-gigabyte upload or copy. <b>Tribunal</b>, <b>Bloodmoon</b>
          and any <b>mods</b> (.esp/.esm/.bsa) in the folder are detected and loaded automatically.</p>
-      <p class="micro"><b>Windows + Steam or a Program&nbsp;Files install?</b> The browser can't open
-         system folders, so first <b>copy your <code>Data&nbsp;Files</code> folder to Documents or
-         Desktop</b> and pick that. Same in Chrome and Edge.</p>
       <div class="note" id="local-note"></div>
       <div class="go" id="local-go">Choose Data Files <span class="arw">▸</span></div>
+    </div>
+
+    <!-- Shown INSTEAD of the folder picker when this server hosts its own copy of the game.
+         The two are mutually exclusive on purpose: offering both would present a choice the
+         player cannot meaningfully make, and the hosted copy is the one that works with no
+         setup. Hidden until the probe below confirms the data is actually there, so a server
+         without it never advertises a card that would dead-end. -->
+    <div class="card actionable reveal d4" id="card-hosted" role="button" tabindex="0" hidden>
+      <button class="help-btn" id="help-hosted" type="button" aria-label="About playing this server's copy">?</button>
+      <div class="glyph" aria-hidden="true">
+        <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round">
+          <rect x="8" y="10" width="32" height="9" rx="2"/>
+          <rect x="8" y="21" width="32" height="9" rx="2"/>
+          <circle cx="13.5" cy="14.5" r="1.4" fill="currentColor" stroke="none"/>
+          <circle cx="13.5" cy="25.5" r="1.4" fill="currentColor" stroke="none"/>
+          <path d="M24 32v6M18 38h12"/>
+        </svg>
+      </div>
+      <div class="kicker">Hosted here</div>
+      <h2>Play this server's copy</h2>
+      <p class="lead">This server hosts Morrowind, so you can play the full game with
+         <b>nothing to install and no folder to pick</b>. Files are read from the server as the
+         world needs them, not downloaded up front, and your saves stay in this browser.</p>
+      <div class="note" id="hosted-note"></div>
+      <div class="go" id="hosted-go">Play now <span class="arw">▸</span></div>
+    </div>
+
+    <!-- Multiplayer. Deliberately the THIRD card, not the first: the single-player paths
+         must stay one click away, and a login wall in front of the demo is exactly what
+         kills a browser port's first impression. -->
+    <div class="card actionable reveal d4" id="card-mp" role="button" tabindex="0">
+      <button class="help-btn" id="help-mp" type="button" aria-label="About multiplayer">?</button>
+      <div class="glyph" aria-hidden="true">
+        <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round">
+          <circle cx="18" cy="18" r="6"/><circle cx="32" cy="22" r="5"/>
+          <path d="M8 40c0-6 4.5-10 10-10s10 4 10 10"/><path d="M26 40c0-4.5 3.5-8 8-8s8 3.5 8 8"/>
+        </svg>
+      </div>
+      <div class="kicker">Play together</div>
+      <h2>Multiplayer</h2>
+      <p class="lead">Sign in, pick a character, and play solo, with friends, or in the public
+         world. Your character follows you between all three.</p>
+      <div class="go">Sign in <span class="arw">▸</span></div>
     </div>
   </div>
 
@@ -319,40 +457,163 @@
   </div>
 </div>
 
+<!-- Multiplayer sign-in. A themed tile, not a browser prompt(): pick the server, then pick
+     an identity provider ("Continue with Google"). The SSO redirect happens on button click. -->
+<div class="modal-bd" id="mp-bd" role="dialog" aria-modal="true" aria-labelledby="mp-title">
+  <div class="modal mp-modal">
+    <div class="mp-glyph" aria-hidden="true">
+      <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round">
+        <circle cx="18" cy="18" r="6"/><circle cx="32" cy="22" r="5"/>
+        <path d="M8 40c0-6 4.5-10 10-10s10 4 10 10"/><path d="M26 40c0-4.5 3.5-8 8-8s8 3.5 8 8"/>
+      </svg>
+    </div>
+    <div class="m-kicker">Multiplayer</div>
+    <h3 id="mp-title">Sign in to play together</h3>
+    <div id="mp-providers" class="mp-providers"></div>
+    <p class="note" id="mp-note"></p>
+  </div>
+</div>
+
+<!-- First-login onboarding: choose a public username (and confirm a contact email if we have
+     none). Shown once, after sign-in, before entering any world. -->
+<div class="modal-bd" id="ob-bd" role="dialog" aria-modal="true" aria-labelledby="ob-title">
+  <div class="modal mp-modal">
+    <div class="m-kicker">Multiplayer &middot; welcome</div>
+    <h3 id="ob-title">Choose your username</h3>
+    <p>This is your public name: how other players see you, and how friends add you. It is
+       letters and numbers only, and unique. Your real name is never shown.</p>
+    <label class="ob-field" id="ob-email-wrap">
+      <span>Email (for your account, never shown to anyone)</span>
+      <input id="ob-email" type="email" spellcheck="false" autocomplete="email" placeholder="you@example.com">
+    </label>
+    <label class="ob-field">
+      <span>Username</span>
+      <input id="ob-username" type="text" spellcheck="false" autocomplete="off" maxlength="20" placeholder="e.g. Nerevarine42">
+    </label>
+    <button id="ob-continue" class="btn btn-primary mp-primary" type="button">Continue <span class="arw">▸</span></button>
+    <p class="note" id="ob-note"></p>
+  </div>
+</div>
+
+<!-- Character select: a FULL SCREEN of tiles (not a modal), shown after login and whenever
+     the game exits back to the launcher (#characters). Launcher theme throughout. -->
+<div class="cs-page" id="cs-bd" role="dialog" aria-modal="true" aria-labelledby="cs-title">
+  <div class="cs-wrap">
+    <div class="cs-glyph" aria-hidden="true">
+      <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round">
+        <circle cx="18" cy="18" r="6"/><circle cx="32" cy="22" r="5"/>
+        <path d="M8 40c0-6 4.5-10 10-10s10 4 10 10"/><path d="M26 40c0-4.5 3.5-8 8-8s8 3.5 8 8"/>
+      </svg>
+    </div>
+    <div class="m-kicker">OpenMW-Web &middot; Multiplayer</div>
+    <h3 id="cs-title">Choose your character</h3>
+    <p class="cs-sub">Each character has their own story, journal and solo world.</p>
+    <div class="cs-grid" id="cs-grid"></div>
+    <p class="note" id="cs-note"></p>
+    <div class="cs-actions">
+      <button id="cs-back" class="btn btn-ghost" type="button">‹ Back to launcher</button>
+    </div>
+  </div>
+</div>
+
+<!-- Delete a character: permanent, so it asks first and names who is being deleted. -->
+<div class="modal-bd" id="cd-bd" role="dialog" aria-modal="true" aria-labelledby="cd-title">
+  <div class="modal mp-modal cs-confirm">
+    <button id="cd-cancel" class="cd-x" type="button" aria-label="Close">×</button>
+    <div class="m-kicker">Multiplayer</div>
+    <h3 id="cd-title">Delete this character?</h3>
+    <p><b id="cd-name"></b> and everything they have done will be
+       <span class="warn">permanently deleted</span>: their journal, inventory and progress.
+       This cannot be undone.</p>
+    <div class="cs-actions">
+      <button id="cd-confirm" class="btn btn-primary" type="button">Delete forever</button>
+    </div>
+    <p class="note" id="cd-note"></p>
+  </div>
+</div>
+
 <script>
  'use strict';
  const $ = (id) => document.getElementById(id);
+ // Themed error dialog (reuses the .modal styling) instead of a raw browser alert().
+ function launcherError(title, msg){
+   const body = $('modal-body');
+   if (!body){ alert(title + ': ' + msg); return; }
+   body.innerHTML = '<div class="m-kicker">Multiplayer</div>'
+     + '<h3 id="modal-title">' + title + '</h3><p>' + msg + '</p>';
+   $('modal-bd').classList.add('show');
+   try { $('modal-close').focus(); } catch(e){}
+ }
  const hasFSA = typeof window.showDirectoryPicker === 'function';
 
  // --- Help modals: deep, docs-style detail per card, opened by the "?" icons. ---
  const HELP = {
+   mp: `
+     <div class="m-kicker">Play together &middot; single sign-on</div>
+     <h3 id="modal-title">Multiplayer</h3>
+     <p>One account, one character, three ways to play: <b>solo</b> in your own private world,
+        in a <b>party</b> with friends, or in the shared <b>public</b> world. Your character and
+        progress follow you between all three, on any device.</p>
+     <h4>Signing in</h4>
+     <p>Multiplayer uses <b>single sign-on</b> (e.g. Continue with Google), so there's no password
+        to create or manage. Signing in is what lets your character and saves persist and sync.</p>
+     <h4>Your game data</h4>
+     <p>The first time, you upload your own <b>Data Files</b> once to your private, account-only
+        locker; after that they stream back to you on any device. They stay private to you and are
+        never shared. You confirm they're your own backup copies of a game you legally own.</p>
+     <div class="m-hr"></div>
+     <p style="margin-top:16px">Just press <b>Sign in</b> and choose a provider.</p>`,
    sample: `
      <div class="m-kicker">Free sample &middot; no download of the game</div>
      <h3 id="modal-title">The example world</h3>
      <h4>What it is</h4>
-     <p>A small, self-contained demo world that ships <b>with the OpenMW engine itself</b> — freely
-        distributable, not Bethesda content. It exists so you can try the engine in your browser
+     <p>A small, self-contained demo world that ships <b>with the OpenMW engine itself</b>. It is
+        freely distributable, and not Bethesda content. It exists so you can try the engine in your browser
         <b>without owning Morrowind</b>.</p>
      <h4>What you'll see</h4>
      <p>A little island town populated with NPCs, town guards and roaming creatures that actually
-        fight — enough to show off rendering, lighting, physics, AI and combat running live on your
+        fight. Enough to show off rendering, lighting, physics, AI and combat running live on your
         machine. It's a tech demo, not a full quest.</p>
      <h4>Controls (OpenMW defaults)</h4>
      <ul>
-       <li><b>Move</b> — W A S D &middot; <b>Look</b> — mouse &middot; <b>Jump</b> — Space</li>
-       <li><b>Attack</b> — hold left mouse &middot; <b>Interact / pick up</b> — left click</li>
-       <li><b>Inventory</b> — I &middot; <b>Menu / back</b> — Esc &middot; <b>Console</b> — backtick <code>\`</code></li>
+       <li><b>Move</b>: W A S D &middot; <b>Look</b>: mouse &middot; <b>Jump</b>: Space</li>
+       <li><b>Attack</b>: hold left mouse &middot; <b>Interact / pick up</b>: left click</li>
+       <li><b>Inventory</b>: I &middot; <b>Menu / back</b>: Esc &middot; <b>Console</b>: backtick <code>\`</code></li>
      </ul>
      <h4>Privacy &amp; performance</h4>
-     <p>Everything runs locally in your browser — nothing is uploaded. First load fetches the engine
+     <p>Everything runs locally in your browser, nothing is uploaded. First load fetches the engine
         (~50&nbsp;MB, cached afterwards). Best on a Chromium browser (Chrome, Edge, Brave) on desktop.</p>
      <div class="m-hr"></div>
-     <p style="margin-top:16px">Just press <b>Start the demo</b> — no setup needed.</p>`,
+     <p style="margin-top:16px">Just press <b>Start the demo</b>: no setup needed.</p>`,
+   hosted: `
+     <div class="m-kicker">This server &middot; nothing to install</div>
+     <h3 id="modal-title">Play this server's copy</h3>
+     <p>This server hosts its own copy of Morrowind, so you can play the full game without
+        owning a copy on this machine and without picking a folder.</p>
+
+     <h4>What actually happens</h4>
+     <p>Nothing is uploaded and nothing is installed. The game files are read from the server
+        <b>on demand, in small pieces</b> — the engine asks for the few megabytes it needs as
+        you move through the world, rather than downloading the whole game up front. What you
+        do fetch is cached by the browser, so a second visit starts much faster.</p>
+
+     <h4>Your saves</h4>
+     <p>Saves are written in your browser, on this machine. They are yours and they are not
+        sent anywhere. Clearing site data clears them, so export anything you care about.</p>
+
+     <h4>If you own Morrowind</h4>
+     <p>Pointing at your own <b>Data&nbsp;Files</b> folder is still the better experience — your
+        mods and expansions load, and nothing streams over the network. That option appears
+        here whenever this server has no copy of its own.</p>
+
+     <div class="m-hr"></div>
+     <p style="margin-top:16px">Availability is the server operator's choice, not a setting you
+        control: this card only appears when a copy is actually present.</p>`,
    local: `
      <div class="m-kicker">Your copy &middot; nothing is uploaded</div>
      <h3 id="modal-title">Bring your own Morrowind</h3>
      <p>Own Morrowind? Point the browser at your installed copy and it plays in-engine, streaming
-        files straight from your disk — <b>no upload, no multi-gigabyte copy</b>. Here's the whole flow.</p>
+        files straight from your disk, <b>no upload, no multi-gigabyte copy</b>. Here's the whole flow.</p>
 
      <h4>1 · Find your Data&nbsp;Files folder</h4>
      <p>It's inside your Morrowind install:</p>
@@ -385,13 +646,13 @@
      <h4>4 · Make sure it's a complete copy</h4>
      <p>A full install has loose <code>Sound</code>, <code>Music</code> and <code>Video</code> folders
         <b>inside Data Files</b> (they are <b>not</b> stored in <code>Morrowind.bsa</code>). If they're
-        missing, the game still runs but with <b>no sound, voices, music or intro video</b> — so we
+        missing, the game still runs but with <b>no sound, voices, music or intro video</b>: so we
         check and warn you before starting rather than leaving you confused. A normal Steam/GOG
         install has them.</p>
 
      <h4>Your saves live on disk</h4>
      <p>Games you save are written to an <code>openmw-web-saves</code> folder <b>inside the folder you
-        picked</b> — real files on your drive, <b>not</b> in the browser. Clearing your browser history
+        picked</b>: real files on your drive, <b>not</b> in the browser. Clearing your browser history
         or cache won't touch them, they're there next time you play, and you can back them up or copy
         them like any other file. (This is why Chrome asks to <b>edit</b> the folder, not just view it.)</p>
 
@@ -402,25 +663,25 @@
 
      <h4>Requirements &amp; privacy</h4>
      <ul>
-       <li><b>Chromium browser on desktop</b> (Chrome, Edge, Brave) — this uses the File System Access
+       <li><b>Chromium browser on desktop</b> (Chrome, Edge, Brave), this uses the File System Access
            API, which Firefox and Safari don't support.</li>
        <li><b>Nothing is uploaded.</b> Files stream from your disk as the game needs them. Your pick is
-           remembered for next time as a revocable browser permission — no copy is stored on any server.</li>
+           remembered for next time as a revocable browser permission, no copy is stored on any server.</li>
      </ul>
 
      <h4>If something's off</h4>
      <ul>
-       <li><b>"Can't open this folder because it contains system files"</b> — your game is in a
+       <li><b>"Can't open this folder because it contains system files"</b>: your game is in a
            location the browser refuses to open. Windows blocks <code>Program&nbsp;Files</code> and
            <code>Program&nbsp;Files&nbsp;(x86)</code>, and <b>Steam's default library lives there</b>
            (<code>C:\\Program Files (x86)\\Steam\\</code>). This is the same in Chrome and Edge, so
            switching browsers won't help. <b>Fix:</b> copy the <code>Data&nbsp;Files</code> folder to
            your <b>Documents</b> or <b>Desktop</b> (or any non-system folder, e.g. another drive) and
            pick it there.</li>
-       <li><b>"Doesn't look like a Data Files folder"</b> — pick the folder that contains
+       <li><b>"Doesn't look like a Data Files folder"</b>: pick the folder that contains
            <code>Morrowind.esm</code> and <code>Morrowind.bsa</code>.</li>
-       <li><b>No sound / no intro</b> — your copy is missing the loose <code>Sound</code>/<code>Video</code> folders.</li>
-       <li><b>Permission denied</b> — reopen the picker and choose <b>View files</b>.</li>
+       <li><b>No sound / no intro</b>: your copy is missing the loose <code>Sound</code>/<code>Video</code> folders.</li>
+       <li><b>Permission denied</b>: reopen the picker and choose <b>View files</b>.</li>
      </ul>`
  };
  (function(){
@@ -429,7 +690,7 @@
    function close(){ bd.classList.remove('show'); }
    // The "?" buttons live inside clickable cards — stop the event so the card's start/pick handler
    // doesn't also fire (on both click and keyboard activation).
-   [['help-sample','sample'],['help-local','local']].forEach(([id,key])=>{
+   [['help-sample','sample'],['help-local','local'],['help-mp','mp'],['help-hosted','hosted']].forEach(([id,key])=>{
      const b=$(id); if(!b) return;
      b.addEventListener('click', e=>{ e.stopPropagation(); open(key); });
      b.addEventListener('keydown', e=>{ e.stopPropagation(); });
@@ -524,6 +785,25 @@
    };
  }
 
+ // Which of the WORLD's content files this folder does not have. The server states its own
+ // load order (/locker/needed -> content); anything it lists that we lack is a hard stop.
+ // Empty on any failure: an unreachable gateway must not block a player from starting, and
+ // the world's own check still refuses a genuinely mismatched client.
+ async function missingWorldContent(scan){
+   try {
+     const base = httpBaseOf(mpServerUrl());
+     if (!base) return [];
+     const r = await fetch(base+'/locker/needed', { credentials:'include' });
+     if (!r.ok) return [];
+     const want = (await r.json()).content || [];
+     const have = { 'morrowind.esm':true, 'tribunal.esm':!!scan.tribunal, 'bloodmoon.esm':!!scan.bloodmoon };
+     return want.filter(function(n){
+       const k = String(n).toLowerCase();
+       return k in have && !have[k];   // only judge files we can actually detect
+     });
+   } catch(e){ return []; }
+ }
+
  // Set once the folder is validated + remembered but the player still needs to confirm starting
  // with missing assets — a second click on the card then starts anyway.
  let confirmStart = false;
@@ -536,12 +816,24 @@
      const dir = await resolveDataDir(picked);
      const scan = await scanMorrowind(dir);
      if (!scan){
-       note('That doesn’t look like a Morrowind Data Files folder — it must contain Morrowind.esm and Morrowind.bsa. Pick the folder shown above (Tribunal and Bloodmoon are optional and picked up automatically).','err');
+       note('That doesn’t look like a Morrowind Data Files folder, it must contain Morrowind.esm and Morrowind.bsa. Pick the folder shown above (Tribunal and Bloodmoon are optional and picked up automatically).','err');
        return;
      }
      // Grant read permission while we still hold the user gesture, then remember the handle.
      if ((await dir.requestPermission({ mode:'readwrite' })) !== 'granted'){
-       note('Edit access was declined. It’s needed so your saved games can be written to the folder — reopen the picker and choose “Edit files”.','err');
+       note('Edit access was declined. It’s needed so your saved games can be written to the folder, reopen the picker and choose “Edit files”.','err');
+       return;
+     }
+     // CONTENT THE WORLD RUNS IS NOT OPTIONAL. A world's content list is fixed by the server,
+     // so a player missing any of it cannot join — this used to let a base-game copy through,
+     // and they only found out after sign-in, chargen and a loading screen, as a raw
+     // BAD_CONTENT refusal. Check it here, where the fix is "pick a complete folder".
+     const lackContent = await missingWorldContent(scan);
+     if (lackContent.length){
+       note('This server runs Morrowind + '+lackContent.join(' + ').replace(/\.esm/gi,'')
+            +', so every player needs '+(lackContent.length>1?'those expansions':'that expansion')
+            +' installed. Your folder does not have '+lackContent.join(', ')
+            +'. Install '+(lackContent.length>1?'them':'it')+' and pick the folder again.','err');
        return;
      }
      await idbSet(KEY, dir);
@@ -553,7 +845,7 @@
        const lacks=[ !scan.sound&&'sound effects and voices', !scan.music&&'music', !scan.video&&'intro videos' ].filter(Boolean);
        confirmStart = true;
        $('local-go').innerHTML = 'Start anyway <span class="arw">▸</span>';
-       note(found+', but no '+missing.join('/')+' folder'+(missing.length>1?'s':'')+' — the game will run without '
+       note(found+', but no '+missing.join('/')+' folder'+(missing.length>1?'s':'')+', the game will run without '
             +lacks.join(' or ')+'. Those live loose in Data Files (not inside the .bsa), so this copy looks incomplete. Click again to start anyway.','err');
        return;
      }
@@ -570,6 +862,426 @@
      note('Could not open that folder: '+(e && e.message || e),'err');
    }
  }
+
+ // --- multiplayer: sign in, choose a character, choose a mode -------------------------
+ // The whole flow is a thin client over ops the server already exposes (SessionRegister /
+ // SessionLoginRequest carry characterId; CharacterCreate adds a slot). It is kept OUT of
+ // the single-player paths on purpose: the demo must stay one click from the front page,
+ // because a login wall in front of it is what kills a browser port's first impression.
+ const MP = {
+   account: localStorage.getItem('omw-mp-account') || '',
+ };
+
+ // Evict addresses stored by older builds. Both used to shadow the derived server, so a
+ // browser that had signed in once kept dialling whatever host that build guessed — long
+ // after the deployment it belonged to was gone. Harmless to run forever; drop it once no
+ // browser plausibly still carries one.
+ try { ['omw-mp-url', 'omw-mp-pending'].forEach(function(k){ localStorage.removeItem(k); }); } catch(e){}
+
+ // Multiplayer is SSO-only, and game data comes from your server-side locker — never a
+ // password, never a bring-your-own folder. The launcher's job is: pick the server, do the
+ // single-sign-on round trip, then hand the game the one-time ticket. Character selection
+ // and any first-time data upload happen IN the game, where the account is known.
+ //
+ // ws:// -> http(s):// for the auth + locker HTTP endpoints, which live on the same host.
+ function httpBaseOf(wsUrl){
+   try { const u = new URL(wsUrl); return (u.protocol==='wss:'?'https:':'http:')+'//'+u.host; }
+   catch(e){ return null; }
+ }
+
+ // Brand glyphs for the provider buttons (inline so the CSP stays strict — no remote assets).
+ const PROVIDER_ICONS = {
+   google: '<svg viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9 3.6l6.7-6.7C35.6 2.6 30.2 0 24 0 14.6 0 6.5 5.4 2.6 13.2l7.8 6.1C12.2 13.5 17.6 9.5 24 9.5z"/><path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.7c-.6 3-2.3 5.5-4.8 7.2l7.4 5.7C43.6 38 46.5 31.8 46.5 24.5z"/><path fill="#FBBC05" d="M10.4 28.7c-.5-1.4-.8-2.9-.8-4.7s.3-3.3.8-4.7l-7.8-6.1C1 16.4 0 20.1 0 24s1 7.6 2.6 10.8l7.8-6.1z"/><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.4-5.7c-2.1 1.4-4.8 2.2-8.5 2.2-6.4 0-11.8-4-13.6-9.8l-7.8 6.1C6.5 42.6 14.6 48 24 48z"/></svg>',
+   discord: '<svg viewBox="0 0 24 24" fill="#5865F2"><path d="M20.3 4.5A19.8 19.8 0 0 0 15.4 3l-.3.5c1.8.4 3.3 1 4.7 1.9-1.7-.8-3.5-1.3-5.4-1.5a20.4 20.4 0 0 0-4.8 0c-1.9.2-3.7.7-5.4 1.5 1.4-.9 2.9-1.5 4.7-1.9L8.6 3A19.8 19.8 0 0 0 3.7 4.5C1.2 8.2.4 11.8.8 15.4a19.9 19.9 0 0 0 6 3l.8-1.3c-.7-.3-1.4-.6-2-1l.5-.4a14.2 14.2 0 0 0 12 0l.5.4c-.6.4-1.3.7-2 1l.8 1.3a19.9 19.9 0 0 0 6-3c.5-4.2-.8-7.8-2.4-10.9zM9 13.5c-1 0-1.7-.9-1.7-1.9S8 9.7 9 9.7s1.7.9 1.7 1.9S10 13.5 9 13.5zm6 0c-1 0-1.7-.9-1.7-1.9S14 9.7 15 9.7s1.7.9 1.7 1.9S16 13.5 15 13.5z"/></svg>',
+   github: '<svg viewBox="0 0 24 24" fill="#1b1f23"><path d="M12 .5C5.7.5.5 5.7.5 12c0 5.1 3.3 9.4 7.9 10.9.6.1.8-.3.8-.6v-2c-3.2.7-3.9-1.5-3.9-1.5-.5-1.3-1.3-1.7-1.3-1.7-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.7 1.3 3.4 1 .1-.8.4-1.3.7-1.6-2.6-.3-5.3-1.3-5.3-5.7 0-1.3.5-2.3 1.2-3.1-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17.3 4.7 18.3 5 18.3 5c.6 1.6.2 2.8.1 3.1.8.8 1.2 1.8 1.2 3.1 0 4.4-2.7 5.4-5.3 5.7.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6 4.6-1.5 7.9-5.8 7.9-10.9C23.5 5.7 18.3.5 12 .5z"/></svg>',
+   microsoft: '<svg viewBox="0 0 24 24"><path fill="#F25022" d="M1 1h10.5v10.5H1z"/><path fill="#7FBA00" d="M12.5 1H23v10.5H12.5z"/><path fill="#00A4EF" d="M1 12.5h10.5V23H1z"/><path fill="#FFB900" d="M12.5 12.5H23V23H12.5z"/></svg>',
+ };
+ function providerLabel(p){ return p.charAt(0).toUpperCase()+p.slice(1); }
+
+ // The multiplayer server is not something a player types, and it is not a per-environment
+ // constant either: it lives behind the SAME origin as the game, because the site's Caddy
+ // reverse-proxies /ws and /auth/* to the gateway. Deriving it from location is what makes
+ // production, the dev preview and a self-host all work with zero configuration — a baked-in
+ // hostname points every deployment at whichever one it was built for. It is also what
+ // index.html's ticket handover already demands: that guard refuses a gateway whose hostname
+ // differs from the page's, so a separate mp.* origin could never have worked.
+ //
+ // ?mpserver= still overrides, for pointing a page at a gateway that is not its own origin
+ // (local dev against a remote server). Deliberately NOT read back from localStorage: a
+ // remembered address outlives the deployment it was for and silently shadows this.
+ function mpServerUrl(){
+   const override = new URLSearchParams(location.search).get('mpserver');
+   if (override) return override;
+   return (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws';
+ }
+
+ // Read the signed-in session, ALWAYS deriving the gateway address rather than restoring it.
+ // Only the identity and the token are genuinely session state; an address is a property of
+ // where the page is being served from right now. Storing one is what let a sign-in from an
+ // earlier build keep dialling a port that build had guessed — and sessionStorage survives a
+ // reload, so it outlived every attempt to clear it from localStorage. Deriving here also
+ // migrates any session an older build already wrote, with no eviction step.
+ function mpSession(){
+   let s = null;
+   try { s = JSON.parse(sessionStorage.getItem('omw-mp-session') || 'null'); } catch(e){}
+   if (!s) return null;
+   s.gwUrl = mpServerUrl();
+   s.gwHttp = httpBaseOf(s.gwUrl);
+   return s;
+ }
+
+ const mpBd = $('mp-bd');
+ function mpClose(){ mpBd.classList.remove('show'); }
+ function mpNote(msg, cls){ const n=$('mp-note'); n.textContent=msg||''; n.className='note'+(cls?' '+cls:''); }
+
+ function mpStart(){
+   $('mp-providers').innerHTML = '';
+   mpNote('');
+   mpBd.classList.add('show');
+   mpLoadProviders(); // fetch and render the "Continue with X" buttons straight away
+ }
+
+ // Redirect into the chosen provider's SSO flow. The server returns us HERE with #mpticket.
+ // Nothing is stashed across the redirect: the gateway is same-origin, so mpServerUrl()
+ // gives the same answer coming back as it did going out. A stored address only creates a
+ // way for a stale one to win — which it did, sending a returning sign-in at the port a
+ // previous build had guessed.
+ function mpGoProvider(http, url, provider){
+   const back = location.origin + location.pathname;
+   location.href = http + '/auth/' + encodeURIComponent(provider) + '/start?return=' + encodeURIComponent(back);
+ }
+
+ // Fetch the configured server's providers and render a "Continue with X" button per provider.
+ async function mpLoadProviders(){
+   const url = mpServerUrl();
+   const http = httpBaseOf(url);
+   if (!http){ mpNote('The multiplayer server is misconfigured. Contact the operator.','err'); return; }
+   mpNote('Connecting…','muted');
+   let list;
+   try {
+     const r = await fetch(http + '/auth/providers', { mode:'cors' });
+     list = ((await r.json()) || {}).providers || [];
+   } catch(e){
+     mpNote('Could not reach the multiplayer server. It may be down, try again shortly.','err');
+     return;
+   }
+   mpNote('');
+   // Always show the full provider line-up; ones the server hasn't enabled render as
+   // "Soon" and aren't clickable, so players see what's coming without hitting a dead link.
+   const available = list.map(function(p){ return p.toLowerCase(); });
+   const ALL = ['google','discord','microsoft'];
+   const box = $('mp-providers'); box.innerHTML = '';
+   let firstLive = null;
+   ALL.forEach(function(key){
+     const live = available.indexOf(key)!==-1;
+     const b = document.createElement('button');
+     b.type = 'button'; b.className = 'mp-prov' + (live?'':' soon');
+     b.innerHTML = (PROVIDER_ICONS[key]||'') + '<span>Continue with '+providerLabel(key)+'</span>'
+       + (live?'':'<span class="soon-tag">Soon</span>');
+     if (live){
+       b.addEventListener('click', function(){ mpNote('Redirecting to '+providerLabel(key)+'…','muted'); mpGoProvider(http, url, key); });
+       if (!firstLive) firstLive = b;
+     } else {
+       b.disabled = true; b.setAttribute('aria-disabled','true');
+     }
+     box.appendChild(b);
+   });
+   if (!firstLive) mpNote('No sign-in provider is enabled yet. Ask the operator to turn one on.','err');
+   else firstLive.focus();
+ }
+
+ // First-login onboarding modal: collect a unique public username (and email if we have none),
+ // POST it to the gateway, and resolve true once the server accepts it.
+ function runOnboarding(gwHttp, token, hasEmail){
+   return new Promise((resolve) => {
+     const bd = $('ob-bd'), emailWrap = $('ob-email-wrap'), note = $('ob-note'), btn = $('ob-continue');
+     emailWrap.style.display = hasEmail ? 'none' : 'block';
+     $('ob-email').value = ''; $('ob-username').value = ''; note.textContent = '';
+     bd.classList.add('show');
+     ($('ob-username')).focus();
+     btn.onclick = async () => {
+       const username = ($('ob-username').value || '').trim();
+       const email = ($('ob-email').value || '').trim();
+       if (username.length < 3){ note.textContent = 'Username must be at least 3 characters.'; note.className = 'note err'; return; }
+       btn.disabled = true; note.textContent = 'Saving…'; note.className = 'note muted';
+       let r;
+       try {
+         r = await (await fetch(gwHttp + '/auth/profile', { method:'POST',
+           headers: { 'content-type':'application/json', authorization: 'Bearer ' + token },
+           body: JSON.stringify({ username, email }) })).json();
+       } catch(e){ note.textContent = 'Could not reach the server. Try again.'; note.className = 'note err'; btn.disabled = false; return; }
+       btn.disabled = false;
+       if (r && r.ok){ bd.classList.remove('show'); resolve(true); return; }
+       note.textContent = (r && r.error) || 'Could not save. Try again.'; note.className = 'note err';
+     };
+     // Enter submits.
+     ['ob-username','ob-email'].forEach((id) => { $(id).onkeydown = (e) => { if (e.key === 'Enter'){ e.preventDefault(); btn.click(); } }; });
+   });
+ }
+
+ // Character select — a launcher-styled tile screen. Lists slots (alias, level, last played)
+ // from GET /auth/characters and lets the player create one (alias -> POST). Resolves the
+ // chosen slot id, or null if they back out. Log out clears the resume token and reloads.
+ function runCharacterSelect(gwHttp, token){
+   return new Promise((resolve) => {
+     const bd = $('cs-bd'), grid = $('cs-grid'), note = $('cs-note');
+     const auth = { authorization: 'Bearer ' + token };
+     let max = 8;
+     // Resolves the whole character record: the boot needs the id AND whether this slot has
+     // ever been played (a fresh slot runs Morrowind's chargen; an existing one skips it).
+     // The screen simply STAYS as it is until the game page takes over. It used to be replaced
+     // with an "Entering Vvardenfell / Loading <name>" state, which was wrong twice over: the
+     // navigation is usually immediate so it barely ever rendered, and the name it printed was
+     // the slot label — for an auto-created slot that was the ACCOUNT name, i.e. the person's
+     // real name on screen. The game page has its own loading UI; this needs none.
+     const done = (ch) => {
+       if (!ch){ bd.classList.remove('show'); resolve(null); return; }
+       resolve(ch);
+     };
+     const clearCreate = () => { const w = bd.querySelector('.cs-create'); if (w) w.remove(); };
+     // New character: no alias prompt. Morrowind's own character creation asks for the name,
+     // and that name replaces the provisional slot label on the next listing.
+     let creating = false;
+     async function showCreate(){
+       if (creating) return;
+       creating = true;
+       note.textContent = 'Creating…'; note.className = 'note muted';
+       let r;
+       try { r = await (await fetch(gwHttp + '/auth/characters', { method:'POST',
+         headers:{ ...auth, 'content-type':'application/json' }, body: JSON.stringify({}) })).json(); }
+       catch(e){ note.textContent = 'Could not create the character.'; note.className = 'note err'; creating = false; return; }
+       if (!r.ok){ note.textContent = r.error || 'Could not create the character.'; note.className = 'note err'; creating = false; return; }
+       done(r.character); // straight into the game; the fresh slot runs chargen there
+     }
+     // Confirm-then-delete. Permanent, so the modal names the character and the tile list
+     // refreshes from the server afterwards rather than being patched locally.
+     function confirmDelete(c){
+       const cbd = $('cd-bd'), cnote = $('cd-note'), ok = $('cd-confirm'), cancel = $('cd-cancel');
+       $('cd-name').textContent = c.name;
+       cnote.textContent = ''; cnote.className = 'note';
+       ok.disabled = false;
+       const close = () => { cbd.classList.remove('show'); ok.onclick = null; cancel.onclick = null; };
+       cancel.onclick = close;
+       ok.onclick = async () => {
+         ok.disabled = true; cnote.textContent = 'Deleting…'; cnote.className = 'note muted';
+         let r;
+         try {
+           r = await (await fetch(gwHttp + '/auth/characters?id=' + encodeURIComponent(c.id),
+             { method: 'DELETE', headers: auth })).json();
+         } catch(e){ cnote.textContent = 'Could not reach the server.'; cnote.className = 'note err'; ok.disabled = false; return; }
+         if (!r.ok){ cnote.textContent = r.error || 'Could not delete.'; cnote.className = 'note err'; ok.disabled = false; return; }
+         close(); await load();
+       };
+       cbd.classList.add('show');
+       cancel.focus();
+     }
+
+     async function load(){
+       clearCreate(); note.textContent = '';
+       grid.innerHTML = '<div class="note muted">Loading…</div>';
+       let data;
+       try { data = await (await fetch(gwHttp + '/auth/characters', { headers: auth })).json(); }
+       catch(e){ grid.innerHTML = ''; note.textContent = 'Could not load your characters.'; note.className = 'note err'; return; }
+       max = data.max || 8;
+       const chars = data.characters || [];
+       grid.innerHTML = '';
+       chars.forEach((c) => {
+         const t = document.createElement('div'); t.className = 'cs-tile'; t.tabIndex = 0;
+         const last = c.lastPlayedAt ? new Date(c.lastPlayedAt).toLocaleDateString() : 'never';
+         // An unfinished slot restarts character creation on entry; say so instead of showing
+         // level/played stats it does not really have yet.
+         const meta = c.needsChargen
+           ? 'Creation unfinished &middot; click to continue'
+           : '<span class="lvl">Level ' + (c.level || 1) + '</span> &middot; played ' + last;
+         t.innerHTML = '<div class="ava"></div><div class="nm"></div>'
+           + '<div class="meta">' + meta + '</div>';
+         t.querySelector('.ava').textContent = (c.name || '?').trim().charAt(0).toUpperCase();
+         t.querySelector('.nm').textContent = c.name;
+         t.title = c.name;
+         t.onclick = () => done(c);
+         t.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' '){ e.preventDefault(); done(c); } };
+         // Delete (trash can, top-right). Stops the click from also selecting the character.
+         const del = document.createElement('button');
+         del.className = 'del'; del.type = 'button';
+         del.title = 'Delete ' + c.name; del.setAttribute('aria-label', 'Delete ' + c.name);
+         del.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6l1 2h4v2H4V5h4l1-2zm-3 6h12l-1 12H7L6 9zm4 2v8h2v-8h-2zm4 0v8h2v-8h-2z"/></svg>';
+         del.onclick = (e) => { e.stopPropagation(); confirmDelete(c); };
+         del.onkeydown = (e) => { e.stopPropagation(); };
+         t.appendChild(del);
+         grid.appendChild(t);
+       });
+       if (chars.length < max){
+         const nt = document.createElement('div'); nt.className = 'cs-tile new';
+         nt.innerHTML = '<div class="plus">+</div>New character';
+         nt.tabIndex = 0; nt.onclick = showCreate;
+         nt.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' '){ e.preventDefault(); showCreate(); } };
+         grid.appendChild(nt);
+       }
+       if (chars.length === 0) showCreate();
+     }
+     $('cs-back').onclick = () => done(null);
+     note.textContent = '';
+     bd.classList.add('show');
+     load();
+   });
+ }
+
+ // Open the player's private world and boot the game with a login ticket + chosen character.
+ // Shared by the fresh-SSO path and the #characters re-entry (Exit from the game).
+ async function bootGame(sess, ticket, chosenChar){
+   let world, privId; // privId is read again below when building the boot fragment
+   try {
+     // World ids are PUBLIC-ish: they label the world, travel in party/join flows, and name the
+     // world's data directory. This used to slug the account name, which for an SSO account is
+     // the person's REAL name — producing ids like "priv-jane-smith". Prefer the user-chosen
+     // public username (that is what onboarding collects it for) and fall back to an opaque
+     // hash, never to the account name.
+     const publicId = (sess.username || '').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,40)
+       || Math.abs([...sess.account].reduce((a,c)=>(a*31+c.charCodeAt(0))|0,0)).toString(36);
+     // PER CHARACTER, not per account. A world holds CELL state — looted containers, opened
+     // doors, moved objects — and the character screen promises "their own solo world". Keying
+     // this by account alone gave every character on the account the same cell deltas, so a
+     // chest one character emptied was already empty for the next. Player state (journal,
+     // inventory) was always per-character; only the world was not. doc.positions is keyed by
+     // world id, so per-character worlds are what that was already built for.
+     privId = 'priv-' + publicId + '-' + String(chosenChar.id).slice(-8);
+     // The locker token is what identifies us: the server resolves the account from this
+     // header and IGNORES any account in the body, because a body-supplied name let one
+     // caller fabricate owners and exhaust every world slot. Sending it in the body only,
+     // as this did, is an unauthenticated request — the server answers 401 sign_in_first.
+     const r = await fetch(sess.gwHttp + '/worlds', { method:'POST',
+       headers:{ 'content-type':'application/json', authorization: 'Bearer ' + sess.lockerToken },
+       body: JSON.stringify({ mode:'private', id: privId }) });
+     world = await r.json();
+     if (!r.ok || !world.wsPath) throw new Error(world.error || 'the server could not open your world');
+   } catch(e){ launcherError('Could not open your world', (e && e.message || e) + '. The multiplayer server may be unreachable, please try again in a moment.'); return; }
+   // Every world is its own process on an internal port that NOTHING publishes, so the only
+   // reachable address is a path on this origin that the gateway splices through (/w/<id>).
+   // There is deliberately no address fallback: the server used to hand back a host it had
+   // been configured with, defaulting to 127.0.0.1 — which for a remote player is their own
+   // machine. A path we join to our OWN origin cannot be wrong for whoever is holding it.
+   const wsProto = /^wss:/.test(sess.gwUrl) ? 'wss' : 'ws';
+   const worldWs = wsProto + '://' + location.host + world.wsPath;
+   // EVERYTHING rides in the fragment now, mp and locker included. Fragments are not logged,
+   // cached or sent as a Referer, and they do not sit in the address bar inviting a player to
+   // retype the world address. The ticket is single-use and the server authorises every
+   // connection regardless — this is blast-radius, not a security boundary.
+   // mpnew=1 = this slot has never been played: boot runs Morrowind's own character creation.
+   // An existing character skips the title menu AND chargen — the server restores their state.
+   const frag = '#mp=' + encodeURIComponent(worldWs)
+     + '&locker=' + encodeURIComponent(sess.gwHttp)
+     + '&mpticket=' + encodeURIComponent(ticket)
+     + (sess.lockerToken ? '&mplocker=' + encodeURIComponent(sess.lockerToken) : '')
+     + '&mpaccount=' + encodeURIComponent(sess.account)
+     + '&mpchar=' + encodeURIComponent(chosenChar.id)
+     // The in-world name for this slot. Other players see it (it rides every
+     // PlayerAppearance), so it is the CHARACTER's name and never the account holder's.
+     + '&mpcharname=' + encodeURIComponent(chosenChar.name || 'Adventurer')
+     // Boot the engine straight into the cell this character logged out in. Without it the
+     // engine spawns at the game's DEFAULT start and the server teleports a moment later —
+     // real seconds standing somewhere you did not choose, next to whatever lives there.
+     // Only NAMED cells: --start takes a cell name, and an exterior grid ref ("-2,-9") is not
+     // one. Exteriors keep the teleport (and the loading screen that hides it).
+     + (function(){
+         var p = (chosenChar.positions || {})[privId];
+         var cell = p && p.cellKey;
+         return (cell && !/^-?\d+,\s*-?\d+$/.test(cell)) ? '&mpstart=' + encodeURIComponent(cell) : '';
+       })()
+     + (chosenChar.needsChargen ? '&mpnew=1' : '');
+   // No query string at all: the address bar shows plain index.html.
+   location.href = 'index.html' + frag;
+ }
+
+ // Exit from the game lands on launcher.html#characters: show the character screen straight
+ // away from the stored session (no re-SSO), and mint a fresh single-use login ticket for the
+ // next boot (the original was spent). A dead/restarted gateway session = sign in again.
+ (async function charactersReentry(){
+   if (location.hash !== '#characters') return;
+   history.replaceState(null, '', location.pathname);
+   const sess = mpSession();
+   if (!sess || !sess.lockerToken) return; // no session, the normal launcher shows
+   const ch = await runCharacterSelect(sess.gwHttp, sess.lockerToken).catch(() => null);
+   if (!ch) return; // backed out to the launcher
+   try {
+     const r = await fetch(sess.gwHttp + '/auth/ticket', { method: 'POST',
+       headers: { authorization: 'Bearer ' + sess.lockerToken } });
+     if (r.status === 401) throw new Error('expired');
+     const { ticket } = await r.json();
+     if (!ticket) throw new Error('no ticket');
+     await bootGame(sess, ticket, ch);
+   } catch(e){
+     try { sessionStorage.removeItem('omw-mp-session'); } catch(_){}
+     launcherError('Session expired', 'Please sign in again to keep playing.');
+   }
+ })();
+
+ // We are back from SSO if the fragment carries a ticket (or an error). Turn it into the
+ // game launch: the data source is the LOCKER (?mplocker), decided in-game.
+ // After SSO we are back HERE. The server we signed in to is the GATEWAY (it serves /auth,
+ // /locker, and the world directory). Ask the directory for THIS player's world, then launch
+ // the game pointed at that world's socket — with the gateway as the locker origin.
+ (async function handleSsoReturn(){
+   const h = location.hash || '';
+   const err = /[#&]mperror=([^&]+)/.exec(h);
+   if (err){
+     history.replaceState(null,'',location.pathname);
+     launcherError('Sign-in failed', decodeURIComponent(err[1]).replace(/_/g,' ') + '. Please try again.');
+     return;
+   }
+   const tk = /[#&]mpticket=([^&]+)/.exec(h);
+   if (!tk) return;
+   const lk = /[#&]mplocker=([^&]+)/.exec(h);
+   const ac = /[#&]mpaccount=([^&]+)/.exec(h);
+   const gwUrl = mpServerUrl();
+   history.replaceState(null,'',location.pathname); // scrub the ticket from the address bar
+   if (!gwUrl || !ac){ launcherError('Sign-in did not complete', 'Something was missing from the sign-in. Please try again.'); return; }
+   const gwHttp = httpBaseOf(gwUrl);
+   const account = decodeURIComponent(ac[1]);
+   const lockerToken = lk ? decodeURIComponent(lk[1]) : '';
+   // Persist the session for the Exit -> character-select re-entry (#characters): the locker
+   // token is the SSO proof; /auth/ticket mints fresh boot tickets from it. sessionStorage =
+   // this tab only, gone when the tab closes.
+   // Deliberately NOT storing gwHttp/gwUrl — see mpSession(). They are derived on read.
+   try { sessionStorage.setItem('omw-mp-session', JSON.stringify({ account, lockerToken })); } catch(e){}
+   // First-login onboarding: pick a public username (and a contact email if we have none) BEFORE
+   // entering any world, so a new player is never shown by their real name. Skipped once set.
+   try {
+     let st = await (await fetch(gwHttp + '/auth/profile', { headers: { authorization: 'Bearer ' + lockerToken } })).json();
+     if (st && st.needsProfile){
+       const ok = await runOnboarding(gwHttp, lockerToken, st.hasEmail);
+       if (!ok) return; // closed without finishing, do not enter a world unnamed
+       st = await (await fetch(gwHttp + '/auth/profile', { headers: { authorization: 'Bearer ' + lockerToken } })).json();
+     }
+     // Carry the PUBLIC username in the session: the world id is derived from it so that no
+     // id, directory or join link is ever built from the account's real name.
+     if (st && st.username) {
+       try {
+         const cur = JSON.parse(sessionStorage.getItem('omw-mp-session') || '{}');
+         cur.username = st.username;
+         // Never write an address back: a read-modify-write would re-persist the stale
+         // gwHttp/gwUrl of a session an older build wrote, undoing the migration.
+         delete cur.gwHttp; delete cur.gwUrl;
+         sessionStorage.setItem('omw-mp-session', JSON.stringify(cur));
+       } catch(e){}
+     }
+   } catch(e){ /* if the check fails, proceed; the in-game gate is the backstop */ }
+   // Character select: pick or create a character (given an alias) on a launcher-styled tile
+   // screen BEFORE opening any world. Returns the chosen slot id, or null if they backed out.
+   let chosenChar = null;
+   try { chosenChar = await runCharacterSelect(gwHttp, lockerToken); }
+   catch(e){ chosenChar = null; }
+   if (!chosenChar) return; // backed out to the launcher
+   // A new player lands in their own PRIVATE world — that is where character creation happens.
+   // Party and public come after (a fresh character must be created in private first).
+   let username = '';
+   try { username = (JSON.parse(sessionStorage.getItem('omw-mp-session') || '{}')).username || ''; } catch(e){}
+   await bootGame({ gwHttp, gwUrl, account, lockerToken, username }, decodeURIComponent(tk[1]), chosenChar);
+ })();
+ $('card-mp').addEventListener('click', mpStart);
+ $('card-mp').addEventListener('keydown', (e)=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); mpStart(); } });
+ mpBd.addEventListener('click', (e)=>{ if(e.target===mpBd) mpClose(); }); // click outside to close
+ document.addEventListener('keydown', (e)=>{ if(e.key==='Escape' && mpBd.classList.contains('show')) mpClose(); });
+
  $('card-local').addEventListener('click', pickLocal);
  $('card-local').addEventListener('keydown', (e)=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); pickLocal(); } });
 
@@ -578,6 +1290,33 @@
    card.classList.remove('actionable'); card.classList.add('disabled');
    note('Needs a Chromium browser (Chrome/Edge/Brave) on desktop.','muted');
  }
+
+ // --- Does THIS server host its own copy of the game? -------------------------------------
+ // Whether a server ships game data is the operator's choice and can change without the page
+ // changing, so it is detected rather than baked in. A one-byte Range request is enough: it
+ // proves the file is present AND that the host answers 206, which the streaming reader needs
+ // — a host that 200s the whole file would appear fine here and then pull the entire game on
+ // first read. Cheap enough to run on every load.
+ //
+ // Found  -> offer the hosted copy and HIDE the folder picker: with data on the server the
+ //           picker is the strictly worse path, and showing both asks the player to decide
+ //           something they have no basis to decide.
+ // Absent -> leave the folder picker exactly as it was. This must fail silently: a server
+ //           without data is the normal case, not an error.
+ (async function detectHostedData(){
+   let ok = false;
+   try {
+     const r = await fetch('mwdata/Morrowind.esm', { headers: { Range: 'bytes=0-0' } });
+     ok = r.status === 206;
+   } catch(e){ ok = false; }
+   if (!ok) return;
+   $('card-local').hidden = true;
+   $('card-hosted').hidden = false;
+   const go = () => { location.href = 'index.html?src=hosted'; };
+   $('card-hosted').addEventListener('click', go);
+   $('card-hosted').addEventListener('keydown', (e)=>{
+     if(e.key==='Enter'||e.key===' '){ e.preventDefault(); go(); } });
+ })();
 
  // --- return-visit fast path ---
  (async function(){
@@ -591,7 +1330,7 @@
    $('continue-btn').addEventListener('click', async ()=>{
      try {
        if (perm!=='granted') perm = await handle.requestPermission({ mode:'readwrite' });
-       if (perm!=='granted'){ note('Edit access was declined — it’s needed to save your games to the folder. Choose “Edit files”.','err'); return; }
+       if (perm!=='granted'){ note('Edit access was declined, it’s needed to save your games to the folder. Choose “Edit files”.','err'); return; }
        location.href='index.html?src=local';
      } catch(e){ note('Could not reopen that folder. Pick it again.','err'); }
    });

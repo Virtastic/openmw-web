@@ -25,6 +25,16 @@
 set -euo pipefail
 
 ROOT="${ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
+# Emscripten runs on python3 from PATH and REQUIRES >= 3.10. macOS ships /usr/bin/python3 at
+# 3.9, and on a fresh login shell that can sit ahead of Homebrew's — at which point emcc dies
+# inside CMake's configure step with a traceback about sys.version_info, which reads like a
+# broken build rather than a broken PATH. Put Homebrew first so the build cannot inherit it.
+export PATH="/opt/homebrew/bin:$PATH"
+if ! python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)'; then
+  echo "emscripten needs python3 >= 3.10; PATH resolves to $(python3 --version 2>&1) at $(command -v python3)" >&2
+  exit 1
+fi
+
 EMSDK_BIN="${EMSDK_BIN:-/opt/homebrew/Cellar/emscripten/6.0.1/libexec}"
 SYSROOT="$EMSDK_BIN/cache/sysroot/lib/wasm32-emscripten"
 LIB="$ROOT/deps/wasm/lib"
@@ -33,7 +43,22 @@ BUILD="$ROOT/build-wasm"
 
 cd "$BUILD"
 
+# The multiplayer Lua package is authored in openmw/files/data but packed from the fsroot
+# preload mirror — sync it here so the two can never drift (the rest of resources/vfs is a
+# deliberately-divergent manual mirror; mp/ is exact by construction).
+rsync -a --delete "$ROOT/openmw/files/data/scripts/mp/" "$ROOT/fsroot/resources/vfs/scripts/mp/"
+cp "$ROOT/openmw/files/data/mp.omwscripts" "$ROOT/fsroot/resources/vfs/mp.omwscripts"
+
 # Make sure the objects on the explicit link line are fresh.
+#
+# openmw-lib AND components must be built here, not just main.cpp.o. The link line below
+# names libopenmw-lib.a and libcomponents.a directly, so a stale archive links CLEANLY and
+# silently ships an engine without your change in it. That is not hypothetical: a new
+# openmw.mp Lua binding was added to luabindings.cpp (in openmw-lib), only main.cpp.o was
+# rebuilt, and the deployed client threw "attempt to call a nil value" at runtime — which
+# killed the whole MP transport, because a throwing Lua handler disables its subsystem.
+# Ninja no-ops these in seconds when nothing changed, so there is no reason to skip them.
+ninja components openmw-lib
 ninja apps/openmw/CMakeFiles/openmw.dir/main.cpp.o
 
 # X11 no-op stubs (osgViewer's X11 backend symbols; see wasm-build/x11_stubs.c).
@@ -86,7 +111,7 @@ ninja apps/openmw/CMakeFiles/openmw.dir/main.cpp.o
   "$LIB/libBulletCollision.a" "$LIB/libLinearMath.a" \
   "$BUILD/x11_stubs.o" \
   -sERROR_ON_UNDEFINED_SYMBOLS=0 \
-  -lidbfs.js -sFORCE_FILESYSTEM=1 \
+  -lidbfs.js -lwebsocket.js -sFORCE_FILESYSTEM=1 \
   -sEXPORTED_RUNTIME_METHODS=['FS','ENV','callMain','Browser','stringToNewUTF8','UTF8ToString'] \
   -sEXPORTED_FUNCTIONS=['_main','_malloc','_free'] \
   --preload-file "$ROOT/fsroot@/"

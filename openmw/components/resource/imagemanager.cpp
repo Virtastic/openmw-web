@@ -2,6 +2,8 @@
 // See WASM_ADAPTATIONS.md at the repository root for details of the changes.
 #include "imagemanager.hpp"
 
+#include <cstdlib>
+
 #include <cassert>
 #include <osgDB/Registry>
 
@@ -86,6 +88,17 @@ namespace Resource
 
     osg::ref_ptr<osg::Image> ImageManager::getImage(VFS::Path::NormalizedView path, bool disableFlip)
     {
+        // HEADLESS: the sim peer renders nothing anyone will ever see, so decoding textures
+        // buys it nothing and costs it everything — nifloader decodes at LOAD time, and the
+        // engine sets setUnRefImageDataAfterApply(false), so every byte decoded here stays
+        // resident for the life of the process (unref fires on GL apply, which never happens).
+        // Hand back the shared 8x8 warning image instead. Nothing in mwmechanics, mwphysics or
+        // detournavigator reads pixels: collision uses mesh geometry and the navmesh is built
+        // from Bullet shapes, neither of which comes through here.
+        static const bool sHeadless = std::getenv("OPENMW_HEADLESS") != nullptr;
+        if (sHeadless)
+            return mWarningImage;
+
         osg::ref_ptr<osg::Object> obj = mCache->getRefFromObjectCache(path);
         if (obj)
             return osg::ref_ptr<osg::Image>(static_cast<osg::Image*>(obj.get()));

@@ -312,6 +312,8 @@ namespace MWLua
 
                 { "ZoomIn", MWInput::A_ZoomIn },
                 { "ZoomOut", MWInput::A_ZoomOut },
+
+                { "Social", MWInput::A_Social },
             }));
 
         // input.CONTROL_SWITCH is deprecated, remove after releasing 0.49

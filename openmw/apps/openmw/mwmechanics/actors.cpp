@@ -1,7 +1,11 @@
 #include "actors.hpp"
 
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <optional>
+
+#include <osg/Vec3f>
 
 #include <components/esm3/esmreader.hpp>
 #include <components/esm3/esmwriter.hpp>
@@ -1237,10 +1241,30 @@ namespace MWMechanics
         if (ptr == player)
             return;
 
-        const float dist
-            = (player.getRefData().getPosition().asVec3() - ptr.getRefData().getPosition().asVec3()).length();
+        // An actor in an interior the server is holding ALWAYS processes. Distance is
+        // meaningless across a door — the room may be a mile from the peer's avatar in world
+        // units — so a range check would cull exactly the NPCs the server asked to simulate.
+        // This is what lets an indoor quest advance while the peer stands somewhere else.
+        const bool heldInterior
+            = MWBase::Environment::get().getWorld()->isAnchoredInterior(ptr.getCell());
+
+        // NEAREST ANCHOR, not just the player. On a normal client there are no anchors and this
+        // is exactly the vanilla check. On a headless sim peer the server supplies one anchor
+        // per populated region, and an actor stops processing only when it is far from ALL of
+        // them — which is what lets ONE peer simulate several parts of the world instead of
+        // needing a whole ~450 MB engine process per region.
+        const osg::Vec3f actorPos = ptr.getRefData().getPosition().asVec3();
+        float dist = (player.getRefData().getPosition().asVec3() - actorPos).length();
+        for (const osg::Vec3f& anchor : MWBase::Environment::get().getWorld()->getSimAnchorPositions())
+        {
+            // Anchors are cell centres at z=0; compare in the horizontal plane so an actor up a
+            // tower or down a cave is not judged out of range by height alone.
+            const float dx = anchor.x() - actorPos.x();
+            const float dy = anchor.y() - actorPos.y();
+            dist = std::min(dist, std::sqrt(dx * dx + dy * dy));
+        }
         const int actorsProcessingRange = Settings::game().mActorsProcessingRange;
-        if (dist > actorsProcessingRange)
+        if (!heldInterior && dist > actorsProcessingRange)
         {
             ptr.getRefData().getBaseNode()->setNodeMask(0);
             return;
@@ -1252,7 +1276,10 @@ namespace MWMechanics
         float visibilityRatio = 1.0;
         const float fadeStartDistance = actorsProcessingRange * 0.9f;
         const float fadeEndDistance = static_cast<float>(actorsProcessingRange);
-        const float fadeRatio = (dist - fadeStartDistance) / (fadeEndDistance - fadeStartDistance);
+        // A held interior is never faded: `dist` to it is meaningless, and fading would make
+        // the peer's own view of those actors wrong without changing whether they simulate.
+        const float fadeRatio
+            = heldInterior ? 0.f : (dist - fadeStartDistance) / (fadeEndDistance - fadeStartDistance);
         if (fadeRatio > 0)
             visibilityRatio -= std::max(0.f, fadeRatio);
 

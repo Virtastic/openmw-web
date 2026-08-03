@@ -1,5 +1,7 @@
 #include "actionmanager.hpp"
 
+#include <cstdlib> // getenv: multiplayer console gate below
+
 #include <MyGUI_InputManager.h>
 
 #include <SDL_keyboard.h>
@@ -230,6 +232,26 @@ namespace MWInput
     {
         if (MyGUI::InputManager::getInstance().isModalAny())
             return;
+
+        // MULTIPLAYER: the console is a complete cheat suite — coc teleports anywhere,
+        // player->additem spawns anything, setstat/tgm rewrite the character. Gated HERE
+        // rather than in Lua or the boot page because this is the single place every route
+        // to the console converges (the keybind, a rebound key, any UI path); blocking it
+        // further out would leave the real opener reachable.
+        //
+        // Only OPENING is blocked. The Escape path that closes an already-open console is a
+        // different call site and must keep working.
+        //
+        // Deterrence, not enforcement: a modified client can remove this. It stops the
+        // casual case, which is most of them. The load-bearing defences are server side —
+        // NPC state comes from the sim peer, and content is validated at join.
+        if (!MWBase::Environment::get().getWindowManager()->isConsoleMode()
+            && std::getenv("OPENMW_MP_URL") != nullptr)
+        {
+            MWBase::Environment::get().getWindowManager()->messageBox(
+                "The console is disabled in multiplayer.");
+            return;
+        }
 
         MWBase::Environment::get().getWindowManager()->toggleConsole();
     }
