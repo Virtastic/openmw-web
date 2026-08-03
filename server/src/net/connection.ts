@@ -745,8 +745,13 @@ export class Connection implements Peer {
     // Cell change is a specced persistence flush point.
     this.ctx.players.update(player.charId, (doc) => (doc.position = { cellKey, x, y, z }), 'now');
     log('info', 'player.cell_change', { id: player.id, cellKey });
-    for (const p of this.ctx.roster.inWorld())
+    for (const p of this.ctx.roster.inWorld()) {
+      // Never announce the SIM PEER's movements TO A PLAYER: a client that hears them spawns
+      // a puppet of the server's simulator (see MoveBroadcaster.tick). The peer still gets its
+      // own echo — that is its confirmation the move landed, and it cannot puppet itself.
+      if (player.system === true && p.id !== player.id) continue;
       p.peer.sendEvent('PlayerCellChange', { id: player.id, cellKey, x, y, z });
+    }
     // M3: entering a cell always yields its delta doc; the vacated cell may flush.
     this.ctx.world.sendCellState(player, cellKey);
     // M4: hand off / claim authority. Leave the old cell before claiming the new one.
@@ -1264,6 +1269,7 @@ export class Connection implements Peer {
     if (this.resumed && this.player.cellKey) {
       const { cellKey, pose } = this.player;
       for (const p of this.ctx.roster.inWorld()) {
+        if (this.player.system === true && p.id !== this.player.id) continue;
         p.peer.sendEvent('PlayerCellChange', { id: this.player.id, cellKey, x: pose?.x ?? 0, y: pose?.y ?? 0, z: pose?.z ?? 0 });
       }
       this.ctx.world.sendCellState(this.player, cellKey);
@@ -1275,7 +1281,9 @@ export class Connection implements Peer {
     // occupancy we already track, in the same PlayerCellChange shape the client handles, so
     // both directions are populated at join instead of on the next twitch.
     for (const p of this.ctx.roster.inWorld()) {
-      if (p.id === this.player.id || !p.cellKey) continue;
+      // Same rule as the live fan-out: never hand a joiner the SIM PEER's position, or their
+      // very first act in the world is to spawn a puppet of the server's simulator.
+      if (p.id === this.player.id || !p.cellKey || p.system === true) continue;
       this.player.peer.sendEvent('PlayerCellChange',
         { id: p.id, cellKey: p.cellKey, x: p.pose?.x ?? 0, y: p.pose?.y ?? 0, z: p.pose?.z ?? 0 });
     }

@@ -242,7 +242,15 @@ export class MoveBroadcaster {
     for (const p of inWorld) liveIds.add(p.id);
     // Drop state for recipients that left.
     for (const id of this.perRecipient.keys()) if (!liveIds.has(id)) this.perRecipient.delete(id);
-    this.index.rebuild(inWorld);
+    // SENDERS ARE HUMANS ONLY. The sim peer is infrastructure with an avatar standing wherever
+    // it happens to simulate from — broadcasting its pose made every client spawn a PUPPET of
+    // it, a silent NPC named "player <id>" (the roster excludes system peers, so the puppet
+    // fell back to that name) standing in the room with you. In the prison ship that is a
+    // stranger in the middle of character creation.
+    //
+    // Asymmetric on purpose: the peer stays a RECIPIENT below, because it needs to know where
+    // players are in order to simulate around them. It just must never be seen.
+    this.index.rebuild(inWorld.filter((p) => p.system !== true));
     this.pairsExamined = 0;
 
     for (const recipient of inWorld) {

@@ -10,7 +10,7 @@
 import { lToJs, type LTable, type LValue, type JsLike } from '../proto/lser';
 import { parseObjRef, objRefToJs, netRefKey, type ObjRef } from '../proto/ref';
 import type { Player, Roster } from './players';
-import { cellsVisible, lodStride, parseExterior, MAX_ABS_COORD, type InterestSettings, loadedCells} from './movement';
+import { cellsVisible, lodStride, parseExterior, MAX_ABS_COORD, type InterestSettings, loadedCells, isChargenCell } from './movement';
 import { unpackActorMoveBatch } from '../proto/movement';
 import { MSG_ACTOR_MOVE_BATCH, packEnvelope, nextBroadcastSeq } from '../proto/envelope';
 import { Authority, type ActorSnapshot } from './authority';
@@ -267,7 +267,18 @@ export class WorldState {
   // cell had no holder at all, so NPCs were frozen for anyone who walked a cell away from
   // wherever the peer happened to be standing.
   authorityEnter(player: Player, cellKey: string): void {
-    const cells = player.system ? loadedCells(cellKey) : [cellKey];
+    // THE CHARGEN SANCTUARY, ENFORCED HERE because this is the choke point every claim goes
+    // through — the anchor list in simPeerTick is only one caller, and the peer ALSO claims a
+    // cell the ordinary way when it walks into one (connection.ts PlayerCellChange). Filtering
+    // only the anchor list left that path wide open, which is how the peer ended up holding
+    // the Imperial Prison Ship after following a player indoors.
+    //
+    // Holding it is what breaks the opening: the client then attaches puppets over the chargen
+    // actors and disables their AI, so Morrowind's own scripts — the only thing that advances
+    // chargenstate — run in the peer's world, where creation is already finished. The guard
+    // never comes for you because on the peer he already did.
+    const cells = (player.system ? loadedCells(cellKey) : [cellKey]).filter((c) => !isChargenCell(c));
+    if (cells.length === 0) return;
     this.enqueue(async () => {
       for (const c of cells) await this.authority.onEnter(player.id, c);
     });
