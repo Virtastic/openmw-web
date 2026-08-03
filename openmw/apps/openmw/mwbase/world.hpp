@@ -584,7 +584,10 @@ namespace MWBase
         virtual bool isAnchoredInterior(const MWWorld::CellStore* cell) const = 0;
 
         /// MP: set those centres. Server-driven; see MWWorld::Scene::setSimAnchors.
-        virtual void setSimAnchors(const std::vector<osg::Vec2i>& anchors) = 0;
+        /// Exteriors anchor by grid coordinate, interiors by cell id — an interior has no
+        /// coordinate, so the two lists cannot be merged.
+        virtual void setSimAnchors(const std::vector<osg::Vec2i>& anchors,
+            const std::vector<ESM::RefId>& interiors) = 0;
 
         /// Preload VFX associated with this effect list
         virtual void preloadEffects(const ESM::EffectList* effectList) = 0;
