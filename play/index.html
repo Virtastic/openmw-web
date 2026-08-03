@@ -1448,9 +1448,12 @@
            // plank-leak stays. ?objshadow=1 (QA) to opt back in if you accept the swim.
            'object shadows = ' + (/[?&]objshadow=1\b/.test(location.search) ? 'true' : 'false') + '\n' +
            'terrain shadows = true\n' +
-           // 2048 (was 4096): with the single 16384 cascade, a tighter shadow range concentrates the
-           // map's texels near the player — visibly crisper + steadier (user-confirmed). ?shadowdist=N (QA).
-           'maximum shadow map distance = ' + ((/[?&]shadowdist=(\d+)/.exec(location.search)||[])[1] || '2048') + '\n' +
+           // 1024 (was 2048, was 4096): with the single cascade, a tighter shadow range concentrates the
+           // map's texels near the player — visibly crisper + steadier (user-confirmed). 2048 still left
+           // exterior shadows visibly blocky (interiors were fine: a small volume gets the whole map), so
+           // halve the range again — outdoor texel density doubles, at the cost of shadows fading out
+           // nearer the camera. ?shadowdist=N (QA) to compare.
+           'maximum shadow map distance = ' + ((/[?&]shadowdist=(\d+)/.exec(location.search)||[])[1] || '1024') + '\n' +
            '[Cells]\n' +
            'preload cell cache max = 18\n' +   // engine asked for 18 for exterior preloading
            '[Game]\n' +

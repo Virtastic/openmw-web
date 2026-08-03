@@ -554,6 +554,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     },
     // Owner-only: flip this world between private (solo) and party (joinable by the owner's
     // party) without respawning it. Admins may flip too. Public worlds never flip.
+    worldId,
     worldMode: (): string => worldMode,
     setWorldMode: (accountKey: string, rank: number, mode: string): 'ok' | 'not_owner' | 'bad_mode' | 'not_flippable' => {
       if (worldModeAtBoot === 'public') return 'not_flippable';
@@ -932,7 +933,16 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
           claimed.add(c);
         }
       }
-      log('info', 'simpeer.anchors', { exteriors: anchors.length, interiors: interiors.length });
+      // worldId, and WHY each occupied cell was dropped. Without these the line is unreadable:
+      // one container runs several worlds and every one of them logs this, so a public world's
+      // anchors look exactly like a private world's, and "the peer anchored the cell my
+      // chargen player is standing in" cannot be told apart from "a different world did
+      // something normal".
+      log('info', 'simpeer.anchors', {
+        world: worldId, exteriors: anchors.length, interiors: interiors.length,
+        occupied: humans.map((p) => `${p.name}@${p.cellKey}${p.inChargen === true ? ' [chargen]' : ''}`),
+        anchored: cells,
+      });
     }
     simPeers.sweep();
   };

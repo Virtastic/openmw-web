@@ -119,6 +119,7 @@ export interface ServerCtx {
   // Spawn a fresh party guest at the leader's position (null when it should not apply).
   guestSpawn(accountKey: string): { cellKey: string; x: number; y: number; z: number } | null;
   // What this world IS, right now. Sent at join so the client never has to infer it.
+  worldId: string;
   worldMode(): string;
   // F3 chargen gate: true only for a GATEWAY-managed party/public world (where a separate
   // private world exists for character creation). A standalone/single-world server is false —
@@ -1239,6 +1240,13 @@ export class Connection implements Peer {
     // the census office is ordinary Seyda Neen exterior, where the guard who escorts you
     // stands. Only "who is standing here" identifies it.
     this.player.inChargen = this.creationInProgress;
+    // The single fact the chargen sanctuary turns on, and until now it was invisible: three
+    // separate diagnoses of "the guard does not escort me" each had to INFER this from anchor
+    // counts, and inference is what got them wrong. State it.
+    log('info', 'conn.chargen_state', {
+      world: this.ctx.worldId, player: this.player.name, charId: this.player.charId,
+      inChargen: this.creationInProgress,
+    });
     this.state = 'AUTHED';
     this.authing = false;
     const sessionToken = randomBytes(16).toString('hex');
