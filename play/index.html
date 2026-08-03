@@ -3154,6 +3154,36 @@
   // moment the connection leaves Joined, so this can never be satisfied by the world we left.
   //
   // The ceiling is not optional: a peer that never starts must not strand anyone behind this.
+  // A FRESH LOGIN TICKET BEFORE EVERY SWITCH.
+  //
+  // Tickets are single use. The in-world path (RequestTravelTicket) can only be answered while
+  // we are still connected — and the case that stranded players is exactly the one where we are
+  // not: after any drop, switchTo falls through to dialling with the ticket that got us into the
+  // world we already left. The destination answers "login ticket expired or already used" and
+  // the reconnect ladder repeats it forever, so the switch appears to do nothing.
+  //
+  // /auth/ticket mints one from the locker Bearer token — the living proof of the same SSO
+  // login — so this grants nothing the session did not already have. The launcher has always
+  // used it for character select; the game page never did.
+  //
+  // Best effort on purpose: if it fails we still attempt the switch, because the in-world path
+  // may well answer and a refusal there is at least a real error.
+  async function primeLoginTicket(){
+    var base = lockerHttpBase();
+    var tok = window.__omwLockerToken || '';
+    if (!base || !tok) return false;
+    try {
+      var r = await fetch(base + '/auth/ticket', {
+        method: 'POST', headers: { authorization: 'Bearer ' + tok },
+      });
+      if (!r.ok) return false;
+      var t = (await r.json()).ticket;
+      if (!t) return false;
+      cmd('mpticket:' + t);
+      return true;
+    } catch (e) { return false; }
+  }
+
   function holdUntilSimulated(ceilingMs){
     // A SETTLING GRACE AFTER READY, not a floor before it.
     //
@@ -3484,7 +3514,8 @@
       if (iLead && v === 'public') {
         if (!confirm('You lead a party of ' + partyN + '. Moving to the public world brings every member with you.\n\nContinue?')) return;
         selfTravel = true; // we chose this; do not narrate it back to us as if it happened to us
-        setWhere(v); cmd('social:PartyTravel:public'); closeSocial();
+        setWhere(v); closeSocial();
+        primeLoginTicket().then(function(){ cmd('social:PartyTravel:public'); });
         window.__omwLoading.show('Moving the party', 'Syncing with the public world…');
         // Hold the loading screen until the connection actually settles. The old fixed 2.5s
       // timeout dropped the player into a world they had not joined yet, which is what made
@@ -3497,8 +3528,10 @@
       if (iLead && v === 'solo' &&
           !confirm('You lead a party of ' + partyN + '. Going solo closes your world and disbands the party.\n\nContinue?')) return;
       setWhere(v);
-      cmd('where:' + v);
       closeSocial();
+      // Ticket first, THEN the switch: dialling without a live credential is what produced
+      // the silent no-op.
+      primeLoginTicket().then(function(){ cmd('where:' + v); });
       // Solo <-> Party on your OWN world is an in-place flip (no reconnect); Public is a real
       // redial that must re-sync with the world's sim peer. Either way the wait is real, so
       // show it — the state watcher above hides it when the connection settles.

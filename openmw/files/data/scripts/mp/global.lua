@@ -1524,6 +1524,10 @@ local eventHandlers = {
     -- The where-am-I switcher (from the Social hub). Solo/Party flip our OWN world in place
     -- (deferred until we are back in it if we are currently in Public); Public dials the one
     -- shared world; Offline peels us home + hides us; Online restores us to where we last were.
+    mpSetTicket = function(data)
+        net.setLoginTicket(tostring(data and data.ticket or ''))
+    end,
+
     mpWhere = function(data)
         -- Nothing to do in multiplayer until the character exists: no leaving the solo world
         -- (or flipping it joinable) mid-chargen. The server's own chargen gate backs this up.

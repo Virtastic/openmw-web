@@ -381,6 +381,10 @@ local function pollHarness()
             core.sendGlobalEvent('mpChatSend', { text = cxText, channel = cxCh, to = cxTo })
         end
         -- Where-am-I switcher (solo/party/public/online/offline).
+        -- A freshly minted login ticket, handed down by the page before a world switch. Not a
+        -- secret the client did not already hold: it is minted from the same SSO session.
+        local tkt = cmd:match('^mpticket:(.+)$')
+        if tkt then core.sendGlobalEvent('mpSetTicket', { ticket = tkt }) end
         local whereMode = cmd:match('^where:(%a+)$')
         if whereMode then core.sendGlobalEvent('mpWhere', { mode = whereMode }) end
         -- Availability toggle.

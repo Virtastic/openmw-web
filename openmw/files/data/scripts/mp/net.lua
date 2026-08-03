@@ -219,6 +219,18 @@ end
 -- player — the destination will refuse us and the normal error path explains why.
 local pendingSwitch = nil
 
+-- Store a login ticket WITHOUT dialling. The page fetches these from /auth/ticket before a
+-- world switch, because RequestTravelTicket can only be answered while we are still connected
+-- — and the case that stranded players is precisely the one where we are NOT: after a drop,
+-- switchTo falls straight through to dialNow carrying the ticket that got us into the world we
+-- already left. Spent. The destination answers "login ticket expired or already used" and the
+-- reconnect ladder repeats it.
+function net.setLoginTicket(ticket)
+    if type(ticket) ~= 'string' or ticket == '' then return end
+    net.loginTicket = ticket
+    if mp.setLoginTicket then mp.setLoginTicket(ticket) end
+end
+
 function net.travelTicket(ticket)
     if type(ticket) == 'string' and ticket ~= '' then
         net.loginTicket = ticket
