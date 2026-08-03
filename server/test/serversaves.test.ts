@@ -230,7 +230,13 @@ test('a client that keeps sending past the cap is refused without killing the se
     }
     // Still serving afterwards: the refusals must not have taken the process with them.
     assert.equal((await fetch(`${h.base}/saves`, { headers: { authorization: 'Bearer tok-a' } })).status, 200);
-    assert.deepEqual(readdirSync(join(dir, 'locker-blobs', 'saves', 'alice')).filter((f) => /^Cap/.test(f)), []);
+    // The 413 is deliberately sent BEFORE the temp file is removed, so that a client whose
+    // connection is about to be cut still learns why. That means cleanup legitimately lands
+    // after the response — wait for it rather than sampling the instant the fetch resolves.
+    const strays = () => readdirSync(join(dir, 'locker-blobs', 'saves', 'alice'))
+      .filter((f) => /^Cap/.test(f));
+    for (let i = 0; i < 250 && strays().length > 0; i++) await new Promise((r) => setTimeout(r, 20));
+    assert.deepEqual(strays(), []);
   } finally {
     await h.close();
   }
