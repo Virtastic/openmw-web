@@ -943,8 +943,19 @@ export class Connection implements Peer {
       // player back at the name prompt. Resuming an in-progress creation in place is always
       // correct: the doc restores position and stats, and Morrowind's own chargen picks up
       // where it left off. The slot simply stays uncompleted until ChargenComplete arrives.
-      const finished = hasJournal
-        || positions.some((p) => !isChargenCell(p.cellKey));
+      // POSITION IS NOT EVIDENCE, and assuming it was is what broke the opening. Chargen is
+      // not confined to the two named rooms: between them you are escorted across ORDINARY
+      // SEYDA NEEN EXTERIOR, so "standing outside a chargen cell" describes the escort exactly
+      // as well as it describes a finished character. The moment a player stepped off the
+      // prison ship this marked their slot complete, inChargen went false on the next auth,
+      // the peer anchored that exterior, and the guard was puppeted with his AI off — he never
+      // walks up, never escorts, and the sequence stops there.
+      //
+      // The journal is real evidence and is enough on its own: chargen's own entry is written
+      // AT RELEASE, so a slot holding any entry is past creation, and one mid-escort holds
+      // none. Everything else waits for ChargenComplete, which is what actually knows.
+      const finished = hasJournal;
+      void positions;
       if (finished) this.ctx.accounts.completeCharacter(account, char.id);
       // Remember it: authenticate() suppresses persistence while creation is genuinely in
       // progress, and this is the only place with the evidence to tell.

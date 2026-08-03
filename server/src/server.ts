@@ -890,7 +890,16 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
 
     // The peer's avatar has to stand somewhere, but it no longer matters WHERE: everything it
     // must simulate is anchored. Prefer an exterior so a cold start lands somewhere sensible.
-    const first = humans.find((p) => parseExterior(p.cellKey!) !== null) ?? humans[0];
+    //
+    // NEVER a cell the sanctuary protects. This picked from the unfiltered human list, so a
+    // lone player creating their character got the peer spawned ON TOP of them — the log read
+    // `simpeer.spawned cell="imperial prison ship"`. It cannot claim that cell (authorityEnter
+    // refuses), but standing there is still wrong: it loads and ticks the chargen actors in
+    // its own world, and it is one accident away from holding them. `cells` is already the
+    // sanctuary-filtered set; fall back to nowhere rather than to a protected cell, and the
+    // peer boots at [simPeer].startCell instead.
+    const placeable = humans.filter((p) => cells.includes(p.cellKey!));
+    const first = placeable.find((p) => parseExterior(p.cellKey!) !== null) ?? placeable[0];
     simPeers.ensure(WORLD_KEY, first
       ? { cellKey: first.cellKey!, x: first.pose?.x ?? 0, y: first.pose?.y ?? 0, z: first.pose?.z ?? 0 }
       : undefined);
