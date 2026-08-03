@@ -601,6 +601,7 @@ export class Connection implements Peer {
         const label = this.player.name;
         this.provisionalCharId = undefined;
         this.creationInProgress = false;
+        if (this.player) this.player.inChargen = false;
         this.ctx.track?.(this.ctx.accounts.get(this.player.accountKey).then((account) => {
           if (!account) return;
           const r = this.ctx.accounts.adoptCharacter(account, id, label);
@@ -1210,6 +1211,11 @@ export class Connection implements Peer {
     // chargen cells) and self-migrates the flag; this reuses that answer rather than
     // second-guessing it. Cleared when ChargenComplete arrives (below).
     else if (this.creationInProgress) this.ctx.players.suppressSaves(this.player.charId);
+    // Visible to authority: a cell with a player still creating their character must NOT be
+    // simulated by the peer, and the cells cannot be named — the walk from the prison ship to
+    // the census office is ordinary Seyda Neen exterior, where the guard who escorts you
+    // stands. Only "who is standing here" identifies it.
+    this.player.inChargen = this.creationInProgress;
     this.state = 'AUTHED';
     this.authing = false;
     const sessionToken = randomBytes(16).toString('hex');

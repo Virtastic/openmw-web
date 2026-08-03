@@ -837,7 +837,13 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     // Unheld is the CORRECT state here: with no holder the client never attaches puppets and
     // keeps running its own local AI, which is exactly what the opening needs. This mirrors
     // the sanctuary objects.lua already applies to world state in the same cells.
-    const cells = [...new Set(humans.map((p) => p.cellKey!))].sort().filter((c) => !isChargenCell(c));
+    // Same rule as WorldState.authorityEnter, applied when building the anchor list so the
+    // peer does not even LOAD a cell it must not simulate: named chargen rooms, plus any cell
+    // holding a player who has not finished creation (the walk between those rooms is
+    // ordinary exterior and cannot be recognised by name).
+    const inChargenCells = new Set(humans.filter((p) => p.inChargen === true).map((p) => p.cellKey!));
+    const cells = [...new Set(humans.map((p) => p.cellKey!))].sort()
+      .filter((c) => !isChargenCell(c) && !inChargenCells.has(c));
     const anchors: { x: number; y: number }[] = [];
     const interiors: string[] = [];
     for (const cell of cells) {

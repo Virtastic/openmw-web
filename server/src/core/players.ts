@@ -40,6 +40,13 @@ export interface Player {
   // Headless sim peer (Phase H): kept out of every human-facing count/list. See
   // roster.humanCount() / humansInWorld().
   system?: boolean;
+  // STILL CREATING A CHARACTER. True from auth until the client reports ChargenComplete
+  // (engine chargenstate == -1). While it is set, no cell this player occupies may be
+  // simulated by the peer: Morrowind's own scripts drive the opening — the prison ship, the
+  // walk to the census office, the guard who escorts you — and the peer puppets those actors
+  // and disables their AI, so the sequence stops dead. The cells cannot be identified by NAME
+  // (the walk between them is ordinary Seyda Neen exterior), only by who is standing there.
+  inChargen?: boolean;
   pose?: PlayerPose;
   moveSeq: number; // last accepted PlayerMove envelope seq (stale-drop)
   poseVersion: number;

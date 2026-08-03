@@ -277,11 +277,24 @@ export class WorldState {
     // actors and disables their AI, so Morrowind's own scripts — the only thing that advances
     // chargenstate — run in the peer's world, where creation is already finished. The guard
     // never comes for you because on the peer he already did.
-    const cells = (player.system ? loadedCells(cellKey) : [cellKey]).filter((c) => !isChargenCell(c));
+    const cells = (player.system ? loadedCells(cellKey) : [cellKey])
+      .filter((c) => !isChargenCell(c) && !this.hasPlayerInChargen(c));
     if (cells.length === 0) return;
     this.enqueue(async () => {
       for (const c of cells) await this.authority.onEnter(player.id, c);
     });
+  }
+
+  // Is anyone in this cell still creating their character? Chargen is not a place, it is a
+  // STATE: it starts in the Imperial Prison Ship, walks through ordinary Seyda Neen exterior —
+  // where the guard escorts you to the door — and ends in the Census and Excise Office. The
+  // two rooms can be matched by name; the walk between them cannot, and that is exactly where
+  // the escort stalled, because the peer anchored the exterior and puppeted the guard.
+  hasPlayerInChargen(cellKey: string): boolean {
+    for (const p of this.roster.inWorld()) {
+      if (p.inChargen === true && p.cellKey === cellKey) return true;
+    }
+    return false;
   }
 
   // Cell change out or disconnect. Captured id/cell because the roster entry may already
