@@ -111,11 +111,19 @@ acceptByNameAndSize = true
 # Storage locker: a player uploads their own Morrowind data once, streams it back on any
 # device. S3-compatible (AWS, Cloudflare R2, Backblaze, MinIO). Credentials come from the
 # env (S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY) so they stay out of config files. An empty
-# endpoint disables the locker and the client falls back to bring-your-own-disk.
+# endpoint falls back to a folder on THIS server (<dataDir>/locker-blobs) instead.
 endpoint = ""                     # e.g. https://<accountid>.r2.cloudflarestorage.com
 region = "auto"                   # R2 uses "auto"; AWS uses the bucket region
 bucket = ""
 maxBytesPerAccount = 6442450944   # 6 GiB — Morrowind GOTY + a few mods
+# Only used by the filesystem fallback: the origin a BROWSER reaches this server on, which
+# is what upload/download URLs are built from. Wrong or empty and the browser cannot reach
+# the URLs the server hands it (the server itself still can). Set it whenever there is no
+# S3 endpoint and players are not on this machine.
+publicBase = ""                   # e.g. https://mp.example.com
+# Server-side savegames, a separate budget from the game-data library above: a full library
+# must never be the reason a player cannot save. 512 MiB is many .omwsave slots.
+maxSaveBytesPerAccount = 536870912
 
 [economy]
 # Public-realm rule: unique/named NPCs respawn there (the world is stateless), so their

@@ -420,7 +420,7 @@ test('erasure removes everything about an account', async (t) => {
   await server.close();
 
   const report = await deleteAccount(dataDir, 'Forgettable');
-  assert.deepEqual(report, { account: true, player: true, bans: true, identities: 0, chatLines: 0, reports: 0 });
+  assert.deepEqual(report, { account: true, player: true, bans: true, identities: 0, chatLines: 0, reports: 0, locker: false, saves: 0 });
   // (the account row check above is the real assertion; there is no accounts directory)
   {
     // Player docs are rows; the directory does not exist any more.
@@ -431,5 +431,5 @@ test('erasure removes everything about an account', async (t) => {
   }
   // Idempotent: erasing again reports nothing left to erase rather than throwing.
   assert.deepEqual(await deleteAccount(dataDir, 'Forgettable'),
-    { account: false, player: false, bans: false, identities: 0, chatLines: 0, reports: 0 });
+    { account: false, player: false, bans: false, identities: 0, chatLines: 0, reports: 0, locker: false, saves: 0 });
 });

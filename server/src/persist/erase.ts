@@ -16,7 +16,7 @@
 //   * stdout logs — they are the operator's to rotate (see PRIVACY.md); this tool prints
 //     what to grep for instead of pretending it can rewrite an operator's log pipeline.
 
-import { existsSync } from 'node:fs';
+import { existsSync, rmSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { join } from 'node:path';
 
@@ -103,10 +103,34 @@ function eraseModerationDb(dataDir: string, key: string): { chatLines: number; r
 
 
 
+// The locker's file list, its attestation (which names the person and their IP), the save
+// list, and — when storage is this server's own disk — the bytes themselves. This was
+// missing entirely: an offline erasure left the whole library and every savegame in place,
+// reachable again the moment the same SSO identity signed back in.
+//
+// S3-backed bytes are NOT reachable from here (the credentials are the running server's,
+// from its env). Those are erased by the online POST /locker/erase; this reports what it
+// could not reach rather than pretending otherwise.
+function eraseLockerAndSaves(dataDir: string, key: string): { locker: boolean; saves: number } {
+  const locker = withDb(join(dataDir, 'locker.db'), false, (db) => {
+    const files = Number(db.prepare('DELETE FROM locker_files WHERE accountKey = ?').run(key).changes);
+    const att = Number(db.prepare('DELETE FROM locker_attestations WHERE accountKey = ?').run(key).changes);
+    return files > 0 || att > 0;
+  });
+  const saves = withDb(join(dataDir, 'saves.db'), 0, (db) =>
+    Number(db.prepare('DELETE FROM player_saves WHERE accountKey = ?').run(key).changes));
+  for (const prefix of ['gamedata', 'saves']) {
+    rmSync(join(dataDir, 'locker-blobs', prefix, key), { recursive: true, force: true });
+  }
+  return { locker, saves };
+}
+
 export interface EraseReport {
   account: boolean;
   player: boolean;
   bans: boolean;
+  locker: boolean; // file list + attestation (and the bytes, when stored on this disk)
+  saves: number; // savegames removed
   identities: number; // Phase B: linked SSO identities removed
   chatLines: number; // A4: lines removed from logs/chat-*.jsonl
   reports: number; // A4: report docs removed (filed BY or ABOUT the account)
@@ -131,10 +155,13 @@ export async function deleteAccount(dataDir: string, name: string): Promise<Eras
   const dbErased = eraseModerationDb(dataDir, key);
   // Order matters: character docs are found VIA the account file, so erase them first.
   const player = erasePlayerDocs(dataDir, key);
+  const lockerErased = eraseLockerAndSaves(dataDir, key);
   const report: EraseReport = {
     account: eraseAccountDb(dataDir, key),
     player,
     bans: false,
+    locker: lockerErased.locker,
+    saves: lockerErased.saves,
     identities: eraseIdentitiesDb(dataDir, key),
     chatLines: dbErased.chatLines,
     reports: dbErased.reports,

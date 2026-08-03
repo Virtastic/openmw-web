@@ -17,6 +17,7 @@ import { IdentityStore } from '../src/auth/identities';
 import { ChatLog, ReportStore } from '../src/core/moderation';
 import { deleteAccount } from '../src/persist/erase';
 import { Locker } from '../src/data/locker';
+import { SaveStore } from '../src/data/save-routes';
 import { tmpDataDir } from './helpers';
 
 test('deleting an account leaves no trace in any database', async (t) => {
@@ -58,22 +59,25 @@ test('deleting an account leaves no trace in any database', async (t) => {
   });
 
   // The locker attestation names the person and is written by the server, so it must go too.
+  // Left in place deliberately: the OFFLINE eraser has to reach it. It did not, for as long
+  // as the locker existed — an erased account's library and attestation both survived.
   const locker = new Locker({ dataDir: dir, maxBytesPerAccount: 1 });
   await locker.attest('victim', [{ name: 'Morrowind.esm', size: 1, sha256: 'a'.repeat(64) }], '1.2.3.4');
   assert.ok(await locker.attestationOf('victim'), 'fixture attestation was not written');
-  await locker.erase('victim');
-  assert.equal(await locker.attestationOf('victim'), undefined, 'erase left the attestation behind');
+
+  new SaveStore(dir).put('victim', { name: 'Hero - Save 1.omwsave', size: 4, mtime: 1 });
 
   const report = await deleteAccount(dir, 'Victim');
   assert.deepEqual(report, {
     account: true, player: true, bans: true, identities: 1, chatLines: 1, reports: 1,
+    locker: true, saves: 1,
   });
 
   // Sweep every table in every database for the account key or its character id. Anything
   // that survives is a leak, whichever store it belongs to.
   const needles = ['victim', char.id];
   const leaks: string[] = [];
-  for (const file of ['accounts.db', 'players.db', 'bans.db', 'identities.db', 'moderation.db', 'locker.db']) {
+  for (const file of ['accounts.db', 'players.db', 'bans.db', 'identities.db', 'moderation.db', 'locker.db', 'saves.db']) {
     const path = join(dir, file);
     if (!existsSync(path)) continue;
     const db = new DatabaseSync(path);

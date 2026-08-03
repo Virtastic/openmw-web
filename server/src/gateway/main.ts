@@ -97,7 +97,7 @@ const frontDoor = await buildFrontDoor(sharedDir, (owner, charId) => {
   // leaving a directory (and, until it is reaped, a process) behind for every character
   // anyone ever deletes.
   worlds.discardForCharacter(owner, charId);
-});
+}, port);
 const directory = await startDirectory({
   worlds, host: '0.0.0.0', port, worldsDir,
   // One private world per player the server can hold. These are the SAME quantity seen from

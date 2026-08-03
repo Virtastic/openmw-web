@@ -49,7 +49,8 @@ import { IdentityStore, LoginTicketStore, SessionIndex } from './auth/identities
 import { createAuthRoutes } from './auth/routes';
 import { ensureVanillaManifest } from './data/vanilla-manifest';
 import { Locker, loadVanillaManifest } from './data/locker';
-import { s3FromEnv } from './data/s3';
+import { lockerStorageFrom, blobRoutes, FsStorage } from './data/fsstorage';
+import { saveRoutes, eraseSaves } from './data/save-routes';
 import { lockerRoutes } from './data/locker-routes';
 import { LockerSessionStore } from './auth/identities';
 import { IpConnTracker, IpRateLimiter } from './net/ratelimit';
@@ -403,15 +404,11 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // Phase C. The store is opened here so its lifetime matches the server's; social.stop()
   // clears presence timers that would otherwise keep the process alive on shutdown.
   // Phase 3.5 storage locker. S3 creds from env; disabled (inert) when no endpoint/keys.
-  const lockerStorage = s3FromEnv({
-    endpoint: config.locker.endpoint,
-    region: config.locker.region,
-    bucket: config.locker.bucket,
-  });
+  const lockerStorage = lockerStorageFrom(config.locker, sharedDir, `http://127.0.0.1:${opts.port}`);
   const locker = new Locker({
     dataDir: sharedDir,
     maxBytesPerAccount: config.locker.maxBytesPerAccount,
-    ...(lockerStorage ? { storage: lockerStorage } : {}),
+    storage: lockerStorage,
   });
   // The files the locker will accept: retail Morrowind by sha256, derived from the operator's
   // own game data when they have not supplied a manifest. The asset pack is a BSA served by
@@ -702,7 +699,19 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     // SSO round trips draw from the same per-IP auth budget as Register/Login: one
     // attacker should not get a second, separate allowance by using the HTTP door.
     limiter: new IpRateLimiter(config.limits.loginPerMinPerIp),
-  }, chainRoutes(adminRoutes, lockerRoutes({ locker, sessions: lockerSessions }))));
+  }, chainRoutes(
+    adminRoutes,
+    // Before the locker: blob URLs carry their capability in the path, not a Bearer header.
+    blobRoutes(lockerStorage instanceof FsStorage ? lockerStorage : undefined),
+    saveRoutes({
+      storage: lockerStorage, sessions: lockerSessions, dataDir: sharedDir,
+      maxBytesPerAccount: config.locker.maxSaveBytesPerAccount,
+    }),
+    lockerRoutes({
+      locker, sessions: lockerSessions,
+      eraseSaves: (acct) => eraseSaves(sharedDir, acct, lockerStorage),
+    }),
+  )));
   // Derived at scrape time from the roster, so no teardown path can strand the gauge.
   // humansInWorld, not inWorld: the sim peer is infrastructure. Counting it here would make
   // every world look like it has a player in it — the reason maxPlayers and the roster exclude

@@ -64,7 +64,8 @@
 	#   /auth/*   SSO.  /locker/*  S3-backed game-data upload.  /worlds  world directory.
 	# /admin, /metrics, /healthz and /status stay unreachable from the internet.
 	# Upstream is overridable because the container is named per environment.
-	@gateway path /w/* /ws /auth/* /locker/* /worlds /worlds/*
+	#   /saves/*  server-side savegames (same auth and storage as the locker).
+	@gateway path /w/* /ws /auth/* /locker/* /saves /saves/* /worlds /worlds/*
 	reverse_proxy @gateway {$MP_UPSTREAM:openmw-mp:8080} {
 		# Preserve the ORIGINAL scheme from the public edge. Caddy defaults X-Forwarded-Proto
 		# to the scheme of the hop IT received — which is plain http, because the edge

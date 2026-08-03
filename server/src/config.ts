@@ -67,7 +67,15 @@ export interface Config {
   // acceptByNameAndSize (default true): also accept a known game file by name + plausible
   // size when its exact hash is unknown, so Steam/GOG/disc/localized copies from different
   // players all upload. Set false for a strict hash-only gate.
-  locker: { endpoint: string; region: string; bucket: string; maxBytesPerAccount: number; acceptByNameAndSize: boolean };
+  // publicBase: the origin the browser reaches this server on, used to build blob URLs when
+  // storage falls back to the filesystem (no S3 endpoint). Empty = localhost, which works
+  // for a single-machine dev run and nothing else.
+  // maxSaveBytesPerAccount caps server-side savegames, which are a separate budget from the
+  // game-data library — a full library must not make the player unable to save.
+  locker: {
+    endpoint: string; region: string; bucket: string; maxBytesPerAccount: number;
+    acceptByNameAndSize: boolean; publicBase: string; maxSaveBytesPerAccount: number;
+  };
   rules: {
     respawnCellKey: string;
     respawnX: number;
@@ -231,6 +239,11 @@ function optBool(t: Tree, sec: string, key: string, dflt: boolean): boolean {
   return typeof v === 'boolean' ? v : dflt;
 }
 
+function optStr(t: Tree, sec: string, key: string, dflt: string): string {
+  const v = (t[sec] as Tree | undefined)?.[key];
+  return typeof v === 'string' ? v : dflt;
+}
+
 function optNum(t: Tree, sec: string, key: string, dflt: number): number {
   const v = (t[sec] as Tree | undefined)?.[key];
   return typeof v === 'number' && Number.isFinite(v) ? v : dflt;
@@ -389,6 +402,8 @@ function validate(t: Tree): Config {
       bucket: reqStr(t, 'locker', 'bucket'),
       maxBytesPerAccount: reqNum(t, 'locker', 'maxBytesPerAccount'),
       acceptByNameAndSize: optBool(t, 'locker', 'acceptByNameAndSize', true),
+      publicBase: optStr(t, 'locker', 'publicBase', ''),
+      maxSaveBytesPerAccount: optNum(t, 'locker', 'maxSaveBytesPerAccount', 536870912),
     },
     rules: {
       respawnCellKey: reqStr(t, 'rules', 'respawnCellKey'),

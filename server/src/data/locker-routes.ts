@@ -33,6 +33,8 @@ export interface LockerRouteDeps {
   // expansions as optional, so a base-game player was let all the way into character creation
   // and only refused when they reached the shared world, which is far too late to be useful.
   requiredContent?: () => string[];
+  /** Delete-my-data must take the savegames with it; supplied where saveRoutes is mounted. */
+  eraseSaves?: (accountKey: string) => Promise<number>;
 }
 
 function json(res: ServerResponse, code: number, body: unknown): void {
@@ -145,6 +147,14 @@ export function lockerRoutes(deps: LockerRouteDeps) {
 
       if (req.method === 'GET' && url.pathname === '/locker/download') {
         const name = url.searchParams.get('name') ?? '';
+        // The same traversal guard parseFile applies on the way in. It was missing here and
+        // was covered only by authorizeDownload's exact-match test against the stored list —
+        // fine while a key was an opaque S3 string, not fine now that a filesystem backend
+        // turns it into a real path.
+        if (name === '' || name.length > 256 || name.includes('..') || name.includes('\0')) {
+          json(res, 404, { error: 'not_yours' });
+          return true;
+        }
         const dl = await deps.locker.authorizeDownload(accountKey, name);
         if (!dl) { json(res, 404, { error: 'not_yours' }); return true; }
         json(res, 200, { url: dl });
@@ -153,7 +163,10 @@ export function lockerRoutes(deps: LockerRouteDeps) {
 
       if (req.method === 'POST' && url.pathname === '/locker/erase') {
         await deps.locker.erase(accountKey);
-        json(res, 200, { ok: true });
+        // Savegames are this account's data too. Erasing the library and leaving the saves
+        // is not an erasure, and this is the only path that can reach S3-backed bytes.
+        const saves = await deps.eraseSaves?.(accountKey);
+        json(res, 200, { ok: true, saves: saves ?? 0 });
         return true;
       }
 

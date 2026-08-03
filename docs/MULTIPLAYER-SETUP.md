@@ -5,8 +5,9 @@ from your own S3-compatible bucket, never a local folder). This guide covers the
 things only you can provision, then the config that turns it all on. Everything else is
 already built and tested.
 
-The two credentials below are the only blockers — I cannot create a Google OAuth app or an
-S3 bucket for you.
+The OAuth app below is the only real blocker — I cannot create a Google OAuth app for you.
+Storage is optional: with no S3 configured the server stores lockers and savegames on its
+own disk (§2).
 
 ---
 
@@ -31,7 +32,25 @@ You now have `clientId` + `clientSecret` for the config below.
 
 ---
 
-## 2. S3-compatible bucket (Cloudflare R2 recommended — no egress fees)
+## 2. Storage: a bucket, or this server's own disk
+
+**You can skip this section.** With no `endpoint`/`bucket`/keys the locker now stores
+everything in `<dataDir>/locker-blobs` on the server instead of going inert. Set one thing
+if you do:
+
+```toml
+[locker]
+publicBase = "https://mp.example.com"   # the origin PLAYERS reach this server on
+```
+
+Upload and download URLs are built from it (they carry a signed, expiring token in the path
+rather than an S3 signature). Leave it empty and the server logs `locker.no_public_base` and
+falls back to localhost, which works only when the player is on this machine.
+
+The trade is bandwidth and disk: every player's library and savegames sit on this box and
+stream out of it. A bucket is still the better answer above a handful of players.
+
+### S3-compatible bucket (Cloudflare R2 recommended — no egress fees)
 
 Any S3 API works (AWS S3, Cloudflare R2, Backblaze B2, MinIO). **R2 is the best fit** — no
 per-GB egress charge, which matters because players stream their data every session.
@@ -127,7 +146,18 @@ curl -s localhost:8080/auth/providers      # -> {"providers":["google"],"allowPa
 curl -s -o /dev/null -w '%{http_code}\n' localhost:8080/locker/files   # 401 (needs a token), NOT 503
 ```
 
-`503` from `/locker/files` means the locker is disabled — endpoint or S3 keys are missing.
+`503` from `/locker/files` should no longer happen: without S3 the locker falls back to the
+server's disk. If you see one, storage failed to initialise — check the boot log for
+`locker.filesystem_storage` or `s3.configured`.
+
+Savegames ride on the same storage and the same session token:
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' localhost:8080/saves   # 401 (needs a token)
+```
+
+They are capped separately from the game-data library (`[locker] maxSaveBytesPerAccount`,
+512 MiB by default) so a full library can never be the reason a player cannot save.
 
 ---
 

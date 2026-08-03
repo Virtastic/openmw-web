@@ -25,7 +25,8 @@ import { IpRateLimiter } from '../net/ratelimit';
 import { createAuthRoutes } from '../auth/routes';
 import { Locker, loadVanillaManifest } from '../data/locker';
 import { ensureVanillaManifest } from '../data/vanilla-manifest';
-import { s3FromEnv } from '../data/s3';
+import { lockerStorageFrom, blobRoutes, FsStorage } from '../data/fsstorage';
+import { saveRoutes, eraseSaves } from '../data/save-routes';
 import { lockerRoutes } from '../data/locker-routes';
 import type { HttpRoute } from '../net/http';
 import { log } from '../log';
@@ -239,6 +240,9 @@ export interface FrontDoor {
 export async function buildFrontDoor(
   sharedDir: string,
   onCharacterDeleted?: (owner: { accountKey: string; username?: string }, charId: string) => void,
+  // Only used to build blob URLs when storage falls back to this server's disk and the
+  // operator set no [locker] publicBase — i.e. a single-machine dev run.
+  gatewayPort = 8080,
 ): Promise<FrontDoor> {
   const config = loadConfig(sharedDir, undefined, sharedDir);
   const accounts = new AccountStore(sharedDir);
@@ -249,11 +253,7 @@ export async function buildFrontDoor(
   const oidc = new OidcService(config.auth);
   const lockerSessions = new LockerSessionStore(); // minted AND resolved here — no cross-process
 
-  const storage = s3FromEnv({
-    endpoint: config.locker.endpoint,
-    region: config.locker.region,
-    bucket: config.locker.bucket,
-  });
+  const storage = lockerStorageFrom(config.locker, sharedDir, `http://127.0.0.1:${gatewayPort}`);
   const locker = new Locker({
     dataDir: sharedDir,
     maxBytesPerAccount: config.locker.maxBytesPerAccount,
@@ -283,12 +283,21 @@ export async function buildFrontDoor(
   const locker2 = lockerRoutes({
     locker, sessions: lockerSessions,
     requiredContent: () => (worldContent.ok ? worldContent.contentFiles : []),
+    eraseSaves: (acct) => eraseSaves(sharedDir, acct, storage),
+  });
+  // Blob routes go BEFORE the locker's: these URLs carry their capability in the path and
+  // have no Bearer header, which lockerRoutes would reject.
+  const blobs = blobRoutes(storage instanceof FsStorage ? storage : undefined);
+  const saves = saveRoutes({
+    storage, sessions: lockerSessions, dataDir: sharedDir,
+    maxBytesPerAccount: config.locker.maxSaveBytesPerAccount,
   });
   const profile = profileRoutes(accounts, lockerSessions);
   const chars = characterRoutes(accounts, lockerSessions, players, onCharacterDeleted);
   const reticket = ticketRoutes(accounts, lockerSessions, tickets);
   const also: HttpRoute = async (req, res, url) =>
-    (await locker2(req, res, url)) || (await profile(req, res, url))
+    (await blobs(req, res, url)) || (await saves(req, res, url))
+    || (await locker2(req, res, url)) || (await profile(req, res, url))
     || (await chars(req, res, url)) || (await reticket(req, res, url));
   const route = createAuthRoutes(
     { config, oidc, identities, tickets, sessions, lockerSessions, accounts, bans,
