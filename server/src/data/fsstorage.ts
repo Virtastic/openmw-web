@@ -211,19 +211,28 @@ export function blobRoutes(storage: FsStorage | undefined): HttpRoute {
   };
 }
 
-// Write to <path>.<pid>.tmp then rename: a reader never sees a half-written file, and the
-// pid suffix keeps two processes writing the same key from clobbering each other's temp.
+// Write to a temp then rename: a reader never sees a half-written file. The temp name is
+// unique PER REQUEST, not just per process — two concurrent PUTs of the same slot (a mirror
+// retrying while the previous upload is still in flight, or a second tab) shared one temp
+// name, so the first rename moved it away and the second failed with ENOENT. A pressure run
+// of twelve concurrent overwrites hit it every time.
+//
 // Over the signed cap the stream is destroyed and the temp removed — a refused upload must
 // not leave bytes on the operator's disk.
+let putSeq = 0;
 async function putBlob(req: IncomingMessage, res: ServerResponse, path: string, cap: number): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
-  const tmp = `${path}.${process.pid}.tmp`;
+  const tmp = `${path}.${process.pid}.${putSeq++}.tmp`;
   const out = createWriteStream(tmp);
   let written = 0;
   let over = false;
   try {
     await new Promise<void>((ok, fail) => {
       req.on('data', (chunk: Buffer) => {
+        // destroy() does not stop chunks already buffered from being delivered, so this
+        // handler runs again AFTER the refusal below has answered. Without this guard the
+        // second one throws ERR_HTTP_HEADERS_SENT and kills the process.
+        if (over) return;
         written += chunk.length;
         // Answer BEFORE killing the connection, so a client that is still reading learns
         // why. Some will only see the reset — that is the cost of not accepting 8 GB from
@@ -241,6 +250,9 @@ async function putBlob(req: IncomingMessage, res: ServerResponse, path: string, 
       req.on('end', () => out.end(ok));
       out.on('error', fail);
     });
+    // Inside the try: a failed rename used to escape as an unhandled rejection and take the
+    // whole process down, which is a far worse outcome than one refused upload.
+    await rename(tmp, path);
   } catch (err) {
     await rm(tmp, { force: true });
     if (over) { log('warn', 'blob.put_over_cap', { cap, written }); return; } // already answered
@@ -248,7 +260,6 @@ async function putBlob(req: IncomingMessage, res: ServerResponse, path: string, 
     if (!res.headersSent) { res.writeHead(500); res.end(); }
     return;
   }
-  await rename(tmp, path);
   res.writeHead(200); res.end();
 }
 

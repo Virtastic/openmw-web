@@ -10,7 +10,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { FsStorage, fsStorageFrom, blobRoutes, parseRange } from '../src/data/fsstorage';
 import { saveRoutes } from '../src/data/save-routes';
@@ -187,6 +187,46 @@ test('an upload past its signed length is cut off and leaves no file', async () 
     const tmp = `${path}.${process.pid}.tmp`;
     for (let i = 0; i < 50 && existsSync(tmp); i++) await new Promise((r) => setTimeout(r, 20));
     assert.equal(existsSync(tmp), false, 'temp file left behind');
+  } finally {
+    await h.close();
+  }
+});
+
+// Both of these took the whole process down under a pressure run, and neither is exotic: a
+// mirror retrying while its previous upload is still in flight produces the first, and any
+// client that ignores the refusal produces the second.
+test('concurrent uploads of one slot do not tear the file or crash the server', async () => {
+  const dir = tmpDataDir();
+  const h = await harness(dir, { 'tok-a': 'alice' });
+  try {
+    const bodies = [...Array(8).keys()].map((i) => Buffer.alloc(64, 65 + i));
+    await Promise.all(bodies.map(async (body) => {
+      const url = h.fix(await h.storage.presignPut('saves/alice/Race.omwsave', body.length));
+      assert.equal((await fetch(url, { method: 'PUT', body })).status, 200);
+    }));
+    // Exactly one of the writers won, whole — never a mix of two, never a half-written file.
+    const got = readFileSync(join(dir, 'locker-blobs', 'saves', 'alice', 'Race.omwsave'));
+    assert.ok(bodies.some((b) => b.equals(got)), 'the surviving file is a torn mix');
+    assert.deepEqual(
+      readdirSync(join(dir, 'locker-blobs', 'saves', 'alice')).filter((f) => f.includes('.tmp')), []);
+  } finally {
+    await h.close();
+  }
+});
+
+test('a client that keeps sending past the cap is refused without killing the server', async () => {
+  const dir = tmpDataDir();
+  const h = await harness(dir, { 'tok-a': 'alice' });
+  try {
+    for (let i = 0; i < 3; i++) {
+      const url = h.fix(await h.storage.presignPut(`saves/alice/Cap${i}.omwsave`, 512));
+      const status = await fetch(url, { method: 'PUT', body: Buffer.alloc(2 * 1024 * 1024, 1) })
+        .then((r) => r.status, () => 0);
+      assert.notEqual(status, 200);
+    }
+    // Still serving afterwards: the refusals must not have taken the process with them.
+    assert.equal((await fetch(`${h.base}/saves`, { headers: { authorization: 'Bearer tok-a' } })).status, 200);
+    assert.deepEqual(readdirSync(join(dir, 'locker-blobs', 'saves', 'alice')).filter((f) => /^Cap/.test(f)), []);
   } finally {
     await h.close();
   }
