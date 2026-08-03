@@ -81,7 +81,6 @@ export class PlayerStore {
   // players/ and, worse, would restore stale state onto a freshly spawned peer. Registered
   // at join and cleared at leave.
   private ephemeral = new Set<string>();
-  private positionOnly = new Set<string>();
 
   markEphemeral(key: string): void {
     this.ephemeral.add(key);
@@ -89,15 +88,6 @@ export class PlayerStore {
     this.dirty.delete(key);
   }
 
-  // The public lobby must not be able to write to a character (that is the duplicate-item
-  // firewall), but it MUST remember where you stood, or every trip back to the shared world
-  // dumps you at the default spawn. positionOnly keeps the loaded doc intact and drops every
-  // field mutation on the floor; the only thing that reaches disk is the live position, which
-  // flushKey folds into positions[worldId]. A character never saved here has no cached doc,
-  // so flushKey no-ops and the player spawns at the chargen exit — the correct first visit.
-  markPositionOnly(key: string): void {
-    this.positionOnly.add(key);
-  }
 
   // Withhold the DISK WRITE while a character is still in Morrowind's opening sequence. The
   // in-memory doc is built normally — quests, stats and position all work for the session —
@@ -200,10 +190,6 @@ export class PlayerStore {
     if (this.ephemeral.has(key)) return; // a sim peer has no character to save
     // Lobby: mark dirty so the sweep/logout flush records the live position, but never let
     // `fn` touch the doc — inventory, stats and quests earned here must not follow you home.
-    if (this.positionOnly.has(key)) {
-      this.dirty.add(key);
-      return;
-    }
     let doc = this.cache.get(key);
     if (!doc) {
       doc = {};

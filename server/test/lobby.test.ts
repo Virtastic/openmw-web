@@ -1,14 +1,20 @@
 // Copyright (C) 2025-2026 Virtastic - https://virtastic.app
 // SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
-// The shared PUBLIC world is a social lobby: its cells reset, so every container in it is an
-// infinite faucet and noDrop only strips unique corpses. Nothing done there may write back to
-// the character — you arrive with your gear and leave with exactly what you had.
+// The shared PUBLIC world is a social lobby: its cells reset, so QUEST PROGRESS and STANDING
+// earned there are meaningless and must not follow you home. Your character otherwise does —
+// what you carry, what you have learned, where you stood.
+//
+// It used to withhold EVERY write instead, as a duplicate-item firewall. That duplicated
+// items rather than preventing them: a withheld write is a withheld LOSS, so something
+// dropped in the shared world stayed on the ground there while the doc still claimed the
+// player carried it, and going home granted it straight back. Quests and standing are now
+// routed to nobody here (journalTarget, server.ts) and everything else is ordinary.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { startServer } from '../src/server';
 import { TestClient, tmpDataDir, readPlayerDoc } from './helpers';
 
-test('the shared public world never writes to the character doc', async (t) => {
+test('the shared world keeps what you carry, and refuses quest progress', async (t) => {
   const dataDir = tmpDataDir();
 
   // Own world first: that is where a character is made and where progress is real.
@@ -20,6 +26,9 @@ test('the shared public world never writes to the character doc', async (t) => {
   a.sendEvent('PlayerAppearance', {
     race: 'dark elf', head: 'h', hair: 'x', isMale: true, class: 'nightblade', name: 'Looter',
   });
+  // A character still IN creation has every write withheld, deliberately. Finish it, or this
+  // test measures the chargen guard instead of the lobby rule.
+  a.sendEvent('ChargenComplete', {});
   a.sendEvent('PlayerInventory', { items: [{ id: 'gold_001', n: 10 }] });
   a.close();
   await a.closed;
@@ -40,20 +49,29 @@ test('the shared public world never writes to the character doc', async (t) => {
   await b.waitJson('SessionWelcome');
   b.sendJson({ t: 'SessionReady' });
   await b.waitEvent('PlayerList');
-  b.sendEvent('PlayerInventory', { items: [{ id: 'gold_001', n: 999999 }] });
+  b.sendEvent('PlayerInventory', { items: [{ id: 'gold_001', n: 25 }] });
+  // Standing is routed like the journal now, so neither may survive the trip.
+  b.sendEvent('FactionUpdate', { factionId: 'fightersguild', rank: 9 });
+  b.sendEvent('CrimeUpdate', { bounty: 4000 });
   b.sendCellChange('0,0', 1, 2, 3);
   await b.waitEvent('PlayerCellChange');
   b.close();
   await b.closed;
   await lobby.flush();
 
-  assert.deepEqual(readPlayerDoc(dataDir, charId)?.['inventory'], [{ id: 'gold_001', n: 10 }],
-    'the lobby wrote to the character — every container there is a dupe faucet');
+  const after = readPlayerDoc(dataDir, charId);
+  // What you are CARRYING is yours wherever you go — including a loss. Withholding this is
+  // what let one item exist in two worlds at once.
+  assert.deepEqual(after?.['inventory'], [{ id: 'gold_001', n: 25 }],
+    'the shared world must record what the character is actually carrying');
+  // ...but nothing that amounts to campaign progress.
+  assert.equal(after?.['factions'], undefined, 'a guild rank earned in the shared world followed the player home');
+  assert.equal(after?.['bounty'], undefined, 'a bounty earned in the shared world followed the player home');
 });
 
-// ...but WHERE you stood is the one thing it must keep, per world. Without this every trip
-// back to the shared world respawned you at the default point instead of where you logged out.
-test('the lobby records position per-world without touching the rest of the character', async (t) => {
+// WHERE you stood is kept PER WORLD, so a trip back to the shared world returns you where you
+// left it rather than to the default spawn — and never disturbs your own world's position.
+test('the lobby records position per-world without clobbering another world', async (t) => {
   const dataDir = tmpDataDir();
   const solo = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1', worldMode: 'private' });
   const a = await TestClient.connect(solo.port);
@@ -63,6 +81,7 @@ test('the lobby records position per-world without touching the rest of the char
   a.sendEvent('PlayerAppearance', {
     race: 'dark elf', head: 'h', hair: 'x', isMale: true, class: 'nightblade', name: 'Wanderer',
   });
+  a.sendEvent('ChargenComplete', {});
   a.sendEvent('PlayerInventory', { items: [{ id: 'gold_001', n: 7 }] });
   a.sendCellChange('solo,cell', 11, 22, 33);
   await a.waitEvent('PlayerCellChange');
@@ -84,7 +103,9 @@ test('the lobby records position per-world without touching the rest of the char
   await b.waitJson('SessionWelcome');
   b.sendJson({ t: 'SessionReady' });
   await b.waitEvent('PlayerList');
-  b.sendEvent('PlayerInventory', { items: [{ id: 'gold_001', n: 999999 }] });
+  // Plausible, not absurd: MAX_COUNT is 10000 and the old 999999 was rejected outright by
+  // the validator — invisible while the test expected the write to be dropped anyway.
+  b.sendEvent('PlayerInventory', { items: [{ id: 'gold_001', n: 9000 }] });
   b.sendCellChange('lobby,cell', 44, 55, 66);
   await b.waitEvent('PlayerCellChange');
   b.close();
@@ -98,6 +119,6 @@ test('the lobby records position per-world without touching the rest of the char
   assert.equal(positions['vvardenfell']?.x, 44);
   assert.equal(positions[soloWorldId]?.cellKey, 'solo,cell',
     'the lobby clobbered the solo world position');
-  assert.deepEqual(doc?.['inventory'], [{ id: 'gold_001', n: 7 }],
-    'position persistence reopened the dupe faucet');
+  assert.deepEqual(doc?.['inventory'], [{ id: 'gold_001', n: 9000 }],
+    'the shared world must record what the character is carrying, losses included');
 });

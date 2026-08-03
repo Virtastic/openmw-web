@@ -622,22 +622,6 @@ export class Connection implements Peer {
       void done;
       return;
     }
-    if (name === 'RequestTravelTicket') {
-      // CHANGING WORLD MEANS AUTHENTICATING AGAIN. Every world is its own process with its own
-      // in-memory resume table, and the SSO login ticket is single-use and already spent on the
-      // first join — so a client dialling a second world had NO credential and was refused
-      // AUTH_FAILED every time. Under SSO-only there was no fallback, which made Public
-      // unreachable. This world already knows who this connection is, so it mints the next
-      // hop's ticket into the SHARED store the destination world reads.
-      //
-      // The account comes from the SESSION, never from the message: a client that could name
-      // its own account here could mint a ticket for somebody else. Single-use and short-lived,
-      // exactly like the one the front door issues after SSO.
-      const ticket = this.ctx.tickets.mint(this.player.accountKey, this.player.name);
-      log('info', 'travel.ticket_minted', { id: this.player.id });
-      this.player.peer.sendEvent('TravelTicket', { ticket });
-      return;
-    }
     if (name === 'SetWorldMode') {
       // The where-am-I switcher's Solo/Party flip for the OWNER of this world. Members change
       // worlds by dialling elsewhere (JoinFriend / PartyTravel), not by flipping this one.
@@ -1243,9 +1227,12 @@ export class Connection implements Peer {
     // Kills every dupe route at once, including ones nobody has thought of yet.
     // ponytail: reuses the sim-peer ephemeral flag; broadcasts are unaffected, only writes.
     if (this.isSystem) this.ctx.players.markEphemeral(this.player.charId);
-    // The lobby used to be fully ephemeral, which also threw away WHERE you were standing —
-    // so every return to the shared world respawned you at the default point. Position only.
-    else if (this.ctx.lobbyWorld) this.ctx.players.markPositionOnly(this.player.charId);
+    // NOTHING SPECIAL FOR THE SHARED WORLD ANY MORE. It used to withhold every write to a
+    // character as a duplicate-item firewall, which duplicated items instead: a withheld
+    // write is a withheld LOSS, so an item dropped there stayed on the ground in that world
+    // while the doc still claimed the player carried it, and going home granted it back.
+    // What actually needs freezing in a shared, resetting world is quest progress and
+    // standing, and journalTarget already routes both to nobody here (server.ts).
     // A character still IN character creation is not saved. Morrowind's opening is a scripted
     // sequence — the census office, the paperwork, the race/class/birthsign prompts — and a doc
     // captured partway through restores a half-built character into a script that has already

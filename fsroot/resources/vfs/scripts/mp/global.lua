@@ -929,9 +929,6 @@ local eventHandlers = {
     end,
     -- The credential for the next world, minted by the one we are still connected to. The
     -- pending switch is waiting on exactly this.
-    MP_TravelTicket = function(data)
-        net.travelTicket(tostring(data and data.ticket or ''))
-    end,
     -- The world telling us what it IS. Authoritative, sent at join and on every flip.
     -- Does the simulation peer hold authority yet? Mirrored to JS, where the loading screen
     -- waits on it. Nothing in Lua acts on this: the engine is perfectly happy simulating

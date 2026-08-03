@@ -70,9 +70,6 @@ local function mirrorTarget() mp.testSet('dialTarget', targetUrl()) end
 -- covers the window where a freshly created world is still booting. Cleared on Joined.
 local switchDeadline = nil
 -- Bounds the wait for a travel ticket, so a wedged world cannot strand a world switch.
-local ticketDeadline = nil
--- One retry of RequestTravelTicket before we give up and dial without a ticket.
-local ticketRetried = false
 -- True from the moment a world switch is requested until we ARRIVE somewhere. Kept because a
 -- switch must authenticate with its travel ticket, never with a resume token belonging to the
 -- world we are leaving.
@@ -211,51 +208,28 @@ end
 -- auth ladder: arriving at a new world is a fresh connection attempt, and carrying an
 -- exponential delay (or a spent resume token) over from the old one would make the first
 -- join look broken.
--- CHANGING WORLD MEANS AUTHENTICATING AGAIN, and we need a credential BEFORE we hang up.
--- Every world is its own process: the resume table is in that process's memory and the SSO
--- login ticket is single-use and already spent, so dialling a second world with what we hold
--- is a guaranteed AUTH_FAILED. Ask the world we are still connected to for the next hop's
--- ticket, and dial once it answers. If it never does, dial anyway rather than stranding the
--- player — the destination will refuse us and the normal error path explains why.
-local pendingSwitch = nil
-
--- Store a login ticket WITHOUT dialling. The page fetches these from /auth/ticket before a
--- world switch, because RequestTravelTicket can only be answered while we are still connected
--- — and the case that stranded players is precisely the one where we are NOT: after a drop,
--- switchTo falls straight through to dialNow carrying the ticket that got us into the world we
--- already left. Spent. The destination answers "login ticket expired or already used" and the
--- reconnect ladder repeats it.
-function net.setLoginTicket(ticket)
-    if type(ticket) ~= 'string' or ticket == '' then return end
-    net.loginTicket = ticket
-    if mp.setLoginTicket then mp.setLoginTicket(ticket) end
-end
-
-function net.travelTicket(ticket)
-    if type(ticket) == 'string' and ticket ~= '' then
-        net.loginTicket = ticket
-        if mp.setLoginTicket then mp.setLoginTicket(ticket) end
-    end
-    local url = pendingSwitch
-    pendingSwitch = nil
-    ticketDeadline = nil
-    ticketRetried = false
-    if url then net.dialNow(url) end
-end
-
+-- CHANGING WORLD RELOADS THE ENGINE. It does not redial.
+--
+-- A socket redial reuses the running engine, and the Morrowind world in memory is never
+-- reloaded — so everything the previous world put into it stays: objects on the ground,
+-- journal entries, mwscript globals, faction rank, crime level, revealed map, disabled refs,
+-- custom records, puppet scripts with AI still switched off. Each reset() below clears its
+-- OWN bookkeeping and undoes none of that, and the client has no complete list of what to
+-- undo — an item dropped in one world was then re-reported to the next as a fresh drop and
+-- written into its database for real.
+--
+-- So the page reboots into the destination instead, exactly the way the launcher boots a
+-- world in the first place. Nothing survives a reload, so no list has to be complete. The
+-- cost is a real load, which is honest: you ARE going somewhere else.
+--
+-- Reconnects are untouched — those go through dialNow and are a socket event, not a world
+-- change.
 function net.switchTo(url)
     if type(url) ~= 'string' or url == '' then return false end
-    -- Already connected: get a fresh ticket first. Not connected (nothing to ask), dial now.
-    if net.state == 'Joined' and pendingSwitch == nil then
-        switching = true
-        pendingSwitch = url
-        ticketRetried = false
-        mp.sendEvent('RequestTravelTicket', {})
-        -- Never wait forever on a world that may be wedged.
-        ticketDeadline = core.getRealTime() + 5
-        return true
-    end
-    return net.dialNow(url)
+    -- The page owns navigation; Lua cannot reload itself. It mints a fresh login ticket and
+    -- rebuilds the boot fragment for `url`.
+    mp.testSet('switchTo', url)
+    return true
 end
 
 function net.dialNow(url)
@@ -569,30 +543,6 @@ function net.tick()
     -- NOT connected. Real time throughout — onUpdate dt pauses with the world, and a paused
     -- tab must still redial.
     local now = core.getRealTime()
-    -- The world we asked for a travel ticket has not answered yet. Ask ONCE more before
-    -- giving up: the request is cheap and the world is often merely busy.
-    --
-    -- What must NOT happen is dialling with the ticket we are still holding. It is spent —
-    -- it is what got us into THIS world — so the destination answers "login ticket expired or
-    -- already used", the reconnect ladder retries the same dead credential, and the player
-    -- sees a switch that silently does nothing. That was the actual behaviour: six identical
-    -- AUTH_FAILEDs in the server log for one click on Public. Clearing it first means the
-    -- ladder falls through to a real credential, and a genuine failure surfaces as one.
-    if pendingSwitch and ticketDeadline and now >= ticketDeadline then
-        if not ticketRetried then
-            ticketRetried = true
-            ticketDeadline = now + 5
-            mp.sendEvent('RequestTravelTicket', {})
-            return
-        end
-        ticketDeadline = nil
-        ticketRetried = false
-        local url = pendingSwitch
-        pendingSwitch = nil
-        net.loginTicket = nil -- never dial with a credential we know is dead
-        net.dialNow(url)
-        return
-    end
     if reconnectAt and now >= reconnectAt then
         reconnectAt = nil
         if mp.connect(targetUrl()) then

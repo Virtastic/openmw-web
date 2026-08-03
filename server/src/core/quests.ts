@@ -356,9 +356,17 @@ export class Quests {
       return;
     }
     const state = { rank, ...(reputation !== undefined ? { reputation } : {}), ...(expelled !== undefined ? { expelled } : {}) };
-    this.ctx.players.update(player.charId, (doc) => {
-      (doc.factions ??= {})[factionId] = state;
-    });
+    // SAME ROUTING AS THE JOURNAL. Standing used to be written straight to player.charId
+    // while journal and globals went through journalTarget, so a guest's guild rank and
+    // bounty followed them home out of a campaign their own quest log knew nothing about —
+    // and the shared world, which persists no quest progress at all, still ranked them up.
+    // A visit either changes your character or it does not; it cannot be half of each.
+    const target = this.ctx.journalTarget(player);
+    if (target !== undefined) {
+      this.ctx.players.update(target, (doc) => {
+        (doc.factions ??= {})[factionId] = state;
+      });
+    }
     if (!this.ctx.isShared('factions')) return;
     const shared = this.ctx.cells.sharedQuest();
     shared.factions[factionId] = state;
@@ -373,7 +381,12 @@ export class Quests {
       this.drop(player, 'CrimeUpdate', 'invalid shape');
       return;
     }
-    this.ctx.players.update(player.charId, (doc) => (doc.bounty = bounty));
+    // Routed like the journal — see factionUpdate above. A bounty earned in someone else's
+    // world, or in the shared one, belongs to that world's campaign, not to the visitor.
+    const crimeTarget = this.ctx.journalTarget(player);
+    if (crimeTarget !== undefined) {
+      this.ctx.players.update(crimeTarget, (doc) => (doc.bounty = bounty));
+    }
     if (!this.ctx.isShared('crime')) return; // personal bounty
     const shared = this.ctx.cells.sharedQuest();
     shared.bounty = bounty;
