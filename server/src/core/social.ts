@@ -797,6 +797,12 @@ export class Social {
           return true;
         }
         void this.worlds.list(player).then((r) => {
+          // The Public switch has died silently at four different layers. This is the one the
+          // server can see: whether the list was asked for, and what came back.
+          log('info', 'world.list_served', {
+            account: player.name, error: r.error ?? '', count: r.worlds.length,
+            publicUp: r.worlds.filter((w) => w.mode === 'public' && w.up).length,
+          });
           // Mapped field by field rather than forwarded wholesale: the gateway's record
           // carries ownerAccount, and echoing another player's account key into a client
           // would leak identity the lobby has no business showing.

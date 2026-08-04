@@ -3172,7 +3172,14 @@
   async function rebootIntoWorld(wsUrl){
     var base = lockerHttpBase();
     var tok = window.__omwLockerToken || '';
-    if (!base || !tok) { append('[mp] cannot change world: no locker session', 'err'); return; }
+    if (!base || !tok) {
+      append('[mp] cannot change world: no locker session', 'err');
+      window.__omwLoading.hide();
+      showNotice('Could not change world',
+        'This session has lost its sign-in. Exit to the menu and sign in again — your character is safe on the server.',
+        GLYPH_WORLD, true);
+      return;
+    }
     window.__omwLoading.show('Changing world', 'Getting you a seat…');
     var ticket = '';
     try {
@@ -3185,6 +3192,9 @@
     if (!ticket) {
       window.__omwLoading.hide();
       append('[mp] could not get a login ticket for the new world', 'err');
+      showNotice('Could not change world',
+        'The server did not give this session a seat in the new world. Try again in a moment — '
+        + 'your character is safe and nothing was lost.', GLYPH_WORLD, true);
       return;
     }
     var frag = String(location.hash || '').replace(/^#/, '');
@@ -3561,6 +3571,22 @@
       setWhere(v);
       closeSocial();
       cmd('where:' + v);
+      // WATCHDOG. A Public switch crosses Lua, the server's world list, the gateway, a ticket
+      // mint and a page navigation, and EVERY one of those has failed silently at least once —
+      // the player is left staring at a loading screen that eventually clears, still in Solo,
+      // with nothing said. A real switch navigates away long before this fires, which cancels
+      // it for free; if we are still here, something on that chain died and the player is owed
+      // a sentence. ponytail: one timer beats plumbing a result back through four layers.
+      if (v === 'public') {
+        clearTimeout(window.__omwSwitchWatch);
+        window.__omwSwitchWatch = setTimeout(function(){
+          window.__omwLoading.hide();
+          setWhere(lastWhere);
+          showNotice('Could not reach the public world',
+            'The server did not hand this session over. You are still in your own world and '
+            + 'nothing was lost — try Public again in a moment.', GLYPH_WORLD, true);
+        }, 15000);
+      }
       // Solo <-> Party on your OWN world is an in-place flip (no reconnect); Public is a real
       // redial that must re-sync with the world's sim peer. Either way the wait is real, so
       // show it — the state watcher above hides it when the connection settles.
@@ -3732,9 +3758,14 @@
   // persistence, and it never suppresses a later one.
   var GLYPH_WORLD = '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><circle cx="24" cy="24" r="15"/><path d="M9 24h30M24 9c4 5 4 25 0 30M24 9c-4 5-4 25 0 30"/></svg>';
   var GLYPH_PARTY = '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><circle cx="18" cy="18" r="6"/><circle cx="32" cy="22" r="5"/><path d="M8 40c0-6 4.5-10 10-10s10 4 10 10"/><path d="M26 40c0-4.5 3.5-8 8-8s8 3.5 8 8"/></svg>';
-  function showNotice(title, body, glyph){
+  function showNotice(title, body, glyph, urgent){
     // Never talk over onboarding: those explain the same systems and are already on screen.
-    if (tourEl.classList.contains('show')) return;
+    // EXCEPT a failure the player is actively waiting on. The Public switch fails at the one
+    // moment the 'unlocked' tour is guaranteed to be up — the click right after chargen — so
+    // this guard swallowed the only explanation there was, and the switch read as "nothing
+    // happened". An informational notice can wait; a failure cannot.
+    if (!urgent && tourEl.classList.contains('show')) return;
+    if (urgent) closeTour();
     tourDeck = [{ t: title, b: body, g: glyph || GLYPH_WORLD }];
     tourKey = null;
     tourIdx = 0; renderTour();
