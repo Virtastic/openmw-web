@@ -588,7 +588,7 @@
      // on its first real frame, so it covers the whole boot (wasm + game data + init) end to end.
      const rendering = !!(window.Module && window.Module.__omwRunning !== undefined);
      const running = rendering || !!(window.Module && window.Module._omw_pump_frame);
-     if (rendering && window.__omwLoading) window.__omwLoading.done();
+     if (rendering && window.__omwLoading && !window.__omwMPSettling) window.__omwLoading.done();
      // Save Backup/Restore toolbar is opt-in (?savetools=1) — hidden by default so it never sits in
      // the chrome. The tar backup/restore functionality stays wired up; only the buttons are gated.
      if (rendering && /[?&]savetools=1\b/.test(location.search)) { var st=document.getElementById('savetools'); if (st) st.classList.add('show'); }
@@ -1103,6 +1103,13 @@
                     + '. Open the launcher fresh instead of reusing an old link.','err');
            } else {
              window.__omwMPEnabled = true;
+             // ONE CONTINUOUS SCREEN. The engine calls __omwLoading.done() on its first frame,
+             // which lands BEFORE the multiplayer session has joined and settled — so holding
+             // for the settle after that would hide the screen and immediately bring it back,
+             // the flicker this is meant to remove. While this flag is set the boot screen is
+             // not dismissed on first frame; holdUntilSimulated clears it when the world has
+             // actually settled (or when it gives up).
+             window.__omwMPSettling = true;
              ENV.OPENMW_MP_URL = mpUrl;
              // NOTE ON URL FLAGS — deliberately NOT blocked here, and the reasoning matters.
              //
@@ -3317,7 +3324,7 @@
     }, 250);
   })();
 
-  function holdUntilSimulated(ceilingMs){
+  function holdUntilSimulated(ceilingMs, opts){
     // A SETTLING GRACE AFTER READY, not a floor before it.
     //
     // "Ready" means the destination world has a peer holding cells — it does NOT mean the
@@ -3331,9 +3338,23 @@
     // elapsed, so the screen still cleared the moment the world said ready.
     var GRACE_MS = 5000;
     var until = Date.now() + (ceilingMs || 30000), said = false, readyAt = 0;
-    // simReady still describes the world being LEFT until the disconnect lands, so clear it
-    // synchronously — otherwise the first poll passes on stale state and nothing waits at all.
-    try { if (window.__omwMP) window.__omwMP.simReady = '0'; } catch (e) {}
+    // Every exit goes through here: the boot screen must never be left up because a world
+    // never reported ready, and the first-frame handler must be released either way.
+    var settled = function(){
+      window.__omwMPSettling = false;
+      window.__omwLoading.hide();
+    };
+    // simReady still describes the world being LEFT until the disconnect lands, so an
+    // IN-PLACE switch clears it synchronously — otherwise the first poll passes on stale state
+    // and nothing waits at all.
+    //
+    // A FRESH BOOT must not clear it. There is no previous world, and the server sends
+    // SimReady on join (that is how an already-simulated world announces itself), so wiping a
+    // value that has already arrived means waiting out the whole ceiling on a world that was
+    // ready before we looked — a 30-second hang in place of the settle it was meant to cover.
+    if (!(opts && opts.fresh)) {
+      try { if (window.__omwMP) window.__omwMP.simReady = '0'; } catch (e) {}
+    }
     (function poll(){
       var st = window.__omwMP || {};
       var ready = (st.state || '') === 'Joined' && st.simReady === '1';
@@ -3346,9 +3367,9 @@
       // Once ready, the grace runs to completion — the ceiling below only bounds the WAIT for
       // readiness, and cutting the grace short would hand back the seconds it exists to cover.
       if (readyAt) {
-        if (Date.now() - readyAt >= GRACE_MS) { window.__omwLoading.hide(); return; }
+        if (Date.now() - readyAt >= GRACE_MS) { settled(); return; }
       } else {
-        if (Date.now() > until) { window.__omwLoading.hide(); return; } // let the net layer speak
+        if (Date.now() > until) { settled(); return; } // let the net layer speak
         if (!said && (st.state || '') === 'Joined') {
           said = true;
           window.__omwLoading.show('Almost there', 'Waiting for the world to be simulated…');
@@ -3928,10 +3949,20 @@
         if (!everJoinedOnce) { /* first boot: the normal loading screen already owns this */ }
         else window.__omwLoading.show('Reconnecting', 'Putting you back in the world…');
       } else if (ns === 'Joined'){
+        var firstJoin = !everJoinedOnce;
         everJoinedOnce = true;
-        window.__omwLoading.hide();
-        // (resumePointerLock() used to be called here and was never defined anywhere — the
-        // canvas click handler re-grabs the lock on the next click, so there is nothing to do.)
+        // RUBBER BANDING ON ARRIVAL. "Joined" only means the socket authenticated — the sim
+        // peer may not hold the cells yet, the actors around you have not had a first pose,
+        // and the server is still correcting your position toward the one it restored. Hiding
+        // on that instant drops the player into exactly the seconds of settling the screen
+        // exists to cover, and they watch themselves snap around.
+        //
+        // holdUntilSimulated already waits for simReady plus a settling grace, but it was
+        // wired ONLY to the two in-place switcher clicks. Every boot went straight to hide()
+        // — and since a world change now REBOOTS the page, every world switch is a boot, so
+        // the one path that most needed the wait was the one that never got it.
+        if (firstJoin && window.__omwMPEnabled) holdUntilSimulated(30000, { fresh: true });
+        else window.__omwLoading.hide();
       }
       // Failed has exactly ONE owner: the mpErrorModal watcher below. Handling it here too
       // stacked two different-looking modals on the same event.
@@ -4056,6 +4087,14 @@
     }
     if (ready) noticeWatch(m);
     profileWatch(m);
+    // THE PICKER MUST NOT BE BURIED. Holding the boot screen until the world settles assumes
+    // the session reaches Joined — but a player who still has to choose a public handle is
+    // parked at ProfileNeeded and never gets there, so the screen would sit on top of the very
+    // picker that unblocks it (the same trap awaitRestore already documents). Release it.
+    if (window.__omwMPSettling && String(m.profileRequired || '') === 'true') {
+      window.__omwMPSettling = false;
+      window.__omwLoading.hide();
+    }
     // Before creation: say WHY the online parts are missing, rather than leaving a player to
     // wonder. Gated on being in-world so it lands on the game, not on a black boot screen.
     if (!ready && (m.state || '') === 'Joined' && !tourSeen('intro')) openTour('intro');
