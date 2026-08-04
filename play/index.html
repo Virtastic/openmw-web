@@ -35,6 +35,12 @@
    padding:24px;text-align:center;background:#0c0a09;color:#ece0c6;
    font:16px/1.6 "Optima","Gill Sans","Gill Sans MT",-apple-system,"Segoe UI",Roboto,sans-serif;
    transition:opacity .6s ease}
+ /* NEVER a click trap. This is a full-viewport z-9000 sheet, and only `.hide` used to make
+    it click-through — so while the world-switch lock held it up, every click aimed at chat
+    (z 50) or social (z 60) landed here instead and the game felt dead. The panel itself takes
+    pointer events for its own controls; the backdrop does not. */
+ #loading{pointer-events:none}
+ #loading .ld-inner{pointer-events:auto}
  #loading.hide{opacity:0;pointer-events:none}
  #loading::before{content:'';position:absolute;inset:0;pointer-events:none;
    background:radial-gradient(150% 72% at 50% 132%, rgba(198,90,46,.30), rgba(198,90,46,.05) 34%, transparent 60%),
@@ -1158,6 +1164,14 @@
                if (lk) append('[mp] linked ' + decodeURIComponent(lk[1]) + ' to your account');
                if (er) append('[mp] sign-in failed: ' + decodeURIComponent(er[1]), 'err');
                if (tk || lk || er) {
+                 // KEEP THE FRAGMENT BEFORE ERASING IT FROM THE URL. The scrub exists so a
+                 // single-use ticket cannot be replayed from history — but a world switch
+                 // rebuilds the destination fragment from this one, and launcher.html ALWAYS
+                 // sends mpticket, so the scrub always ran and the switch always rebuilt from
+                 // an empty string. Everything the destination needs (mplocker, locker,
+                 // mpaccount, mpchar, mpcharname) was dropped. Held in memory instead, minus
+                 // the single-use credential itself.
+                 window.__omwBootFrag = String(location.hash || '').replace(/^#/, '');
                  history.replaceState(null, '', location.pathname + location.search);
                }
              } catch(e){ append('[mp sso err] ' + e, 'err'); }
@@ -3184,6 +3198,17 @@
   // display name, all of which are unchanged by moving world. Only the destination and the
   // ticket differ. mpstart/mpnew are dropped — the server owns where you arrive.
   async function rebootIntoWorld(wsUrl){
+    // EVERY caller gets a watchdog, not just Public. Party travel, join-a-friend and the
+    // character switch all land here, and a hung gateway used to strand them behind a locked
+    // loading screen forever with nothing said — only the Public click handler had cover.
+    // A real switch navigates away, which cancels this for free.
+    clearTimeout(window.__omwRebootWatch);
+    window.__omwRebootWatch = setTimeout(function(){
+      window.__omwLoading.unlock();
+      showNotice('Could not change world',
+        'The server did not hand this session over. You are still where you were and nothing '
+        + 'was lost — try again in a moment.', GLYPH_WORLD, true);
+    }, 20000);
     var base = window.__lockerHttpBase ? window.__lockerHttpBase() : '';
     var tok = window.__omwLockerToken || '';
     if (!base || !tok) {
@@ -3198,7 +3223,10 @@
     window.__omwLoading.show('Changing world', 'Getting you a seat…');
     var ticket = '';
     try {
-      var r = await fetch(base + '/auth/ticket', { method: 'POST', headers: { authorization: 'Bearer ' + tok } });
+      // Bounded: an unreachable gateway used to leave the player behind a locked loading
+      // screen with nothing said, because only the Public path had a watchdog.
+      var r = await fetch(base + '/auth/ticket', { method: 'POST',
+        headers: { authorization: 'Bearer ' + tok }, signal: AbortSignal.timeout(10000) });
       if (r.ok) ticket = (await r.json()).ticket || '';
     } catch (e) { /* reported below */ }
     // A login ticket is single use, so the one that got us HERE is spent. Without a fresh one
@@ -3206,14 +3234,15 @@
     // which is what made a switch look like it silently did nothing.
     if (!ticket) {
       window.__omwLoading.unlock();
-      clearTimeout(window.__omwSwitchWatch);
+      clearTimeout(window.__omwSwitchWatch); clearTimeout(window.__omwRebootWatch);
       mpLog('[mp] could not get a login ticket for the new world', 'err');
       showNotice('Could not change world',
         'The server did not give this session a seat in the new world. Try again in a moment — '
         + 'your character is safe and nothing was lost.', GLYPH_WORLD, true);
       return;
     }
-    var frag = String(location.hash || '').replace(/^#/, '');
+    // location.hash is empty by now — the boot scrub cleared it (see __omwBootFrag).
+    var frag = String(window.__omwBootFrag || location.hash || '').replace(/^#/, '');
     // A character switch rides the mirror: Lua state dies with the reload, so without this
     // the reused fragment's mpchar rebooted the OLD character and the click did nothing.
     var swChar = String((window.__omwMP || {}).switchChar || '');
@@ -3226,7 +3255,24 @@
     if (swChar) keep.push('mpchar=' + encodeURIComponent(swChar));
     // Flush saves and settings before the navigation, exactly as a tab close would.
     try { if (window.__omwSync) window.__omwSync(); } catch (e) {}
-    location.href = 'index.html#' + keep.join('&');
+    // The beforeunload guard asks "leave site?" whenever the engine is running. This IS a
+    // deliberate leave, so say so — the Exit button already does this and the reboot did not.
+    window.__omwAllowLeave = true;
+    // A RELOAD, NOT A FRAGMENT CHANGE. This page IS index.html, so assigning
+    // 'index.html#...' is a same-document navigation: the browser fires hashchange and does
+    // NOT reload. Nothing listens for hashchange, so the switch was a silent no-op — the
+    // engine stayed socketed to the old world and the server never saw a dial. It looked
+    // right because the identical line in launcher.html works, where the document differs.
+    // Set the hash first, then force the reload, so the destination boots from the new
+    // fragment whether or not the path happens to match.
+    var url = new URL('index.html', location.href);
+    url.hash = keep.join('&');
+    if (url.pathname === location.pathname && url.search === location.search) {
+      location.hash = keep.join('&');
+      location.reload();
+    } else {
+      location.assign(url.toString());
+    }
   }
 
   // SCRIPT BLOCKS DO NOT SHARE LOCALS. append() and lockerHttpBase() are declared INSIDE
@@ -3840,6 +3886,15 @@
   // them. Cleared on every notice edge, not only inside the branch that consumed it: it used
   // to latch true whenever the edge never fired, suppressing the NEXT genuine notice.
   var selfTravel = false;
+  // DECLARED, because reading an undeclared identifier THROWS. These two were assigned but
+  // never declared, so noticeWatch threw a ReferenceError on its very first tick — and it runs
+  // every 150 ms from the mirror poll, gated on `ready`, which turns true the moment chargen
+  // finishes. Everything after the noticeWatch call in that callback was therefore dead from
+  // that instant: the chat feed never re-rendered (so a sent line never echoed and nothing
+  // incoming appeared), Lua could not open the chat panel, social acks never landed. That is
+  // the "I cannot send messages" bug, and it was invisible to every test because nothing in
+  // CI ever loads this page. See pagescope.test.ts, which now fails on undeclared identifiers.
+  var seenNetState = null, everJoinedOnce = false;
   function noticeWatch(m){
     var ns = m.netstate == null ? '' : String(m.netstate);
     if (ns !== seenNetState){
@@ -3858,7 +3913,8 @@
       } else if (ns === 'Joined'){
         everJoinedOnce = true;
         window.__omwLoading.hide();
-        resumePointerLock();
+        // (resumePointerLock() used to be called here and was never defined anywhere — the
+        // canvas click handler re-grabs the lock on the next click, so there is nothing to do.)
       }
       // Failed has exactly ONE owner: the mpErrorModal watcher below. Handling it here too
       // stacked two different-looking modals on the same event.

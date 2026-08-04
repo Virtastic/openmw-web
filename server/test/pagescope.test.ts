@@ -80,3 +80,46 @@ test('no script block calls a function that is local to another block', {
     'a block-local function is called from another script block — that is a ReferenceError '
     + 'at runtime, which is how the world switch broke silently');
 });
+
+// UNDECLARED IDENTIFIERS. `seenNetState`, `everJoinedOnce` and `resumePointerLock` were read
+// and assigned in noticeWatch while being declared NOWHERE in the file. Reading an undeclared
+// identifier throws, so that function died on its first tick — and it runs every 150 ms from
+// the mirror poll, gated on a flag that turns true the moment chargen finishes. Everything
+// after it in that callback was dead from that instant, which is why chat stopped echoing.
+//
+// The function-scope check above could not see this: these names are declared in no block at
+// all, so they never enter its map. Same runtime-ReferenceError class, different shape.
+test('no script block reads an identifier that is never declared anywhere', {
+  skip: existsSync(PAGE) ? false : 'play/index.html is not in this build context',
+}, () => {
+  const html = readFileSync(PAGE, 'utf8');
+  const blocks = scriptBlocks(html);
+  const all = blocks.join('\n');
+
+  // Names ASSIGNED bare (`x = ...`) anywhere. An assignment to an undeclared name is the
+  // signature of the bug: someone meant a variable and never declared one.
+  const assigned = new Set<string>();
+  for (const m of all.matchAll(/(?:^|[;{}\n])\s*([A-Za-z_$][\w$]*)\s*=(?!=)/g)) {
+    assigned.add(m[1]!);
+  }
+
+  const declared = (name: string): boolean =>
+    new RegExp(`\\b(?:var|let|const)\\s+(?:[\\w$]+\\s*(?:=[^;\\n]*)?,\\s*)*${name}\\b`).test(all)
+    || new RegExp(`function\\s+${name}\\s*\\(`).test(all)
+    // a parameter of ANY function form: named, anonymous, or arrow
+    || new RegExp(`function[^(]*\\([^)]*\\b${name}\\b[^)]*\\)`).test(all)
+    || new RegExp(`\\(([^)]*\\b${name}\\b[^)]*)\\)\\s*=>`).test(all)
+    || new RegExp(`\\bcatch\\s*\\(\\s*${name}\\b`).test(all)
+    || new RegExp(`\\bfor\\s*\\(\\s*(?:var|let|const)\\s+${name}\\b`).test(all);
+
+  // Globals the page legitimately assigns through (window.*, DOM, engine).
+  const GLOBALS = new Set(['window', 'document', 'location', 'Module', 'ENV', 'self', 'globalThis']);
+
+  const undeclared = [...assigned]
+    .filter((n) => !GLOBALS.has(n) && !declared(n))
+    .sort();
+
+  assert.deepEqual(undeclared, [],
+    'an identifier is assigned but never declared — reading it throws ReferenceError at '
+    + 'runtime and silently kills the rest of its function');
+});

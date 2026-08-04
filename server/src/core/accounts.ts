@@ -200,6 +200,39 @@ export class AccountStore {
     return row?.accountKey;
   }
 
+  /** Read-modify-WRITE-THROUGH under one synchronous critical section.
+   *
+   *  THE CHARACTER-LOSS BUG. flush() writes `this.cache.get(key)` — the CACHED object — while
+   *  get() replaced that cached object on every read-through miss. ChargenComplete issues two
+   *  concurrent get()s on the same account, so the second one swapped the cache to a fresh
+   *  object B while the caller still held A; adoptCharacter then pushed the character onto A
+   *  and flush() wrote B. The player finished creation, the log said character.created, and
+   *  the account kept zero slots — five finished characters were orphaned this way on the dev
+   *  server, their PlayerDocs intact and nothing pointing at them.
+   *
+   *  Object identity was load-bearing and invisible. It is not any more: mutations re-read by
+   *  KEY, apply, and write immediately (node:sqlite is synchronous, so this whole body runs
+   *  without interleaving). A caller's stale Account reference is simply ignored. */
+  private mutate<T>(account: Account, fn: (doc: Account) => T | undefined): T | undefined {
+    const key = account.name.toLowerCase();
+    // Fold what is on disk INTO the caller's object rather than building a rival copy, so
+    // every holder of this account converges on one identity instead of diverging. Callers
+    // read their own reference back immediately (Welcome lists account.characters), so a
+    // mutation applied to a private copy is invisible to them — and a mutation applied to
+    // THEIR copy while flush wrote a different one is how characters got lost.
+    const row = this.db.prepare('SELECT doc FROM accounts WHERE key = ?').get(key) as
+      { doc: string } | undefined;
+    if (row) {
+      try { Object.assign(account, JSON.parse(row.doc) as Account); } catch { /* keep ours */ }
+    }
+    const out = fn(account);
+    if (out === undefined) return undefined; // the mutation declined; nothing to write
+    this.writeNow(key, account); // keeps the cross-process character merge + tombstones
+    this.cache.set(key, account); // this object is now THE cached one
+    this.dirty.delete(key); // written through: no queued copy may overwrite it later
+    return out;
+  }
+
   async get(name: string): Promise<Account | undefined> {
     const key = name.toLowerCase();
     const cached = this.cache.get(key);
@@ -279,20 +312,26 @@ export class AccountStore {
   /** Write a provisional character into the account, now that creation has finished. Same cap
    *  as createCharacter — the check has to happen HERE, since nothing was reserved up front. */
   adoptCharacter(account: Account, charId: string, name: string): CharacterSummary | 'full' | 'exists' {
-    const chars = (account.characters ??= []);
-    if (chars.some((c) => c.id === charId)) return 'exists';
-    if (chars.length >= MAX_CHARACTERS) return 'full';
-    const now = new Date().toISOString();
-    const char: CharacterSummary = { id: charId, name, createdAt: now, lastPlayedAt: now, completed: true };
-    chars.push(char);
-    this.dirty.add(account.name.toLowerCase());
-    void this.flush();
-    return char;
+    return this.mutate(account, (doc) => {
+      const chars = (doc.characters ??= []);
+      if (chars.some((c) => c.id === charId)) return 'exists' as const;
+      if (chars.length >= MAX_CHARACTERS) return 'full' as const;
+      const now = new Date().toISOString();
+      const char: CharacterSummary = { id: charId, name, createdAt: now, lastPlayedAt: now, completed: true };
+      chars.push(char);
+      return char;
+    }) ?? 'full';
   }
 
   createCharacter(account: Account, name: string): CharacterSummary | 'full' {
-    const chars = (account.characters ??= []);
-    if (chars.length >= MAX_CHARACTERS) return 'full';
+    return this.mutate(account, (doc) => {
+      const chars = (doc.characters ??= []);
+      if (chars.length >= MAX_CHARACTERS) return 'full' as const;
+      return this.buildCharacter(chars, name);
+    }) ?? 'full';
+  }
+
+  private buildCharacter(chars: CharacterSummary[], name: string): CharacterSummary {
     const now = new Date().toISOString();
     const char: CharacterSummary = {
       // 'c' + 24 hex chars: never collides with a legacy account-keyed doc (those are
@@ -303,7 +342,6 @@ export class AccountStore {
       lastPlayedAt: now,
     };
     chars.push(char);
-    this.dirty.add(account.name.toLowerCase());
     return char;
   }
 
@@ -312,11 +350,12 @@ export class AccountStore {
   // disk — the slot then looked like an unfinished creation on the next login. It fires once
   // per character, so the cost is nothing.
   completeCharacter(account: Account, charId: string): void {
-    const char = account.characters?.find((c) => c.id === charId);
-    if (!char || char.completed) return;
-    char.completed = true;
-    this.dirty.add(account.name.toLowerCase());
-    void this.flush();
+    this.mutate(account, (doc) => {
+      const char = doc.characters?.find((c) => c.id === charId);
+      if (!char || char.completed) return undefined;
+      char.completed = true;
+      return true as const;
+    });
   }
 
   // Delete a character slot. The slot record goes; the character's PlayerDoc is erased by the
@@ -327,13 +366,18 @@ export class AccountStore {
     if (!chars) return false;
     const i = chars.findIndex((c) => c.id === charId);
     if (i < 0) return false;
-    chars.splice(i, 1);
-    const tomb = account.deletedCharacters ?? [];
-    if (!tomb.includes(charId)) tomb.unshift(charId);
-    account.deletedCharacters = tomb.slice(0, 64);
-    this.dirty.add(account.name.toLowerCase());
-    void this.flush();
-    return true;
+    void chars; void i;
+    return this.mutate(account, (doc) => {
+      const list = doc.characters;
+      if (!list) return undefined;
+      const at = list.findIndex((c) => c.id === charId);
+      if (at < 0) return undefined;
+      list.splice(at, 1);
+      const tomb = doc.deletedCharacters ?? [];
+      if (!tomb.includes(charId)) tomb.unshift(charId);
+      doc.deletedCharacters = tomb.slice(0, 64);
+      return true as const;
+    }) === true;
   }
 
   // Chargen is where a character is really named; the name reaches the server in the
@@ -346,17 +390,22 @@ export class AccountStore {
     // had chosen it — and then this guard refused every later correction, because the slot no
     // longer looked like a placeholder. Reject the placeholder on the way in as well as out.
     if (PLACEHOLDER_NAMES.has(name.trim().toLowerCase())) return;
-    if (!char || char.name === name || !PLACEHOLDER_NAMES.has(char.name.toLowerCase())) return;
-    char.name = name;
-    this.dirty.add(account.name.toLowerCase());
-    void this.flush();
+    void char;
+    this.mutate(account, (doc) => {
+      const c = doc.characters?.find((x) => x.id === charId);
+      if (!c || c.name === name || !PLACEHOLDER_NAMES.has(c.name.toLowerCase())) return undefined;
+      c.name = name;
+      return true as const;
+    });
   }
 
   touchCharacter(account: Account, charId: string): void {
-    const char = account.characters?.find((c) => c.id === charId);
-    if (!char) return;
-    char.lastPlayedAt = new Date().toISOString();
-    this.dirty.add(account.name.toLowerCase());
+    this.mutate(account, (doc) => {
+      const char = doc.characters?.find((c) => c.id === charId);
+      if (!char) return undefined;
+      char.lastPlayedAt = new Date().toISOString();
+      return true as const;
+    });
   }
 
   // Onboarding. Sets/changes the unique public handle. The index write is awaited (a

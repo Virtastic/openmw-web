@@ -200,3 +200,35 @@ test('a deleted character is not resurrected by a stale flush', async () => {
   assert.equal((await after.get('traveller'))?.characters?.length ?? 0, 0,
     'a deleted character came back');
 });
+
+// OBJECT IDENTITY WAS LOAD-BEARING AND INVISIBLE — the character-loss bug.
+// flush() wrote `cache.get(key)` while get() replaced that cached object on every
+// read-through. ChargenComplete (connection.ts) issues TWO concurrent get()s on the same
+// account, so the second swapped the cache to object B while the caller still held A;
+// adoptCharacter pushed the character onto A and flush() wrote B. The player finished
+// creation, the log said character.created, and the account kept ZERO slots. Five finished
+// characters were orphaned on the dev server exactly this way.
+test('a character adopted through an earlier reference still reaches disk', async () => {
+  const dir = tmpDataDir();
+  const store = new AccountStore(dir);
+  const acct = await store.register('Traveller', 'hunter22');
+  assert.ok(typeof acct !== 'string');
+  await store.flush();
+
+  // Exactly what ChargenComplete does: two concurrent reads of the same account.
+  const [first, second] = await Promise.all([store.get('traveller'), store.get('traveller')]);
+  assert.ok(first);
+  assert.ok(second);
+
+  // Adopt through the FIRST reference — the one the cache no longer points at.
+  const r = store.adoptCharacter(first, 'c' + 'ab'.repeat(12), 'Virtastic');
+  assert.notEqual(r, 'full');
+  assert.notEqual(r, 'exists');
+
+  const reread = new AccountStore(dir);
+  const seen = await reread.get('traveller');
+  assert.equal(seen?.characters?.length, 1,
+    'the finished character never reached disk — written to an object the flush discarded');
+  assert.equal(seen?.characters?.[0]?.name, 'Virtastic');
+  assert.equal(seen?.characters?.[0]?.completed, true);
+});
