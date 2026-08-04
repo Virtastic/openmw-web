@@ -22,9 +22,15 @@ import { writeFileSync } from 'node:fs';
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url))); // repo root
 const SCENARIO_DIR = join(ROOT, 'wasm-build', 'mp-scenarios');
-const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+// CHROME_BIN overrides the path. The suite was macOS-only by hardcode, so it could only run
+// on the developer's own machine — where six concurrent engine boots fight the daily driver,
+// which is why it stopped being run at all. The build server has 32 cores and no one using it.
+const CHROME = process.env.CHROME_BIN || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const PLAY_PORT = 8910; // fixed in play/server.py (no port flag); we reuse a live one if present
-const JOIN_TIMEOUT_MS = 120_000; // full engine boot to world + MP join; ~30-60s typical
+// Full engine boot to world + MP join; ~30-60s on a real GPU. SwiftShader (a CI box with no
+// GPU) is several times slower and the engine is genuinely making progress the whole time, so
+// a fixed 120s reported a stall that was really just software rasterisation.
+const JOIN_TIMEOUT_MS = Number(process.env.JOIN_TIMEOUT_MS || 120_000);
 const RUN_ID = Date.now().toString(36); // suffix for account names -> no cross-run collisions
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -205,6 +211,9 @@ async function launchClient(name, mpPort, extraParams = '', opts = {}) {
     + extraParams;
   const chrome = spawn(CHROME, [
     '--headless=new', ...glArgs,
+    // --no-sandbox only off the developer machine: Chrome's sandbox needs user namespaces
+    // that a CI VM usually does not grant, and it fails to launch at all rather than warning.
+    ...(process.env.CHROME_BIN ? ['--no-sandbox'] : []),
     '--disable-gpu-sandbox', '--no-first-run', '--no-default-browser-check',
     '--user-data-dir=' + profile, '--remote-debugging-port=0',
     '--window-size=1280,720', 'about:blank',
@@ -423,7 +432,12 @@ for (const file of files) {
             // here is bimodal — a client either boots in tens of seconds or wedges forever —
             // so a bigger number past this point only delays the report of a hang.
             joinTimeoutMs: (opts ?? {}).joinTimeoutMs
-              ?? Math.min(180_000, JOIN_TIMEOUT_MS + clients.length * 30_000),
+              // The cap tracks JOIN_TIMEOUT_MS rather than being a bare 180s: the bimodal
+              // reasoning above holds on a GPU, but SwiftShader (a CI box with no GPU) boots
+              // several times slower while genuinely progressing, and the fixed cap silently
+              // overrode an explicitly raised budget and reported a stall that was not one.
+              ?? Math.min(Math.max(180_000, JOIN_TIMEOUT_MS),
+                          JOIN_TIMEOUT_MS + clients.length * 30_000),
           }));
         bootQueue = mine.catch(() => {}); // a failed boot must not wedge the queue
         const c = await mine;
