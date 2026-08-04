@@ -144,6 +144,9 @@ export async function startTestBots(deps: TestBotDeps): Promise<RunningTestBots>
     });
 
     self = roster.addAuthed(name, accountKey, 0, peer, '127.0.0.1');
+    // Visible, not present: shown in every player-facing list, but never counted as an
+    // occupant for capacity or world lifecycle. See Player.bot.
+    self.bot = true;
     self.charId = charId;
     self.cellKey = spawn.cellKey;
     // A pose, so the movement broadcaster has something to send and the bot stands somewhere

@@ -40,6 +40,12 @@ export interface Player {
   // Headless sim peer (Phase H): kept out of every human-facing count/list. See
   // roster.humanCount() / humansInWorld().
   system?: boolean;
+  /** DEV/TEST BOT (dev/testbots.ts). Visible everywhere a player is — the Players panel,
+   *  friend rows, party rows — because that is what it exists for. But NOT an occupant: it
+   *  must not keep a world looking busy (the gateway's idle reaper and the sim peer's sleep
+   *  both read the human count), and it must not eat a maxPlayers slot a real player then
+   *  cannot use. Visible, not present. */
+  bot?: boolean;
   // STILL CREATING A CHARACTER. True from auth until the client reports ChargenComplete
   // (engine chargenstate == -1). While it is set, no cell this player occupies may be
   // simulated by the peer: Morrowind's own scripts drive the opening — the prison ship, the
@@ -69,8 +75,10 @@ export class Roster {
   // human-facing surface uses these; the simulation paths (broadcaster, authority) still use
   // count/inWorld() because the peer is very much a real occupant THERE.
   get humanCount(): number {
+    // CAPACITY AND LIFECYCLE. Excludes bots as well as system peers: a world holding only
+    // bots is an EMPTY world, or it never idles and its headless engine never sleeps.
     let n = 0;
-    for (const p of this.byId.values()) if (!p.system) n++;
+    for (const p of this.byId.values()) if (!p.system && !p.bot) n++;
     return n;
   }
 

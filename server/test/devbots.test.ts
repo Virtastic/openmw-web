@@ -140,3 +140,77 @@ test('without configured content ids a bot is social-only, never half-dressed', 
   assert.equal(doc?.appearance, undefined, 'a partial appearance would withhold the record');
   assert.ok(doc?.position, 'it still stands somewhere');
 });
+
+// PRESSURE: A WORLD FULL OF BOTS IS AN EMPTY WORLD. Bots are not system peers, so every
+// human-facing count included them — which means /status connectedCount never reaches zero,
+// the gateway's idle reaper never fires, and the sim peer never goes idle. A dev server with
+// bots on would hold a world (and a headless engine) open forever, and every bot would eat a
+// maxPlayers slot that a real player could not then use. They must be visible WITHOUT being
+// occupants for the purposes of capacity and lifecycle.
+test('bots do not hold a world open or consume player slots', async (t) => {
+  const server = await startServer({
+    requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
+    configOverride: { ...BOTS, server: { maxPlayers: 4 } } as never,
+  });
+  t.after(() => server.close());
+
+  // The visible roster shows them — that is the whole point of the feature.
+  const names = server.api.players().map((p) => p.name);
+  assert.ok(names.includes('Bot1') && names.includes('Bot2'), 'bots must be visible to players');
+
+  // /status is what the GATEWAY reads to decide whether a world is occupied, and what the
+  // world itself reads to decide whether the sim peer may sleep.
+  const st = await (await fetch(`http://127.0.0.1:${server.port}/status`)).json() as
+    { playerCount: number; connectedCount: number };
+  assert.equal(st.connectedCount, 0,
+    'bots counted as connected humans: the world never idles, the sim peer never sleeps, '
+    + 'and each bot eats a maxPlayers slot a real player then cannot use');
+});
+
+// PRESSURE: the flows a video (or a bored tester) will actually hit — repeatedly, out of
+// order, and from more than one person. A bot that only works once, or that answers a request
+// it should refuse, is worse than no bot: it would "prove" a broken feature works.
+test('bots survive repeat invites, several humans, and refusals', async (t) => {
+  const server = await startServer({
+    requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
+    configOverride: { dev: { bots: 4, botPrefix: 'Bot' }, login: { allowHarnessAuth: true } } as never,
+  });
+  t.after(() => server.close());
+
+  const a = await TestClient.connect(server.port);
+  t.after(() => a.close());
+  await a.joinAsNew('Ann', 'hunter22');
+  const b = await TestClient.connect(server.port);
+  t.after(() => b.close());
+  await b.joinAsNew('Bob', 'hunter22');
+
+  // 1. Two humans befriend the SAME bot. A bot is not exclusive.
+  a.sendEvent('FriendRequest', { name: 'Bot1' });
+  await a.waitEvent('FriendList',
+    (v) => ((v as { friends?: { acct: string }[] }).friends ?? []).some((f) => f.acct === 'bot1'));
+  b.sendEvent('FriendRequest', { name: 'Bot1' });
+  await b.waitEvent('FriendList',
+    (v) => ((v as { friends?: { acct: string }[] }).friends ?? []).some((f) => f.acct === 'bot1'));
+
+  // 2. Re-sending a request to a bot that is ALREADY a friend must not break anything.
+  a.sendEvent('FriendRequest', { name: 'Bot1' });
+  a.sendEvent('FriendRequest', { name: 'Bot1' });
+
+  // 3. Several bots into one party, and the party keeps every one of them.
+  for (const n of ['Bot1', 'Bot2', 'Bot3']) a.sendEvent('PartyInvite', { name: n });
+  const full = await a.waitEvent('PartyUpdate', (v) => {
+    const m = (v as { members?: { acct: string }[] }).members ?? [];
+    return ['bot1', 'bot2', 'bot3'].every((x) => m.some((y) => y.acct === x));
+  }, 15000);
+  assert.ok(full, 'the party lost bots along the way');
+
+  // 4. A BLOCKED bot must not be befriendable — the accept runs through the same guards a
+  //    human hits, so blocking has to win.
+  b.sendEvent('BlockAdd', { name: 'Bot4' });
+  await b.waitEvent('SocialResult', (v) => (v as { op?: string }).op === 'BlockAdd');
+  b.sendEvent('FriendRequest', { name: 'Bot4' });
+  const refused = await b.waitEvent('SocialResult',
+    (v) => (v as { op?: string; ok?: boolean }).op === 'FriendRequest'
+      && (v as { ok?: boolean }).ok === false, 8000).catch(() => null);
+  assert.ok(refused, 'a blocked bot still accepted a friend request');
+});

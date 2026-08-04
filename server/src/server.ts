@@ -861,7 +861,10 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     if (!config.simPeer.enabled) return;
     // humansInWorld, NOT inWorld: the peer itself is in-world, so counting it would keep the
     // world looking busy forever and the reaper would never fire.
-    const humans = roster.humansInWorld().filter((p) => p.cellKey !== undefined);
+    // Bots excluded: they are visible players but need no simulation, and anchoring the peer
+    // to a cell only a bot stands in would hold a headless engine on an empty world.
+    const humans = roster.humansInWorld()
+      .filter((p) => p.cellKey !== undefined && !p.bot);
     // START THE PEER WHEN A HUMAN CONNECTS, NOT WHEN ONE REACHES A CELL. humanCount counts
     // authed players who are still loading or in character creation; the peer takes 2-4s to
     // become ready (simpeer.ready startupMs), so waiting for a cell meant the player was
