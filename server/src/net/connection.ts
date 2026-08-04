@@ -1095,7 +1095,13 @@ export class Connection implements Peer {
       }
     }
     if (!char && !this.isSystem) {
-      const rc = await this.resolveCharacter('resume', account);
+      // CARRY THE TICKET'S CHARACTER THROUGH. A ticket whose charId has no slot is not
+      // exotic — it is every mid-chargen reconnect, because a provisional only becomes a
+      // slot when creation finishes. Falling back with no requestedId resolved
+      // latest-or-auto-create, i.e. silently resumed a DIFFERENT character; in the public
+      // world (no world/character suffix contract) nothing would ever have said so. The
+      // provisional path in resolveCharacter already knows how to honour the id.
+      const rc = await this.resolveCharacter('resume', account, ticket.charId);
       if (!rc) return;
       char = rc.char;
       doc = rc.doc;
