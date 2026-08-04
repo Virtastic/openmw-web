@@ -141,7 +141,15 @@ export function characterRoutes(
       // Level lives in the character's shared PlayerDoc, not on the slot. A brand-new slot
       // (never played, no chargen yet) has no doc — report level 1.
       const withLevel = await Promise.all(chars.map(async (c) => {
+        // READ THROUGH, never cache. This store is the gateway's, and the WORLDS are what
+        // actually write these docs — a level-up, a rename, a new logout position all land in
+        // players.db from another process. get() answers from its own cache and never
+        // re-reads, so the character-select screen served whatever was true the first time
+        // the gateway saw the character and stayed that way until the gateway restarted:
+        // stale level, stale name, and a boot position that could send the player to where
+        // they were hours ago. Releasing after each read costs one query per tile.
         const doc = await players.get(c.id);
+        await players.releaseCached(c.id);
         // The name the player typed in Morrowind's own character creation wins over the slot
         // label: it is what they actually called themselves, so the tile screen never has to
         // ask for an alias up front.
