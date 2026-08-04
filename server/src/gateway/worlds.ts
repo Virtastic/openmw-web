@@ -82,6 +82,8 @@ export class WorldSupervisor {
   private worlds = new Map<string, World>();
   private blockedUntil = new Map<string, number>();
   private usedPorts = new Set<number>();
+  /** Consecutive immediate deaths per world; see the exit handler. */
+  private fastCrashes = new Map<string, number>();
   private pollTimer?: NodeJS.Timeout;
   private readonly now: () => number;
 
@@ -196,7 +198,24 @@ export class WorldSupervisor {
         return;
       }
       this.blockedUntil.set(id, this.now() + s.restartBackoffMs);
-      log('error', 'world.crashed', { id, code: code ?? -1, signal: signal ?? '' });
+      // A world that dies INSTANTLY, every time, is misconfigured — not unlucky. The harness
+      // hit exactly this: the entry point rejected a flag the gateway passes, so every world
+      // exited on startup, backed off and started again, forever. The world list stayed empty,
+      // the gateway stayed "healthy", and nothing said why — which is what made it expensive.
+      // The backoff already stops it spinning; this makes it SPEAK. Any world that survives
+      // the startup window clears the counter.
+      const lifeMs = this.now() - world.startedAt;
+      const fast = lifeMs < 5_000;
+      const n = fast ? (this.fastCrashes.get(id) ?? 0) + 1 : 0;
+      if (fast) this.fastCrashes.set(id, n); else this.fastCrashes.delete(id);
+      log('error', 'world.crashed', { id, code: code ?? -1, signal: signal ?? '', lifeMs });
+      if (n === 3) {
+        log('error', 'world.dies_on_startup', {
+          id, crashes: n,
+          hint: 'this world exits immediately on every attempt — check the --server-entry'
+            + ' binary and the flags the gateway passes it: --data, --shared, --port, --gateway',
+        });
+      }
     });
     child.on('error', (err) => log('error', 'world.child_error', { id, error: String(err) }));
     return this.get(id)!;

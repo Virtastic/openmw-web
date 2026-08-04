@@ -55,11 +55,14 @@ export default async function run(ctx) {
     // died and the scenario saw only an empty world list.
     '--server-entry', join(ROOT, 'server', 'dist', 'testhost.mjs'),
   ], {
-    stdio: 'ignore',
+    // PIPED, not discarded: a gateway whose spawned worlds all crash comes up "healthy" and
+    // is indistinguishable from a working one. ctx.watchChild prints this on any failure.
+    stdio: ['ignore', 'pipe', 'pipe'],
     // Worlds this gateway spawns inherit it: the harness clients log in with the fixed
     // ?mpauto=1 password, which real servers refuse by default.
     env: { ...process.env, OMW_ALLOW_HARNESS_AUTH: '1' },
   });
+  ctx.watchChild('gateway', gw);
   const stopGw = () => { try { gw.kill('SIGTERM'); } catch { /* gone */ } };
 
   try {

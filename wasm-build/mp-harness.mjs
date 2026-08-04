@@ -412,6 +412,7 @@ for (const file of files) {
   let bootQueue = Promise.resolve(); // serializes client boots (see launchClient below)
   let server = null;
   let err = null;
+  const childLogs = []; // scenario-spawned processes (gateways), dumped on failure
   console.log(`\n=== scenario ${file} ===`);
   try {
     // Import first: a scenario may declare server rules it needs (e.g. pvp = true).
@@ -419,6 +420,19 @@ for (const file of files) {
     const envForRun = typeof serverEnv === 'function' ? serverEnv(RUN_ID) : (serverEnv ?? {});
     server = await startGameServer(serverRules, envForRun);
     await run({
+      // CAPTURE ANY CHILD A SCENARIO SPAWNS. Gateways were started with stdio:'ignore', so a
+      // gateway that came up healthy while every world it spawned crashed on startup looked
+      // identical to a working one — the scenario then failed on an unrelated downstream
+      // assertion with the cause sitting in a dead pipe. Pass a spawned process through here
+      // and its output is printed whenever the scenario fails. Spawn it with
+      // stdio: ['ignore','pipe','pipe'] for this to have anything to read.
+      watchChild: (label, proc) => {
+        const buf = [];
+        proc.stdout?.on('data', (d) => buf.push(String(d)));
+        proc.stderr?.on('data', (d) => buf.push(String(d)));
+        childLogs.push({ label, tail: () => buf.join('').split('\n').slice(-40).join('\n') });
+        return proc;
+      },
       runId: RUN_ID,
       motd: server.motd,
       // s42 attaches protocol bots to this same server (bots/soak.ts --attach) so a
@@ -498,6 +512,10 @@ for (const file of files) {
     console.error(`FAIL ${file} (${secs}s):\n${err.stack || err}`);
     const srv = server?.logTail?.();
     if (srv) console.error(`--- SERVER LOG (the other half of the conversation) ---\n${srv}`);
+    for (const c of childLogs) {
+      const t = c.tail();
+      if (t.trim()) console.error(`--- ${c.label.toUpperCase()} LOG ---\n${t}`);
+    }
   }
   else console.log(`PASS ${file} (${secs}s)`);
 }

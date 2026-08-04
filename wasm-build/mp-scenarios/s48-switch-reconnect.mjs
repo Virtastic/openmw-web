@@ -63,14 +63,8 @@ export default async function run(ctx) {
     // ?mpauto=1 password, which real servers refuse by default.
     env: { ...process.env, OMW_ALLOW_HARNESS_AUTH: '1' },
   });
-  const gwOut = [];
-  gw.stdout.on('data', (d) => gwOut.push(String(d)));
-  gw.stderr.on('data', (d) => gwOut.push(String(d)));
+  ctx.watchChild('gateway', gw);
   const stopGw = () => { try { gw.kill('SIGTERM'); } catch { /* gone */ } };
-  const dumpGw = () => {
-    const t = gwOut.join('').split('\n').slice(-40).join('\n');
-    if (t.trim()) ctx.log('--- GATEWAY LOG ---\n' + t);
-  };
 
   try {
     assert.ok(await waitHttp(`http://127.0.0.1:${GW_PORT}/healthz`, 30_000), 'gateway must come up');
@@ -127,9 +121,6 @@ export default async function run(ctx) {
     assert.ok(!dial.includes(`:${ctx.serverPort}/`),
       'and it must NOT still point at the launch world');
     ctx.log('  ok: a reconnect would return the player to the session world, not the public one');
-  } catch (e) {
-    dumpGw();
-    throw e;
   } finally {
     stopGw();
   }
