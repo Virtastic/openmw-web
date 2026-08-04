@@ -423,19 +423,27 @@ dispatch.SessionHelloOk = function(msg)
     -- back to minting its own character and the wrong-world guard refused it. Whether the
     -- module-load env read raced or the state was lost, the fix is the same: ask again at the
     -- moment the answer matters.
-    if desiredCharId == nil then
-        -- The SESSION's confirmed character outranks the boot fragment: after Welcome clears
-        -- desiredCharId, a reconnect used to re-arm from the env — the character the PAGE was
-        -- opened with — silently overriding whichever slot the session had switched to.
+    -- LOCAL, and that is the whole point. This used to assign to desiredCharId itself, which
+    -- is module state the resume decision reads ("nil = nothing explicit was chosen, so a
+    -- parked resume token may be used"). Setting it here left it non-nil forever after the
+    -- first auth, so every later reconnect SKIPPED resume, fell through to a login ticket
+    -- already spent at Welcome, and was refused — the endless "connection lost, reconnecting"
+    -- on a connection the server still held open. An explicit switch (net.setCharacter) must
+    -- still block resume; a passive fallback must only label the message being built.
+    local charForAuth = desiredCharId
+    if charForAuth == nil then
+        -- The SESSION's confirmed character outranks the boot fragment: the fragment names
+        -- the character the PAGE was opened with, which is wrong once the session has
+        -- switched slots.
         if type(net.characterId) == 'string' and net.characterId ~= '' then
-            desiredCharId = net.characterId
+            charForAuth = net.characterId
         elseif mp.getBootCharacter then
             local boot = mp.getBootCharacter()
-            if type(boot) == 'string' and boot ~= '' then desiredCharId = boot end
+            if type(boot) == 'string' and boot ~= '' then charForAuth = boot end
         end
     end
-    if desiredCharId and auth.t ~= 'SessionResume' then
-        auth.characterId = desiredCharId
+    if charForAuth and auth.t ~= 'SessionResume' then
+        auth.characterId = charForAuth
     end
     send(auth)
     mp.testSet('authMode', authMode)

@@ -378,6 +378,8 @@
  const __hudEnabled = /[?&](hud=1|debug)\b/.test(location.search);
  if (__hudEnabled) hudEl.classList.add('show');
  let lastMsg = 'booting…';
+ // Exported because LATER SCRIPT BLOCKS need it: this is a block-local function, not a
+ // global, and a bare append() from another block is a ReferenceError. See __omwLog below.
  function append(t, cls){ if(!started){logEl.textContent='';started=true;}
    const s=document.createElement('span'); if(cls)s.className=cls; s.textContent=t+"\n"; logEl.appendChild(s);
    logEl.scrollTop=logEl.scrollHeight;
@@ -439,7 +441,18 @@
      el.classList.remove('hide');
      set(null, label || 'Loading', detail == null ? '' : detail);
    }
-   return { set:set, fromLog:fromLog, done:finish, show:show, hide:finish };
+   // ONE OWNER. A world switch is a page navigation, but FOUR independent watchers hide this
+   // screen — the netstate poll, the Joined edge, the restore hold, and the simulated hold —
+   // and each one asks "are we in a live world?", which during a switch is answered by the
+   // world we are trying to LEAVE. So the screen flashed and vanished mid-switch and the
+   // player was dropped back where they started. While locked, only the lock holder can
+   // clear it: hide() from anyone else is ignored.
+   var locked = false;
+   function lock(label, detail){ show(label, detail); locked = true; }
+   function unlock(){ locked = false; finish(); }
+   return { set:set, fromLog:fromLog, done:finish, show:show,
+            hide: function(){ if (!locked) finish(); },
+            lock:lock, unlock:unlock };
  })();
  // Full-screen fatal overlay: aborts, GPU context loss, unsupported browsers. The hidden dev
  // log is useless to end users — anything fatal must be VISIBLE with a way forward.
@@ -453,6 +466,7 @@
  }
  // opts: { kicker, actionLabel, actionHref } — the default is the multiplayer-styled
  // panel with a Reload button, which is what every pre-existing caller wants.
+ window.__omwLog = append;
  function fatalOverlay(title, detail, showReload, opts){
    opts = opts || {};
    killEngine();
@@ -3170,11 +3184,12 @@
   // display name, all of which are unchanged by moving world. Only the destination and the
   // ticket differ. mpstart/mpnew are dropped — the server owns where you arrive.
   async function rebootIntoWorld(wsUrl){
-    var base = lockerHttpBase();
+    var base = window.__lockerHttpBase ? window.__lockerHttpBase() : '';
     var tok = window.__omwLockerToken || '';
     if (!base || !tok) {
-      append('[mp] cannot change world: no locker session', 'err');
-      window.__omwLoading.hide();
+      mpLog('[mp] cannot change world: no locker session', 'err');
+      window.__omwLoading.unlock();
+      clearTimeout(window.__omwSwitchWatch);
       showNotice('Could not change world',
         'This session has lost its sign-in. Exit to the menu and sign in again — your character is safe on the server.',
         GLYPH_WORLD, true);
@@ -3190,8 +3205,9 @@
     // the destination refuses us and the reconnect ladder retries a dead credential forever,
     // which is what made a switch look like it silently did nothing.
     if (!ticket) {
-      window.__omwLoading.hide();
-      append('[mp] could not get a login ticket for the new world', 'err');
+      window.__omwLoading.unlock();
+      clearTimeout(window.__omwSwitchWatch);
+      mpLog('[mp] could not get a login ticket for the new world', 'err');
       showNotice('Could not change world',
         'The server did not give this session a seat in the new world. Try again in a moment — '
         + 'your character is safe and nothing was lost.', GLYPH_WORLD, true);
@@ -3213,6 +3229,13 @@
     location.href = 'index.html#' + keep.join('&');
   }
 
+  // SCRIPT BLOCKS DO NOT SHARE LOCALS. append() and lockerHttpBase() are declared INSIDE
+  // other blocks (depth 2 and 4), so they are not globals and a bare call from here is a
+  // ReferenceError — which is exactly what killed every world switch: this watcher threw
+  // before it could navigate, having ALREADY set `seen`, so the first Public click did
+  // nothing and every click after it was swallowed as a duplicate. Use the exported handles.
+  function mpLog(t, cls){ try { if (window.__omwLog) window.__omwLog(t, cls); } catch (e) {} }
+
   // Lua cannot navigate, so net.switchTo publishes the destination here instead.
   (function watchWorldSwitch(){
     var seen = '';
@@ -3220,8 +3243,14 @@
       var want = String((window.__omwMP || {}).switchTo || '');
       if (!want || want === seen) return;
       seen = want;
-      append('[mp] changing world -> ' + want);
-      rebootIntoWorld(want);
+      mpLog('[mp] changing world -> ' + want);
+      // A failed handoff must be RETRYABLE: clearing the latch lets the next click (or the
+      // next publish of the same destination) try again instead of being ignored forever.
+      try {
+        Promise.resolve(rebootIntoWorld(want)).catch(function(e){
+          seen = ''; mpLog('[mp] world change failed: ' + e, 'err');
+        });
+      } catch (e) { seen = ''; mpLog('[mp] world change threw: ' + e, 'err'); }
     }, 250);
   })();
 
@@ -3347,7 +3376,7 @@
     var id = top ? (top.id || top.tagName + (top.className ? '.' + String(top.className).split(' ')[0] : '')) : 'null';
     var inOverlay = !!(top && top.closest && top.closest('#omw-social, #omw-chat, #omw-uname'));
     if (!inOverlay || document.pointerLockElement){
-      append('[ui] click at ' + Math.round(e.clientX) + ',' + Math.round(e.clientY)
+      mpLog('[ui] click at ' + Math.round(e.clientX) + ',' + Math.round(e.clientY)
         + ' went to <' + id + '>'
         + (document.pointerLockElement ? ' POINTER-LOCKED (cursor captured by the game)' : '')
         + ' canvas pointer-events=' + (canvasEl ? getComputedStyle(canvasEl).pointerEvents : '?'), 'err');
@@ -3580,8 +3609,7 @@
       if (v === 'public') {
         clearTimeout(window.__omwSwitchWatch);
         window.__omwSwitchWatch = setTimeout(function(){
-          // Owns the loading screen too: see the comment at the show() below.
-          window.__omwLoading.hide();
+          window.__omwLoading.unlock();
           setWhere(lastWhere);
           // The stage the client actually reached, so a screenshot names the failing layer
           // instead of costing another test-and-guess round.
@@ -3596,8 +3624,8 @@
       // Solo <-> Party on your OWN world is an in-place flip (no reconnect); Public is a real
       // redial that must re-sync with the world's sim peer. Either way the wait is real, so
       // show it — the state watcher above hides it when the connection settles.
-      window.__omwLoading.show(v === 'public' ? 'Joining the public world' : 'Switching world',
-        'Syncing with the server…');
+      if (v === 'public') window.__omwLoading.lock('Joining the public world', 'Syncing with the server…');
+      else window.__omwLoading.show('Switching world', 'Syncing with the server…');
       // Public is a page NAVIGATION, not a state change in THIS page. holdUntilSimulated asks
       // "are we in a live world yet?" — and we are: the one we never left. So it cleared the
       // screen while the switch was still in flight, dropping the player back into their old
@@ -3986,7 +4014,15 @@
     if (wantHold !== netHold) {
       netHold = wantHold;
       uiHold(wantHold);
-      if (wantHold) window.__omwLoading.show('Connection lost', 'Reconnecting…');
+      // "Connection lost" is a LIE before the first join. A world is spawned when the
+      // launcher asks for it, and the client dials while it is still coming up, so the very
+      // first dial is routinely refused and retried — which greeted every new game with
+      // "Connection lost, reconnecting" for a connection that had never existed. Same state,
+      // two different situations, and only one of them is a loss.
+      if (wantHold) {
+        if (everJoinedOnce) window.__omwLoading.show('Connection lost', 'Reconnecting…');
+        else window.__omwLoading.show('Starting your world', 'Waking the server, this takes a moment…');
+      }
       else { window.__omwLoading.hide(); setStatus('Reconnected.'); }
     }
     if (socialOpen) renderSocial();
