@@ -132,11 +132,17 @@ test('shared character doc keeps per-world positions apart', async () => {
   });
   await w1.close();
 
-  // Another world sees the character (stats) but NOT world-a's position.
+  // Another world sees the character (stats) and is SEEDED from where they last stood.
+  // This used to assert `position === undefined` — "a doc from another world must not
+  // teleport the player here". Right hazard, wrong cure: it left the client on the engine's
+  // own default and dropped a player switching to the public world at exterior 0,0, the grid
+  // origin, in open sea, where they drowned. They are the same character walking into another
+  // instance of the same content, so seeding is correct. The property that MATTERS — one
+  // world's write never clobbers another's — is asserted below and still holds.
   const w2 = new PlayerStore(dataDir, 'world-b');
   const seenByB = await w2.get(charId);
   assert.equal(seenByB?.stats?.level, 5);
-  assert.equal(seenByB?.position, undefined);
+  assert.deepEqual(seenByB?.position, { cellKey: '1,1', x: 10, y: 20, z: 30 });
   w2.update(charId, (doc) => (doc.position = { cellKey: '9,9', x: 1, y: 1, z: 1 }));
   await w2.close();
 

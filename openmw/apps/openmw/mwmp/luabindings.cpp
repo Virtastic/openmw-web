@@ -157,6 +157,12 @@ namespace MWMP
         // The character slot chosen on the HTML pre-boot tile screen (index.html sets
         // OPENMW_MP_CHARACTER from the #mpchar fragment). Empty = last-played default.
         api["getBootCharacter"] = []() { return getEnvString("OPENMW_MP_CHARACTER"); };
+        // The player's OWN (solo/party) world. A world change reboots the page, so Lua state
+        // dies and "the world we first landed in is ours" — true when a switch was an in-place
+        // redial — became "the PUBLIC world is ours" on the rebooted page. Going Solo then
+        // asked the public world to turn private and was refused. The launcher stamps this
+        // into the boot fragment and every switch carries it through.
+        api["getHomeUrl"] = []() { return getEnvString("OPENMW_MP_HOME"); };
         api["getEngineHash"] = []() { return getEnvString("OPENMW_MP_ENGINEHASH"); };
         api["vectorsEnabled"] = []() { return std::getenv("OPENMW_MP_VECTORS") != nullptr; };
         // Test seam for the multiplayer console gate. The harness cannot press a key (no SDL

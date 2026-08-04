@@ -791,9 +791,16 @@ local function start()
                     .. ' as ' .. tostring(mp.getName() or '?'))
             end
             wasJoined = true
-            -- The world we FIRST land in at login is our own (the launcher puts us there). Cache
-            -- its URL so the where-am-I switcher can return here from Public.
-            if not worldUrls.own then worldUrls.own = net.currentTarget() end
+            -- OUR OWN WORLD, from the boot fragment — not "whichever world we happen to be
+            -- in". A world change REBOOTS the page, so this Lua state is brand new on arrival
+            -- and "the world we first land in is ours" made the PUBLIC world our own: going
+            -- Solo then asked the public world to turn private, and it refused, which is the
+            -- "cannot switch back to solo/party" the player hit. mphome rides every switch.
+            if not worldUrls.own then
+                local home = mp.getHomeUrl and mp.getHomeUrl() or ''
+                if type(home) == 'string' and home ~= '' then worldUrls.own = home
+                else worldUrls.own = net.currentTarget() end -- pre-mphome boot / standalone
+            end
             -- A flip that had to wait for us to arrive back in our own world (e.g. "Party"
             -- pressed while in Public) fires now that we are joined.
             if pendingFlip and net.currentTarget() == worldUrls.own then

@@ -1157,6 +1157,9 @@
                if (lok) window.__omwLockerToken = decodeURIComponent(lok[1]); // Bearer for /locker/*
                // The character slot chosen on the launcher's tile screen; the engine reads it
                // via mp.getBootCharacter() and auths into that slot (empty = last-played).
+               // The player's OWN world, so the switcher can return to it after a reboot.
+               var mhome = /[#&]mphome=([^&]+)/.exec(h);
+               if (mhome) ENV.OPENMW_MP_HOME = decodeURIComponent(mhome[1]);
                var mch = /[#&]mpchar=([^&]+)/.exec(h);
                // Also kept for the JS side: the onboarding modals are per-CHARACTER, and
                // without this they were per-browser — dismissed once, never seen again on any

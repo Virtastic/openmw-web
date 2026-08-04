@@ -13,6 +13,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { startServer } from '../src/server';
 import { TestClient, tmpDataDir, readPlayerDoc } from './helpers';
+import { PlayerStore } from '../src/persist/playerstore';
 
 test('the shared world keeps what you carry, and refuses quest progress', async (t) => {
   const dataDir = tmpDataDir();
@@ -121,4 +122,26 @@ test('the lobby records position per-world without clobbering another world', as
     'the lobby clobbered the solo world position');
   assert.deepEqual(doc?.['inventory'], [{ id: 'gold_001', n: 9000 }],
     'the shared world must record what the character is carrying, losses included');
+});
+
+// SPAWNING AT THE ORIGIN. A player switching into a world they have never visited had their
+// position DELETED — "no position at all" — which left the client on the engine's own default
+// and dropped them at exterior cell 0,0, the grid origin, open sea. The live log is
+// unambiguous: join_world -> cell_change "0,0" -> death. They are the same character walking
+// into another instance of the same content, so a world with no entry of its own seeds from
+// where they last stood.
+test('a world you have never visited spawns you where you last were, not at the origin', async () => {
+  const dir = tmpDataDir();
+  const home = new PlayerStore(dir, 'priv-alice-abcd1234');
+  home.update('c1', (d) => {
+    d.positions = { 'priv-alice-abcd1234': { cellKey: 'seyda neen', x: 1, y: 2, z: 3 } };
+  });
+  await home.releaseCached('c1'); // flush + forget, the real cross-world path
+
+  // The PUBLIC world has no entry for this character at all.
+  const shared = new PlayerStore(dir, 'vvardenfell');
+  const doc = await shared.get('c1');
+  assert.ok(doc?.position, 'the player was given no position — the engine then picks 0,0');
+  assert.equal(doc.position.cellKey, 'seyda neen');
+  assert.equal(doc.position.x, 1);
 });

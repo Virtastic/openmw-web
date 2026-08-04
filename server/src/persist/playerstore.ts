@@ -75,6 +75,19 @@ export type LivePosition = { cellKey: string; x: number; y: number; z: number };
 const SWEEP_MS = 45_000;
 const EQUIP_DEBOUNCE_MS = 10_000;
 
+/** The player's latest known position across all worlds — by `at` when the entries carry it,
+ *  else the last one written. Seeds a world they have never visited; see materializePosition. */
+function mostRecentPosition(
+  positions: Record<string, { cellKey: string; x: number; y: number; z: number; at?: string }>,
+): { cellKey: string; x: number; y: number; z: number } | undefined {
+  let best: { cellKey: string; x: number; y: number; z: number; at?: string } | undefined;
+  for (const p of Object.values(positions)) {
+    if (!p || typeof p.cellKey !== 'string' || p.cellKey === '') continue;
+    if (!best || (p.at ?? '') >= (best.at ?? '')) best = p;
+  }
+  return best;
+}
+
 export class PlayerStore {
   // Phase H: accounts that own no character. A sim peer connects as a client but has no
   // inventory, stats or progress to keep — persisting a doc for it writes junk into
@@ -178,7 +191,19 @@ export class PlayerStore {
   private materializePosition(doc: PlayerDoc): void {
     if (doc.positions) {
       const mine = doc.positions[this.worldId];
-      if (mine) doc.position = { ...mine };
+      if (mine) { doc.position = { ...mine }; return; }
+      // NEVER "no position at all". Deleting it left the client to the engine's own default,
+      // which put a player switching to the public world at exterior cell 0,0 — the grid
+      // ORIGIN, open sea. They drowned there and the respawn point then threw them somewhere
+      // else again. The log says exactly that: join_world -> cell_change 0,0 -> death.
+      //
+      // The original rule ("a doc written by another world must not teleport the player
+      // here") was guarding a real hazard but over-corrected: this is the SAME character
+      // walking into another instance of the SAME world, so the honest answer for a world
+      // they have never visited is where they last stood, not nowhere. Every world here runs
+      // the same content, so the cell resolves.
+      const seeded = mostRecentPosition(doc.positions);
+      if (seeded) doc.position = { ...seeded };
       else delete doc.position;
     }
     // No positions map = pre-slot doc from this world's own dir; keep legacy position as-is.

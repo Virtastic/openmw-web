@@ -1175,7 +1175,11 @@
    // connection regardless — this is blast-radius, not a security boundary.
    // mpnew=1 = this slot has never been played: boot runs Morrowind's own character creation.
    // An existing character skips the title menu AND chargen — the server restores their state.
-   const frag = '#mp=' + encodeURIComponent(worldWs)
+   // mphome: the player's OWN world, so the switcher can come back to it after a reboot into
+   // some other world. Same value as mp= on this first boot; a switch rewrites mp= and keeps
+   // this untouched, which is the whole point.
+   const frag = '#mphome=' + encodeURIComponent(worldWs)
+     + '&mp=' + encodeURIComponent(worldWs)
      + '&locker=' + encodeURIComponent(sess.gwHttp)
      + '&mpticket=' + encodeURIComponent(ticket)
      + (sess.lockerToken ? '&mplocker=' + encodeURIComponent(sess.lockerToken) : '')
