@@ -3544,9 +3544,17 @@
     // did players.length-1 (assuming we are in the list) while the list filtered on a selfName
     // the engine never mirrors — so it filtered nobody. With one player online that read "0"
     // next to your own row, and offered to friend/mute/block yourself.
-    var selfName = String(m.selfName || window.__omwSelfName || '').toLowerCase();
-    // Same value, display casing kept: the Players tab renders your own row from it.
-    var selfDisplay = String(m.selfName || window.__omwSelfName || '');
+    // Compared against ROSTER names, which are usernames — so this has to be the username
+    // too. It was the character name, so the fallback compare never matched anybody and you
+    // appeared in your own Players list whenever the id mirror had not landed yet.
+    var selfName = String(m.profileUsername || m.selfName || window.__omwSelfName || '').toLowerCase();
+    // YOUR OWN ROW IS YOUR USERNAME, like everyone else's. This rendered __omwSelfName —
+    // which comes from the mpcharname fragment, i.e. the CHARACTER name, "New character" on a
+    // fresh slot. So every other row showed the public handle the player was asked to create
+    // and their own showed a placeholder. profileUsername is that handle, mirrored from the
+    // server's Welcome; the character name is only a last resort for the moment before it
+    // lands (and for a standalone server with no onboarding at all).
+    var selfDisplay = String(m.profileUsername || m.selfName || window.__omwSelfName || '');
     // Identity, not name: the roster carries usernames while __omwSelfName is the CHARACTER
     // name, so a name compare let the player see themselves. Name stays as the fallback for
     // the moment before the id mirror lands.
