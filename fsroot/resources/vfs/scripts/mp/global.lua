@@ -652,6 +652,22 @@ local function restoreTick()
     -- ever read them back, so a guild rank or a bounty was recorded and then quietly lost on
     -- the next join.
     quests.restoreStanding(record)
+    -- MAP THE RECORD IDS BEFORE IT LEAVES. equipment and spells are stored FLAT in the doc
+    -- (not world-keyed), and they went out through toNet but came back raw — so a dynamic or
+    -- enchanted item saved in world A was fed to world B as A's id, where that same string
+    -- means a different record or nothing at all. The inventory restore above has mapped
+    -- since M7 (worldmp.toLocal); its two siblings never did. toLocal is global-only, which
+    -- is exactly why this belongs here and not in identity.lua.
+    if record.equipment then
+        local slots = {}
+        for slot, id in pairs(record.equipment) do slots[slot] = worldmp.toLocal(id) end
+        record.equipment = slots
+    end
+    if record.spells then
+        local spells = {}
+        for k, id in pairs(record.spells) do spells[k] = worldmp.toLocal(id) end
+        record.spells = spells
+    end
     player:sendEvent('MP_ApplyRecord', record)
     print('[mp] rejoin restore: ' .. granted .. ' item stack(s) granted, record forwarded')
 end
@@ -1642,6 +1658,17 @@ local eventHandlers = {
             slots[slot] = worldmp.toNet(recordId)
         end
         mp.sendEvent('PlayerEquipment', { slots = slots })
+    end,
+    -- Spellbook out, mapped — the sibling of mpEquipmentOut, and for the same reason: the
+    -- custom-record registry is global-only, so a player-script send would put a raw local
+    -- dynamic id on the wire.
+    mpSpellbookOut = function(data)
+        local function mapped(list)
+            local out = {}
+            for i, id in ipairs(list or {}) do out[i] = worldmp.toNet(id) end
+            return out
+        end
+        mp.sendEvent('PlayerSpellbook', { add = mapped(data.add), remove = mapped(data.remove) })
     end,
     mpGuiReply = function(data)
         worldmp.sendGuiReply(data.guiId, data.data)

@@ -542,6 +542,17 @@ export class WorldState {
       this.invalid(player, name);
       return undefined;
     }
+    // REACH. The actor family checks holder+epoch; this family checked NOTHING, so any authed
+    // client could delete, move, lock or unlock any object in any cell in the world, from
+    // anywhere, persisted (delete writes a permanent tombstone). Holder+epoch is the wrong
+    // instrument here — object edits are authored by ordinary players in their own cell, not
+    // by the authority holder — but PROXIMITY is exactly right and already the rule every
+    // relay uses: you may edit what you could see. The sim peer is exempt: it legitimately
+    // acts on cells it does not stand in (anchored interiors), and it is server-run.
+    if (!player.system && !cellsVisible(player.cellKey, cellKey)) {
+      log('warn', 'object.out_of_reach', { from: player.name, name, at: player.cellKey ?? null, cellKey });
+      return undefined;
+    }
     const doc = await this.cells.get(cellKey);
     if (name !== 'ObjectDelete' && doc.deleted.includes(ref.key)) return undefined; // dead object
     return { doc, ref, cellKey };

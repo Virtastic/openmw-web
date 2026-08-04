@@ -217,13 +217,16 @@ function identity.tick(now)
                 if not spells[id] then remove[#remove + 1] = id end
             end
             if #add > 0 or #remove > 0 then
-                mp.sendEvent('PlayerSpellbook', { add = add, remove = remove })
+                -- Routed through global for the same reason equipment is (mpEquipmentOut):
+                -- toNet lives in the global-only record registry, and a raw local dynamic id
+                -- on the wire is the bug M7 exists to close.
+                core.sendGlobalEvent('mpSpellbookOut', { add = add, remove = remove })
             end
         else
             local add = {}
             for id in pairs(spells) do add[#add + 1] = id end
             table.sort(add)
-            if #add > 0 then mp.sendEvent('PlayerSpellbook', { add = add, remove = {} }) end
+            if #add > 0 then core.sendGlobalEvent('mpSpellbookOut', { add = add, remove = {} }) end
         end
         last.spells = spells
     end

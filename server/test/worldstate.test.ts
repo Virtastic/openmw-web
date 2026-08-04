@@ -7,6 +7,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { contentRefKey, netRefKey, parseRefKey } from '../src/proto/ref';
+import { CellStore } from '../src/persist/cellstore';
 import { startServer, type RunningServer } from '../src/server';
 import { TestClient, tmpDataDir } from './helpers';
 
@@ -58,6 +59,33 @@ test('world objects and containers end to end', async (t) => {
     a.sendEvent('ChatSend', { text: 'spawn-fence' });
     await b.waitEvent('ChatMessage', (v) => (v as { text?: string }).text === 'spawn-fence');
     assert.equal(b.inbox.events.filter((e) => e.name === 'ObjectPlace').length, 0);
+  });
+
+  // REACH. The actor family checks holder+epoch; this family checked nothing at all, so any
+  // authed client could delete/move/lock/unlock any object in any cell in the world, from
+  // anywhere, persisted — ObjectDelete writes a permanent tombstone. Proximity is the rule
+  // now: you may edit what you could see.
+  await t.test('an object op on a far-away cell is refused, not persisted', async () => {
+    const far = 'a-cell-nobody-is-in';
+    const ref = { __refnum: { index: 900, contentFile: 0 } };
+    a.sendEvent('ObjectLock', { ref, cellKey: far, lockLevel: 90 });
+    a.sendEvent('ObjectDelete', { ref, cellKey: far });
+    // Fence on a cell we ARE in: once this round-trips, the far ops have been processed too.
+    a.sendEvent('ObjectLock', { ref: { __refnum: { index: 901, contentFile: 0 } }, cellKey: '0,0', lockLevel: 10 });
+    await a.waitEvent('ObjectLock');
+
+    // THE DOC is the evidence, not the inbox: the relay is already cell-scoped, so nobody
+    // sees a far-cell op either way — what made this dangerous was that it PERSISTED, and
+    // ObjectDelete's tombstone is permanent.
+    await server.flush(); // write-behind store: without this the read below is vacuous
+    const store = new CellStore(dataDir);
+    // Control: the NEAR lock must be visible through this same read, or the assertions below
+    // prove nothing about the far one (a lazy flush would make both look empty).
+    assert.equal(Object.keys((await store.get('0,0')).locks).length > 0, true,
+      'the in-reach lock is not visible through this read — the far-cell assertions are vacuous');
+    const doc = await store.get(far);
+    assert.deepEqual(doc.locks, {}, 'an out-of-reach lock was persisted');
+    assert.deepEqual(doc.deleted, [], 'an out-of-reach delete wrote a permanent tombstone');
   });
 
   await t.test('move/lock/door relay cell-scoped with sender id and land in the doc', async () => {
