@@ -191,10 +191,21 @@ namespace MWMP
             std::string hair = t.get_or<std::string>("hair", "");
             std::string cls = t.get_or<std::string>("class", "");
             std::string birthsign = t.get_or<std::string>("birthsign", "");
+            // THE NAME, which this restored everything BUT. A character created through
+            // Morrowind's own chargen carries the name the player typed, but a restored one is
+            // built by the skip-chargen boot path and keeps the engine's default ("player") —
+            // so the save screen, and anything else reading the player record, showed that
+            // instead of who they are. Invisible until a world change started rebooting the
+            // page, which made EVERY switch a restore.
+            std::string name = t.get_or<std::string>("name", "");
             bool isMale = t.get_or("isMale", true);
             luaManager->addAction(
                 [=] {
                     MWBase::MechanicsManager* mechanics = MWBase::Environment::get().getMechanicsManager();
+                    // Name first: setPlayerRace rebuilds the player record, and the same call
+                    // chargen makes puts the name on it.
+                    if (!name.empty())
+                        mechanics->setPlayerName(name);
                     if (!race.empty())
                         mechanics->setPlayerRace(ESM::RefId::deserializeText(race), isMale,
                             ESM::RefId::deserializeText(head), ESM::RefId::deserializeText(hair));

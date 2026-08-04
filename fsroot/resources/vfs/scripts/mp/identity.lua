@@ -280,6 +280,11 @@ function identity.applyRecord(record)
             hair = record.appearance.hair,
             isMale = record.appearance.isMale,
             class = record.appearance.class,
+            -- The name the player chose, restored with the rest of the look. Without it a
+            -- restored character keeps the engine default ("player"), which is what the save
+            -- screen shows. The doc's appearance name is authoritative; the boot fragment is
+            -- the fallback for a session whose record has not arrived yet.
+            name = record.appearance.name or (mp.getName and mp.getName()) or nil,
         })
     end
     pendingPhase2 = record
