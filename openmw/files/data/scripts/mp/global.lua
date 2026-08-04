@@ -647,6 +647,11 @@ local function restoreTick()
             deadline = core.getRealTime() + RESTORE_HOLD_SECONDS,
         }
     end
+    -- Standing, applied HERE because faction and crime setters are global-context only
+    -- (mwlua gates local scripts to "self"). The doc has carried these all along and nothing
+    -- ever read them back, so a guild rank or a bounty was recorded and then quietly lost on
+    -- the next join.
+    quests.restoreStanding(record)
     player:sendEvent('MP_ApplyRecord', record)
     print('[mp] rejoin restore: ' .. granted .. ' item stack(s) granted, record forwarded')
 end

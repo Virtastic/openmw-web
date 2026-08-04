@@ -458,6 +458,27 @@ handlers.MP_CrimeUpdate = function(data)
     types.Player.setCrimeLevel(player, level) -- global-only setter; we ARE global
 end
 
+-- REJOIN RESTORE for standing. The server records faction rank/reputation/expulsion and
+-- crime bounty on the character doc and sends the whole doc back as playerRecord — but
+-- nothing ever applied them, so "your standing follows you" was written-only: recorded on
+-- the way out, silently dropped on the way in.
+--
+-- Deliberately reuses the live appliers rather than repeating the engine calls, so the
+-- restore path cannot drift from the update path (and inherits the same echo-guard caching,
+-- which is what stops the first diff after a join re-uploading everything we just applied).
+function quests.restoreStanding(record)
+    if type(record) ~= 'table' then return end
+    for id, st in pairs(record.factions or {}) do
+        if type(st) == 'table' then
+            handlers.MP_FactionUpdate({
+                factionId = id, rank = st.rank,
+                reputation = st.reputation, expelled = st.expelled,
+            })
+        end
+    end
+    if record.bounty ~= nil then handlers.MP_CrimeUpdate({ bounty = record.bounty }) end
+end
+
 handlers.MP_DialogueLockResult = function(data)
     local obj = data.ref
     local okValid, valid = pcall(function() return obj:isValid() end)
