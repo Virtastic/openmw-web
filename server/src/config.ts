@@ -119,6 +119,11 @@ export interface Config {
    *  at boot when it is not. Also settable as OMW_DEV_BOTS for a throwaway run. */
   dev: {
     bots: number;
+    /** The handles the bots wear. Real-looking names, because "Bot1" standing in town reads
+     *  as scaffolding on camera and in a screenshot. Consumed in order; if there are more
+     *  bots than names the rest fall back to `<botPrefix><n>`. Each must be a valid public
+     *  handle (letters and digits, 3-20) or it is skipped with a warning. */
+    botNames: string[];
     botPrefix: string;
     /** Appearance the bots wear. Empty = social-only: they hold accounts, characters and a
      *  position, but broadcast no appearance so no puppet is spawned for them. These are
@@ -240,6 +245,13 @@ function reqSignedNum(t: Tree, sec: string, key: string): number {
 
 function reqStrArray(t: Tree, sec: string, key: string): string[] {
   const v = (t[sec] as Tree | undefined)?.[key];
+  if (!Array.isArray(v) || v.some((e) => typeof e !== 'string')) fail(`[${sec}].${key}`, 'an array of strings');
+  return v as string[];
+}
+
+function optStrArray(t: Tree, sec: string, key: string, dflt: string[]): string[] {
+  const v = (t[sec] as Tree | undefined)?.[key];
+  if (v === undefined) return dflt;
   if (!Array.isArray(v) || v.some((e) => typeof e !== 'string')) fail(`[${sec}].${key}`, 'an array of strings');
   return v as string[];
 }
@@ -445,6 +457,8 @@ function validate(t: Tree): Config {
       // Env wins so a one-off `OMW_DEV_BOTS=3` run needs no config edit and leaves no file
       // behind that could ship enabled.
       bots: Math.max(0, Math.trunc(Number(process.env.OMW_DEV_BOTS ?? optNum(t, 'dev', 'bots', 0))) || 0),
+      botNames: optStrArray(t, 'dev', 'botNames',
+        ['Kestrel', 'Talvyn', 'Sable', 'Ferrun', 'Nyra', 'Orin', 'Vesk', 'Draleth']),
       botPrefix: optStr(t, 'dev', 'botPrefix', 'Bot'),
       botRace: optStr(t, 'dev', 'botRace', ''),
       botHead: optStr(t, 'dev', 'botHead', ''),

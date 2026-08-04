@@ -1046,6 +1046,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     ? await startTestBots({
       roster, social, accounts, players: playerStore,
       count: Math.min(config.dev.bots, 16), // a sanity ceiling; this is a dev aid, not a load test
+      names: config.dev.botNames,
       prefix: config.dev.botPrefix,
       // The starter village — the same point respawn uses, so "where players begin" is
       // configured once per deployment rather than twice.

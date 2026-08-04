@@ -229,6 +229,11 @@ intervalSec = 259200              # 3 days; only applies to the cells listed abo
 # single throwaway run without editing this file; the server logs a warning while any are up.
 [dev]
 bots = 0
+# The handles they wear, consumed in order — real-looking names, because "Bot1" standing in
+# town reads as scaffolding in a screenshot. Anything past the end of this list falls back to
+# botPrefix + n. A name that is not a valid public handle (letters and digits, 3-20) is
+# skipped with a warning rather than producing a bot with no handle.
+botNames = ["Kestrel", "Talvyn", "Sable", "Ferrun", "Nyra", "Orin", "Vesk", "Draleth"]
 botPrefix = "Bot"
 # What the bots look like. These are CONTENT record ids, so there is no safe universal
 # default — a wrong one spawns a broken puppet, which is worse than none. Leave them empty and

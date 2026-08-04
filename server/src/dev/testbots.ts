@@ -29,6 +29,8 @@ export interface TestBotDeps {
    *  account is what makes the bot behave like a player rather than a special case. */
   accounts: AccountStore;
   count: number;
+  /** Handles to use, in order. Anything beyond the list falls back to `<prefix><n>`. */
+  names?: string[];
   prefix: string;
   /** Where a bot stands: the STARTER VILLAGE, the same point [rules] respawn* names — the
    *  town every character reaches after chargen. Reused rather than a second setting, so a
@@ -69,6 +71,7 @@ async function ensureBotAccount(accounts: AccountStore, name: string): Promise<A
 
 export async function startTestBots(deps: TestBotDeps): Promise<RunningTestBots> {
   const { roster, social, accounts, players, count, prefix, spawn } = deps;
+  const pool = deps.names ?? [];
   const look = deps.look;
   const timers = new Set<NodeJS.Timeout>();
   const names: string[] = [];
@@ -88,7 +91,14 @@ export async function startTestBots(deps: TestBotDeps): Promise<RunningTestBots>
   };
 
   for (let i = 1; i <= count; i++) {
-    const name = `${prefix}${i}`;
+    // A REAL HANDLE, not "Bot1" — these are on screen next to real players, and scaffolding
+    // names read as scaffolding. Falls back to the prefix when the pool runs out.
+    const candidate = pool[i - 1];
+    const name = (candidate && /^[A-Za-z0-9]{3,20}$/.test(candidate)) ? candidate : `${prefix}${i}`;
+    if (candidate && name !== candidate) {
+      log('warn', 'devbot.bad_name', { given: candidate, using: name,
+        why: 'a public handle is letters and digits only, 3-20 characters' });
+    }
     const accountKey = name.toLowerCase();
     let self: Player | undefined;
 

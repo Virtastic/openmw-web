@@ -16,7 +16,7 @@ const LOOK = {
   botHair: 'b_n_dark elf_m_hair_01', botClass: 'acrobat',
 };
 const BOTS = {
-  dev: { bots: 2, botPrefix: 'Bot', ...LOOK },
+  dev: { bots: 2, botPrefix: 'Bot', botNames: ['Bot1', 'Bot2'], ...LOOK },
   rules: { respawnCellKey: '-2,-9', respawnX: -10350, respawnY: -71235, respawnZ: 167 },
   login: { allowHarnessAuth: true },
 };
@@ -129,7 +129,7 @@ test('without configured content ids a bot is social-only, never half-dressed', 
   const dataDir = tmpDataDir();
   const server = await startServer({
     requireGameData: false, dataDir, port: 0, host: '127.0.0.1',
-    configOverride: { dev: { bots: 1, botPrefix: 'Bot' }, login: { allowHarnessAuth: true } } as never,
+    configOverride: { dev: { bots: 1, botPrefix: 'Bot', botNames: ['Bot1'] }, login: { allowHarnessAuth: true } } as never,
   });
   await server.close();
 
@@ -173,7 +173,8 @@ test('bots do not hold a world open or consume player slots', async (t) => {
 test('bots survive repeat invites, several humans, and refusals', async (t) => {
   const server = await startServer({
     requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
-    configOverride: { dev: { bots: 4, botPrefix: 'Bot' }, login: { allowHarnessAuth: true } } as never,
+    configOverride: { dev: { bots: 4, botPrefix: 'Bot', botNames: ['Bot1', 'Bot2', 'Bot3', 'Bot4'] },
+      login: { allowHarnessAuth: true } } as never,
   });
   t.after(() => server.close());
 
@@ -213,4 +214,28 @@ test('bots survive repeat invites, several humans, and refusals', async (t) => {
     (v) => (v as { op?: string; ok?: boolean }).op === 'FriendRequest'
       && (v as { ok?: boolean }).ok === false, 8000).catch(() => null);
   assert.ok(refused, 'a blocked bot still accepted a friend request');
+});
+
+// REAL HANDLES. "Bot1" standing in town reads as scaffolding on camera, so the default names
+// are player-looking — and an invalid one must fall back rather than silently produce a bot
+// with no public handle (a handle is letters and digits, 3-20).
+test('bots take real usernames, and a bad one falls back instead of breaking', async (t) => {
+  const dataDir = tmpDataDir();
+  const server = await startServer({
+    requireGameData: false, dataDir, port: 0, host: '127.0.0.1',
+    configOverride: {
+      dev: { bots: 3, botPrefix: 'Bot', botNames: ['Kestrel', 'no', 'Talvyn'] },
+      login: { allowHarnessAuth: true },
+    } as never,
+  });
+  const names = server.api.players().map((p) => p.name);
+  await server.close();
+
+  assert.ok(names.includes('Kestrel'), `expected Kestrel, got ${names.join(', ')}`);
+  assert.ok(names.includes('Talvyn'), `expected Talvyn, got ${names.join(', ')}`);
+  // 'no' is too short for a handle: fall back rather than create an unnamed bot.
+  assert.ok(names.includes('Bot2'), `expected the rejected name to fall back, got ${names.join(', ')}`);
+
+  const acct = await new AccountStore(dataDir).get('Kestrel');
+  assert.equal(acct?.username, 'Kestrel', 'the handle must reach the account');
 });
