@@ -366,6 +366,12 @@ export class Quests {
       this.ctx.players.update(target, (doc) => {
         (doc.factions ??= {})[factionId] = state;
       });
+    } else if (this.ctx.ownerCharId?.() !== undefined || player.charId !== undefined) {
+      // Nowhere to put it: the shared world persists no campaign progress (correct), or an
+      // owned world's host is offline. The relay below still applies it on every client, so
+      // saying nothing leaves the world and the disk disagreeing for the rest of the session
+      // with no way to notice.
+      log('info', 'quest.standing_not_persisted', { player: player.name, factionId, rank });
     }
     if (!this.ctx.isShared('factions')) return;
     const shared = this.ctx.cells.sharedQuest();
@@ -386,6 +392,8 @@ export class Quests {
     const crimeTarget = this.ctx.journalTarget(player);
     if (crimeTarget !== undefined) {
       this.ctx.players.update(crimeTarget, (doc) => (doc.bounty = bounty));
+    } else {
+      log('info', 'quest.standing_not_persisted', { player: player.name, bounty });
     }
     if (!this.ctx.isShared('crime')) return; // personal bounty
     const shared = this.ctx.cells.sharedQuest();

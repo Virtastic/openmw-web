@@ -347,6 +347,30 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   });
   world.setModerationNote((accountKey, kind) => moderation.noteAnomaly(accountKey, kind));
 
+  // Close this world to everyone who is not its owner: tell each guest to go home (their
+  // client knows its own world and dials it), then drop anyone still here after a grace. The
+  // grace is for the trip to happen cleanly, not for them to keep playing.
+  //
+  // NEVER THE SIM PEER. "Guests" means people; the peer is this world's own simulator, and
+  // evicting it threw away authority over every cell the owner was standing in — so going
+  // Solo froze the NPCs and rubber-banded the player when it came back. It is not in the
+  // party, so no door is being closed on it.
+  const closeToGuests = (reason: string): void => {
+    for (const conn of [...connections]) {
+      const p = conn.player;
+      if (!p || p.accountKey === worldOwner || p.rank >= 1) continue;
+      if (p.system === true) continue;
+      // The owner's CHARACTER name, off the live roster — never the account display name,
+      // which carries the signed-in person's real name.
+      p.peer.sendEvent('WorldClosed',
+        { reason, by: roster.activeForAccount(worldOwner)?.name ?? '' });
+      const t = setTimeout(() => {
+        if (connections.has(conn)) conn.disconnect('KICKED', 'this world is no longer open to your party');
+      }, 5000);
+      t.unref();
+    }
+  };
+
   const stateCtx: StateCtx = {
     roster,
     store: playerStore,
@@ -574,27 +598,22 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       // kept playing in someone else's private world. Closing means closing: tell each guest
       // to go home (their client knows its own world and dials it), then drop anyone still
       // here. The grace is for the switch to happen cleanly, not for them to keep playing.
-      if (mode === 'private') {
-        for (const conn of [...connections]) {
-          const p = conn.player;
-          if (!p || p.accountKey === worldOwner || p.rank >= 1) continue;
-          // NEVER THE SIM PEER. "Guests" means people; the peer is this world's own
-          // simulator, and evicting it on a flip to Solo threw away authority over every
-          // cell the owner was standing in — so going Solo froze the NPCs, stalled the join
-          // behind a fresh 2-4s peer boot, and rubber-banded the player when it came back.
-          // It is not in the party, so no door is being closed on it.
-          if (p.system === true) continue;
-          // The owner's CHARACTER name, off the live roster — never the account display
-          // name, which carries the signed-in person's real name.
-          p.peer.sendEvent('WorldClosed',
-            { reason: 'owner_went_solo', by: roster.activeForAccount(worldOwner)?.name ?? '' });
-          const t = setTimeout(() => {
-            if (connections.has(conn)) conn.disconnect('KICKED', 'this world is no longer open to your party');
-          }, 5000);
-          t.unref();
-        }
-      }
+      if (mode === 'private') closeToGuests('owner_went_solo');
       return 'ok';
+    },
+    // A guest world with no host is nobody's world. Called when a player leaves; acts only if
+    // that player was the owner.
+    onPlayerLeftWorld: (accountKey: string): void => {
+      if (worldOwner === '' || accountKey !== worldOwner) return;
+      if (worldModeAtBoot === 'public' || worldMode !== 'party') return;
+      // The owner closing their tab used to leave the party standing in a world that no
+      // longer had a host: nothing watched for it, so they kept playing somewhere that would
+      // never come back, and the party outlived the world it existed to share.
+      log('info', 'world.owner_left', { world: worldId, owner: worldOwner });
+      worldMode = 'private';
+      for (const conn of connections) conn.player?.peer.sendEvent('WorldMode', { mode: 'private' });
+      social.partyDisband(worldOwner);
+      closeToGuests('owner_left');
     },
     // Spawn-near-leader: when a NON-owner freshly joins a party world (a friend/party member
     // dialling in — never the owner, never a resume-in-place), place them at the owner's live

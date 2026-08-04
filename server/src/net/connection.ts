@@ -116,6 +116,9 @@ export interface ServerCtx {
   // Owner-only in-place flip of THIS world between 'private' (solo) and 'party' (joinable by
   // the owner's party). Public worlds are not flippable. Used by the where-am-I switcher.
   setWorldMode(accountKey: string, rank: number, mode: string): 'ok' | 'not_owner' | 'bad_mode' | 'not_flippable';
+  /** A player left the world. Acts only if they were its OWNER: a guest world with no host is
+   *  nobody's world, so the party is disbanded and everyone is sent home. */
+  onPlayerLeftWorld?(accountKey: string): void;
   // Spawn a fresh party guest at the leader's position (null when it should not apply).
   guestSpawn(accountKey: string): { cellKey: string; x: number; y: number; z: number } | null;
   // What this world IS, right now. Sent at join so the client never has to infer it.
@@ -322,6 +325,9 @@ export class Connection implements Peer {
       // session's next write — a cell change, flushed 'now' — replaced the whole row with a
       // single position field: inventory, stats, journal, appearance, all gone. An ordinary
       // reconnect was enough. Roster.remove guards the same way for the same reason.
+      // Owner leaving closes the world to its guests (server.ts). Nothing watched for this,
+      // so a host closing their tab left the party in a world that would never come back.
+      this.ctx.onPlayerLeftWorld?.(this.player.accountKey);
       const heldByAnother = this.ctx.roster.activeForAccount(this.player.accountKey);
       if (heldByAnother === undefined || heldByAnother.charId !== charId) {
         this.ctx.track?.(this.ctx.players.releaseCached(charId));
