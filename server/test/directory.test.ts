@@ -211,6 +211,40 @@ test('deleting a character discards exactly that character\'s world', async () =
   } finally { await h.cleanup(); }
 });
 
+// A PRIVATE WORLD'S ID IS DERIVED FROM THE CHARACTER, never trusted from the client. A stale
+// launcher tab computed it from a character list that no longer matched reality, so worlds
+// were minted for characters that did not exist — and the player's real character was then
+// refused at that world's door. A ghost character is refused at CREATION instead.
+test('POST /worlds derives the private id from the character and refuses ghosts', async () => {
+  const h = await harness();
+  const dir2 = await startDirectory({
+    worlds: h.worlds, host: '127.0.0.1', port: 0, maxPerOwner: 2,
+    worldsDir: mkdtempSync(join(tmpdir(), 'omw-dirw-')),
+    resolveAccount: (auth) => (auth.startsWith('Bearer ') ? auth.slice(7) : undefined),
+    privateWorldIdFor: async (acct, charId) =>
+      charId === 'c'.repeat(25) ? `priv-${acct}-${charId.slice(-8)}` : undefined,
+  });
+  try {
+    // A real character: the server's derivation wins over whatever the client computed.
+    const ok = await fetch(`http://127.0.0.1:${dir2.port}/worlds`, {
+      method: 'POST', headers: { authorization: 'Bearer alice' },
+      body: JSON.stringify({ mode: 'private', id: 'priv-alice-wrongsuf', characterId: 'c'.repeat(25) }),
+    });
+    const w = await ok.json() as { id?: string; wsPath?: string };
+    assert.equal(w.id, 'priv-alice-cccccccc', 'the client-computed id must not survive');
+    // A ghost: refused outright, no world minted.
+    const ghost = await fetch(`http://127.0.0.1:${dir2.port}/worlds`, {
+      method: 'POST', headers: { authorization: 'Bearer alice' },
+      body: JSON.stringify({ mode: 'private', id: 'priv-alice-deadbeef', characterId: 'c123deadbeefdeadbeefdead1' }),
+    });
+    assert.equal(ghost.status, 404);
+    assert.equal(((await ghost.json()) as { error?: string }).error, 'no_such_character');
+  } finally {
+    await dir2.close();
+    await h.cleanup();
+  }
+});
+
 // The directory's prefix list IS the router: a path the front door implements but that is
 // missing here falls through to the directory's own 404, with no error anywhere to explain
 // it. That is exactly how /saves behaved on the live dev server while /locker/* worked

@@ -108,6 +108,7 @@ const directory = await startDirectory({
   maxPerOwner: Number(values['max-per-owner'] ?? config.server.maxPlayers),
   frontDoor: frontDoor.route,
   resolveAccount: frontDoor.resolveAccount,
+  privateWorldIdFor: frontDoor.privateWorldIdFor,
 });
 
 log('info', 'gateway.start', {

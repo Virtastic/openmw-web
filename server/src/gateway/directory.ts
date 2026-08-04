@@ -45,6 +45,9 @@ export interface DirectoryDeps {
   // under fabricated names until the global maxWorlds cap was gone, while every per-owner
   // limit read as satisfied. Absent = no verifier wired, and world creation is refused.
   resolveAccount?: (authorizationHeader: string) => string | undefined;
+  /** Derive the private-world id for one of this account's characters, or undefined when the
+   *  character does not exist — a stale tile must be refused, not built a world. */
+  privateWorldIdFor?: (accountKey: string, characterId: string) => Promise<string | undefined>;
 }
 
 export interface RunningDirectory {
@@ -127,8 +130,9 @@ export async function startDirectory(deps: DirectoryDeps): Promise<RunningDirect
         body += c;
         if (body.length > 4096) req.destroy(); // a create request is tiny; anything else is abuse
       });
-      req.on('end', () => {
-        let parsed: { id?: string; mode?: string; account?: string };
+      // eslint-disable-next-line @typescript-eslint/no-misused-promises -- errors are caught below
+      req.on('end', async () => {
+        let parsed: { id?: string; mode?: string; account?: string; characterId?: string };
         try { parsed = JSON.parse(body || '{}'); } catch { json(res, 400, { error: 'bad json' }); return; }
         const mode = parsed.mode;
         if (mode !== 'private' && mode !== 'party') {
@@ -142,7 +146,22 @@ export async function startDirectory(deps: DirectoryDeps): Promise<RunningDirect
         // grace, locking real players out with 503s.
         const account = deps.resolveAccount?.(req.headers.authorization ?? '');
         if (!account) { json(res, 401, { error: 'sign_in_first' }); return; }
-        const id = parsed.id && /^[a-z0-9][a-z0-9_-]{0,63}$/i.test(parsed.id) ? parsed.id : undefined;
+        let id = parsed.id && /^[a-z0-9][a-z0-9_-]{0,63}$/i.test(parsed.id) ? parsed.id : undefined;
+        // A PRIVATE WORLD IS MADE FOR A CHARACTER, so its id is DERIVED, never trusted from
+        // the client. The launcher computed it locally, and a stale tab computed it from a
+        // character list that no longer matched reality — worlds got minted for characters
+        // that did not exist, the player's real character was then refused at that world's
+        // door ("belongs to a different character"), and every retry minted another orphan.
+        // The client's id is accepted only as a fallback for launchers that predate
+        // characterId; the auth-time guard still refuses any mismatch loudly.
+        if (parsed.mode === 'private' && typeof parsed.characterId === 'string' && deps.privateWorldIdFor) {
+          const derived = await deps.privateWorldIdFor(account, parsed.characterId);
+          if (!derived) { json(res, 404, { error: 'no_such_character' }); return; }
+          if (id !== undefined && id !== derived) {
+            log('warn', 'directory.world_id_overridden', { account, sent: id, derived });
+          }
+          id = derived;
+        }
         if (!id) { json(res, 400, { error: 'id must be [a-z0-9_-], 1-64 chars' }); return; }
 
         // Per-owner cap: without it one account can exhaust maxWorlds and deny everyone

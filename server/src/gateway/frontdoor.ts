@@ -242,6 +242,9 @@ export interface FrontDoor {
   // request BODY, so anyone could spawn worlds under fabricated names and exhaust the
   // global cap while every per-owner limit read as satisfied.
   resolveAccount(authorizationHeader: string): string | undefined;
+  /** Derived private-world id for one of this account's characters; undefined = no such
+   *  character, and the directory must refuse rather than build a world for a ghost. */
+  privateWorldIdFor(accountKey: string, characterId: string): Promise<string | undefined>;
 }
 
 // All state lives in the shared dir; the same files the world processes read and write.
@@ -316,5 +319,19 @@ export async function buildFrontDoor(
     route,
     resolveAccount: (auth: string) =>
       lockerSessions.resolve(auth.startsWith('Bearer ') ? auth.slice(7) : ''),
+    // The private-world id, derived HERE from the character rather than trusted from the
+    // launcher. A stale tab computed it from a character list that no longer matched reality,
+    // so worlds got minted for characters that did not exist and the player's real character
+    // was refused at their door. Same slug rule the launcher uses (username, never the
+    // account name — that is the person's real name), so ids stay stable across the change.
+    privateWorldIdFor: async (accountKey: string, characterId: string) => {
+      const account = await accounts.get(accountKey);
+      const char = account?.characters?.find((c) => c.id === characterId);
+      if (!account || !char) return undefined;
+      const slug = (account.username ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '').slice(0, 40)
+        || Math.abs([...accountKey].reduce((a, c) => (a * 31 + c.charCodeAt(0)) | 0, 0)).toString(36);
+      return `priv-${slug}-${characterId.slice(-8)}`;
+    },
   };
 }

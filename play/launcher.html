@@ -1151,9 +1151,16 @@
      // as this did, is an unauthenticated request — the server answers 401 sign_in_first.
      const r = await fetch(sess.gwHttp + '/worlds', { method:'POST',
        headers:{ 'content-type':'application/json', authorization: 'Bearer ' + sess.lockerToken },
-       body: JSON.stringify({ mode:'private', id: privId }) });
+       // characterId lets the SERVER derive the world id and refuse a character that no
+       // longer exists — a stale tab computing privId locally is how worlds got minted for
+       // ghosts. privId stays as the fallback for older servers.
+       body: JSON.stringify({ mode:'private', id: privId, characterId: String(chosenChar.id) }) });
      world = await r.json();
-     if (!r.ok || !world.wsPath) throw new Error(world.error || 'the server could not open your world');
+     if (!r.ok || !world.wsPath) throw new Error(world.error === 'no_such_character'
+       ? 'that character no longer exists — go back and pick another'
+       : (world.error || 'the server could not open your world'));
+     // The server may have derived a DIFFERENT id than we computed; its answer is the truth.
+     if (world.id) privId = 'priv-' + String(world.id).replace(/^priv-/, '');
    } catch(e){ launcherError('Could not open your world', (e && e.message || e) + '. The multiplayer server may be unreachable, please try again in a moment.'); return; }
    // Every world is its own process on an internal port that NOTHING publishes, so the only
    // reachable address is a path on this origin that the gateway splices through (/w/<id>).
