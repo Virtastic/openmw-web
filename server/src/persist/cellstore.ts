@@ -147,7 +147,18 @@ export class CellStore {
   private globalLoaded: Promise<void>;
   private globalWrite: Promise<void> = Promise.resolve();
 
-  constructor(dataDir: string) {
+  /** Does a cell reset RESTOCK containers to their first-seen contents?
+   *
+   *  True everywhere a campaign is played, so a world does not stay stripped. False in the
+   *  shared world, where it is an item faucet: cells there reset on a timer AND anything a
+   *  character is carrying now follows them home (it has to, or dropping something there
+   *  does not stick). Loot a chest, wait for the reset, loot it again, walk home with all of
+   *  it. Everything else a reset does — clearing placements, deaths, locks — still happens;
+   *  a looted container in the shared world simply stays looted. */
+  private readonly restockOnReset: boolean;
+
+  constructor(dataDir: string, restockOnReset = true) {
+    this.restockOnReset = restockOnReset;
     this.db = openDb(join(dataDir, 'world', 'world.db'), CELL_MIGRATIONS);
     this.sweepTimer = setInterval(() => void this.flushAll(), SWEEP_MS);
     this.sweepTimer.unref();
@@ -252,6 +263,7 @@ export class CellStore {
     const before = this.cache.get(cellKey) ?? (await this.get(cellKey));
     const doc = emptyCellDoc();
     for (const [key, cont] of Object.entries(before.containers)) {
+      if (!this.restockOnReset) continue; // shared world: looted stays looted (see above)
       if (!cont.origin) continue; // pre-restock doc: nothing to restore it to
       const items = cont.origin.map((i) => ({ ...i }));
       // stateSeq keeps CLIMBING across a reset. A client that reconnects mid-reset must

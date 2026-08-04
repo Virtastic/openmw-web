@@ -161,7 +161,10 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     baseUrl: config.integrations.attioBaseUrl,
     dataDir: sharedDir,
   });
-  const cellStore = new CellStore(opts.dataDir);
+  // The shared world does NOT restock containers on reset. Its cells reset on a timer and
+  // what a character carries now follows them home, so restocking is an item faucet: loot,
+  // wait, loot again. A campaign world still restocks, or it stays stripped forever.
+  const cellStore = new CellStore(opts.dataDir, worldModeAtBoot !== 'public');
   const recordStore = new RecordStore(opts.dataDir);
   const bans = new BanStore(sharedDir);
   // Phase B: the identity index must be complete before the listener opens too — a missed
