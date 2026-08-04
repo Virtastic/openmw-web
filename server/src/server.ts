@@ -603,6 +603,15 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     },
     // A guest world with no host is nobody's world. Called when a player leaves; acts only if
     // that player was the owner.
+    wrongWorldForCharacter: (accountKey: string, charId: string): boolean => {
+      // Only gateway-spawned character worlds have the suffix contract; standalone servers,
+      // the public world, and GUESTS (who bring their own characters into a host's world by
+      // design) are all exempt. The owner's own character must match the world made for it.
+      if (!process.env.OMW_WORLD_ID || worldModeAtBoot === 'public') return false;
+      if (accountKey !== worldOwner) return false;
+      const m = /-([0-9a-f]{8})$/.exec(worldId);
+      return m !== null && !charId.endsWith(m[1]!);
+    },
     onPlayerLeftWorld: (accountKey: string): void => {
       if (worldOwner === '' || accountKey !== worldOwner) return;
       if (worldModeAtBoot === 'public' || worldMode !== 'party') return;

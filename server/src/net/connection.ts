@@ -119,6 +119,10 @@ export interface ServerCtx {
   /** A player left the world. Acts only if they were its OWNER: a guest world with no host is
    *  nobody's world, so the party is disbanded and everyone is sent home. */
   onPlayerLeftWorld?(accountKey: string): void;
+  /** Is this character in the wrong PRIVATE world? Private world ids end with the last 8 of
+   *  their character's id, so the owner arriving with any other character is a routing error
+   *  to refuse at the door — not something to diagnose downstream, again. */
+  wrongWorldForCharacter?(accountKey: string, charId: string): boolean;
   // Spawn a fresh party guest at the leader's position (null when it should not apply).
   guestSpawn(accountKey: string): { cellKey: string; x: number; y: number; z: number } | null;
   // What this world IS, right now. Sent at join so the client never has to infer it.
@@ -1212,6 +1216,20 @@ export class Connection implements Peer {
     if (!this.isSystem && !this.ctx.mayJoinWorld(accountKey, account.rank)) {
       log('info', 'conn.world_refused', { ip: this.ip, account: account.name });
       this.authFail(op, 'AUTH_FAILED', 'this world is private');
+      return;
+    }
+    // THE WRONG CHARACTER IN THE RIGHT ACCOUNT IS STILL THE WRONG WORLD. mayJoinWorld is
+    // owner-scoped, so the owner was admitted to ANY of their private worlds with ANY of
+    // their characters — including a still-running world of a character they had deleted.
+    // Stale caches routed a player exactly there, and everything downstream (the frozen
+    // chargen guard, the unsaved character, the dead Public button) was this one mistake
+    // wearing masks. Causes come and go; the guard is at the door. Refusing loudly beats
+    // playing quietly in a world that belongs to someone who no longer exists.
+    if (!this.isSystem && char && this.ctx.wrongWorldForCharacter?.(accountKey, char.id)) {
+      log('warn', 'conn.wrong_world_for_character', {
+        account: account.name, charId: char.id, world: this.ctx.worldId,
+      });
+      this.authFail(op, 'AUTH_FAILED', 'this world belongs to a different character');
       return;
     }
     // Chargen gate (F3): a gateway party/public world refuses a character that has not finished
