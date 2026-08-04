@@ -952,7 +952,15 @@ export class Connection implements Peer {
   ): Promise<{ char?: CharacterSummary; doc?: PlayerDoc } | null> {
     if (this.isSystem) return {};
     const accountKey = account.name.toLowerCase();
-    if (!account.characters || account.characters.length === 0) {
+    // A NAMED CHARACTER OUTRANKS THE AUTO-CREATE. This branch used to run first
+    // unconditionally, so an account with zero slots — which is exactly what a brand-new
+    // player mid-first-creation looks like, since provisionals only become slots at
+    // ChargenComplete — had a server-side character minted for EVERY auth, ignoring the
+    // characterId the client sent. The world had been built for the character the player
+    // actually chose, so the wrong-world guard refused the phantom, and the player saw
+    // "belongs to a different character" on every attempt at creating their first character.
+    // The decisive log line: conn.auth_char sent:<their id> resolved:<a stranger>.
+    if ((!account.characters || account.characters.length === 0) && requestedId === undefined) {
       // NEVER the account name. An SSO account name is the person's real name, and a character
       // name is public: it labels the tile, rides every PlayerAppearance, and is what other
       // players see in-world. This slot is auto-created before creation has run, so it gets a
@@ -966,7 +974,7 @@ export class Connection implements Peer {
     }
     let char: CharacterSummary | undefined;
     if (requestedId !== undefined) {
-      char = account.characters.find((c) => c.id === requestedId);
+      char = account.characters?.find((c) => c.id === requestedId);
       if (!char) {
         // No slot behind this id means creation is in flight: the launcher hands out a
         // provisional id and the slot is only written when chargen FINISHES, so an abandoned
@@ -983,8 +991,10 @@ export class Connection implements Peer {
           createdAt: new Date().toISOString(), lastPlayedAt: new Date().toISOString() }, doc: undefined };
       }
     } else {
-      // length checked non-zero above, so the sort always yields one.
-      char = [...account.characters].sort((a, b) => b.lastPlayedAt.localeCompare(a.lastPlayedAt))[0]!;
+      // Reaching here without a requestedId means the list was non-empty (the empty case
+      // auto-created and returned above), so the sort always yields one.
+      char = [...(account.characters ?? [])].sort((a, b) => b.lastPlayedAt.localeCompare(a.lastPlayedAt))[0];
+      if (!char) { this.authFail(op, 'AUTH_FAILED', 'no character'); return null; }
     }
     const doc = await this.ctx.players.get(char.id);
     this.applyCreationState(account, char, doc);
