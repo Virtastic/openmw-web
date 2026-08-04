@@ -11,7 +11,7 @@
 // syntactically perfect and only fails when the callback runs. This asserts the SCOPE.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 
 const PAGE = join(import.meta.dirname, '..', '..', 'play', 'index.html');
@@ -43,7 +43,11 @@ function declDepth(src: string, rx: RegExp): number | null {
 const stripComments = (s: string): string =>
   s.split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
 
-test('no script block calls a function that is local to another block', () => {
+// The server image builds from server/ alone, so the page is not in that context. Skip
+// rather than fail there: this guards the CLIENT page and runs wherever that page ships.
+test('no script block calls a function that is local to another block', {
+  skip: existsSync(PAGE) ? false : 'play/index.html is not in this build context',
+}, () => {
   const html = readFileSync(PAGE, 'utf8');
   const blocks = scriptBlocks(html);
   assert.ok(blocks.length >= 2, 'expected several inline script blocks');
