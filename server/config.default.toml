@@ -222,6 +222,15 @@ timeoutSec = 60
 cells = []
 intervalSec = 259200              # 3 days; only applies to the cells listed above
 
+# DEV/TEST ONLY. Fake players that auto-accept friend requests and party invites, so the
+# social flows can be exercised (and recorded) without a second human. They take real roster
+# slots and write real friend/party rows, so a server strangers can reach must leave this at
+# 0 — otherwise you are hosting accounts nobody controls. OMW_DEV_BOTS=<n> enables it for a
+# single throwaway run without editing this file; the server logs a warning while any are up.
+[dev]
+bots = 0
+botPrefix = "Bot"
+
 [admin]
 # M8: accounts promoted to rank 3 (owner) on every boot, so the first operator never has
 # to hand-edit accounts/<name>.json. Ranks: 0 player, 1 moderator (kick/tp/tpto),

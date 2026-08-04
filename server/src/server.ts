@@ -56,6 +56,7 @@ import { LockerSessionStore } from './auth/identities';
 import { IpConnTracker, IpRateLimiter } from './net/ratelimit';
 import { disconnectMsg } from './proto/session';
 import { log } from './log';
+import { startTestBots } from './dev/testbots';
 import { metrics } from './metrics';
 import { SimPeerSupervisor } from './core/simpeer';
 import { WorldBrowser } from './core/worldbrowser';
@@ -1035,6 +1036,17 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   moveBroadcaster.start();
   m7.start(); // clock ticking + cell-reset sweep before plugins register schedules
   hooks.serverStart();
+  // DEV/TEST BOTS. Off unless [dev] bots (or OMW_DEV_BOTS) says otherwise — see dev/testbots.
+  // Started AFTER hooks so plugins see a normal roster, and given the world's respawn cell so
+  // interest-managed broadcasts reach them.
+  const devBots = config.dev.bots > 0
+    ? startTestBots({
+      roster, social, accounts,
+      count: Math.min(config.dev.bots, 16), // a sanity ceiling; this is a dev aid, not a load test
+      prefix: config.dev.botPrefix,
+      cellKey: config.rules.respawnCellKey,
+    })
+    : undefined;
   log('info', 'server.start', { port, dataDir: opts.dataDir, sharedDir, version: VERSION });
 
   let closed = false;
@@ -1058,6 +1070,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     close: async () => {
       if (closed) return;
       closed = true;
+      devBots?.stop();
       unhookGauge();
       unhookBufferedGauge();
       clearInterval(simPeerTick);

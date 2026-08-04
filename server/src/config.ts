@@ -112,6 +112,12 @@ export interface Config {
   // dashboard is off, which is the right default for a self-hoster who only wants the
   // in-game panel.
   admin: { owners: string[]; allowConsole: boolean; dashboardToken: string };
+  /** DEV/TEST ONLY, and OFF unless deliberately switched on. Fake players that accept friend
+   *  requests and party invites, for exercising the social flows without a second human. They
+   *  occupy real roster slots and real friend/party rows, so a public server running them is
+   *  handing strangers accounts nobody controls — hence `count: 0` by default and a loud warn
+   *  at boot when it is not. Also settable as OMW_DEV_BOTS for a throwaway run. */
+  dev: { bots: number; botPrefix: string };
   moderation: { chatLog: boolean; retentionDays: number; contextLines: number };
   limits: {
     msgsPerSec: number;
@@ -425,6 +431,12 @@ function validate(t: Tree): Config {
     cellReset: {
       cells: reqStrArray(t, 'cellReset', 'cells'),
       intervalSec: reqNum(t, 'cellReset', 'intervalSec'),
+    },
+    dev: {
+      // Env wins so a one-off `OMW_DEV_BOTS=3` run needs no config edit and leaves no file
+      // behind that could ship enabled.
+      bots: Math.max(0, Math.trunc(Number(process.env.OMW_DEV_BOTS ?? optNum(t, 'dev', 'bots', 0))) || 0),
+      botPrefix: optStr(t, 'dev', 'botPrefix', 'Bot'),
     },
     admin: {
       owners: reqStrArray(t, 'admin', 'owners'),
