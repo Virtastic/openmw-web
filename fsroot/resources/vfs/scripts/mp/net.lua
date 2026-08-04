@@ -417,6 +417,15 @@ dispatch.SessionHelloOk = function(msg)
     end
     -- Character slots: an explicit selection rides every auth rung except resume (resume
     -- pins the character server-side; overriding it would swap personas mid-reconnect).
+    -- Re-read the boot character HERE, not only at module load. The auth arrived at the
+    -- server without a characterId while the fragment plainly carried one, so the world fell
+    -- back to minting its own character and the wrong-world guard refused it. Whether the
+    -- module-load env read raced or the state was lost, the fix is the same: ask again at the
+    -- moment the answer matters.
+    if desiredCharId == nil and mp.getBootCharacter then
+        local boot = mp.getBootCharacter()
+        if type(boot) == 'string' and boot ~= '' then desiredCharId = boot end
+    end
     if desiredCharId and auth.t ~= 'SessionResume' then
         auth.characterId = desiredCharId
     end

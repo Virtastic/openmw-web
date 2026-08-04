@@ -1190,6 +1190,12 @@ export class Connection implements Peer {
     }
     const rc = await this.resolveCharacter('ticket', account, msg.characterId);
     if (!rc) return;
+    // The one fact three rounds of guessing needed: did the client's auth NAME a character?
+    // Absent means the world falls back to latest-or-create, which is where every phantom
+    // character and wrong-world refusal tonight came from.
+    log('info', 'conn.auth_char', {
+      account: account.name, sent: msg.characterId ?? null, resolved: rc.char?.id ?? null,
+    });
     log('info', 'player.sso_login', { account: account.name, ip: this.ip });
     this.finishAuth('ticket', account, rc.doc, false, rc.char);
     // Committed (or refused). Spend it ONLY on success, so a refusal leaves the player with a
