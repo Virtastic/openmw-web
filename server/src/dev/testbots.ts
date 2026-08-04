@@ -76,7 +76,6 @@ export async function startTestBots(deps: TestBotDeps): Promise<RunningTestBots>
   const pool = deps.names ?? [];
   const look = deps.look;
   const timers = new Set<NodeJS.Timeout>();
-  const names: string[] = [];
   const bots: Player[] = [];
 
   // Answers are delayed a beat so they read like a person reacting, AND so social is never
@@ -218,7 +217,7 @@ export async function startTestBots(deps: TestBotDeps): Promise<RunningTestBots>
 
   if (count > 0) {
     log('warn', 'devbot.enabled', {
-      count, names,
+      count, names: ids.map((b) => b.name),
       why: 'dev/test bots are ONLINE and auto-accept friend requests and party invites.'
         + ' Set [dev] bots = 0 (or unset OMW_DEV_BOTS) on any server real players can reach.',
     });
