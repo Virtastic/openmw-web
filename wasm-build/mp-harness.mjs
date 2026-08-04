@@ -164,6 +164,11 @@ async function startGameServer(extraRules = '', extraEnv = {}) {
     // parties live here, and a world that cannot see them refuses its own members.
     dataDir, motd,
     status: async () => (await fetch(`http://127.0.0.1:${port}/status`)).json(),
+    // The server's own log, surfaced on failure. It was captured and then DISCARDED once
+    // startup succeeded, so a client stuck at HelloSent looked like silence from both ends —
+    // the server's refusal (bad engine hash, content mismatch, full, banned) was sitting in a
+    // buffer nobody printed. Every scenario failure now prints it.
+    logTail: (n = 40) => out.join('').split('\n').slice(-n).join('\n'),
     // Abrupt death (no SessionDisconnect, no clean close) — for connection-lost scenarios.
     kill: () => { try { proc.kill('SIGKILL'); } catch {} },
     stop: () => {
@@ -484,7 +489,11 @@ for (const file of files) {
   }
   const secs = ((Date.now() - t0) / 1000).toFixed(1);
   results.push({ file, ok: !err, secs });
-  if (err) console.error(`FAIL ${file} (${secs}s):\n${err.stack || err}`);
+  if (err) {
+    console.error(`FAIL ${file} (${secs}s):\n${err.stack || err}`);
+    const srv = server?.logTail?.();
+    if (srv) console.error(`--- SERVER LOG (the other half of the conversation) ---\n${srv}`);
+  }
   else console.log(`PASS ${file} (${secs}s)`);
 }
 play.stop();

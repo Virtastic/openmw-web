@@ -1078,7 +1078,21 @@
            // Matching on hostname alone let ws://127.0.0.1:8080 through on a page served from
            // :8910, which then failed later as an opaque HTTP 401 instead of being refused here.
            var mpHostOk = false;
-           try { mpHostOk = new URL(mpUrl).host === location.host; } catch(e){}
+           try {
+             var mpU = new URL(mpUrl);
+             // LOOPBACK IS THE ONE EXEMPTION, and it is why the browser harness has been dead.
+             // The gate above is right for production: a crafted ?mp= must not point an
+             // authenticated session (and its locker token) at another origin. But the harness
+             // serves this page from one local port and runs each world server on another, so
+             // an exact host:port match refuses MP before it starts — every scenario failed at
+             // boot, which is why no automated run has covered this page while three runtime
+             // bugs shipped green. On loopback the "attacker origin" would have to already be
+             // a process on this machine, and production is never loopback, so the hostname
+             // must still match exactly and only the PORT may differ here.
+             var loop = /^(127\.0\.0\.1|localhost|\[::1\]|::1)$/;
+             mpHostOk = mpU.host === location.host
+               || (mpU.hostname === location.hostname && loop.test(location.hostname));
+           } catch(e){}
            if (!/^wss?:\/\//.test(mpUrl)){
              append('[mp] ignored ?mp= — URL must be ws:// or wss://','err');
            } else if (!mpHostOk){
