@@ -59,7 +59,7 @@ export interface PlayerDoc {
   // makes sense in the world it was recorded in. positions is keyed by world id;
   // `position` stays as this world's materialized view (set on load, folded back on
   // flush) so every existing caller keeps working untouched.
-  positions?: Record<string, { cellKey: string; x: number; y: number; z: number }>;
+  positions?: Record<string, { cellKey: string; x: number; y: number; z: number; at?: string }>;
   // M6: this player's own view. Always written (even in shared mode, so a family can be
   // switched to individual later without losing history); relayed only per [sharing].
   journal?: Record<string, number>; // questId -> highest index this player reported
@@ -280,7 +280,13 @@ export class PlayerStore {
     if (live) doc.position = { ...live };
     // Fold this world's position back into the per-world map before it hits disk, so a doc
     // shared across worlds never clobbers another world's position with ours.
-    if (doc.position) (doc.positions ??= {})[this.worldId] = { ...doc.position };
+    // STAMPED, because "where you last stood" needs to know WHEN. Seeding a world you have
+    // never visited picks the most recent entry, and with no timestamp that silently degraded
+    // to object insertion order — which does NOT move when an existing key is rewritten, so a
+    // player with several worlds could be seeded from the oldest one they had ever entered.
+    if (doc.position) {
+      (doc.positions ??= {})[this.worldId] = { ...doc.position, at: new Date().toISOString() };
+    }
     try {
       await timeFlush('players', async () =>
         this.db.prepare('INSERT OR REPLACE INTO players (key, doc) VALUES (?, ?)')

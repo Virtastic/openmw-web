@@ -145,3 +145,32 @@ test('a world you have never visited spawns you where you last were, not at the 
   assert.equal(doc.position.cellKey, 'seyda neen');
   assert.equal(doc.position.x, 1);
 });
+
+// SWITCHING BACK AND FORTH KEEPS EACH WORLD'S OWN SPOT. This is the behaviour the per-world
+// positions map exists for, and the seeding fix must not blur it: a world you HAVE visited
+// always wins over "where you last stood somewhere else".
+test('each world remembers its own position across repeated switches', async () => {
+  const dir = tmpDataDir();
+
+  const solo = new PlayerStore(dir, 'priv-alice-abcd1234');
+  solo.update('c1', (d) => { d.position = { cellKey: 'seyda neen', x: 1, y: 1, z: 1 }; });
+  await solo.releaseCached('c1');
+
+  // First visit to the public world: seeded from where they were (not the ocean).
+  const pub = new PlayerStore(dir, 'vvardenfell');
+  assert.equal((await pub.get('c1'))?.position?.cellKey, 'seyda neen');
+  pub.update('c1', (d) => { d.position = { cellKey: 'balmora', x: 9, y: 9, z: 9 }; });
+  await pub.releaseCached('c1');
+
+  // Back to solo: their SOLO spot, not balmora.
+  const solo2 = new PlayerStore(dir, 'priv-alice-abcd1234');
+  assert.deepEqual(
+    { ...(await solo2.get('c1'))!.position, at: undefined },
+    { cellKey: 'seyda neen', x: 1, y: 1, z: 1, at: undefined },
+    'going home landed the player where they were in the PUBLIC world');
+  await solo2.releaseCached('c1');
+
+  // And back to public: balmora, the spot that world remembers.
+  const pub2 = new PlayerStore(dir, 'vvardenfell');
+  assert.equal((await pub2.get('c1'))?.position?.cellKey, 'balmora');
+});

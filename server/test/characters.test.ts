@@ -142,19 +142,22 @@ test('shared character doc keeps per-world positions apart', async () => {
   const w2 = new PlayerStore(dataDir, 'world-b');
   const seenByB = await w2.get(charId);
   assert.equal(seenByB?.stats?.level, 5);
-  assert.deepEqual(seenByB?.position, { cellKey: '1,1', x: 10, y: 20, z: 30 });
+  // `at` is a flush timestamp (see playerstore); these tests are about WHERE, so drop it.
+  const where = (p?: { cellKey: string; x: number; y: number; z: number }): unknown =>
+    p && { cellKey: p.cellKey, x: p.x, y: p.y, z: p.z };
+  assert.deepEqual(where(seenByB?.position), { cellKey: '1,1', x: 10, y: 20, z: 30 });
   w2.update(charId, (doc) => (doc.position = { cellKey: '9,9', x: 1, y: 1, z: 1 }));
   await w2.close();
 
   // world-a still has its own position; world-b's write did not clobber it.
   const w1again = new PlayerStore(dataDir, 'world-a');
   const seenByA = await w1again.get(charId);
-  assert.deepEqual(seenByA?.position, { cellKey: '1,1', x: 10, y: 20, z: 30 });
+  assert.deepEqual(where(seenByA?.position), { cellKey: '1,1', x: 10, y: 20, z: 30 });
   await w1again.close();
 
   const w2again = new PlayerStore(dataDir, 'world-b');
   const seenByB2 = await w2again.get(charId);
-  assert.deepEqual(seenByB2?.position, { cellKey: '9,9', x: 1, y: 1, z: 1 });
+  assert.deepEqual(where(seenByB2?.position), { cellKey: '9,9', x: 1, y: 1, z: 1 });
   await w2again.close();
 });
 

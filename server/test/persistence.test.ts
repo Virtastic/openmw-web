@@ -37,7 +37,10 @@ test('playerstore round-trip and atomicity', async () => {
   assert.deepEqual(doc?.inventory, [{ id: 'gold_001', n: 250 }]);
   assert.equal(doc?.stats?.level, 7);
   assert.deepEqual(doc?.spells, ['fire_bite']);
-  assert.deepEqual(doc?.position, { cellKey: '3,-2', x: 1, y: 2, z: 3 });
+  // `at` is a flush timestamp added by the store; this asserts WHERE, so compare the spatials.
+  assert.deepEqual(
+    doc?.position && { cellKey: doc.position.cellKey, x: doc.position.x, y: doc.position.y, z: doc.position.z },
+    { cellKey: '3,-2', x: 1, y: 2, z: 3 });
   assert.deepEqual(readPlayerDoc(dataDir, 'drelas')?.['spells'], ['fire_bite'], 'the row is readable outside the store');
   await store2.close();
 });
