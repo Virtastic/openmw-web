@@ -221,8 +221,10 @@ test('POST /worlds derives the private id from the character and refuses ghosts'
     worlds: h.worlds, host: '127.0.0.1', port: 0, maxPerOwner: 2,
     worldsDir: mkdtempSync(join(tmpdir(), 'omw-dirw-')),
     resolveAccount: (auth) => (auth.startsWith('Bearer ') ? auth.slice(7) : undefined),
+    // Mirrors the real rule: a known character or a well-formed PROVISIONAL id derives
+    // (new characters have no slot until chargen completes); malformed garbage does not.
     privateWorldIdFor: async (acct, charId) =>
-      charId === 'c'.repeat(25) ? `priv-${acct}-${charId.slice(-8)}` : undefined,
+      /^c[0-9a-f]{24}$/.test(charId) ? `priv-${acct}-${charId.slice(-8)}` : undefined,
   });
   try {
     // A real character: the server's derivation wins over whatever the client computed.
@@ -232,10 +234,11 @@ test('POST /worlds derives the private id from the character and refuses ghosts'
     });
     const w = await ok.json() as { id?: string; wsPath?: string };
     assert.equal(w.id, 'priv-alice-cccccccc', 'the client-computed id must not survive');
-    // A ghost: refused outright, no world minted.
+    // Malformed garbage: refused outright, no world minted. (A well-formed unknown id is a
+    // PROVISIONAL new character and must derive — refusing those broke character creation.)
     const ghost = await fetch(`http://127.0.0.1:${dir2.port}/worlds`, {
       method: 'POST', headers: { authorization: 'Bearer alice' },
-      body: JSON.stringify({ mode: 'private', id: 'priv-alice-deadbeef', characterId: 'c123deadbeefdeadbeefdead1' }),
+      body: JSON.stringify({ mode: 'private', id: 'priv-alice-deadbeef', characterId: 'not-a-character-id' }),
     });
     assert.equal(ghost.status, 404);
     assert.equal(((await ghost.json()) as { error?: string }).error, 'no_such_character');

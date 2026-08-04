@@ -326,8 +326,16 @@ export async function buildFrontDoor(
     // account name — that is the person's real name), so ids stay stable across the change.
     privateWorldIdFor: async (accountKey: string, characterId: string) => {
       const account = await accounts.get(accountKey);
-      const char = account?.characters?.find((c) => c.id === characterId);
-      if (!account || !char) return undefined;
+      if (!account) return undefined;
+      // A NEW character is PROVISIONAL by design — the slot is only written when creation
+      // finishes (adoptCharacter, at ChargenComplete) — so "must exist on the account" refused
+      // every genuinely new character with no_such_character and broke character creation
+      // outright. Existence was never the load-bearing property; DERIVATION is: the world id
+      // comes from the same character id the client will boot with, so world-for-A,
+      // boot-with-B — the stale-tab bug this exists for — is impossible either way. The shape
+      // check is the same rule world auth applies before accepting a provisional character.
+      const char = account.characters?.find((c) => c.id === characterId);
+      if (!char && !/^c[0-9a-f]{24}$/.test(characterId)) return undefined;
       const slug = (account.username ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '-')
         .replace(/^-+|-+$/g, '').slice(0, 40)
         || Math.abs([...accountKey].reduce((a, c) => (a * 31 + c.charCodeAt(0)) | 0, 0)).toString(36);
