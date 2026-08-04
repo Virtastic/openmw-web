@@ -55,12 +55,22 @@ export default async function run(ctx) {
     // died and the scenario saw only an empty world list.
     '--server-entry', join(ROOT, 'server', 'dist', 'testhost.mjs'),
   ], {
-    stdio: 'ignore',
+    // CAPTURED, not discarded. A gateway that comes up healthy but spawns no worlds is
+    // invisible with stdio:'ignore' — the scenario then fails on a downstream assertion
+    // ("session created") while the reason sits unprinted in a dead pipe.
+    stdio: ['ignore', 'pipe', 'pipe'],
     // Worlds this gateway spawns inherit it: the harness clients log in with the fixed
     // ?mpauto=1 password, which real servers refuse by default.
     env: { ...process.env, OMW_ALLOW_HARNESS_AUTH: '1' },
   });
+  const gwOut = [];
+  gw.stdout.on('data', (d) => gwOut.push(String(d)));
+  gw.stderr.on('data', (d) => gwOut.push(String(d)));
   const stopGw = () => { try { gw.kill('SIGTERM'); } catch { /* gone */ } };
+  const dumpGw = () => {
+    const t = gwOut.join('').split('\n').slice(-40).join('\n');
+    if (t.trim()) ctx.log('--- GATEWAY LOG ---\n' + t);
+  };
 
   try {
     assert.ok(await waitHttp(`http://127.0.0.1:${GW_PORT}/healthz`, 30_000), 'gateway must come up');
@@ -117,6 +127,9 @@ export default async function run(ctx) {
     assert.ok(!dial.includes(`:${ctx.serverPort}/`),
       'and it must NOT still point at the launch world');
     ctx.log('  ok: a reconnect would return the player to the session world, not the public one');
+  } catch (e) {
+    dumpGw();
+    throw e;
   } finally {
     stopGw();
   }

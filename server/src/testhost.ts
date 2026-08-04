@@ -34,6 +34,14 @@ const { values } = parseArgs({
     'max-players': { type: 'string' },
     'conns-per-ip': { type: 'string' },
     'metrics-token': { type: 'string' },
+    // THE GATEWAY PASSES THESE. It spawns every world with --shared (and --gateway), and
+    // parseArgs THROWS on an unknown option — so each world this harness's gateway started
+    // died instantly with ERR_PARSE_ARGS_UNKNOWN_OPTION, backed off, and died again. The
+    // world list stayed empty forever and every gateway scenario failed on a downstream
+    // assertion with no hint of the cause, because the gateway's own output was discarded.
+    // These must mirror main.ts or a spawned world cannot start at all.
+    shared: { type: 'string' },
+    gateway: { type: 'string' },
   },
 });
 
@@ -51,8 +59,11 @@ const server = await startServer({
   dataDir,
   port: Number(values.port ?? 0),
   host: '127.0.0.1',
+  ...(values.shared ? { sharedDir: values.shared } : {}),
   configOverride: {
     server: { maxPlayers },
+    // Without this a spawned world has no world browser, so it can neither list nor switch.
+    ...(values.gateway ? { gateway: { url: values.gateway } } : {}),
     limits: { maxConnsPerIp: connsPerIp, loginPerMinPerIp: 100000 },
     ...(values['metrics-token']
       ? { metrics: { enabled: true, token: values['metrics-token'] } }
