@@ -310,12 +310,22 @@ export class Connection implements Peer {
         });
         this.ctx.track?.(this.ctx.players.flushKey(charId));
       }
-      // ...and FORGET it. get() answers from the cache and never re-reads disk, while
-      // flushKey writes the whole doc with INSERT OR REPLACE — so a world that stays up (the
-      // shared one never restarts) held this snapshot until it did, and overwrote whatever the
-      // player did elsewhere in between with a copy from their last visit. releaseCached
-      // flushes first, so nothing is lost by dropping it.
-      this.ctx.track?.(this.ctx.players.releaseCached(charId));
+      // ...and FORGET it, but ONLY IF NOBODY ELSE IS HOLDING IT. get() answers from the cache
+      // and never re-reads disk, so a world that stays up kept this snapshot until it
+      // restarted and overwrote whatever the player did elsewhere meanwhile — that is why the
+      // release exists.
+      //
+      // The identity guard is not optional. A superseding login loads the new session's doc
+      // into the cache and THEN tears this one down (finishAuth -> disconnect('SUPERSEDED') ->
+      // cleanup, all synchronous), so an unguarded release drops the cache out from under a
+      // live session. update() fabricates {} on a miss rather than reloading, so that
+      // session's next write — a cell change, flushed 'now' — replaced the whole row with a
+      // single position field: inventory, stats, journal, appearance, all gone. An ordinary
+      // reconnect was enough. Roster.remove guards the same way for the same reason.
+      const heldByAnother = this.ctx.roster.activeForAccount(this.player.accountKey);
+      if (heldByAnother === undefined || heldByAnother.charId !== charId) {
+        this.ctx.track?.(this.ctx.players.releaseCached(charId));
+      }
       // M8: park a resume ticket BEFORE the roster slot goes, so a reconnect within
       // [login] resumeWindowSec can rejoin in place instead of paying argon2 again.
       // Only in-world sessions get one: there is nothing to resume mid-auth.

@@ -78,3 +78,31 @@ test('a character is adopted under the name the player chose, not the placeholde
   assert.equal(slot?.name, 'Ravenhand',
     'the slot kept its placeholder label instead of the name the player chose');
 });
+
+// A CACHE MISS MUST NOT MEAN "NEW CHARACTER". update() fabricated an empty doc when the key
+// was not cached, so any miss became a silent truncation: the stub takes one field and
+// flushKey stores it with INSERT OR REPLACE, dropping inventory, stats, journal and
+// appearance from the row. Misses are ordinary — a supersede tears down the previous session
+// and drops the cache while the new one is live — so this destroyed characters on a reconnect.
+test('a write against an uncached character does not truncate it', async () => {
+  const dir = tmpDataDir();
+  const key = 'c-hero';
+
+  const first = new PlayerStore(dir, 'world-a');
+  first.update(key, (d) => {
+    d.inventory = [{ id: 'gold_001', n: 900 }];
+    d.stats = { level: 14 } as never;
+  });
+  await first.flushAll();
+
+  // A fresh store has nothing cached — the same state the eviction leaves behind.
+  const cold = new PlayerStore(dir, 'world-a');
+  cold.update(key, (d) => { d.position = { cellKey: '0,0', x: 1, y: 2, z: 3 }; }, 'now');
+  await cold.flushAll();
+
+  const after = await new PlayerStore(dir, 'world-a').get(key);
+  assert.deepEqual(after?.inventory, [{ id: 'gold_001', n: 900 }],
+    'writing one field against an uncached character wiped the rest of it');
+  assert.equal((after?.stats as { level?: number } | undefined)?.level, 14);
+  assert.equal(after?.position?.cellKey, '0,0', 'and the write itself must still land');
+});

@@ -145,10 +145,22 @@ export class PlayerStore {
   async get(key: string): Promise<PlayerDoc | undefined> {
     const cached = this.cache.get(key);
     if (cached) return cached;
+    return this.loadSync(key);
+  }
+
+  /** Read a doc straight off disk and cache it. node:sqlite is synchronous, so this is a
+   *  plain function call — which is what lets update() use it too.
+   *
+   *  update() used to FABRICATE an empty doc on a cache miss. Every miss therefore became a
+   *  silent truncation: the stub gets one field written into it and flushKey stores it with
+   *  INSERT OR REPLACE, so inventory, stats, journal and appearance are dropped from the row.
+   *  A cache miss is normal (a supersede tearing down the previous session, an eviction, a
+   *  path that writes before anyone read) and must never mean "this character is new". */
+  private loadSync(key: string): PlayerDoc | undefined {
     const row = this.db.prepare('SELECT doc FROM players WHERE key = ?').get(key) as
       { doc: string } | undefined;
-    const loaded = row ? (JSON.parse(row.doc) as PlayerDoc) : undefined;
-    if (!loaded) return undefined;
+    if (!row) return undefined;
+    const loaded = JSON.parse(row.doc) as PlayerDoc;
     // JSON turned equipment slot keys into strings; normalize back to numbers.
     if (loaded.equipment) {
       const eq: Record<number, string> = {};
@@ -205,9 +217,9 @@ export class PlayerStore {
   // bursts, 'sweep' leaves it to the 45 s sweep / next explicit flush.
   update(key: string, fn: (doc: PlayerDoc) => void, flush: 'now' | 'debounced' | 'sweep' = 'sweep'): void {
     if (this.ephemeral.has(key)) return; // a sim peer has no character to save
-    // Lobby: mark dirty so the sweep/logout flush records the live position, but never let
-    // `fn` touch the doc — inventory, stats and quests earned here must not follow you home.
-    let doc = this.cache.get(key);
+    // Cache, then DISK, and only then a genuinely new character. Fabricating on a miss is
+    // what made a miss destructive — see loadSync.
+    let doc = this.cache.get(key) ?? this.loadSync(key);
     if (!doc) {
       doc = {};
       this.cache.set(key, doc);
