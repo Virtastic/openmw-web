@@ -239,3 +239,69 @@ test('bots take real usernames, and a bad one falls back instead of breaking', a
   const acct = await new AccountStore(dataDir).get('Kestrel');
   assert.equal(acct?.username, 'Kestrel', 'the handle must reach the account');
 });
+
+// A BOT IS A PLAYER, AND A PLAYER IS IN ONE WORLD AT A TIME.
+//
+// Every world is its own process reading the same shared config, so starting bots in each one
+// put a copy of every bot in every world simultaneously — that is scenery, not a player. The
+// behaviour asked for is: they hang out in PUBLIC, you befriend and party them there, and when
+// you switch worlds they come WITH you and stop being in the one you left.
+//
+// Presence is derived, and each world derives it alone: party membership lives in the shared
+// store, so a bot belongs wherever a member of its party actually is, and an unpartied bot
+// belongs in public. Two world processes over one data dir is exactly the real topology.
+test('an unpartied bot is only in public; a partied one follows the player', async (t) => {
+  const dataDir = tmpDataDir();
+  const cfg = (mode: string) => ({
+    requireGameData: false, dataDir, port: 0, host: '127.0.0.1', worldMode: mode,
+    configOverride: {
+      dev: { bots: 1, botPrefix: 'Bot', botNames: ['Kestrel'] },
+      login: { allowHarnessAuth: true },
+    } as never,
+  });
+
+  const pub = await startServer(cfg('public'));
+  t.after(() => pub.close());
+  const priv = await startServer(cfg('private'));
+  t.after(() => priv.close());
+
+  const inWorld = (s: { api: { players(): { name: string }[] } }): string[] =>
+    s.api.players().map((p) => p.name);
+
+  // Unpartied: public only. The private world must NOT be showing a second copy.
+  assert.ok(inWorld(pub).includes('Kestrel'), 'the bot should hang out in public');
+  assert.ok(!inWorld(priv).includes('Kestrel'),
+    'the bot is in a world nobody invited it to — that is scenery, not a player');
+
+  // Party with it from PUBLIC, the way a player would.
+  const a = await TestClient.connect(pub.port);
+  t.after(() => a.close());
+  await a.joinAsNew('Ann', 'hunter22');
+  a.sendEvent('PartyInvite', { name: 'Kestrel' });
+  await a.waitEvent('PartyUpdate',
+    (v) => ((v as { members?: { acct: string }[] }).members ?? []).some((m) => m.acct === 'kestrel'));
+
+  // Now the SWITCH, modelled the way it really happens: the client dials the new world and
+  // the old socket goes away. Leaving both connected would put one player in two worlds at
+  // once, which no real switch can do — and the public world would be right to keep the bot,
+  // because a party member genuinely would still be standing there.
+  const b = await TestClient.connect(priv.port);
+  t.after(() => b.close());
+  await b.joinExisting('Ann', 'hunter22');
+  a.close();
+
+  // The bot follows: present where the player is, gone from the world they left.
+  const followed = await waitFor(() => inWorld(priv).includes('Kestrel'), 12000);
+  assert.ok(followed, 'the bot did not follow its party into the private world');
+  const left = await waitFor(() => !inWorld(pub).includes('Kestrel'), 12000);
+  assert.ok(left, 'the bot is still standing in public while partied elsewhere — two copies');
+});
+
+async function waitFor(cond: () => boolean, ms: number): Promise<boolean> {
+  const until = Date.now() + ms;
+  while (Date.now() < until) {
+    if (cond()) return true;
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  return cond();
+}

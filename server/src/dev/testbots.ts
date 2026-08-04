@@ -40,6 +40,8 @@ export interface TestBotDeps {
   look?: { race: string; head: string; hair: string; class: string };
   /** Character docs live here; a bot needs one to have a character at all. */
   players: PlayerStore;
+  /** Is THIS world the public one? An unpartied bot hangs out there and nowhere else. */
+  isPublic: boolean;
 }
 
 export interface RunningTestBots {
@@ -90,6 +92,19 @@ export async function startTestBots(deps: TestBotDeps): Promise<RunningTestBots>
     t.unref?.();
   };
 
+  // A BOT IS A PLAYER, AND A PLAYER IS IN ONE WORLD AT A TIME. Every world is its own
+  // process reading the same shared config, so simply starting bots everywhere put a copy of
+  // each in every world at once — which is not a player, it is scenery.
+  //
+  // Presence is DERIVED, and every world can derive it alone because party membership lives in
+  // the shared store: a bot with a party belongs wherever a member of that party actually is,
+  // and a bot with no party hangs out in public. Each world evaluates that against its own
+  // roster, so a bot follows the party through a world switch and leaves the world it came
+  // from, with no cross-process messaging.
+  interface BotId { name: string; accountKey: string; charId: string; peer: Peer; }
+  const ids: BotId[] = [];
+  const here = new Map<string, Player>(); // accountKey -> our roster entry, while present
+
   for (let i = 1; i <= count; i++) {
     // A REAL HANDLE, not "Bot1" — these are on screen next to real players, and scaffolding
     // names read as scaffolding. Falls back to the prefix when the pool runs out.
@@ -100,23 +115,24 @@ export async function startTestBots(deps: TestBotDeps): Promise<RunningTestBots>
         why: 'a public handle is letters and digits only, 3-20 characters' });
     }
     const accountKey = name.toLowerCase();
-    let self: Player | undefined;
 
     const peer: Peer = {
       sendEvent(evt: string, body: JsLike): void {
         const b = (body ?? {}) as Record<string, unknown>;
         const from = b['fromAcct'];
-        if (typeof from !== 'string' || !self) return;
-        // The two events a human would see a prompt for.
+        if (typeof from !== 'string') return;
+        const self = here.get(accountKey);
+        if (!self) return;
         const op = evt === 'FriendRequestReceived' ? 'FriendAccept'
           : evt === 'PartyInviteReceived' ? 'PartyAccept' : undefined;
         if (!op) return;
         replyLater(() => {
-          if (!self) return;
+          const live = here.get(accountKey);
+          if (!live) return;
           // EXACTLY what a client sends: both accepts take the other side's account key, and
           // going through handleEvent means every guard a human hits — blocked, party full,
           // no such request — applies to a bot too.
-          social.handleEvent(self, op, new Map<string, JsLike>([['acct', from]]) as never);
+          social.handleEvent(live, op, new Map<string, JsLike>([['acct', from]]) as never);
           log('info', 'devbot.accepted', { bot: name, op, from });
         });
       },
@@ -125,59 +141,80 @@ export async function startTestBots(deps: TestBotDeps): Promise<RunningTestBots>
       disconnect: () => { /* a bot has no socket to close */ },
     };
 
-    // AWAITED, BEFORE THE BOT EXISTS TO ANYONE. A friend request resolves a typed name
-    // through the account index, so a bot that is in the roster while its account is still
-    // being written is unreachable by the very flow it exists to exercise — a race that would
-    // only ever show up as "the bot ignored me" in the first seconds after boot. No account,
-    // no bot.
+    // AWAITED, BEFORE THE BOT EXISTS TO ANYONE. A friend request resolves a typed name through
+    // the account index, so a bot in the roster whose account is still being written is
+    // unreachable by the very flow it exists to exercise.
     const account = await ensureBotAccount(accounts, name);
     if (!account) continue;
 
-    // A REAL CHARACTER, standing in the starter village. Without one a bot is an account with
-    // nothing behind it: no slot on the account, no doc, and no position — so it cannot be
-    // anywhere, and every surface that reads a character (the Players panel, a party row, the
-    // world itself) has nothing to show. The slot is adopted as COMPLETE because a bot never
-    // runs chargen, and an incomplete slot is treated as creation-in-progress everywhere.
     const charId = `c${createHash('sha1').update(`devbot:${accountKey}`).digest('hex').slice(0, 24)}`;
     const adopted = accounts.adoptCharacter(account, charId, name);
     if (adopted === 'full') log('warn', 'devbot.slot_full', { bot: name });
 
     players.update(charId, (doc) => {
       doc.position = { cellKey: spawn.cellKey, x: spawn.x, y: spawn.y, z: spawn.z };
-      // Appearance is what makes a puppet spawn for other clients. Written only when the
-      // deployment supplied content ids: handleAppearance REFUSES an incomplete one, and a
-      // half-written appearance is worse than none — it withholds the whole player record.
       if (look && look.race && look.head && look.class) {
         doc.appearance = { race: look.race, head: look.head, hair: look.hair,
           class: look.class, name, isMale: true };
       }
     });
 
-    self = roster.addAuthed(name, accountKey, 0, peer, '127.0.0.1');
-    // Visible, not present: shown in every player-facing list, but never counted as an
-    // occupant for capacity or world lifecycle. See Player.bot.
-    self.bot = true;
-    self.charId = charId;
-    self.cellKey = spawn.cellKey;
-    // A pose, so the movement broadcaster has something to send and the bot stands somewhere
-    // rather than at the origin.
-    self.pose = { x: spawn.x, y: spawn.y, z: spawn.z, yaw: 0, pitch: 0, anim: 0 } as never;
-    roster.joinWorld(self);
+    ids.push({ name, accountKey, charId, peer });
+  }
 
-    // Tell everyone already here what this bot looks like. Late joiners get it from the
-    // roster/appearance replay the same way they do for any player.
-    if (look && look.race && look.head && look.class) {
+  const dressed = !!(look && look.race && look.head && look.class);
+
+  const arrive = (b: BotId): void => {
+    const self = roster.addAuthed(b.name, b.accountKey, 0, b.peer, '127.0.0.1');
+    self.bot = true;
+    self.charId = b.charId;
+    // Stand where the party is if we are following someone, else in the starter village.
+    const lead = roster.humansInWorld().find((p) => !p.bot && p.cellKey !== undefined);
+    const at = lead?.pose as { x: number; y: number; z: number } | undefined;
+    self.cellKey = lead?.cellKey ?? spawn.cellKey;
+    self.pose = (at ? { ...at, yaw: 0, pitch: 0, anim: 0 }
+      : { x: spawn.x, y: spawn.y, z: spawn.z, yaw: 0, pitch: 0, anim: 0 }) as never;
+    roster.joinWorld(self);
+    here.set(b.accountKey, self);
+    if (dressed) {
       for (const p of roster.inWorld()) {
         if (p.id === self.id) continue;
         p.peer.sendEvent('PlayerAppearance', {
-          id: self.id, race: look.race, head: look.head, hair: look.hair,
-          class: look.class, name, isMale: true,
+          id: self.id, race: look!.race, head: look!.head, hair: look!.hair,
+          class: look!.class, name: b.name, isMale: true,
         } as never);
       }
     }
-    bots.push(self);
-    names.push(name);
-  }
+    log('info', 'devbot.arrived', { bot: b.name, cellKey: self.cellKey });
+  };
+
+  const depart = (b: BotId): void => {
+    const self = here.get(b.accountKey);
+    if (!self) return;
+    here.delete(b.accountKey);
+    roster.remove(self);
+    log('info', 'devbot.departed', { bot: b.name });
+  };
+
+  const reconcile = (): void => {
+    // Humans only: a bot must never be the reason another bot thinks the party is here.
+    const humansHere = roster.humansInWorld().filter((p) => !p.bot).map((p) => p.accountKey);
+    for (const b of ids) {
+      const members = social.partyMembersOf(b.accountKey);
+      const belongsHere = members.length > 0
+        ? members.some((m) => humansHere.includes(m)) // follow the party
+        : deps.isPublic;                              // unpartied: hang out in public
+      const present = here.has(b.accountKey);
+      if (belongsHere && !present) arrive(b);
+      else if (!belongsHere && present) depart(b);
+    }
+  };
+
+  reconcile();
+  // Party membership changes in ANOTHER process (the world the invite happened in), so this
+  // is polled rather than event-driven — a world switch is seconds of loading anyway.
+  const tick = setInterval(reconcile, 2000);
+  tick.unref?.();
 
   if (count > 0) {
     log('warn', 'devbot.enabled', {
@@ -188,11 +225,13 @@ export async function startTestBots(deps: TestBotDeps): Promise<RunningTestBots>
   }
 
   return {
-    names,
+    names: ids.map((b) => b.name),
     stop(): void {
+      clearInterval(tick);
       for (const t of timers) clearTimeout(t);
       timers.clear();
-      for (const b of bots) roster.remove(b);
+      for (const p of here.values()) roster.remove(p);
+      here.clear();
     },
   };
 }

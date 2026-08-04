@@ -1042,9 +1042,13 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // DEV/TEST BOTS. Off unless [dev] bots (or OMW_DEV_BOTS) says otherwise — see dev/testbots.
   // Started AFTER hooks so plugins see a normal roster, and given the world's respawn cell so
   // interest-managed broadcasts reach them.
+  // Bots run in every world PROCESS, but presence decides where they actually appear: an
+  // unpartied bot is in public only, and a partied one follows its party — including into a
+  // private world when the leader switches. See dev/testbots reconcile().
   const devBots = config.dev.bots > 0
     ? await startTestBots({
       roster, social, accounts, players: playerStore,
+      isPublic: worldModeAtBoot === 'public',
       count: Math.min(config.dev.bots, 16), // a sanity ceiling; this is a dev aid, not a load test
       names: config.dev.botNames,
       prefix: config.dev.botPrefix,
