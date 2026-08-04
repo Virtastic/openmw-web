@@ -620,11 +620,18 @@ local function restoreTick()
     -- items to fix a cosmetic count. This stops the growth; it does not heal an inventory
     -- already inflated by the old behaviour.
     for _, entry in ipairs(record.inventory or {}) do
+        -- MAP THE RECORD ID FIRST. A player-made item (enchanted, alchemy) is a DYNAMIC record,
+        -- and dynamic ids are minted per world by an engine-global counter — so world A's
+        -- "Generated:0x3" and world B's are different records wearing the same string. Handing
+        -- the doc's raw id to createObject in another world therefore builds whatever that
+        -- string happens to mean HERE, silently. The object path has guarded this since M7
+        -- (objects.lua:325); the character doc never did.
+        local wantId = worldmp.toLocal(entry.id)
         local want = entry.n or 1
-        local okc, have = pcall(function() return inventory:countOf(entry.id) end)
+        local okc, have = pcall(function() return inventory:countOf(wantId) end)
         local short = want - ((okc and have) or 0)
         if short > 0 then
-            local ok, item = pcall(function() return world.createObject(entry.id, short) end)
+            local ok, item = pcall(function() return world.createObject(wantId, short) end)
             if ok then
                 item:moveInto(inventory)
                 granted = granted + 1
@@ -839,19 +846,31 @@ local eventHandlers = {
     -- window only if forwarded here — the social family's straight pass-through pattern.
     MP_WorldList = function(data)
         toPlayer('MP_WorldList', data)
+        if pendingPublic then
+            print('[mp] public: world list returned ' .. tostring(#(data.worlds or {}))
+                .. ' world(s), error=' .. tostring(data.error or ''))
+        end
         -- The switcher's "Public" leg asked for the directory so it could find the one shared
         -- world and dial it. Remember its URL for next time and switch now.
         if pendingPublic then
             pendingPublic = false
+            local found = false
             for _, w in ipairs(data.worlds or {}) do
                 if w.mode == 'public' and w.up then
                     local u = worldUrlOf(w)
                     if u then
+                        found = true
                         worldUrls.public = u
-                        if net.currentTarget() ~= u then net.switchTo(u) end
+                        print('[mp] public: resolved to ' .. tostring(u))
+                        if net.currentTarget() ~= u then net.switchTo(u)
+                        else notice('You are already in the public world.') end
                         break
                     end
                 end
+            end
+            if not found then
+                notice('The public world is not available right now.')
+                print('[mp] public: no usable public world in the list')
             end
         end
     end,
@@ -1548,8 +1567,21 @@ local eventHandlers = {
             if inOwn or not worldUrls.own then mp.sendEvent('SetWorldMode', { mode = 'party' })
             else pendingFlip = 'party'; net.switchTo(worldUrls.own) end
         elseif mode == 'public' then
-            if worldUrls.public and net.currentTarget() ~= worldUrls.public then net.switchTo(worldUrls.public)
-            elseif not worldUrls.public then pendingPublic = true; mp.sendEvent('WorldList', {}) end
+            -- Public has failed silently more than once, in three different ways: the request
+            -- for the world list going unanswered, the list coming back without a public
+            -- world, and the destination resolving to where we already are. All three look
+            -- identical from the outside — nothing happens and the panel still says Solo. Say
+            -- which one it is.
+            if worldUrls.public and net.currentTarget() ~= worldUrls.public then
+                print('[mp] public: switching to ' .. tostring(worldUrls.public))
+                net.switchTo(worldUrls.public)
+            elseif worldUrls.public then
+                notice('You are already in the public world.')
+            else
+                print('[mp] public: asking the server for the world list')
+                pendingPublic = true
+                mp.sendEvent('WorldList', {})
+            end
         elseif mode == 'offline' then
             if not inOwn and worldUrls.own then worldUrls.lastOut = net.currentTarget() end
             mp.sendEvent('SetAvailability', { state = 'offline' })
@@ -1692,14 +1724,32 @@ end
 -- ponytail: teleport doors only — that is the freeze players actually hit (boat -> dock,
 -- entering a building). Widen to every cell boundary if the exteriors turn out to stall too.
 local cellLoadSeq = 0
+local lastCellLoadAt = 0
+local CELL_LOAD_DEBOUNCE = 2.0
 local function signalCellLoad()
+    -- ONE SIGNAL PER TRANSITION. A single door was raising this more than once — the overlay
+    -- appeared, cleared as the player arrived, then appeared again a moment later over a world
+    -- that had already finished loading. Whatever raises the second one (a re-activation, the
+    -- door on the far side), a transition cannot legitimately start twice inside two seconds.
+    local now = core.getRealTime()
+    if now - lastCellLoadAt < CELL_LOAD_DEBOUNCE then return end
+    lastCellLoadAt = now
     cellLoadSeq = cellLoadSeq + 1
     mp.testSet('cellLoad', tostring(cellLoadSeq))
 end
 I.Activation.addHandlerForType(types.Door, function(door, actor)
     if actor ~= world.players[1] then return end
     local ok, isTeleport = pcall(function() return types.Door.isTeleport(door) end)
-    if ok and isTeleport then signalCellLoad() end
+    if not (ok and isTeleport) then return end
+    -- A DOOR YOU CANNOT OPEN LOADS NOTHING. This fires on the ATTEMPT, which is the whole
+    -- point — the overlay has to be on screen before the main loop blocks — but a locked door
+    -- refuses the activation, so the player got a loading screen for a cell they never
+    -- entered and were left standing in front of the same door.
+    local lockOk, locked = pcall(function()
+        return types.Lockable.objectIsInstance(door) and types.Lockable.isLocked(door)
+    end)
+    if lockOk and locked then return end
+    signalCellLoad()
 end)
 
 return {

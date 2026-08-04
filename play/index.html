@@ -3205,6 +3205,7 @@
       var want = String((window.__omwMP || {}).switchTo || '');
       if (!want || want === seen) return;
       seen = want;
+      append('[mp] changing world -> ' + want);
       rebootIntoWorld(want);
     }, 250);
   })();
@@ -3509,7 +3510,7 @@
     var otherPlayers = players.filter(function(p){
       if (selfId && p.id != null) return String(p.id) !== selfId;
       return String(p.name||'').toLowerCase() !== selfName; });
-    [['friends','Friends', friends.length],['party','Party', partyN],['players','Players', otherPlayers.length + (selfDisplay ? 1 : 0)],['settings','Settings', null]]
+    [['friends','Friends', friends.length],['party','Party', partyN],['players','Players', otherPlayers.length + (selfDisplay ? 1 : 0)]]
       .forEach(function(t){
         var d = el('div','nv'+(sTab===t[0]?' on':''), esc(t[1]) + (t[2]!=null ? ' <span class="n">'+t[2]+'</span>' : ''));
         d.setAttribute('data-t', t[0]); // stable hook for the click regression test
@@ -3637,17 +3638,10 @@
           ['mute', function(){ cmd('social:MuteAdd:'+acct); }],
           ['block', function(){ cmd('social:BlockAdd:'+p.name); }]]));
       });
-    } else {
-      sec.appendChild(el('h3',null,'Privacy'));
-      var pr = el('div','whererow');
-      pr.appendChild(el('span','lb','Visible to'));
-      pr.appendChild(seg([['public','Everyone'],['friends','Friends'],['party','Party'],['private','Nobody']], presence,
-        function(v){ cmd('social:PresenceMode:'+v); }));
-      sec.appendChild(pr);
-      sec.appendChild(el('div','note',
-        'Controls who can see where you are. <b>Nobody</b> also refuses invites.'
-        + '<br>Muted players stay muted across sessions; blocking someone removes and silences them everywhere.'));
     }
+    // No Settings tab and no Privacy pane: presence filtering was a control nobody asked for
+    // sitting in front of the features people actually use. Removed rather than hidden — a
+    // dead tab is still a thing to explain.
     sBody.appendChild(sec);
   }
 

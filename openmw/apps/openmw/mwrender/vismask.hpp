@@ -56,12 +56,6 @@ namespace MWRender
         Mask_Lighting = (1 << 19),
 
         Mask_Groundcover = (1 << 20),
-
-        // Geometry that exists ONLY to cast a shadow and is never drawn. Used for the head and
-        // hair in first person: the camera sits inside them, so they cannot be rendered, but
-        // without them the player's own shadow is a headless body. Excluded from the scene
-        // camera's cull mask (renderingmanager.cpp) and added to the shadow-casting traversal.
-        Mask_FirstPersonShadow = (1 << 21),
     };
 
     // Defines masks to remove when using ToggleWorld command

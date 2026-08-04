@@ -103,10 +103,6 @@ export class PlayerStore {
   suppressSaves(key: string): void { this.creating.add(key); }
   allowSaves(key: string): void { this.creating.delete(key); }
 
-  clearEphemeral(key: string): void {
-    this.ephemeral.delete(key);
-  }
-
   private cache = new Map<string, PlayerDoc>(); // key = account nameLower
   private dirty = new Set<string>();
   private debounce = new Map<string, NodeJS.Timeout>();
@@ -174,6 +170,27 @@ export class PlayerStore {
       else delete doc.position;
     }
     // No positions map = pre-slot doc from this world's own dir; keep legacy position as-is.
+  }
+
+  /** This character has left THIS world. Flush first, then forget it.
+   *
+   *  get() answers from the cache and never re-reads disk, and flushKey writes the WHOLE doc
+   *  with INSERT OR REPLACE. A long-lived world (the shared one never restarts) therefore held
+   *  a snapshot from the player's last visit for as long as it stayed up: play at home for an
+   *  hour, come back, and its next flush replaced that hour with the stale copy. Silent, and
+   *  it destroyed real progress.
+   *
+   *  Forgetting is safe precisely because the doc was just written: the next join re-reads it
+   *  from disk, which is the only copy that can be current when several world processes share
+   *  one players.db. */
+  async releaseCached(key: string): Promise<void> {
+    if (this.dirty.has(key)) await this.flushKey(key);
+    this.cache.delete(key);
+    this.dirty.delete(key);
+    this.creating.delete(key);
+    // The sim-peer flag is per-connection state too. clearEphemeral existed for this and was
+    // never called anywhere, so a key stayed ephemeral for the life of the process.
+    this.ephemeral.delete(key);
   }
 
   // Character-slot migration: adopt a pre-slot account-keyed doc under a character id.

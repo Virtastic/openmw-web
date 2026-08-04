@@ -258,7 +258,12 @@ export class LoginTicketStore {
    *  "login ticket expired or already used" refusals and a switch that silently did nothing.
    *  ALWAYS pair with claim() on the success path; a peek alone is not single-use. */
   peek(ticket: string): LoginTicket | undefined {
+    // RESERVED, not merely read. Two connections peeking the same ticket in the same instant
+    // would both have proceeded and both been admitted, which is single-use in name only. The
+    // in-memory entry is removed here so the second peek finds nothing; the DB row survives
+    // until claim(), so a refusal can still hand the ticket back (see restore below).
     let found = this.tickets.get(ticket);
+    this.tickets.delete(ticket);
     if (!found && this.db) {
       try {
         const row = this.db
@@ -268,6 +273,24 @@ export class LoginTicketStore {
       } catch { /* not here */ }
     }
     return found && found.expiresAt > Date.now() ? found : undefined;
+  }
+
+  /** Give back a ticket reserved by peek() but never committed — the join was refused, so the
+   *  player should still be able to use it (to go back where they came from, or to retry).
+   *  Without this the reservation above would turn every refusal into a spent credential,
+   *  which is the failure peek() exists to prevent. */
+  restore(ticket: string): void {
+    if (!this.db) return;
+    try {
+      const row = this.db
+        .prepare('SELECT accountKey, accountName, expiresAt FROM tickets WHERE ticket = ?')
+        .get(ticket) as LoginTicket | undefined;
+      if (row && Number(row.expiresAt) > Date.now()) {
+        this.tickets.set(ticket, {
+          accountKey: row.accountKey, accountName: row.accountName, expiresAt: Number(row.expiresAt),
+        });
+      }
+    } catch { /* the row is gone: nothing to give back */ }
   }
 
   // Single use: removed on the first claim, valid or not. Falls through to the shared DB when

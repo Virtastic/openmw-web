@@ -222,16 +222,7 @@ namespace MWRender
         if (Settings::shadows().mActorShadows)
             shadowCastingTraversalMask |= Mask_Actor;
         if (Settings::shadows().mPlayerShadows)
-        {
             shadowCastingTraversalMask |= Mask_Player;
-            // ...and the FIRST PERSON body, which is a different node entirely. Entering first
-            // person rebuilds the player as the .1st model tagged Mask_FirstPerson, so with
-            // only Mask_Player here the player's shadow simply vanished the moment they looked
-            // down the camera — third person cast one, first person cast nothing. The .1st
-            // model is a whole body (getBodyParts returns the same part set either way; the
-            // flag only picks the .1st mesh variant), so it casts a correct silhouette.
-            shadowCastingTraversalMask |= Mask_FirstPerson | Mask_FirstPersonShadow;
-        }
 
         int indoorShadowCastingTraversalMask = shadowCastingTraversalMask;
         if (Settings::shadows().mObjectShadows)
@@ -421,10 +412,7 @@ namespace MWRender
         mViewer->getCamera()->setCullingMode(cullingMode);
         mViewer->getCamera()->setName(Constants::SceneCamera);
 
-        // Mask_FirstPersonShadow is shadow-only geometry: this cull mask is ~0 minus
-        // exclusions, so a new bit would otherwise be DRAWN by the scene camera — which for
-        // the first-person head means rendering the inside of the player's own skull.
-        auto mask = ~(Mask_UpdateVisitor | Mask_SimpleWater | Mask_FirstPersonShadow);
+        auto mask = ~(Mask_UpdateVisitor | Mask_SimpleWater);
         MWBase::Environment::get().getWindowManager()->setCullMask(mask);
         NifOsg::Loader::setHiddenNodeMask(Mask_UpdateVisitor);
         NifOsg::Loader::setIntersectionDisabledNodeMask(Mask_Effect);

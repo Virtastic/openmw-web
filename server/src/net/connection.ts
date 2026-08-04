@@ -310,6 +310,12 @@ export class Connection implements Peer {
         });
         this.ctx.track?.(this.ctx.players.flushKey(charId));
       }
+      // ...and FORGET it. get() answers from the cache and never re-reads disk, while
+      // flushKey writes the whole doc with INSERT OR REPLACE — so a world that stays up (the
+      // shared one never restarts) held this snapshot until it did, and overwrote whatever the
+      // player did elsewhere in between with a copy from their last visit. releaseCached
+      // flushes first, so nothing is lost by dropping it.
+      this.ctx.track?.(this.ctx.players.releaseCached(charId));
       // M8: park a resume ticket BEFORE the roster slot goes, so a reconnect within
       // [login] resumeWindowSec can rejoin in place instead of paying argon2 again.
       // Only in-world sessions get one: there is nothing to resume mid-auth.
@@ -604,7 +610,13 @@ export class Connection implements Peer {
       // written at all — nothing to reap if the player had quit instead.
       if (this.provisionalCharId !== undefined && this.player) {
         const id = this.provisionalCharId;
-        const label = this.player.name;
+        // THE NAME THE PLAYER TYPED, not the slot label. onCharacterNamed already writes the
+        // chargen name onto the slot — but it fires on PlayerAppearance, which arrives while
+        // the slot is still PROVISIONAL and unwritten, so the rename lands on nothing. By the
+        // time the slot exists (here) the appearance has stopped changing, so the diff never
+        // re-sends and nothing corrects it: the character stayed "New character" forever.
+        const named = this.ctx.players.getCached(this.player.charId)?.appearance?.name;
+        const label = (typeof named === 'string' && named.trim() !== '') ? named : this.player.name;
         this.provisionalCharId = undefined;
         this.creationInProgress = false;
         if (this.player) this.player.inChargen = false;
@@ -1163,7 +1175,12 @@ export class Connection implements Peer {
     // Committed (or refused). Spend it ONLY on success, so a refusal leaves the player with a
     // credential they can still use — on the world they came from, or on a retry here.
     if (this.state === 'AUTHED') this.ctx.tickets.claim(msg.ticket);
-    else log('info', 'conn.ticket_kept', { reason: 'join refused', account: account.name });
+    else {
+      // Refused after the peek reserved it: hand it back, or the reservation itself becomes
+      // the spent-credential bug it was added to prevent.
+      this.ctx.tickets.restore(msg.ticket);
+      log('info', 'conn.ticket_kept', { reason: 'join refused', account: account.name });
+    }
   }
 
   // forceRecord: send the doc even without an appearance. The appearance gate below exists

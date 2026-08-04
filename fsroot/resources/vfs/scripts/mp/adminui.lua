@@ -178,8 +178,12 @@ end
 
 return {
     engineHandlers = {
-        onKeyPress = function(key)
-            if key.symbol == 'g' and not I.UI.getMode() then toggle() end
+        -- NO KEY. G used to open this MyGUI panel, which is the old in-engine styling and
+        -- sits beside the HTML chat and social modals rather than matching them. It is not
+        -- removed — MP_AdminUiOpen still opens it, which is how the harness drives it — only
+        -- unbound, so it stops appearing in front of players until the same treatment as the
+        -- other overlays replaces it.
+        onKeyPress = function(_key)
         end,
     },
     eventHandlers = {

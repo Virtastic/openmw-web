@@ -11,7 +11,6 @@
 
 #include <components/debug/debuglog.hpp>
 
-#include <components/misc/constants.hpp>
 #include <components/misc/rng.hpp>
 
 #include <components/misc/resourcehelpers.hpp>
@@ -398,18 +397,6 @@ namespace MWRender
         void operator()(osg::Node* node, osg::NodeVisitor* nv) override
         {
             osgUtil::CullVisitor* cv = static_cast<osgUtil::CullVisitor*>(nv);
-            // ONLY the scene camera. Now that the first-person body is in the shadow-casting
-            // traversal, this callback also runs during the shadow cull — and rewriting a
-            // shadow camera's projection to the first-person FOV would distort every shadow in
-            // the scene. (A directional-light shadow camera is orthographic, so getPerspective
-            // below would fail and no-op today, but relying on that is a trap for the first
-            // perspective shadow camera anyone adds.)
-            const osg::Camera* cam = cv->getCurrentCamera();
-            if (!cam || cam->getName() != Constants::SceneCamera)
-            {
-                traverse(node, nv);
-                return;
-            }
             float fov, aspect, zNear, zFar;
             if (cv->getProjectionMatrix()->getPerspective(fov, aspect, zNear, zFar) && std::abs(fov - mFov) > 0.001)
             {
@@ -675,21 +662,12 @@ namespace MWRender
             }
         }
 
-        if (mPartPriorities[ESM::PRT_Head] < 1 && !mHeadModel.empty())
-            addOrReplaceIndividualPart(ESM::PRT_Head, -1, 1, mHeadModel);
-        if (mPartPriorities[ESM::PRT_Hair] < 1 && mPartPriorities[ESM::PRT_Head] <= 1 && !mHairModel.empty())
-            addOrReplaceIndividualPart(ESM::PRT_Hair, -1, 1, mHairModel);
-        if (mViewMode == VM_FirstPerson)
+        if (mViewMode != VM_FirstPerson)
         {
-            // The head and hair used to be skipped entirely here, because the camera sits
-            // inside them and drawing them fills the screen with the back of your own face.
-            // But the rest of the first-person body now casts a shadow, and a body with no
-            // head casts a headless silhouette, which reads as a bug rather than as a view
-            // mode. So they are attached and tagged shadow-only: the scene camera never
-            // traverses this bit, the shadow pass does.
-            for (const int part : { ESM::PRT_Head, ESM::PRT_Hair })
-                if (mObjectParts[part])
-                    mObjectParts[part]->getNode()->setNodeMask(Mask_FirstPersonShadow);
+            if (mPartPriorities[ESM::PRT_Head] < 1 && !mHeadModel.empty())
+                addOrReplaceIndividualPart(ESM::PRT_Head, -1, 1, mHeadModel);
+            if (mPartPriorities[ESM::PRT_Hair] < 1 && mPartPriorities[ESM::PRT_Head] <= 1 && !mHairModel.empty())
+                addOrReplaceIndividualPart(ESM::PRT_Hair, -1, 1, mHairModel);
         }
         if (mViewMode == VM_HeadOnly)
             return;
