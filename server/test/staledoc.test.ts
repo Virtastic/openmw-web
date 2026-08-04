@@ -106,3 +106,35 @@ test('a write against an uncached character does not truncate it', async () => {
   assert.equal((after?.stats as { level?: number } | undefined)?.level, 14);
   assert.equal(after?.position?.cellKey, '0,0', 'and the write itself must still land');
 });
+
+// THE SAME DISEASE, THIRD HOST. AccountStore.get returned its cache forever, and the gateway
+// plus every world each hold one over the same accounts.db — so a long-running world
+// authenticated players against the character list it saw at its own boot: characters created
+// since didn't exist, completed flags were stale, and one player was routed into a DELETED
+// character's still-running world with inChargen wrongly false, where the sim peer took the
+// cell and froze the chargen guard. A clean cached doc must be re-read; queued writes win.
+test('a world sees characters another process created after it first looked', async () => {
+  const dir = tmpDataDir();
+  const gateway = new AccountStore(dir);
+  const world = new AccountStore(dir);
+
+  const acct = await gateway.register('Traveller', 'hunter22');
+  assert.ok(typeof acct !== 'string');
+  await gateway.flush();
+
+  // The world looks once — this is the first impression it used to keep forever.
+  assert.equal((await world.get('traveller'))?.characters?.length ?? 0, 0);
+
+  // The gateway then creates a slot (the launcher's "+ New character" tile).
+  const fresh = await gateway.get('traveller');
+  assert.ok(fresh);
+  const created = gateway.createCharacter(fresh, 'Virtastic');
+  assert.ok(typeof created !== 'string');
+  await gateway.flush();
+
+  // The world must see it — authing this character is what sets inChargen correctly.
+  const seen = await world.get('traveller');
+  assert.equal(seen?.characters?.length, 1,
+    'the world authenticated against a character list from before the slot existed');
+  assert.equal(seen?.characters?.[0]?.completed !== true, true);
+});

@@ -165,12 +165,21 @@ export class AccountStore {
   async get(name: string): Promise<Account | undefined> {
     const key = name.toLowerCase();
     const cached = this.cache.get(key);
-    if (cached) return cached;
+    // Pending writes win — a doc with queued mutations is the truth this process is about to
+    // flush, and replacing it would lose them. A CLEAN cached doc is only a first impression:
+    // the gateway and every world share accounts.db, and each used to serve whatever was true
+    // the first time it looked, forever. A long-running world then authenticated players
+    // against a character list from another era — stale slots, stale completed flags — which
+    // put one into a DELETED character's still-running world with inChargen wrongly false,
+    // where the sim peer took the cell and froze the chargen guard. Third instance of the
+    // same never-re-read disease (PlayerStore had it twice); read through unless dirty.
+    if (cached && this.dirty.has(key)) return cached;
     const row = this.db.prepare('SELECT doc FROM accounts WHERE key = ?').get(key) as
       { doc: string } | undefined;
     const loaded = row ? (JSON.parse(row.doc) as Account) : undefined;
     if (loaded) this.cache.set(key, loaded);
-    return loaded;
+    // Row gone but cached: deletion raced us; the delete path owns cache eviction.
+    return loaded ?? cached;
   }
 
   // 'exists' | 'badname' | the new account. Uniqueness is case-insensitive.
