@@ -137,22 +137,26 @@ local function playersTab()
             others = others + 1
             if shown < MAX_ROWS then
                 shown = shown + 1
-                local acct = string.lower(p.name) -- account keys are the lowercased name
+                -- The roster carries {id, name} ONLY — the account key is not on the wire, and
+                -- lowercased-username used to be guessed as the key. Wrong since usernames:
+                -- mute/invite/report all hit a phantom account and reported success. The
+                -- SERVER resolves the name against its live roster instead.
+                local acct = string.lower(p.name) -- display-only fallback for local checks
                 local actions = {}
                 if not isFriend(acct) then
                     actions[#actions + 1] = { 'add friend', function() send('FriendRequest', { name = p.name }) end }
                 end
                 if not inParty(acct) then
-                    actions[#actions + 1] = { 'party', function() send('PartyInvite', { acct = acct }) end }
+                    actions[#actions + 1] = { 'party', function() send('PartyInvite', { name = p.name }) end }
                 end
                 -- Mute is separate from block: block ends the relationship, mute just
                 -- means "I do not want to hear this person right now". Persistent, so it
                 -- survives a relog.
-                actions[#actions + 1] = { 'mute', function() send('MuteAdd', { acct = acct }) end }
+                actions[#actions + 1] = { 'mute', function() send('MuteAdd', { name = p.name }) end }
                 -- One click to report. A flow that requires typing a slash command with
                 -- the right syntax is one nobody uses at the moment they need it.
                 actions[#actions + 1] = { 'report', function()
-                    reportTarget = acct
+                    reportTarget = p.name
                     reportName = p.name
                     status = 'Type a reason, then press Enter.'
                     render()
@@ -172,7 +176,7 @@ local function playersTab()
                 textChanged = async:callback(function(text) reportDraft = text end),
                 keyPress = async:callback(function(e)
                     if e.code == input.KEY.Enter and reportDraft ~= '' then
-                        send('ReportPlayer', { acct = reportTarget, reason = reportDraft })
+                        send('ReportPlayer', { name = reportTarget, reason = reportDraft })
                         status = 'Report sent to the moderators.'
                         reportTarget, reportName, reportDraft = nil, nil, ''
                         render()

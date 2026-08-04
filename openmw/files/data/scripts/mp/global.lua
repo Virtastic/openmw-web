@@ -1473,6 +1473,9 @@ local eventHandlers = {
         local id = tostring(data.id or '')
         if id == '' or id == net.characterId then return end
         net.setCharacter(id)
+        -- The reboot reuses the boot fragment, and net state dies with the Lua VM — so the
+        -- chosen slot must ride the mirror or the reload boots the OLD character.
+        mp.testSet('switchChar', id)
         net.switchTo(net.currentTarget())
     end,
     mpCharCreate = function(data)

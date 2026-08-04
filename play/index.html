@@ -3188,11 +3188,16 @@
       return;
     }
     var frag = String(location.hash || '').replace(/^#/, '');
+    // A character switch rides the mirror: Lua state dies with the reload, so without this
+    // the reused fragment's mpchar rebooted the OLD character and the click did nothing.
+    var swChar = String((window.__omwMP || {}).switchChar || '');
     var keep = frag.split('&').filter(function(kv){
       var k = kv.split('=')[0];
+      if (swChar && (k === 'mpchar' || k === 'mpcharname')) return false;
       return k !== 'mp' && k !== 'mpticket' && k !== 'mpstart' && k !== 'mpnew' && kv !== '';
     });
     keep.unshift('mp=' + encodeURIComponent(wsUrl), 'mpticket=' + encodeURIComponent(ticket));
+    if (swChar) keep.push('mpchar=' + encodeURIComponent(swChar));
     // Flush saves and settings before the navigation, exactly as a tab close would.
     try { if (window.__omwSync) window.__omwSync(); } catch (e) {}
     location.href = 'index.html#' + keep.join('&');

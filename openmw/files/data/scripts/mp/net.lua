@@ -422,9 +422,16 @@ dispatch.SessionHelloOk = function(msg)
     -- back to minting its own character and the wrong-world guard refused it. Whether the
     -- module-load env read raced or the state was lost, the fix is the same: ask again at the
     -- moment the answer matters.
-    if desiredCharId == nil and mp.getBootCharacter then
-        local boot = mp.getBootCharacter()
-        if type(boot) == 'string' and boot ~= '' then desiredCharId = boot end
+    if desiredCharId == nil then
+        -- The SESSION's confirmed character outranks the boot fragment: after Welcome clears
+        -- desiredCharId, a reconnect used to re-arm from the env — the character the PAGE was
+        -- opened with — silently overriding whichever slot the session had switched to.
+        if type(net.characterId) == 'string' and net.characterId ~= '' then
+            desiredCharId = net.characterId
+        elseif mp.getBootCharacter then
+            local boot = mp.getBootCharacter()
+            if type(boot) == 'string' and boot ~= '' then desiredCharId = boot end
+        end
     end
     if desiredCharId and auth.t ~= 'SessionResume' then
         auth.characterId = desiredCharId

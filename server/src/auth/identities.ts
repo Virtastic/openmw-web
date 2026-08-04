@@ -241,6 +241,11 @@ export class LoginTicketStore {
   }
 
   mint(accountKey: string, accountName: string): string {
+    // Sweep expired rows first — /auth/ticket has no rate limiter and this INSERTs into the
+    // SHARED db, so an authed client in a loop grew it without bound. Same idiom as
+    // LockerSessionStore.mint, which always swept.
+    try { this.db?.prepare('DELETE FROM tickets WHERE expiresAt < ?').run(Date.now()); } catch { /* best effort */ }
+    for (const [k, v] of this.tickets) { if (v.expiresAt <= Date.now()) this.tickets.delete(k); }
     const ticket = randomBytes(32).toString('base64url'); // 256 bits: unguessable within the TTL
     const rec: LoginTicket = { accountKey, accountName, expiresAt: Date.now() + this.ttlMs };
     this.tickets.set(ticket, rec);

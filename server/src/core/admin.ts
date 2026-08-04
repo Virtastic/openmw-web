@@ -258,7 +258,7 @@ export const ADMIN_COMMANDS: Record<string, AdminCommandSpec> = {
     async run(ctx, actor, args) {
       const name = arg(args, 0);
       if (!name) return 'usage: /ban <account> [reason]';
-      const account = await ctx.accounts.get(name);
+      const account = await ctx.accounts.get(ctx.accounts.keyForUsername(name) ?? name);
       if (!account) return `No account named "${name}".`;
       const online = ctx.roster.findByName(account.name);
       if (online && online.rank > actor.rank) return `${online.name} outranks you.`;
@@ -349,7 +349,11 @@ export const ADMIN_COMMANDS: Record<string, AdminCommandSpec> = {
 };
 
 function looksLikeIp(s: string): boolean {
-  return /^[0-9.]+$/.test(s) || /^[0-9a-fA-F:]+$/.test(s);
+  // Both alternatives REQUIRE a separator. Without it, any name spelled in hex ("Facade",
+  // "dead") or digits ("1234" — a legal username) passed as an address: the name was banned
+  // as a literal IP string, the roster loop matched nobody, and the operator was told it
+  // worked. A real address always carries '.' or ':'.
+  return /^(?=.*\.)[0-9.]+$/.test(s) || /^(?=.*[.:])[0-9a-fA-F:.]+$/.test(s);
 }
 
 function sendTeleport(player: Player, cellKey: string, pose: { x: number; y: number; z: number }): void {

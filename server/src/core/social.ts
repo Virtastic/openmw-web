@@ -10,7 +10,7 @@
 
 import type { Player, Roster } from './players';
 import { SocialStore, type AccountKey } from './socialstore';
-import type { LValue, JsLike } from '../proto/lser';
+import type { LValue, LTable, JsLike } from '../proto/lser';
 import type { WorldBrowser } from './worldbrowser';
 import { log } from '../log';
 
@@ -728,6 +728,23 @@ export class Social {
   // Returns true when the event belonged to this family, matching the other core modules.
   // Every failure is reported back to the caller rather than dropped: a friend request that
   // silently does nothing is indistinguishable from a broken server to the player.
+  // Resolve an op's target to a REAL account key. The client's roster carries {id, name}
+  // only, and it used to guess the key as the lowercased display name — wrong since
+  // usernames, so mute/invite/report all landed on a phantom account and reported success.
+  // A name is resolved against the live roster (you target people you can SEE); a raw acct
+  // is accepted only if someone in this world actually has it.
+  private targetAcct(body: LTable | undefined): string | undefined {
+    const s = (k: string): string => {
+      const v = body?.get(k);
+      return typeof v === 'string' ? v : '';
+    };
+    const nm = s('name');
+    if (nm !== '') return this.d.roster.findByName(nm)?.accountKey;
+    const acct = s('acct');
+    if (acct === '') return undefined;
+    return this.d.roster.inWorld().some((p) => p.accountKey === acct) ? acct : undefined;
+  }
+
   handleEvent(player: Player, name: string, value: LValue | undefined): boolean {
     // LSER decodes tables to Map, not to a plain object. Reading it as an object silently
     // yields '' for every field, which the policy then correctly reports as
@@ -837,7 +854,9 @@ export class Social {
         return true;
       }
       case 'PartyInvite': {
-        const r = this.partyInvite(player, str('acct'));
+        const inviteTarget = this.targetAcct(body);
+        if (inviteTarget === undefined) { this.reply(player, 'PartyInvite', false, 'no_such_player'); return true; }
+        const r = this.partyInvite(player, inviteTarget);
         this.reply(player, 'PartyInvite', r === 'ok', r);
         return true;
       }
@@ -888,8 +907,9 @@ export class Social {
       // event rather than a typed command is what makes it one click from the social hub,
       // which is the difference between a report flow that gets used and one that does not.
       case 'ReportPlayer': {
-        const targetAcct = str('acct');
+        const targetAcct = this.targetAcct(body);
         const reason = str('reason').slice(0, 500);
+        if (targetAcct === undefined) { this.reply(player, 'ReportPlayer', false, 'no_such_player'); return true; }
         if (targetAcct === player.accountKey) {
           this.reply(player, 'ReportPlayer', false, 'self');
           return true;
@@ -927,7 +947,9 @@ export class Social {
         return true;
       }
       case 'MuteAdd': {
-        const r = this.mute(player, str('acct'));
+        const muteTarget = this.targetAcct(body);
+        if (muteTarget === undefined) { this.reply(player, 'MuteAdd', false, 'no_such_player'); return true; }
+        const r = this.mute(player, muteTarget);
         this.reply(player, 'MuteAdd', r === 'ok', r);
         return true;
       }

@@ -38,6 +38,10 @@ test('the shared world leaves a looted container looted', async () => {
   const store = new CellStore(tmpDataDir(), false); // public world
   await lootedCell(store);
   const after = await store.resetCell(CELL);
-  assert.equal(after.containers[KEY], undefined,
-    'the shared world restocked a container the player had already emptied — that is the faucet');
+  // The looted row is CARRIED FORWARD, still empty — not dropped. A dropped row re-armed the
+  // faucet one door over: containerOpen treats a missing row as "first open" and adopts the
+  // opener's client-declared contents, so deletion here meant a full re-seed on next open.
+  assert.deepEqual(after.containers[KEY]?.items, [],
+    'the shared world restocked (or forgot) a container the player had already emptied');
+  assert.ok((after.containers[KEY]?.stateSeq ?? 0) > 1, 'seq must keep climbing across the reset');
 });

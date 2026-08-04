@@ -263,7 +263,16 @@ export class CellStore {
     const before = this.cache.get(cellKey) ?? (await this.get(cellKey));
     const doc = emptyCellDoc();
     for (const [key, cont] of Object.entries(before.containers)) {
-      if (!this.restockOnReset) continue; // shared world: looted stays looted (see above)
+      if (!this.restockOnReset) {
+        // Shared world: CARRY THE ROW FORWARD, looted as it stands. Dropping it looked the
+        // same from outside but re-armed the faucet: containerOpen treats a missing row as
+        // "first open" and adopts the opener's client-declared contents as canonical, so the
+        // very next open after a reset re-seeded the full roll. A row that persists means
+        // there is no "first open" ever again.
+        doc.containers[key] = { items: cont.items.map((i) => ({ ...i })), stateSeq: cont.stateSeq + 1,
+          ...(cont.origin ? { origin: cont.origin.map((i) => ({ ...i })) } : {}) };
+        continue;
+      }
       if (!cont.origin) continue; // pre-restock doc: nothing to restore it to
       const items = cont.origin.map((i) => ({ ...i }));
       // stateSeq keeps CLIMBING across a reset. A client that reconnects mid-reset must

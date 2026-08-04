@@ -978,6 +978,10 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     simPeers.sweep();
   };
   const simPeerTick = setInterval(simPeerPass, 5_000);
+  // Loot rolls: sweep() is what settles a roll whose voter disconnected — without a caller,
+  // a dropped party member pinned the item forever and every retry leaked another open roll.
+  const lootSweep = setInterval(() => partyRules.sweep(), 5_000);
+  lootSweep.unref();
   // A peer finishing its hello should not wait up to a full tick to be put to work —
   // that is 5s of the player holding a loading screen for no reason.
   ctx.onPeerJoined = () => simPeerPass();
