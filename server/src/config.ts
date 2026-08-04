@@ -117,7 +117,16 @@ export interface Config {
    *  occupy real roster slots and real friend/party rows, so a public server running them is
    *  handing strangers accounts nobody controls — hence `count: 0` by default and a loud warn
    *  at boot when it is not. Also settable as OMW_DEV_BOTS for a throwaway run. */
-  dev: { bots: number; botPrefix: string };
+  dev: {
+    bots: number;
+    botPrefix: string;
+    /** Appearance the bots wear. Empty = social-only: they hold accounts, characters and a
+     *  position, but broadcast no appearance so no puppet is spawned for them. These are
+     *  CONTENT record ids, so there is no safe universal default — a wrong one produces a
+     *  broken puppet, which is worse than none. Set them to ids that exist in the data this
+     *  server actually loads. */
+    botRace: string; botHead: string; botHair: string; botClass: string;
+  };
   moderation: { chatLog: boolean; retentionDays: number; contextLines: number };
   limits: {
     msgsPerSec: number;
@@ -437,6 +446,10 @@ function validate(t: Tree): Config {
       // behind that could ship enabled.
       bots: Math.max(0, Math.trunc(Number(process.env.OMW_DEV_BOTS ?? optNum(t, 'dev', 'bots', 0))) || 0),
       botPrefix: optStr(t, 'dev', 'botPrefix', 'Bot'),
+      botRace: optStr(t, 'dev', 'botRace', ''),
+      botHead: optStr(t, 'dev', 'botHead', ''),
+      botHair: optStr(t, 'dev', 'botHair', ''),
+      botClass: optStr(t, 'dev', 'botClass', ''),
     },
     admin: {
       owners: reqStrArray(t, 'admin', 'owners'),

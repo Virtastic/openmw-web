@@ -1040,11 +1040,20 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // Started AFTER hooks so plugins see a normal roster, and given the world's respawn cell so
   // interest-managed broadcasts reach them.
   const devBots = config.dev.bots > 0
-    ? startTestBots({
-      roster, social, accounts,
+    ? await startTestBots({
+      roster, social, accounts, players: playerStore,
       count: Math.min(config.dev.bots, 16), // a sanity ceiling; this is a dev aid, not a load test
       prefix: config.dev.botPrefix,
-      cellKey: config.rules.respawnCellKey,
+      // The starter village — the same point respawn uses, so "where players begin" is
+      // configured once per deployment rather than twice.
+      spawn: {
+        cellKey: config.rules.respawnCellKey,
+        x: config.rules.respawnX, y: config.rules.respawnY, z: config.rules.respawnZ,
+      },
+      look: {
+        race: config.dev.botRace, head: config.dev.botHead,
+        hair: config.dev.botHair, class: config.dev.botClass,
+      },
     })
     : undefined;
   log('info', 'server.start', { port, dataDir: opts.dataDir, sharedDir, version: VERSION });

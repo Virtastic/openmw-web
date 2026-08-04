@@ -230,6 +230,18 @@ intervalSec = 259200              # 3 days; only applies to the cells listed abo
 [dev]
 bots = 0
 botPrefix = "Bot"
+# What the bots look like. These are CONTENT record ids, so there is no safe universal
+# default — a wrong one spawns a broken puppet, which is worse than none. Leave them empty and
+# the bots are social-only: real accounts, real characters, standing in the starter village,
+# but no puppet in the world. For retail Morrowind, values that are known to work:
+#   botRace = "dark elf"
+#   botHead = "b_n_dark elf_m_head_01"
+#   botHair = "b_n_dark elf_m_hair_01"
+#   botClass = "acrobat"
+botRace = ""
+botHead = ""
+botHair = ""
+botClass = ""
 
 [admin]
 # M8: accounts promoted to rank 3 (owner) on every boot, so the first operator never has
