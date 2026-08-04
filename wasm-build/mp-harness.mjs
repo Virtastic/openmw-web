@@ -30,7 +30,12 @@ const PLAY_PORT = 8910; // fixed in play/server.py (no port flag); we reuse a li
 // Full engine boot to world + MP join; ~30-60s on a real GPU. SwiftShader (a CI box with no
 // GPU) is several times slower and the engine is genuinely making progress the whole time, so
 // a fixed 120s reported a stall that was really just software rasterisation.
-const JOIN_TIMEOUT_MS = Number(process.env.JOIN_TIMEOUT_MS || 120_000);
+// Engine boot is bimodal: the FIRST client on a machine warms the page/wasm caches and joins
+// in ~25s, while a second client booting alongside it competes for CPU with a running WASM
+// engine and streams its own animation data far slower. 120s was tuned when only one client
+// ever booted; a two-bot scenario times out on the second while it is still visibly loading,
+// which reads as "the bot cannot join" and is really "this laptop is running two engines".
+const JOIN_TIMEOUT_MS = Number(process.env.JOIN_TIMEOUT_MS || 300_000);
 const RUN_ID = Date.now().toString(36); // suffix for account names -> no cross-run collisions
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
