@@ -61,6 +61,11 @@ export interface Account {
   banned?: boolean;
   // Absent on pre-slot accounts; the first authed session migrates them to one character.
   characters?: CharacterSummary[];
+  // Ids of characters this account has DELETED. The gateway and every world write this whole
+  // document, so a write has to merge the character list rather than replace it (see
+  // writeNow) — and a plain union would resurrect deleted slots forever. Bounded: the tail is
+  // dropped, because a tombstone only has to outlive other processes' stale caches.
+  deletedCharacters?: string[];
   // Onboarding profile. email is CONTACT data: it must never appear in any wire payload
   // or peer-visible surface — only the owner's own profile view and the CRM hook see it.
   // username is the unique public handle shown everywhere in-game (nametags, chat,
@@ -134,8 +139,41 @@ export class AccountStore {
   // storage means a crash right after signup loses it, and anything that looks the account up
   // from outside the process (erasure, another world) finds nothing.
   private writeNow(key: string, account: Account): void {
+    // MERGE THE SLOT LIST, never replace it. The gateway and every world process hold their
+    // own AccountStore over this one file and each writes the WHOLE document, so the last
+    // flush won outright: a process whose cached copy predated a character wiped that
+    // character off the account. Observed live — three player docs with real journals and an
+    // account with ZERO slots, which is a finished character that has to run chargen again
+    // because the character screen cannot see it. Read-through on get() fixed stale READS;
+    // this is the same disease on the write side.
+    //
+    // Union by id, newest lastPlayedAt wins, minus this account's deletion tombstones — a
+    // plain union would resurrect every deleted character the moment a stale process flushed.
+    const row = this.db.prepare('SELECT doc FROM accounts WHERE key = ?').get(key) as
+      { doc: string } | undefined;
+    const merged: Account = { ...account };
+    if (row) {
+      try {
+        const disk = JSON.parse(row.doc) as Account;
+        const tombs = new Set([...(account.deletedCharacters ?? []), ...(disk.deletedCharacters ?? [])]);
+        const byId = new Map<string, CharacterSummary>();
+        for (const c of disk.characters ?? []) byId.set(c.id, c);
+        for (const c of account.characters ?? []) {
+          const prev = byId.get(c.id);
+          // A slot we know about wins unless disk's copy was played more recently.
+          if (!prev || (prev.lastPlayedAt ?? '') <= (c.lastPlayedAt ?? '')) byId.set(c.id, c);
+        }
+        for (const id of tombs) byId.delete(id);
+        merged.characters = [...byId.values()];
+        if (tombs.size > 0) merged.deletedCharacters = [...tombs].slice(0, 64);
+      } catch { /* unreadable row: our copy is the best we have */ }
+    }
     this.db.prepare('INSERT OR REPLACE INTO accounts (key, doc) VALUES (?, ?)')
-      .run(key, JSON.stringify(account));
+      .run(key, JSON.stringify(merged));
+    // Keep the in-memory copy consistent with what is now on disk, or the next mutation
+    // would rebuild the same stale list and undo the merge we just did.
+    account.characters = merged.characters;
+    if (merged.deletedCharacters) account.deletedCharacters = merged.deletedCharacters;
     this.keysOnDisk.add(key);
   }
 
@@ -290,6 +328,9 @@ export class AccountStore {
     const i = chars.findIndex((c) => c.id === charId);
     if (i < 0) return false;
     chars.splice(i, 1);
+    const tomb = account.deletedCharacters ?? [];
+    if (!tomb.includes(charId)) tomb.unshift(charId);
+    account.deletedCharacters = tomb.slice(0, 64);
     this.dirty.add(account.name.toLowerCase());
     void this.flush();
     return true;

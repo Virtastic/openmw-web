@@ -3580,11 +3580,17 @@
       if (v === 'public') {
         clearTimeout(window.__omwSwitchWatch);
         window.__omwSwitchWatch = setTimeout(function(){
+          // Owns the loading screen too: see the comment at the show() below.
           window.__omwLoading.hide();
           setWhere(lastWhere);
+          // The stage the client actually reached, so a screenshot names the failing layer
+          // instead of costing another test-and-guess round.
+          var stage = String((window.__omwMP || {}).publicStage || 'no-response');
           showNotice('Could not reach the public world',
             'The server did not hand this session over. You are still in your own world and '
-            + 'nothing was lost — try Public again in a moment.', GLYPH_WORLD, true);
+            + 'nothing was lost — try Public again in a moment.'
+            + '<br><br><span style="opacity:.6;font-size:12px">stage: ' + esc(stage) + '</span>',
+            GLYPH_WORLD, true);
         }, 15000);
       }
       // Solo <-> Party on your OWN world is an in-place flip (no reconnect); Public is a real
@@ -3592,7 +3598,14 @@
       // show it — the state watcher above hides it when the connection settles.
       window.__omwLoading.show(v === 'public' ? 'Joining the public world' : 'Switching world',
         'Syncing with the server…');
-      holdUntilSimulated(30000);
+      // Public is a page NAVIGATION, not a state change in THIS page. holdUntilSimulated asks
+      // "are we in a live world yet?" — and we are: the one we never left. So it cleared the
+      // screen while the switch was still in flight, dropping the player back into their old
+      // world looking like the click did nothing, and the failure notice arrived later out of
+      // nowhere. The screen must stay up until the page navigates (which ends it for free) or
+      // the watchdog says it failed. Solo/Party ARE in-place flips of this connection, so the
+      // simulated-hold is exactly right for them.
+      if (v !== 'public') holdUntilSimulated(30000);
       // No status line for a world switch: the loading screen IS the progress indicator, and
       // a second running commentary in the panel footer only contradicted it.
       setStatus('');

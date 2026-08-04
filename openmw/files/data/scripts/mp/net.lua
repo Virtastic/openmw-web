@@ -225,6 +225,7 @@ end
 -- Reconnects are untouched — those go through dialNow and are a socket event, not a world
 -- change.
 function net.switchTo(url)
+    mp.testSet('publicStage', 'switchTo:' .. tostring(url))
     if type(url) ~= 'string' or url == '' then return false end
     -- The page owns navigation; Lua cannot reload itself. It mints a fresh login ticket and
     -- rebuilds the boot fragment for `url`.

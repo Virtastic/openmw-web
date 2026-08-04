@@ -138,3 +138,65 @@ test('a world sees characters another process created after it first looked', as
     'the world authenticated against a character list from before the slot existed');
   assert.equal(seen?.characters?.[0]?.completed !== true, true);
 });
+
+// THE SAME DISEASE ON THE WRITE SIDE. The gateway and every world hold their own AccountStore
+// over one accounts.db and each flushes the WHOLE document, so the last writer won outright:
+// a process whose cached copy predated a character wiped that character off the account.
+// Observed live as three player docs with real journals and an account with ZERO slots — a
+// finished character that has to run chargen again, because the character screen cannot see it.
+test('a stale process flushing does not wipe a character another process created', async () => {
+  const dir = tmpDataDir();
+  const gateway = new AccountStore(dir);
+  const world = new AccountStore(dir);
+
+  const acct = await gateway.register('Traveller', 'hunter22');
+  assert.ok(typeof acct !== 'string');
+  await gateway.flush();
+
+  // The gateway holds the account and dirties it — this is what pinned its stale copy.
+  const gwCopy = await gateway.get('traveller');
+  assert.ok(gwCopy);
+  gateway.touchLastSeen('Traveller'); // dirties the gateway's copy — what pinned the stale doc
+
+  // Meanwhile the WORLD adopts a character (chargen finished) and flushes it.
+  const wCopy = await world.get('traveller');
+  assert.ok(wCopy);
+  const made = world.createCharacter(wCopy, 'Virtastic');
+  assert.ok(typeof made !== 'string');
+  await world.flush();
+
+  // Now the gateway flushes its copy, which never knew about that character.
+  await gateway.flush();
+
+  const after = new AccountStore(dir);
+  const seen = await after.get('traveller');
+  assert.equal(seen?.characters?.length, 1,
+    'a stale flush erased a character that had already finished creation');
+  assert.equal(seen?.characters?.[0]?.name, 'Virtastic');
+});
+
+// ...but a DELETED character must stay deleted, or the merge resurrects every slot the player
+// ever removed as soon as any stale process flushes.
+test('a deleted character is not resurrected by a stale flush', async () => {
+  const dir = tmpDataDir();
+  const a = new AccountStore(dir);
+  const acct = await a.register('Traveller', 'hunter22');
+  assert.ok(typeof acct !== 'string');
+  const made = a.createCharacter(acct, 'Doomed');
+  assert.ok(typeof made !== 'string');
+  await a.flush();
+
+  const b = new AccountStore(dir);
+  const stale = await b.get('traveller'); // b's copy still has the character
+  assert.equal(stale?.characters?.length, 1);
+
+  const own = await a.get('traveller');
+  assert.ok(own);
+  assert.equal(a.deleteCharacter(own, made.id), true);
+  await a.flush();
+
+  await b.flush(); // stale process writes its copy, which still lists the deleted slot
+  const after = new AccountStore(dir);
+  assert.equal((await after.get('traveller'))?.characters?.length ?? 0, 0,
+    'a deleted character came back');
+});

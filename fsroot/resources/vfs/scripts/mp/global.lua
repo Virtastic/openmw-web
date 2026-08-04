@@ -875,6 +875,10 @@ local eventHandlers = {
         -- world and dial it. Remember its URL for next time and switch now.
         if pendingPublic then
             pendingPublic = false
+            -- STAGE TRACE. Every one of these steps has failed silently, and the browser
+            -- console is not evidence anyone can hand me. The last stage reached rides the
+            -- mirror into the failure modal, so one screenshot names the layer.
+            mp.testSet('publicStage', 'list:' .. tostring(#(data.worlds or {})))
             local found = false
             for _, w in ipairs(data.worlds or {}) do
                 if w.mode == 'public' and w.up then
@@ -882,6 +886,7 @@ local eventHandlers = {
                     if u then
                         found = true
                         worldUrls.public = u
+                        mp.testSet('publicStage', 'resolved:' .. tostring(u))
                         print('[mp] public: resolved to ' .. tostring(u))
                         if net.currentTarget() ~= u then net.switchTo(u)
                         else notice('You are already in the public world.') end
@@ -890,6 +895,7 @@ local eventHandlers = {
                 end
             end
             if not found then
+                mp.testSet('publicStage', 'no-usable-world')
                 notice('The public world is not available right now.')
                 print('[mp] public: no usable public world in the list')
             end
@@ -1603,6 +1609,7 @@ local eventHandlers = {
                 notice('You are already in the public world.')
             else
                 print('[mp] public: asking the server for the world list')
+                mp.testSet('publicStage', 'asked')
                 pendingPublic = true
                 mp.sendEvent('WorldList', {})
             end
