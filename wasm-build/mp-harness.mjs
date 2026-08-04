@@ -230,6 +230,13 @@ async function launchClient(name, mpPort, extraParams = '', opts = {}) {
     // two wrong hypotheses while the answer sat in the log the whole time. Surfaced per
     // client so it is never buried again.
     luaErrors: () => logs.filter((l) => l.includes('Lua error')),
+    // UNCAUGHT JS EXCEPTIONS, promoted to a first-class signal for the same reason Lua errors
+    // were. A ReferenceError inside a setInterval callback kills the REST of that callback
+    // forever while the page keeps running and every mirror this harness reads stays fresh
+    // from other code — so scenarios pass and the feature is dead. That is exactly how three
+    // undeclared identifiers silently killed chat, and how a cross-block call killed the
+    // world switch, both shipping green because nothing in CI ever loaded the page.
+    jsErrors: () => logs.filter((l) => l.startsWith('EXC:')),
     close: () => {
       try { chrome.kill('SIGKILL'); } catch {}
       try { rmSync(profile, { recursive: true, force: true }); } catch {}
@@ -457,6 +464,15 @@ for (const file of files) {
     // assertions happened to be satisfied by some other path while a subsystem was dead.
     // Reported (not failed) so it cannot be silently normalised, and so a green suite still
     // says "something is broken in here".
+    // A page that threw is a FAILURE, not a note. Unlike a Lua handler (whose blast radius is
+    // one subsystem), an uncaught JS exception silently kills everything after it in its
+    // callback — including the 150 ms mirror poll that drives chat, social and the world
+    // switch. Nothing else in CI loads this page, so this is the only gate that sees it.
+    const jsErrs = [...new Set(clients.flatMap((c) => c.jsErrors?.() ?? []))];
+    if (jsErrs.length && !err) {
+      err = new Error(`${jsErrs.length} uncaught JS exception(s) on the page — the rest of the`
+        + ` throwing callback never ran:\n` + jsErrs.slice(0, 5).map((l) => '  ' + l.trim()).join('\n'));
+    }
     const luaErrs = [...new Set(clients.flatMap((c) => c.luaErrors?.() ?? []))];
     if (luaErrs.length) {
       console.error(`[harness] ${file}: ${luaErrs.length} distinct LUA ERROR(s) during this scenario —`
