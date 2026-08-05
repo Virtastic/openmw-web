@@ -340,3 +340,51 @@ test('players in another world are visible and online from here', async (t) => {
   assert.ok(list,
     'a player in another world never reached this one — nobody to see or invite from solo');
 });
+
+// A PARTY MEMBER IS ONLINE BY DEFINITION — you cannot be in a party without being connected.
+// partyView asked the LOCAL roster, so a member in another world read as "Offline" while the
+// player could see them standing there. Same bug as the friend list, one function over.
+// And the leader can now REMOVE someone: leaving was the only way out, so a leader stuck with
+// a member had to disband the whole party to be rid of them.
+test('a party member in another world reads online, and the leader can remove them', async (t) => {
+  const dataDir = tmpDataDir();
+  const cfg = (mode: string) => ({
+    requireGameData: false, dataDir, port: 0, host: '127.0.0.1', worldMode: mode,
+    worldId: mode === 'public' ? 'vvardenfell' : 'priv-someone',
+    configOverride: {
+      dev: { bots: 1, botPrefix: 'Bot', botNames: ['Kestrel'] },
+      login: { allowHarnessAuth: true },
+    } as never,
+  });
+  const pub = await startServer(cfg('public'));
+  t.after(() => pub.close());
+  const priv = await startServer(cfg('private'));
+  t.after(() => priv.close());
+
+  // Party with the bot in PUBLIC, then move to the private world and look at the panel.
+  const a = await TestClient.connect(pub.port);
+  t.after(() => a.close());
+  await a.joinAsNew('Ann', 'hunter22');
+  a.sendEvent('PartyInvite', { name: 'Kestrel' });
+  await a.waitEvent('PartyUpdate',
+    (v) => ((v as { members?: { acct: string }[] }).members ?? []).some((m) => m.acct === 'kestrel'));
+
+  const b = await TestClient.connect(priv.port);
+  t.after(() => b.close());
+  await b.joinExisting('Ann', 'hunter22');
+  a.close();
+
+  const view = await b.waitEvent('PartyUpdate', (v) => {
+    const m = ((v as { members?: { acct: string; online?: boolean }[] }).members ?? [])
+      .find((x) => x.acct === 'kestrel');
+    return m !== undefined && m.online === true;
+  }, 20000).catch(() => null);
+  assert.ok(view, 'a party member in another world reads as offline — impossible, and visible');
+
+  // The leader removes them.
+  b.sendEvent('PartyKick', { acct: 'kestrel' });
+  const gone = await b.waitEvent('PartyUpdate',
+    (v) => !((v as { members?: { acct: string }[] }).members ?? []).some((m) => m.acct === 'kestrel'),
+    15000).catch(() => null);
+  assert.ok(gone, 'the leader could not remove a party member');
+});

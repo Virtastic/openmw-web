@@ -3174,6 +3174,32 @@
   letter-spacing:.12em; text-transform:uppercase; color:#1a1207;
   background:linear-gradient(180deg,#d3a84e,#8a6838); }
 #omw-tour .next:hover{ background:linear-gradient(180deg,#e8c86a,#d3a84e); }
+/* CONFIRMATION, in the game's own voice. These warnings are about OTHER PEOPLE — closing a
+   world disbands a party, moving takes everyone with you — so a raw browser confirm() was the
+   wrong place to say it: it is the one moment the interface stops looking like the game.
+   Same panel as the tour, one extra button. */
+#omw-ask{ position:fixed; inset:0; z-index:75; display:none; align-items:center; justify-content:center;
+  background:rgba(8,6,4,.72); backdrop-filter:blur(3px);
+  font:400 14.5px/1.6 "Optima","Gill Sans","Gill Sans MT",-apple-system,"Segoe UI",Roboto,sans-serif; }
+#omw-ask.show{ display:flex; }
+#omw-ask *{ box-sizing:border-box; }
+#omw-ask .panel{ position:relative; width:min(460px,92vw); padding:34px 36px 26px; text-align:center;
+  background:linear-gradient(160deg,#211a12,#17130e); border:1px solid #8a6838; border-radius:10px;
+  box-shadow:0 30px 80px rgba(0,0,0,.62); }
+#omw-ask .glyph{ width:44px; height:44px; margin:0 auto 12px; color:#c69a4e; }
+#omw-ask .glyph svg{ width:100%; height:100%; display:block; }
+#omw-ask .kick{ font:600 10px/1 "Optima","Gill Sans",sans-serif; letter-spacing:.22em;
+  text-transform:uppercase; color:#8a7a5e; }
+#omw-ask h2{ margin:6px 0 10px; font:600 24px/1.15 "Hoefler Text","Baskerville",Georgia,serif; color:#f4ecd9; }
+#omw-ask p{ margin:0 0 22px; color:#b9a888; }
+#omw-ask p b{ color:#e9dcc3; }
+#omw-ask .row{ display:flex; gap:10px; justify-content:center; }
+#omw-ask button{ padding:11px 22px; border-radius:4px; cursor:pointer;
+  font:600 12.5px/1 "Optima","Gill Sans",sans-serif; letter-spacing:.12em; text-transform:uppercase; }
+#omw-ask .go{ border:1px solid #e8c86a; color:#1a1207; background:linear-gradient(180deg,#d3a84e,#8a6838); }
+#omw-ask .go:hover{ background:linear-gradient(180deg,#e8c86a,#d3a84e); }
+#omw-ask .cancel{ border:1px solid #5a4a32; background:transparent; color:#c9bb9e; }
+#omw-ask .cancel:hover{ border-color:#8a6838; color:#e9dcc3; }
 </style>
 <div id="omw-chat"><div class="feed" id="omw-feed"></div>
   <div class="bar">
@@ -3194,6 +3220,16 @@
     <div class="content" id="omw-social-body"></div>
   </div>
   <div class="ft" id="omw-social-status"></div>
+</div></div>
+<div id="omw-ask"><div class="panel">
+  <div class="glyph" id="omw-ask-glyph"></div>
+  <div class="kick">Multiplayer</div>
+  <h2 id="omw-ask-title"></h2>
+  <p id="omw-ask-body"></p>
+  <div class="row">
+    <button class="cancel" id="omw-ask-no">Cancel</button>
+    <button class="go" id="omw-ask-yes">Continue</button>
+  </div>
 </div></div>
 <div id="omw-tour"><div class="panel">
   <button class="x" id="omw-tour-x" aria-label="Close">×</button>
@@ -3676,11 +3712,13 @@
     if (wn) lastWhere = wn;
     var where = el('div','whererow');
     where.appendChild(el('span','lb','Playing'));
-    where.appendChild(seg([['solo','Solo'],['party','Party'],['public','Public']], lastWhere, function(v){
+    where.appendChild(seg([['solo','Solo'],['party','Party'],['public','Public']], lastWhere, async function(v){
       // Leading a party changes what these buttons mean. Public takes the WHOLE party with you
       // (PartyTravel fans a dial-out to every member), and Solo closes your world, which ends
       // the party rather than stranding members in one. Both are other people's business, so
-      // both ask first. ponytail: native confirm, swap for a styled modal if it ever needs art.
+      // both ask first — in the game's own modal (askConfirm), because a browser confirm()
+      // delivered a warning about other people in the one style that is unmistakably not the
+      // game. The handler is async purely so those answers can be awaited.
       // No self-account mirror exists, so resolve our own key out of the member list by name
       // (the roster carries {name, acct}). Only the WARNING depends on this: the server is
       // still the authority — PartyTravel answers not_leader and partyDisband no-ops.
@@ -3688,7 +3726,9 @@
         return String(p.name || '').toLowerCase() === selfName; })[0];
       var iLead = !!me && String(party.leader || '') !== '' && me.acct === party.leader && partyN > 1;
       if (iLead && v === 'public') {
-        if (!confirm('You lead a party of ' + partyN + '. Moving to the public world brings every member with you.\n\nContinue?')) return;
+        if (!await askConfirm('Take the party with you?',
+          'You lead a party of <b>' + partyN + '</b>. Moving to the public world brings '
+          + 'every member with you.', GLYPH_PARTY, 'Move the party')) return;
         selfTravel = true; // we chose this; do not narrate it back to us as if it happened to us
         setWhere(v); closeSocial();
         cmd('social:PartyTravel:public');
@@ -3701,8 +3741,10 @@
         renderSocial();
         return;
       }
-      if (iLead && v === 'solo' &&
-          !confirm('You lead a party of ' + partyN + '. Going solo closes your world and disbands the party.\n\nContinue?')) return;
+      if (iLead && v === 'solo'
+          && !await askConfirm('Disband the party?',
+            'You lead a party of <b>' + partyN + '</b>. Going solo closes your world, which '
+            + 'ends the party rather than stranding anyone in it.', GLYPH_PARTY, 'Go solo')) return;
       setWhere(v);
       closeSocial();
       cmd('where:' + v);
@@ -3778,8 +3820,25 @@
       sec.appendChild(el('h3',null,'Your party'));
       var mem = party.members||[];
       if (!mem.length) sec.appendChild(el('div','empty','You are not in a party. Invite a friend from the Friends tab to start one.'));
-      mem.forEach(function(p){ sec.appendChild(personRow(p.name,
-        p.acct===party.leader ? 'Party leader' : (p.online ? 'Online' : 'Offline'), p.online, [])); });
+      // KICK, for the leader only. Leaving was the only way out of a party, so a leader stuck
+      // with someone had to disband the whole group to be rid of them. The server is still the
+      // authority (PartyKick answers not_leader); this only decides whether to offer it.
+      // No self-account mirror exists, so resolve our own key out of the member list by name —
+      // the same way the Solo/Public warnings already do. selfName is the USERNAME, which is
+      // what party rows carry.
+      var mine = mem.filter(function(p){ return String(p.name || '').toLowerCase() === selfName; })[0];
+      var iAmLeader = !!mine && String(party.leader || '') !== '' && mine.acct === party.leader;
+      mem.forEach(function(p){
+        var actions = [];
+        if (iAmLeader && p.acct !== party.leader) {
+          actions.push(['remove', function(){
+            cmd('social:PartyKick:' + p.acct);
+            setStatus('Removing ' + p.name + ' from the party…');
+          }]);
+        }
+        sec.appendChild(personRow(p.name,
+          p.acct===party.leader ? 'Party leader' : (p.online ? 'Online' : 'Offline'), p.online, actions));
+      });
       if (mem.length){ var lv = el('div','addrow'); var lb2 = el('button','btn','Leave party');
         lb2.onclick = function(){ cmd('social:PartyLeave:'); setStatus('You left the party.'); }; lv.appendChild(lb2); sec.appendChild(lv); }
     } else if (sTab === 'players'){
@@ -3905,6 +3964,40 @@
   // persistence, and it never suppresses a later one.
   var GLYPH_WORLD = '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><circle cx="24" cy="24" r="15"/><path d="M9 24h30M24 9c4 5 4 25 0 30M24 9c-4 5-4 25 0 30"/></svg>';
   var GLYPH_PARTY = '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><circle cx="18" cy="18" r="6"/><circle cx="32" cy="22" r="5"/><path d="M8 40c0-6 4.5-10 10-10s10 4 10 10"/><path d="M26 40c0-4.5 3.5-8 8-8s8 3.5 8 8"/></svg>';
+  // CONFIRMATION IN THE GAME'S OWN VOICE. These warnings are all about other people — going
+  // Solo closes your world and disbands the party, going Public takes everyone with you — and
+  // a browser confirm() delivered them in the one style the player cannot mistake for the
+  // game. Resolves true/false like confirm(), so call sites read the same.
+  function askConfirm(title, body, glyph, okLabel){
+    return new Promise(function(resolve){
+      var bd = document.getElementById('omw-ask');
+      if (!bd) return resolve(window.confirm(String(title) + '\n\n' + String(body).replace(/<[^>]+>/g, '')));
+      document.getElementById('omw-ask-glyph').innerHTML = glyph || GLYPH_PARTY;
+      document.getElementById('omw-ask-title').textContent = title;
+      document.getElementById('omw-ask-body').innerHTML = body;
+      var yes = document.getElementById('omw-ask-yes'), no = document.getElementById('omw-ask-no');
+      yes.textContent = okLabel || 'Continue';
+      // The overlay owns the mouse while it is up, exactly as the tour does — otherwise the
+      // click that dismisses it is also a click into the world behind it.
+      uiHold(true);
+      function done(v){
+        bd.classList.remove('show');
+        uiHold(false);
+        yes.onclick = null; no.onclick = null; document.removeEventListener('keydown', key, true);
+        resolve(v);
+      }
+      function key(e){
+        if (e.key === 'Escape'){ e.preventDefault(); e.stopPropagation(); done(false); }
+        else if (e.key === 'Enter'){ e.preventDefault(); e.stopPropagation(); done(true); }
+      }
+      yes.onclick = function(){ done(true); };
+      no.onclick = function(){ done(false); };
+      document.addEventListener('keydown', key, true);
+      bd.classList.add('show');
+      no.focus();
+    });
+  }
+
   function showNotice(title, body, glyph, urgent){
     // Never talk over onboarding: those explain the same systems and are already on screen.
     // EXCEPT a failure the player is actively waiting on. The Public switch fails at the one

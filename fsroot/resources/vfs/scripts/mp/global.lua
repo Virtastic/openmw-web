@@ -1472,6 +1472,7 @@ local eventHandlers = {
             FriendRequest = true, FriendAccept = true, FriendRemove = true,
             BlockAdd = true, BlockRemove = true, InviteSend = true, InviteAccept = true,
             PartyInvite = true, PartyAccept = true, PartyLeave = true, PartyTravel = true,
+            PartyKick = true,
             PresenceMode = true, MuteAdd = true, MuteRemove = true, VoiceSignal = true,
             ReportPlayer = true, PartySetting = true,
             -- Social UX: availability (Online/Offline), cross-world join, and the owner's

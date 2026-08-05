@@ -1082,6 +1082,10 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   const presenceTick = setInterval(() => {
     publishPresence();
     broadcastServerRoster();
+    // The friend and party panels are pushed on RELATIONSHIP changes, which never fire when a
+    // member simply walks into another world — so they kept saying "Offline" about someone
+    // standing in plain sight. Presence moves on this heartbeat; the views follow it.
+    social.refreshPresenceViews();
   }, 10_000);
   presenceTick.unref();
   // DEV/TEST BOTS. Off unless [dev] bots (or OMW_DEV_BOTS) says otherwise — see dev/testbots.

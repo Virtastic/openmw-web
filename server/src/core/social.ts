@@ -179,6 +179,24 @@ export class Social {
     return this.presentRows();
   }
 
+  /** Re-send the friend and party panels to everyone here.
+   *
+   *  Those views are pushed when the RELATIONSHIP changes — someone accepts, leaves, is
+   *  removed — which is correct for membership and useless for presence: a member walking into
+   *  another world changes nothing about the party, so the panel kept whatever it last said.
+   *  It said "Offline" about someone the player could see standing in front of them. Presence
+   *  now moves on its own heartbeat, so the views have to follow it. */
+  refreshPresenceViews(): void {
+    this.presenceCache = undefined; // the whole point is to pick up what changed elsewhere
+    for (const p of this.d.roster.inWorld()) {
+      if (p.system || p.bot) continue; // nothing is listening on those peers
+      this.sendFriendList(p);
+      if (this.partyOf.has(p.accountKey) || this.d.store.partyOfAccount(p.accountKey)) {
+        this.sendParty(p.accountKey);
+      }
+    }
+  }
+
   // cellKey is included ONLY for friends. It is a location disclosure, and a stranger — or
   // someone this player has blocked — must never receive it.
   friendList(acct: AccountKey): FriendView[] {
@@ -599,13 +617,19 @@ export class Social {
       rollOnRare: settings.rollOnRare,
       members: [...party.members].map((m) => {
         const p = this.onlinePlayer(m);
+        // SERVER-WIDE, like the friend list. This asked the LOCAL roster, so a party member in
+        // another world showed as OFFLINE — which is not merely wrong, it is impossible: you
+        // cannot be in a party without being online, and the panel said so while the player
+        // could literally see them standing there.
+        const where = this.presenceOf(m);
         return {
           acct: m,
           name: this.d.displayName(m) ?? m,
-          online: p !== undefined,
+          online: where.online,
           // A party member's location is shown to the party regardless of mode 'party',
           // but 'private' still hides it — opting out has to mean something even here.
-          ...(p ? { playerId: p.id, ...(p.cellKey && this.presenceMode(m) !== 'private' ? { cellKey: p.cellKey } : {}) } : {}),
+          ...(p ? { playerId: p.id } : {}),
+          ...(where.cellKey && this.presenceMode(m) !== 'private' ? { cellKey: where.cellKey } : {}),
         };
       }),
     };
@@ -712,6 +736,25 @@ export class Social {
       // which is what every other social surface shows; empty when they have not set one.
       leaderName: this.d.displayName(party.leader) ?? '',
     });
+  }
+
+  /** Leader removes a member. Reuses partyLeave so leader succession, dissolution below two
+   *  members, and the store writes all stay in ONE place — a second copy of that logic is how
+   *  a party ends up half-dissolved. */
+  partyKick(byAcct: AccountKey, target: AccountKey): 'ok' | 'not_leader' | 'no_party' | 'not_member' | 'self' {
+    if (byAcct === target) return 'self'; // leaving is PartyLeave; this is for removing someone else
+    this.loadParty(byAcct);
+    const key = this.partyOf.get(byAcct);
+    if (key === undefined) return 'no_party';
+    const party = this.parties.get(key);
+    if (!party) return 'no_party';
+    if (party.leader !== byAcct) return 'not_leader';
+    if (!party.members.has(target)) return 'not_member';
+    this.partyLeave(target);
+    // Tell them, or being removed is indistinguishable from the party vanishing.
+    this.onlinePlayer(target)?.peer.sendEvent('SocialNotice',
+      { kind: 'party_kicked', by: this.d.displayName(byAcct) ?? byAcct } as never);
+    return 'ok';
   }
 
   partyLeave(acct: AccountKey): void {
@@ -1005,6 +1048,19 @@ export class Social {
         this.unmute(player, str('acct'));
         this.reply(player, 'MuteRemove', true, 'ok');
         return true;
+      // The leader may remove a member. Leaving was the only way out, so a leader stuck with
+      // someone had to disband the whole party to be rid of them.
+      case 'PartyKick': {
+        // The account key comes straight from the party view the client is looking at, and is
+        // authorised by MEMBERSHIP, not by presence: targetAcct only accepts someone in THIS
+        // world, and a party member is very often in another one — which is the entire reason
+        // the party is shared state. partyKick refuses anything that is not a member.
+        const target = str('acct');
+        if (target === '') { this.reply(player, 'PartyKick', false, 'no_such_player'); return true; }
+        const r = this.partyKick(player.accountKey, target);
+        this.reply(player, 'PartyKick', r === 'ok', r);
+        return true;
+      }
       case 'PartyLeave':
         this.partyLeave(player.accountKey);
         this.reply(player, 'PartyLeave', true, 'ok');
