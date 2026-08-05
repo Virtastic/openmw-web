@@ -1110,6 +1110,19 @@
              // not dismissed on first frame; holdUntilSimulated clears it when the world has
              // actually settled (or when it gives up).
              window.__omwMPSettling = true;
+             // DEAD MAN'S SWITCH. Suppressing the engine's own "boot finished" dismissal means
+             // something else must always take responsibility for clearing the screen — and
+             // when the thing that was supposed to (the settle hold) turned out to be gated on
+             // chargen, every new character sat on a loading screen that could never go away.
+             // A suppression that can outlive its owner is not acceptable here: whatever
+             // happens, the screen is released. 45s is far longer than any real settle and far
+             // shorter than "forever".
+             setTimeout(function(){
+               if (!window.__omwMPSettling) return;
+               window.__omwMPSettling = false;
+               try { window.__omwLoading.hide(); } catch (e) {}
+               try { if (window.__omwLog) window.__omwLog('[mp] settle hold released by timeout', 'err'); } catch (e) {}
+             }, 45000);
              ENV.OPENMW_MP_URL = mpUrl;
              // NOTE ON URL FLAGS — deliberately NOT blocked here, and the reasoning matters.
              //
@@ -3949,7 +3962,6 @@
         if (!everJoinedOnce) { /* first boot: the normal loading screen already owns this */ }
         else window.__omwLoading.show('Reconnecting', 'Putting you back in the world…');
       } else if (ns === 'Joined'){
-        var firstJoin = !everJoinedOnce;
         everJoinedOnce = true;
         // RUBBER BANDING ON ARRIVAL. "Joined" only means the socket authenticated — the sim
         // peer may not hold the cells yet, the actors around you have not had a first pose,
@@ -3961,8 +3973,9 @@
         // wired ONLY to the two in-place switcher clicks. Every boot went straight to hide()
         // — and since a world change now REBOOTS the page, every world switch is a boot, so
         // the one path that most needed the wait was the one that never got it.
-        if (firstJoin && window.__omwMPEnabled) holdUntilSimulated(30000, { fresh: true });
-        else window.__omwLoading.hide();
+        // The settle hold is armed by the mirror poll above, which runs regardless of chargen
+        // state; this only clears the screen when nothing is holding it.
+        if (!window.__omwMPSettling) window.__omwLoading.hide();
       }
       // Failed has exactly ONE owner: the mpErrorModal watcher below. Handling it here too
       // stacked two different-looking modals on the same event.
@@ -4072,6 +4085,7 @@
   // without this window it would immediately re-toggle what the keypress just did. After a
   // JS-handled key we absorb pending signals instead of acting on them.
   var suppressUntil = 0;
+  var settleStarted = false;
   function suppressSignals(){ suppressUntil = Date.now() + 800; }
   setInterval(function(){
     var m = mpState();
@@ -4084,6 +4098,15 @@
       chatEl.style.display = ready ? '' : 'none';
       // The moment multiplayer unlocks, walk a first-timer through what just appeared.
       if (ready && !tourSeen('unlocked')) openTour('unlocked');
+    }
+    // THE SETTLE HOLD IS NOT A CHARGEN CONCERN, and putting it inside noticeWatch made it one:
+    // noticeWatch only runs once chargen is DONE, so a player still creating a character never
+    // reached it — __omwMPSettling stayed true, the engine's first-frame dismissal stayed
+    // suppressed, and the loading screen never cleared. Every new character was stranded on it
+    // forever. Whether the world has settled has nothing to do with whether chargen has.
+    if (window.__omwMPSettling && !settleStarted && (m.state || '') === 'Joined') {
+      settleStarted = true;
+      holdUntilSimulated(30000, { fresh: true });
     }
     if (ready) noticeWatch(m);
     profileWatch(m);
