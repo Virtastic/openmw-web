@@ -122,12 +122,17 @@ export class SocialStore {
       );
       CREATE INDEX IF NOT EXISTS chat_history_scope ON chat_history (scope, id);
       CREATE TABLE IF NOT EXISTS presence (
-        account    TEXT PRIMARY KEY,
-        world      TEXT NOT NULL,
-        name       TEXT NOT NULL,
-        cell_key   TEXT,
-        is_bot     INTEGER NOT NULL DEFAULT 0,
-        updated_at INTEGER NOT NULL
+        account       TEXT PRIMARY KEY,
+        world         TEXT NOT NULL,
+        name          TEXT NOT NULL,
+        cell_key      TEXT,
+        is_bot        INTEGER NOT NULL DEFAULT 0,
+        updated_at    INTEGER NOT NULL,
+        -- WHEN they went, not merely THAT they are gone. Deleting the row on leave made
+        -- "offline" and "offline for a while" indistinguishable — and the difference is the
+        -- whole question: leaving one world to join another IS a disconnect from the first,
+        -- and treating that as quitting would dissolve a party every time someone switched.
+        offline_since INTEGER
       );
       CREATE TABLE IF NOT EXISTS presence_pref (
         account TEXT PRIMARY KEY,
@@ -174,6 +179,18 @@ export class SocialStore {
       );
       CREATE INDEX IF NOT EXISTS mute_muter ON mute(muter);
     `);
+
+    // COLUMNS ADDED TO AN EXISTING TABLE. `CREATE TABLE IF NOT EXISTS` above is a no-op on a
+    // database that already has the table, so a new column never appears on a live server —
+    // the code compiles, every test passes against a fresh temp dir, and production is the
+    // only place that breaks. Add it explicitly; SQLite throws if it is already there.
+    for (const [table, column, decl] of [
+      ['presence', 'offline_since', 'INTEGER'],
+    ] as const) {
+      const has = (this.db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[])
+        .some((c) => c.name === column);
+      if (!has) this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${decl}`);
+    }
   }
 
   // CLOSED IS A STATE, NOT A CLIFF. Social handlers await network work mid-flight (PartyTravel
@@ -243,25 +260,39 @@ export class SocialStore {
   setPresence(account: AccountKey, world: string, name: string,
     cellKey: string | undefined, isBot: boolean, now: number): void {
     this.db.prepare(
-      `INSERT INTO presence (account, world, name, cell_key, is_bot, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?)
+      `INSERT INTO presence (account, world, name, cell_key, is_bot, updated_at, offline_since)
+       VALUES (?, ?, ?, ?, ?, ?, NULL)
        ON CONFLICT(account) DO UPDATE SET
          world = excluded.world, name = excluded.name, cell_key = excluded.cell_key,
-         is_bot = excluded.is_bot, updated_at = excluded.updated_at`,
+         is_bot = excluded.is_bot, updated_at = excluded.updated_at, offline_since = NULL`,
     ).run(account, world, name, cellKey ?? null, isBot ? 1 : 0, now);
   }
 
   /** Drop presence on leave. Deleting only OUR row matters: a player who moved to another
    *  world has already written a row naming that world, and a late delete from the world they
    *  left would wrongly mark them offline. */
-  clearPresence(account: AccountKey, world: string): void {
-    this.db.prepare('DELETE FROM presence WHERE account = ? AND world = ?').run(account, world);
+  clearPresence(account: AccountKey, world: string, now: number): void {
+    // Marked, not deleted: a party sweep has to know how LONG someone has been gone, and a
+    // missing row cannot say. Reads still treat it as offline immediately.
+    this.db.prepare(
+      'UPDATE presence SET offline_since = ? WHERE account = ? AND world = ? AND offline_since IS NULL',
+    ).run(now, account, world);
+  }
+
+  /** Accounts that have been offline EVERYWHERE for longer than `graceMs`. The grace is what
+   *  separates a world switch from quitting. */
+  goneLongerThan(now: number, graceMs: number): AccountKey[] {
+    const rows = this.db.prepare(
+      'SELECT account FROM presence WHERE offline_since IS NOT NULL AND offline_since <= ?',
+    ).all(now - graceMs) as { account: string }[];
+    return rows.map((r) => r.account);
   }
 
   /** Everyone online across every world, fresher than `ttlMs`. */
   presentEverywhere(now: number, ttlMs: number): PresenceRow[] {
     const rows = this.db.prepare(
-      'SELECT account, world, name, cell_key AS cellKey, is_bot AS isBot FROM presence WHERE updated_at >= ?',
+      'SELECT account, world, name, cell_key AS cellKey, is_bot AS isBot FROM presence'
+      + ' WHERE offline_since IS NULL AND updated_at >= ?',
     ).all(now - ttlMs) as { account: string; world: string; name: string; cellKey: string | null; isBot: number }[];
     return rows.map((r) => ({
       account: r.account, world: r.world, name: r.name,

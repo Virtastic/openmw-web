@@ -34,7 +34,10 @@ function world() {
     return p;
   };
 
-  const roster = { activeForAccount: (acct: string) => players.get(acct) } as unknown as Roster;
+  const roster = {
+    activeForAccount: (acct: string) => players.get(acct),
+    inWorld: () => [...players.values()].filter((p) => p.inWorld),
+  } as unknown as Roster;
   const social = new Social({
     store,
     roster,
@@ -281,4 +284,91 @@ test('social: you cannot be in two parties at once', () => {
   assert.equal(w.social.partyAccept(bob, 'alice'), 'ok');
   assert.equal(w.social.partyInvite(carol, 'bob'), 'already_in_party');
   w.close();
+});
+
+// DISCONNECT RULES. Party membership is durable on purpose — it must survive a member hopping
+// between world PROCESSES, which is the whole point of party travel — but nothing separated a
+// hop from quitting. So a party outlived everyone in it, and a player who reconnected was
+// mysteriously still in one, sitting in their solo world while "in" a party.
+//
+// The grace is the separator: leaving one world to join another is indistinguishable from
+// disconnecting for the seconds in between. Past it, it is a departure.
+test('a leader gone past the grace disbands the party; a member gone is just removed', async () => {
+  const h = world();
+  h.add('boss', 'Boss');
+  h.add('mate', 'Mate');
+  h.add('third', 'Third');
+
+  // Boss leads, two members join.
+  // Straight at the party methods: the event path resolves names through roster.findByName,
+  // which this harness's roster stub does not implement, and the subject here is the SWEEP.
+  h.social.partyInvite(h.players.get('boss')!, 'mate');
+  h.social.partyAccept(h.players.get('mate')!, 'boss');
+  h.social.partyInvite(h.players.get('boss')!, 'third');
+  h.social.partyAccept(h.players.get('third')!, 'boss');
+  assert.ok(h.store.partyOfAccount('mate'), 'the party should exist');
+
+  // The harness runs on a FIXED clock (social's `now`), so presence timestamps must be on the
+  // same clock — wall time here would never look expired to the sweep.
+  const T = 1_700_000_000_000;
+
+  // A MEMBER vanishes. Inside the grace nothing happens — that is a world switch.
+  h.store.setPresence('third', 'w', 'Third', undefined, false, T);
+  h.store.clearPresence('third', 'w', T);
+  h.social.sweepDisconnected(90_000);
+  assert.ok(h.store.partyOfAccount('third'), 'a member mid-switch must not be dropped');
+
+  // Past the grace they are gone: removed, and the party survives without them.
+  // Back online first: clearPresence marks only a row that is not already marked (the FIRST
+  // departure is the one that counts), so backdating a marked row would be a no-op.
+  h.store.setPresence('third', 'w', 'Third', undefined, false, T);
+  h.store.clearPresence('third', 'w', T - 120_000);
+  h.social.sweepDisconnected(90_000);
+  assert.equal(h.store.partyOfAccount('third'), undefined, 'a departed member stayed in the party');
+  assert.ok(h.store.partyOfAccount('mate'), 'removing one member must not dissolve the party');
+
+  // The LEADER vanishes past the grace: the whole party goes, and members are told.
+  h.store.setPresence('boss', 'w', 'Boss', undefined, false, T);
+  h.store.clearPresence('boss', 'w', T - 120_000);
+  h.social.sweepDisconnected(90_000);
+  assert.equal(h.store.partyOfAccount('mate'), undefined,
+    'the leader disconnected and the party outlived them');
+  const told = h.events('mate', 'SocialNotice');
+  assert.ok(told.some((e) => (e.body as { kind?: string }).kind === 'party_disbanded'),
+    'a party that evaporates without a word is indistinguishable from a bug');
+});
+
+
+// IN A PARTY, BUT ALONE IN YOUR OWN WORLD. Membership is durable across a disconnect on
+// purpose, so reconnecting dropped a member into their solo world while the panel insisted
+// they were in a party — two true statements that cannot both be right. Shared presence knows
+// where the leader actually is, so the joiner is handed off to follow.
+test('a member who rejoins is sent to the world the party is actually in', async () => {
+  const h = world();
+  const boss = h.add('boss', 'Boss');
+  const mate = h.add('mate', 'Mate');
+  h.social.partyInvite(boss, 'mate');
+  h.social.partyAccept(mate, 'boss');
+
+  const T = 1_700_000_000_000;
+  // The leader is genuinely ELSEWHERE: not in this world's roster, only in shared presence.
+  // (A leader who is local needs no hand-off, and presenceOf correctly answers "here".)
+  boss.inWorld = false;
+  h.store.setPresence('boss', 'vvardenfell', 'Boss', '-2,-9', false, T);
+
+  const sent = h.social.routeJoinerToParty(mate, 'priv-mate-1234');
+  assert.equal(sent, true, 'a rejoining member was left alone in their own world');
+  const travel = h.events('mate', 'PartyTravel');
+  assert.equal((travel[0]?.body as { worldId?: string })?.worldId, 'vvardenfell');
+
+  // The LEADER is never routed anywhere: they are the destination.
+  assert.equal(h.social.routeJoinerToParty(boss, 'vvardenfell'), false);
+  void 0;
+  // And nobody is sent chasing a world the leader is not in.
+  h.store.clearPresence('boss', 'vvardenfell', T);
+  // The presence read is cached for a second, and this harness's clock does not advance, so
+  // invalidate it explicitly — in production the second simply passes.
+  h.social.refreshPresenceViews();
+  assert.equal(h.social.routeJoinerToParty(mate, 'priv-mate-1234'), false,
+    'sending someone to chase an empty world is worse than leaving them put');
 });

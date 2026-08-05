@@ -309,6 +309,9 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   registerAdminCommands(commands, admin);
   // How much scrollback a newcomer is handed. Enough to see what the room is talking about,
   // short enough that a join is not a wall of text.
+  // Long enough to cover a world switch (a page reload plus engine boot, tens of seconds on a
+  // cold cache) and short enough that a genuine quit does not leave a ghost party standing.
+  const PARTY_DISCONNECT_GRACE_MS = 90_000;
   const CHAT_HISTORY_KEEP = 200;
   const CHAT_HISTORY_REPLAY = 60;
   const commandCtx: CommandContext = {
@@ -636,6 +639,12 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     // Scrollback on arrival: the server-wide conversation, plus this player's own party.
     // Ordinary ChatMessage events in the order they were said, so the client needs no new
     // handling — history is the same messages, earlier.
+    // A player who reconnects while still in a party belongs WITH the party, not alone in
+    // their own world — the panel saying "in a party" while they stand in solo is two true
+    // statements that cannot both be right.
+    routeJoinerToParty: (player): void => {
+      socialRef?.routeJoinerToParty(player, worldId ?? 'default');
+    },
     replayChat: (player): void => {
       const lines = [
         ...socialStore.recentChat('', CHAT_HISTORY_REPLAY),
@@ -657,7 +666,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     onPlayerLeftWorld: (accountKey: string): void => {
       // Only OUR row: a player who moved to another world has already written a row naming
       // that world, and deleting theirs from the world they left would blink them offline.
-      socialStore.clearPresence(accountKey, worldId ?? 'default');
+      socialStore.clearPresence(accountKey, worldId ?? 'default', Date.now());
       if (worldOwner === '' || accountKey !== worldOwner) return;
       if (worldModeAtBoot === 'public' || worldMode !== 'party') return;
       // The owner closing their tab used to leave the party standing in a world that no
@@ -1126,6 +1135,10 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     // member simply walks into another world — so they kept saying "Offline" about someone
     // standing in plain sight. Presence moves on this heartbeat; the views follow it.
     social.refreshPresenceViews();
+    // Disconnect rules: a leader gone past the grace disbands the party, a member gone past it
+    // is removed. The grace is what separates a WORLD SWITCH — which is a disconnect from the
+    // world you left — from actually quitting.
+    social.sweepDisconnected(PARTY_DISCONNECT_GRACE_MS);
   }, 10_000);
   presenceTick.unref();
   // DEV/TEST BOTS. Off unless [dev] bots (or OMW_DEV_BOTS) says otherwise — see dev/testbots.

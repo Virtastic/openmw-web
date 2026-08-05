@@ -186,6 +186,78 @@ export class Social {
    *  another world changes nothing about the party, so the panel kept whatever it last said.
    *  It said "Offline" about someone the player could see standing in front of them. Presence
    *  now moves on its own heartbeat, so the views have to follow it. */
+  /** DISCONNECT RULES. Party membership is deliberately durable — it must survive a member
+   *  hopping between world processes, which is the entire point of party travel — but nothing
+   *  distinguished a hop from quitting, so a party outlived everyone in it and a player who
+   *  reconnected was mysteriously still in one.
+   *
+   *  A grace separates the two: leaving one world to join another looks identical to
+   *  disconnecting for the few seconds in between. Past the grace it is a departure.
+   *    - the LEADER gone  -> the party disbands, and members are told
+   *    - a MEMBER gone    -> that member is removed
+   *
+   *  Idempotent, because every world process runs this over the same shared store: a party
+   *  already dissolved has no members to sweep, and a member already removed is not in one. */
+  sweepDisconnected(graceMs: number): void {
+    const gone = this.d.store.goneLongerThan(this.d.now(), graceMs);
+    for (const acct of gone) {
+      const row = this.d.store.partyOfAccount(acct);
+      if (!row) continue;
+      const key = row.key;
+      this.loadParty(acct);
+      const party = this.parties.get(key);
+      if (!party || !party.members.has(acct)) continue;
+      if (party.leader === acct) {
+        const members = [...party.members];
+        for (const m of members) {
+          this.partyOf.delete(m);
+          this.d.store.partyRemoveMember(m);
+          // Told, or the party simply evaporates and nobody knows why. Guests are returned to
+          // their own world by the world-close path; this is the membership half.
+          if (m !== acct) {
+            this.onlinePlayer(m)?.peer.sendEvent('SocialNotice',
+              { kind: 'party_disbanded', why: 'leader_left',
+                by: this.d.displayName(acct) ?? acct } as never);
+          }
+        }
+        this.parties.delete(key);
+        this.d.store.partyDissolve(key);
+        log('info', 'party.disbanded_leader_gone', { leader: acct, members: members.length });
+      } else {
+        this.partyLeave(acct);
+        log('info', 'party.member_dropped', { account: acct });
+      }
+    }
+  }
+
+  /** A player who joins while in a party belongs WITH the party, not alone in their own
+   *  world. Membership is durable across a disconnect (deliberately — see sweepDisconnected),
+   *  so reconnecting used to drop you into your solo world while the panel insisted you were
+   *  in a party: two true statements that cannot both be right.
+   *
+   *  Shared presence knows which world the leader is actually in, so the client can be told to
+   *  follow. Returns true when a hand-off was sent. */
+  routeJoinerToParty(player: Player, worldIdHere: string): boolean {
+    const key = this.partyOf.get(player.accountKey) ?? this.d.store.partyOfAccount(player.accountKey)?.key;
+    if (key === undefined) return false;
+    this.loadParty(player.accountKey);
+    const party = this.parties.get(key);
+    if (!party || party.leader === player.accountKey) return false; // the leader IS the destination
+    const where = this.presenceOf(party.leader);
+    // Leader offline: sweepDisconnected will dissolve this shortly. Sending someone to chase a
+    // world nobody is in would be worse than leaving them where they are.
+    if (!where.online || !where.world || where.world === worldIdHere) return false;
+    player.peer.sendEvent('PartyTravel', {
+      worldId: where.world,
+      wsPath: `/w/${where.world}`,
+      leaderName: this.d.displayName(party.leader) ?? party.leader,
+    } as never);
+    log('info', 'party.rejoin_routed', {
+      account: player.accountKey, to: where.world, leader: party.leader,
+    });
+    return true;
+  }
+
   refreshPresenceViews(): void {
     this.presenceCache = undefined; // the whole point is to pick up what changed elsewhere
     for (const p of this.d.roster.inWorld()) {
