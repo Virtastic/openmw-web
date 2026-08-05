@@ -390,6 +390,30 @@ async function launchClient(name, mpPort, extraParams = '', opts = {}) {
     // Retail boots stream ~hundreds of MB of game data before the world exists.
     await handle.waitFor(waitExpr, opts.joinTimeoutMs ?? JOIN_TIMEOUT_MS, waitWhat);
     console.log(`[harness] ${name}: reached [${waitWhat}] in ${((Date.now() - boot0) / 1000).toFixed(1)}s`);
+
+    // BOOT HEALTH: THE LOADING SCREEN MUST ACTUALLY CLEAR.
+    //
+    // Reaching Joined is a MIRROR value — Lua publishes it whether or not the player can see
+    // anything, so a client that is authenticated and playing is indistinguishable here from
+    // one stuck behind a full-screen overlay forever. That is not hypothetical: holding the
+    // arrival screen until the world settled put the release inside a function gated on chargen
+    // being finished, so every NEW character sat on a loading screen that could never be
+    // dismissed. Nothing threw, so the uncaught-exception gate stayed quiet, every mirror this
+    // harness reads looked perfect, and the player found it instead of the tests.
+    //
+    // #loading gets the `hide` class when it is dismissed (play/index.html finish()), so this
+    // asks the one question the mirrors cannot: is the player actually looking at the game?
+    // Deliberately harness-wide rather than one scenario's assertion — a boot that cannot be
+    // seen through is never what a scenario meant to test.
+    if (opts.expectStuckLoading !== true) {
+      await handle.waitFor(
+        "(function(){var el=document.getElementById('loading');"
+        + "return !el || el.classList.contains('hide') || el.style.display === 'none';})()",
+        // Generous on purpose: the settle hold waits for the world to be simulated plus a 5s
+        // grace, and its own backstop gives up at 30s. Anything past that is genuinely stuck.
+        45_000, 'the loading screen to clear (is the player actually IN the world?)');
+      console.log(`[harness] ${name}: loading screen cleared`);
+    }
     return handle;
   } catch (e) {
     handle.close(); // never leak a Chrome on a failed boot
