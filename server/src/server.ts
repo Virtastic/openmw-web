@@ -307,6 +307,10 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   registerCoreCommands(commands);
   registerReportCommand(commands, moderation);
   registerAdminCommands(commands, admin);
+  // How much scrollback a newcomer is handed. Enough to see what the room is talking about,
+  // short enough that a join is not a wall of text.
+  const CHAT_HISTORY_KEEP = 200;
+  const CHAT_HISTORY_REPLAY = 60;
   const commandCtx: CommandContext = {
     roster,
     // Mutes are enforced at DELIVERY (chat.ts), not in the client: a mute a modified
@@ -316,6 +320,21 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     // Opt-in per deployment: a crowded public world wants proximity say, a co-op session
     // very much does not (friends spread across the map must still be able to talk).
     sayProximity: config.rules.sayScope === 'proximity',
+    // SCROLLBACK. Only the channels a newcomer may legitimately replay: 'global' and 'server'
+    // are the server-wide conversation, and a party's own lines are scoped to that party.
+    // 'say' is proximity (replaying a conversation from a cell you were not in is noise, and
+    // in a public world it is a privacy leak), and 'whisper' is nobody else's business.
+    history: (player, channel, text) => {
+      const scope = channel === 'party'
+        ? (socialRef?.partyIdOf(player.accountKey) ?? '')
+        : '';
+      if (channel === 'party' && scope === '') return; // no party, nothing to scope it to
+      if (channel !== 'global' && channel !== 'server' && channel !== 'party') return;
+      socialStore.appendChat({
+        ts: Date.now(), channel, scope,
+        acct: player.accountKey, name: player.name, text,
+      }, CHAT_HISTORY_KEEP);
+    },
     onCommand: (player, name, args) => hooks.command({ id: player.id, name: player.name, rank: player.rank }, name, args),
   };
 
@@ -613,6 +632,27 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       if (accountKey !== worldOwner) return false;
       const m = /-([0-9a-f]{8})$/.exec(worldId);
       return m !== null && !charId.endsWith(m[1]!);
+    },
+    // Scrollback on arrival: the server-wide conversation, plus this player's own party.
+    // Ordinary ChatMessage events in the order they were said, so the client needs no new
+    // handling — history is the same messages, earlier.
+    replayChat: (player): void => {
+      const lines = [
+        ...socialStore.recentChat('', CHAT_HISTORY_REPLAY),
+        ...(socialRef?.partyIdOf(player.accountKey)
+          ? socialStore.recentChat(socialRef.partyIdOf(player.accountKey)!, CHAT_HISTORY_REPLAY)
+          : []),
+      ].sort((a, b) => a.ts - b.ts);
+      for (const l of lines) {
+        // A listener who muted the speaker never received the line live, and must not get it
+        // through the back door on their next join.
+        if (l.acct !== player.accountKey && socialRef?.isMuted(player.accountKey, l.acct)) continue;
+        player.peer.sendEvent('ChatMessage', {
+          channel: l.channel as 'global' | 'server' | 'party',
+          ...(l.channel === 'server' ? {} : { from: l.name }),
+          text: l.text,
+        });
+      }
     },
     onPlayerLeftWorld: (accountKey: string): void => {
       // Only OUR row: a player who moved to another world has already written a row naming

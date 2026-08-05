@@ -54,6 +54,9 @@ export function serverWhisper(player: Player, text: string): void {
 export interface ChatHooks {
   // false = a plugin vetoed the line.
   onChat(player: Player, text: string): boolean;
+  /** Record a line for SCROLLBACK (distinct from the moderation log, which is an archive
+   *  answering a different question). Absent = no history kept. */
+  history?(player: Player, channel: string, text: string): void;
 }
 
 // A4: the durable moderation stream. Slash commands are recorded too (channel 'command')
@@ -184,5 +187,7 @@ export function handleChatSend(
   } else {
     broadcastChat(ctx.roster, msg, ctx.isMuted, player.accountKey);
   }
+  // Scrollback, after delivery: a line nobody received is not part of the conversation.
+  ctx.history?.(player, channel, line);
   log('info', 'chat.' + channel, { from: player.name, chars: line.length });
 }

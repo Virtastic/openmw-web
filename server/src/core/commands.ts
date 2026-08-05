@@ -12,6 +12,9 @@ import { log } from '../log';
 
 export interface CommandContext {
   roster: Roster;
+  /** Record a delivered line for SCROLLBACK — see chat.ts. Optional so a partial context in a
+   *  test still constructs, and absent simply means no history is kept. */
+  history?(player: Player, channel: string, text: string): void;
   // Phase 2.5: mute lookup for chat delivery (see chat.ts broadcastChat). Optional so a
   // partial context in a test still constructs.
   isMuted?(listenerAcct: string, speakerAcct: string): boolean;

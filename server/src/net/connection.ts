@@ -80,6 +80,8 @@ export interface ServerCtx {
   simReady?(): boolean;
   /** Run an anchor/claim pass now instead of waiting for the next periodic one. */
   onPeerJoined?(): void;
+  /** Send this player their chat scrollback. Absent = no history configured. */
+  replayChat?(player: Player): void;
   // Tier 2 (the server has its own valid game data). Only then may a sim peer's manifest be
   // pinned as the world's canonical content list.
   gameDataOk?: boolean;
@@ -1374,6 +1376,12 @@ export class Connection implements Peer {
       const near = this.ctx.guestSpawn(this.player.accountKey);
       if (near) this.player.peer.sendEvent('InviteAccepted', near);
     }
+    // CHAT SCROLLBACK. The feed lives in the page and a world change now RELOADS the page, so
+    // every switch wiped the conversation and a player arriving anywhere saw an empty box with
+    // no idea what was being discussed. Replayed as ordinary ChatMessage events, oldest first,
+    // so the client renders them through the path it already has — history is not a different
+    // kind of message, it is the same messages, earlier.
+    this.ctx.replayChat?.(this.player);
     syncStateOnJoin(this.ctx.stateCtx, this.player); // M2 late-joiner appearance/equipment sync
     this.ctx.quests.sendJournalSync(this.player); // M6 full journal state at join
     this.ctx.quests.sendGlobalSync(this.player); // Phase 4 character-shadowed quest globals

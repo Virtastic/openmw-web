@@ -596,6 +596,12 @@ export class Social {
 
   // Phase 4: party membership for quest credit / loot rules. Hydrates from the store so a
   // member who formed the party in another world still counts here. Empty when solo.
+  /** The party's id, for scoping things that belong to it (chat scrollback). */
+  partyIdOf(acct: AccountKey): string | undefined {
+    this.loadParty(acct);
+    return this.partyOf.get(acct);
+  }
+
   partyMembersOf(acct: AccountKey): AccountKey[] {
     this.loadParty(acct);
     const key = this.partyOf.get(acct);

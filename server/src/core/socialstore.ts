@@ -21,6 +21,14 @@ import { join } from 'node:path';
 // friendship would expire on every reconnect.
 export type AccountKey = string;
 
+export interface ChatHistoryRow {
+  ts: number;
+  channel: string;
+  acct: AccountKey;
+  name: string;
+  text: string;
+}
+
 export interface PresenceRow {
   account: AccountKey;
   world: string;
@@ -94,6 +102,25 @@ export class SocialStore {
       -- like friendships and parties, rather than something each process infers alone.
       -- Rows are refreshed on a heartbeat and read with a TTL, so a world that dies without
       -- cleaning up ages out instead of leaving ghosts online forever.
+      -- CHAT SCROLLBACK, shared and durable. The client's feed lives in the page, and a world
+      -- change now RELOADS the page — so every switch wiped the conversation, and a player
+      -- arriving anywhere saw an empty box with no idea what was being discussed. History is
+      -- what makes a chat box feel inhabited rather than like a fresh terminal.
+      --
+      -- Shared, not per-world, for the same reason parties are: the public channel is one
+      -- conversation across the whole server, and a player who steps into their own world and
+      -- back should not lose it. Trimmed to a bounded tail — this is scrollback, not an
+      -- archive; the moderation log is the archive and answers a different question.
+      CREATE TABLE IF NOT EXISTS chat_history (
+        id       INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts       INTEGER NOT NULL,
+        channel  TEXT NOT NULL,
+        scope    TEXT NOT NULL,   -- '' for server-wide; a party id for party lines
+        acct     TEXT NOT NULL,
+        name     TEXT NOT NULL,
+        text     TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS chat_history_scope ON chat_history (scope, id);
       CREATE TABLE IF NOT EXISTS presence (
         account    TEXT PRIMARY KEY,
         world      TEXT NOT NULL,
@@ -184,6 +211,29 @@ export class SocialStore {
   areFriends(x: AccountKey, y: AccountKey): boolean {
     const [a, b] = SocialStore.pair(x, y);
     return this.db.prepare('SELECT 1 FROM friend WHERE a = ? AND b = ?').get(a, b) !== undefined;
+  }
+
+  // --- chat scrollback ------------------------------------------------------------------
+
+  /** Append one line and trim the tail. Called for the channels a newcomer may replay. */
+  appendChat(line: { ts: number; channel: string; scope: string; acct: string; name: string; text: string },
+    keep: number): void {
+    this.db.prepare(
+      'INSERT INTO chat_history (ts, channel, scope, acct, name, text) VALUES (?, ?, ?, ?, ?, ?)',
+    ).run(line.ts, line.channel, line.scope, line.acct, line.name, line.text);
+    // Bounded per scope, so a busy public channel cannot push a quiet party's history out.
+    this.db.prepare(
+      `DELETE FROM chat_history WHERE scope = ? AND id NOT IN
+         (SELECT id FROM chat_history WHERE scope = ? ORDER BY id DESC LIMIT ?)`,
+    ).run(line.scope, line.scope, keep);
+  }
+
+  /** Oldest-first tail for a scope, so a client can replay it in the order it was said. */
+  recentChat(scope: string, limit: number): ChatHistoryRow[] {
+    const rows = this.db.prepare(
+      'SELECT ts, channel, acct, name, text FROM chat_history WHERE scope = ? ORDER BY id DESC LIMIT ?',
+    ).all(scope, limit) as unknown as ChatHistoryRow[];
+    return rows.reverse();
   }
 
   // --- server-wide presence -----------------------------------------------------------
