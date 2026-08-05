@@ -1115,14 +1115,15 @@
              // when the thing that was supposed to (the settle hold) turned out to be gated on
              // chargen, every new character sat on a loading screen that could never go away.
              // A suppression that can outlive its owner is not acceptable here: whatever
-             // happens, the screen is released. 45s is far longer than any real settle and far
-             // shorter than "forever".
+             // happens, the screen is released. 30s is comfortably longer than any real settle
+             // (the hold itself gives up at 30s and its grace is 5s) and far shorter than
+             // "forever" — the point is a bound, not a generous one.
              setTimeout(function(){
                if (!window.__omwMPSettling) return;
                window.__omwMPSettling = false;
                try { window.__omwLoading.hide(); } catch (e) {}
                try { if (window.__omwLog) window.__omwLog('[mp] settle hold released by timeout', 'err'); } catch (e) {}
-             }, 45000);
+             }, 30000);
              ENV.OPENMW_MP_URL = mpUrl;
              // NOTE ON URL FLAGS — deliberately NOT blocked here, and the reasoning matters.
              //
