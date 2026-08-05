@@ -174,6 +174,24 @@ export class Social {
     return rows;
   }
 
+  /** How the VIEWER stands with this person: already friends, or a request pending in either
+   *  direction. The Players list offered "add friend" to everyone — including people you were
+   *  already friends with, and people whose request you had already sent — because a roster row
+   *  carries only {id, name} and the client was guessing the account key from the display name,
+   *  which has not matched since handles were introduced.
+   *
+   *  Computed here and sent as FLAGS rather than shipping the account key: an account key is
+   *  the login identifier, which for an SSO account is the person's real name. The panel needs
+   *  to know the relationship, not who someone is. */
+  relationTo(viewer: AccountKey, subject: AccountKey): { friend?: true; reqOut?: true; reqIn?: true } {
+    if (viewer === subject) return {};
+    const now = this.d.now();
+    if (this.d.store.areFriends(viewer, subject)) return { friend: true };
+    if (this.d.store.hasRequest(viewer, subject, now)) return { reqOut: true };
+    if (this.d.store.hasRequest(subject, viewer, now)) return { reqIn: true };
+    return {};
+  }
+
   /** Everyone online anywhere on the server, for the Players list. */
   onlineEverywhere(): PresenceRow[] {
     return this.presentRows();
@@ -925,7 +943,10 @@ export class Social {
         return true;
       }
       case 'FriendAccept': {
-        const r = this.acceptFriend(player, str('acct'));
+        // By NAME from the panel (the account key is not on the wire), by acct from the older
+        // request list. targetAcct takes either.
+        const who = this.targetAcct(body) ?? str('acct');
+        const r = this.acceptFriend(player, who);
         this.reply(player, 'FriendAccept', r === 'ok', r);
         return true;
       }

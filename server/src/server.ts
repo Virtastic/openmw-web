@@ -1117,12 +1117,22 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   const broadcastServerRoster = (): void => {
     const everyone = social.onlineEverywhere();
     if (everyone.length === 0) return;
-    const list = everyone.map((r) => {
-      const local = roster.activeForAccount(r.account);
-      return local && local.inWorld ? { id: local.id, name: r.name } : { name: r.name };
-    });
     for (const p of roster.humansInWorld()) {
       if (p.bot) continue; // nothing is listening on a bot's peer
+      // PER RECIPIENT, because the interesting part of a row is the RELATIONSHIP: the panel
+      // offered "add friend" to people you were already friends with, and to people whose
+      // request you had already sent, since a row carried only {id, name}. Flags, not account
+      // keys — a key is the login identifier, which for an SSO account is a real name.
+      const list = everyone
+        .filter((r) => r.account !== p.accountKey) // your own row is rendered from what you know
+        .map((r) => {
+          const local = roster.activeForAccount(r.account);
+          return {
+            ...(local && local.inWorld ? { id: local.id } : {}),
+            name: r.name,
+            ...social.relationTo(p.accountKey, r.account),
+          };
+        });
       p.peer.sendEvent('PlayerList', { players: list as unknown as never });
     }
   };

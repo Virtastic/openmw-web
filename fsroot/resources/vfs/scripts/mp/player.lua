@@ -294,7 +294,15 @@ local function pollHarness()
         -- the server contract.
         local sop, sarg = cmd:match('^social:([%a]+):(.*)$')
         if sop then
-            local byName = (sop == 'FriendRequest' or sop == 'BlockAdd')
+            -- BY NAME, for everything that targets a PERSON. The panel only knows display
+            -- names — the account key is the login identifier and is deliberately not on the
+            -- wire — so it used to send a GUESS (the lowercased handle) for these, which stops
+            -- being a real key the moment someone's handle differs from their login name. The
+            -- server resolves names against its roster and the shared account index.
+            -- PartyKick is the exception: its argument is a party member's key, which the
+            -- party view legitimately carries.
+            local byName = (sop == 'FriendRequest' or sop == 'BlockAdd' or sop == 'FriendAccept'
+                or sop == 'PartyInvite' or sop == 'MuteAdd' or sop == 'ReportPlayer')
             -- The arg does NOT always belong in name/acct. PresenceMode reads `mode` and
             -- SetAvailability reads `state` on the server, so routing their argument into
             -- `acct` meant the server saw an empty value and refused with no_such_player --

@@ -372,3 +372,33 @@ test('a member who rejoins is sent to the world the party is actually in', async
   assert.equal(h.social.routeJoinerToParty(mate, 'priv-mate-1234'), false,
     'sending someone to chase an empty world is worse than leaving them put');
 });
+
+// THE PANEL SHOULD KNOW WHERE YOU STAND. Players rows carry only {id, name} — an account key
+// is the login identifier and for an SSO account that is a real name, so it is deliberately
+// not on the wire — and the client was GUESSING the key by lowercasing the display name, which
+// stopped matching the moment handles existed. Every row therefore looked like a stranger:
+// "add friend" was offered to people you were already friends with, and to people whose
+// request you had already sent. The relationship is computed server-side and sent as flags.
+test('a players row says whether you are already friends, or a request is pending', async () => {
+  const h = world();
+  const a = h.add('ann', 'Ann');
+  const b = h.add('bob', 'Bob');
+  h.add('cid', 'Cid');
+
+  // Strangers: nothing set, so the panel offers to ask.
+  assert.deepEqual(h.social.relationTo('ann', 'cid'), {});
+
+  // Ann asks Bob. Ann sees "sent"; Bob sees an incoming request — answering is his useful
+  // action, not asking back.
+  h.social.requestFriend(a, 'Bob');
+  assert.deepEqual(h.social.relationTo('ann', 'bob'), { reqOut: true });
+  assert.deepEqual(h.social.relationTo('bob', 'ann'), { reqIn: true });
+
+  // Accepted: both sides read as friends, and neither is offered "add friend" again.
+  h.social.acceptFriend(b, 'ann');
+  assert.deepEqual(h.social.relationTo('ann', 'bob'), { friend: true });
+  assert.deepEqual(h.social.relationTo('bob', 'ann'), { friend: true });
+
+  // Your own row is never a relationship.
+  assert.deepEqual(h.social.relationTo('ann', 'ann'), {});
+});

@@ -120,6 +120,9 @@ local function personRow(name, opts)
     if opts.where then label = label .. '  (' .. opts.where .. ')' end
     if opts.offline then label = label .. '  (offline)' end
     if opts.leader then label = label .. '  - leader' end
+    -- Where you stand with this person ("Friend", "Request sent"). Without it, a row with no
+    -- add-friend button is indistinguishable from a broken one.
+    if opts.note then label = label .. '  - ' .. opts.note end
 
     local items = { U.text(label, { grow = 1 }) }
     for _, a in ipairs(opts.actions or {}) do
@@ -137,13 +140,22 @@ local function playersTab()
             others = others + 1
             if shown < MAX_ROWS then
                 shown = shown + 1
-                -- The roster carries {id, name} ONLY — the account key is not on the wire, and
-                -- lowercased-username used to be guessed as the key. Wrong since usernames:
-                -- mute/invite/report all hit a phantom account and reported success. The
-                -- SERVER resolves the name against its live roster instead.
+                -- RELATIONSHIP COMES FROM THE SERVER. The roster carries no account key (it is
+                -- the login identifier, and for an SSO account that is a real name), so the
+                -- client used to GUESS it by lowercasing the display name — which has not
+                -- matched a real key since handles were introduced. Every row therefore looked
+                -- like a stranger: "add friend" was offered to people you were already friends
+                -- with, and to people whose request you had already sent.
                 local acct = string.lower(p.name) -- display-only fallback for local checks
                 local actions = {}
-                if not isFriend(acct) then
+                if p.friend then
+                    -- Already friends: nothing to add. Said plainly, because an absent button
+                    -- reads as a missing feature.
+                    status = status
+                elseif p.reqIn then
+                    -- They asked YOU. Answering is the useful action here, not asking back.
+                    actions[#actions + 1] = { 'accept friend', function() send('FriendAccept', { name = p.name }) end }
+                elseif not p.reqOut then
                     actions[#actions + 1] = { 'add friend', function() send('FriendRequest', { name = p.name }) end }
                 end
                 if not inParty(acct) then
@@ -162,7 +174,13 @@ local function playersTab()
                     render()
                 end }
                 actions[#actions + 1] = { 'block', function() send('BlockAdd', { name = p.name }) end }
-                rows[#rows + 1] = personRow(p.name, { actions = actions })
+                -- The row says WHERE you stand, so a missing button is explained rather than
+                -- looking like something is broken.
+                local note = p.friend and 'Friend'
+                    or (p.reqOut and 'Request sent')
+                    or (p.reqIn and 'Wants to be friends')
+                    or nil
+                rows[#rows + 1] = personRow(p.name, { actions = actions, note = note })
             end
         end
     end

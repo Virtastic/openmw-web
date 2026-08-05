@@ -3868,12 +3868,26 @@
         sec.appendChild(el('div','note','Showing the first ' + PLAYER_ROWS + ' of ' + others.length
           + ' players here.'));
       }
-      others.slice(0, PLAYER_ROWS).forEach(function(p){ var acct = String(p.name||'').toLowerCase();
-        sec.appendChild(personRow(p.name, null, false, [
-          ['add friend', function(){ cmd('social:FriendRequest:'+p.name); setStatus('Friend request sent.'); }, true],
-          ['party', function(){ cmd('social:PartyInvite:'+acct); }],
-          ['mute', function(){ cmd('social:MuteAdd:'+acct); }],
-          ['block', function(){ cmd('social:BlockAdd:'+p.name); }]]));
+      others.slice(0, PLAYER_ROWS).forEach(function(p){
+        // WHERE YOU STAND, from the server. Rows carry relationship flags because the panel
+        // only knows display names — an account key is the login identifier and is not on the
+        // wire — so this used to offer "add friend" to everyone, including people you were
+        // already friends with and people whose request you had already sent.
+        var acts = [];
+        if (p.friend) { /* already friends: nothing to ask for */ }
+        else if (p.reqIn) acts.push(['accept friend', function(){
+          cmd('social:FriendAccept:'+p.name); setStatus('Friend request accepted.'); }, true]);
+        else if (!p.reqOut) acts.push(['add friend', function(){
+          cmd('social:FriendRequest:'+p.name); setStatus('Friend request sent.'); }, true]);
+        // Everything that targets a PERSON goes by name for the same reason.
+        acts.push(['party', function(){ cmd('social:PartyInvite:'+p.name); }]);
+        acts.push(['mute', function(){ cmd('social:MuteAdd:'+p.name); }]);
+        acts.push(['block', function(){ cmd('social:BlockAdd:'+p.name); }]);
+        // A row with no add-friend button reads as broken unless it says why.
+        var note = p.friend ? 'Friend'
+          : p.reqOut ? 'Request sent'
+          : p.reqIn ? 'Wants to be friends' : null;
+        sec.appendChild(personRow(p.name, note, false, acts));
       });
     }
     // No Settings tab and no Privacy pane: presence filtering was a control nobody asked for
