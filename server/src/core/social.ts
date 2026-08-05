@@ -9,7 +9,7 @@
 // is carried alongside, and only when the friend is actually online.
 
 import type { Player, Roster } from './players';
-import { SocialStore, type AccountKey } from './socialstore';
+import { SocialStore, type AccountKey, type PresenceRow } from './socialstore';
 import type { LValue, LTable, JsLike } from '../proto/lser';
 import type { WorldBrowser } from './worldbrowser';
 import { log } from '../log';
@@ -71,9 +71,16 @@ export type SocialFailure =
   | 'party_full'
   | 'already_in_party';
 
+/** How long a presence row stays believable without a refresh. Comfortably longer than the
+ *  heartbeat, so a hiccup does not blink everyone offline, and short enough that a world which
+ *  died without cleaning up ages out rather than leaving ghosts online forever. */
+const PRESENCE_TTL_MS = 30_000;
+
 export interface SocialDeps {
   store: SocialStore;
   roster: Roster;
+  /** This world's id, so shared presence can name where a player actually is. */
+  worldId?: string;
   // Display name for an account that may be offline. Returns undefined for an unknown one.
   displayName(acct: AccountKey): string | undefined;
   // Resolve a typed-in display name to an account key (case-insensitive).
@@ -127,6 +134,8 @@ export class Social {
   // a restart from resurrecting groups whose members are gone for good.
   private readonly parties = new Map<string, Party>();
   private readonly partyOf = new Map<AccountKey, string>();
+  /** Cached for a second: a friend list of N would otherwise scan the table N times. */
+  private presenceCache: { at: number; rows: PresenceRow[] } | undefined;
   private readonly maxParty = 8;
 
   constructor(deps: SocialDeps, tuning: SocialTuning = socialTuning) {
@@ -144,6 +153,32 @@ export class Social {
     return p?.inWorld ? p : undefined;
   }
 
+  /** PRESENCE IS SERVER-WIDE, not per-world. Every world is its own process with its own
+   *  roster, so asking the local roster alone answered "is my friend online?" with "is my
+   *  friend in MY world?" — a friend in their own solo world read as offline, and a party
+   *  member elsewhere had no location. Local first (it is authoritative and current), then the
+   *  shared presence table for everyone else. */
+  private presenceOf(acct: AccountKey): { online: boolean; cellKey?: string; world?: string } {
+    const local = this.onlinePlayer(acct);
+    if (local) return { online: true, cellKey: local.cellKey, world: this.d.worldId };
+    const row = this.presentRows().find((r) => r.account === acct);
+    return row ? { online: true, cellKey: row.cellKey, world: row.world } : { online: false };
+  }
+
+  /** Cached for one tick of calls: a friend list of N asks N times, and this is a table scan. */
+  private presentRows(): PresenceRow[] {
+    const now = this.d.now();
+    if (this.presenceCache && now - this.presenceCache.at < 1000) return this.presenceCache.rows;
+    const rows = this.d.store.presentEverywhere(now, PRESENCE_TTL_MS);
+    this.presenceCache = { at: now, rows };
+    return rows;
+  }
+
+  /** Everyone online anywhere on the server, for the Players list. */
+  onlineEverywhere(): PresenceRow[] {
+    return this.presentRows();
+  }
+
   // cellKey is included ONLY for friends. It is a location disclosure, and a stranger — or
   // someone this player has blocked — must never receive it.
   friendList(acct: AccountKey): FriendView[] {
@@ -156,13 +191,20 @@ export class Social {
       // Availability is a hard gate over connectedness: an Offline player is CONNECTED (they
       // are off in their own solo world) but must read as offline to friends — hidden, and
       // with no location, exactly as if disconnected.
-      const available = p !== undefined && this.isAvailable(f.account);
-      const showWhere = available && p.cellKey !== undefined && this.maySeeLocation(acct, f.account);
+      // Server-wide: `p` is only this world's copy, and a friend elsewhere is still online.
+      const where = this.presenceOf(f.account);
+      const available = where.online && this.isAvailable(f.account);
+      const showWhere = available && where.cellKey !== undefined && this.maySeeLocation(acct, f.account);
       out.push({
         acct: f.account,
         name: this.d.displayName(f.account) ?? f.account,
         online: available,
-        ...(available ? { playerId: p.id, ...(showWhere ? { cellKey: p.cellKey } : {}) } : {}),
+        // playerId is a LOCAL connection id and only means anything in this world — a friend
+        // elsewhere is online with no id here, which is exactly right: you cannot click
+        // through to a session this process does not hold. The location comes from shared
+        // presence, so it is correct wherever they are.
+        ...(available && p ? { playerId: p.id } : {}),
+        ...(showWhere ? { cellKey: where.cellKey } : {}),
       });
     }
     return out;

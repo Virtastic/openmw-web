@@ -456,6 +456,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   const social = new Social({
     store: socialStore,
     roster,
+    worldId: worldId ?? 'default',
     // The USERNAME is the public handle (accounts.ts: "shown everywhere in-game — nametags,
     // chat, friends, admin views"). account.name is the LOGIN IDENTIFIER, and for an SSO
     // account it is the provider's name claim, i.e. the person's real name. Every social
@@ -614,6 +615,9 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       return m !== null && !charId.endsWith(m[1]!);
     },
     onPlayerLeftWorld: (accountKey: string): void => {
+      // Only OUR row: a player who moved to another world has already written a row naming
+      // that world, and deleting theirs from the world they left would blink them offline.
+      socialStore.clearPresence(accountKey, worldId ?? 'default');
       if (worldOwner === '' || accountKey !== worldOwner) return;
       if (worldModeAtBoot === 'public' || worldMode !== 'party') return;
       // The owner closing their tab used to leave the party standing in a world that no
@@ -1039,6 +1043,47 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   moveBroadcaster.start();
   m7.start(); // clock ticking + cell-reset sweep before plugins register schedules
   hooks.serverStart();
+  // SERVER-WIDE PRESENCE. Each world publishes its own occupants into the shared store so
+  // every other world can answer "who is online?" for the whole server rather than for its own
+  // process — friends in another world used to read as offline, party members had no location,
+  // and the Players list showed one world's population as if it were everyone. Refreshed on a
+  // heartbeat and read with a TTL, so a world that dies without cleaning up ages out.
+  const presenceWorld = worldId ?? 'default';
+  const publishPresence = (): void => {
+    const now = Date.now();
+    for (const p of roster.inWorld()) {
+      if (p.system) continue; // the sim peer is infrastructure, not a player
+      socialStore.setPresence(p.accountKey, presenceWorld, p.name, p.cellKey, p.bot === true, now);
+    }
+  };
+  // THE PLAYERS LIST IS THE SERVER'S, NOT THIS WORLD'S. Roster.joinWorld sends a PlayerList
+  // built from this process's occupants, which is all it can see — so the panel showed the
+  // world you were standing in and called it "players". You should be able to see, and invite,
+  // anyone connected to the server from wherever you are. Rebroadcast the shared view; the
+  // client's PlayerList handler already replaces its roster wholesale.
+  //
+  // A remote player carries no id: connection ids are local to the process that holds the
+  // socket, and inventing one would let the UI offer actions that address nothing. Social ops
+  // resolve by NAME, so every button still works on a row from another world.
+  const broadcastServerRoster = (): void => {
+    const everyone = social.onlineEverywhere();
+    if (everyone.length === 0) return;
+    const list = everyone.map((r) => {
+      const local = roster.activeForAccount(r.account);
+      return local && local.inWorld ? { id: local.id, name: r.name } : { name: r.name };
+    });
+    for (const p of roster.humansInWorld()) {
+      if (p.bot) continue; // nothing is listening on a bot's peer
+      p.peer.sendEvent('PlayerList', { players: list as unknown as never });
+    }
+  };
+
+  publishPresence();
+  const presenceTick = setInterval(() => {
+    publishPresence();
+    broadcastServerRoster();
+  }, 10_000);
+  presenceTick.unref();
   // DEV/TEST BOTS. Off unless [dev] bots (or OMW_DEV_BOTS) says otherwise — see dev/testbots.
   // Started AFTER hooks so plugins see a normal roster, and given the world's respawn cell so
   // interest-managed broadcasts reach them.
@@ -1088,6 +1133,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       if (closed) return;
       closed = true;
       devBots?.stop();
+      clearInterval(presenceTick);
       unhookGauge();
       unhookBufferedGauge();
       clearInterval(simPeerTick);

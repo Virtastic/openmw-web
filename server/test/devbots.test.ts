@@ -305,3 +305,38 @@ async function waitFor(cond: () => boolean, ms: number): Promise<boolean> {
   }
   return cond();
 }
+
+// PRESENCE IS SERVER-WIDE, NOT PER-WORLD. Every world is its own process with its own roster,
+// so asking the local roster answered "is my friend online?" with "is my friend in MY world?".
+// A friend in their own solo world read as offline, a party member elsewhere had no location,
+// and the Players list showed one world's population as if it were the server's — so from solo
+// there was nobody to see or invite.
+test('players in another world are visible and online from here', async (t) => {
+  const dataDir = tmpDataDir();
+  const cfg = (mode: string) => ({
+    requireGameData: false, dataDir, port: 0, host: '127.0.0.1', worldMode: mode,
+    worldId: mode === 'public' ? 'vvardenfell' : 'priv-someone',
+    configOverride: {
+      dev: { bots: 1, botPrefix: 'Bot', botNames: ['Kestrel'] },
+      login: { allowHarnessAuth: true },
+    } as never,
+  });
+
+  const pub = await startServer(cfg('public'));
+  t.after(() => pub.close());
+  const priv = await startServer(cfg('private'));
+  t.after(() => priv.close());
+
+  // Ann is in the PRIVATE world; Kestrel the bot is in PUBLIC.
+  const ann = await TestClient.connect(priv.port);
+  t.after(() => ann.close());
+  await ann.joinAsNew('Ann', 'hunter22');
+
+  // The shared roster must REACH HER — asserted on what the client receives, which is what
+  // the panel actually renders, rather than on server-side bookkeeping.
+  const list = await ann.waitEvent('PlayerList',
+    (v) => ((v as { players?: { name: string }[] }).players ?? []).some((p) => p.name === 'Kestrel'),
+    20000).catch(() => null);
+  assert.ok(list,
+    'a player in another world never reached this one — nobody to see or invite from solo');
+});

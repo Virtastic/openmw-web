@@ -21,6 +21,14 @@ import { join } from 'node:path';
 // friendship would expire on every reconnect.
 export type AccountKey = string;
 
+export interface PresenceRow {
+  account: AccountKey;
+  world: string;
+  name: string;
+  cellKey?: string;
+  isBot: boolean;
+}
+
 export interface FriendRow {
   account: AccountKey;
   since: number;
@@ -79,6 +87,21 @@ export class SocialStore {
       );
       CREATE INDEX IF NOT EXISTS invite_to ON invite(toAcct);
       -- Presence mode is a per-account PREFERENCE, so it persists.
+      -- WHO IS ONLINE, SERVER-WIDE. Every world is its own PROCESS with its own roster, so a
+      -- world could only ever see its own occupants: a friend playing in their own solo world
+      -- read as OFFLINE, a party member elsewhere had no location, and the Players list showed
+      -- one world's population as if it were the server's. Presence is therefore shared state,
+      -- like friendships and parties, rather than something each process infers alone.
+      -- Rows are refreshed on a heartbeat and read with a TTL, so a world that dies without
+      -- cleaning up ages out instead of leaving ghosts online forever.
+      CREATE TABLE IF NOT EXISTS presence (
+        account    TEXT PRIMARY KEY,
+        world      TEXT NOT NULL,
+        name       TEXT NOT NULL,
+        cell_key   TEXT,
+        is_bot     INTEGER NOT NULL DEFAULT 0,
+        updated_at INTEGER NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS presence_pref (
         account TEXT PRIMARY KEY,
         mode    TEXT NOT NULL
@@ -161,6 +184,39 @@ export class SocialStore {
   areFriends(x: AccountKey, y: AccountKey): boolean {
     const [a, b] = SocialStore.pair(x, y);
     return this.db.prepare('SELECT 1 FROM friend WHERE a = ? AND b = ?').get(a, b) !== undefined;
+  }
+
+  // --- server-wide presence -----------------------------------------------------------
+  // A world writes its own occupants here and reads everyone's. See the presence table.
+
+  /** Refresh this account's presence. Called on join and on the heartbeat. */
+  setPresence(account: AccountKey, world: string, name: string,
+    cellKey: string | undefined, isBot: boolean, now: number): void {
+    this.db.prepare(
+      `INSERT INTO presence (account, world, name, cell_key, is_bot, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(account) DO UPDATE SET
+         world = excluded.world, name = excluded.name, cell_key = excluded.cell_key,
+         is_bot = excluded.is_bot, updated_at = excluded.updated_at`,
+    ).run(account, world, name, cellKey ?? null, isBot ? 1 : 0, now);
+  }
+
+  /** Drop presence on leave. Deleting only OUR row matters: a player who moved to another
+   *  world has already written a row naming that world, and a late delete from the world they
+   *  left would wrongly mark them offline. */
+  clearPresence(account: AccountKey, world: string): void {
+    this.db.prepare('DELETE FROM presence WHERE account = ? AND world = ?').run(account, world);
+  }
+
+  /** Everyone online across every world, fresher than `ttlMs`. */
+  presentEverywhere(now: number, ttlMs: number): PresenceRow[] {
+    const rows = this.db.prepare(
+      'SELECT account, world, name, cell_key AS cellKey, is_bot AS isBot FROM presence WHERE updated_at >= ?',
+    ).all(now - ttlMs) as { account: string; world: string; name: string; cellKey: string | null; isBot: number }[];
+    return rows.map((r) => ({
+      account: r.account, world: r.world, name: r.name,
+      cellKey: r.cellKey ?? undefined, isBot: r.isBot === 1,
+    }));
   }
 
   friendsOf(account: AccountKey): FriendRow[] {

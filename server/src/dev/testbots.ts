@@ -150,8 +150,10 @@ export async function startTestBots(deps: TestBotDeps): Promise<RunningTestBots>
     const adopted = accounts.adoptCharacter(account, charId, name);
     if (adopted === 'full') log('warn', 'devbot.slot_full', { bot: name });
 
+    const ringAng = ((i - 1) / Math.max(1, count)) * Math.PI * 2;
     players.update(charId, (doc) => {
-      doc.position = { cellKey: spawn.cellKey, x: spawn.x, y: spawn.y, z: spawn.z };
+      doc.position = { cellKey: spawn.cellKey,
+        x: spawn.x + Math.cos(ringAng) * 120, y: spawn.y + Math.sin(ringAng) * 120, z: spawn.z };
       if (look && look.race && look.head && look.class) {
         doc.appearance = { race: look.race, head: look.head, hair: look.hair,
           class: look.class, name, isMale: true };
@@ -171,8 +173,15 @@ export async function startTestBots(deps: TestBotDeps): Promise<RunningTestBots>
     const lead = roster.humansInWorld().find((p) => !p.bot && p.cellKey !== undefined);
     const at = lead?.pose as { x: number; y: number; z: number } | undefined;
     self.cellKey = lead?.cellKey ?? spawn.cellKey;
-    self.pose = (at ? { ...at, yaw: 0, pitch: 0, anim: 0 }
-      : { x: spawn.x, y: spawn.y, z: spawn.z, yaw: 0, pitch: 0, anim: 0 }) as never;
+    // SPREAD OUT. Every bot took the exact same spawn coordinates, so three characters stood
+    // INSIDE each other and the player saw one. A small ring keeps them individually visible
+    // and lets you walk up to a specific one — the difference between three players and a smear.
+    const idx = Math.max(0, ids.findIndex((x) => x.accountKey === b.accountKey));
+    const ang = (idx / Math.max(1, ids.length)) * Math.PI * 2;
+    const R = 120; // Morrowind units: adjacent, not stacked, not scattered
+    const spot = at ?? { x: spawn.x, y: spawn.y, z: spawn.z };
+    self.pose = { x: spot.x + Math.cos(ang) * R, y: spot.y + Math.sin(ang) * R, z: spot.z,
+      yaw: 0, pitch: 0, anim: 0 } as never;
     roster.joinWorld(self);
     here.set(b.accountKey, self);
     if (dressed) {
