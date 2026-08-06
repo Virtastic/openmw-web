@@ -462,7 +462,7 @@
         </svg>
       </div>
       <div class="kicker">Your copy, anywhere</div>
-      <h2>Play your own Morrowind</h2>
+      <h2>Cloud locker</h2>
       <p class="lead">Sign in once and upload your Morrowind. It is waiting on any machine you
          sign in from, and your saves go with it. Single player.</p>
       <div class="go">Sign in <span class="arw">▸</span></div>
@@ -493,13 +493,13 @@
      an identity provider ("Continue with Google"). The SSO redirect happens on button click. -->
 <div class="modal-bd" id="mp-bd" role="dialog" aria-modal="true" aria-labelledby="mp-title">
   <div class="modal mp-modal">
-    <div class="mp-glyph" aria-hidden="true">
+    <div class="mp-glyph" id="mp-glyph" aria-hidden="true">
       <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round">
         <circle cx="18" cy="18" r="6"/><circle cx="32" cy="22" r="5"/>
         <path d="M8 40c0-6 4.5-10 10-10s10 4 10 10"/><path d="M26 40c0-4.5 3.5-8 8-8s8 3.5 8 8"/>
       </svg>
     </div>
-    <div class="m-kicker">Multiplayer</div>
+    <div class="m-kicker" id="mp-kicker">Multiplayer</div>
     <h3 id="mp-title">Sign in to play together</h3>
     <div id="mp-providers" class="mp-providers"></div>
     <p class="note" id="mp-note"></p>
@@ -582,7 +582,7 @@
  const HELP = {
    cloud: `
      <div class="m-kicker">Your copy, anywhere &middot; single sign-on</div>
-     <h3 id="modal-title">Play your own Morrowind</h3>
+     <h3 id="modal-title">Cloud locker</h3>
      <p>Upload your own Morrowind once. After that it is waiting on any machine you sign in
         from, and your saves go with it. This is single player: no other people, no world to
         join.</p>
@@ -983,7 +983,19 @@
  function mpClose(){ mpBd.classList.remove('show'); }
  function mpNote(msg, cls){ const n=$('mp-note'); n.textContent=msg||''; n.className='note'+(cls?' '+cls:''); }
 
+ const CLOUD_GLYPH = '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round">'
+   + '<path d="M14 34h20a7 7 0 0 0 .6-13.97A10 10 0 0 0 15.2 18.4 6.6 6.6 0 0 0 14 34z"/>'
+   + '<path d="M24 22v10M20 28l4 4 4-4"/></svg>';
+ const MP_GLYPH = $('mp-glyph').innerHTML;
+
  function mpStart(){
+   // THE DIALOG NAMES THE THING YOU CLICKED. Sign-in is shared, so this said "Multiplayer" to
+   // someone who asked for the cloud locker — the wrong product at the exact moment they are
+   // deciding whether to hand over an account.
+   const cloud = window.__omwSignInIntent === 'cloud';
+   $('mp-kicker').textContent = cloud ? 'Cloud locker' : 'Multiplayer';
+   $('mp-title').textContent = cloud ? 'Sign in to play anywhere' : 'Sign in to play together';
+   $('mp-glyph').innerHTML = cloud ? CLOUD_GLYPH : MP_GLYPH;
    $('mp-providers').innerHTML = '';
    mpNote('');
    mpBd.classList.add('show');
