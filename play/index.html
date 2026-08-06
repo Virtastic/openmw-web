@@ -1911,9 +1911,10 @@
        async function mountAssetPack(){
          if (/[?&]noassets\b/.test(location.search)) return null;
          try {
-           // Idempotent (no-ops if already initialised). Required here because the server-hosted
-           // retail path only inits StreamFS under ?stream, and throws without cross-origin
-           // isolation — caught below so a non-isolated context just skips the pack.
+           // Idempotent (no-ops if already initialised). Called here because this runs on every
+           // data path, including ones that never touched StreamFS. It throws without
+           // cross-origin isolation — caught below, so a non-isolated context just skips the
+           // pack rather than failing the boot.
            StreamFS.init();
            // Two candidates: moddata/ for a local/self-host tree, data/ for the deployed site where
            // the read-only dataset volume mounts at /srv/data. First one that answers with a
@@ -2023,12 +2024,6 @@
            }
          }
 
-         // The launcher may have remembered a Data Files folder handle; reuse it silently.
-         async function rememberedDir(){
-           try {
-             return await new Promise(function(res,rej){ var r=indexedDB.open('omw-launcher',1); r.onupgradeneeded=function(){ if(!r.result.objectStoreNames.contains('handles')) r.result.createObjectStore('handles'); }; r.onsuccess=function(){ try{ var t=r.result.transaction('handles','readonly').objectStore('handles').get('mwdata'); t.onsuccess=function(){res(t.result);}; t.onerror=function(){rej(t.error);}; }catch(e){rej(e);} }; r.onerror=function(){rej(r.error);}; });
-           } catch(e){ return null; }
-         }
 
          // The upload wizard's view: a checklist keyed by lowercased filename, with a live
          // per-file status pill that ticks over pending -> busy -> done (or err).
@@ -2795,29 +2790,6 @@
          }
          function writeRaw(dest){ return function(b){ FS.writeFile(dest, new Uint8Array(b)); return b.byteLength; }; }
          function untarInto(label){ return function(b){ var c = untar(b, '/mwdata/'); append('[mw] '+label+': extracted '+c+' files'); }; }
-         // ?stream: don't copy the BSAs into memory at all — mount them as lazy range-read
-         // files (emscripten FS.createLazyFile + the server's HTTP Range support). Only the
-         // bytes OpenMW actually touches are fetched/resident: cuts resident memory by the
-         // ~483MB of archives and removes them from the up-front download entirely.
-         var STREAM_BSA = /[?&]stream\b/.test(location.search);
-         if (STREAM_BSA){ try { StreamFS.init(); } catch(e){ append('[mw] streamfs unavailable: '+e, 'err'); STREAM_BSA = false; } }
-         function addBsa(name){
-           if (STREAM_BSA){
-             // Probe the size with a 1-byte range request, then mount the worker-backed
-             // streaming file (see streamfs.js). No archive bytes resident up-front.
-             return fetch('mwdata/' + name, { headers: { Range: 'bytes=0-0' } }).then(function(r){
-               var cr = r.headers.get('Content-Range');
-               var size = cr ? parseInt(cr.split('/')[1], 10) : NaN;
-               if (!size) throw 'no Content-Range for ' + name;
-               StreamFS.mount('/mwdata/' + name, 'mwdata/' + name, size);
-               append('[mw] ' + name + ' mounted streaming (' + Math.round(size/1048576) + 'MB on demand)');
-             }).catch(function(e){
-               append('[mw] stream mount failed for ' + name + ', falling back: ' + e, 'err');
-               return grab('mwdata/' + name).then(writeRaw('/mwdata/' + name));
-             });
-           }
-           return grab('mwdata/' + name).then(writeRaw('/mwdata/' + name));
-         }
          append('[mw] loading Morrowind (cached after first run)…');
          // Whether a host stages game data is the OPERATOR'S choice, so its absence is an
          // ordinary configuration and not a crash. Without this it surfaced as a 404 mid-chain

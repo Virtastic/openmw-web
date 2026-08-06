@@ -44,7 +44,7 @@ engine was made to run in a browser tab.
 ## Playing
 
 Serve `play/` (see [Running](#running)) and open it in desktop Chrome. With the
-launcher enabled there are two ways in:
+launcher enabled there are four ways in:
 
 - **The example world.** A small, freely-distributable demo that ships with OpenMW.
   No copy of Morrowind required.
@@ -56,6 +56,15 @@ launcher enabled there are two ways in:
   system location, such as your Documents or Desktop folder: browsers refuse to open
   folders inside `Program Files`, and Steam's default library lives there. See
   [Troubleshooting](#troubleshooting) below.
+- **This server's copy.** Shown only when the host has staged game data of its own. The
+  files are read from the server as the world needs them, so there is nothing to install
+  and no folder to pick.
+- **Play your own Morrowind, from anywhere.** Sign in and upload your Morrowind once; it
+  is then waiting on any machine you sign in from, and your saves go with it. Single
+  player. This is the same account and the same storage locker multiplayer uses, so
+  uploading for one covers the other.
+
+[Multiplayer](#multiplayer) adds a fifth entry point and is **experimental**.
 
 Settings and keybindings persist in the browser (IndexedDB) and survive reloads.
 Saves persist too, and where they land depends on how you are playing:
@@ -118,6 +127,9 @@ or `Video` folders that live inside `Data Files` (they are not stored in the `.b
 A normal Steam or GOG install has them.
 
 ## Multiplayer
+
+**Experimental.** It works and is playable, but it is young: expect rough edges, and expect
+behaviour to change.
 
 Morrowind has no multiplayer, so none of this is a port of something upstream — it is a
 server that owns the shared world and a client that asks it what happened.
