@@ -1,5 +1,7 @@
 #include "mousemanager.hpp"
 
+#include <algorithm> // std::clamp, for the browser's delta-driven GUI cursor
+
 #include <MyGUI_Button.h>
 #include <MyGUI_InputManager.h>
 #include <MyGUI_RenderManager.h>
@@ -27,6 +29,7 @@ namespace MWInput
         BindingsManager* bindingsManager, SDLUtil::InputWrapper* inputWrapper, SDL_Window* window)
         : mBindingsManager(bindingsManager)
         , mInputWrapper(inputWrapper)
+        , mWindow(window)
         , mGuiCursorX(0)
         , mGuiCursorY(0)
         , mMouseWheel(0)
@@ -61,8 +64,36 @@ namespace MWInput
             // game mode does not move the position of the GUI cursor
             MWBase::WindowManager* winMgr = MWBase::Environment::get().getWindowManager();
             float uiScale = winMgr->getScalingFactor();
+#ifdef __EMSCRIPTEN__
+            // BROWSER: THE CURSOR IS OURS TO DRAW, so the pointer lock is never dropped for an
+            // in-game menu (see updateCursorMode below). Absolute coordinates do not advance
+            // while the pointer is locked, so the GUI cursor is integrated from the relative
+            // deltas instead — which is what the engine already draws, and what every click,
+            // press and release reads, so nothing downstream changes.
+            //
+            // Why bother: a browser announces "press Esc to show your cursor" EVERY time a page
+            // takes the pointer, and taking it back for every inventory, dialogue and container
+            // screen meant that banner appeared constantly. The notice itself cannot be
+            // suppressed by a page; not surrendering the lock in the first place is the only
+            // thing that stops it.
+            if (mInputWrapper->getMouseRelative())
+            {
+                int winW = 0, winH = 0;
+                SDL_GetWindowSize(mWindow, &winW, &winH);
+                mGuiCursorX = std::clamp(mGuiCursorX + static_cast<float>(arg.xrel) / uiScale,
+                    0.f, static_cast<float>(winW) / uiScale - 1.f);
+                mGuiCursorY = std::clamp(mGuiCursorY + static_cast<float>(arg.yrel) / uiScale,
+                    0.f, static_cast<float>(winH) / uiScale - 1.f);
+            }
+            else
+            {
+                mGuiCursorX = static_cast<float>(arg.x) / uiScale;
+                mGuiCursorY = static_cast<float>(arg.y) / uiScale;
+            }
+#else
             mGuiCursorX = static_cast<float>(arg.x) / uiScale;
             mGuiCursorY = static_cast<float>(arg.y) / uiScale;
+#endif
 
             mMouseWheel = static_cast<int>(arg.z);
 
@@ -200,6 +231,15 @@ namespace MWInput
 
         bool wasRelative = mInputWrapper->getMouseRelative();
         bool isRelative = !MWBase::Environment::get().getWindowManager()->isGuiMode();
+
+#ifdef __EMSCRIPTEN__
+        // Keep the lock for IN-GAME menus. `grab` is already false for the main menu and the
+        // console, so those still release it — an escape hatch that costs one notice, rather
+        // than one per inventory screen. The GUI cursor runs on deltas while locked
+        // (mouseMoved above).
+        if (!isRelative && grab)
+            isRelative = true;
+#endif
 
         // don't keep the pointer away from the window edge in gui mode
         // stop using raw mouse motions and switch to system cursor movements
