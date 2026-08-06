@@ -1708,6 +1708,12 @@
        }
        window.__lockerHttpBase = lockerHttpBase;
        var __srvSaves = false, __srvMirrored = {}, __srvMirroring = false, __srvAgain = false;
+       // WHICH GAME THESE SAVES BELONG TO. Multiplayer and the cloud-locker mode share an
+       // account and a library on purpose, but they are different games: a multiplayer
+       // character is server-owned state and a solo save is a whole-world snapshot. Listing
+       // one in the other's load screen is confusing at best, and a way to overwrite the wrong
+       // thing at worst. The server keys saves by this and the two never meet.
+       var __saveScope = window.__omwMPEnabled ? 'mp' : 'solo';
        function srvApi(path, opts){
          opts = opts || {};
          opts.headers = Object.assign({ authorization: 'Bearer ' + (window.__omwLockerToken||'') },
@@ -1719,7 +1725,7 @@
        async function setupServerSaves(){
          var list;
          try {
-           var r = await srvApi('/saves');
+           var r = await srvApi('/saves?scope=' + __saveScope);
            if (r.status === 503) return;                  // operator has no storage configured
            if (!r.ok) { append('[saves] server saves unavailable ('+r.status+')','err'); return; }
            list = (await r.json()).files || [];
@@ -1732,7 +1738,8 @@
            try { local = FS.stat(path).mtime.getTime(); } catch(e){}
            if (local !== null && local >= f.mtime){ __srvMirrored[f.name] = local; continue; }
            try {
-             var d = await srvApi('/saves/download?name='+encodeURIComponent(f.name));
+             var d = await srvApi('/saves/download?scope=' + __saveScope
+               + '&name='+encodeURIComponent(f.name));
              if (!d.ok) continue;
              var bytes = new Uint8Array(await (await fetch((await d.json()).url)).arrayBuffer());
              FS.writeFile(path, bytes);
@@ -1758,7 +1765,7 @@
              try {
                var data=FS.readFile(__SAVES_DIR+'/'+n);
                var au=await (await srvApi('/saves/authorize-upload', { method:'POST',
-                 body: JSON.stringify({ name:n, size:data.length }) })).json();
+                 body: JSON.stringify({ name:n, size:data.length, scope:__saveScope }) })).json();
                if (!au.ok){
                  append('[saves] server refused '+n+(au.reason==='quota'?' — out of space':''),'err');
                  __srvMirrored[n]=mt;                     // do not retry every 15s on a hard refusal
@@ -1767,13 +1774,14 @@
                var put=await fetch(au.url, { method:'PUT', body:data });
                if (!put.ok) throw new Error('PUT '+put.status);
                await srvApi('/saves/uploaded', { method:'POST',
-                 body: JSON.stringify({ name:n, size:data.length, mtime:mt }) });
+                 body: JSON.stringify({ name:n, size:data.length, mtime:mt, scope:__saveScope }) });
                __srvMirrored[n]=mt;
              } catch(e){ append('[saves] uploading '+n+' failed: '+e,'err'); }
            }
            for (var d in __srvMirrored){
              if (live[d]) continue;                       // deleted in-game: delete it there too
-             try { await srvApi('/saves/delete', { method:'POST', body: JSON.stringify({ name:d }) }); } catch(e){}
+             try { await srvApi('/saves/delete', { method:'POST',
+               body: JSON.stringify({ name:d, scope:__saveScope }) }); } catch(e){}
              delete __srvMirrored[d];
            }
          } catch(e){ append('[saves] mirror to server failed: '+e,'err'); }

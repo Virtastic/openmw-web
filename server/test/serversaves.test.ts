@@ -15,6 +15,7 @@ import { join } from 'node:path';
 import { FsStorage, fsStorageFrom, blobRoutes, parseRange } from '../src/data/fsstorage';
 import { saveRoutes } from '../src/data/save-routes';
 import { tmpDataDir } from './helpers';
+import { SaveStore, saveKey } from '../src/data/save-routes';
 
 // A server carrying both route groups, exactly as the front door chains them.
 async function harness(dir: string, sessions: Record<string, string>) {
@@ -288,4 +289,40 @@ test('deleting a save removes the bytes as well as the row', async () => {
   } finally {
     await h.close();
   }
+});
+
+// MULTIPLAYER AND CLOUD SAVES MUST NOT CROSS. The two modes share an account and a library on
+// purpose, but they are different games: a multiplayer character is server-owned state, a solo
+// save is a whole-world snapshot. Saves were keyed by (account, name) alone, so a "Save 1" in
+// each collided outright and either mode could list — and overwrite — the other's slots.
+test('a solo save and a multiplayer save of the same name never meet', async (t) => {
+  const dir = tmpDataDir();
+  const store = new SaveStore(dir);
+
+  store.put('ann', 'mp', { name: 'Hero - Save 1.omwsave', size: 10, mtime: 1 });
+  store.put('ann', 'solo', { name: 'Hero - Save 1.omwsave', size: 20, mtime: 2 });
+
+  // Same name, both kept, each visible only to its own mode.
+  assert.deepEqual(store.list('ann', 'mp').map((f) => f.size), [10]);
+  assert.deepEqual(store.list('ann', 'solo').map((f) => f.size), [20]);
+  assert.equal(store.has('ann', 'mp', 'Hero - Save 1.omwsave'), true);
+  assert.equal(store.has('ann', 'solo', 'Hero - Save 1.omwsave'), true);
+
+  // Deleting in one mode leaves the other alone — the overwrite this prevents.
+  store.remove('ann', 'solo', 'Hero - Save 1.omwsave');
+  assert.equal(store.list('ann', 'solo').length, 0);
+  assert.equal(store.list('ann', 'mp').length, 1, 'deleting a solo save took the multiplayer one');
+
+  // Quota is per ACCOUNT across both: the budget is storage we pay for, not an allowance
+  // per mode.
+  store.put('ann', 'solo', { name: 'Hero - Save 2.omwsave', size: 5, mtime: 3 });
+  assert.equal(store.used('ann'), 15);
+  void t;
+});
+
+// Saves written BEFORE scopes existed were all multiplayer, and their storage keys must not
+// move — a rename would orphan real players' saves for no benefit.
+test('multiplayer keeps the original storage layout', async () => {
+  assert.equal(saveKey('ann', 'mp', 'S.omwsave'), 'saves/ann/S.omwsave');
+  assert.equal(saveKey('ann', 'solo', 'S.omwsave'), 'saves/ann/solo/S.omwsave');
 });

@@ -48,12 +48,52 @@ const SAVE_MIGRATIONS = [
       )`);
     },
   },
+  {
+    name: '002-saves-scope',
+    up: (db: DatabaseSync) => {
+      // SAVES MUST NOT CROSS MODES. Multiplayer and the cloud-locker mode share an account and
+      // a library on purpose, but they are different games: a multiplayer character is
+      // server-owned state, a solo save is a whole world snapshot, and listing one in the
+      // other's load screen is at best confusing and at worst a way to overwrite the wrong
+      // thing. The name alone was the key, so a "Save 1" in each collided outright.
+      //
+      // SQLite cannot alter a primary key, so the table is rebuilt. Existing rows are all
+      // multiplayer — that is the only mode that existed — so they take scope 'mp', which
+      // keeps their storage keys unchanged (see keyOf).
+      db.exec(`CREATE TABLE player_saves_v2 (
+        accountKey TEXT NOT NULL,
+        scope      TEXT NOT NULL,
+        name       TEXT NOT NULL,
+        size       INTEGER NOT NULL,
+        mtime      INTEGER NOT NULL,
+        PRIMARY KEY (accountKey, scope, name)
+      )`);
+      db.exec(`INSERT INTO player_saves_v2 (accountKey, scope, name, size, mtime)
+               SELECT accountKey, 'mp', name, size, mtime FROM player_saves`);
+      db.exec('DROP TABLE player_saves');
+      db.exec('ALTER TABLE player_saves_v2 RENAME TO player_saves');
+    },
+  },
 ];
+
+/** Which game a save belongs to. Anything unrecognised is treated as multiplayer, which is
+ *  what every save written before this existed actually was. */
+const SCOPES = new Set(['mp', 'solo']);
+function scopeOf(v: unknown): 'mp' | 'solo' {
+  return v === 'solo' ? 'solo' : 'mp';
+}
 
 // A save name is a filename and nothing else. An allow-list, not a deny-list: with the
 // filesystem backend this becomes a real path, and the interesting attacks are the ones
 // nobody thought to deny. OpenMW's own slot names are the character name plus a label.
 const SAVE_NAME = /^[A-Za-z0-9 ._'()\-]{1,128}\.omwsave$/;
+
+/** Storage key for one save. 'mp' keeps the ORIGINAL layout so every save already in storage
+ *  stays exactly where it is — a rename would orphan real players' saves for no benefit.
+ *  Other scopes nest under their own folder. Exported so the layout guarantee is testable. */
+export function saveKey(account: string, scope: string, name: string): string {
+  return scope === 'mp' ? `saves/${account}/${name}` : `saves/${account}/${scope}/${name}`;
+}
 
 export interface SaveRouteDeps {
   storage: {
@@ -73,24 +113,35 @@ export class SaveStore {
   constructor(dataDir: string) {
     this.db = openDb(join(dataDir, 'saves.db'), SAVE_MIGRATIONS);
   }
-  list(accountKey: string): SaveEntry[] {
+  list(accountKey: string, scope: string): SaveEntry[] {
     return this.db
-      .prepare('SELECT name, size, mtime FROM player_saves WHERE accountKey = ? ORDER BY name')
-      .all(accountKey) as unknown as SaveEntry[];
+      .prepare('SELECT name, size, mtime FROM player_saves WHERE accountKey = ? AND scope = ? ORDER BY name')
+      .all(accountKey, scope) as unknown as SaveEntry[];
   }
+  /** Quota is per ACCOUNT, across every scope: the budget is storage we are paying for, not
+   *  an allowance per game mode. */
   used(accountKey: string): number {
-    return this.list(accountKey).reduce((a, f) => a + f.size, 0);
+    const row = this.db
+      .prepare('SELECT COALESCE(SUM(size), 0) AS n FROM player_saves WHERE accountKey = ?')
+      .get(accountKey) as { n: number };
+    return row.n;
   }
-  has(accountKey: string, name: string): boolean {
-    return this.list(accountKey).some((f) => f.name === name);
+  has(accountKey: string, scope: string, name: string): boolean {
+    return this.list(accountKey, scope).some((f) => f.name === name);
   }
-  put(accountKey: string, e: SaveEntry): void {
+  put(accountKey: string, scope: string, e: SaveEntry): void {
     this.db
-      .prepare('INSERT OR REPLACE INTO player_saves (accountKey, name, size, mtime) VALUES (?, ?, ?, ?)')
-      .run(accountKey, e.name, e.size, e.mtime);
+      .prepare('INSERT OR REPLACE INTO player_saves (accountKey, scope, name, size, mtime) VALUES (?, ?, ?, ?, ?)')
+      .run(accountKey, scope, e.name, e.size, e.mtime);
   }
-  remove(accountKey: string, name: string): void {
-    this.db.prepare('DELETE FROM player_saves WHERE accountKey = ? AND name = ?').run(accountKey, name);
+  /** Every save the account has, in every scope. For erasure, which must not miss a mode. */
+  listAll(accountKey: string): { scope: string; name: string }[] {
+    return this.db.prepare('SELECT scope, name FROM player_saves WHERE accountKey = ?')
+      .all(accountKey) as unknown as { scope: string; name: string }[];
+  }
+  remove(accountKey: string, scope: string, name: string): void {
+    this.db.prepare('DELETE FROM player_saves WHERE accountKey = ? AND scope = ? AND name = ?')
+      .run(accountKey, scope, name);
   }
 }
 
@@ -116,7 +167,7 @@ function saveName(v: unknown): string | undefined {
 export function saveRoutes(deps: SaveRouteDeps): HttpRoute {
   const store = new SaveStore(deps.dataDir);
   // Per-account prefix, same rule as the locker: never a shared or content-addressed key.
-  const keyOf = (account: string, name: string): string => `saves/${account}/${name}`;
+  const keyOf = saveKey;
 
   return async (req: IncomingMessage, res: ServerResponse, url: URL): Promise<boolean> => {
     if (url.pathname !== '/saves' && !url.pathname.startsWith('/saves/')) return false;
@@ -131,8 +182,12 @@ export function saveRoutes(deps: SaveRouteDeps): HttpRoute {
     if (!accountKey) { json(res, 401, { error: 'sign_in_first' }); return true; }
 
     try {
+      // Scope rides every request: the client knows which game it is, and the server keeps
+      // the two apart. An absent or unknown value means multiplayer, which is what every save
+      // written before scopes existed actually is.
       if (req.method === 'GET' && url.pathname === '/saves') {
-        json(res, 200, { files: store.list(accountKey), quota: deps.maxBytesPerAccount });
+        const scope = scopeOf(url.searchParams.get('scope'));
+        json(res, 200, { files: store.list(accountKey, scope), quota: deps.maxBytesPerAccount });
         return true;
       }
 
@@ -142,13 +197,14 @@ export function saveRoutes(deps: SaveRouteDeps): HttpRoute {
         const size = typeof body.size === 'number' && Number.isFinite(body.size) && body.size >= 0
           ? Math.floor(body.size) : undefined;
         if (!name || size === undefined) { json(res, 400, { error: 'bad_save' }); return true; }
+        const scope = scopeOf(body.scope);
         // Replacing a slot frees its old bytes, so charge only the difference.
-        const prior = store.list(accountKey).find((f) => f.name === name)?.size ?? 0;
+        const prior = store.list(accountKey, scope).find((f) => f.name === name)?.size ?? 0;
         if (store.used(accountKey) - prior + size > deps.maxBytesPerAccount) {
           json(res, 200, { ok: false, reason: 'quota' });
           return true;
         }
-        json(res, 200, { ok: true, url: await deps.storage.presignPut(keyOf(accountKey, name), size) });
+        json(res, 200, { ok: true, url: await deps.storage.presignPut(keyOf(accountKey, scope, name), size) });
         return true;
       }
 
@@ -159,23 +215,27 @@ export function saveRoutes(deps: SaveRouteDeps): HttpRoute {
         if (!name || size === undefined) { json(res, 400, { error: 'bad_save' }); return true; }
         const mtime = typeof body.mtime === 'number' && Number.isFinite(body.mtime)
           ? Math.floor(body.mtime) : Date.now();
-        store.put(accountKey, { name, size, mtime });
+        store.put(accountKey, scopeOf(body.scope), { name, size, mtime });
         return json(res, 200, { ok: true }), true;
       }
 
       if (req.method === 'GET' && url.pathname === '/saves/download') {
         const name = saveName(url.searchParams.get('name'));
-        // Not in YOUR list is 404 whether or not it exists for somebody else.
-        if (!name || !store.has(accountKey, name)) { json(res, 404, { error: 'not_yours' }); return true; }
-        json(res, 200, { url: await deps.storage.presignGet(keyOf(accountKey, name)) });
+        const scope = scopeOf(url.searchParams.get('scope'));
+        // Not in YOUR list is 404 whether or not it exists for somebody else — and a save in
+        // the OTHER mode is not in this list, so the modes cannot reach each other's slots.
+        if (!name || !store.has(accountKey, scope, name)) { json(res, 404, { error: 'not_yours' }); return true; }
+        json(res, 200, { url: await deps.storage.presignGet(keyOf(accountKey, scope, name)) });
         return true;
       }
 
       if (req.method === 'POST' && url.pathname === '/saves/delete') {
-        const name = saveName((await readBody(req)).name);
-        if (!name || !store.has(accountKey, name)) { json(res, 404, { error: 'not_yours' }); return true; }
-        await deps.storage.delete(keyOf(accountKey, name));
-        store.remove(accountKey, name);
+        const delBody = await readBody(req);
+        const name = saveName(delBody.name);
+        const scope = scopeOf(delBody.scope);
+        if (!name || !store.has(accountKey, scope, name)) { json(res, 404, { error: 'not_yours' }); return true; }
+        await deps.storage.delete(keyOf(accountKey, scope, name));
+        store.remove(accountKey, scope, name);
         json(res, 200, { ok: true });
         return true;
       }
@@ -198,8 +258,10 @@ export async function eraseSaves(
   storage: { delete(prefix: string): Promise<void> } | undefined,
 ): Promise<number> {
   const store = new SaveStore(dataDir);
-  const n = store.list(accountKey).length;
+  // EVERY scope: "delete my data" that quietly left one game mode behind would be a lie, and
+  // the prefix delete below already takes the nested keys with it.
+  const all = store.listAll(accountKey);
   await storage?.delete(`saves/${accountKey}/`);
-  for (const f of store.list(accountKey)) store.remove(accountKey, f.name);
-  return n;
+  for (const f of all) store.remove(accountKey, f.scope, f.name);
+  return all.length;
 }

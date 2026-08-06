@@ -65,12 +65,14 @@ test('deleting an account leaves no trace in any database', async (t) => {
   await locker.attest('victim', [{ name: 'Morrowind.esm', size: 1, sha256: 'a'.repeat(64) }], '1.2.3.4');
   assert.ok(await locker.attestationOf('victim'), 'fixture attestation was not written');
 
-  new SaveStore(dir).put('victim', { name: 'Hero - Save 1.omwsave', size: 4, mtime: 1 });
+  // Both scopes: erasure that leaves one game mode's saves behind is not erasure.
+  new SaveStore(dir).put('victim', 'mp', { name: 'Hero - Save 1.omwsave', size: 4, mtime: 1 });
+  new SaveStore(dir).put('victim', 'solo', { name: 'Hero - Save 1.omwsave', size: 4, mtime: 1 });
 
   const report = await deleteAccount(dir, 'Victim');
   assert.deepEqual(report, {
     account: true, player: true, bans: true, identities: 1, chatLines: 1, reports: 1,
-    locker: true, saves: 1,
+    locker: true, saves: 2,   // one per scope: erasure must not leave a mode behind
   });
 
   // Sweep every table in every database for the account key or its character id. Anything
