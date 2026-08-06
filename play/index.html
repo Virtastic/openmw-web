@@ -531,7 +531,11 @@
  // "typed the URL".
  if (location.pathname.endsWith('/index.html')
      && (location.search === '' || location.search === '?')
-     && !/[#&](mp|mpticket|characters)=?/.test(location.hash || '')) {
+     // `cloud` is listed EXPLICITLY. A cloud-locker boot (#locker=&mplocker=&cloud=1) already
+     // passed this only because `mp` matches as a prefix of `mplocker` and the `=` is optional —
+     // an accident, not a decision, and the next tightening of this regex would have bounced
+     // the whole mode back to the launcher with no clue why.
+     && !/[#&](mp|mpticket|characters|cloud)=?/.test(location.hash || '')) {
    location.replace('launcher.html');
    throw new Error('redirecting to launcher');   // stop this script; the navigation is queued
  }
@@ -1943,7 +1947,13 @@
          var TOKEN = window.__omwLockerToken || '';
          var HTTP = lockerHttpBase();   // shared with the server-save mirror
          function api(path, opts){ opts=opts||{}; opts.headers=Object.assign({ authorization:'Bearer '+TOKEN }, opts.headers||{}); return fetch(HTTP+path, opts); }
-         function bounce(msg){ append('[locker] '+msg,'err'); fatalOverlay('Multiplayer sign-in needed', msg+' Returning to the launcher…', false); setTimeout(function(){ location.href='launcher.html'; }, 2400); }
+         // EVERY locker failure lands here, so the title has to be true in both modes: the
+         // cloud tile mounts this same path with no multiplayer anywhere, and naming the wrong
+         // product in the one message a stuck player actually reads is its own small betrayal.
+         function bounce(msg){ append('[locker] '+msg,'err');
+           fatalOverlay(window.__omwMPEnabled ? 'Multiplayer sign-in needed' : 'Sign-in needed',
+             msg+' Returning to the launcher…', false);
+           setTimeout(function(){ location.href='launcher.html'; }, 2400); }
          try { StreamFS.init(); } catch(e){ return bounce('Streaming unavailable (needs a Chromium browser on desktop).'); }
          if (!TOKEN || !HTTP) return bounce('No locker session. Please sign in again.');
          addRunDependency('mw-local');
@@ -2544,9 +2554,16 @@
                if (assetPack) cfg.push('fallback-archive='+assetPack); // LAST = overrides vanilla meshes
                base.forEach(function(c){ if(content.indexOf(c)>=0) cfg.push('content='+c); });
                extraContent.forEach(function(c){ cfg.push('content='+c); });
-               cfg.push('content=mp.omwscripts'); // multiplayer is always on this path
+               // NOT ALWAYS. The locker is "your files, streamed back to you on any device"
+               // (docs/LEGAL.md §2), which is useful with or without other players — the cloud
+               // tile signs in and mounts exactly this way with no world at all. Gated like
+               // the other two data paths (the local and hosted branches below) so one mount
+               // serves both modes; loading the multiplayer scripts with no socket behind
+               // them would be a permanent "connecting" that never resolves.
+               if (window.__omwMPEnabled) cfg.push('content=mp.omwscripts');
                FS.writeFile('/openmw.cfg', cfg.join('\n'));
-               append('[locker] READY -> multiplayer with your library ('+content.join(' + ')+')');
+               append('[locker] READY -> ' + (window.__omwMPEnabled ? 'multiplayer' : 'single player')
+                 + ' with your library ('+content.join(' + ')+')');
                // The 8s SETTLE DELAY that used to sit here is gone. It was meant to cover the
                // window where the player has control but the simulation peer does not yet hold
                // their cell — walk in it and the peer arrives, asserts its own view of where

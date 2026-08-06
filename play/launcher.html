@@ -110,6 +110,9 @@
  .glyph{color:var(--bronze-hi); width:46px; height:46px; transition:color .18s ease}
  .card.actionable:hover .glyph{color:var(--gold-hi)}
  .glyph svg{width:100%; height:100%; display:block}
+ .pill{position:absolute; right:12px; bottom:10px; padding:3px 8px; border-radius:999px;
+   border:1px solid rgba(138,104,56,.55); font-size:9.5px; letter-spacing:.18em;
+   text-transform:uppercase; font-weight:600; color:var(--faint)}
  .kicker{font-size:10.5px; letter-spacing:.22em; text-transform:uppercase; font-weight:600; color:var(--faint)}
  .card h2{margin:0; font-family:"Hoefler Text","Baskerville","Palatino Linotype",Palatino,Georgia,serif;
    font-weight:600; font-size:23px; letter-spacing:.01em; color:var(--ink)}
@@ -434,6 +437,26 @@
       <p class="lead">Sign in, pick a character, and play solo, with friends, or in the public
          world. Your character follows you between all three.</p>
       <div class="go">Sign in <span class="arw">▸</span></div>
+      <div class="pill">Experimental</div>
+    </div>
+
+    <!-- Cloud locker: the same sign-in and the same uploaded library as multiplayer, without
+         the multiplayer. The locker was always "your files, streamed back to you on any
+         device" (docs/LEGAL.md §2); this is simply the door to it that does not require
+         other people. -->
+    <div class="card actionable reveal d4" id="card-cloud" role="button" tabindex="0">
+      <button class="help-btn" id="help-cloud" type="button" aria-label="About playing from anywhere">?</button>
+      <div class="glyph" aria-hidden="true">
+        <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round">
+          <path d="M14 34h20a7 7 0 0 0 .6-13.97A10 10 0 0 0 15.2 18.4 6.6 6.6 0 0 0 14 34z"/>
+          <path d="M24 22v10M20 28l4 4 4-4"/>
+        </svg>
+      </div>
+      <div class="kicker">Your copy, anywhere</div>
+      <h2>Play your own Morrowind</h2>
+      <p class="lead">Sign in once and upload your Morrowind. It is waiting on any machine you
+         sign in from, and your saves go with it. Single player.</p>
+      <div class="go">Sign in <span class="arw">▸</span></div>
     </div>
   </div>
 
@@ -548,6 +571,22 @@
 
  // --- Help modals: deep, docs-style detail per card, opened by the "?" icons. ---
  const HELP = {
+   cloud: `
+     <div class="m-kicker">Your copy, anywhere &middot; single sign-on</div>
+     <h3 id="modal-title">Play your own Morrowind</h3>
+     <p>Upload your own Morrowind once. After that it is waiting on any machine you sign in
+        from, and your saves go with it. This is single player: no other people, no world to
+        join.</p>
+     <h4>What gets uploaded</h4>
+     <p>Only the retail files you already own, checked against a manifest as they go up.
+        They are stored under your account alone, streamed back only to you, and you can
+        export or delete the lot whenever you like.</p>
+     <h4>Saves</h4>
+     <p>A save goes up when the game writes one, which means when you save, quicksave, or rest
+        with autosave on. Nothing is uploaded while you are simply playing.</p>
+     <h4>Already used multiplayer?</h4>
+     <p>Same account, same library. If you uploaded there, this just works, and the other way
+        round.</p>`,
    mp: `
      <div class="m-kicker">Play together &middot; single sign-on</div>
      <h3 id="modal-title">Multiplayer</h3>
@@ -690,7 +729,8 @@
    function close(){ bd.classList.remove('show'); }
    // The "?" buttons live inside clickable cards — stop the event so the card's start/pick handler
    // doesn't also fire (on both click and keyboard activation).
-   [['help-sample','sample'],['help-local','local'],['help-mp','mp'],['help-hosted','hosted']].forEach(([id,key])=>{
+   [['help-sample','sample'],['help-local','local'],['help-mp','mp'],['help-hosted','hosted'],
+    ['help-cloud','cloud']].forEach(([id,key])=>{
      const b=$(id); if(!b) return;
      b.addEventListener('click', e=>{ e.stopPropagation(); open(key); });
      b.addEventListener('keydown', e=>{ e.stopPropagation(); });
@@ -947,6 +987,9 @@
  // way for a stale one to win — which it did, sending a returning sign-in at the port a
  // previous build had guessed.
  function mpGoProvider(http, url, provider){
+   // WHICH TILE ASKED. Sign-in is shared; only what happens on the way back differs, and the
+   // provider round-trip is the one moment that knowledge would be lost.
+   try { sessionStorage.setItem('omw-signin-intent', window.__omwSignInIntent || 'mp'); } catch(e){}
    const back = location.origin + location.pathname;
    location.href = http + '/auth/' + encodeURIComponent(provider) + '/start?return=' + encodeURIComponent(back);
  }
@@ -1276,6 +1319,20 @@
        } catch(e){}
      }
    } catch(e){ /* if the check fails, proceed; the in-game gate is the backstop */ }
+   // CLOUD LOCKER: same account, same library, no world. Character slots are a multiplayer
+   // concept, so there is nothing to pick; boot straight into single player with the locker
+   // mounted. index.html keys multiplayer off `mp=` alone, so omitting it is the whole mode.
+   let intent = 'mp';
+   try { intent = sessionStorage.getItem('omw-signin-intent') || 'mp'; } catch(e){}
+   try { sessionStorage.removeItem('omw-signin-intent'); } catch(e){}
+   if (intent === 'cloud'){
+     window.__omwAllowLeave = true;
+     location.href = 'index.html#locker=' + encodeURIComponent(gwHttp)
+       + '&mplocker=' + encodeURIComponent(lockerToken)
+       + '&mpaccount=' + encodeURIComponent(account)
+       + '&cloud=1';   // read by index.html's launcher gate; see the guard there
+     return;
+   }
    // Character select: pick or create a character (given an alias) on a launcher-styled tile
    // screen BEFORE opening any world. Returns the chosen slot id, or null if they backed out.
    let chosenChar = null;
@@ -1288,8 +1345,11 @@
    try { username = (JSON.parse(sessionStorage.getItem('omw-mp-session') || '{}')).username || ''; } catch(e){}
    await bootGame({ gwHttp, gwUrl, account, lockerToken, username }, decodeURIComponent(tk[1]), chosenChar);
  })();
- $('card-mp').addEventListener('click', mpStart);
- $('card-mp').addEventListener('keydown', (e)=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); mpStart(); } });
+ function cloudStart(){ window.__omwSignInIntent = 'cloud'; mpStart(); }
+ $('card-cloud').addEventListener('click', cloudStart);
+ $('card-cloud').addEventListener('keydown', (e)=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); cloudStart(); } });
+ $('card-mp').addEventListener('click', ()=>{ window.__omwSignInIntent = 'mp'; mpStart(); });
+ $('card-mp').addEventListener('keydown', (e)=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); window.__omwSignInIntent='mp'; mpStart(); } });
  mpBd.addEventListener('click', (e)=>{ if(e.target===mpBd) mpClose(); }); // click outside to close
  document.addEventListener('keydown', (e)=>{ if(e.key==='Escape' && mpBd.classList.contains('show')) mpClose(); });
 
