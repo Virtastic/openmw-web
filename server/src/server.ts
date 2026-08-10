@@ -654,8 +654,12 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       ].sort((a, b) => a.ts - b.ts);
       for (const l of lines) {
         // A listener who muted the speaker never received the line live, and must not get it
-        // through the back door on their next join.
-        if (l.acct !== player.accountKey && socialRef?.isMuted(player.accountKey, l.acct)) continue;
+        // through the back door on their next join. The same is true of a BLOCK, which is the
+        // stronger control and was not applied here at all — a blocked player's lines came
+        // back on every join.
+        if (l.acct !== player.accountKey
+          && (socialRef?.isMuted(player.accountKey, l.acct)
+            || socialStore.blockedEitherWay(player.accountKey, l.acct))) continue;
         player.peer.sendEvent('ChatMessage', {
           channel: l.channel as 'global' | 'server' | 'party',
           ...(l.channel === 'server' ? {} : { from: l.name }),
@@ -1173,6 +1177,16 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // Bots run in every world PROCESS, but presence decides where they actually appear: an
   // unpartied bot is in public only, and a partied one follows its party — including into a
   // private world when the leader switches. See dev/testbots reconcile().
+  if (config.dev.bots > 0) {
+    // SAY SO, LOUDLY. dev/testbots' own header promises "boot logs a warning whenever any are
+    // running" and nothing did. These register REAL accounts and claim real usernames, which
+    // stay reserved after the bots are switched off — so an operator who set OMW_DEV_BOTS once
+    // in production had no way to notice.
+    log('warn', 'devbots.enabled', {
+      count: Math.min(config.dev.bots, 16),
+      note: 'test bots register real accounts and reserve real usernames; do not run in production',
+    });
+  }
   const devBots = config.dev.bots > 0
     ? await startTestBots({
       roster, social, accounts, players: playerStore,

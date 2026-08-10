@@ -99,6 +99,15 @@ export class FsStorage {
     }
   }
 
+  /** See S3Storage.objectSize. */
+  async objectSize(key: string): Promise<number | undefined> {
+    try {
+      return (await stat(this.pathFor(key))).size;
+    } catch {
+      return undefined;
+    }
+  }
+
   // S3 semantics: `prefix` is either one object key or a directory prefix ending in '/'.
   async delete(prefix: string): Promise<void> {
     const p = this.pathFor(prefix.endsWith('/') ? prefix.slice(0, -1) : prefix);

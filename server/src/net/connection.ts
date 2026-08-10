@@ -611,9 +611,19 @@ export class Connection implements Peer {
       // refusals, so a client never has to guess whether a command silently failed.
       const body = value instanceof Map ? value : undefined;
       const player = this.player;
+      // .catch IS LOAD-BEARING. admin.exec wraps command bodies, but ctx.allow and refusal()
+      // sit outside that try/catch — and an unhandled rejection here reaches main.ts's
+      // unhandledRejection handler, which exits the process and takes every player in this
+      // world with it. A failed admin command must cost the command, not the world.
       void this.ctx.admin
         .execEvent(player, body?.get('cmd'), body?.get('args'))
-        .then((text) => player.peer.sendEvent('AdminResult', { text }));
+        .then((text) => player.peer.sendEvent('AdminResult', { text }))
+        .catch((err: unknown) => {
+          log('warn', 'admin.command_failed', { player: player.name, error: String(err) });
+          try {
+            player.peer.sendEvent('AdminResult', { text: 'That command failed. Nothing was changed.' });
+          } catch { /* the socket went away mid-command; nothing to tell */ }
+        });
       return;
     }
     if (this.ctx.m7.handleEvent(this.player, name, value)) return; // M7 family
@@ -813,9 +823,6 @@ export class Connection implements Peer {
       this.disconnect('BAD_PROTO', `unsupported lserVersion ${msg.lserVersion}`);
       return;
     }
-    // A system peer never counts against maxPlayers and is never refused as "full": it is
-    // operator infrastructure, and turning it away would be the server refusing to simulate
-    // its own world.
     // A system peer never counts against maxPlayers and is never refused as "full": it is
     // operator infrastructure, and turning it away would be the server refusing to simulate
     // its own world. (humanCount already excludes it; the explicit guard states the intent.)

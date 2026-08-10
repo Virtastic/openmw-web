@@ -560,6 +560,11 @@ export class SocialStore {
   partyDissolve(key: string): void {
     // party_member rows go via ON DELETE CASCADE.
     this.write('DELETE FROM party WHERE key = ?').run(key);
+    // chat_history does NOT cascade — it has no foreign key, because it is scoped by a string
+    // that is sometimes a party id and sometimes '' for the server-wide channel. So the
+    // party's scrollback (up to CHAT_HISTORY_KEEP rows) outlived the party forever, once per
+    // party ever formed. Nobody can ever read it again: the scope is gone.
+    this.write('DELETE FROM chat_history WHERE scope = ?').run(key);
   }
 
   partySetting(key: string, name: string): string | undefined {

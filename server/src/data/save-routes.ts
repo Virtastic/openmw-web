@@ -77,8 +77,10 @@ const SAVE_MIGRATIONS = [
 ];
 
 /** Which game a save belongs to. Anything unrecognised is treated as multiplayer, which is
- *  what every save written before this existed actually was. */
-const SCOPES = new Set(['mp', 'solo']);
+ *  what every save written before this existed actually was — and which is also the whole
+ *  validation: '', '../..' and 'a/b' all collapse to 'mp', so a client-supplied scope cannot
+ *  escape its namespace in saveKey below. (There was a SCOPES allow-list here that nothing
+ *  referenced; it read like the check and was not one.) */
 function scopeOf(v: unknown): 'mp' | 'solo' {
   return v === 'solo' ? 'solo' : 'mp';
 }
@@ -100,6 +102,9 @@ export interface SaveRouteDeps {
     presignPut(key: string, contentLength: number): Promise<string>;
     presignGet(key: string): Promise<string>;
     delete(prefix: string): Promise<void>;
+    /** Real byte length of a stored object. Optional so a test double need not implement it;
+     *  absent means the declared size is all we have. */
+    objectSize?(key: string): Promise<number | undefined>;
   } | undefined;
   sessions: LockerSessions;
   dataDir: string;
@@ -215,7 +220,13 @@ export function saveRoutes(deps: SaveRouteDeps): HttpRoute {
         if (!name || size === undefined) { json(res, 400, { error: 'bad_save' }); return true; }
         const mtime = typeof body.mtime === 'number' && Number.isFinite(body.mtime)
           ? Math.floor(body.mtime) : Date.now();
-        store.put(accountKey, scopeOf(body.scope), { name, size, mtime });
+        // MEASURE IT, do not take the client's word. The quota is accounted from this number
+        // and presignPut does not enforce the length it signed, so a client could presign for
+        // ten bytes, upload five gigabytes, and report ten. The locker already HEADs its
+        // uploads for exactly this reason (locker.ts).
+        const scope = scopeOf(body.scope);
+        const real = await deps.storage?.objectSize?.(keyOf(accountKey, scope, name));
+        store.put(accountKey, scope, { name, size: real ?? size, mtime });
         return json(res, 200, { ok: true }), true;
       }
 

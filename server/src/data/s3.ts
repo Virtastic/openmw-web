@@ -221,6 +221,22 @@ export class S3Storage {
     return Buffer.from(await res.arrayBuffer());
   }
 
+  /** The object's real byte length, or undefined when it cannot be read. The save routes trust
+   *  a client-declared size for quota accounting otherwise: presign for ten bytes, upload five
+   *  gigabytes, report ten. The locker already verifies its uploads this way. */
+  async objectSize(key: string): Promise<number | undefined> {
+    try {
+      const res = await fetch(this.presign('GET', key), {
+        method: 'HEAD', signal: AbortSignal.timeout(30_000),
+      });
+      if (!res.ok) return undefined;
+      const n = Number(res.headers.get('content-length'));
+      return Number.isFinite(n) && n >= 0 ? n : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   // Erasure. Listing is a signed GET on the bucket with a prefix; each object is then
   // deleted individually. Slower than a bulk delete and deliberately so — this runs on a
   // delete-my-data request, where being correct matters far more than being quick.

@@ -27,6 +27,9 @@ const OWNER_FILE = '.owner';
 // The pid of the process last started for this world, so a NEW gateway can reap the children
 // of a dead one. See reapOrphanWorlds.
 const PID_FILE = '.pid';
+// Ceiling on the crash-bookkeeping maps. Far above any plausible number of worlds in flight,
+// so it only ever trims history nobody is going to consult.
+const MAX_TRACKED_WORLDS = 4096;
 
 export type WorldMode = 'public' | 'private' | 'party';
 
@@ -158,6 +161,15 @@ export class WorldSupervisor {
     }
   }
 
+  /** Drop least-recently-inserted keys until the map is within `cap`. */
+  private forgetOldest(m: Map<string, number>, cap: number): void {
+    while (m.size > cap) {
+      const oldest = m.keys().next();
+      if (oldest.done) return;
+      m.delete(oldest.value);
+    }
+  }
+
   private allocPort(): number | null {
     const { basePort, maxWorlds } = this.deps.settings;
     for (let p = basePort; p < basePort + maxWorlds * 4; p++) {
@@ -242,6 +254,12 @@ export class WorldSupervisor {
         return;
       }
       this.blockedUntil.set(id, this.now() + s.restartBackoffMs);
+      // Bounded. World ids are per CHARACTER, so this key space grows with every character
+      // anyone ever made, and entries were only removed on a rolling restart or a clean run.
+      // Numbers, so it is a slow leak rather than a cliff — but a supervisor that runs for
+      // months should not accumulate one entry per character ever created.
+      this.forgetOldest(this.blockedUntil, MAX_TRACKED_WORLDS);
+      this.forgetOldest(this.fastCrashes, MAX_TRACKED_WORLDS);
       // A world that dies INSTANTLY, every time, is misconfigured — not unlucky. The harness
       // hit exactly this: the entry point rejected a flag the gateway passes, so every world
       // exited on startup, backed off and started again, forever. The world list stayed empty,
