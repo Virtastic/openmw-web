@@ -53,12 +53,30 @@ export function openDb(path: string, migrations: Migration[] = []): DatabaseSync
   const done = new Set(
     (db.prepare('SELECT name FROM schema_migrations').all() as { name: string }[]).map((r) => r.name),
   );
+  const applied = db.prepare('SELECT 1 FROM schema_migrations WHERE name = ?');
   for (const m of migrations) {
     if (done.has(m.name)) continue;
     // One transaction per migration: a migration that throws leaves NOTHING behind, so the
     // next boot retries it from a clean state instead of resuming a half-applied schema.
-    db.exec('BEGIN');
+    //
+    // IMMEDIATE, and re-checked INSIDE the transaction. The `done` set above was read once,
+    // before the loop, and a plain BEGIN is deferred — it takes no write lock until the first
+    // write. So two processes opening the same shared database at the same moment both saw a
+    // migration as pending and both ran it, and the second died on `CREATE TABLE ... already
+    // exists`. That kills the WORLD PROCESS at boot, and the gateway starts its worlds
+    // together, so it is exactly the shape that shows up on a busy launch and never in a test
+    // that opens one database. Found by scripts/two-world-soak.ts at eight concurrent worlds.
+    //
+    // IMMEDIATE takes the write lock up front, which serialises the racing processes;
+    // busy_timeout (set above, before anything can contend) makes the loser wait rather than
+    // throw. The re-check is what the loser needs when it finally gets the lock.
+    db.exec('BEGIN IMMEDIATE');
     try {
+      if (applied.get(m.name) !== undefined) {
+        db.exec('ROLLBACK'); // another process got there first; nothing to do and nothing wrong
+        log('info', 'sqlite.migration_raced', { db: path, migration: m.name });
+        continue;
+      }
       m.up(db);
       db.prepare('INSERT INTO schema_migrations (name, appliedAt) VALUES (?, ?)')
         .run(m.name, new Date().toISOString());
