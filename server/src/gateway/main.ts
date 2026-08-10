@@ -12,7 +12,7 @@ import { parseArgs } from 'node:util';
 import { existsSync } from 'node:fs';
 import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { WorldSupervisor } from './worlds';
+import { WorldSupervisor, reapOrphanWorlds } from './worlds';
 import { startDirectory } from './directory';
 import { buildFrontDoor } from './frontdoor';
 import { loadConfig } from '../config';
@@ -89,6 +89,11 @@ const worlds = new WorldSupervisor({
   },
 });
 
+// Before anything binds a port: kill the world processes a previous gateway left behind. They
+// still hold their ports, and allocPort cannot see them.
+const orphans = reapOrphanWorlds(worldsDir);
+if (orphans > 0) log('warn', 'gateway.orphans_reaped', { count: orphans });
+
 worlds.startPublic();
 worlds.startPolling();
 // The shared SSO + locker front door, on the same public port as the directory.
@@ -116,17 +121,32 @@ log('info', 'gateway.start', {
 });
 
 let shuttingDown = false;
-async function shutdown(signal: string): Promise<void> {
+async function shutdown(signal: string, code = 0): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
   log('info', 'gateway.shutdown', { signal });
   // Directory first: stop accepting new joins before tearing worlds down, so nobody is
   // handed a port that is about to disappear.
   await directory.close();
+  await frontDoor.close(); // drain the CRM queue; a redeploy is when signups cluster
   worlds.stopAll();
   // The world processes flush their stores on SIGTERM; give them a moment to do it before
   // this process exits and the shell reaps them.
-  setTimeout(() => process.exit(0), 3000).unref();
+  // Non-zero on the crash path so whatever supervises this process restarts it, rather than
+  // treating a crash as a clean stop.
+  setTimeout(() => process.exit(code), 3000).unref();
 }
 process.on('SIGTERM', () => void shutdown('SIGTERM'));
 process.on('SIGINT', () => void shutdown('SIGINT'));
+
+// THE GATEWAY HAD NO CRASH HANDLERS AT ALL. Node terminates the process on an unhandled
+// rejection by default, and the gateway is the only thing that reaps worlds — so a single
+// stray rejection took the gateway down, orphaned every world process, and left the ports
+// held (see reapOrphanWorlds). Going through shutdown() means the worlds get their SIGTERM
+// and flush their stores on the way out, instead of being abandoned mid-write.
+function crashExit(kind: string, err: unknown): void {
+  log('error', 'gateway.crash', { kind, error: String(err), stack: (err as Error)?.stack });
+  void shutdown(kind, 1);
+}
+process.on('uncaughtException', (err) => crashExit('uncaughtException', err));
+process.on('unhandledRejection', (err) => crashExit('unhandledRejection', err));

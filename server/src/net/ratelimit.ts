@@ -43,6 +43,8 @@ export class IpConnTracker {
   }
 }
 
+const MAX_BUCKETS = 10_000;
+
 // Per-IP limiter for auth attempts (Register+Login), n per minute.
 export class IpRateLimiter {
   private buckets = new Map<string, TokenBucket>();
@@ -50,12 +52,25 @@ export class IpRateLimiter {
   constructor(private readonly perMinute: number) {}
 
   allow(ip: string): boolean {
-    // Unbounded-growth guard; buckets are tiny, drop-all is an acceptable reset.
-    if (this.buckets.size > 10000) this.buckets.clear();
     let b = this.buckets.get(ip);
-    if (!b) {
+    if (b) {
+      // Re-insert to move this key to the end: a Map iterates in insertion order, so deleting
+      // from the front then evicts the LEAST RECENTLY USED rather than the oldest-created.
+      this.buckets.delete(ip);
+      this.buckets.set(ip, b);
+    } else {
       b = new TokenBucket(this.perMinute / 60, this.perMinute);
       this.buckets.set(ip, b);
+    }
+    // Unbounded-growth guard. This used to be `if (size > 10000) clear()` — which made the
+    // guard the BYPASS: 10,001 addresses wiped every bucket including the one throttling an
+    // attacker's brute force, and holding the map above the mark turned rate limiting off
+    // permanently. Evicting one LRU entry per insert bounds the map without ever resetting the
+    // bucket of whoever is actually hammering us, because they are the most recently used.
+    while (this.buckets.size > MAX_BUCKETS) {
+      const oldest = this.buckets.keys().next();
+      if (oldest.done) break;
+      this.buckets.delete(oldest.value);
     }
     return b.take(1);
   }

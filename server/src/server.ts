@@ -1139,16 +1139,29 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
 
   publishPresence();
   const presenceTick = setInterval(() => {
-    publishPresence();
-    broadcastServerRoster();
-    // The friend and party panels are pushed on RELATIONSHIP changes, which never fire when a
-    // member simply walks into another world — so they kept saying "Offline" about someone
-    // standing in plain sight. Presence moves on this heartbeat; the views follow it.
-    social.refreshPresenceViews();
-    // Disconnect rules: a leader gone past the grace disbands the party, a member gone past it
-    // is removed. The grace is what separates a WORLD SWITCH — which is a disconnect from the
-    // world you left — from actually quitting.
-    social.sweepDisconnected(PARTY_DISCONNECT_GRACE_MS);
+    // WRAPPED, BECAUSE A THROW HERE KILLED THE WHOLE WORLD. Everything below writes to the
+    // shared social database, which every world process has open at once. A synchronous throw
+    // out of a timer callback is an uncaughtException, and main.ts turns that into
+    // process.exit(1) — so one contended write ejected every player in this world. Presence is
+    // a heartbeat: missing a beat is survivable, and the next one is 10 seconds away.
+    try {
+      publishPresence();
+      broadcastServerRoster();
+      // The friend and party panels are pushed on RELATIONSHIP changes, which never fire when a
+      // member simply walks into another world — so they kept saying "Offline" about someone
+      // standing in plain sight. Presence moves on this heartbeat; the views follow it.
+      social.refreshPresenceViews();
+      // Disconnect rules: a leader gone past the grace disbands the party, a member gone past it
+      // is removed. The grace is what separates a WORLD SWITCH — which is a disconnect from the
+      // world you left — from actually quitting.
+      social.sweepDisconnected(PARTY_DISCONNECT_GRACE_MS);
+      // Expired friend requests and party invites. Swept here rather than on their own timer:
+      // this is already the once-per-10s social heartbeat, and sweepExpired had NO production
+      // caller at all — only a test — so the rows accumulated forever.
+      socialStore.sweepExpired(Date.now());
+    } catch (err) {
+      log('warn', 'presence.tick_failed', { error: String(err) });
+    }
   }, 10_000);
   presenceTick.unref();
   // DEV/TEST BOTS. Off unless [dev] bots (or OMW_DEV_BOTS) says otherwise — see dev/testbots.

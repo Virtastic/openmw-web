@@ -15,6 +15,7 @@
 // expressed by a file this process owns.
 
 import { DatabaseSync } from 'node:sqlite';
+import { openDb } from '../persist/sqlite';
 import { join } from 'node:path';
 
 // Keys are ACCOUNT keys, never player ids: player ids are per-session, so an id-keyed
@@ -47,11 +48,22 @@ export class SocialStore {
 
   // ':memory:' is accepted for tests.
   constructor(dataDir: string, filename = 'social.sqlite') {
-    this.db = new DatabaseSync(dataDir === ':memory:' ? ':memory:' : join(dataDir, filename));
-    // WAL: a crash mid-write must not take the graph with it. Also lets a read (the
-    // FriendList sent on join) proceed while a write is in flight.
-    this.db.exec('PRAGMA journal_mode = WAL');
-    this.db.exec('PRAGMA foreign_keys = ON');
+    if (dataDir === ':memory:') {
+      this.db = new DatabaseSync(':memory:');
+      this.db.exec('PRAGMA foreign_keys = ON');
+    } else {
+      // THROUGH openDb, LIKE EVERY OTHER STORE. This was the one SQLite user in the repo that
+      // opened its own handle, and so the one WITHOUT `PRAGMA busy_timeout` — while being the
+      // only database genuinely shared by every world process. WAL admits a single writer, so
+      // N worlds writing presence on a 10s heartbeat make SQLITE_BUSY a matter of when; with
+      // no busy_timeout that is an instant throw instead of a short wait, and it surfaced
+      // inside a setInterval where an uncaughtException kills the whole world process.
+      //
+      // The header comment above still says node:sqlite is safe because a world is
+      // single-process. That stopped being true when the gateway started spawning one process
+      // per world; this line is the correction.
+      this.db = openDb(join(dataDir, filename));
+    }
     this.migrate();
   }
 
@@ -235,11 +247,11 @@ export class SocialStore {
   /** Append one line and trim the tail. Called for the channels a newcomer may replay. */
   appendChat(line: { ts: number; channel: string; scope: string; acct: string; name: string; text: string },
     keep: number): void {
-    this.db.prepare(
+    this.write(
       'INSERT INTO chat_history (ts, channel, scope, acct, name, text) VALUES (?, ?, ?, ?, ?, ?)',
     ).run(line.ts, line.channel, line.scope, line.acct, line.name, line.text);
     // Bounded per scope, so a busy public channel cannot push a quiet party's history out.
-    this.db.prepare(
+    this.write(
       `DELETE FROM chat_history WHERE scope = ? AND id NOT IN
          (SELECT id FROM chat_history WHERE scope = ? ORDER BY id DESC LIMIT ?)`,
     ).run(line.scope, line.scope, keep);
@@ -259,7 +271,7 @@ export class SocialStore {
   /** Refresh this account's presence. Called on join and on the heartbeat. */
   setPresence(account: AccountKey, world: string, name: string,
     cellKey: string | undefined, isBot: boolean, now: number): void {
-    this.db.prepare(
+    this.write(
       `INSERT INTO presence (account, world, name, cell_key, is_bot, updated_at, offline_since)
        VALUES (?, ?, ?, ?, ?, ?, NULL)
        ON CONFLICT(account) DO UPDATE SET
@@ -274,7 +286,7 @@ export class SocialStore {
   clearPresence(account: AccountKey, world: string, now: number): void {
     // Marked, not deleted: a party sweep has to know how LONG someone has been gone, and a
     // missing row cannot say. Reads still treat it as offline immediately.
-    this.db.prepare(
+    this.write(
       'UPDATE presence SET offline_since = ? WHERE account = ? AND world = ? AND offline_since IS NULL',
     ).run(now, account, world);
   }
@@ -348,8 +360,8 @@ export class SocialStore {
   // ----------------------------------------------------------------- requests
 
   addRequest(from: AccountKey, to: AccountKey, now: number, ttlMs: number): void {
-    this.db
-      .prepare('INSERT OR REPLACE INTO friend_request (fromAcct, toAcct, sent, expires) VALUES (?, ?, ?, ?)')
+    this
+      .write('INSERT OR REPLACE INTO friend_request (fromAcct, toAcct, sent, expires) VALUES (?, ?, ?, ?)')
       .run(from, to, now, now + ttlMs);
   }
 
@@ -384,8 +396,8 @@ export class SocialStore {
   // Same contract as requests above, including expiry-on-read.
 
   addInvite(from: AccountKey, to: AccountKey, kind: string, now: number, ttlMs: number): void {
-    this.db
-      .prepare('INSERT OR REPLACE INTO invite (fromAcct, toAcct, kind, sent, expires) VALUES (?, ?, ?, ?, ?)')
+    this
+      .write('INSERT OR REPLACE INTO invite (fromAcct, toAcct, kind, sent, expires) VALUES (?, ?, ?, ?, ?)')
       .run(from, to, kind, now, now + ttlMs);
   }
 

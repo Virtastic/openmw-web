@@ -17,6 +17,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { detectGameData, gameDataDir } from '../core/gamedata';
 import { loadConfig } from '../config';
 import { AccountStore, validEmail, validAccountName, MAX_CHARACTERS } from '../core/accounts';
+import { AttioHook } from '../integrations/attio';
 import { PlayerStore } from '../persist/playerstore';
 import { BanStore } from '../persist/banstore';
 import { OidcService } from '../auth/oidc';
@@ -44,7 +45,8 @@ async function readBody(req: IncomingMessage): Promise<Record<string, unknown>> 
 // The onboarding profile: contact email (kept private, never on the wire) + the unique public
 // handle shown to everyone. Done in the launcher (HTML) right after sign-in, so a fresh player
 // picks a username instead of being shown their real name. Authed by the locker Bearer token.
-function profileRoutes(accounts: AccountStore, lockerSessions: LockerSessionStore): HttpRoute {
+function profileRoutes(accounts: AccountStore, lockerSessions: LockerSessionStore,
+  attio: AttioHook): HttpRoute {
   return async (req, res, url) => {
     if (url.pathname !== '/auth/profile') return false;
     res.setHeader('access-control-allow-origin', req.headers.origin ?? '*');
@@ -88,6 +90,16 @@ function profileRoutes(accounts: AccountStore, lockerSessions: LockerSessionStor
         return true;
       }
       await accounts.flush(); // persist now, so the world reads the new handle when the player joins
+      // The same capture the in-world path does. marketingOptIn is FALSE because this form
+      // never asks — recording consent nobody gave would be worse than recording none.
+      attio.enqueue({
+        email: account.email ?? email,
+        username: account.username ?? username,
+        accountKey: account.name.toLowerCase(),
+        signupAt: account.createdAt,
+        provider: 'sso',
+        marketingOptIn: false,
+      });
       log('info', 'frontdoor.profile_set', { account: account.name, username: account.username });
       sendJson(res, 200, { ok: true, username: account.username });
       return true;
@@ -242,6 +254,8 @@ export interface FrontDoor {
   // request BODY, so anyone could spawn worlds under fabricated names and exhaust the
   // global cap while every per-owner limit read as satisfied.
   resolveAccount(authorizationHeader: string): string | undefined;
+  /** Flush anything queued for outbound integrations before the process exits. */
+  close(): Promise<void>;
   /** Derived private-world id for one of this account's characters; undefined = no such
    *  character, and the directory must refuse rather than build a world for a ghost. */
   privateWorldIdFor(accountKey: string, characterId: string): Promise<string | undefined>;
@@ -263,6 +277,16 @@ export async function buildFrontDoor(
   const sessions = new SessionIndex();
   const oidc = new OidcService(config.auth);
   const lockerSessions = new LockerSessionStore(); // minted AND resolved here — no cross-process
+  // CRM capture belongs HERE, not only in a world. Onboarding runs in the launcher, before
+  // the player has entered any world, so the capture that lived solely on the WebSocket
+  // ProfileSetup path never fired for the flow real players actually take: the key was
+  // configured, the relay worked, and the records were silently never written.
+  // Env wins over toml so the key can stay out of config files; empty = inert.
+  const attio = new AttioHook({
+    apiKey: process.env.ATTIO_API_KEY ?? config.integrations.attioApiKey,
+    baseUrl: config.integrations.attioBaseUrl,
+    dataDir: sharedDir,
+  });
 
   const storage = lockerStorageFrom(config.locker, sharedDir, `http://127.0.0.1:${gatewayPort}`);
   const locker = new Locker({
@@ -303,7 +327,7 @@ export async function buildFrontDoor(
     storage, sessions: lockerSessions, dataDir: sharedDir,
     maxBytesPerAccount: config.locker.maxSaveBytesPerAccount,
   });
-  const profile = profileRoutes(accounts, lockerSessions);
+  const profile = profileRoutes(accounts, lockerSessions, attio);
   const chars = characterRoutes(accounts, lockerSessions, players, onCharacterDeleted);
   const reticket = ticketRoutes(accounts, lockerSessions, tickets);
   const also: HttpRoute = async (req, res, url) =>
@@ -317,6 +341,10 @@ export async function buildFrontDoor(
   );
   return {
     route,
+    /** Drain the CRM queue on shutdown. A record enqueued a moment before SIGTERM would
+     *  otherwise wait for the next boot's timer, and a redeploy is exactly when signups
+     *  cluster. */
+    close: () => attio.close(),
     resolveAccount: (auth: string) =>
       lockerSessions.resolve(auth.startsWith('Bearer ') ? auth.slice(7) : ''),
     // The private-world id, derived HERE from the character rather than trusted from the

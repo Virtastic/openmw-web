@@ -17,9 +17,16 @@
 // the same reason: a world per party is how a box runs out of memory if nothing reaps.
 
 import { spawn, type ChildProcess } from 'node:child_process';
-import { existsSync, mkdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { log } from '../log';
+
+// Written into a private/party world's data dir at creation so a later REVIVAL can authorise.
+// A dotfile so it cannot collide with anything the world itself writes.
+const OWNER_FILE = '.owner';
+// The pid of the process last started for this world, so a NEW gateway can reap the children
+// of a dead one. See reapOrphanWorlds.
+const PID_FILE = '.pid';
 
 export type WorldMode = 'public' | 'private' | 'party';
 
@@ -139,6 +146,18 @@ export class WorldSupervisor {
     return this.start(id, mode, ownerAccount);
   }
 
+  /** The owner recorded on disk when the world was created, or undefined for a public world
+   *  (and for a private world whose marker is missing — callers MUST treat that as "cannot
+   *  authorise", never as "no owner needed"). */
+  ownerOnDisk(id: string): string | undefined {
+    try {
+      const v = readFileSync(join(this.deps.settings.worldsDir, id, OWNER_FILE), 'utf8').trim();
+      return v.length > 0 ? v : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   private allocPort(): number | null {
     const { basePort, maxWorlds } = this.deps.settings;
     for (let p = basePort; p < basePort + maxWorlds * 4; p++) {
@@ -160,6 +179,21 @@ export class WorldSupervisor {
     } catch (err) {
       log('error', 'world.mkdir_failed', { id, error: String(err) });
       return null;
+    }
+    // THE OWNER OUTLIVES THE PROCESS. A private world is idle-reaped after two minutes and
+    // revived when its owner dials back in, so "reaped, on disk, revivable" is the normal
+    // resting state of a solo world — and a revival that could not name the owner started it
+    // with OMW_WORLD_OWNER='', which mayJoinWorld reads as "public, admit anyone". Writing the
+    // owner beside the world's data is what lets a revival be as authorised as a creation.
+    if (ownerAccount) {
+      try {
+        writeFileSync(join(dataDir, OWNER_FILE), ownerAccount, 'utf8');
+      } catch (err) {
+        // Fail the start rather than run an unowned private world: an unwritable marker means
+        // the next revival cannot authorise, and that is the hole this closes.
+        log('error', 'world.owner_write_failed', { id, error: String(err) });
+        return null;
+      }
     }
     // Tell the world where its gateway is. Without this the world browser is off and no
     // client can ever discover — or switch to — another world.
@@ -185,6 +219,16 @@ export class WorldSupervisor {
       return null;
     }
     this.usedPorts.add(port);
+    // Record the pid so a NEW gateway can find the children of a dead one. Worlds are spawned
+    // non-detached but without PDEATHSIG, so a gateway that dies takes nothing with it: the
+    // orphans keep their ports, and the new gateway's allocPort — which only knows its own
+    // freshly-empty usedPorts — hands out the same port, the world dies EADDRINUSE, backs off,
+    // and retries forever. A healthy-looking gateway with zero joinable worlds.
+    try {
+      if (child.pid !== undefined) writeFileSync(join(dataDir, PID_FILE), String(child.pid), 'utf8');
+    } catch (err) {
+      log('warn', 'world.pid_write_failed', { id, error: String(err) });
+    }
     const world: World = { id, mode, port, child, startedAt: this.now(), stopping: false, ownerAccount };
     this.worlds.set(id, world);
     log('info', 'world.started', { id, mode, port, pid: child.pid ?? -1 });
@@ -259,6 +303,8 @@ export class WorldSupervisor {
   // client downloads its game data (hundreds of MB, minutes on a slow link) BEFORE it connects, so
   // the reaper must not kill the world out from under a browser that is still loading toward it.
   private static readonly STARTUP_GRACE_MS = 15 * 60_000;
+  /** How long a world gets to drain after SIGTERM before it is killed outright. */
+  private static readonly STOP_GRACE_MS = 20_000;
 
   sweep(): void {
     const now = this.now();
@@ -292,6 +338,17 @@ export class WorldSupervisor {
     w.stopping = true;
     // SIGTERM so the world drains and flushes its stores; main.ts already handles it.
     w.child.kill('SIGTERM');
+    // ESCALATE. A world that hangs in its own async shutdown never fires 'exit', and 'exit' is
+    // the ONLY thing that removes it from this.worlds or frees its port — so one stuck world
+    // holds a slot and a port for the life of the gateway, and a handful of them make the box
+    // answer "no capacity" with nothing actually running. The grace is longer than the drain
+    // main.ts asks for, so a healthy world is never killed mid-flush.
+    const kill = setTimeout(() => {
+      if (this.worlds.get(id) !== w) return; // it exited; nothing to escalate to
+      log('warn', 'world.sigkill_escalated', { id, pid: w.child.pid ?? -1 });
+      w.child.kill('SIGKILL');
+    }, WorldSupervisor.STOP_GRACE_MS);
+    kill.unref();
   }
 
   // A deleted character's solo world is dead weight: nobody can ever reach it again, because
@@ -403,4 +460,49 @@ async function defaultFetchStatus(port: number): Promise<{ playerCount: number; 
   } catch {
     return null; // not up yet, or wedged — either way it is not joinable
   }
+}
+
+// ORPHANS FROM A PREVIOUS GATEWAY. Worlds are spawned non-detached but without PDEATHSIG, so a
+// gateway that dies (or is SIGKILLed) leaves every world process running and holding its port.
+// The replacement gateway starts with an empty usedPorts, hands out a port an orphan still
+// owns, and that world dies EADDRINUSE -> backoff -> retry, forever: the gateway looks healthy
+// and nothing is joinable. Run this before startPublic().
+//
+// Kill by the recorded pid, and ONLY if that pid is still a live process. A pid file outlives
+// its process and pids are reused, so this is a best-effort reap: SIGTERM is a request, and a
+// pid that now belongs to something else is not ours to kill — which is why nothing escalates
+// to SIGKILL here.
+export function reapOrphanWorlds(worldsDir: string): number {
+  let reaped = 0;
+  let ids: string[];
+  try {
+    ids = readdirSync(worldsDir);
+  } catch {
+    return 0; // no worlds dir yet: first boot
+  }
+  for (const id of ids) {
+    const pidPath = join(worldsDir, id, PID_FILE);
+    let pid: number;
+    try {
+      pid = Number(readFileSync(pidPath, 'utf8').trim());
+    } catch {
+      continue;
+    }
+    if (!Number.isInteger(pid) || pid <= 1) continue;
+    try {
+      process.kill(pid, 0); // liveness probe; throws ESRCH when the pid is gone
+    } catch {
+      rmSync(pidPath, { force: true });
+      continue;
+    }
+    try {
+      process.kill(pid, 'SIGTERM');
+      reaped++;
+      log('warn', 'world.orphan_reaped', { id, pid });
+    } catch (err) {
+      log('warn', 'world.orphan_reap_failed', { id, pid, error: String(err) });
+    }
+    rmSync(pidPath, { force: true });
+  }
+  return reaped;
 }

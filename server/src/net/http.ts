@@ -56,8 +56,61 @@ function bearerOk(header: string | undefined, token: string): boolean {
 
 // ------------------------------------------------------------------- helpers
 
+// Set by the gateway when it splices a client through to a world (gateway/directory.ts). The
+// gateway strips any client-supplied copy before stamping its own.
+export const CLIENT_IP_HEADER = 'x-omw-client-ip';
+
+const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
+
+// THE TRUST BOUNDARY FOR EVERY FORWARDED-FOR HEADER. A reverse proxy is the only way a request
+// reaches us in production (deploy/openmw-mp.caddy publishes no host ports), and a proxy always
+// sits on a private network: loopback on a bare host, a docker bridge in the compose deploy. So
+// a forwarding header is trustworthy exactly when the PEER is private. A client on the public
+// internet that reaches the origin directly has a public peer address, and every address header
+// it sends is ignored.
+//
+// This is what makes the headers safe to read at all. Trusting cf-connecting-ip from any peer
+// (which is what this used to do) let a client pick its own address: evading IP bans and
+// maxConnsPerIp, and attributing its failed logins to a victim's address to lock THEM out.
+function proxyIsTrusted(peer: string): boolean {
+  if (LOOPBACK.has(peer)) return true;
+  const v4 = peer.startsWith('::ffff:') ? peer.slice(7) : peer;
+  if (/^(10|127)\./.test(v4)) return true;
+  if (/^192\.168\./.test(v4)) return true;
+  if (/^172\.(1[6-9]|2[0-9]|3[01])\./.test(v4)) return true;
+  return /^f[cd]/i.test(peer); // fc00::/7 unique-local
+}
+
+function header(req: IncomingMessage, name: string): string | undefined {
+  const v = req.headers[name];
+  const first = Array.isArray(v) ? v[0] : v;
+  return typeof first === 'string' && first.length > 0 ? first : undefined;
+}
+
+// The address to rate-limit, ban and log by.
+//
+// This used to return `req.socket.remoteAddress` bare. Behind Caddy that is the PROXY for every
+// request, so `loginPerMinPerIp` (5) was one bucket for the entire server: the sixth person to
+// click "sign in" in any given minute was refused, and stayed refused. Every caller in
+// src/auth/routes.ts keys its limiter on this.
 export function clientIp(req: IncomingMessage): string {
-  return req.socket.remoteAddress ?? '';
+  const peer = req.socket.remoteAddress ?? '';
+  if (!proxyIsTrusted(peer)) return peer;
+  // The gateway's own stamp wins: a world process only ever sees the gateway, and the gateway
+  // has already resolved the real address by this same rule.
+  const stamped = header(req, CLIENT_IP_HEADER);
+  if (stamped) return stamped;
+  const cf = header(req, 'cf-connecting-ip');
+  if (cf) return cf;
+  // LAST entry, not first. A proxy APPENDS the peer it saw, so anything a client put in the
+  // header itself stays to the left of the entry our own proxy added. Taking [0] — which
+  // data/locker-routes.ts did — reads the client's forgery by preference.
+  const xff = header(req, 'x-forwarded-for');
+  if (xff) {
+    const last = xff.split(',').pop()?.trim();
+    if (last) return last;
+  }
+  return peer;
 }
 
 // True when the browser reached us over TLS, directly or through a terminating proxy.

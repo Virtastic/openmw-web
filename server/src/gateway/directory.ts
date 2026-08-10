@@ -26,6 +26,7 @@ import { join } from 'node:path';
 import { log } from '../log';
 import type { WorldSupervisor, WorldMode } from './worlds';
 import type { HttpRoute } from '../net/http';
+import { IpRateLimiter } from '../net/ratelimit';
 
 export interface DirectoryDeps {
   worlds: WorldSupervisor;
@@ -62,6 +63,11 @@ function json(res: ServerResponse, code: number, body: unknown): void {
 }
 
 export async function startDirectory(deps: DirectoryDeps): Promise<RunningDirectory> {
+  // Reviving a reaped world on dial spawns an OS PROCESS, and the upgrade path has no Bearer
+  // token to gate on — a browser cannot set one on a WebSocket handshake. So the spawn itself
+  // is what gets rate-limited. Generous, because a legitimate reconnect ladder retries: this
+  // only has to stop one address walking every priv-* directory on disk.
+  const revives = new IpRateLimiter(30);
   // Clients dial wsPath on THIS origin — the only address they can reach, since a world's
   // port is internal and never published. So the projection deliberately does NOT carry an
   // address: `host` used to be a configured guess that defaulted to 127.0.0.1, which is a
@@ -215,8 +221,28 @@ export async function startDirectory(deps: DirectoryDeps): Promise<RunningDirect
     // whole time. The world id encodes its owner and the world itself still authorises the
     // arrival (mayJoinWorld), so bringing it back costs nothing a launcher request would not.
     if (!world && m && /^priv-/.test(m[1]!) && existsSync(join(deps.worldsDir, m[1]!))) {
-      world = deps.worlds.ensure(m[1]!, 'private') ?? undefined;
-      if (world) log('info', 'world.revived_on_dial', { id: m[1] });
+      // THE OWNER MUST COME BACK WITH THE WORLD. This used to call ensure(id, 'private') with
+      // no owner, which stamps OMW_WORLD_OWNER='' — and server.ts reads an empty owner as
+      // "admit everyone" in BOTH mayJoinWorld and wrongWorldForCharacter. Since a private world
+      // spends most of its life reaped-and-revivable, that meant any signed-in account could
+      // dial /w/priv-<username>-<8hex> (both halves of which the launcher shows) and walk into
+      // someone else's solo game with any character.
+      //
+      // No recoverable owner means we cannot authorise, so we do not start it. The owner's own
+      // launcher re-creates it through POST /worlds, which knows who is asking.
+      const owner = deps.worlds.ownerOnDisk(m[1]!);
+      if (!owner) {
+        log('warn', 'world.revive_refused_no_owner', { id: m[1] });
+      } else if (!revives.allow(clientIp(req))) {
+        // Reviving spawns an OS process, and this path has no Bearer check to lean on (a
+        // browser cannot set one on a WebSocket upgrade). Rate-limiting the SPAWN is what
+        // stops an unauthenticated client walking every priv-* directory on disk and pinning
+        // the box at maxWorlds.
+        log('warn', 'world.revive_rate_limited', { id: m[1] });
+      } else {
+        world = deps.worlds.ensure(m[1]!, 'private', owner) ?? undefined;
+        if (world) log('info', 'world.revived_on_dial', { id: m[1], owner });
+      }
     }
     if (!world || !world.up) {
       // A world that is down must fail the handshake, not hang: the client's own retry ladder

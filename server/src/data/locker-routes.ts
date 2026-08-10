@@ -18,7 +18,7 @@
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Locker, LockerFile } from './locker';
-import { isSecureRequest } from '../net/http';
+import { clientIp, isSecureRequest } from '../net/http';
 import { log } from '../log';
 
 export interface LockerSessions {
@@ -178,11 +178,5 @@ export function lockerRoutes(deps: LockerRouteDeps) {
       return true;
     }
   };
-}
-
-function clientIp(req: IncomingMessage): string {
-  const xff = req.headers['x-forwarded-for'];
-  if (typeof xff === 'string' && xff.length > 0) return xff.split(',')[0]!.trim();
-  return req.socket.remoteAddress ?? '';
 }
 

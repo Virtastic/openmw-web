@@ -37,29 +37,12 @@ export function socketRttMs(ws: WebSocket): number | undefined {
   return rttState.get(ws)?.rttMs;
 }
 
-// Set by the gateway when it splices a client through to a world (gateway/directory.ts). The
-// gateway strips any client-supplied copy before stamping its own.
-export const CLIENT_IP_HEADER = 'x-omw-client-ip';
-
-const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
-
-export function clientIp(req: IncomingMessage): string {
-  const peer = req.socket.remoteAddress ?? 'unknown';
-  // TRUSTED ONLY FROM LOOPBACK. After the gateway's splice a world sees every client as
-  // 127.0.0.1, which silently turned per-IP connection limits into whole-world limits and
-  // stopped IP bans matching real addresses. The loopback check is the trust boundary: a
-  // remote client cannot reach a world except through the gateway, and the gateway drops any
-  // copy of this header the client sent.
-  if (LOOPBACK.has(peer)) {
-    const fwd = req.headers[CLIENT_IP_HEADER];
-    const v = Array.isArray(fwd) ? fwd[0] : fwd;
-    if (typeof v === 'string' && v.length > 0) return v;
-  }
-  const cf = req.headers['cf-connecting-ip'];
-  if (typeof cf === 'string' && cf.length > 0) return cf;
-  if (Array.isArray(cf) && cf[0]) return cf[0];
-  return peer;
-}
+// ONE implementation, in net/http.ts. There used to be three — this one, http.ts's (which read
+// the raw socket peer and so made the login rate limit global), and a third in
+// data/locker-routes.ts that trusted x-forwarded-for[0] from anybody. Re-exported rather than
+// moved so every existing `from '../net/ws'` import keeps working.
+import { clientIp, CLIENT_IP_HEADER } from './http';
+export { clientIp, CLIENT_IP_HEADER };
 
 export function attachWss(
   httpServer: Server,
