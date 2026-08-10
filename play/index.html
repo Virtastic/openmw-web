@@ -711,7 +711,15 @@
          });
          if (window.__omwSyncfs) window.__omwSyncfs();
          append('[restore] '+n+' files restored. Reload to load them.');
-         alert('Restored '+n+' files. Reload the page to pick up the restored saves/settings.');
+         // The game's own modal, not a Chrome alert() — a browser dialog is the one style a
+         // player cannot mistake for the game. Falls back only if the modal is not up yet.
+         if (window.__omwNotice) {
+           window.__omwNotice('Saves restored',
+             'Restored <b>'+n+'</b> files. Reload the page to pick up the restored saves and settings.',
+             '', false);
+         } else {
+           alert('Restored '+n+' files. Reload the page to pick up the restored saves/settings.');
+         }
        } catch(e){ append('[restore err] '+(e&&e.message||e),'err'); }
      };
      r.readAsArrayBuffer(file);
@@ -1956,6 +1964,26 @@
          var TOKEN = window.__omwLockerToken || '';
          var HTTP = lockerHttpBase();   // shared with the server-save mirror
          function api(path, opts){ opts=opts||{}; opts.headers=Object.assign({ authorization:'Bearer '+TOKEN }, opts.headers||{}); return fetch(HTTP+path, opts); }
+         // THE CACHE HELPERS LIVE OUT HERE, not inside the wizard's IIFE, because the UPLOAD
+         // path is a sibling closure of the download path. cachePut was declared in the IIFE
+         // and called from the uploader, so the call resolved to nothing: a ReferenceError on
+         // every uploaded file, swallowed by the surrounding try/catch, which meant the write
+         // documented as "cache what we just read" never happened and every file the player
+         // had just uploaded was re-downloaded from S3 on first play. test/pagescope.test.ts
+         // resolves the real scope chain now and fails on this shape.
+         var LOCKER_CACHE = 'omw-locker-v1';
+         async function cacheGet(sha){
+           if (!self.caches || !sha) return null;
+           try { var c=await caches.open(LOCKER_CACHE); var hit=await c.match('https://locker.local/'+sha); return hit ? await hit.arrayBuffer() : null; } catch(e){ return null; }
+         }
+         async function cacheGetBlob(sha){
+           if (!self.caches || !sha) return null;
+           try { var c=await caches.open(LOCKER_CACHE); var hit=await c.match('https://locker.local/'+sha); return hit ? await hit.blob() : null; } catch(e){ return null; }
+         }
+         async function cachePut(sha, buf){
+           if (!self.caches || !sha) return;
+           try { var c=await caches.open(LOCKER_CACHE); await c.put('https://locker.local/'+sha, new Response(buf)); } catch(e){ /* quota — non-fatal */ }
+         }
          // EVERY locker failure lands here, so the title has to be true in both modes: the
          // cloud tile mounts this same path with no multiplayer anywhere, and naming the wrong
          // product in the one message a stuck player actually reads is its own small betrayal.
@@ -2410,19 +2438,6 @@
            // visit reads them from the browser's Cache storage instead of re-downloading ~90MB
            // from S3 every time. The hash comes from the locker manifest, so a re-uploaded (changed)
            // file has a new hash -> cache miss -> re-download. Persists across sessions.
-           var LOCKER_CACHE = 'omw-locker-v1';
-           async function cacheGet(sha){
-             if (!self.caches || !sha) return null;
-             try { var c=await caches.open(LOCKER_CACHE); var hit=await c.match('https://locker.local/'+sha); return hit ? await hit.arrayBuffer() : null; } catch(e){ return null; }
-           }
-           async function cacheGetBlob(sha){
-             if (!self.caches || !sha) return null;
-             try { var c=await caches.open(LOCKER_CACHE); var hit=await c.match('https://locker.local/'+sha); return hit ? await hit.blob() : null; } catch(e){ return null; }
-           }
-           async function cachePut(sha, buf){
-             if (!self.caches || !sha) return;
-             try { var c=await caches.open(LOCKER_CACHE); await c.put('https://locker.local/'+sha, new Response(buf)); } catch(e){ /* quota — non-fatal */ }
-           }
            // USTAR reader for the voice pack — the mirror of the wizard's writer. Writes each
            // entry into the engine FS at its retail relative path (Sound/Vo/...), creating
            // directories as it goes. Returns how many files landed.
@@ -3289,7 +3304,12 @@
       showNotice('Could not change world',
         'This session has lost its sign-in. Exit to the menu and sign in again — your character is safe on the server.',
         GLYPH_WORLD, true);
-      return;
+      // THROW, DO NOT RETURN. The watcher sets its dedupe latch BEFORE calling us and clears it
+      // only in .catch() — so returning normally resolves the promise, leaves the latch pinned
+      // to this destination, and every later click on the same world is swallowed as a
+      // duplicate. Public died permanently after one failure. The notice above is still what
+      // the player sees; this is only how the latch learns it did not work.
+      throw new Error('no locker session');
     }
     window.__omwLoading.show('Changing world', 'Getting you a seat…');
     var ticket = '';
@@ -3310,7 +3330,7 @@
       showNotice('Could not change world',
         'The server did not give this session a seat in the new world. Try again in a moment — '
         + 'your character is safe and nothing was lost.', GLYPH_WORLD, true);
-      return;
+      throw new Error('no login ticket'); // see the throw above: a return pins the latch
     }
     // location.hash is empty by now — the boot scrub cleared it (see __omwBootFrag).
     var frag = String(window.__omwBootFrag || location.hash || '').replace(/^#/, '');
@@ -3361,13 +3381,19 @@
       if (!want || want === seen) return;
       seen = want;
       mpLog('[mp] changing world -> ' + want);
-      // A failed handoff must be RETRYABLE: clearing the latch lets the next click (or the
-      // next publish of the same destination) try again instead of being ignored forever.
+      // A failed handoff must be RETRYABLE, and must not retry BY ITSELF. Clearing the latch
+      // alone would re-fire this every 250 ms, because net.switchTo publishes a destination
+      // and nothing ever unpublishes it — so a player whose sign-in had lapsed would get the
+      // failure modal several times a second. Clear the mirror as well: the latch stops the
+      // duplicate, and the next real click republishes and tries again.
+      var failed = function(e){
+        seen = '';
+        try { if (window.__omwMP) window.__omwMP.switchTo = ''; } catch (e2) {}
+        mpLog('[mp] world change failed: ' + e, 'err');
+      };
       try {
-        Promise.resolve(rebootIntoWorld(want)).catch(function(e){
-          seen = ''; mpLog('[mp] world change failed: ' + e, 'err');
-        });
-      } catch (e) { seen = ''; mpLog('[mp] world change threw: ' + e, 'err'); }
+        Promise.resolve(rebootIntoWorld(want)).catch(failed);
+      } catch (e) { failed(e); }
     }, 250);
   })();
 
@@ -3722,21 +3748,21 @@
       var me = (party.members || []).filter(function(p){
         return String(p.name || '').toLowerCase() === selfName; })[0];
       var iLead = !!me && String(party.leader || '') !== '' && me.acct === party.leader && partyN > 1;
+      // TAKING THE PARTY IS THE SAME TRIP, with a different command. It used to be a separate
+      // early-return branch, and so it missed everything below: no watchdog (installed further
+      // down), show() instead of lock(), and holdUntilSimulated for a PUBLIC destination —
+      // which the guard below exists to prevent, because that hold asks "are we in a live
+      // world?" using the world we are trying to LEAVE. It answered yes, cleared the screen
+      // after 30 s with no message at all, and left the leader standing in their own world.
+      // The server can legitimately answer not_leader here (leadership is inferred from a
+      // lowercased name match against the roster), and that answer landed in the same hole.
+      var partyTravel = false;
       if (iLead && v === 'public') {
         if (!await askConfirm('Take the party with you?',
           'You lead a party of <b>' + partyN + '</b>. Moving to the public world brings '
           + 'every member with you.', GLYPH_PARTY, 'Move the party')) return;
         selfTravel = true; // we chose this; do not narrate it back to us as if it happened to us
-        setWhere(v); closeSocial();
-        cmd('social:PartyTravel:public');
-        window.__omwLoading.show('Moving the party', 'Syncing with the public world…');
-        // Hold the loading screen until the connection actually settles. The old fixed 2.5s
-      // timeout dropped the player into a world they had not joined yet, which is what made
-      // the panel narrate the join instead of the loading screen doing it.
-      holdUntilSimulated(30000);
-        setStatus('');
-        renderSocial();
-        return;
+        partyTravel = true;
       }
       if (iLead && v === 'solo'
           && !await askConfirm('Disband the party?',
@@ -3744,7 +3770,7 @@
             + 'ends the party rather than stranding anyone in it.', GLYPH_PARTY, 'Go solo')) return;
       setWhere(v);
       closeSocial();
-      cmd('where:' + v);
+      cmd(partyTravel ? 'social:PartyTravel:public' : 'where:' + v);
       // WATCHDOG. A Public switch crosses Lua, the server's world list, the gateway, a ticket
       // mint and a page navigation, and EVERY one of those has failed silently at least once —
       // the player is left staring at a loading screen that eventually clears, still in Solo,
@@ -3769,8 +3795,10 @@
       // Solo <-> Party on your OWN world is an in-place flip (no reconnect); Public is a real
       // redial that must re-sync with the world's sim peer. Either way the wait is real, so
       // show it — the state watcher above hides it when the connection settles.
-      if (v === 'public') window.__omwLoading.lock('Joining the public world', 'Syncing with the server…');
-      else window.__omwLoading.show('Switching world', 'Syncing with the server…');
+      if (v === 'public') {
+        window.__omwLoading.lock(partyTravel ? 'Moving the party' : 'Joining the public world',
+          partyTravel ? 'Syncing with the public world…' : 'Syncing with the server…');
+      } else window.__omwLoading.show('Switching world', 'Syncing with the server…');
       // Public is a page NAVIGATION, not a state change in THIS page. holdUntilSimulated asks
       // "are we in a live world yet?" — and we are: the one we never left. So it cleared the
       // screen while the switch was still in flight, dropping the player back into their old
@@ -4026,6 +4054,9 @@
     uiHold(true);
     tourPaused = false;
   }
+  // Exported like __omwLog and __omwLoading: showNotice is block-local (depth 1 of block 4),
+  // so the earlier blocks cannot call it by name. The save-restore handler in block 2 needs it.
+  window.__omwNotice = showNotice;
   document.getElementById('omw-tour-next').addEventListener('click', function(){
     if (tourIdx < tourDeck.length - 1){ tourIdx++; renderTour(); } else closeTour(); });
   document.getElementById('omw-tour-x').addEventListener('click', closeTour);
