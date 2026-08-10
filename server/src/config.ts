@@ -142,6 +142,11 @@ export interface Config {
     maxBufferedBytes: number;
     maxBufferedBytesHard: number;
     maxConnsPerIp: number;
+    /** Trust CF-Connecting-IP from a private (proxy) peer. Only meaningful when Cloudflare is
+     *  genuinely in front AND the edge deletes any client-supplied copy — see net/http.ts. Off
+     *  by default: a header nobody sets is pure attack surface, and believing it lets a client
+     *  reset its own login limit, evade an IP ban and evade maxConnsPerIp. */
+    trustCloudflareIp: boolean;
     maxMsgBytes: number;
     helloTimeoutMs: number;
     loginPerMinPerIp: number;
@@ -486,6 +491,7 @@ function validate(t: Tree): Config {
       maxBufferedBytes: reqNum(t, 'limits', 'maxBufferedBytes'),
       maxBufferedBytesHard: reqNum(t, 'limits', 'maxBufferedBytesHard'),
       maxConnsPerIp: reqNum(t, 'limits', 'maxConnsPerIp'),
+      trustCloudflareIp: optBool(t, 'limits', 'trustCloudflareIp', false),
       maxMsgBytes: reqNum(t, 'limits', 'maxMsgBytes'),
       helloTimeoutMs: reqNum(t, 'limits', 'helloTimeoutMs'),
       loginPerMinPerIp: reqNum(t, 'limits', 'loginPerMinPerIp'),

@@ -9,6 +9,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { IncomingMessage } from 'node:http';
 import { clientIp, CLIENT_IP_HEADER } from '../src/net/ws';
+import { setTrustCloudflareIp } from '../src/net/http';
 
 const req = (remoteAddress: string, headers: Record<string, string> = {}): IncomingMessage =>
   ({ headers, socket: { remoteAddress } } as unknown as IncomingMessage);
@@ -39,8 +40,20 @@ test('a REMOTE client cannot forge its own address', () => {
   assert.equal(clientIp(req('198.51.100.4', { [CLIENT_IP_HEADER]: '203.0.113.9' })), '198.51.100.4');
 });
 
-test('cf-connecting-ip is trusted from the proxy, and the socket address is the floor', () => {
-  assert.equal(clientIp(req('172.18.0.2', { 'cf-connecting-ip': '203.0.113.7' })), '203.0.113.7');
+// OFF BY DEFAULT. Probing the gateway directly from inside the docker network — past the
+// edge's header strip — showed a forged CF-Connecting-IP buying a fresh login budget while the
+// control stayed refused. Where Cloudflare is not in front, nothing legitimately sets this
+// header, so believing it is pure attack surface.
+test('cf-connecting-ip is ignored unless the deployment opts in', () => {
+  assert.equal(clientIp(req('172.18.0.2', { 'cf-connecting-ip': '203.0.113.7' })), '172.18.0.2');
+  try {
+    setTrustCloudflareIp(true);
+    assert.equal(clientIp(req('172.18.0.2', { 'cf-connecting-ip': '203.0.113.7' })), '203.0.113.7');
+    // Even opted in, it is only believed from a proxy — never from the open internet.
+    assert.equal(clientIp(req('198.51.100.4', { 'cf-connecting-ip': '203.0.113.7' })), '198.51.100.4');
+  } finally {
+    setTrustCloudflareIp(false);
+  }
   assert.equal(clientIp(req('198.51.100.4')), '198.51.100.4');
 });
 

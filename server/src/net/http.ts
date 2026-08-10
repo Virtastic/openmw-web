@@ -81,6 +81,17 @@ function proxyIsTrusted(peer: string): boolean {
   return /^f[cd]/i.test(peer); // fc00::/7 unique-local
 }
 
+// Set once at boot from [limits] trustCloudflareIp. A module-level switch rather than a
+// threaded parameter because clientIp is called from a dozen places that have no config in
+// hand, and the answer is a property of the DEPLOYMENT, not of the request.
+let trustCloudflareIp = false;
+
+/** Declare that Cloudflare terminates in front of us and the edge strips client copies of
+ *  CF-Connecting-IP. Called once at boot; never per request. */
+export function setTrustCloudflareIp(trust: boolean): void {
+  trustCloudflareIp = trust;
+}
+
 function header(req: IncomingMessage, name: string): string | undefined {
   const v = req.headers[name];
   const first = Array.isArray(v) ? v[0] : v;
@@ -110,11 +121,17 @@ export function clientIp(req: IncomingMessage): string {
     if (stamped) return stamped;
   }
   if (!proxyIsTrusted(peer)) return peer;
-  // Cloudflare's header, which only means anything when Cloudflare is actually in front AND
-  // the edge strips any copy the client sent. That stripping is the load-bearing part; "the
-  // peer is private" proves the header survived the hop, never that the hop wrote it.
-  const cf = header(req, 'cf-connecting-ip');
-  if (cf) return cf;
+  // Cloudflare's header, and OFF unless a deployment says Cloudflare is really in front. It
+  // only means anything when the edge also deletes any copy the client sent — "the peer is
+  // private" proves the header survived the hop, never that the hop wrote it. Verified by
+  // probing the gateway directly from inside the docker network, past the edge: with this
+  // ungated, a forged CF-Connecting-IP bought a fresh login budget while the control stayed
+  // refused. Where Cloudflare is NOT in front, this header is pure attack surface, so the
+  // default is to ignore it.
+  if (trustCloudflareIp) {
+    const cf = header(req, 'cf-connecting-ip');
+    if (cf) return cf;
+  }
   // LAST entry, not first. A proxy APPENDS the peer it saw, so anything a client put in the
   // header itself stays to the left of the entry our own proxy added. Taking [0] — which
   // data/locker-routes.ts did — reads the client's forgery by preference.

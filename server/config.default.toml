@@ -161,6 +161,14 @@ maxMsgBytes = 262144              # ws maxPayload; larger frames drop the socket
 # just doesn't punish players with big load orders or slow connections.
 helloTimeoutMs = 45000
 loginPerMinPerIp = 5              # auth attempts (Register+Login) per IP per minute
+# Trust CF-Connecting-IP as the client's address, when it arrives from a private (proxy) peer.
+# OFF by default. Turn it on ONLY where Cloudflare genuinely terminates in front of this server
+# AND the edge deletes any client-supplied copy (see the header_up lines in deploy/Caddyfile).
+# Wrong in either direction is silent: on with a leaky edge lets any client name its own
+# address and reset its own rate limit, evade an IP ban and evade maxConnsPerIp; off behind
+# Cloudflare makes every player share the edge's address, which collapses every per-IP limit
+# into one global bucket. The mode is logged at boot as net.client_ip_mode.
+trustCloudflareIp = false
 maxHitDamage = 1000               # M5 sanity bound on relayed damage/effect magnitudes (not balance)
 
 # Interest management + level of detail. Cell-granular visibility alone makes one busy cell

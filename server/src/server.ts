@@ -43,7 +43,7 @@ import { MoveBroadcaster, interestFromLimits } from './core/movement';
 import { configureAuthority } from './core/authority';
 import { Connection, type ServerCtx } from './net/connection';
 import { attachWss } from './net/ws';
-import { createHttpServer, type HttpRoute } from './net/http';
+import { createHttpServer, setTrustCloudflareIp, type HttpRoute } from './net/http';
 import { OidcService } from './auth/oidc';
 import { IdentityStore, LoginTicketStore, SessionIndex } from './auth/identities';
 import { createAuthRoutes } from './auth/routes';
@@ -125,6 +125,17 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // both live in the SHARED dir. loadConfig merges shared/config.toml; gamedata is resolved
   // from the shared dir too (below) so 500MB of Morrowind is not copied per world.
   const config = loadConfig(opts.dataDir, opts.configOverride, sharedDir);
+  // Deployment property, set once: whether CF-Connecting-IP means anything here. Logged
+  // because getting it wrong is silent in both directions — on, and a misconfigured edge lets
+  // a client name its own address; off behind Cloudflare, and every player shares the edge's
+  // address, which turns per-IP limits back into one global bucket.
+  setTrustCloudflareIp(config.limits.trustCloudflareIp);
+  log('info', 'net.client_ip_mode', {
+    trustCloudflareIp: config.limits.trustCloudflareIp,
+    note: config.limits.trustCloudflareIp
+      ? 'CF-Connecting-IP trusted from a private peer; the edge MUST strip client copies'
+      : 'CF-Connecting-IP ignored; set [limits] trustCloudflareIp when Cloudflare is in front',
+  });
   // Read live by core/authority.ts, which WorldState builds without ever seeing the config.
   configureAuthority({
     reviewMs: config.authority.reviewSec * 1000,
