@@ -92,3 +92,17 @@ test('every private-range proxy is trusted, and nothing else is', () => {
     assert.equal(clientIp(req(peer, { 'x-forwarded-for': '203.0.113.9' })), peer, peer);
   }
 });
+
+// The misconfiguration that is silent and dangerous: off while Cloudflare IS in front. Every
+// client then resolves to the edge, per-IP limits become one global bucket, and the sixth
+// person to sign in within a minute is refused — the fault this whole sweep began by fixing.
+// Seeing the header arrive from a trusted proxy is the tell, so it must not pass unremarked.
+test('an ignored cf-connecting-ip from a trusted proxy is still resolved by other means', () => {
+  // Falls through to X-Forwarded-For rather than silently keying everyone on the proxy.
+  assert.equal(
+    clientIp(req('172.18.0.2', { 'cf-connecting-ip': '203.0.113.7', 'x-forwarded-for': '198.51.100.9' })),
+    '198.51.100.9');
+  // With nothing else to go on, the proxy address IS the answer — that is the collapse the
+  // boot log and the runtime warning exist to make visible.
+  assert.equal(clientIp(req('172.18.0.2', { 'cf-connecting-ip': '203.0.113.7' })), '172.18.0.2');
+});

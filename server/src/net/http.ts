@@ -90,7 +90,11 @@ let trustCloudflareIp = false;
  *  CF-Connecting-IP. Called once at boot; never per request. */
 export function setTrustCloudflareIp(trust: boolean): void {
   trustCloudflareIp = trust;
+  warnedCloudflare = false;
 }
+
+// One-shot, because this fires on a request path.
+let warnedCloudflare = false;
 
 function header(req: IncomingMessage, name: string): string | undefined {
   const v = req.headers[name];
@@ -131,6 +135,18 @@ export function clientIp(req: IncomingMessage): string {
   if (trustCloudflareIp) {
     const cf = header(req, 'cf-connecting-ip');
     if (cf) return cf;
+  } else if (!warnedCloudflare && header(req, 'cf-connecting-ip') !== undefined) {
+    // THE DANGEROUS DIRECTION, MADE VISIBLE. Off behind Cloudflare is silent: every player
+    // resolves to the edge's address, so per-IP limits quietly become one global bucket and
+    // the sixth person to sign in within a minute is refused — the exact fault this sweep
+    // began by fixing. Cloudflare really being in front is the only way this header arrives
+    // from a trusted proxy, so seeing one here says the setting is probably wrong.
+    warnedCloudflare = true;
+    log('warn', 'net.cloudflare_header_ignored', {
+      note: 'CF-Connecting-IP arrived from a trusted proxy but [limits] trustCloudflareIp is '
+        + 'false, so every client resolves to the proxy and per-IP limits are effectively '
+        + 'global. Set it true if Cloudflare terminates in front of this deployment.',
+    });
   }
   // LAST entry, not first. A proxy APPENDS the peer it saw, so anything a client put in the
   // header itself stays to the left of the entry our own proxy added. Taking [0] — which
