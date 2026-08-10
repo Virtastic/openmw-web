@@ -30,46 +30,33 @@ code() { curl -s -o /dev/null -w '%{http_code}' --max-time 20 "$@"; }
 
 echo "==> multiplayer hardening checks against $BASE"
 
-# --- 1. the client-address trust boundary ----------------------------------------------------
-# Two requests that differ ONLY by a forged address header. If the forgery were honoured they
-# would land in different rate-limit buckets; since it is not, both are simply this client.
-# The observable is weaker than the property (we cannot read the server's bucket from here), so
-# assert what we CAN see: the header does not change how the endpoint answers, and above all it
-# never produces a 5xx — an unparsed or trusted header used to be able to.
-for hdr in "x-forwarded-for: 1.2.3.4" "cf-connecting-ip: 1.2.3.4" "x-omw-client-ip: 1.2.3.4"; do
-  c=$(code -H "$hdr" "$BASE/auth/providers")
-  if [ "$c" = "200" ]; then
-    pass "forged '${hdr%%:*}' accepted without effect (200)"
-  else
-    fail "forged '${hdr%%:*}'" "expected 200, got $c"
-  fi
-done
+# --- 1+2. a forged address must not buy a fresh login budget --------------------------------
+# THE CHECK THAT ACTUALLY FOUND SOMETHING. /auth/<provider>/start is the rate-limited route,
+# and a refusal is NOT a 429 — it redirects back to the launcher with mperror=rate. An earlier
+# version of this script looked for 429, never saw one, and reported a pass it had not earned.
+#
+# Method: exhaust this address's bucket, then alternate CONTROL / FORGED / CONTROL. The
+# controls matter because the bucket refills a token every twelve seconds, which is more than
+# enough to make an unguarded probe look like a bypass when it is only the clock.
+goog() { curl -s -o /dev/null -w '%{redirect_url}' --max-time 20 "$@" | grep -qi accounts.google.com && echo FRESH || echo limited; }
 
-# --- 2. the login bucket is per-address, and a forged address cannot buy a fresh one ---------
-# /auth/<provider>/start is the rate-limited route (auth/routes.ts). This is the check that
-# actually discriminates: a single client cannot tell a per-IP bucket from a global one just by
-# being refused, but it CAN prove the refusal does not lift when it claims to be someone else.
-# clientIp reads a forwarding header only when the peer is private, so from out here the forgery
-# must change nothing — otherwise anyone could mint themselves unlimited sign-in attempts, and
-# attribute the failures to whichever address they named.
-BURST=0
-for _ in $(seq 1 8); do
-  c=$(code "$BASE/auth/google/start")
-  [ "$c" = "429" ] && { BURST=1; break; }
-done
-if [ "$BURST" = "1" ]; then
-  forged=$(code -H 'cf-connecting-ip: 203.0.113.77' -H 'x-forwarded-for: 203.0.113.77' \
-             "$BASE/auth/google/start")
-  if [ "$forged" = "429" ]; then
-    pass "a forged address does not get its own login budget (still 429)"
-  else
-    fail "forged address bypassed the login limit" \
-      "claiming 203.0.113.77 got $forged instead of 429 — the limiter can be reset at will"
-  fi
+for _ in $(seq 1 8); do curl -s -o /dev/null --max-time 20 "$BASE/auth/google/start"; done
+if [ "$(goog "$BASE/auth/google/start")" != "limited" ]; then
+  echo "  --   could not exhaust the login bucket from here; forgery check skipped (not a failure)"
 else
-  # Not a failure of the fix: the bucket may simply not have been exhausted (it refills, and
-  # other traffic shares this address). Say so rather than claiming a pass we did not earn.
-  echo "  --   login limit not reached in 8 attempts; forgery check skipped (not a failure)"
+  for hdr in "cf-connecting-ip: 203.0.113.77" "x-omw-client-ip: 203.0.113.99" \
+             "true-client-ip: 203.0.113.66" "x-forwarded-for: 203.0.113.88"; do
+    got=$(goog -H "$hdr" "$BASE/auth/google/start")
+    ctl=$(goog "$BASE/auth/google/start")
+    if [ "$ctl" != "limited" ]; then
+      echo "  --   bucket refilled mid-probe; '${hdr%%:*}' inconclusive"
+    elif [ "$got" = "limited" ]; then
+      pass "forged '${hdr%%:*}' does not get its own login budget"
+    else
+      fail "forged '${hdr%%:*}' bypassed the login limit" \
+        "claiming ${hdr#*: } got a fresh budget while the control stayed refused — the limiter, IP bans and maxConnsPerIp can all be reset at will"
+    fi
+  done
 fi
 
 # --- 3. an unattributable private world must not be revived ----------------------------------
