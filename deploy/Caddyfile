@@ -67,6 +67,20 @@
 	#   /saves/*  server-side savegames (same auth and storage as the locker).
 	@gateway path /w/* /ws /auth/* /locker/* /saves /saves/* /worlds /worlds/*
 	reverse_proxy @gateway {$MP_UPSTREAM:openmw-mp:8080} {
+		# STRIP CLIENT-SUPPLIED ADDRESS HEADERS. The gateway trusts these because its peer is
+		# this proxy, on a private network — but "the peer is private" only means the header
+		# survived the hop, not that the hop authored it. Caddy forwards request headers
+		# untouched, so without these three lines any client could send its own
+		# CF-Connecting-IP and be believed: reset its login rate limit at will, walk past an IP
+		# ban and maxConnsPerIp, and pin its failed sign-ins on somebody else's address.
+		# Verified against the live dev deployment before this existed — a forged header got a
+		# fresh login budget on demand.
+		#
+		# X-Forwarded-For is NOT stripped: Caddy APPENDS the peer it saw, so a client's own
+		# entry stays to the left of the one added here and the server reads from the right.
+		header_up -CF-Connecting-IP
+		header_up -X-Omw-Client-IP
+		header_up -True-Client-IP
 		# Preserve the ORIGINAL scheme from the public edge. Caddy defaults X-Forwarded-Proto
 		# to the scheme of the hop IT received — which is plain http, because the edge
 		# terminates TLS and reaches this container over the docker network. Without this the

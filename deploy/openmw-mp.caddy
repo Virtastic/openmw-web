@@ -8,10 +8,16 @@
 # - Caddy proxies WebSockets natively (Upgrade/Connection pass through); no `encode` — nothing
 #   here benefits and it must not touch the WS stream.
 # - No `import inject`: the server reads the real client IP from CF-Connecting-IP, which
-#   Cloudflare sets and reverse_proxy forwards untouched. Only the edge can reach the container
-#   (no published host ports), so the header is trustworthy.
+#   Cloudflare sets. "Only the edge can reach the container" makes the CHANNEL private; it does
+#   NOT make the header authentic, because reverse_proxy forwards whatever the client sent. A
+#   client-supplied copy has to be deleted here or the server believes it — see the same
+#   header_up lines in Caddyfile, and the live bypass that proved it.
 mp.virtastic.app {
 	tls /certs/virtastic.crt /certs/virtastic.key
 	import sec_headers
-	reverse_proxy openmw-mp:8080
+	reverse_proxy openmw-mp:8080 {
+		header_up -CF-Connecting-IP
+		header_up -X-Omw-Client-IP
+		header_up -True-Client-IP
+	}
 }

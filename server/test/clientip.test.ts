@@ -18,6 +18,22 @@ test('the spliced client address is trusted from loopback', () => {
   assert.equal(clientIp(req('::1', { [CLIENT_IP_HEADER]: '203.0.113.9' })), '203.0.113.9');
 });
 
+// LOOPBACK ONLY, and this is not pedantry: it was briefly widened to "any private peer" and
+// that shipped a live bypass. The gateway splices to a world over 127.0.0.1 and stamps the
+// header itself; a reverse proxy on a docker bridge is a private peer too, and it forwards
+// whatever the client sent — so any client could name its own address, reset its login rate
+// limit, walk past an IP ban and maxConnsPerIp, and pin its failures on someone else.
+// Confirmed against the live dev deployment before it was narrowed back.
+test('the spliced client address is NOT trusted from a private proxy', () => {
+  for (const peer of ['172.18.0.2', '10.1.2.3', '192.168.1.9']) {
+    assert.equal(clientIp(req(peer, { [CLIENT_IP_HEADER]: '203.0.113.9' })), peer, peer);
+  }
+  // ...and the proxy's own X-Forwarded-For is still honoured from those peers, so narrowing
+  // this header did not take the real client address away with it.
+  assert.equal(clientIp(req('172.18.0.2',
+    { [CLIENT_IP_HEADER]: '203.0.113.9', 'x-forwarded-for': '198.51.100.7' })), '198.51.100.7');
+});
+
 test('a REMOTE client cannot forge its own address', () => {
   // The attack: set the header yourself to dodge maxConnsPerIp or an IP ban.
   assert.equal(clientIp(req('198.51.100.4', { [CLIENT_IP_HEADER]: '203.0.113.9' })), '198.51.100.4');

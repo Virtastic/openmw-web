@@ -95,11 +95,24 @@ function header(req: IncomingMessage, name: string): string | undefined {
 // src/auth/routes.ts keys its limiter on this.
 export function clientIp(req: IncomingMessage): string {
   const peer = req.socket.remoteAddress ?? '';
+  // LOOPBACK, not merely private. The gateway splices a client through to a world over
+  // 127.0.0.1 and stamps this header itself, so loopback is the only place it can legitimately
+  // come from. Accepting it from any private address — which is what this briefly did — let a
+  // client send its own copy through the reverse proxy and be believed, because the proxy
+  // forwards request headers untouched and the proxy IS a private peer. Confirmed against the
+  // live deployment: a forged header bought a fresh login-rate budget on demand.
+  //
+  // The edge now deletes client-supplied copies too (deploy/Caddyfile). Both halves are kept:
+  // the proxy is the authority on who the client is, and this is the narrowest rule that still
+  // lets the gateway do its job.
+  if (LOOPBACK.has(peer)) {
+    const stamped = header(req, CLIENT_IP_HEADER);
+    if (stamped) return stamped;
+  }
   if (!proxyIsTrusted(peer)) return peer;
-  // The gateway's own stamp wins: a world process only ever sees the gateway, and the gateway
-  // has already resolved the real address by this same rule.
-  const stamped = header(req, CLIENT_IP_HEADER);
-  if (stamped) return stamped;
+  // Cloudflare's header, which only means anything when Cloudflare is actually in front AND
+  // the edge strips any copy the client sent. That stripping is the load-bearing part; "the
+  // peer is private" proves the header survived the hop, never that the hop wrote it.
   const cf = header(req, 'cf-connecting-ip');
   if (cf) return cf;
   // LAST entry, not first. A proxy APPENDS the peer it saw, so anything a client put in the
