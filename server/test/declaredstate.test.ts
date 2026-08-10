@@ -5,15 +5,22 @@
 // anti-cheat role is cell authority over NPCs (worldstate.handleActorMoveBatch). Containers
 // are transactional, but PlayerInventory bypasses them entirely.
 //
-// So this is telemetry, not enforcement, matching the movement envelope exactly: absurd-only
-// thresholds, counted and fed to moderation, never rejected — a false positive on a real
-// player is worse than a cheat that has to stay under the bar.
+// Absurd declarations are now REFUSED as well as counted: the declaration is dropped whole and
+// the server's own copy stands, so the client's next pass is measured against what the server
+// believes rather than the hoard it just claimed. The thresholds were raised when they stopped
+// being advisory, because a refusal costs a real player their inventory sync — the bar sits
+// where a false positive is implausible, not merely where a cheat is obvious. The counter is
+// kept so what real players actually trip stays measurable.
+//
+// Position is still client-authored, and damage is still applied by the VICTIM (the server has
+// no armour or resistance tables to compute with) — those are bounded by rate and proximity,
+// not by truth.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { startServer } from '../src/server';
 import { TestClient, tmpDataDir, readPlayerDoc } from './helpers';
 
-test('an absurd declared hoard is recorded as an anomaly, and still stored', async (t) => {
+test('an absurd declared hoard is recorded and refused', async (t) => {
   const dataDir = tmpDataDir();
   const server = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1',
     configOverride: { metrics: { enabled: true, token: 'tok' } } });
@@ -38,17 +45,23 @@ test('an absurd declared hoard is recorded as an anomaly, and still stored', asy
     'the counter must be registered, or the assertion below proves nothing');
   assert.equal(gains(quiet), 0, 'a legitimate haul must not be flagged');
 
-  // Now a declaration no play session produces.
-  c.sendEvent('PlayerInventory', { items: [{ id: 'gold_001', n: 9999 }] });
+  // A large but PLAUSIBLE haul still goes through: selling a hoard to a merchant in one go is
+  // real, and refusing it would be the false positive that costs more than the cheat.
+  c.sendEvent('PlayerInventory', { items: [{ id: 'gold_001', n: 5000 }] });
+  await new Promise((r) => setTimeout(r, 250));
+  assert.equal(gains(await scrape()), 0, 'a large but real haul must not be refused');
+
+  // Now a jump no play session produces: nothing to nearly the hard cap in one declaration.
+  c.sendEvent('PlayerInventory', { items: [{ id: 'gold_001', n: 5000 }, { id: 'diamond', n: 9500 }] });
   await new Promise((r) => setTimeout(r, 250));
 
   assert.equal(gains(await scrape()), 1, 'the absurd declaration was not recorded');
 
-  // Stored anyway — this path never rejects, exactly like the movement envelope.
+  // REFUSED: the server keeps the last thing it believed, not the claim.
   await server.flush();
   const doc = readPlayerDoc(dataDir, charId);
-  assert.deepEqual(doc?.['inventory'], [{ id: 'gold_001', n: 9999 }],
-    'the declaration must still be stored; rejecting would rubber-band real players');
+  assert.deepEqual(doc?.['inventory'], [{ id: 'gold_001', n: 5000 }],
+    'the absurd declaration overwrote the server copy anyway');
   c.close();
 });
 
@@ -163,7 +176,7 @@ test('a quarantined account cannot put anything into the shared world', async (t
     'a clean account must be able to play normally');
 
   // Declare something impossible -> quarantined from here on.
-  c.sendEvent('PlayerInventory', { items: [{ id: 'gold_001', n: 9999 }] });
+  c.sendEvent('PlayerInventory', { items: [{ id: 'gold_001', n: 9500 }] });
   await new Promise((r) => setTimeout(r, 300));
 
   c.sendEvent('ObjectSpawnRequest', {

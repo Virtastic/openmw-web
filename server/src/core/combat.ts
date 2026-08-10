@@ -14,6 +14,7 @@ import { lToJs, type LTable, type LValue, type JsLike } from '../proto/lser';
 import { parseObjRef, type ObjRef } from '../proto/ref';
 import type { Player, Roster } from './players';
 import { cellsVisible, MAX_ABS_COORD } from './movement';
+import { TokenBucket } from '../net/ratelimit';
 import { log } from '../log';
 
 const MAX_ID = 64;
@@ -92,8 +93,30 @@ function checkedMagnitude(v: LValue | undefined, cap: number): number | undefine
   return n !== undefined && Math.abs(n) <= cap ? n : undefined;
 }
 
+// THE CAP BOUNDS ONE HIT; THIS BOUNDS THE RATE. maxHitDamage refuses an absurd single blow,
+// but nothing stopped a modified client sending a capped hit every frame, which is the same
+// kill with more messages. Morrowind's fastest weapons swing a few times a second and spells
+// are slower still, so this is far above any real attack sequence and only bites automation.
+// ponytail: per-attacker, not per-victim — a focus-fire party is legitimate.
+const HITS_PER_SEC = 8;
+const HITS_BURST = 20;
+
 export class Combat {
+  // Keyed by the Player object, so a disconnected session's bucket is collected with it —
+  // a Map keyed by id would grow for the life of the world.
+  private readonly hitRate = new WeakMap<Player, TokenBucket>();
+
   constructor(private readonly ctx: CombatCtx) {}
+
+  /** False when this attacker is swinging faster than any real client can. */
+  private hitAllowed(player: Player): boolean {
+    let b = this.hitRate.get(player);
+    if (!b) {
+      b = new TokenBucket(HITS_PER_SEC, HITS_BURST);
+      this.hitRate.set(player, b);
+    }
+    return b.take(1);
+  }
 
   private drop(player: Player, name: string, why: string): void {
     log('warn', 'combat.dropped', { from: player.name, name, why });
@@ -106,6 +129,12 @@ export class Combat {
       const victim = this.ctx.roster.get(target.playerId);
       if (!victim || !victim.inWorld) {
         this.drop(attacker, name, 'unknown target player');
+        return null;
+      }
+      // THE ACTOR PATH CHECKED PROXIMITY AND THIS ONE DID NOT, so a player could be hit from
+      // anywhere in the world. Same rule for both: you must be near enough to see the target.
+      if (!cellsVisible(attacker.cellKey, victim.cellKey)) {
+        this.drop(attacker, name, 'attacker not near the target player');
         return null;
       }
       if (!this.ctx.allowPlayerHit(attacker, victim.id, name)) return null; // pvp plugin veto
@@ -154,6 +183,10 @@ export class Combat {
   }
 
   private hit(player: Player, body: LTable): void {
+    if (!this.hitAllowed(player)) {
+      this.drop(player, 'CombatHit', 'hit rate above any real client');
+      return;
+    }
     const target = parseTarget(body.get('target'));
     const damage = tbl(body.get('damage'));
     const strength = finite(body.get('strength'));
@@ -193,6 +226,10 @@ export class Combat {
   }
 
   private spellHit(player: Player, body: LTable): void {
+    if (!this.hitAllowed(player)) {
+      this.drop(player, 'CombatSpellHit', 'hit rate above any real client');
+      return;
+    }
     const target = parseTarget(body.get('target'));
     const spellId = str(body.get('spellId'));
     const effects = tbl(body.get('effects'));

@@ -159,8 +159,13 @@ function handleLevel(ctx: StateCtx, player: Player, body: LTable): boolean {
   // A level moves by ONE at a time in Morrowind. Several at once is not a fast player, it is
   // a declaration — same absurd-only bar as the movement envelope, same non-rejecting answer.
   const had = ctx.store.getCached(player.charId)?.stats?.level;
-  if (had !== undefined && level - had >= 5) {
+  if (had !== undefined && level - had >= LEVEL_JUMP_LIMIT) {
+    // REFUSED, not merely counted. A level moves by one at a time in Morrowind: there is no
+    // legitimate path that produces a jump this size, so unlike the inventory bar below there
+    // is no false positive to trade against. Dropping the message leaves the server's own
+    // level standing, and the client's next declaration is measured against that.
     noteGain(ctx, player, 'level_jump', { from: had, to: level });
+    return false;
   }
   // Level-up is a specced flush point.
   ctx.store.update(player.charId, (doc) => (doc.stats = { ...doc.stats, level }), 'now');
@@ -200,8 +205,19 @@ function handleSpellbook(ctx: StateCtx, player: Player, body: LTable): boolean {
 // declared hoard is visible at all.
 // ponytail: heuristic, not a ledger. A real ledger needs purchase/barter to be server-side
 // first, otherwise every shopping trip is a false positive.
-const IMPLAUSIBLE_STACK = 5000;   // one item id gaining this much in a single declaration
-const IMPLAUSIBLE_DISTINCT = 100; // this many NEW item ids appearing at once
+// These now REJECT rather than count, so they are set where a false positive is implausible
+// rather than where a cheat is obvious — a refused declaration costs a real player their
+// inventory sync, which is worse than a cheat that has to stay under the bar. Barter is
+// client-side, so a merchant bought out in one go is the shape most likely to trip the breadth
+// rule; both were raised when they stopped being advisory. metrics.implausibleGains still
+// records every trip, so what real players actually hit is measurable before tightening.
+// A single stack is already hard-capped at MAX_COUNT (10000) by the shape check above, so this
+// rule only catches a near-max jump appearing in one step; the breadth rule below is the one
+// doing real work. Kept under MAX_COUNT deliberately — a threshold above it can never fire.
+const IMPLAUSIBLE_STACK = 9000;   // one item id gaining this much in a single declaration
+const IMPLAUSIBLE_DISTINCT = 250; // this many NEW item ids appearing at once
+// Morrowind levels one at a time; five at once is a declaration, not a fast player.
+const LEVEL_JUMP_LIMIT = 5;
 
 function noteGain(ctx: StateCtx, player: Player, kind: string, detail: Record<string, unknown>): void {
   metrics.implausibleGains.inc({ kind });
@@ -228,11 +244,16 @@ function handleInventory(ctx: StateCtx, player: Player, body: LTable): boolean {
     const had = before.get(id);
     if (had === undefined) newIds++;
     if (n - (had ?? 0) >= IMPLAUSIBLE_STACK) {
+      // REFUSED now, not merely counted. The declaration is dropped whole and the server's
+      // copy stands, so the client's next pass is measured against what the server believes
+      // rather than against the hoard it just claimed.
       noteGain(ctx, player, 'inventory_stack', { item: id, from: had ?? 0, to: n });
+      return false;
     }
   }
   if (newIds >= IMPLAUSIBLE_DISTINCT) {
     noteGain(ctx, player, 'inventory_breadth', { newItems: newIds, total: out.length });
+    return false;
   }
   ctx.store.update(player.charId, (doc) => (doc.inventory = out));
   return true;
