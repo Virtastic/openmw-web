@@ -10,6 +10,7 @@ import { Social, PARTY_STALE_MS } from '../src/core/social';
 import { SocialStore } from '../src/core/socialstore';
 import type { Player, Roster } from '../src/core/players';
 import type { WorldBrowser, WorldEntry } from '../src/core/worldbrowser';
+import { tmpDataDir } from './helpers';
 
 type Sent = { name: string; body: Record<string, unknown> };
 
@@ -509,4 +510,41 @@ test('a full party refuses another invite end to end', async () => {
   assert.equal(w.social.partyInvite(alice, 'i'), 'party_full');
   w.close();
   store.close();
+});
+
+// THE SAME SPLIT, BUT ON A REAL FILE WITH TWO CONNECTIONS.
+//
+// Every cross-world test above shares ONE in-memory SocialStore between the two harnesses.
+// That is the right unit — it isolates the cache from the storage — but it cannot see anything
+// the file-backed, two-connection case does differently, and two connections to one file is
+// what the gateway actually creates: one per world process. This is the topology that made the
+// per-process cache look correct for as long as only one process was asked.
+test('the split holds with two connections to one database file', async () => {
+  const dir = tmpDataDir();
+  const storeA = new SocialStore(dir);
+  const storeB = new SocialStore(dir);
+  const w1 = harness(storeA, fakeWorlds());
+  const w2 = harness(storeB, fakeWorlds());
+  const alice = w1.add('alice', 'Alice');
+  const bob = w2.add('bob', 'Bob');
+  w1.social.onJoin(alice);
+  w2.social.onJoin(bob);
+
+  assert.equal(w1.social.partyInvite(alice, 'bob'), 'ok');
+  w2.social.onJoin(bob);
+  assert.equal(w2.social.partyAccept(bob, 'alice'), 'ok');
+  assert.deepEqual(w1.social.partyMembersOf('alice').sort(), ['alice', 'bob'],
+    'the invite and accept did not cross the file');
+
+  // Bob leaves from his own world; world A is told nothing.
+  w2.social.partyLeave('bob');
+
+  assert.ok(!w1.social.partyMembersOf('alice').includes('bob'),
+    'world A still calls Bob a party member, so voice signalling to him is still authorised');
+  assert.equal(w1.social.partyView('alice'), null,
+    'world A keeps re-asserting a party that no longer exists');
+
+  w1.close(); w2.close();
+  storeA.close();
+  storeB.close();
 });
