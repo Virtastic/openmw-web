@@ -43,6 +43,16 @@ export interface FriendRow {
   since: number;
 }
 
+// How far back a sweep looks for departures. Wider than any plausible gap between two
+// heartbeats, so a disconnect cannot slip through, and narrow enough that the scan does not
+// grow with the lifetime of the server.
+const SWEEP_WINDOW_MS = 60 * 60 * 1000;
+// A presence row nobody has refreshed in this long belongs to a world process that died
+// without cleaning up.
+const PRESENCE_DEAD_MS = 5 * 60 * 1000;
+// How long an offline row is kept before it is deleted outright.
+const PRESENCE_KEEP_MS = 24 * 60 * 60 * 1000;
+
 export class SocialStore {
   private readonly db: DatabaseSync;
 
@@ -294,10 +304,33 @@ export class SocialStore {
   /** Accounts that have been offline EVERYWHERE for longer than `graceMs`. The grace is what
    *  separates a world switch from quitting. */
   goneLongerThan(now: number, graceMs: number): AccountKey[] {
+    const cutoff = now - graceMs;
+    // A LOWER BOUND AS WELL AS AN UPPER ONE. Nothing deletes presence rows — clearPresence
+    // only stamps offline_since — so without a floor this matched every account that has ever
+    // played, forever, and the caller ran a party lookup per row every 10 seconds in every
+    // world process. The window only has to be wide enough that a departure cannot be missed
+    // between two sweeps; anything older has already been handled.
+    const floor = cutoff - SWEEP_WINDOW_MS;
     const rows = this.db.prepare(
-      'SELECT account FROM presence WHERE offline_since IS NOT NULL AND offline_since <= ?',
-    ).all(now - graceMs) as { account: string }[];
-    return rows.map((r) => r.account);
+      'SELECT account FROM presence WHERE offline_since IS NOT NULL'
+      + ' AND offline_since <= ? AND offline_since > ?',
+    ).all(cutoff, floor) as { account: string }[];
+    // A world process that dies HARD never runs clearPresence, so its occupants keep
+    // offline_since NULL with a frozen updated_at: they are hidden from presentEverywhere by
+    // the TTL, but the sweep never fired for them and their party survived until the 24h
+    // staleness. A row nobody has refreshed in far longer than the heartbeat is gone.
+    const stale = this.db.prepare(
+      'SELECT account FROM presence WHERE offline_since IS NULL AND updated_at <= ? AND updated_at > ?',
+    ).all(cutoff - PRESENCE_DEAD_MS, floor - PRESENCE_DEAD_MS) as { account: string }[];
+    return [...new Set([...rows, ...stale].map((r) => r.account))];
+  }
+
+  /** Delete presence rows for accounts long gone. Called from the same heartbeat as the sweep;
+   *  without it the table grows by one row per account that ever played and never shrinks. */
+  prunePresence(now: number): number {
+    const res = this.write('DELETE FROM presence WHERE offline_since IS NOT NULL AND offline_since <= ?')
+      .run(now - PRESENCE_KEEP_MS) as { changes?: number } | undefined;
+    return Number(res?.changes ?? 0);
   }
 
   /** Everyone online across every world, fresher than `ttlMs`. */
@@ -381,6 +414,14 @@ export class SocialStore {
     return (this.db
       .prepare('SELECT fromAcct FROM friend_request WHERE toAcct = ? AND expires > ? ORDER BY sent')
       .all(to, now) as { fromAcct: string }[]).map((r) => r.fromAcct);
+  }
+
+  /** Every account this one has an outstanding request TO. One query instead of one per
+   *  candidate — see Social.relationsFor. */
+  sentTo(from: AccountKey, now: number): AccountKey[] {
+    return (this.db
+      .prepare('SELECT toAcct FROM friend_request WHERE fromAcct = ? AND expires > ?')
+      .all(from, now) as { toAcct: string }[]).map((r) => r.toAcct);
   }
 
   // Outstanding requests SENT by an account, used to cap them — without a cap this is a
@@ -487,9 +528,25 @@ export class SocialStore {
       { account: string }[]).map((r) => r.account);
   }
 
-  partyAddMember(key: string, account: AccountKey, now: number): void {
+  /** Add a member, refusing if the party is already at `cap`. Returns false when it is full.
+   *
+   *  THE CAP IS CHECKED HERE, not by the caller. social.ts checked its own in-memory copy of
+   *  the member set, which is per-process: two invitees accepting in two different world
+   *  processes against a 7-member party both read 7 and both inserted, and the party ended up
+   *  over the limit with party-scaled loot and quest credit fanning out across it. This read
+   *  and the insert are one synchronous call against the same connection, so nothing can slip
+   *  between them. */
+  partyAddMember(key: string, account: AccountKey, now: number, cap = Infinity): boolean {
+    const already = this.db.prepare('SELECT 1 FROM party_member WHERE account = ? AND party = ?')
+      .get(account, key) !== undefined;
+    if (!already) {
+      const n = (this.db.prepare('SELECT COUNT(*) AS n FROM party_member WHERE party = ?')
+        .get(key) as { n: number }).n;
+      if (n >= cap) return false;
+    }
     this.write('INSERT OR REPLACE INTO party_member (account, party) VALUES (?, ?)').run(account, key);
     this.partyTouch(key, now);
+    return true;
   }
 
   partyRemoveMember(account: AccountKey): void {

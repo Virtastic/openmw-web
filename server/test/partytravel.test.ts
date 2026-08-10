@@ -351,3 +351,162 @@ test('an expired invite cannot be accepted, and a block drops it', async () => {
   w.close();
   store.close();
 });
+
+// A MEMBERSHIP CHANGE MADE IN ANOTHER WORLD MUST BE VISIBLE HERE.
+//
+// social.ts kept `parties` and `partyOf` as a per-process cache, and loadParty began with
+// `if (this.partyOf.has(acct)) return`. The maps were only ever added to for remote changes —
+// deletions happened solely for actions taken in the same process. So a member who left in
+// world B stayed in world A's party forever: the panel re-asserted them every 10 seconds via
+// refreshPresenceViews, a leader handover in B never reached A (both processes then believed
+// a different account led, and both passed isPartyLeader), and partyMembersOf — which is the
+// authorization check for VoiceSignal — kept returning someone who had walked out.
+test('a member who leaves in one world stops being a member in the other', async () => {
+  const store = new SocialStore(':memory:');
+  const w1 = harness(store, fakeWorlds());
+  const w2 = harness(store, fakeWorlds());
+  const alice = w1.add('alice', 'Alice');
+  const bob = w2.add('bob', 'Bob');
+  w1.social.onJoin(alice);
+  w2.social.onJoin(bob);
+
+  assert.equal(w1.social.partyInvite(alice, 'bob'), 'ok');
+  w2.social.onJoin(bob);
+  assert.equal(w2.social.partyAccept(bob, 'alice'), 'ok');
+
+  // Both worlds agree there is a party of two.
+  assert.deepEqual(w1.social.partyMembersOf('alice').sort(), ['alice', 'bob']);
+  assert.deepEqual(w2.social.partyMembersOf('bob').sort(), ['alice', 'bob']);
+
+  // Bob leaves from HIS world. World A took no part in this.
+  w2.social.partyLeave('bob');
+
+  assert.ok(!w1.social.partyMembersOf('alice').includes('bob'),
+    'world A still calls Bob a party member, so voice signalling to him is still authorised');
+  assert.equal(w1.social.partyView('alice'), null,
+    'the panel in world A must stop showing a party of one it re-asserts every 10 seconds');
+  w1.close(); w2.close();
+  store.close();
+});
+
+// Leadership is what gates PartyTravel and the party settings. Two processes each believing
+// they hold it means two people can drag the group to different worlds.
+test('a leader handover in one world is seen by the other', async () => {
+  const store = new SocialStore(':memory:');
+  const w1 = harness(store, fakeWorlds());
+  const w2 = harness(store, fakeWorlds());
+  const alice = w1.add('alice', 'Alice');
+  const bob = w2.add('bob', 'Bob');
+  const carol = w2.add('carol', 'Carol');
+  w1.social.onJoin(alice);
+  w2.social.onJoin(bob);
+  w2.social.onJoin(carol);
+
+  assert.equal(w1.social.partyInvite(alice, 'bob'), 'ok');
+  w2.social.onJoin(bob);
+  assert.equal(w2.social.partyAccept(bob, 'alice'), 'ok');
+  assert.equal(w1.social.partyInvite(alice, 'carol'), 'ok');
+  w2.social.onJoin(carol);
+  assert.equal(w2.social.partyAccept(carol, 'alice'), 'ok');
+
+  assert.equal(w1.social.isPartyLeader('alice'), true);
+  assert.equal(w2.social.isPartyLeader('alice'), true);
+
+  // Alice leaves from her own world, which hands leadership on.
+  w1.social.partyLeave('alice');
+
+  assert.equal(w1.social.isPartyLeader('alice'), false, 'the old leader still leads in world A');
+  assert.equal(w2.social.isPartyLeader('alice'), false,
+    'world B still believes Alice leads, so two accounts can both drag the party');
+  const leaderNow = w2.social.partyView('bob')?.leader;
+  assert.ok(leaderNow === 'bob' || leaderNow === 'carol', `unexpected leader ${String(leaderNow)}`);
+  assert.equal(w1.social.partyView('bob')?.leader, leaderNow,
+    'the two worlds name different party leaders');
+  store.close();
+  w1.close(); w2.close();
+});
+
+// INVITING SOMEONE MUST NOT PUT YOU IN A PARTY BY YOURSELF.
+//
+// partyInvite used to call partyCreate immediately, so the inviter was in a real, persisted
+// party of one from the moment they clicked. The already_in_party check reads the store, so
+// from everyone else's side they were instantly un-invitable — and if the invitee never
+// accepted, the invite expired in two minutes and the phantom party outlived it. "I invited
+// Bob, he never got it, and now nobody can invite me."
+test('an unaccepted invite leaves the inviter invitable by someone else', async () => {
+  const store = new SocialStore(':memory:');
+  const w = harness(store, fakeWorlds());
+  const alice = w.add('alice', 'Alice');
+  const bob = w.add('bob', 'Bob');
+  const carol = w.add('carol', 'Carol');
+  [alice, bob, carol].forEach((p) => w.social.onJoin(p));
+
+  assert.equal(w.social.partyInvite(alice, 'bob'), 'ok');
+  assert.equal(store.partyOfAccount('alice'), undefined,
+    'inviting created a party of one, which makes the inviter un-invitable');
+
+  // Carol can still invite Alice, because Alice is not actually in a party.
+  assert.equal(w.social.partyInvite(carol, 'alice'), 'ok');
+  assert.equal(w.social.partyAccept(alice, 'carol'), 'ok');
+  assert.deepEqual(w.social.partyMembersOf('alice').sort(), ['alice', 'carol']);
+  w.close();
+  store.close();
+});
+
+// The party still has to come into existence when someone accepts.
+test('accepting an invite creates the party with the inviter leading', async () => {
+  const store = new SocialStore(':memory:');
+  const w = harness(store, fakeWorlds());
+  const alice = w.add('alice', 'Alice');
+  const bob = w.add('bob', 'Bob');
+  w.social.onJoin(alice); w.social.onJoin(bob);
+
+  assert.equal(w.social.partyInvite(alice, 'bob'), 'ok');
+  assert.equal(w.social.partyAccept(bob, 'alice'), 'ok');
+  assert.deepEqual(w.social.partyMembersOf('alice').sort(), ['alice', 'bob']);
+  assert.equal(w.social.isPartyLeader('alice'), true);
+  w.close();
+  store.close();
+});
+
+// The cap belongs to the STORE, in the same call as the insert. social.ts checked its own
+// in-memory member set, which is per-process: two invitees accepting in two different world
+// processes both read the same stale count and both inserted, and the party ended up over its
+// limit with party-scaled loot and quest credit fanning out across it.
+test('the store refuses a member past the cap, whatever the caller believed', async () => {
+  const store = new SocialStore(':memory:');
+  store.partyCreate('pk', 'alice', 1);
+  for (const m of ['b', 'c', 'd', 'e', 'f', 'g', 'h']) {
+    assert.equal(store.partyAddMember('pk', m, 1, 8), true, `adding ${m}`);
+  }
+  assert.equal(store.partyMembers('pk').length, 8);
+
+  // The ninth, from a process whose cache still said seven.
+  assert.equal(store.partyAddMember('pk', 'i', 1, 8), false);
+  assert.equal(store.partyMembers('pk').length, 8, 'the party went over its cap');
+
+  // Re-adding someone already in the party is not a new seat, so it must not be refused.
+  assert.equal(store.partyAddMember('pk', 'h', 2, 8), true);
+  assert.equal(store.partyMembers('pk').length, 8);
+  store.close();
+});
+
+test('a full party refuses another invite end to end', async () => {
+  const store = new SocialStore(':memory:');
+  const w = harness(store, fakeWorlds());
+  const alice = w.add('alice', 'Alice');
+  w.social.onJoin(alice);
+  for (const n of ['b', 'c', 'd', 'e', 'f', 'g', 'h']) {
+    const p = w.add(n, n.toUpperCase());
+    w.social.onJoin(p);
+    assert.equal(w.social.partyInvite(alice, n), 'ok', `invite ${n}`);
+    assert.equal(w.social.partyAccept(p, 'alice'), 'ok', `accept ${n}`);
+  }
+  assert.equal(w.social.partyMembersOf('alice').length, 8);
+
+  const ninth = w.add('i', 'I');
+  w.social.onJoin(ninth);
+  assert.equal(w.social.partyInvite(alice, 'i'), 'party_full');
+  w.close();
+  store.close();
+});

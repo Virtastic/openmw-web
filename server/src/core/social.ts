@@ -192,6 +192,28 @@ export class Social {
     return {};
   }
 
+  /** relationTo for a WHOLE list, in three queries instead of three per subject.
+   *
+   *  The Players panel is rebuilt every 10 seconds for every player in the world, against
+   *  everyone online server-wide — so relationTo ran once per PAIR, each call costing up to
+   *  three freshly-prepared SQLite statements against the cross-process WAL file, on the event
+   *  loop. At 200 players here and 256 online that is ~51,000 pairs and up to ~150,000
+   *  synchronous queries every 10 seconds, in every world process at once. Invisible below
+   *  about 50 concurrent players and a wall above it. */
+  relationsFor(viewer: AccountKey): (subject: AccountKey) => { friend?: true; reqOut?: true; reqIn?: true } {
+    const now = this.d.now();
+    const friends = new Set(this.d.store.friendsOf(viewer).map((f) => f.account));
+    const out = new Set(this.d.store.sentTo(viewer, now));
+    const inc = new Set(this.d.store.pendingFor(viewer, now));
+    return (subject) => {
+      if (viewer === subject) return {};
+      if (friends.has(subject)) return { friend: true };
+      if (out.has(subject)) return { reqOut: true };
+      if (inc.has(subject)) return { reqIn: true };
+      return {};
+    };
+  }
+
   /** Everyone online anywhere on the server, for the Players list. */
   onlineEverywhere(): PresenceRow[] {
     return this.presentRows();
@@ -346,12 +368,40 @@ export class Social {
   // accepted yet. Hydrating that party (to accept the invite from another world) must not
   // destroy the very thing it came to load.
   private loadParty(acct: AccountKey, allowSolo = false): void {
-    if (this.partyOf.has(acct)) return;
+    // NO EARLY RETURN ON A CACHE HIT. This used to begin `if (this.partyOf.has(acct)) return`,
+    // and the two maps were only ever ADDED to for remote changes — deletions happened only
+    // for actions taken in THIS process. So every membership change made in another world was
+    // invisible here permanently: a member who left in world B stayed listed in world A, and
+    // refreshPresenceViews re-asserted them to everyone every 10 seconds; a leader handover in
+    // B never arrived, so two processes each believed a different account led and both passed
+    // isPartyLeader; and partyMembersOf — which is the AUTHORIZATION check for VoiceSignal —
+    // kept returning someone who had left, so they stayed reachable by voice.
+    //
+    // The store is the truth and it is one indexed row plus one member query, so reconcile
+    // against it every time instead of trusting a cache with no invalidation.
+    // A party of ONE is normally stale rubbish, but it is legitimate and transient while an
+    // invite is outstanding — partyInvite creates the party then writes the invite. This
+    // process created it, so its presence in the cache is the evidence: dissolving on a
+    // reconcile would destroy the party the invitee is about to accept into.
+    const known = this.partyOf.has(acct);
     const row = this.d.store.partyOfAccount(acct);
-    if (!row) return;
+    if (!row) {
+      // Gone in the store means gone here, including the party object if we were its last
+      // local trace.
+      const stale = this.partyOf.get(acct);
+      if (stale !== undefined) {
+        this.partyOf.delete(acct);
+        const p = this.parties.get(stale);
+        p?.members.delete(acct);
+        if (p && p.members.size === 0) this.parties.delete(stale);
+      }
+      return;
+    }
     const members = this.d.store.partyMembers(row.key);
-    if (members.length <= 1 && !allowSolo) {
+    if (members.length <= 1 && !allowSolo && !known) {
       this.d.store.partyDissolve(row.key);
+      this.partyOf.delete(acct);
+      this.parties.delete(row.key);
       return;
     }
     this.d.store.partySweepStale(this.d.now() - PARTY_STALE_MS);
@@ -360,6 +410,14 @@ export class Social {
     if (!party) {
       party = { key: row.key, leader: row.leader, members: new Set(members) };
       this.parties.set(row.key, party);
+    }
+    // Mutated in place, not replaced: callers hold the object across a loadParty.
+    party.leader = row.leader; // a handover made in another world lands here
+    const live = new Set(members);
+    for (const m of [...party.members]) {
+      if (live.has(m)) continue;
+      party.members.delete(m);
+      if (this.partyOf.get(m) === row.key) this.partyOf.delete(m);
     }
     for (const m of members) {
       party.members.add(m);
@@ -623,6 +681,7 @@ export class Social {
   // ------------------------------------------------------------------- party
 
   private samePartyAs(a: AccountKey, b: AccountKey): boolean {
+    this.loadParty(a); this.loadParty(b);
     const pa = this.partyOf.get(a);
     return pa !== undefined && pa === this.partyOf.get(b);
   }
@@ -668,6 +727,7 @@ export class Social {
   }
 
   setPartySetting(player: Player, name: string, value: boolean): SocialFailure | 'ok' {
+    this.loadParty(player.accountKey);
     const key = this.partyOf.get(player.accountKey);
     const party = key !== undefined ? this.parties.get(key) : undefined;
     if (!party) return 'not_in_party';
@@ -679,6 +739,7 @@ export class Social {
   }
 
   isPartyLeader(acct: AccountKey): boolean {
+    this.loadParty(acct);
     const key = this.partyOf.get(acct);
     const party = key !== undefined ? this.parties.get(key) : undefined;
     return party?.leader === acct;
@@ -700,6 +761,7 @@ export class Social {
   }
 
   partyView(acct: AccountKey): PartyView | null {
+    this.loadParty(acct);
     const id = this.partyOf.get(acct);
     if (id === undefined) return null;
     const party = this.parties.get(id);
@@ -758,30 +820,43 @@ export class Social {
     if (targetAcct === from) return 'self';
     if (this.d.store.blockedEitherWay(from, targetAcct)) return 'blocked';
     if (this.presenceMode(targetAcct) === 'private') return 'private';
-    // Same as invite(): reachable means AVAILABLE, not co-present.
+    // Same as invite(): reachable means AVAILABLE, not co-present. Deliberately NOT gated on a
+    // live presence row — those are written on a 10s heartbeat, so gating here would refuse an
+    // invite to someone who joined eight seconds ago. An invite to a player who is genuinely
+    // offline is harmless now that the party is created on ACCEPT: it sits in the mailbox,
+    // drains on their next join if it is still inside the TTL, and leaves nothing behind if
+    // not.
     if (!this.isAvailable(targetAcct)) return 'not_online';
     // Ask the STORE, not the local map: partyOf is hydrated on join, so it knows nothing
     // about a player who is partied over in another world — and would happily double-invite
     // them into a second group.
     if (this.d.store.partyOfAccount(targetAcct) !== undefined) return 'already_in_party';
 
-    let key = this.partyOf.get(from);
-    if (key === undefined) {
-      // Stable platform-wide key: persisted, survives world hops and leader handover.
-      key = `p${this.d.now().toString(36)}${Math.floor(Math.random() * 36 ** 4).toString(36)}`;
-      this.parties.set(key, { key, leader: from, members: new Set([from]) });
-      this.partyOf.set(from, key);
-      this.d.store.partyCreate(key, from, this.d.now());
+    // THE PARTY IS CREATED ON ACCEPT, NOT ON INVITE. Creating it here put the inviter into a
+    // real, persisted party of ONE the moment they clicked invite — and the check above reads
+    // the store, so from everyone else's side they were now 'already_in_party' and could not
+    // be invited by anybody. If the invitee never accepted (they were offline, or just did
+    // not), the invite expired in two minutes and the phantom party outlived it: "I invited
+    // Bob, he never got it, and now nobody can invite me."
+    this.loadParty(from, true);
+    const key = this.partyOf.get(from);
+    const party = key !== undefined ? this.parties.get(key) : undefined;
+    if (party) {
+      if (party.leader !== from) return 'not_leader';
+      if (party.members.size >= this.maxParty) return 'party_full';
     }
-    const party = this.parties.get(key)!;
-    if (party.leader !== from) return 'not_leader';
-    if (party.members.size >= this.maxParty) return 'party_full';
 
     const now = this.d.now();
     this.d.store.addInvite(from, targetAcct, 'party', now, this.tuning.inviteTtlMs);
     this.deliverInvite(targetAcct, from, player.name, 'party');
-    this.sendParty(from);
+    if (party) this.sendParty(from);
     return 'ok';
+  }
+
+  /** A party key: stable, opaque and platform-wide — persisted, so it survives world hops and
+   *  leader handover. */
+  private newPartyKey(): string {
+    return `p${this.d.now().toString(36)}${Math.floor(Math.random() * 36 ** 4).toString(36)}`;
   }
 
   partyAccept(player: Player, fromAcct: AccountKey): SocialFailure | 'ok' {
@@ -794,13 +869,25 @@ export class Social {
     // caches filled on join, so accepting an invite that arrived from another world found
     // nothing here and answered 'not_in_party' — the party exists, just not in this process.
     this.loadParty(fromAcct, true);
-    const key = this.partyOf.get(fromAcct);
-    const party = key !== undefined ? this.parties.get(key) : undefined;
-    if (!party) return 'not_in_party';
-    if (party.members.size >= this.maxParty) return 'party_full';
+    let key = this.partyOf.get(fromAcct);
+    let party = key !== undefined ? this.parties.get(key) : undefined;
+    if (!party) {
+      // First acceptance makes the party. The inviter had none because partyInvite no longer
+      // creates one — see the note there.
+      key = this.newPartyKey();
+      party = { key, leader: fromAcct, members: new Set([fromAcct]) };
+      this.parties.set(key, party);
+      this.partyOf.set(fromAcct, key);
+      this.d.store.partyCreate(key, fromAcct, now);
+    }
+    // The cap is enforced by the STORE, in the same call as the insert: this local check is
+    // per-process, so two accepts landing in two different worlds both saw room.
+    if (!this.d.store.partyAddMember(party.key, me, now, this.maxParty)) {
+      this.d.store.removeInvite(fromAcct, me); // spent either way; see the note below
+      return 'party_full';
+    }
     party.members.add(me);
     this.partyOf.set(me, party.key);
-    this.d.store.partyAddMember(party.key, me, now);
     this.d.store.removeInvite(fromAcct, me);
     this.broadcastParty(party.key);
     return 'ok';

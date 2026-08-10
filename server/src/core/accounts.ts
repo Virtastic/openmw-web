@@ -362,11 +362,8 @@ export class AccountStore {
   // caller (it owns the PlayerStore). Returns false when the id does not belong to this
   // account — never trust a client-supplied id to name someone else's character.
   deleteCharacter(account: Account, charId: string): boolean {
-    const chars = account.characters;
-    if (!chars) return false;
-    const i = chars.findIndex((c) => c.id === charId);
-    if (i < 0) return false;
-    void chars; void i;
+    // No precheck against the caller's copy: mutate() re-reads the doc by key, so a check out
+    // here can only disagree with the one inside. The closure below is the whole decision.
     return this.mutate(account, (doc) => {
       const list = doc.characters;
       if (!list) return undefined;
@@ -384,13 +381,11 @@ export class AccountStore {
   // appearance. Only ever replaces the PLACEHOLDER, so a slot the player named themselves is
   // never overwritten. Flushed now: it is once per character and the tile shows it immediately.
   nameCharacter(account: Account, charId: string, name: string): void {
-    const char = account.characters?.find((c) => c.id === charId);
     // Never accept a placeholder AS the name: the client used to send the session name, which
     // before chargen is the slot label, so "New character" was written in as though the player
     // had chosen it — and then this guard refused every later correction, because the slot no
     // longer looked like a placeholder. Reject the placeholder on the way in as well as out.
     if (PLACEHOLDER_NAMES.has(name.trim().toLowerCase())) return;
-    void char;
     this.mutate(account, (doc) => {
       const c = doc.characters?.find((x) => x.id === charId);
       if (!c || c.name === name || !PLACEHOLDER_NAMES.has(c.name.toLowerCase())) return undefined;
@@ -422,8 +417,7 @@ export class AccountStore {
     const oldLower = account.username?.toLowerCase();
     if (oldLower === usernameLower) {
       // Case-only change of one's own handle: no uniqueness or cooldown question.
-      account.username = username;
-      this.dirty.add(accountKey);
+      this.mutate(account, (doc) => { doc.username = username; return 'ok'; });
       return 'ok';
     }
     if (account.username !== undefined && account.usernameChangedAt !== undefined) {
@@ -456,33 +450,47 @@ export class AccountStore {
       // and impersonate the player their friends still know by that name.
       if (oldLower !== undefined) put.run(oldLower, accountKey, reservedUntil ?? null);
     });
-    account.username = username;
-    account.usernameChangedAt = new Date().toISOString();
-    this.dirty.add(accountKey);
+    // WRITE-THROUGH, not the dirty queue. flush() writes this.cache.get(key) while get()
+    // swaps the cached object on every clean read-through — the same shape that lost
+    // characters. Here it was worse than a lost field: the usernames row above is already
+    // committed, so a dropped write left the handle CLAIMED and reserved for 30 days while the
+    // account doc had no username. The player reads as un-onboarded and nobody, including
+    // them, can ever claim that handle.
+    this.mutate(account, (doc) => {
+      doc.username = username;
+      doc.usernameChangedAt = new Date().toISOString();
+      return 'ok';
+    });
     return 'ok';
   }
 
   setEmail(account: Account, email: string, marketingOptIn?: boolean): void {
-    account.email = email;
-    if (marketingOptIn !== undefined) account.marketingOptIn = marketingOptIn;
-    this.dirty.add(account.name.toLowerCase());
+    // Write-through: this takes a CALLER-HELD Account, so the dirty queue could write a
+    // different object than the one just mutated. See setUsername.
+    this.mutate(account, (doc) => {
+      doc.email = email;
+      if (marketingOptIn !== undefined) doc.marketingOptIn = marketingOptIn;
+      return 'ok';
+    });
   }
 
-  // M8: rank/ban mutations go through the dirty queue like lastSeen. The account must be
-  // in cache (every caller has just awaited get()).
+  // M8: rank/ban. Written through rather than queued — a ban that a later flush drops is a
+  // banned player still playing. The account must be in cache (every caller has just awaited
+  // get()).
   setRank(name: string, rank: number): void {
     const account = this.cache.get(name.toLowerCase());
     if (!account) return;
-    account.rank = rank;
-    this.dirty.add(name.toLowerCase());
+    this.mutate(account, (doc) => { doc.rank = rank; return 'ok'; });
   }
 
   setBanned(name: string, banned: boolean): void {
     const account = this.cache.get(name.toLowerCase());
     if (!account) return;
-    if (banned) account.banned = true;
-    else delete account.banned;
-    this.dirty.add(name.toLowerCase());
+    this.mutate(account, (doc) => {
+      if (banned) doc.banned = true;
+      else delete doc.banned;
+      return 'ok';
+    });
   }
 
   // Erasure (--delete-account): forget the cached copy so nothing rewrites the file we
@@ -491,8 +499,16 @@ export class AccountStore {
     const key = name.toLowerCase();
     this.cache.delete(key);
     this.dirty.delete(key);
+    // keysOnDisk too, or existsNow keeps answering true for an account whose row is about to
+    // be unlinked — which made a deleted account still resolve for friend-request name lookup
+    // until the next restart.
+    this.keysOnDisk.delete(key);
   }
 
+  // The one mutation that stays on the dirty queue on purpose: it fires on every join and
+  // carries nothing anyone would miss, so batching it is right. It is also the only writer
+  // left, which is what makes mutate()'s dirty.delete() harmless — there is no longer a queued
+  // copy holding a field that a write-through would silently roll back.
   touchLastSeen(name: string): void {
     const key = name.toLowerCase();
     const account = this.cache.get(key);

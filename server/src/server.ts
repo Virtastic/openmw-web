@@ -1119,6 +1119,8 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     if (everyone.length === 0) return;
     for (const p of roster.humansInWorld()) {
       if (p.bot) continue; // nothing is listening on a bot's peer
+      // Three queries for this viewer, not three per candidate. See Social.relationsFor.
+      const relation = social.relationsFor(p.accountKey);
       // PER RECIPIENT, because the interesting part of a row is the RELATIONSHIP: the panel
       // offered "add friend" to people you were already friends with, and to people whose
       // request you had already sent, since a row carried only {id, name}. Flags, not account
@@ -1130,7 +1132,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
           return {
             ...(local && local.inWorld ? { id: local.id } : {}),
             name: r.name,
-            ...social.relationTo(p.accountKey, r.account),
+            ...relation(r.account),
           };
         });
       p.peer.sendEvent('PlayerList', { players: list as unknown as never });
@@ -1159,6 +1161,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       // this is already the once-per-10s social heartbeat, and sweepExpired had NO production
       // caller at all — only a test — so the rows accumulated forever.
       socialStore.sweepExpired(Date.now());
+      socialStore.prunePresence(Date.now());
     } catch (err) {
       log('warn', 'presence.tick_failed', { error: String(err) });
     }
