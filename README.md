@@ -138,6 +138,14 @@ server that owns the shared world and a client that asks it what happened.
 else in it. *Party* puts your group in one world together. *Public* is a shared world
 with strangers in it. Switching moves your character; it does not restart the game.
 
+**Your copy follows you.** Sign in and upload your Morrowind once; it streams back to you on
+any machine you sign in from, and your saves go with it. Uploads are private to the account,
+never shared between players, and checked against a manifest so unrelated files are refused
+rather than stored.
+
+There is a **cloud locker** tile for this on its own, without multiplayer: same account, same
+uploaded files, single player. Upload once, play anywhere.
+
 **The server decides.** NPCs, combat resolution, loot and cell state are simulated
 server-side by a headless copy of the engine that holds authority over the cells players
 are standing in. A modified client can lie about its own input and gets nowhere: it

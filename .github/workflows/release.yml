@@ -126,18 +126,48 @@ jobs:
       - name: Checksums
         run: cd dist && shasum -a 256 openmw-web-*.zip openmw-web-*.tar.gz > SHA256SUMS
 
+      # Release notes come from CHANGELOG.md, so what people read on the release page is the
+      # same text the repo carries. The body used to be a hardcoded template identical for
+      # every version, which meant v1.1.0 - the multiplayer release - shipped notes describing
+      # a single player bundle and never mentioning multiplayer, the locker or the security
+      # fixes. Falls back to the boilerplate alone if the version has no changelog section,
+      # so a release never fails over its own notes.
+      - name: Compose release notes
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          VER="${TAG#v}"
+          : > /tmp/notes.md
+          if [ -f CHANGELOG.md ]; then
+            awk -v want="## $VER" '
+              $0 == want { f = 1; next }
+              /^## / { f = 0 }
+              f { print }
+            ' CHANGELOG.md > /tmp/section.md
+            if [ -s /tmp/section.md ]; then
+              cat /tmp/section.md >> /tmp/notes.md
+              printf '\n---\n\n' >> /tmp/notes.md
+            else
+              echo "no CHANGELOG.md section for $VER - publishing boilerplate only" >&2
+            fi
+          fi
+          cat >> /tmp/notes.md <<EOF
+          **Play Morrowind in your browser.** Prebuilt WebAssembly engine - unzip the web bundle, run \`python3 server.py\`, open desktop Chrome. See [SELF_HOSTING.md](https://github.com/Virtastic/openmw-web/blob/$TAG/SELF_HOSTING.md).
+
+          - \`openmw-web-*.zip\` - grab-and-go: prebuilt engine + web shell + free demo world
+          - \`openmw-web-src-*.tar.gz\` - the exact source snapshot (GPLv3 Corresponding Source)
+
+          WASM port (c) 2025-2026 [Virtastic](https://virtastic.app) - GPL-3.0-or-later - No Morrowind game data included.
+          EOF
+          echo "--- composed $(wc -c </tmp/notes.md) bytes ---"
+          head -5 /tmp/notes.md
+
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
           name: "OpenMW-Web ${{ steps.tag.outputs.tag }} — by Virtastic"
-          body: |
-            **Play Morrowind in your browser.** Prebuilt WebAssembly engine — unzip the web bundle, run `python3 server.py`, open desktop Chrome. See [SELF_HOSTING.md](https://github.com/Virtastic/openmw-web/blob/${{ steps.tag.outputs.tag }}/SELF_HOSTING.md).
-
-            - `openmw-web-*.zip` — grab-and-go: prebuilt engine + web shell + free demo world
-            - `openmw-web-src-*.tar.gz` — the exact source snapshot (GPLv3 Corresponding Source)
-
-            WASM port © 2025–2026 [Virtastic](https://virtastic.app) · GPL-3.0-or-later · No Morrowind game data included.
+          body_path: /tmp/notes.md
           files: |
             dist/openmw-web-${{ steps.tag.outputs.tag }}.zip
             dist/openmw-web-src-${{ steps.tag.outputs.tag }}.tar.gz
