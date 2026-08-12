@@ -1,7 +1,5 @@
 #include "mousemanager.hpp"
 
-#include <algorithm> // std::clamp, for the browser's delta-driven GUI cursor
-
 #include <MyGUI_Button.h>
 #include <MyGUI_InputManager.h>
 #include <MyGUI_RenderManager.h>
@@ -29,7 +27,6 @@ namespace MWInput
         BindingsManager* bindingsManager, SDLUtil::InputWrapper* inputWrapper, SDL_Window* window)
         : mBindingsManager(bindingsManager)
         , mInputWrapper(inputWrapper)
-        , mWindow(window)
         , mGuiCursorX(0)
         , mGuiCursorY(0)
         , mMouseWheel(0)
@@ -64,36 +61,8 @@ namespace MWInput
             // game mode does not move the position of the GUI cursor
             MWBase::WindowManager* winMgr = MWBase::Environment::get().getWindowManager();
             float uiScale = winMgr->getScalingFactor();
-#ifdef __EMSCRIPTEN__
-            // BROWSER: THE CURSOR IS OURS TO DRAW, so the pointer lock is never dropped for an
-            // in-game menu (see updateCursorMode below). Absolute coordinates do not advance
-            // while the pointer is locked, so the GUI cursor is integrated from the relative
-            // deltas instead — which is what the engine already draws, and what every click,
-            // press and release reads, so nothing downstream changes.
-            //
-            // Why bother: a browser announces "press Esc to show your cursor" EVERY time a page
-            // takes the pointer, and taking it back for every inventory, dialogue and container
-            // screen meant that banner appeared constantly. The notice itself cannot be
-            // suppressed by a page; not surrendering the lock in the first place is the only
-            // thing that stops it.
-            if (mInputWrapper->getMouseRelative())
-            {
-                int winW = 0, winH = 0;
-                SDL_GetWindowSize(mWindow, &winW, &winH);
-                mGuiCursorX = std::clamp(mGuiCursorX + static_cast<float>(arg.xrel) / uiScale,
-                    0.f, static_cast<float>(winW) / uiScale - 1.f);
-                mGuiCursorY = std::clamp(mGuiCursorY + static_cast<float>(arg.yrel) / uiScale,
-                    0.f, static_cast<float>(winH) / uiScale - 1.f);
-            }
-            else
-            {
-                mGuiCursorX = static_cast<float>(arg.x) / uiScale;
-                mGuiCursorY = static_cast<float>(arg.y) / uiScale;
-            }
-#else
             mGuiCursorX = static_cast<float>(arg.x) / uiScale;
             mGuiCursorY = static_cast<float>(arg.y) / uiScale;
-#endif
 
             mMouseWheel = static_cast<int>(arg.z);
 
@@ -231,26 +200,6 @@ namespace MWInput
 
         bool wasRelative = mInputWrapper->getMouseRelative();
         bool isRelative = !MWBase::Environment::get().getWindowManager()->isGuiMode();
-
-#ifdef __EMSCRIPTEN__
-        // KEEP a lock we already hold; never TAKE one for a menu. `wasRelative` is the whole
-        // point of that distinction: SDL relative mode is pointer lock, and a browser only
-        // grants pointer lock in response to a user gesture. Forcing it on unconditionally
-        // meant that any GUI opened WITHOUT a lock already held - chargen, which runs the
-        // moment the game starts and before the player has clicked the canvas - put us in the
-        // delta branch of mouseMoved while the browser delivered no deltas at all. Absolute
-        // coordinates were then ignored, so the GUI cursor never moved, never activated and
-        // never drew: a class-selection dialog with no pointer and no way to click it.
-        //
-        // With the gate, the two cases separate cleanly:
-        //   in-game -> inventory : lock already held, kept, no "press Esc" notice (the point)
-        //   chargen / no lock yet: stays absolute, cursor behaves exactly as it always did
-        // Pressing Esc to release the lock also lands in the second case, which is the escape
-        // hatch working rather than a state to recover from.
-        // `grab` is already false for the main menu and the console, so those still release it.
-        if (!isRelative && grab && wasRelative)
-            isRelative = true;
-#endif
 
         // don't keep the pointer away from the window edge in gui mode
         // stop using raw mouse motions and switch to system cursor movements

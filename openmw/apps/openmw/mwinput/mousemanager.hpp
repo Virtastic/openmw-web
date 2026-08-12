@@ -43,9 +43,6 @@ namespace MWInput
     private:
         BindingsManager* mBindingsManager;
         SDLUtil::InputWrapper* mInputWrapper;
-        // Kept for the browser's delta-driven GUI cursor, which has to clamp to the current
-        // viewport — a size taken once at construction goes wrong the moment the window resizes.
-        SDL_Window* mWindow;
 
         float mGuiCursorX;
         float mGuiCursorY;
