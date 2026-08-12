@@ -38,6 +38,13 @@ export interface TestBotDeps {
   spawn: { cellKey: string; x: number; y: number; z: number };
   /** Content record ids. Empty = no appearance broadcast, so no puppet is spawned. */
   look?: { race: string; head: string; hair: string; class: string };
+  /** PER-BOT appearances, one entry per bot, cycled if there are more bots than entries.
+   *  Without this every bot wore the SAME race, head, hair and class, and isMale was hardcoded
+   *  true — so "three players standing in the village" was three identical men, which is worse
+   *  than useless for a screenshot and reads as a rendering bug rather than a roster.
+   *  Each entry: "race|head|hair|class". Sex is derived from the head id, which encodes _m_
+   *  or _f_, so it can never disagree with the mesh it names. */
+  looks?: string[];
   /** Character docs live here; a bot needs one to have a character at all. */
   players: PlayerStore;
   /** Is THIS world the public one? An unpartied bot hangs out there and nowhere else. */
@@ -75,6 +82,29 @@ export async function startTestBots(deps: TestBotDeps): Promise<RunningTestBots>
   const { roster, social, accounts, players, count, prefix, spawn } = deps;
   const pool = deps.names ?? [];
   const look = deps.look;
+
+  // Parsed once. A malformed entry is DROPPED with a warning rather than spawning a broken
+  // puppet: config.default.toml is explicit that these are content record ids and a wrong one
+  // is worse than none.
+  interface BotLook { race: string; head: string; hair: string; class: string; isMale: boolean }
+  const looks: BotLook[] = [];
+  for (const raw of deps.looks ?? []) {
+    const [race, head, hair, cls] = raw.split('|').map((x) => x.trim());
+    if (!race || !head || !hair || !cls) {
+      log('warn', 'devbot.look_malformed', { entry: raw, want: 'race|head|hair|class' });
+      continue;
+    }
+    // The head id carries the sex (b_n_<race>_m_head_01). Deriving it means the body can
+    // never contradict the head.
+    looks.push({ race, head, hair, class: cls, isMale: !/_f_/.test(head) });
+  }
+  const lookFor = (idx: number): BotLook | undefined => {
+    if (looks.length > 0) return looks[idx % looks.length];
+    if (look && look.race && look.head && look.class) {
+      return { race: look.race, head: look.head, hair: look.hair, class: look.class, isMale: true };
+    }
+    return undefined;
+  };
   const timers = new Set<NodeJS.Timeout>();
   const bots: Player[] = [];
 
@@ -154,16 +184,17 @@ export async function startTestBots(deps: TestBotDeps): Promise<RunningTestBots>
     players.update(charId, (doc) => {
       doc.position = { cellKey: spawn.cellKey,
         x: spawn.x + Math.cos(ringAng) * 120, y: spawn.y + Math.sin(ringAng) * 120, z: spawn.z };
-      if (look && look.race && look.head && look.class) {
-        doc.appearance = { race: look.race, head: look.head, hair: look.hair,
-          class: look.class, name, isMale: true };
+      const mine = lookFor(i - 1);
+      if (mine) {
+        doc.appearance = { race: mine.race, head: mine.head, hair: mine.hair,
+          class: mine.class, name, isMale: mine.isMale };
       }
     });
 
     ids.push({ name, accountKey, charId, peer });
   }
 
-  const dressed = !!(look && look.race && look.head && look.class);
+  const dressed = looks.length > 0 || !!(look && look.race && look.head && look.class);
 
   const arrive = (b: BotId): void => {
     const self = roster.addAuthed(b.name, b.accountKey, 0, b.peer, '127.0.0.1');
@@ -184,12 +215,13 @@ export async function startTestBots(deps: TestBotDeps): Promise<RunningTestBots>
       yaw: 0, pitch: 0, anim: 0 } as never;
     roster.joinWorld(self);
     here.set(b.accountKey, self);
-    if (dressed) {
+    const mine = lookFor(idx);
+    if (dressed && mine) {
       for (const p of roster.inWorld()) {
         if (p.id === self.id) continue;
         p.peer.sendEvent('PlayerAppearance', {
-          id: self.id, race: look!.race, head: look!.head, hair: look!.hair,
-          class: look!.class, name: b.name, isMale: true,
+          id: self.id, race: mine.race, head: mine.head, hair: mine.hair,
+          class: mine.class, name: b.name, isMale: mine.isMale,
         } as never);
       }
     }

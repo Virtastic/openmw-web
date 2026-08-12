@@ -67,14 +67,34 @@ export class AttioHook {
     private readonly fetchFn: typeof fetch = fetch,
   ) {
     this.db = openDb(join(settings.dataDir, 'attio.db'), ATTIO_MIGRATIONS);
+    if (settings.apiKey !== '' && !this.enabled) {
+      // Configured but unusable: worth one loud line, because the operator clearly INTENDED
+      // the CRM to work and would otherwise only find out from a log full of retries.
+      log('warn', 'attio.disabled_bad_base_url', {
+        baseUrl: settings.baseUrl,
+        fix: 'set [integrations] attioBaseUrl to an absolute https URL (default https://api.attio.com)',
+      });
+    }
     if (this.enabled) {
       this.timer = setInterval(() => void this.flush(), FLUSH_INTERVAL_MS);
       this.timer.unref();
     }
   }
 
+  // A KEY IS NOT ENOUGH; the base URL has to be usable too. With baseUrl empty (which a
+  // deployment can do by writing attioBaseUrl = "" over the default) every request built a
+  // RELATIVE url, fetch threw "Failed to parse URL from /v2/objects/...", and the queue retried
+  // it on every drain forever — filling the log with attio.unreachable and never draining a
+  // single record. Treated like a missing key: inert, and said once at boot rather than
+  // shouted on a timer.
   get enabled(): boolean {
-    return this.settings.apiKey !== '';
+    if (this.settings.apiKey === '') return false;
+    try {
+      const u = new URL(this.settings.baseUrl);
+      return u.protocol === 'http:' || u.protocol === 'https:';
+    } catch {
+      return false;
+    }
   }
 
   // Hot-path side: one local row insert, then an async kick. Never throws.

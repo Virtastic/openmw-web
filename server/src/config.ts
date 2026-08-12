@@ -130,6 +130,8 @@ export interface Config {
      *  CONTENT record ids, so there is no safe universal default — a wrong one produces a
      *  broken puppet, which is worse than none. Set them to ids that exist in the data this
      *  server actually loads. */
+    /** Per-bot "race|head|hair|class" entries; overrides botRace/botHead/botHair/botClass. */
+    botLooks: string[];
     botRace: string; botHead: string; botHair: string; botClass: string;
   };
   moderation: { chatLog: boolean; retentionDays: number; contextLines: number };
@@ -465,6 +467,7 @@ function validate(t: Tree): Config {
       botNames: optStrArray(t, 'dev', 'botNames',
         ['Kestrel', 'Talvyn', 'Sable', 'Ferrun', 'Nyra', 'Orin', 'Vesk', 'Draleth']),
       botPrefix: optStr(t, 'dev', 'botPrefix', 'Bot'),
+      botLooks: optStrArray(t, 'dev', 'botLooks', []),
       botRace: optStr(t, 'dev', 'botRace', ''),
       botHead: optStr(t, 'dev', 'botHead', ''),
       botHair: optStr(t, 'dev', 'botHair', ''),

@@ -251,6 +251,19 @@ botPrefix = "Bot"
 #   botHead = "b_n_dark elf_m_head_01"
 #   botHair = "b_n_dark elf_m_hair_01"
 #   botClass = "acrobat"
+# PER-BOT looks, one entry per bot, cycled if there are more bots than entries. This is what
+# makes a group of bots read as several people rather than one person repeated: without it every
+# bot shares botRace/botHead/botHair/botClass below and they are identical clones.
+# Each entry is "race|head|hair|class". Sex is taken from the head id (which encodes _m_ or
+# _f_), so the body can never contradict the head. Same caveat as below: these are CONTENT
+# record ids and a wrong one spawns a broken puppet, so only list ids your game data has.
+# Values verified present in retail Morrowind.esm:
+#   botLooks = [
+#     "dark elf|b_n_dark elf_f_head_01|b_n_dark elf_f_hair_01|healer",
+#     "breton|b_n_breton_f_head_01|b_n_breton_f_hair_01|mage",
+#     "imperial|b_n_imperial_m_head_01|b_n_imperial_m_hair_00|agent",
+#   ]
+botLooks = []
 botRace = ""
 botHead = ""
 botHair = ""

@@ -2421,6 +2421,18 @@
            // So DOWNLOAD content files in full into memory (they total ~90MB) and only STREAM the
            // big BSAs (meshes/textures, read a little at a time). This mirrors the retail path.
            var LD = window.__omwLoading;
+           // SHOW IT, don't just set() it. set() writes values into the overlay; show() is what
+           // makes the overlay VISIBLE, and by this point it is almost always hidden — the boot
+           // screen finished while the upload wizard (its own overlay) was on top. So the
+           // download loop below reported progress into an element with display:none and the
+           // player watched a BLACK SCREEN for minutes while hundreds of megabytes came down,
+           // with no indication anything was happening. Reported as "after upload the screen
+           // just goes black, then four minutes later the game started".
+           //
+           // show(), not lock(): a lock that never clears strands the player behind a screen
+           // they cannot dismiss, which is worse than this was. The engine's own boot takes the
+           // screen over when it starts.
+           if (LD) LD.show('Preparing your game', 'Fetching your files…');
            function ldSet(pct,label,detail){ if(LD) LD.set(pct,label,detail); }
            async function fetchFull(url, size, name){
              var r = await fetch(url);

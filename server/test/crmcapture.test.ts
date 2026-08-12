@@ -14,7 +14,7 @@ test('completing onboarding queues a CRM record', async () => {
   const dir = tmpDataDir();
   const calls: { url: string; body: unknown }[] = [];
   const hook = new AttioHook(
-    { apiKey: 'test-key', baseUrl: '', dataDir: dir },
+    { apiKey: 'test-key', baseUrl: 'https://api.attio.com', dataDir: dir },
     (async (url: string, init?: { body?: string }) => {
       calls.push({ url: String(url), body: init?.body ? JSON.parse(init.body) : undefined });
       return { ok: true, status: 200, text: async () => '{}' } as unknown as Response;
@@ -47,5 +47,43 @@ test('no API key means the CRM hook does nothing at all', async () => {
   });
   await hook.flush();
   assert.equal(called, false, 'an unconfigured CRM reached out anyway');
+  await hook.close();
+});
+
+// A KEY WITHOUT A USABLE BASE URL IS NOT "CONFIGURED", IT IS BROKEN.
+//
+// The dev deployment wrote attioBaseUrl = "" over the default, so every request built a
+// RELATIVE url, fetch threw "Failed to parse URL from /v2/objects/...", and the queue retried
+// on every drain forever: a log full of attio.unreachable and not one record delivered.
+test('an empty or relative base url disables the hook instead of retrying forever', async () => {
+  const dir = tmpDataDir();
+  let called = false;
+  const spy = (async () => { called = true; return { ok: true, status: 200, text: async () => '{}' } as unknown as Response; }) as unknown as typeof fetch;
+
+  for (const bad of ['', '/v2', 'api.attio.com', 'ftp://api.attio.com']) {
+    const hook = new AttioHook({ apiKey: 'test-key', baseUrl: bad, dataDir: dir }, spy);
+    hook.enqueue({
+      email: 'p@example.com', username: 'X', accountKey: `a-${bad}`,
+      signupAt: new Date().toISOString(), provider: 'sso', marketingOptIn: false,
+    });
+    await hook.flush();
+    await hook.close();
+    assert.equal(called, false, `baseUrl ${JSON.stringify(bad)} should have disabled the hook`);
+  }
+});
+
+test('a good base url is still enabled', async () => {
+  const dir = tmpDataDir();
+  let called = false;
+  const hook = new AttioHook(
+    { apiKey: 'test-key', baseUrl: 'https://api.attio.com', dataDir: dir },
+    (async () => { called = true; return { ok: true, status: 200, text: async () => '{}' } as unknown as Response; }) as unknown as typeof fetch,
+  );
+  hook.enqueue({
+    email: 'p@example.com', username: 'X', accountKey: 'a',
+    signupAt: new Date().toISOString(), provider: 'sso', marketingOptIn: false,
+  });
+  await hook.flush();
+  assert.equal(called, true, 'a correctly configured hook must still send');
   await hook.close();
 });

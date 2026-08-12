@@ -1211,6 +1211,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
         cellKey: config.rules.respawnCellKey,
         x: config.rules.respawnX, y: config.rules.respawnY, z: config.rules.respawnZ,
       },
+      looks: config.dev.botLooks,
       look: {
         race: config.dev.botRace, head: config.dev.botHead,
         hair: config.dev.botHair, class: config.dev.botClass,
