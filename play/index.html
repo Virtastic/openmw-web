@@ -2048,6 +2048,15 @@
            wiz.set('media.tar','busy','verifying…');
            var conf = await (await api('/locker/uploaded',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(rec)})).json();
            if (conf && conf.ok===false) throw new Error('not accepted');
+           // KEEP THE PACK WE JUST BUILT, exactly like the per-file uploader above does. The
+           // reader is keyed by the SAME sha256, so without this the first play session missed
+           // the cache and pulled the whole voice pack back out of S3 — hundreds of megabytes,
+           // re-downloading bytes that were in this tab's memory a moment earlier. That is the
+           // "Downloading voices" the player sees immediately after uploading voices.
+           // Best-effort and last: cachePut swallows QuotaExceeded, and a cache miss only ever
+           // costs a download, so a full cache must never fail the upload that already
+           // succeeded.
+           try { await cachePut(sha, built.blob); } catch(e){ /* non-fatal, see above */ }
            wiz.set('media.tar','done','uploaded');
          }
 
