@@ -233,11 +233,22 @@ namespace MWInput
         bool isRelative = !MWBase::Environment::get().getWindowManager()->isGuiMode();
 
 #ifdef __EMSCRIPTEN__
-        // Keep the lock for IN-GAME menus. `grab` is already false for the main menu and the
-        // console, so those still release it — an escape hatch that costs one notice, rather
-        // than one per inventory screen. The GUI cursor runs on deltas while locked
-        // (mouseMoved above).
-        if (!isRelative && grab)
+        // KEEP a lock we already hold; never TAKE one for a menu. `wasRelative` is the whole
+        // point of that distinction: SDL relative mode is pointer lock, and a browser only
+        // grants pointer lock in response to a user gesture. Forcing it on unconditionally
+        // meant that any GUI opened WITHOUT a lock already held - chargen, which runs the
+        // moment the game starts and before the player has clicked the canvas - put us in the
+        // delta branch of mouseMoved while the browser delivered no deltas at all. Absolute
+        // coordinates were then ignored, so the GUI cursor never moved, never activated and
+        // never drew: a class-selection dialog with no pointer and no way to click it.
+        //
+        // With the gate, the two cases separate cleanly:
+        //   in-game -> inventory : lock already held, kept, no "press Esc" notice (the point)
+        //   chargen / no lock yet: stays absolute, cursor behaves exactly as it always did
+        // Pressing Esc to release the lock also lands in the second case, which is the escape
+        // hatch working rather than a state to recover from.
+        // `grab` is already false for the main menu and the console, so those still release it.
+        if (!isRelative && grab && wasRelative)
             isRelative = true;
 #endif
 
