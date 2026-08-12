@@ -131,6 +131,27 @@ region   = "auto"
 bucket   = "omw-lockers"
 ```
 
+### If you are behind Cloudflare
+
+```toml
+[limits]
+trustCloudflareIp = true
+```
+
+Only set this when Cloudflare really does terminate in front of the server **and** your edge
+deletes any client-supplied `CF-Connecting-IP` (the shipped `deploy/Caddyfile` and
+`deploy/openmw-mp.caddy` both do). It is wrong in both directions and both are quiet:
+
+- **On, with an edge that does not strip it**, any client can name its own address. It resets
+  its own login rate limit, walks past an IP ban and past the per-address connection cap, and
+  can pin its failed sign-ins on somebody else.
+- **Off, while behind Cloudflare**, every player resolves to the Cloudflare edge address. Per-IP
+  limits then apply to the whole player base at once, so `loginPerMinPerIp = 5` means the sixth
+  person to sign in in any given minute is refused.
+
+The server logs which mode it chose at boot (`net.client_ip_mode`), and warns once
+(`net.cloudflare_header_ignored`) if the header shows up while the setting is off.
+
 S3 keys go in the **environment**, not the config file:
 
 ```bash
