@@ -46,7 +46,18 @@ cd "$BUILD"
 # The multiplayer Lua package is authored in openmw/files/data but packed from the fsroot
 # preload mirror — sync it here so the two can never drift (the rest of resources/vfs is a
 # deliberately-divergent manual mirror; mp/ is exact by construction).
-rsync -a --delete "$ROOT/openmw/files/data/scripts/mp/" "$ROOT/fsroot/resources/vfs/scripts/mp/"
+#
+# cp, not rsync: the release image (Dockerfile) has no rsync, so this line exited 127 and took
+# the whole v1.1.0 release build with it after a 13-minute compile. The Jenkins builder happens
+# to have rsync installed, so the dev path stayed green and only the PUBLIC release broke.
+# Removing the dependency is smaller than installing a package into the image for one directory
+# copy. `rm -rf` then `cp -a` is exactly `rsync -a --delete` for this case: mirror the source,
+# drop anything stale in the destination.
+MP_SRC="$ROOT/openmw/files/data/scripts/mp"
+MP_DST="$ROOT/fsroot/resources/vfs/scripts/mp"
+rm -rf "$MP_DST"
+mkdir -p "$MP_DST"
+cp -a "$MP_SRC/." "$MP_DST/"
 cp "$ROOT/openmw/files/data/mp.omwscripts" "$ROOT/fsroot/resources/vfs/mp.omwscripts"
 
 # Make sure the objects on the explicit link line are fresh.
