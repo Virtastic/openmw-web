@@ -1,13 +1,15 @@
-name: deploy-mp (mp.virtastic.app)
+name: deploy-mp (multiplayer server)
 
 # Deploys the openmw-mp multiplayer server to the OVH VPS via the same self-hosted runner as
 # deploy-ovh.yml. Path-filtered: server pushes deploy in ~1 min without touching the ~13-min
 # engine build, and vice versa. The runner executes ON the VPS with docker access.
 #
-# Prereqs on the box (one-time): the shared `edge-caddy` container + `nostalgia` network,
-# /opt/edge/certs/virtastic.{crt,key}, and the terraform `mp` DNS record applied
-# (infra/terraform/main.tf). Persistent state lives in /opt/openmw-mp/data — this workflow
-# NEVER touches that dir's contents.
+# Prereqs on the box (one-time): the shared `edge-caddy` container + `nostalgia` network, and
+# /opt/edge/certs/virtastic.{crt,key}. NO dedicated DNS record or vhost: the gateway is reached
+# through the game's own Caddy on the game's origin, because index.html will not hand its
+# session ticket to a gateway on a different hostname (AGENTS.md, "One origin"). Persistent
+# state lives in /opt/openmw-mp/data - this workflow NEVER touches that dir's contents.
+# See docs/PRODUCTION-BRINGUP.md for the full first-deploy checklist.
 on:
   push:
     branches: [ovhcloud]
@@ -43,10 +45,6 @@ jobs:
         run: |
           sudo mkdir -p /opt/openmw-mp/data
           sudo cp server/docker-compose.prod.yml /opt/openmw-mp/docker-compose.prod.yml
-
-      # Drop the vhost into the shared edge's sites dir (imported by /opt/edge/Caddyfile).
-      - name: Install edge vhost
-        run: sudo cp deploy/openmw-mp.caddy /opt/edge/sites/openmw-mp.caddy
 
       # Drain BEFORE the swap. `compose up -d` on a changed image recreates the container,
       # which kills connected players mid-session with no warning frame. `compose stop`
@@ -94,26 +92,35 @@ jobs:
             -v "$PWD/server/bots:/bots:ro" \
             openmw-mp:ovh node /bots/healthcheck.mjs ws://openmw-mp:8080/ws
 
-      # Gate 3 — the edge path THIS deploy controls: TLS with the origin cert + sec_headers +
-      # reverse_proxy + a real WebSocket 101 upgrade. Hit the edge directly via --resolve to
-      # 127.0.0.1 (bypasses Cloudflare, same rationale as deploy-ovh.yml); -k because the edge
-      # presents the Cloudflare Origin CA cert. The upgrade MUST carry the omw-mp.1 subprotocol
-      # or the server rejects the handshake.
-      - name: Health check (edge, bypassing Cloudflare)
+      # Gate 3 - the edge path a PLAYER actually takes. The game page and the gateway are one
+      # origin (AGENTS.md, "One origin"): index.html refuses to hand its session ticket to a
+      # gateway whose hostname differs from the page's, so there is no separate mp.<domain> to
+      # test. This used to curl an mp.virtastic.app vhost that no client could ever use, and
+      # which proxied the gateway with NO path filter - exposing /healthz and /status, which
+      # the real same-origin config deliberately withholds. Caddy routes on the Host header, so
+      # its lack of a DNS record protected nothing.
+      #
+      # --resolve to 127.0.0.1 bypasses Cloudflare (same rationale as deploy-ovh.yml); -k
+      # because the edge presents the Cloudflare Origin CA cert.
+      - name: Health check (edge, the path players use)
         run: |
           set -e
-          E() { curl -sS -k --resolve mp.virtastic.app:443:127.0.0.1 "$@"; }
+          E() { curl -sS -k --resolve morrowind.virtastic.app:443:127.0.0.1 "$@"; }
           for i in $(seq 1 12); do
-            E -f -o /dev/null https://mp.virtastic.app/healthz && break
-            echo "edge not ready yet ($i)…"; sleep 3
+            E -f -o /dev/null https://morrowind.virtastic.app/auth/providers && break
+            echo "edge not ready yet ($i)..."; sleep 3
           done
-          E -f https://mp.virtastic.app/status | tee /dev/stderr | grep -q '"name"'
+          # Proves the gateway is reachable THROUGH the game's own Caddy, which is the only way
+          # a browser reaches it. /healthz and /status are deliberately not exposed here.
+          E -f https://morrowind.virtastic.app/auth/providers | tee /dev/stderr | grep -q '"providers"'
+          # The gameplay socket, on the origin the client dials. The upgrade MUST carry the
+          # omw-mp.1 subprotocol or the server rejects the handshake.
           code=$(E -o /dev/null -w '%{http_code}' --http1.1 \
             -H "Connection: Upgrade" -H "Upgrade: websocket" \
             -H "Sec-WebSocket-Version: 13" -H "Sec-WebSocket-Key: aGVhbHRoY2hlY2sxNg==" \
             -H "Sec-WebSocket-Protocol: omw-mp.1" \
-            https://mp.virtastic.app/ws)
+            https://morrowind.virtastic.app/w/vvardenfell)
           test "$code" = 101 || { echo "FATAL: WS upgrade at the edge returned HTTP $code (want 101)" >&2; exit 1; }
-          echo "edge health OK (101 upgrade + status)"
+          echo "edge health OK (101 upgrade on /w/ + providers)"
 
       # No Cloudflare purge: nothing this service serves is cacheable.

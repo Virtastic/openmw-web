@@ -36,7 +36,8 @@ It will make the machine unusable. Run it on the build server.
 **DO NOT push to `ovhcloud` to test.** That branch deploys to *production*
 (morrowind.virtastic.app) via the self-hosted runner on the OVH VPS. The local build server
 exists precisely so testing never touches production. Note `mp.virtastic.app` is **not** a
-thing — it has no DNS record and the design that wanted it is dead (see "One origin" below).
+thing: the design that wanted it is dead, and the vhost that kept the name alive has been
+deleted (see "One origin" below).
 
 **DO NOT push local feature branches to `origin`.** `Virtastic/openmw-web` is a **public** repo.
 The `multiplayer` branch is local-only and unpushed. Publishing is the maintainer's decision.
@@ -111,7 +112,10 @@ a fixed set of paths to the gateway (`{$MP_UPSTREAM:openmw-mp:8080}`; the test d
 
 This is not a preference. `index.html` refuses to hand its session ticket to a gateway whose
 hostname differs from the page's, so a separate `mp.<domain>` origin can never receive it —
-the `mp.virtastic.app` vhost in `deploy/openmw-mp.caddy` is a dead end and has no DNS record.
+`deploy/openmw-mp.caddy` used to keep an `mp.virtastic.app` vhost alive for a deploy
+healthcheck; it has been deleted. It proxied the gateway with NO path filter, so it exposed
+`/healthz` and `/status`, which the same-origin config deliberately withholds - and since Caddy
+routes on the Host header, having no DNS record protected nothing.
 The launcher derives the server from `location`, so production, the dev preview and a
 self-host all work with **no per-environment constant**. A baked-in hostname is wrong in every
 deployment but the one it was built for; that bug shipped once and cost a full debugging pass.
