@@ -8,6 +8,7 @@ provisioned there, so the first `ovhcloud` push needs the box prepared first. Ve
 |---|---|
 | `/opt/openmw-mp/data` | absent |
 | `/opt/openmw-mp/data/config.toml` | absent |
+| `/opt/openmw-mp/gamedata` (note: NOT under data/) | absent |
 | game data for the sim peer | absent |
 | `/opt/edge/certs/virtastic.{crt,key}` | present (shared edge already running) |
 | shared `edge-caddy` + `nostalgia` network | present |
@@ -94,8 +95,18 @@ S3_SECRET_ACCESS_KEY=...
 ## 4. Game data for the sim peer
 
 The sim peer is a headless OpenMW and needs real game data. Drop it in
-`/opt/openmw-mp/data/gamedata`. Without it the server refuses to boot, deliberately: there is a
-test asserting exactly that, because a peer with no data silently simulates nothing.
+`/opt/openmw-mp/gamedata` - NOT `/opt/openmw-mp/data/gamedata`. docker-compose.prod.yml mounts
+`/opt/openmw-mp/data:/data` and then overlays `/opt/openmw-mp/gamedata:/data/gamedata:ro`, so
+anything placed under `data/gamedata` is shadowed and the server reports the directory empty.
+Without game data it refuses to boot, deliberately: a peer with no data silently simulates
+nothing.
+
+Also set, or the locker hands players presigned URLs pointing at 127.0.0.1:
+
+```toml
+[locker]
+publicBase = "https://morrowind.virtastic.app"
+```
 
 ## 5. Then deploy
 

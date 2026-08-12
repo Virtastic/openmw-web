@@ -15,7 +15,10 @@ on:
     branches: [ovhcloud]
     paths:
       - 'server/**'
-      - 'deploy/openmw-mp.caddy'
+      # The sim peer is COMPILED from openmw/ into this image (Dockerfile.simpeer), so an
+      # engine change that does not rebuild here leaves the peer simulating with a different
+      # engine than the clients are running.
+      - 'openmw/**'
       - '.github/workflows/deploy-mp.yml'
   workflow_dispatch:
 
@@ -39,7 +42,21 @@ jobs:
         run: DOCKER_BUILDKIT=1 docker build --network=host --target test -f server/Dockerfile server/
 
       - name: Build image
-        run: DOCKER_BUILDKIT=1 docker build --network=host -t openmw-mp:ovh -f server/Dockerfile server/
+        run: |
+          # Dockerfile.simpeer --target tier2, from the REPO ROOT. NOT server/Dockerfile:
+          # ci/jenkins/build-server.sh says it outright - "that alpine/musl image has no peer
+          # binary and cannot run the glibc one". This workflow built it anyway, so the first
+          # production multiplayer deploy came up and died with "no sim-peer binary". It was
+          # never caught because production had never deployed multiplayer before.
+          # The context is the repo root because the image compiles the OpenMW fork, so it
+          # needs openmw/ in the context.
+          DOCKER_BUILDKIT=1 docker build --network=host \
+            -f server/Dockerfile.simpeer --target tier2 -t openmw-mp:ovh .
+          # Assert the peer is actually in there, like the Jenkins build does. Without it the
+          # server starts, finds no binary and exits, which is a crash loop rather than a
+          # degraded mode - so failing here is strictly better than failing on the box.
+          docker run --rm --entrypoint sh openmw-mp:ovh -c 'command -v openmw' \
+            || { echo "FATAL: openmw-mp:ovh has no openmw peer binary" >&2; exit 1; }
 
       - name: Sync compose to /opt/openmw-mp
         run: |
