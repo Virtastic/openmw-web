@@ -1,169 +1,131 @@
 # Changelog
 
-All notable changes to openmw-web are documented here.
+Notable changes to OpenMW-Web. Dates are release dates, newest first.
 
-This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+## 1.1.0
 
-## [1.1.0] - 2026-08-03
+The multiplayer release. 1.0.x was a single player engine in the browser. 1.1.0 adds a hosted
+multiplayer service around it, a way to bring your own copy of Morrowind with you to any
+machine, and a launcher that ties the two together.
 
-Multiplayer. Morrowind is a single-player game, so this is not a port of anything
-upstream — it is a server that owns the shared world and a client that asks it what
-happened. 268 commits since 1.0.2.
+If you self host, nothing here forces you into the hosted shape. Every new subsystem is off by
+default and the permissive defaults are still the shipped ones.
 
-Single-player is unchanged and still needs no server: the example world and the
-bring-your-own-Morrowind path work exactly as they did.
+### Multiplayer
 
-### Added
+**Worlds.** A gateway process runs in front of many world processes and hands each player to the
+right one. There is a shared public world, and every player also gets a private world of their
+own that starts when they dial it and is reaped when they leave. Worlds reachable through a
+single port, so a world's own port never leaves the container.
 
-- **Play together, three ways.** *Solo* is your own world. *Party* puts your group in
-  one world. *Public* is a shared world with strangers in it. You switch from inside
-  the game and your character comes with you — no restart, no re-picking your data.
+**Server authoritative NPCs.** A headless OpenMW instance, the sim peer, holds cell authority and
+is the only thing that simulates actors. One peer covers every occupied cell, with interiors
+anchored so a peer is not spawned per room.
 
-- **The server simulates the world, not the clients.** NPCs, combat, loot and cell
-  state are owned by a headless copy of the engine running server-side, holding
-  authority over the cells players are actually standing in. A modified client can
-  lie about its own input and gets nowhere: it cannot author what an NPC did, conjure
-  an item, or vouch for its own damage.
+**Identity.** Sign in with Google, Discord or Microsoft. Accounts are keyed on (issuer, subject)
+and never on email, because providers reassign email and keying on it would hand one player's
+character to another. No email scope is requested. First login picks a public handle, and your
+real name is never shown.
 
-- **Sign in with Google, Discord or Microsoft.** There is no password to phish or
-  leak, because there is no password. Only `openid profile` is requested — never an
-  email scope — and your public handle is a username you pick, never the name your
-  provider hands over.
+**Characters.** Accounts own character slots. Player state is keyed per character, so your
+progress follows the character and not the account.
 
-- **Your own game data, your own copy.** Upload your Morrowind files once to a private
-  locker and stream them back on any device. Every account stores its own bytes with
-  no deduplication between accounts, gated on an ownership attestation and a check of
-  what actually landed. The reasoning is written down in `docs/LEGAL.md`.
+**Social.** Friends, parties, whisper, chat with history so a room reads as inhabited, presence
+that spans worlds so a friend in their own world does not read as offline, and party voice over
+a WebRTC mesh scoped to the party.
 
-- **Savegames on the server.** Sign in and your saves follow you: clear your browser,
-  move to another machine, and the same game is there. The upload happens when you
-  click Save and at no other time — no autosave, no background snapshots.
+**Party play.** Parties persist across worlds and across restarts. The leader can move the whole
+group to another world in one action. Party difficulty scaling, loot rules with a roll UI, and
+quest credit shared across the party.
 
-- **The social layer that makes a world habitable.** Friends and presence, parties
-  with loot rolls, whisper, mute and block, and in-game reporting that hands a
-  moderator the surrounding chat rather than a bare accusation.
+**Quests.** Instance owned journals with the guest journal stashed and restored, durable quest
+steps, non depleting quest items, and a whitelist for the quests that are safe to share.
 
-- **Self-hosting a server takes an OAuth app and about ten minutes**
-  (`docs/MULTIPLAYER-SETUP.md`). Object storage is optional: with no S3 bucket
-  configured, lockers and savegames are stored in a folder on the server.
+**Moderation and fair play.** An anti cheat envelope on declared state, PvP zoning, persistent
+mutes and blocks, a report flow, a web admin dashboard, and an in game console that is disabled
+in multiplayer.
 
-### Changed
+### Cloud locker
 
-- Saves now go to whichever of the three places fits how you are playing — your own
-  folder, the server, or browser storage. `README.md` spells out which is which.
+Upload your own Morrowind once and it streams back to you on any machine you sign in from,
+including your saves. Per account isolation with no deduplication, so no player's files are ever
+served to anyone else. Uploads are checked against a manifest generated from the server's own
+game data and sniffed after upload, so unrelated files are refused rather than stored.
 
-## [1.0.2] - 2026-07-31
+There is now a single player tile for this as well. Same account, same locker, same uploaded
+files, with multiplayer simply not booting. Upload once, play anywhere, on your own.
 
-Mostly about the downloadable bundle: it behaves like the live site now, it can
-serve your own copy of the game, and you don't need a terminal to start it.
-Nothing here changes the hosted site at morrowind.virtastic.app.
+### Savegames
 
-### Fixed
+Saves are stored on the server and follow your account. Multiplayer saves and cloud locker saves
+are kept in separate namespaces and cannot appear in each other's load screens. The server falls
+back to its own disk when no S3 bucket is configured.
 
-- **The download now opens the same chooser as the website.** It shipped with
-  the data-chooser page present but unreachable, so unzipping and running it
-  dropped you straight into the game with no way to pick the demo or point at
-  your own Morrowind.
+### Launcher
 
-- **Self-hosting your own copy works with whatever you actually own.** The
-  no-chooser path used to insist on both expansions *and* five pre-packed
-  archives that exist in no retail install — so a normal copy of the game could
-  not satisfy it, and owning only the base game failed outright. Copy your
-  `Data Files` into `mwdata/` and it loads what's there: base game alone,
-  expansions, mods, any combination. See `SELF_HOSTING.md`.
+A rebuilt front page with a tile per way in, a themed sign in modal showing every configured
+provider, a first visit upload wizard with a multi file picker and an ownership gate, and help on
+each tile rather than a wall of text.
 
-- A port conflict printed a Python traceback; it now says that openmw-web is
-  probably already running, and how to use a different port.
+### Operators
 
-### Added
+- One container image runs the gateway and the sim peer together, with the peer binary auto probed.
+- Linux sim peer builds, so tier 2 is deployable.
+- `simPeer` mode can be `auto`, `on` or `off`, with a start deadline.
+- Bucket CORS is registered from the deployment's own origin.
+- Strict content mode is real: per file SHA-256 closes the tampering hole.
+- Optional CRM capture on signup.
+- Development bots that hold accounts and characters, accept friend and party invites, and stand
+  where players begin. Off unless enabled, and the server now says loudly at boot when they are
+  running, because they register real accounts and reserve real handles.
 
-- **Double-click to start** — `Start openmw-web.command` (macOS/Linux) and
-  `Start openmw-web.bat` (Windows). Each checks for Python and says where to get
-  it. No terminal required.
-- **Your browser opens by itself** when the server starts (`OPENMW_OPEN=0` to
-  skip).
-- **`START-HERE.txt`** in the download: what to click, why it must be Chrome,
-  and the Steam/`Program Files` gotcha.
-- **Performance asset pack, included in the download.** Mesh and texture
-  optimisations from the Morrowind Optimization Patch and Project Atlas, packed
-  into a single archive the engine reads on demand. Measured in a Balmora
-  interior: **1193 → 885 draw calls** and **9.2 ms → 7.7 ms** per frame, roughly
-  a quarter off both. Interiors gain most, since they get no distant-object
-  batching. It only applies to your own copy of the game; it costs nothing until
-  a mesh is actually read, and `?noassets=1` turns it off.
+### Security and reliability
 
-  Credit: the Morrowind Optimization Patch contributors and the Project Atlas
-  team — see `THIRD-PARTY-LICENSES.md`.
+The pre release hardening pass. Several of these were found by probing a running deployment
+rather than by reading code, and are listed plainly because they were real:
 
-### Changed
+- The per IP login limit was one bucket for the entire server, because the client address was
+  read from the socket and behind a reverse proxy that is always the proxy. The sixth person to
+  sign in within a minute was refused. Client addresses are now resolved through a single trust
+  boundaried helper.
+- A client could forge its own address past the proxy and get a fresh login budget, evade an IP
+  ban and evade the per address connection cap. The edge now strips client supplied address
+  headers, and the server trusts the gateway's stamp only from loopback. `CF-Connecting-IP` is
+  ignored unless a deployment opts in with `[limits] trustCloudflareIp`.
+- A private world revived after being reaped came back with no owner, which every access check
+  read as "public, admit anyone". Any signed in account could enter another player's world. The
+  owner is now recorded beside the world and recovered on revival, and a world that cannot be
+  attributed is not started.
+- The shared social database was the only store opened without a busy timeout, and it threw from
+  inside a timer, which exits the process. Two populated worlds was enough to eject everyone in
+  one of them.
+- Two worlds booting at the same moment could both run the same migration, and the loser died at
+  startup.
+- The gateway had no crash handlers and left its worlds running when it died, holding the ports
+  the next gateway then tried to use.
+- Party membership was cached per process and never invalidated, so a member who left in one
+  world stayed a member in another, kept appearing in the panel, and stayed reachable by voice.
+- Inviting someone created a party of one immediately, which made the inviter uninvitable by
+  anyone else if the invite was never accepted.
+- A promotion or an unban could be silently rolled back by the next character mutation.
+- Absurd declared inventory and level changes are now refused rather than only counted, and
+  combat is bounded by a per attacker rate limit and a proximity check.
 
-- Game files are now streamed in chunks rather than downloaded whole into
-  memory, which lowers peak memory use on the self-host path.
+Known and deliberate: the server does not compute damage, because armour, resistances and
+difficulty live in game data the server process does not load. The victim's client applies the
+hit, and the server bounds shape, rate and proximity rather than truth. Position is client
+authored on the same terms.
 
-### Notes
+### Notes for operators upgrading
 
-`SELF_HOSTING.md` documented port 8795; the default has been 8910.
+- A hosted deployment should set `[auth] requireSso = true`. It forces password login off. The
+  shipped default stays permissive for self hosters, and the front door now warns at boot when
+  SSO providers are configured while password login is still accepted.
+- A deployment behind Cloudflare must set `[limits] trustCloudflareIp = true`. Leaving it off
+  behind Cloudflare makes every player resolve to the edge address, which collapses every per IP
+  limit into one global bucket. The active mode is logged at boot as `net.client_ip_mode`.
 
-## [1.0.1] - 2026-07-27
+## 1.0.2 and earlier
 
-A bug-fix release. Everything here affects displays with **fractional** scaling,
-which in practice means Windows machines set to 125%, 150%, or 175% (the Windows
-defaults), and anyone using browser zoom. Displays at 100% and Retina Macs were
-never affected and are unchanged by this release.
-
-### Fixed
-
-- **The mouse cursor and your clicks now line up.** On Windows display scaling,
-  clicks landed away from where the pointer was drawn, and the error grew the
-  further you moved from the top-left corner. The mouse position was converted
-  between coordinate spaces with integer division, which silently discarded a
-  fractional scaling factor, so the pointer you saw (drawn by the browser) and
-  the position the game used had drifted apart.
-
-- **The game no longer renders far more pixels than it was asked to.** On a
-  125% display the engine was rendering 1.56x the intended pixel count, and at
-  150% it was 2.25x. This cost framerate for no visual benefit. Windows HiDPI
-  users should see a straightforward performance improvement.
-
-- **Menus and HUD are the correct size** on fractionally-scaled displays. The
-  interface was being laid out against the wrong screen ratio and drawn smaller
-  than intended.
-
-- **Camera look sensitivity is correct** on those same displays. Mouse-look was
-  scaled by the same faulty factor.
-
-- **Mouse-wheel events no longer report a doubled cursor position.** A latent
-  bug that could not show up while the scaling factor was 1.
-
-- **Zooming the browser below 100% no longer risks a divide-by-zero** in the
-  window-sizing and input paths.
-
-### Notes
-
-Verified across device pixel ratios 1.0, 1.25, 1.5, 1.75 and 2.0: the drawing
-buffer now matches the requested render size at every step, and the interface
-scale matches the true buffer-to-CSS ratio. Integer ratios produce numerically
-identical results to 1.0.0, so Retina and 100% displays are untouched.
-
-## [1.0.0] - 2026-07-19
-
-First public release. The OpenMW engine cross-compiled to WebAssembly and
-playable in a desktop browser.
-
-- Play the freely-distributable OpenMW example world with no game data required.
-- Bring your own legally-obtained Morrowind `Data Files` folder, streamed from
-  disk on demand via the File System Access API with no upload or copy.
-- Saves on the bring-your-own path are written to a real `openmw-web-saves`
-  folder on disk; settings, keybindings and saves otherwise persist in the
-  browser.
-- Tribunal, Bloodmoon and loose mod `.esp`/`.esm`/`.bsa` files are detected and
-  loaded automatically.
-- Resolution scaling (Full / High / Half / Third / Quarter) renders the 3D scene
-  at a fraction of native while keeping menus and text crisp.
-- Self-host bundle and GPLv3 Complete Corresponding Source published with the
-  release.
-
-[1.1.0]: https://github.com/Virtastic/openmw-web/releases/tag/v1.1.0
-[1.0.2]: https://github.com/Virtastic/openmw-web/releases/tag/v1.0.2
-[1.0.1]: https://github.com/Virtastic/openmw-web/releases/tag/v1.0.1
-[1.0.0]: https://github.com/Virtastic/openmw-web/releases/tag/v1.0.0
+Single player OpenMW in the browser: the engine compiled to WebAssembly, the demo content, the
+rendering and performance work, and the launcher that boots it. See the git history for detail.

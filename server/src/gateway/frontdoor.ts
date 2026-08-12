@@ -313,6 +313,23 @@ export async function buildFrontDoor(
   );
   log('info', 'frontdoor.ready', { requireSso: config.auth.requireSso, providers, locker: locker.enabled });
 
+  // A HOSTED DEPLOYMENT OFFERING SSO SHOULD NOT ALSO ACCEPT PASSWORDS. Both defaults are
+  // deliberately permissive because self-hosters are a real audience and some of them want
+  // account+password — but on a deployment that has gone to the trouble of configuring OIDC
+  // providers, leaving the password path open is an extra credential store to breach, an extra
+  // brute-force surface, and a second identity for the same player. It is also silent: nothing
+  // in the UI shows it, because the shipped launcher only ever offers SSO buttons.
+  //
+  // Warned, not refused: forcing it would break the self-hosters the defaults exist for.
+  if (providers.length > 0 && config.auth.allowPasswordLogin) {
+    log('warn', 'frontdoor.password_login_open', {
+      providers,
+      note: 'SSO providers are configured AND account+password login is still accepted. A '
+        + 'hosted deployment should set [auth] requireSso = true, which forces allowPasswordLogin '
+        + 'off. Ignore this if you deliberately offer both.',
+    });
+  }
+
   // `also` is tried after the SSO routes: locker (/locker/*), profile (/auth/profile), then
   // characters (/auth/characters). Character stats live in the SHARED PlayerStore.
   const players = new PlayerStore(sharedDir);
