@@ -1,0 +1,30 @@
+# Edge vhost for upload.virtastic.app — the FILE-MODE locker's upload/download host.
+# Installed by .github/workflows/deploy-mp.yml into the shared edge Caddy's sites dir,
+# same mechanism as morrowind.caddy.
+#
+# WHY THIS EXISTS. In file mode (no S3 keys; blobs on the VPS disk) the locker's presigned
+# URLs ride the game's own origin — which is proxied by Cloudflare, whose free plan caps
+# request bodies at 100 MB. Morrowind.bsa is ~310 MB, so file-mode uploads of the big
+# archives die at the edge, invisibly to the server. S3 mode does not have this problem
+# (the browser PUTs straight to object storage) and takes priority whenever the keys are
+# staged; this host is what makes file mode actually work.
+#
+# The DNS record is UNPROXIED (grey cloud — this deliberately trades origin-IP secrecy for
+# a path Cloudflare never touches) and lives on port 8443 so 443 stays Cloudflare-only in
+# the box firewall (DOCKER-USER chain). Browsers connect here directly, so the cert must be
+# publicly trusted: a real Let's Encrypt cert, NOT the Cloudflare Origin CA cert the other
+# vhosts use. certbot renews it via DNS-01 and
+# /etc/letsencrypt/renewal-hooks/deploy/upload-edge.sh pushes it to /opt/edge/certs and
+# restarts the edge. One-time box setup for all of this: docs/PRODUCTION-BRINGUP.md §6.
+#
+# ONLY the presigned blob endpoint is exposed. It authenticates by HMAC token in the URL
+# (fsstorage.ts), so no session or admin surface exists on this host; everything else 404s.
+upload.virtastic.app:8443 {
+	tls /certs/upload.crt /certs/upload.key
+	handle /locker/blob/* {
+		reverse_proxy openmw-mp:8080
+	}
+	handle {
+		respond 404
+	}
+}
