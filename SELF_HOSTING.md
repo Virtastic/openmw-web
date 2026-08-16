@@ -123,76 +123,181 @@ headers in the host's headers config.
 
 ## Multiplayer server
 
-The multiplayer relay (`server/`) is a separate, optional process: a Node 22 WebSocket
-server that validates and relays play between clients and persists the shared world. It is
-not needed to host single-player.
+Multiplayer (`server/`, Node 22) is optional — single-player hosting needs none of this.
+Since 1.1.0 it is not a bare relay any more but a small platform: a **gateway** process
+fronts many **world** processes (one shared public world, plus private/party worlds booted
+on demand and reaped when idle), and every world runs a **sim peer** — a headless copy of
+the OpenMW engine that simulates NPCs server-side so a modified client cannot author the
+world.
 
-### Run it
+Three consequences an operator must know up front:
+
+1. **The sim peer is mandatory.** The server refuses to boot without a usable `openmw`
+   binary and game data. That means **you supply your own legally-owned Morrowind
+   `Data Files` on the server** (never bundled, never distributed — see the licensing
+   notes below).
+2. **One origin.** The game page and the server share a hostname. The page refuses to
+   hand its session ticket to a server on a different host, so a separate
+   `mp.example.com` cannot work — you reverse-proxy the server's paths from the same
+   vhost that serves the game.
+3. **Sign-in is OAuth** (Google / Discord / Microsoft). You need at least one OAuth app;
+   [`docs/MULTIPLAYER-SETUP.md`](docs/MULTIPLAYER-SETUP.md) walks through creating one
+   in about five minutes, plus the optional S3 storage locker.
+
+### Step by step
+
+**1. Build the server.**
 
 ```bash
 cd server
 npm ci
-npm run build
-node dist/server.mjs --data ./devdata --port 8080
+npm run build     # emits dist/server.mjs (single world) and dist/gateway.mjs (gateway)
 ```
 
-Or with Docker (`server/Dockerfile`, `server/docker-compose.prod.yml`):
+**2. Stage game data for the sim peer.** Copy the contents of your own `Data Files`
+into `<dataDir>/gamedata`. Without it the server refuses to boot — that is deliberate,
+not a bug. The peer binary is auto-probed from `/usr/local/bin/openmw`,
+`/usr/bin/openmw`, or `/opt/openmw/bin/openmw` (override with `[simPeer] binary`); the
+shipped production image (`server/Dockerfile.simpeer`, target `tier2`) builds and
+includes it.
+
+**3. Generate the vanilla manifest** so the locker accepts player uploads (generated
+from your own copy; until it exists the locker refuses every upload, which is the safe
+default):
+
+```bash
+node server/tools/gen-vanilla-manifest.mjs "/path/to/Morrowind/Data Files" \
+     --out <dataDir>/vanilla-manifest.json
+```
+
+**4. Write `<dataDir>/config.toml`.** Defaults live in `server/config.default.toml`
+(documented inline) and overrides deep-merge over them. Minimum viable:
+
+```toml
+[server]
+password = "<long random string>"   # the SIM PEER's credential — never typed by a player.
+                                    # Empty = the server refuses to boot.
+
+[auth]
+requireSso = true                   # forces password login off. Set it on anything public.
+returnUrl  = "https://example.com/launcher.html"
+
+[auth.google]                       # and/or [auth.discord] / [auth.microsoft]
+enabled      = true
+clientId     = "..."
+clientSecret = "..."
+redirectUri  = "https://example.com/auth/google/callback"
+```
+
+Two silent footguns, both logged at boot: leave `requireSso` unset and password login
+stays open beside SSO (`frontdoor.password_login_open`); behind Cloudflare, set
+`[limits] trustCloudflareIp = true` or every player shares one rate-limit bucket
+(`net.client_ip_mode`). Storage is optional — with no S3 bucket configured, lockers and
+saves land on the server's own disk (set `[locker] publicBase` to the origin players
+reach the server on; see [`docs/MULTIPLAYER-SETUP.md`](docs/MULTIPLAYER-SETUP.md) §2).
+
+**5. Run it.**
+
+```bash
+# single world (development / small private server)
+node dist/server.mjs --data ./devdata --port 8080
+
+# the full platform: gateway + on-demand worlds + sim peers
+node dist/gateway.mjs --worlds /data/worlds --shared /data --port 8080 --base-port 9000
+```
+
+Or with Docker — one container runs the gateway, the worlds and the sim peers together:
 
 ```bash
 docker compose -f server/docker-compose.prod.yml up -d
 ```
 
-Behind a reverse proxy, `/ws` must be upgraded to a WebSocket and `/status` + `/healthz`
-proxied as plain GETs. With Caddy:
+(S3 keys go in the environment / an `env_file`, never in `config.toml`.)
+
+**6. Reverse-proxy, same origin as the game page.** Forward these paths to the gateway
+and leave everything else on the static handler:
 
 ```
-mp.example.com {
-    reverse_proxy 127.0.0.1:8080
-}
+/w/*        # the gameplay WebSocket — needs Upgrade handling
+/ws         # local-dev direct dial — same
+/auth/*     # OAuth sign-in
+/locker/*   # game-data upload/stream
+/saves  /saves/*
+/worlds /worlds/*
 ```
 
-Use `wss://` in production. The game client joins via
-`index.html?mp=wss://mp.example.com/ws&name=<display-name>`, which is exactly the URL a
-launcher hands out — so a working `/status` plus that URL is all a server list needs.
+The shipped [`deploy/Caddyfile`](deploy/Caddyfile) is a working reference. Non-negotiables
+it encodes: **strip `CF-Connecting-IP`, `X-Omw-Client-IP` and `True-Client-IP` from client
+requests** (a forged header otherwise grants a fresh login budget and walks past IP bans),
+preserve `X-Forwarded-Proto`, keep the COOP/COEP/CORP isolation headers on the game page,
+and do **not** expose `/admin`, `/metrics`, `/healthz` or `/status` to the internet.
 
-### Configuration
+**7. Verify.**
 
-Defaults live in `server/config.default.toml` (documented inline); operator overrides go in
-`<dataDir>/config.toml` and are deep-merged over them. The knobs you will actually touch:
+```bash
+curl -s localhost:8080/healthz          # gateway liveness
+curl -s localhost:8080/auth/providers   # your providers, "allowPasswordLogin":false
+curl -s localhost:8080/worlds           # the world directory
+```
+
+Then open the launcher in a browser: sign in, pick a handle, upload your Data Files
+once, and enter a world. For a two-player local test, use two browser profiles (each is
+one account). Players join through the launcher on your origin — there is no server
+address to type and no `?mp=` URL to hand out.
+
+### Configuration knobs you will actually touch
 
 | Key | What |
 |---|---|
-| `[server] name`, `motd`, `maxPlayers`, `password` | identity and the front door |
-| `[login] allowRegistration`, `inviteCode`, `resumeWindowSec` | who may create an account; how long a dropped session may rejoin in place |
+| `[server] name`, `motd`, `maxPlayers` | identity and capacity |
+| `[server] password` | **the sim peer's credential**, not a player password |
+| `[auth] requireSso`, `[auth.google/discord/microsoft]` | sign-in |
+| `[locker] *` | storage: S3 endpoint/bucket, or `publicBase` for disk mode; `maxSaveBytesPerAccount` |
+| `[login] allowRegistration`, `inviteCode`, `resumeWindowSec` | who may join; dropped-session rejoin window |
 | `[content] enforce`, `[engine] enforce` | load-order / engine-build matching (`names`, `strict`, `off`) |
 | `[sharing] *` | which quest families are world-shared vs per-player |
-| `[rules] pvp`, `difficulty`, `respawn*` | gameplay policy |
-| `[admin] owners`, `allowConsole` | who bootstraps as rank 3; whether `/console` exists at all |
+| `[rules] pvp`, `pvpZone`, `difficulty`, `partyScaling`, `sayScope`, `timeSkip`, `respawn*` | gameplay policy |
+| `[admin] owners`, `allowConsole`, `dashboardToken` | moderation (below) |
 | `[cellReset] cells`, `intervalSec` | scheduled cell wipes |
-| `[limits] *` | rate limits and per-IP caps |
+| `[limits] *` | rate limits, per-IP caps, `trustCloudflareIp`, avatar render LOD |
+| `[simPeer] *` | peer binary path, generated config dirs, start deadline |
+| `[dev] bots` | development bots (below) |
 
 ### Operating it
 
 Ranks are stored per account: **0** player, **1** moderator (`/kick /tp /tpto`), **2** admin
-(`/ban /unban /ipban /give /motd`), **3** owner (`/setrank /console`). List your own account
+(`/ban /unban /give /motd`), **3** owner (`/setrank /console`). List your own account
 in `[admin] owners` and restart — it is promoted on boot, so you never hand-edit account
-files. Commands work as chat slash-commands and, for launcher/tooling use, as the
-`AdminCommand` protocol message; both go through the same rank gate, and every action is
-logged as `admin.action` with actor, target and arguments.
+files. Commands work as chat slash-commands and, for tooling, as the `AdminCommand`
+protocol message; both go through the same rank gate, and every action is logged as
+`admin.action` with actor, target and arguments.
 
 `/console` sends a script to a player's own client to execute. Treat it as remote code
 execution on someone else's machine: it is owner-only, every use is logged in full, and
 `[admin] allowConsole = false` removes it entirely.
 
-- `GET /healthz` → `ok` (liveness).
-- `GET /status` → public JSON for launchers: server name, MOTD, player count and list,
-  max players, content/engine policy, whether a password or invite is required, PvP flag,
-  uptime, version. It contains no IP addresses and no account data.
-- `SIGUSR1` flushes state to disk; `SIGTERM`/`SIGINT` disconnect players cleanly and flush.
+**Web admin dashboard.** A single-page dashboard lives at `/admin` (overview, report
+inbox, kick / ban / mute / broadcast / cell-reset actions). It is gated on a bearer
+token, `[admin] dashboardToken` — with the token empty the routes do not exist at all.
+It lives on the world process, which never faces the internet directly; reach it over
+loopback or an SSH tunnel, never a public proxy route.
+
+**Endpoints and signals.** `GET /healthz` is liveness on both processes. `GET /status`
+(world process) is the launcher-facing JSON summary — name, MOTD, players, policy flags,
+uptime, version; no IP addresses, no account data. `GET /metrics` is Prometheus text,
+gated on `[metrics] token`, answering 404 while disabled so it is invisible until turned
+on. `SIGUSR1` flushes state to disk; `SIGTERM`/`SIGINT` disconnect players cleanly and
+flush.
+
+**Development bots.** `[dev] bots = N` (or the `OMW_DEV_BOTS` env var; capped at 16)
+spawns bots that hold accounts and characters, accept friend and party invites, and
+stand where players begin — useful for testing menus and party flows alone. They
+register **real** accounts and reserve **real** handles, so the server says loudly at
+boot when they are running (`devbots.enabled`). Do not run them on a public server.
 
 Everything the server stores about players, and how to erase it, is documented in
-`server/PRIVACY.md` — including the `--delete-account <name>` CLI for deletion requests.
-Read it before you take registrations from anyone but yourself.
+[`server/PRIVACY.md`](server/PRIVACY.md) — including the `--delete-account <name>` CLI
+for deletion requests. Read it before you take sign-ins from anyone but yourself.
 
 ## Browser support
 
@@ -211,28 +316,24 @@ game data is **not** included and must never be bundled by hosts either.
 
 ### Multiplayer servers and game data
 
-The multiplayer relay needs **no game data at all** — movement, chat, objects, quests,
-combat and the social layer all work with nothing installed on the server. That is the
-normal configuration and nothing below is required for it.
+Since 1.1.0 a multiplayer server **requires game data**: every world runs a simulation
+peer — a headless OpenMW that simulates NPCs on the operator's machine so a modified
+client cannot author NPC behaviour for everyone else — and the server refuses to boot
+without a peer binary and usable game data. Two things follow, and neither changes the
+licensing stance above:
 
-Game data on a *server* buys exactly one thing: the **simulation peer**, a headless OpenMW
-that runs NPCs on the operator's machine instead of in a player's browser. It closes the
-largest anti-cheat hole (a modified client can no longer author NPC behaviour for everyone
-else) and lets the server validate content at join.
+- **Nothing is bundled.** The operator places *their own legally-owned* copy in
+  `<dataDir>/gamedata`, exactly as a player points the browser at their own `Data Files`.
+  Neither the releases nor the deploy workflows ship or touch any game data; distributing
+  it with a server would be as wrong as bundling it with the client.
+- **Player uploads stay private.** The cloud locker holds each account's own copy with no
+  deduplication and serves it back only to that account. The manifest gate exists so the
+  locker stays a backup locker for recognized game files, not general file hosting. The
+  full reasoning is written down in [`docs/LEGAL.md`](docs/LEGAL.md).
 
-Two things follow, and neither is a change to the licensing stance above:
-
-- **Nothing is bundled.** An operator who wants this places *their own legally-owned* copy
-  in `<dataDir>/gamedata`, exactly as a player points the browser at their own `Data Files`.
-  Distributing that data with the server would be as wrong as bundling it with the client.
-- **Without it you lose nothing but the peer.** Multiplayer stays fully functional; NPCs are
-  simulated by a player's client, which is how it has always worked.
-
-What tier 2 additionally requires, and which the shipped deploy does **not** yet provide:
-a `/opt/openmw-mp/gamedata:/data/gamedata:ro` mount, `mem_limit` raised from 384 MB to
-around 1 GB per peer (measured ~360 MB RSS each), and a base image carrying an `openmw`
-binary — the current image is `node:22-alpine` with no engine in it. Until those exist the
-peer stays off in production regardless of what is in the folder.
+The shipped production image (`server/Dockerfile.simpeer`, target `tier2`) includes the
+peer binary; budget roughly 1 GB of memory per world with a peer (~360 MB RSS measured
+per peer, plus the world process).
 
 ---
 WASM port © 2025–2026 [Virtastic](https://virtastic.app) — GPL-3.0-or-later

@@ -141,8 +141,8 @@ USER app
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
   CMD wget -qO- http://127.0.0.1:8080/healthz || exit 1
-# simPeer mode=auto finds `openmw` on PATH (/usr/local/bin) and enables itself iff the
-# operator mounted valid game data at /data/gamedata. Same heap-cap reasoning as the
-# alpine image.
+# The sim peer is mandatory since 1.1.0: the server probes `openmw` on PATH
+# (/usr/local/bin) and refuses to boot unless the operator mounted valid game data at
+# /data/gamedata. Same heap-cap reasoning as the alpine image.
 ENTRYPOINT []
 CMD ["node", "--max-old-space-size=512", "dist/gateway.mjs", "--worlds", "/data/worlds", "--shared", "/data", "--port", "8080", "--base-port", "9000"]

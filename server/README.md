@@ -1,9 +1,14 @@
 # openmw-mp
 
-Multiplayer server for openmw-web. It is a **relay / validator / persister**: it routes
-chat and (in later milestones) movement/events between browser clients, enforces the
-session rules in [PROTOCOL.md](PROTOCOL.md), and persists accounts. It runs **no game
-simulation** and ships **no game data**.
+Multiplayer server for openmw-web. Two processes come out of one build: the **world
+server** (`dist/server.mjs`) validates and relays play, enforces the session rules in
+[PROTOCOL.md](PROTOCOL.md), persists accounts and world state, and supervises a **sim
+peer** — a headless OpenMW that holds cell authority and is the only thing simulating
+NPCs (mandatory since 1.1.0; the server refuses to boot without a peer binary and usable
+game data). The **gateway** (`dist/gateway.mjs`) fronts many world processes: one public
+world plus private/party worlds booted on demand, all reachable through a single port.
+It ships **no game data** — operators supply their own (see
+[`../SELF_HOSTING.md`](../SELF_HOSTING.md)).
 
 ## Dev quickstart
 
@@ -21,12 +26,22 @@ npm start          # node dist/server.mjs
 ## CLI
 
 ```
-node dist/server.mjs [--data <dir>] [--port <n>]
+node dist/server.mjs  [--data <dir>] [--shared <dir>] [--port <n>] [--delete-account <name>]
+node dist/gateway.mjs [--worlds <dir>] [--shared <dir>] [--port <n>] [--base-port <n>]
 ```
 
-- `--data` — data directory. Default: `/data` when it exists (container), else `./devdata`.
-- `--port` — HTTP+WS port. Default `8080`. WS endpoint is `/ws`; `/healthz` and `/status`
-  are plain HTTP on the same port.
+- `--data` — world data directory. Default: `/data` when it exists (container), else
+  `./devdata`.
+- `--shared` — directory for state shared across worlds (accounts, identities, friends,
+  bans, `gamedata/`, `vanilla-manifest.json`). Defaults to the data dir itself for a
+  single-world server.
+- `--port` — HTTP+WS port. Default `8080`. The world server's WS endpoint is `/ws`;
+  `/healthz` and `/status` are plain HTTP on the same port. The gateway serves
+  `/worlds`, `/auth/*`, `/locker/*`, `/saves*` and splices `/w/<worldId>` WebSocket
+  upgrades to the right world; world ports (`--base-port` upward) never leave the
+  machine.
+- `--delete-account <name>` — erase an account and its data, then exit (see
+  [PRIVACY.md](PRIVACY.md)).
 
 Metrics: `GET /metrics` serves the Prometheus text format, gated on
 `Authorization: Bearer <[metrics] token>`. It is off by default and answers `404` (not

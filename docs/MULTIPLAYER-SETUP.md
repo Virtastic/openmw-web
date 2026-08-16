@@ -1,13 +1,16 @@
 # Multiplayer setup: SSO + storage locker
 
-Multiplayer is **SSO-only** (no account/password) and **locker-only** (game data streams
-from your own S3-compatible bucket, never a local folder). This guide covers the three
-things only you can provision, then the config that turns it all on. Everything else is
-already built and tested.
+Multiplayer sign-in is **SSO-only** in production (`requireSso = true`; no passwords),
+and players' game data lives in the **storage locker** — an S3-compatible bucket, or the
+server's own disk when no bucket is configured. This guide covers the things only an
+operator can provision (the OAuth app, optionally the bucket, and the upload manifest),
+then the config that turns it all on. The rest of the server walkthrough — game data for
+the sim peer, running it, the reverse proxy — is in
+[`../SELF_HOSTING.md`](../SELF_HOSTING.md#multiplayer-server).
 
-The OAuth app below is the only real blocker — I cannot create a Google OAuth app for you.
-Storage is optional: with no S3 configured the server stores lockers and savegames on its
-own disk (§2).
+The OAuth app below is the one hard prerequisite nobody can create for you. Storage is
+optional: with no S3 configured the server stores lockers and savegames on its own disk
+(§2).
 
 ---
 
@@ -186,10 +189,12 @@ They are capped separately from the game-data library (`[locker] maxSaveBytesPer
 
 ## 5. Play
 
-Open the launcher → **Multiplayer** card → enter the server address → it sends you through
-Google → back to the game. First time, it asks for your Data Files folder once, hashes and
-uploads them to your locker, then streams them back. After that, any device: sign in, and
-your data (and your character) are already there.
+Open the launcher on your server's origin → **Multiplayer** tile → it sends you through
+your provider's sign-in → you pick a public handle → back to the game. There is no server
+address to type: the launcher talks to the server it was served from. First time, the
+upload wizard asks for your Data Files folder once, hashes and uploads it to your locker,
+then streams it back. After that, any device: sign in, and your data (and your character)
+are already there.
 
 For a two-player local test, use two browser profiles (each is one account).
 

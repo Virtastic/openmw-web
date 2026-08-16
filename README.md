@@ -167,9 +167,11 @@ This is deliberate and the reasoning is written down in [`docs/LEGAL.md`](docs/L
 
 **Also there:** friends and presence, parties with loot rolls, whisper, mute and block,
 in-game reporting with chat context for moderators, an admin surface, and server-side
-savegames. Running your own server needs an OAuth app and about ten minutes:
-[`docs/MULTIPLAYER-SETUP.md`](docs/MULTIPLAYER-SETUP.md). Storage is optional — with no
-S3 bucket configured, lockers and saves go to a folder on the server.
+savegames. Running your own server needs an OAuth app, your own copy of the game data
+for the server-side simulation, and a spare half hour: the step-by-step is in
+[`SELF_HOSTING.md`](SELF_HOSTING.md#multiplayer-server), with the OAuth and storage
+details in [`docs/MULTIPLAYER-SETUP.md`](docs/MULTIPLAYER-SETUP.md). Storage is
+optional — with no S3 bucket configured, lockers and saves go to a folder on the server.
 
 For running the server on your own machine while developing, see
 [Multiplayer locally](#multiplayer-locally).
