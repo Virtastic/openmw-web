@@ -195,6 +195,10 @@
     <p class="wz-p lkhelp-tip">Installed to a second drive or a custom Steam library? Use
        <b>Browse local files</b> rather than guessing the path, since Steam puts extra libraries
        wherever you chose (often <code>D:\SteamLibrary\steamapps\common\Morrowind</code>).</p>
+    <p class="wz-p lkhelp-tip">On Windows, the browser refuses to open folders inside
+       <code>Program&nbsp;Files</code> — and Steam's default library lives there, so the picker
+       says the folder <i>"contains system files"</i>. Copy your <b>Data&nbsp;Files</b> folder to
+       Documents or Desktop first, then pick the copy here. (Chrome and Edge behave the same.)</p>
 
     <h3 class="lkhelp-h3">GOG.com</h3>
     <p class="wz-p">In <b>GOG Galaxy</b>, open Morrowind, click the gear beside <b>Play</b> and
@@ -2197,7 +2201,17 @@
                if (!window.showDirectoryPicker){ dirInput.click(); return; } // older browser fallback
                var res;
                try { res = await pickFolderTargeted(); }
-               catch(e){ if (e && e.name === 'AbortError') return; wiz.note('Could not read that folder: '+(e&&e.message||e),'err'); return; }
+               catch(e){
+                 if (e && e.name === 'AbortError') return;
+                 // Chromium refuses folders inside system locations (Program Files, Windows, …).
+                 // Steam's default library lives under C:\Program Files (x86)\Steam\, so a default
+                 // Steam install trips this — same handling as the launcher's local-play picker.
+                 if (e && (e.name==='SecurityError' || /system files|blocklist/i.test((e && e.message)||''))){
+                   wiz.note('That folder is in a location the browser won’t open (Windows blocks Program Files, including Steam’s default C:\\Program Files (x86)\\Steam\\ folder). This is the same in Chrome and Edge. Copy your Data Files folder to Documents or Desktop and pick the copy here.','err');
+                   return;
+                 }
+                 wiz.note('Could not read that folder: '+(e&&e.message||e),'err'); return;
+               }
                var list = res.files;
                if (!list.length){
                  wiz.note('Nothing this server needs is in that folder. Pick the folder that holds Morrowind.esm (usually "Data Files").','err');
