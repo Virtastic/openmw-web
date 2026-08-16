@@ -84,13 +84,24 @@ Mode `600`, owned by whoever the container runs as, or the container cannot read
 
 ## 3. S3 credentials
 
-These go in the environment, never the config file. `server/docker-compose.prod.yml` expects an
-env file beside it.
+These go in the environment, never the config file. `server/docker-compose.prod.yml` loads them
+from **`/opt/openmw-mp/data/s3.env`** (under `data/` because the workflow never touches that
+dir — same convention as the test server's `/opt/openmw-mp-test/data/s3.env`, which holds the
+same keys). Mode `600`, owned by the container user (uid 1001):
 
-```
+```bash
+sudo sh -c 'umask 077; cat > /opt/openmw-mp/data/s3.env' <<'EOF'
 S3_ACCESS_KEY_ID=...
 S3_SECRET_ACCESS_KEY=...
+EOF
+sudo chown 1001:1001 /opt/openmw-mp/data/s3.env
 ```
+
+**Do not skip this.** With an endpoint configured but no keys, the server used to fall back to
+filesystem storage with a single info line — and filesystem uploads travel through Cloudflare,
+whose free-plan 100 MB body cap silently kills every BSA/media upload at the edge. Production
+shipped that way once. The server now logs `locker.s3_creds_missing` at error level and
+`deploy-mp` fails its health gate on it, so the deploy goes red instead of quietly degrading.
 
 ## 4. Game data for the sim peer
 
@@ -118,7 +129,48 @@ Watch both workflows. `deploy-mp` ends with a healthcheck that connects a bot ov
 WebSocket, so a green run means the server actually accepts a session rather than merely
 starting.
 
-## 6. Verify before announcing
+## 6. The file-mode upload host (one-time box setup)
+
+S3 mode needs none of this — presigned URLs go straight to object storage. But **file mode**
+(no S3 keys; blobs in `/data/locker-blobs`) hands out URLs on the game's own origin, which is
+proxied by Cloudflare — and the free plan rejects request bodies over 100 MB at the edge, so
+`Morrowind.bsa` (~310 MB) can never upload. The workaround is a second hostname that Cloudflare
+never touches: `upload.virtastic.app`, unproxied (grey cloud — this deliberately publishes the
+origin IP), on port `8443` so `443` stays Cloudflare-only in the box firewall.
+
+The vhost itself (`deploy/upload.virtastic.app.caddy`) is installed by `deploy-mp` like any
+other deploy artifact. The one-time pieces on the box:
+
+1. **DNS**: unproxied `A` record `upload` → the VPS IP (the zone-scoped Cloudflare token can
+   do it).
+2. **Cert**: browsers connect here directly, so the Cloudflare Origin CA cert will not do —
+   it needs a real Let's Encrypt cert, and inbound 80/443 are Cloudflare-only, so use DNS-01:
+
+   ```bash
+   sudo apt-get install -y certbot python3-certbot-dns-cloudflare
+   # /root/.secrets/cloudflare.ini (mode 600): dns_cloudflare_api_token = <zone token>
+   sudo certbot certonly --dns-cloudflare \
+        --dns-cloudflare-credentials /root/.secrets/cloudflare.ini \
+        -d upload.virtastic.app --non-interactive --agree-tos -m <you>
+   ```
+
+   A deploy hook at `/etc/letsencrypt/renewal-hooks/deploy/upload-edge.sh` copies the cert to
+   `/opt/edge/certs/upload.{crt,key}` and restarts `edge-caddy` on each renewal.
+3. **Port**: add `"8443:8443"` to the edge Caddy's `ports:` in `/opt/edge/docker-compose.yml`
+   and `docker compose up -d`. The `DOCKER-USER` firewall chain only restricts 80/443, so
+   8443 is publicly reachable without touching it.
+4. **Config**: point file-mode presigned URLs at the new host in
+   `/opt/openmw-mp/data/config.toml`:
+
+   ```toml
+   [locker]
+   publicBase = "https://upload.virtastic.app:8443"
+   ```
+
+`publicBase` is ignored in S3 mode, so this is safe to leave set permanently: staging the S3
+keys switches the locker to direct-to-S3 and this host simply goes quiet.
+
+## 7. Verify before announcing
 
 ```bash
 ci/jenkins/verify-mp-hardening.sh https://morrowind.virtastic.app 10

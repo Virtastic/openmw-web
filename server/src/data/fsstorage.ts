@@ -159,6 +159,20 @@ export function lockerStorageFrom(
 ): S3Storage | FsStorage {
   const s3 = s3FromEnv({ endpoint: cfg.endpoint, region: cfg.region, bucket: cfg.bucket });
   if (s3) return s3;
+  if (cfg.endpoint !== '') {
+    // The operator ASKED for S3 (endpoint in config) but the env keys are absent, so this
+    // boot is about to silently fall back to disk. That fallback is not harmless: filesystem
+    // URLs go through the site origin, and a proxy in front of it (Cloudflare's free plan
+    // caps request bodies at 100 MB) can refuse the big uploads at the edge — where nothing
+    // ever reaches this server's logs. Production ran that way for a month, every player's
+    // BSA upload dying with a generic failure while every boot logged one info line. An
+    // explicit endpoint with no keys is a broken deployment, so say so at error level, and
+    // deploy-mp.yml fails the deploy when it sees this event.
+    log('error', 'locker.s3_creds_missing', {
+      endpoint: cfg.endpoint, bucket: cfg.bucket,
+      fix: 'set S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY in the container env (prod: /opt/openmw-mp/data/s3.env), or clear [locker] endpoint to choose filesystem storage deliberately',
+    });
+  }
   if (cfg.publicBase === '') {
     // Server-side reads (the media-pack verify) still work; a browser on another machine
     // cannot reach a localhost URL, so say so once rather than letting every upload fail

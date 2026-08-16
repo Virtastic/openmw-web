@@ -21,6 +21,14 @@ services:
       - /opt/openmw-mp/gamedata:/data/gamedata:ro
     environment:
       - NODE_ENV=production
+    # S3/locker credentials (S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY — see
+    # docs/PRODUCTION-BRINGUP.md §3). Lives under data/ because the deploy workflow never
+    # touches that dir, same convention as the test server's /opt/openmw-mp-test/data/s3.env.
+    # Optional so a fresh box still boots (the server then logs locker.s3_creds_missing at
+    # error level and deploy-mp fails its gate — absent keys must never be silent again).
+    env_file:
+      - path: /opt/openmw-mp/data/s3.env
+        required: false
     # Sized for tier 2: node server (heap-capped at 256 MB) + one headless sim peer
     # (~310 MB measured with retail data) + slack. A tier 1 deploy (alpine image, no
     # peer) fits the old 384m; a runaway leak still trips well before the box cares.

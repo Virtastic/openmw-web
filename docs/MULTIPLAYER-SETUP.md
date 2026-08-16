@@ -100,9 +100,11 @@ default.
 would reject a friend's legitimate copy from a different store. So the locker accepts a
 file when either its exact sha256 is known **or** its filename matches a manifest entry and
 its size is within ±5% (a movie renamed to `Morrowind.esm` is nowhere near ~79.8MB, so it
-is still refused). A newly-seen legit copy is logged (`locker.accepted_new_copy`) and its
-hash remembered. To require exact hashes only, set `acceptByNameAndSize = false` under
-`[locker]` in the config.
+is still refused). A refusal is logged (`locker.refused_unrecognized`) with the offered
+name, size and hash, so an operator can add a genuinely new distribution to the manifest by
+hand. Unknown hashes that pass on name+size are deliberately NOT remembered — learning them
+would let one uploader whitelist a byte-mismatched file for everyone. To require exact
+hashes only, set `acceptByNameAndSize = false` under `[locker]` in the config.
 
 > The multiplayer content gate is name-based, so same-named files from different stores play
 > together fine; only genuinely different *records* (e.g. a different language ESM) would

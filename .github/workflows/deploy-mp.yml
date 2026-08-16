@@ -19,6 +19,7 @@ on:
       # engine change that does not rebuild here leaves the peer simulating with a different
       # engine than the clients are running.
       - 'openmw/**'
+      - 'deploy/upload.virtastic.app.caddy'
       - '.github/workflows/deploy-mp.yml'
   workflow_dispatch:
 
@@ -85,6 +86,12 @@ jobs:
       - name: Start / update container
         run: docker compose -f /opt/openmw-mp/docker-compose.prod.yml up -d
 
+      # The file-mode upload host (see the vhost's own header for why it exists). Its cert
+      # and DNS record are one-time box setup (docs/PRODUCTION-BRINGUP.md §6); the vhost
+      # itself is pipeline-owned like morrowind.caddy.
+      - name: Install upload-host edge vhost
+        run: sudo cp deploy/upload.virtastic.app.caddy /opt/edge/sites/upload.virtastic.app.caddy
+
       # Validate, then restart the shared edge to apply (admin API disabled -> no `caddy
       # reload`; restart re-reads the Caddyfile, ~3s blip). Validate first to protect the
       # co-tenant sites.
@@ -99,6 +106,21 @@ jobs:
           sleep 4
           docker run --rm --network nostalgia curlimages/curl:latest \
             -fsS http://openmw-mp:8080/healthz | grep -q ok
+
+      # Gate 1b — storage is what the config asked for. A configured [locker] endpoint with
+      # no S3 keys used to fall back to filesystem storage with one info line: uploads then
+      # rode the site origin through Cloudflare, whose free-plan 100 MB body cap killed every
+      # BSA/media upload at the edge — invisible in server logs, and shipped that way for a
+      # month. The server now logs locker.s3_creds_missing at error level; a deploy that
+      # boots into that state is broken and must not go green. (compose up -d recreated the
+      # container above, so these logs are this boot's, not history.)
+      - name: Health check (locker storage mode)
+        run: |
+          if docker logs openmw-mp 2>&1 | grep -q 'locker.s3_creds_missing'; then
+            echo "FATAL: [locker] endpoint is configured but S3 credentials are missing" >&2
+            echo "       (stage them in /opt/openmw-mp/data/s3.env — docs/PRODUCTION-BRINGUP.md §3)" >&2
+            exit 1
+          fi
 
       # Gate 2 — protocol-level: a real omw-mp/1 hello through the container's WS endpoint.
       # Zero-dep bot (Node's global WebSocket) run inside the freshly built image, so it needs

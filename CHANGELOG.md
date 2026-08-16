@@ -2,6 +2,23 @@
 
 Notable changes to OpenMW-Web. Dates are release dates, newest first.
 
+## Unreleased
+
+**Locker uploads over 100 MB no longer fail silently.** A configured `[locker]` S3 endpoint
+with missing credentials used to fall back to filesystem storage with one info line; uploads
+then rode the site origin through Cloudflare, whose free-plan 100 MB body cap rejected every
+BSA and voice-pack upload at the edge — invisible in server logs, while the wizard showed a
+generic failure players read as "files not genuine". The server now logs
+`locker.s3_creds_missing` at error level, the production deploy fails its health gate on that
+event, and `docker-compose.prod.yml` actually loads the credentials file the bring-up doc
+described. The upload wizard also explains the Windows/Chromium "contains system files" folder
+block (default Steam installs live in `Program Files`) instead of showing a raw error.
+
+**File-mode lockers get an upload host that bypasses the CDN.** When the locker stores blobs
+on the server's own disk, presigned URLs can now point at a dedicated unproxied hostname
+(`[locker] publicBase`), so big uploads no longer have to fit through a fronting proxy's body
+cap. S3 mode is unaffected and still uploads directly to object storage.
+
 ## 1.1.0
 
 The multiplayer release. 1.0.x was a single player engine in the browser. 1.1.0 adds a hosted
