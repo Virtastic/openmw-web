@@ -122,14 +122,21 @@ jobs:
             exit 1
           fi
 
-      # Gate 2 — protocol-level: a real omw-mp/1 hello through the container's WS endpoint.
+      # Gate 2 — protocol-level: a real omw-mp/1 hello along the path a client takes. The bot
+      # asks the directory (GET /worlds) for a wsPath and dials /w/<worldId> through the
+      # gateway's upgrade splice. NOT ws://…/ws: the gateway has no /ws route and answers 502
+      # by design (deploy/Caddyfile), so that probe failed every deploy while the service was
+      # fine. --allow-refusal=BAD_CONTENT: a tier-2 world pins the sim peer's content list, so
+      # the data-less bot is always refused BAD_CONTENT — after the handshake, splice and
+      # hello all worked, which is exactly what this gate exists to prove.
       # Zero-dep bot (Node's global WebSocket) run inside the freshly built image, so it needs
       # no node on the runner and no extra deps.
       - name: Health check (protocol)
         run: |
           docker run --rm --network nostalgia \
             -v "$PWD/server/bots:/bots:ro" \
-            openmw-mp:ovh node /bots/healthcheck.mjs ws://openmw-mp:8080/ws
+            openmw-mp:ovh node /bots/healthcheck.mjs http://openmw-mp:8080 \
+              --allow-refusal=BAD_CONTENT
 
       # Gate 3 - the edge path a PLAYER actually takes. The game page and the gateway are one
       # origin (AGENTS.md, "One origin"): index.html refuses to hand its session ticket to a
@@ -152,13 +159,20 @@ jobs:
           # Proves the gateway is reachable THROUGH the game's own Caddy, which is the only way
           # a browser reaches it. /healthz and /status are deliberately not exposed here.
           E -f https://morrowind.virtastic.app/auth/providers | tee /dev/stderr | grep -q '"providers"'
-          # The gameplay socket, on the origin the client dials. The upgrade MUST carry the
-          # omw-mp.1 subprotocol or the server rejects the handshake.
-          code=$(E -o /dev/null -w '%{http_code}' --http1.1 \
+          # The gameplay socket, on the origin the client dials. Two traps this has already
+          # fallen into:
+          #  - Sec-WebSocket-Key MUST be base64 of exactly 16 bytes (RFC 6455). The old key
+          #    decoded to 13, and the world's ws library rejects that with HTTP 400 before
+          #    the handshake — so this gate read "edge broken" with everything healthy.
+          #    dGhlIHNhbXBsZSBub25jZQ== is the RFC's own sample key (AGENTS.md uses it too).
+          #  - After a 101 curl just streams the socket forever (the server only hangs up at
+          #    its hello timeout), so cap it with --max-time; on timeout curl exits 28 but
+          #    has already written the -w %{http_code}, which is all we want.
+          code=$(E -o /dev/null -w '%{http_code}' --http1.1 --max-time 8 \
             -H "Connection: Upgrade" -H "Upgrade: websocket" \
-            -H "Sec-WebSocket-Version: 13" -H "Sec-WebSocket-Key: aGVhbHRoY2hlY2sxNg==" \
+            -H "Sec-WebSocket-Version: 13" -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" \
             -H "Sec-WebSocket-Protocol: omw-mp.1" \
-            https://morrowind.virtastic.app/w/vvardenfell)
+            https://morrowind.virtastic.app/w/vvardenfell || true)
           test "$code" = 101 || { echo "FATAL: WS upgrade at the edge returned HTTP $code (want 101)" >&2; exit 1; }
           echo "edge health OK (101 upgrade on /w/ + providers)"
 
