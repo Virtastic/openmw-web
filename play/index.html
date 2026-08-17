@@ -1866,6 +1866,16 @@
        var __srcLocal = /[?&]src=local\b/.test(location.search);
        // The locker token rides in the URL FRAGMENT (captured to __omwLockerToken above), not
        // the query string — so key the locker path off the captured token, never location.search.
+       //
+       // "Above" means the multiplayer branch — which only runs with mp=. The cloud-locker
+       // boot (#locker=&mplocker=&cloud=1) deliberately has NO mp=, so without this capture
+       // the token was never read, the locker mount never ran, and the boot fell through to
+       // the server-hosted retail path: an account with a fully uploaded library was told
+       // "No game data on this server". Same library, same account, different door.
+       if (!window.__omwLockerToken) {
+         var clok = /[#&]mplocker=([^&]+)/.exec(location.hash || '');
+         if (clok) window.__omwLockerToken = decodeURIComponent(clok[1]);
+       }
        var __mpLocker = !!window.__omwLockerToken;
        if (__mpLocker) mountLockerMorrowind();       // MP: game data streams from your locker
        else if (__srcLocal) mountLocalMorrowind();   // bring-your-own local folder (single-player)
