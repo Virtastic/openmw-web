@@ -3514,6 +3514,42 @@
     }, 250);
   })();
 
+  // SSO auth rescue. The engine's auth ladder publishes needFreshTicket ("stamp|target|why")
+  // when it dead-ends with no usable credential — a spent ticket, or a drop with no resume
+  // token (the reaped-world case: switch to public, your own world idles out, switch back,
+  // and the revived process knows nothing about you). The only credential that can work is
+  // a fresh single-use ticket, and only this page can mint one (the locker token lives
+  // here). Answer by rebooting into the same world through rebootIntoWorld — the identical
+  // proven path a manual world switch takes, so nothing new can leak.
+  //
+  // BOUNDED: three rescues per ten minutes, per tab. A server refusing every fresh ticket
+  // is a real refusal (ban, dead session) and must surface as the Failed modal — which it
+  // does, because an unanswered ask times out in Lua (net.tick) and fails the old way.
+  (function watchTicketRescue(){
+    var seen = '';
+    setInterval(function(){
+      var want = String((window.__omwMP || {}).needFreshTicket || '');
+      if (!want || want === seen) return;
+      seen = want;
+      var target = want.split('|')[1] || '';
+      var why = want.split('|')[2] || 'auth dead-end';
+      if (!target) { mpLog('[mp] auth rescue asked with no target — ignoring', 'err'); return; }
+      var RKEY = 'omw-sso-rescues';
+      var now = Date.now(), hist = [];
+      try { hist = JSON.parse(sessionStorage.getItem(RKEY) || '[]').filter(function(t){ return now - t < 600000; }); } catch (e) {}
+      if (hist.length >= 3) {
+        mpLog('[mp] auth rescue suppressed — ' + hist.length + ' rejoins in 10 minutes; letting the failure surface', 'err');
+        return; // Lua's deadline turns this into the terminal modal
+      }
+      hist.push(now);
+      try { sessionStorage.setItem(RKEY, JSON.stringify(hist)); } catch (e) {}
+      mpLog('[mp] ' + why + ' — minting a fresh ticket and rejoining');
+      Promise.resolve(rebootIntoWorld(target)).catch(function(e){
+        mpLog('[mp] auth rescue failed: ' + e, 'err'); // Lua's deadline shows the modal
+      });
+    }, 250);
+  })();
+
   function holdUntilSimulated(ceilingMs, opts){
     // A SETTLING GRACE AFTER READY, not a floor before it.
     //
