@@ -261,6 +261,19 @@ export class Locker {
     return this.mediaEntries().reduce((a, f) => a + f.size, 0);
   }
 
+  // The packable media paths, lowercased — the list the wizard filters its pack against.
+  //
+  // WHY THIS IS EXPOSED. verifyMediaPack rejects a pack containing ANY entry this manifest
+  // does not know, and that rejection destroys the WHOLE pack. Two genuine retail installs
+  // legitimately differ in which media is loose and which is inside a BSA (a player whose
+  // copy carries Sound/Cr/alamlexia/ loose lost a 166 MB upload to that difference, then was
+  // asked to upload it again forever). Without the list, a client cannot know what to leave
+  // out; with it, the client packs only recognized files and the strict server-side gate
+  // stays exactly as strict. Names only — hashes stay server-side (see requiredManifest).
+  packableMedia(): string[] {
+    return this.mediaEntries().map((f) => f.name.toLowerCase());
+  }
+
   // The size ceiling for a media pack: the media bytes plus USTAR overhead (a 512-byte
   // header per file + padding) with a little slack for distribution differences.
   private mediaPackCap(): number {

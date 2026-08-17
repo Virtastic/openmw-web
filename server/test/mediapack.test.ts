@@ -112,6 +112,32 @@ test('a clean pack verifies and stays; a pack with a foreign file is deleted', a
   assert.ok(!objects.has(`gamedata/alice/${MEDIA_PACK}`), 'and the object is deleted');
 });
 
+// The wizard cannot know which loose media THIS server recognizes, and guessing wrong is
+// expensive: verifyMediaPack deletes the whole pack over one unknown path. Two genuine retail
+// installs differ in what is loose vs inside a BSA — a real copy carrying Sound/Cr/alamlexia/
+// lost a 166 MB upload to exactly that, then was asked for the voices again on every launch.
+// packableMedia is what lets the client leave those out; the strict gate above is unchanged.
+test('packableMedia lists the packable paths so the wizard can filter its pack', () => {
+  const locker = boot(new Map(), [VOICE, VOICE2, MUSIC]);
+  const packable = locker.packableMedia();
+
+  assert.deepEqual(
+    [...packable].sort(),
+    [VOICE.name.toLowerCase(), VOICE2.name.toLowerCase()].sort(),
+    'voice only — lowercased, and never the per-file media',
+  );
+  assert.ok(!packable.includes(MUSIC.name.toLowerCase()), 'Music/ uploads per file, not in the pack');
+
+  // The point of the list: a client filtering on it drops the entry that would have cost it
+  // the whole pack, and what remains is exactly what verification accepts.
+  const onDisk = [VOICE.name, VOICE2.name, 'Sound/Cr/alamlexia/alamATT01.wav'];
+  const kept = onDisk.filter((p) => packable.includes(p.toLowerCase()));
+  assert.deepEqual(kept, [VOICE.name, VOICE2.name], 'the unknown creature sound is left behind');
+
+  // No hashes ride along: requiredManifest withholds them and this must not leak them.
+  assert.ok(packable.every((p) => typeof p === 'string' && !/[0-9a-f]{64}/.test(p)), 'names only');
+});
+
 test('an oversized pack is refused up front; not-a-tar is refused at confirm', async () => {
   const objects = new Map<string, Buffer>();
   const locker = boot(objects, [VOICE]);

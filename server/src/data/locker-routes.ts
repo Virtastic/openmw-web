@@ -6,6 +6,7 @@
 //   POST /locker/authorize-upload  -> presigned PUT for one recognized file, or a refusal
 //   POST /locker/uploaded          confirm a file landed (records it in the manifest)
 //   GET  /locker/files             list this account's stored files
+//   GET  /locker/media-manifest    the media paths a pack may contain (wizard filters on it)
 //   GET  /locker/download?name=    -> presigned GET (owner only)
 //   POST /locker/erase             delete-my-data
 //
@@ -142,6 +143,14 @@ export function lockerRoutes(deps: LockerRouteDeps) {
           // launcher refuses to start rather than letting them find out three screens later.
           content: deps.requiredContent?.() ?? [],
         });
+        return true;
+      }
+
+      // The paths the media pack may contain. The wizard fetches this before packing and
+      // drops anything absent, so a player whose retail copy has loose media this manifest
+      // does not know keeps their voices instead of losing the whole pack to one file.
+      if (req.method === 'GET' && url.pathname === '/locker/media-manifest') {
+        json(res, 200, { files: deps.locker.packableMedia() });
         return true;
       }
 

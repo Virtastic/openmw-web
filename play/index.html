@@ -2311,6 +2311,23 @@
              async function ingest(list){
                var core={}, loose=[], voice=[];
                var wanted={}; fileNeeded.forEach(function(f){ wanted[f.name.toLowerCase()]=f.name; });
+               // WHAT THE PACK IS ALLOWED TO CONTAIN. The server verifies media.tar entry by
+               // entry and deletes the ENTIRE pack if it finds one path its manifest does not
+               // know — asynchronously, after the wizard has already said "uploaded". Two
+               // genuine retail installs differ in which media is loose and which lives in a
+               // BSA, so a real copy carrying one extra file (observed: Sound/Cr/alamlexia/)
+               // silently lost all 166 MB and was asked for the voices again on every launch.
+               // Ask the server what it recognizes and pack only that; anything else is not
+               // wanted by this world anyway. A failed fetch falls back to packing everything
+               // (exactly the old behaviour) — no worse than before, and never a hard block.
+               var packable = null, skippedVoice = 0;
+               try {
+                 var pm = await api('/locker/media-manifest');
+                 if (pm.ok){
+                   var names = (await pm.json()).files || [];
+                   if (names.length){ packable = {}; names.forEach(function(n){ packable[String(n).toLowerCase()] = 1; }); }
+                 }
+               } catch(e){ append('[locker] media manifest unavailable ('+(e&&e.message||e)+') — packing unfiltered','err'); }
                list.forEach(function(f){
                  // __rel: set by the targeted showDirectoryPicker walk. webkitRelativePath:
                  // the <input webkitdirectory> fallback. name: a plain multi-file pick.
@@ -2318,7 +2335,12 @@
                  var base=rel.split('/').pop();
                  var m=rel.match(/(?:^|\/)((?:Sound|Music|Video|Fonts|Splash)\/.+)$/i);
                  if (m && MEDIA_EXT_RE.test(m[1])){
-                   if (/^Sound\//i.test(m[1])) voice.push({ path:m[1], file:f });
+                   // Only Sound/ is filtered: loose media uploads per file, where an
+                   // unrecognized one is refused on its own and costs nothing else.
+                   if (/^Sound\//i.test(m[1])){
+                     if (!packable || packable[m[1].toLowerCase()]) voice.push({ path:m[1], file:f });
+                     else skippedVoice++;
+                   }
                    else loose.push({ path:m[1], file:f });
                  } else if (wanted[base.toLowerCase()] && /\.(esm|esp|bsa|omwaddon)$/i.test(base)){
                    core[base.toLowerCase()]=f; // canonical spelling comes from the manifest
@@ -2390,6 +2412,8 @@
                  }
                }
                // Voice: thousands of tiny files, so one packed upload.
+               if (skippedVoice) append('[locker] packing '+voice.length+' voice files; skipped '
+                 + skippedVoice + ' this server does not use.');
                if (voice.length && mediaRow && have.indexOf('media.tar')===-1){
                  try { await uploadMediaPack(voice); }
                  catch(e){ wiz.set('media.tar','err','failed'); wiz.note('Voices could not be added ('+(e&&e.message||e)+'). Starting without them.','err'); }
