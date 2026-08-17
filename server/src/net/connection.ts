@@ -564,6 +564,13 @@ export class Connection implements Peer {
   // sum(omwmp_auth_total) by op == attempts that got past the state machine.
   private authFail(op: AuthOp, result: 'AUTH_FAILED' | 'BANNED' | 'RATE', detail: string): void {
     metrics.auth.inc({ op, result });
+    // WHICH RUNG OF THE LADDER FAILED. The disconnect log carries only the detail string, and
+    // two very different faults share one message: a client that presented a spent ticket and
+    // a client that presented no credential at all both end at "this server uses single
+    // sign-on". Telling them apart decides whether the ticket handoff or the client's auth
+    // ladder is at fault, and without it a real SSO failure could only be guessed at from
+    // timing. The metric already knew; the log did not, and the log is what gets read.
+    log('warn', 'conn.auth_failed', { ip: this.ip, op, result, detail });
     this.disconnect(result, detail);
   }
 
