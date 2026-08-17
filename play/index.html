@@ -480,6 +480,14 @@
  function fatalOverlay(title, detail, showReload, opts){
    opts = opts || {};
    killEngine();
+   // A fatal BEFORE the engine is up means the engine must never come up. The loader keeps
+   // downloading and compiling behind the overlay (openmw.js + wasm + data + the pthread
+   // pool), and that work pegs the main thread — the overlay paints, but its button never
+   // hears the click ("Back to the launcher" did nothing). window.stop() cancels every
+   // in-flight fetch; nothing behind a boot fatal is worth finishing. A RUNNING engine is
+   // killEngine()'s job instead (and e.g. the GPU-loss path needs its reload timer, which
+   // window.stop() does not touch).
+   try { if (!(window.Module && (Module.calledRun || Module.__omwRunning))) window.stop(); } catch(e){}
    try {
      // The SAME panel the multiplayer error modal uses. This used to be a monospace slab of
      // terminal-grey text, which read like a stack trace at the exact moment a player needs a
@@ -514,6 +522,9 @@
          + 'font:600 12.5px/1 Optima,"Gill Sans",sans-serif;letter-spacing:.12em;text-transform:uppercase;'
          + 'background:linear-gradient(180deg,#d3a84e,#8a6838);color:#1a1207';
        b.addEventListener('click', function(){
+         // A deliberate leave: never let the unsaved-progress beforeunload guard turn the
+         // one visible way out of a fatal into a "Leave site?" interrogation.
+         window.__omwAllowLeave = true;
          if (opts.actionHref) location.href = opts.actionHref; else location.reload();
        });
        box.appendChild(b);
@@ -2004,7 +2015,9 @@
          function bounce(msg){ append('[locker] '+msg,'err');
            fatalOverlay(window.__omwMPEnabled ? 'Multiplayer sign-in needed' : 'Sign-in needed',
              msg+' Returning to the launcher…', false);
-           setTimeout(function(){ location.href='launcher.html'; }, 2400); }
+           // The auto-redirect is a deliberate leave too — without the flag it raised the
+           // browser's "Leave site?" dialog on top of the overlay whenever the guard was armed.
+           setTimeout(function(){ window.__omwAllowLeave = true; location.href='launcher.html'; }, 2400); }
          try { StreamFS.init(); } catch(e){ return bounce('Streaming unavailable (needs a Chromium browser on desktop).'); }
          if (!TOKEN || !HTTP) return bounce('No locker session. Please sign in again.');
          addRunDependency('mw-local');
