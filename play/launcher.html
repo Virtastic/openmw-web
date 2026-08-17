@@ -453,7 +453,7 @@
          the multiplayer. The locker was always "your files, streamed back to you on any
          device" (docs/LEGAL.md §2); this is simply the door to it that does not require
          other people. -->
-    <div class="card actionable reveal d4" id="card-cloud" role="button" tabindex="0">
+    <div class="card actionable reveal d4" id="card-cloud" role="button" tabindex="0" hidden>
       <button class="help-btn" id="help-cloud" type="button" aria-label="About playing from anywhere">?</button>
       <div class="glyph" aria-hidden="true">
         <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round">
@@ -1365,6 +1365,20 @@
    let username = '';
    try { username = (JSON.parse(sessionStorage.getItem('omw-mp-session') || '{}')).username || ''; } catch(e){}
    await bootGame({ gwHttp, gwUrl, account, lockerToken, username }, decodeURIComponent(tk[1]), chosenChar);
+ })();
+ // EXPERIMENTAL, AND OFF ON THE LIVE SITE. The cloud locker is the newest door and the least
+ // proven end to end — the upload wizard, the server-side pack verification and the boot path
+ // each still have rough edges, and morrowind.virtastic.app is a server people actually play
+ // on. The markup ships `hidden` and is revealed only where breaking it is free, so the
+ // default on prod is "not offered" even if this script fails before reaching this line.
+ //
+ // NOT DELETED, deliberately: the code is fine, the experience is what is not ready. Any host
+ // other than the live site (a dev box, localhost) still shows it, and ?experimental=1 opens
+ // it on prod for a deliberate test. Drop the gate when the mode is ready to be offered.
+ (function(){
+   var isProd = /^morrowind\.virtastic\.app$/i.test(location.hostname);
+   var optIn = /[?&]experimental=1\b/.test(location.search);
+   $('card-cloud').hidden = isProd && !optIn;
  })();
  function cloudStart(){ window.__omwSignInIntent = 'cloud'; mpStart(); }
  $('card-cloud').addEventListener('click', cloudStart);
