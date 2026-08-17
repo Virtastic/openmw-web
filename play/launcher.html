@@ -74,7 +74,9 @@
  .diamond{width:7px; height:7px; transform:rotate(45deg); border:1px solid var(--gold); flex:none}
 
  /* --- Choice cards, styled as inscribed artifact plaques --- */
- .cards{display:grid; grid-template-columns:repeat(4,1fr); gap:22px; align-items:stretch}
+ /* --card-cols is set from the number of VISIBLE cards (see the experimental gate): a fixed
+    four columns left a hole and an off-centre row whenever a card was hidden. */
+ .cards{display:grid; grid-template-columns:repeat(var(--card-cols,4),1fr); gap:22px; align-items:stretch}
  /* Four across on a full-width desktop, so the entry points read as one row of choices
     rather than three and an orphan. Two is the honest middle: four in ~1180px would give
     each card under 280px and the copy starts wrapping to ribbons. */
@@ -433,7 +435,7 @@
     <!-- Multiplayer. Deliberately the THIRD card, not the first: the single-player paths
          must stay one click away, and a login wall in front of the demo is exactly what
          kills a browser port's first impression. -->
-    <div class="card actionable reveal d4" id="card-mp" role="button" tabindex="0">
+    <div class="card actionable reveal d4" id="card-mp" role="button" tabindex="0" hidden>
       <button class="help-btn" id="help-mp" type="button" aria-label="About multiplayer">?</button>
       <div class="glyph" aria-hidden="true">
         <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round">
@@ -453,7 +455,7 @@
          the multiplayer. The locker was always "your files, streamed back to you on any
          device" (docs/LEGAL.md §2); this is simply the door to it that does not require
          other people. -->
-    <div class="card actionable reveal d4" id="card-cloud" role="button" tabindex="0" hidden>
+    <div class="card actionable reveal d4" id="card-cloud" role="button" tabindex="0">
       <button class="help-btn" id="help-cloud" type="button" aria-label="About playing from anywhere">?</button>
       <div class="glyph" aria-hidden="true">
         <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round">
@@ -1366,19 +1368,25 @@
    try { username = (JSON.parse(sessionStorage.getItem('omw-mp-session') || '{}')).username || ''; } catch(e){}
    await bootGame({ gwHttp, gwUrl, account, lockerToken, username }, decodeURIComponent(tk[1]), chosenChar);
  })();
- // EXPERIMENTAL, AND OFF ON THE LIVE SITE. The cloud locker is the newest door and the least
- // proven end to end — the upload wizard, the server-side pack verification and the boot path
- // each still have rough edges, and morrowind.virtastic.app is a server people actually play
- // on. The markup ships `hidden` and is revealed only where breaking it is free, so the
- // default on prod is "not offered" even if this script fails before reaching this line.
+ // EXPERIMENTAL MODES, OFF ON THE LIVE SITE ONLY.
  //
- // NOT DELETED, deliberately: the code is fine, the experience is what is not ready. Any host
- // other than the live site (a dev box, localhost) still shows it, and ?experimental=1 opens
- // it on prod for a deliberate test. Drop the gate when the mode is ready to be offered.
+ // HOST-BASED ON PURPOSE, not a build flag: the same artifact deploys everywhere, so a dev
+ // box or localhost keeps every tile and pushing updates never changes what dev shows. Only
+ // the live hostname hides anything, and ?experimental=1 opens them there for a deliberate
+ // test. Drop a card from this list when its mode is ready to be offered.
+ //
+ // The markup ships `hidden` and is revealed here, so prod fails toward "not offered" if this
+ // script ever breaks before this line — the safe direction for a server people play on.
+ //
+ // Multiplayer is gated because it does not currently survive a world switch: returning from
+ // the public world to your own dead-ends at AUTH_FAILED (the login ticket is minted and then
+ // never presented), on top of a loading screen that drops and returns with music over it.
  (function(){
+   var EXPERIMENTAL = ['card-mp'];
    var isProd = /^morrowind\.virtastic\.app$/i.test(location.hostname);
    var optIn = /[?&]experimental=1\b/.test(location.search);
-   $('card-cloud').hidden = isProd && !optIn;
+   EXPERIMENTAL.forEach(function(id){ var el = $(id); if (el) el.hidden = isProd && !optIn; });
+   syncCardColumns();
  })();
  function cloudStart(){ window.__omwSignInIntent = 'cloud'; mpStart(); }
  $('card-cloud').addEventListener('click', cloudStart);
@@ -1409,6 +1417,17 @@
  //           something they have no basis to decide.
  // Absent -> leave the folder picker exactly as it was. This must fail silently: a server
  //           without data is the normal case, not an error.
+ // The grid is a fixed four columns, so hiding any card left a hole and pushed the rest off
+ // centre. Drive the column count from what is ACTUALLY visible, and call this again after
+ // anything changes a card's visibility — the hosted/local swap below is async, so a count
+ // taken once at startup is only correct by luck.
+ function syncCardColumns(){
+   var grid = document.querySelector('.cards');
+   if (!grid) return;
+   var shown = Array.prototype.filter.call(grid.children, function(el){ return !el.hidden; }).length;
+   if (shown) grid.style.setProperty('--card-cols', String(shown));
+ }
+
  (async function detectHostedData(){
    let ok = false;
    try {
@@ -1418,6 +1437,7 @@
    if (!ok) return;
    $('card-local').hidden = true;
    $('card-hosted').hidden = false;
+   syncCardColumns();
    const go = () => { location.href = 'index.html?src=hosted'; };
    $('card-hosted').addEventListener('click', go);
    $('card-hosted').addEventListener('keydown', (e)=>{
