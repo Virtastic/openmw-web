@@ -2177,12 +2177,14 @@
          // find the plugins, archives and media inside it ourselves. Nothing but Morrowind's
          // own files is ever read or uploaded — the matching below is the whole allow-list,
          // and the server re-checks every byte against its manifest regardless.
-         async function runWizard(needed, haveNames){
+         async function runWizard(needed, haveNames, warnNote){
            return new Promise(function(resolve){
              var fileNeeded = needed.filter(function(f){ return !f.media; });
              var mediaRow = needed.find(function(f){ return f.media; });
              var have = haveNames.slice();
-             wiz.render(needed, have); wiz.note('');
+             // A repeat visit caused by a REJECTED upload opens with the reason, not a blank
+             // panel that looks identical to a first visit.
+             wiz.render(needed, have); wiz.note(warnNote || '', warnNote ? 'err' : '');
              var fileInput=document.getElementById('lkwiz-file');
              var dirInput=document.getElementById('lkwiz-dir');
              var pick=document.getElementById('lkwiz-pick');
@@ -2438,9 +2440,20 @@
          }
 
          (async function(){
-           var files;
-           try { files = (await (await api('/locker/files')).json()).files; }
+           var files, mediaPack = null;
+           try {
+             var lf = await (await api('/locker/files')).json();
+             files = lf.files; mediaPack = lf.mediaPack || null;
+           }
            catch(e){ return bounce('Could not reach your locker on the server.'); }
+           // A pack that was accepted and then failed its content check is deleted server-side
+           // AFTER the wizard reported success, so being asked for the voices again is the only
+           // symptom. Say what the server decided instead of silently re-asking.
+           if (mediaPack && mediaPack.reason && mediaPack.reason !== 'ok'){
+             append('[locker] your last voice upload was rejected: ' + mediaPack.reason
+               + (mediaPack.detail ? ' (' + mediaPack.detail + ')' : '')
+               + ' at ' + mediaPack.at, 'err');
+           }
            // The wizard runs when the locker is EMPTY, and also when it is merely INCOMPLETE:
            // an account that uploaded before the manifest knew about music/videos/voices has
            // the plugins but none of the media, and would otherwise silently keep playing a
@@ -2486,7 +2499,15 @@
            } else if (missing.length){
              append('[locker] have '+have.length+' of '+needed.length+' — missing: '
                + missing.map(function(m){ return m.name; }).join(', '));
-             try { files = await runWizard(needed, have) || files; }
+             var rejectNote = (mediaPack && mediaPack.reason && mediaPack.reason !== 'ok')
+               ? (mediaPack.reason === 'unknown_entry'
+                   ? 'Your last voice upload was rejected: it contained a file this server does not use'
+                     + (mediaPack.detail ? ' (' + mediaPack.detail + ')' : '')
+                     + '. Pick the same folder again — those files are now left out.'
+                   : 'Your last voice upload was rejected by the server (' + mediaPack.reason
+                     + '). Pick your Data Files folder to try again.')
+               : '';
+             try { files = await runWizard(needed, have, rejectNote) || files; }
              catch(e){
                // Never swallow this: a wizard that fails to open leaves the player with a
                // half-installed game and no explanation of why.

@@ -131,7 +131,14 @@ export function lockerRoutes(deps: LockerRouteDeps) {
       }
 
       if (req.method === 'GET' && url.pathname === '/locker/files') {
-        json(res, 200, { files: await deps.locker.filesOf(accountKey) });
+        // mediaPack rides along so a client that finds media.tar missing can say WHY it is
+        // missing. The pack is verified after the upload is confirmed, so "you uploaded it
+        // and it is gone" is a state only the server can explain.
+        const mediaPack = deps.locker.mediaStatusOf(accountKey);
+        json(res, 200, {
+          files: await deps.locker.filesOf(accountKey),
+          ...(mediaPack ? { mediaPack } : {}),
+        });
         return true;
       }
 

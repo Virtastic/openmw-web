@@ -47,6 +47,23 @@ const LOCKER_MIGRATIONS = [
       )`);
     },
   },
+  {
+    name: '002-media-pack-status',
+    up: (db: DatabaseSync) => {
+      // WHY A PLAYER-VISIBLE REASON EXISTS. verifyMediaPack runs after recordUploaded has
+      // already answered ok:true, so a rejection lands with nobody listening: the wizard said
+      // "uploaded", the pack is deleted, and the next launch asks for the same 166 MB again
+      // with nothing said about why. That loop is indistinguishable from the upload silently
+      // not working, and it cost a real player two full re-uploads before the server logs
+      // explained it. The verdict is kept here so the client can say what happened.
+      db.exec(`CREATE TABLE locker_media_status (
+        accountKey TEXT PRIMARY KEY,
+        reason     TEXT NOT NULL,   -- verifyMediaPack's fail() reason, or 'ok'
+        detail     TEXT,            -- the offending entry, when there is one
+        at         TEXT NOT NULL
+      )`);
+    },
+  },
 ];
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -459,6 +476,9 @@ export class Locker {
       try { await storage.delete(key); } catch { /* already gone is fine */ }
       const files = await this.filesOf(accountKey);
       this.putFiles(accountKey, files.filter((f) => f.name !== MEDIA_PACK));
+      // Leave the verdict where the player can be told it. Without this the deletion is
+      // invisible from the browser and the wizard can only ask for the same upload again.
+      this.setMediaStatus(accountKey, reason, typeof detail.name === 'string' ? detail.name : undefined);
     };
     let url: string;
     try { url = await storage.presignGet(key); } catch (err) { return fail('presign', { error: String(err) }); }
@@ -506,6 +526,23 @@ export class Locker {
       buf = buf.subarray(512 + padded);
     }
     log('info', 'locker.media_pack_verified', { account: accountKey, entries });
+    this.setMediaStatus(accountKey, 'ok');
+  }
+
+  private setMediaStatus(accountKey: string, reason: string, detail?: string): void {
+    this.db
+      .prepare('INSERT OR REPLACE INTO locker_media_status (accountKey, reason, detail, at) VALUES (?, ?, ?, ?)')
+      .run(accountKey, reason, detail ?? null, new Date().toISOString());
+  }
+
+  // The last verdict on this account's media pack, for the wizard to explain itself with.
+  // Undefined = never uploaded one, which is the ordinary first-visit case and not a failure.
+  mediaStatusOf(accountKey: string): { reason: string; detail?: string; at: string } | undefined {
+    const row = this.db
+      .prepare('SELECT reason, detail, at FROM locker_media_status WHERE accountKey = ?')
+      .get(accountKey) as { reason: string; detail: string | null; at: string } | undefined;
+    if (!row) return undefined;
+    return { reason: row.reason, ...(row.detail ? { detail: row.detail } : {}), at: row.at };
   }
 
   async filesOf(accountKey: string): Promise<LockerFile[]> {
@@ -545,6 +582,7 @@ export class Locker {
     // would be keeping a record about someone who asked to be forgotten.
     this.db.prepare('DELETE FROM locker_files WHERE accountKey = ?').run(accountKey);
     this.db.prepare('DELETE FROM locker_attestations WHERE accountKey = ?').run(accountKey);
+    this.db.prepare('DELETE FROM locker_media_status WHERE accountKey = ?').run(accountKey);
     log('info', 'locker.erased', { account: accountKey });
   }
 
