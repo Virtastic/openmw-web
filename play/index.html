@@ -288,8 +288,13 @@
        attrs = attrs || {};
        attrs.alpha = false;                 // opaque canvas — desktop framebuffer semantics
        attrs.premultipliedAlpha = false;    // moot with alpha:false; explicit for clarity
+       // 'default' counts as unset: Emscripten's GL layer (which creates THE game context for
+       // SDL) always passes powerPreference:'default' explicitly, so a null-only guard skipped
+       // the one context this hint exists for — and dual-GPU laptops rendered the game on the
+       // power-saving iGPU with the discrete GPU idle.
        if (!window.__NO_GPU_HINT && !/[?&]noopt\b/.test(location.search)
-           && attrs.powerPreference == null) attrs.powerPreference = 'high-performance';
+           && (attrs.powerPreference == null || attrs.powerPreference === 'default'))
+         attrs.powerPreference = 'high-performance';
        // desynchronized disabled — suspected first-frame hang in headless preview.
      }
      var ctx = orig.call(this, type, attrs);
@@ -298,6 +303,15 @@
      // ACCEPTED after getExtension() is called on the context — otherwise glTexParameterf raises
      // GL_INVALID_ENUM. Calling it here lets the OSG anisotropy path work (see Texture.cpp).
      if (ctx && (type === 'webgl2' || type === 'webgl' || type === 'experimental-webgl')) {
+       // Name the GPU that actually got the context in the debug log. On dual-GPU machines
+       // this is the only way to SEE whether the high-performance hint was honored — the
+       // symptom otherwise is just "low FPS" with no cause attached.
+       try {
+         var dbg = ctx.getExtension('WEBGL_debug_renderer_info');
+         var gpu = ctx.getParameter(dbg ? dbg.UNMASKED_RENDERER_WEBGL : ctx.RENDERER);
+         if (window.__omwLog) window.__omwLog('[gl] renderer: ' + gpu
+           + ' (powerPreference: ' + ((ctx.getContextAttributes()||{}).powerPreference || '?') + ')');
+       } catch (e) {}
        try { ctx.getExtension('EXT_texture_filter_anisotropic'); } catch (e) {}
        // EXT_color_buffer_float: makes RGBA16F/RGBA32F color-renderable so post-processing float
        // render targets (e.g. bloom) are FBO-complete instead of rendering black.
