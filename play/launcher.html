@@ -1320,9 +1320,25 @@
    // this tab only, gone when the tab closes.
    // Deliberately NOT storing gwHttp/gwUrl — see mpSession(). They are derived on read.
    try { sessionStorage.setItem('omw-mp-session', JSON.stringify({ account, lockerToken })); } catch(e){}
+   // WHICH DOOR did they come through? Sign-in is shared between multiplayer and the cloud
+   // locker, so the intent has to be resolved BEFORE the profile gate below rather than after
+   // it — see the gate for why.
+   let intent = 'mp';
+   try { intent = sessionStorage.getItem('omw-signin-intent') || 'mp'; } catch(e){}
+   try { sessionStorage.removeItem('omw-signin-intent'); } catch(e){}
    // First-login onboarding: pick a public username (and a contact email if we have none) BEFORE
    // entering any world, so a new player is never shown by their real name. Skipped once set.
-   try {
+   //
+   // NOT ON THE CLOUD LOCKER PATH. A username is a PUBLIC HANDLE — it exists so other players
+   // have something to see instead of your real name. The locker has no other players: it is
+   // single player, every row in server/src/data/locker.ts is keyed on accountKey and that
+   // module never reads a username at all, files stream back only to the account that uploaded
+   // them, and there is no world, directory or join link whose id could be derived from it.
+   // Asking for one here put an invented public identity in front of a player who only wanted
+   // their own save files. If they later open multiplayer, needsProfile is still true and they
+   // are asked then — the prompt moves to the moment it is actually true, and multiplayer keeps
+   // both its gates (this one, and the backstop in server/src/net/connection.ts).
+   if (intent !== 'cloud') try {
      let st = await (await fetch(gwHttp + '/auth/profile', { headers: { authorization: 'Bearer ' + lockerToken } })).json();
      if (st && st.needsProfile){
        const ok = await runOnboarding(gwHttp, lockerToken, st.hasEmail);
@@ -1345,9 +1361,6 @@
    // CLOUD LOCKER: same account, same library, no world. Character slots are a multiplayer
    // concept, so there is nothing to pick; boot straight into single player with the locker
    // mounted. index.html keys multiplayer off `mp=` alone, so omitting it is the whole mode.
-   let intent = 'mp';
-   try { intent = sessionStorage.getItem('omw-signin-intent') || 'mp'; } catch(e){}
-   try { sessionStorage.removeItem('omw-signin-intent'); } catch(e){}
    if (intent === 'cloud'){
      window.__omwAllowLeave = true;
      location.href = 'index.html#locker=' + encodeURIComponent(gwHttp)
