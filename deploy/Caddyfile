@@ -44,7 +44,14 @@
 	# thing that should re-fetch. (Cloudflare's Cache Rule mirrors this at the edge.)
 	@immutable path *.wasm *.data *.js *.br *.bsa *.esm *.tar
 	header @immutable Cache-Control "public, max-age=31536000, immutable"
-	@html path *.html
+	# "/" MUST be in this matcher. The rewrite above serves launcher.html for the bare root, but
+	# this matcher tests the REQUEST path, which is still "/" — so the root shipped with no
+	# Cache-Control at all while /launcher.html got no-cache. Absent Cache-Control (and with a
+	# Last-Modified present) browsers apply HEURISTIC freshness, ~10% of the document's age, so
+	# returning visitors to morrowind.virtastic.app were served a stale launcher for hours after
+	# a deploy without ever revalidating. That is the bare domain every link points at, so a
+	# deploy was effectively invisible to exactly the people most likely to come back.
+	@html path / *.html
 	header @html Cache-Control "no-cache"
 
 	# --- Multiplayer gateway, on THIS origin -------------------------------------------------
