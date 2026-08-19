@@ -434,8 +434,9 @@ Come hang out, get help, and show off your setup:
 
 openmw-web is built and hosted by [Virtastic](https://virtastic.app). If you enjoy
 it, you can support us on [Ko-fi](https://ko-fi.com/virtastic) or
-[Patreon](https://patreon.com/virtastic). It pays for the servers that keep
-morrowind.virtastic.app free to play.
+[Patreon](https://patreon.com/virtastic). It funds the open-source engine work — the
+WebAssembly port, the netcode, and the hours behind them. Nothing here is paywalled:
+every mode is free to everyone, supporter or not.
 
 ## Credits
 
