@@ -19,6 +19,15 @@ services:
       - /opt/openmw-mp/gamedata:/data/gamedata:ro
     environment:
       - NODE_ENV=production
+    # journald instead of the default json-file: json-file logs are DELETED when a deploy
+    # recreates the container, destroying the evidence of whatever bug the deploy fixes.
+    # journald persists across recreations (query history: `journalctl CONTAINER_NAME=openmw-mp`),
+    # rotates itself, and `docker logs openmw-mp` still works. Host journald storage is
+    # persistent on the VPS (/var/log/journal exists).
+    logging:
+      driver: journald
+      options:
+        tag: openmw-mp
     # S3/locker credentials (S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY — see
     # docs/PRODUCTION-BRINGUP.md §3). Lives under data/ because the deploy workflow never
     # touches that dir, same convention as the test server's /opt/openmw-mp-test/data/s3.env.

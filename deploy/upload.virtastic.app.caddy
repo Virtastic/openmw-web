@@ -21,6 +21,13 @@
 # (fsstorage.ts), so no session or admin surface exists on this host; everything else 404s.
 upload.virtastic.app:8443 {
 	tls /certs/upload.crt /certs/upload.key
+	# Access log to stderr (read-only container, see morrowind.caddy). File-mode locker
+	# uploads died invisibly at the edge once before (the 100MB Cloudflare cap) — log the
+	# requests so a failing upload leaves a trace on OUR side this time.
+	log {
+		output stderr
+		format json
+	}
 	handle /locker/blob/* {
 		reverse_proxy openmw-mp:8080
 	}

@@ -8,6 +8,13 @@ services:
     container_name: morrowind
     restart: unless-stopped
     networks: [shared]
+    # journald instead of the default json-file: json-file logs are deleted when a deploy
+    # recreates the container and grow without bound between deploys. journald persists
+    # across recreations, rotates itself, and `docker logs morrowind` still works.
+    logging:
+      driver: journald
+      options:
+        tag: morrowind
     # The demo dataset is large and changes far less often than the engine. Mount it read-only
     # instead of rebaking the image each engine build. Place it at /opt/morrowind/data on the VPS.
     # (Remove this if you choose to bake the demo dataset into the image instead.)

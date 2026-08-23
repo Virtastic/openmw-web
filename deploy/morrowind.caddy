@@ -11,5 +11,13 @@
 morrowind.virtastic.app {
 	tls /certs/virtastic.crt /certs/virtastic.key
 	import sec_headers
+	# Access log to stderr (the edge container mounts everything read-only, so no log files):
+	# Docker captures it, giving request-level evidence (path, status, latency, remote IP) for
+	# "I couldn't connect" reports — including the /w/* gameplay WebSocket and /auth/* SSO
+	# requests this vhost fronts for the multiplayer gateway.
+	log {
+		output stderr
+		format json
+	}
 	reverse_proxy morrowind:8080
 }
