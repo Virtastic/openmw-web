@@ -24,8 +24,7 @@ jobs:
     if: github.repository == 'Virtastic/openmw-web' && github.event_name != 'pull_request'
     runs-on: [self-hosted, ovh, virtastic]
     steps:
-      - uses: actions/checkout@v4
-
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       # Stage the gitignored ?nomw demo data (fsroot/gamedata) from the box's canonical source tree
       # into the build context — a clean checkout omits it, and the Dockerfile now FAILS LOUD rather
       # than baking an empty demo. ~/morrowind-src is the rsync'd source of truth on this runner.

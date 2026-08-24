@@ -34,8 +34,7 @@ jobs:
     if: github.repository == 'Virtastic/openmw-web' && github.event_name != 'pull_request'
     runs-on: [self-hosted, ovh, virtastic]
     steps:
-      - uses: actions/checkout@v4
-
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       # Hard gate: the test stage runs typecheck + the full unit/integration suite inside the
       # build. A red suite never reaches the box. --network=host: npm ci needs egress, which
       # the default build bridge lacks here (same reason as deploy-ovh.yml).
