@@ -1,0 +1,7 @@
+# morrowind.virtastic.app — the OpenMW-Web landing page and engine.
+# Cloudflare prepends its managed AI-crawler block to this file at the edge; what follows is
+# the origin's own policy. Everything here is meant to be found, so nothing is disallowed.
+User-agent: *
+Allow: /
+
+Sitemap: https://morrowind.virtastic.app/sitemap.xml

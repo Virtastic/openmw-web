@@ -141,6 +141,27 @@ jobs:
           # launcher gate: bare / and ?nomw both reachable (200)
           E -f -o /dev/null https://morrowind.virtastic.app/
           E -f -o /dev/null "https://morrowind.virtastic.app/index.html?nomw"
+
+          # Indexable posture. Google once indexed /index.html?nomw= as its own result, titled with
+          # the engine's "Engine failed to load" overlay -- a crawler cannot run wasm, so the fatal
+          # path is all it can render. The canonical is what folds every boot URL back into "/", so
+          # losing it silently re-creates that failure. Both pages must carry it, and it must point
+          # at the bare root, not at itself.
+          E -o /tmp/root https://morrowind.virtastic.app/
+          for f in /tmp/root /tmp/idx; do
+            grep -q '<link rel="canonical" href="https://morrowind.virtastic.app/">' "$f" || {
+              echo "FATAL: canonical missing/wrong in $f" >&2; exit 1; }
+          done
+          grep -q '<meta name="description"' /tmp/root || {
+            echo "FATAL: no meta description on the launcher" >&2; exit 1; }
+          grep -q 'og:image" content="https://morrowind.virtastic.app/og.png"' /tmp/root || {
+            echo "FATAL: no og:image on the launcher" >&2; exit 1; }
+          # ...and the card it advertises has to exist. A 404 here is invisible until someone
+          # shares the link and gets a bare text card.
+          for u in og.png robots.txt sitemap.xml; do
+            code=$(E -o /dev/null -w '%{http_code}' "https://morrowind.virtastic.app/$u")
+            test "$code" = 200 || { echo "FATAL: /$u returned HTTP $code" >&2; exit 1; }
+          done
           echo "edge health OK"
 
       # Refresh the edge cache for the HTML entry point after a deploy. The engine binaries are now
