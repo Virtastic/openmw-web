@@ -184,5 +184,8 @@ jobs:
             -H "Authorization: Bearer ${CF_PURGE_TOKEN}" -H "Content-Type: application/json" \
             --data '{"files":[
               "https://morrowind.virtastic.app/",
-              "https://morrowind.virtastic.app/index.html"
+              "https://morrowind.virtastic.app/index.html",
+              "https://morrowind.virtastic.app/og.png",
+              "https://morrowind.virtastic.app/robots.txt",
+              "https://morrowind.virtastic.app/sitemap.xml"
             ]}'
