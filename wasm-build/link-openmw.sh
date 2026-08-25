@@ -75,12 +75,31 @@ cp "$ROOT/openmw/files/data/mp.omwscripts" "$ROOT/fsroot/resources/vfs/mp.omwscr
 # main.cpp points ICU here with u_setDataDirectory("/icu") under __EMSCRIPTEN__; this stages the
 # package it reads. Copied from the emsdk cache rather than committed: it is ~28 MB of upstream
 # build output, and it belongs in the same category as the rest of deps/.
+# Three places it can come from, in order. The emsdk cache is only populated where the ICU
+# port has actually been built, and the prebaked builder image (openmw-builder:1) does NOT
+# carry it -- the data is staged into the source tree instead, which is the convention
+# ci/jenkins/build-engine.sh asserts on and sync-to-builder.sh restages from
+# ~/build-artifacts. Looking only in the cache made this script fail every build on the
+# build server while passing on a laptop with a warm emsdk -- so accept a pre-staged copy
+# and fall back to the cache, rather than the other way round.
+ICU_TARGET="$ROOT/fsroot/icu/icudt68l.dat"
+ICU_STAGED="$ROOT/fsroot/icudt68l.dat"
 ICU_DAT="${EMSDK_BIN}/cache/ports/icu/icu/source/data/in/icudt68l.dat"
-if [ -f "$ICU_DAT" ]; then
+if [ -s "$ICU_TARGET" ]; then
+  echo "   ICU data already staged at fsroot/icu/icudt68l.dat"
+elif [ -s "$ICU_STAGED" ]; then
   mkdir -p "$ROOT/fsroot/icu"
-  cp "$ICU_DAT" "$ROOT/fsroot/icu/"
+  cp "$ICU_STAGED" "$ICU_TARGET"
+  echo "   ICU data staged from fsroot/icudt68l.dat"
+elif [ -f "$ICU_DAT" ]; then
+  mkdir -p "$ROOT/fsroot/icu"
+  cp "$ICU_DAT" "$ICU_TARGET"
+  echo "   ICU data staged from the emsdk ports cache"
 else
-  echo "!! ICU data package not found at $ICU_DAT" >&2
+  echo "!! ICU data package not found. Looked in:" >&2
+  echo "     $ICU_TARGET" >&2
+  echo "     $ICU_STAGED" >&2
+  echo "     $ICU_DAT" >&2
   echo "   The engine will link, boot, and then die with 'null function' in SettingsWindow." >&2
   exit 1
 fi
