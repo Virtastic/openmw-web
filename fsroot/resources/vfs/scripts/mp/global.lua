@@ -175,6 +175,8 @@ local function tryTeleport(obj, cellArg, pos)
 end
 
 -- Throttle for MP_CombatRefused: one explanation per situation, not one per swing.
+-- Which cell the sim peer is currently standing in, so it only relocates when that changes.
+local peerStandingIn = nil
 local combatRefusedAt = nil
 local COMBAT_REFUSED_EVERY = 8 -- seconds
 
@@ -1025,6 +1027,27 @@ local eventHandlers = {
             if type(name) == 'string' and name ~= '' then rooms[#rooms + 1] = name end
         end
         mp.setSimAnchors(out, rooms)
+
+        -- AND GO STAND THERE. Loading a cell is not simulating it. OpenMW hard-clamps
+        -- [Game] actors processing range to 7168 units while an exterior cell is 8192 wide, so
+        -- this engine only ticks actors near its OWN position no matter how much it has loaded.
+        -- Anchors alone therefore produced a peer that held every occupied cell and simulated
+        -- none of them except the one it booted in: the server logged authority.silent_peer, and
+        -- players two cells away watched monsters stand still and melee pass through them.
+        --
+        -- data.place is the position the server already computes to SPAWN the peer -- a real
+        -- player's, so it is valid ground rather than a computed cell centre that might be
+        -- inside terrain. Only move when the cell actually changes: teleporting every 5 s resets
+        -- the actors' AI packages and would keep them permanently re-deciding what to do.
+        local place = data and data.place
+        if place and place.cellKey and place.cellKey ~= peerStandingIn then
+            local cellArg = inviteCellArg(place.cellKey)
+            local p = world.players[1]
+            if cellArg and p and tryTeleport(p, cellArg, util.vector3(place.x or 0, place.y or 0, place.z or 0)) then
+                peerStandingIn = place.cellKey
+                print('[mp] sim peer moved to ' .. tostring(place.cellKey) .. ' to simulate it')
+            end
+        end
     end,
     -- The credential for the next world, minted by the one we are still connected to. The
     -- pending switch is waiting on exactly this.

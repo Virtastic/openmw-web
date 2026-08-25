@@ -1092,7 +1092,24 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
         // the claim were skipped while the set was marked delivered — and for a lone player
         // standing still it never changes again, so that session got no anchors at all.
         lastAnchors = key;
-        peerPlayer.peer.sendEvent('SimAnchors', { anchors, interiors });
+        // WHERE TO STAND, not just what to load. Loading a cell is not simulating it: OpenMW
+        // hard-clamps [Game] actors processing range to 7168 units while an exterior cell is
+        // 8192 wide (see core/movement.ts), so a peer only ticks actors near ITS OWN position.
+        // The anchor list made it LOAD the cells players occupy and it dutifully HELD them, but
+        // standing back at its start cell it produced no actor frames for any of them --
+        // authority.silent_peer, and from a player's chair: monsters that never attack and
+        // melee that never lands, in every cell except the one the peer happened to boot in.
+        //
+        // `first` is the placement already computed above for spawning the peer; a running peer
+        // needs the same information. It is a real player's position, so it is guaranteed to be
+        // valid ground rather than a computed cell centre that could be inside terrain.
+        peerPlayer.peer.sendEvent('SimAnchors', {
+          anchors,
+          interiors,
+          ...(first
+            ? { place: { cellKey: first.cellKey!, x: first.pose?.x ?? 0, y: first.pose?.y ?? 0, z: first.pose?.z ?? 0 } }
+            : {}),
+        });
         // AUTHORITY FOLLOWS THE ANCHORS. The peer keeps these cells loaded and ticks their
         // actors, so it must also HOLD them — otherwise the cells players are standing in have
         // no holder and their NPCs are frozen anyway, which was the whole bug. Claiming a cell
