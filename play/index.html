@@ -350,6 +350,24 @@
        try { ctx.getExtension('EXT_color_buffer_float'); } catch (e) {}
        try { ctx.getExtension('EXT_color_buffer_half_float'); } catch (e) {}
        try { ctx.getExtension('OES_texture_float_linear'); } catch (e) {}
+       // S3TC/DXT, enabled EXPLICITLY for the same reason as the lines above: an extension
+       // has to be fetched before the context will accept its enums. Morrowind ships its
+       // textures as DXT-compressed DDS, so without this every compressed upload fails and
+       // the mesh samples black -- which is what an opaque black tree canopy IS. Reported
+       // from Brave, where the shields' fingerprinting defence can hide extensions from
+       // enumeration and so defeat Emscripten's automatic-enable. Harmless where the
+       // extension was already live; the call is idempotent and returns the same object.
+       try { ctx.getExtension('WEBGL_compressed_texture_s3tc'); } catch (e) {}
+       try { ctx.getExtension('WEBGL_compressed_texture_s3tc_srgb'); } catch (e) {}
+       // Say what actually came back. This is the one line that settles whether a black-
+       // foliage report is a missing S3TC extension or something else entirely -- the
+       // affected machine reports it itself instead of us guessing from a screenshot.
+       try {
+         var exts = ctx.getSupportedExtensions() || [];
+         var comp = exts.filter(function(e){ return /compressed/i.test(e); });
+         if (window.__omwLog) window.__omwLog('[gl] compressed texture formats: '
+           + (comp.length ? comp.join(', ') : 'NONE -- DXT textures cannot upload and will sample BLACK'));
+       } catch (e) {}
        // ?glcount=1 (QA): count GL calls per frame to attribute the Draw phase. Wrap a curated set
        // of hot methods (draws + state changes + uniform uploads) with a counter. Pure diagnostic —
        // the counter increment perturbs timing slightly but COUNTS are exact. window.__glCalls is the

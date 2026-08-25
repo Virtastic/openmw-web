@@ -536,7 +536,7 @@ before/after comparison rather than a guess.
 
 Screenshots this time, which settled two of these on the spot.
 
-### 11. Attributes climb, and the character sheet fills in late — PARTLY FIXED, one hypothesis open
+### 11. Attributes climb, and the character sheet fills in late — PARTLY FIXED, climb still open
 
 Two shots of the same level-1 Redguard Acrobat, minutes apart:
 
@@ -557,15 +557,44 @@ copy-paste of the skills loop directly above it. Present since the initial vendo
 (`2600f5b`), not introduced by this cycle. It is masked whenever a race is selected, because the
 race block re-bases all eight attributes absolutely, which is why ordinary chargen looks fine.
 
-**Still a hypothesis — the +50 climb itself.** `applyChargen` guards each step separately
-(`if (!race.empty())` … `if (!cls.empty())`), and the class block does
-`setAttribute(id, getAttribute(id).getBase() + 10)` on the class's two favoured attributes. With
-no race re-base in front of it that `+10` accumulates on every `buildPlayer()`, and `buildPlayer()`
-runs at least twice per restore. That predicts exactly the observed shape — two attributes moving,
-six static. It is NOT yet confirmed: `snapAppearance` falls back to `villager_00`'s race or the
-literal `'none'`, so the race is never empty, and a bogus RefId would make
-`esmStore.get<ESM::Race>().find()` throw instead. **Confirm at runtime before fixing** — print
-`mRaceSelected` and the eight attributes on each `buildPlayer()` across a restore.
+**NOT FIXED — the +50 climb itself, and the earlier explanation for it was WRONG.**
+The first write-up here blamed the class `+10` loop accumulating without a race re-base. The
+screenshot data disproves that. Decomposed against Redguard male base values:
+
+| attr | base | shot 2 | delta | shot 3 | delta |
+| --- | --- | --- | --- | --- | --- |
+| Strength | 50 | 60 | +10 | 60 | +10 |
+| Agility | 40 | 50 | +10 | 50 | +10 |
+| Endurance | 50 | 225 | **+175** | 275 | **+225** |
+| Personality | 30 | 205 | **+175** | 255 | **+225** |
+| Int/Wil/Spd/Luck | — | — | 0 | — | 0 |
+
+Strength and Agility carry the class `+10` applied EXACTLY ONCE, which proves the race block ran
+and `mRaceSelected` was true — so the class loop is idempotent, exactly as written. Endurance and
+Personality instead carry an *identical* offset growing in lockstep by +50.
+
+Ruled out by reading, so nobody re-walks them:
+
+- **The MP layer writes no attribute modifier anywhere.** Every attribute write in
+  `scripts/mp/*.lua` is `.base = v` assignment.
+- `threat.lua` party scaling touches **health only** and is once-guarded by `scaled[refKey]`.
+- The equipment restore applies **once** — `tryApplyEquipment` nils `pendingEquipment` after it.
+- The class `+10` loop — disproved above.
+
+So the accumulation is **not caused by the multiplayer layer**. Two leads remain, in order:
+
+1. **A stacking Fortify effect** (a modifier, not a base). An identical offset on two attributes
+   growing in lockstep is that signature. The diagnostic added to `identity.lua` prints base and
+   modifier for any attribute carrying an offset after a restore, and is silent otherwise.
+2. **A base feedback loop.** `setAttribute(id, getBase() + 10)` in the class block is the only
+   `+10`-on-base site in the engine, and +50 is 5×10. If five `buildPlayer()` calls ever land
+   without the race re-base in front of them, the inflated base is then snapshotted by
+   `snapProgression`, saved, restored as base next session and inflated again. That would compound
+   per session exactly as observed. It needs `mRaceSelected` false for those calls, which is not
+   demonstrated.
+
+**The diagnostic distinguishes these two on sight**: if it prints, it is lead 1; if the numbers are
+wrong and it stays silent, the inflation is in `.base` and it is lead 2.
 
 The late-filling Major Skills list is the same restore settling, not a separate bug: phase 2 runs
 0.5 s after chargen, so a sheet opened inside that window shows a half-built character.
@@ -586,7 +615,7 @@ chargen just made. Negative control RUN: with the clear disabled the book comes 
 One thing this does not do: it stops the growth, it does not clean docs that are already
 contaminated. Those keep whatever they were last saved with.
 
-### 13. Alpha renders opaque black on Brave — NOT REPRODUCED HERE, leading hypothesis
+### 13. Alpha renders opaque black on Brave — CANDIDATE FIX SHIPPED + self-reporting diagnostic
 
 Foliage draws as full black quads where the leaf cutout should be transparent. The shader path is
 sound — `lib/material/alpha.glsl` discards correctly and `shadervisitor.cpp` converts the
@@ -600,17 +629,32 @@ whatever the browser exposes — and **Brave's fingerprinting protection can hid
 That would fail the compressed upload, sample black, and be specific to Brave, which matches both
 the report and the fact that the software-GL harness here does not reproduce it.
 
-Unverified. Cheapest next step is one line in Brave's console on the affected machine:
+**Candidate fix shipped.** `play/index.html` already explicitly calls `getExtension()` for every
+extension that must be live before use — anisotropy, `EXT_color_buffer_float`, and friends — for
+the documented reason that the context will not accept an extension's enums until it is fetched.
+**S3TC was missing from that list.** It is now fetched alongside the others. Where the extension
+was already enabled this is a no-op (`getExtension` is idempotent and returns the same object);
+where Emscripten's automatic-enable was defeated, this is the fix.
 
-```js
-document.createElement('canvas').getContext('webgl2').getSupportedExtensions().filter(e => /compressed/i.test(e))
+**And it now reports itself.** The same block logs which compressed formats the context actually
+exposes, so an affected machine says so in its own log instead of us inferring it from a
+screenshot:
+
+```
+[gl] compressed texture formats: NONE -- DXT textures cannot upload and will sample BLACK
 ```
 
-If `WEBGL_compressed_texture_s3tc` is missing there and present in Chrome, that is the bug, and the
-fix is a CPU-side S3TC decode fallback in `imagemanager.cpp` beside the existing BGRA rewrite —
-which is already the place where a web-specific texture-format problem gets corrected. Note the
-`imagemanager.cpp` emscripten block handles UNCOMPRESSED BGRA/BGR only; compressed formats pass
-through it untouched.
+This is high leverage because of the deploy asymmetry measured above: `index.html` is re-uploaded
+on EVERY deploy while the engine directory is content-addressed and can sit unchanged for weeks.
+So this reaches players without an engine rebuild.
+
+Still not *confirmed* as the cause — nothing here reproduces it on software GL, and the fix is
+aimed at the leading hypothesis rather than at a demonstrated fault. If the log comes back naming
+`WEBGL_compressed_texture_s3tc` and the canopy is still black, the hypothesis is dead and the next
+suspect is the DDS alpha flag: OSG mapping DXT1 to `COMPRESSED_RGB_S3TC_DXT1` (no alpha) rather
+than the `RGBA` variant, which would drop the cutout while leaving the texture otherwise correct.
+The emscripten block in `imagemanager.cpp` rewrites UNCOMPRESSED BGRA/BGR only; compressed formats
+pass through it untouched, so that is where such a fix would go.
 
 ## Known open (already triaged — not bugs to re-report)
 - Some textures skip mipmaps (`glGenerateMipmap` warning) → slight distant shimmer — OSG fix pending

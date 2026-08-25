@@ -398,6 +398,28 @@ local function applyPhase2(record)
     last.spells = snapSpells()
     last.inventory = fingerprint(snapInventory())
     restoring = false
+    -- SELF-SILENCING DIAGNOSTIC. Everything the restore writes is `.base`; a freshly restored
+    -- character should therefore carry no attribute MODIFIER at all. A live report showed a
+    -- level-1 Redguard whose Endurance and Personality both held an IDENTICAL offset (+175, then
+    -- +225 a few minutes later) while the other six attributes sat exactly on base+class bonus.
+    -- An identical offset on two attributes, growing in lockstep, is the signature of a stacking
+    -- Fortify effect, not a wrong base -- and nothing in the MP layer writes a modifier anywhere,
+    -- so the source is engine- or data-side. This prints nothing for a healthy character and
+    -- names the attributes and the amount when it is not, which is what the next live session
+    -- needs to settle it. Do not delete until that report comes back clean.
+    local drift = {}
+    for _, id in ipairs(ATTRIBUTES) do
+        local okA, st = pcall(function() return Actor.stats.attributes[id](self) end)
+        if okA and st then
+            local off = (st.modifier or 0) - (st.damage or 0)
+            if off ~= 0 then
+                drift[#drift + 1] = string.format('%s%+g(base %g)', id, off, st.base or 0)
+            end
+        end
+    end
+    if #drift > 0 then
+        print('[mp] ATTRIBUTE MODIFIER PRESENT AFTER RESTORE: ' .. table.concat(drift, ' '))
+    end
     print('[mp] rejoin restore applied')
     mp.testSet('restored', '1')
 end
