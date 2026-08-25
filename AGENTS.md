@@ -56,37 +56,43 @@ deliberate promotion.
 
 ## The loop
 
-**Push to `dev`. Jenkins does the rest.** There is no manual build step and no manual deploy
-step: both jobs poll `dev` every couple of minutes, and every build that succeeds deploys to the
-test server and then runs the contract gate. A green build IS a deployed test server.
+**Merge to `dev`, then run one command.** Builds happen when somebody asks for one -- there is
+no polling and no webhook, because triggering Jenkins needs a credential this setup does not
+hand out (`/git/notifyCommit` answers 401 and the remote build URL 403 with anonymous read
+disabled). Asking is a single command, and it runs everything ON THE BUILD SERVER:
 
 ```bash
-# from the repo root, on a branch off dev
-git push -u origin my-change        # then open a PR against dev
-# ...maintainer approves and merges...
-# Jenkins picks the merge up within ~2 minutes and deploys it. Nothing else to run.
+ci/jenkins/release-to-test.sh            # both images
+ci/jenkins/release-to-test.sh engine     # just the WASM engine  (~13 min)
+ci/jenkins/release-to-test.sh server     # just the gateway + sim peer
 ```
+
+It fetches `origin/dev`, restages the build inputs git cannot carry, builds, and deploys --
+stopping at the first failure. The deploy runs the contract gate and fails on any miss.
 
 | Job | Time | What it does |
 |---|---|---|
-| `OpenMW-Web-MP-Server` | ~1 min (longer if `openmw/` changed) | gateway + sim peer → deploy → contract gate |
-| `OpenMW-Web-Engine-WASM` | ~13 min | WASM engine + statics → deploy → contract gate |
+| server | ~1 min, longer if `openmw/` changed | gateway + sim peer -> deploy -> contract gate |
+| engine | ~13 min | WASM engine + statics -> deploy -> contract gate |
 
-Both jobs are: **checkout `dev` → restage build inputs → build → deploy**. The deploy stage is
-unconditional — there is deliberately no "build without deploying", because an image that was
-never deployed has never been tested.
+Nothing compiles on the laptop. A clean engine build is ~13 minutes and will lock that machine
+up; `release-to-test.sh` only ever drives the build server over ssh.
+
+**Jenkins holds the same two jobs**, defined by `ci/jenkins/Jenkinsfile.engine` and
+`.server` in this repo, and runs the identical scripts. Use *Build Now* from its UI if you
+prefer a button and a build history. It is deliberately not scheduled.
 
 **The build inputs are not in git.** `deps/`, `fsroot/gamedata/` and `fsroot/icudt68l.dat` are
-~750 MB of retail data and prebuilt dependencies, deliberately unpublished. A checkout alone is
-therefore NOT a buildable tree, and `build-engine.sh` hard-fails on all three.
-`ci/jenkins/restage-inputs.sh` puts them back from `~/build-artifacts` when they are missing —
-normally a no-op, since `git checkout -f` leaves untracked files alone.
+~750 MB of retail data and prebuilt dependencies, deliberately unpublished, so a checkout alone
+is NOT a buildable tree -- `build-engine.sh` hard-fails on all three.
+`ci/jenkins/restage-inputs.sh` puts them back from `~/build-artifacts` when missing; normally a
+no-op, since `git checkout -f` leaves untracked files alone.
 
-**`sync-to-builder.sh` is retired.** It rsynced the laptop's working tree, including
-`ci/jenkins/config.env` — which is how the deploy stage silently broke: the file carries
+**`sync-to-builder.sh` is retired.** It rsynced the laptop's tree including
+`ci/jenkins/config.env` -- which is how the deploy stage silently broke: that file carries
 laptop-shaped `TEST_HOST`/`SSH_KEY` values that cannot resolve inside the Jenkins container, so
-deploys failed there while working by hand. The script now refuses and points here. If you need
-to build something uncommitted, commit it to a branch and push it.
+deploys failed there while working by hand, and nobody saw a red build because the job simply
+stopped being used. Commit your work and push it instead.
 
 After a deploy the test server serves:
 
