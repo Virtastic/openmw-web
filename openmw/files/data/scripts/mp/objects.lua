@@ -64,6 +64,28 @@ end
 
 -- Wire address for an object, or nil if it is a client-local dynamic object that has no
 -- netId yet (must not travel).
+-- A PLAYER ACTION THAT GOES NOWHERE SHOULD NOT DO IT QUIETLY.
+--
+-- The outbound paths below all have guards that return without sending: no address for the
+-- object, a chargen cell, no cell key. Every one of them is a real case, but the player still
+-- swung, opened or took something, and until now the game said nothing and the server logged
+-- nothing because it was never told. That is precisely how "plants are empty" looked from both
+-- ends: the container emptied locally and the server had no idea a container had been touched.
+--
+-- Throttled per (what, why) so a guard that trips every frame cannot flood the log, and mirrored
+-- into testSet so a scenario can assert on it.
+local dropOutAt = {}
+local DROP_OUT_EVERY = 5
+local function dropOut(what, why, detail)
+    local key = what .. '/' .. why
+    local now = core.getRealTime()
+    if dropOutAt[key] and now - dropOutAt[key] < DROP_OUT_EVERY then return end
+    dropOutAt[key] = now
+    pcall(function() mp.testSet('lastDropOut', key) end)
+    print(string.format('[mp] OUTBOUND DROPPED: %s why=%s%s', what, why,
+        detail and (' ' .. tostring(detail)) or ''))
+end
+
 local function addrOf(obj)
     local netId = objIdToNet[obj.id]
     if netId then return { net = netId } end
@@ -117,11 +139,17 @@ end
 
 local function sendAddressed(eventName, obj, extra)
     local addr = addrOf(obj)
-    if not addr then return false end
+    if not addr then
+        dropOut(eventName, 'unaddressable', tostring(obj.recordId))
+        return false
+    end
     extra = extra or {}
     for k, v in pairs(addr) do extra[k] = v end
     extra.cellKey = extra.cellKey or cellKeyOfObj(obj)
-    if isChargenCell(extra.cellKey) then return false end
+    if isChargenCell(extra.cellKey) then
+        dropOut(eventName, 'chargen-cell', tostring(extra.cellKey))
+        return false
+    end
     mp.sendEvent(eventName, extra)
     return true
 end
@@ -716,10 +744,18 @@ function objects.tick(now)
 end
 
 function objects.sendContainerOp(obj, op, itemId, n)
-    if isChargenCell(cellKeyOfObj(obj)) then return nil end -- tutorial cells are local-only
+    if isChargenCell(cellKeyOfObj(obj)) then
+        dropOut('ContainerOpRequest', 'chargen-cell', tostring(obj.recordId))
+        return nil -- tutorial cells are local-only, by design
+    end
     opCounter = opCounter + 1
     local addr = addrOf(obj)
-    if not addr then return nil end
+    if not addr then
+        -- No netId and no contentFile: nothing on the wire can name this object, so the take or
+        -- put cannot be reported at all. The item still moved locally.
+        dropOut('ContainerOpRequest', 'unaddressable', tostring(obj.recordId))
+        return nil
+    end
     pendingOps[opCounter] = { op = op, itemId = itemId, n = n, key = refKeyOfObj(obj), obj = obj, at = core.getRealTime() }
     local body = { opId = opCounter, op = op, itemId = itemId, n = n, cellKey = cellKeyOfObj(obj) }
     for k, v in pairs(addr) do body[k] = v end
