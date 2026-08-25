@@ -89,6 +89,20 @@ $SSH "$TEST_HOST" "
   set -e
   sudo mkdir -p /opt/openmw-mp-test/data /opt/morrowind-test/data 2>/dev/null || true
   docker network create $NETWORK >/dev/null 2>&1 || true
+  # STOP IT PROPERLY FIRST. `docker rm -f` is SIGKILL, and this server has a real graceful
+  # shutdown that SIGKILL throws away: on SIGTERM it disconnects every player with the
+  # SessionDisconnect code SHUTDOWN and flushes its stores (main.ts, server.ts:1327,
+  # gateway/main.ts gives the world processes a moment to do it).
+  #
+  # Both halves of that matter. SHUTDOWN is the one disconnect code the client treats as
+  # TRANSIENT -- net.lua reconnects through it instead of dropping the player into a modal --
+  # so a killed server ejects everyone where a stopped one does not. And an unflushed store
+  # loses whatever was written since the last checkpoint, which on this project means
+  # character state, and we have spent enough of today on characters that lost their stats.
+  #
+  # 20s is well past the flush and short enough that a wedged process does not stall a deploy;
+  # docker escalates to SIGKILL by itself after it.
+  docker stop --time 20 $NAME >/dev/null 2>&1 || true
   docker rm -f $NAME >/dev/null 2>&1 || true
   # Run as whoever owns the staged data dir. config.toml and s3.env are mode 600, so a
   # container whose user does not match cannot read them and dies at loadConfig(). The
