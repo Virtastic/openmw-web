@@ -176,3 +176,43 @@ test('with no storage configured the locker is inert (the client keeps using its
   await locker.attest('alice', [FILE], 'ip');
   assert.deepEqual(await locker.authorizeUpload('alice', FILE), { ok: false, reason: 'not-recognized' });
 });
+
+test('the expansions are flagged soloOptional; the base game and the media never are', () => {
+  const { locker } = mk();
+  locker.configureAccepted({ files: [
+    { name: 'Morrowind.esm', size: 100, sha256: 'a'.repeat(64) },
+    { name: 'Morrowind.bsa', size: 900, sha256: 'b'.repeat(64) },
+    { name: 'Tribunal.esm', size: 50, sha256: 'c'.repeat(64) },
+    { name: 'Tribunal.bsa', size: 500, sha256: 'd'.repeat(64) },
+    { name: 'Bloodmoon.esm', size: 60, sha256: 'e'.repeat(64) },
+    { name: 'Bloodmoon.bsa', size: 600, sha256: 'f'.repeat(64) },
+    { name: 'BetterBodies.esp', size: 10, sha256: '1'.repeat(64) },
+    { name: 'Music/Explore/mx_1.mp3', size: 30, sha256: '2'.repeat(64) },
+    { name: 'Sound/Vo/a/f/hello.mp3', size: 20, sha256: '3'.repeat(64) },
+  ] });
+  const rows = locker.requiredManifest();
+  const by = (n: string) => rows.find((r) => r.name === n);
+
+  // STILL REQUIRED, all of it. Multiplayer pins the world's content list and refuses a client
+  // whose own list differs (core/manifest.ts ContentGate), so relaxing `required` would not
+  // let anyone in — it would only move the refusal to after a multi-gigabyte upload.
+  assert.ok(rows.every((r) => r.required), 'nothing is downgraded to optional outright');
+
+  // The flag says WHO it is required for. Only the expansions, and both halves of each pair:
+  // an .esm without its .bsa renders marker_error for everything it owns (core/gamedata.ts),
+  // so offering to skip one without the other would produce a broken game, not a smaller one.
+  assert.deepEqual(
+    rows.filter((r) => r.soloOptional).map((r) => r.name).sort(),
+    ['Bloodmoon.bsa', 'Bloodmoon.esm', 'Tribunal.bsa', 'Tribunal.esm'],
+  );
+
+  // The base game is never skippable — there is no game without it.
+  assert.equal(by('Morrowind.esm')!.soloOptional, undefined);
+  assert.equal(by('Morrowind.bsa')!.soloOptional, undefined);
+  // Nor is a mod the world loads: a plugin changes the simulation, which is a different kind
+  // of thing from content Bethesda sold separately.
+  assert.equal(by('BetterBodies.esp')!.soloOptional, undefined);
+  // Nor the media: without it dialogue auto-skips and the intro never plays.
+  assert.equal(by('Music/')!.soloOptional, undefined);
+  assert.equal(by('media.tar')!.soloOptional, undefined);
+});

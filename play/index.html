@@ -152,6 +152,12 @@
    background:linear-gradient(180deg,#d3a84e,#8a6838);color:#1a1207;border-color:#eecb78;
    transition:filter .15s ease}
  #lkwiz .wz-btn:hover{filter:brightness(1.08)} #lkwiz .wz-btn[disabled]{opacity:.5;cursor:default;filter:none}
+ /* Secondary, deliberately NOT a second gold button: adding the expansions is still the
+    recommended action, and two equal buttons would read as an even choice. */
+ #lkwiz .wz-btn.wz-alt{margin-top:11px;padding:9px 20px;background:none;border-color:transparent;
+   color:#a5987e;letter-spacing:.1em;text-transform:none;font-weight:500;font-size:12.5px;
+   text-decoration:underline;text-underline-offset:3px;text-decoration-color:rgba(165,152,126,.45)}
+ #lkwiz .wz-btn.wz-alt:hover{filter:none;color:#e8c86a;text-decoration-color:rgba(232,200,106,.6)}
  #lkwiz .wz-note{margin:14px 0 0;min-height:18px;font-size:13px;line-height:1.5;color:#a5987e}
  #lkwiz .wz-note.err{color:#e0836a} #lkwiz .wz-note.ok{color:#a9c48a}
  #lkwiz .wz-eula-lead{margin:22px 0 0;text-align:left;font-size:12.5px;line-height:1.55;color:#a5987e}
@@ -244,7 +250,11 @@
 </div>
 <div id="lkwiz" role="dialog" aria-modal="true" aria-labelledby="lkwiz-h">
   <div class="wz">
-    <div class="wz-kick">Multiplayer &middot; one-time setup</div>
+    <!-- Set at open time: this same wizard serves the CLOUD LOCKER (single player, no world)
+         as well as multiplayer, and saying "Multiplayer" on the cloud tile was wrong long
+         before the expansions became skippable — it just did not contradict anything on
+         screen until rows started reading "optional". See wiz.show(). -->
+    <div class="wz-kick" id="lkwiz-kick">One-time setup</div>
     <button class="wz-help" id="lkwiz-help" type="button"
             aria-label="Where do I find my Data Files folder?">?</button>
     <h2 class="wz-h" id="lkwiz-h">Add your Morrowind files</h2>
@@ -267,7 +277,10 @@
     <!-- No "pick files individually" path: the media alone is ~6,400 voice files, so hand-
          selecting is not a real option. The folder read is targeted (plugins/archives at the
          top level + the five media folders) and nothing else is even enumerated. -->
-    <button class="wz-btn" id="lkwiz-skip" type="button" style="display:none">Skip for now</button>
+    <!-- Shown only once every file THIS session needs is already in the library (see
+         `canSkip`), so it can never wave through the base game or the media. Its label is
+         built from the rows actually missing: "Continue without Tribunal & Bloodmoon". -->
+    <button class="wz-btn wz-alt" id="lkwiz-skip" type="button" style="display:none">Continue without the expansions</button>
     <p class="wz-note" id="lkwiz-note"></p>
     <p class="wz-fine">Your browser asks you to confirm the folder. Only Morrowind's own game files are
        read from it — plugins, archives, music, videos and voices. Nothing else is touched or uploaded,
@@ -2148,12 +2161,60 @@
            });
          })();
 
+         // Does THIS session actually have to have this file? The server marks everything its
+         // manifest lists `required` and is right to: multiplayer pins the world's content
+         // list and refuses any client whose own list differs (server/src/core/manifest.ts
+         // ContentGate), so a base-game client cannot join a world that loads the expansions
+         // no matter how politely it asks.
+         //
+         // `soloOptional` rows are required FOR THAT REASON ONLY. The cloud locker is also a
+         // single-player library with no world behind it (launcher's `cloud=1` door), and
+         // there is no content list to match there — so Tribunal and Bloodmoon go back to
+         // being what they are in retail: extra content, not an entry fee. Morrowind itself
+         // and the media are never soloOptional, so this can never wave through a library
+         // that has no game in it.
+         function needs(f){
+           return !!f.required && !(f.soloOptional && !window.__omwMPEnabled);
+         }
+         // The soloOptional rows this library is still missing, for the sentences below.
+         function optionalGap(needed, haveNames){
+           return needed.filter(function(f){
+             if (needs(f)) return false;
+             var k=f.name.toLowerCase();
+             return k.slice(-1)==='/'
+               ? !haveNames.some(function(h){ return h.indexOf(k)===0; })
+               : haveNames.indexOf(k)===-1;
+           });
+         }
+         // "Tribunal & Bloodmoon" from Tribunal.esm/.bsa/Bloodmoon.esm/.bsa — the player owns
+         // expansions, not files, and a button offering to continue without four filenames
+         // reads like an error report.
+         var NAME_ORDER=['tribunal','bloodmoon'];   // release order, as the rest of the page says them
+         function gapLabel(rows){
+           var seen=[];
+           rows.forEach(function(r){
+             var n=r.name.replace(/\.(esm|bsa)$/i,'').replace(/\/$/,'');
+             if (seen.indexOf(n)===-1) seen.push(n);
+           });
+           seen.sort(function(a,b){
+             var ia=NAME_ORDER.indexOf(a.toLowerCase()), ib=NAME_ORDER.indexOf(b.toLowerCase());
+             if (ia===-1 && ib===-1) return 0;          // unknown names keep the server's order
+             return (ia===-1?99:ia) - (ib===-1?99:ib);
+           });
+           return seen.length>1 ? seen.slice(0,-1).join(', ')+' & '+seen[seen.length-1] : (seen[0]||'them');
+         }
+
          var wiz = (function(){
            var el=document.getElementById('lkwiz'), list=document.getElementById('lkwiz-list'),
                noteEl=document.getElementById('lkwiz-note'), pick=document.getElementById('lkwiz-pick');
            var rows={};
            return {
-             show:function(){ el.classList.add('show'); },
+             show:function(){
+               var k=document.getElementById('lkwiz-kick');
+               if (k) k.innerHTML = (window.__omwMPEnabled ? 'Multiplayer' : 'Cloud locker')
+                 + ' &middot; one-time setup';
+               el.classList.add('show');
+             },
              hide:function(){ el.classList.remove('show'); },
              onPick:function(cb){ pick.onclick=cb; },
              setPick:function(label,enabled){ pick.textContent=label; pick.disabled=!enabled; },
@@ -2169,13 +2230,14 @@
                    ? haveNames.some(function(h){ return h.indexOf(key)===0; })
                    : haveNames.indexOf(key)!==-1;
                  var label = LABEL[key] || f.name;
-                 var li=document.createElement('li'); li.className='wz-li'+(f.required?'':' opt')+(done?' done':'');
+                 var req=needs(f);
+                 var li=document.createElement('li'); li.className='wz-li'+(req?'':' opt')+(done?' done':'');
                  li.innerHTML='<span class="ic">'+(done?'✓':'')+'</span>'
                    +'<span class="nm">'+label+'</span>'
-                   +(f.required?'':'<span class="tag">optional</span>')
+                   +(req?'':'<span class="tag">optional</span>')
                    +'<span class="st">'+(done?'in your library':(Math.round(f.size/1048576)+' MB'))+'</span>';
                  list.appendChild(li);
-                 rows[key]={li:li,req:f.required,ic:li.querySelector('.ic'),st:li.querySelector('.st')};
+                 rows[key]={li:li,req:req,ic:li.querySelector('.ic'),st:li.querySelector('.st')};
                });
              },
              set:function(name,state,text){
@@ -2207,6 +2269,7 @@
              var fileInput=document.getElementById('lkwiz-file');
              var dirInput=document.getElementById('lkwiz-dir');
              var pick=document.getElementById('lkwiz-pick');
+             var skip=document.getElementById('lkwiz-skip');
              var alt=null; // individual-file picker removed: hand-picking 6,400 media files is not viable
              var eula=document.getElementById('lkwiz-eula');
              var boxes=['eula-own','eula-legal','eula-understand'].map(function(id){ return document.getElementById(id); });
@@ -2276,25 +2339,65 @@
                  return;
                }
                // Say up front what is not there, rather than discovering it after an upload.
-               if (res.notFound.length) wiz.note('Not in that folder: '+res.notFound.join(', ')+'. Continuing with what is.','err');
+               // A folder with no Tribunal/Bloodmoon is now an ORDINARY folder, so it must not
+               // be reported in red as though something had gone wrong — that red line is the
+               // whole reason a base-game owner used to think the uploader had failed them.
+               if (res.notFound.length){
+                 var lostReq = res.notFound.filter(function(n){
+                   var row = needed.find(function(f){ return f.name.toLowerCase()===String(n).toLowerCase(); });
+                   return !row || needs(row);
+                 });
+                 if (lostReq.length) wiz.note('Not in that folder: '+res.notFound.join(', ')+'. Continuing with what is.','err');
+                 else wiz.note('No '+gapLabel(res.notFound.map(function(n){ return {name:String(n)}; }))
+                   +' in that folder — they are optional here, so we will carry on without them.','');
+               }
                else wiz.note('Found everything this server needs ('+list.length+' files). Checking…','');
                busy=true; pick.disabled=true;
                ingest(list);
              };
              if (alt) alt.onclick=function(){ if(!busy) fileInput.click(); };
 
+             // CONTINUE WITHOUT THE OPTIONAL ONES. Offered only once every row this session
+             // actually needs is already in the library, so it can never be a way past the
+             // base game or the media — and it is a plain text link rather than a second gold
+             // button, because "add my expansions" is still the action being recommended.
+             //
+             // This is also the wizard's only way OUT — it is a modal with no close control. The
+             // checklist is re-offered on EVERY launch until the files are actually uploaded
+             // (see the boot gate below), which is what keeps "I will do it later" possible;
+             // this link is what stops that offer from being a wall.
+             var gap = optionalGap(needed, have);
+             var canSkip = gap.length > 0 && needed.every(function(f){
+               if (!needs(f)) return true;
+               var k=f.name.toLowerCase();
+               return k.slice(-1)==='/'
+                 ? have.some(function(h){ return h.indexOf(k)===0; })
+                 : have.indexOf(k)!==-1;
+             });
+             if (canSkip){
+               skip.textContent='Continue without '+gapLabel(gap);
+               skip.style.display='';
+               skip.onclick=function(){ if (busy) return; wiz.hide(); resolve(null); };
+             } else {
+               skip.style.display='none';
+               skip.onclick=null;
+             }
+
              // A RETURNING player has already attested; they are here because the server needs
              // files they have not uploaded yet. Skip the ownership checkboxes and go straight
-             // to the folder pick. Nothing here is skippable: every row is content this server
-             // loads, so a client without it cannot play the world the server is authoring.
+             // to the folder pick.
              if (have.length){
-               wiz.note('Your library is missing some of this server’s game files. Choose your Data Files folder to add them.','');
+               wiz.note(canSkip
+                 ? 'You can add ' + gapLabel(gap) + ' whenever you like — choose your Data Files '
+                   + 'folder and we will take just those. Nothing already uploaded is sent again.'
+                 : 'Your library is missing some of this server’s game files. Choose your Data Files folder to add them.','');
                pick.disabled=false; eula.style.display='none';
                if (alt) alt.style.display='';
              }
              wiz.show();
 
-             function stop(msg){ wiz.note(msg,'err'); busy=false; eula.style.display=''; pick.disabled=false; pick.textContent='Try again'; if (alt) alt.style.display=''; }
+             function stop(msg){ wiz.note(msg,'err'); busy=false; eula.style.display=''; pick.disabled=false; pick.textContent='Try again'; if (alt) alt.style.display='';
+               if (canSkip) skip.style.display=''; }
              function done(){
                wiz.note('All set. Starting Morrowind.','ok');
                (async function(){
@@ -2372,7 +2475,7 @@
                // anything under that prefix (or, for voice, any Sound/ file to pack).
                var picked = loose.map(function(e){ return e.path.toLowerCase(); });
                var missing = needed.filter(function(f){
-                 if (!f.required) return false;
+                 if (!needs(f)) return false;
                  var k=f.name.toLowerCase();
                  if (k === 'media.tar') return !voice.length && have.indexOf('media.tar')===-1;
                  if (k.slice(-1) === '/'){
@@ -2388,6 +2491,7 @@
                  return;
                }
                busy=true; pick.disabled=true; eula.style.display='none'; if (alt) alt.style.display='none';
+               skip.style.display='none';   // an upload is running; leaving now would abandon it
 
                // Hash the core files first so ownership is attested over the real list.
                var records=[];
@@ -2405,7 +2509,7 @@
                for (const rec of records){
                  if (!(await put(rec, core[rec.name.toLowerCase()], rec.name))) failed.push(rec.name);
                }
-               var reqFailed = failed.filter(function(n){ return (fileNeeded.find(function(x){return x.name===n;})||{}).required; });
+               var reqFailed = failed.filter(function(n){ return needs(fileNeeded.find(function(x){return x.name===n;})||{}); });
                if (reqFailed.length) return stop('Could not add: '+reqFailed.join(', ')+'. Make sure they are genuine Morrowind files, then try again.');
 
                // Loose media (Music/Video/Splash/Fonts): per-file uploads, but the CHECKLIST
@@ -2506,6 +2610,16 @@
              return have.indexOf(k)!==-1;
            }
            var missing = needed.filter(function(f){ return !satisfied(f); });
+           // ANYTHING missing still opens the checklist, expansions included — and that is the
+           // deliberate choice, not an oversight. The wizard is the only route back to it, so
+           // an optional gap that stopped re-offering itself would mean a player who skipped
+           // Tribunal once could never add it again without support. Offering it every launch
+           // costs one click to decline (the "Continue without…" link, which appears precisely
+           // when the only gap left is optional) and keeps the door open for ever.
+           //
+           // What the optional flag changes is that the offer is DECLINABLE, not that it stops
+           // being made: `missingReq` is what may hold the player here against their will.
+           var missingReq = missing.filter(needs);
            if (!files || !files.length){
              if (!needed.length) {
                return bounce(neededFailed
@@ -2531,10 +2645,18 @@
                // Never swallow this: a wizard that fails to open leaves the player with a
                // half-installed game and no explanation of why.
                append('[locker] upload wizard failed to open: '+(e&&e.message||e),'err');
-               fatalOverlay('Your game files are incomplete',
-                 'This server needs: '+missing.map(function(m){ return m.name; }).join(', ')
-                 + '. The uploader could not open ('+(e&&e.message||e)+'). Reload to try again.', false);
-               return;
+               // Fatal ONLY when the gap was one this session cannot play without. A player who
+               // came here from "Add game files" to add their expansions has a perfectly good
+               // library already; stranding them behind an unclosable overlay because the
+               // optional extra could not be offered would be a worse outcome than the gap.
+               if (!missingReq.length){
+                 append('[locker] carrying on without '+missing.map(function(m){ return m.name; }).join(', ')+'.');
+               } else {
+                 fatalOverlay('Your game files are incomplete',
+                   'This server needs: '+missingReq.map(function(m){ return m.name; }).join(', ')
+                   + '. The uploader could not open ('+(e&&e.message||e)+'). Reload to try again.', false);
+                 return;
+               }
              }
            } else {
              append('[locker] library complete ('+have.length+' items).');
