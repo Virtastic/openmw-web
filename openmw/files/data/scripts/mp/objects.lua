@@ -27,6 +27,14 @@ local CONTAINER_WATCH_SECONDS = 15 -- native container UI has no close signal; p
 local CONTAINER_POLL = 0.25
 local LOCK_WATCH_SECONDS = 4
 local DOOR_READ_DELAY = 0.4 -- door starts turning on activation; read the resulting state
+-- Containers get the same treatment for a sharper reason. Morrowind resolves a container's
+-- LEVELED LOOT the first time it is activated, so reading the contents inside onActivate can
+-- catch it before the engine has populated it. That read is not just wrong once: the server
+-- takes the FIRST opener's contents as canonical and never overwrites them
+-- (worldstate.ts containerOpen), so an empty first read makes the container permanently empty
+-- for everybody, and the client then forces that emptiness back onto the object on every open.
+-- Reported as a plant that opens blank and stays blank. Read it a beat later instead.
+local CONTAINER_OPEN_DELAY = 0.2
 local ECHO_GUARD_SECONDS = 5
 
 local netToObj = {} -- netId -> GameObject
@@ -38,6 +46,7 @@ local opCounter = 0
 local pendingOps = {} -- opId -> {op=, itemId=, n=, key=, obj=}
 local recentPickups = {} -- obj.id -> time (belt+braces beside the byId echo skip)
 local doorPending = {} -- obj.id -> {obj=, at=}
+local containerOpenPending = {} -- obj.id -> {obj=, at=}: deferred first read, see above
 local lockWatch = {} -- obj.id -> {obj=, locked=, level=, until_=}
 -- Phase 4: obj.id -> last seen `enabled`. Unlike locks, an enable/disable is not tied to
 -- an activation — a quest script flips it whenever it likes — so this is a low-rate poll
@@ -295,41 +304,46 @@ function objects.onActivate(object, actor)
     end
 
     if types.Container.objectIsInstance(object) then
-        local snapshot = snapshotContainer(object)
-        if snapshot and sendAddressed('ContainerOpen', object, { contents = countsToItems(snapshot) }) then
-            containerWatch[object.id] = {
-                obj = object,
-                last = snapshot,
-                -- Poll on the NEXT tick, not a quarter second from now. A harvest can resolve and
-                -- the object can go away inside that gap, and the take is then unreportable.
-                nextPoll = 0,
-                until_ = now + CONTAINER_WATCH_SECONDS,
-            }
-        else
-            -- SELF-SILENCING DIAGNOSTIC. Reaching here means the container was activated but
-            -- NO watch was registered, so nothing this player takes from it will ever be
-            -- reported: the take is invisible to the server and the item's fate is decided
-            -- by whatever trues the cell up next. Reported from live play as "plants are
-            -- empty" -- the container opens, empties, and the player receives nothing, with
-            -- the server logging absolutely nothing because it was never told.
-            --
-            -- Three ways to get here, and this says WHICH, because they need different
-            -- fixes: no snapshot (Container.content did not read), not addressable (no netId
-            -- and no contentFile), or a chargen cell (deliberate, local-only).
-            local why
-            if not snapshot then
-                why = 'no snapshot (Container.content unreadable)'
-            elseif not addrOf(object) then
-                why = 'not addressable (no netId, no contentFile)'
-            elseif isChargenCell(cellKeyOfObj(object)) then
-                why = 'chargen cell (local-only by design)'
-            else
-                why = 'sendAddressed refused'
-            end
-            print(string.format('[mp] CONTAINER NOT WATCHED: %s cell=%s why=%s',
-                tostring(object.recordId), tostring(cellKeyOfObj(object)), why))
-        end
+        -- Deferred: the contents may not exist yet at this instant (see CONTAINER_OPEN_DELAY).
+        containerOpenPending[object.id] = { obj = object, at = now + CONTAINER_OPEN_DELAY }
     end
+end
+
+-- The deferred half of a container open: snapshot the contents once the engine has actually
+-- populated them, tell the server, and start watching for takes from that same snapshot.
+local function openContainerNow(object, now)
+    if not (object and object:isValid()) then return end
+    local snapshot = snapshotContainer(object)
+    if snapshot and sendAddressed('ContainerOpen', object, { contents = countsToItems(snapshot) }) then
+        containerWatch[object.id] = {
+            obj = object,
+            last = snapshot,
+            -- Poll on the NEXT tick, not a quarter second from now. A harvest can resolve and the
+            -- object can go away inside that gap, and the take is then unreportable.
+            nextPoll = 0,
+            until_ = now + CONTAINER_WATCH_SECONDS,
+        }
+        return
+    end
+    -- SELF-SILENCING DIAGNOSTIC. Reaching here means the container was activated but NO watch
+    -- was registered, so nothing this player takes from it will ever be reported: the take is
+    -- invisible to the server and the item's fate is decided by whatever trues the cell up next.
+    --
+    -- Three ways to get here, and this says WHICH, because they need different fixes: no
+    -- snapshot (Container.content did not read), not addressable (no netId and no contentFile),
+    -- or a chargen cell (deliberate, local-only).
+    local why
+    if not snapshot then
+        why = 'no snapshot (Container.content unreadable)'
+    elseif not addrOf(object) then
+        why = 'not addressable (no netId, no contentFile)'
+    elseif isChargenCell(cellKeyOfObj(object)) then
+        why = 'chargen cell (local-only by design)'
+    else
+        why = 'sendAddressed refused'
+    end
+    print(string.format('[mp] CONTAINER NOT WATCHED: %s cell=%s why=%s',
+        tostring(object.recordId), tostring(cellKeyOfObj(object)), why))
 end
 
 -- GLOBAL onItemActive: an item object appeared in the world. Content items fire this on
@@ -684,6 +698,13 @@ function objects.tick(now)
         end
     end
 
+    for id, pending in pairs(containerOpenPending) do
+        if now >= pending.at then
+            containerOpenPending[id] = nil
+            openContainerNow(pending.obj, now)
+        end
+    end
+
     for id, pending in pairs(doorPending) do
         if now >= pending.at then
             doorPending[id] = nil
@@ -832,6 +853,7 @@ function objects.reset()
     pendingOps = {}
     recentPickups = {}
     doorPending = {}
+    containerOpenPending = {}
     lockWatch = {}
     enableWatch = {}
     nextEnablePoll = 0
