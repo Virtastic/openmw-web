@@ -1,52 +1,30 @@
 #!/usr/bin/env bash
-# Push the local working tree to the build server. Run from the repo root.
+# RETIRED. Builds come from the `dev` branch now; this script no longer does anything.
 #
-# The build server does NOT use git: the multiplayer branch is unpushed and the repo is
-# public, so the source arrives by rsync over the LAN and nothing leaves the network.
-# That also means uncommitted work builds exactly as it sits on disk.
+# It used to rsync the laptop's working tree to the build server, and it is kept as a refusal
+# rather than deleted because the muscle memory outlives the script — running it and getting
+# "command not found" tells you nothing about what to do instead.
+#
+# Why it went away, beyond the workflow change: it synced the WHOLE tree, including
+# ci/jenkins/config.env. That file has to serve two machines at once — BUILDER is resolved from
+# the laptop, while TEST_HOST/SSH_KEY are resolved on the build server, inside the Jenkins
+# container. Overwriting it on every sync is how the deploy stage silently broke: the container
+# got a `test-vm` alias it cannot resolve and a key path under ~/Documents that does not exist
+# there, so Jenkins deploys failed while hand-run deploys worked. Nobody saw a red build, because
+# the job simply stopped being used.
+#
+# The flow now (see AGENTS.md "The loop"):
+#   1. commit to a branch off dev, push it, open a PR against dev
+#   2. the maintainer approves and merges
+#   3. Jenkins polls dev, builds, and deploys to the test server on its own
 set -euo pipefail
+cat >&2 <<'MSG'
+sync-to-builder.sh is RETIRED — Jenkins builds from the `dev` branch now.
 
-# Deployment values come from ci/jenkins/config.env (gitignored — this repo is public).
-# Environment wins, so a CI job can override without touching the file.
-_cfg="$(dirname "$0")/config.env"
-# shellcheck disable=SC1090
-[ -f "$_cfg" ] && . "$_cfg"
-BUILDER="${BUILDER:?set BUILDER in ci/jenkins/config.env (see config.env.example)}"
-DEST="${DEST:-morrowind-src}"
+  git push -u origin <your-branch>     # then open a PR against dev
+  # maintainer approves + merges -> Jenkins builds and deploys within ~2 minutes
 
-cd "$(dirname "$0")/../.."   # repo root
-
-command -v rsync >/dev/null || { echo "rsync not found"; exit 1; }
-
-echo "==> syncing working tree to $BUILDER:$DEST"
-# Excludes mirror .dockerignore plus the local-only heavy trees. deps/ and fsroot/gamedata
-# are NOT sent - they are staged once on the builder at ~/build-artifacts and copied in by
-# this script's tail, because re-sending ~750MB on every build is pointless.
-rsync -a --delete \
-  --exclude '.git/' --exclude '.github/' \
-  --exclude 'deps/' \
-  --exclude 'build-wasm/' --exclude 'build-wasm.good/' --exclude 'build-native/' \
-  --exclude 'build-bullet-native/' --exclude 'build-mygui-native/' \
-  --exclude 'archive/' --exclude 'source-mw/' --exclude 'content/' \
-  --exclude 'node_modules/' --exclude 'wasm-build/mod-src/' \
-  --exclude 'play/mwdata/' --exclude 'play/moddata/' \
-  --exclude 'play/openmw.*' --exclude 'play/*.tar' \
-  --exclude 'fsroot/gamedata/' \
-  ./ "$BUILDER:$DEST/"
-
-# Record what was built, so a Jenkins log can be traced back to a commit even though the
-# tree is not a git checkout. Dirty trees are the normal case here.
-git rev-parse HEAD 2>/dev/null | ssh "$BUILDER" "cat > $DEST/.source-commit"
-
-echo "==> restaging the gitignored build inputs"
-ssh "$BUILDER" "
-  set -e
-  cp -a ~/build-artifacts/deps $DEST/
-  cp -a ~/build-artifacts/fsroot/gamedata $DEST/fsroot/
-  cp -a ~/build-artifacts/fsroot/icudt68l.dat $DEST/fsroot/
-"
-
-echo "==> done. commit $(git rev-parse --short HEAD 2>/dev/null || echo unknown)$(git diff --quiet 2>/dev/null || echo ' (dirty)')"
-echo "    now trigger a job on the build server's Jenkins (BUILDER=$BUILDER)"
-echo "      OpenMW-Web-Engine-WASM   ~13 min   engine + statics"
-echo "      OpenMW-Web-MP-Server     ~1 min    gateway + sim peer (longer if openmw/ changed)"
+There is no manual build or deploy step any more. To build something uncommitted, commit it
+to a branch and push it. See AGENTS.md, "The loop".
+MSG
+exit 1

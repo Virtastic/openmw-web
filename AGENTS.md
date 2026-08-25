@@ -39,28 +39,54 @@ exists precisely so testing never touches production. Note `mp.virtastic.app` is
 thing: the design that wanted it is dead, and the vhost that kept the name alive has been
 deleted (see "One origin" below).
 
-**DO NOT push local feature branches to `origin`.** `Virtastic/openmw-web` is a **public** repo.
-The `multiplayer` branch is local-only and unpushed. Publishing is the maintainer's decision.
-(There is also a credential in `fsroot/resources/vfs/scripts/mp/net.lua` pending rotation.)
-The build server does not use git — it builds from a synced working tree, so nothing leaves
-the network.
+**`dev` IS THE INTEGRATION BRANCH, AND IT IS PUBLIC.** `Virtastic/openmw-web` is a **public**
+repo, so everything merged to `dev` is published permanently the moment it lands. Read what you
+are pushing. `ci/jenkins/config.env` is gitignored and must stay that way — it holds this
+network's hosts and key paths.
+
+`dev` is branch-protected: **one approving review**, stale reviews dismissed, no force-push and
+no deletion. Admins are not forced through it (`enforce_admins` is off), so the maintainer keeps
+a direct push for emergencies — use it as one.
+
+**Contributors open a PR against `dev`.** The maintainer approves and merges. `main` and
+`ovhcloud` are NOT touched by this flow: `ovhcloud` deploys production and is a separate,
+deliberate promotion.
 
 ---
 
 ## The loop
 
-The build server holds a mirror of the working tree at `~/morrowind-src` on `jenkins-vm`.
-Sync local changes to it, then trigger a build.
+**Push to `dev`. Jenkins does the rest.** There is no manual build step and no manual deploy
+step: both jobs poll `dev` every couple of minutes, and every build that succeeds deploys to the
+test server and then runs the contract gate. A green build IS a deployed test server.
 
 ```bash
-# 1. push your working tree to the build server (from the repo root)
-./ci/jenkins/sync-to-builder.sh
-
-# 2. build + deploy to the test server
-#    Jenkins UI:  http://<build server>:8080/   (BUILDER in ci/jenkins/config.env)
-#      OpenMW-Web-MP-Server     ~1 min    gateway + sim peer, then deploy
-#      OpenMW-Web-Engine-WASM   ~13 min   WASM engine: full compile, then deploy
+# from the repo root, on a branch off dev
+git push -u origin my-change        # then open a PR against dev
+# ...maintainer approves and merges...
+# Jenkins picks the merge up within ~2 minutes and deploys it. Nothing else to run.
 ```
+
+| Job | Time | What it does |
+|---|---|---|
+| `OpenMW-Web-MP-Server` | ~1 min (longer if `openmw/` changed) | gateway + sim peer → deploy → contract gate |
+| `OpenMW-Web-Engine-WASM` | ~13 min | WASM engine + statics → deploy → contract gate |
+
+Both jobs are: **checkout `dev` → restage build inputs → build → deploy**. The deploy stage is
+unconditional — there is deliberately no "build without deploying", because an image that was
+never deployed has never been tested.
+
+**The build inputs are not in git.** `deps/`, `fsroot/gamedata/` and `fsroot/icudt68l.dat` are
+~750 MB of retail data and prebuilt dependencies, deliberately unpublished. A checkout alone is
+therefore NOT a buildable tree, and `build-engine.sh` hard-fails on all three.
+`ci/jenkins/restage-inputs.sh` puts them back from `~/build-artifacts` when they are missing —
+normally a no-op, since `git checkout -f` leaves untracked files alone.
+
+**`sync-to-builder.sh` is retired.** It rsynced the laptop's working tree, including
+`ci/jenkins/config.env` — which is how the deploy stage silently broke: the file carries
+laptop-shaped `TEST_HOST`/`SSH_KEY` values that cannot resolve inside the Jenkins container, so
+deploys failed there while working by hand. The script now refuses and points here. If you need
+to build something uncommitted, commit it to a branch and push it.
 
 After a deploy the test server serves:
 
