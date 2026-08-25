@@ -81,6 +81,40 @@ async function fence(from: TestClient, ...watchers: TestClient[]) {
   for (const w of watchers) await w.waitEvent('ChatMessage', (v) => (v as { text?: string }).text === text);
 }
 
+// UNARMED ATTACKS DAMAGE FATIGUE, NOT HEALTH, and the server used to require damage.health.
+//
+// The engine builds the damage table with EITHER health OR fatigue and never both
+// (mwlua/luamanagerimp.cpp onHit: `if (isHealth) damageTable["health"] = damage; else
+// damageTable["fatigue"] = damage;`). In Morrowind a hand-to-hand blow is a fatigue hit, so
+// demanding health dropped EVERY unarmed swing in the game. It fails silently and total:
+// puppet.lua's onHitIntercept has already cancelled the local damage chain by then, so the
+// player swings through the target and nothing happens at all -- no damage, no miss, no sound.
+// Reported from live play as "I cannot attack anything", with the server logging
+// combat.dropped/"damage.health missing or over cap" once per swing.
+test('a fatigue-only hit (hand-to-hand) is relayed, not dropped', async (t) => {
+  const { vic, vicId, atk } = await scenario(t, true);
+
+  const fatigueOnly = {
+    target: { playerId: vicId },
+    damage: { fatigue: 12 },   // no health key at all — exactly what an unarmed hit sends
+    strength: 0.8,
+    sourceType: 'melee',
+    successful: true,
+  };
+  atk.sendEvent('CombatHit', fatigueOnly);
+  const got = await vic.waitEvent('CombatHit');
+  const v = got.value as { damage: { fatigue: number; health?: number } };
+  assert.equal(v.damage.fatigue, 12);
+  assert.equal(v.damage.health, undefined);
+
+  // A damage table with NO channel at all is still refused — this widened the rule, it did
+  // not remove it. Asserted by silence: the victim must receive nothing more.
+  const before = vic.inbox.events.filter((e) => e.name === 'CombatHit').length;
+  atk.sendEvent('CombatHit', { ...fatigueOnly, damage: {} });
+  await fence(atk, atk, vic);
+  assert.equal(vic.inbox.events.filter((e) => e.name === 'CombatHit').length, before);
+});
+
 test('combat routing with pvp enabled', async (t) => {
   const { server, peer, atk, vic, far, atkId, vicId, epoch, welcome } = await scenario(t, true);
 

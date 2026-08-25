@@ -301,17 +301,32 @@ export class Combat {
       return;
     }
     const cap = this.ctx.maxHitDamage;
-    const health = checkedMagnitude(damage.get('health'), cap);
-    if (health === undefined) {
-      this.drop(player, 'CombatHit', 'damage.health missing or over cap');
-      return;
-    }
-    // fatigue/magicka are optional but capped when present.
-    for (const key of ['fatigue', 'magicka'] as const) {
-      if (damage.get(key) !== undefined && checkedMagnitude(damage.get(key), cap) === undefined) {
+    // AT LEAST ONE damage channel — NOT `health` specifically.
+    //
+    // The engine builds this table with EITHER health OR fatigue and never both
+    // (mwlua/luamanagerimp.cpp onHit: `if (isHealth) damageTable["health"] = damage; else
+    // damageTable["fatigue"] = damage;`), and in Morrowind an UNARMED attack damages
+    // FATIGUE. Demanding health therefore dropped every hand-to-hand swing in the game:
+    // a character with no weapon equipped could not land a single blow.
+    //
+    // It fails silently and total. puppet.lua's onHitIntercept has already returned false
+    // and cancelled the local damage chain by the time the server sees this, so a dropped
+    // hit is not a lost message but a lost SWING — no damage, no miss, no sound, no blood.
+    // The player swings through the target and the game says nothing at all, which is
+    // exactly how it was reported: "I cannot attack anything".
+    let channels = 0;
+    for (const key of ['health', 'fatigue', 'magicka'] as const) {
+      const raw = damage.get(key);
+      if (raw === undefined) continue;
+      if (checkedMagnitude(raw, cap) === undefined) {
         this.drop(player, 'CombatHit', `damage.${key} over cap`);
         return;
       }
+      channels++;
+    }
+    if (channels === 0) {
+      this.drop(player, 'CombatHit', 'damage has no health/fatigue/magicka channel');
+      return;
     }
     // Optional ids/position, validated when present.
     for (const key of ['weaponId', 'ammoId'] as const) {

@@ -253,6 +253,29 @@ function objects.onActivate(object, actor)
                 nextPoll = now + CONTAINER_POLL,
                 until_ = now + CONTAINER_WATCH_SECONDS,
             }
+        else
+            -- SELF-SILENCING DIAGNOSTIC. Reaching here means the container was activated but
+            -- NO watch was registered, so nothing this player takes from it will ever be
+            -- reported: the take is invisible to the server and the item's fate is decided
+            -- by whatever trues the cell up next. Reported from live play as "plants are
+            -- empty" -- the container opens, empties, and the player receives nothing, with
+            -- the server logging absolutely nothing because it was never told.
+            --
+            -- Three ways to get here, and this says WHICH, because they need different
+            -- fixes: no snapshot (Container.content did not read), not addressable (no netId
+            -- and no contentFile), or a chargen cell (deliberate, local-only).
+            local why
+            if not snapshot then
+                why = 'no snapshot (Container.content unreadable)'
+            elseif not addrOf(object) then
+                why = 'not addressable (no netId, no contentFile)'
+            elseif isChargenCell(cellKeyOfObj(object)) then
+                why = 'chargen cell (local-only by design)'
+            else
+                why = 'sendAddressed refused'
+            end
+            print(string.format('[mp] CONTAINER NOT WATCHED: %s cell=%s why=%s',
+                tostring(object.recordId), tostring(cellKeyOfObj(object)), why))
         end
     end
 end
