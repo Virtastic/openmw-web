@@ -309,5 +309,47 @@ do
   end
 end
 
+-- ============================================================ identity.lua: the spell restore REPLACES
+-- Reported from live play: a Redguard carrying Ancestor Guardian, a DUNMER power. applyChargen
+-- runs buildPlayer(), which clears the spellbook and grants this character's race powers,
+-- birthsign powers and autocalc spells. Phase 2 then restored the saved set by ADDING it, so the
+-- two were unioned and anything the slot used to own survived a race it no longer is. The diff
+-- could not clean up after it either: broadcasts are suppressed while `restoring`, and last.spells
+-- is re-seeded from the union, so the stale power never surfaced as a removal.
+print('identity.lua -- the rejoin spell restore replaces rather than merges')
+fresh()
+env = stubs.install({})
+local identity = require('scripts.mp.identity')
+
+-- What chargen just granted (this slot was a Dunmer before it was rebuilt).
+env.spellbook:add('ancestor_guardian')
+-- What the character actually owns, per the server doc.
+identity.applyRecord({ stats = {}, spells = { 'adrenaline_rush' } })
+identity.equipRetryTick(1.0) -- past the 0.5 s settle
+
+local function bookIds()
+  local out = {}
+  for _, sp in ipairs(env.spellbook) do out[#out + 1] = sp.id end
+  table.sort(out)
+  return out
+end
+local ids = bookIds()
+check('the saved spell is restored', #ids == 1 and ids[1] == 'adrenaline_rush',
+  'book=' .. table.concat(ids, ','))
+check('the power from the race this slot no longer is does not survive',
+  #ids == 1 and ids[1] ~= 'ancestor_guardian',
+  'book=' .. table.concat(ids, ',') .. ' -- the restore unioned instead of replacing')
+
+-- The guard: a record with NO spells must not wipe what chargen just granted, or a character
+-- whose doc predates spell persistence is stripped of its racial powers on every rejoin.
+fresh()
+env = stubs.install({})
+identity = require('scripts.mp.identity')
+env.spellbook:add('adrenaline_rush')
+identity.applyRecord({ stats = {}, spells = {} })
+identity.equipRetryTick(1.0)
+check('an empty saved set leaves the chargen grant alone', #env.spellbook == 1,
+  '#book=' .. #env.spellbook)
+
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)

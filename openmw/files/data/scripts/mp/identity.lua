@@ -355,8 +355,21 @@ local function applyPhase2(record)
             if dyn.mp then d.magicka(self).base = dyn.mp.b; d.magicka(self).current = dyn.mp.c end
             if dyn.ft then d.fatigue(self).base = dyn.ft.b; d.fatigue(self).current = dyn.ft.c end
         end
-        if record.spells then
+        if record.spells and next(record.spells) ~= nil then
             local spells = Actor.spells(self)
+            -- CLEAR FIRST. applyChargen ran half a second ago and buildPlayer() granted this
+            -- character its RACE powers, birthsign powers and autocalc spells. Adding the saved
+            -- set on top UNIONS the two, so anything the character used to have -- a power from
+            -- the race this slot was before it was rebuilt -- survives a race it no longer is.
+            -- The diff cannot clean it up either: broadcasts are suppressed while `restoring`,
+            -- and last.spells is re-seeded from the union below, so the stale power never shows
+            -- up as a removal and is cemented into the server doc instead. The saved set already
+            -- contains everything chargen grants (snapSpells captures the lot), so replacing
+            -- rather than merging loses nothing. Guarded on a non-empty set: a record with no
+            -- spells must not wipe the powers chargen just granted.
+            -- pcall'd like every other call here: if the binding is ever absent this must
+            -- degrade to the old union, not abort the rest of phase 2 (equipment included).
+            pcall(function() spells:clear() end)
             for _, id in pairs(record.spells) do
                 pcall(function() spells:add(id) end)
             end

@@ -127,8 +127,13 @@ namespace MWMechanics
         for (size_t i = 0; i < player->mNpdt.mSkills.size(); ++i)
             npcStats.getSkill(ESM::Skill::indexToRefId(static_cast<int>(i))).setBase(player->mNpdt.mSkills[i]);
 
+        // ATTRIBUTES COME FROM mAttributes, NOT mSkills. This read the skills array (a copy-paste
+        // of the loop above), so the reset seeded all eight attributes from the first eight SKILL
+        // values. It is masked whenever a race is selected -- the race block below re-bases every
+        // attribute absolutely -- so a normal chargen looks fine, and it only shows through on a
+        // rebuild that skips the race block.
         for (size_t i = 0; i < player->mNpdt.mAttributes.size(); ++i)
-            npcStats.setAttribute(ESM::Attribute::indexToRefId(static_cast<int>(i)), player->mNpdt.mSkills[i]);
+            npcStats.setAttribute(ESM::Attribute::indexToRefId(static_cast<int>(i)), player->mNpdt.mAttributes[i]);
 
         const MWWorld::ESMStore& esmStore = *MWBase::Environment::get().getESMStore();
 

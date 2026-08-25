@@ -55,13 +55,23 @@ function M.install(opts)
   for _, a in ipairs({ 'strength', 'intelligence', 'willpower', 'agility',
                        'speed', 'endurance', 'personality', 'luck' }) do attrs[a] = stat(30) end
 
+  local spellbook = setmetatable({}, { __index = {
+    add = function(self, id)
+      for _, sp in ipairs(self) do if sp.id == id then return end end
+      self[#self + 1] = { id = id }
+    end,
+    clear = function(self) for i = #self, 1, -1 do self[i] = nil end end,
+  } })
+
   local types = {
     Actor = {
       inventory = function() return { getAll = function() return inventory end } end,
       getEquipment = function() return {} end,
       setEquipment = function() end,
       isDead = function() return false end,
-      spells = function() return {} end,
+      -- Stateful spellbook: an ARRAY of {id=...} (so pairs() yields spell records the way
+      -- snapSpells expects) with add/clear on a metatable, kept off the array part.
+      spells = function() return spellbook end,
       stats = {
         dynamic = { health = function() return dyn.health end,
                     magicka = function() return dyn.magicka end,
@@ -105,6 +115,7 @@ function M.install(opts)
     advance = function(sec) realTime = realTime + sec end,
     now = function() return realTime end,
     setInventory = function(items) inventory = items end,
+    spellbook = spellbook,
   }
 end
 

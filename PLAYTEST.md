@@ -295,6 +295,30 @@ played is not the build the suite runs. **Establish which build first**: `play/o
 is rebuilt from this working tree, and the deployed site may be older or newer than any of the
 fixes in this cycle.
 
+### Which build — ANSWERED 2026-08-25: the session was the deployed site, and it is a week behind
+
+The report came from `morrowind.virtastic.app`, not from this tree. Measured, not assumed:
+
+| | deployed | this tree |
+| --- | --- | --- |
+| engine stamp (`__ENGINE_VER`) | `b42a8f65c461` | `27d4fa302707` |
+| engine binary date | 18 Aug 2026 | rebuilt from HEAD |
+| preload entries | 712 (game data baked in) | 389 (streamed) |
+| ICU data path | `/icudt68l.dat` (root) | `/icu/icudt68l.dat` |
+| `mp.setPuppet` / `takeMagicHits` | **absent** | present |
+| all 20 `scripts/mp/*.lua` | smaller, every one differs | this cycle's |
+
+`index.html` is re-uploaded on each deploy and was fresh, which is why the site LOOKS current --
+but it still points at the 18 Aug engine directory. The Lua binding names are the sound marker
+here: they are string literals and survive stripping. `isPuppet`, `recordMagicHit` and
+`u_setDataDirectory` are absent from BOTH binaries -- they inline away -- so they prove nothing
+and were discarded rather than read as evidence.
+
+So: **nothing in this cycle has ever been in front of a player.** Items below that "do not
+reproduce here" were reproduced on a build without the fixes; that is the expected result, not a
+contradiction. The suite being green and the session being broken are the same fact. Nothing is
+re-triaged on that basis alone -- a deploy and a re-test is the only thing that settles them.
+
 ### Combat and NPCs
 1, 6, 8. **Player cannot attack** / **escape must be pressed twice** / **random mouse spin.**
    **DOES NOT REPRODUCE HERE. Keyboard input works.** Two earlier versions of this entry said
@@ -507,6 +531,86 @@ fixes in this cycle.
 **Nothing above is fixed.** They are recorded here because a playtest report is worth more than
 the memory of one, and because two of them (1 and 9) touch code changed in this cycle and need a
 before/after comparison rather than a guess.
+
+## Reported from live play 2026-08-25 (second round, with screenshots) — Brave
+
+Screenshots this time, which settled two of these on the spot.
+
+### 11. Attributes climb, and the character sheet fills in late — PARTLY FIXED, one hypothesis open
+
+Two shots of the same level-1 Redguard Acrobat, minutes apart:
+
+| | first | second |
+| --- | --- | --- |
+| Endurance | 225 | 275 |
+| Personality | 205 | 255 |
+| Fatigue | 365 | 415 |
+| Major Skills listed | 1 (Acrobatics) | all 5 |
+
+Not a display artifact: base fatigue is Str+Wil+Agi+End, and 60+30+50+**225**=365 and
+60+30+50+**275**=415 both check out, so the engine really is holding those numbers. Two
+attributes climb by +50 and the other six sit still.
+
+**FIXED — `mechanicsmanagerimp.cpp` `buildPlayer()` seeded attributes from the wrong array.**
+The reset loop read `player->mNpdt.mSkills[i]` where it must read `mNpdt.mAttributes[i]` — a
+copy-paste of the skills loop directly above it. Present since the initial vendored snapshot
+(`2600f5b`), not introduced by this cycle. It is masked whenever a race is selected, because the
+race block re-bases all eight attributes absolutely, which is why ordinary chargen looks fine.
+
+**Still a hypothesis — the +50 climb itself.** `applyChargen` guards each step separately
+(`if (!race.empty())` … `if (!cls.empty())`), and the class block does
+`setAttribute(id, getAttribute(id).getBase() + 10)` on the class's two favoured attributes. With
+no race re-base in front of it that `+10` accumulates on every `buildPlayer()`, and `buildPlayer()`
+runs at least twice per restore. That predicts exactly the observed shape — two attributes moving,
+six static. It is NOT yet confirmed: `snapAppearance` falls back to `villager_00`'s race or the
+literal `'none'`, so the race is never empty, and a bogus RefId would make
+`esmStore.get<ESM::Race>().find()` throw instead. **Confirm at runtime before fixing** — print
+`mRaceSelected` and the eight attributes on each `buildPlayer()` across a restore.
+
+The late-filling Major Skills list is the same restore settling, not a separate bug: phase 2 runs
+0.5 s after chargen, so a sheet opened inside that window shows a half-built character.
+
+### 12. A Redguard carrying Ancestor Guardian — FIXED, negative-controlled
+
+A DUNMER power on a Redguard, alongside the correct Adrenaline Rush. `applyChargen` runs
+`buildPlayer()`, which clears the spellbook and grants this character's race powers, birthsign
+powers and autocalc spells; phase 2 then restored the saved set by **adding** it, so the two were
+unioned and whatever the slot used to be survived into what it now is. The diff could not clean up
+after it either — broadcasts are suppressed while `restoring`, and `last.spells` is re-seeded from
+the union, so the stale power never surfaced as a removal and was cemented into the server doc.
+
+`identity.lua` now clears before restoring, guarded so an empty saved set cannot wipe the grant
+chargen just made. Negative control RUN: with the clear disabled the book comes back
+`adrenaline_rush,ancestor_guardian` and two checks fail. 63/63 with it restored.
+
+One thing this does not do: it stops the growth, it does not clean docs that are already
+contaminated. Those keep whatever they were last saved with.
+
+### 13. Alpha renders opaque black on Brave — NOT REPRODUCED HERE, leading hypothesis
+
+Foliage draws as full black quads where the leaf cutout should be transparent. The shader path is
+sound — `lib/material/alpha.glsl` discards correctly and `shadervisitor.cpp` converts the
+`osg::AlphaFunc` into the `@alphaFunc`/`alphaRef` defines, and there is no `force shaders` knob to
+be off in this version. The whole quad being drawn points at alpha never being tested, i.e. the
+texture arriving without its alpha channel rather than the shader misjudging it.
+
+Morrowind foliage is DXT-compressed, and WebGL can only accept that through
+`WEBGL_compressed_texture_s3tc`. The build passes no extension flags — Emscripten auto-enables
+whatever the browser exposes — and **Brave's fingerprinting protection can hide WebGL extensions**.
+That would fail the compressed upload, sample black, and be specific to Brave, which matches both
+the report and the fact that the software-GL harness here does not reproduce it.
+
+Unverified. Cheapest next step is one line in Brave's console on the affected machine:
+
+```js
+document.createElement('canvas').getContext('webgl2').getSupportedExtensions().filter(e => /compressed/i.test(e))
+```
+
+If `WEBGL_compressed_texture_s3tc` is missing there and present in Chrome, that is the bug, and the
+fix is a CPU-side S3TC decode fallback in `imagemanager.cpp` beside the existing BGRA rewrite —
+which is already the place where a web-specific texture-format problem gets corrected. Note the
+`imagemanager.cpp` emscripten block handles UNCOMPRESSED BGRA/BGR only; compressed formats pass
+through it untouched.
 
 ## Known open (already triaged — not bugs to re-report)
 - Some textures skip mipmaps (`glGenerateMipmap` warning) → slight distant shimmer — OSG fix pending
