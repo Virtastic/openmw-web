@@ -27,7 +27,18 @@ cd "$PLAY"
 # wasm's hash alone, a streamfs-only change would reuse the existing e/<hash>/ path and returning
 # visitors would be pinned to the stale copy for up to a year — immutable means the browser does not
 # even revalidate. sha256sum (Linux/alpine busybox) or shasum -a 256 (macOS) — whichever exists.
-VER=$( { cat openmw.wasm streamfs.js 2>/dev/null || true; } | { sha256sum 2>/dev/null || shasum -a 256; } | cut -c1-12 )
+# EVERY file that moves into e/<hash>/ must be IN the hash. openmw.js and openmw.data were not,
+# and openmw.data is where the multiplayer client lives: fsroot/resources/vfs/scripts/mp/*.lua is
+# packed into it. A Lua-only change therefore left openmw.wasm byte-identical (the compile is
+# deterministic on purpose), produced the SAME hash, and republished the new openmw.data over the
+# existing e/<hash>/ path -- a path served Cache-Control: immutable, max-age=31536000. Immutable
+# means the browser does not even revalidate, so a returning player keeps the old client scripts
+# for up to a year while the server runs the new code. A whole class of client fix could ship,
+# pass its deploy gate, and reach nobody who had played before.
+#
+# openmw.js has the same problem for a different reason: it carries the preload manifest, whose
+# byte offsets shift whenever openmw.data changes.
+VER=$( { cat openmw.wasm openmw.js openmw.data streamfs.js 2>/dev/null || true; } | { sha256sum 2>/dev/null || shasum -a 256; } | cut -c1-12 )
 [ -n "$VER" ] || { echo "version-engine: could not hash engine files" >&2; exit 1; }
 
 DIR="e/$VER"
