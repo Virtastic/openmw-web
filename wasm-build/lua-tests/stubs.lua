@@ -12,13 +12,16 @@ local M = {}
 
 function M.install(opts)
   opts = opts or {}
-  local calls = { events = {}, json = {}, testSet = {}, connects = 0, disconnects = 0, prints = {} }
+  local calls = { events = {}, json = {}, testSet = {}, connects = 0, disconnects = 0, prints = {}, seq = {} }
 
   local mp = {
     _calls = calls,
     sendEvent = function(name, body) calls.events[#calls.events + 1] = { name = name, body = body } end,
     sendJson = function(obj) calls.json[#calls.json + 1] = obj end,
     testSet = function(k, v) calls.testSet[k] = v end,
+    -- Engine primitive (mwmp/luabindings.cpp): purge every active effect on the player.
+    -- Recorded in the same sequence log as the spellbook so ORDER can be asserted.
+    clearActiveSpells = function() calls.seq[#calls.seq + 1] = 'clearActive' end,
     -- The engine mirror of the connection state; the C++ side owns it, so here it just records.
     _setState = function(v) calls.testSet['_state'] = v end,
     connect = function() calls.connects = calls.connects + 1; return true end,
@@ -57,10 +60,14 @@ function M.install(opts)
 
   local spellbook = setmetatable({}, { __index = {
     add = function(self, id)
+      calls.seq[#calls.seq + 1] = 'add:' .. tostring(id)
       for _, sp in ipairs(self) do if sp.id == id then return end end
       self[#self + 1] = { id = id }
     end,
-    clear = function(self) for i = #self, 1, -1 do self[i] = nil end end,
+    clear = function(self)
+      calls.seq[#calls.seq + 1] = 'clear'
+      for i = #self, 1, -1 do self[i] = nil end
+    end,
   } })
 
   local types = {

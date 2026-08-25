@@ -351,5 +351,37 @@ identity.equipRetryTick(1.0)
 check('an empty saved set leaves the chargen grant alone', #env.spellbook == 1,
   '#book=' .. #env.spellbook)
 
+-- ====================================== identity.lua: stale ability EFFECTS are purged on restore
+-- The attribute climb. A level-1 Redguard Acrobat with the Lady's Favor birthsign was reported
+-- holding Endurance 225 and Personality 205, then 275/255 minutes later. Read against the actual
+-- game records: Lady's Favor grants "lady's grace" (Fortify Endurance 25) and "lady's favor"
+-- (Fortify Personality 25), and 175 = 7x25 while 225 = 9x25 -- the SAME ability applied seven
+-- times, then nine, which is why both attributes carried an identical offset while the other six
+-- sat still. The sheet shows getModified(), and CreatureStats recomputes base fatigue from the
+-- MODIFIED attributes, which is why the fatigue bar tracked the inflation instead of exposing it.
+--
+-- Cause: the restore rebuilds the character in place, and nothing took the OLD effects off.
+-- Spells::clear() and removeSpell() touch the spell LIST only, and activeSpells:remove() refuses
+-- anything without Flag_Temporary, so a constant-effect ability could not be removed from script.
+-- Every rebuild layered one more copy on the last.
+print('identity.lua -- the restore purges stale ability effects before re-adding')
+fresh()
+env = stubs.install({})
+local identity = require('scripts.mp.identity')
+
+identity.applyRecord({ stats = {}, spells = { 'lady_s_grace' } })
+identity.equipRetryTick(1.0)
+
+local seq = table.concat(env.calls.seq, ',')
+check('the active effects are purged during the restore',
+  seq:find('clearActive', 1, true) ~= nil,
+  'seq=' .. seq .. ' -- without this the birthsign fortify stacks once per rejoin')
+-- ORDER is the contract: purge first, then re-add, so the engine re-applies each ability exactly
+-- once on its next update (guarded by isSpellActive). Purging afterwards would strip the copy it
+-- had just applied.
+check('the purge happens BEFORE the spells are re-added',
+  seq:find('clearActive', 1, true) < (seq:find('add:', 1, true) or math.huge),
+  'seq=' .. seq)
+
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)

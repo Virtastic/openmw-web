@@ -536,7 +536,7 @@ before/after comparison rather than a guess.
 
 Screenshots this time, which settled two of these on the spot.
 
-### 11. Attributes climb, and the character sheet fills in late — PARTLY FIXED, climb still open
+### 11. Attributes climb, and the character sheet fills in late — ROOT-CAUSED AND FIXED
 
 Two shots of the same level-1 Redguard Acrobat, minutes apart:
 
@@ -557,44 +557,51 @@ copy-paste of the skills loop directly above it. Present since the initial vendo
 (`2600f5b`), not introduced by this cycle. It is masked whenever a race is selected, because the
 race block re-bases all eight attributes absolutely, which is why ordinary chargen looks fine.
 
-**NOT FIXED — the +50 climb itself, and the earlier explanation for it was WRONG.**
-The first write-up here blamed the class `+10` loop accumulating without a race re-base. The
-screenshot data disproves that. Decomposed against Redguard male base values:
+**ROOT-CAUSED AND FIXED — and my first explanation for it was WRONG, corrected here.**
+The first write-up blamed the class `+10` loop accumulating without a race re-base. The
+screenshots disprove that, so it is recorded as dead rather than quietly dropped. Decomposed
+against the ACTUAL records read out of `Morrowind.esm` (not remembered):
 
-| attr | base | shot 2 | delta | shot 3 | delta |
-| --- | --- | --- | --- | --- | --- |
-| Strength | 50 | 60 | +10 | 60 | +10 |
-| Agility | 40 | 50 | +10 | 50 | +10 |
-| Endurance | 50 | 225 | **+175** | 275 | **+225** |
-| Personality | 30 | 205 | **+175** | 255 | **+225** |
-| Int/Wil/Spd/Luck | — | — | 0 | — | 0 |
+- `RACE Redguard` male — Str 50, Int 30, Wil 30, Agi 40, Spd 40, End 50, Per 30, Luck 40
+- `CLAS Acrobat` — favoured attributes **Agility and Endurance**, specialization Stealth
 
-Strength and Agility carry the class `+10` applied EXACTLY ONCE, which proves the race block ran
-and `mRaceSelected` was true — so the class loop is idempotent, exactly as written. Endurance and
-Personality instead carry an *identical* offset growing in lockstep by +50.
+Agility 40→50 is the class `+10`, applied EXACTLY ONCE. So the race block ran, `mRaceSelected`
+was true, and the class loop is idempotent as written. Endurance and Personality instead carry an
+*identical* offset: **+175, then +225**.
 
-Ruled out by reading, so nobody re-walks them:
+Those are not arbitrary. The character's birthsign is **Lady's Favor**, and from the same file:
 
-- **The MP layer writes no attribute modifier anywhere.** Every attribute write in
-  `scripts/mp/*.lua` is `.base = v` assignment.
-- `threat.lua` party scaling touches **health only** and is once-guarded by `scaled[refKey]`.
-- The equipment restore applies **once** — `tryApplyEquipment` nils `pendingEquipment` after it.
-- The class `+10` loop — disproved above.
+| spell | type | effect |
+| --- | --- | --- |
+| `lady's grace` | **Ability** | Fortify Endurance **25** |
+| `lady's favor` | **Ability** | Fortify Personality **25** |
 
-So the accumulation is **not caused by the multiplayer layer**. Two leads remain, in order:
+**175 = 7 × 25. 225 = 9 × 25.** The same two abilities applied seven times, then nine — which is
+exactly why both attributes moved by an identical amount while the other six sat still. The sheet
+shows `getModified()`, and `CreatureStats::setAttribute` recomputes base fatigue from the
+**modified** attributes, which is why the fatigue bar tracked the inflation instead of exposing it.
 
-1. **A stacking Fortify effect** (a modifier, not a base). An identical offset on two attributes
-   growing in lockstep is that signature. The diagnostic added to `identity.lua` prints base and
-   modifier for any attribute carrying an offset after a restore, and is silent otherwise.
-2. **A base feedback loop.** `setAttribute(id, getBase() + 10)` in the class block is the only
-   `+10`-on-base site in the engine, and +50 is 5×10. If five `buildPlayer()` calls ever land
-   without the race re-base in front of them, the inflated base is then snapshotted by
-   `snapProgression`, saved, restored as base next session and inflated again. That would compound
-   per session exactly as observed. It needs `mRaceSelected` false for those calls, which is not
-   demonstrated.
+**Mechanism.** The rejoin restore rebuilds a character in place, and nothing took the OLD effects
+off. `Spells::clear()` and `removeSpell()` touch the spell LIST only — neither purges what those
+spells already applied — and the Lua `activeSpells:remove()` throws for anything without
+`Flag_Temporary`. Both Lady's spells are `type=Ability`, i.e. permanent, so a constant-effect
+ability could not be removed from script AT ALL. Every rebuild layered one more copy on the last.
 
-**The diagnostic distinguishes these two on sight**: if it prints, it is lead 1; if the numbers are
-wrong and it stays silent, the inflation is in `.base` and it is lead 2.
+**Fix.** A new `mp.clearActiveSpells()` binding exposes the same primitive `buildPlayer()` already
+uses one line below its own spell clear (`getActiveSpells().clear(ptr)`), and `identity.lua` calls
+it during the restore — after clearing the spellbook, BEFORE re-adding. Order is the contract: the
+engine re-applies each ability on its next update guarded by `isSpellActive`, so the count after a
+restore is exactly one and cannot climb. Purging afterwards would strip the copy just applied.
+
+Negative control RUN: with the purge disabled the recorded sequence is `clear,add:lady_s_grace`
+with no purge and the check fails. 65/65 with it restored. Both edited translation units compile
+clean under the real emscripten toolchain (`em++`, warnings pre-existing and unrelated).
+
+**One residual, honestly flagged:** Strength shows +10 and nothing accounts for it — Acrobat
+favours Agility and Endurance, not Strength, and Adrenaline Rush is a temporary Power (Fortify
+Str/Agi/Spd/End 50 for 60 s), which fits neither the magnitude nor the attribute set. It is small,
+static across both screenshots, and does not compound. The purge covers any stacked ability
+regardless of source; if a +10 on Strength survives the next session it is a separate bug.
 
 The late-filling Major Skills list is the same restore settling, not a separate bug: phase 2 runs
 0.5 s after chargen, so a sheet opened inside that window shows a half-built character.

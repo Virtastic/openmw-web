@@ -370,6 +370,15 @@ local function applyPhase2(record)
             -- pcall'd like every other call here: if the binding is ever absent this must
             -- degrade to the old union, not abort the rest of phase 2 (equipment included).
             pcall(function() spells:clear() end)
+            -- ...and purge what those spells ALREADY APPLIED. Clearing the spell list does not
+            -- remove its effects, and activeSpells:remove() refuses anything non-temporary, so a
+            -- constant-effect ability could not be taken off from script at all. Every rebuild
+            -- therefore layered another copy of the birthsign ability on the last: a Lady's Favor
+            -- character (Fortify Endurance 25 + Fortify Personality 25) was reported at +175 on
+            -- both attributes and +225 minutes later -- 7 copies, then 9. The engine re-applies
+            -- each ability on the next update, guarded by isSpellActive, so after this the count
+            -- is exactly one and cannot climb.
+            if mp.clearActiveSpells then pcall(mp.clearActiveSpells) end
             for _, id in pairs(record.spells) do
                 pcall(function() spells:add(id) end)
             end

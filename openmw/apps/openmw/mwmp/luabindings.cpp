@@ -31,6 +31,11 @@
 
 #include "../mwinput/actions.hpp"
 
+#include "../mwmechanics/activespells.hpp"
+#include "../mwmechanics/creaturestats.hpp"
+
+#include "../mwworld/class.hpp"
+
 #include "netmanager.hpp"
 
 namespace MWMP
@@ -260,6 +265,33 @@ namespace MWMP
                 },
                 "MPResurrect");
         };
+        // Purge every active effect on the player. The rejoin restore REBUILDS a character in
+        // place: applyChargen runs buildPlayer(), which grants this character its race and
+        // birthsign abilities, and phase 2 then writes the saved spell set over the top.
+        //
+        // Nothing in that sequence takes the OLD effects off. Spells::clear() and removeSpell()
+        // touch the spell LIST only -- neither purges what those spells already applied -- and
+        // the Lua activeSpells:remove() refuses anything without Flag_Temporary, so a constant-
+        // effect ability cannot be removed from script at all. So each rebuild layered another
+        // copy of the birthsign ability on top of the last: a Lady's Favor character (Fortify
+        // Endurance 25 + Fortify Personality 25) was seen at +175 on both and then +225 a few
+        // minutes later -- 7 copies, then 9. The character sheet shows getModified(), and base
+        // fatigue is recomputed from the MODIFIED attributes, which is why the fatigue bar
+        // tracked the inflation exactly instead of contradicting it.
+        //
+        // This is the same primitive buildPlayer() already uses on the line below its spell
+        // clear, exposed so the restore can reset to a clean slate before re-adding. The
+        // engine re-applies each ability on the next update, guarded by isSpellActive, so the
+        // count after a restore is exactly one and cannot climb.
+        api["clearActiveSpells"] = [luaManager = context.mLuaManager]() {
+            luaManager->addAction(
+                [] {
+                    MWWorld::Ptr player = MWBase::Environment::get().getWorld()->getPlayerPtr();
+                    player.getClass().getCreatureStats(player).getActiveSpells().clear(player);
+                },
+                "MPClearActiveSpells");
+        };
+
         // M7 WorldMapExplored (PROTOCOL.md §M7): mark an exterior cell as discovered on the
         // world map. There is no Lua binding for map state in 0.52, and the only reachable
         // surface is GUI-side: WindowManager::addVisitedLocation (mwbase/windowmanager.hpp:243)
