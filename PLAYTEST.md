@@ -597,14 +597,20 @@ Negative control RUN: with the purge disabled the recorded sequence is `clear,ad
 with no purge and the check fails. 65/65 with it restored. Both edited translation units compile
 clean under the real emscripten toolchain (`em++`, warnings pre-existing and unrelated).
 
-**One residual, honestly flagged:** Strength shows +10 and nothing accounts for it — Acrobat
-favours Agility and Endurance, not Strength, and Adrenaline Rush is a temporary Power (Fortify
-Str/Agi/Spd/End 50 for 60 s), which fits neither the magnitude nor the attribute set. It is small,
-static across both screenshots, and does not compound. The purge covers any stacked ability
-regardless of source; if a +10 on Strength survives the next session it is a separate bug.
+**The Strength +10, chased down.** Working back from the fix, the *base* values are static across
+both shots (only the modifier grows) and come out as Str 60, Agi 50, End 50, Per 30. Against
+Redguard male that is **+10 on Strength and Agility** — but Acrobat favours **Agility and
+Endurance**. The class `+10` pair landed on the wrong attributes, so the bases were captured while
+the character was a class favouring Strength+Agility. Read out of `Morrowind.esm`, exactly two
+classes qualify: **Crusader** and **Archer**.
 
-The late-filling Major Skills list is the same restore settling, not a separate bug: phase 2 runs
-0.5 s after chargen, so a sheet opened inside that window shows a half-built character.
+That is the "the class is wrong too" half of the report, and it is a *consistency* bug rather than
+an arithmetic one: `applyChargen` sets the class from `record.appearance.class`, and phase 2 then
+writes `record.stats.attributes` over the rebuilt character as `.base`. The class bonus baked into
+those saved bases is whatever class was current when they were captured, and it is never
+recomputed against the class now being displayed. The two fields can disagree, and nothing checks.
+Saving and restoring `.base` is itself correct — a persisted character's base IS the authority —
+so the fix is to stop the two diverging, not to recompute bonuses on load.
 
 ### 12. A Redguard carrying Ancestor Guardian — FIXED, negative-controlled
 
@@ -662,6 +668,34 @@ suspect is the DDS alpha flag: OSG mapping DXT1 to `COMPRESSED_RGB_S3TC_DXT1` (n
 than the `RGBA` variant, which would drop the cutout while leaving the texture otherwise correct.
 The emscripten block in `imagemanager.cpp` rewrites UNCOMPRESSED BGRA/BGR only; compressed formats
 pass through it untouched, so that is where such a fix would go.
+
+### 14. `snapAppearance` can emit a record id that does not exist — FIXED at the consumer
+
+Found while chasing the above, and it is a live crash path. `snapAppearance` fills an empty
+race/head/hair/class from `NPC.records['villager_00']` and falls back to the literal string
+`'none'` when that record is missing. **`villager_00` is a demo record and is in no retail data
+file** — verified absent from `Morrowind.esm`, `Tribunal.esm` and `Bloodmoon.esm` — and even where
+it exists it carries no `class`. So `'none'` is not a missing value; it is an invalid record id.
+
+Every consumer of it ends in `buildPlayer()`, which resolves ids with `Store::find()` — and `find()
+**throws**` when `search()` returns null (confirmed in `mwworld/store.cpp`). An unresolvable id
+therefore does not degrade, it aborts the whole `MPApplyChargen` action, so everything sequenced
+*after* the bad field — class, birthsign, name — silently never applies.
+
+**The obvious fix is wrong, and was reverted after being written.** Making `orFallback` return `''`
+instead of `'none'` looks cleaner and breaks something worse: the server REJECTS an appearance with
+any empty `race`/`head`/`class`/`name` (`playerstate.ts handleAppearance`), and a rejected
+appearance leaves `doc.appearance` unset, which withholds `playerRecord` on every join — losing the
+character's inventory and position. That exact failure is already recorded in that function's own
+comment: *a boot path that sent `name=""` cost a player their quest items*. The non-empty
+placeholder is deliberate.
+
+So the placeholder stays and the **consumer** declines what it cannot resolve: `applyChargen` now
+looks each id up with `search()` before applying it, and logs `[mp] chargen: unknown race '…', left
+as-is` instead of throwing. Compiles clean under `em++`.
+
+The late-filling Major Skills list is the same restore settling, not a separate bug: phase 2 runs
+0.5 s after chargen, so a sheet opened inside that window shows a half-built character.
 
 ## Known open (already triaged — not bugs to re-report)
 - Some textures skip mipmaps (`glGenerateMipmap` warning) → slight distant shimmer — OSG fix pending

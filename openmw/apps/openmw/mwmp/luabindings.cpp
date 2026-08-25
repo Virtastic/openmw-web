@@ -14,7 +14,11 @@
 #include <emscripten.h>
 #endif
 
+#include <components/debug/debuglog.hpp>
 #include <components/esm/refid.hpp>
+#include <components/esm3/loadbsgn.hpp>
+#include <components/esm3/loadclas.hpp>
+#include <components/esm3/loadrace.hpp>
 #include <components/lua/luastate.hpp>
 #include <components/lua/serialization.hpp>
 
@@ -35,6 +39,7 @@
 #include "../mwmechanics/creaturestats.hpp"
 
 #include "../mwworld/class.hpp"
+#include "../mwworld/esmstore.hpp"
 
 #include "netmanager.hpp"
 
@@ -243,13 +248,43 @@ namespace MWMP
                     // chargen makes puts the name on it.
                     if (!name.empty())
                         mechanics->setPlayerName(name);
-                    if (!race.empty())
+                    // RESOLVE BEFORE APPLYING. Every one of these ends in buildPlayer(), which
+                    // looks the id up with Store::find() -- and find() THROWS when search()
+                    // returns null. An id that does not resolve therefore does not degrade, it
+                    // aborts this whole action, so everything sequenced AFTER the bad field
+                    // (class, birthsign, name) silently never applies.
+                    //
+                    // This is reachable, not theoretical. snapAppearance fills an empty field
+                    // from NPC.records['villager_00'] and falls back to the literal string
+                    // "none" when that record is missing -- and villager_00 is a DEMO record
+                    // present in NO retail data file (checked: absent from Morrowind.esm,
+                    // Tribunal.esm and Bloodmoon.esm), and carries no class even where it does
+                    // exist. "none" is not a missing value; it is an invalid record id.
+                    //
+                    // The fix belongs HERE and not in snapAppearance: the server REJECTS an
+                    // appearance with any empty race/head/class/name (playerstate.ts
+                    // handleAppearance), and a rejected appearance leaves doc.appearance unset,
+                    // which withholds playerRecord on every join and loses the character's
+                    // inventory and position. Sending "" instead of "none" would trade a
+                    // recoverable cosmetic default for exactly that. So the placeholder stays,
+                    // and the CONSUMER declines to apply what it cannot resolve.
+                    const MWWorld::ESMStore& store = *MWBase::Environment::get().getESMStore();
+                    const auto resolves = [&](const auto& recordStore, const std::string& id) {
+                        return !id.empty() && recordStore.search(ESM::RefId::deserializeText(id)) != nullptr;
+                    };
+                    if (resolves(store.get<ESM::Race>(), race))
                         mechanics->setPlayerRace(ESM::RefId::deserializeText(race), isMale,
                             ESM::RefId::deserializeText(head), ESM::RefId::deserializeText(hair));
-                    if (!cls.empty())
+                    else if (!race.empty())
+                        Log(Debug::Warning) << "[mp] chargen: unknown race '" << race << "', left as-is";
+                    if (resolves(store.get<ESM::Class>(), cls))
                         mechanics->setPlayerClass(ESM::RefId::deserializeText(cls));
-                    if (!birthsign.empty())
+                    else if (!cls.empty())
+                        Log(Debug::Warning) << "[mp] chargen: unknown class '" << cls << "', left as-is";
+                    if (resolves(store.get<ESM::BirthSign>(), birthsign))
                         mechanics->setPlayerBirthsign(ESM::RefId::deserializeText(birthsign));
+                    else if (!birthsign.empty())
+                        Log(Debug::Warning) << "[mp] chargen: unknown birthsign '" << birthsign << "'";
                 },
                 "MPApplyChargen");
         };
