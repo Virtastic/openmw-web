@@ -231,6 +231,28 @@ local function applyContainerDelta(obj, itemId, dn)
     if watch then watch.last = snapshotContainer(obj) or watch.last end
 end
 
+-- Diff a watched container against its last snapshot and report every change. Extracted so the
+-- expiry path can run it too: the watch window closing does not mean nothing happened inside it.
+local function diffContainer(obj, watch)
+    local current = snapshotContainer(obj)
+    if not current then
+        dropOut('ContainerOpRequest', 'contents-unreadable', tostring(obj.recordId))
+        return
+    end
+    local seen = {}
+    for recId, n in pairs(current) do
+        seen[recId] = true
+        local dn = n - (watch.last[recId] or 0)
+        if dn ~= 0 then objects.sendContainerOp(obj, dn < 0 and 'take' or 'put', recId, math.abs(dn)) end
+    end
+    for recId, n in pairs(watch.last) do
+        if not seen[recId] and n > 0 then
+            objects.sendContainerOp(obj, 'take', recId, n)
+        end
+    end
+    watch.last = current
+end
+
 local function trackContainerData(key, items, seq)
     containerData[key] = { items = itemsToCounts(items), seq = seq or 0 }
 end
@@ -278,7 +300,9 @@ function objects.onActivate(object, actor)
             containerWatch[object.id] = {
                 obj = object,
                 last = snapshot,
-                nextPoll = now + CONTAINER_POLL,
+                -- Poll on the NEXT tick, not a quarter second from now. A harvest can resolve and
+                -- the object can go away inside that gap, and the take is then unreportable.
+                nextPoll = 0,
                 until_ = now + CONTAINER_WATCH_SECONDS,
             }
         else
@@ -689,25 +713,22 @@ function objects.tick(now)
 
     for id, watch in pairs(containerWatch) do
         local obj = watch.obj
-        if now > watch.until_ or not obj:isValid() then
+        if not obj:isValid() then
+            -- The object went away while we were watching it. Whatever was taken since the last
+            -- poll is UNREPORTABLE now -- the contents cannot be read and the object cannot be
+            -- addressed -- so say so rather than dropping the watch in silence. A harvested plant
+            -- that disables itself lands here.
+            dropOut('ContainerOpRequest', 'object-gone-while-watched', tostring(id))
+            containerWatch[id] = nil
+        elseif now > watch.until_ then
+            -- FINAL DIFF BEFORE LETTING GO. The window expiring is not evidence that nothing was
+            -- taken in it: the object is still valid here, so read it one last time. Dropping the
+            -- watch without this lost every take made in the last poll interval.
+            diffContainer(obj, watch)
             containerWatch[id] = nil
         elseif now >= watch.nextPoll then
             watch.nextPoll = now + CONTAINER_POLL
-            local current = snapshotContainer(obj)
-            if current then
-                local seen = {}
-                for recId, n in pairs(current) do
-                    seen[recId] = true
-                    local dn = n - (watch.last[recId] or 0)
-                    if dn ~= 0 then objects.sendContainerOp(obj, dn < 0 and 'take' or 'put', recId, math.abs(dn)) end
-                end
-                for recId, n in pairs(watch.last) do
-                    if not seen[recId] and n > 0 then
-                        objects.sendContainerOp(obj, 'take', recId, n)
-                    end
-                end
-                watch.last = current
-            end
+            diffContainer(obj, watch)
         end
     end
 
