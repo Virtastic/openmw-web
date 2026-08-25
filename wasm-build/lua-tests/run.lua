@@ -383,5 +383,39 @@ check('the purge happens BEFORE the spells are re-added',
   seq:find('clearActive', 1, true) < (seq:find('add:', 1, true) or math.huge),
   'seq=' .. seq)
 
+-- ================================ identity.lua: the restore reports a class it could not apply
+-- The other half of the live report -- "the class too". applyChargen sets the class from
+-- record.appearance.class, then phase 2 writes record.stats.attributes over the rebuilt character
+-- as `.base`. The class bonus baked into those saved bases is whatever class was current when they
+-- were CAPTURED and is never reconciled against the class now displayed, so the two can disagree
+-- with nothing checking. The reported sheet read Acrobat (favoured Agility+Endurance) while its
+-- bases carried the +10 pair on Strength+Agility, which only Crusader and Archer produce.
+print('identity.lua -- a class the restore could not apply is reported, not hidden')
+local function saidClassMismatch(env)
+  for _, line in ipairs(env.calls.prints) do
+    if line:find('CLASS MISMATCH', 1, true) then return line end
+  end
+  return nil
+end
+
+-- The stub character is a nightblade; the doc claims acrobat. That is the divergence.
+fresh()
+env = stubs.install({})
+local identity = require('scripts.mp.identity')
+identity.applyRecord({ stats = {}, appearance = { class = 'acrobat' } })
+identity.equipRetryTick(1.0)
+check('a class the engine did not end up with is reported',
+  saidClassMismatch(env) ~= nil,
+  'the sheet would show one class while the stats came from another, silently')
+
+-- Self-silencing: agreeing class must say NOTHING, or the log is noise on every healthy restore.
+fresh()
+env = stubs.install({})
+identity = require('scripts.mp.identity')
+identity.applyRecord({ stats = {}, appearance = { class = 'nightblade' } })
+identity.equipRetryTick(1.0)
+check('an agreeing class is silent', saidClassMismatch(env) == nil,
+  'got: ' .. tostring(saidClassMismatch(env)))
+
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)

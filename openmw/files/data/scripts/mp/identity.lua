@@ -429,6 +429,21 @@ local function applyPhase2(record)
     if #drift > 0 then
         print('[mp] ATTRIBUTE MODIFIER PRESENT AFTER RESTORE: ' .. table.concat(drift, ' '))
     end
+    -- Same self-silencing shape for the CLASS. The restore sets the class from
+    -- record.appearance.class and then writes record.stats.attributes over the rebuilt
+    -- character as `.base`. The class bonus baked into those saved bases is whatever class was
+    -- current when they were CAPTURED, and it is never reconciled against the class now shown --
+    -- so the two can disagree and nothing checks. A live report was exactly that: a sheet
+    -- reading Acrobat (favoured Agility+Endurance) whose bases carried the +10 pair on
+    -- Strength+Agility instead, which only Crusader and Archer produce. If the engine's class
+    -- and the doc's class disagree, say so rather than let the sheet quietly lie.
+    if record.appearance and record.appearance.class then
+        local okC, live = pcall(function() return NPC.record(self).class end)
+        if okC and live and live ~= '' and live ~= record.appearance.class then
+            print(string.format('[mp] CLASS MISMATCH AFTER RESTORE: doc=%s engine=%s',
+                tostring(record.appearance.class), tostring(live)))
+        end
+    end
     print('[mp] rejoin restore applied')
     mp.testSet('restored', '1')
 end

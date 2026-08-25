@@ -10,9 +10,20 @@
 -- suite stays green. This does not replace the scenarios. It means the logic has been RUN.
 local M = {}
 
+-- The scripts report anomalies through print(), and several of those lines ARE the
+-- behaviour under test (the self-silencing restore diagnostics). Capture once and keep the
+-- original, so repeated install() calls cannot nest wrappers.
+local realPrint = print
+
 function M.install(opts)
   opts = opts or {}
   local calls = { events = {}, json = {}, testSet = {}, connects = 0, disconnects = 0, prints = {}, seq = {} }
+  _G.print = function(...)
+    local parts = {}
+    for i = 1, select('#', ...) do parts[#parts + 1] = tostring((select(i, ...))) end
+    calls.prints[#calls.prints + 1] = table.concat(parts, ' ')
+    realPrint(...)
+  end
 
   local mp = {
     _calls = calls,
