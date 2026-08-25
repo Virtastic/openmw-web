@@ -56,6 +56,15 @@ local function chargenTick()
         if ok and v == -1 then
             chargenDone = true
             mp.testSet('chargenDone', '1')
+            -- Tell the PLAYER script too, not just the server. identity.lua holds the persistent
+            -- halves of the sync (attributes, skills, level, spellbook, inventory) and keeps them
+            -- silent until it knows what this character is -- otherwise it broadcasts the raw
+            -- template the engine starts with (every attribute 30, every skill 5, hand-to-hand
+            -- 100) and the server stores that over the real character, permanently. A returning
+            -- character opens that gate when its record finishes applying; a BRAND NEW one has no
+            -- record to apply, and this is the only other moment it stops being a template.
+            local p = world.players[1]
+            if p then p:sendEvent('MP_ChargenDone', {}) end
         end
     end
     -- Tell the server creation FINISHED for this slot: until this lands the character is

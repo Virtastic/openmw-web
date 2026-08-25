@@ -67,6 +67,19 @@ fresh()
 env = stubs.install({})
 local identity = require('scripts.mp.identity')
 env.setInventory({ { recordId = 'iron_dagger', count = 1 } })
+
+-- THE GATE IS SHUT UNTIL WE KNOW WHAT THIS CHARACTER IS. Before a restore has applied or
+-- chargen has finished, the engine's player is the raw TEMPLATE -- every attribute 30, every
+-- skill 5, hand-to-hand 100 -- and broadcasting that made the server store it OVER the real
+-- character. It never healed: the next restore re-applied the template doc and the client
+-- reported it straight back. Reported as a Nord Barbarian whose stats were a flat 30 on relog.
+identity.tick(0)
+identity.tick(1.0)
+check('nothing persistent is broadcast before the baseline is known',
+  #acquiredEvents(env.calls) == 0,
+  'the template would be stored over the real character, permanently')
+
+identity.markBaselineReady()   -- chargen finished (or the restore landed)
 identity.tick(0)   -- first pass SEEDS the baseline
 check('the first scan reports nothing', #acquiredEvents(env.calls) == 0,
   'reporting an existing inventory as freshly acquired would credit it twice')

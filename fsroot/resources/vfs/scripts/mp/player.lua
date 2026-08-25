@@ -647,6 +647,12 @@ return {
         MP_ApplyRecord = function(record)
             identity.applyRecord(record)
         end,
+        -- Chargen finished on a BRAND NEW character (global.lua watches chargenstate hit -1).
+        -- There is no record to restore for one of these, so this is the only signal that the
+        -- player has stopped being the engine's template and its stats are worth persisting.
+        MP_ChargenDone = function()
+            identity.markBaselineReady()
+        end,
         -- Test hook: dynamic record created by global.lua (equiptest) — equip as a helmet.
         MP_TestItem = function(data)
             pendingTestEquip = { id = data.id, slot = 0, until_ = core.getRealTime() + 5 }

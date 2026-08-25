@@ -48,6 +48,23 @@ local nextAt = { appearance = 0, equipment = 0, dynamic = 0, progression = 0, in
 local acqCounts = nil
 local wasDead = false
 local restoring = false -- suppress broadcasts while the rejoin record is being applied
+-- BASELINE GATE. Until this is true we do not know what this character IS yet, so the
+-- persistent halves of the sync stay silent.
+--
+-- Between the engine booting and the rejoin record landing, the player object exists and is
+-- the raw TEMPLATE: every attribute 30, every skill 5, hand-to-hand 100. The diff loop had no
+-- idea that was not the character, so it broadcast it, and the server -- which validates shape
+-- and not plausibility -- stored it over the real one. The damage is permanent and
+-- self-perpetuating: the next restore faithfully re-applies the template doc, the client
+-- reports the template back, and no state anywhere still remembers the character. Seen in the
+-- wild as a level-1 Nord Barbarian whose stats reset to a flat 30 across the board on relog,
+-- with hand-to-hand pinned at 100.
+--
+-- Set when EITHER the restore finished (returning character) or chargen completed (new one) --
+-- the two ways a character stops being a template. Appearance, equipment and the dynamic bars
+-- are deliberately NOT gated: appearance is how the server detects chargen finishing at all,
+-- and the bars re-derive themselves every tick.
+local baselineReady = false
 local pendingPhase2 = nil -- rejoin record awaiting the post-chargen stats pass
 local phase2At = 0
 
@@ -207,7 +224,7 @@ function identity.tick(now)
         end
     end
 
-    if now >= nextAt.progression then
+    if baselineReady and now >= nextAt.progression then
         nextAt.progression = now + INTERVALS.progression
         local prog = snapProgression()
         -- Server contract (playerstate.ts parseNumberMap): the body IS the flat map.
@@ -250,12 +267,12 @@ function identity.tick(now)
         last.spells = spells
     end
 
-    diffSend('inventory', 'PlayerInventory', snapInventory, now)
+    if baselineReady then diffSend('inventory', 'PlayerInventory', snapInventory, now) end
 
     -- Report COUNT INCREASES as they happen. Only increases: a decrease is a drop, a sale or a
     -- use, and the server learns about those from the snapshot — this exists solely to stop the
     -- server's picture being stale in the direction that matters for conservation.
-    if not restoring and now >= nextAt.acquire then
+    if baselineReady and not restoring and now >= nextAt.acquire then
         nextAt.acquire = now + ACQUIRE_INTERVAL
         local counts = {}
         for _, item in ipairs(Actor.inventory(self):getAll()) do
@@ -277,6 +294,13 @@ function identity.tick(now)
 end
 
 -- Rejoin: session ended -> everything must be re-sent on the next join (unless restored).
+-- Called when chargen completes: global.lua sees chargenstate hit -1 and forwards it. The
+-- restore path sets the same flag from applyPhase2. Idempotent.
+function identity.markBaselineReady()
+    baselineReady = true
+    mp.testSet('baselineReady', '1')
+end
+
 function identity.reset()
     last = {}
     -- nil, NOT {}: the next pass must re-seed the baseline rather than treat the whole restored
@@ -407,6 +431,8 @@ local function applyPhase2(record)
     last.spells = snapSpells()
     last.inventory = fingerprint(snapInventory())
     restoring = false
+    baselineReady = true -- the doc IS the character now; the diffs may speak again
+    mp.testSet('baselineReady', '1')
     -- SELF-SILENCING DIAGNOSTIC. Everything the restore writes is `.base`; a freshly restored
     -- character should therefore carry no attribute MODIFIER at all. A live report showed a
     -- level-1 Redguard whose Endurance and Personality both held an IDENTICAL offset (+175, then
