@@ -41,9 +41,21 @@ attioBaseUrl = "https://api.attio.com"
 enforce = "names"
 
 [engine]
-# engineHash check against the first player's hash (adopt-first, like content):
-# "warn" logs mismatches, "refuse" disconnects with BAD_ENGINE, "off" skips.
+# engineHash check: "warn" logs mismatches, "refuse" disconnects with BAD_ENGINE, "off" skips.
+#
+# In "refuse" mode a client that sends NO hash is refused too. That used to be a free pass —
+# the guard read `mode === 'off' || hash === ''` — so anything could opt out of the check by
+# declining to identify itself, and the only clients it actually caught were honest players on
+# a stale build. "warn" still exempts an empty hash, because an unstamped local dev build
+# legitimately sends one and warn's job is to report rather than to gate.
 enforce = "warn"
+# The 12-hex engine build THIS server serves (as stamped by wasm-build/version-engine.sh).
+# Empty = adopt whichever build connects first, which is fine for answering "is this session
+# consistent?" and wrong as a security control: on an empty server the first arrival defines
+# the standard every later client is measured against. Set this when you build and serve the
+# engine yourself — then the canonical build is something you STATED, and it survives the
+# server emptying.
+pin = ""
 
 [rules]
 # Where the respawn plugin sends the dead (M2). Defaults = the Example Suite demo's
@@ -75,10 +87,19 @@ sayScope = "world"
 # into the night).
 timeSkip = "anyone"
 # Phase 4: scale hostile NPCs to the party members standing WITH you (sub-linear, because
-# a group's real advantage is action economy rather than raw numbers), and enable the
-# party loot rules (gold split on, roll-on-rare off — the leader toggles both). A solo
-# player is never affected: the rule keys on co-present members beyond the first.
-partyScaling = true
+# a group's real advantage is action economy rather than raw numbers). A solo player is never
+# affected: the rule keys on co-present members beyond the first.
+#
+# OFF BY DEFAULT, which is a deliberate reversal. The scaling model itself is sound — Valheim
+# under-scales and co-op goes trivial, V Rising over-scales and its top complaint is that
+# bosses are harsher with friends than solo — but Morrowind is not balanced for either, and
+# what people actually come to co-op for is to play it TOGETHER, not to have it silently made
+# harder because a friend walked in. A group that wants the challenge turns it on; a group
+# that gets it without asking has no idea why the mudcrab took four hits.
+#
+# The party loot rules (gold split on, roll-on-rare off) are unaffected and stay on — the
+# leader toggles those separately.
+partyScaling = false
 # Difficulty is surfaced in SessionWelcome.flags and applied CLIENT-side, in the victim's
 # own combat pipeline (the server never computes damage). Morrowind scale: -100..100.
 difficulty = 0
@@ -98,10 +119,15 @@ regressAllowlist = []
 # Phase 4. Quest globals are CHARACTER-SHADOWED by default (stored per character, never
 # relayed) — relaying them makes two party members at different stages overwrite each
 # other forever. Only globals describing the WORLD are shared; add total-conversion ones
-# here. partyCredit: co-present party members who already started a quest and are behind
-# advance with the deed they witnessed (never jumped forward through unplayed content).
+# here.
+#
+# partyCredit IS GONE, not merely defaulted off. It advanced co-present party members' OWN
+# journals, which the instance-owned model forbids outright: one log per world, and it belongs
+# to that world's owner (core/quests.ts). The implementation was deleted; the knob outlived it
+# and was still parsed and documented here while nothing read it, and CHANGELOG 1.1.0 went on
+# advertising the feature. A setting that does nothing is worse than a missing one — it reads
+# as a promise. Setting it now is simply ignored, as any unknown key is.
 worldGlobals = []
-partyCredit = true
 
 [locker]
 # Accept an upload whose sha256 is unknown but whose name and size match a known retail file
@@ -130,6 +156,17 @@ maxSaveBytesPerAccount = 536870912
 # corpses must drop nothing or every reset mints artifacts. Off for private/party
 # campaigns, which keep vanilla loot. Classification comes from content-table.json.
 noDrop = false
+# Refuse a drop of an item the sender does not hold, rather than only counting it as an
+# anomaly. This became answerable once clients started reporting acquisitions per event
+# (PlayerItemAcquired): before that the server's picture of an inventory was up to 2 s stale,
+# which is exactly long enough for "pick up, then drop" — ordinary play — to look like a drop
+# of something you never had. Enforcement was implemented on that stale picture once and
+# backed out for precisely that reason.
+#
+# OFF by default: the credit path is only as complete as the client reporting it, so leave this
+# off until the browser scenarios have exercised every acquisition path against a real engine.
+# Account-level containment is unaffected and remains the working defence meanwhile.
+refuseUnownedDrops = false
 
 [limits]
 msgsPerSec = 60                   # per-session message token bucket (burst = rate)
@@ -153,6 +190,18 @@ bytesBurst = 262144               # 4x rate
 maxBufferedBytes = 262144         # 256 KB ~= 4 s of the byte budget
 maxBufferedBytesHard = 1048576    # 1 MB
 maxConnsPerIp = 3
+# Non-adjacent EXTERIOR cell changes allowed per minute, per player. 0 disables.
+#
+# The speed envelope deliberately forgives a cell change, because a door is a teleport — which
+# leaves declaring cell changes as the way around it. The server ships no game data and cannot
+# tell a real door from an invented one, but it does not need to: walking is always into an
+# ADJACENT exterior cell, and a door goes through an interior. An exterior-to-exterior jump
+# across the grid is a teleport spell, a silt strider, or a lie.
+#
+# Legitimate ones are rare (Recall and Intervention cost magicka and have somewhere to be), so
+# this bounds the rate rather than refusing the act. Six a minute leaves a real player alone and
+# makes map-hopping useless. Enforced in the shared lobby; counted everywhere else.
+farTravelPerMin = 6
 maxMsgBytes = 262144              # ws maxPayload; larger frames drop the socket
 # SessionHello deadline. Generous on purpose: the browser client opens its socket from Lua,
 # but Hello can only be sent on the next Lua tick — and while the engine streams game data
@@ -229,6 +278,16 @@ timeoutSec = 60
 # return to their content-file state and clients are told to reload). Empty = no resets.
 cells = []
 intervalSec = 259200              # 3 days; only applies to the cells listed above
+# SHARED LOBBY ONLY (ignored in private, party and standalone worlds). Seconds between wiping
+# the cells the lobby has accumulated deltas for — i.e. everything strangers have dropped and
+# left. `cells` above cannot cover this: it needs an explicit list, and nobody can enumerate the
+# cells of a game the server has no data for.
+#
+# Safe only because the lobby persists nothing: an item on its ground could never have become
+# anyone's property. Never enable an equivalent in a world where loot can leave. Cells with
+# players standing in them are skipped, and a reset re-sends the restored cell to whoever is
+# there rather than kicking them. 0 disables.
+litterSweepSec = 3600
 
 # DEV/TEST ONLY. Fake players that auto-accept friend requests and party invites, so the
 # social flows can be exercised (and recorded) without a second human. They take real roster
@@ -397,19 +456,54 @@ binary = ""                       # absolute path to the headless-capable openmw
 configDir = ""                    # its own --config dir (isolated openmw.cfg + settings.cfg)
 userDataDir = ""                  # its own --user-data dir
 startCell = "Seyda Neen"
-# Hard ceiling on peers per world. One peer covers the 3x3 block it has loaded, so this is
-# also the number of separated player groups a world can simulate at once; beyond it the
-# furthest clusters go unsimulated and simpeer.clusters_over_cap says so.
-# Measured ~450 MB RSS and ~17% of a core each WITH the generated settings.cfg. Treat that as
-# a floor, not a figure: it was measured on a peer that was accidentally parked in a small
-# interior, so a peer actually simulating a populated exterior block will cost more.
-# TWO, not four: node is ~330 MB and the container budget does not fit four ~450 MB peers,
-# least of all during the 120 s idle-reap overlap when a cluster splits. Over the cap the
-# warning fires honestly; over the memory limit the OOM killer takes the whole world down.
+# Hard ceiling on peers IN THIS WORLD PROCESS. In practice that is one: server.ts calls
+# ensure() with a single key ('world'), because one peer covers every occupied cell in the
+# world through its ANCHOR LIST (mwmp setSimAnchors) rather than by standing in them.
+#
+# The older "one peer per 3x3 block, so this is the number of separated player groups" note
+# was from the pre-anchor design and is wrong twice over: movement.ts loadedCells() returns
+# ONE cell (OpenMW clamps actor processing to 7168 units, narrower than an 8192-unit cell),
+# and clustering was replaced by anchors. There is no clusters_over_cap warning.
+#
+# THIS IS NOT THE PLATFORM'S MEMORY GOVERNOR — it cannot be, because it is per world process
+# and cannot see its siblings. N worlds means N peers. Size the box with [worlds] memBudgetMb
+# on the gateway; this stays as a per-world backstop.
+# MEASURED 487 MB RSS with full retail Morrowind + Tribunal + Bloodmoon, headless on Linux,
+# anchoring one exterior cell (2026-08-24, host load 1.4). Startup to SessionHello was 11.4 s
+# with that data set, which is why [simPeer] startTimeoutMs is generous. A peer anchoring
+# several busy cells will cost more.
 maxPeers = 2
 idleReapMs = 120000               # reap a peer whose world has had no humans this long
 startTimeoutMs = 120000           # retail data load is slow; generous, and failure is non-fatal
 restartBackoffMs = 15000          # after a crash, wait before respawning (no hot crash loop)
+
+# F3 supervisor sizing. Read by the GATEWAY process (dist/gateway.mjs) only; a single world
+# server ignores this table entirely.
+#
+# Every occupied world is a node process AND its own sim peer, so worlds multiply RAM rather
+# than sharing it. A count cap cannot see that, which is why there is a memory budget: the
+# gateway takes the LOWER of the two ceilings and logs which one bound it (gateway.capacity).
+[worlds]
+# 0 = derive the count ceiling from [server] maxPlayers (one solo world per seated player).
+maxWorlds = 0
+# Total RAM the gateway may spend on worlds and their peers. 0 DISABLES the memory governor
+# and leaves only the count cap — which is how a 1.5 GB container was allowed to try to run
+# 256 worlds. Set it to the container's limit, measured on the host you actually deploy to.
+memBudgetMb = 0
+# MEASURED cost of one occupied world: its node process plus its sim peer.
+#
+# 640 comes from a real measurement, not an estimate: 623 MB total (sim peer 487 MB + world
+# process 136 MB), stable across three samples 20 s apart, on Linux/x86-64 with full retail
+# Morrowind + Tribunal + Bloodmoon and one player anchoring one exterior cell, host load 1.4.
+# Rounded up for headroom. The previous value of 780 was a guess assembled from two figures in
+# comments and was wrong in both halves — the node process is far smaller and the peer larger.
+#
+# Re-measure on YOUR host with YOUR game data: server/scripts/measure-capacity.ts. A peer
+# anchoring several busy cells will cost more than one standing in Seyda Neen.
+worldCostMb = 640
+# Held back for the gateway process itself before worlds are budgeted. Measured at 118 MB with
+# one world supervised; 256 leaves room for the directory, the SSO front door and the locker.
+gatewayReserveMb = 256
 
 # F3 — the world directory this world's players can browse from the in-game Social menu.
 # Empty means no gateway: the Worlds tab says so and everything else works normally, which

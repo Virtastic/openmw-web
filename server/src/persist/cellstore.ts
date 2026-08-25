@@ -298,6 +298,25 @@ export class CellStore {
     return doc;
   }
 
+  /** Every cell this world has stored deltas for — i.e. every cell somebody has CHANGED.
+   *
+   *  Exactly the set that accumulates litter, and nothing else: a cell nobody has touched has
+   *  no row, so this never proposes resetting the whole map. Reads the table rather than the
+   *  cache because the cache only holds what is currently loaded, and litter outlives that. */
+  cellsWithDeltas(): string[] {
+    try {
+      const rows = this.db.prepare('SELECT cellKey FROM cells').all() as { cellKey: string }[];
+      const keys = new Set(rows.map((r) => r.cellKey));
+      // Dirty-but-unflushed cells live only in memory until the next sweep; a litter pass
+      // that ran between a drop and its flush would otherwise miss the cell entirely.
+      for (const k of this.dirty) keys.add(k);
+      return [...keys];
+    } catch (err) {
+      log('error', 'world.cell_list_failed', { error: String(err) });
+      return [];
+    }
+  }
+
   getCached(cellKey: string): CellDoc | undefined {
     return this.cache.get(cellKey);
   }

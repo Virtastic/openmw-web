@@ -154,6 +154,39 @@ local function scheduleReconnect()
     print(string.format('[mp] connection lost — reconnecting in %.1fs (attempt %d)', delay, reconnectAttempt))
 end
 
+-- ------------------------------------------------------------------ SSO dead-end rescue
+-- An SSO user holds exactly ONE credential: a single-use login ticket minted by the page.
+-- Every rung below the ticket — register, login — is the PASSWORD ladder, and an SSO server
+-- refuses that unconditionally. Falling to it can never succeed; it just converts a
+-- recoverable situation (a spent ticket, a reaped world that forgot our resume token) into
+-- the terminal "AUTH FAILED" modal. Observed in production doing exactly that: switch to
+-- public, world idles out and is reaped, switch back — the revived world knows no resume
+-- token, the boot ticket is long spent, and the ladder dead-ends at "this server uses
+-- single sign-on" while a perfectly good locker session sits in the page one call away.
+--
+-- The page can ALWAYS mint a fresh ticket (its locker token outlives any world process), so
+-- the right move is to ask it: publish a rescue request; index.html's watcher mints a
+-- ticket and reboots this page into the same world — the exact machinery a manual world
+-- switch already uses, so nothing new can leak. If the page does not act (headless harness,
+-- no locker session, rescue budget exhausted), net.tick turns it into the old terminal
+-- failure after a bounded wait, so nothing hangs forever.
+local rescueDeadline = nil
+local function ssoUser()
+    local pass = mp.getPassword and mp.getPassword() or ''
+    -- A configured password means the password ladder is REAL (dev flags, self-hosted,
+    -- harness); only its absence marks an SSO user. System peers have their own gate.
+    return (pass == nil or pass == '') and not mp.isSystem()
+end
+local function askPageForFreshTicket(why)
+    if rescueDeadline then return false end -- already asked once this page; let it fail
+    rescueDeadline = core.getRealTime() + 10
+    print('[mp] auth dead-end (' .. why .. ') — asking the page for a fresh ticket')
+    -- The stamp makes every ask observably distinct; the target spares the page a guess.
+    mp.testSet('needFreshTicket', string.format('%d|%s|%s', nowMs(), targetUrl(), why))
+    setState('Reconnecting') -- honest UI label; the page reboot normally lands within ~1s
+    return true
+end
+
 function net.start()
     mirrorTarget()
     triedLogin = false
@@ -311,6 +344,11 @@ function net.onClose()
         if type(ticket) == 'string' and ticket ~= '' then
             authMode = 'ticket'
             net.loginTicket = ticket
+        elseif ssoUser() then
+            -- No ticket left and no password exists for this user: every remaining rung is
+            -- the password ladder the server refuses. Ask the page instead of dead-ending.
+            if askPageForFreshTicket('resume refused, no ticket in hand') then return end
+            authMode = 'register' -- rescue already pending/spent; let it fail visibly
         else
             authMode = 'register'
         end
@@ -320,12 +358,22 @@ function net.onClose()
         end
     end
     if net.lastError == 'AUTH_FAILED' and authMode == 'register' and not triedLogin then
-        triedLogin = true
-        authMode = 'login'
-        net.lastError = nil
-        if mp.connect(targetUrl()) then
-            setState('Connecting')
-            return
+        -- An SSO user's register was refused ("this server uses single sign-on") — login
+        -- would get the identical refusal. The only credential that can work is a fresh
+        -- ticket, and only the page can mint one.
+        if ssoUser() then
+            if askPageForFreshTicket('register refused by SSO server') then
+                net.lastError = nil
+                return
+            end
+        else
+            triedLogin = true
+            authMode = 'login'
+            net.lastError = nil
+            if mp.connect(targetUrl()) then
+                setState('Connecting')
+                return
+            end
         end
     end
     -- Connection LOST after we were in the world (server restart, wifi hop, CF recycling a
@@ -339,6 +387,15 @@ function net.onClose()
     -- forever instead of saying "sign in again". The auth ladder above has already tried the
     -- alternatives by the time we get here.
     if net.lastError == 'AUTH_FAILED' then
+        -- Last stop before the terminal modal. For an SSO user this covers the spent or
+        -- expired ticket (the world we dialed was slower than the ticket's life, or a
+        -- reconnect re-presented one already redeemed): a fresh ticket fixes exactly this,
+        -- so ask for one — once. A second AUTH_FAILED after a fresh ticket is a real
+        -- refusal (ban, wrong account) and must surface.
+        if ssoUser() and askPageForFreshTicket('credential refused: ' .. tostring(net.lastErrorDetail or net.lastError)) then
+            net.lastError = nil
+            return
+        end
         net.lastErrorDetail = net.lastErrorDetail or 'sign in again'
         mp.testSet('lastError', tostring(net.lastError) .. ' ' .. tostring(net.lastErrorDetail))
         setState('Failed')
@@ -356,6 +413,15 @@ function net.onClose()
             authMode = 'resume'
             triedResume = false
             net.resumeToken = net.resumeToken or mp.getResumeToken()
+        elseif ssoUser() then
+            -- Dropped from the world with no resume token to rejoin on (the world process
+            -- died and took it along, or none was ever parked). For an SSO user "login" is
+            -- a guaranteed refusal — the reconnect would dial forever presenting a
+            -- credential class the server rejects on principle. A fresh ticket is a clean
+            -- rejoin instead.
+            if askPageForFreshTicket('dropped without a resume token') then return end
+            authMode = 'login' -- rescue spent; fail visibly rather than silently
+            triedLogin = true
         else
             authMode = 'login' -- we had an account; register would just answer AUTH_FAILED
             triedLogin = true
@@ -539,11 +605,31 @@ dispatch.SessionPong = function(msg)
     mp.testSet('rttMs', tostring(net.rttMs))
 end
 
+-- Disconnect codes that describe the SERVER's situation rather than a verdict on this client.
+-- The world is coming back in seconds, so the honest response is to wait for it, not to eject
+-- the player into a terminal modal they can only escape by reloading.
+--
+-- Everything else stays terminal, deliberately: BANNED and KICKED are decisions a moderator
+-- made and must not be re-litigated by an auto-retry; SUPERSEDED means this character is open
+-- somewhere else and reconnecting would have the two sessions fight; RATE means the client was
+-- dropped for flooding, and hammering the door is precisely the wrong reply; BAD_ENGINE /
+-- BAD_CONTENT / BAD_PROTO will refuse identically every time.
+local TRANSIENT_DISCONNECT = { SHUTDOWN = true, SERVER_FULL = true }
+
 dispatch.SessionDisconnect = function(msg)
     net.lastError = msg.code
     net.lastErrorDetail = msg.detail
     print('[mp] server disconnect: ' .. tostring(msg.code) .. ' (' .. tostring(msg.detail) .. ')')
     mp.testSet('lastError', tostring(msg.code) .. ' ' .. tostring(msg.detail or ''))
+    -- A RESTART IS NOT A FAILURE. SHUTDOWN used to land here and set Failed, so every deploy —
+    -- and every rolling restart, the very thing meant to avoid an outage — threw all its players
+    -- into the fatal modal. Leaving the state alone lets onClose fall through to the ordinary
+    -- reconnect ladder, which backs off, redials, and rejoins in place if its resume token
+    -- survived (or through a fresh ticket if the world forgot it, which a restart guarantees).
+    if TRANSIENT_DISCONNECT[msg.code] then
+        mp.testSet('serverRestarting', '1')
+        return
+    end
     if msg.code ~= 'AUTH_FAILED' then
         setState('Failed')
     end
@@ -568,6 +654,19 @@ function net.tick()
     -- NOT connected. Real time throughout — onUpdate dt pauses with the world, and a paused
     -- tab must still redial.
     local now = core.getRealTime()
+    -- The page was asked for a fresh ticket and has not rebooted us. Headless clients, a
+    -- lapsed locker session, or an exhausted rescue budget all land here: surface the old
+    -- terminal failure instead of waiting on a rescue that is not coming.
+    if rescueDeadline and now >= rescueDeadline then
+        rescueDeadline = nil
+        if net.state ~= 'Joined' then
+            net.lastError = 'AUTH_FAILED'
+            net.lastErrorDetail = 'sign in again'
+            mp.testSet('lastError', 'AUTH_FAILED sign in again')
+            setState('Failed')
+            return
+        end
+    end
     if reconnectAt and now >= reconnectAt then
         reconnectAt = nil
         if mp.connect(targetUrl()) then

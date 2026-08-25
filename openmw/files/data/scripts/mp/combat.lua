@@ -41,14 +41,28 @@ function combat.onPuppetHit(data)
         -- Actor victim: owned by that cell's authority holder. The server guards actor
         -- targets with (cellKey, epoch) exactly like the Actor* family.
         local cellKey = deps.cellKeyOfObj(data.victim)
-        local epoch = deps.epochOf(cellKey)
-        if not cellKey or not epoch then
-            -- No live epoch for that cell (we are not the holder and the server has not
-            -- told us the epoch): the server would drop this. See the M5 note in the report.
-            print('[mp] combat: no epoch for ' .. tostring(cellKey) .. ', hit not forwarded')
+        if not cellKey then
+            -- Nothing to address the target with. Rare, and genuinely undeliverable.
+            print('[mp] combat: victim has no cell, hit not forwarded')
             return
         end
-        target = { ref = data.victim, cellKey = cellKey, epoch = epoch }
+        -- THE EPOCH IS OPTIONAL ON THE WIRE, AND THIS USED TO REFUSE TO SEND WITHOUT ONE.
+        --
+        -- server/src/core/combat.ts only validates the epoch `if (target.epoch !== undefined)`
+        -- and proves presence by proximity instead, precisely because "the attacker is usually
+        -- a NON-holder, and until it has seen an ActorAuthorityInfo/Grant for that cell it has
+        -- no legal epoch to quote". The server was relaxed for that case; this side never was,
+        -- so it dropped the hit itself on a condition the server had stopped caring about.
+        --
+        -- That is not a lost message, it is a lost SWING. puppet.lua's onHit interceptor has
+        -- already returned false and cancelled the entire local damage chain by the time we get
+        -- here, so refusing to forward means the attack does nothing at all: no damage, no
+        -- miss, no sound, no blood — the player swings through the target and the game says
+        -- nothing. Send it and let the server decide; it is the one holding the authority
+        -- table, and quoting a stale epoch is the only thing it actually needs protecting from.
+        local epoch = deps.epochOf(cellKey)
+        target = { ref = data.victim, cellKey = cellKey }
+        if epoch then target.epoch = epoch end
     else
         return
     end
@@ -65,6 +79,38 @@ function combat.onPuppetHit(data)
     if data.ammoId then body.ammoId = data.ammoId end
     if data.hitPos then body.hitPos = data.hitPos end
     mp.sendEvent('CombatHit', body)
+end
+
+-- Spell damage forwarded from a puppet (see puppet.lua forwardMagicHits). Same addressing
+-- rules as onPuppetHit: a player victim needs PvP on, an actor victim is addressed by cell.
+-- The server has always implemented CombatSpellHit; until now no client ever sent one.
+function combat.onPuppetSpellHit(data)
+    local function note(why) pcall(function() mp.testSet('spellFwd', why) end) end
+    local effects = data.effects or {}
+    if #effects == 0 then note('no-effects') return end
+    local target
+    if data.playerId then
+        if not deps.isPvpEnabled() then note('pvp-off') return end
+        target = { playerId = data.playerId }
+    elseif data.victim and data.victim:isValid() then
+        local cellKey = deps.cellKeyOfObj(data.victim)
+        if not cellKey then note('no-cell') return end
+        target = { ref = data.victim, cellKey = cellKey }
+        local epoch = deps.epochOf(cellKey)
+        if epoch then target.epoch = epoch end
+    else
+        note('no-victim')
+        return
+    end
+    note('sending')
+    mp.sendEvent('CombatSpellHit', {
+        target = target,
+        effects = effects,
+        -- The OWNER applies the spell record by id, so this must be the spell, not the effect.
+        -- Without it MP_CombatSpellHit looks up nil and silently applies nothing.
+        spellId = data.spellId or effects[1].id,
+        casterId = deps.ownIdFn() or 0,
+    })
 end
 
 -- --------------------------------------------------------------- inbound
@@ -143,8 +189,14 @@ combat.handlers.MP_CombatSpellHit = function(data)
     local ok, err = pcall(function()
         local spell = core.magic.spells.records[data.spellId]
         if not spell then return end
+        -- ZERO-BASED. activeSpells:add indexes the spell record's own effect list from 0
+        -- (`Actor.activeSpells(self):add({id = 'chameleon', effects = { 0 }})` in the API docs),
+        -- while Lua's own list is 1-based. Building 1..n threw
+        -- `vector::_M_range_check: __n (which is 1) >= this->size() (which is 1)` on every
+        -- single application — so even a forwarded spell hit applied nothing. Never caught
+        -- because no client had ever sent a CombatSpellHit for this to receive.
         local indexes = {}
-        for i = 1, #spell.effects do indexes[i] = i end
+        for i = 1, #spell.effects do indexes[i] = i - 1 end
         types.Actor.activeSpells(victim):add({
             id = data.spellId,
             effects = indexes,

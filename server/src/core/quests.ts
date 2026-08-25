@@ -164,11 +164,22 @@ export class Quests {
     }
     // ONE LOG PER INSTANCE, AND IT BELONGS TO THE OWNER.
     //
-    // A guest advances the campaign they are visiting and keeps nothing of their own: their
-    // character doc is untouched for the whole visit, so an evening in a friend's world
-    // cannot move — or spoil — their own story. In your own Solo world you ARE the owner, so
-    // this is the same rule, not a special case. An unowned instance (the shared world)
-    // persists nothing, so entries there move the live map and no character at all.
+    // A guest advances the campaign they are visiting and keeps no QUEST STATE of their own:
+    // an evening in a friend's world cannot move — or spoil — their own story. In your own
+    // Solo world you ARE the owner, so this is the same rule, not a special case. An unowned
+    // instance (the shared world) persists nothing, so entries there move the live map and no
+    // character at all.
+    //
+    // "THEIR CHARACTER DOC IS UNTOUCHED FOR THE WHOLE VISIT" is what this used to say, and it
+    // is not true — only the quest half is. Inventory, stats, skills, level, spells and
+    // equipment all write to the GUEST's own charId (core/playerstate.ts), which is
+    // deliberate: Morrowind progression is use-based, so a guest's Long Blade rose because
+    // they swung it, and taking that away would make helping a friend pure charity. What is
+    // frozen is the quest system, in BOTH halves — journal here, globals/factions/bounty
+    // below — because those are what a campaign IS.
+    //
+    // So the honest one-liner is: a guest keeps what they carry out and what they learned;
+    // the quest log belongs to the world's owner.
     //
     // The doc write happens AFTER arbitration, never before: writing first let a stale
     // client put 20 into the owner's save while the instance log correctly kept 40, and the

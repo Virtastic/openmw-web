@@ -13,7 +13,7 @@
 // kills ONLY the PIDs this harness spawned — never any pkill pattern (repo hard rule: the
 // user's real Chrome must be untouchable; every client runs in a throwaway --user-data-dir).
 import { spawn, execSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { cpSync, existsSync, mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs';
 import net from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -37,6 +37,9 @@ const PLAY_PORT = 8910; // fixed in play/server.py (no port flag); we reuse a li
 // which reads as "the bot cannot join" and is really "this laptop is running two engines".
 const JOIN_TIMEOUT_MS = Number(process.env.JOIN_TIMEOUT_MS || 300_000);
 const RUN_ID = Date.now().toString(36); // suffix for account names -> no cross-run collisions
+// Per-run, so a peer from one run can never authenticate against another's server.
+const SERVER_PASSWORD = `harness-${RUN_ID}`;
+const NL = String.fromCharCode(10); // avoids escape-mangling in generated edits
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -150,7 +153,13 @@ async function startGameServer(extraRules = '', extraEnv = {}) {
   writeFileSync(join(dataDir, 'config.toml'),
     [...sections].map(([name, lines]) => `[${name}]\n${lines.join('\n')}\n`).join(''));
   const port = await freePort();
-  const proc = spawn(process.execPath, [dist, '--data', dataDir, '--port', String(port)], {
+  // A server password, so a scenario can stand up its own sim peer. `system` is client-declared
+  // and connection.ts only believes it when the claim carries this password — and an UNSET
+  // password means no peer can authenticate at all, which is what testhost shipped. Without a
+  // peer nothing can hold cell authority (canSimulate is `p.system === true`), so no browser
+  // scenario could exercise the M4/M5 layer.
+  const proc = spawn(process.execPath,
+    [dist, '--data', dataDir, '--port', String(port), '--server-password', SERVER_PASSWORD], {
     cwd: join(ROOT, 'server'), stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...process.env, ...extraEnv },
   });
@@ -162,6 +171,28 @@ async function startGameServer(extraRules = '', extraEnv = {}) {
   } catch (e) {
     try { proc.kill('SIGKILL'); } catch {}
     throw new Error(e.message + '\nserver output:\n' + out.join(''));
+  }
+  // THE PORT WE HAND OUT MUST BE THE PORT THIS SERVER IS ON.
+  //
+  // /healthz answering on `port` is not proof of that: a LEAKED server from an earlier
+  // scenario answers it just as happily, and then everything a scenario builds on
+  // ctx.serverPort quietly talks to the wrong world. Not hypothetical — s43's soak bots
+  // reported `port=46765` while s43's own testhost logged `listening on 46835`, passed their
+  // own health check against whatever was on 46765, and never produced a live bot
+  // (`alive=0/8`) because the crowd was joining a world with nobody in it. The scenario then
+  // failed on "roster reached 8 remote players", which points at everything except the cause.
+  //
+  // testhost prints its real port for exactly this reason ("Prints ... so a harness can wait
+  // on the line rather than polling"), so compare the two and fail loudly rather than hand out
+  // a number that is merely plausible.
+  const bound = /testhost: listening on (\d+)/.exec(out.join(''));
+  if (bound && Number(bound[1]) !== port) {
+    try { proc.kill('SIGKILL'); } catch {}
+    throw new Error(
+      `harness/server port disagreement: asked for ${port}, testhost bound ${bound[1]}. `
+      + 'Something else answered /healthz on the asked-for port — almost certainly a server '
+      + 'leaked by an earlier scenario. Every scenario using ctx.serverPort would have been '
+      + 'talking to the wrong world.\nserver output:\n' + out.join(''));
   }
   return {
     port,
@@ -197,10 +228,111 @@ async function ensurePlayServer() {
 }
 
 // --- headless-Chrome game client over raw CDP (transport per smoke.mjs) ----------------------
+// ---------------------------------------------------------------- native simulating sim peer
+// A REAL headless OpenMW, for the scenarios that need NPCs to actually move and fight.
+//
+// `server/dist/testpeer.mjs` gives a scenario a peer that HOLDS a cell, which is enough for
+// anything asserting on routing (s41, s58). It is not enough for s40/s42/s51, which compare NPC
+// positions between clients: a peer that answers the wire produces no ActorMoveBatch. This one
+// runs the engine.
+//
+// Requires wasm-build/Dockerfile.harness-peer (the peer's own Ubuntu image plus a browser);
+// OMW_SIM_PEER_BIN points at the binary there.
+//
+// THE CONFIG IS buildPeerCfg()'s SHAPE, deliberately (server/src/core/gamedata.ts): data=,
+// content= in load order, `content=mp.omwscripts` LAST, fallback-archive= per BSA, resources=.
+// It does NOT declare builtin.omwscripts — openmw loads that implicitly from resources, and
+// declaring it aborts startup with "Content file specified more than once", which is a
+// confusing way to spend an afternoon. Keep this in step with buildPeerCfg rather than
+// inventing a second config.
+function startSimPeer(port, password, cellKey, gameDataDir, watch) {
+  const bin = process.env.OMW_SIM_PEER_BIN;
+  if (!bin || !existsSync(bin)) return null;
+  const cfgDir = mkdtempSync(join(tmpdir(), 'omw-peercfg-'));
+  const userDir = mkdtempSync(join(tmpdir(), 'omw-peeruser-'));
+  const entries = readdirSync(gameDataDir);
+  const order = ['Morrowind.esm', 'Tribunal.esm', 'Bloodmoon.esm'];
+  const content = order.filter((f) => entries.includes(f));
+  const archives = order.map((f) => f.replace(/\.esm$/, '.bsa')).filter((a) => entries.includes(a));
+  writeFileSync(join(cfgDir, 'openmw.cfg'), [
+    '# GENERATED by mp-harness for a scenario that needs a SIMULATING peer.',
+    `data=${gameDataDir}`,
+    ...content.map((c) => `content=${c}`),
+    'content=mp.omwscripts',
+    ...archives.map((a) => `fallback-archive=${a}`),
+    'resources=/usr/local/share/openmw/resources',
+  ].join('\n') + '\n');
+  // Without a framerate cap the headless peer spins at ~97% of a core and the box it shares
+  // with the browsers cannot keep the broadcast tick — see buildPeerSettings().
+  // Mirrors buildPeerSettings() (core/gamedata.ts). `actors processing range` stays at the
+  // engine default: the AI gate is anchor-aware now (mwmechanics/actors.cpp), so the default
+  // range around each anchor is right and raising it only simulates empty cells.
+  writeFileSync(join(cfgDir, 'settings.cfg'),
+    '[Video]' + NL + 'framerate limit = 20' + NL + 'vsync mode = 0' + NL
+    + '[Shadows]' + NL + 'enable shadows = false' + NL
+    );
+  // THE PEER MUST RUN THE SCRIPTS UNDER TEST, not the ones baked into its image.
+  //
+  // openmw-simpeer:local ships its own copy of scripts/mp under the resources tree, and
+  // `resources=` wins over any later `data=` line, so a working-tree fix reaches the browsers
+  // and NOT the peer. That failure is invisible from the outside: the browser forwards
+  // correctly and the peer fails on old code, so the feature looks broken in a way that points
+  // at neither. Cost several rebuild cycles to spot — a 0-based index fix in combat.lua looked
+  // inert because only half the fleet had it.
+  const peerScripts = '/usr/local/share/openmw/resources/vfs/scripts/mp';
+  try {
+    if (existsSync(peerScripts)) {
+      rmSync(peerScripts, { recursive: true, force: true });
+      cpSync(join(ROOT, 'openmw', 'files', 'data', 'scripts', 'mp'), peerScripts, { recursive: true });
+    }
+  } catch (e) {
+    console.log(`[harness] WARNING: could not sync mp scripts into the peer (${e.message}). `
+      + 'The peer will run its baked copy, so client-script changes will not be under test.');
+  }
+  const proc = spawn(bin, [
+    '--config', cfgDir, '--replace', 'config', '--user-data', userDir,
+    '--skip-menu', '--start', cellKey, '--no-sound',
+  ], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: {
+      ...process.env,
+      XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR || '/tmp',
+      OPENMW_HEADLESS: '1',
+      OSG_THREADING: 'SingleThreaded',
+      OPENMW_MP_SYSTEM: '1',
+      OPENMW_MP_URL: `ws://127.0.0.1:${port}/ws`,
+      // SANITISE THE NAME. A cellKey is "-2,-9" and the account charset is
+      // "2-24 chars of A-Z a-z 0-9 _ - space" (connection.ts), so `simpeer-${cellKey}` is
+      // refused at register with AUTH_FAILED and the cell then has no owner at all — which
+      // surfaces three minutes later as "the simulating peer never took it", pointing at the
+      // engine rather than at a comma.
+      OPENMW_MP_NAME: `simpeer-${cellKey.replace(/[^A-Za-z0-9_-]/g, '_')}`,
+      OPENMW_MP_PASS: password,
+    },
+  });
+  if (watch) watch('simpeer', proc);
+  return {
+    proc,
+    stop: () => {
+      try { proc.kill('SIGTERM'); } catch {}
+      try { rmSync(cfgDir, { recursive: true, force: true }); } catch {}
+      try { rmSync(userDir, { recursive: true, force: true }); } catch {}
+    },
+  };
+}
 async function launchClient(name, mpPort, extraParams = '', opts = {}) {
   const profile = mkdtempSync(join(tmpdir(), 'omw-mpharness-'));
+  // THREE BACKENDS, and the difference matters on a box with no GPU. `swiftshader` is RAW
+  // SwiftShader GL, which does not implement every entry point the engine probes; the engine
+  // resolves GL dynamically (libGL-getprocaddr.a), so a missing one comes back null and calling
+  // it is a bare `RuntimeError: null function` in the middle of render setup. `angle-swiftshader`
+  // runs ANGLE — the same translator the engine targets in a real browser — over SwiftShader's
+  // Vulkan, so the GL surface is ANGLE's rather than SwiftShader's. On a GPU-less Linux box that
+  // is the one to reach for.
   const glArgs = process.env.SMOKE_GL === 'swiftshader'
     ? ['--use-gl=swiftshader', '--enable-unsafe-swiftshader']
+    : process.env.SMOKE_GL === 'angle-swiftshader'
+    ? ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader']
     : ['--use-gl=angle', '--use-angle=metal', '--enable-unsafe-swiftshader'];
   // ?start=Village: MP global.lua only runs once a world is loaded (onInit), so deep-link
   // into the demo cell (--skip-menu path; same as mp-vectors.mjs). ?nomw = baked example suite.
@@ -328,6 +460,27 @@ async function launchClient(name, mpPort, extraParams = '', opts = {}) {
       await bsend('Input.dispatchKeyEvent', { type: 'keyDown', text: def.text ?? def.key, ...base }, sessionId);
       await bsend('Input.dispatchKeyEvent', { type: 'keyUp', ...base }, sessionId);
     };
+    // A RAW MOUSE BUTTON on the game canvas, which is how you attack.
+    //
+    // `handle.click(selector)` is for DOM elements — it hit-tests a CSS selector. The engine
+    // takes input on the canvas through SDL, so an in-game swing needs a press and a release at
+    // canvas coordinates with a real hold between them (Morrowind charges an attack for as long
+    // as the button is down). Nothing in this harness could produce one before, which is why
+    // every combat test drives the synthetic `hitn:` command instead — and why a fault in the
+    // INPUT path rather than the combat path would leave the whole suite green.
+    handle.mouseHold = async (ms = 700, button = 'left') => {
+      const box = await handle.eval(
+        `(function(){ var c = document.querySelector('canvas');
+           if (!c) return null; var r = c.getBoundingClientRect();
+           return JSON.stringify({ x: r.left + r.width/2, y: r.top + r.height/2 }); })()`);
+      if (!box) throw new Error('mouseHold: no canvas');
+      const { x, y } = JSON.parse(box);
+      const base = { x, y, button, clickCount: 1 };
+      await bsend('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, buttons: 0 }, sessionId);
+      await bsend('Input.dispatchMouseEvent', { type: 'mousePressed', ...base, buttons: 1 }, sessionId);
+      await new Promise((r) => setTimeout(r, ms));
+      await bsend('Input.dispatchMouseEvent', { type: 'mouseReleased', ...base, buttons: 0 }, sessionId);
+    };
     // eval WITH transient user activation. Gesture-gated APIs (requestPointerLock, fullscreen)
     // are rejected outright from a plain Runtime.evaluate, which silently turns any test of
     // them into a no-op that passes whether or not the code under test works.
@@ -411,7 +564,12 @@ async function launchClient(name, mpPort, extraParams = '', opts = {}) {
         + "return !el || el.classList.contains('hide') || el.style.display === 'none';})()",
         // Generous on purpose: the settle hold waits for the world to be simulated plus a 5s
         // grace, and its own backstop gives up at 30s. Anything past that is genuinely stuck.
-        45_000, 'the loading screen to clear (is the player actually IN the world?)');
+        // LOADING_CLEAR_MS raises it for one specific job: a `--profiling-funcs` build carries a
+        // name section and is ~40% larger, and it does not finish downloading and compiling
+        // inside 45s under software rasterisation — so the run dies here with no console output
+        // at all, which is the opposite of what you built a named binary to find out.
+        Number(process.env.LOADING_CLEAR_MS || 45_000),
+        'the loading screen to clear (is the player actually IN the world?)');
       console.log(`[harness] ${name}: loading screen cleared`);
     }
     return handle;
@@ -462,6 +620,20 @@ for (const file of files) {
       // s42 attaches protocol bots to this same server (bots/soak.ts --attach) so a
       // scenario can put crowd load behind its real browser clients.
       serverPort: server.port,
+      // Hand it to the scenario: TestClient.simPeer-style peers need it to be believed.
+      serverPassword: SERVER_PASSWORD,
+      // A REAL simulating peer, for scenarios that need NPCs to move rather than just a cell to
+      // have an owner. Returns null when the binary is absent (the plain harness image), so a
+      // scenario can skip cleanly instead of failing.
+      startSimPeer: (cellKey, gameDataDir) => startSimPeer(
+        server.port, SERVER_PASSWORD, cellKey,
+        gameDataDir ?? join(ROOT, 'play', 'mwdata'),
+        (label, proc) => {
+          const buf = [];
+          proc.stdout?.on('data', (d) => buf.push(String(d)));
+          proc.stderr?.on('data', (d) => buf.push(String(d)));
+          childLogs.push({ label, tail: () => buf.join('').split(NL).slice(-40).join(NL) });
+        }),
       serverDataDir: server.dataDir,
       serverStatus: server.status,
       serverKill: server.kill,

@@ -194,8 +194,15 @@ test('per-region weather authority', async (t) => {
     const handoff = (await b.waitEvent('WorldWeatherAuthority')).value as { region: string; holderId: number };
     assert.deepEqual(handoff, { region: 'Ascadian Isles', holderId: bId });
     const carried = (await b.waitEvent('WorldWeather', (v) =>
-      (v as { region: string }).region === 'Ascadian Isles')).value as { current: number };
+      (v as { region: string }).region === 'Ascadian Isles')).value as
+      { current: number; restore?: boolean };
     assert.equal(carried.current, 4, 'the new holder resumes the stored weather');
+    // MARKED `restore`. The client drops any WorldWeather for a region it holds, so a handback
+    // that is not distinguishable from an echo is discarded by the very client it is for — and
+    // the region then keeps whatever weather that client rolled at boot, which solo means a
+    // fresh roll every session ("weather is randomised on each load").
+    assert.equal(carried.restore, true,
+      'the continuity handback must be marked, or the new holder cannot tell it from its own echo');
     // A is told it no longer speaks for the region it left.
     const revoked = (await a.waitEvent('WorldWeatherAuthority', (v) =>
       (v as { region: string }).region === 'Ascadian Isles')).value as { holderId: number };

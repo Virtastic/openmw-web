@@ -4593,7 +4593,14 @@
       // "Connection lost, reconnecting" for a connection that had never existed. Same state,
       // two different situations, and only one of them is a loss.
       if (wantHold) {
-        if (everJoinedOnce) window.__omwLoading.show('Connection lost', 'Reconnecting…');
+        // THREE DIFFERENT SITUATIONS, three different sentences. "Connection lost" is a lie
+        // before the first join (the world is still coming up), and it is also a lie when the
+        // SERVER told us it was restarting — that is a deploy or a rolling restart, it is
+        // expected, it is brief, and saying so is the difference between "something broke" and
+        // "hang on a second".
+        if (String((window.__omwMP || {}).serverRestarting || '') === '1') {
+          window.__omwLoading.show('The server is restarting', 'Putting you back in…');
+        } else if (everJoinedOnce) window.__omwLoading.show('Connection lost', 'Reconnecting…');
         else window.__omwLoading.show('Starting your world', 'Waking the server, this takes a moment…');
       }
       // NOT WHILE THE BOOT SETTLE OWNS THE SCREEN. The first dial into a world that is still
@@ -4603,7 +4610,13 @@
       // 250 ms poll put it straight back up ("Almost there"), which is the drop-and-return
       // flicker, with the engine's music starting in the gap. The settle hold is the single
       // owner of that screen and clears it itself (or by its own dead man's switch).
-      else { if (!window.__omwMPSettling) window.__omwLoading.hide(); setStatus('Reconnected.'); }
+      else {
+        if (!window.__omwMPSettling) window.__omwLoading.hide();
+        setStatus('Reconnected.');
+        // Back in. Consume the restart flag so an ordinary drop later is not still blamed on a
+        // restart that finished minutes ago.
+        try { if (window.__omwMP) window.__omwMP.serverRestarting = ''; } catch (e) {}
+      }
     }
     if (socialOpen) renderSocial();
   }, 150);

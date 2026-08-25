@@ -42,6 +42,19 @@ const { values } = parseArgs({
     // These must mirror main.ts or a spawned world cannot start at all.
     shared: { type: 'string' },
     gateway: { type: 'string' },
+    // A SERVER PASSWORD, so a scenario can stand up its own sim peer.
+    //
+    // `system` is client-declared, so connection.ts only believes it when the claim carries the
+    // server password — and an UNSET password is not permission, it means no peer can
+    // authenticate at all. testhost set none, so no browser scenario could ever produce an
+    // authority holder. Since `canSimulate` became `p.system === true` (only the peer may hold a
+    // cell), that quietly made s40-npc, s41-authority-handoff, s42-crowded-cell and
+    // s51-npc-combat unpassable: they assert a CLIENT holds authority, which cannot happen now,
+    // and with no peer available nothing holds it either. Nobody noticed because the wasm engine
+    // did not build, so the browser suite had not run.
+    //
+    // Harness-only, like the rest of this entry point: main.ts and the Dockerfiles never read it.
+    'server-password': { type: 'string' },
   },
 });
 
@@ -61,7 +74,7 @@ const server = await startServer({
   host: '127.0.0.1',
   ...(values.shared ? { sharedDir: values.shared } : {}),
   configOverride: {
-    server: { maxPlayers },
+    server: { maxPlayers, ...(values['server-password'] ? { password: values['server-password'] } : {}) },
     // Without this a spawned world has no world browser, so it can neither list nor switch.
     ...(values.gateway ? { gateway: { url: values.gateway } } : {}),
     limits: { maxConnsPerIp: connsPerIp, loginPerMinPerIp: 100000 },

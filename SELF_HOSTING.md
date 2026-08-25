@@ -332,8 +332,71 @@ licensing stance above:
   full reasoning is written down in [`docs/LEGAL.md`](docs/LEGAL.md).
 
 The shipped production image (`server/Dockerfile.simpeer`, target `tier2`) includes the
-peer binary; budget roughly 1 GB of memory per world with a peer (~360 MB RSS measured
-per peer, plus the world process).
+peer binary. Building it compiles OpenMW from source:
+
+```bash
+docker build --build-arg BUILD_JOBS=6 -f server/Dockerfile.simpeer -t openmw-simpeer .
+```
+
+**Set `BUILD_JOBS` to roughly one per gigabyte of RAM you can spare.** OpenMW translation units
+reach 1–2 GB each, and letting ninja use its default (`nproc + 2`) on a many-core machine with
+ordinary memory exhausts RAM — where it presents as a *hang* rather than an OOM kill: the build
+stops emitting output partway through and takes the Docker daemon with it. The default of 6 is
+deliberately conservative.
+
+### Sizing a gateway (read this before opening it to anyone)
+
+**Every occupied world costs a sim peer.** Each world is its own process and each one runs its
+own peer supervisor, so worlds *multiply* the peer's cost rather than sharing it.
+
+Measured on Linux/x86-64 with full retail Morrowind + Tribunal + Bloodmoon, one player anchoring
+one exterior cell, host load 1.4:
+
+| | RSS |
+| --- | --- |
+| sim peer (headless OpenMW) | 487 MB |
+| world process (node) | 136 MB |
+| **one occupied world** | **623 MB** |
+| gateway process (supervising one world) | 118 MB |
+
+The peer reached `SessionHello` 11.4 s after spawn with that data set. Budget **~640 MB per
+occupied world** and re-measure on your own hardware with your own game data —
+`server/scripts/measure-capacity.ts` does it against a running stack, and a peer anchoring
+several busy cells will cost more than one standing in Seyda Neen.
+
+`[simPeer] maxPeers` cannot govern this: it is per world process and cannot see its siblings.
+The ceiling that can is `[worlds]`, on the **gateway**:
+
+```toml
+[worlds]
+memBudgetMb = 8192      # total RAM for worlds and their peers
+worldCostMb = 640       # measured cost of one occupied world
+gatewayReserveMb = 256  # held back for the gateway itself
+```
+
+That budget admits 12 concurrent occupied worlds; `GET /healthz` reports the live ceiling as
+`{"capacity":12,"capacityReason":"memory"}`.
+
+The gateway takes the lower of this and the count cap, logs which one binds
+(`gateway.capacity` at boot), reports it on `GET /healthz`, and refuses a world with
+`world.at_cap` naming the reason. A player who cannot get in is told the server is full rather
+than being left to retry. `GET /metrics` on the gateway (same bearer as a world's) carries
+`omwmp_worlds_running`, `omwmp_worlds_capacity` and `omwmp_world_refused_total`.
+
+`--idle-reap-ms` overrides how long a non-public world may sit empty before it is stopped
+(default 120000). Its data survives; the world is revived when its owner dials back in.
+
+**Rolling restart: `kill -HUP` the gateway.** Worlds restart one at a time, emptiest first, and
+the next is not touched until the previous one answers `/status` again — so a world-code deploy
+is not an outage. Each world drains first (its players are told `SHUTDOWN` and the client waits
+for it to come back rather than treating it as fatal), and a world that will not return halts
+the rollout instead of turning one failure into a full one.
+
+**Leave `memBudgetMb` at 0 and there is no memory governor at all** — only a count cap, which
+defaults to `[server] maxPlayers`. That combination is how a container gets OOM-killed while
+every per-world cap reads as satisfied. Keep `memBudgetMb + gatewayReserveMb` at or below the
+container's own memory limit; raising one without the other only changes which of the two
+kills you first.
 
 ---
 WASM port © 2025–2026 [Virtastic](https://virtastic.app) — GPL-3.0-or-later

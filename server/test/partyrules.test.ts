@@ -12,7 +12,7 @@ import type { Player, Roster } from '../src/core/players';
 
 type Sent = { name: string; body: Record<string, unknown> };
 
-function harness(opts: { party?: string[]; goldSplit?: boolean; rollOnRare?: boolean; enabled?: boolean } = {}) {
+function harness(opts: { party?: string[]; goldSplit?: boolean; rollOnRare?: boolean; enabled?: boolean; scaling?: boolean } = {}) {
   const list: Player[] = [];
   const sent = new Map<string, Sent[]>();
   const add = (acct: string, cellKey = '0,0'): Player => {
@@ -29,7 +29,13 @@ function harness(opts: { party?: string[]; goldSplit?: boolean; rollOnRare?: boo
   const rules = new PartyRules({
     roster: { inWorld: () => list } as unknown as Roster,
     partyOf: (acct) => ((opts.party ?? []).includes(acct) ? (opts.party ?? []) : []),
-    settingsOf: () => ({ goldSplit: opts.goldSplit ?? true, rollOnRare: opts.rollOnRare ?? false }),
+    // scaling defaults TRUE here so the existing scaling cases keep testing the maths rather
+    // than the new opt-in gate; the gate has its own cases below.
+    settingsOf: () => ({
+      goldSplit: opts.goldSplit ?? true,
+      rollOnRare: opts.rollOnRare ?? false,
+      scaling: opts.scaling ?? true,
+    }),
     isNotable: (id) => id === 'sunder',
     enabled: opts.enabled ?? true,
   });
@@ -134,4 +140,32 @@ test('a roll nobody answers expires instead of pinning the item forever', () => 
   assert.equal(swept.length, 1);
   assert.equal(swept[0]!.rollId, rollId);
   assert.equal(swept[0]!.winner, undefined, 'all passes means nobody wins, not a deadlock');
+});
+
+// SCALING IS THE LEADER'S CHOICE, and it has to be a choice they can actually make.
+//
+// [rules] partyScaling ships OFF: people come to co-op to play Morrowind together, not to have
+// it quietly made harder because a friend walked in. That is only defensible if a group that
+// WANTS the challenge can turn it on — and for a while it was not, because the config default
+// was flipped off while party settings still only knew about loot, leaving scaling
+// operator-only with no way back. This pins both halves.
+test('scaling off for this party means no scaling, however many are present', () => {
+  const { rules, add } = harness({ party: ['a', 'b', 'c'], scaling: false });
+  add('a'); add('b'); add('c');
+  assert.equal(rules.scalingFor(add('a2')), null, 'a party that opted out was scaled anyway');
+});
+
+test('...and a party that opts IN is scaled', () => {
+  const { rules, add } = harness({ party: ['a', 'b'], scaling: true });
+  const a = add('a'); add('b');
+  const s = rules.scalingFor(a);
+  assert.ok(s, 'a party that asked for scaling did not get it');
+  assert.ok(s.hp > 1 && s.damage > 1);
+});
+
+// The operator's kill switch still outranks the party: enabled=false is "not on this world".
+test('the operator switch still wins over a party that wants scaling', () => {
+  const { rules, add } = harness({ party: ['a', 'b'], scaling: true, enabled: false });
+  const a = add('a'); add('b');
+  assert.equal(rules.scalingFor(a), null);
 });

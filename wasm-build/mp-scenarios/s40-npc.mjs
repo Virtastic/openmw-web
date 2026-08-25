@@ -25,6 +25,39 @@ const probeOf = async (c) => JSON.parse(await c.eval('(window.__omwMP||{}).actor
 const dist = (p, q) => Math.hypot(p.x - q.x, p.y - q.y, p.z - q.z);
 
 export default async function run(ctx) {
+  // NEEDS A *SIMULATING* PEER, WHICH THIS SUITE CANNOT YET START.
+  //
+  // This scenario asserts that a CLIENT holds cell authority. That stopped being possible when
+  // `worldstate.ts` `canSimulate` became `return p.system === true` — only a sim peer may hold a
+  // cell, so this failed with `0 !== 1` and had been failing unnoticed for as long as the wasm
+  // engine did not build and the browser suite was not run.
+  //
+  // It is NOT enough to give it the protocol peer that `s41` and `s52` use
+  // (`server/dist/testpeer.mjs`): that peer answers the wire, it does not run OpenMW, so it
+  // produces no ActorMoveBatch and the NPC positions this scenario compares never move. What it
+  // needs is the NATIVE headless peer (`openmw-simpeer:local`, /usr/local/bin/openmw) running
+  // beside the browsers.
+  //
+  // That is blocked on packaging, not on effort: the peer image is Ubuntu 24.04 (glibc 2.39) and
+  // ships no chromium — `apt-cache policy chromium` has no candidate there, it is snap-only —
+  // while the harness image is Debian bookworm (glibc 2.36), which cannot run the peer binary.
+  // One image needs both. The other route is a second container sharing the harness network
+  // namespace, which needs the world port to be predictable rather than ephemeral.
+  //
+  // SKIPPING rather than failing, because a red result here says "the code is broken" and the
+  // truth is "this test describes a model the server no longer has". Set OMW_SIM_PEER=1 once a
+  // simulating peer is wired in, and rewrite the assertions for peer-held authority.
+  // A SIMULATING peer, or nothing to assert. `canSimulate` is `p.system === true`, so a client
+  // cannot hold the cell this scenario compares NPCs in, and the protocol peer in
+  // server/dist/testpeer.mjs answers the wire without producing ActorMoveBatch. Needs the real
+  // binary — wasm-build/Dockerfile.harness-peer.
+  const simPeer = ctx.startSimPeer('-2,-9');
+  if (!simPeer) {
+    ctx.log('SKIP: no simulating sim peer available (OMW_SIM_PEER_BIN unset). '
+      + 'Run under wasm-build/Dockerfile.harness-peer. See s41 for the authority-model test.');
+    return;
+  }
+  ctx.log('started a native simulating peer');
   if (!existsSync(join(ROOT, 'play', 'mwdata', 'Morrowind.esm'))) {
     ctx.log('SKIP: play/mwdata/Morrowind.esm absent (retail data required for shared NPCs)');
     return;
@@ -34,35 +67,54 @@ export default async function run(ctx) {
     ctx.launchClient('bot-b', '', BOOT),
   ]);
 
-  // Authority: exactly one holder for the shared cell. The Grant lands a moment AFTER the
-  // actors become active (server processes PlayerCellChange, then claims), and the mirrors
-  // are 2 Hz — poll both until the authority state settles rather than reading once.
+  // AUTHORITY BELONGS TO THE SIM PEER, AND TO NEITHER CLIENT.
+  //
+  // This used to assert "exactly one CLIENT holds the cell", which is what the model was before
+  // `canSimulate` became `p.system === true`. It cannot happen now, and asserting it made this
+  // scenario fail `0 !== 1` for as long as nobody could run the browser suite. Both clients
+  // reporting isHolder=false is the CORRECT state; what has to be true is that they both know
+  // the cell HAS an owner, because that is what makes them puppet its NPCs instead of
+  // simulating their own.
   await a.waitFor('Number((window.__omwMP||{}).actorCount||0) > 0', STEP_TIMEOUT, 'A sees cell actors');
   await b.waitFor('Number((window.__omwMP||{}).actorCount||0) > 0', STEP_TIMEOUT, 'B sees cell actors');
   let holderA = null;
   let holderB = null;
-  const authDeadline = Date.now() + STEP_TIMEOUT;
+  let ownerA = 'none';
+  // THE PEER BOOTS A WHOLE RETAIL GAME before it can take the cell — measured at roughly two
+  // and a half minutes on a GPU-less box, against STEP_TIMEOUT's 20s. It is started at the top
+  // of this scenario so it boots alongside the browsers rather than after them, but it still
+  // needs a wait of its own order. This is not a flake budget; it is how long OpenMW takes.
+  const PEER_AUTHORITY_TIMEOUT = Number(process.env.S40_PEER_TIMEOUT ?? 300_000);
+  const authDeadline = Date.now() + PEER_AUTHORITY_TIMEOUT;
   while (Date.now() < authDeadline) {
-    [holderA, holderB] = await Promise.all([
+    [holderA, holderB, ownerA] = await Promise.all([
       a.eval('(window.__omwMP||{}).isHolder'),
       b.eval('(window.__omwMP||{}).isHolder'),
+      a.eval('(window.__omwMP||{}).authorityHolder'),
     ]);
-    if ([holderA, holderB].filter((h) => h === 'true').length === 1) break;
+    if (ownerA && ownerA !== 'none') break;
     await ctx.sleep(500);
   }
-  ctx.log(`isHolder A=${holderA} B=${holderB}`);
-  assert.equal([holderA, holderB].filter((h) => h === 'true').length, 1,
-    'exactly one client must hold cell authority');
-  const [holder, peer] = holderA === 'true' ? [a, b] : [b, a];
+  ctx.log(`isHolder A=${holderA} B=${holderB}; cell owner=${ownerA}`);
+  assert.equal(holderA, 'false', 'client A took cell authority, which belongs to the sim peer');
+  assert.equal(holderB, 'false', 'client B took cell authority, which belongs to the sim peer');
+  assert.notEqual(ownerA, 'none',
+    'the cell has no owner: the simulating peer never took it, so nothing drives these NPCs');
+  // Both clients are non-holders now, so either can play the "watcher" role the rest of this
+  // scenario needs.
+  const [holder, peer] = [a, b];
 
-  // The non-holder MUST actually be puppeting the cell's actors. Assert the mechanism, not
-  // just the symptom: with both clients running independent AI from identical spawns, the
-  // positions stay close for a while by luck, so a convergence check alone reports a green
-  // for a completely unsynced world (observed: puppetedActors=0 passing at 46.9 units in one
-  // run and failing at 644 in the next, purely on how far the NPCs had wandered).
+  // BOTH clients MUST actually be puppeting the cell's actors. Assert the mechanism, not just
+  // the symptom: with clients running independent AI from identical spawns, positions stay
+  // close for a while by luck, so a convergence check alone reports a green for a completely
+  // unsynced world (observed: puppetedActors=0 passing at 46.9 units in one run and failing at
+  // 644 in the next, purely on how far the NPCs had wandered).
   await peer.waitFor('Number((window.__omwMP||{}).puppetedActors||0) >= 3', STEP_TIMEOUT,
-    'non-holder attached puppets to the cell actors');
-  ctx.log(`non-holder puppeted ${await peer.eval('(window.__omwMP||{}).puppetedActors')} actors`);
+    'client B attached puppets to the cell actors');
+  await holder.waitFor('Number((window.__omwMP||{}).puppetedActors||0) >= 3', STEP_TIMEOUT,
+    'client A attached puppets to the cell actors');
+  ctx.log(`puppeted A=${await holder.eval('(window.__omwMP||{}).puppetedActors')} `
+    + `B=${await peer.eval('(window.__omwMP||{}).puppetedActors')}`);
 
   // Same NPCs, converged positions. Compare records present on BOTH clients.
   let shared = [];
@@ -117,25 +169,22 @@ export default async function run(ctx) {
 
   // Kill an NPC on the holder -> dead on both + shared tally bumps.
   const victim = shared.find((r) => r && r.length > 0);
-  ctx.log(`killing "${victim}" on the holder (${holder.name})`);
-  await holder.eval(`Module.__omwMPCmd=${JSON.stringify('killnpc:' + victim)}`);
+  // A CLIENT CANNOT KILL A SHARED NPC. This block used to assert the opposite — kill on the
+  // holding CLIENT, watch the death relay — because a client could hold the cell then. Under
+  // `canSimulate === p.system === true` the sim peer owns these actors, so a client killing one
+  // locally is exactly the unilateral authorship the model exists to prevent. The death must NOT
+  // reach anyone else, and the peer's authoritative state is what everybody keeps seeing.
+  //
+  // The legitimate route to a dead NPC is combat: hit it, the server routes the hit to the peer,
+  // the peer applies it and broadcasts the death. s58-combat-forward covers the routing half of
+  // that; killing outright through the peer is not covered here.
+  ctx.log(`attempting a unilateral kill of "${victim}" on client ${a.name}`);
+  await a.eval(`Module.__omwMPCmd=${JSON.stringify('killnpc:' + victim)}`);
   const deadExpr = `((JSON.parse((window.__omwMP||{}).actorProbe||"{}")[${JSON.stringify(victim)}]||{}).dead === true)`;
-  await holder.waitFor(deadExpr, STEP_TIMEOUT, 'NPC dead on the holder');
-  await peer.waitFor(deadExpr, STEP_TIMEOUT, 'NPC dead on the non-holder (ActorDeath relay)');
-  ctx.log('ok: death relayed to the non-holder');
-
-  // Shared kill tally (WorldKillCount -> mp.setDeadCount) reaches BOTH clients.
-  const tallyExpr = `((window.__omwMP||{}).killCountOf||"") === ${JSON.stringify(victim + '=1')}`;
-  try {
-    await holder.waitFor(tallyExpr, STEP_TIMEOUT, 'kill tally on the holder');
-    await peer.waitFor(tallyExpr, STEP_TIMEOUT, 'kill tally on the non-holder');
-  } catch (e) {
-    const [th, tp] = await Promise.all([
-      holder.eval('(window.__omwMP||{}).killCountOf'),
-      peer.eval('(window.__omwMP||{}).killCountOf'),
-    ]);
-    ctx.log(`diag tally: holder=${JSON.stringify(th)} peer=${JSON.stringify(tp)} expected="${victim}=1"`);
-    throw e;
-  }
-  ctx.log(`ok: shared kill count = 1 for "${victim}" on both clients`);
+  await ctx.sleep(8_000); // long enough that a relay, if there were one, would have landed
+  const deadOnB = await b.eval(deadExpr);
+  assert.notEqual(deadOnB, true,
+    `client ${a.name} killed a shared NPC for everyone — a client must not be able to author `
+    + 'NPC state; only the sim peer may');
+  ctx.log('ok: a unilateral client kill did not reach the other player');
 }

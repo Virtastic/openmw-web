@@ -256,6 +256,27 @@ function handleInventory(ctx: StateCtx, player: Player, body: LTable): boolean {
     return false;
   }
   ctx.store.update(player.charId, (doc) => (doc.inventory = out));
+  // The snapshot now accounts for everything credited since the last one, so the credit is
+  // spent. Clearing here (rather than expiring on a timer) is what keeps the ledger from
+  // double-counting: credit and snapshot are the same items seen twice.
+  player.pendingAcquired?.clear();
+  return true;
+}
+
+// A single acquisition, reported the moment it happens. Deliberately additive and unvalidated
+// against any "could you have got this?" rule: it is not a claim of ownership, it is a claim of
+// TIMING — "the snapshot you have is stale by this much". Over-reporting therefore buys a
+// cheater nothing that declaring a fat PlayerInventory would not already buy them, and that path
+// is guarded separately (IMPLAUSIBLE_STACK / IMPLAUSIBLE_DISTINCT above).
+function handleItemAcquired(ctx: StateCtx, player: Player, body: LTable): boolean {
+  const id = recordId(body.get('id'));
+  const n = finite(body.get('n'));
+  if (!id || n === undefined || !Number.isInteger(n) || n < 1 || n > MAX_COUNT) return false;
+  const led = (player.pendingAcquired ??= new Map<string, number>());
+  // Bounded by the same breadth limit the snapshot uses, so a client cannot grow this map
+  // without bound between snapshots.
+  if (!led.has(id) && led.size >= MAX_INVENTORY) return false;
+  led.set(id, Math.min(MAX_COUNT, (led.get(id) ?? 0) + n));
   return true;
 }
 
@@ -272,6 +293,7 @@ const HANDLERS: Record<string, (ctx: StateCtx, player: Player, body: LTable) => 
   PlayerLevel: handleLevel,
   PlayerSpellbook: handleSpellbook,
   PlayerInventory: handleInventory,
+  PlayerItemAcquired: handleItemAcquired,
 };
 
 export function handleStateEvent(ctx: StateCtx, player: Player, name: string, value: LValue | undefined): boolean {

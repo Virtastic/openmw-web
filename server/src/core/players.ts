@@ -58,6 +58,30 @@ export interface Player {
   poseVersion: number;
   // Phase 3.6: wall-clock of the last accepted pose, for the plausible-speed envelope.
   lastPoseAt?: number;
+  /** CONSECUTIVE implausible speed WINDOWS. A single one is ordinary, so enforcement waits for
+   *  a run — which is what tells a bad link apart from a client actually moving that way. */
+  implausibleRun?: number;
+  /** Baseline for the speed envelope: a pose and the time it was measured.
+   *
+   *  Speed is measured against THIS rather than against the previous frame, because frame
+   *  spacing is ARRIVAL spacing and a stalled connection delivers a burst. Per-frame, that burst
+   *  is a normal distance over a near-zero dt — an enormous apparent speed for a player who did
+   *  nothing wrong. Over a fixed window the same burst is just the distance actually travelled
+   *  in that window, which is the quantity the envelope is about. */
+  moveAnchor?: { x: number; y: number; z: number; at: number };
+  /** Timestamps of recent NON-ADJACENT exterior cell changes — Recall, Divine Intervention,
+   *  Almsivi, a silt strider, or a client inventing its own teleport. Walking is always to an
+   *  adjacent cell, and a door goes through an interior, so this list only ever holds real
+   *  jumps. Bounded by the rate check that reads it. */
+  farJumps?: number[];
+  /** Items this character has acquired SINCE its last full PlayerInventory snapshot.
+   *
+   *  Closes the race that made drop conservation unenforceable: the snapshot is a 2 s diff, so
+   *  a player who picks something up and drops it immediately outruns their own declaration and
+   *  the server has not yet been told they hold it. That is ordinary play, and refusing it broke
+   *  a real scenario — which is why unowned drops were only ever COUNTED. Credit arrives per
+   *  event instead, and is cleared by the next snapshot (which now includes it). */
+  pendingAcquired?: Map<string, number>;
 }
 
 export class Roster {

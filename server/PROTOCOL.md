@@ -126,6 +126,45 @@ Payload: `[u8 nameLen][name: nameLen bytes, ASCII][body: LSER blob]`.
 
 Flow: `CONNECTED → (Hello ≤10 s) → HELLO_OK → (auth) → AUTHED → (Ready) → IN_WORLD`.
 
+### World modes and the shared lobby
+
+A world is `private` (one character's solo world), `party` (that world opened to its owner's
+party), or `public`. The gateway's public world is a **social lobby**, and the rules differ
+there in ways a client should not have to infer:
+
+- **Nothing persists.** Character documents are read-only: inventory, stats, skills and
+  position are all discarded on leaving. You arrive with your gear and leave with exactly what
+  you had, in both directions — a loss in the lobby is as local as a gain. Quest progress and
+  standing were already routed to nobody there.
+- **Movement is enforced, not merely measured.** Sustained implausible speed has its
+  `PlayerMove` frames refused rather than counted, so the offender simply stops moving as far
+  as peers are concerned. Speed is measured over a **200 ms window**, not between consecutive
+  frames: frame spacing is ARRIVAL spacing, and a stalled connection delivers a burst of
+  ordinary little movements milliseconds apart, which per-frame reads as an enormous speed for
+  a player who did nothing wrong. Three consecutive windows past the envelope are required. A
+  refused frame does NOT advance the speed baseline, so a client that teleports away stays
+  refused until it returns somewhere reachable — coming back is forgiven, staying away is not.
+
+  **`PlayerCellChange` is bounded separately, and only bounded.** A cell change is a legitimate
+  teleport — a door, a silt strider, Recall, Divine Intervention — so the envelope resets its
+  baseline on every one, which would otherwise leave "declare a cell change" as a free teleport.
+  The server ships no game data and cannot tell a real door from an invented one, but it does
+  not need to: **walking is always into an ADJACENT exterior cell, and a door goes through an
+  interior.** An exterior-to-exterior jump across the grid is a spell, a silt strider, or a lie,
+  and those are rare in play — so `[limits] farTravelPerMin` (default 6) bounds the RATE rather
+  than refusing the act. Over the limit the change is counted everywhere and refused in the
+  lobby, so a hopper's occupancy simply stops being updated.
+
+  This makes map-hopping useless without touching a real player: walking any distance and using
+  doors any number of times are both unaffected, by construction. It is still **not** a teleport
+  check — a single unearned jump inside the budget goes through. Closing that needs the sim peer
+  to validate arrivals against the real cell graph, which is not built.
+- **Rule floor.** `timeSkip` is `off` and PvP is on with `pvpZone = "wilderness"` unless the
+  operator has stated otherwise.
+
+None of this applies to a standalone single-world server, which defaults to `public` but is
+that operator's real game.
+
 `SessionHello` carries an optional **`simulatesActors: true`**. A client that omits it is
 never granted cell actor authority — neither by election nor by claiming a dormant cell.
 Authority is otherwise chosen on network fitness, and a protocol-only client (a load bot, a
@@ -137,6 +176,15 @@ Client → server:
 
 - `{"t":"SessionHello", "proto":1, "engineHash":"<12-hex or empty>", "lserVersion":0,
    "manifest":[{"name":"Morrowind.esm","size":123,"idx":0}, …], "resumeToken":"<opt>"}`
+  **`engineHash` may only be empty under `[engine] enforce = "warn"` or `"off"`.** Under
+  `"refuse"` a client that sends none is refused with `BAD_ENGINE` — an absent hash used to be
+  an unconditional pass, which let anything opt out of the check by declining to identify
+  itself, while still catching honest players on a stale build. `[engine] pin` additionally
+  fixes the canonical build to an operator statement rather than adopting whichever client
+  connects first. The **sim peer is exempt**: it is the operator's own binary, a native build
+  whose hash could never equal a wasm one, and refusing it would leave every cell unsimulated
+  while the server reported itself healthy.
+
   Manifest = the client's content files in load order (`strict` mode adds `"sha256"`,
   M0 implements `names` mode: name+size+order). Reality check: OpenMW 0.52 Lua exposes
   content-file NAMES only (`core.contentFiles.list`, lowercased) — sizes are unreachable,
@@ -210,6 +258,7 @@ Event-body conventions: arrays = 1-based integer-keyed tables; nil fields = omit
 | `PlayerLevel` | C→S on change | `{level=int 1..255}`; stored for persistence; not relayed in M2 |
 | `PlayerSpellbook` | C→S `{add={id,…}, remove={id,…}}` | stored; not relayed in M2 |
 | `PlayerInventory` | C→S full snapshot `{items={{id=recordId, n=count}, …}}` on change (2 s diff, cap 512 entries) | stored for rejoin restore; not relayed |
+| `PlayerItemAcquired` | C→S `{id=recordId, n=count}` on every count INCREASE (0.25 s scan) | credits the item against drop conservation; SPENT by a drop that uses it, and cleared wholesale by the next `PlayerInventory`. Not stored, not relayed |
 | `PlayerDeath` | C→S `{}` | server runs respawn/death-penalty plugins |
 | `PlayerResurrect` | S→C `{cellKey=string, x=,y=,z=, restoreHp=bool}` | client teleports self, restores dynamic stats, clears death |
 
@@ -244,6 +293,24 @@ generated RefNums NEVER travel.
 | `ContainerUpdate` | S→C broadcast (cell-scoped) | `{ref|net, delta={itemId=, dn=number}, stateSeq=}` |
 | `WorldCellState` | S→C (on PlayerCellChange + ResyncRequest) | `{cellKey=, placed={…ObjectPlace-shaped…}, deleted={refKeys}, moved={…}, locks={…}, doors={…}, containers={refKey={items,stateSeq}}}` |
 | `ResyncRequest` | C→S | `{cellKey=string}` |
+
+**Drop conservation (`ObjectSpawnRequest`).** `fromInventory=true` marks a request as a DROP
+rather than a placement — scripts and tools legitimately place objects nobody carries, so
+without the flag conservation cannot be enforced at all. When `[economy] refuseUnownedDrops`
+is on, a drop of more than the sender is known to hold is refused (no ack, no placement);
+otherwise it is counted (`omwmp_unowned_drops_total`) and fed to moderation.
+
+"Known to hold" is the last `PlayerInventory` snapshot **plus** anything credited by
+`PlayerItemAcquired` since, **minus** whatever those credits have already been spent on. Both
+halves of that bookkeeping matter: a snapshot is only sent when the inventory CHANGES, and
+acquire-then-drop leaves it unchanged — so without spending the credit at the point of use it
+is never superseded, and one pickup funds an unlimited supply of drops.
+
+That sum is the point. Judged on the snapshot alone the server's picture is up to 2 s stale, and
+a player who picks something up and drops it immediately — ordinary play — is indistinguishable
+from one dropping an item they never had. Enforcement was built on the stale picture once and
+had to be backed out. Clients MUST report acquisitions for
+enforcement to be safe to enable; a client that does not will have legitimate drops refused.
 
 Semantics: the server persists per-cell delta docs (`world/cells/<cellKey>.json`) and is
 the serialization point — ops are applied in server-arrival order and rebroadcast with

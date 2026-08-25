@@ -131,6 +131,15 @@ async function worstDisagreement(clients) {
 }
 
 export default async function run(ctx) {
+  // A SIMULATING peer owns the cell these clients crowd into. Started FIRST because it boots a
+  // whole retail game (~2.5 min on a GPU-less box) before it can take anything, so it needs to
+  // overlap the browser boots rather than follow them.
+  const simPeer = ctx.startSimPeer('-2,-9');
+  if (!simPeer) {
+    ctx.log('SKIP: no simulating sim peer available (OMW_SIM_PEER_BIN unset). '
+      + 'Run under wasm-build/Dockerfile.harness-peer.');
+    return;
+  }
   if (!existsSync(join(ROOT, 'play', 'mwdata', 'Morrowind.esm'))) {
     ctx.log('SKIP: play/mwdata/Morrowind.esm absent (retail data required for shared NPCs)');
     return;
@@ -149,40 +158,37 @@ export default async function run(ctx) {
   assert.ok(new Set(cellKeys).size === 1, `clients must share one cell, got ${JSON.stringify(cellKeys)}`);
   const cellKey = cellKeys[0];
 
-  // 1. Exactly one holder, and every non-holder knows who it is.
+  // 1. THE CELL IS OWNED BY THE SIM PEER, and every client knows who owns it.
+  //
+  // This block used to elect one of the CLIENTS as holder. `canSimulate` is `p.system === true`
+  // now, so no client can hold anything and that assertion could only fail — which it did,
+  // unnoticed, for as long as the browser suite could not run. Every client being a non-holder
+  // is the correct state; what must be true is that they all learned the cell HAS an owner,
+  // because that is what makes them puppet its actors instead of each simulating their own.
   let flags = [];
-  const authDeadline = Date.now() + STEP_TIMEOUT;
+  let owners = [];
+  const authDeadline = Date.now() + Number(process.env.S42_PEER_TIMEOUT ?? 300_000);
   while (Date.now() < authDeadline) {
-    flags = await Promise.all(clients.map((c) => c.eval('(window.__omwMP||{}).isHolder')));
-    if (flags.filter((h) => h === 'true').length === 1) break;
+    [flags, owners] = await Promise.all([
+      Promise.all(clients.map((c) => c.eval('(window.__omwMP||{}).isHolder'))),
+      Promise.all(clients.map((c) => c.eval('(window.__omwMP||{}).authorityHolder'))),
+    ]);
+    if (owners.every((o) => o && o !== 'none')) break;
     await ctx.sleep(500);
   }
   ctx.log(`isHolder: ${clients.map((c, i) => `${c.name}=${flags[i]}`).join(' ')}`);
-  if (flags.filter((h) => h === 'true').length !== 1) {
-    // isHolder alone cannot distinguish "nobody was ever granted" from "granted under a
-    // cellKey the client mirror is not looking at" — and those need completely different
-    // fixes. Dump what each client believes before failing, so the next run does not have
-    // to be a second experiment just to learn which one it is.
-    for (const c of clients) {
-      const holderId = await c.eval('(window.__omwMP||{}).authorityHolder');
-      const myId = await c.eval('(window.__omwMP||{}).playerId');
-      const census = await c.eval('(window.__omwMP||{}).actorCensus||"[]"');
-      const me = JSON.parse(census).find((e) => e.startsWith('player@')) ?? 'none';
-      ctx.log(`  ${c.name}: id=${myId} authorityHolder=${holderId} cellPerCensus=${me}`);
-    }
+  ctx.log(`cell owner per client: ${owners.join(' ')}`);
+  assert.equal(flags.filter((h) => h === 'true').length, 0,
+    `no client may hold ${cellKey}; that belongs to the sim peer. got ${JSON.stringify(flags)}`);
+  for (const [i, o] of owners.entries()) {
+    assert.ok(o && o !== 'none',
+      `${clients[i].name} never learned who owns ${cellKey}, so it is not puppeting anything`);
   }
-  assert.equal(flags.filter((h) => h === 'true').length, 1,
-    `exactly one client must hold ${cellKey}, got ${JSON.stringify(flags)}`);
-  const holder = clients[flags.indexOf('true')];
-  const peers = clients.filter((c) => c !== holder);
-  // Both mirrors are strings formatted by different call sites ('%.0f' vs tostring), so
-  // compare numerically rather than trusting them to render identically.
-  const holderId = Number(await holder.eval('(window.__omwMP||{}).playerId'));
-  assert.ok(Number.isInteger(holderId), `holder has no usable playerId: ${holderId}`);
-  for (const p of peers) {
-    await p.waitFor(`Number((window.__omwMP||{}).authorityHolder) === ${holderId}`,
-      STEP_TIMEOUT, `${p.name} learned holder=${holderId}`);
-  }
+  // Everyone must agree on WHICH owner, or they are being driven by different simulators.
+  assert.equal(new Set(owners.map(String)).size, 1,
+    `clients disagree about who owns ${cellKey}: ${JSON.stringify(owners)}`);
+  const peers = clients; // every client is a non-holder under peer authority
+  ctx.log(`cell owned by ${owners[0]}; all ${clients.length} clients are non-holders`);
 
   // 2. Non-holders must actually be puppeting. Asserted BEFORE any convergence number is
   //    believed — see the header note about the zero-puppet false green.
@@ -190,7 +196,7 @@ export default async function run(ctx) {
     await p.waitFor('Number((window.__omwMP||{}).puppetedActors||0) >= 3', STEP_TIMEOUT,
       `${p.name} attached puppets to the cell actors`);
   }
-  ctx.log(`holder=${holder.name} (id ${holderId}); ${peers.length} non-holders puppeting`);
+  ctx.log(`cell owned by ${owners[0]}; all ${peers.length} clients puppeting as non-holders`);
 
   // Baseline agreement with only the browser clients present.
   let before = { shared: 0, worst: null, rec: null };
@@ -298,7 +304,7 @@ export default async function run(ctx) {
       const holderNow = await Promise.all(clients.map((c) => c.eval('(window.__omwMP||{}).authorityHolder')));
       const stillHolder = await Promise.all(clients.map((c) => c.eval('(window.__omwMP||{}).isHolder')));
       ctx.log(`STALL on ${stalled.join(', ')}`);
-      ctx.log(`  holder was ${holderId}; now authorityHolder=${holderNow.join(',')} isHolder=${stillHolder.join(',')}`);
+      ctx.log(`  owner was ${owners[0]}; now authorityHolder=${holderNow.join(',')} isHolder=${stillHolder.join(',')}`);
       ctx.log(`  server counters:\n      ${await shedCounters(ctx.serverPort)}`);
     }
     assert.equal(stalled.length, 0,
@@ -339,17 +345,22 @@ export default async function run(ctx) {
     // So: skip on a busy box (the numbers cannot be trusted anyway), fail on an idle one
     // (nothing external explains it, so it is real). Same rule the convergence gate above
     // uses, for the same reason.
-    const stillHolder = await holder.eval('(window.__omwMP||{}).isHolder');
-    if (stillHolder !== 'true') {
+    // THE CELL MUST STILL HAVE AN OWNER after the crowd load. Under peer authority there is no
+    // re-election to a fitter client to forgive any more — the peer either held on or it did
+    // not, and a cell that lost its simulator mid-measurement makes every number above
+    // unattributable. A busy box is still worth skipping rather than failing: a peer starved of
+    // CPU going quiet is the machine, not the code.
+    const ownerNow = await clients[0].eval('(window.__omwMP||{}).authorityHolder');
+    if (!ownerNow || ownerNow === 'none') {
       const loadNow = os.loadavg()[0];
       if (loadNow > 12) {
-        ctx.log(`SKIP: authority moved off ${holder.name} at host load ${loadNow.toFixed(1)} `
-          + '— a degraded holder is re-elected BY DESIGN, and the measurement above is '
-          + 'unattributable once it moves. Re-run when idle.');
+        ctx.log(`SKIP: ${cellKey} lost its owner at host load ${loadNow.toFixed(1)} — a peer `
+          + 'starved of CPU cannot hold a cell, and the measurement above is unattributable '
+          + 'once it drops. Re-run when idle.');
         return;
       }
-      assert.fail(`authority left ${holder.name} during the crowd load at host load `
-        + `${loadNow.toFixed(1)} — the box is idle, so this is not fitness re-election`);
+      assert.fail(`${cellKey} lost its simulating owner during the crowd load at host load `
+        + `${loadNow.toFixed(1)} — the box is idle, so this is not CPU starvation`);
     }
     ctx.log(`ok: ${clients.length} browser clients agreed on shared actor state with ${BOTS} bots in ${cellKey}`);
     botFailure = await reapBots();

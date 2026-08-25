@@ -155,11 +155,39 @@ export class EngineGate {
   private canonical: string | null = null;
   private holders = 0;
 
-  constructor(private readonly mode: 'warn' | 'refuse' | 'off') {}
+  /** `pin` makes the canonical hash an OPERATOR statement instead of a race.
+   *
+   *  Adopt-first-canonical is fine for `warn` — it answers "is this session consistent?" — but
+   *  as a security control it is backwards: the FIRST client to arrive defines what every later
+   *  client is compared against, so on an empty server an attacker's build becomes the standard
+   *  and every honest player is the mismatch. When we build and serve the engine ourselves we
+   *  already know the answer, so we state it. */
+  constructor(
+    private readonly mode: 'warn' | 'refuse' | 'off',
+    private readonly pin: string = '',
+  ) {
+    if (pin !== '') this.canonical = pin;
+  }
 
   check(hash: string): { ok: true } | { ok: false; detail: string } {
-    if (this.mode === 'off' || hash === '') {
-      if (hash === '' && this.mode !== 'off') log('debug', 'engine.hash_absent', {});
+    if (this.mode === 'off') {
+      this.holders++;
+      return { ok: true };
+    }
+    // AN ABSENT HASH IS NOT A PASS IN REFUSE MODE. It used to be: the guard read
+    // `mode === 'off' || hash === ''`, so any client could skip the check entirely by declining
+    // to identify itself — which made `refuse` decorative against the only party it exists to
+    // stop, while still catching honest players running a stale build. An operator choosing
+    // `refuse` is saying "only my engine connects", and something that will not say what it is
+    // cannot be that.
+    //
+    // `warn` keeps the exemption on purpose: an unstamped local dev build legitimately sends '',
+    // and warn's job is to report, not to gate.
+    if (hash === '') {
+      if (this.mode === 'refuse') {
+        return { ok: false, detail: 'this server requires an identified engine build; yours sent no version' };
+      }
+      log('debug', 'engine.hash_absent', {});
       this.holders++;
       return { ok: true };
     }
@@ -179,6 +207,9 @@ export class EngineGate {
 
   release(): void {
     if (this.holders > 0) this.holders--;
-    if (this.holders === 0) this.canonical = null;
+    // A PINNED canonical is the operator's, not the session's, so an emptying server must not
+    // forget it — otherwise the pin would silently degrade to adopt-first the moment the last
+    // player logged out, which is exactly when an attacker would arrive first.
+    if (this.holders === 0 && this.pin === '') this.canonical = null;
   }
 }

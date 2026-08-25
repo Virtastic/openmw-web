@@ -10,6 +10,9 @@ local core = require('openmw.core')
 local self = require('openmw.self')
 local types = require('openmw.types')
 local I = require('openmw.interfaces')
+-- openmw.mp is available in LOCAL scripts too (luabindings.cpp registers it for every context);
+-- puppet.lua needs it only for setPuppet, which is why it was not imported before.
+local mp = require('openmw.mp')
 
 local Interp = require('scripts.mp.interp')
 
@@ -47,6 +50,29 @@ local SNAP_DISTANCE = 128 -- near-tier divergence before asking for a teleport (
 local STUCK_SECONDS = 0.7 -- commanded to move but no progress this long -> snap
 local IDLE_TIMEOUT = 1.0 -- no snapshots this long -> stand still
 local SNAP_COOLDOWN = 1.0 -- let a requested teleport land before asking again
+
+-- TELL THE ENGINE THIS ACTOR'S DAMAGE IS NOT OURS TO APPLY.
+--
+-- Melee already routes correctly because the engine hands damage application to Lua (the `Hit`
+-- event) and onHitIntercept below cancels it. MAGIC does not: mwmechanics/spelleffects.cpp
+-- applies harmful effects itself in C++, and its only Lua notification is queued and returns
+-- void, so nothing could veto it. Spell damage therefore never travelled — the caster's client
+-- damaged its own puppet copy and the owner never heard, so the health bar flickered and
+-- reverted on the next stats push.
+--
+-- mp.setPuppet marks this actor in a registry the damage site queries synchronously
+-- (mwmp/puppets.hpp). Marked, the engine skips its local application and records the effect for
+-- global.lua to forward to whoever owns the actor.
+local function markPuppet(on)
+    if not mp.setPuppet then
+        if mp.testSet then mp.testSet('puppetMark', 'no-binding') end
+        return
+    end
+    local ok, err = pcall(function() mp.setPuppet(self.object, on) end)
+    if mp.testSet then
+        mp.testSet('puppetMark', ok and (on and 'marked' or 'unmarked') or ('failed:' .. tostring(err)))
+    end
+end
 
 local playerId = nil -- set for remote-player puppets
 local actorKey = nil -- set for M4 NPC puppets (refKey the holder addresses)
@@ -155,8 +181,38 @@ local function ensureHitHandler()
 end
 ensureHitHandler()
 
+-- SPELL DAMAGE THE ENGINE HANDED BACK TO US.
+--
+-- Marked as a puppet, the C++ damage site skips its local application and parks the effect
+-- (mwmp/puppets.hpp). Drain ours each frame and forward on the same route melee takes — the
+-- global script owns the socket, so it sends. Without this, spell damage simply vanished:
+-- applied to our local copy, never told to the owner, reverted on the next stats push.
+local function forwardMagicHits()
+    if not (playerId or actorKey) then return end
+    if not mp.takeMagicHits then return end
+    local ok, hits = pcall(function() return mp.takeMagicHits(self.object) end)
+    if not ok then
+        if mp.testSet then mp.testSet('magicFwd', 'take-failed:' .. tostring(hits)) end
+        return
+    end
+    if not hits or #hits == 0 then return end
+    if mp.testSet then mp.testSet('magicFwd', 'drained:' .. tostring(#hits)) end
+    local effects, spellId = {}, nil
+    for _, h in ipairs(hits) do
+        effects[#effects + 1] = { id = tostring(h.effectId), magnitude = h.magnitude or 0, duration = 0 }
+        spellId = spellId or (h.spellId ~= '' and h.spellId or nil)
+    end
+    core.sendGlobalEvent('mpCombatSpellHit', {
+        victim = self.object,
+        playerId = playerId,
+        effects = effects,
+        spellId = spellId,
+    })
+end
+
 local function onUpdate(dt)
     ensureHitHandler()
+    forwardMagicHits()
     if dt <= 0 or (not playerId and not actorKey) then return end
     if dead then
         zeroControls()
@@ -266,11 +322,13 @@ return {
             playerId = initData and initData.playerId
             actorKey = initData and initData.actorKey
             self:enableAI(false) -- the pose stream owns this actor, not the AI
+            markPuppet(true)
         end,
         onLoad = function(data)
             playerId = data and data.playerId
             actorKey = data and data.actorKey
             self:enableAI(false)
+            markPuppet(true)
         end,
         onSave = function()
             return { playerId = playerId, actorKey = actorKey }
@@ -333,6 +391,8 @@ return {
             dead = false
             zeroControls()
             self:enableAI(true)
+            -- No longer somebody else's actor: the engine may apply magic damage to it again.
+            markPuppet(false)
             -- Ask the GLOBAL script to remove us, now that AI is back on. `removeScript` is
             -- bound on GObject only (objectbindings.cpp) — it does not exist on a local
             -- script's `self`, so the previous `self:removeScript(...)` here threw and the

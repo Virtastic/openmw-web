@@ -1,0 +1,31 @@
+# Linux runner for the multiplayer browser suite (wasm-build/mp-harness.mjs).
+#
+# The suite was macOS-only by hardcode (CHROME points at /Applications/...), so it could only
+# ever run on one developer's daily driver, where six concurrent engine boots fight the machine
+# actually being used — which is why it stopped being run at all. This image is the "build box
+# with 32 cores and no one using it" the harness header asks for, made reproducible.
+#
+# It supplies exactly the three things the harness spawns: node (server/dist/testhost.mjs),
+# python3 (play/server.py), and a browser (CHROME_BIN). Nothing here touches a real Chrome
+# profile — the harness gives every client a throwaway --user-data-dir, and this browser has
+# no profile to touch in the first place.
+#
+# There is no GPU inside a container, so SMOKE_GL=swiftshader is the default rather than an
+# override. Software rasterisation is several times slower than the ANGLE path the timeouts
+# were originally tuned for; JOIN_TIMEOUT_MS is raised to match, because the engine is making
+# real progress the whole time and a short bound reports a stall that is really just a CPU
+# rasteriser doing its job.
+FROM node:22-bookworm
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      chromium python3 ca-certificates \
+      fonts-liberation libnss3 libatk-bridge2.0-0 libgtk-3-0 libasound2 libxdamage1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Chromium's sandbox needs privileges a default container does not have. The harness already
+# passes --no-sandbox; this only makes the intent explicit for anyone running it by hand.
+ENV CHROME_BIN=/usr/bin/chromium \
+    SMOKE_GL=swiftshader \
+    JOIN_TIMEOUT_MS=600000
+
+WORKDIR /repo

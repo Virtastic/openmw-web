@@ -1,5 +1,9 @@
 #include "spelleffects.hpp"
 
+#ifdef __EMSCRIPTEN__
+#include "../mwmp/puppets.hpp"
+#endif
+
 #include <algorithm>
 #include <array>
 
@@ -698,6 +702,30 @@ namespace MWMechanics
                         targetStat = Stats::Magicka;
                     else if (effect.mEffectId == ESM::MagicEffect::DamageFatigue)
                         targetStat = Stats::Fatigue;
+#ifdef __EMSCRIPTEN__
+                    // MULTIPLAYER: this actor's damage may not be ours to apply.
+                    //
+                    // A puppet is simulated by a remote peer; anything we do to it here is a
+                    // guess the owner will overwrite on its next stats push, which is exactly
+                    // what made spell damage appear for an instant and revert. Melee already
+                    // avoids this because the engine hands damage application to Lua (the `Hit`
+                    // event) and scripts/mp/puppet.lua cancels it — magic is applied right here
+                    // in C++ with no seam to cancel through, so this IS the seam. Record the
+                    // effect for scripts/mp to forward to the owner, and apply nothing.
+                    //
+                    // Guarded, and the desktop path is left byte-for-byte intact per
+                    // WASM_ADAPTATIONS.md. The registry is empty in singleplayer, so isPuppet is
+                    // a hash lookup against an empty set.
+                    if (MWMP::isPuppet(target.getCellRef().getRefNum()))
+                    {
+                        MWMP::recordMagicHit({ target.getCellRef().getRefNum(),
+                            caster.isEmpty() ? ESM::RefNum{} : caster.getCellRef().getRefNum(),
+                            effect.mEffectId.serializeText(),
+                            spellParams.getSourceSpellId().serializeText(), effect.mMagnitude,
+                            targetStat == Stats::Health ? 0 : (targetStat == Stats::Magicka ? 1 : 2) });
+                    }
+                    else
+#endif
                     // Damage "Dynamic" abilities reduce the base value
                     if (spellParams.hasFlag(ESM::ActiveSpells::Flag_AffectsBaseValues))
                         modDynamicStat(target, targetStat, -effect.mMagnitude);

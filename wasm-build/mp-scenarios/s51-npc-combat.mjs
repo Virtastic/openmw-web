@@ -18,69 +18,83 @@ const BOOT = { retail: true, joinTimeoutMs: 420_000 };
 const probeOf = async (c) => JSON.parse(await c.eval('(window.__omwMP||{}).actorProbe||"{}"'));
 
 export default async function run(ctx) {
+  // A SIMULATING peer holds the cell. Both browsers are therefore NON-holders, which is the
+  // real shape of shared NPC combat: nobody fighting an NPC owns it.
   if (!existsSync(join(ROOT, 'play', 'mwdata', 'Morrowind.esm'))) {
     ctx.log('SKIP: play/mwdata/Morrowind.esm absent (retail data required for shared NPCs)');
+    return;
+  }
+  // Start the peer FIRST: it boots a whole retail game before it can take a cell (~2.5 min on a
+  // GPU-less box), so it needs to overlap the browsers rather than follow them.
+  const simPeer = ctx.startSimPeer('-2,-9');
+  if (!simPeer) {
+    ctx.log('SKIP: no simulating sim peer available (OMW_SIM_PEER_BIN unset). '
+      + 'Run under wasm-build/Dockerfile.harness-peer.');
     return;
   }
   const [a, b] = await Promise.all([
     ctx.launchClient('bot-a', '', BOOT),
     ctx.launchClient('bot-b', '', BOOT),
   ]);
+  const clients = [a, b];
   for (const c of [a, b]) {
     await c.waitFor('Number((window.__omwMP||{}).actorCount||0) > 0', STEP_TIMEOUT, `${c.name} sees actors`);
   }
 
-  // Settle authority (Grant lands after the cell-change claim; mirrors are 2 Hz).
-  let holderA = null;
-  let holderB = null;
-  const authDeadline = Date.now() + STEP_TIMEOUT;
+  // AUTHORITY IS THE PEER'S. This scenario used to elect one of the two CLIENTS as holder and
+  // assert the other's hit was forwarded to it. `canSimulate` is `p.system === true` now, so
+  // neither client holds anything and BOTH hits have to travel — which is a better test of the
+  // same thing, and the shape real play has.
+  let ownerSeen = 'none';
+  const authDeadline = Date.now() + Number(process.env.S51_PEER_TIMEOUT ?? 300_000);
   while (Date.now() < authDeadline) {
-    [holderA, holderB] = await Promise.all([
-      a.eval('(window.__omwMP||{}).isHolder'),
-      b.eval('(window.__omwMP||{}).isHolder'),
-    ]);
-    if ([holderA, holderB].filter((h) => h === 'true').length === 1) break;
+    ownerSeen = await a.eval('(window.__omwMP||{}).authorityHolder');
+    if (ownerSeen && ownerSeen !== 'none') break;
     await ctx.sleep(500);
   }
-  assert.equal([holderA, holderB].filter((h) => h === 'true').length, 1, 'exactly one holder');
-  const [holder, peer] = holderA === 'true' ? [a, b] : [b, a];
-  ctx.log(`holder=${holder.name}, non-holder=${peer.name}`);
+  assert.notEqual(ownerSeen, 'none', 'the simulating peer never took the cell');
+  assert.equal(await a.eval('(window.__omwMP||{}).isHolder'), 'false', 'client A must not hold');
+  assert.equal(await b.eval('(window.__omwMP||{}).isHolder'), 'false', 'client B must not hold');
+  ctx.log(`cell owner=${ownerSeen}; neither client holds it`);
 
-  // A victim both clients can see.
-  const [ph, pp] = await Promise.all([probeOf(holder), probeOf(peer)]);
-  // Prefer a settled NPC over a wandering creature. Creatures like the mudcrab roam far
-  // enough to leave the peer's visible set mid-test, which times out the relay assert on a
-  // scenario that is really about combat routing — a flake, not a product defect. Records
-  // with a space in the id are Morrowind's named NPCs ("indrele rathryon"); single-word
-  // ids are typically creatures ("mudcrab"). Fall back to anything living if none exist.
-  const living = Object.keys(ph).filter((r) => pp[r] && !ph[r].dead);
-  const victim = living.find((r) => r.includes(' ')) ?? living[0];
+  for (const c of clients) {
+    await c.waitFor('Number((window.__omwMP||{}).puppetedActors||0) > 0', STEP_TIMEOUT,
+      `${c.name} puppeted the cell actors`);
+  }
+
+  const [ph, pp] = await Promise.all([probeOf(a), probeOf(b)]);
+  const victim = Object.keys(ph).find((r) => r !== 'player' && pp[r]
+    && ph[r].dead !== true && pp[r].dead !== true);
   assert.ok(victim, 'need a living NPC visible to both clients');
-  ctx.log(`victim NPC: ${victim}`);
+  ctx.log(`both clients attacking "${victim}"`);
 
-  // The non-holder attacks first. Its hit lands on a PUPPET, so it must be intercepted,
-  // forwarded, and applied by the holder — the holder's combat applier records the raw
-  // damage it received. This is the assertion that proves cross-client NPC combat works
-  // (and the one that fails loudly if the non-holder cannot address the cell's epoch).
-  await peer.eval(`Module.__omwMPCmd=${JSON.stringify('hitn:' + victim + ':40')}`);
-  await holder.waitFor('(window.__omwMP||{}).lastHitTaken === "40"', STEP_TIMEOUT,
-    "the non-holder's hit reached the authority holder");
-  ctx.log("ok: non-holder's hit forwarded to and applied by the holder");
-
-  // The holder also attacks it directly (applied locally, no round trip).
-  await holder.eval(`Module.__omwMPCmd=${JSON.stringify('hitn:' + victim + ':40')}`);
-
-  // Finish it off from the holder so death is deterministic regardless of NPC hp.
-  await ctx.sleep(1200);
-  await holder.eval(`Module.__omwMPCmd=${JSON.stringify('killnpc:' + victim)}`);
-
+  // BOTH clients are non-holders, so every one of these hits must be intercepted locally,
+  // forwarded, routed by the server to the peer, and applied there. Nothing a browser does
+  // to this NPC counts unless that whole chain works — which is precisely the path that was
+  // reported broken as "hits are not registering".
   const deadExpr = `((JSON.parse((window.__omwMP||{}).actorProbe||"{}")[${JSON.stringify(victim)}]||{}).dead === true)`;
-  await holder.waitFor(deadExpr, STEP_TIMEOUT, 'NPC dead on the holder');
-  await peer.waitFor(deadExpr, STEP_TIMEOUT, 'NPC dead on the non-holder');
+  const swingDeadline = Date.now() + 90_000;
+  let died = false;
+  while (Date.now() < swingDeadline && !died) {
+    await a.eval(`Module.__omwMPCmd=${JSON.stringify('hitn:' + victim + ':40')}`);
+    await ctx.sleep(600);
+    await b.eval(`Module.__omwMPCmd=${JSON.stringify('hitn:' + victim + ':40')}`);
+    await ctx.sleep(600);
+    died = (await a.eval(deadExpr)) === true || (await b.eval(deadExpr)) === true;
+  }
+  assert.ok(died,
+    'the NPC never died: hits from non-holders are not reaching the cell owner, which is the '
+    + '"my attacks do nothing" failure');
+  ctx.log('ok: the NPC died from hits routed through the cell owner');
 
-  // Exactly ONE kill counted, on both clients (server dedups by (ref, deathNo)).
+  // The death is authored by the peer and must reach BOTH players, not just whoever swung last.
+  await a.waitFor(deadExpr, STEP_TIMEOUT, 'NPC dead on client A');
+  await b.waitFor(deadExpr, STEP_TIMEOUT, 'NPC dead on client B');
+
+  // Exactly ONE kill counted on both clients (server dedups by (ref, deathNo)) — two players
+  // hitting the same NPC must not score it twice.
   const tally = `(window.__omwMP||{}).killCountOf === ${JSON.stringify(victim + '=1')}`;
-  await holder.waitFor(tally, STEP_TIMEOUT, 'kill tally = 1 on the holder');
-  await peer.waitFor(tally, STEP_TIMEOUT, 'kill tally = 1 on the non-holder');
-  ctx.log('ok: NPC died once on both clients, shared kill count = 1');
+  await a.waitFor(tally, STEP_TIMEOUT, 'kill tally = 1 on client A');
+  await b.waitFor(tally, STEP_TIMEOUT, 'kill tally = 1 on client B');
+  ctx.log('ok: NPC died once for both players, shared kill count = 1');
 }

@@ -84,6 +84,12 @@ GL is paid once at init, zero per frame.
 So a peer is ~360 MB + ~9% of a core. On the 23 GB / 8-core VPS that is dozens of
 concurrent peers; one public-world peer is trivial.
 
+> **SUPERSEDED — this is the macOS figure.** Measured on Linux/x86-64 with full retail data on
+> 2026-08-24 the peer is **468–487 MB**, not ~360 MB, and the number that actually sizes a host
+> is per WORLD (peer + its node process ≈ 623 MB), not per peer. See "EXERCISED 2026-08-24"
+> below. The "dozens of concurrent peers" conclusion also does not survive contact with the
+> gateway: worlds multiply the peer's cost, which is what `[worlds] memBudgetMb` exists for.
+
 **H2 — native transport.** A dependency-free RFC 6455 client (`ws://` only; TLS is the
 browser edge's problem). The threading contract was the real work: `NetManager`'s callbacks
 mutate its state inline and are only safe because emscripten delivers them between frames,
@@ -141,18 +147,25 @@ download to protect meshes and textures. NOT usable yet — no client sends hash
 
 ## What is still NOT true, stated plainly
 
-- **"Public, private and party" maps to one world per process today.** A peer per SESSION
-  needs multi-world orchestration (F3), which is **not built** — verified 2026-07-27: there
-  is no gateway, no `child_process` in `server/src`, no `[worlds]` config. A task list
-  claimed otherwise and was corrected. What works now is a peer for THIS server's world,
-  on demand.
-- **Linux/displayless is unexercised.** The measurement is a macOS hidden window. A
-  headless box needs `SDL_VIDEODRIVER=offscreen` (or EGL/OSMesa) and that path has not been
-  run.
+- ~~**"Public, private and party" maps to one world per process today.**~~ **SUPERSEDED.**
+  F3 landed: `gateway/worlds.ts` supervises world processes and each one runs its own
+  `SimPeerSupervisor`, so a peer per session comes with the world. That has a consequence this
+  document originally got backwards — see the note below.
+- ~~**Linux/displayless is unexercised.**~~ **EXERCISED 2026-08-24.** The `tier2` image
+  (`server/Dockerfile.simpeer`) was built and run on x86-64 Linux in a container with no display
+  of any kind. It booted with full retail Morrowind + Tribunal + Bloodmoon, reached
+  `SessionHello` in **11.4 s** (`simpeer.ready startupMs=11357`), and anchored the cell its
+  player was standing in — no `SDL_VIDEODRIVER=offscreen`, no EGL/OSMesa fallback needed.
+
+  **Measured RSS, host load 1.4:** sim peer **487 MB**, world process **136 MB**, gateway
+  process **118 MB**. So one occupied world is **623 MB**, against the 780 MB this document's
+  arithmetic had assumed — wrong in both halves, the node process much smaller and the peer
+  larger. `[worlds] worldCostMb` is now 640 and derived from this rather than from a comment.
 - **Player self-movement is still client-authored** — deliberately (see H5). The peer makes
   validating it possible for the first time; that is follow-on work, not done.
-- **The cost figure is one machine, one cell set.** It has not been measured with a busy
-  world, and per-peer cost is what H4's cap is sized from.
+- **The cost figure is one machine, one cell set.** Still true of the 2026-08-24 Linux
+  measurement above: one player, one exterior cell, an idle box. A peer anchoring several busy
+  cells will cost more, and that has not been measured.
 
 ---
 
@@ -223,6 +236,18 @@ This is the requirement that makes Phase H big, and it revives E1.
 | public world | one long-lived peer, started with the world |
 | private session | started when the session is created, reaped when empty |
 | party | same as private, keyed on the party |
+
+**AND THAT MEANS WORLDS MULTIPLY THE PEER'S COST.** `[simPeer] maxPeers` is per world process,
+so it can never govern the box — it cannot see its siblings. The gateway's `maxWorlds` was for
+a time derived from `[server] maxPlayers` on the explicit reasoning that peers were capped
+separately and "worlds do not multiply the peer's cost", which is the opposite of what this
+table says. See `[worlds] memBudgetMb` and `gateway/worlds.ts capacity()`.
+
+**One peer covers a whole world, not a 3x3 block.** The peer takes an anchor LIST
+(`SimAnchors` -> `Scene::setSimAnchors`), one anchor per occupied cell, so 200 players spread
+across the map are simulated from a single process. `movement.ts loadedCells()` returns ONE
+cell: OpenMW clamps actor processing to 7168 units, narrower than an 8192-unit cell, so a peer
+cannot tick actors across a neighbouring cell no matter what it has loaded.
 
 **Cost per peer is the deciding number and it is currently unknown** — H1 measures it. A full
 OpenMW instance with game data loaded is likely hundreds of MB, so "one per party" may be

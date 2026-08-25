@@ -21,9 +21,22 @@ export PKG_CONFIG_PATH="$DW/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
 # final openmw.{js,wasm} is linked out-of-band by wasm-build/link-openmw.sh (authoritative). Keep
 # INITIAL_MEMORY (1.5 GB) and ASSERTIONS (off) here in sync with that script so a stray cmake-driven
 # link can't clobber them with different values.
+# PNG_LIBRARY, for the same reason build-osg.sh needs it: under -pthread the emscripten port
+# is built as libpng-mt.a, and CMake's FindPNG only looks for libpng.a / libpng16.a. It then
+# reports the headers as found and the library as missing in the same breath, and
+# FindOSGPlugins fails on a dependency that is very much present.
+PNG_A="$SR/lib/wasm32-emscripten/libpng-mt.a"
+
+# Force-included into every translation unit. These are build INPUTS, so they live in the
+# repo — they used to exist only in the maintainer's gitignored deps/wasm/include, which
+# meant a clean checkout could not compile a single file ("gl_compat.h file not found").
+# A deps/ copy still wins if one is present, so an existing maintainer tree is untouched.
+OMW_FORCE_INC="$ROOT/wasm-build/include"
+[ -f "$DW/include/gl_compat.h" ] && OMW_FORCE_INC="$DW/include"
+
 emcmake cmake -S "$ROOT/openmw" -B "$ROOT/build-wasm" -G Ninja \
   -DMYGUI_STATIC=ON -DUSE_LUAJIT=OFF -DOSG_STATIC=ON -DOPENMW_USE_SYSTEM_OSG=ON -DOSGPlugins_LIB_DIR="$DW/lib" -DCMAKE_CXX_SCAN_FOR_MODULES=OFF \
-  -DSDL2_DIR="$DW/lib/cmake/SDL2" \
+  -DSDL2_DIR="$DW/lib/cmake/SDL2" -DPNG_LIBRARY:FILEPATH="$PNG_A" \
   -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_PREFIX_PATH="$DW;$SR;$SR/include" \
   -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=BOTH -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=BOTH \
@@ -34,7 +47,7 @@ emcmake cmake -S "$ROOT/openmw" -B "$ROOT/build-wasm" -G Ninja \
   -DBUILD_DOCS=OFF -DBUILD_BENCHMARKS=OFF -DBUILD_UNITTESTS=OFF -DBUILD_COMPONENTS_TESTS=OFF \
   -DBUILD_OPENMW_MP=OFF -DUSE_QT=OFF -DUSE_SYSTEM_TINYXML=OFF \
   -DOPENMW_USE_SYSTEM_SQLITE3=OFF -DOPENMW_USE_SYSTEM_YAML_CPP=OFF -DOPENMW_USE_SYSTEM_ICU=ON \
-  -DCMAKE_CXX_FLAGS="-D_LIBCPP_ENABLE_CXX17_REMOVED_FEATURES -DBT_USE_DOUBLE_PRECISION -fwasm-exceptions -include $DW/include/mygui_char_traits_fix.h -include $DW/include/gl_compat.h -Wno-missing-template-arg-list-after-template-kw -Wno-error=missing-template-arg-list-after-template-kw -pthread -I$BOOST/../bullet3/src -I$DW/include -I$BOOST" \
+  -DCMAKE_CXX_FLAGS="-D_LIBCPP_ENABLE_CXX17_REMOVED_FEATURES -DBT_USE_DOUBLE_PRECISION -fwasm-exceptions -include $OMW_FORCE_INC/mygui_char_traits_fix.h -include $OMW_FORCE_INC/gl_compat.h -Wno-missing-template-arg-list-after-template-kw -Wno-error=missing-template-arg-list-after-template-kw -pthread -I$BOOST/../bullet3/src -I$DW/include -I$BOOST" \
   -DCMAKE_C_FLAGS="-pthread" \
   -DBoost_INCLUDE_DIR="$BOOST" -DBoost_NO_BOOST_CMAKE=OFF \
   -DBoost_USE_STATIC_RUNTIME=ON -DBoost_USE_STATIC_LIBS=ON \

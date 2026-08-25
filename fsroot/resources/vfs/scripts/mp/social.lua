@@ -82,6 +82,79 @@ local PRESENCE_HELP = {
     private = 'nobody can see you, and invites are refused',
 }
 
+-- WHAT THE PLAYER IS TOLD WHEN A SOCIAL ACTION IS REFUSED.
+--
+-- Every social op answers with a `SocialResult` carrying a protocol code — `already_in_party`,
+-- `not_leader`, `private`. Those are wire identifiers, and they used to be shown to the player
+-- verbatim: pressing "party" on somebody who already had one popped up "PartyInvite:
+-- already_in_party", and a SUCCESSFUL invite read "PartyInvite: ok". The information was all
+-- there and none of it was in English, which is the difference between a game telling you what
+-- happened and a game leaking its own internals at you.
+local SOCIAL_FAIL = {
+    no_such_player    = 'No player by that name.',
+    blocked           = 'You cannot do that with this player.',
+    already_friends   = 'You are already friends.',
+    self              = 'That is you.',
+    too_many_requests = 'Too many requests pending — try again shortly.',
+    no_request        = 'That invitation has expired.',
+    not_online        = 'They are offline.',
+    private           = 'They are not accepting invitations.',
+    not_in_party      = 'You are not in a party.',
+    not_leader        = 'Only the party leader can do that.',
+    party_full        = 'The party is full.',
+    already_in_party  = 'You are already in a party.',
+    no_party          = 'You are not in a party.',
+    not_member        = 'They are not in your party.',
+}
+
+-- Two codes describe the OTHER person when the action reaches outward, and the same person when
+-- it reaches inward. `already_in_party` on an invite is a fact about THEM (social.ts checks the
+-- target); on an accept it is a fact about YOU. Sharing one sentence between the two would make
+-- one of them a lie, so the outward op overrides.
+local SOCIAL_FAIL_BY_OP = {
+    PartyInvite = {
+        already_in_party = 'They are already in a party.',
+        party_full       = 'Your party is full.',
+    },
+}
+
+local SOCIAL_OK = {
+    PartyInvite   = 'Invitation sent.',
+    InviteSend    = 'Invitation sent.',
+    PartyAccept   = 'You joined the party.',
+    InviteAccept  = 'Invitation accepted.',
+    PartyLeave    = 'You left the party.',
+    PartyKick     = 'They have been removed from the party.',
+    FriendAccept  = 'You are now friends.',
+    FriendRemove  = 'Friend removed.',
+    BlockAdd      = 'Blocked.',
+    BlockRemove   = 'Unblocked.',
+    MuteAdd       = 'Muted.',
+    MuteRemove    = 'Unmuted.',
+    ReportPlayer  = 'Report sent to the moderators.',
+    PartyTravel   = 'Taking the party there...',
+    LootRollVote  = 'Roll cast.',
+}
+
+-- WebRTC signalling is machinery, not an action the player took. A dropped offer because the
+-- peer just left the party is normal, and popping "VoiceSignal: not_in_party" over the game for
+-- it is pure noise.
+local SOCIAL_SILENT = { VoiceSignal = true }
+
+-- FriendRequest answers 'sent' or 'accepted' — a request that crosses one already waiting the
+-- other way completes on the spot, and saying "request sent" there would be wrong.
+local function socialText(op, ok, detail)
+    if ok then
+        if op == 'FriendRequest' then
+            return detail == 'accepted' and 'You are now friends.' or 'Friend request sent.'
+        end
+        return SOCIAL_OK[op] or 'Done.'
+    end
+    local byOp = SOCIAL_FAIL_BY_OP[op]
+    return (byOp and byOp[detail]) or SOCIAL_FAIL[detail]
+        or (tostring(op) .. ': ' .. tostring(detail or '?'))
+end
+
 local function send(op, body)
     body = body or {}
     body.op = op
@@ -329,7 +402,23 @@ local function partyTab()
                     render()
                 end
             end),
+            -- DIFFICULTY, and it is off unless a group asks for it. Enemies scale to how many of
+            -- you are actually standing together, sub-linearly — a group's real advantage is
+            -- action economy rather than raw numbers. Shipped off because people come to co-op to
+            -- play Morrowind together, not to find it quietly harder because a friend walked in;
+            -- this button is what makes that a CHOICE rather than a decision taken for them.
+            U.button((party.scaling == true) and 'enemies: scaled' or 'enemies: vanilla', function()
+                if amLeader then
+                    send('PartySetting', { name = 'scaling', value = (party.scaling ~= true) and 'true' or 'false' })
+                else
+                    status = 'Only the party leader can change that.'
+                    render()
+                end
+            end),
         }
+        if party.scaling == true then
+            rows[#rows + 1] = U.text('Enemies are tougher with more of you in the same place.')
+        end
         rows[#rows + 1] = U.row {
             U.button(voiceOn and 'voice: on' or 'voice: off', function()
                 voiceOn = not voiceOn
@@ -672,7 +761,21 @@ return {
             -- Keep the voice mesh exactly in step with the party the player can see:
             -- someone who left the group must not still be connected to your microphone.
             core.sendGlobalEvent('mpVoice', { op = 'party', members = data.members or {} })
-            party = { leader = data.leader or '', members = data.members or {} }
+            -- CARRY THE RULES, not just the roster. This rebuilt the table from leader+members
+            -- alone and dropped every setting the server sent, so party.goldSplit and
+            -- party.rollOnRare were ALWAYS nil on the client. The consequences were quiet and
+            -- total: each button rendered its default label no matter what the party had
+            -- actually chosen, and because the click handlers compute the new value from that
+            -- same nil, they could only ever send 'false' — press "gold: split" and it sends
+            -- goldSplit=false, press it again and it sends false again. The toggles were
+            -- one-way, and the labels lied about which way.
+            party = {
+                leader = data.leader or '',
+                members = data.members or {},
+                goldSplit = data.goldSplit,
+                rollOnRare = data.rollOnRare,
+                scaling = data.scaling,
+            }
             for _, m in ipairs(party.members) do invites[m.acct] = nil end
             mirror()
             render()
@@ -748,6 +851,27 @@ return {
             tab = 'party'
             if not isOpen then toggle() else render() end
         end,
+        -- THE ANSWER TO THE QUESTION IT ASKED. The server sends LootRollResult to every member
+        -- when a roll settles, and nothing on the client listened for it — so the game
+        -- interrupted you for a decision about an artifact and then never said who won. A
+        -- prompt with no outcome reads as broken, and it is the one moment in a loot rule that
+        -- players actually care about.
+        MP_LootRollResult = function(data)
+            local item = tostring(data.itemId or 'it')
+            if data.youWon == true then
+                status = 'You won the roll for ' .. item .. '.'
+            elseif tostring(data.winner or '') ~= '' then
+                status = tostring(data.winner) .. ' won the roll for ' .. item .. '.'
+            else
+                -- Everyone passed, or nobody answered before the window closed.
+                status = 'Nobody claimed ' .. item .. '.'
+            end
+            -- Clear any prompt still on screen: this roll is over, and leaving its need/pass
+            -- buttons up invites a vote the server has already stopped listening for.
+            rollId, rollItem = nil, nil
+            render()
+        end,
+
         MP_LootShare = function(data)
             status = 'Party share: ' .. tostring(data.n) .. ' x ' .. tostring(data.itemId)
                 .. ' from ' .. tostring(data.from)
@@ -805,6 +929,48 @@ return {
         end,
         -- Every refused action reports why. An action that silently does nothing is
         -- indistinguishable from a broken server.
+        -- Why the world clock did not move. `[rules] timeSkip` refuses a Rest or Wait so one
+        -- stranger cannot fast-forward everyone else into the night; the public world ships it
+        -- off entirely. Without this the bed simply does nothing and the player tries again.
+        MP_WorldTimeRefused = function(data)
+            -- The server already phrases this as a sentence ("time does not skip in this
+            -- world", "only your party leader can rest for the group"), so pass it through
+            -- rather than re-deriving it from a code that does not exist. A lookup table here
+            -- would silently stop matching the day someone adds a reason.
+            local reason = tostring(data.reason or '')
+            if reason == '' then reason = 'you cannot pass time here' end
+            status = reason:sub(1, 1):upper() .. reason:sub(2) .. '.'
+            ui.showMessage(status)
+            render()
+        end,
+        -- You were removed from a party, or it disbanded under you. Being dropped in silence is
+        -- indistinguishable from the server losing your party.
+        -- The swing was real and the server threw it away, because the cell it landed in is not
+        -- being simulated right now (the peer is restarting, or has not picked the cell up yet).
+        -- Without this the attack just does nothing, which reads as a broken game rather than a
+        -- momentary one.
+        MP_CombatRefused = function(data)
+            local why = tostring(data.reason or '')
+            if why == 'stale epoch' then
+                status = 'The world is handing this area over — try that again.'
+            else
+                status = 'This area is not being simulated right now; attacks will not land.'
+            end
+            ui.showMessage(status)
+        end,
+        MP_SocialNotice = function(data)
+            local by = tostring(data.by or 'someone')
+            if data.kind == 'party_kicked' then
+                status = by .. ' removed you from the party.'
+            elseif data.kind == 'party_disbanded' then
+                status = 'The party has broken up (' .. by .. ' left).'
+            else
+                status = 'Your party changed.'
+            end
+            ui.showMessage(status)
+            mirror()
+            render()
+        end,
         MP_SocialResult = function(data)
             if data.op == 'PresenceMode' and data.ok == true then
                 presence = tostring(data.detail)
@@ -816,8 +982,10 @@ return {
             elseif data.op == 'SetWorldMode' and data.ok == true then
                 status = tostring(data.detail) == 'party'
                     and 'Your world is open to your party.' or 'Your world is solo again.'
+            elseif SOCIAL_SILENT[data.op] then
+                -- Machinery, not a player action. Never narrated, success or failure.
             else
-                status = tostring(data.op or '?') .. ': ' .. tostring(data.detail or '?')
+                status = socialText(data.op, data.ok == true, tostring(data.detail or ''))
                 if data.ok ~= true then ui.showMessage(status) end
             end
             mp.testSet('socialResult', json.encode({ op = data.op, ok = data.ok, detail = data.detail }))

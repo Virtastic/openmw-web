@@ -165,6 +165,10 @@ local function tryTeleport(obj, cellArg, pos)
     return ok
 end
 
+-- Throttle for MP_CombatRefused: one explanation per situation, not one per swing.
+local combatRefusedAt = nil
+local COMBAT_REFUSED_EVERY = 8 -- seconds
+
 local function toPlayer(eventName, data)
     local player = playerScript()
     if player then player:sendEvent(eventName, data) end
@@ -506,6 +510,7 @@ local testItemRecordId = nil -- dynamic record for the equiptest harness hook
 local chestRecordId = nil
 local chestObj = nil
 local lastChestOpId = nil
+local testCastSpellId = nil -- created once by mpTestCastAt
 local lastDoorMirror = 0
 
 local function nearestDoor()
@@ -701,6 +706,11 @@ local function start()
         ownCellKeyFn = function() return ownCellKeyCache end,
         ownIdFn = function() return net.state == 'Joined' and net.playerId or nil end,
         placeholderItemFn = placeholderItemId,
+        -- A refused container op UNDOES the optimistic local take, so without this the item
+        -- simply disappears out of the player's inventory a moment after they picked it up.
+        -- notice() is queued and flushed against the player script, so it is a no-op on the
+        -- headless sim peer rather than something that needs guarding at the call site.
+        noticeFn = notice,
     })
     -- M4 shared-NPC authority hub (see scripts/mp/actors.lua). isMpPuppetFn tells the actor
     -- sampler which active actors are remote-PLAYER puppets (driven by player move frames) so
@@ -909,6 +919,33 @@ local eventHandlers = {
         end
     end,
     MP_WorldCreate = function(data) toPlayer('MP_WorldCreate', data) end,
+    -- BOTH OF THESE WERE SENT BY THE SERVER AND HANDLED BY NOBODY. A server->client event with
+    -- no handler is not an error anywhere: it arrives, matches nothing, and is dropped in
+    -- silence, so the feature reads as unimplemented while the server-side half is complete
+    -- and tested. Found by diffing every `sendEvent` on the server against every `MP_*`
+    -- handler here.
+    --
+    -- WorldTimeRefused: the server refuses a Rest/Wait under `[rules] timeSkip` and says so
+    -- deliberately — m7.ts's own comment is "Refusals are TOLD to the player — a Rest that
+    -- silently does nothing gets pressed again and then reported as a bug". Which is exactly
+    -- what happened, because the telling never arrived. It matters more now than when it was
+    -- written: the public world ships `timeSkip = "off"`, so resting in the lobby is a thing
+    -- every visitor will try.
+    MP_WorldTimeRefused = function(data) toPlayer('MP_WorldTimeRefused', data) end,
+    -- SocialNotice: you were kicked from a party, or the leader left and it disbanded. The
+    -- server sends it precisely so the party does not just evaporate with nobody knowing why.
+    MP_SocialNotice = function(data) toPlayer('MP_SocialNotice', data) end,
+    -- Why that swing did nothing. The attacker's client has ALREADY cancelled its own damage by
+    -- the time the server sees the hit, so a drop costs the whole attack — and the cell being
+    -- unsimulated is not something the player can see. Throttled here rather than on the server
+    -- because the server would have to keep per-player state to do it, and one message per
+    -- situation is what is wanted, not one per swing.
+    MP_CombatRefused = function(data)
+        local now = core.getRealTime()
+        if combatRefusedAt and now - combatRefusedAt < COMBAT_REFUSED_EVERY then return end
+        combatRefusedAt = now
+        toPlayer('MP_CombatRefused', data)
+    end,
     MP_FriendRequestReceived = function(data) toPlayer('MP_FriendRequestReceived', data) end,
     MP_InviteReceived = function(data) toPlayer('MP_InviteReceived', data) end,
     MP_PresenceUpdate = function(data) toPlayer('MP_PresenceUpdate', data) end,
@@ -1041,11 +1078,21 @@ local eventHandlers = {
     -- knows where the host actually is.
     MP_InviteAccepted = function(data)
         local player = playerScript()
-        if not player or not data.cellKey then return end
+        if not player then return end -- headless peer: nothing to travel
+        -- ACCEPTING AN INVITE AND GOING NOWHERE USED TO BE SILENT. Both of these leave the
+        -- player exactly where they were, having just pressed "accept" — which reads as the
+        -- invite being broken rather than the travel being. One line each is the whole fix.
+        if not data.cellKey then
+            notice('Could not work out where they are — ask them to try again.')
+            return
+        end
         local ok, err = pcall(function()
             player:teleport(inviteCellArg(tostring(data.cellKey)), util.vector3(data.x or 0, data.y or 0, data.z or 0))
         end)
-        if not ok then print('[mp] invite teleport failed: ' .. tostring(err)) end
+        if not ok then
+            print('[mp] invite teleport failed: ' .. tostring(err))
+            notice('Could not travel to them just now.')
+        end
         mp.testSet('invitedTo', tostring(data.cellKey))
     end,
 
@@ -1414,6 +1461,60 @@ local eventHandlers = {
         })
     end,
 
+    -- M5 test hook: CAST a damaging spell at a cell NPC (castat:<recordId>:<magnitude>).
+    -- The melee hook posts a `Hit` event; this one goes through the MAGIC path
+    -- (mwmechanics/spelleffects.cpp), which is a different code path entirely and the one that
+    -- never propagated before the puppet registry existed. Headless CDP cannot cast a spell, so
+    -- without this there is no automated way to exercise it at all.
+    mpTestCastAt = function(data)
+        local victim = nil
+        for _, obj in ipairs(world.activeActors) do
+            if obj:isValid() and obj.recordId == data.record then victim = obj break end
+        end
+        if not victim then
+            print('[mp] mpTestCastAt: no victim for ' .. tostring(data.record))
+            mp.testSet('castAt', 'no-victim')
+            return
+        end
+        -- A SPELL THE OWNER ALSO HAS. Creating a record here would make a DYNAMIC spell that
+        -- exists only on this client; the owner applies the spell by id
+        -- (combat.lua MP_CombatSpellHit), finds nothing, and silently applies nothing — which
+        -- is exactly how this failed the first time. Pick one out of the shared content
+        -- instead, so both sides can resolve it.
+        if not testCastSpellId then
+            local harmful = { damagehealth = true, firedamage = true, shockdamage = true,
+                              frostdamage = true, poison = true }
+            local okFind = pcall(function()
+                for _, spell in pairs(core.magic.spells.records) do
+                    for _, eff in ipairs(spell.effects or {}) do
+                        local id = eff.effect and eff.effect.id or eff.id
+                        if id and harmful[tostring(id)] then
+                            testCastSpellId = spell.id
+                            return
+                        end
+                    end
+                end
+            end)
+            if not okFind or not testCastSpellId then
+                print('[mp] mpTestCastAt: no harmful spell in this content')
+                mp.testSet('castAt', 'no-harmful-spell')
+                return
+            end
+        end
+        local okAdd, err = pcall(function()
+            types.Actor.activeSpells(victim):add({
+                id = testCastSpellId, effects = { 0 },
+                caster = playerScript(), ignoreResistances = true,
+            })
+        end)
+        if not okAdd then
+            print('[mp] mpTestCastAt failed: ' .. tostring(err))
+            mp.testSet('castAt', 'add-failed:' .. tostring(err))
+        else
+            mp.testSet('castAt', 'cast:' .. tostring(testCastSpellId))
+        end
+    end,
+
     -- M4 test hook: kill a specific cell NPC (holder side drives the death edge).
     mpKillNpc = function(data)
         if type(data.id) == 'string' and not actors.killActorByRecord(data.id) then
@@ -1758,6 +1859,8 @@ for name, fn in pairs(combat.handlers) do
 end
 -- puppet.lua -> here: a hit landed on a puppet; forward it to the victim's owner.
 eventHandlers.mpCombatHit = combat.onPuppetHit
+
+eventHandlers.mpCombatSpellHit = combat.onPuppetSpellHit
 -- Wrap the op-result applier to expose the outcome to the harness (s31 race assert).
 local baseOpResult = eventHandlers.MP_ContainerOpResult
 eventHandlers.MP_ContainerOpResult = function(data)

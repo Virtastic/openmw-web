@@ -20,6 +20,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { log } from '../log';
+import { metrics } from '../metrics';
 
 // Written into a private/party world's data dir at creation so a later REVIVAL can authorise.
 // A dotfile so it cannot collide with anything the world itself writes.
@@ -40,6 +41,19 @@ export interface WorldSettings {
   nodeBin: string;
   basePort: number;
   maxWorlds: number; // hard cap across ALL modes
+  // THE MEMORY GOVERNOR. maxWorlds alone is a COUNT, and a count cannot see the thing that
+  // actually runs out: every occupied world is a node process AND its own sim peer (each world
+  // process runs its own SimPeerSupervisor), so worlds multiply the peer's cost rather than
+  // sharing it. A cap derived from maxPlayers therefore let the supervisor spawn worlds until
+  // the OOM killer took the container, while [simPeer].maxPeers — which is per-world — read as
+  // satisfied the whole time. Budget in megabytes, converted to a world count at boot.
+  //
+  // OPTIONAL because a test (and an embedder driving fake spawners) wants a pure count cap and
+  // has no memory to govern. main.ts — the real deployment path — always supplies these, and
+  // logs at boot when it cannot, so "no budget" is a stated condition rather than a silent one.
+  memBudgetMb?: number; // total RAM this gateway may spend on worlds + their peers (0/absent = no budget)
+  worldCostMb?: number; // MEASURED cost of one occupied world: node process + its sim peer (~640)
+  gatewayReserveMb?: number; // held back for the gateway process itself
   idleReapMs: number; // a non-public world with no players this long is stopped
   startTimeoutMs: number;
   restartBackoffMs: number;
@@ -105,6 +119,26 @@ export class WorldSupervisor {
     return this.worlds.size;
   }
 
+  /** How many worlds this gateway may run at once, and why. The memory budget and the hard
+   *  count cap are BOTH ceilings; the lower one wins, and `reason` names it so an operator
+   *  reading `world.at_cap` knows which number to change. A zero/absent budget means the
+   *  operator has opted out and only the count cap applies. */
+  capacity(): { cap: number; reason: 'count' | 'memory'; fromMemory: number } {
+    const s = this.deps.settings;
+    const budget = s.memBudgetMb ?? 0;
+    const cost = s.worldCostMb ?? 0;
+    const usable = budget - (s.gatewayReserveMb ?? 0);
+    // A budget too small for even one world is still one world: refusing to start anything
+    // would make a misconfigured budget indistinguishable from a broken gateway, and the
+    // operator sees the honest ceiling in gateway.capacity either way.
+    const fromMemory = budget > 0 && cost > 0
+      ? Math.max(1, Math.floor(usable / cost))
+      : Number.POSITIVE_INFINITY;
+    return fromMemory < s.maxWorlds
+      ? { cap: fromMemory, reason: 'memory', fromMemory }
+      : { cap: s.maxWorlds, reason: 'count', fromMemory };
+  }
+
   list(): WorldInfo[] {
     return [...this.worlds.values()].map((w) => ({
       id: w.id,
@@ -137,8 +171,13 @@ export class WorldSupervisor {
       existing.idleSince = undefined;
       return this.get(id)!;
     }
-    if (this.worlds.size >= this.deps.settings.maxWorlds) {
-      log('warn', 'world.at_cap', { id, running: this.worlds.size, cap: this.deps.settings.maxWorlds });
+    const { cap, reason } = this.capacity();
+    if (this.worlds.size >= cap) {
+      // `reason` is the whole point of the line: "at cap" with no attribution is what sent an
+      // operator to raise maxWorlds when the binding constraint was RAM, which is how a box
+      // gets OOM-killed by a setting that was changed to prevent exactly that.
+      log('warn', 'world.at_cap', { id, running: this.worlds.size, cap, reason });
+      metrics.worldRefused.inc({ reason });
       return null;
     }
     const blocked = this.blockedUntil.get(id);

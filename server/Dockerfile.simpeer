@@ -56,6 +56,20 @@ RUN git clone --depth 1 --branch 3.25 https://github.com/bulletphysics/bullet3.g
 # apps/openmw/mwmp and the headless guards in apps/openmw/engine.cpp.
 COPY openmw /src/openmw
 
+# HOW MANY COMPILES AT ONCE, and why this is not left to ninja.
+#
+# Ninja defaults to nproc+2. On a 32-core / 16 GB machine that is 34 concurrent g++ processes
+# on OpenMW translation units that individually reach 1-2 GB — the box goes to swap, the Docker
+# daemon stops answering, and the build sits at the same object file indefinitely with no error
+# and no output. Measured doing exactly that at [652/859].
+#
+# It presents as a hang rather than an OOM kill, which is the worst kind: nothing fails, so
+# there is nothing to read. Budget roughly 1 GB of RAM per job and set BUILD_JOBS accordingly;
+# the default is deliberately conservative so the image builds on an ordinary machine rather
+# than only on the one it was written on.
+ARG BUILD_JOBS=6
+ENV CMAKE_BUILD_PARALLEL_LEVEL=${BUILD_JOBS}
+
 # Tools OFF (no launcher/wizard/opencs): the peer never renders a menu, and turning them off
 # also avoids the Qt dependency. The APPLE-only bundling guard added for the macOS build does
 # not apply here.

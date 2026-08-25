@@ -1,6 +1,9 @@
 // Modified by Virtastic (https://virtastic.app) for the OpenMW-Web port, 2025-2026.
 // See WASM_ADAPTATIONS.md at the repository root for details of the changes.
 #include <components/debug/debugging.hpp>
+#ifdef __EMSCRIPTEN__
+#include <unicode/putil.h>
+#endif
 #include <components/fallback/fallback.hpp>
 #include <components/fallback/validate.hpp>
 #include <components/files/configurationmanager.hpp>
@@ -214,6 +217,29 @@ namespace
 int runApplication(int argc, char* argv[])
 {
     Platform::init();
+
+#ifdef __EMSCRIPTEN__
+    // POINT ICU AT ITS DATA BEFORE ANYTHING FORMATS A MESSAGE.
+    //
+    // The emscripten ICU port links `libicu_stubdata`, which is ICU's "the data is supplied
+    // some other way" placeholder — and nothing was supplying it. ICU then has no locale data
+    // at all, so NumberFormat::createInstance() returns U_MISSING_RESOURCE_ERROR and a null
+    // pointer, and MessageFormat::format() calls a virtual on that null. In wasm a virtual
+    // call through a null object reads a garbage table index, which surfaces as a bare
+    // `RuntimeError: null function` with no message.
+    //
+    // That killed the engine on EVERY boot, in SettingsWindow's constructor: configureWidgets
+    // walks the settings tree, updateSliderLabel formats a number into a label, and ICU dies
+    // there. Reproduced in isolation with a twelve-line program against these same archives
+    // (U_MISSING_RESOURCE_ERROR -> ptr=NULL -> null function), and fixed by this one call:
+    // with it, the same program prints "Value: 42".
+    //
+    // The .dat is staged into the preload package by wasm-build/link-openmw.sh. Setting the
+    // ICU_DATA environment variable instead does NOT work here — this build of ICU reports an
+    // empty u_getDataDirectory() regardless — so it has to be set in-process, and it has to be
+    // before the first ICU use rather than wherever L10n happens to initialise.
+    u_setDataDirectory("/icu");
+#endif
 
 #ifdef __APPLE__
     setenv("OSG_GL_TEXTURE_STORAGE", "OFF", 0);

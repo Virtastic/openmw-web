@@ -64,18 +64,60 @@ build_recast() {
 }
 
 # --- MyGUI (engine only, static) -> libMyGUIEngineStatic.a  (+ headers into deps/wasm/include)
+# --- SDL2 cmake config shim. The emscripten SDL2 PORT ships sdl2-config.cmake but no
+# sdl2-config-version.cmake, so CMake reads its version as "unknown" and OpenMW's
+# find_package(SDL2 2.0.20) rejects it — while the port is actually SDL 2.32.10, far newer than
+# required. Nothing is wrong but the missing file, so supply one and forward to the port.
+build_sdl2_cfg() {
+  log "sdl2 cmake config shim"
+  local V H OUT="$DW/lib/cmake/SDL2"
+  H="$SR/include/SDL2/SDL_version.h"
+  V="$(awk '/define SDL_MAJOR_VERSION/{a=$3} /define SDL_MINOR_VERSION/{b=$3} /define SDL_PATCHLEVEL/{c=$3} END{print a"."b"."c}' "$H")"
+  [ -n "$V" ] && [ "$V" != ".." ] || { echo "!! could not read SDL version from $H" >&2; return 1; }
+  mkdir -p "$OUT"
+  # Read from the header rather than hardcoded, so a toolchain bump cannot leave a lie here.
+  cat > "$OUT/SDL2Config.cmake" <<CFG
+include("$SR/lib/cmake/SDL2/sdl2-config.cmake")
+set(SDL2_VERSION "$V")
+CFG
+  cat > "$OUT/SDL2ConfigVersion.cmake" <<CFG
+set(PACKAGE_VERSION "$V")
+if("\${PACKAGE_VERSION}" VERSION_LESS "\${PACKAGE_FIND_VERSION}")
+  set(PACKAGE_VERSION_COMPATIBLE FALSE)
+else()
+  set(PACKAGE_VERSION_COMPATIBLE TRUE)
+  if("\${PACKAGE_VERSION}" VERSION_EQUAL "\${PACKAGE_FIND_VERSION}")
+    set(PACKAGE_VERSION_EXACT TRUE)
+  endif()
+endif()
+CFG
+  echo "staged SDL2 cmake config for $V"
+}
+
 build_mygui() {
   log "mygui"
-  # MyGUI needs FreeType; use the emscripten FreeType port (-sUSE_FREETYPE=1). ### VERIFY ### that
-  # cmake finds the port's FreeType (may need -DFREETYPE_INCLUDE_DIRS / -DFREETYPE_LIBRARIES).
+  # MyGUI needs FreeType, from the emscripten port. VERIFIED 2026-08-24: cmake DOES find it, but
+  # only once the port has been materialised into the sysroot — a port does not exist as a .a
+  # until something links it, so build_em_ports must have run first (it now builds this set).
+  # Without that, configure fails at "Could NOT find Freetype (missing: FREETYPE_LIBRARY)" while
+  # cheerfully reporting the headers were found, which is a confusing place to land.
   local FT="-sUSE_FREETYPE=1"
+  # MyGUI's UString is std::basic_string<unsigned short>, and libc++ only specialises char_traits
+  # for the standard character types — newer releases removed the primary template it relied on,
+  # so 3.4.3 no longer compiles as-is. Force-include a forwarding specialisation rather than
+  # patching upstream. See deps/shim/ushort_char_traits.h for why this is safe.
+  local SHIM=""
+  [ -f "$ROOT/deps/shim/ushort_char_traits.h" ] && SHIM="-include $ROOT/deps/shim/ushort_char_traits.h"
   emcmake cmake -S "$SRC/mygui" -B "$SRC/mygui/build-wasm" -G Ninja \
     -DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
     -DMYGUI_STATIC=ON -DMYGUI_RENDERSYSTEM=1 -DMYGUI_DISABLE_PLUGINS=ON \
     -DMYGUI_BUILD_DEMOS=OFF -DMYGUI_BUILD_TOOLS=OFF -DMYGUI_BUILD_PLUGINS=OFF \
     -DMYGUI_BUILD_UNITTESTS=OFF -DMYGUI_BUILD_TEST_APP=OFF -DMYGUI_DONT_USE_OBSOLETE=ON \
-    -DCMAKE_CXX_FLAGS="$CFLAGS_COMMON $FT" -DCMAKE_C_FLAGS="$CFLAGS_COMMON $FT"
-  ninja -C "$SRC/mygui/build-wasm" MyGUIEngineStatic
+    -DCMAKE_CXX_FLAGS="$CFLAGS_COMMON $FT $SHIM" -DCMAKE_C_FLAGS="$CFLAGS_COMMON $FT"
+  # MyGUIEngine, NOT MyGUIEngineStatic. MYGUI_STATIC=ON changes the library TYPE, not the target
+  # NAME — 3.4.3 has no MyGUIEngineStatic target at all, so this failed with "unknown target"
+  # every time. (It had never been run: the VERIFY note above was still standing.)
+  ninja -C "$SRC/mygui/build-wasm" MyGUIEngine
   find "$SRC/mygui/build-wasm" -name 'libMyGUIEngine*.a' -exec cp -f {} "$DW/lib/" \;
   # Headers OpenMW's configure expects under MYGUI_HOME=$DW (include/MYGUI/*).
   mkdir -p "$DW/include/MYGUI"
@@ -160,6 +202,11 @@ build_em_ports() {
   emcc -pthread -sMAX_WEBGL_VERSION=2 -sFULL_ES3=1 "$t/p.c" -o "$t/gl.js"    # GL -> libGL-getprocaddr.a
   echo 'int main(){return 0;}' > "$t/i.c"
   emcc -pthread -sUSE_ICU=1 "$t/i.c" -o "$t/icu.js"                          # ICU port -> libicu_*-mt.a
+  # The rest of the ports OpenMW and MyGUI link. A port is only materialised into the sysroot
+  # when something links it, so building them here is what lets MyGUI's FindFreetype succeed —
+  # and what makes link-openmw.sh's -sUSE_* flags resolve without a surprise rebuild.
+  echo 'int main(){return 0;}' > "$t/r.c"
+  emcc -pthread -sUSE_SDL=2 -sUSE_FREETYPE=1 -sUSE_HARFBUZZ=1 -sUSE_LIBPNG=1        -sUSE_LIBJPEG=1 -sUSE_ZLIB=1 -sUSE_OGG=1 -sUSE_VORBIS=1 "$t/r.c" -o "$t/r.js"
   # FATAL if the sysroot archives aren't staged — otherwise build-deps reports success and the
   # failure only surfaces much later as a cryptic link-openmw.sh "file not found" (or links a stale
   # cached variant). (Previously `emcc ... || true` + `ls ... || echo` masked this and returned 0.)
@@ -167,7 +214,7 @@ build_em_ports() {
     echo "!! ICU-mt / libGL-getprocaddr not staged — see VERIFY note above" >&2; exit 1; }
 }
 
-ALL=(em_ports openal_stub lz4 lua boost bullet recast mygui ffmpeg osg)
+ALL=(em_ports openal_stub sdl2_cfg lz4 lua boost bullet recast mygui ffmpeg osg)
 targets=("${@:-${ALL[@]}}")
 for t in "${targets[@]}"; do "build_${t}"; done
 log "done. staged libs:"; ls "$DW/lib/"*.a | wc -l

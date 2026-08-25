@@ -448,6 +448,24 @@ handlers.MP_ContainerOpResult = function(data)
     -- Lost the race ("gone"): undo the optimistic local take — the item leaves the player
     -- inventory again, and the container is trued up by the ResyncRequest cell state.
     print('[mp] container op rejected: ' .. tostring(data.reason))
+    -- TELL THEM. The undo below removes the item from the player's inventory again, so from
+    -- their side a thing they just picked up vanishes on its own. "gone" is the ordinary case
+    -- and it is not an error: somebody else reached the container first.
+    -- The five the server actually sends (worldstate.ts containerOp): nostate, contained,
+    -- gone, rolling, full. `rolling` is the one that most needs saying — with party loot rolls
+    -- on, grabbing a rare item refuses the take and starts a roll instead, so silence reads as
+    -- the game ignoring you at the exact moment it is doing something interesting.
+    if deps.noticeFn then
+        local why = {
+            gone = 'Somebody else took that first.',
+            rolling = 'The party is rolling for that one.',
+            full = 'You cannot carry any more of that.',
+            contained = 'That cannot be moved directly.',
+            nostate = 'That container is still opening — try again.',
+        }
+        deps.noticeFn(why[tostring(data.reason or '')]
+            or (op.op == 'take' and 'You could not take that.' or 'That would not go in.'))
+    end
     if op.op == 'take' then
         local player = deps.playerFn()
         if player then

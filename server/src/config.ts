@@ -18,6 +18,18 @@ export interface Config {
   // the in-game world browser simply reports that there is nothing to browse (a single
   // self-hosted world is a complete, valid setup).
   gateway: { url: string };
+  /** "section.key" paths the operator explicitly stated (see statedPaths). Empty for a config
+   *  built purely from the shipped defaults. Populated by loadConfig, not by validate(). */
+  stated?: Set<string>;
+  // F3 supervisor sizing. Read by the GATEWAY process only (dist/gateway.mjs); a single world
+  // server ignores it. See gateway/worlds.ts capacity() for why a count cap alone is not
+  // enough: every occupied world carries its own sim peer, so worlds multiply RAM.
+  worlds: {
+    maxWorlds: number; // hard count ceiling (0 = derive from memory alone)
+    memBudgetMb: number; // total RAM for worlds + peers (0 = no memory governor)
+    worldCostMb: number; // measured: one world's node process + its sim peer
+    gatewayReserveMb: number; // held back for the gateway process itself
+  };
   simPeer: {
     /** Always true once boot succeeds; boot fails otherwise. Kept so call sites read clearly. */
     enabled: boolean;
@@ -55,12 +67,16 @@ export interface Config {
     // progress (added to the built-in conservative set); and whether co-present party
     // members earn credit for objectives they were present and eligible for.
     worldGlobals: string[];
-    partyCredit: boolean;
   };
   // Phase 3 public sandbox economy. Enabled on the public realm only: it resets by
   // construction, so unique NPCs respawn — and a respawning unique that drops loot is an
   // infinite artifact faucet. Private/party campaigns keep vanilla rules.
-  economy: { noDrop: boolean };
+  economy: {
+    noDrop: boolean;
+    /** Refuse a drop of something the sender does not hold, instead of only counting it.
+     *  Needs clients that report acquisitions per event (PlayerItemAcquired). */
+    refuseUnownedDrops: boolean;
+  };
   // Phase 3.5 storage locker. S3 creds come from env (S3_ACCESS_KEY_ID/S3_SECRET_ACCESS_KEY);
   // endpoint/region/bucket are config. Empty endpoint = locker disabled, client falls back
   // to its own disk. maxBytesPerAccount caps one player's library.
@@ -102,11 +118,20 @@ export interface Config {
     partyScaling: boolean;
     difficulty: number;
   };
-  engine: { enforce: 'warn' | 'refuse' | 'off' };
+  engine: {
+    enforce: 'warn' | 'refuse' | 'off';
+    /** 12-hex engine build the operator serves. Empty = adopt the first client's. */
+    pin: string;
+  };
   // M7 world state.
   time: { scale: number };
   gui: { timeoutSec: number };
-  cellReset: { cells: string[]; intervalSec: number };
+  cellReset: {
+    cells: string[];
+    intervalSec: number;
+    /** Shared-lobby only: seconds between wiping cells that have accumulated deltas. */
+    litterSweepSec: number;
+  };
   // M8 ops.
   // dashboardToken: bearer for the web admin dashboard (/admin). Empty = the whole
   // dashboard is off, which is the right default for a self-hoster who only wants the
@@ -144,6 +169,9 @@ export interface Config {
     maxBufferedBytes: number;
     maxBufferedBytesHard: number;
     maxConnsPerIp: number;
+    /** Non-adjacent exterior cell changes allowed per minute (Recall, Intervention, travel).
+     *  0 disables the check. See connection.ts handleCellChange. */
+    farTravelPerMin: number;
     /** Trust CF-Connecting-IP from a private (proxy) peer. Only meaningful when Cloudflare is
      *  genuinely in front AND the edge deletes any client-supplied copy — see net/http.ts. Off
      *  by default: a header nobody sets is pure attack surface, and believing it lets a client
@@ -394,6 +422,14 @@ function validate(t: Tree): Config {
       password: reqStr(t, 'server', 'password'),
     },
     gateway: { url: reqStr(t, 'gateway', 'url') },
+    worlds: {
+      // All optional: a config.toml written before the governor existed must keep booting,
+      // and a single world server never reads this table at all.
+      maxWorlds: optNum(t, 'worlds', 'maxWorlds', 0),
+      memBudgetMb: optNum(t, 'worlds', 'memBudgetMb', 0),
+      worldCostMb: optNum(t, 'worlds', 'worldCostMb', 640),
+      gatewayReserveMb: optNum(t, 'worlds', 'gatewayReserveMb', 256),
+    },
     simPeer: {
       // Resolved in startServer once the game data has been inspected; the raw config cannot
       // know whether a peer is actually runnable.
@@ -427,9 +463,11 @@ function validate(t: Tree): Config {
       map: reqBool(t, 'sharing', 'map'),
       regressAllowlist: reqStrArray(t, 'sharing', 'regressAllowlist'),
       worldGlobals: reqStrArray(t, 'sharing', 'worldGlobals'),
-      partyCredit: reqBool(t, 'sharing', 'partyCredit'),
     },
-    economy: { noDrop: reqBool(t, 'economy', 'noDrop') },
+    economy: {
+      noDrop: reqBool(t, 'economy', 'noDrop'),
+      refuseUnownedDrops: optBool(t, 'economy', 'refuseUnownedDrops', false),
+    },
     locker: {
       endpoint: reqStr(t, 'locker', 'endpoint'),
       region: reqStr(t, 'locker', 'region'),
@@ -453,12 +491,16 @@ function validate(t: Tree): Config {
       partyScaling: reqBool(t, 'rules', 'partyScaling'),
       difficulty: reqSignedNum(t, 'rules', 'difficulty'),
     },
-    engine: { enforce: reqEnum(t, 'engine', 'enforce', ['warn', 'refuse', 'off'] as const) },
+    engine: {
+      enforce: reqEnum(t, 'engine', 'enforce', ['warn', 'refuse', 'off'] as const),
+      pin: optStr(t, 'engine', 'pin', ''),
+    },
     time: { scale: reqNum(t, 'time', 'scale') },
     gui: { timeoutSec: reqNum(t, 'gui', 'timeoutSec') },
     cellReset: {
       cells: reqStrArray(t, 'cellReset', 'cells'),
       intervalSec: reqNum(t, 'cellReset', 'intervalSec'),
+      litterSweepSec: optNum(t, 'cellReset', 'litterSweepSec', 3600),
     },
     dev: {
       // Env wins so a one-off `OMW_DEV_BOTS=3` run needs no config edit and leaves no file
@@ -494,6 +536,8 @@ function validate(t: Tree): Config {
       maxBufferedBytes: reqNum(t, 'limits', 'maxBufferedBytes'),
       maxBufferedBytesHard: reqNum(t, 'limits', 'maxBufferedBytesHard'),
       maxConnsPerIp: reqNum(t, 'limits', 'maxConnsPerIp'),
+      // Optional: configs written before teleport-hopping was bounded must keep working.
+      farTravelPerMin: optNum(t, 'limits', 'farTravelPerMin', 6),
       trustCloudflareIp: optBool(t, 'limits', 'trustCloudflareIp', false),
       maxMsgBytes: reqNum(t, 'limits', 'maxMsgBytes'),
       helloTimeoutMs: reqNum(t, 'limits', 'helloTimeoutMs'),
@@ -527,24 +571,50 @@ function validate(t: Tree): Config {
 // Resolves both from src/ (tsx) and dist/ (bundle): ../config.default.toml.
 const DEFAULTS_URL = new URL('../config.default.toml', import.meta.url);
 
+/** Every "section.key" an operator actually WROTE, across all non-default sources.
+ *  Needed because a merged value cannot be told apart from a shipped default, and some rules
+ *  are applied as a FLOOR ("harden this unless the operator has an opinion") rather than as an
+ *  override. Without this, hardening the shared lobby would silently overrule a self-hoster who
+ *  had deliberately set the opposite. */
+function statedPaths(...trees: (Tree | undefined)[]): Set<string> {
+  const out = new Set<string>();
+  for (const t of trees) {
+    if (!t) continue;
+    for (const [section, body] of Object.entries(t)) {
+      if (body === null || typeof body !== 'object' || Array.isArray(body)) { out.add(section); continue; }
+      for (const key of Object.keys(body as object)) out.add(`${section}.${key}`);
+    }
+  }
+  return out;
+}
+
 export function loadConfig(dataDir: string, override?: DeepPartial<Config>, sharedDir?: string): Config {
   let tree = parse(readFileSync(DEFAULTS_URL, 'utf8')) as Tree;
+  const operatorTrees: (Tree | undefined)[] = [];
   // F3: one config.toml in the SHARED dir drives the gateway AND every world it spawns (worlds
   // get empty data dirs). Merged first, so a world may still override with its own config.toml.
   if (sharedDir && sharedDir !== dataDir) {
     const sharedPath = join(sharedDir, 'config.toml');
-    if (existsSync(sharedPath)) tree = deepMerge(tree, parse(readFileSync(sharedPath, 'utf8')) as Tree);
+    if (existsSync(sharedPath)) {
+      const shared = parse(readFileSync(sharedPath, 'utf8')) as Tree;
+      operatorTrees.push(shared);
+      tree = deepMerge(tree, shared);
+    }
   }
   const operatorPath = join(dataDir, 'config.toml');
   if (existsSync(operatorPath)) {
-    tree = deepMerge(tree, parse(readFileSync(operatorPath, 'utf8')) as Tree);
+    const operator = parse(readFileSync(operatorPath, 'utf8')) as Tree;
+    operatorTrees.push(operator);
+    tree = deepMerge(tree, operator);
   }
-  if (override) tree = deepMerge(tree, override as Tree);
+  if (override) { operatorTrees.push(override as Tree); tree = deepMerge(tree, override as Tree); }
   // Worlds spawned by the gateway have no config.toml of their own, so the one flag the
   // browser harness must be able to set on them travels in the environment it already
   // controls. Deliberately env-only and single-purpose: production sets neither.
   if (process.env.OMW_ALLOW_HARNESS_AUTH === '1') {
     tree = deepMerge(tree, { login: { allowHarnessAuth: true } } as Tree);
   }
-  return validate(tree);
+  const cfg = validate(tree);
+  cfg.stated = statedPaths(...operatorTrees);
+  return cfg;
 }

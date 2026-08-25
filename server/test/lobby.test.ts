@@ -1,21 +1,27 @@
 // Copyright (C) 2025-2026 Virtastic - https://virtastic.app
 // SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
-// The shared PUBLIC world is a social lobby: its cells reset, so QUEST PROGRESS and STANDING
-// earned there are meaningless and must not follow you home. Your character otherwise does —
-// what you carry, what you have learned, where you stood.
+// The shared PUBLIC world is a social lobby, and NOTHING done there follows you home.
 //
-// It used to withhold EVERY write instead, as a duplicate-item firewall. That duplicated
-// items rather than preventing them: a withheld write is a withheld LOSS, so something
-// dropped in the shared world stayed on the ground there while the doc still claimed the
-// player carried it, and going home granted it straight back. Quests and standing are now
-// routed to nobody here (journalTarget, server.ts) and everything else is ordinary.
+// This file used to assert the opposite for inventory — "the shared world must record what the
+// character is actually carrying" — on the reasoning that a withheld write is a withheld LOSS:
+// drop something in the lobby and it stayed on the lobby's ground while your doc still claimed
+// you carried it, so going home granted it back. That reasoning was right about the mechanism
+// and wrong about the consequence. It is only a duplicate if one of the copies can ESCAPE, and
+// the justification given for safety at the time ("its cells reset by construction") was not
+// true either: [cellReset] cells is empty by default, so nothing reset, quest items never
+// deplete from a container, and N strangers could each take the same Dwemer Puzzle Box and keep
+// it on a real character forever.
+//
+// So the lobby now persists nothing at all (PlayerStore lobby mode) and the asymmetry stops
+// mattering: you arrive with your gear, play, and leave with exactly what you had, in both
+// directions. Quests and standing were already routed to nobody here (journalTarget).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { startServer } from '../src/server';
 import { TestClient, tmpDataDir, readPlayerDoc } from './helpers';
 import { PlayerStore } from '../src/persist/playerstore';
 
-test('the shared world keeps what you carry, and refuses quest progress', async (t) => {
+test('the shared world keeps nothing: not loot, not quests, not standing', async (t) => {
   const dataDir = tmpDataDir();
 
   // Own world first: that is where a character is made and where progress is real.
@@ -61,18 +67,17 @@ test('the shared world keeps what you carry, and refuses quest progress', async 
   await lobby.flush();
 
   const after = readPlayerDoc(dataDir, charId);
-  // What you are CARRYING is yours wherever you go — including a loss. Withholding this is
-  // what let one item exist in two worlds at once.
-  assert.deepEqual(after?.['inventory'], [{ id: 'gold_001', n: 25 }],
-    'the shared world must record what the character is actually carrying');
+  // The 25 gold they "picked up" in the lobby is not theirs; the 10 they walked in with is.
+  assert.deepEqual(after?.['inventory'], [{ id: 'gold_001', n: 10 }],
+    'loot taken in the lobby followed the player home');
   // ...but nothing that amounts to campaign progress.
   assert.equal(after?.['factions'], undefined, 'a guild rank earned in the shared world followed the player home');
   assert.equal(after?.['bounty'], undefined, 'a bounty earned in the shared world followed the player home');
 });
 
-// WHERE you stood is kept PER WORLD, so a trip back to the shared world returns you where you
-// left it rather than to the default spawn — and never disturbs your own world's position.
-test('the lobby records position per-world without clobbering another world', async (t) => {
+// Position is kept PER WORLD everywhere it is kept at all — and the lobby is not one of those
+// places. What must never happen is the lobby reaching into a world where position IS real.
+test('the lobby records no position, and never clobbers a world that does', async (t) => {
   const dataDir = tmpDataDir();
   const solo = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1', worldMode: 'private' });
   const a = await TestClient.connect(solo.port);
@@ -115,13 +120,16 @@ test('the lobby records position per-world without clobbering another world', as
 
   const doc = readPlayerDoc(dataDir, charId);
   const positions = doc?.['positions'] as Record<string, { cellKey: string; x: number }>;
-  assert.equal(positions['vvardenfell']?.cellKey, 'lobby,cell',
-    'the lobby did not remember where the player stood');
-  assert.equal(positions['vvardenfell']?.x, 44);
+  // WHERE YOU STOOD IN THE LOBBY IS NOT REMEMBERED EITHER — "nothing persists" is not a rule
+  // with exceptions, and position is simply not worth carving one out for. Returning players
+  // are placed by materializePosition's cross-world fallback, which is what already stops the
+  // real bug here: a player with no entry for this world used to have their position DELETED
+  // and be dropped at exterior 0,0, the grid origin, open sea, where they drowned.
+  assert.equal(positions['vvardenfell'], undefined, 'the lobby wrote a position it should not have');
   assert.equal(positions[soloWorldId]?.cellKey, 'solo,cell',
-    'the lobby clobbered the solo world position');
-  assert.deepEqual(doc?.['inventory'], [{ id: 'gold_001', n: 9000 }],
-    'the shared world must record what the character is carrying, losses included');
+    'and it must not have disturbed the world where position IS real');
+  assert.deepEqual(doc?.['inventory'], [{ id: 'gold_001', n: 7 }],
+    'the 9000 gold declared in the lobby escaped it');
 });
 
 // SPAWNING AT THE ORIGIN. A player switching into a world they have never visited had their

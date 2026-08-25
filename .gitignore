@@ -114,3 +114,6 @@ ci/jenkins/config.env
 # Engine logs from a local Oblivion run — build output, not source.
 oblivion-play/
 openmw-oblivion-wt/
+# ICU data package, copied from the emsdk cache by link-openmw.sh (~28MB of upstream output).
+fsroot/icu/
+render-check-*.png

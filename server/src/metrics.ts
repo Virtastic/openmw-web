@@ -246,6 +246,50 @@ export const metrics = {
   simPeerRefused: reg(
     new Counter('omwmp_simpeer_refused_total', 'Sim peer starts declined.', ['reason'])),
 
+  // GATEWAY-ONLY (these render on the gateway process, which supervises worlds; a world
+  // process leaves them at zero). worldRefused is the one to alert on: reason="memory" means
+  // the box is full and a player was told to come back later, which is honest but is also the
+  // signal to provision. Without it the only evidence of a full platform was a 503 the player
+  // saw and nobody else did.
+  worldsRunning: reg(new Gauge('omwmp_worlds_running', 'World processes currently supervised.')),
+  worldsCapacity: reg(new Gauge('omwmp_worlds_capacity', 'Worlds this gateway may run at once (the binding ceiling).')),
+  worldRefused: reg(
+    new Counter('omwmp_world_refused_total', 'World starts declined.', ['reason'])),
+
+  // Move frames REFUSED (not merely counted) after sustained implausibility in the shared
+  // lobby. Distinct from implausibleMoves, which counts the signal wherever it fires: this one
+  // only rises where the server actually declined to move somebody.
+  // Drops REFUSED for conservation, as opposed to unownedDrops which counts the signal
+  // wherever it fires. Only rises where [economy] refuseUnownedDrops is on.
+  unownedDropsRefused: reg(
+    new Counter('omwmp_unowned_drops_refused_total', 'Object drops refused: the sender does not hold the item.', [])),
+
+  // Non-adjacent exterior cell changes over [limits] farTravelPerMin. Rises where a client is
+  // hopping the map faster than any spell or silt strider allows.
+  farTravelRefused: reg(
+    new Counter('omwmp_far_travel_refused_total', 'Cell changes refused: teleporting across the grid too often.', [])),
+
+  movesRefused: reg(
+    new Counter('omwmp_moves_refused_total', 'Player move frames refused for sustained implausible speed.', [])),
+
+  // WHY THIS EXISTS: a dropped combat event is an attack that visibly did NOTHING. The
+  // attacker's client has already cancelled its own damage (puppet.lua's onHit interceptor
+  // returns false) before the server ever sees the hit, so a drop here costs the player the
+  // whole swing — no damage, no miss, no sound — with nothing said to them. That is the
+  // "my hits do not register" report, and until this counter existed an operator answering it
+  // had only scattered warn lines to go on.
+  // reason: cell has no authority holder | stale epoch | attacker not near the target cell |
+  //         unknown target player | vetoed by a plugin | hit rate above any real client | ...
+  // outcome: held | delivered | expired. A swing into a cell whose simulator is momentarily
+  // absent is PARKED rather than discarded (the attacker's client already cancelled its own
+  // damage, so a drop costs the whole attack). `held` rising with `delivered` is a peer
+  // restarting and recovering; `held` rising with `expired` is a peer that is not coming back.
+  combatHeld: reg(
+    new Counter('omwmp_combat_held_total', 'Combat events parked while a cell had no simulator.', ['outcome'])),
+
+  combatDropped: reg(
+    new Counter('omwmp_combat_dropped_total', 'Combat events dropped, by reason. Each one is a swing the player lost.', ['reason'])),
+
   actorBatchRejected: reg(
     new Counter('omwmp_actor_batch_rejected_total', 'Inbound ActorMoveBatch frames dropped.', ['reason'])),
   // kind: move | actor. Outbound lossy frames dropped because the socket's send queue was

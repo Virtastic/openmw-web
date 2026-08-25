@@ -1,0 +1,16 @@
+# Copyright (C) 2025-2026 Virtastic - https://virtastic.app
+# SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
+
+# PATCHES MUST STAY LF, ON EVERY PLATFORM.
+#
+# A .patch checked out with CRLF does not apply: git compares context lines byte for byte, the
+# sources it patches are LF, and every hunk mismatches. On a Windows checkout with autocrlf that
+# is exactly what happens to wasm-build/patches/osg-emscripten.patch — the whole wasm dependency
+# stack is then unbuildable, and the error ("patch does not apply") points at the patch rather
+# than at the checkout, which is the wrong place to go looking.
+*.patch text eol=lf
+*.diff text eol=lf
+
+# Shell scripts likewise: a CRLF script fails with a bare `bad interpreter` or `\r: not found`,
+# which says nothing useful about the cause.
+*.sh text eol=lf

@@ -31,3 +31,8 @@ await build({ ...common, entryPoints: ['src/gateway/main.ts'], outfile: 'dist/ga
 // `npm run build` keeps it in step with the source the tests are checking; deliberately not
 // referenced by any Dockerfile.
 await build({ ...common, entryPoints: ['src/testhost.ts'], outfile: 'dist/testhost.mjs' });
+// A sim peer the BROWSER harness can import (src/testpeer.ts). Only a system peer may hold cell
+// authority, and the scenarios that need a holder are .mjs run by node, so they cannot reach the
+// TypeScript TestClient the server suite uses. Harness-only, like testhost: no Dockerfile builds
+// against it and main.ts never imports it.
+await build({ ...common, entryPoints: ['src/testpeer.ts'], outfile: 'dist/testpeer.mjs' });

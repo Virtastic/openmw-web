@@ -17,6 +17,7 @@ import { startDirectory } from './directory';
 import { buildFrontDoor } from './frontdoor';
 import { loadConfig } from '../config';
 import { log } from '../log';
+import { metrics } from '../metrics';
 
 const { values } = parseArgs({
   options: {
@@ -25,6 +26,10 @@ const { values } = parseArgs({
     'base-port': { type: 'string' },
     'max-worlds': { type: 'string' },
     'max-per-owner': { type: 'string' },
+    // Testable reaping. The revive-on-dial path (a private world idles out, is reaped, and
+    // comes back when its owner returns) is a real player journey with no way to exercise it
+    // in scenario time while this was pinned at two minutes.
+    'idle-reap-ms': { type: 'string' },
     'public-world': { type: 'string', multiple: true },
     'server-entry': { type: 'string' },
     shared: { type: 'string' },
@@ -70,18 +75,31 @@ const worlds = new WorldSupervisor({
     nodeBin: process.execPath,
     basePort: Number(values['base-port'] ?? 9000),
     gatewayPort: port,
-    // One world per player the server can hold, matching maxPlayers and maxPerOwner. A solo
-    // world is simply where a player is when they are not in a shared one, so a cap below
-    // maxPlayers means a server advertising N seats cannot seat N people playing alone — the
-    // previous 32 locked out the 33rd.
+    // TWO CEILINGS, AND THE MEMORY ONE IS USUALLY THE REAL ONE.
     //
-    // This is NOT the memory governor, which is the mistake the old 32 was defending against:
-    // sim peers are capped SEPARATELY by [simPeer].maxPeers and are spawned on demand, not
-    // pinned one-per-world, so worlds do not multiply the peer's cost. A world nobody is in
-    // is not even running — worlds start on dial and are idle-reaped. Size a host with
-    // [simPeer].maxPeers, measured on that host; do not budget from a number in a comment.
-    maxWorlds: positiveInt(values['max-worlds'], config.server.maxPlayers, 'max-worlds'),
-    idleReapMs: 120_000,
+    // The count cap answers "how many people may play alone at once", so it tracks maxPlayers:
+    // a solo world is simply where a player is when they are not in a shared one, and a cap
+    // below maxPlayers means a server advertising N seats cannot seat N people playing alone.
+    //
+    // What used to be written here was that this is NOT the memory governor, because "sim
+    // peers are capped SEPARATELY by [simPeer].maxPeers and are spawned on demand, not pinned
+    // one-per-world, so worlds do not multiply the peer's cost". THAT IS FALSE, and it is the
+    // reasoning that left this box undefended: every world is its own PROCESS and each one
+    // runs its own SimPeerSupervisor (gateway/worlds.ts), so [simPeer].maxPeers is per world.
+    // Worlds multiply the peer's cost exactly. With maxPlayers at 256 the supervisor would
+    // spawn worlds until the OOM killer took the container, while every per-world cap read as
+    // satisfied and simpeer.at_cap never fired.
+    //
+    // So the memory budget is passed too, and capacity() takes the lower of the two. Size a
+    // host by measuring one world+peer on it and setting [worlds] memBudgetMb/worldCostMb —
+    // not from a number in a comment, this one included.
+    maxWorlds: positiveInt(values['max-worlds'],
+      config.worlds.maxWorlds > 0 ? config.worlds.maxWorlds : config.server.maxPlayers,
+      'max-worlds'),
+    memBudgetMb: config.worlds.memBudgetMb,
+    worldCostMb: config.worlds.worldCostMb,
+    gatewayReserveMb: config.worlds.gatewayReserveMb,
+    idleReapMs: positiveInt(values['idle-reap-ms'], 120_000, 'idle-reap-ms'),
     startTimeoutMs: 120_000,
     restartBackoffMs: 15_000,
     publicWorlds: values['public-world'] ?? ['vvardenfell'],
@@ -111,9 +129,31 @@ const directory = await startDirectory({
   // It was a standalone default of 2, which locked an account out after two characters and
   // read as an unexplained 429 mid-sign-in. --max-per-owner still overrides for a small host.
   maxPerOwner: Number(values['max-per-owner'] ?? config.server.maxPlayers),
+  metricsToken: config.metrics.enabled ? config.metrics.token : '',
   frontDoor: frontDoor.route,
   resolveAccount: frontDoor.resolveAccount,
   privateWorldIdFor: frontDoor.privateWorldIdFor,
+});
+
+// SAY THE CEILING OUT LOUD, AT BOOT. A platform that refuses a world at 03:00 must not be the
+// first time anyone learns what its limit was, and "no memory governor configured" is a
+// condition an operator should be told about rather than discover from an OOM kill.
+const cap = worlds.capacity();
+log('info', 'gateway.capacity', {
+  cap: cap.cap,
+  reason: cap.reason,
+  memBudgetMb: config.worlds.memBudgetMb,
+  worldCostMb: config.worlds.worldCostMb,
+  ...(config.worlds.memBudgetMb <= 0
+    ? { warning: 'no [worlds] memBudgetMb set: only the count cap applies, and worlds carry a sim peer each' }
+    : {}),
+});
+metrics.worldsRunning.addCollector(() => worlds.running);
+metrics.worldsCapacity.addCollector(() => {
+  const c = worlds.capacity().cap;
+  // A gauge must be a number; an unbounded cap renders as 0 ("not governed") rather than
+  // Infinity, which the Prometheus text format cannot carry and metrics.ts would drop.
+  return Number.isFinite(c) ? c : 0;
 });
 
 log('info', 'gateway.start', {
@@ -138,6 +178,33 @@ async function shutdown(signal: string, code = 0): Promise<void> {
 }
 process.on('SIGTERM', () => void shutdown('SIGTERM'));
 process.on('SIGINT', () => void shutdown('SIGINT'));
+
+// ROLL THE WORLDS WITHOUT TAKING THE PLATFORM DOWN.
+//
+// WorldSupervisor.rollingRestart() was written, tested twice, and then reachable from nowhere:
+// no route, no signal, no command. So the thing built to stop a deploy being an outage could
+// not be asked to run, and every restart dropped every player anyway. SIGHUP is the ordinary
+// idiom for "reload gracefully" and needs no auth surface — a signal can only come from someone
+// who is already inside the container.
+//
+// Guarded against overlap: a second HUP while a roll is in flight would interleave two
+// sequences over the same worlds, and the "wait for the old process to exit" step of one would
+// see the other's replacement and give up on it.
+let rolling = false;
+process.on('SIGHUP', () => {
+  if (shuttingDown) return;
+  if (rolling) {
+    log('warn', 'gateway.rolling_restart_busy', {});
+    return;
+  }
+  rolling = true;
+  log('info', 'gateway.rolling_restart_requested', { worlds: worlds.running });
+  void worlds.rollingRestart()
+    .then((r) => log('info', 'gateway.rolling_restart_done',
+      { restarted: r.restarted.length, failed: r.failed.length, failedIds: r.failed.join(',') }))
+    .catch((err) => log('error', 'gateway.rolling_restart_failed', { error: String(err) }))
+    .finally(() => { rolling = false; });
+});
 
 // THE GATEWAY HAD NO CRASH HANDLERS AT ALL. Node terminates the process on an unhandled
 // rejection by default, and the gateway is the only thing that reaps worlds — so a single

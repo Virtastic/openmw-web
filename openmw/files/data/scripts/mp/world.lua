@@ -530,7 +530,13 @@ handlers.MP_WorldWeather = function(data)
     if type(data.region) ~= 'string' or type(data.current) ~= 'number' then return end
     -- The broadcast is global; only the region we are standing in is ours to render, and
     -- the holder must never apply its own echo back onto itself.
-    if isHolderOf(data.region) then return end
+    --
+    -- EXCEPT the continuity handback (`restore`), which the server sends to the NEW HOLDER
+    -- immediately after granting it the region, carrying the weather that region had before it
+    -- went dormant. That arrives after the grant, so this guard used to discard it — leaving the
+    -- holder on whatever weather it rolled at boot. Solo, that is a fresh roll every session:
+    -- the "weather is randomised on each load" report.
+    if isHolderOf(data.region) and data.restore ~= true then return end
     local rec = weatherRecordAt(data.current)
     if not rec then
         print('[mp] weather index ' .. tostring(data.current) .. ' unknown here')

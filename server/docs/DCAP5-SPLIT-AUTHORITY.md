@@ -2,6 +2,14 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web -->
 # D-cap-5 — splitting actor authority within a cell
 
+> **CLOSED 2026-08-24 — do not build this without a NEW reason.**
+>
+> D-cap-5 existed to stop one player's browser carrying a crowded cell for everyone.
+> `core/worldstate.ts` now hardcodes `canSimulate` to the sim peer, so no browser holds a cell
+> under any configuration and the problem cannot occur. The measurement below is also stale:
+> the peer is 468–487 MB on Linux with retail data, and eight players across eight anchored
+> cells cost it no more than one did — so cell load is not what a peer is sized by either.
+
 Design only. Not implemented. **Recommendation as of 2026-07-27: do not build this yet, and
 probably not at all.** The reasoning below is the record of why, so a future reader does not
 re-derive it or build it on a premise that has since changed.

@@ -54,6 +54,8 @@ export interface PartyView {
   leader: AccountKey;
   goldSplit?: boolean;
   rollOnRare?: boolean;
+  /** Party difficulty scaling. Leader-toggled; [rules] partyScaling is only the default. */
+  scaling?: boolean;
   members: { acct: AccountKey; name: string; online: boolean; playerId?: number; cellKey?: string }[];
 }
 
@@ -81,6 +83,9 @@ export interface SocialDeps {
   roster: Roster;
   /** This world's id, so shared presence can name where a player actually is. */
   worldId?: string;
+  /** [rules] partyScaling — the DEFAULT for a party that has never touched the toggle. Not the
+   *  answer itself: the leader's choice, once made, outranks it. */
+  defaultPartyScaling?: boolean;
   // Display name for an account that may be offline. Returns undefined for an unknown one.
   displayName(acct: AccountKey): string | undefined;
   // Resolve a typed-in display name to an account key (case-insensitive).
@@ -716,13 +721,20 @@ export class Social {
   // Phase 4 party rules the LEADER toggles for the group. Defaults chosen so a party that
   // never opens the panel still behaves the way friends expect: gold splits (first-grab on
   // gold is the one thing that reliably breeds resentment), rolling does not interrupt.
-  partySettings(acct: AccountKey): { goldSplit: boolean; rollOnRare: boolean } {
+  partySettings(acct: AccountKey): { goldSplit: boolean; rollOnRare: boolean; scaling: boolean } {
     this.loadParty(acct);
     const key = this.partyOf.get(acct);
-    if (key === undefined) return { goldSplit: false, rollOnRare: false };
+    if (key === undefined) return { goldSplit: false, rollOnRare: false, scaling: false };
     return {
       goldSplit: (this.d.store.partySetting(key, 'goldSplit') ?? 'true') === 'true',
       rollOnRare: (this.d.store.partySetting(key, 'rollOnRare') ?? 'false') === 'true',
+      // Difficulty scaling is OPT-IN and the LEADER is who opts in. [rules] partyScaling supplies
+      // the default (shipped off): people come to co-op to play Morrowind together, not to have
+      // it quietly made harder because a friend walked in. But a group that wants the challenge
+      // has to be able to ASK — and for a while it could not, because the config default was
+      // flipped off while this map still only knew about loot, leaving scaling operator-only.
+      scaling: (this.d.store.partySetting(key, 'scaling')
+        ?? (this.d.defaultPartyScaling ? 'true' : 'false')) === 'true',
     };
   }
 
@@ -732,7 +744,7 @@ export class Social {
     const party = key !== undefined ? this.parties.get(key) : undefined;
     if (!party) return 'not_in_party';
     if (party.leader !== player.accountKey) return 'not_leader';
-    if (name !== 'goldSplit' && name !== 'rollOnRare') return 'no_such_player';
+    if (name !== 'goldSplit' && name !== 'rollOnRare' && name !== 'scaling') return 'no_such_player';
     this.d.store.setPartySetting(key!, name, value ? 'true' : 'false');
     for (const m of party.members) this.sendParty(m);
     return 'ok';
@@ -773,6 +785,7 @@ export class Social {
       // "why did my gold split" should be answerable by looking at the panel.
       goldSplit: settings.goldSplit,
       rollOnRare: settings.rollOnRare,
+      scaling: settings.scaling,
       members: [...party.members].map((m) => {
         const p = this.onlinePlayer(m);
         // SERVER-WIDE, like the friend list. This asked the LOCAL roster, so a party member in

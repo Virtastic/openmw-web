@@ -173,6 +173,18 @@ export function buildPeerSettings(): string {
     // held for a visit that never happens, on a background thread that costs CPU to run.
     '[Cells]',
     'preload enabled = false',
+    // NOTE ON AI PROCESSING RANGE, deliberately left at the engine default.
+    //
+    // An earlier version of this raised it to 24576 as a workaround: AI is only processed within
+    // `actors processing range` of the peer, the default is 7168, and an exterior cell is 8192 —
+    // so NPCs near any player the peer was not parked beside got no AI at all. That was the
+    // "some NPCs never attack or aggro" report.
+    //
+    // Fixed properly in the engine instead (`mwmechanics/actors.cpp`): the gate now measures to
+    // the nearest SIM ANCHOR as well as to the player, which is what the visibility check a few
+    // hundred lines above it had always done. Anchors sit on occupied cells, so the default range
+    // around each one is exactly right, and inflating it here would only make the peer simulate
+    // cells nobody is standing in.
     // The world map is a rendered image nobody looks at: this peer has no UI. 18px per
     // exterior cell across Vvardenfell is a several-megabyte RGBA surface built at startup.
     // 1 is the floor the setting accepts, not a disable, but it takes the cost to ~nothing.

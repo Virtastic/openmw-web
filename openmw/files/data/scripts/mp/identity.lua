@@ -7,6 +7,7 @@
 --   PlayerAttributes/PlayerSkills/PlayerLevel  1 s diff (server-side persistence only)
 --   PlayerSpellbook    add/remove diff (1 s)
 --   PlayerInventory    2 s diff, {items={{id,n},...}} capped at 512 entries
+--   PlayerItemAcquired 0.25 s, {id,n} per count INCREASE — closes the drop-conservation race
 --   PlayerDeath        once when isDead(self) edges true
 -- Also applies the rejoin-restore record (MP_ApplyRecord from global.lua) and seeds the
 -- diff caches from the applied state so restoring can never loop back into a broadcast.
@@ -22,11 +23,29 @@ local NPC = types.NPC
 
 local INTERVALS = { appearance = 1.0, equipment = 0.5, dynamic = 0.25, progression = 1.0, inventory = 2.0 }
 local INVENTORY_CAP = 512
+-- ACQUISITION REPORTING, and why it is a separate faster pass rather than a smaller INTERVAL.
+--
+-- The full PlayerInventory snapshot is a 2 s diff, and the server used to judge "can this player
+-- drop that?" against it. A player who picks something up and drops it immediately outruns their
+-- own declaration, so the server has not yet been told they hold it — ordinary play that looked
+-- exactly like dropping something you never had. Conservation enforcement was written on that
+-- stale picture once and had to be backed out.
+--
+-- So increases are reported the moment they are seen, while the full snapshot stays on its slow
+-- cadence: the expensive part is the snapshot's SIZE (up to 512 entries every time), not noticing
+-- that one count went up. Derived from the inventory itself rather than from hooks on each
+-- acquisition path, which is what makes it complete by construction — pickup, container, barter,
+-- alchemy, quest reward and anything a mod invents all land here identically.
+local ACQUIRE_INTERVAL = 0.25
 
 local identity = {}
 
 local last = { appearance = nil, equipment = nil, dynamic = nil, progression = nil, spells = nil, inventory = nil }
-local nextAt = { appearance = 0, equipment = 0, dynamic = 0, progression = 0, inventory = 0 }
+local nextAt = { appearance = 0, equipment = 0, dynamic = 0, progression = 0, inventory = 0, acquire = 0 }
+-- recordId -> count, as of the last acquisition pass. Separate from `last.inventory` because
+-- that one only advances on the slow cadence, and comparing against it would re-report the same
+-- gain every 0.25 s until the snapshot caught up.
+local acqCounts = nil
 local wasDead = false
 local restoring = false -- suppress broadcasts while the rejoin record is being applied
 local pendingPhase2 = nil -- rejoin record awaiting the post-chargen stats pass
@@ -232,12 +251,38 @@ function identity.tick(now)
     end
 
     diffSend('inventory', 'PlayerInventory', snapInventory, now)
+
+    -- Report COUNT INCREASES as they happen. Only increases: a decrease is a drop, a sale or a
+    -- use, and the server learns about those from the snapshot — this exists solely to stop the
+    -- server's picture being stale in the direction that matters for conservation.
+    if not restoring and now >= nextAt.acquire then
+        nextAt.acquire = now + ACQUIRE_INTERVAL
+        local counts = {}
+        for _, item in ipairs(Actor.inventory(self):getAll()) do
+            counts[item.recordId] = (counts[item.recordId] or 0) + item.count
+        end
+        -- The FIRST pass only seeds the baseline. Reporting everything a character already owns
+        -- as freshly acquired would credit their whole inventory twice over — once here and
+        -- again in the snapshot — and on a rejoin-restore that is the entire restored doc.
+        if acqCounts ~= nil then
+            for id, n in pairs(counts) do
+                local before = acqCounts[id] or 0
+                if n > before then
+                    mp.sendEvent('PlayerItemAcquired', { id = id, n = n - before })
+                end
+            end
+        end
+        acqCounts = counts
+    end
 end
 
 -- Rejoin: session ended -> everything must be re-sent on the next join (unless restored).
 function identity.reset()
     last = {}
-    nextAt = { appearance = 0, equipment = 0, dynamic = 0, progression = 0, inventory = 0 }
+    -- nil, NOT {}: the next pass must re-seed the baseline rather than treat the whole restored
+    -- inventory as newly acquired.
+    acqCounts = nil
+    nextAt = { appearance = 0, equipment = 0, dynamic = 0, progression = 0, inventory = 0, acquire = 0 }
     wasDead = false
     restoring = false
     pendingPhase2 = nil

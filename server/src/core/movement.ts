@@ -59,9 +59,13 @@ export function parseExterior(cellKey: string): { x: number; y: number } | null 
 //
 // An unheld cell is visible and fixable. A silently unsimulated one is neither.
 //
-// ponytail: one cell per peer, so coverage costs peers. Widening this needs the peer placed
-// at the cell CENTRE (half-diagonal 5793 < 7168, so the anchor is fully covered) and a real
-// measurement of what its processing radius reaches — not an assumption about what is loaded.
+// ponytail: one cell per ANCHOR — which is not the same as one cell per peer, and the
+// difference matters. A peer takes a LIST of anchors (server.ts simPeerPass), so a single
+// process covers every occupied cell in the world; coverage costs anchors, which are cheap,
+// not processes, which are not. Widening an anchor's reach beyond its own cell needs the peer
+// placed at the cell CENTRE (half-diagonal 5793 < 7168, so the anchor is fully covered) and a
+// real measurement of what its processing radius reaches — not an assumption about what is
+// loaded.
 export function loadedCells(cellKey: string): string[] {
   return [cellKey];
 }

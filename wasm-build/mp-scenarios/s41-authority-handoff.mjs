@@ -1,81 +1,108 @@
 // Copyright (C) 2025-2026 Virtastic - https://virtastic.app
 // SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
-// s41 (M4): authority handoff. Two clients share a retail cell; the holder's browser is
-// hard-killed (SIGKILL — no clean leave, the same abrupt path as s92). The survivor must
-// receive ActorAuthorityGrant within a few seconds AND actually take over simulation:
-// the cell's NPCs must keep moving (AI resumed), not freeze as orphaned puppets.
+// s41: ONLY A SIM PEER MAY HOLD CELL AUTHORITY. A client never does, however it asks.
+//
+// WHAT THIS FILE USED TO BE, and why it could not stay. It tested client-to-client authority
+// HANDOFF: two browsers share a cell, the holder is SIGKILLed, the survivor must be granted the
+// cell and resume the NPCs' AI. That model is gone. `worldstate.ts` `canSimulate` is now
+// `return p.system === true`, with the reasoning stated there:
+//
+//   ONLY the sim peer may hold a cell. Not a knob: it was tied to `auth.requireSso`, which has
+//   nothing to do with who simulates NPCs — so a non-SSO server silently fell back to letting a
+//   PLAYER'S BROWSER author NPC state for everyone.
+//
+// So there is no second holder to hand off TO, and the old scenario could only ever fail
+// (`exactly one holder before handoff: 0 !== 1`). It had been failing unnoticed since that
+// change, because the wasm engine did not build and the browser suite was not being run.
+//
+// Deleting it would have left the REPLACEMENT property untested, which is the more important
+// one: the whole point of that change is that a player's machine can never author NPC state.
+// Nothing anywhere drove that through a real browser. This does.
+//
+// The sharpest form of the assertion is the second one: `simulatesActors` is CLIENT-DECLARED
+// (connection.ts:913), and a client that declares it must still be refused. That is the exact
+// hole `canSimulate` was rewritten to close, so it is worth an explicit test rather than
+// trusting the flag is ignored.
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const ROOT = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
-const STEP_TIMEOUT = 20_000;
-const HANDOFF_BUDGET_MS = 15_000; // spec target ~3s; budget covers the server's leave detection
-const MOVE_EPS = 5; // units an actor must travel to count as "not frozen"
+export const bootTimeoutMs = 420_000;
+
+// A protocol peer runs no game data, so it cannot satisfy a manifest adopted from a retail
+// browser. See s52 for the full reasoning.
+export const serverRules = `
+[content]
+enforce = "off"
+`;
+
 const BOOT = { retail: true, joinTimeoutMs: 420_000 };
+// Long enough that a Grant which was going to arrive, has. The server grants on cell entry,
+// so this is generous rather than a guess at scheduling.
+const NO_GRANT_SETTLE_MS = 8_000;
 
-const probeOf = async (c) => JSON.parse(await c.eval('(window.__omwMP||{}).actorProbe||"{}"'));
-const dist = (p, q) => Math.hypot(p.x - q.x, p.y - q.y, p.z - q.z);
+const mirror = (c, key) => c.eval(`(window.__omwMP||{}).${key}`);
 
-// Largest distance any shared-record actor moved between two probes.
-function maxDelta(p1, p2) {
-  let best = 0;
-  for (const rec of Object.keys(p1)) {
-    if (p2[rec] && !p1[rec].dead) best = Math.max(best, dist(p1[rec], p2[rec]));
-  }
-  return best;
+async function cellKeyOf(c) {
+  const census = JSON.parse(await c.eval('(window.__omwMP||{}).actorCensus||"[]"'));
+  const me = census.find((e) => e.startsWith('player@'));
+  if (!me) throw new Error(`actorCensus has no player entry: ${JSON.stringify(census)}`);
+  return me.slice('player@'.length);
 }
 
 export default async function run(ctx) {
   if (!existsSync(join(ROOT, 'play', 'mwdata', 'Morrowind.esm'))) {
-    ctx.log('SKIP: play/mwdata/Morrowind.esm absent (retail data required for shared NPCs)');
+    ctx.log('SKIP: play/mwdata/Morrowind.esm absent (retail data required for cell NPCs)');
     return;
   }
-  const [a, b] = await Promise.all([
-    ctx.launchClient('bot-a', '', BOOT),
-    ctx.launchClient('bot-b', '', BOOT),
-  ]);
-  for (const c of [a, b]) {
-    await c.waitFor('Number((window.__omwMP||{}).actorCount||0) > 0', STEP_TIMEOUT, `${c.name} sees cell actors`);
-  }
-  // Poll until authority settles (Grant lands after the cell-change claim; mirrors are 2 Hz).
-  let holderA = null;
-  let holderB = null;
-  const authDeadline = Date.now() + STEP_TIMEOUT;
-  while (Date.now() < authDeadline) {
-    [holderA, holderB] = await Promise.all([
-      a.eval('(window.__omwMP||{}).isHolder'),
-      b.eval('(window.__omwMP||{}).isHolder'),
-    ]);
-    if ([holderA, holderB].filter((h) => h === 'true').length === 1) break;
-    await ctx.sleep(500);
-  }
-  assert.equal([holderA, holderB].filter((h) => h === 'true').length, 1, 'exactly one holder before handoff');
-  const [holder, peer] = holderA === 'true' ? [a, b] : [b, a];
-  ctx.log(`holder is ${holder.name}; killing its browser`);
+  const { holdCell, TestClient } = await import(
+    pathToFileURL(join(ROOT, 'server', 'dist', 'testpeer.mjs')).href);
 
-  // Hard kill — no clean disconnect (s92 pattern).
-  const t0 = Date.now();
-  holder.close();
-  await peer.waitFor('(window.__omwMP||{}).isHolder === "true"', HANDOFF_BUDGET_MS,
-    'survivor receives ActorAuthorityGrant');
-  const handoffMs = Date.now() - t0;
-  ctx.log(`ok: authority handed off in ${handoffMs}ms`);
+  const a = await ctx.launchClient('watcher', '', BOOT);
+  const cellKey = await cellKeyOf(a);
+  ctx.log(`client is in ${cellKey}`);
 
-  // The survivor must now SIMULATE: sample the cell twice and require real motion.
-  // (Frozen actors = puppets still waiting on a dead holder's stream.)
-  await ctx.sleep(1500); // let AI re-enable and the actors take a step
-  let moved = 0;
-  const deadline = Date.now() + STEP_TIMEOUT;
-  while (Date.now() < deadline && moved < MOVE_EPS) {
-    const p1 = await probeOf(peer);
-    await ctx.sleep(2500);
-    const p2 = await probeOf(peer);
-    moved = maxDelta(p1, p2);
-  }
-  ctx.log(`post-handoff max actor movement: ${moved.toFixed(1)} units`);
-  assert.ok(moved >= MOVE_EPS,
-    `NPCs frozen after handoff (max movement ${moved.toFixed(1)} < ${MOVE_EPS} units)`);
-  ctx.log('ok: NPCs still simulating under the new holder');
+  // 1. A LONE BROWSER DOES NOT TAKE THE CELL. Before the sim peer existed this client would
+  //    have been granted it on arrival and would be simulating every NPC for everyone.
+  await ctx.sleep(NO_GRANT_SETTLE_MS);
+  assert.equal(await mirror(a, 'isHolder'), 'false',
+    'a browser client took cell authority — canSimulate is no longer system-only');
+  assert.equal(await mirror(a, 'authorityHolder'), 'none',
+    `no peer is running, so ${cellKey} must have no holder at all`);
+  ctx.log('lone browser holds nothing, and the cell has no holder');
+
+  // 2. DECLARING simulatesActors CHANGES NOTHING. This is the hole canSimulate was rewritten
+  //    to close: the flag is client-authored, so believing it hands NPC authorship to whoever
+  //    asks. TestClient sets it true by default, which is exactly the claim under test.
+  const liar = await TestClient.connect(ctx.serverPort);
+  await liar.joinAsNew('EagerSimulator');
+  await liar.waitEvent('PlayerList');
+  liar.sendCellChange(cellKey, 0, 0, 0);
+  await liar.waitEvent('PlayerCellChange');
+  await ctx.sleep(NO_GRANT_SETTLE_MS);
+  const grants = liar.inbox.events.filter((e) => e.name === 'ActorAuthorityGrant');
+  assert.equal(grants.length, 0,
+    `a client declaring simulatesActors was granted authority: ${JSON.stringify(grants)}`);
+  assert.equal(await mirror(a, 'authorityHolder'), 'none',
+    'the declaring client became the holder as far as the browser is concerned');
+  ctx.log('a client declaring simulatesActors was refused');
+
+  // 3. A SYSTEM PEER DOES GET IT, and the browser is told who holds the cell — which is what
+  //    lets it puppet the NPCs rather than simulate them.
+  const { peer, epoch } = await holdCell(ctx.serverPort, ctx.serverPassword, cellKey);
+  ctx.log(`peer holds ${cellKey} at epoch ${epoch}`);
+  await a.waitFor(`(window.__omwMP||{}).authorityHolder !== 'none'`, 30_000,
+    'the browser to learn the cell has a holder');
+  const holder = await mirror(a, 'authorityHolder');
+  assert.notEqual(holder, 'none', 'the browser never learned about the peer');
+  assert.equal(await mirror(a, 'isHolder'), 'false',
+    'the browser thinks IT holds the cell the peer was granted');
+  assert.equal(String(holder), String(peer.playerId),
+    `the holder should be the peer (${peer.playerId}), got ${holder}`);
+  ctx.log(`browser sees holder=${holder} (the peer), and still holds nothing itself`);
+
+  liar.close();
+  peer.close();
 }

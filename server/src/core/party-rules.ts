@@ -40,7 +40,7 @@ export interface PartyRulesCtx {
   partyOf(accountKey: string): string[];
   // Leader-toggled settings, per party. Defaults live here so a party that never opens
   // the panel still behaves sensibly.
-  settingsOf(accountKey: string): { goldSplit: boolean; rollOnRare: boolean };
+  settingsOf(accountKey: string): { goldSplit: boolean; rollOnRare: boolean; scaling: boolean };
   isNotable(recordId: string): boolean;
   scaling?: PartyScaling;
   enabled: boolean;
@@ -79,6 +79,10 @@ export class PartyRules {
   // not visibly inflate an enemy's health bar (that reads as jank), and one dying should
   // not deflate it (that would reward sacrificing the weakest member).
   scalingFor(player: Player): { hp: number; damage: number; extraSpawns: number; members: number } | null {
+    // THE LEADER'S CHOICE, not the operator's. `enabled` is the operator's kill switch; within a
+    // world that allows it, whether a given party plays scaled is that party's decision — which
+    // is the whole point of shipping the default OFF rather than removing the feature.
+    if (!this.ctx.settingsOf(player.accountKey).scaling) return null;
     const present = this.coPresent(player);
     const extra = Math.max(0, present.length - 1);
     if (extra === 0) return null;

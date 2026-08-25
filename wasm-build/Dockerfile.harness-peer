@@ -1,0 +1,40 @@
+# Linux runner for the multiplayer browser suite WITH a real, SIMULATING sim peer.
+#
+# WHY THIS EXISTS. `Dockerfile.harness` runs the browsers but nothing that needs a cell to be
+# SIMULATED. Since `canSimulate` became `p.system === true`, only a sim peer may hold cell
+# authority, and `s40-npc`, `s42-crowded-cell` and `s51-npc-combat` assert that NPCs actually move
+# and fight — which `server/dist/testpeer.mjs` cannot do, because it answers the wire without
+# running OpenMW. Those three are skipped behind OMW_SIM_PEER=1 until something can.
+#
+# WHY IT IS BUILT THIS WAY ROUND, which took two wrong turns to establish:
+#
+#   1. Add the peer to the harness image (Debian bookworm). Dead: the peer binary is linked
+#      against Ubuntu 24.04's glibc 2.39 and bookworm has 2.36.
+#   2. Rebase on Debian trixie (glibc 2.41, and a real chromium .deb — both constraints met) and
+#      carry the peer's Ubuntu .so closure into a quarantined /opt/peerlib. Gets impressively
+#      far — `openmw --version` runs, zero missing libraries — and then SEGFAULTS booting the
+#      game (signal 11 at 0xac). Mixing an Ubuntu-built engine with Debian's glibc and mesa is
+#      an ABI hazard, not a packaging detail. Do not retry this.
+#
+# So: keep the peer in the environment it was BUILT for and where it is already known to work
+# (`STATUS.md` measured it there), and bring the browser to it instead. Ubuntu has no chromium
+# .deb — it is snap-only, `apt-cache policy chromium` is empty — but Google publish a real
+# google-chrome-stable .deb, which is the ordinary way CI gets a browser on Ubuntu. The peer
+# image already ships node 22 and python 3.12, which is everything else the harness needs.
+FROM openmw-simpeer:local
+USER root
+
+RUN apt-get update && apt-get install -y --no-install-recommends wget gnupg ca-certificates \
+ && wget -qO /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb \
+ && apt-get install -y --no-install-recommends /tmp/chrome.deb \
+ && rm -f /tmp/chrome.deb && rm -rf /var/lib/apt/lists/*
+
+# CHROME_BIN is what mp-harness.mjs launches; --no-sandbox is added whenever it is set, which is
+# required in a container. SMOKE_GL=swiftshader because there is no GPU here.
+ENV CHROME_BIN=/usr/bin/google-chrome \
+    SMOKE_GL=swiftshader \
+    JOIN_TIMEOUT_MS=900000 \
+    LOADING_CLEAR_MS=240000 \
+    OMW_SIM_PEER_BIN=/usr/local/bin/openmw
+
+WORKDIR /repo

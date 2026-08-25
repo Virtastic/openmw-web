@@ -171,6 +171,343 @@ it is the only open question about this feature.**
 - [ ] Combat with a player near the cap boundary: does hit feedback still line up with
       where they appear to be? (Degraded avatars are *drawn* up to 2048 units off.)
 
+## 11. The 2026-08-24 overhaul — what changed, and how to break it
+
+Everything here is server-verified and (for the client scripts) logic-tested, but **none of it
+has been through a browser**. These are the specific things to try, and what a failure looks
+like, so the session is spent on the parts nothing automated could answer.
+
+### The lobby keeps nothing (the headline change)
+
+1. In your own world, note what you are carrying.
+2. Switch to **Public**. You should arrive with exactly that.
+3. Loot something there, drop something you brought, kill something.
+4. Switch back to **Solo**.
+
+**Expected:** you leave with exactly what you walked in with — the looted thing does not follow
+you, and the dropped thing is still yours. **Report if:** anything crossed either way. This is
+proven at the server; what needs a human is whether it *reads* as intended rather than as the
+game losing your loot. If it feels like a bug when it happens to you, say so — that is the
+finding, and the fix is probably a message, not a rule.
+
+### A restart should be a pause, not an ejection
+
+With someone in-world, `docker kill --signal=HUP` the gateway (or redeploy).
+
+**Expected:** "The server is restarting — putting you back in…", then play resumes roughly
+where you left off. **Report if:** you get the fatal modal, or have to reload, or come back
+somewhere unexpected. Until today this ejected everyone permanently.
+
+### Party difficulty scaling now defaults OFF
+
+Fight the same enemies solo and then as a group of three, with scaling off, then have the leader
+turn it on and repeat.
+
+**Expected, and this is the actual question:** does co-op feel too easy with it off? The default
+was flipped on the reasoning that people come to co-op to play *together*, not to have the game
+quietly made harder — but that is a judgement, and this session is the only thing that can
+check it. Say which of the two you would rather have shipped.
+
+### Dying, and the party settings panel
+
+Die on purpose, somewhere far from Seyda Neen — deep in a Daedric ruin or up a Telvanni tower —
+while at least one party member is alive somewhere else entirely. Then do it again with nobody
+else in the party.
+
+**Expected:** with a living party member, you come back beside them. Alone, you come back where
+you fell. What must NOT happen is the old behaviour: every death dumped you at one fixed spot
+outside Seyda Neen regardless of where you were, which for anyone playing past the first hour
+ended the session. The rest of the party should also see a line saying you went down — losing a
+friend silently is the thing being fixed.
+
+While you are grouped, have the leader toggle each of the three party buttons (gold split,
+rare-item rolls, enemy scaling) and watch **another player's** screen.
+
+**Expected:** the other player's buttons change to match, immediately. The bug being fixed was
+that they did not — the update carried no settings, so every client kept showing whatever it
+assumed when it joined, and pressing a button looked like it did nothing. Also loot a rare item
+as a group: the roll result should be announced to the party, not resolved silently.
+
+### Attacks land (the one that was reported from a live server)
+
+Walk into a cell with NPCs and attack immediately, before standing around — the bug depended on
+attacking before the server had told your client who owned the cell. Do it in an interior and in
+the open. Attack something a friend is also fighting. Attack, walk one cell over, attack again.
+
+**Expected:** every swing produces an outcome — damage, or a miss, with the usual sound and
+blood. What must NOT happen is the reported symptom: the swing passing through with *nothing at
+all*, no damage and no miss.
+
+**Test this with a WEAPON, not with magic.** Spells are a known gap, not a regression of this
+fix: nothing on the client ever sends the spell-hit message, so spell damage does not reach the
+victim's owner at all and the health bar flickers back. Casting at a friend or at an NPC is
+expected to do nothing until that is built, and it needs an engine change rather than a script
+one. Report melee and ranged results; do not spend the session on magic.
+
+**Be aware which fix is which.** The contract mismatch fixed in `combat.lua` turned out to be
+narrower than first thought and is probably NOT what you were hitting. The likelier cause is an
+area with no simulator at that moment — and that one still loses the swing; what changed is that
+the game now tells you instead of doing nothing. So the thing to check here is whether you ever
+swing and get *no feedback at all*. A message saying the area is not being simulated is the fix
+working, not the bug.
+
+**If it still happens, the server can now say why.** `omwmp_combat_dropped_total` counts every
+discarded combat event by reason, and the `combat.dropped` log line names it. `cell has no
+authority holder` means the simulation peer was not covering that cell — a peer that has
+crashed, restarted, or never started, which is an operator problem and not a combat one. Check
+that counter before assuming the fix did not work.
+### Being a guest in someone else's world
+
+Join a friend's world, do a quest step, pick things up, go home.
+
+**Expected:** the game TELLS you on arrival that quests here advance the host's journal and
+your own is set aside; your own log is intact when you get back; the items and skills you gained
+are yours. **Report if:** the notice did not appear or was not understandable, or if losing the
+quest progress feels like a bug rather than a rule you were told about.
+
+### The switcher and the loading screen
+
+Solo → Party → Public → Solo, a few times, including once after leaving your own world idle long
+enough to be reaped (two minutes).
+
+**Expected:** one continuous loading screen per switch. **Report if:** it clears and comes back,
+music starts over a black screen, you dead-end on an auth error, or a switch silently does
+nothing. All four have happened before and all four are supposed to be fixed.
+
+### Fair play, without breaking a real player
+
+The interesting failures are FALSE POSITIVES, so play badly on purpose:
+
+- Levitate, or use Boots of Blinding Speed, on a poor connection.
+- Take doors and silt striders repeatedly.
+- Recall / Divine Intervention / Almsivi a few times in a row.
+
+**Expected:** nothing happens to you. **Report immediately if:** you are frozen in place, rubber
+-banded, or other players stop seeing you move. The envelope is meant to be invisible to
+everyone playing honestly, and a false positive on a bad connection is worse than a missed cheat.
+
+## Reported from live play 2026-08-25 — OPEN, not yet reproduced here
+
+Straight from a real session, recorded before triage so nothing is lost or quietly reinterpreted.
+**None of these has been reproduced in the automated suite yet**, and the suite is green on the
+paths several of them touch — so either they are outside what it covers, or the build that was
+played is not the build the suite runs. **Establish which build first**: `play/openmw.wasm` here
+is rebuilt from this working tree, and the deployed site may be older or newer than any of the
+fixes in this cycle.
+
+### Combat and NPCs
+1, 6, 8. **Player cannot attack** / **escape must be pressed twice** / **random mouse spin.**
+   **DOES NOT REPRODUCE HERE. Keyboard input works.** Two earlier versions of this entry said
+   otherwise; both were wrong, and how they were wrong is worth keeping.
+
+   `s64-real-input` drives real CDP input against a retail client and now shows:
+
+   ```
+   document keydown listener saw: ["k"]            <- page receives keys
+   engine onKeyPress saw: k; I.UI.getMode()=none   <- engine delivers to scripts
+   W (bound A_MoveForward): pose y:-69632 -> y:-69452.57, z:87.29 -> -20.77   <- THE PLAYER MOVED
+   Escape: uiMode none -> none
+   ```
+
+   A BOUND ACTION moved the character ~180 units from a real keypress. 'j' opens the Journal and
+   Escape closes it. Input is not broken in this build.
+
+   **The two wrong readings, and why:**
+   1. *"Keys reach the page but never the engine."* The only engine-side signal was an input
+      ACTION (`A_Social`). That cannot distinguish "input is dead" from "that one binding did not
+      fire". Adding a raw `onKeyPress` mirror disproved it immediately.
+   2. *"Raw keys work but bound actions are dead."* The raw probe pressed **'j'** — which IS the
+      Journal key. It opened the journal, and every subsequent key was then correctly swallowed
+      by an open GUI window, which read as "bound actions are dead". Probing with a key bound to
+      nothing, and asserting the UI mode is clear first, disproved that too.
+
+   Both were confident and both were artifacts of the probe. The movement check is what settles
+   it, because moving is unambiguous and unambiguously bound.
+
+   **A narrow thing DOES reproduce, and it is worth someone's time.** The ready-weapon key does
+   not change the stance while movement from the same dispatcher works. `F` is confirmed correct
+   (`defaultKeyBindings[A_ToggleWeapon] = SDL_SCANCODE_F`), so the asymmetry is real.
+
+   **Why it matters:** `bindingsmanager.cpp:221` disables a SPECIFIC channel set —
+   `A_ToggleWeapon`, `A_ToggleSpell`, **`A_Use` (attack)**, `A_Journal`, quick keys — and
+   movement is NOT in it. `keyboardmanager.cpp` calls it on every keypress as
+   `setPlayerControlsEnabled(!consumed)`. So a state where those channels are disabled looks
+   EXACTLY like the report: cannot attack, cannot ready a weapon, but walks around fine.
+
+   **Two candidate causes were checked and BOTH are ruled out**, so nobody re-treads them:
+   - *MyGUI consuming the key via keyboard navigation.* No: `KeyboardNavigation::injectKeyPress`
+     consumes only arrows, Tab, Return/Enter/Space — `F` hits `default: return false` — and the
+     widget fallback only returns true for a focused Button with a navigation key.
+   - *`SDL_IsTextInputActive()` swallowing printable keys.* No: Escape is not printable and also
+     produced no action, and W (printable) moved the player, so keys are plainly reaching the
+     binder.
+
+   So the channels are disabled by something else, or the fault is elsewhere entirely. The
+   remaining suspects are `controlsDisabled()` and the control-switch layer
+   (`mControlSwitch`, which chargen manipulates and which multiplayer's boot path touches). That
+   is where I would look next, and it is a narrow question now rather than a hunt.
+
+   **So this item is back with you.** Input works here; either the played build differs, or the
+   fault needs conditions this scenario does not create. The scenario is permanent now and takes
+   about 80 seconds, so it is cheap to re-point at a build that does show it.
+
+2 & 3. **Some NPCs never attack or aggro** / **assassin will not fight, stuck in an attack
+   animation.** **ROOT CAUSE FOUND — one cause for both, and it is architectural.**
+
+   `mwmechanics/actors.cpp:1586` gates AI processing on distance to `getPlayer()`:
+
+   > `const float distSqr = (playerPos - actor...getPosition()).length2();`
+   > `// AI processing is only done within given distance to the player.`
+   > `const bool inProcessingRange = distSqr <= actorsProcessingRange * actorsProcessingRange;`
+
+   On a sim peer the "player" is the peer's OWN headless avatar, parked wherever `--start` put
+   it and never moving — the peer is not a person walking around. The shipped
+   `actors processing range` is **7168** units, and an exterior cell is **8192**. So any NPC near
+   a real player who is not standing where the peer is parked gets NO AI PROCESSING AT ALL: it
+   never aggros, never attacks, and anything caught mid-animation stays there. That is item 2 and
+   item 3 exactly, including why it is "SOME" NPCs — the ones near the peer's anchor behave, the
+   rest do not.
+
+   Anchoring does not help: the peer anchors every occupied cell so they stay LOADED, but the AI
+   gate measures from one avatar position, not from the anchor list.
+
+   **FIXED PROPERLY, and the fix was half-written already.** A few hundred lines up in the same
+   file, `adjustVisibility()` measures to the NEAREST SIM ANCHOR rather than to the player, with
+   a comment spelling out the sim-peer case: "an actor stops processing only when it is far from
+   ALL of them — which is what lets ONE peer simulate several parts of the world". The anchor
+   list, the accessor (`World::getSimAnchorPositions`, world units, commented "mechanics wants
+   world units") and the precedent were all there. Only the AI gate was still measuring from the
+   avatar.
+
+   It now applies the same nearest-anchor rule. On an ordinary client there are no anchors, so it
+   is byte-for-byte the vanilla check; on a peer, an actor is processed if it is near ANY anchor,
+   and anchors sit on occupied cells. The earlier workaround here — raising
+   `actors processing range` to 24576 in `buildPeerSettings()` — has been REVERTED, because with
+   the gate fixed the default range around each anchor is exactly right and inflating it would
+   only make the peer simulate cells nobody is standing in.
+
+   Verified: `s40-npc`, `s42-crowded-cell`, `s51-npc-combat` and `s59-spell-forward` all pass on
+   the rebuilt engine. What is NOT proven here is the symptom itself — no scenario asserts that an
+   NPC aggros a player unprompted, and writing one needs an NPC hostile to a puppet. The code
+   defect and its fix are certain; the live behaviour wants your eyes.
+
+4. **Texture transparency broken — alpha renders opaque, worst on trees.**
+   **DOES NOT REPRODUCE on this build.** Reading settled nothing — the alpha-test machinery is
+   intact and correct: `shadervisitor.cpp` captures the `ALPHAFUNC` attribute, disables the
+   deprecated fixed-function test, and `lib/material/alpha.glsl` discards properly on both the
+   plain and alpha-to-coverage paths. So the question was taken to a frame instead:
+   `s65-render-check` boots retail at Seyda Neen and captures one.
+
+   **The trees render with correct alpha** — sky and background clearly visible through the gaps
+   in the foliage, leaf clusters with transparent edges rather than solid quads. If alpha were
+   opaque this is exactly where it would be unmissable, which is why the report named trees.
+
+   **Caveat that matters:** this frame is SwiftShader software rasterisation, and the reported
+   session was on real hardware through ANGLE. Alpha-test and alpha-to-coverage are precisely the
+   kind of thing that differs between backends — `@alphaToCoverage` takes a different branch in
+   that shader. So this narrows it to "hardware-GL-specific, or a different build", it does not
+   clear it. Re-check on a GPU box before closing.
+5. **Minimap texture corruption — solid white, blue, or black.**
+   **DOES NOT REPRODUCE on this build**, same capture. The HUD's map panel shows actual content,
+   not a flat fill. Same software-rasterisation caveat as (4) — a render-to-texture path is, if
+   anything, more backend-sensitive than alpha testing.
+
+   One thing in the frame worth a second look on a GPU box: alongside the health/magicka/fatigue
+   bars there is a small solid-black square in the HUD. It may be a placeholder that fills in
+   later, or it may be the same corruption in miniature.
+
+### UI and character data
+6. **Escape must be pressed twice to open the menu.** Input/UI focus.
+7. **Character sheet shows only one major skill, the rest missing.**
+   **LEAD, with evidence — and it is not the skills sync.** `identity.lua` `skillIds()`
+   enumerates every skill record and snapshots each, so the sync is complete. "Major skills"
+   come from the character's CLASS record, not the skill list.
+
+   The class is restored BY ID: `mp.applyChargen` takes a class string and calls
+   `setPlayerClass(ESM::RefId::deserializeText(cls))` (`mwmp/luabindings.cpp`). That resolves an
+   EXISTING class record. A player who built a CUSTOM class at chargen has a dynamic record —
+   and multiplayer "boots as a fresh game and never loads a save" (`quests.lua` says so, which is
+   why the journal is rebuilt from JournalSync every session). So the custom class record does
+   not exist on the next boot, the id resolves to nothing, and the sheet has no majors to show.
+
+   **NOW PROVEN FROM CODE, not just suspected.** `playerstate.ts:59` stores the class as a bare
+   record id — `class: recordId(body.get('class')) ?? ''` — alongside race/head/hair. No majors,
+   no minors, no specialisation. A PRESET class (Knight, Battlemage) is a content record that
+   exists on every boot, so restoring it by id works. A CUSTOM class built at chargen is a
+   dynamic record, multiplayer boots a fresh game and never loads a save, so on the next session
+   that id resolves to nothing and the sheet has no majors to show.
+
+   **Confirm in one minute:** make a character with a preset class and one with a custom class.
+   If presets are fine and custom ones are broken, that is the whole of it.
+
+   **The obvious fix is BLOCKED, and it is worth knowing why before anyone starts.** Persisting
+   the class DEFINITION and rebuilding the record is the right answer, but class records are
+   READ-ONLY from Lua: `mwlua/classbindings.cpp` exposes `majorSkills` and `specialization` as
+   `sol::readonly_property` and provides no `createRecordDraft`, unlike NPCs, armour and spells.
+   Recreating one needs an engine binding — the same class of change as the magic-damage seam.
+
+   Two workarounds that do NOT need one:
+   - Persist the definition and apply the skills directly. Skill BASES are writable
+     (`NPC.stats.skills[id](self).base`, which `identity.lua` already reads), so a restored
+     character could be given the right numbers even while the sheet's class panel stays wrong.
+   - Map a custom class onto its nearest preset at chargen. Cheap, lossy, and honest if it is
+     said out loud in the UI rather than done quietly.
+
+### Input
+8. **Intermittent random mouse movement, spinning the character or camera.** Pointer-lock delta
+   handling is the usual cause of this in a browser build.
+
+### World and interaction
+9. **Looting plants: the container empties but nothing arrives in the inventory.**
+   **PARTLY DIAGNOSED, and it is NOT a regression from this cycle.** A harvestable plant is a
+   Container that OpenMW empties INSTANTLY on activation (`Container::canBeHarvested` ->
+   `ActionHarvest`, `mwclass/container.cpp:195`), with no container window. But the Lua
+   activation hook is a QUEUED engine event — `mEngineEvents.addToQueue(EngineEvents::OnActivate{...})`
+   (`mwlua/luamanagerimp.hpp:89`) — so `objects.onActivate` does not run until the NEXT frame, by
+   which time the plant is already empty.
+
+   So `snapshotContainer` records an EMPTY container, `ContainerOpen` tells the server the plant
+   held nothing, and the watch that would diff a disappearing item sees nothing change and never
+   sends a `take`. Harvesting is therefore invisible to the server: it never learns the item
+   moved. Nothing in `objects.lua` handles organic/harvestable containers as a special case, and
+   the instant-harvest path has no seam the way an opened container does.
+
+   **The local half is now NARROWED, though not closed.** Nothing on the multiplayer path takes
+   an item OUT of a player's inventory except two things: the container-op undo (which runs only
+   when a take was sent and REFUSED), and lobby containment in the public world. The inventory
+   restore cannot be responsible — `global.lua` grants only the shortfall and "deliberately does
+   NOT remove a surplus", precisely so a player holding more than the debounced doc records is
+   never confiscated from.
+
+   That leaves three candidates, in order of likelihood:
+   1. **Not multiplayer at all** — the engine's own harvest, which would reproduce in
+      singleplayer. Check that FIRST; it is the cheapest to rule in or out.
+   2. **A refused take** — but per the paragraph above no take is normally sent for a plant, so
+      this would mean the watch DID see a change. The refusal wording added this cycle makes it
+      self-diagnosing: you would see "Somebody else took that first" or similar. Silence means
+      this is not it.
+   3. **The public lobby**, where inventory is contained by design. Worth knowing which world the
+      session was in.
+10. **Weather appears randomised on each load. FIXED.**
+    Weather was never meant to reroll: `core/weather.ts` folds a region's last state when it goes
+    dormant and hands it back to the next claimant "so weather CONTINUES across a dormancy
+    instead of rerolling". The server did send it. The CLIENT threw it away.
+
+    `world.lua`'s `MP_WorldWeather` drops any weather for a region it holds — correct, so a
+    holder never applies its own echo back onto itself. But the continuity handback arrives
+    immediately AFTER the grant that made this client the holder, so it is indistinguishable from
+    an echo and was discarded by the one client it was meant for. The region then kept whatever
+    weather that client rolled at boot; solo, that is a fresh roll every session.
+
+    The handback is now marked `restore: true` and the guard honours it. Negative-controlled on
+    BOTH halves and both controls were RUN: reverting the client guard fails the Lua check,
+    and dropping the server's marker fails three server tests including "the longest-present
+    occupant inherits on handoff".
+
+**Nothing above is fixed.** They are recorded here because a playtest report is worth more than
+the memory of one, and because two of them (1 and 9) touch code changed in this cycle and need a
+before/after comparison rather than a guess.
+
 ## Known open (already triaged — not bugs to re-report)
 - Some textures skip mipmaps (`glGenerateMipmap` warning) → slight distant shimmer — OSG fix pending
 - No MSAA → jagged edges vs desktop — enhancement, deferred

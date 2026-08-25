@@ -90,6 +90,14 @@ export class WorldState {
 
   // Public-realm rules: unique NPCs respawn (the world is stateless) and therefore must
   // not be farmable. Off by default — a private or party campaign keeps vanilla loot.
+  /** Turn the unowned-drop SIGNAL into a refusal. Requires clients that report acquisitions
+   *  per event (PlayerItemAcquired); see the spawn handler for why it is not on by default. */
+  private refuseUnownedDrops = false;
+
+  setDropEnforcement(on: boolean): void {
+    this.refuseUnownedDrops = on;
+  }
+
   setEconomyRules(opts: { uniqueActors: Iterable<string>; noDrop: boolean }): void {
     this.uniqueActors = new Set([...opts.uniqueActors].map((s) => s.toLowerCase()));
     this.noDrop = opts.noDrop;
@@ -117,6 +125,19 @@ export class WorldState {
     this.heldCount = fn;
   }
 
+  // SPENDING the per-event acquisition credit, which is not optional bookkeeping.
+  //
+  // The credit exists because the inventory snapshot is a 2 s diff and a player can pick
+  // something up and drop it before their own declaration catches up. But a snapshot is only
+  // sent when the inventory CHANGES, and acquire-then-drop leaves it unchanged — so no snapshot
+  // arrives, the credit is never superseded, and it sits there funding a second drop of
+  // something that was only ever acquired once. Consume it at the point it is used.
+  private debitAcquired?: (player: Player, recordId: string, count: number) => void;
+
+  setInventoryDebit(fn: (player: Player, recordId: string, count: number) => void): void {
+    this.debitAcquired = fn;
+  }
+
   private moderationNote?: (accountKey: string, kind: string) => void;
 
   setModerationNote(fn: (accountKey: string, kind: string) => void): void {
@@ -130,8 +151,9 @@ export class WorldState {
   // hand anything to anyone else in the SHARED world. They may still cheat their own
   // campaign, which harms nobody.
   //
-  // ponytail: quarantine the ACCOUNT, not the item. Per-item provenance needs the
-  // observability work first; this needs nothing new and protects strangers today.
+  // Per-item provenance now EXISTS (PlayerItemAcquired + refuseUnownedDrops), but it is off by
+  // default and covers drops only. Containment stays: it is the backstop for every acquisition
+  // path the ledger does not see, and for the case where the ledger is switched off.
   private quarantined?: (accountKey: string) => boolean;
 
   setQuarantineCheck(fn: (accountKey: string) => boolean): void {
@@ -143,6 +165,9 @@ export class WorldState {
     return this.noDrop && this.quarantined?.(player.accountKey) === true;
   }
 
+  /** Set by the server: a cell gained an authority holder. See the grant callback below. */
+  onHolderGained?: (cellKey: string) => void;
+
   constructor(
     private readonly roster: Roster,
     private readonly cells: CellStore,
@@ -152,8 +177,13 @@ export class WorldState {
     // a capable client can hold, so the existing authority-mechanism tests still exercise it.
   ) {
     this.authority = new Authority({
-      grant: (playerId, cellKey, epoch, snapshot) =>
-        this.roster.get(playerId)?.peer.sendEvent('ActorAuthorityGrant', { cellKey, epoch, snapshot }),
+      grant: (playerId, cellKey, epoch, snapshot) => {
+        this.roster.get(playerId)?.peer.sendEvent('ActorAuthorityGrant', { cellKey, epoch, snapshot });
+        // A cell that just got a simulator may have swings parked on it (combat.ts `hold`),
+        // from the window where it had none. Deliver them now rather than having cost those
+        // players the attack.
+        this.onHolderGained?.(cellKey);
+      },
       revoke: (playerId, cellKey, epoch) =>
         this.roster.get(playerId)?.peer.sendEvent('ActorAuthorityRevoke', { cellKey, epoch }),
       info: (playerId, cellKey, holderId, epoch) =>
@@ -502,24 +532,38 @@ export class WorldState {
         player: player.name, account: player.accountKey, recordId, count, held,
         fromInventory, refused: fromInventory && this.noDrop,
       });
-      // STILL NOT REFUSED, and this was measured twice, not assumed.
+      // REFUSABLE AT LAST — both blockers are gone, and it took both.
       //
-      // fromInventory fixed the first false positive (placements are no longer mistaken for
-      // drops), so refusal was tried again — and s30 failed: a player who picks something up
-      // and drops it immediately outruns their own 2 s inventory diff, so the server has not
-      // yet been told they hold it. That is ordinary play, not cheating.
+      // fromInventory fixed the first false positive: this op is the generic "place an object",
+      // which scripts and tools use for things nobody carries (s30/s31 spawn a CHEST), so
+      // without it conservation refused legitimate placements.
       //
-      // Enforcement therefore lives at the ACCOUNT level (containment, see contained()),
-      // which keys on declarations that have no innocent explanation. This stays a signal —
-      // now a precise one, since it can no longer fire on a scripted placement.
-      // ponytail: refuse here only once acquisition is reported per-event rather than by a
-      // 2 s snapshot diff; the race is the blocker, not the rule.
+      // The second was a RACE, not a rule: a player who picks something up and drops it
+      // immediately outruns their own 2 s inventory diff, so the server had not yet been told
+      // they held it. PlayerItemAcquired now credits acquisitions per event and the oracle adds
+      // them, so "you cannot drop what you do not have" is finally a question the server can
+      // answer in time. That is what `refuseUnownedDrops` turns on.
+      //
+      // OFF BY DEFAULT, and that is deliberate rather than timid: the credit path is only as
+      // complete as the client that reports it, and this repo has already backed this
+      // enforcement out once. It stays a signal until the browser scenarios have exercised
+      // every acquisition path against a real engine. Account-level containment (contained())
+      // is unchanged and still the working defence in the meantime.
+      if (this.refuseUnownedDrops && fromInventory) {
+        metrics.unownedDropsRefused.inc();
+        log('warn', 'object.unowned_drop_refused', {
+          player: player.name, account: player.accountKey, recordId, count, held,
+        });
+        return; // no ack, no placement
+      }
     }
     if (this.contained(player)) {
       metrics.containedActions.inc({ action: 'drop' });
       log('warn', 'contain.drop_refused', { player: player.name, account: player.accountKey, recordId });
       return; // no ack, no placement: nothing they declared reaches the shared world
     }
+    // The drop is going ahead, so whatever credit backed it is now spent (see setInventoryDebit).
+    if (fromInventory) this.debitAcquired?.(player, recordId, count);
     const doc = await this.cells.get(cellKey);
     const netId = this.cells.allocNetId();
     const placed = { netId, recordId, cellKey, x, y, z, rotZ, count, byId: player.id };

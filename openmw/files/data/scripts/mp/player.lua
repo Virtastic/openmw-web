@@ -187,6 +187,12 @@ local function poseFlags()
     local stance = types.Actor.getStance(self)
     if stance == types.Actor.STANCE.Weapon then flags = flags + 16 end -- bit4
     if stance == types.Actor.STANCE.Spell then flags = flags + 32 end -- bit5
+    -- INPUT DIAGNOSTIC. "Player cannot attack" was reported from live play while every combat
+    -- test stayed green, because the harness drives a synthetic Hit event and had no way to
+    -- press a mouse button. Mirroring the stance lets a scenario prove that REAL input reaches
+    -- the engine at all: readying a weapon must change this.
+    mp.testSet('stance', stance == types.Actor.STANCE.Weapon and 'weapon'
+        or (stance == types.Actor.STANCE.Spell and 'spell' or 'nothing'))
     return flags
 end
 
@@ -494,6 +500,12 @@ local function pollHarness()
         if hitRec then
             core.sendGlobalEvent('mpTestHit', { record = hitRec, damage = tonumber(hitNdmg) })
         end
+        -- M5: CAST a damaging spell at an NPC (castat:<recordId>:<magnitude>). Distinct from
+        -- hitn: that is the melee path; this one goes through spelleffects.cpp.
+        local castRec, castMag = cmd:match('^castat:(.+):([%d.]+)$')
+        if castRec then
+            core.sendGlobalEvent('mpTestCastAt', { record = castRec, magnitude = tonumber(castMag) })
+        end
         local killNpc = cmd:match('^killnpc:(.+)$')
         if killNpc then core.sendGlobalEvent('mpKillNpc', { id = killNpc }) end
         if cmd == 'door:toggle' then core.sendGlobalEvent('mpDoorToggle', {}) end
@@ -607,6 +619,14 @@ return {
             if key.symbol == 'v' then core.sendGlobalEvent('mpVoice', { op = 'talk', on = false }) end
         end,
         onKeyPress = function(key)
+            -- INPUT DIAGNOSTIC. "Player cannot attack" / "escape must be pressed twice" were
+            -- reported from live play, and s64-real-input shows keys reaching the PAGE and no
+            -- engine action firing. This mirror answers the next question: does the ENGINE
+            -- deliver key events to scripts at all? If it does, input arrives and something
+            -- downstream (control switches, GUI mode) is swallowing it; if it does not, the
+            -- break is between the browser and SDL.
+            mp.testSet('lastKey', tostring(key.symbol or key.code or '?'))
+            mp.testSet('uiMode', tostring(I.UI.getMode() or 'none'))
             if key.symbol == 't' and not I.UI.getMode() then
                 toggleChat()
             elseif key.symbol == 'v' and not I.UI.getMode() then

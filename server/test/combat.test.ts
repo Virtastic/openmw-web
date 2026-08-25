@@ -212,6 +212,54 @@ test('combat routing with pvp enabled', async (t) => {
     assert.ok(Number(f.lodNearRadius) > 0 && Number(f.lodMidRadius) >= Number(f.lodNearRadius),
       `radii must be positive and ordered, got near=${String(f.lodNearRadius)} mid=${String(f.lodMidRadius)}`);
   });
+
+  // LAST IN THIS SUITE ON PURPOSE. Delivering a parked swing requires moving the peer onto the
+  // cell it was parked for, which takes it off '0,0' and bumps that cell's epoch — every test
+  // above depends on the peer holding '0,0' at the epoch captured during setup. Placed here so
+  // the side effect cannot reach them. (Learned by moving it: four unrelated tests went red.)
+  await t.test('a swing into an unsimulated cell is PARKED, then delivered', async () => {
+    // The attacker's client cancels its own damage before sending (puppet.lua's onHit
+    // interceptor returns false), so discarding a hit costs the whole attack. A cell with no
+    // holder is a MOMENTARY state — the sim peer is restarting, or has not picked the cell up
+    // yet — so the swing is held rather than thrown away, and lands when the cell is granted.
+    // '0,1' is adjacent to the attacker (so it passes proximity) and unheld.
+    vic.inbox.events.length = 0;
+    peer.inbox.events.length = 0;
+    vic.sendEvent('CombatHit', hitBody({ ref: ACTOR_REF, cellKey: '0,1' }));
+    await fence(vic, peer);
+    assert.equal(peer.inbox.events.filter((e) => e.name === 'CombatHit').length, 0,
+      'nothing to deliver to yet: the cell has no holder');
+    assert.equal(vic.inbox.events.filter((e) => e.name === 'CombatRefused').length, 0,
+      'a parked swing must not be reported as refused — it has not failed yet');
+
+    // The peer takes the cell. The parked swing must now land, with every ordinary guard still
+    // applied to the delivery.
+    peer.sendCellChange('0,1', 0, 0, 0);
+    const landed = await peer.waitEvent('CombatHit');
+    assert.equal((landed.value as { attackerId: number }).attackerId, vicId,
+      'the delivered hit lost its attacker');
+    assert.equal((landed.value as { damage: { health: number } }).damage.health, 25,
+      'the delivered hit lost its damage');
+  });
+
+  await t.test('a swing that genuinely cannot land is explained to the attacker', async () => {
+    // A STALE epoch is not a momentary gap — the client is addressing a simulator generation
+    // that is gone, and holding it would only deliver it to the wrong one. Refused, and said.
+    vic.inbox.events.length = 0;
+    // '0,1', because the test above moved the peer there — a stale epoch only means anything
+    // for a cell that HAS a holder; without one the swing would be parked, not refused.
+    vic.sendEvent('CombatHit', hitBody({ ref: ACTOR_REF, cellKey: '0,1', epoch: epoch + 99 }));
+    const stale = await vic.waitEvent('CombatRefused');
+    assert.equal((stale.value as { reason: string }).reason, 'stale epoch');
+
+    // But a malformed body is a CLIENT bug the player cannot act on, and an anti-cheat trip must
+    // not tell the client which check it hit. Neither is reported back.
+    vic.inbox.events.length = 0;
+    vic.sendEvent('CombatHit', 'not a table' as never);
+    await fence(vic, peer);
+    assert.equal(vic.inbox.events.filter((e) => e.name === 'CombatRefused').length, 0);
+  });
+
 });
 
 test('pvp gate blocks player targets but not actor targets', async (t) => {

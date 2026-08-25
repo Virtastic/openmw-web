@@ -55,6 +55,12 @@ export interface PluginApi {
   // without every plugin needing to care.
   arePartied?(aPlayerId: number, bPlayerId: number): boolean;
   cellOfPlayer?(playerId: number): string | undefined;
+  /** Where a player currently is, or undefined if they have not reported a pose yet. Needed by
+   *  any rule that has to put somebody NEXT TO somebody else — party respawn, summons, travel. */
+  posOfPlayer?(playerId: number): { cellKey: string; x: number; y: number; z: number } | undefined;
+  /** Live party members of `playerId` who are in-world, nearest-first is NOT implied — order is
+   *  roster order. Excludes the player themselves. */
+  partyOfPlayer?(playerId: number): number[];
 }
 
 export interface Plugin {

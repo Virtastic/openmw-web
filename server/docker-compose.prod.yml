@@ -36,10 +36,26 @@ services:
     env_file:
       - path: /opt/openmw-mp/data/s3.env
         required: false
-    # Sized for gateway + worlds + sim peers: node processes (heap-capped) + one headless
-    # sim peer (~310 MB measured with retail data) + slack. A runaway leak still trips
-    # well before the box cares.
-    mem_limit: 1536m
+    # Sized for gateway + worlds + sim peers. The old value was 1536m, described as room for
+    # "one headless sim peer" — which was the whole problem: EVERY occupied world runs its own
+    # peer (each world process has its own SimPeerSupervisor), so the real cost is ~780 MB per
+    # occupied world (node ~330 MB + peer ~450 MB). At 1536m the box fits ONE world, while the
+    # gateway's own cap was derived from maxPlayers and would happily spawn 256 — so the
+    # governor was a count that could not see the thing that runs out, and the OOM killer took
+    # the container instead of anyone being told the platform was full.
+    #
+    # 8g targets the "tens of concurrent players" shape. At the MEASURED 623 MB per occupied
+    # world (sim peer 487 MB + world process 136 MB, retail data, host load 1.4) that is 12
+    # concurrent worlds after the gateway's own reserve.
+    #
+    # This MUST stay >= [worlds] memBudgetMb + gatewayReserveMb in config.toml, which is what
+    # actually refuses a world before the kernel does. Raising one without the other just moves
+    # which of the two kills you.
+    #
+    # Re-measure on the deploy target before trusting these: the figures above are from an
+    # x86-64 Linux container with one player in one exterior cell, and a peer anchoring several
+    # busy cells will cost more. server/scripts/measure-capacity.ts does it.
+    mem_limit: 8g
     # SIGTERM triggers a full persistence flush; give it time before SIGKILL.
     stop_grace_period: 30s
 networks:

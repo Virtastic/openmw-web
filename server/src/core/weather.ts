@@ -50,9 +50,17 @@ export class WeatherRegions {
       grant: (playerId, key, _epoch, snapshot) => {
         this.send(playerId, 'WorldWeatherAuthority', { region: key, holderId: playerId });
         // Continuity: hand the new holder the region's last known weather.
+        //
+        // MARKED `restore`, and it has to be. The client drops any WorldWeather for a region it
+        // holds — correctly, so a holder never applies its own echo back onto itself — and this
+        // message arrives just AFTER the grant that made it the holder. Unmarked it is
+        // indistinguishable from an echo and is thrown away by the one client it was meant for,
+        // so the region keeps whatever weather that client happened to roll at boot. For a solo
+        // player that is a fresh roll every session, which is exactly the "weather is randomised
+        // on each load" report.
         const state = snapshot as WeatherState | undefined;
         if (state && typeof state.current === 'number') {
-          this.send(playerId, 'WorldWeather', { region: key, ...stateBody(state) });
+          this.send(playerId, 'WorldWeather', { region: key, ...stateBody(state), restore: true });
         }
       },
       // holderId 0 is never a valid playerId (the roster allocates from 1) and reads as

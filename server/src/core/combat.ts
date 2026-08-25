@@ -15,6 +15,7 @@ import { parseObjRef, type ObjRef } from '../proto/ref';
 import type { Player, Roster } from './players';
 import { cellsVisible, MAX_ABS_COORD } from './movement';
 import { TokenBucket } from '../net/ratelimit';
+import { metrics } from '../metrics';
 import { log } from '../log';
 
 const MAX_ID = 64;
@@ -101,10 +102,29 @@ function checkedMagnitude(v: LValue | undefined, cap: number): number | undefine
 const HITS_PER_SEC = 8;
 const HITS_BURST = 20;
 
+// HOW LONG A SWING MAY WAIT FOR ITS SIMULATOR, and how many may wait.
+//
+// A cell whose sim peer is restarting has no holder, and every attack into it used to be
+// discarded — the attacker's client having already cancelled its own damage, so the swing was
+// simply gone. Holding them briefly turns a peer restart from "my hits stopped working" into a
+// half-second of lag.
+//
+// BOUNDED IN BOTH DIRECTIONS, because a queue is how you turn a brief outage into a stampede.
+// 6s: past that the fight has moved on and landing an old hit is worse than dropping it — the
+// target may be dead, fled, or someone else's problem. 64 per cell: enough for a party mid-fight,
+// far below what an attacker could use to make the server hold state on their behalf.
+const HOLD_MS = 6_000;
+const HOLD_MAX_PER_CELL = 64;
+
 export class Combat {
   // Keyed by the Player object, so a disconnected session's bucket is collected with it —
   // a Map keyed by id would grow for the life of the world.
   private readonly hitRate = new WeakMap<Player, TokenBucket>();
+  // cellKey -> swings waiting for that cell to get a simulator back.
+  private readonly waiting = new Map<string, { player: Player; name: string; body: LTable; at: number }[]>();
+  // The body currently being routed. resolveOwner needs it to park a swing, and threading it
+  // through every call site would touch four handlers for one case.
+  private holding: LTable | null = null;
 
   constructor(private readonly ctx: CombatCtx) {}
 
@@ -118,8 +138,86 @@ export class Combat {
     return b.take(1);
   }
 
+  // Reasons the ATTACKER should be told about, because they are about the world rather than
+  // about them. A cell whose simulator is missing or mid-handoff will swallow every swing until
+  // it comes back, and the player has no way to see that: their client already cancelled the
+  // local damage, so the attack simply does nothing. The rest are deliberately NOT reported —
+  // 'invalid shape' and 'malformed body' are client bugs a player cannot act on, and telling a
+  // cheat client which check it tripped ('hit rate above any real client') only helps it tune.
+  private static readonly TELL_ATTACKER = new Set([
+    'cell has no authority holder',
+    'authority holder gone',
+    'stale epoch',
+  ]);
+
+  /** Park a swing until its cell has a simulator again. Called instead of dropping it. */
+  private hold(player: Player, name: string, cellKey: string): void {
+    const body = this.holding;
+    if (!body) { this.drop(player, name, 'cell has no authority holder'); return; }
+    const q = this.waiting.get(cellKey) ?? [];
+    if (q.length >= HOLD_MAX_PER_CELL) {
+      // Full. Drop the OLDEST rather than refusing the newest: if a cell is this busy the recent
+      // swings are the ones still worth landing.
+      const stale = q.shift();
+      if (stale) this.drop(stale.player, stale.name, 'cell has no authority holder');
+    }
+    q.push({ player, name, body, at: Date.now() });
+    this.waiting.set(cellKey, q);
+    metrics.combatHeld.inc({ outcome: 'held' });
+    log('info', 'combat.held', { from: player.name, name, cellKey, waiting: q.length });
+  }
+
+  /**
+   * A cell just got a simulator. Deliver everything that was waiting on it.
+   * Wired from worldstate's authority grant.
+   */
+  flushCell(cellKey: string): void {
+    const q = this.waiting.get(cellKey);
+    if (!q || q.length === 0) return;
+    this.waiting.delete(cellKey);
+    const now = Date.now();
+    for (const held of q) {
+      if (now - held.at > HOLD_MS) {
+        // Too old to land honestly — the fight has moved on.
+        metrics.combatHeld.inc({ outcome: 'expired' });
+        this.drop(held.player, held.name, 'cell has no authority holder');
+        continue;
+      }
+      if (!held.player.inWorld) { metrics.combatHeld.inc({ outcome: 'expired' }); continue; }
+      metrics.combatHeld.inc({ outcome: 'delivered' });
+      // Re-run the ordinary path: the cell has a holder now, so it routes normally. Re-parsed
+      // rather than cached-through, so every guard (proximity, epoch, damage cap) applies to
+      // the delivery exactly as it would have to the original.
+      this.handleEvent(held.player, held.name, held.body as unknown as LValue);
+    }
+  }
+
+  /** Expire anything that has been waiting too long, whether or not a grant ever arrives. */
+  sweepHeld(): void {
+    const now = Date.now();
+    for (const [cellKey, q] of this.waiting) {
+      const live = q.filter((h) => {
+        if (now - h.at <= HOLD_MS) return true;
+        metrics.combatHeld.inc({ outcome: 'expired' });
+        this.drop(h.player, h.name, 'cell has no authority holder');
+        return false;
+      });
+      if (live.length === 0) this.waiting.delete(cellKey);
+      else this.waiting.set(cellKey, live);
+    }
+  }
+
   private drop(player: Player, name: string, why: string): void {
     log('warn', 'combat.dropped', { from: player.name, name, why });
+    // COUNT IT. The attacker's client cancelled its own damage before sending, so every drop
+    // here is an attack the player made that did nothing at all and was told nothing about.
+    // A rising rate on any reason is the machine-readable form of "my hits are not landing".
+    metrics.combatDropped.inc({ reason: why });
+    if (Combat.TELL_ATTACKER.has(why)) {
+      // The client throttles this — a player swinging at a dormant cell generates one of these
+      // per swing, and the point is to explain the situation once, not to narrate every miss.
+      player.peer.sendEvent('CombatRefused', { reason: why });
+    }
   }
 
   // Resolves the union to the single session that owns damage application, or null when
@@ -150,7 +248,12 @@ export class Combat {
     }
     const holderId = this.ctx.holderOf(target.cellKey);
     if (holderId === undefined) {
-      this.drop(attacker, name, 'cell has no authority holder');
+      // NOT A DROP: the cell has no simulator AT THIS MOMENT — the peer is restarting, or has
+      // not picked this cell up yet. The attacker's client already cancelled its own damage, so
+      // discarding here costs them the whole swing. Hold it and deliver when the cell is
+      // granted; `flushCell` does that, and anything still waiting after HOLD_MS is dropped for
+      // real (with the same metric and log, so a peer that never comes back still shows up).
+      this.hold(attacker, name, target.cellKey);
       return null;
     }
     if (target.epoch !== undefined && this.ctx.epochOf(target.cellKey) !== target.epoch) {
@@ -173,6 +276,7 @@ export class Combat {
       this.drop(player, name, 'malformed body');
       return true;
     }
+    this.holding = body; // see `holding` — resolveOwner may need to park this swing
     switch (name) {
       case 'CombatHit': this.hit(player, body); break;
       case 'CombatSpellHit': this.spellHit(player, body); break;

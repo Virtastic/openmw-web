@@ -290,3 +290,62 @@ test('rolling restart: a world that will not come back HALTS the rollout', async
     'the rollout must HALT rather than restart the healthy world behind a failure');
   sup.stopAll();
 });
+
+// ---------------------------------------------------------------- memory governor
+//
+// The bug these cover: maxWorlds was derived from [server] maxPlayers (256) on the reasoning
+// that "sim peers are capped separately, so worlds do not multiply the peer's cost". They do —
+// every world process runs its own SimPeerSupervisor — so a 1.5 GB container would spawn
+// worlds until the OOM killer took it, with every per-world cap reading as satisfied.
+
+test('capacity: the memory budget binds when it is tighter than the count cap', () => {
+  // 2048 usable after the 256 MB reserve, at 780 MB per world -> 2 worlds, not 10.
+  const { sup } = harness({
+    maxWorlds: 10, memBudgetMb: 2304, worldCostMb: 780, gatewayReserveMb: 256, publicWorlds: [],
+  });
+  const cap = sup.capacity();
+  assert.equal(cap.cap, 2);
+  assert.equal(cap.reason, 'memory');
+
+  assert.ok(sup.ensure('a', 'private', 'ann'), 'first world fits');
+  assert.ok(sup.ensure('b', 'private', 'bob'), 'second world fits');
+  assert.equal(sup.ensure('c', 'private', 'cid'), null, 'third is refused by the memory budget');
+  assert.equal(sup.running, 2);
+});
+
+test('capacity: the count cap still binds when it is the tighter of the two', () => {
+  const { sup } = harness({
+    maxWorlds: 1, memBudgetMb: 100_000, worldCostMb: 780, gatewayReserveMb: 256, publicWorlds: [],
+  });
+  assert.deepEqual(
+    { cap: sup.capacity().cap, reason: sup.capacity().reason },
+    { cap: 1, reason: 'count' },
+  );
+  assert.ok(sup.ensure('a', 'private', 'ann'));
+  assert.equal(sup.ensure('b', 'private', 'bob'), null);
+});
+
+// NEGATIVE CONTROL. Remove the budget and the SAME calls succeed — so the refusal above is
+// the governor doing its job, not the harness running out of ports or the fake spawner
+// failing. Deleting the memBudgetMb check in ensure() makes the first test fail and this one
+// keep passing, which is the discrimination that matters.
+test('capacity: with no budget configured only the count cap applies', () => {
+  const { sup } = harness({ maxWorlds: 10, publicWorlds: [] });
+  assert.equal(sup.capacity().reason, 'count');
+  assert.ok(sup.ensure('a', 'private', 'ann'));
+  assert.ok(sup.ensure('b', 'private', 'bob'));
+  assert.ok(sup.ensure('c', 'private', 'cid'), 'the third world that the budget refused');
+  assert.equal(sup.running, 3);
+});
+
+// A budget too small for one world must still run one. Refusing everything would make a
+// fat-fingered memBudgetMb indistinguishable from a broken gateway — the failure mode this
+// whole governor exists to make legible.
+test('capacity: a budget below one world still admits one, and says so', () => {
+  const { sup } = harness({
+    maxWorlds: 10, memBudgetMb: 300, worldCostMb: 780, gatewayReserveMb: 256, publicWorlds: [],
+  });
+  assert.equal(sup.capacity().cap, 1);
+  assert.ok(sup.ensure('a', 'private', 'ann'));
+  assert.equal(sup.ensure('b', 'private', 'bob'), null);
+});

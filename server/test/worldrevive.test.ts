@@ -24,24 +24,28 @@ class FakeChild extends EventEmitter {
   kill(sig: string): boolean { queueMicrotask(() => this.emit('exit', 0, sig)); return true; }
 }
 
-async function harness() {
+async function harness(over: { idleReapMs?: number } = {}) {
   const wdir = mkdtempSync(join(tmpdir(), 'omw-revive-'));
+  // Reported by the fake /status, so a test can put someone in a world and take them out again
+  // — which is the only way to make the idle reaper engage at all.
+  let players = 0;
   const worlds = new WorldSupervisor({
     settings: {
       worldsDir: wdir, gatewayPort: 8080,
       serverEntry: '/fake/server.mjs', nodeBin: '/fake/node',
-      basePort: 43000, maxWorlds: 8, idleReapMs: 60_000, startTimeoutMs: 1000,
+      basePort: 43000, maxWorlds: 8, idleReapMs: over.idleReapMs ?? 60_000, startTimeoutMs: 1000,
       restartBackoffMs: 1000, publicWorlds: [],
       sharedDir: mkdtempSync(join(tmpdir(), 'omw-shared-')),
     },
     spawner: () => new FakeChild() as unknown as ChildProcess,
-    fetchStatus: async (port) => ({ playerCount: 0, connectedCount: 0, maxPlayers: 32, name: `w${port}` }),
+    fetchStatus: async (port) => ({ playerCount: players, connectedCount: players, maxPlayers: 32, name: `w${port}` }),
   });
   const dir = await startDirectory({
     worlds, host: '127.0.0.1', port: 0, maxPerOwner: 4, worldsDir: wdir,
     resolveAccount: (auth: string) => (auth.startsWith('Bearer ') ? auth.slice(7) : undefined),
   });
   return { worlds, dir, wdir, base: `http://127.0.0.1:${dir.port}`,
+    setPlayers: (n: number) => { players = n; },
     cleanup: async () => { await dir.close(); worlds.stopAll(); } };
 }
 
@@ -129,6 +133,43 @@ test('reviving is rate limited, so one client cannot spawn a process per directo
     await new Promise((r) => setTimeout(r, 100));
     assert.ok(h.worlds.running <= 30, `revived ${h.worlds.running} worlds from one address`);
     assert.ok(h.worlds.running >= 1, 'the limit must not refuse legitimate reconnects outright');
+  } finally {
+    await h.cleanup();
+  }
+});
+
+// THE REAL ROUND TRIP: let the REAPER do the reaping.
+//
+// Everything above simulates the reap with a manual stop(), which proves revival works but not
+// that the thing which actually stops these worlds leaves them revivable. Those are different
+// claims: the reaper could grow a "tidy up the data dir" step tomorrow and every test above
+// would stay green while every solo world became unrecoverable the moment its owner stepped
+// away — the exact journey that gated multiplayer off production (solo -> public -> reaped ->
+// home). Drive the sweep for real, then walk back in.
+test('a world the REAPER stopped is still the owner\'s when they come home', async () => {
+  const h = await harness({ idleReapMs: 1 });
+  try {
+    const id = 'priv-alice-abcd1234';
+    await createPrivate(h.base, id, 'alice');
+
+    // Joined, then left. Idle is measured on CONNECTED clients, and a world that was never
+    // reached gets a long startup grace instead — so it has to be seen occupied first, or the
+    // reaper correctly leaves it alone and this measures nothing.
+    h.setPlayers(1);
+    await h.worlds.poll();
+    h.setPlayers(0);
+    await h.worlds.poll();       // starts the idle clock
+    await new Promise((r) => setTimeout(r, 10));
+    await h.worlds.poll();       // ...and now it is past idleReapMs
+    await new Promise((r) => setTimeout(r, 50));
+
+    assert.equal(h.worlds.get(id), undefined, 'the reaper should have stopped it');
+    assert.ok(existsSync(join(h.wdir, id)), 'the data dir must outlive the reaper');
+
+    await dial(h.dir.port, `/w/${id}`);
+    await new Promise((r) => setTimeout(r, 50));
+    assert.equal(h.worlds.get(id)?.ownerAccount, 'alice',
+      'a reaper-stopped world came back unowned, which admits everyone');
   } finally {
     await h.cleanup();
   }

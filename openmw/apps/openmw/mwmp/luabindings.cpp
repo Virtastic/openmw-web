@@ -1,6 +1,7 @@
 // Added by Virtastic (https://virtastic.app) for the OpenMW-Web port, 2026.
 // See WASM_ADAPTATIONS.md at the repository root for details.
 #include "luabindings.hpp"
+#include "puppets.hpp"
 
 #include <cstdlib>
 #include <vector>
@@ -142,6 +143,37 @@ namespace MWMP
             luaManager->addAction(
                 [id, count] { MWBase::Environment::get().getMechanicsManager()->setDeaths(id, count); },
                 "MPSetDeadCount");
+        };
+        // PUPPET REGISTRY (see puppets.hpp). Lua knows which actors a remote peer simulates;
+        // the C++ magic-damage site needs that answer synchronously, because it applies damage
+        // itself and there is no Lua veto on that path the way there is for melee.
+        api["setPuppet"] = [](const sol::object& obj, bool on) {
+            if (!obj.is<MWLua::Object>())
+                return;
+            setPuppet(obj.as<MWLua::Object>().id(), on);
+        };
+        api["clearPuppets"] = []() { clearPuppets(); };
+        // Drain the harmful magic effects the engine declined to apply to THIS actor, so its
+        // puppet script can forward them to whoever owns it. Per-object on purpose: the puppet
+        // local script already has the object and already forwards melee the same way
+        // (core.sendGlobalEvent 'mpCombatHit'), so this needs no RefNum-to-object lookup in Lua.
+        // Returns an array of {effectId=string, magnitude=number, stat=0|1|2}
+        // (0 health, 1 magicka, 2 fatigue).
+        api["takeMagicHits"] = [](sol::this_state state, const sol::object& obj) {
+            sol::table out(state, sol::create);
+            if (!obj.is<MWLua::Object>())
+                return out;
+            int i = 1;
+            for (const MagicHit& h : takeMagicHitsFor(obj.as<MWLua::Object>().id()))
+            {
+                sol::table e(state, sol::create);
+                e["effectId"] = h.mEffectId;
+                e["spellId"] = h.mSpellId;
+                e["magnitude"] = h.mMagnitude;
+                e["stat"] = h.mStat;
+                out[i++] = e;
+            }
+            return out;
         };
         api["isEnabled"] = []() { return std::getenv("OPENMW_MP_URL") != nullptr; };
         api["getUrl"] = []() { return getEnvString("OPENMW_MP_URL"); };

@@ -85,11 +85,18 @@ export class TestClient {
   }
 
   // subprotocol: null = offer none (must be refused by the server).
-  static connect(port: number, subprotocol: string | null = 'omw-mp.1'): Promise<TestClient> {
+  /** `path` defaults to a world's own '/ws'. A GATEWAY publishes no world ports at all and
+   *  splices clients through '/w/<worldId>' instead, so anything driving a real gateway (the
+   *  capacity measurement, a scenario) has to be able to say so. */
+  static connect(
+    port: number,
+    subprotocol: string | null = 'omw-mp.1',
+    path = '/ws',
+  ): Promise<TestClient> {
     return new Promise((resolve, reject) => {
       const ws = subprotocol
-        ? new WebSocket(`ws://127.0.0.1:${port}/ws`, subprotocol)
-        : new WebSocket(`ws://127.0.0.1:${port}/ws`);
+        ? new WebSocket(`ws://127.0.0.1:${port}${path}`, subprotocol)
+        : new WebSocket(`ws://127.0.0.1:${port}${path}`);
       ws.once('open', () => resolve(new TestClient(ws)));
       ws.once('error', reject);
     });

@@ -116,6 +116,31 @@ export class PlayerStore {
   suppressSaves(key: string): void { this.creating.add(key); }
   allowSaves(key: string): void { this.creating.delete(key); }
 
+  // LOBBY MODE: nothing done in this world reaches the character on disk.
+  //
+  // The gateway's public world is a social lobby with no quest progress and no stakes, but
+  // inventory DID persist out of it — and quest items never deplete from a container
+  // (core/quests.ts), so N strangers could each take the same Dwemer Puzzle Box and keep it
+  // forever. The comment guarding this claimed the lobby was safe because "its cells reset by
+  // construction"; [cellReset] cells is empty by default, so nothing reset and nothing was safe.
+  //
+  // The fix is containment rather than policing each loot path: in lobby mode the character doc
+  // is never written. You arrive with your gear, play, and leave with exactly what you had.
+  //
+  // It is symmetric ON PURPOSE, which repairs an old bug rather than reintroducing it. The
+  // previous read-only attempt was abandoned because "a withheld write is a withheld LOSS" — an
+  // item dropped in the lobby stayed on the lobby's ground while the doc still claimed you
+  // carried it, so going home granted it back. That is a duplicate only if one of the copies can
+  // ESCAPE, and neither can: the ground copy is in a world nobody takes anything out of, and the
+  // carried copy is the one you walked in with. Containment is the mechanism, so the asymmetry
+  // stops mattering.
+  private readonly lobby: boolean;
+  // Released lobby docs, kept briefly so a RECONNECT is not a reset. Dropped after
+  // lobbyRetainMs, which is why a player who comes back next week gets their real character
+  // rather than a week-old lobby snapshot. Never written to disk.
+  private retained = new Map<string, { doc: PlayerDoc; at: number }>();
+  private readonly lobbyRetainMs: number;
+
   private cache = new Map<string, PlayerDoc>(); // key = account nameLower
   private dirty = new Set<string>();
   private debounce = new Map<string, NodeJS.Timeout>();
@@ -128,11 +153,32 @@ export class PlayerStore {
 
   // dataDir: where docs live — under the F3 gateway this is the SHARED dir, so a character
   // doc follows the player across worlds. worldId scopes positions.
-  constructor(dataDir: string, worldId = 'default') {
+  constructor(dataDir: string, worldId = 'default', opts: { lobby?: boolean; lobbyRetainMs?: number } = {}) {
     this.db = openDb(join(dataDir, 'players.db'), PLAYER_MIGRATIONS);
     this.worldId = worldId;
-    this.sweepTimer = setInterval(() => void this.flushAll(), SWEEP_MS);
+    this.lobby = opts.lobby === true;
+    // Matched to [login] resumeWindowSec by the caller: the window in which coming back is a
+    // RECONNECT rather than a return. Same question, so the same answer.
+    this.lobbyRetainMs = opts.lobbyRetainMs ?? 300_000;
+    this.sweepTimer = setInterval(() => {
+      void this.flushAll();
+      this.sweepRetained();
+    }, SWEEP_MS);
     this.sweepTimer.unref();
+  }
+
+  /** Is this store discarding character writes? Exposed so a caller can state it in a log line
+   *  rather than inferring it, and so a test can assert the mode was actually applied. */
+  get isLobby(): boolean {
+    return this.lobby;
+  }
+
+  private sweepRetained(): void {
+    if (this.retained.size === 0) return;
+    const cutoff = Date.now() - this.lobbyRetainMs;
+    for (const [key, held] of [...this.retained]) {
+      if (held.at <= cutoff) this.retained.delete(key);
+    }
   }
 
   setLivePositionProvider(fn: (key: string) => LivePosition | undefined): void {
@@ -170,6 +216,18 @@ export class PlayerStore {
    *  A cache miss is normal (a supersede tearing down the previous session, an eviction, a
    *  path that writes before anyone read) and must never mean "this character is new". */
   private loadSync(key: string): PlayerDoc | undefined {
+    // A recent lobby session outranks the disk copy — but only inside the retain window. Past
+    // it the entry is gone and the player gets their real character, which is what makes this a
+    // reconnect affordance rather than a second, stale save file.
+    const held = this.retained.get(key);
+    if (held !== undefined) {
+      if (Date.now() - held.at <= this.lobbyRetainMs) {
+        this.retained.delete(key);
+        this.cache.set(key, held.doc);
+        return held.doc;
+      }
+      this.retained.delete(key);
+    }
     const row = this.db.prepare('SELECT doc FROM players WHERE key = ?').get(key) as
       { doc: string } | undefined;
     if (!row) return undefined;
@@ -222,6 +280,11 @@ export class PlayerStore {
    *  one players.db. */
   async releaseCached(key: string): Promise<void> {
     if (this.dirty.has(key)) await this.flushKey(key);
+    // In the lobby there is nothing on disk to re-read, so dropping the doc outright would make
+    // a three-second network blip look like a reset: the player would rejoin with the inventory
+    // they walked in with and lose everything they had picked up. Hold it briefly instead.
+    const held = this.cache.get(key);
+    if (this.lobby && held) this.retained.set(key, { doc: held, at: Date.now() });
     this.cache.delete(key);
     this.dirty.delete(key);
     this.creating.delete(key);
@@ -264,6 +327,11 @@ export class PlayerStore {
   }
 
   async flushKey(key: string): Promise<void> {
+    // LOBBY MODE WRITES NOTHING, EVER. Checked first and unconditionally: every other flush
+    // path (sweep, 'now', debounce, releaseCached, shutdown) funnels through here, so this one
+    // line is the whole containment guarantee. Leave the dirty flag alone — there is no later
+    // moment at which this doc becomes writable, and clearing it would only hide that.
+    if (this.lobby) return;
     // Still in character creation: keep the doc in memory and leave the dirty flag set, so the
     // first flush after ChargenComplete writes everything that happened meanwhile.
     if (this.creating.has(key)) return;

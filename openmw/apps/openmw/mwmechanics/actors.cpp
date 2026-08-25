@@ -1583,8 +1583,32 @@ namespace MWMechanics
                 MWBase::LuaManager::ActorControls* luaControls
                     = MWBase::Environment::get().getLuaManager()->getActorControls(actor.getPtr());
 
-                const float distSqr = (playerPos - actor.getPtr().getRefData().getPosition().asVec3()).length2();
-                // AI processing is only done within given distance to the player.
+                // NEAREST ANCHOR, not just the player — the same rule adjustVisibility() above
+                // already applies, and for the same reason.
+                //
+                // This gate decides whether an actor gets AI AT ALL. On a normal client there
+                // are no anchors and it is exactly the vanilla check. On a headless sim peer the
+                // "player" is its own parked avatar, so measuring only from that meant every NPC
+                // near a REAL player — anywhere the peer was not standing — got no AI: it never
+                // aggroed, never attacked, and anything caught mid-animation froze in it. The
+                // default range is 7168 and an exterior cell is 8192, so one cell away was
+                // already enough. Reported from live play as "some NPCs never attack or aggro"
+                // and an assassin "stuck in an attack animation".
+                //
+                // The anchors were already there and already used for VISIBILITY a few hundred
+                // lines up; only this half was still measuring from the avatar.
+                const osg::Vec3f thisActorPos = actor.getPtr().getRefData().getPosition().asVec3();
+                float nearestDistSqr = (playerPos - thisActorPos).length2();
+                for (const osg::Vec3f& anchor : MWBase::Environment::get().getWorld()->getSimAnchorPositions())
+                {
+                    // Horizontal plane: anchors are cell centres at z=0, so an actor up a tower
+                    // or down a cave must not read as out of range on height alone.
+                    const float dx = anchor.x() - thisActorPos.x();
+                    const float dy = anchor.y() - thisActorPos.y();
+                    nearestDistSqr = std::min(nearestDistSqr, dx * dx + dy * dy);
+                }
+                const float distSqr = nearestDistSqr;
+                // AI processing is only done within given distance to the player (or an anchor).
                 const bool inProcessingRange = distSqr <= actorsProcessingRange * actorsProcessingRange;
 
                 // If dead or no longer in combat, no longer store any actors who attempted to hit us. Also remove for

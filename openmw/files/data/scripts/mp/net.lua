@@ -605,11 +605,31 @@ dispatch.SessionPong = function(msg)
     mp.testSet('rttMs', tostring(net.rttMs))
 end
 
+-- Disconnect codes that describe the SERVER's situation rather than a verdict on this client.
+-- The world is coming back in seconds, so the honest response is to wait for it, not to eject
+-- the player into a terminal modal they can only escape by reloading.
+--
+-- Everything else stays terminal, deliberately: BANNED and KICKED are decisions a moderator
+-- made and must not be re-litigated by an auto-retry; SUPERSEDED means this character is open
+-- somewhere else and reconnecting would have the two sessions fight; RATE means the client was
+-- dropped for flooding, and hammering the door is precisely the wrong reply; BAD_ENGINE /
+-- BAD_CONTENT / BAD_PROTO will refuse identically every time.
+local TRANSIENT_DISCONNECT = { SHUTDOWN = true, SERVER_FULL = true }
+
 dispatch.SessionDisconnect = function(msg)
     net.lastError = msg.code
     net.lastErrorDetail = msg.detail
     print('[mp] server disconnect: ' .. tostring(msg.code) .. ' (' .. tostring(msg.detail) .. ')')
     mp.testSet('lastError', tostring(msg.code) .. ' ' .. tostring(msg.detail or ''))
+    -- A RESTART IS NOT A FAILURE. SHUTDOWN used to land here and set Failed, so every deploy —
+    -- and every rolling restart, the very thing meant to avoid an outage — threw all its players
+    -- into the fatal modal. Leaving the state alone lets onClose fall through to the ordinary
+    -- reconnect ladder, which backs off, redials, and rejoins in place if its resume token
+    -- survived (or through a fresh ticket if the world forgot it, which a restart guarantees).
+    if TRANSIENT_DISCONNECT[msg.code] then
+        mp.testSet('serverRestarting', '1')
+        return
+    end
     if msg.code ~= 'AUTH_FAILED' then
         setState('Failed')
     end

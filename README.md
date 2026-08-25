@@ -136,7 +136,19 @@ server that owns the shared world and a client that asks it what happened.
 
 **Three ways to play, switched from inside the game.** *Solo* is your own world, no one
 else in it. *Party* puts your group in one world together. *Public* is a shared world
-with strangers in it. Switching moves your character; it does not restart the game.
+with strangers in it. Switching carries your character over and reloads into the new world,
+so there is a loading screen — you are genuinely going somewhere else, and nothing from the
+old world is left behind in the new one.
+
+**The public world is a lobby, and nothing there is permanent.** It is where you meet people:
+you arrive with your gear, play, and leave with exactly what you had — a sword found there does
+not come home with you, and one lost there is still yours. Quests do not advance in it either.
+Real progress happens in your own world, or in a friend's.
+
+**Visiting a friend's world advances THEIR campaign.** You keep what you carry out and every
+skill you used getting it — Morrowind levels what you actually do, so helping a friend is never
+wasted — but the quest log is the host's. Your own story is neither moved nor spoiled by the
+visit, and the game says so when you arrive.
 
 **Your copy follows you.** Sign in and upload your Morrowind once; it streams back to you on
 any machine you sign in from, and your saves go with it. Uploads are private to the account,
@@ -148,8 +160,15 @@ uploaded files, single player. Upload once, play anywhere.
 
 **The server decides.** NPCs, combat resolution, loot and cell state are simulated
 server-side by a headless copy of the engine that holds authority over the cells players
-are standing in. A modified client can lie about its own input and gets nowhere: it
-cannot author what an NPC did, spawn an item, or vouch for its own damage. Character
+are standing in. A modified client **cannot author what an NPC did, and cannot vouch for its
+own damage against one** — those are the operator's machine's to decide, and a forged actor
+update is rejected, counted and relayed to nobody.
+
+Where it is bounded rather than impossible, this says so. Your own character's position and
+stats are still reported by your own client, because that is what makes the game feel
+responsive — so the server bounds them instead: impossible speed stops being relayed to other
+players in the public world, and hopping across the map is rate-limited. Dropping an item you
+do not have is detected everywhere and refusable, though operators must turn that on. Character
 state (position, inventory, stats, journal, faction standing) lives in the server's own
 per-character document, written behind a debounce and flushed on cell change, level-up
 and logout.
@@ -269,6 +288,41 @@ dep, staging into `deps/wasm/{lib,include}`). Run it with no args to build
 everything, or pass targets like `build-deps.sh bullet lua`. It wraps the standard
 emscripten cross-compiles for Bullet, Recast, MyGUI, FFmpeg, Boost, Lua, LZ4, the
 empty OpenAL stub, the ICU-mt and libGL-getprocaddr emscripten ports, and OSG.
+
+**Building the stack in Docker.** `build-deps.sh` assumes a host emsdk; the pinned toolchain
+image works too and needs two things the image does not ship:
+
+```bash
+docker run --rm -i -v "$PWD:/repo" -w /repo -m 12g emscripten/emsdk:6.0.1 bash -s <<'SH'
+apt-get update -qq && apt-get install -y -qq ninja-build   # the image has cmake, not ninja
+export EM_LIBEXEC=/emsdk/upstream/emscripten ROOT=/repo
+export CMAKE_BUILD_PARALLEL_LEVEL=6                        # ~1 GB per job; unbounded exhausts RAM
+bash wasm-build/build-deps.sh                              # or name targets to go one at a time
+SH
+```
+
+Sources are expected under `deps/src/` and are NOT fetched by the script: `osg`
+(`OpenSceneGraph-3.6.5`, patched), `bullet3` (3.25), `recast` (v1.6.0), `mygui` (MyGUI3.4.3),
+`ffmpeg-6.1.2`, `boost_1_85_0`, `lua-5.4.7`, `lz4-1.10.0`.
+
+**Two headers are force-included into every translation unit** (`wasm-build/include/`):
+`gl_compat.h` supplies desktop-GL vocabulary the GLES2 headers omit but OSG and OpenMW still
+name — the sRGB S3TC formats, `GLdouble`/`GLclampd`, and the fixed-function enums (fog modes,
+clip planes, lights, texgen, `GL_QUADS`, ...). Every value is spec-fixed and the modes they feed
+are runtime no-ops in a GLES build, so this is a compile-time vocabulary gap, not a capability
+claim. `mygui_char_traits_fix.h` gives `std::char_traits` for `unsigned short`/`unsigned int`,
+which modern libc++ no longer provides and MyGUI's `UString` still needs.
+
+Both previously existed only inside a maintainer's gitignored `deps/wasm/include`, so a clean
+checkout could not compile a single file. They are build INPUTS and now live in the repo; a
+`deps/` copy still takes precedence if you have one. Add to `gl_compat.h` only when a real
+compile error demands it, and say which one.
+
+**On Windows, check your line endings first.** A `.patch` or `.sh` checked out with CRLF is
+unusable — the OSG patch fails every hunk against LF sources, and `set -euo pipefail` becomes
+`pipefail
+`. `.gitattributes` pins `eol=lf` for both; if you cloned before that existed, run
+`git add --renormalize .`.
 
 OSG is the most involved dep and has its own script (which `build-deps.sh` calls):
 apply `wasm-build/patches/osg-emscripten.patch` to an `OpenSceneGraph-3.6.5` checkout

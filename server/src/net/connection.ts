@@ -20,7 +20,7 @@ import { TokenBucket, IpRateLimiter } from './ratelimit';
 import { socketRttMs } from './ws';
 import { MSG_EVENT, MSG_PLAYER_MOVE, MSG_PLAYER_MOVE_BATCH, MSG_ACTOR_MOVE_BATCH, ProtoError, unpackEnvelope, unpackEvent, packEvent, packEnvelope, nextBroadcastSeq } from '../proto/envelope';
 import { unpackMove } from '../proto/movement';
-import { MAX_ABS_COORD , isChargenCell } from '../core/movement';
+import { MAX_ABS_COORD , isChargenCell, parseExterior, cellsVisible } from '../core/movement';
 import { handleStateEvent, syncStateOnJoin, type StateCtx } from '../core/playerstate';
 import type { WorldState } from '../core/worldstate';
 import type { Combat } from '../core/combat';
@@ -153,6 +153,11 @@ export interface ServerCtx {
   };
   motd(): string; // mutable at runtime via /motd
 }
+
+// How much wall clock must pass before a speed verdict is formed. Long enough that a burst of
+// frames delivered after a network stall collapses into one honest measurement, short enough
+// that three consecutive windows is still under a second of sustained impossibility.
+const MOVE_WINDOW_MS = 200;
 
 export class Connection implements Peer {
   state: SessionState = 'CONNECTED';
@@ -720,24 +725,57 @@ export class Connection implements Peer {
     // Boots of Blinding Speed), and a false positive on a real player is worse than a
     // cheat that has to move at merely-absurd speed. Same-cell only — a cell change IS a
     // teleport by design (doors, travel, recall).
-    const prev = player.pose;
     const now = Date.now();
-    if (prev && player.lastPoseAt !== undefined && !this.isSystem) {
-      const dt = Math.max(1, now - player.lastPoseAt) / 1000;
-      const dist = Math.hypot(pose.x - prev.x, pose.y - prev.y, pose.z - prev.z);
+    const anchor = player.moveAnchor;
+    // MEASURED OVER A WINDOW, NOT BETWEEN FRAMES.
+    //
+    // Frame spacing is ARRIVAL spacing, and a stalled connection delivers a burst: per-frame
+    // that is an ordinary distance over a near-zero dt, i.e. an enormous apparent speed for a
+    // player who did nothing but have bad wifi. While this only counted, that was noise in a
+    // log; now that the lobby ACTS on it, it would be a rubber-band on the wrong person.
+    //
+    // Over a fixed window the same burst is just the distance actually covered in that window.
+    // A frame arriving inside the window is still accepted and relayed — it simply does not
+    // produce a verdict, because there is not yet enough elapsed time to form one.
+    if (anchor !== undefined && !this.isSystem && now - anchor.at >= MOVE_WINDOW_MS) {
+      const dt = (now - anchor.at) / 1000;
+      const dist = Math.hypot(pose.x - anchor.x, pose.y - anchor.y, pose.z - anchor.z);
+      const speed = dist / dt;
       // Units/second. Vanilla sprint is ~600; levitate + fortify speed reaches a few
       // thousand. 12000 is beyond anything the engine produces without console commands.
-      if (dist / dt > 12000 && dt < 5) {
+      // dt < 5: a longer gap is a load screen or an AFK, where displacement says nothing.
+      if (speed > 12000 && dt < 5) {
+        const run = (player.implausibleRun ?? 0) + 1;
+        player.implausibleRun = run;
         metrics.implausibleMoves.inc();
         this.ctx.moderation.noteAnomaly(player.accountKey, 'move');
         log('warn', 'conn.move_implausible', {
           player: player.name, account: player.accountKey,
-          speed: Math.round(dist / dt), dt: Math.round(dt * 1000),
+          speed: Math.round(speed), dt: Math.round(dt * 1000), run,
         });
-        // Counted, not dropped: rejecting the frame would rubber-band a legitimate player
-        // whose connection stalled and then delivered a batch late, which is common. The
-        // record is what moderation acts on.
+        // IN THE SHARED LOBBY, COUNTING IS NOT ENOUGH. Everywhere else this stays a signal:
+        // a private or party world is the player's own game (or their friends'), and someone
+        // cheating there harms nobody, while a false positive would be pure harm.
+        //
+        // The lobby is strangers, so the frame is REFUSED: the pose is not accepted, so to
+        // everyone else the offender stops where they last legitimately were. No teleport is
+        // sent and no new message exists — a correction that can misfire is worse than one
+        // that cannot.
+        //
+        // Gated on a RUN of windows, so enforcement needs sustained impossibility rather than
+        // one bad measurement. The anchor is deliberately NOT advanced on a refused frame:
+        // the next window is measured from the last position we believed, so a client that
+        // teleports away stays refused until it comes back to somewhere reachable.
+        if (this.ctx.lobbyWorld && run >= 3) {
+          metrics.movesRefused.inc();
+          return; // pose, lastPoseAt and moveSeq all stand: this frame never happened
+        }
+      } else {
+        player.implausibleRun = 0;
       }
+      player.moveAnchor = { x: pose.x, y: pose.y, z: pose.z, at: now };
+    } else if (anchor === undefined) {
+      player.moveAnchor = { x: pose.x, y: pose.y, z: pose.z, at: now };
     }
     player.lastPoseAt = now;
     player.moveSeq = seq;
@@ -765,6 +803,43 @@ export class Connection implements Peer {
       return;
     }
     const oldCell = player.cellKey;
+
+    // TELEPORT-HOPPING, bounded without any game data.
+    //
+    // The speed envelope deliberately forgives a cell change, because a door IS a teleport —
+    // which leaves declaring cell changes as the way around it. The server cannot tell a real
+    // door from an invented one (it ships no content), but it does not have to: what it can see
+    // is that WALKING is always into an ADJACENT exterior cell, and a door always goes through
+    // an interior. So an exterior-to-exterior jump across the grid is never walking. It is a
+    // teleport spell, a silt strider, or a lie.
+    //
+    // Legitimate ones are RARE — Recall and Intervention cost magicka and have somewhere to be —
+    // so they are rate-limited rather than refused. That leaves a real player untouched and
+    // makes the bypass useless for the thing it would actually be used for: hopping the map to
+    // scout, to farm, or to stay out of reach.
+    if (!this.isSystem && oldCell !== undefined && oldCell !== cellKey
+        && parseExterior(oldCell) !== null && parseExterior(cellKey) !== null
+        && !cellsVisible(oldCell, cellKey)) {
+      const now = Date.now();
+      const window = now - 60_000;
+      const jumps = (player.farJumps ?? []).filter((t) => t > window);
+      jumps.push(now);
+      player.farJumps = jumps;
+      const cap = this.ctx.config.limits.farTravelPerMin;
+      if (cap > 0 && jumps.length > cap) {
+        metrics.farTravelRefused.inc();
+        this.ctx.moderation.noteAnomaly(player.accountKey, 'far_travel');
+        log('warn', 'conn.far_travel_flood', {
+          player: player.name, account: player.accountKey,
+          from: oldCell, to: cellKey, inLastMinute: jumps.length, cap,
+        });
+        // Same split as the movement envelope: the lobby is strangers and acts, everywhere else
+        // is somebody's own game and only counts. Refusing means occupancy is not updated, so
+        // the hopper simply is not where they claim to be as far as anyone else can tell.
+        if (this.ctx.lobbyWorld) return;
+      }
+    }
+
     // Co-presence changed, so the scaling did too.
     queueMicrotask(() => this.ctx.sendPartyScaling?.(player));
     // ...and this character may be owed a one-shot encounter that fired for somebody else
@@ -786,6 +861,21 @@ export class Connection implements Peer {
       counter: 0,
     };
     player.poseVersion++;
+    // A CELL CHANGE IS A LEGITIMATE TELEPORT — a door, a silt strider, Recall, Divine
+    // Intervention — so the speed envelope must not measure across one. The old per-frame
+    // check got this property for free, because it compared against player.pose and the block
+    // above refreshes exactly that. The windowed check keeps its own baseline, so it has to be
+    // told: without this, arriving anywhere by door measures as the distance between two cells
+    // covered instantly, and in the lobby three of those in a row would freeze a player for
+    // travelling normally.
+    //
+    // AND THIS IS A KNOWN BYPASS, stated rather than glossed: a modified client can move
+    // anywhere it likes by declaring a PlayerCellChange instead of a PlayerMove, and this line
+    // forgives it. The server ships no game data, so it cannot tell a real door from an
+    // invented one — the envelope bounds travel WITHIN a cell and is not a teleport check.
+    // Closing it needs the sim peer to validate arrivals against the real cell graph.
+    player.moveAnchor = { x, y, z, at: Date.now() };
+    player.implausibleRun = 0;
     // Cell change is a specced persistence flush point.
     this.ctx.players.update(player.charId, (doc) => (doc.position = { cellKey, x, y, z }), 'now');
     log('info', 'player.cell_change', { id: player.id, cellKey });
@@ -837,7 +927,15 @@ export class Connection implements Peer {
       this.disconnect('SERVER_FULL', 'server is full');
       return;
     }
-    const engineCheck = this.ctx.engine.check(msg.engineHash);
+    // THE SIM PEER IS NOT A CLIENT TO BE VETTED. It is the operator's own binary, spawned by
+    // this server, authenticated by [server] password — and it is a NATIVE build, so its hash
+    // could never equal the wasm one a pin names even if it sent one (simpeer.ts does not set
+    // OPENMW_MP_ENGINEHASH, so it sends ''). Now that `refuse` no longer waves an absent hash
+    // through, running it without this exemption would refuse the peer from its own world: no
+    // holder for any cell, every NPC frozen, and the server reporting itself healthy.
+    const engineCheck = this.isSystem
+      ? { ok: true as const }
+      : this.ctx.engine.check(msg.engineHash);
     if (!engineCheck.ok) {
       this.refuseSetup('BAD_ENGINE', engineCheck.detail);
       return;
@@ -1311,19 +1409,21 @@ export class Connection implements Peer {
     this.player.system = this.isSystem;
     // A sim peer owns no character: keep it out of players/ entirely rather than writing a
     // doc that would be restored onto the next freshly spawned peer.
-    // Nothing done in the PUBLIC world writes back to the character. It is a social lobby:
-    // its cells reset by construction, so every container in it is an infinite faucet, and
-    // noDrop only strips UNIQUE corpses. Rather than police each loot path, the doc is simply
-    // read-only here — you arrive with your gear, play, and leave with exactly what you had.
-    // Kills every dupe route at once, including ones nobody has thought of yet.
-    // ponytail: reuses the sim-peer ephemeral flag; broadcasts are unaffected, only writes.
+    // Nothing done in the gateway's PUBLIC world writes back to the character — but that is
+    // enforced in PlayerStore's lobby mode (persist/playerstore.ts), not here. This comment
+    // used to sit above the ephemeral call as though it were describing it, and it justified
+    // the safety with "its cells reset by construction". They do not: [cellReset] cells is
+    // empty by default, so nothing reset, the read-only firewall below had already been
+    // removed, and inventory persisted straight out of the lobby onto real characters.
     if (this.isSystem) this.ctx.players.markEphemeral(this.player.charId);
-    // NOTHING SPECIAL FOR THE SHARED WORLD ANY MORE. It used to withhold every write to a
-    // character as a duplicate-item firewall, which duplicated items instead: a withheld
-    // write is a withheld LOSS, so an item dropped there stayed on the ground in that world
-    // while the doc still claimed the player carried it, and going home granted it back.
-    // What actually needs freezing in a shared, resetting world is quest progress and
-    // standing, and journalTarget already routes both to nobody here (server.ts).
+    // THE SHARED WORLD IS HANDLED IN THE STORE, NOT HERE. An earlier attempt withheld writes
+    // at this level and was reverted because "a withheld write is a withheld LOSS": an item
+    // dropped there stayed on that world's ground while the doc still claimed the player
+    // carried it, so going home granted it back. That reasoning was right about the mechanism
+    // and wrong about the consequence — it is only a duplicate if one copy can ESCAPE the
+    // lobby, and once the lobby persists NOTHING, neither can. Quest progress and standing
+    // were already routed to nobody there via journalTarget (server.ts); lobby mode closes
+    // the other half.
     // A character still IN character creation is not saved. Morrowind's opening is a scripted
     // sequence — the census office, the paperwork, the race/class/birthsign prompts — and a doc
     // captured partway through restores a half-built character into a script that has already

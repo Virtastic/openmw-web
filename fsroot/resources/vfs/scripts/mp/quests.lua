@@ -331,12 +331,19 @@ handlers.MP_JournalSync = function(data)
             if not types.Player.isJournalStashed(player) then
                 types.Player.stashJournal(player)
                 print('[mp] journal: stashed own campaign for a visit')
+                -- SAY IT. A guest whose journal silently becomes someone else's reads it as
+                -- lost progress, and a guest who does not realise the quests they are
+                -- advancing are the HOST's is being quietly misled about what their evening
+                -- earned them. Both are answered by one line at the moment it happens.
+                notice("You are visiting this world's campaign — quests here advance the host's"
+                    .. ' journal. Your own is set aside and comes back when you go home.')
             end
         elseif types.Player.isJournalStashed(player) then
             -- Home. The borrowed set is discarded and ours moves back as the same objects,
             -- so the restore is exact rather than a reconstruction.
             types.Player.unstashJournal(player)
             print('[mp] journal: restored own campaign')
+            notice('Your own journal is back.')
         end
     end
     for questId, index in pairs(data.quests or {}) do

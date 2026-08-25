@@ -153,6 +153,35 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   let worldMode = opts.worldMode ?? process.env.OMW_WORLD_MODE ?? 'public';
   const worldModeAtBoot = worldMode;
 
+  // THE SHARED LOBBY'S RULE FLOOR.
+  //
+  // The gateway's public world is a crowd of strangers with no stake in each other's game, and
+  // the shipped defaults are tuned for the opposite case — a handful of friends on a
+  // self-hosted server. Two of them are actively wrong in a lobby, and one of them the code
+  // already CLAIMED to enforce and did not (maySkipTime's comment read "Public worlds never
+  // skip time" while it read a config value that defaults to "anyone").
+  //
+  // The predicate is deliberately `OMW_WORLD_ID && public`, not `public` — the same one
+  // lobbyWorld and chargenGate use. A standalone self-hosted server also defaults to
+  // worldMode 'public', but it IS that operator's real game, and imposing lobby rules on it
+  // would be this file overruling their config for no reason.
+  //
+  // A FLOOR, NOT AN OVERRIDE: an operator who has stated a value in config.toml keeps it.
+  // Only the shipped defaults are replaced, so this cannot silently undo a deliberate choice.
+  const isSharedLobby = !!process.env.OMW_WORLD_ID && worldModeAtBoot === 'public';
+  if (isSharedLobby) {
+    const stated = config.stated ?? new Set<string>();
+    // One stranger must not fast-forward a hundred people into the night.
+    if (!stated.has('rules.timeSkip')) config.rules.timeSkip = 'off';
+    // Give the lobby something to do that is not chat. Wilderness-only, so towns, shops and
+    // guildhalls stay places you can stand still in; party members are already exempt.
+    if (!stated.has('rules.pvp')) config.rules.pvp = true;
+    if (!stated.has('rules.pvpZone')) config.rules.pvpZone = 'wilderness';
+    log('info', 'world.lobby_rules', {
+      timeSkip: config.rules.timeSkip, pvp: config.rules.pvp, pvpZone: config.rules.pvpZone,
+    });
+  }
+
   // Background writes still in flight. close() drains these BEFORE shutting the stores, so a
   // fire-and-forget write can never land on a closed database — which both throws an unhandled
   // rejection and LOSES the write. ChargenComplete is the one that hurts: the flag it sets is
@@ -165,7 +194,16 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     void p.catch(() => undefined).finally(() => inFlight.delete(p));
   };
   const worldOwner = (opts.worldOwner ?? process.env.OMW_WORLD_OWNER ?? '').toLowerCase();
-  const playerStore = new PlayerStore(sharedDir, worldId);
+  // LOBBY MODE for the gateway's shared world: character docs are read-only there, so nothing
+  // looted, dropped or lost in the lobby follows anyone home. Same predicate as the rule floor
+  // above and as ctx.lobbyWorld below — a STANDALONE public server is somebody's real game and
+  // must keep saving. Retention matches the resume window: coming back inside it is a
+  // reconnect, past it you get your real character.
+  const playerStore = new PlayerStore(sharedDir, worldId, {
+    lobby: isSharedLobby,
+    lobbyRetainMs: Math.max(0, config.login.resumeWindowSec) * 1000,
+  });
+  if (isSharedLobby) log('info', 'world.lobby_persistence', { writes: 'discarded' });
   // Onboarding CRM capture. Env var wins over toml so the key can stay out of config files
   // in deployments; empty = inert.
   const attio = new AttioHook({
@@ -249,6 +287,10 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     cells: cellStore,
     records: recordStore,
     guiTimeoutMs: Math.round(config.gui.timeoutSec * 1000),
+    // Lobby only. Everywhere else a dropped item is somebody's property and wiping it would be
+    // destroying real progress; in the lobby nothing can ever leave, so the item on the ground
+    // could never have become anyone's. See M7.sweepLitter.
+    ...(isSharedLobby ? { litterSweepSec: config.cellReset.litterSweepSec } : {}),
     isMapShared: () => hooks.shareFamily('map'),
     // Public worlds never skip time; party worlds let the leader decide for the group.
     maySkipTime: (player) => {
@@ -280,6 +322,19 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       return socialRef?.partyMembersOf(a.accountKey).includes(b.accountKey) ?? false;
     },
     cellOfPlayer: (playerId) => roster.get(playerId)?.cellKey,
+    posOfPlayer: (playerId) => {
+      const p = roster.get(playerId);
+      if (!p || p.cellKey === undefined || !p.pose) return undefined;
+      return { cellKey: p.cellKey, x: p.pose.x, y: p.pose.y, z: p.pose.z };
+    },
+    partyOfPlayer: (playerId) => {
+      const me = roster.get(playerId);
+      if (!me) return [];
+      const accts = socialRef?.partyMembersOf(me.accountKey) ?? [];
+      return roster.humansInWorld()
+        .filter((p) => p.id !== playerId && accts.includes(p.accountKey))
+        .map((p) => p.id);
+    },
     chat: (target, msg: ChatMessageBody) => {
       if (target === 'all') broadcastChat(roster, msg);
       else roster.get(target)?.peer.sendEvent('ChatMessage', msg);
@@ -373,11 +428,24 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     return DECLARED_STATE_ANOMALIES.some((k) => (seen[k] ?? 0) > 0);
   };
   world.setQuarantineCheck(isQuarantined);
+  world.setDropEnforcement(config.economy.refuseUnownedDrops);
 
   world.setInventoryOracle((player, recordId) => {
     const inv = playerStore.getCached(player.charId)?.inventory;
-    if (!inv) return undefined;
-    return inv.find((i) => i.id === recordId)?.n ?? 0;
+    if (!inv) return undefined; // no doc to judge by: never treated as guilt
+    const declared = inv.find((i) => i.id === recordId)?.n ?? 0;
+    // ...plus anything acquired since that snapshot was taken. Without this the count is
+    // stale by up to the 2 s inventory diff, which is exactly long enough for "pick up, drop"
+    // to look like a drop of something you never had.
+    return declared + (player.pendingAcquired?.get(recordId) ?? 0);
+  });
+  world.setInventoryDebit((player, recordId, count) => {
+    const led = player.pendingAcquired;
+    const have = led?.get(recordId);
+    if (led === undefined || have === undefined) return;
+    const left = have - count;
+    if (left > 0) led.set(recordId, left);
+    else led.delete(recordId);
   });
   world.setModerationNote((accountKey, kind) => moderation.noteAnomaly(accountKey, kind));
 
@@ -444,6 +512,10 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     },
   });
 
+  // Deliver swings that were parked while a cell had no simulator (combat.ts `hold`). Wired
+  // here because the world is built before the combat relay and neither should import the other.
+  world.onHolderGained = (cellKey) => combat.flushCell(cellKey);
+
   const quests = new Quests({
     roster,
     cells: cellStore,
@@ -490,6 +562,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     store: socialStore,
     roster,
     worldId: worldId ?? 'default',
+    defaultPartyScaling: config.rules.partyScaling,
     // The USERNAME is the public handle (accounts.ts: "shown everywhere in-game — nametags,
     // chat, friends, admin views"). account.name is the LOGIN IDENTIFIER, and for an SSO
     // account it is the provider's name claim, i.e. the person's real name. Every social
@@ -557,7 +630,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     accounts,
     roster,
     content: contentGate,
-    engine: new EngineGate(config.engine.enforce),
+    engine: new EngineGate(config.engine.enforce, config.engine.pin),
     loginLimiter: new IpRateLimiter(config.limits.loginPerMinPerIp),
     commands,
     commandCtx,
