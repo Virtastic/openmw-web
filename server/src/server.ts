@@ -988,6 +988,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // because anchors are cheap now — the expensive thing was processes, and there is one.
   // Empty regions cost nothing: the engine already unloads cells no anchor covers.
   const WORLD_KEY = 'world';
+  let lastUncovered = ''; // throttle for simpeer.cells_unsimulated: one line per change
   let lastAnchors = '';
   // Cells the peer currently holds because they are anchored, so the set can be diffed rather
   // than re-entered every tick (re-entering bumps the epoch and forces a full re-sync).
@@ -1065,8 +1066,14 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       else interiors.push(cell);
     }
 
-    // The peer's avatar has to stand somewhere, but it no longer matters WHERE: everything it
-    // must simulate is anchored. Prefer an exterior so a cold start lands somewhere sensible.
+    // WHERE THE PEER STANDS MATTERS. This comment used to say it did not -- that anchoring a
+    // cell was enough -- and that was wrong in the expensive direction. Anchoring makes the
+    // engine LOAD a cell; it does not make it tick the actors in it. OpenMW hard-clamps
+    // [Game] actors processing range to 7168 units against an 8192-wide cell (see
+    // core/movement.ts), so a peer only simulates near its own feet. Standing in the wrong
+    // place produced cells with a healthy holder and no actor frames at all: monsters that
+    // never attacked and melee that never landed, for every player except whoever happened to
+    // share the peer's cell. Prefer an exterior so a cold start lands somewhere sensible.
     //
     // NEVER a cell the sanctuary protects. This picked from the unfiltered human list, so a
     // lone player creating their character got the peer spawned ON TOP of them — the log read
@@ -1077,6 +1084,26 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     // peer boots at [simPeer].startCell instead.
     const placeable = humans.filter((p) => cells.includes(p.cellKey!));
     const first = placeable.find((p) => parseExterior(p.cellKey!) !== null) ?? placeable[0];
+
+    // ONE PEER STANDS IN ONE CELL, so any OTHER occupied cell is held but not simulated. Say so.
+    // authority.silent_peer eventually notices, but only after 15s and only if that cell happens
+    // to contain actors -- an empty-looking report for a real coverage limit. This names it up
+    // front, at the moment the shortfall appears, so the cause is legible instead of inferred
+    // from a player saying combat feels broken. Raising coverage means a peer per anchor, which
+    // the supervisor already keys for (peers is a Map) and nothing currently asks for.
+    if (first && cells.length > 1) {
+      const covered = first.cellKey!;
+      const uncovered = cells.filter((c) => c !== covered);
+      if (uncovered.length > 0 && uncovered.join(',') !== lastUncovered) {
+        lastUncovered = uncovered.join(',');
+        log('warn', 'simpeer.cells_unsimulated', {
+          simulating: covered, unsimulated: uncovered.join(','), peers: 1,
+          note: 'held but not ticked: one peer can only stand in one cell',
+        });
+      }
+    } else if (lastUncovered !== '') {
+      lastUncovered = '';
+    }
     simPeers.ensure(WORLD_KEY, first
       ? { cellKey: first.cellKey!, x: first.pose?.x ?? 0, y: first.pose?.y ?? 0, z: first.pose?.z ?? 0 }
       : undefined);
