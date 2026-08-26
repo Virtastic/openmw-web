@@ -139,7 +139,14 @@ loot bug already fixed here.
 
 ### Shared state that currently forks per player (duplication)
 
-* **Merchants.** No reference to barter, trader stock or trader gold anywhere. A shop's
+* **Merchants — STOCK now shared, GOLD still not.** The stock half is fixed: opening a barter
+  window registers the merchant on the same authoritative container path a chest uses (deferred
+  open, take/put watch, ContainerOpRequest arbitrated server-side), so two players can no longer
+  each buy the same unique item. What remains is the PURSE: `getBarterGold`/`setBarterGold` exist
+  and are not yet synced, so a trader's gold is still per-client and each player can sell into a
+  purse that never empties. Trainers share this exact gap and no other. Original entry follows.
+
+  Historic: No reference to barter, trader stock or trader gold anywhere. A shop's
   inventory and purse are therefore per-client: two players can each buy the SAME unique item
   from the same merchant, and each sell the same loot to a purse that never depletes. This is
   the corpse-loot bug at economic scale, and it is reachable in the first ten minutes of play.

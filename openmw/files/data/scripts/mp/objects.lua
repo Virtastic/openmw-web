@@ -178,10 +178,16 @@ end
 --
 -- LIVE actors are deliberately excluded: activating one opens dialogue, not a container, and
 -- pickpocketing is its own mechanic with its own rules. Death is the line.
-local function lootStore(obj)
+-- allowLive is an explicit opt-in used ONLY by the barter path. Activating a live actor opens
+-- dialogue, not a container, so the activation path must never pass it -- but a merchant's
+-- stock IS a shared container while the barter window is open, and it is the same refKey the
+-- server already transacts on. Without this, two players could each buy the same unique item
+-- from the same trader and each sell into a purse that never emptied.
+local function lootStore(obj, allowLive)
     if not (obj and obj:isValid()) then return nil end
     if types.Container.objectIsInstance(obj) then return types.Container.content(obj) end
     if types.Actor.objectIsInstance(obj) then
+        if allowLive then return types.Actor.inventory(obj) end
         local ok, dead = pcall(function() return types.Actor.isDead(obj) end)
         if ok and dead then return types.Actor.inventory(obj) end
     end
@@ -192,8 +198,8 @@ local function isLootable(obj)
     return lootStore(obj) ~= nil
 end
 
-local function snapshotContainer(obj)
-    local store = lootStore(obj)
+local function snapshotContainer(obj, allowLive)
+    local store = lootStore(obj, allowLive)
     if not store then return nil end
     local counts = {}
     local ok = pcall(function()
@@ -227,7 +233,10 @@ end
 -- Force a real local container to the given contents (server truth). Global-context
 -- inventory surgery: remove everything, recreate. Coarse but deterministic.
 local function setContainerContents(obj, items)
-    local content = lootStore(obj)
+    -- allowLive: reaching here means the SERVER holds canonical state for this refKey, which
+    -- is itself the authorisation. Refusing a live actor here would leave a merchant's stock
+    -- permanently out of step with the server that is arbitrating it.
+    local content = lootStore(obj, true)
     if not content then return end
     pcall(function()
         for _, item in ipairs(content:getAll()) do
@@ -244,7 +253,7 @@ local function setContainerContents(obj, items)
 end
 
 local function applyContainerDelta(obj, itemId, dn)
-    local content = lootStore(obj)
+    local content = lootStore(obj, true)
     if not content then return end
     pcall(function()
         if dn > 0 then
@@ -268,7 +277,7 @@ end
 -- Diff a watched container against its last snapshot and report every change. Extracted so the
 -- expiry path can run it too: the watch window closing does not mean nothing happened inside it.
 local function diffContainer(obj, watch)
-    local current = snapshotContainer(obj)
+    local current = snapshotContainer(obj, watch.live)
     if not current then
         dropOut('ContainerOpRequest', 'contents-unreadable', tostring(obj.recordId))
         return
@@ -338,13 +347,14 @@ end
 
 -- The deferred half of a container open: snapshot the contents once the engine has actually
 -- populated them, tell the server, and start watching for takes from that same snapshot.
-local function openContainerNow(object, now)
+local function openContainerNow(object, now, live)
     if not (object and object:isValid()) then return end
-    local snapshot = snapshotContainer(object)
+    local snapshot = snapshotContainer(object, live)
     if snapshot and sendAddressed('ContainerOpen', object, { contents = countsToItems(snapshot) }) then
         containerWatch[object.id] = {
             obj = object,
             last = snapshot,
+            live = live, -- a merchant stays alive while we watch it; a corpse does not
             -- Poll on the NEXT tick, not a quarter second from now. A harvest can resolve and the
             -- object can go away inside that gap, and the take is then unreportable.
             nextPoll = 0,
@@ -371,6 +381,36 @@ local function openContainerNow(object, now)
     end
     print(string.format('[mp] CONTAINER NOT WATCHED: %s cell=%s why=%s',
         tostring(object.recordId), tostring(cellKeyOfObj(object)), why))
+end
+
+-- BARTER. A merchant's stock is shared state for exactly as long as the window is open, and it
+-- is the same refKey the server already transacts containers on -- so this reuses the whole
+-- container path rather than inventing a second one: deferred open, take/put watch, and
+-- ContainerOpRequest arbitrated server-side. What it buys is that two players can no longer each
+-- buy the SAME unique item from the same trader.
+--
+-- The deferred read matters here for the same reason it does for a chest: a merchant restocks
+-- on open, so reading the instant the window appears can catch the stock before it is refilled
+-- and make an empty shop canonical forever.
+function objects.onBarterOpen(merchant)
+    if not (merchant and merchant:isValid()) then return end
+    local now = core.getRealTime()
+    containerOpenPending[merchant.id] = { obj = merchant, at = now + CONTAINER_OPEN_DELAY, live = true }
+end
+
+-- Closing the window is the moment to reconcile: the engine has finished moving items both
+-- ways, so one final diff reports the whole trade rather than a stream of intermediate states.
+function objects.onBarterClose()
+    local now = core.getRealTime()
+    for id, watch in pairs(containerWatch) do
+        if watch.live and watch.obj and watch.obj:isValid() then
+            diffContainer(watch.obj, watch)
+            containerWatch[id] = nil
+        end
+    end
+    for id, pending in pairs(containerOpenPending) do
+        if pending.live then containerOpenPending[id] = nil end
+    end
 end
 
 -- GLOBAL onItemActive: an item object appeared in the world. Content items fire this on
@@ -728,7 +768,7 @@ function objects.tick(now)
     for id, pending in pairs(containerOpenPending) do
         if now >= pending.at then
             containerOpenPending[id] = nil
-            openContainerNow(pending.obj, now)
+            openContainerNow(pending.obj, now, pending.live)
         end
     end
 

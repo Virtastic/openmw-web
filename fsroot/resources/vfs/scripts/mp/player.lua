@@ -692,6 +692,13 @@ return {
             if data.oldMode == 'Dialogue' and data.newMode ~= 'Dialogue' then
                 core.sendGlobalEvent('mpDialogueClosed', {})
             end
+            -- BARTER. `arg` is the actor the window belongs to (omw/ui.lua passes it straight
+            -- through), which is the merchant whose stock the server has to arbitrate.
+            if data.newMode == 'Barter' and data.arg then
+                core.sendGlobalEvent('mpBarterOpen', { merchant = data.arg })
+            elseif data.oldMode == 'Barter' and data.newMode ~= 'Barter' then
+                core.sendGlobalEvent('mpBarterClose', {})
+            end
         end,
     },
 }

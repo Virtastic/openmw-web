@@ -1897,6 +1897,12 @@ local eventHandlers = {
         quests.onQuestUpdate(data.questId, data.stage)
     end,
     -- Dialogue window closed on the player side -> release the lock.
+    -- Barter opened/closed on a merchant. Routed through the global script because the
+    -- container machinery lives there and a local script cannot read another actor's inventory.
+    mpBarterOpen = function(data)
+        if data and data.merchant then objects.onBarterOpen(data.merchant) end
+    end,
+    mpBarterClose = function() objects.onBarterClose() end,
     mpDialogueClosed = function()
         quests.releaseLock('windowclosed')
     end,
