@@ -26,6 +26,16 @@ const MAX_CONTAINER_ENTRIES = 512;
 // times over. This does not stop a player selling honestly; it bounds GRIEFING -- a negative
 // delta drains a merchant's purse for everyone in the world, and nothing else caps it.
 const MAX_GOLD_DELTA = 1000000;
+// fBarterGoldResetDelay. The engine restocks a merchant's purse every 24 GAME hours
+// (dialogue.cpp), and only the purse -- not their stock -- so this matches that exactly
+// rather than inventing a richer rule.
+const GOLD_RESTOCK_HOURS = 24;
+
+// Morrowind's calendar: 12 months of 28 days, no leap years. Collapsed to one number so two
+// readings can be compared; only DIFFERENCES matter, so the epoch is arbitrary.
+function absGameHours(t: { gameHour: number; day: number; month: number; year: number }): number {
+  return (((t.year * 12 + (t.month - 1)) * 28) + (t.day - 1)) * 24 + t.gameHour;
+}
 
 const WORLD_EVENTS = new Set([
   'ObjectSpawnRequest',
@@ -726,9 +736,28 @@ export class WorldState {
       if (gold !== undefined && gold >= 0) {
         cont.gold = Math.floor(gold);
         cont.goldOrigin = cont.gold;
+        cont.goldRestockAt = absGameHours(this.cells.worldM7().time) + GOLD_RESTOCK_HOURS;
       }
       doc.containers[ref.key] = cont;
       this.cells.markDirty(cellKey);
+    }
+    // THE 24h RESTOCK, checked on open because that is when anyone can observe it. Without
+    // this a merchant drained on day one stays drained for the life of the world: the engine
+    // restocks on the client's own calendar, which only ever moved that client's LOCAL value,
+    // and canonical is set once by the first opener and never again.
+    if (cont.goldOrigin !== undefined && cont.goldRestockAt !== undefined) {
+      const nowH = absGameHours(this.cells.worldM7().time);
+      if (nowH >= cont.goldRestockAt) {
+        // Snapped forward from NOW rather than advanced by one period: a world left alone for
+        // a month should restock once on the next visit, not run the loop thirty times.
+        cont.goldRestockAt = nowH + GOLD_RESTOCK_HOURS;
+        if (cont.gold !== cont.goldOrigin) {
+          cont.gold = cont.goldOrigin;
+          cont.stateSeq += 1;
+          this.cells.markDirty(cellKey);
+          log('debug', 'world.merchant_restock', { cellKey, gold: cont.gold });
+        }
+      }
     }
     player.peer.sendEvent('ContainerState', {
       ...objRefToJs(ref),

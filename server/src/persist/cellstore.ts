@@ -61,7 +61,12 @@ export interface CellDoc {
   // It has to be canonical for the same reason the stock does: left per-client, every player
   // sells into a purse that never empties, which is the other half of the merchant
   // duplication. Trainers touch this field and nothing else.
-  containers: Record<string, { items: ContainerItems; stateSeq: number; origin?: ContainerItems; gold?: number; goldOrigin?: number }>;
+  // `goldRestockAt` is an ABSOLUTE game-hour reading, not a wall clock: a merchant restocks
+  // on the world's calendar, which players can push forward by resting.
+  containers: Record<string, {
+    items: ContainerItems; stateSeq: number; origin?: ContainerItems;
+    gold?: number; goldOrigin?: number; goldRestockAt?: number;
+  }>;
   // M4: last actor snapshot folded when the cell went dormant ({actors:[...]}, JSON-safe),
   // and per-actor highest processed deathNo (dedup + death persistence).
   actorOverrides?: unknown;
@@ -279,7 +284,8 @@ export class CellStore {
         doc.containers[key] = { items: cont.items.map((i) => ({ ...i })), stateSeq: cont.stateSeq + 1,
           ...(cont.origin ? { origin: cont.origin.map((i) => ({ ...i })) } : {}),
           ...(cont.gold !== undefined ? { gold: cont.gold } : {}),
-          ...(cont.goldOrigin !== undefined ? { goldOrigin: cont.goldOrigin } : {}) };
+          ...(cont.goldOrigin !== undefined ? { goldOrigin: cont.goldOrigin } : {}),
+          ...(cont.goldRestockAt !== undefined ? { goldRestockAt: cont.goldRestockAt } : {}) };
         continue;
       }
       if (!cont.origin) continue; // pre-restock doc: nothing to restore it to
@@ -290,7 +296,8 @@ export class CellStore {
       // A restock refills the purse too -- a merchant whose stock is back but whose gold is
       // still zero cannot buy anything, which is half a restock.
       doc.containers[key] = { items, stateSeq: cont.stateSeq + 1, origin: cont.origin.map((i) => ({ ...i })),
-        ...(cont.goldOrigin !== undefined ? { gold: cont.goldOrigin, goldOrigin: cont.goldOrigin } : {}) };
+        ...(cont.goldOrigin !== undefined ? { gold: cont.goldOrigin, goldOrigin: cont.goldOrigin } : {}),
+        ...(cont.goldRestockAt !== undefined ? { goldRestockAt: cont.goldRestockAt } : {}) };
     }
     this.cache.set(cellKey, doc);
     this.dirty.add(cellKey);
