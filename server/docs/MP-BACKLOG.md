@@ -277,11 +277,27 @@ request needs a timeout and retry of its own, or the answer needs to be guarante
   now logs the compressed-format list at boot; one line from the affected machine settles it.
   Eliminated already: the shader discards correctly (`lib/material/alpha.glsl`) and the
   `osg::AlphaFunc` → `@alphaFunc` conversion is intact, so it is not the shader.
-* **Minimap renders solid white/blue/black.** Undiagnosed. Eliminated: no web-specific handling
-  in `localmap.cpp`, `GL_DEPTH24_STENCIL8` is valid WebGL2, and the `osg::PolygonMode` set there
-  is `FILL` (the GL default, so inert even though `glPolygonMode` does not exist in GLES). The
-  remaining suspect is the RTT path itself — the fallback is `PIXEL_BUFFER_RTT`, and pbuffers do
-  not exist under WebGL, so anything that declines the FBO path has no working fallback.
+* **Minimap renders solid white/blue/black.** ONE SUSPECT ACTED ON, not yet confirmed as the
+  cause. Eliminated previously: no web-specific handling in `localmap.cpp`,
+  `GL_DEPTH24_STENCIL8` is valid WebGL2, and the `osg::PolygonMode` set there is `FILL` (the
+  GL default, so inert even though `glPolygonMode` does not exist in GLES).
+
+  The remaining suspect was the RTT path, and it turned out to be checkable rather than
+  speculative: `localmap.cpp` asked for `FRAME_BUFFER_OBJECT` with `PIXEL_BUFFER_RTT` as the
+  FALLBACK. A pbuffer does not exist under WebGL at all, so that second argument named a path
+  that cannot possibly work -- anything declining the FBO path lands there and renders garbage
+  instead of failing loudly, which is the exact shape of this bug.
+
+  A survey settles that it was an outlier and not the house style: every other RTT camera in
+  the engine -- postprocessor, precipitation occlusion, shadows, `rtt.cpp`, multiview -- asks
+  for `FRAME_BUFFER_OBJECT` alone. The only three still naming the fallback were `localmap`,
+  `globalmap` and `characterpreview`: the minimap, the world map and the inventory doll. All
+  three now match everything else.
+
+  NOT PROVEN. Nobody has reproduced the minimap here, so this is not "fixed" -- it is a path
+  that provably cannot work on the target platform, removed on its own merits. If the minimap
+  still breaks after the next engine build, the RTT theory is dead and the search moves on,
+  which is worth something too.
 
 ### Input (never reproduced; keyboard input demonstrably works)
 

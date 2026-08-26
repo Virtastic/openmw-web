@@ -349,7 +349,18 @@ namespace MWRender
 
         camera->setUpdateCallback(new CameraUpdateGlobalCallback(this));
 
-        camera->setRenderTargetImplementation(osg::Camera::FRAME_BUFFER_OBJECT, osg::Camera::PIXEL_BUFFER_RTT);
+        // NO PIXEL_BUFFER FALLBACK. PIXEL_BUFFER_RTT is a pbuffer, which does not exist under
+        // WebGL at all -- so on this build the second argument names a path that cannot
+        // possibly work, and anything that declines the FBO path lands there and renders
+        // garbage instead of failing loudly. The minimap rendering solid white/blue/black is
+        // exactly that shape, and these three cameras were the only ones in the engine still
+        // naming the fallback; every other RTT here already asks for FRAME_BUFFER_OBJECT
+        // alone.
+        //
+        // Stated honestly: this has not been reproduced, so it is not proven to be the cause.
+        // It is removing a path that provably cannot work on the target platform, which is
+        // worth doing on its own merits.
+        camera->setRenderTargetImplementation(osg::Camera::FRAME_BUFFER_OBJECT);
         camera->attach(osg::Camera::COLOR_BUFFER, mOverlayTexture);
 
         // no need for a depth buffer
