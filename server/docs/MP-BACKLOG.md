@@ -343,7 +343,18 @@ request needs a timeout and retry of its own, or the answer needs to be guarante
 * ~~**Escape needs two presses to open the menu.**~~ NOT A BUG — confirmed working as intended
   by the reporter (2026-08-26). Nothing was ever changed for it: the only match across the whole
   branch is this backlog line, and `UiModeChanged`/input handling are untouched.
-* **Intermittent camera/mouse spin.**
+* **Intermittent camera/mouse spin.** ONE MECHANISM GUARDED, not confirmed as the cause --
+  nobody has reproduced this, here or anywhere.
+
+  `mousemanager.cpp` fed `arg.xrel`/`yrel` straight into `player.yaw()`/`pitch()` with no
+  bound. Under pointer lock a browser can deliver a single mousemove carrying a movementX of
+  several THOUSAND pixels -- on lock acquisition, on regaining focus, after a tab restore --
+  and that is not a look, it is the camera whipping round. It matches the reported symptom
+  exactly, including why it is intermittent: it happens when focus changes, not while playing.
+
+  Clamped per event, web build only (native has no pointer lock and no such event). The cap is
+  far above any genuine flick, so it can only catch the artefact and cannot become a
+  sensitivity limit by the back door.
 
 Both were reported against a build that predates this cycle. Neither reproduces in the harness.
 Re-test before spending time on them.
