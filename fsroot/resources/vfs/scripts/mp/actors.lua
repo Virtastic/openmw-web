@@ -175,6 +175,26 @@ local function broadcastCell(cellKey, epoch, cell, now)
             end
         end
 
+        -- DISPOSITION. Shared, not personal: getBaseDisposition(npc, player) ignores its player
+        -- argument and reads one value off the NPC's stats, so persuading, bribing or
+        -- threatening someone changes how they feel about EVERYONE. Left unsynced it was
+        -- per-client, so a player could talk a guard down and their friend would still be
+        -- attacked by the same guard. Same slow beat as equipment; it moves rarely.
+        if not tracked.nextDisp or now >= tracked.nextDisp then
+            local ownPlayer = world.players[1]
+            if ownPlayer and ownPlayer:isValid() then
+                local okD, disp = pcall(function()
+                    return types.NPC.getBaseDisposition(obj, ownPlayer)
+                end)
+                if okD and type(disp) == 'number' and disp ~= tracked.dispVal then
+                    tracked.dispVal = disp
+                    tracked.nextDisp = now + EQUIP_MIN_INTERVAL
+                    mp.sendEvent('ActorDisposition',
+                        { cellKey = cellKey, epoch = epoch, ref = obj, disposition = disp })
+                end
+            end
+        end
+
         -- Death edge -> ActorDeath (killedRecordId is the tally key the server counts on).
         if dead and not tracked.dead then
             tracked.dead = true
@@ -340,6 +360,17 @@ end
 -- The holder says what this actor is wearing. Handed to the puppet script, which already knows
 -- how to turn record ids into equipped objects and retry until the items exist (puppet.lua
 -- MP_Equip / pendingEquip) -- the same path a remote PLAYER's equipment takes.
+-- The holder says how this NPC now feels. Applied directly rather than through the puppet:
+-- disposition lives on the actor's own stats, and setBaseDisposition is a GLOBAL-context call
+-- (local scripts may only modify themselves), which is the context this handler runs in.
+actors.handlers.MP_ActorDisposition = function(data)
+    local obj = data.ref and data.ref:isValid() and data.ref or nil
+    if not obj or type(data.disposition) ~= 'number' then return end
+    local ownPlayer = world.players[1]
+    if not (ownPlayer and ownPlayer:isValid()) then return end
+    pcall(function() types.NPC.setBaseDisposition(obj, ownPlayer, data.disposition) end)
+end
+
 actors.handlers.MP_ActorEquip = function(data)
     local obj = data.ref and data.ref:isValid() and data.ref or nil
     if obj and puppetActors[refKeyOf(obj)] then

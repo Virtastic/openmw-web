@@ -168,9 +168,11 @@ loot bug already fixed here.
   these and earned "server freezes caused by infinite topic packet spam from local scripts" --
   but it is currently neither documented nor tested.
 
-* **Disposition and persuasion.** No references. An NPC's disposition is per-client, so bribing
-  or admiring someone helps only you, and a player who angers an NPC does not anger it for the
-  party.
+* ~~**Disposition and persuasion.**~~ FIXED — the holder diffs base disposition and relays it as
+  `ActorDisposition`. Confirmed SHARED rather than personal before syncing it:
+  `getBaseDisposition(npc, player)` ignores its player argument and reads one value off the
+  NPC's stats, so persuading or threatening someone changes how they feel about everyone. Left
+  per-client, a player could talk a guard down and their friend would still be attacked by it.
 
 * **Companions / followers.** No `AiFollow` handling. A recruited companion follows whoever
   recruited them on that client only. Several main-quest and expansion arcs use companions.

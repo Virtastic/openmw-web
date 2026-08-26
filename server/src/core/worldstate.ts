@@ -37,7 +37,11 @@ const WORLD_EVENTS = new Set([
 
 // M4 actor events (all holder-only, epoch-guarded). ActorSnapshot is stored, not relayed;
 // ActorDeath is deduped/persisted/tallied; the rest relay cell-scoped (excluding sender).
-const ACTOR_RELAY_EVENTS = new Set(['ActorStatsDynamic', 'ActorEquip', 'ActorAI']);
+// ActorDisposition joins these because base disposition is genuinely SHARED state, not a
+// per-player opinion: getBaseDisposition(npc, player) ignores its player argument entirely and
+// reads getNpcStats(npc).getBaseDisposition(). One value on the NPC, so a bribe or a threat by
+// one player has to reach the others or the world stops agreeing about who likes whom.
+const ACTOR_RELAY_EVENTS = new Set(['ActorStatsDynamic', 'ActorEquip', 'ActorAI', 'ActorDisposition']);
 const ACTOR_EVENTS = new Set([...ACTOR_RELAY_EVENTS, 'ActorSnapshot', 'ActorDeath']);
 
 function str(v: LValue | undefined, max: number): string | undefined {
