@@ -129,3 +129,91 @@ test('public no-drop: a unique NPC corpse is stripped for the whole cell', async
   a.close();
   b.close();
 });
+
+test("a merchant's purse is canonical and shared, and deltas from two traders both land", async (t) => {
+  const dataDir = tmpDataDir();
+  const server = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1' });
+  t.after(() => server.close());
+
+  const a = await TestClient.connect(server.port);
+  await a.joinAsNew('Alice');
+  await a.waitEvent('PlayerList');
+  a.sendCellChange('0,0', 0, 0, 0);
+  const b = await TestClient.connect(server.port);
+  await b.joinAsNew('Bob');
+  await b.waitEvent('PlayerList');
+  b.sendCellChange('0,0', 0, 0, 0);
+
+  // Alice opens the trader first, so her reading of the purse becomes canonical.
+  a.sendEvent('ContainerOpen', {
+    ref: { __refnum: { index: 91, contentFile: 0 } },
+    cellKey: '0,0',
+    contents: [{ id: 'iron_dagger', n: 1 }],
+    gold: 500,
+  });
+  await new Promise((r) => setTimeout(r, 200));
+
+  // Bob opens the SAME trader. Before this change he was told nothing about the purse and
+  // his client kept its own full 500 -- the half of merchant duplication c58f5ad left open.
+  b.sendEvent('ContainerOpen', {
+    ref: { __refnum: { index: 91, contentFile: 0 } },
+    cellKey: '0,0',
+    contents: [{ id: 'iron_dagger', n: 1 }],
+    gold: 500,
+  });
+  const bState = await b.waitEvent('ContainerState');
+  assert.equal((bState.value as { gold?: number }).gold, 500,
+    'the second opener is told the canonical purse rather than trusting his own');
+
+  // Alice sells 200 worth: the purse drops for EVERYONE, not just her.
+  a.sendEvent('ContainerOpRequest', {
+    ref: { __refnum: { index: 91, contentFile: 0 } }, cellKey: '0,0',
+    opId: 1, op: 'gold', goldDelta: -200,
+  });
+  assert.equal(((await a.waitEvent('ContainerOpResult')).value as { ok: boolean }).ok, true);
+
+  // Bob sells 200 too. A client sending an ABSOLUTE would send 300 here from its stale
+  // view and erase Alice's trade; a delta composes, so the purse lands on 100.
+  b.sendEvent('ContainerOpRequest', {
+    ref: { __refnum: { index: 91, contentFile: 0 } }, cellKey: '0,0',
+    opId: 2, op: 'gold', goldDelta: -200,
+  });
+  assert.equal(((await b.waitEvent('ContainerOpResult')).value as { ok: boolean }).ok, true);
+
+  // NEGATIVE CONTROL, sent BEFORE the only fresh observer opens: griefing is bounded, so a
+  // client cannot move more gold in one op than any vendor in the game holds. It is a
+  // POSITIVE delta on purpose -- a negative one would floor to 0 and read the same whether
+  // the cap held or not, which is no control at all. An invalid body is logged and dropped,
+  // never replied to, so there is nothing to await; the canonical purse is the observable.
+  b.sendEvent('ContainerOpRequest', {
+    ref: { __refnum: { index: 91, contentFile: 0 } }, cellKey: '0,0',
+    opId: 3, op: 'gold', goldDelta: 100000000,
+  });
+  await new Promise((r) => setTimeout(r, 300));
+
+  // A third opener, who has never seen this container, is the honest observer: an existing
+  // client would replay its own buffered ContainerState from its first open. Her single
+  // reading proves both properties at once -- both deltas composed, and the over-cap one
+  // was refused. 500 would mean nothing applied; 300 would mean one trade erased the other;
+  // anything enormous would mean the cap does not hold.
+  const c = await TestClient.connect(server.port);
+  await c.joinAsNew('Cassia');
+  await c.waitEvent('PlayerList');
+  c.sendCellChange('0,0', 0, 0, 0);
+  c.sendEvent('ContainerOpen', {
+    ref: { __refnum: { index: 91, contentFile: 0 } },
+    cellKey: '0,0', contents: [{ id: 'iron_dagger', n: 1 }], gold: 500,
+  });
+  const cState = await c.waitEvent('ContainerState');
+  assert.equal((cState.value as { gold?: number }).gold, 100,
+    'both deltas landed (500 - 200 - 200) and the over-cap delta moved nothing');
+
+  // And the purse floors at zero rather than going negative.
+  c.sendEvent('ContainerOpRequest', {
+    ref: { __refnum: { index: 91, contentFile: 0 } }, cellKey: '0,0',
+    opId: 4, op: 'gold', goldDelta: -9999,
+  });
+  assert.equal(((await c.waitEvent('ContainerOpResult')).value as { ok: boolean }).ok, true);
+
+  a.close(); b.close(); c.close();
+});
