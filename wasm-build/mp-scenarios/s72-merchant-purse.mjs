@@ -9,7 +9,14 @@
 // Deliberately asserts on the SECOND client's reading. The first opener is the one who
 // defines canonical, so his own view agreeing with himself proves nothing at all.
 import assert from 'node:assert/strict';
+import { existsSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+// RETAIL. A purse belongs to a merchant, and the demo content has no NPCs to be one -- the
+// same reason s31 has to spawn its own chest. There is no non-retail way to test this.
+const BOOT = { retail: true, joinTimeoutMs: 420_000 };
 const STEP_TIMEOUT = 20_000;
 
 const goldOf = async (c) => {
@@ -18,9 +25,13 @@ const goldOf = async (c) => {
 };
 
 export default async function run(ctx) {
+  if (!existsSync(join(ROOT, 'play', 'mwdata', 'Morrowind.esm'))) {
+    ctx.log('SKIP: play/mwdata/Morrowind.esm absent (retail data required for a merchant)');
+    return;
+  }
   const [a, b] = await Promise.all([
-    ctx.launchClient('purse-a'),
-    ctx.launchClient('purse-b'),
+    ctx.launchClient('purse-a', '', BOOT),
+    ctx.launchClient('purse-b', '', BOOT),
   ]);
 
   // A opens first: his reading becomes canonical for everyone.
