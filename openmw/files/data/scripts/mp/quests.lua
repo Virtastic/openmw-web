@@ -135,8 +135,19 @@ local function applyJournalEntry(questId, index)
         -- not every stage passed through). The index still has to land.
         print('[mp] journal: no entry text for "' .. tostring(questId) .. '" @' .. tostring(index))
     end
-    quest.stage = index -- belt and braces: never assume addEntry left the index where we want
+    -- PROTECTED, AND `applying` RESET WHATEVER HAPPENS. This assignment used to sit outside any
+    -- pcall between `applying = true` and `applying = false`, so one throw here left the flag
+    -- stuck true for the rest of the session -- and onQuestUpdate early-returns on `applying`,
+    -- which means the client would silently stop reporting ANY local quest progress from that
+    -- moment on. No error, no recovery, and the player's quests simply stop travelling.
+    -- belt and braces: never assume addEntry left the index where we want it.
+    local okStage, stageErr = pcall(function() quest.stage = index end)
     applying = false
+    if not okStage then
+        print('[mp] journal: could not set stage for "' .. tostring(questId) .. '" @'
+            .. tostring(index) .. ': ' .. tostring(stageErr))
+        return false
+    end
     return true
 end
 

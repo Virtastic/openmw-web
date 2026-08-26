@@ -422,14 +422,29 @@ local function applyPhase2(record)
     -- Seed every diff cache from the just-applied state: the first broadcast tick after a
     -- restore must see "no change" (server already holds this snapshot). Appearance is the
     -- exception — peers need the relay — so its cache stays empty.
-    last.equipment = fingerprint(snapEquipment())
-    last.dynamic = fingerprint(snapDynamic())
-    local prog = snapProgression()
-    last.progression = fingerprint(prog.attributes)
-    last.skills = fingerprint(prog.skills)
-    last.level = prog.level
-    last.spells = snapSpells()
-    last.inventory = fingerprint(snapInventory())
+    --
+    -- PROTECTED, because everything below reaches into the engine and `restoring` gates the
+    -- whole broadcast loop. These seven calls used to sit unguarded between the pcall above and
+    -- the reset below, so ONE throw in any of them left `restoring` stuck true and
+    -- `baselineReady` never set -- and identity.tick early-returns on `restoring`. The client
+    -- would silently stop broadcasting EVERYTHING for the rest of the session: appearance,
+    -- equipment, stats, inventory, the lot. No error surfaced, and the player looks frozen and
+    -- empty to everyone else while their own screen is fine.
+    local okSeed, seedErr = pcall(function()
+        last.equipment = fingerprint(snapEquipment())
+        last.dynamic = fingerprint(snapDynamic())
+        local prog = snapProgression()
+        last.progression = fingerprint(prog.attributes)
+        last.skills = fingerprint(prog.skills)
+        last.level = prog.level
+        last.spells = snapSpells()
+        last.inventory = fingerprint(snapInventory())
+    end)
+    if not okSeed then
+        -- A half-seeded cache is survivable: the next diff tick re-reads and sends whatever
+        -- disagrees. A stuck `restoring` is not, so the reset below happens either way.
+        print('[mp] restore: diff cache seeding failed: ' .. tostring(seedErr))
+    end
     restoring = false
     baselineReady = true -- the doc IS the character now; the diffs may speak again
     mp.testSet('baselineReady', '1')
