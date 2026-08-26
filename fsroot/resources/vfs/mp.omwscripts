@@ -9,6 +9,12 @@ PLAYER: scripts/mp/social.lua
 # Phase E3 admin window (G). Menu is built from the server's own /help reply.
 PLAYER: scripts/mp/adminui.lua
 MENU: scripts/mp/menu.lua
+# COMPANIONS. On the ACTOR, not in the holder's diff loop, because a global script cannot read
+# AI package state for a foreign actor -- an engine limitation, and the reason ActorAI sat as
+# dead protocol surface. An actor's own script can read its own packages. Silent unless the
+# answer changes, which for an ordinary NPC is never.
+NPC: scripts/mp/companion.lua
+CREATURE: scripts/mp/companion.lua
 CUSTOM: scripts/mp/puppet.lua
 # Test-only: attached on demand by actors.killActorByRecord (see testkill.lua).
 CUSTOM: scripts/mp/testkill.lua

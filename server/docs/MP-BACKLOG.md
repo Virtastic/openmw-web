@@ -467,26 +467,22 @@ globals, factions and bounty. Everything below is character state Morrowind has 
 does not, so it resets every time the player reconnects -- silently, and in the player's favour,
 which is why nobody reports it as a bug.
 
-* **BIRTHSIGN IS NEVER CAPTURED OR RESTORED.** The engine binding already supports it --
-  `applyChargen` takes a birthsign and applies it through `setPlayerBirthsign` -- but
-  `snapAppearance` never reads one, the doc has no field for it, and the restore's applyChargen
-  call passes race/head/hair/isMale/class/name and stops there. So a rejoined character has no
-  birthsign on their sheet. The ABILITIES partly survive by accident, because snapSpells
-  captures them as spells, which is also why they were stacking before the attribute-climb fix.
-  The engine half is done; this is a three-field change on the client and the doc.
+* ~~**Birthsign is never captured or restored.**~~ FIXED. `identity.lua` reads it with
+  `types.Player.getBirthSign(self)` and the restore applies it through `applyChargen`, which
+  already took one. Previously a rejoined character had no birthsign on their sheet, and its
+  abilities survived only by accident because `snapSpells` captured them as spells -- which is
+  also why they stacked before the attribute-climb fix.
 
-* **Item condition is not persisted.** `inventory` is `{ id, n }` -- record id and count, nothing
-  else -- and the restore recreates items with `world.createObject(recordId)`, which yields a
-  FRESH object. Every relog therefore fully repairs every weapon and every piece of armour. Free,
-  unlimited, and invisible.
+* ~~**Item condition, enchantment charge and soul gems are not persisted.**~~ FIXED together,
+  because they were one gap: `inventory` was `{ id, n }` and the restore recreated items with
+  `world.createObject(recordId)`, which yields a FRESH object. Every relog fully repaired every
+  weapon and every piece of armour, recharged every enchantment, and emptied every soul gem --
+  free, unlimited and invisible, and the last of those breaks enchanting outright, which is the
+  entire point of trapping souls.
 
-* **Enchantment charge is not persisted either**, for the same reason: a drained enchanted item
-  comes back at full charge. Free recharge on demand, which also makes soul gems and the
-  Recharge mechanic pointless.
-
-* **Soul gems lose their souls.** `{ id, n }` cannot express which soul a gem holds, so a filled
-  grand soul gem returns as an empty one. Directly breaks enchanting, which is the entire point
-  of trapping souls.
+  `itemState(item)` now reads `itemData.condition`, `itemData.enchantmentCharge` and
+  `itemData.soul`, and `snapInventory` returns `{ items, itemStates }` so the shape stays
+  backward compatible with docs that predate it.
 
 * **Active magic effects are not persisted** -- no `activeSpells` field in the doc. The scope of
   this is MUCH narrower than first written here, and the original entry was wrong:

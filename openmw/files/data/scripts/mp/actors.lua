@@ -371,6 +371,42 @@ actors.handlers.MP_ActorDisposition = function(data)
     pcall(function() types.NPC.setBaseDisposition(obj, ownPlayer, data.disposition) end)
 end
 
+-- COMPANIONS, the sending half. Called from global.lua when an actor's OWN script reports a
+-- change in who it follows -- which is how the fact gets here at all, because a global script
+-- cannot read AI package state for a foreign actor. ActorAI has been relayed by the server
+-- since M4 and no client ever sent one; this is that gap closed.
+--
+-- Holder-only, like every other actor fact: two clients both announcing the same follower
+-- would fight over it, and the holder is the one whose simulation is authoritative anyway.
+function actors.noteFollow(obj, target)
+    if not (obj and obj:isValid()) then return end
+    local cellKey = actors.cellKeyOfObj(obj)
+    if not cellKey or not actors.isHolderOf(cellKey) then return end
+    -- nil target is a real value here: it means 'stopped following', which has to travel or a
+    -- dismissed companion keeps trailing everyone else forever.
+    local followId = deps.playerIdOf and deps.playerIdOf(target) or nil
+    mp.sendEvent('ActorAI', {
+        cellKey = cellKey, epoch = actors.epochOf(cellKey), ref = obj, follow = followId,
+    })
+end
+
+-- ...and the receiving half. The target is resolved LOCALLY: the player who recruited them
+-- gets their own avatar, everyone else gets the puppet standing in for that person. Applied
+-- by sending the actor a StartAIPackage event, because AI packages can only be started from
+-- the actor's own local script -- the same asymmetry that made this a client gap.
+actors.handlers.MP_ActorAI = function(data)
+    local obj = data.ref and data.ref:isValid() and data.ref or nil
+    if not obj then return end
+    local target = deps.playerObjOf and deps.playerObjOf(data.follow) or nil
+    if target then
+        pcall(function() obj:sendEvent('StartAIPackage', { type = 'Follow', target = target }) end)
+    else
+        -- Only Follow is removed, never the whole stack: clearing everything would also cancel
+        -- the combat and wander packages that make the actor an actor.
+        pcall(function() obj:sendEvent('RemoveAIPackages', 'Follow') end)
+    end
+end
+
 actors.handlers.MP_ActorEquip = function(data)
     local obj = data.ref and data.ref:isValid() and data.ref or nil
     if obj and puppetActors[refKeyOf(obj)] then

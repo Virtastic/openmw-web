@@ -154,19 +154,33 @@ export default async function run(ctx) {
     //
     // Worth being clear that this is a PRODUCT observation, not only a test one: a Public
     // press that is silently lost looks to the player exactly like a button that does nothing.
+    // PRESS AGAIN ONLY WHILE NOTHING IS IN FLIGHT. `where:public` asks the server for a world
+    // list and switches when the answer names an up public world:
+    //     asked -> list:<n> -> resolved:<url> -> switchTo:<url>
+    // Under load the first press has been seen to stop at `asked` -- the request goes out and
+    // the answer does not come back -- so a second press is worth making, exactly as a player
+    // would. But once publicStage shows `switchTo:` the switch IS happening, and pressing
+    // again RELOADS THE PAGE and restarts the engine boot that was already running. A blind
+    // retry loop therefore prevented the very arrival it was waiting for: three presses, three
+    // reloads, never landing. Re-press only from `asked`; after that, wait it out.
     let inPublic = false;
     let lastStage = '(never set)';
-    for (let attempt = 1; attempt <= 3 && !inPublic; attempt++) {
-      await a.eval("Module.__omwMPCmd='socialtab:worlds'");
-      await a.eval("Module.__omwMPCmd='where:public'");
-      const by = Date.now() + 90_000;
-      while (Date.now() < by) {
-        if (await playersIn('vvardenfell') > 0) { inPublic = true; break; }
-        const v = String(await a.eval("(window.__omwMP||{}).publicStage||''").catch(() => ''));
-        if (v) lastStage = v;
-        await ctx.sleep(1000);
+    const publicBy = Date.now() + 240_000;
+    let pressed = 0;
+    let lastPress = 0;
+    while (Date.now() < publicBy && !inPublic) {
+      const inFlight = lastStage.startsWith('switchTo:') || lastStage.startsWith('resolved:');
+      if (!inFlight && Date.now() - lastPress > 20_000 && pressed < 3) {
+        pressed++;
+        lastPress = Date.now();
+        ctx.log(`  pressing Public (attempt ${pressed}, publicStage="${lastStage}")`);
+        await a.eval("Module.__omwMPCmd='socialtab:worlds'");
+        await a.eval("Module.__omwMPCmd='where:public'");
       }
-      if (!inPublic) ctx.log(`  Public press ${attempt} did not land (publicStage="${lastStage}")`);
+      if (await playersIn('vvardenfell') > 0) { inPublic = true; break; }
+      const v = String(await a.eval("(window.__omwMP||{}).publicStage||''").catch(() => ''));
+      if (v) lastStage = v;
+      await ctx.sleep(1000);
     }
     ctx.log(`  reached public: ${inPublic} (publicStage="${lastStage}")`);
     assert.ok(inPublic, 'the player must actually reach the public world before anything is idle');

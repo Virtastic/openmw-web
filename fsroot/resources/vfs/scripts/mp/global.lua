@@ -777,6 +777,31 @@ local function start()
             end
             return false
         end,
+        -- COMPANIONS, both directions. A follow target is a PLAYER on the client that
+        -- recruited them and a PUPPET everywhere else, so the wire carries the player ID and
+        -- each side translates: whoever recruited them sees their own avatar, everyone else
+        -- sees the stand-in for that same person.
+        playerIdOf = function(obj)
+            if not (obj and obj:isValid()) then return nil end
+            for _, pl in ipairs(world.players) do
+                if pl:isValid() and pl.id == obj.id then
+                    return net.state == 'Joined' and net.playerId or nil
+                end
+            end
+            for id, p in pairs(puppets) do
+                if p.obj:isValid() and p.obj.id == obj.id then return id end
+            end
+            return nil
+        end,
+        playerObjOf = function(id)
+            if id == nil then return nil end
+            if net.state == 'Joined' and id == net.playerId then
+                local own = world.players[1]
+                return own and own:isValid() and own or nil
+            end
+            local p = puppets[id]
+            return p and p.obj:isValid() and p.obj or nil
+        end,
     })
     -- M5 combat hub (see scripts/mp/combat.lua).
     combat.init({
@@ -1743,6 +1768,13 @@ local eventHandlers = {
 
     mpSocialJoinById = function(data)
         toPlayer('MP_SocialJoinById', { id = tostring(data.id or '') })
+    end,
+
+    -- COMPANIONS. Sent by scripts/mp/companion.lua, which runs on the ACTOR because a global
+    -- script cannot read AI package state for a foreign actor. This is the only route by which
+    -- the fact reaches anywhere it can be acted on.
+    mpActorFollow = function(data)
+        actors.noteFollow(data and data.actor, data and data.target)
     end,
 
     mpSocialTab = function(data)
