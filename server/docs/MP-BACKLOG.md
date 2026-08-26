@@ -46,7 +46,9 @@ The diagnostics are self-silencing: on a healthy session they print nothing.
 
 ### Input (never reproduced; keyboard input demonstrably works)
 
-* **Escape needs two presses to open the menu.**
+* ~~**Escape needs two presses to open the menu.**~~ NOT A BUG — confirmed working as intended
+  by the reporter (2026-08-26). Nothing was ever changed for it: the only match across the whole
+  branch is this backlog line, and `UiModeChanged`/input handling are untouched.
 * **Intermittent camera/mouse spin.**
 
 Both were reported against a build that predates this cycle. Neither reproduces in the harness.
