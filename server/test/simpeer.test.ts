@@ -9,7 +9,7 @@ const PEER_PASS = 'peer-secret-1';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import type { ChildProcess } from 'node:child_process';
-import { SimPeerSupervisor, type SimPeerSettings } from '../src/core/simpeer';
+import { SimPeerSupervisor, peerAccountName, type SimPeerSettings } from '../src/core/simpeer';
 
 class FakeChild extends EventEmitter {
   killed: string[] = [];
@@ -76,6 +76,44 @@ test('sim peer: ensure is idempotent — humans arriving repeatedly do not fork 
   sup.ensure('world');
   assert.equal(spawned.length, 1, 'one peer per world, not one per join');
   assert.equal(sup.running, 1);
+});
+
+// MULTI-PEER COVERAGE. This is a multiplayer server: players are routinely in different cells,
+// and a peer only ticks actors within 7168 units of where it stands against an 8192-wide cell.
+// One peer therefore simulates exactly one cell, and everyone else watches frozen NPCs and
+// swings that never land. The supervisor was always keyed for one peer per cell; the server
+// tick only ever asked for one.
+test('sim peer: one peer per occupied cell, each standing in its own', () => {
+  const { sup, spawned } = harness();
+  sup.ensure('-2,-9', { cellKey: '-2,-9', x: 1, y: 2, z: 3 });
+  sup.ensure('0,-9', { cellKey: '0,-9', x: 4, y: 5, z: 6 });
+  assert.equal(spawned.length, 2, 'two occupied cells need two engines');
+  // Each boots INTO its own cell (--start), which is what makes it simulate that cell rather
+  // than merely load it.
+  const started = spawned.map((sp) => sp.args[sp.args.indexOf('--start') + 1]);
+  assert.deepEqual(started.sort(), ['-2,-9', '0,-9']);
+  assert.deepEqual(sup.keys().sort(), ['-2,-9', '0,-9']);
+});
+
+// A cell key is not a legal account name -- '-2,-9' carries a comma, interiors carry spaces --
+// but the peer still has to log in, and the server has to map the connected system player BACK
+// to the cell it covers in order to send it the right anchor and grant it the right authority.
+// Getting this wrong is silent: the peer connects, matches nothing, and simulates nowhere.
+test('sim peer: the account name is legal and maps back to its cell', () => {
+  const { sup, spawned } = harness();
+  sup.ensure('-2,-9', { cellKey: '-2,-9', x: 0, y: 0, z: 0 });
+  const name = spawned[0]!.env.OPENMW_MP_NAME!;
+  assert.ok(!/[^A-Za-z0-9_-]/.test(name), `account name must be charset-legal, got ${name}`);
+  assert.equal(name, peerAccountName('-2,-9'));
+  assert.equal(sup.keyOfAccount(name), '-2,-9', 'must resolve back to the cell it simulates');
+});
+
+test('sim peer: an interior gets a legal name too, and still maps back', () => {
+  const { sup, spawned } = harness();
+  sup.ensure('Balmora, Council Club', { cellKey: 'Balmora, Council Club', x: 0, y: 0, z: 0 });
+  const name = spawned[0]!.env.OPENMW_MP_NAME!;
+  assert.ok(!/[^A-Za-z0-9_-]/.test(name), `got ${name}`);
+  assert.equal(sup.keyOfAccount(name), 'Balmora, Council Club');
 });
 
 test('sim peer: the cap is enforced, and refusing is not a crash', () => {

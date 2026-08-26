@@ -59,12 +59,22 @@ export interface SimPeerDeps {
   now?: () => number;
 }
 
+// A peer's key is a CELL KEY, and a cell key is not a legal account name: exteriors look like
+// "-2,-9" and the account charset rejects the comma, while interiors are free text with spaces
+// and punctuation. The peer still has to log in, so the name is sanitised -- and because the
+// server has to map a connected system player BACK to the cell it covers, the supervisor keeps
+// the reverse lookup rather than leaving every caller to re-derive it and get it subtly wrong.
+export function peerAccountName(key: string): string {
+  return 'simpeer-' + key.replace(/[^A-Za-z0-9_-]/g, '_');
+}
+
 export class SimPeerSupervisor {
   private peers = new Map<string, Peer>();
   // key -> where that peer must stand. Survives a crash-restart so a respawned peer returns
   // to the cluster it was covering rather than to a default cell.
   private anchors = new Map<string, { cellKey: string; x: number; y: number; z: number }>();
   private blockedUntil = new Map<string, number>();
+  private byAccount = new Map<string, string>(); // sanitised account name -> peer key
   // Set once a peer is refused for a reason that will not change on retry (bad content, bad
   // engine hash). Distinct from blockedUntil, which is a temporary crash backoff.
   private permanentlyDisabled?: string;
@@ -102,6 +112,11 @@ export class SimPeerSupervisor {
   // block (see loadedCells), so a world with players spread further apart needs one peer per
   // cluster — which is why ensure() takes a key AND a place to stand, rather than one global
   // peer parked wherever [simPeer].startCell happened to point.
+  /** Which cell a connected system player covers, by its account name. */
+  keyOfAccount(name: string): string | undefined {
+    return this.byAccount.get(name);
+  }
+
   /** Live peer keys, so the caller can idle the clusters nobody occupies any more. */
   keys(): string[] {
     return [...this.peers.keys()];
@@ -170,7 +185,7 @@ export class SimPeerSupervisor {
       OSG_THREADING: 'SingleThreaded',
       OPENMW_MP_SYSTEM: '1', // keeps it out of the player list / count / maxPlayers
       OPENMW_MP_URL: this.deps.wsUrl(),
-      OPENMW_MP_NAME: `simpeer-${key}`,
+      OPENMW_MP_NAME: peerAccountName(key),
       OPENMW_MP_PASS: this.deps.password,
     };
     let child: ChildProcess;
@@ -183,6 +198,7 @@ export class SimPeerSupervisor {
     }
     const peer: Peer = { key, child, startedAt: this.now(), stopping: false };
     this.peers.set(key, peer);
+    this.byAccount.set(peerAccountName(key), key);
     metrics.simPeerSpawned.inc({});
     log('info', 'simpeer.spawned', { key, pid: child.pid ?? -1, cell: anchor?.cellKey ?? s.startCell });
 
