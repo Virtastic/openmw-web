@@ -310,6 +310,13 @@ function identity.reset()
     wasDead = false
     restoring = false
     pendingPhase2 = nil
+    -- SHUT THE GATE AGAIN. reset() runs every tick while we are not Joined -- a disconnect, a
+    -- reconnect, a world hop -- and leaving baselineReady true across that reopens the exact
+    -- hole it exists to close: the engine is the raw template again until the new world's
+    -- record lands, and an open gate broadcasts that template over the real character. It is
+    -- reopened by the same two events as the first time: applyPhase2 for a returning character,
+    -- MP_ChargenDone for a brand new one.
+    baselineReady = false
 end
 
 -- --- rejoin restore ----------------------------------------------------------------------

@@ -50,6 +50,13 @@ local function worldUrlOf(w)
 end
 
 local function chargenTick()
+    -- RE-REPORT ON EVERY CONNECTION, not once per process. identity.reset() shuts the baseline
+    -- gate whenever we are not Joined, and for a brand new character MP_ChargenDone is the only
+    -- thing that reopens it -- so a character that finished creation and then merely RECONNECTED
+    -- (same process, so no page reload) would find the gate shut and nothing to reopen it, and
+    -- would silently stop persisting anything. The send is idempotent by design, which is what
+    -- makes re-reporting the safe direction.
+    if net.state ~= 'Joined' then chargenReported = false end
     if chargenDone and chargenReported then return end
     if not chargenDone then
         local ok, v = pcall(function() return world.mwscript.getGlobalVariables()['chargenstate'] end)
