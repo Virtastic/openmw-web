@@ -463,22 +463,26 @@ local function joinWorld(w)
     -- Switching world is a reconnect, not a reload: mp.connect takes any URL, so the engine
     -- keeps running and only the session moves. Accounts are shared across worlds (F1), so
     -- the same login works wherever we land.
-    if not w.host or not w.port then
-        status = 'That world did not say where to connect.'
-        render()
-        return
-    end
-    -- host:port only. Production publishes no world ports, so this legacy panel cannot reach
-    -- a world there; the HTML world browser goes through the global hub's worldUrlOf, which
-    -- prefers the gateway path. Left as-is rather than duplicating that rule in dead UI.
-    local url = 'ws://' .. tostring(w.host) .. ':' .. string.format('%d', w.port) .. '/ws'
+    -- THE ADDRESS IS COMPUTED ON THE GLOBAL SIDE, by worldUrlOf, which is the one place that
+    -- knows the rule: prefer the gateway PATH on the current connection's scheme and
+    -- authority, and fall back to host:port only when a world publishes them.
+    --
+    -- This used to demand w.host and w.port here and give up with "That world did not say
+    -- where to connect" when they were absent. The directory deliberately strips both from
+    -- everything it serves, so that was ALWAYS absent in production -- the join button on the
+    -- Worlds tab could never work. It was written off in a comment as dead UI; it is not dead,
+    -- line 525 is the button. Sending the fields instead of a URL keeps the rule in one place,
+    -- which is what that comment said it did not want to duplicate.
     joiningWorld = tostring(w.name)
     status = 'Joining ' .. joiningWorld .. '...'
     render()
     -- mpJoinWorld, NOT MP_JoinWorld: this repo's convention is `mp*` for player -> global
     -- (mpSocial, mpOpenUi) and `MP_*` for global -> player. Sending the wrong one is
     -- silent — sendGlobalEvent for an unhandled name simply does nothing.
-    core.sendGlobalEvent('mpJoinWorld', { url = url, name = tostring(w.name) })
+    core.sendGlobalEvent('mpJoinWorld', {
+        name = tostring(w.name), id = tostring(w.id or ''),
+        wsPath = w.wsPath, host = w.host, port = w.port,
+    })
 end
 
 local function worldsTab()

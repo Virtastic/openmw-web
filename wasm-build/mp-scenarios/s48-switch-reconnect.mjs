@@ -40,10 +40,16 @@ async function waitHttp(url, timeoutMs) {
   return false;
 }
 
-const playersIn = async (port) => {
+// Asked of the GATEWAY, by world id. The directory deliberately strips a world's internal
+// host and port from everything it serves (there is a test asserting it must not leak them),
+// so this scenario used to poll `http://127.0.0.1:undefined/status` and report the resulting
+// silence as 'the player never arrived'. playerCount survives the sanitiser, so the gateway's
+// own view is both the correct signal and the only one available.
+const playersIn = async (gwPort, id) => {
   try {
-    const st = await (await fetch(`http://127.0.0.1:${port}/status`, { signal: AbortSignal.timeout(1500) })).json();
-    return st.playerCount ?? 0;
+    const w = await (await fetch(`http://127.0.0.1:${gwPort}/worlds/${id}`,
+      { signal: AbortSignal.timeout(1500) })).json();
+    return w.playerCount ?? 0;
   } catch {
     return -1; // not answering
   }
@@ -58,6 +64,13 @@ export default async function run(ctx) {
     // Worlds this gateway spawns must boot WITHOUT real game data, a peer binary or a server
     // password — a harness has none. server.mjs refuses on all three, so every spawned world
     // died and the scenario saw only an empty world list.
+    // SHARE THE WORLD'S DATA DIR, as s47 and s54 already do. Two reasons, both real
+    // deployment requirements rather than test details: accounts, friends and parties live
+    // there, and a world that cannot see them refuses the very players it was created for --
+    // and the shared config.toml is where [gateway] serverToken lives, which is how a world
+    // process proves to the gateway that it may create a world for a player. Without it this
+    // gateway read a config with no credential and refused every create with 401.
+    '--shared', ctx.serverDataDir,
     '--server-entry', join(ROOT, 'server', 'dist', 'testhost.mjs'),
   ], {
     // CAPTURED, not discarded. A gateway that comes up healthy but spawns no worlds is
@@ -83,15 +96,23 @@ export default async function run(ctx) {
     await a.waitFor("Number((window.__omwMP||{}).worldCount||0) > 1", STEP, 'session created');
 
     const listUrl = `http://127.0.0.1:${GW_PORT}/worlds?account=${encodeURIComponent(acct)}`;
-    let sessionPort = 0;
+    let sessionUp = false;
     const upBy = Date.now() + 60_000;
+    // SAY WHAT WAS SEEN. A bare `sessionPort > 0` cannot distinguish 'the world was never
+    // listed' from 'listed but never up' from 'the directory itself errored', and a fetch that
+    // throws here used to escape the loop entirely and be reported as the same assertion.
+    let lastSeen = 'the directory was never reached';
     while (Date.now() < upBy) {
-      const l = await (await fetch(listUrl)).json();
-      const w = l.worlds.find((x) => x.id === 'switchtest');
-      if (w?.up) { sessionPort = w.port; break; }
+      try {
+        const l = await (await fetch(listUrl)).json();
+        const w = (l.worlds ?? []).find((x) => x.id === 'switchtest');
+        lastSeen = w ? `listed, up=${w.up}, port=${w.port}` : `not listed (${(l.worlds ?? []).length} worlds)`;
+        if (w?.up) { sessionUp = true; break; }
+      } catch (err) { lastSeen = `directory error: ${err}`; }
       await ctx.sleep(1000);
     }
-    assert.ok(sessionPort > 0, 'the session world must come up');
+    ctx.log(`  session world: ${lastSeen}`);
+    assert.ok(sessionUp, `the session world must come up — ${lastSeen}`);
 
     // Refresh so the UI offers a join, then switch.
     await a.eval("Module.__omwMPCmd='socialtab:players'");
@@ -102,11 +123,11 @@ export default async function run(ctx) {
     const joinBy = Date.now() + 60_000;
     let joined = false;
     while (Date.now() < joinBy) {
-      if (await playersIn(sessionPort) > 0) { joined = true; break; }
+      if (await playersIn(GW_PORT, 'switchtest') > 0) { joined = true; break; }
       await ctx.sleep(1000);
     }
     assert.ok(joined, 'the player must first arrive in the session world');
-    ctx.log(`  switched into the session world on ${sessionPort}`);
+    ctx.log('  switched into the session world');
 
     // --- the actual subject: WHERE would a reconnect go? -------------------------------
     // Every redial path in net.lua goes through targetUrl(), so the dial target IS the
@@ -119,8 +140,11 @@ export default async function run(ctx) {
     // the only thing a world switch changes is this value.
     const dial = String(await a.eval("(window.__omwMP||{}).dialTarget || ''"));
     ctx.log(`  dial target after switching: ${dial}`);
-    assert.ok(dial.includes(`:${sessionPort}/`),
-      `a reconnect must redial the world we SWITCHED TO (port ${sessionPort}), but the dial `
+    // Identified by the world's PATH, not its port. The gateway hands clients `/w/<id>` on its
+    // own origin precisely so a world's internal port is never published -- an address here was
+    // once a configured guess that defaulted to 127.0.0.1, i.e. a remote player's own machine.
+    assert.ok(dial.includes('/w/switchtest'),
+      `a reconnect must redial the world we SWITCHED TO (/w/switchtest), but the dial `
       + `target is "${dial}" — a dropped player would be silently returned to the world they `
       + 'originally launched into');
     assert.ok(!dial.includes(`:${ctx.serverPort}/`),

@@ -1749,8 +1749,19 @@ local eventHandlers = {
     end,
 
     mpJoinWorld = function(data)
+        -- `url` is still honoured for any caller that already has one; the Worlds tab now
+        -- sends the world's FIELDS instead and lets worldUrlOf decide, so the gateway-path
+        -- rule lives in exactly one place. Without this the tab's join button computed
+        -- ws://nil:nil/ws, because the directory publishes no host or port.
         local url = tostring(data.url or '')
-        if url == '' then return end
+        if url == '' then url = worldUrlOf(data) or '' end
+        if url == '' then
+            -- Say so. A silent return here is indistinguishable from a click that did nothing,
+            -- and that is how this stayed broken.
+            print('[mp] cannot join ' .. tostring(data.name) .. ': it published no address')
+            notice('That world did not say where to connect.')
+            return
+        end
         print('[mp] switching to ' .. tostring(data.name) .. ' at ' .. url)
         net.switchTo(url)
     end,

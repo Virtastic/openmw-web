@@ -74,6 +74,13 @@ export default async function run(ctx) {
     '--worlds', worldsDir, '--port', String(GW_PORT),
     '--base-port', String(GW_PORT + 200), '--max-worlds', '4',
     '--idle-reap-ms', String(REAP_MS),
+    // SHARE THE WORLD'S DATA DIR, as s47 and s54 already do. Two reasons, both real
+    // deployment requirements rather than test details: accounts, friends and parties live
+    // there, and a world that cannot see them refuses the very players it was created for --
+    // and the shared config.toml is where [gateway] serverToken lives, which is how a world
+    // process proves to the gateway that it may create a world for a player. Without it this
+    // gateway read a config with no credential and refused every create with 401.
+    '--shared', ctx.serverDataDir,
     '--server-entry', join(ROOT, 'server', 'dist', 'testhost.mjs'),
   ], {
     stdio: ['ignore', 'pipe', 'pipe'],
