@@ -414,10 +414,28 @@ loot bug already fixed here.
 
 ### Systems that simply do not happen for other players
 
-* **Travel services** — silt strider, boat, guild guide. No references. A player using one
-  teleports themselves; whether the others see a sensible cell change or a player who vanished
-  and reappeared across the map is untested. Party travel exists as its own mechanism and is
-  NOT the same thing.
+* **Travel services** — silt strider, boat, guild guide. Read in the engine rather than
+  guessed at this time. The PLAYER's half is already covered, by three separate mechanisms
+  that were not built for it:
+
+  * The destination is a CELL CHANGE, which `PlayerState` already carries -- and the movement
+    envelope deliberately forgives a cell change, because "a cell change IS a teleport by
+    design (doors, travel, recall)". So arriving across the map is not flagged as cheating.
+  * Travel ADVANCES TIME, and `world.lua`'s local-jump detector turns any unexplained local
+    advance into a `WorldTimeRequest`, so everyone else's clock follows. (Before the
+    SNAP_HOURS fix this teleported their sky instead of rolling it.)
+  * The FARE pays `setGoldPool`, and `Travel` is one of the seven GUI modes now watched for
+    the shared merchant purse, so it comes out of the same trader's gold everyone else sees.
+
+  WHAT IS NOT COVERED IS FOLLOWERS. `travelwindow.cpp` calls
+  `ActionTeleport::getFollowers` and moves them with you, locally. On every other client that
+  NPC is driven by whoever holds its cell, and a teleport out of that cell is not something
+  the actor sync expresses -- so a companion who travels with you is left standing where they
+  were for everyone else.
+
+  This only became reachable now that companions follow at all (see the ActorAI entry), and
+  it is a specific case of a broader limit: ACTORS DO NOT MOVE BETWEEN CELLS in this sync.
+  Worth fixing as that general problem rather than as a travel special case.
 
 * **Crime response** — arrest, jail, fines. Bounty itself IS synced (`diffCrime`), so the number
   travels, but nothing arrests you, and what a guard does about another player's bounty is
@@ -437,10 +455,20 @@ loot bug already fixed here.
 * **Companions / followers.** No `AiFollow` handling. A recruited companion follows whoever
   recruited them on that client only. Several main-quest and expansion arcs use companions.
 
-* **Vampirism and lycanthropy.** No references at all. Both change the player's record, spells
-  and how NPCs react. Whether they even survive a rejoin is unknown -- the restore path writes
-  attributes and skills, and the vampire clock is a per-character global that Phase 4 shadows,
-  so it may work by accident. Untested either way.
+* ~~**Vampirism and lycanthropy.**~~ Both already work, and the original entry ("no references
+  at all", "whether they even survive a rejoin is unknown") was wrong on both halves.
+  Verified in the engine before writing a fix that was not needed -- the same mistake this
+  list already made once with diseases.
+
+  LYCANTHROPY is explicitly handled: form is a flag on NpcStats, so nothing generic carried
+  it, and `identity.lua` captures it with `NPC.isWerewolf` and restores it with
+  `NPC.setWerewolf`. It rides `appearance` because that is what it is, and because appearance
+  is relayed -- other players see the wolf rather than a man with a wolf's stats.
+
+  VAMPIRISM needs nothing of its own. `character.cpp` derives it from the Vampirism MAGIC
+  EFFECT magnitude, which comes from the `vampire_<clan>` ABILITY in the spell list --
+  and `snapSpells` iterates the whole spell store, abilities included. It persists by the
+  same route diseases do.
 
 * **Item repair.** Every `repair` match in the codebase is `questRepair`, the admin tool -- not
   the hammer. Condition is per-item state on a shared object.
