@@ -16,6 +16,7 @@ import { WorldSupervisor, reapOrphanWorlds } from './worlds';
 import { startDirectory } from './directory';
 import { buildFrontDoor } from './frontdoor';
 import { loadConfig } from '../config';
+import { HARNESS_PASSWORD } from '../net/connection';
 import { log } from '../log';
 import { metrics } from '../metrics';
 
@@ -145,6 +146,16 @@ const directory = await startDirectory({
     return diff === 0;
   },
   privateWorldIdFor: frontDoor.privateWorldIdFor,
+  // BROWSER HARNESS ONLY. Supplied only when the operator has ALREADY opted into harness
+  // auth -- the same flag, and the same reasoning, as the fixed harness password: a test
+  // affordance must not be a public account-takeover path. When the flag is off this is
+  // undefined, and the route it backs does not exist at all.
+  ...(config.login.allowHarnessAuth
+    ? {
+        mintHarnessSession: (account: string, password: string) =>
+          (password === HARNESS_PASSWORD && account ? frontDoor.mintSession(account) : undefined),
+      }
+    : {}),
 });
 
 // SAY THE CEILING OUT LOUD, AT BOOT. A platform that refuses a world at 03:00 must not be the

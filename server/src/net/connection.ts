@@ -62,7 +62,9 @@ type AuthOp = 'register' | 'login' | 'resume' | 'ticket';
 
 // Matches play/index.html's ?mpauto=1 harness login. Public by construction (it is in the
 // page source), so the SERVER decides whether it is acceptable — see refuseHarnessAuth.
-const HARNESS_PASSWORD = 'harness-pass-1';
+// Exported so the gateway's harness-session affordance checks the SAME literal rather than
+// carrying a second copy that could drift out of step with this one.
+export const HARNESS_PASSWORD = 'harness-pass-1';
 
 // Everything a connection needs from the composed server; kept as an interface so
 // connection.ts has no import cycle with server.ts.

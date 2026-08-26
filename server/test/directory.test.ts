@@ -321,3 +321,22 @@ test('directory: naming an account is refused without the platform credential', 
       'a bad credential must never mint a world owned by someone else');
   } finally { await h.cleanup(); }
 });
+
+test('directory: the harness session route does not exist unless it was wired', async () => {
+  // THE POINT OF THE DESIGN. mintHarnessSession is supplied by main.ts ONLY when the operator
+  // has already opted into harness auth, so in production the route is ABSENT rather than
+  // present-and-checking-a-flag. A locker session is a full sign-in; a route that mints one on
+  // request is an account-takeover path if it ever ships enabled, which is exactly the trap
+  // the fixed harness password already documents.
+  const h = await harness(); // the default fixture wires no mintHarnessSession
+  try {
+    const r = await fetch(`${h.base}/harness/session`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ account: 'alice', password: 'harness-pass-1' }),
+    });
+    assert.notEqual(r.status, 200, 'no token may be minted when the affordance was not wired');
+    const body = await r.json().catch(() => ({}));
+    assert.equal((body as { token?: string }).token, undefined, 'and certainly no token in the body');
+  } finally { await h.cleanup(); }
+});

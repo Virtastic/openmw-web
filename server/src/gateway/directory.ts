@@ -56,6 +56,13 @@ export interface DirectoryDeps {
   // way it can act for a player. Returns false when no credential is configured, so the
   // absence of a secret closes the door rather than opening it.
   isTrustedServer?: (authorizationHeader: string) => boolean;
+  // BROWSER HARNESS ONLY, and ABSENT in production rather than present-and-flagged: main.ts
+  // supplies it only when the operator has already opted into harness auth, so the route
+  // below does not exist at all unless that opt-in was made. A locker session is what the
+  // page needs to change world; harness clients sign in with a server credential that grants
+  // none, so every world switch they attempted died at 'no locker session' before reaching
+  // the network -- which made four scenarios permanently unable to test what they assert.
+  mintHarnessSession?: (account: string, password: string) => string | undefined;
   /** Derive the private-world id for one of this account's characters, or undefined when the
    *  character does not exist — a stale tile must be refused, not built a world. */
   privateWorldIdFor?: (accountKey: string, characterId: string) => Promise<string | undefined>;
@@ -221,6 +228,21 @@ export async function startDirectory(deps: DirectoryDeps): Promise<RunningDirect
       const w = deps.worlds.get(id);
       if (!w) { json(res, 404, { error: 'no such world' }); return; }
       json(res, 200, pub(w));
+      return;
+    }
+
+    if (req.method === 'POST' && path === '/harness/session' && deps.mintHarnessSession) {
+      let body = '';
+      req.on('data', (c) => { body += c; if (body.length > 4096) req.destroy(); });
+      req.on('end', () => {
+        let parsed: { account?: unknown; password?: unknown } = {};
+        try { parsed = JSON.parse(body || '{}'); } catch { json(res, 400, { error: 'bad json' }); return; }
+        const account = typeof parsed.account === 'string' ? parsed.account : '';
+        const password = typeof parsed.password === 'string' ? parsed.password : '';
+        const token = account ? deps.mintHarnessSession!(account, password) : undefined;
+        if (!token) { json(res, 401, { error: 'harness sessions are not available here' }); return; }
+        json(res, 200, { token });
+      });
       return;
     }
 

@@ -255,6 +255,9 @@ export interface FrontDoor {
   // request BODY, so anyone could spawn worlds under fabricated names and exhaust the
   // global cap while every per-owner limit read as satisfied.
   resolveAccount(authorizationHeader: string): string | undefined;
+  /** Mint a locker session for an account. BROWSER HARNESS ONLY -- main.ts wires it only
+   *  when harness auth is already enabled, so production never has a caller. */
+  mintSession(accountKey: string): string;
   /** Flush anything queued for outbound integrations before the process exits. */
   close(): Promise<void>;
   /** Derived private-world id for one of this account's characters; undefined = no such
@@ -369,6 +372,10 @@ export async function buildFrontDoor(
     close: () => attio.close(),
     resolveAccount: (auth: string) =>
       lockerSessions.resolve(auth.startsWith('Bearer ') ? auth.slice(7) : ''),
+    // Mints a locker session directly, for the browser harness ONLY. Exposed here but wired
+    // in main.ts only when the operator has already opted into harness auth, so in production
+    // the route below simply does not exist rather than existing and checking a flag.
+    mintSession: (accountKey: string) => lockerSessions.mint(accountKey),
     // The private-world id, derived HERE from the character rather than trusted from the
     // launcher. A stale tab computed it from a character list that no longer matched reality,
     // so worlds got minted for characters that did not exist and the player's real character

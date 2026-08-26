@@ -43,6 +43,20 @@ async function waitHttp(url, timeoutMs) {
   return false;
 }
 
+
+// The gateway mints these only when harness auth is on; a null here means the affordance is
+// absent, and the scenario says so rather than failing later at 'no locker session'.
+async function harnessSession(gwPort, account) {
+  const r = await fetch(`http://127.0.0.1:${gwPort}/harness/session`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ account, password: 'harness-pass-1' }),
+    signal: AbortSignal.timeout(5000),
+  });
+  if (!r.ok) throw new Error(`the gateway would not mint a harness locker session (${r.status})`);
+  return (await r.json()).token;
+}
+
 export default async function run(ctx) {
   const SHOTS = mkdtempSync(join(tmpdir(), 'omw-s47-'));
   const worldsDir = mkdtempSync(join(tmpdir(), 'omw-s47-worlds-'));
@@ -81,7 +95,13 @@ export default async function run(ctx) {
 
     // The scenario's world must point at this gateway, or its Worlds tab correctly reports
     // "standalone" and there is nothing to test.
-    const a = await ctx.launchClient('bot-a', '');
+    // A LOCKER SESSION, which ?mpauto=1 does not grant. The page needs one to change world at
+    // all: rebootIntoWorld mints a fresh single-use ticket with it, and without one every
+    // switch died at 'no locker session' before touching the network -- so this scenario was
+    // asserting against a path it could not reach. The gateway only serves this when harness
+    // auth is already enabled, which is exactly where this runs.
+    const lockerToken = await harnessSession(GW_PORT, `bot-a-${ctx.runId}`);
+    const a = await ctx.launchClient('bot-a', '', { lockerToken });
 
     // --- 1. The tab fetches the directory the first time it is opened ------------------
     await a.eval("Module.__omwMPCmd='socialtab:worlds'");
