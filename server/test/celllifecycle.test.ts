@@ -139,3 +139,45 @@ test('a journal advance is durable immediately, not on the 45s sweep', async (t)
     'a quest stage must hit the disk at once — the Tribunal-MQ corruption is a crash before the sweep');
   a.close();
 });
+
+test('a SCHEDULED cell reset fires on its own and restocks, without kicking anyone', async (t) => {
+  // [cellReset] has been configured and never exercised — the operator-triggered reset above
+  // is covered, but the timer that makes it a policy rather than a button was not. A whole
+  // TES3MP fork exists because cell-reset scripts crashed it, so "configured and unexercised"
+  // is not a comfortable place for this to sit.
+  const dataDir = tmpDataDir();
+  const server = await startServer({
+    requireGameData: false, dataDir, port: 0, host: '127.0.0.1',
+    configOverride: { cellReset: { cells: ['0,0'], intervalSec: 1 } } as never,
+  });
+  t.after(() => server.close());
+
+  const a = await TestClient.connect(server.port);
+  await a.joinAsNew('Looter');
+  await a.waitEvent('PlayerList');
+  a.sendCellChange('0,0', 0, 0, 0);
+
+  // Canonical contents, then loot it empty.
+  a.sendEvent('ContainerOpen', {
+    ref: REF, cellKey: '0,0', contents: [{ id: 'iron_dagger', n: 1 }],
+  });
+  await new Promise((r) => setTimeout(r, 200));
+  a.sendEvent('ContainerOpRequest', {
+    ref: REF, cellKey: '0,0', opId: 1, op: 'take', itemId: 'iron_dagger', n: 1,
+  });
+  assert.equal(((await a.waitEvent('ContainerOpResult')).value as { ok: boolean }).ok, true);
+
+  // Now do nothing. The point of this test is that NOBODY asks for the reset: the schedule
+  // sweeps on its own timer, which is the half that had never run in a test.
+  const reset = await a.waitEvent('WorldCellReset');
+  assert.equal((reset.value as { cellKey: string }).cellKey, '0,0');
+
+  // And the player standing in the cell is handed the restored truth rather than kicked —
+  // the primitive TES3MP lacks, and whose absence forces its admins to kick everyone.
+  const snap = await a.waitEvent('CellSnapshotReplace');
+  const body = snap.value as { cellKey: string; containers?: Record<string, unknown> };
+  assert.equal(body.cellKey, '0,0');
+  assert.ok(body.containers, 'the snapshot must carry the restocked containers');
+
+  a.close();
+});

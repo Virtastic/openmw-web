@@ -632,8 +632,18 @@ carry more than a record id -- and that one change closes three of the five.
   same way, through scripted events rather than the journal. Our journal model differs (guests
   borrow the host's journal via `journalTarget`), so the failure mode is likely different — but
   nobody has played one through.
-* **`[cellReset]`.** A whole TES3MP fork exists because cell-reset scripts crashed it. Ours is
-  configured and unexercised.
+* ~~**`[cellReset]`.**~~ NOW EXERCISED. The operator-triggered reset was already covered; what
+  had never run in a test was the TIMER that makes it a policy rather than a button --
+  `scheduleCellReset` and `sweepResets` had no coverage at all, which is an uncomfortable place
+  for a feature whose TES3MP equivalent spawned a fork by crashing.
+
+  The test loots a container empty and then does NOTHING: the schedule sweeps on its own, the
+  container is restocked, and the player standing in the cell is handed the restored truth
+  rather than kicked -- the primitive whose absence forces TES3MP admins to kick everyone.
+  Negative-controlled by disabling the sweep, which fails it.
+
+  Still unexercised: reset while a cell is under active simulation by a peer, and reset of a
+  cell with scripted content, which is the specific thing that broke TES3MP.
 * **Many worlds at once.** The gateway is memory-governed now (`gateway.capacity` reports which
   ceiling bound it) but has never run more than a handful of worlds simultaneously.
 
