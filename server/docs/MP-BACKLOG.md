@@ -644,8 +644,18 @@ carry more than a record id -- and that one change closes three of the five.
 
   Still unexercised: reset while a cell is under active simulation by a peer, and reset of a
   cell with scripted content, which is the specific thing that broke TES3MP.
-* **Many worlds at once.** The gateway is memory-governed now (`gateway.capacity` reports which
-  ceiling bound it) but has never run more than a handful of worlds simultaneously.
+* **Many worlds at once.** The REFUSAL is now covered; the LOAD is still not. The capacity
+  governor's arithmetic was already tested, but nothing exercised a real request arriving at the
+  ceiling -- and a cap that is computed and never enforced is not a cap. There is now a test
+  that fills the platform and asserts the next create is refused with 503, which is the status
+  `WorldBrowser` maps to `platform_full` and the client turns into "The server has no room for
+  another world right now". A refusal nobody can read is a bug report about the game being
+  broken. Negative-controlled by making the over-capacity path answer 200.
+
+  What remains genuinely untested is the thing the original entry meant: many worlds actually
+  RUNNING at once. That is a load measurement on real hardware, not a unit test, and the
+  numbers must not be published from a busy box -- capacity figures were once published 10x
+  wrong for exactly that reason.
 
 ---
 

@@ -340,3 +340,32 @@ test('directory: the harness session route does not exist unless it was wired', 
     assert.equal((body as { token?: string }).token, undefined, 'and certainly no token in the body');
   } finally { await h.cleanup(); }
 });
+
+test('at the ceiling the platform REFUSES a new world, with a reason the UI can explain', async () => {
+  // "Many worlds at once" was a claim nobody had tested: the capacity governor's ARITHMETIC is
+  // covered in worlds.test.ts, but nothing exercised what happens when a real request arrives
+  // at the ceiling. A cap that is computed and never enforced is not a cap.
+  //
+  // maxWorlds 3 = the always-on public world plus two sessions, and a per-owner cap high enough
+  // that the PLATFORM limit is what binds rather than the owner limit -- otherwise this would
+  // be re-testing the per-owner rule with extra steps.
+  const h = await harness(3, 10);
+  try {
+    const mk = async (id: string, who: string) => (await fetch(`${h.base}/worlds`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${who}` },
+      body: JSON.stringify({ id, mode: 'private', account: who }),
+    })).status;
+
+    assert.equal(await mk('one', 'alice'), 200, 'first session fits');
+    assert.equal(await mk('two', 'bob'), 200, 'second session fits');
+
+    // Third session would be the fourth world. It must be refused, and refused as 503 rather
+    // than a 500 or a hang: WorldBrowser maps exactly that status to 'platform_full', which is
+    // what turns into "The server has no room for another world right now" in the client. A
+    // refusal nobody can read is a bug report about the game being broken.
+    const status = await mk('three', 'cassia');
+    assert.equal(status, 503,
+      'over capacity must be 503 — that is the status the client turns into a legible message');
+  } finally { await h.cleanup(); }
+});
