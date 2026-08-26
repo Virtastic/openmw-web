@@ -19,15 +19,15 @@
 //
 // Reaping is driven by --idle-reap-ms rather than by waiting out the two-minute default.
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { gatewayRules, grantLockerSession, startGatewayAndClient } from './_gateway.mjs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const ROOT = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 const STEP = 30_000;
 const GW_PORT = 58900 + (process.pid % 120);
+// The world this scenario reaps and dials back into. priv-* because that is the only prefix
+// the gateway will revive on dial, and revival is the whole subject here.
+const OWN_ID = 'priv-revivetest';
 // 45s, not 4s. A world is idle until someone is JOINED, and a client takes several seconds to
 // boot -- longer under SwiftShader, which is what CI has. At 4s the world was reaped one second
 // BEFORE the player finished arriving in it: the client logged HelloSent and then
@@ -42,18 +42,8 @@ const REAP_MS = 45000;
 // from the body, and a world has no locker session to present -- so without this every
 // in-game create is refused with 401, which is exactly what was happening. This one file is
 // both the world's config and the gateway's --shared config, mirroring production.
-export const serverRules = `[gateway]\nurl = "http://127.0.0.1:${GW_PORT}"\nserverToken = "harness-server-credential-not-for-production"`;
+export const serverRules = gatewayRules(GW_PORT);
 
-async function waitHttp(url, timeoutMs) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      if ((await fetch(url, { signal: AbortSignal.timeout(1000) })).ok) return true;
-    } catch { /* not up yet */ }
-    await new Promise((r) => setTimeout(r, 300));
-  }
-  return false;
-}
 
 const worldsOf = async (acct) => {
   try {
@@ -80,96 +70,25 @@ const playersIn = async (id) => {
 };
 
 
-// The gateway mints these only when harness auth is on; a null here means the affordance is
-// absent, and the scenario says so rather than failing later at 'no locker session'.
-async function harnessSession(gwPort, account) {
-  const r = await fetch(`http://127.0.0.1:${gwPort}/harness/session`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ account, password: 'harness-pass-1' }),
-    signal: AbortSignal.timeout(5000),
-  });
-  if (!r.ok) throw new Error(`the gateway would not mint a harness locker session (${r.status})`);
-  return (await r.json()).token;
-}
 
-// Injected AFTER boot, never through the URL. #mplocker in the address flips index.html into
-// locker/launcher mode -- a different asset path that never comes up in the harness and killed
-// the client outright. These two globals are the whole of what rebootIntoWorld reads, and the
-// base has to point at the GATEWAY: /auth/ticket lives there, while lockerHttpBase would
-// otherwise derive it from the WORLD's socket URL and get a server that does not serve it.
-async function grantLockerSession(client, gwPort, account) {
-  const token = await harnessSession(gwPort, account);
-  // Ends in a STRING on purpose. The last expression is what Runtime.evaluate serialises, and
-  // an assignment whose value is a function comes back as an unserialisable remote object --
-  // which rejects, and an unhandled rejection here takes the whole run down with no output at
-  // all rather than failing this scenario.
-  await client.eval(`window.__omwLockerToken = ${JSON.stringify(token)};`
-    + `window.__lockerHttpBase = function(){ return 'http://127.0.0.1:${gwPort}'; };`
-    + `'granted';`);
-}
 
 export default async function run(ctx) {
-  const worldsDir = mkdtempSync(join(tmpdir(), 'omw-s57-worlds-'));
-  const gw = spawn(process.execPath, [
-    join(ROOT, 'server', 'dist', 'gateway.mjs'),
-    '--worlds', worldsDir, '--port', String(GW_PORT),
-    '--base-port', String(GW_PORT + 200), '--max-worlds', '4',
-    '--idle-reap-ms', String(REAP_MS),
-    // SHARE THE WORLD'S DATA DIR, as s47 and s54 already do. Two reasons, both real
-    // deployment requirements rather than test details: accounts, friends and parties live
-    // there, and a world that cannot see them refuses the very players it was created for --
-    // and the shared config.toml is where [gateway] serverToken lives, which is how a world
-    // process proves to the gateway that it may create a world for a player. Without it this
-    // gateway read a config with no credential and refused every create with 401.
-    '--shared', ctx.serverDataDir,
-    '--server-entry', join(ROOT, 'server', 'dist', 'testhost.mjs'),
-  ], {
-    stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env, OMW_ALLOW_HARNESS_AUTH: '1' },
+  // The whole gateway dance lives in _gateway.mjs now: wait for the PUBLIC world before
+  // dialling anything, reach a world THROUGH the gateway, arrive in your OWN world, and
+  // declare #mphome so a reload does not make the client treat wherever it landed as home.
+  // s57 had hand-rolled three of those four and was missing the first, which is why the
+  // public world was dialled while it might still be booting.
+  //
+  // ownId is the world this scenario later reaps and dials back into. It HAS to be the
+  // player own world: `where:solo` returns them there, so a separate one would send them
+  // somewhere that was never reaped and the revival round trip would never be exercised.
+  const gw = await startGatewayAndClient(ctx, {
+    gwPort: GW_PORT, idleReapMs: REAP_MS, ownId: OWN_ID,
   });
-  ctx.watchChild('gateway', gw);
-  const stopGw = () => { try { gw.kill('SIGTERM'); } catch { /* gone */ } };
-
+  const a = gw.client;
+  const stopGw = gw.stop;
+  const acct = a.name.toLowerCase();
   try {
-    assert.ok(await waitHttp(`http://127.0.0.1:${GW_PORT}/healthz`, 30_000), 'gateway must come up');
-    // A LOCKER SESSION, which ?mpauto=1 does not grant. The page needs one to change world at
-    // all: rebootIntoWorld mints a fresh single-use ticket with it, and without one every
-    // switch died at 'no locker session' before touching the network -- so this scenario was
-    // asserting against a path it could not reach. The gateway only serves this when harness
-    // auth is already enabled, which is exactly where this runs.
-    // THE PRODUCTION FLOW, and every part of it is load-bearing (see s47 for the evidence).
-    // The client dials THROUGH the gateway, because worldUrlOf derives a switch destination
-    // from the current connection's authority plus /w/<id> -- a client wired straight to a
-    // world derives a path no world serves. And it arrives in its OWN world, because a
-    // brand-new account is refused by public with "finish creating your character in your
-    // private world first". The launcher creates that world through the gateway with the
-    // player's locker session; this does the same.
-    const acctName = `bot-a-${ctx.runId}`;
-    const soloToken = await harnessSession(GW_PORT, acctName);
-    // THE SAME WORLD the scenario later reaps and dials back into. It has to be: `where:solo`
-    // returns a player to their OWN world, so a separate one here would send them somewhere
-    // that was never reaped and the revival round trip would never be exercised. POST /worlds
-    // is create-or-join, so the in-game create below simply resolves to this one.
-    const soloId = 'priv-revivetest';
-    const mk = await fetch(`http://127.0.0.1:${GW_PORT}/worlds`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${soloToken}` },
-      body: JSON.stringify({ id: soloId, mode: 'private' }),
-    });
-    assert.equal(mk.status, 200, `the player's own world must be creatable (${mk.status})`);
-    const soloBy = Date.now() + 60_000;
-    let soloUp = false;
-    while (Date.now() < soloBy) {
-      try {
-        const w = await (await fetch(`http://127.0.0.1:${GW_PORT}/worlds/${soloId}`)).json();
-        if (w.up) { soloUp = true; break; }
-      } catch { /* still booting */ }
-      await ctx.sleep(1000);
-    }
-    assert.ok(soloUp, "the player's own world must come up");
-    const ownUrl = `ws://127.0.0.1:${GW_PORT}/w/${soloId}`;
-    const a = await ctx.launchClient('bot-a', '', { mpUrl: ownUrl, homeUrl: ownUrl });
     await grantLockerSession(a, GW_PORT, `bot-a-${ctx.runId}`);
     const acct = a.name.toLowerCase();
 

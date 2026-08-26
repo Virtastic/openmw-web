@@ -235,21 +235,18 @@ signal.
   existed. The scenario was racing its own fixture. Now 45s -- still far below the two-minute
   default, so the reap is driven rather than waited out.
 
-**Where it stops now, with the evidence:** `where:public` does nothing. `publicStage` is empty,
-which means the handler that resolves the public world from a list never ran at all -- and that
-handler is what performs the switch. The client is instead reconnecting on a loop, and on every
-attempt the ENGINE logs:
+**Where it stops now, with the evidence.** `s57` is on the shared `_gateway.mjs` flow, so it
+gets all four corrections that made `s47`, `s48` and `s53` pass. It reaches: own world ->
+create -> join -> reaped -> and then dies going to Public.
 
-```
-Menu[scripts/omw/settings/menu.lua] onStateChanged failed.
-  Lua error: DelayedAction is not allowed to create another DelayedAction
-Menu[scripts/omw/console/menu.lua]  onStateChanged failed.  (same error)
-```
+At that point the client is not merely failing to connect -- it is GONE. `publicStage`, the
+chat line and `worldCount` are all empty, `jsErrors` and `luaErrors` are empty, and
+`logTail()` returns nothing at all. An empty log buffer with empty mirrors is a page that
+navigated somewhere blank, not a page that booted and could not reach a server.
 
-That is vanilla OpenMW menu code failing on a state change, repeating every ~20s in step with
-the reconnect ladder. It may be incidental, but a menu-context handler that throws takes the
-REST of that handler down silently -- which is exactly the failure shape this repo has been
-bitten by before -- so it is the first thing to rule out rather than the last.
+So the next thing to look at is the URL `rebootIntoWorld` navigates to on the SECOND switch,
+not the network. Every other scenario switches once; this is the only one that switches again
+after already having switched, and it is the only one that ends up on a dead page.
 
 `s53-charslots` is the same family: it has no gateway at all, so it cannot get a locker session
 and its character switch cannot reboot. Giving it one is the same restructure s47 and s48 got.

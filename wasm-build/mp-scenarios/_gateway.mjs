@@ -72,7 +72,7 @@ export async function grantLockerSession(client, gwPort, account) {
  * Returns { client, gwPort, ownId, account, stop }.
  */
 export async function startGatewayAndClient(ctx, opts = {}) {
-  const { gwPort, name = 'bot-a', maxWorlds = 4, idleReapMs } = opts;
+  const { gwPort, name = 'bot-a', maxWorlds = 4, idleReapMs, ownId = 'priv-own-world' } = opts;
   const worldsDir = mkdtempSync(join(tmpdir(), 'omw-gw-worlds-'));
   const gw = spawn(process.execPath, [
     join(ROOT, 'server', 'dist', 'gateway.mjs'),
@@ -119,7 +119,6 @@ export async function startGatewayAndClient(ctx, opts = {}) {
     // Named priv-* because that is the only prefix the gateway will revive on dial.
     const account = `${name}-${ctx.runId}`;
     const token = await harnessSession(gwPort, account);
-    const ownId = 'priv-own-world';
     const mk = await fetch(`http://127.0.0.1:${gwPort}/worlds`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
