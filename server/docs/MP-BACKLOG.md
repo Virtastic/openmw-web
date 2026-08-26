@@ -437,9 +437,25 @@ loot bug already fixed here.
   it is a specific case of a broader limit: ACTORS DO NOT MOVE BETWEEN CELLS in this sync.
   Worth fixing as that general problem rather than as a travel special case.
 
-* **Crime response** — arrest, jail, fines. Bounty itself IS synced (`diffCrime`), so the number
-  travels, but nothing arrests you, and what a guard does about another player's bounty is
-  undefined. TES3MP reports this class as a real source of quest breakage.
+* **Crime response** — arrest, jail, fines. Traced end to end rather than grepped, and the
+  original entry ("nothing arrests you") does not survive it. `[sharing] crime = true` by
+  default, so a bounty relays to everyone and each client applies it to THEIR OWN player with
+  `setCrimeLevel`. From there arrest is vanilla and untouched: guard AI pursues on the local
+  crime level, which every client now has.
+
+  The rest follows for free. Being arrested sets the crime level to 0 locally, `diffCrime`
+  fires on any change including downwards, and the clear relays -- so paying a fine clears the
+  party. Jail advances time, which the local-jump detector turns into a `WorldTimeRequest`
+  (a sentence is days, well inside `MAX_ADVANCE_HOURS`'s 30). Skill loss is on the prisoner's
+  own stats and already synced.
+
+  WHAT IS ACTUALLY UNVERIFIED is narrower and worth stating as such: nobody has watched two
+  players share a bounty and be arrested separately, so the interaction between two
+  simultaneous arrests is untested. That is a playtest, not a missing mechanism.
+
+  Design note, since it is a real choice and not an accident: a shared bounty means one
+  player's crime makes the whole party wanted. That is the `[sharing] crime` toggle, and an
+  operator who wants personal bounties can set it false today.
 
 * ~~**Dialogue topics.**~~ IMPLEMENTED, and the decision is worth stating rather than leaving
   as "possibly the right trade". Sharing the JOURNAL and not the topics is the inconsistent
