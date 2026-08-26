@@ -462,8 +462,16 @@ startCell = "Seyda Neen"
 #
 # The older "one peer per 3x3 block, so this is the number of separated player groups" note
 # was from the pre-anchor design and is wrong twice over: movement.ts loadedCells() returns
-# ONE cell (OpenMW clamps actor processing to 7168 units, narrower than an 8192-unit cell),
-# and clustering was replaced by anchors. There is no clusters_over_cap warning.
+# ONE PEER SIMULATES ONE CELL. OpenMW clamps actor processing to 7168 units and an exterior
+# cell is 8192 wide, so an engine only ticks actors near where it STANDS -- anchoring makes it
+# load a cell, not simulate it. The server therefore runs one peer per OCCUPIED CELL, and this
+# cap is what bounds that.
+#
+# READ THIS AS THE PLAYER CEILING IT IS: the number of cells that can be simulated at once, not
+# the number of players. Players sharing a cell share its peer and cost nothing extra, so a
+# hundred people in Balmora need one peer; ten people in ten corners of Vvardenfell need ten.
+# Cells past the cap are held but NOT ticked, and the server says so once per change with
+# simpeer.cells_unsimulated -- frozen NPCs and melee that does not land, for whoever is there.
 #
 # THIS IS NOT THE PLATFORM'S MEMORY GOVERNOR — it cannot be, because it is per world process
 # and cannot see its siblings. N worlds means N peers. Size the box with [worlds] memBudgetMb
@@ -472,7 +480,13 @@ startCell = "Seyda Neen"
 # anchoring one exterior cell (2026-08-24, host load 1.4). Startup to SessionHello was 11.4 s
 # with that data set, which is why [simPeer] startTimeoutMs is generous. A peer anchoring
 # several busy cells will cost more.
-maxPeers = 2
+# 8, from the 487 MB measurement above against the 8g mem_limit in docker-compose.prod.yml:
+# 8 x 487MB = 3.9GB of peers, leaving over half the container for the world process, its stores
+# and headroom. Was 2, which predates one-peer-per-cell and meant a third occupied cell simply
+# went unsimulated. Raise it only WITH a measurement on the box you deploy to -- each peer is a
+# full engine ticking actors (~20% of a core when busy), so CPU runs out on a small host before
+# RAM does.
+maxPeers = 8
 idleReapMs = 120000               # reap a peer whose world has had no humans this long
 startTimeoutMs = 120000           # retail data load is slow; generous, and failure is non-fatal
 restartBackoffMs = 15000          # after a crash, wait before respawning (no hot crash loop)
@@ -489,7 +503,11 @@ maxWorlds = 0
 # Total RAM the gateway may spend on worlds and their peers. 0 DISABLES the memory governor
 # and leaves only the count cap — which is how a 1.5 GB container was allowed to try to run
 # 256 worlds. Set it to the container's limit, measured on the host you actually deploy to.
-memBudgetMb = 0
+# 8192 = the mem_limit in docker-compose.prod.yml. This was 0 -- the governor OFF -- and the
+# comment above says exactly what that cost: a 1.5 GB container permitted to attempt 256 worlds.
+# Leaving it off is worse now than it was, because each world may run several peers rather than
+# one. Set it to YOUR container's limit if that is not 8g.
+memBudgetMb = 8192
 # MEASURED cost of one occupied world: its node process plus its sim peer.
 #
 # 640 comes from a real measurement, not an estimate: 623 MB total (sim peer 487 MB + world

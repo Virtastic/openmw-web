@@ -70,6 +70,21 @@ ci/jenkins/release-to-test.sh server     # just the gateway + sim peer
 It fetches `origin/dev`, restages the build inputs git cannot carry, builds, and deploys --
 stopping at the first failure. The deploy runs the contract gate and fails on any miss.
 
+**RUN IT SO IT OUTLIVES ITS CALLER.** It drives the build server over a single ssh session, so if
+the local process dies the ssh dies with it and the remote run stops WHEREVER IT HAD GOT TO. That
+is not a visible failure: a run killed between the two deploys shipped the server and not the
+engine, every line it had printed said success, and the site kept serving the previous client
+while the server ran new code. Nothing in the logs says so -- the tell is the engine hash in
+`/index.html` not moving, and the container's age not resetting. Foreground it, or use a job
+runner that keeps it alive; `nohup cmd &` from a shell that then exits is exactly the trap.
+
+Confirm a deploy by what CHANGED, never by the exit code:
+
+```bash
+curl -sk https://<origin>/index.html | grep -o '__ENGINE_VER = "[^"]*"'   # must differ
+ssh <test-host> 'docker ps --format "{{.Names}} {{.RunningFor}}"'         # must have reset
+```
+
 | Job | Time | What it does |
 |---|---|---|
 | server | ~1 min, longer if `openmw/` changed | gateway + sim peer -> deploy -> contract gate |
