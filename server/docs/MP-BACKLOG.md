@@ -119,6 +119,34 @@ simply stayed put.
 
 #### BLOCKING THE HARNESS, not the product: no switch scenario can reboot
 
+**Resolved in two parts, and the second is the interesting one.**
+
+*The locker session.* Harness clients sign in with `?mpauto=1`, which is a server credential
+and grants no locker session, so `rebootIntoWorld` threw `no locker session` before touching
+the network. The gateway now mints one on request -- ABSENT in production rather than
+present-and-flagged, wired only when the operator already opted into harness auth. It is
+injected AFTER boot, never through the URL: `#mplocker` flips index.html into locker/launcher
+mode, a different asset path that never comes up here and killed the client outright.
+
+*The topology.* With a session in hand the join still did nothing, and the mirrors said why:
+
+```
+joinError:   ""                                        <- the world WAS in the client's list
+publicStage: "switchTo:ws://127.0.0.1:45275/w/my-session"  <- worldUrlOf built the right SHAPE
+switchTo:    ""                                        <- the page took it and gave up
+```
+
+45275 is the WORLD server's port; the gateway was on 58401. `worldUrlOf` derives a switch
+destination from the CURRENT connection's authority plus the world's `/w/<id>` path -- correct
+in production, where clients reach a world THROUGH the gateway (Caddy fronts `/w/*`), and
+wrong in a harness that dialled a world port directly, because no world serves `/w/<id>`. The
+gateway is the thing that splices that path through to a world.
+
+So the scenario, not the product, had the wrong shape: a client connected straight to a world
+can never test a world switch. It now dials `ws://<gateway>/w/vvardenfell`, which is what a
+real player does.
+
+
 `s53`, and the join half of `s47`, `s48` and `s57`, all end in `rebootIntoWorld()`, which
 needs `window.__omwLockerToken` -- a locker session that rides in the page's URL fragment as
 `#mplocker=`. Harness clients authenticate with `?mpauto=1`, which is a SERVER credential and

@@ -116,7 +116,15 @@ export default async function run(ctx) {
     // switch died at 'no locker session' before touching the network -- so this scenario was
     // asserting against a path it could not reach. The gateway only serves this when harness
     // auth is already enabled, which is exactly where this runs.
-    const a = await ctx.launchClient('bot-a', '');
+    // CONNECT THROUGH THE GATEWAY, not straight at a world port -- this is the production
+    // topology and the scenario cannot test a join without it. worldUrlOf builds a switch
+    // destination from the CURRENT connection's authority plus the world's /w/<id> path, so a
+    // client dialled directly at a world derives ws://<that world>/w/<other world>, which no
+    // world serves. The gateway is the thing that splices /w/<id> through to a world, exactly
+    // as Caddy fronts it in production.
+    const a = await ctx.launchClient('bot-a', '', {
+      mpUrl: `ws://127.0.0.1:${GW_PORT}/w/vvardenfell`,
+    });
     await grantLockerSession(a, GW_PORT, `bot-a-${ctx.runId}`);
 
     // --- 1. The tab fetches the directory the first time it is opened ------------------
@@ -184,6 +192,16 @@ export default async function run(ctx) {
     await ctx.sleep(1500);
 
     await a.eval("Module.__omwMPCmd='worldjoin:my-session'");
+    // WHAT THE CLIENT DECIDED. The join is a chain -- MP_SocialJoinById -> joinWorld ->
+    // mpJoinWorld -> net.switchTo -> the page's rebootIntoWorld -- and every link can fail
+    // quietly. These four mirrors say which link stopped: joinError means the world was never
+    // in the client's list, publicStage means switchTo was reached and with what address,
+    // switchTo empty AFTER that means the page took it and gave up, and dialTarget says where
+    // a reconnect would now go.
+    await ctx.sleep(2000);
+    for (const k of ['joinError', 'publicStage', 'switchTo', 'dialTarget']) {
+      ctx.log(`  ${k}: "${String(await a.eval(`(window.__omwMP||{}).${k}||''`))}"`);
+    }
     // The definitive check is on the DESTINATION world: it must report a player that was
     // not there before. Asserting only on client state would pass if the client merely
     // believed it had moved.

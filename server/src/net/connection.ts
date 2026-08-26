@@ -61,9 +61,6 @@ export type SessionState = 'CONNECTED' | 'HELLO_OK' | 'AUTHED' | 'IN_WORLD' | 'C
 // omwmp_auth_total{op,...}. Kept apart from the message name so the label space is closed.
 type AuthOp = 'register' | 'login' | 'resume' | 'ticket';
 
-// Matches play/index.html's ?mpauto=1 harness login. Public by construction (it is in the
-// page source), so the SERVER decides whether it is acceptable — see refuseHarnessAuth.
-
 // Everything a connection needs from the composed server; kept as an interface so
 // connection.ts has no import cycle with server.ts.
 export interface ServerCtx {
