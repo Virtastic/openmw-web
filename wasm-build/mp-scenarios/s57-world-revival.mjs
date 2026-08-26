@@ -28,7 +28,14 @@ import { fileURLToPath } from 'node:url';
 const ROOT = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 const STEP = 30_000;
 const GW_PORT = 58900 + (process.pid % 120);
-const REAP_MS = 4000;
+// 45s, not 4s. A world is idle until someone is JOINED, and a client takes several seconds to
+// boot -- longer under SwiftShader, which is what CI has. At 4s the world was reaped one second
+// BEFORE the player finished arriving in it: the client logged HelloSent and then
+// 'server disconnect: SHUTDOWN', and everything after that was a reconnect to a world that no
+// longer existed. The scenario was racing its own fixture, not testing a reap.
+//
+// Still far below the two-minute default, so the reap is still driven rather than waited out.
+const REAP_MS = 45000;
 
 // serverToken is the credential a WORLD PROCESS presents to the gateway so it may create
 // a world for a player. The gateway takes the account from the caller's identity and never
@@ -241,6 +248,15 @@ export default async function run(ctx) {
     while (Date.now() < pubBy) {
       if (await playersIn('vvardenfell') > 0) { inPublic = true; break; }
       await ctx.sleep(1000);
+    }
+    if (!inPublic) {
+      // THE CLIENT'S OWN ACCOUNT of the second switch. Everything outside the page said the
+      // same unhelpful thing -- it reloaded and never arrived -- so the only place left to
+      // look is what the page itself logged while booting again.
+      ctx.log(`  jsErrors: ${JSON.stringify(a.jsErrors?.() ?? [])}`);
+      ctx.log(`  luaErrors: ${JSON.stringify(a.luaErrors?.() ?? [])}`);
+      ctx.log(`  client log tail:
+${a.logTail?.(45) ?? '(none)'}`);
     }
     assert.ok(inPublic, 'the player must actually reach the public world before anything is idle');
     ctx.log('  switched to the public world');

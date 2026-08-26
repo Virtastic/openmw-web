@@ -224,6 +224,37 @@ signal.
 
 #### `s57-world-revival`: revival WORKS, the scenario does not finish
 
+**Two fixture faults found and fixed on the way, neither of them the product:**
+
+* The world id had to be `priv-*`. The gateway only revives that prefix on dial, so a world
+  named anything else stays down -- the scenario could never have exercised the round trip it
+  asserts. `world.revived_on_dial` now fires.
+* `--idle-reap-ms 4000` was shorter than a client boot. The world was reaped ONE SECOND before
+  the player finished arriving: the client logged `HelloSent` and then
+  `server disconnect: SHUTDOWN`, and everything after was a reconnect to a world that no longer
+  existed. The scenario was racing its own fixture. Now 45s -- still far below the two-minute
+  default, so the reap is driven rather than waited out.
+
+**Where it stops now, with the evidence:** `where:public` does nothing. `publicStage` is empty,
+which means the handler that resolves the public world from a list never ran at all -- and that
+handler is what performs the switch. The client is instead reconnecting on a loop, and on every
+attempt the ENGINE logs:
+
+```
+Menu[scripts/omw/settings/menu.lua] onStateChanged failed.
+  Lua error: DelayedAction is not allowed to create another DelayedAction
+Menu[scripts/omw/console/menu.lua]  onStateChanged failed.  (same error)
+```
+
+That is vanilla OpenMW menu code failing on a state change, repeating every ~20s in step with
+the reconnect ladder. It may be incidental, but a menu-context handler that throws takes the
+REST of that handler down silently -- which is exactly the failure shape this repo has been
+bitten by before -- so it is the first thing to rule out rather than the last.
+
+`s53-charslots` is the same family: it has no gateway at all, so it cannot get a locker session
+and its character switch cannot reboot. Giving it one is the same restructure s47 and s48 got.
+
+
 `world.revived_on_dial` now fires, which is the mechanism this scenario exists to prove, and it
 only fires for `priv-*` ids -- the old world name could never have been revived. It now gets
 through: own world -> create -> join -> reaped. It fails on the NEXT step, going to Public:
