@@ -186,6 +186,51 @@ does not agree with itself" rather than as an error -- which is exactly why they
 audit rather than by playing. Merchants are the one that would spoil a session soonest, and the
 one most likely to be hit within minutes of two people logging in together.
 
+## P1c — persistence gaps: what silently resets on every rejoin
+
+Second scan, different question: not "is this system synced" but "does this survive a relog".
+The character doc stores appearance, equipment, inventory, stats, spells, position, journal,
+globals, factions and bounty. Everything below is character state Morrowind has and the doc
+does not, so it resets every time the player reconnects -- silently, and in the player's favour,
+which is why nobody reports it as a bug.
+
+* **BIRTHSIGN IS NEVER CAPTURED OR RESTORED.** The engine binding already supports it --
+  `applyChargen` takes a birthsign and applies it through `setPlayerBirthsign` -- but
+  `snapAppearance` never reads one, the doc has no field for it, and the restore's applyChargen
+  call passes race/head/hair/isMale/class/name and stops there. So a rejoined character has no
+  birthsign on their sheet. The ABILITIES partly survive by accident, because snapSpells
+  captures them as spells, which is also why they were stacking before the attribute-climb fix.
+  The engine half is done; this is a three-field change on the client and the doc.
+
+* **Item condition is not persisted.** `inventory` is `{ id, n }` -- record id and count, nothing
+  else -- and the restore recreates items with `world.createObject(recordId)`, which yields a
+  FRESH object. Every relog therefore fully repairs every weapon and every piece of armour. Free,
+  unlimited, and invisible.
+
+* **Enchantment charge is not persisted either**, for the same reason: a drained enchanted item
+  comes back at full charge. Free recharge on demand, which also makes soul gems and the
+  Recharge mechanic pointless.
+
+* **Soul gems lose their souls.** `{ id, n }` cannot express which soul a gem holds, so a filled
+  grand soul gem returns as an empty one. Directly breaks enchanting, which is the entire point
+  of trapping souls.
+
+* **Active magic effects are not persisted** -- no `activeSpells` or `effects` field anywhere in
+  the doc. Buffs expiring early is cosmetic; DISEASES are not. Blight, corprus and common
+  disease are active effects, so a relog cures them for free. Several quests turn on being
+  diseased.
+
+### Why this group is easy to miss
+
+Every one of these fails in the player's FAVOUR -- repaired gear, recharged items, cured
+disease. Nobody files a bug about their sword being fixed. They surface as "multiplayer feels
+easier than single player" long before anyone identifies a cause, and they quietly delete whole
+mechanics: Armorer, Recharge, soul trapping and disease all stop mattering.
+
+Sizing: birthsign is the cheapest to fix and the most visible to a player looking at their own
+character sheet. Item condition and charge are the same fix -- the inventory doc entry needs to
+carry more than a record id -- and that one change closes three of the five.
+
 ## P2 — claims nobody has tested
 
 * **The Morrowind / Tribunal / Bloodmoon main quests, played together.** TES3MP reports the
