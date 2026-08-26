@@ -32,6 +32,7 @@ export interface WorldEntry {
 
 export interface WorldBrowserDeps {
   gatewayUrl: string; // '' = no gateway configured
+  serverToken?: string; // platform credential; '' or absent = cannot create worlds
   // This world's own port, so the client can tell which entry in the list is where it
   // already is. Resolved lazily because the listening port is not known at construction.
   ownPort?: () => number;
@@ -100,9 +101,15 @@ export class WorldBrowser {
     if (!this.enabled) return { error: 'no_gateway' };
     if (mode !== 'private' && mode !== 'party') return { error: 'bad_mode' };
     if (!/^[a-z0-9][a-z0-9_-]{0,63}$/i.test(id)) return { error: 'bad_id' };
+    // The account still comes from the SESSION and never from the client's message. What is
+    // new is proving to the gateway that this is a world process saying it: a world has no
+    // locker session to present, so without the credential the gateway identified us as an
+    // anonymous caller and refused every create with 401.
+    const token = this.deps.serverToken ?? '';
+    if (!token) return { error: 'no_server_token' };
     const r = await this.call('/worlds', {
       method: 'POST',
-      // accountKey from the SESSION, never from the client's message.
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
       body: JSON.stringify({ id, mode, account: player.accountKey }),
     });
     if (!r || typeof r !== 'object') return { error: 'unreachable' };

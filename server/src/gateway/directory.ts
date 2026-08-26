@@ -51,6 +51,11 @@ export interface DirectoryDeps {
   // under fabricated names until the global maxWorlds cap was gone, while every per-owner
   // limit read as satisfied. Absent = no verifier wired, and world creation is refused.
   resolveAccount?: (authorizationHeader: string) => string | undefined;
+  // True only when the caller presented the platform's own server credential. A WORLD
+  // PROCESS is a trusted component and has no locker session to present, so this is the only
+  // way it can act for a player. Returns false when no credential is configured, so the
+  // absence of a secret closes the door rather than opening it.
+  isTrustedServer?: (authorizationHeader: string) => boolean;
   /** Derive the private-world id for one of this account's characters, or undefined when the
    *  character does not exist — a stale tile must be refused, not built a world. */
   privateWorldIdFor?: (accountKey: string, characterId: string) => Promise<string | undefined>;
@@ -239,7 +244,17 @@ export async function startDirectory(deps: DirectoryDeps): Promise<RunningDirect
         // made the per-owner cap decorative: fabricate a new name per request and one caller
         // exhausts every world slot on the host, each holding its slot for the full startup
         // grace, locking real players out with 503s.
-        const account = deps.resolveAccount?.(req.headers.authorization ?? '');
+        // A trusted world process may name the account it is acting for; ANY OTHER CALLER
+        // may not, and is identified by its own session. The distinction is the whole point:
+        // a client-supplied account made the per-owner cap decorative, because one caller
+        // could fabricate a name per request and exhaust every world slot on the host. A
+        // world server cannot present a locker session, so without this it could never
+        // create a world for anyone -- which is exactly what was happening (401 on every
+        // in-game create).
+        const auth = req.headers.authorization ?? '';
+        const account = deps.isTrustedServer?.(auth)
+          ? (typeof parsed.account === 'string' ? parsed.account : undefined)
+          : deps.resolveAccount?.(auth);
         if (!account) { json(res, 401, { error: 'sign_in_first' }); return; }
         let id = parsed.id && /^[a-z0-9][a-z0-9_-]{0,63}$/i.test(parsed.id) ? parsed.id : undefined;
         // A PRIVATE WORLD IS MADE FOR A CHARACTER, so its id is DERIVED, never trusted from

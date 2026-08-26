@@ -132,6 +132,18 @@ const directory = await startDirectory({
   metricsToken: config.metrics.enabled ? config.metrics.token : '',
   frontDoor: frontDoor.route,
   resolveAccount: frontDoor.resolveAccount,
+  // Constant-time-ish compare on a fixed-length secret, and an empty token NEVER matches --
+  // otherwise an unconfigured platform would treat every anonymous caller as trusted, which
+  // is the one failure mode that must not exist.
+  isTrustedServer: (auth: string) => {
+    const want = config.gateway.serverToken;
+    if (!want) return false;
+    const got = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+    if (got.length !== want.length) return false;
+    let diff = 0;
+    for (let i = 0; i < want.length; i++) diff |= got.charCodeAt(i) ^ want.charCodeAt(i);
+    return diff === 0;
+  },
   privateWorldIdFor: frontDoor.privateWorldIdFor,
 });
 

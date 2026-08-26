@@ -30,7 +30,12 @@ const STEP = 30_000;
 const GW_PORT = 58900 + (process.pid % 120);
 const REAP_MS = 4000;
 
-export const serverRules = `[gateway]\nurl = "http://127.0.0.1:${GW_PORT}"`;
+// serverToken is the credential a WORLD PROCESS presents to the gateway so it may create
+// a world for a player. The gateway takes the account from the caller's identity and never
+// from the body, and a world has no locker session to present -- so without this every
+// in-game create is refused with 401, which is exactly what was happening. This one file is
+// both the world's config and the gateway's --shared config, mirroring production.
+export const serverRules = `[gateway]\nurl = "http://127.0.0.1:${GW_PORT}"\nserverToken = "harness-server-credential-not-for-production"`;
 
 async function waitHttp(url, timeoutMs) {
   const deadline = Date.now() + timeoutMs;

@@ -17,7 +17,12 @@ export interface Config {
   // F3: where this world's clients can find the world directory. Empty = no gateway, and
   // the in-game world browser simply reports that there is nothing to browse (a single
   // self-hosted world is a complete, valid setup).
-  gateway: { url: string };
+  // `serverToken` is how a WORLD PROCESS proves to the gateway that it is a trusted part of
+  // the platform rather than a client. One config.toml in the shared dir drives the gateway
+  // and every world it spawns, so both sides read the same value without extra plumbing.
+  // Empty means no trust path exists at all -- creating a world from in-game is refused,
+  // which is the safe direction to fail.
+  gateway: { url: string; serverToken: string };
   /** "section.key" paths the operator explicitly stated (see statedPaths). Empty for a config
    *  built purely from the shipped defaults. Populated by loadConfig, not by validate(). */
   stated?: Set<string>;
@@ -421,7 +426,7 @@ function validate(t: Tree): Config {
       maxPlayers: reqNum(t, 'server', 'maxPlayers'),
       password: reqStr(t, 'server', 'password'),
     },
-    gateway: { url: reqStr(t, 'gateway', 'url') },
+    gateway: { url: reqStr(t, 'gateway', 'url'), serverToken: optStr(t, 'gateway', 'serverToken', '') },
     worlds: {
       // All optional: a config.toml written before the governor existed must keep booting,
       // and a single world server never reads this table at all.

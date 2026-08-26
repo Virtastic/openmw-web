@@ -603,7 +603,8 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     // F3: only when a gateway is configured. Without one the Worlds tab reports that this
     // is a standalone world, which is an honest answer and a valid setup.
     ...(config.gateway.url
-      ? { worlds: new WorldBrowser({ gatewayUrl: config.gateway.url, ownPort: () => port }) }
+      ? { worlds: new WorldBrowser({ gatewayUrl: config.gateway.url,
+          serverToken: config.gateway.serverToken, ownPort: () => port }) }
       : {}),
   });
   socialRef = social;

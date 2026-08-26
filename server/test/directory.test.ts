@@ -37,6 +37,9 @@ async function harness(maxWorlds = 5, maxPerOwner = 2) {
     // so the tests exercise the same rule: who is asking comes from the verified session,
     // never from the request body (which anyone could fabricate to exhaust the world cap).
     resolveAccount: (auth: string) => (auth.startsWith('Bearer ') ? auth.slice(7) : undefined),
+    // A WORLD PROCESS has no locker session to present, so this is how it proves it is part
+    // of the platform and may act for a player. Without it every in-game create was 401.
+    isTrustedServer: (auth: string) => auth === 'Bearer platform-secret',
   });
   const base = `http://127.0.0.1:${dir.port}`;
   return { worlds, dir, base, cleanup: async () => { await dir.close(); worlds.stopAll(); } };
@@ -276,4 +279,45 @@ test('every front-door path reaches the front door, not the directory 404', asyn
     await dir2.close();
     await h.cleanup();
   }
+});
+
+test('directory: a trusted world server may create a world for a player it names', async () => {
+  const h = await harness();
+  try {
+    const r = await fetch(`${h.base}/worlds`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer platform-secret' },
+      body: JSON.stringify({ id: 'in-game-session', mode: 'private', account: 'alice' }),
+    });
+    assert.equal(r.status, 200, 'the platform credential is accepted');
+    const w = await r.json() as { id: string; ownerAccount: string };
+    assert.equal(w.ownerAccount, 'alice', 'the world belongs to the player, not to the server');
+  } finally { await h.cleanup(); }
+});
+
+test('directory: naming an account is refused without the platform credential', async () => {
+  const h = await harness();
+  try {
+    // THE NEGATIVE CONTROL FOR THE WHOLE MECHANISM. If a body-supplied account were honoured
+    // for an anonymous caller, the per-owner cap would be decorative: fabricate a name per
+    // request and one caller exhausts every world slot on the host. Mallory presents no
+    // credential and no session, and claims to be alice.
+    const r = await fetch(`${h.base}/worlds`, {
+      method: 'POST',
+      body: JSON.stringify({ id: 'stolen', mode: 'private', account: 'alice' }),
+    });
+    assert.equal(r.status, 401, 'no credential and no session means no world');
+
+    // A WRONG credential is no better than none -- it must not fall through to trusting the
+    // body just because an Authorization header was present.
+    const r2 = await fetch(`${h.base}/worlds`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer not-the-secret' },
+      body: JSON.stringify({ id: 'stolen2', mode: 'private', account: 'alice' }),
+    });
+    const owner2 = r2.status === 200
+      ? (await r2.json() as { ownerAccount: string }).ownerAccount : undefined;
+    assert.notEqual(owner2, 'alice',
+      'a bad credential must never mint a world owned by someone else');
+  } finally { await h.cleanup(); }
 });
