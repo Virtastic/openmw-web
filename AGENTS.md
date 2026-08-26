@@ -70,6 +70,16 @@ ci/jenkins/release-to-test.sh server     # just the gateway + sim peer
 It fetches `origin/dev`, restages the build inputs git cannot carry, builds, and deploys --
 stopping at the first failure. The deploy runs the contract gate and fails on any miss.
 
+**CLIENT LUA IS BAKED INTO THE ENGINE.** `fsroot/resources/vfs/scripts/mp/*.lua` is packed into
+`openmw.data`, so the browser scenario suite runs whatever was in the engine at BUILD time, not
+what is on disk. Editing a client script and re-running `mp-harness.mjs` tests the OLD code and
+passes, which is worse than not running it. Rebuild the engine (~13 min) before believing a
+scenario result about a client-side change. Cheap check:
+
+```bash
+grep -c <your-new-symbol> play/openmw.data    # 0 means the harness cannot see your change
+```
+
 **RUN IT SO IT OUTLIVES ITS CALLER.** It drives the build server over a single ssh session, so if
 the local process dies the ssh dies with it and the remote run stops WHEREVER IT HAD GOT TO. That
 is not a visible failure: a run killed between the two deploys shipped the server and not the

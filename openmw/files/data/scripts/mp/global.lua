@@ -1484,8 +1484,17 @@ local eventHandlers = {
             print('[mp] mpTestHit: no victim for ' .. json.encode(data))
             return
         end
+        -- WHICH DAMAGE CHANNEL. The engine fills EITHER health OR fatigue and never both
+        -- (mwlua/luamanagerimp.cpp onHit), and an UNARMED blow in Morrowind is a fatigue hit.
+        -- This hook used to hardcode health, which is precisely why the suite could not catch
+        -- the server refusing every hand-to-hand swing in the game: no scenario was able to
+        -- express the failing case, so 46 of them passed while combat was completely broken for
+        -- anyone without a weapon. A test hook that cannot produce the shape a real client
+        -- produces is not covering the code, it is covering the half somebody remembered.
+        local n = data.damage or 10
+        local damage = data.channel == 'fatigue' and { fatigue = n } or { health = n }
         victim:sendEvent('Hit', {
-            damage = { health = data.damage or 10 },
+            damage = damage,
             strength = 1,
             successful = true,
             sourceType = 'Melee',

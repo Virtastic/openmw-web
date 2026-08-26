@@ -99,8 +99,13 @@ export default async function run(ctx) {
   // arrives within N seconds", so keep swinging until it lands or the window closes.
   peer.inbox.events.length = 0;
   const swingUntil = Date.now() + 60_000;
+  // An explicit stop flag, NOT the inbox contents. The second phase below clears the inbox to
+  // watch for its own hit, which would make an inbox-driven condition true again and leave this
+  // loop firing ARMED swings underneath it -- the unarmed assertion then reads a health payload
+  // and fails for a reason that has nothing to do with the product.
+  let stopArmed = false;
   void (async () => {
-    while (Date.now() < swingUntil
+    while (Date.now() < swingUntil && !stopArmed
            && peer.inbox.events.filter((e) => e.name === 'CombatHit').length === 0) {
       await c.eval(`Module.__omwMPCmd='hitn:${record}:7'`);
       await ctx.sleep(1500);
@@ -115,6 +120,40 @@ export default async function run(ctx) {
   assert.ok(body?.target, 'CombatHit carried no target');
   assert.equal(body.target.cellKey, cellKey, 'the hit was addressed to the wrong cell');
   assert.equal(body.damage?.health, 7, 'the raw pre-mitigation damage did not survive the trip');
+
+  // ---------------------------------------------------------------- UNARMED, which is FATIGUE
+  //
+  // Morrowind's hand-to-hand damages FATIGUE, and the engine fills EITHER health OR fatigue and
+  // never both (mwlua/luamanagerimp.cpp onHit). The server used to demand damage.health, so it
+  // dropped every unarmed swing in the game -- a level-1 character with no weapon could not land
+  // a single blow, and because puppet.lua has already cancelled the local damage chain by then
+  // the attack produced nothing at all: no damage, no miss, no sound.
+  //
+  // This suite could not have caught it. The hitn: hook hardcoded a health payload, so no
+  // scenario was ABLE to express the failing shape, and 46 of them passed while combat was
+  // broken for anyone without a weapon. hitnfat: exists so the gap cannot reopen.
+  // Stop the armed loop and let its in-flight swing settle before clearing the inbox, or a
+  // straggler health hit lands in the window the unarmed assertion is watching.
+  stopArmed = true;
+  await ctx.sleep(2000);
+  ctx.log('swinging UNARMED (fatigue damage) at ' + record);
+  peer.inbox.events.length = 0;
+  const fatUntil = Date.now() + 60_000;
+  void (async () => {
+    while (Date.now() < fatUntil
+           && peer.inbox.events.filter((e) => e.name === 'CombatHit').length === 0) {
+      await c.eval(`Module.__omwMPCmd='hitnfat:${record}:5'`);
+      await ctx.sleep(1500);
+    }
+  })();
+
+  const fat = await peer.waitEvent('CombatHit');
+  const fatBody = fat.value;
+  ctx.log(`peer received unarmed CombatHit: ${JSON.stringify(fatBody).slice(0, 200)}`);
+  assert.equal(fatBody.damage?.fatigue, 5, 'the fatigue damage did not survive the trip');
+  assert.equal(fatBody.damage?.health, undefined,
+    'an unarmed hit must NOT carry a health channel — the engine sends one or the other');
+  ctx.log('ok: an unarmed (fatigue-only) hit reaches the cell owner');
 
   peer.close();
 }

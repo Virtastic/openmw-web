@@ -500,6 +500,16 @@ local function pollHarness()
         if hitRec then
             core.sendGlobalEvent('mpTestHit', { record = hitRec, damage = tonumber(hitNdmg) })
         end
+        -- UNARMED variant. Morrowind's hand-to-hand damages FATIGUE, not health, and the engine
+        -- fills only one of the two -- so without a way to send this shape no scenario could
+        -- reproduce the server dropping every unarmed swing. Separate command rather than an
+        -- argument on hitn: record ids may contain colons, so the existing pattern cannot take
+        -- another field on the end without becoming ambiguous.
+        local hitFatRec, hitFatDmg = cmd:match('^hitnfat:(.+):([%d.]+)$')
+        if hitFatRec then
+            core.sendGlobalEvent('mpTestHit',
+                { record = hitFatRec, damage = tonumber(hitFatDmg), channel = 'fatigue' })
+        end
         -- M5: CAST a damaging spell at an NPC (castat:<recordId>:<magnitude>). Distinct from
         -- hitn: that is the melee path; this one goes through spelleffects.cpp.
         local castRec, castMag = cmd:match('^castat:(.+):([%d.]+)$')
