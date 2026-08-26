@@ -367,6 +367,16 @@
          var comp = exts.filter(function(e){ return /compressed/i.test(e); });
          if (window.__omwLog) window.__omwLog('[gl] compressed texture formats: '
            + (comp.length ? comp.join(', ') : 'NONE -- DXT textures cannot upload and will sample BLACK'));
+         // AND TELL THE PLAYER, not just the console. A black tree canopy with no explanation
+         // is indistinguishable from "this game looks broken"; the actual cause is a browser
+         // setting the player can change. The explicit getExtension() calls above are the
+         // workaround -- they can succeed even where enumeration is hidden -- so reaching here
+         // means the extension is genuinely unavailable and not merely invisible.
+         //
+         // A FLAG, read and surfaced by the notice code far below. showNotice() is declared
+         // inside another script block and calling it from here is a ReferenceError, which is
+         // the exact trap that once killed every world switch.
+         if (!comp.length) window.__omwMissingS3TC = true;
        } catch (e) {}
        // ?glcount=1 (QA): count GL calls per frame to attribute the Draw phase. Wrap a curated set
        // of hot methods (draws + state changes + uniform uploads) with a counter. Pure diagnostic —
@@ -3664,6 +3674,22 @@
   // before it could navigate, having ALREADY set `seen`, so the first Public click did
   // nothing and every click after it was swallowed as a duplicate. Use the exported handles.
   function mpLog(t, cls){ try { if (window.__omwLog) window.__omwLog(t, cls); } catch (e) {} }
+
+  // Surfaced once, from a block where showNotice() is actually in scope (see the flag's own
+  // comment). Deferred rather than immediate: at boot there is no UI to put it in yet.
+  (function warnMissingS3TC(){
+    if (!window.__omwMissingS3TC) return;
+    setTimeout(function(){
+      try {
+        showNotice('Your browser is hiding a graphics feature',
+          'This game stores its textures in a compressed format (S3TC) that your browser is not '
+          + 'making available — most often a privacy or fingerprinting shield. Trees and other '
+          + 'foliage will look solid black until it is allowed. Turning shields off for this '
+          + 'site, or switching browser, fixes it. Nothing is wrong with your save.',
+          GLYPH_WORLD, true);
+      } catch (e) { /* no UI yet; the console line above still carries it */ }
+    }, 8000);
+  })();
 
   // Lua cannot navigate, so net.switchTo publishes the destination here instead.
   (function watchWorldSwitch(){

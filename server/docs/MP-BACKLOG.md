@@ -272,11 +272,25 @@ request needs a timeout and retry of its own, or the answer needs to be guarante
 
 ### Rendering (never reproduced here; software GL hides them)
 
-* **Tree alpha renders as solid black on Brave.** Leading theory is Brave's fingerprinting
-  protection hiding `WEBGL_compressed_texture_s3tc`, which would fail the DXT upload. The page
-  now logs the compressed-format list at boot; one line from the affected machine settles it.
-  Eliminated already: the shader discards correctly (`lib/material/alpha.glsl`) and the
-  `osg::AlphaFunc` → `@alphaFunc` conversion is intact, so it is not the shader.
+* **Tree alpha renders as solid black on Brave.** The workaround is already in and the
+  diagnosis no longer depends on someone reading a console line.
+
+  Cause, as far as it can be established without a Brave machine: Morrowind ships its textures
+  as DXT-compressed DDS, and Brave's fingerprinting shield can hide extensions from
+  `getSupportedExtensions()`, which defeats Emscripten's automatic-enable. A mesh whose
+  compressed upload fails samples BLACK -- which is what an opaque black canopy IS. Eliminated:
+  the shader discards correctly (`lib/material/alpha.glsl`) and the `osg::AlphaFunc` ->
+  `@alphaFunc` conversion is intact, so it is not the shader.
+
+  The page now calls `getExtension('WEBGL_compressed_texture_s3tc')` EXPLICITLY, which can
+  succeed even where enumeration is hidden -- that is the actual fix. And when it genuinely
+  cannot be had, the player is TOLD, rather than left with black trees and no explanation: a
+  notice names the browser shield and says nothing is wrong with their save. The cause is a
+  setting they can change, so it is worth saying out loud.
+
+  Still unconfirmed on Brave itself. What is no longer true is that it needs someone to know
+  to open a console.
+
 * **Minimap renders solid white/blue/black.** ONE SUSPECT ACTED ON, not yet confirmed as the
   cause. Eliminated previously: no web-specific handling in `localmap.cpp`,
   `GL_DEPTH24_STENCIL8` is valid WebGL2, and the `osg::PolygonMode` set there is `FILL` (the
