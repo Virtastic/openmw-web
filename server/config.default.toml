@@ -541,7 +541,10 @@ url = ""
 # has no locker session to present, so this credential is the only way it can create a world on
 # a player's behalf; without it, creating a session from inside the game is refused.
 #
-# One config.toml in the shared dir drives the gateway AND every world it spawns, so both sides
-# read this same value. Set it to a long random string on any host running a gateway. EMPTY
-# MEANS NO TRUST PATH AT ALL, which is the safe direction to fail.
+# LEAVE THIS EMPTY. It generates itself: on first load a random credential is written to
+# `gateway-token` in the shared dir, which the gateway and every world it spawns already read,
+# so both halves agree without anyone pasting anything. Requiring an operator to invent one
+# meant the feature was silently dead on any deployment that forgot.
+#
+# Set it only if you want to manage the secret yourself -- an explicit value always wins.
 serverToken = ""

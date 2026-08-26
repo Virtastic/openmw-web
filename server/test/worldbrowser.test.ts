@@ -6,6 +6,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { WorldBrowser } from '../src/core/worldbrowser';
 import type { Player } from '../src/core/players';
+import { loadConfig } from '../src/config';
+import { tmpDataDir } from './helpers';
 
 const player = (accountKey: string): Player => ({
   id: 1, name: accountKey, accountKey, charId: accountKey, rank: 0,
@@ -118,4 +120,23 @@ test('world browser: without a platform credential, creating a world fails CLOSE
   const r = await wb.create({ accountKey: 'alice' } as never, 'my-session', 'private');
   assert.equal(r.error, 'no_server_token');
   assert.equal(called, false, 'and it must not even ask the gateway');
+});
+
+test('the gateway credential generates itself, and both halves get the SAME one', async () => {
+  // Requiring an operator to invent and paste a secret means the feature is silently dead on
+  // every deployment that forgets. The gateway and every world it spawns read the same shared
+  // dir, so a file there is the one place both halves are guaranteed to agree.
+  const shared = tmpDataDir();
+  const gateway = loadConfig(tmpDataDir(), undefined, shared);
+  assert.ok(gateway.gateway.serverToken.length > 20, 'a credential is minted on first load');
+
+  // A WORLD the gateway spawned: its own data dir is empty, the shared dir is the same.
+  const world = loadConfig(tmpDataDir(), undefined, shared);
+  assert.equal(world.gateway.serverToken, gateway.gateway.serverToken,
+    'the world must present the credential the gateway will recognise — a per-process secret '
+    + 'would refuse every create, differently on each restart');
+
+  // An operator who wants to manage it still wins.
+  const explicit = loadConfig(tmpDataDir(), { gateway: { serverToken: 'mine' } }, shared);
+  assert.equal(explicit.gateway.serverToken, 'mine', 'an explicit value overrides the minted one');
 });

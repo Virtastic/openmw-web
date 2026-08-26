@@ -4,9 +4,10 @@
 // <dataDir>/config.toml, then a programmatic override (tests). Scalars/arrays replace,
 // tables merge key-by-key. Validated into a strict shape; bad values fail boot loudly.
 
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { parse } from 'smol-toml';
+import { randomBytes } from 'node:crypto';
 
 export interface Config {
   server: { name: string; motd: string; maxPlayers: number; password: string };
@@ -621,5 +622,34 @@ export function loadConfig(dataDir: string, override?: DeepPartial<Config>, shar
   }
   const cfg = validate(tree);
   cfg.stated = statedPaths(...operatorTrees);
+  // THE GATEWAY CREDENTIAL GENERATES ITSELF. A world process proves to the gateway that it is
+  // part of the platform with a shared secret, and without one a player cannot create a world
+  // from inside the game at all. Requiring an operator to invent and paste a string into
+  // config.toml means the feature is silently dead on every deployment that forgets -- and
+  // 'fails closed' is the right default only when there is a way to open it that nobody can
+  // forget to take.
+  //
+  // The gateway and every world it spawns already read the SAME shared dir, so a file there is
+  // the one place both halves are guaranteed to agree without extra plumbing. An explicitly
+  // configured value always wins, so an operator who wants to manage the secret still can.
+  if (!cfg.gateway.serverToken) {
+    const dir = sharedDir || dataDir;
+    const path = join(dir, 'gateway-token');
+    try {
+      if (existsSync(path)) {
+        cfg.gateway.serverToken = readFileSync(path, 'utf8').trim();
+      } else {
+        mkdirSync(dir, { recursive: true });
+        const minted = randomBytes(32).toString('base64url');
+        // 0600: it is a credential, and the worlds run as the same user that wrote it.
+        writeFileSync(path, minted, { mode: 0o600 });
+        cfg.gateway.serverToken = minted;
+      }
+    } catch {
+      // Unwritable shared dir: leave it empty and stay failed-closed rather than inventing a
+      // per-process secret, which would differ between the gateway and every world and refuse
+      // every create anyway -- but confusingly, and differently each restart.
+    }
+  }
   return cfg;
 }
