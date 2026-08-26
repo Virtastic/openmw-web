@@ -97,6 +97,17 @@ local function snapAppearance()
         hair = orFallback(rec.hair, 'hair'),
         isMale = rec.isMale == true,
         class = orFallback(rec.class, 'class'),
+        -- BIRTHSIGN. The engine has always been able to apply one (mp.applyChargen ->
+        -- setPlayerBirthsign) and nothing ever sent it, so every rejoin dropped it: the sheet
+        -- came back blank and buildPlayer's birthsign block granted nothing. The ABILITIES
+        -- survived by accident, because snapSpells captures them as spells -- which is also
+        -- why they used to stack on every rejoin. No fallback: a character legitimately may
+        -- have no birthsign, and inventing one is worse than carrying none.
+        birthsign = (function()
+            local ok, v = pcall(function() return types.Player.getBirthSign(self) end)
+            if ok and type(v) == 'string' and v ~= '' then return v end
+            return nil
+        end)(),
         -- The name the player typed in Morrowind's own character creation, read from their
         -- NPC record — i.e. out of the character itself. mp.getName() is the SESSION name,
         -- which before chargen is the slot's placeholder label ("New character"), and sending
@@ -356,6 +367,9 @@ function identity.applyRecord(record)
             hair = record.appearance.hair,
             isMale = record.appearance.isMale,
             class = record.appearance.class,
+            -- Applied by the same call that applies race and class; the binding resolves it
+            -- against the birthsign store and skips an id this content does not define.
+            birthsign = record.appearance.birthsign,
             -- The name the player chose, restored with the rest of the look. Without it a
             -- restored character keeps the engine default ("player"), which is what the save
             -- screen shows. The doc's appearance name is authoritative; the boot fragment is

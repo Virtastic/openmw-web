@@ -66,6 +66,10 @@ function handleAppearance(ctx: StateCtx, player: Player, body: LTable): boolean 
     class: recordId(body.get('class')) ?? '',
     name: recordId(body.get('name')) ?? '',
     isMale: body.get('isMale') === true,
+    // OPTIONAL like hair, and for a stronger reason: a character legitimately may have no
+    // birthsign, and requiring one would reject that character's appearance entirely — which
+    // withholds playerRecord on every join and costs them their inventory and position.
+    ...(recordId(body.get('birthsign')) ? { birthsign: recordId(body.get('birthsign'))! } : {}),
   };
   // hair is OPTIONAL: bald/hairless heads are legal in the game data, and demanding it would
   // permanently reject those characters' appearance. The rest identify the character and are

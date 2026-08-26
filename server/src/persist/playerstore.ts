@@ -35,6 +35,9 @@ export interface PlayerAppearanceDoc {
   isMale: boolean;
   class: string;
   name: string;
+  // A birthsign grants permanent abilities (Atronach's absorption, Lady's stat bonus).
+  // Optional: a character may legitimately have none, and pre-existing docs have no field.
+  birthsign?: string;
 }
 
 // Type alias (not interface) so it structurally satisfies JsLike's index signature.
