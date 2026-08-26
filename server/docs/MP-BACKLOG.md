@@ -310,20 +310,20 @@ Re-test before spending time on them.
   refKey like any other object. **Unproven in play** — it wants a scenario with two clients
   looting one body.
 
-* **`ActorAI` is dead protocol surface — and it is now the ONLY one.** (`ActorEquip` FIXED: the holder diffs an actor's equipment and sends record ids, and the receiver hands them to puppet.lua's existing MP_Equip retry path, the same route a remote player's equipment already took.) A full
-  protocol audit now backs that: all 54 server-sent events have a client handler, and on the
-  inbound side every accepted event is sent by someone except these two (0 client references
-  each). The social family looked dead to a naive scan and is not — `global.lua mpSocial`
-  dispatches it through a whitelist, which is deliberate: "a local script must not be able to
-  name an arbitrary server event". Both are in the server's relayed
-  event set (`worldstate.ts`), and the client never sends or handles either. An NPC that draws a
-  weapon, swaps armour or changes AI package mid-fight therefore looks different to every
-  player. The server-side half already exists, so this is a client gap rather than a design one.
+* ~~**`ActorAI` is dead protocol surface.**~~ FIXED, and the diagnosis was the interesting
+  part: it was not unimplemented, it was UNREACHABLE. A global script cannot read AI package
+  state for a foreign actor, so no amount of work in the holder's diff loop -- where every
+  other actor property is read -- could ever have produced this event. The fact now travels UP
+  from a script on the actor itself. See Companions under P1b.
 
-* **AI package state cannot be read for a foreign actor** from a global script, which is an
-  engine limitation rather than an oversight — `actors.lua` derives a coarse facing/anim hint
-  from motion instead and says so. Worth knowing when a puppet's animation looks wrong: the
-  information to do better is not currently exposed.
+  With it, every server-sent event has a client handler AND every accepted inbound event is
+  sent by someone. The protocol has no dead surface left.
+
+* **AI package state cannot be read for a foreign actor** from a global script. Still true --
+  it is an engine limitation -- but it is no longer a dead end. An actor's OWN local script
+  can read its own packages, and `scripts/mp/companion.lua` is that route: the fact is pushed
+  up rather than pulled down. `actors.lua` still derives a coarse facing/anim hint from motion
+  for everything else, which is worth knowing when a puppet's animation looks wrong.
 
 * Working, checked while here: dynamic stats (hp/magicka/fatigue), death, and applied magic
   effects all reach the victim's owner — `activeSpells:add` is driven from the CombatSpellHit
@@ -346,10 +346,10 @@ Re-test before spending time on them.
   global sync. Still uncovered inside that file: the journal diff, faction sync and crime sync.
   So the file is no longer a blind spot, but it is not fully exercised either — and it still
   covers the systems TES3MP reports as its worst.
-* **Dialogue topics are not synchronised.** Open/close is (`mpDialogueClosed`), the topic list is
-  not, so a topic one player unlocks does not appear for another. TES3MP synced these and got
-  "server freezes caused by infinite topic packet spam from local scripts" for its trouble — so
-  the absence may be the right trade, but it is currently undocumented and untested either way.
+* ~~**Dialogue topics are not synchronised.**~~ FIXED -- see the full entry under P1b. The
+  absence was NOT the right trade: the journal is already shared, so a guest could be looking
+  at a quest with no way to ask anyone about it. TES3MP's packet storm is a LOOP rather than
+  volume, and it is designed out here.
 
 ---
 
@@ -490,8 +490,16 @@ loot bug already fixed here.
   NPC's stats, so persuading or threatening someone changes how they feel about everyone. Left
   per-client, a player could talk a guard down and their friend would still be attacked by it.
 
-* **Companions / followers.** No `AiFollow` handling. A recruited companion follows whoever
-  recruited them on that client only. Several main-quest and expansion arcs use companions.
+* ~~**Companions / followers.**~~ FIXED. A recruited follower used to follow their recruiter
+  on THAT CLIENT ONLY; everyone else saw the NPC standing where the cell had left them.
+
+  `scripts/mp/companion.lua` runs on the actor itself, because a global script cannot read AI
+  package state for a foreign actor -- which is why `ActorAI` sat unreachable rather than
+  merely unimplemented. The wire carries a player ID, since the target is a player object on
+  the recruiter's client and a puppet everywhere else. Applying it goes back through the actor,
+  because packages can only be STARTED from the actor's own script.
+
+  Travelling with one works too, now that actors move between cells (see Travel services).
 
 * ~~**Vampirism and lycanthropy.**~~ Both already work, and the original entry ("no references
   at all", "whether they even survive a rejoin is unknown") was wrong on both halves.
@@ -508,8 +516,15 @@ loot bug already fixed here.
   and `snapSpells` iterates the whole spell store, abilities included. It persists by the
   same route diseases do.
 
-* **Item repair.** Every `repair` match in the codebase is `questRepair`, the admin tool -- not
-  the hammer. Condition is per-item state on a shared object.
+* ~~**Item repair.**~~ Nothing to do, and the entry's premise was wrong. "Condition is
+  per-item state on a shared object" is not what repair touches: `mwmechanics/repair.cpp`
+  works entirely on the PLAYER'S OWN inventory -- it raises the item's charge, consumes the
+  hammer, and grants Armorer. All three were already synced, and item condition now persists
+  as well.
+
+  What DOES touch shared state is repair FOR HIRE: `merchantrepair.cpp` pays the smith out of
+  `setGoldPool`, and `MerchantRepair` is one of the seven GUI modes now watched for the shared
+  merchant purse.
 
 ### Confirmed working, so the audit is not one-sided
 
