@@ -353,9 +353,15 @@ async function launchClient(name, mpPort, extraParams = '', opts = {}) {
   // the harness and killed the client outright. Scenarios that need one inject it AFTER the
   // client is up (see grantLockerSession in s47), which is the only part rebootIntoWorld
   // actually reads.
+  // opts.homeUrl -> #mphome: WHICH WORLD IS THIS PLAYER'S OWN. A switch RELOADS the page and
+  // Lua state dies with it, so without this the client relearns 'own world' as wherever it
+  // just landed -- go Solo from Public and it asks the PUBLIC world to turn private. The
+  // launcher sets this in production and it rides every switch; a harness client had none.
+  // Unlike #mplocker this does not flip the page into locker mode, so it is safe in the URL.
+  const frag = opts.homeUrl ? `#mphome=${encodeURIComponent(opts.homeUrl)}` : '';
   const url = `http://127.0.0.1:${PLAY_PORT}/index.html${world}`
     + `&mp=${encodeURIComponent(mpUrl)}${auth}`
-    + extraParams;
+    + extraParams + frag;
   const chrome = spawn(CHROME, [
     '--headless=new', ...glArgs,
     // --no-sandbox only off the developer machine: Chrome's sandbox needs user namespaces

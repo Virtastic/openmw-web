@@ -59,9 +59,9 @@ both false CURRENT and false STALE. Bare identifiers are the only trustworthy pr
 | `s99-overlays` | PASS | scenario drove the page's mirrors without the seq that gates them |
 | `s44-far-tier-correct` | PASS | scenario demanded a distance a WALK cannot cover in 16s |
 | `s43-avatar-load` | excluded | the only RETAIL one; retail cannot pass in a GPU-less container |
-| `s47-worlds-ui` | FAIL | world switch (below) |
-| `s48-switch-reconnect` | FAIL | world switch (below) |
-| `s57-world-revival` | FAIL | world switch (below) |
+| `s47-worlds-ui` | PASS | create, join, and the destination sees the player arrive |
+| `s48-switch-reconnect` | PASS | world switch, and the reconnect that follows it |
+| `s57-world-revival` | FAIL | reaches step 3 of 5; revival itself now works (below) |
 | `s53-charslots` | FAIL | world switch (below), and it spawns no gateway at all |
 
 Two of the five were real product defects a player would have felt, and three were scenarios
@@ -186,6 +186,42 @@ above is correct but NOT verifiable here. Deciding what to do is a real choice:
    but it puts a test-only branch inside the sign-in path, which is the worst place for one.
 
 Until then, treat a switch/join failure in these four as UNPROVEN rather than as a defect.
+
+#### What made the world switch testable at all (s47, s48 now PASS)
+
+Four things had to be true, and every one of them was a wrong assumption in the SCENARIOS
+rather than a defect in the product. Worth listing, because two rounds of triage read them as
+product failures:
+
+1. **The gateway splice.** `/w/<id>` is what every switch resolves to. It works -- now asserted
+   directly from Node before any browser is involved, so a failure there is unambiguously the
+   gateway. It must wait for the world to be UP first: dialling one still booting gets the 502
+   a down world is supposed to give, and that race is what read as "the upgrade path is broken".
+2. **The client must dial THROUGH the gateway.** `worldUrlOf` builds a destination from the
+   current connection's authority plus `/w/<id>`, so a client wired straight to a world derives
+   a path no world serves.
+3. **And arrive in its OWN world, not public.** A brand-new account is refused by public with
+   "finish creating your character in your private world first" -- a real rule, so booting into
+   public could never have worked.
+4. **`#mphome` must be set.** A switch reloads the page and Lua state dies with it, so without
+   it the client relearns "my own world" as wherever it just landed -- go Solo from Public and
+   it asks the PUBLIC world to turn private. The launcher sets this in production.
+
+Also fixed across all three: they read `w.port` off the directory, which strips it, and polled
+`http://127.0.0.1:undefined/status`. `playerCount` survives the sanitiser and is the right
+signal.
+
+#### `s57-world-revival`: revival WORKS, the scenario does not finish
+
+`world.revived_on_dial` now fires, which is the mechanism this scenario exists to prove, and it
+only fires for `priv-*` ids -- the old world name could never have been revived. It now gets
+through: own world -> create -> join -> reaped. It fails on the NEXT step, going to Public:
+the page reloads (its mirrors come back empty, so the switch did fire) and the client never
+arrives, with no AUTH_FAILED anywhere and 180s of slack. It is the only scenario that switches
+THREE times, so the suspicion is state that does not survive a second reload -- the locker
+session is re-granted before each switch, but nothing proves the grant lands after the previous
+reload rather than before it.
+
 
 #### The notice cluster (3) -- s99 FIXED, s92 pending a build
 

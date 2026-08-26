@@ -140,7 +140,11 @@ export default async function run(ctx) {
     // player's locker session; this does the same.
     const acctName = `bot-a-${ctx.runId}`;
     const soloToken = await harnessSession(GW_PORT, acctName);
-    const soloId = 'solo-bot-a';
+    // THE SAME WORLD the scenario later reaps and dials back into. It has to be: `where:solo`
+    // returns a player to their OWN world, so a separate one here would send them somewhere
+    // that was never reaped and the revival round trip would never be exercised. POST /worlds
+    // is create-or-join, so the in-game create below simply resolves to this one.
+    const soloId = 'priv-revivetest';
     const mk = await fetch(`http://127.0.0.1:${GW_PORT}/worlds`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${soloToken}` },
@@ -157,16 +161,20 @@ export default async function run(ctx) {
       await ctx.sleep(1000);
     }
     assert.ok(soloUp, "the player's own world must come up");
-    const a = await ctx.launchClient('bot-a', '', {
-      mpUrl: `ws://127.0.0.1:${GW_PORT}/w/${soloId}`,
-    });
+    const ownUrl = `ws://127.0.0.1:${GW_PORT}/w/${soloId}`;
+    const a = await ctx.launchClient('bot-a', '', { mpUrl: ownUrl, homeUrl: ownUrl });
     await grantLockerSession(a, GW_PORT, `bot-a-${ctx.runId}`);
     const acct = a.name.toLowerCase();
 
     // --- own world, entered -------------------------------------------------------------
     await a.eval("Module.__omwMPCmd='socialtab:worlds'");
     await a.waitFor("(window.__omwMP||{}).worldCount !== undefined", STEP, 'world list arrives');
-    await a.eval("Module.__omwMPCmd='worldcreate:revivetest:private'");
+    // NAMED priv-*, because that is the only kind of world the gateway will REVIVE ON DIAL --
+    // and revival is the whole subject of this scenario. A reaped world outside that prefix
+    // stays down, so the old id could never have exercised the round trip it asserts. Real
+    // private worlds are named this way (priv-<username>-<8hex>); the owner is read from disk
+    // rather than parsed out of the id.
+    await a.eval("Module.__omwMPCmd='worldcreate:priv-revivetest:private'");
     await a.waitFor("Number((window.__omwMP||{}).worldCount||0) > 1", STEP, 'session created');
 
     // `up`, not a port: the gateway publishes no world ports, so the old `ownPort = w.port`
@@ -174,7 +182,7 @@ export default async function run(ctx) {
     let ownUp = false;
     const upBy = Date.now() + 60_000;
     while (Date.now() < upBy) {
-      const w = (await worldsOf(acct)).find((x) => x.id === 'revivetest');
+      const w = (await worldsOf(acct)).find((x) => x.id === 'priv-revivetest');
       if (w?.up) { ownUp = true; break; }
       await ctx.sleep(1000);
     }
@@ -183,26 +191,64 @@ export default async function run(ctx) {
     await a.eval("Module.__omwMPCmd='socialtab:players'");
     await a.eval("Module.__omwMPCmd='socialtab:worlds'");
     await ctx.sleep(1500);
-    await a.eval("Module.__omwMPCmd='worldjoin:revivetest'");
+    // RE-GRANT BEFORE EVERY SWITCH. A switch RELOADS the page, and the locker session is
+    // injected into window rather than carried in the URL, so it does not survive. s47 and s48
+    // switch once and never noticed; this scenario switches three times and the second one
+    // silently had no session at all.
+    await grantLockerSession(a, GW_PORT, `bot-a-${ctx.runId}`);
+    await a.eval("Module.__omwMPCmd='worldjoin:priv-revivetest'");
 
     let joined = false;
     const joinBy = Date.now() + 60_000;
     while (Date.now() < joinBy) {
-      if (await playersIn('revivetest') > 0) { joined = true; break; }
+      if (await playersIn('priv-revivetest') > 0) { joined = true; break; }
       await ctx.sleep(1000);
     }
     assert.ok(joined, 'the player must first arrive in their own world');
     ctx.log('  in their own world');
 
     // --- leave for the public world, and let the empty one be reaped --------------------
+    // RE-GRANT BEFORE EVERY SWITCH. A switch RELOADS the page, and the locker session is
+    // injected into window rather than carried in the URL, so it does not survive. s47 and s48
+    // switch once and never noticed; this scenario switches three times and the second one
+    // silently had no session at all.
+    await grantLockerSession(a, GW_PORT, `bot-a-${ctx.runId}`);
+    // RELEARN THE WORLD LIST FIRST. The join above reloaded the page, and worldUrls -- which
+    // is where the client keeps the public world's address -- died with the Lua state. Without
+    // this, Public has no address to dial and does nothing at all. A player necessarily does
+    // the same thing, because the Public button lives in the hub that fetches the list.
+    await a.eval("Module.__omwMPCmd='socialtab:worlds'");
+    await a.waitFor("(window.__omwMP||{}).worldCount !== undefined", STEP,
+      'the world list is back after the reload');
     await a.eval("Module.__omwMPCmd='where:public'");
-    await a.waitFor(`(window.__omwMP||{}).state === 'Joined'`, STEP, 'arrives in the public world');
+    // WHAT PUBLIC DECIDED. mpWhere either dials, says "you are already in the public world",
+    // or says "the public world is not available right now" when it has no address -- three
+    // outcomes that otherwise look identical from out here.
+    await ctx.sleep(2500);
+    ctx.log(`  where:public -> publicStage="${await a.eval("(window.__omwMP||{}).publicStage||''")}"`
+      + ` chat="${await a.eval("(window.__omwMP||{}).lastChatLine||''")}"`
+      + ` worldCount=${await a.eval("(window.__omwMP||{}).worldCount||'?'")}`);
+    // WAIT FOR THE DESTINATION TO SEE THEM, not for the client to say 'Joined'. The client is
+    // ALREADY Joined -- to the world it is leaving -- so that condition is true the moment it
+    // is asked and the scenario walked straight on to expect a reap of a world the player had
+    // not left yet.
+    // 180s, not 60. A world switch RELOADS the page, so the whole engine boots again -- which
+    // took 7s here on a warm cache and is several times that under SwiftShader on a busy box.
+    // The first join in this scenario is given 600s for exactly this reason; expecting the
+    // second to land in 60 was measuring the boot, not the switch.
+    let inPublic = false;
+    const pubBy = Date.now() + 180_000;
+    while (Date.now() < pubBy) {
+      if (await playersIn('vvardenfell') > 0) { inPublic = true; break; }
+      await ctx.sleep(1000);
+    }
+    assert.ok(inPublic, 'the player must actually reach the public world before anything is idle');
     ctx.log('  switched to the public world');
 
     let reaped = false;
     const reapBy = Date.now() + REAP_MS + 30_000;
     while (Date.now() < reapBy) {
-      const w = (await worldsOf(acct)).find((x) => x.id === 'revivetest');
+      const w = (await worldsOf(acct)).find((x) => x.id === 'priv-revivetest');
       if (!w || !w.up) { reaped = true; break; }
       await ctx.sleep(500);
     }
@@ -213,14 +259,19 @@ export default async function run(ctx) {
     // The resume token died with that process, and for an SSO user every remaining rung of the
     // ladder is the password path the server refuses. Getting back in at all proves the world
     // was revived under its owner AND that the ladder rescued itself with a fresh ticket.
+    // RE-GRANT BEFORE EVERY SWITCH. A switch RELOADS the page, and the locker session is
+    // injected into window rather than carried in the URL, so it does not survive. s47 and s48
+    // switch once and never noticed; this scenario switches three times and the second one
+    // silently had no session at all.
+    await grantLockerSession(a, GW_PORT, `bot-a-${ctx.runId}`);
     await a.eval("Module.__omwMPCmd='where:solo'");
 
     let home = false;
     const homeBy = Date.now() + 90_000;
     while (Date.now() < homeBy) {
-      const w = (await worldsOf(acct)).find((x) => x.id === 'revivetest');
+      const w = (await worldsOf(acct)).find((x) => x.id === 'priv-revivetest');
       if (w?.up) {
-        if (await playersIn('revivetest') > 0) { home = true; break; }
+        if (await playersIn('priv-revivetest') > 0) { home = true; break; }
       }
       await ctx.sleep(1000);
     }
