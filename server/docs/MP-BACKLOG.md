@@ -441,10 +441,23 @@ loot bug already fixed here.
   travels, but nothing arrests you, and what a guard does about another player's bounty is
   undefined. TES3MP reports this class as a real source of quest breakage.
 
-* **Dialogue topics.** Open/close is synced (`mpDialogueClosed`); the topic list is not, so a
-  topic one player unlocks does not appear for another. Possibly the right trade -- TES3MP synced
-  these and earned "server freezes caused by infinite topic packet spam from local scripts" --
-  but it is currently neither documented nor tested.
+* ~~**Dialogue topics.**~~ IMPLEMENTED, and the decision is worth stating rather than leaving
+  as "possibly the right trade". Sharing the JOURNAL and not the topics is the inconsistent
+  position: a guest's quest state already routes through the host's journal, so without this a
+  guest can be looking at a quest in their log with no way to ask anyone about it, because the
+  topic that quest turns on was learned by someone else.
+
+  TES3MP synced these too and earned "server freezes caused by infinite topic packet spam from
+  local scripts". The failure there is a LOOP, not volume: B applies a topic, B's own diff
+  then reads it as something B did not have, and sends it back. Three things stop it here --
+  only additions are sent, diffed against a set, so a steady state is silent; an applied remote
+  topic is written into that set BEFORE it is added, so it is never seen as a local discovery;
+  and they ride the same slow beat as globals, factions and bounty.
+
+  Routed on the JOURNAL family rather than a new one, because a topic is journal knowledge and
+  has to follow the same campaign the entries do. Covered by a test that proves the echo guard
+  by ORDERING rather than by waiting out a timeout for a non-event, and negative-controlled:
+  relaying to everyone including the sender fails it.
 
 * ~~**Disposition and persuasion.**~~ FIXED — the holder diffs base disposition and relays it as
   `ActorDisposition`. Confirmed SHARED rather than personal before syncing it:

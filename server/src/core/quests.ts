@@ -58,6 +58,12 @@ const WORLD_GLOBALS = new Set([
   // Vampire clock and the werewolf state are per-character despite the naming; NOT here.
 ]);
 
+// A dialogue topic id is a record id; the cap on how many can arrive at once is generous
+// because a single conversation can turn on several, and mean because TES3MP's version of
+// this feature is remembered for packet storms.
+const MAX_TOPIC_ID = 64;
+const MAX_TOPICS_PER_EVENT = 64;
+
 export type ShareFamily = 'journal' | 'questVars' | 'factions' | 'crime' | 'map';
 
 export const QUEST_EVENTS = new Set([
@@ -67,6 +73,7 @@ export const QUEST_EVENTS = new Set([
   'FactionUpdate',
   'CrimeUpdate',
   'DialogueLock',
+  'TopicsLearned',
 ]);
 
 export interface QuestCtx {
@@ -147,6 +154,7 @@ export class Quests {
       case 'MemberVarUpdate': this.memberVar(player, body); break;
       case 'FactionUpdate': this.faction(player, body); break;
       case 'CrimeUpdate': this.crime(player, body); break;
+      case 'TopicsLearned': this.topics(player, body); break;
       case 'DialogueLock': this.dialogueLock(player, body); break;
     }
     return true;
@@ -415,6 +423,30 @@ export class Quests {
       ...(typeof kind === 'string' ? { kind } : {}),
       byId: player.id,
     });
+  }
+
+  // Dialogue topics, shared for the same reason the JOURNAL is: a guest's quest state routes
+  // through the host's journal, so without this a guest can be looking at a quest in their log
+  // with no way to ask anyone about it, because the topic it turns on was learned by someone
+  // else. Sharing the journal and not the topics is the inconsistent position.
+  //
+  // Routed on the JOURNAL family, not a new one: a topic is journal knowledge, and it must
+  // follow the same campaign the entries do -- a topic learned in someone else's world belongs
+  // to that world, exactly like a quest stage.
+  private topics(player: Player, body: LTable): void {
+    const list = body.get('topics');
+    if (!(list instanceof Map) || list.size === 0 || list.size > MAX_TOPICS_PER_EVENT) {
+      this.drop(player, 'TopicsLearned', 'invalid shape');
+      return;
+    }
+    const topics: string[] = [];
+    for (const [, v] of list) {
+      const id = str(v, MAX_TOPIC_ID);
+      if (!id) { this.drop(player, 'TopicsLearned', 'bad topic id'); return; }
+      topics.push(id);
+    }
+    if (!this.ctx.isShared('journal')) return; // topics follow the journal's sharing rule
+    this.relayAll(player.id, 'TopicsLearned', { topics, byId: player.id });
   }
 
   // --------------------------------------------------------- dialogue locks

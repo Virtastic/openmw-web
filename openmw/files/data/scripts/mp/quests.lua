@@ -251,6 +251,69 @@ local function diffCrime()
     end
 end
 
+-- ================================================================== dialogue topics
+
+-- WHY TOPICS ARE SHARED AT ALL. The journal already is: a guest's quest state routes through
+-- the host's journalTarget, so a guest can be looking at a quest in their log and have no way
+-- to ask anyone about it, because the TOPIC that quest turns on was learned by someone else.
+-- Sharing the journal and not the topics is the inconsistent position, not this.
+--
+-- TES3MP synced these too and earned "server freezes caused by infinite topic packet spam
+-- from local scripts" for it. Three things keep that from happening here:
+--   * only ADDITIONS are sent, diffed against a set, so a steady state is silent;
+--   * an applied REMOTE topic is written into that set BEFORE it is added to the journal, so
+--     it is never seen as a local discovery and echoed back -- which is the actual mechanism
+--     of a packet storm between two clients, not volume;
+--   * they ride the same slow diff beat as globals, factions and bounty.
+local knownTopics = nil -- nil until the first snapshot; a set of topic id -> true
+
+local function topicSet()
+    local player = playerObj()
+    if not player then return nil end
+    local ok, set = pcall(function()
+        local out = {}
+        -- types.Player.journal(player).topics -- the topic store hangs off the JOURNAL
+        -- binding, not off the player directly.
+        for id in pairs(types.Player.journal(player).topics) do out[id] = true end
+        return out
+    end)
+    return ok and set or nil
+end
+
+local function diffTopics()
+    local now = topicSet()
+    if not now then return end
+    -- FIRST SNAPSHOT IS A BASELINE, never a broadcast. A character logs in already knowing
+    -- every topic they have ever learned; announcing all of them would hand the whole set to
+    -- everyone on every join.
+    if knownTopics == nil then knownTopics = now; return end
+    local fresh = nil
+    for id in pairs(now) do
+        if not knownTopics[id] then
+            knownTopics[id] = true
+            fresh = fresh or {}
+            fresh[#fresh + 1] = id
+        end
+    end
+    -- Topics are never UNLEARNED, so there is no removal half to carry.
+    if fresh then mp.sendEvent('TopicsLearned', { topics = fresh }) end
+end
+
+-- Applied from the server. Recorded in the baseline FIRST: addTopic makes it a local fact,
+-- and the next diff would otherwise read it as this player's own discovery and send it
+-- straight back to the person it came from.
+function quests.applyTopics(list)
+    local player = playerObj()
+    if not player or type(list) ~= 'table' then return end
+    if knownTopics == nil then knownTopics = topicSet() or {} end
+    for _, id in ipairs(list) do
+        if type(id) == 'string' and id ~= '' and not knownTopics[id] then
+            knownTopics[id] = true
+            pcall(function() types.Player.addTopic(player, id) end)
+        end
+    end
+end
+
 -- ================================================================== mwscript locals
 
 local function scriptVarSnapshot(script)
@@ -494,6 +557,14 @@ handlers.MP_FactionUpdate = function(data)
     end
 end
 
+-- Topics someone else learned. quests.applyTopics records them in the local baseline BEFORE
+-- adding them, so the next diff does not read them as this player's own discovery and send
+-- them straight back -- which is how two clients turn one topic into a packet storm.
+handlers.MP_TopicsLearned = function(data)
+    if data.byId ~= nil and data.byId == deps.ownIdFn() then return end -- own echo
+    quests.applyTopics(data.topics)
+end
+
 handlers.MP_CrimeUpdate = function(data)
     local player = playerObj()
     local level = asInt(data.bounty)
@@ -647,6 +718,7 @@ function quests.tick(now)
         diffGlobals()
         diffFactions()
         diffCrime()
+        diffTopics()
     end
     tickMemberVars(now)
     if now - lastMirror >= MIRROR_INTERVAL then
@@ -656,6 +728,7 @@ function quests.tick(now)
 end
 
 function quests.reset()
+    knownTopics = nil -- re-baseline on the next world; never replay a set across a switch
     journal = {}
     journalSent = 0
     journalSynced = false

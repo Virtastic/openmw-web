@@ -165,12 +165,16 @@ export default async function run(ctx) {
     // reloads, never landing. Re-press only from `asked`; after that, wait it out.
     let inPublic = false;
     let lastStage = '(never set)';
-    const publicBy = Date.now() + 240_000;
+    // BUDGETED LIKE A JOIN, because that is what it is. Arriving after a switch means the page
+    // reloads and the WHOLE ENGINE boots again -- the harness gives a first join 600s for
+    // exactly that reason, and this scenario does it three times. 240s passed in isolation and
+    // failed in a full run at 291s, which was measuring the box rather than the product.
+    const publicBy = Date.now() + 420_000;
     let pressed = 0;
     let lastPress = 0;
     while (Date.now() < publicBy && !inPublic) {
       const inFlight = lastStage.startsWith('switchTo:') || lastStage.startsWith('resolved:');
-      if (!inFlight && Date.now() - lastPress > 20_000 && pressed < 3) {
+      if (!inFlight && Date.now() - lastPress > 30_000 && pressed < 3) {
         pressed++;
         lastPress = Date.now();
         ctx.log(`  pressing Public (attempt ${pressed}, publicStage="${lastStage}")`);

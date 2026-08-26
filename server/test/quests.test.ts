@@ -296,3 +296,42 @@ test('shared quest state survives a restart', async (t) => {
   c.close();
   await c.closed;
 });
+
+test('dialogue topics reach the other player, and never bounce back to the sender', async (t) => {
+  const dataDir = tmpDataDir();
+  const server = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1' });
+  t.after(() => server.close());
+
+  const a = await TestClient.connect(server.port);
+  await a.joinAsNew('Teller');
+  await a.waitEvent('PlayerList');
+  const b = await TestClient.connect(server.port);
+  await b.joinAsNew('Listener');
+  await b.waitEvent('PlayerList');
+
+  // A learns two topics in conversation. Sharing them is the same rule the JOURNAL follows:
+  // a guest's quest state routes through the host's journal, so without this they can be
+  // looking at a quest in their log with no way to ask anyone about it.
+  a.sendEvent('TopicsLearned', { topics: ['nerevarine', 'sixth house'] });
+  const got = await b.waitEvent('TopicsLearned');
+  const body = got.value as { topics: string[]; byId: number };
+  assert.deepEqual(body.topics, ['nerevarine', 'sixth house']);
+
+  // THE ECHO GUARD, which is the whole reason this is safe to ship. TES3MP synced topics and
+  // earned "infinite topic packet spam" for it, and the mechanism is a loop: B applies the
+  // topic, B's own diff then sees a topic it did not have, and sends it back to A. `byId`
+  // names the origin so a client can recognise its own, and the client records an applied
+  // topic in its baseline BEFORE adding it so the diff never reports it at all.
+  assert.equal(typeof body.byId, 'number', 'the relay must name who learned it');
+
+  // Proved by ORDERING rather than by waiting out a timeout for a non-event: B now learns a
+  // topic of their own, and the FIRST thing A ever receives must be that one. If A had been
+  // echoed its own, A's first event would be 'nerevarine'. This also runs in milliseconds
+  // instead of burning the full wait, and unlike a timeout it cannot pass by accident.
+  b.sendEvent('TopicsLearned', { topics: ['sleepers'] });
+  const first = await a.waitEvent('TopicsLearned');
+  assert.deepEqual((first.value as { topics: string[] }).topics, ['sleepers'],
+    "the first topics A hears about must be B's — anything else means A was echoed its own");
+
+  a.close(); b.close();
+});
