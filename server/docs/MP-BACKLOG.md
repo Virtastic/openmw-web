@@ -202,9 +202,19 @@ loot bug already fixed here.
   erase the earlier trade. Deltas commute. The delta is also bounded: a forged one cannot
   enrich the sender, but an unbounded negative one would drain a trader for the whole world.
 
-  Trainers touch this field and no other (`trainingwindow.cpp:202` does
-  `setGoldPool(getGoldPool() + price)`), so they are fixed by the same change. The skill gain
+  CORRECTION to the first version of this entry, which said trainers touch this field "and no
+  other" and were therefore already covered. Both halves were wrong. SEVEN player-reachable
+  windows call `setGoldPool` -- `tradewindow`, `trainingwindow`, `travelwindow`,
+  `spellbuyingwindow`, `spellcreationdialog`, `enchanting`, `merchantrepair` -- and the client
+  hook fired only on `newMode == 'Barter'`, so trainers were NOT covered either. All seven GUI
+  modes are watched now, named from the engine's own table in `uibindings.cpp`. The skill gain
   and the buyer's gold were already synced.
+
+  STILL OPEN, and it needs a server-side rule: **the canonical purse never restocks.** The
+  engine restocks a merchant every 24h at `dialogue.cpp:537`, but that only ever writes a
+  client's LOCAL value, and canonical is set by the first opener -- so a merchant drained on
+  day one stays drained for the life of the world. Nobody has hit this yet because no world
+  has run long enough.
 
   Covered by `economy.test.ts`, negative-controlled (raising the cap fails the test). NOT yet
   exercised end-to-end in a browser -- the harness runs against a stale engine bundle, so the
@@ -214,6 +224,16 @@ loot bug already fixed here.
   `enchantmentCharge` now persist, so a filled gem stays filled and a drained item stays
   drained. Both are operations on the player's OWN inventory, which was already synced -- the
   gap was only that a rejoin reset them.
+
+* ~~**A shared container rewrite stripped live NPCs of their equipment.**~~ FIXED. Applying a
+  canonical `ContainerState` calls `setContainerContents`, which destroys and recreates every
+  object in the store. On a live actor that store is the WHOLE inventory, equipped items
+  included, so a merchant's armour came back as a fresh UNEQUIPPED copy and the merchant stood
+  there naked on every other client. This was live for merchants, and was found while widening
+  the same path to six more NPC types -- which is why it was fixed first rather than widened.
+  Slots are now captured as `slot -> recordId` before the rewrite and restored after it;
+  recordId rather than object because the objects do not survive, and `setEquipment` accepts a
+  recordId and searches the store.
 
 ### Systems that simply do not happen for other players
 
