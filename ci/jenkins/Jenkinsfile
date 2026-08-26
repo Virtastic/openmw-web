@@ -1,0 +1,45 @@
+// Single pipeline for the OpenMW-Web job: builds BOTH deliverables from the dev branch and
+// deploys each to the test app server. Replaces the former OpenMW-Web-Engine-WASM and
+// OpenMW-Web-MP-Server jobs, so there is exactly one button to press for this repo.
+//
+// Lives in the REPO, not in Jenkins' own config, so it is versioned, reviewable through a PR
+// against dev, and survives the Jenkins container being rebuilt. It is also what lets polling
+// work AT ALL: a pipeline whose script is inline in the job has no SCM until it has run once,
+// so pollSCM has nothing to poll and the job can only ever be started by hand. Script-from-SCM
+// gives Jenkins the SCM from the job config itself.
+//
+// Ordering is deliberate: the engine is built and deployed FIRST, so a slow MP-server rebuild
+// (the sim peer is the fork compiled natively) never delays the game going live on test.
+pipeline {
+  agent any
+  // 120 min covers the old engine (60) and server (45) budgets in one run, plus restaging.
+  options { timestamps(); timeout(time: 120, unit: 'MINUTES'); disableConcurrentBuilds() }
+  stages {
+    stage('Checkout dev') {
+      steps {
+        // Build in /src, not the Jenkins workspace: /src is the host's ~/morrowind-src, and it
+        // is where the ~750 MB of gitignored build inputs live between builds.
+        dir('/src') {
+          checkout([$class: 'GitSCM',
+                    branches: [[name: '*/dev']],
+                    userRemoteConfigs: [[url: 'https://github.com/Virtastic/openmw-web.git']]])
+        }
+        // `cd /src` rather than a sh inside dir('/src'): that makes Jenkins create a sibling
+        // /src@tmp, and /src is a MOUNT, so the sibling lands at the container root -- owned by
+        // root while Jenkins runs as uid 1000. Engine build 46 died on exactly that after the
+        // container was rebuilt. checkout() alone needs no @tmp, so only the sh has to move out.
+        sh 'cd /src && git rev-parse HEAD > .source-commit && echo "building $(git log --oneline -1)"'
+      }
+    }
+    // Shared by both halves, so it runs once rather than once per job as it used to.
+    stage('Restage build inputs') { steps { sh '/src/ci/jenkins/restage-inputs.sh' } }
+
+    stage('Compile OpenMW to WebAssembly') { steps { sh '/src/ci/jenkins/build-engine.sh' } }
+    // Unconditional on purpose: an image that was never deployed has never been tested.
+    // deploy-test.sh runs the contract gate itself and fails the build on any miss.
+    stage('Deploy engine to test server') { steps { sh '/src/ci/jenkins/deploy-test.sh engine' } }
+
+    stage('Build gateway + sim peer')      { steps { sh '/src/ci/jenkins/build-server.sh' } }
+    stage('Deploy server to test server')  { steps { sh '/src/ci/jenkins/deploy-test.sh server' } }
+  }
+}
