@@ -242,3 +242,49 @@ test('shared ActorMoveBatch frame decodes independently for every recipient', as
   await holder.closed;
   for (const c of peers) await c.closed;
 });
+
+test('an actor leaving a cell is announced to BOTH cells, not just the one it left', async (t) => {
+  const dataDir = tmpDataDir();
+  const server = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1',
+    configOverride: { server: { password: PEER_PASS } } as never });
+  t.after(() => server.close());
+
+  const peer = await TestClient.simPeer(server.port, PEER_PASS, 'Holder');
+  peer.sendCellChange('0,0', 0, 0, 0);
+  // The EPOCH from the grant, not a guess: authCheck refuses an actor event whose epoch does
+  // not match the current one, which is the guard that stops a stale holder talking.
+  const grant = await peer.waitEvent('ActorAuthorityGrant');
+  const epoch = (grant.value as { epoch: number }).epoch;
+
+  const here = await TestClient.connect(server.port);
+  await here.joinAsNew('Stayer');
+  await here.waitEvent('PlayerList');
+  here.sendCellChange('0,0', 0, 0, 0);
+  // FAR AWAY, not next door. Relay visibility already covers ADJACENT cells, so a neighbour
+  // would receive this anyway and the test would pass with the destination relay deleted --
+  // it did, the first time this was written. A travelling companion crosses the map, which is
+  // the case that actually needs the second relay.
+  const there = await TestClient.connect(server.port);
+  await there.joinAsNew('Waiter');
+  await there.waitEvent('PlayerList');
+  there.sendCellChange('20,20', 0, 0, 0);
+  await new Promise((r) => setTimeout(r, 300));
+
+  // A companion travels out of 0,0 and across the map to 20,20.
+  peer.sendEvent('ActorCellChange', {
+    cellKey: '0,0', epoch, ref: { __refnum: { index: 55, contentFile: 0 } },
+    toCellKey: '20,20', x: 10, y: 20, z: 30,
+  });
+
+  // BOTH rooms have to hear it, and they are different rooms full of different people: the
+  // player left behind must stop drawing the actor where it was, and the player at the
+  // destination must have it arrive. Every other actor event concerns ONE cell because the
+  // actor is in it; this is the exception by definition -- and relaying it only to the origin
+  // is exactly what leaves a travelling companion standing in the old cell forever.
+  const a = await here.waitEvent('ActorCellChange');
+  const b = await there.waitEvent('ActorCellChange');
+  assert.equal((a.value as { toCellKey: string }).toCellKey, '20,20');
+  assert.equal((b.value as { toCellKey: string }).toCellKey, '20,20');
+
+  peer.close(); here.close(); there.close();
+});

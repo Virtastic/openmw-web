@@ -212,6 +212,39 @@ local function broadcastCell(cellKey, epoch, cell, now)
         end
     end
 
+    -- ACTORS THAT LEFT THIS CELL. Everything above describes actors we can still see; this
+    -- is the one thing that has to be said about an actor we CANNOT. A follower who walks
+    -- through a door -- or travels with you -- vanishes from `live`, so the pose stream simply
+    -- stops and every other client is left with that NPC standing in the old cell forever.
+    --
+    -- Sent as its own event rather than by widening the pose batch: poses go out at 10 Hz and
+    -- a cell change happens seconds or minutes apart, so paying for a cell key on every pose
+    -- to carry a fact that almost never changes is the wrong trade.
+    for key, tracked in pairs(cell.actors) do
+        if tracked.seen ~= now then
+            local obj = tracked.obj
+            if obj and obj:isValid() then
+                local toCell = cellKeyOf(obj.cell)
+                -- toCell == cellKey would mean it is still here and we merely missed it this
+                -- pass; only a real move is worth an event.
+                if toCell and toCell ~= cellKey and tracked.leftTo ~= toCell then
+                    tracked.leftTo = toCell
+                    local pos = obj.position
+                    mp.sendEvent('ActorCellChange', {
+                        cellKey = cellKey, epoch = epoch, ref = obj, toCellKey = toCell,
+                        x = pos.x, y = pos.y, z = pos.z,
+                    })
+                end
+            else
+                -- Gone entirely (unloaded or destroyed). Drop the row so a recycled key
+                -- cannot inherit a stale leftTo and swallow a later, real move.
+                cell.actors[key] = nil
+            end
+        else
+            tracked.leftTo = nil
+        end
+    end
+
     if #batch > 0 then
         mp.sendActorMoveBatch(epoch, batch)
     end
@@ -348,6 +381,27 @@ actors.handlers.MP_ActorMoveBatch = function(batch)
             pcall(function() obj:sendEvent('MP_Pose', e) end)
         end
     end
+end
+
+-- The holder says an actor has LEFT the cell it was being simulated in. Without this the
+-- puppet stands where the pose stream stopped -- which is what left a travelling companion
+-- behind for everyone except the player who recruited them.
+actors.handlers.MP_ActorCellChange = function(data)
+    local obj = data.ref and data.ref:isValid() and data.ref or nil
+    if not obj or type(data.toCellKey) ~= 'string' then return end
+    local key = refKeyOf(obj)
+    -- DETACH FIRST. The puppet script suppresses this actor's own AI, and it is keyed to the
+    -- cell it was puppeted in; carrying it across would leave an actor frozen in a cell whose
+    -- holder has never heard of it. The destination cell's holder re-attaches on its next
+    -- pose, which is the same path an actor entering a cell already takes.
+    local p = puppetActors[key]
+    if p then
+        pcall(function() p.obj:sendEvent('MP_Detach', {}) end)
+        puppetActors[key] = nil
+    end
+    pcall(function()
+        obj:teleport(data.toCellKey, util.vector3(data.x or 0, data.y or 0, data.z or 0))
+    end)
 end
 
 actors.handlers.MP_ActorStatsDynamic = function(data)

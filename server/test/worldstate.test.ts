@@ -234,3 +234,4 @@ test('world objects and containers end to end', async (t) => {
     await d.closed;
   });
 });
+

@@ -433,9 +433,18 @@ loot bug already fixed here.
   the actor sync expresses -- so a companion who travels with you is left standing where they
   were for everyone else.
 
-  This only became reachable now that companions follow at all (see the ActorAI entry), and
-  it is a specific case of a broader limit: ACTORS DO NOT MOVE BETWEEN CELLS in this sync.
-  Worth fixing as that general problem rather than as a travel special case.
+  FIXED as the general problem rather than as a travel special case, because that is what it
+  was: actors did not move between cells at all. The holder now notices an actor that has left
+  the cell it was simulating -- it drops out of the live list while still being a valid object
+  whose `cell` says somewhere else -- and sends `ActorCellChange`. Receivers detach the puppet
+  and teleport their copy; the destination cell's holder re-attaches on its next pose, which is
+  the path an actor entering a cell already took.
+
+  Its own event rather than a wider pose: poses go out at 10 Hz and a cell change happens
+  seconds or minutes apart, so paying for a cell key on every pose to carry a fact that almost
+  never changes is the wrong trade. Relayed to BOTH cells, which every other actor event has no
+  reason to do -- the people left behind must stop drawing it, and the people at the
+  destination must have it arrive.
 
 * **Crime response** — arrest, jail, fines. Traced end to end rather than grepped, and the
   original entry ("nothing arrests you") does not survive it. `[sharing] crime = true` by

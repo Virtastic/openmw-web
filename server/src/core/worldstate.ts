@@ -55,7 +55,9 @@ const WORLD_EVENTS = new Set([
 // per-player opinion: getBaseDisposition(npc, player) ignores its player argument entirely and
 // reads getNpcStats(npc).getBaseDisposition(). One value on the NPC, so a bribe or a threat by
 // one player has to reach the others or the world stops agreeing about who likes whom.
-const ACTOR_RELAY_EVENTS = new Set(['ActorStatsDynamic', 'ActorEquip', 'ActorAI', 'ActorDisposition']);
+const ACTOR_RELAY_EVENTS = new Set([
+  'ActorStatsDynamic', 'ActorEquip', 'ActorAI', 'ActorDisposition', 'ActorCellChange',
+]);
 const ACTOR_EVENTS = new Set([...ACTOR_RELAY_EVENTS, 'ActorSnapshot', 'ActorDeath']);
 
 function str(v: LValue | undefined, max: number): string | undefined {
@@ -412,6 +414,21 @@ export class WorldState {
     const { cellKey, ref } = checked;
     if (name === 'ActorDeath') {
       await this.actorDeath(player, cellKey, ref, body);
+      return;
+    }
+    if (name === 'ActorCellChange') {
+      // RELAYED TO BOTH CELLS. Everyone still standing where the actor WAS has to stop
+      // drawing it there, and everyone where it is GOING has to have it arrive -- and those
+      // are different rooms full of different people. Every other actor event concerns one
+      // cell because the actor is in it; this one is the exception by definition.
+      const toCellKey = str(body.get('toCellKey'), MAX_CELL_KEY);
+      if (!toCellKey) {
+        this.invalid(player, name);
+        return;
+      }
+      const payload = { ...lToJs(body) as Record<string, JsLike> };
+      this.relayCellExcept(cellKey, player.id, name, payload);
+      if (toCellKey !== cellKey) this.relayCellExcept(toCellKey, player.id, name, payload);
       return;
     }
     // Stats/Equip/AI: relay verbatim cell-scoped (excluding the holder).
