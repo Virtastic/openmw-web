@@ -50,6 +50,12 @@ export interface PlayerDoc {
   appearance?: PlayerAppearanceDoc;
   equipment?: Record<number, string>; // slot -> recordId (keys stringify in JSON; normalized on load)
   inventory?: { id: string; n: number }[];
+  // Per-item state the record id cannot express: wear, remaining enchantment charge, and
+  // which soul is in a gem. Keyed by record id, positional within it, and ADVISORY -- the
+  // counts above remain the authority on how much a character owns, so a wrong state costs
+  // fidelity and never an item. Without this, every relog silently repaired all gear,
+  // recharged every enchantment and emptied every soul gem.
+  itemStates?: Record<string, { condition?: number; charge?: number; soul?: string }[]>;
   stats?: {
     dynamic?: { hp: DynamicStatDoc; mp: DynamicStatDoc; ft: DynamicStatDoc };
     attributes?: Record<string, number>;

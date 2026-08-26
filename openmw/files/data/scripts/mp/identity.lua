@@ -153,20 +153,51 @@ local function snapSpells()
     return set
 end
 
+-- Per-item state the record id cannot express: wear, remaining enchantment charge, and which
+-- soul is in a gem. Read through itemData (mwlua/itemdata.cpp exposes condition,
+-- enchantmentCharge and soul as read/write properties). nil means "engine default", which is
+-- the common case and costs nothing to carry.
+local function itemState(item)
+    local ok, d = pcall(function() return item.itemData end)
+    if not ok or d == nil then return nil end
+    local st, any = {}, false
+    local okc, c = pcall(function() return d.condition end)
+    if okc and type(c) == 'number' then st.condition = c; any = true end
+    local oke, e = pcall(function() return d.enchantmentCharge end)
+    if oke and type(e) == 'number' then st.charge = e; any = true end
+    local oks, sl = pcall(function() return d.soul end)
+    if oks and type(sl) == 'string' and sl ~= '' then st.soul = sl; any = true end
+    if any then return st end
+    return nil
+end
+
 local function snapInventory()
     local counts, order = {}, {}
+    -- ADDITIVE, and deliberately so. `items` keeps its exact existing shape and arithmetic,
+    -- because the restore grants the SHORTFALL between what the doc records and what
+    -- countOf() finds -- change how entries aggregate and that subtraction starts duplicating
+    -- or destroying real items, which is the worst failure this project has. States travel
+    -- ALONGSIDE, keyed by record and positional within it, and are applied best-effort after
+    -- the grant. Getting the states wrong costs fidelity; it cannot cost items.
+    local states = {}
     for _, item in ipairs(Actor.inventory(self):getAll()) do
         if not counts[item.recordId] then
             order[#order + 1] = item.recordId
         end
         counts[item.recordId] = (counts[item.recordId] or 0) + item.count
+        local st = itemState(item)
+        if st then
+            local bucket = states[item.recordId]
+            if not bucket then bucket = {}; states[item.recordId] = bucket end
+            bucket[#bucket + 1] = st
+        end
     end
     local items = {}
     for _, id in ipairs(order) do
         items[#items + 1] = { id = id, n = counts[id] }
         if #items >= INVENTORY_CAP then break end
     end
-    return { items = items }
+    return { items = items, itemStates = states }
 end
 
 -- Stable stringify for change detection (json.encode key order is pairs-order, so sort).

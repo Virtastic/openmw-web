@@ -275,7 +275,41 @@ function handleInventory(ctx: StateCtx, player: Player, body: LTable): boolean {
     noteGain(ctx, player, 'inventory_breadth', { newItems: newIds, total: out.length });
     return false;
   }
-  ctx.store.update(player.charId, (doc) => (doc.inventory = out));
+  // PER-ITEM STATE, carried alongside rather than folded into the counts. `out` keeps its exact
+  // shape because the client's restore grants the SHORTFALL between it and countOf(); changing
+  // how entries aggregate would make that subtraction duplicate or destroy real items. States
+  // are keyed by record id and positional within it, and are advisory: a bad state costs
+  // fidelity, never an item. Bounded by the same entry cap so it cannot grow unchecked.
+  const rawStates = tbl(body.get('itemStates'));
+  const states: Record<string, { condition?: number; charge?: number; soul?: string }[]> = {};
+  if (rawStates) {
+    for (const [k, v] of rawStates) {
+      const id = typeof k === 'string' ? recordId(k) : undefined;
+      const list = tbl(v);
+      if (!id || !list) continue;
+      const bucket: { condition?: number; charge?: number; soul?: string }[] = [];
+      for (const [, e] of list) {
+        const t = tbl(e);
+        if (!t) continue;
+        const cond = finite(t.get('condition'));
+        const charge = finite(t.get('charge'));
+        const soul = recordId(t.get('soul'));
+        const one: { condition?: number; charge?: number; soul?: string } = {};
+        if (cond !== undefined && cond >= 0) one.condition = cond;
+        if (charge !== undefined && charge >= 0) one.charge = charge;
+        if (soul) one.soul = soul;
+        if (Object.keys(one).length > 0) bucket.push(one);
+        if (bucket.length >= MAX_COUNT) break;
+      }
+      if (bucket.length > 0) states[id] = bucket;
+      if (Object.keys(states).length >= MAX_INVENTORY) break;
+    }
+  }
+  ctx.store.update(player.charId, (doc) => {
+    doc.inventory = out;
+    if (Object.keys(states).length > 0) doc.itemStates = states;
+    else delete doc.itemStates;
+  });
   // The snapshot now accounts for everything credited since the last one, so the credit is
   // spent. Clearing here (rather than expiring on a timer) is what keeps the ledger from
   // double-counting: credit and snapshot are the same items seen twice.

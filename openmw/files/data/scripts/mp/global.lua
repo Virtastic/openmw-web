@@ -661,6 +661,37 @@ local function restoreTick()
             end
         end
     end
+    -- PER-ITEM STATE, applied after the grant and strictly best-effort. Without this every
+    -- rejoin handed the character fully repaired gear, fully charged enchantments and empty
+    -- soul gems, because createObject builds a FRESH object and the doc only ever recorded a
+    -- record id and a count. Each failure in here is swallowed on purpose: the item itself is
+    -- already correctly in the inventory, and losing its wear is a far smaller harm than
+    -- aborting the rest of the restore over it.
+    local restored = 0
+    for recId, bucket in pairs(record.itemStates or {}) do
+        local localId = worldmp.toLocal(recId)
+        local idx = 0
+        local okAll = pcall(function()
+            for _, item in ipairs(inventory:getAll()) do
+                if item.recordId == localId then
+                    idx = idx + 1
+                    local st = bucket[idx]
+                    if st then
+                        local d = item.itemData
+                        if st.condition ~= nil then pcall(function() d.condition = st.condition end) end
+                        if st.charge ~= nil then pcall(function() d.enchantmentCharge = st.charge end) end
+                        if st.soul ~= nil then pcall(function() d.soul = st.soul end) end
+                        restored = restored + 1
+                    end
+                end
+            end
+        end)
+        if not okAll then
+            print('[mp] restore: item state for "' .. tostring(recId) .. '" did not apply')
+        end
+    end
+    if restored > 0 then print('[mp] restored state on ' .. tostring(restored) .. ' item(s)') end
+
     mp.testSet('restorePos', record.position and json.encode(record.position) or 'none')
     if record.position then
         teleportPlayerTo(record.position)
