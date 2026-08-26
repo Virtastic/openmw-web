@@ -117,6 +117,25 @@ function M.install(opts)
     },
   }
 
+  -- GLOBAL-CONTEXT stubs. quests.lua and global.lua are global scripts: they require
+  -- openmw.world and openmw.interfaces, which nothing here provided, so that whole half of the
+  -- client -- journal, factions, crime, mwscript globals -- had no coverage at all.
+  local globalVars = opts.globals or {}
+  local world = {
+    mwscript = {
+      getGlobalVariables = function() return globalVars end,
+      getLocalScript = function() return nil end,
+    },
+    players = {},
+    activeActors = {},
+  }
+  local interfaces = {
+    -- quests.init registers an activation handler; the tests drive quests.onNpcActivate
+    -- directly, so recording the registration is enough.
+    Activation = { addHandlerForType = function() end },
+  }
+  package.loaded['openmw.world'] = world
+  package.loaded['openmw.interfaces'] = interfaces
   package.loaded['openmw.core'] = core
   package.loaded['openmw.mp'] = mp
   package.loaded['openmw.self'] = { id = 'self' }
@@ -134,6 +153,9 @@ function M.install(opts)
     now = function() return realTime end,
     setInventory = function(items) inventory = items end,
     spellbook = spellbook,
+    world = world,
+    globals = globalVars,
+    setGlobal = function(name, value) globalVars[name] = value end,
   }
 end
 

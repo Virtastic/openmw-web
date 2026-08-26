@@ -430,5 +430,60 @@ identity.equipRetryTick(1.0)
 check('an agreeing class is silent', saidClassMismatch(env) == nil,
   'got: ' .. tostring(saidClassMismatch(env)))
 
+-- ============================================================ quests.lua: global sync fairness
+-- Morrowind gates most quests on mwscript globals, and this loop is how they travel. It walked
+-- pairs(store) -- an order Lua explicitly does not define -- and sent at most 24 per tick, so
+-- above 24 changing globals WHICH ones got through was arbitrary and a quest global could sit
+-- unsent indefinitely behind churning ones while the log showed a healthy rate-limited sync.
+-- Reachable, not theoretical: the game ships scripts that set values every other frame.
+print('quests.lua -- no global starves behind churning ones')
+fresh()
+env = stubs.install({})
+local quests = require('scripts.mp.quests')
+quests.init({ playerFn = function() return nil end })
+
+local function globalUpdates(calls)
+  local out = {}
+  for _, c in ipairs(calls.events) do
+    if c.name == 'GlobalVarUpdate' then out[#out + 1] = c.body.name end
+  end
+  return out
+end
+
+-- Seed: the first pass records what exists without broadcasting it.
+for i = 1, 40 do env.setGlobal('churn' .. i, 0) end
+env.setGlobal('quest_important', 0)
+quests.tick(0)
+check('the seeding pass broadcasts nothing', #globalUpdates(env.calls) == 0,
+  'replaying every existing global on connect is not a change')
+
+-- Now change far more than one tick can carry, including the one that matters.
+for i = 1, 40 do env.setGlobal('churn' .. i, 1) end
+env.setGlobal('quest_important', 1)
+
+-- Drain over several ticks. DIFF_INTERVAL is 1s, so advance a second each time.
+local seen = {}
+for t = 1, 6 do
+  quests.tick(t)
+  for _, n in ipairs(globalUpdates(env.calls)) do seen[n] = true end
+end
+check('the quest global is not starved by 40 churning ones', seen['quest_important'] == true,
+  'it can wait behind them forever when the send order is undefined')
+local missing = 0
+for i = 1, 40 do if not seen['churn' .. i] then missing = missing + 1 end end
+check('every changed global eventually sends', missing == 0, missing .. ' never sent')
+
+-- The rate limit must still hold, or this trades starvation for a packet flood.
+fresh()
+env = stubs.install({})
+quests = require('scripts.mp.quests')
+quests.init({ playerFn = function() return nil end })
+for i = 1, 100 do env.setGlobal('g' .. i, 0) end
+quests.tick(0)
+for i = 1, 100 do env.setGlobal('g' .. i, 1) end
+quests.tick(1)
+check('one tick still respects the send budget', #globalUpdates(env.calls) <= 24,
+  'sent ' .. #globalUpdates(env.calls) .. ' in a single tick')
+
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)
