@@ -20,7 +20,10 @@ import { RecordStore, RECORD_KINDS, type RecordKind, type CustomRecord } from '.
 import { log } from '../log';
 
 const MAX_CELL_KEY = 128;
-const MAX_MAP_CELLS = 1024;
+// A DoS bound, not a gameplay bound. 1024 is inside what a thorough player explores across
+// Vvardenfell and Solstheim, and exceeding it dropped the whole map sync while reporting
+// 'invalid shape' -- which is not what happened and sends anyone debugging it the wrong way.
+const MAX_MAP_CELLS = 8192;
 const MAX_RECORD_FIELDS = 128;
 const RESET_TICK_MS = 1_000;
 
@@ -282,8 +285,15 @@ export class WorldM7 {
   // C->S WorldMapExplored {cellKeys}; relayed to everyone else under [sharing] map.
   private mapExplored(player: Player, body: LTable): void {
     const raw = body.get('cellKeys');
-    if (!(raw instanceof Map) || raw.size === 0 || raw.size > MAX_MAP_CELLS) {
+    if (!(raw instanceof Map) || raw.size === 0) {
       log('warn', 'map.dropped', { from: player.name, why: 'invalid shape' });
+      return;
+    }
+    if (raw.size > MAX_MAP_CELLS) {
+      log('error', 'map.dropped', {
+        from: player.name, why: 'too many cells', size: raw.size, cap: MAX_MAP_CELLS,
+        note: 'map exploration stops syncing for this player until it shrinks',
+      });
       return;
     }
     const cellKeys: string[] = [];

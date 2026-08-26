@@ -13,7 +13,14 @@ import { log } from '../log';
 import { metrics } from '../metrics';
 
 const MAX_RECORD_ID = 64;
-const MAX_INVENTORY = 512;
+// A DoS BOUND, NOT A GAMEPLAY BOUND -- and the difference is the whole point. This was 512
+// distinct stacks, which a hoarder reaches in a long session, and going one over does not trim
+// the excess: handleInventory returns false and the ENTIRE inventory stops persisting. The
+// player then loses everything acquired since, on every relog, and the only trace is a generic
+// state.invalid_body that does not mention size. Morrowind has roughly two thousand item
+// records in total, so 4096 is beyond any legitimate personal inventory while still bounding
+// what one client can make the server hold.
+const MAX_INVENTORY = 4096;
 const MAX_COUNT = 10000;
 const MAX_SPELLS = 1024;
 const MAX_STAT_ENTRIES = 64;
@@ -227,7 +234,16 @@ function noteGain(ctx: StateCtx, player: Player, kind: string, detail: Record<st
 
 function handleInventory(ctx: StateCtx, player: Player, body: LTable): boolean {
   const items = tbl(body.get('items'));
-  if (!items || items.size > MAX_INVENTORY) return false;
+  if (!items) return false;
+  if (items.size > MAX_INVENTORY) {
+    // Say WHICH limit and by how much. Refusing the whole inventory is a silent, permanent
+    // loss for that character, so it must never be indistinguishable from a malformed body.
+    log('error', 'state.inventory_too_large', {
+      from: player.name, size: items.size, cap: MAX_INVENTORY,
+      note: 'inventory NOT persisted; this character loses items on relog until it shrinks',
+    });
+    return false;
+  }
   const out: { id: string; n: number }[] = [];
   for (const [, entry] of items) {
     const t = tbl(entry);
