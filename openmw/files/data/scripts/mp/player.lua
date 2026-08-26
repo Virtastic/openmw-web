@@ -178,6 +178,7 @@ local GOLD_SERVICE_MODES = {
     SpellCreation = true, Enchanting = true, MerchantRepair = true,
 }
 
+local barterTarget = nil -- harness 'barter:open': the NPC whose purse is mirrored
 local walkCmd = nil -- harness 'walk:<dx>,<dy>,<ms>' injection
 local pendingTestEquip = nil -- harness 'equip:<id>:<slot>': equip once the grant lands
 
@@ -284,6 +285,19 @@ local function walkTick()
     self.controls.movement = walkCmd.dy
     self.controls.sideMovement = walkCmd.dx
     self.controls.run = walkCmd.run
+end
+
+-- HARNESS ONLY. Mirrors the merchant's purse so a scenario can assert on it. Polled rather
+-- than pushed because the interesting moment is AFTER the server's canonical figure has been
+-- applied back with setBarterGold, which happens on a network handler the scenario cannot see.
+local nextBarterMirror = 0
+local function barterMirrorTick()
+    if not (barterTarget and barterTarget:isValid()) then return end
+    local now = core.getRealTime()
+    if now < nextBarterMirror then return end
+    nextBarterMirror = now + 0.25
+    local okg, g = pcall(function() return types.Actor.getBarterGold(barterTarget) end)
+    if okg and type(g) == 'number' then mp.testSet('barterGold', tostring(math.floor(g))) end
 end
 
 local function testEquipTick()
@@ -432,6 +446,36 @@ local function pollHarness()
         -- enter Interface mode (frees the mouse cursor + suspends game input, no pause); on
         -- close it restores. This is what lets clicking/typing in the HTML panel not also drive
         -- the game behind it.
+        -- HARNESS ONLY. Opens a real barter window on the nearest living NPC so a scenario
+        -- can exercise the SHARED PURSE end to end -- the one fix nothing else can reach,
+        -- because a merchant's gold only moves through a GUI a bot has no other way to open.
+        -- Nearest-NPC rather than a hardcoded id so the scenario does not depend on which
+        -- cell the harness happens to start in.
+        if cmd == 'barter:open' then
+            local best, bestD2 = nil, nil
+            local cell = self.cell
+            if cell then
+                for _, obj in ipairs(cell:getAll()) do
+                    if types.NPC.objectIsInstance(obj) and not types.Player.objectIsInstance(obj) then
+                        local okd, dead = pcall(function() return types.Actor.isDead(obj) end)
+                        if okd and not dead then
+                            local d2 = (obj.position - self.position):length2()
+                            if not bestD2 or d2 < bestD2 then best, bestD2 = obj, d2 end
+                        end
+                    end
+                end
+            end
+            if best then
+                barterTarget = best
+                pcall(function() I.UI.addMode('Barter', { target = best }) end)
+            else
+                mp.testSet('barterGold', 'no-npc') -- say so rather than time out silently
+            end
+        end
+        if cmd == 'barter:close' then
+            pcall(function() I.UI.removeMode('Barter') end)
+        end
+
         local ui_mode = cmd:match('^uimode:(%a+)$')
         if ui_mode == 'on' then I.UI.setMode('Interface', { windows = {} })
         elseif ui_mode == 'off' then I.UI.removeMode('Interface') end
@@ -657,6 +701,7 @@ return {
             pollHarness()
             walkTick()
             testEquipTick()
+            barterMirrorTick()
             movementTick()
         end,
     },
