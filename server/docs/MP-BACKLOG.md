@@ -102,7 +102,44 @@ a world count rather than reading the answer the server actually sent -- so a 40
 an opaque 30-second timeout. `worldbrowser.create_refused` now logs the status, and s47 asserts
 on the mirrored result.
 
-#### The notice cluster (3), not yet root-caused
+#### P0: the Worlds tab's join button could never work in production -- FIXED
+
+`joinWorld()` demanded `w.host` and `w.port` and gave up with "That world did not say where to
+connect" when they were absent. The directory DELIBERATELY strips both from everything it
+serves, so they were always absent -- the join button could never work, and neither could
+`MP_SocialJoinById`, which routes into the same function.
+
+A comment above it wrote this off as a legacy panel and "dead UI". It is not dead: line 525 is
+the Worlds tab's join button. The rule that works already existed (`worldUrlOf`, which prefers
+the gateway path on the current connection's scheme and authority), so the tab now sends the
+world's fields and the global side computes the address -- one place, which is what that
+comment did not want to duplicate. `mpJoinWorld` also stops returning silently when it cannot
+build an address, which is how this survived: the button appeared to work and the player
+simply stayed put.
+
+#### BLOCKING THE HARNESS, not the product: no switch scenario can reboot
+
+`s53`, and the join half of `s47`, `s48` and `s57`, all end in `rebootIntoWorld()`, which
+needs `window.__omwLockerToken` -- a locker session that rides in the page's URL fragment as
+`#mplocker=`. Harness clients authenticate with `?mpauto=1`, which is a SERVER credential and
+grants no locker session, so every one of these paths throws `no locker session` before it
+reaches the network. Proven rather than guessed: after a `charswitch`, `publicStage` shows
+`net.switchTo` was called with a valid ws:// URL and `switchChar` holds the right id, while
+the `switchTo` mirror is EMPTY -- which is precisely what the page's `failed` handler does
+when the reboot throws.
+
+So these four cannot pass as written no matter what is fixed in the product, and the join fix
+above is correct but NOT verifiable here. Deciding what to do is a real choice:
+
+1. Give harness clients a locker session (sign in through the front door and pass
+   `#mplocker=`). Makes the scenarios exercise the real path -- but `s53` spawns no gateway at
+   all, so it has no front door to sign into and would need one.
+2. Let the reboot path accept a harness credential where a locker session is required. Smaller,
+   but it puts a test-only branch inside the sign-in path, which is the worst place for one.
+
+Until then, treat a switch/join failure in these four as UNPROVEN rather than as a defect.
+
+#### The notice cluster (3) -- s99 FIXED, s92 pending a build
 
 * `s92-connection-lost` -- timeout waiting for the in-game "connection lost" notice.
 * `s99-overlays` -- timeout waiting for eviction to show a notice.

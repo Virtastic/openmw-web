@@ -36,8 +36,18 @@ export default async function run(ctx) {
 
   // Switch: a reconnect that must come back AS the new character.
   await a.eval(`Module.__omwMPCmd='charswitch:${alt.id}'`);
+  // REPORT THE HANDOFF, because a bare wait on characterId cannot tell 'the command never
+  // reached Lua' from 'Lua published a destination and the page ignored it' from 'the reload
+  // happened and came back as the wrong character'. Each is a different bug and they were all
+  // presenting as the same 30-second timeout. publicStage is set by net.switchTo BEFORE its
+  // own empty-url check, so it distinguishes 'not called' from 'called with nothing'.
+  await ctx.sleep(1500);
+  const stage = String(await a.eval("(window.__omwMP||{}).publicStage||''"));
+  const swTo = String(await a.eval("(window.__omwMP||{}).switchTo||''"));
+  const swChar = String(await a.eval("(window.__omwMP||{}).switchChar||''"));
+  ctx.log(`  after charswitch: publicStage="${stage}" switchTo="${swTo}" switchChar="${swChar}"`);
   await a.waitFor(`((window.__omwMP||{}).characterId||'') === '${alt.id}'`, STEP,
-    'reconnect lands on the selected character');
+    `reconnect lands on the selected character (publicStage="${stage}" switchChar="${swChar}")`);
   await a.waitFor("(window.__omwMP||{}).state === 'Joined'", STEP, 'and reaches Joined');
   ctx.log('  ok: switched — the session now plays the new slot');
 
