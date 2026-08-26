@@ -54,6 +54,17 @@ local pendingApply = {} -- inbound entries that arrived before the player object
 local globals = {} -- name -> last seen value
 local globalSeq = {} -- name -> last sequence WE stamped
 local globalsSeeded = false
+-- FIFO queue of globals waiting to be sent, plus a membership set so a variable that changes
+-- again while queued keeps its ORIGINAL place rather than going to the back forever.
+--
+-- Without this the send order was pairs(store), which Lua explicitly does not define, capped at
+-- MAX_GLOBALS_PER_TICK. Above that many churning globals -- and Morrowind has scripts that set
+-- values every other frame -- WHICH ones got through was arbitrary each tick, so a quest global
+-- could sit unsent indefinitely behind them while the log showed a healthy, rate-limited sync.
+-- TES3MP hit the same class and solved it with a whitelist; a queue fixes the fairness without
+-- needing to enumerate every global in the game.
+local globalQueue = {} -- array of names, oldest first
+local globalQueued = {} -- name -> true while it is in globalQueue
 
 local factions = {} -- factionId -> fingerprint string
 local factionsSeeded = false
@@ -152,21 +163,37 @@ end
 
 local function diffGlobals()
     local store = globalStore()
-    local sent = 0
+    -- 1. Notice every change and ENQUEUE it. Detection is not rate limited; only sending is,
+    --    so a change can never be missed just because the tick's budget was already spent.
     for name, value in pairs(store) do
         if not TIME_GLOBALS[string.lower(name)] then
             if globals[name] ~= value then
                 globals[name] = value
-                if globalsSeeded and sent < MAX_GLOBALS_PER_TICK then
-                    local seq = (globalSeq[name] or 0) + 1
-                    globalSeq[name] = seq
-                    mp.sendEvent('GlobalVarUpdate', { name = name, value = value, seq = seq })
-                    sent = sent + 1
+                if globalsSeeded and not globalQueued[name] then
+                    globalQueued[name] = true
+                    globalQueue[#globalQueue + 1] = name
                 end
             end
         end
     end
     globalsSeeded = true
+
+    -- 2. Drain the FRONT of the queue. Oldest waiting first, so nothing starves however many
+    --    other globals are churning. The value sent is the CURRENT one, not the one that was
+    --    current when it was queued -- the receiver wants where the variable ended up.
+    local sent = 0
+    while sent < MAX_GLOBALS_PER_TICK and #globalQueue > 0 do
+        local name = table.remove(globalQueue, 1)
+        globalQueued[name] = nil
+        local value = store[name]
+        if value ~= nil then
+            local seq = (globalSeq[name] or 0) + 1
+            globalSeq[name] = seq
+            mp.sendEvent('GlobalVarUpdate', { name = name, value = value, seq = seq })
+            sent = sent + 1
+        end
+    end
+    if #globalQueue > 0 then mp.testSet('globalBacklog', tostring(#globalQueue)) end
 end
 
 -- ================================================================== factions / crime

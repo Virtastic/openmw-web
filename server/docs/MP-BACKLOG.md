@@ -54,15 +54,21 @@ Re-test before spending time on them.
 
 ### Sync
 
-* **mwscript global sends can starve.** `quests.lua diffGlobals` walks `pairs(store)` — whose
-  order is undefined in Lua — and sends at most `MAX_GLOBALS_PER_TICK = 24`. If more than 24
-  globals change per tick, *which* ones get through is arbitrary, so a quest global can sit
-  behind churning ones indefinitely. TES3MP hit the same class and moved to a whitelist; the
-  scripts it names (banners flapping, objects bobbing on water) set values every other frame.
-  **Note the relay side is already right**: the server character-shadows every global by default
-  and relays only a small conservative `WORLD_GLOBALS` set, which is what avoids TES3MP's
-  two-players-fighting-over-one-variable ping-pong. This is a client-side send fairness bug, not
-  a design flaw.
+* ~~**mwscript global sends can starve.**~~ FIXED — `diffGlobals` now enqueues changed globals
+  and drains the queue oldest-first, so nothing starves however many others are churning.
+  Detection is deliberately not rate limited; only sending is. Previously it walked
+  `pairs(store)` (order undefined in Lua) capped at 24/tick, so *which* globals got through was
+  arbitrary and a quest global could sit unsent indefinitely while the log looked healthy.
+  The relay side was already right: the server character-shadows every global by default and
+  relays only a small conservative `WORLD_GLOBALS` set, which is what avoids TES3MP's
+  two-players-fighting-over-one-variable ping-pong.
+
+* **`quests.lua` has NO automated coverage at all.** The Lua harness never loads it and the stub
+  has no `openmw.world`/`mwscript`, so the journal diff, faction and crime sync, and the global
+  sync above are all unexercised — the fairness fix was verified only by the file parsing and by
+  the other 68 checks still passing. This is the largest untested surface in the client, and it
+  covers precisely the systems TES3MP reports as its worst (quest and journal state). Closing it
+  needs a `world` stub for global-context scripts, which the harness does not have yet.
 * **Dialogue topics are not synchronised.** Open/close is (`mpDialogueClosed`), the topic list is
   not, so a topic one player unlocks does not appear for another. TES3MP synced these and got
   "server freezes caused by infinite topic packet spam from local scripts" for its trouble — so
