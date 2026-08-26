@@ -69,7 +69,12 @@ Re-test before spending time on them.
   refKey like any other object. **Unproven in play** — it wants a scenario with two clients
   looting one body.
 
-* **`ActorEquip` and `ActorAI` are dead protocol surface.** Both are in the server's relayed
+* **`ActorEquip` and `ActorAI` are dead protocol surface — and they are the ONLY two.** A full
+  protocol audit now backs that: all 54 server-sent events have a client handler, and on the
+  inbound side every accepted event is sent by someone except these two (0 client references
+  each). The social family looked dead to a naive scan and is not — `global.lua mpSocial`
+  dispatches it through a whitelist, which is deliberate: "a local script must not be able to
+  name an arbitrary server event". Both are in the server's relayed
   event set (`worldstate.ts`), and the client never sends or handles either. An NPC that draws a
   weapon, swaps armour or changes AI package mid-fight therefore looks different to every
   player. The server-side half already exists, so this is a client gap rather than a design one.
