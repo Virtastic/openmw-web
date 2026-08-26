@@ -72,8 +72,8 @@ and two remain: `s53-charslots` and `s57-world-revival`, both on the world-switc
 | `s43-avatar-load` | excluded | the only RETAIL one; retail cannot pass in a GPU-less container |
 | `s47-worlds-ui` | PASS | create, join, and the destination sees the player arrive |
 | `s48-switch-reconnect` | PASS | world switch, and the reconnect that follows it |
-| `s57-world-revival` | FAIL | reaches step 3 of 5; revival itself now works (below) |
-| `s53-charslots` | FAIL | world switch (below), and it spawns no gateway at all |
+| `s57-world-revival` | PASS | the full revival round trip (below) |
+| `s53-charslots` | PASS | the character-switch round trip |
 
 Two of the five were real product defects a player would have felt, and three were scenarios
 asserting against something that could not happen. Worth noting which is which: the suite was
@@ -222,45 +222,27 @@ Also fixed across all three: they read `w.port` off the directory, which strips 
 `http://127.0.0.1:undefined/status`. `playerCount` survives the sanitiser and is the right
 signal.
 
-#### `s57-world-revival`: revival WORKS, the scenario does not finish
+#### `s57-world-revival` PASSES, and it found two real product bugs
 
-**Two fixture faults found and fixed on the way, neither of them the product:**
+The full round trip now runs: own world -> create -> join -> reaped while away -> revived on
+dial -> walked back in. It is the only scenario that switches worlds THREE times, which is why
+it was the only one that caught what follows -- both in `rebootIntoWorld`, both hit by a real
+player on every switch:
 
-* The world id had to be `priv-*`. The gateway only revives that prefix on dial, so a world
-  named anything else stays down -- the scenario could never have exercised the round trip it
-  asserts. `world.revived_on_dial` now fires.
-* `--idle-reap-ms 4000` was shorter than a client boot. The world was reaped ONE SECOND before
-  the player finished arriving: the client logged `HelloSent` and then
-  `server disconnect: SHUTDOWN`, and everything after was a reconnect to a world that no longer
-  existed. The scenario was racing its own fixture. Now 45s -- still far below the two-minute
-  default, so the reap is driven rather than waited out.
+1. **The query string was dropped.** `new URL('index.html', location.href)` has an EMPTY
+   search, so the navigation went to a bare `index.html` and lost every launch parameter --
+   `?stream`, `?novid`, `?skipintro`, `?start=`. The engine came back as if opened cold, so a
+   switch quietly changed how the game starts. It also made the pathname+search equality test
+   always false, so the reload path that code's own comment describes was never taken.
+2. **Then the carried query re-armed the old world.** A launch URL can carry `mp=` in the
+   QUERY, while the switch destination goes in the FRAGMENT -- so keeping the query wholesale
+   booted the page straight back into the world it was leaving. The superseded keys are
+   stripped now, the same list the fragment filter already used.
 
-**Where it stops now, with the evidence.** `s57` is on the shared `_gateway.mjs` flow, so it
-gets all four corrections that made `s47`, `s48` and `s53` pass. It reaches: own world ->
-create -> join -> reaped -> and then dies going to Public.
-
-At that point the client is not merely failing to connect -- it is GONE. `publicStage`, the
-chat line and `worldCount` are all empty, `jsErrors` and `luaErrors` are empty, and
-`logTail()` returns nothing at all. An empty log buffer with empty mirrors is a page that
-navigated somewhere blank, not a page that booted and could not reach a server.
-
-So the next thing to look at is the URL `rebootIntoWorld` navigates to on the SECOND switch,
-not the network. Every other scenario switches once; this is the only one that switches again
-after already having switched, and it is the only one that ends up on a dead page.
-
-`s53-charslots` is the same family: it has no gateway at all, so it cannot get a locker session
-and its character switch cannot reboot. Giving it one is the same restructure s47 and s48 got.
-
-
-`world.revived_on_dial` now fires, which is the mechanism this scenario exists to prove, and it
-only fires for `priv-*` ids -- the old world name could never have been revived. It now gets
-through: own world -> create -> join -> reaped. It fails on the NEXT step, going to Public:
-the page reloads (its mirrors come back empty, so the switch did fire) and the client never
-arrives, with no AUTH_FAILED anywhere and 180s of slack. It is the only scenario that switches
-THREE times, so the suspicion is state that does not survive a second reload -- the locker
-session is re-granted before each switch, but nothing proves the grant lands after the previous
-reload rather than before it.
-
+Fixture faults fixed on the way, none of them the product: the world had to be named `priv-*`
+(the only prefix the gateway revives on dial, and revival is the whole subject), and
+`--idle-reap-ms 4000` was shorter than a client boot, so the world was reaped ONE SECOND
+before the player finished arriving -- the scenario was racing its own fixture.
 
 #### The notice cluster (3) -- s99 FIXED, s92 pending a build
 
