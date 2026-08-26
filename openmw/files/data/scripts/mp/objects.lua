@@ -47,6 +47,11 @@ local pendingOps = {} -- opId -> {op=, itemId=, n=, key=, obj=}
 local recentPickups = {} -- obj.id -> time (belt+braces beside the byId echo skip)
 local doorPending = {} -- obj.id -> {obj=, at=}
 local containerOpenPending = {} -- obj.id -> {obj=, at=}: deferred first read, see above
+-- obj.id -> {obj=, slots=, until_=}: equipment to put back on an actor whose inventory was
+-- just rewritten by a canonical ContainerState. Retried rather than applied once, because the
+-- recreated items do not exist until a later frame.
+local equipPending = {}
+local EQUIP_RESTORE_WINDOW = 3.0 -- give up after this; a permanent retry would leak the entry
 local lockWatch = {} -- obj.id -> {obj=, locked=, level=, until_=}
 -- Phase 4: obj.id -> last seen `enabled`. Unlike locks, an enable/disable is not tied to
 -- an activation — a quest script flips it whenever it likes — so this is a low-rate poll
@@ -264,9 +269,11 @@ local function setContainerContents(obj, items)
             if okc then created:moveInto(content) end
         end
     end)
-    -- After the refill, not inside it: the replacements have to be in the store to be found.
+    -- DEFERRED, not inline. createObject+moveInto lands a frame or more later, so calling
+    -- setEquipment here finds an empty store and fails silently -- identity.lua hit exactly
+    -- this and says so. Retried from the tick until the replacements actually exist.
     if equipped and next(equipped) then
-        pcall(function() types.Actor.setEquipment(obj, equipped) end)
+        equipPending[obj.id] = { obj = obj, slots = equipped, until_ = core.getRealTime() + EQUIP_RESTORE_WINDOW }
     end
     -- Never re-diff a network apply as a local op.
     local watch = containerWatch[obj.id]
@@ -819,6 +826,29 @@ function objects.tick(now)
         if now >= pending.at then
             containerOpenPending[id] = nil
             openContainerNow(pending.obj, now, pending.live)
+        end
+    end
+
+    -- Put equipment back once the recreated items have landed. Applied the moment they are
+    -- all present, and abandoned at the deadline so a record that never rematerialises (a
+    -- mod removed between sessions, say) does not retry for the life of the session.
+    for id, pending in pairs(equipPending) do
+        local obj = pending.obj
+        if not (obj and obj:isValid()) then
+            equipPending[id] = nil
+        else
+            local have = {}
+            local okinv = pcall(function()
+                for _, item in ipairs(types.Actor.inventory(obj):getAll()) do have[item.recordId] = true end
+            end)
+            local ready = okinv
+            for _, rid in pairs(pending.slots) do
+                if not have[rid] then ready = false end
+            end
+            if ready or now > pending.until_ then
+                equipPending[id] = nil
+                pcall(function() types.Actor.setEquipment(obj, pending.slots) end)
+            end
         end
     end
 
