@@ -1,0 +1,111 @@
+# Multiplayer backlog
+
+What is known to be wrong, unverified, or missing — with the evidence, so nothing here has to
+be re-derived. Ordered by what would spoil a session soonest.
+
+Goal this is measured against: **seamless drop-in/drop-out co-op — solo, party and public —
+with the server authoritative.** Not an MMO; Morrowind's data files are not built for one.
+
+Two things earn a place here: a defect with evidence, or a claim nobody has tested. A hunch
+does not.
+
+---
+
+## P0 — unverified fixes (the largest risk right now)
+
+Everything below was fixed and deployed today, and **none of it has been confirmed by a human
+playing the game.** The automated suites cannot see most of it: 706 server tests, 68 Lua checks
+and the contract gate all passed while combat was totally broken this morning.
+
+| Check | Fix it proves | Signal if it failed |
+|---|---|---|
+| Unarmed attacks land | fatigue damage channel | `combat.dropped` in the server log |
+| Monsters attack away from the peer's start cell | peer placement | `authority.silent_peer` |
+| Two players in different cells both fight normally | one peer per cell | `simpeer.cells_unsimulated` |
+| A NEW character keeps its stats across a relog | baseline gate | stats flatten to 30s |
+| Plants contain loot | deferred container read | `CONTAINER NOT WATCHED` / `OUTBOUND DROPPED` |
+
+The diagnostics are self-silencing: on a healthy session they print nothing.
+
+---
+
+## P1 — known defects, not yet fixed
+
+### Rendering (never reproduced here; software GL hides them)
+
+* **Tree alpha renders as solid black on Brave.** Leading theory is Brave's fingerprinting
+  protection hiding `WEBGL_compressed_texture_s3tc`, which would fail the DXT upload. The page
+  now logs the compressed-format list at boot; one line from the affected machine settles it.
+  Eliminated already: the shader discards correctly (`lib/material/alpha.glsl`) and the
+  `osg::AlphaFunc` → `@alphaFunc` conversion is intact, so it is not the shader.
+* **Minimap renders solid white/blue/black.** Undiagnosed. Eliminated: no web-specific handling
+  in `localmap.cpp`, `GL_DEPTH24_STENCIL8` is valid WebGL2, and the `osg::PolygonMode` set there
+  is `FILL` (the GL default, so inert even though `glPolygonMode` does not exist in GLES). The
+  remaining suspect is the RTT path itself — the fallback is `PIXEL_BUFFER_RTT`, and pbuffers do
+  not exist under WebGL, so anything that declines the FBO path has no working fallback.
+
+### Input (never reproduced; keyboard input demonstrably works)
+
+* **Escape needs two presses to open the menu.**
+* **Intermittent camera/mouse spin.**
+
+Both were reported against a build that predates this cycle. Neither reproduces in the harness.
+Re-test before spending time on them.
+
+### Sync
+
+* **mwscript global sends can starve.** `quests.lua diffGlobals` walks `pairs(store)` — whose
+  order is undefined in Lua — and sends at most `MAX_GLOBALS_PER_TICK = 24`. If more than 24
+  globals change per tick, *which* ones get through is arbitrary, so a quest global can sit
+  behind churning ones indefinitely. TES3MP hit the same class and moved to a whitelist; the
+  scripts it names (banners flapping, objects bobbing on water) set values every other frame.
+  **Note the relay side is already right**: the server character-shadows every global by default
+  and relays only a small conservative `WORLD_GLOBALS` set, which is what avoids TES3MP's
+  two-players-fighting-over-one-variable ping-pong. This is a client-side send fairness bug, not
+  a design flaw.
+* **Dialogue topics are not synchronised.** Open/close is (`mpDialogueClosed`), the topic list is
+  not, so a topic one player unlocks does not appear for another. TES3MP synced these and got
+  "server freezes caused by infinite topic packet spam from local scripts" for its trouble — so
+  the absence may be the right trade, but it is currently undocumented and untested either way.
+
+---
+
+## P2 — claims nobody has tested
+
+* **The Morrowind / Tribunal / Bloodmoon main quests, played together.** TES3MP reports the
+  Tribunal main quest as "utterly broken" in multiplayer and expects the others to break the
+  same way, through scripted events rather than the journal. Our journal model differs (guests
+  borrow the host's journal via `journalTarget`), so the failure mode is likely different — but
+  nobody has played one through.
+* **`[cellReset]`.** A whole TES3MP fork exists because cell-reset scripts crashed it. Ours is
+  configured and unexercised.
+* **Many worlds at once.** The gateway is memory-governed now (`gateway.capacity` reports which
+  ceiling bound it) but has never run more than a handful of worlds simultaneously.
+
+---
+
+## P3 — design gaps for the stated goal
+
+* **Peers are per-world and per-host.** Coverage is uncapped now (`maxPeers = 0`), so every
+  occupied cell gets an engine — but they all land on one box. Hundreds of players spread over
+  hundreds of cells means hundreds of engines at ~487 MB and ~20% of a core each. Scaling past
+  one host means peers on separate machines, which is an architecture change, not a config one.
+* **`ovhcloud` is unprotected**, and pushing to it deploys production. No PR, no review, and
+  force-push is allowed. Left alone deliberately: releases are made by pushing to it, so a
+  required-review rule would block the release path until that flow changes.
+* **The default branch is `main`, not `dev`**, so fork PRs pre-select the wrong target.
+
+---
+
+## Fixed today (context for anything that resurfaces)
+
+Combat: unarmed hits refused server-side (`damage.health` demanded; the engine sends *either*
+health *or* fatigue, and hand-to-hand is fatigue). Peer placement: anchoring loads a cell,
+standing in it simulates it — the 7168 vs 8192 clamp. Multi-peer: one engine per occupied cell.
+Character stats: the pre-restore template was broadcast over the real character and became
+canonical. Containers: read before the engine had rolled the leveled loot, and the first read is
+canonical forever. Caps: inventory (512) and map (1024) were gameplay bounds masquerading as DoS
+bounds — one stack over and the whole inventory silently stopped persisting.
+
+The recurring shape, worth naming: **a snapshot taken a moment too early becomes canonical, and
+the system then defends the corruption.** Characters and containers were the same bug twice.
