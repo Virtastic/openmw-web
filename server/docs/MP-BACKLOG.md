@@ -49,6 +49,26 @@ both false CURRENT and false STALE. Bare identifiers are the only trustworthy pr
 
 ### The 10 scenario failures, RE-RUN against a current engine (2026-08-26)
 
+**Final tally: five of the ten now PASS, one is excluded, four remain and share one cause.**
+
+| Scenario | State | Why |
+|---|---|---|
+| `s70-time` | PASS | real product bug -- every rest teleported the sky (SNAP_HOURS) |
+| `s92-connection-lost` | PASS | real product gap -- no reconnect notice existed at all |
+| `s81-reconnect` | PASS | same notice |
+| `s99-overlays` | PASS | scenario drove the page's mirrors without the seq that gates them |
+| `s44-far-tier-correct` | PASS | scenario demanded a distance a WALK cannot cover in 16s |
+| `s43-avatar-load` | excluded | the only RETAIL one; retail cannot pass in a GPU-less container |
+| `s47-worlds-ui` | FAIL | world switch (below) |
+| `s48-switch-reconnect` | FAIL | world switch (below) |
+| `s57-world-revival` | FAIL | world switch (below) |
+| `s53-charslots` | FAIL | world switch (below), and it spawns no gateway at all |
+
+Two of the five were real product defects a player would have felt, and three were scenarios
+asserting against something that could not happen. Worth noting which is which: the suite was
+not simply wrong, and it was not simply right.
+
+
 The first triage was against a stale bundle and could attribute nothing. These results are
 against build 48, verified to contain today's Lua by identifier probe.
 
