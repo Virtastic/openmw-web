@@ -476,6 +476,23 @@ local function pollHarness()
             pcall(function() I.UI.removeMode('Barter') end)
         end
 
+        -- HARNESS ONLY. Learns a dialogue topic and mirrors what this player knows, so a
+        -- scenario can prove the whole path -- local discovery, relay, remote apply -- without
+        -- retail dialogue. Topics are just record ids, so unlike companions or merchants this
+        -- one feature IS testable against the demo content.
+        local learnTopic = cmd:match('^topic:(.+)$')
+        if learnTopic then
+            pcall(function() types.Player.addTopic(self, learnTopic) end)
+        end
+        if cmd == 'topics' then
+            local names = {}
+            pcall(function()
+                for id in pairs(types.Player.journal(self).topics) do names[#names + 1] = id end
+            end)
+            table.sort(names)
+            mp.testSet('topics', table.concat(names, ','))
+        end
+
         local ui_mode = cmd:match('^uimode:(%a+)$')
         if ui_mode == 'on' then I.UI.setMode('Interface', { windows = {} })
         elseif ui_mode == 'off' then I.UI.removeMode('Interface') end
