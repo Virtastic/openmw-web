@@ -747,6 +747,9 @@ local function puppetTick()
 end
 
 local function start()
+    -- net.lua cannot reach the player script, so it announces through this. Set before
+    -- anything can drop, or the very first outage would be the silent one.
+    net.noticeFn = notice
     if not mp.isEnabled() then return end
     if mp.vectorsEnabled() then dumpVectors() end
     -- M3 world-object hub wiring (see scripts/mp/objects.lua).

@@ -174,7 +174,13 @@ export default async function run(ctx) {
 
   // Transition notices: being moved between worlds, or losing your party, must SAY so.
   // Driven through the same mirror the engine writes, so this exercises the real watcher.
-  await a.eval(`window.__omwMP.worldClosedBy = 'Ada'; window.__omwMP.worldClosed = 'owner_went_solo'`)
+  // noticeSeq TOO, because that is what actually gates the watcher. A notice reports an
+  // EVENT rather than a state, so the page fires only when the sequence moves -- otherwise
+  // every unrelated mirror update would replay the last eviction. global.lua bumps it
+  // alongside the fields, so setting the fields without it is not what the engine does.
+  await a.eval(`window.__omwMP.worldClosedBy = 'Ada';
+    window.__omwMP.worldClosed = 'owner_went_solo';
+    window.__omwMP.noticeSeq = String(Number(window.__omwMP.noticeSeq || 0) + 1)`)
   await a.waitFor(`document.getElementById('omw-tour').classList.contains('show')
     && /Returning to your own world/.test(document.getElementById('omw-tour-title').textContent)`,
     4000, 'being evicted from a world shows a notice');
@@ -187,7 +193,15 @@ export default async function run(ctx) {
   await a.waitFor(`!document.getElementById('omw-tour').classList.contains('show')`, 3000,
     'the notice closed (click landed on: ' + noticeHit + ')');
 
-  await a.eval(`window.__omwMP.partyTravelBy = 'Ben'; window.__omwMP.partyTravelTo = 'vvardenfell'`)
+  // worldClosed is CLEARED first: the page picks one notice per event with an else-if, so a
+  // value left over from the eviction above would mask this one forever. The engine only
+  // ever has one of these set at a time, which is what makes the else-if correct there and
+  // makes leaving it set wrong here.
+  await a.eval(`window.__omwMP.worldClosed = '';
+    window.__omwMP.worldClosedBy = '';
+    window.__omwMP.partyTravelBy = 'Ben';
+    window.__omwMP.partyTravelTo = 'vvardenfell';
+    window.__omwMP.noticeSeq = String(Number(window.__omwMP.noticeSeq || 0) + 1)`)
   await a.waitFor(`document.getElementById('omw-tour').classList.contains('show')
     && /party is moving/i.test(document.getElementById('omw-tour-title').textContent)`,
     4000, 'a leader moving the party shows a notice');

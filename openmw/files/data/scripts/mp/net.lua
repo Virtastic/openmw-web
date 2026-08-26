@@ -99,6 +99,14 @@ local reconnectAt = nil -- real time to redial at, nil = not scheduled
 -- so keying "should I retry?" off the state alone gives up after exactly one attempt.
 local reconnecting = false
 
+-- Set by global.lua, the same way objects.init takes a noticeFn: this module cannot reach the
+-- player script itself, and on the headless sim peer there is no player to tell, so an unset
+-- hook is a no-op rather than something every call site has to guard.
+net.noticeFn = nil
+local function say(text)
+    if net.noticeFn then pcall(net.noticeFn, text) end
+end
+
 local function setState(s)
     if net.state == s then return end
     net.state = s
@@ -152,6 +160,14 @@ local function scheduleReconnect()
     mp.testSet('nextRetrySeconds', string.format('%.2f', delay))
     setState('Reconnecting')
     print(string.format('[mp] connection lost — reconnecting in %.1fs (attempt %d)', delay, reconnectAttempt))
+    -- TELL THE PLAYER, once. This only ever printed to a console nobody has open, so a dropped
+    -- player saw the world stop responding and nothing else -- and reloading is the one thing
+    -- they must not do, because it throws away the parked resume ticket that buys them an
+    -- in-place rejoin. Announced on the FIRST attempt only: the backoff can run for minutes
+    -- and a line per attempt would bury the chat it is sharing.
+    if reconnectAttempt == 1 then
+        say('Connection lost — reconnecting. Please wait rather than reloading.')
+    end
 end
 
 -- ------------------------------------------------------------------ SSO dead-end rescue
@@ -555,6 +571,9 @@ dispatch.SessionWelcome = function(msg)
     mp.testSet('profileUsername', tostring(net.profile.username or ''))
     -- Back in the world: forget the backoff so the NEXT outage starts from 1s again rather
     -- than inheriting a 30s ceiling from an earlier bad patch.
+    -- Announce the RECOVERY only if there was an outage to recover from; a first join is not
+    -- a reconnection and saying so would be a lie on every login.
+    if reconnecting then say('Reconnected.') end
     reconnectAttempt = 0
     reconnectAt = nil
     reconnecting = false
