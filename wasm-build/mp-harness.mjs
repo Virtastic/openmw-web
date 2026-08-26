@@ -592,7 +592,11 @@ async function launchClient(name, mpPort, extraParams = '', opts = {}) {
 
 // --- scenario runner -------------------------------------------------------------------------
 const wanted = process.argv.slice(2);
-const files = readdirSync(SCENARIO_DIR).filter((f) => f.endsWith('.mjs')).sort()
+// A leading underscore marks a LIBRARY, not a scenario. Without this the shared gateway
+// helper would be imported and run as one, fail for having no default export, and read as
+// a broken scenario.
+const files = readdirSync(SCENARIO_DIR)
+  .filter((f) => f.endsWith('.mjs') && !f.startsWith('_')).sort()
   .filter((f) => wanted.length === 0 || wanted.some((w) => f.startsWith(w)));
 if (files.length === 0) { console.error('no scenarios matched:', wanted.join(' ')); process.exit(2); }
 
