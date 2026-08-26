@@ -70,6 +70,7 @@ function handleAppearance(ctx: StateCtx, player: Player, body: LTable): boolean 
     // birthsign, and requiring one would reject that character's appearance entirely — which
     // withholds playerRecord on every join and costs them their inventory and position.
     ...(recordId(body.get('birthsign')) ? { birthsign: recordId(body.get('birthsign'))! } : {}),
+    ...(body.get('isWerewolf') === true ? { isWerewolf: true } : {}),
   };
   // hair is OPTIONAL: bald/hairless heads are legal in the game data, and demanding it would
   // permanently reject those characters' appearance. The rest identify the character and are

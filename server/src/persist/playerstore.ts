@@ -38,6 +38,10 @@ export interface PlayerAppearanceDoc {
   // A birthsign grants permanent abilities (Atronach's absorption, Lady's stat bonus).
   // Optional: a character may legitimately have none, and pre-existing docs have no field.
   birthsign?: string;
+  // Lycanthropic FORM. The disease-like half of lycanthropy is an ESM::Spell and already
+  // rides the spellbook; the form itself is a flag on NpcStats, so without this a werewolf
+  // relogged as a human. Absent means human, so old docs need no migration.
+  isWerewolf?: boolean;
 }
 
 // Type alias (not interface) so it structurally satisfies JsLike's index signature.

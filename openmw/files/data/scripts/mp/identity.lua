@@ -103,6 +103,16 @@ local function snapAppearance()
         -- survived by accident, because snapSpells captures them as spells -- which is also
         -- why they used to stack on every rejoin. No fallback: a character legitimately may
         -- have no birthsign, and inventing one is worse than carrying none.
+        -- WEREWOLF FORM. Unlike a disease -- which is an ESM::Spell in the spell list and so
+        -- already rides snapSpells -- lycanthropic FORM is a flag on NpcStats
+        -- (NpcStats::isWerewolf), so nothing carried it and a werewolf who relogged came back
+        -- human. It rides appearance because that is literally what it is, and because
+        -- appearance is relayed to other players: they see the wolf rather than a man running
+        -- around with a wolf's stats.
+        isWerewolf = (function()
+            local ok, v = pcall(function() return NPC.isWerewolf(self) end)
+            return (ok and v == true) or nil
+        end)(),
         birthsign = (function()
             local ok, v = pcall(function() return types.Player.getBirthSign(self) end)
             if ok and type(v) == 'string' and v ~= '' then return v end
@@ -407,6 +417,11 @@ function identity.applyRecord(record)
             -- the fallback for a session whose record has not arrived yet.
             name = record.appearance.name or (mp.getName and mp.getName()) or nil,
         })
+    end
+    -- Form is restored with the rest of the look, not in phase 2: applyChargen rebuilds the
+    -- player record, and setting the form before that would be undone by it.
+    if record.appearance and record.appearance.isWerewolf == true then
+        pcall(function() NPC.setWerewolf(self, true) end)
     end
     pendingPhase2 = record
     phase2At = core.getRealTime() + 0.5
