@@ -52,6 +52,31 @@ The diagnostics are self-silencing: on a healthy session they print nothing.
 Both were reported against a build that predates this cycle. Neither reproduces in the harness.
 Re-test before spending time on them.
 
+### NPCs and actors
+
+* **Corpse loot is not synchronised, so it duplicates.** `objects.lua` watches
+  `types.Container` instances only, and a dead NPC is an Actor, not a Container. The actor
+  event family is `ActorAuthorityGrant/Revoke/Info`, `ActorSnapshot`, `ActorDeath`, `ActorAI`,
+  `ActorEquip`, `ActorStatsDynamic` — there is **no actor-inventory event at all**. So looting a
+  body is entirely client-local: two players looting the same corpse each receive the full loot,
+  and the server is never told. For a design whose whole premise is server authority over items,
+  this is the largest remaining hole — every fight with a party produces duplicate equipment.
+  `noDrop` does not help; it strips unique-actor corpses in public worlds and nothing else.
+
+* **`ActorEquip` and `ActorAI` are dead protocol surface.** Both are in the server's relayed
+  event set (`worldstate.ts`), and the client never sends or handles either. An NPC that draws a
+  weapon, swaps armour or changes AI package mid-fight therefore looks different to every
+  player. The server-side half already exists, so this is a client gap rather than a design one.
+
+* **AI package state cannot be read for a foreign actor** from a global script, which is an
+  engine limitation rather than an oversight — `actors.lua` derives a coarse facing/anim hint
+  from motion instead and says so. Worth knowing when a puppet's animation looks wrong: the
+  information to do better is not currently exposed.
+
+* Working, checked while here: dynamic stats (hp/magicka/fatigue), death, and applied magic
+  effects all reach the victim's owner — `activeSpells:add` is driven from the CombatSpellHit
+  path, including the 0-based effect indexing the engine expects.
+
 ### Sync
 
 * ~~**mwscript global sends can starve.**~~ FIXED — `diffGlobals` now enqueues changed globals
