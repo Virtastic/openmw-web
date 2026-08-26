@@ -47,46 +47,68 @@ A per-file staleness sweep by grepping a source line against the bundle is NOT r
 should not be repeated: line endings differ between the tree and the bundle, so it reports
 both false CURRENT and false STALE. Bare identifiers are the only trustworthy probe.
 
-### The 10 scenario failures, triaged (all against the STALE bundle)
+### The 10 scenario failures, RE-RUN against a current engine (2026-08-26)
 
-Seven of ten are client-side behaviour and cannot be attributed until an engine carrying
-today's Lua reaches the harness. Recorded so the triage is not paid for twice.
+The first triage was against a stale bundle and could attribute nothing. These results are
+against build 48, verified to contain today's Lua by identifier probe.
 
-| Scenario | Failure | Cluster |
-|---|---|---|
-| `s47-worlds-ui` | timeout: the new session appears in the list | session/world creation UI |
-| `s48-switch-reconnect` | timeout: session created | session/world creation UI |
-| `s57-world-revival` | timeout: session created | session/world creation UI |
-| `s53-charslots` | timeout: reconnect lands on the selected character | session/world creation UI |
-| `s92-connection-lost` | timeout: in-game "connection lost" notice | in-game notices |
-| `s99-overlays` | timeout: eviction shows a notice | in-game notices |
-| `s81-reconnect` | got `* you are now in the public world.` instead of a reconnecting notice | in-game notices |
-| `s43-avatar-load` | timeout: roster reached 8 remote players | roster |
-| `s44-far-tier-correct` | precondition: A walked only 1840 units, short of the far-tier threshold | movement |
-| `s70-time` | B snapped instead of slewing (no intermediate sample) | movement |
+**Two were fixed and now PASS.** `s70-time` was a real product bug (see SNAP_HOURS below) and
+`s44-far-tier-correct` was a mis-calibrated scenario -- the harness `walk:` command hardcodes
+`run = false`, so 16s of walking covers ~1840 units against an assertion demanding 2400, which
+no healthy build could pass. Retimed to 28000ms.
 
-Two notes worth keeping. `s43`'s bots ARE connected -- the server log shows `w8_0`..`w8_7`
-chatting, spawning and hitting throughout -- while the soak reporter says `alive=0/8
-rss=NaNMB ping=NaNms`, so the reporter's probe is broken independently of whatever makes the
-roster fall short.
+**`s43-avatar-load` is the only RETAIL scenario among the ten**, and the 12 retail scenarios do
+not pass in the GPU-less harness container at all (see STATUS.md). It is excluded rather than
+counted as a product failure. Its soak reporter is separately broken -- the bots ARE connected
+(the server log shows `w8_0`..`w8_7` chatting, spawning and hitting throughout) while the
+reporter prints `alive=0/8 rss=NaNMB ping=NaNms`.
 
-`s44` and `s70` are now both RESOLVED, and neither was what it looked like. The movement
-envelope was never involved -- it only fires above 12000 units/sec, and both were investigated
-on an idle box (load 2.01 across 24 cores), so neither was load either.
+**The remaining seven are REAL and reproduce on a current engine.** They are two clusters, and
+the first has a confirmed single root cause:
 
-* `s44` was a MIS-CALIBRATED SCENARIO. The harness `walk:` command hardcodes `run = false`
-  (`player.lua`), so it walks at roughly 115 units/sec; 16s covers ~1840 units against an
-  assertion demanding 2400. No healthy build could ever have passed it. `WALK_MS` is now 28000,
-  sized off the measured rate with margin because walk speed varies with the character's stats.
+#### P0: in-game session creation is completely broken (401 at the gateway)
 
-* `s70` was a REAL PRODUCT BUG and the scenario was right to fail. `SNAP_HOURS` was 1.0, so a
-  delta of an hour or more snapped instead of slewing -- and a rest is 1-24 hours, so EVERY
-  rest by another player teleported everyone else's sky, the exact opposite of what
-  `world.lua`'s own header promises. The snap branch justified itself as "we just arrived
-  somewhere", but arrival is adopted outright and separately by `adoptedClock`, so arrival can
-  never reach that branch; what reaches it is a rest. Now 48.0, above the largest rest the game
-  can produce. An 8-hour rest slews in ~27 ticks at TICK 0.25s, so the sky rolls forward over
-  about seven seconds instead of jumping.
+`s47-worlds-ui`, `s48-switch-reconnect`, `s57-world-revival` and almost certainly
+`s53-charslots` all fail here. **No player can create a private or party world from inside the
+game.** Confirmed, not inferred:
+
+```
+worldbrowser.create_refused status=401 id=my-session mode=private account=bot-a-mtag4bm7
+```
+
+`directory.ts` takes the account from an Authorization header and never from the message body
+-- deliberately, and the comment explains why: a client-supplied account made the per-owner cap
+decorative, so one caller could exhaust every world slot on the host. That reasoning is sound.
+
+But `WorldBrowser.create` (world server -> gateway) sends only a JSON body and **no
+Authorization header at all**, so `resolveAccount` returns undefined and every create is 401.
+The header it would need holds a LOCKER SESSION token, which the browser/launcher has and the
+world server does not -- `Player` carries no token of any kind. This is not a missing line; the
+two halves disagree about who authenticates.
+
+Three ways out, and picking one is a decision about an auth boundary rather than a bug fix:
+
+1. Route the in-game create through the BROWSER, which already holds the locker token and
+   already talks to the gateway for the launcher.
+2. Give the world server its own server credential, and let a caller holding it name an account
+   in the body -- preserving the anti-forgery property, since only a trusted component could.
+3. Plumb the player's locker token through the join handshake onto `Player` and forward it.
+
+Until then the Worlds tab can LIST (that path needs no account) and cannot CREATE.
+
+Fixed on the way to finding this: the refusal was undiagnosable. Every status that is not 429
+or 503 collapsed into a bare `'refused'` with the status discarded, and the scenarios waited on
+a world count rather than reading the answer the server actually sent -- so a 401 presented as
+an opaque 30-second timeout. `worldbrowser.create_refused` now logs the status, and s47 asserts
+on the mirrored result.
+
+#### The notice cluster (3), not yet root-caused
+
+* `s92-connection-lost` -- timeout waiting for the in-game "connection lost" notice.
+* `s99-overlays` -- timeout waiting for eviction to show a notice.
+* `s81-reconnect` -- got `* you are now in the public world.` where a RECONNECTING notice was
+  expected. The most informative of the three: the client is not silent, it is saying something
+  else, which points at the notice path picking the wrong message rather than never firing.
 
 
 ---

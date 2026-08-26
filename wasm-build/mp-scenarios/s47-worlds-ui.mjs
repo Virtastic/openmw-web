@@ -94,6 +94,15 @@ export default async function run(ctx) {
     // The harness cannot type into the name field, so the create is driven by a test hook
     // that goes through the same uplink a button press would.
     await a.eval("Module.__omwMPCmd='worldcreate:my-session:private'");
+    // Read the SERVER'S ANSWER before waiting on the list. social.lua mirrors it to
+    // `worldCreate`, and waiting only on worldCount turned every refusal -- platform_full,
+    // too_many_sessions, unreachable -- into the same blind 30s timeout that says nothing
+    // about which one happened.
+    await a.waitFor('((window.__omwMP||{}).worldCreate||"") !== ""', STEP,
+      'the server answered the create request at all');
+    const created = JSON.parse(await a.eval('(window.__omwMP||{}).worldCreate'));
+    ctx.log(`  create answered: ok=${created.ok} error="${created.error ?? ''}"`);
+    assert.equal(created.ok, true, `creating a session was refused: ${created.error || 'no reason given'}`);
     await a.waitFor(`Number((window.__omwMP||{}).worldCount||0) > ${before}`, STEP,
       'the new session appears in the list');
     ctx.log(`  after create: ${await a.eval("(window.__omwMP||{}).worldCount")} worlds`);

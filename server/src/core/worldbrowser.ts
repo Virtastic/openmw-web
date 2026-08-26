@@ -108,6 +108,14 @@ export class WorldBrowser {
     if (!r || typeof r !== 'object') return { error: 'unreachable' };
     if ('__httpError' in r) {
       const status = (r as { __httpError: number }).__httpError;
+      // LOG THE STATUS. Everything that is not 429 or 503 collapses into a single 'refused'
+      // with the status discarded, so a 400, a 401 and a 404 are indistinguishable to the
+      // player AND to whoever is reading the log -- s47 spent two runs as an opaque 30s
+      // timeout for exactly this reason. The mapped strings stay as they are because the
+      // client keys its human-readable messages off them.
+      log('warn', 'worldbrowser.create_refused', {
+        status, id, mode, account: player.accountKey || '(none)',
+      });
       return { error: status === 429 ? 'too_many_sessions' : status === 503 ? 'platform_full' : 'refused' };
     }
     return { world: r as WorldEntry };
