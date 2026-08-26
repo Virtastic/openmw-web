@@ -168,6 +168,16 @@ local jumpQueued = false
 local prevJumpCtl = false
 local lastCellKey = nil
 local lastPoseMirror = 0
+-- Every GUI mode that can pay an NPC out of its purse. Verified against the engine rather
+-- than guessed: these are exactly the call sites of setGoldPool that a player can reach --
+-- tradewindow, trainingwindow, travelwindow, spellbuyingwindow, spellcreationdialog,
+-- enchanting and merchantrepair. Barter alone was covered for a while, which left the other
+-- six paying into a per-client purse that never empties.
+local GOLD_SERVICE_MODES = {
+    Barter = true, Training = true, Travel = true, SpellBuying = true,
+    SpellCreation = true, Enchanting = true, MerchantRepair = true,
+}
+
 local walkCmd = nil -- harness 'walk:<dx>,<dy>,<ms>' injection
 local pendingTestEquip = nil -- harness 'equip:<id>:<slot>': equip once the grant lands
 
@@ -692,11 +702,14 @@ return {
             if data.oldMode == 'Dialogue' and data.newMode ~= 'Dialogue' then
                 core.sendGlobalEvent('mpDialogueClosed', {})
             end
-            -- BARTER. `arg` is the actor the window belongs to (omw/ui.lua passes it straight
-            -- through), which is the merchant whose stock the server has to arbitrate.
-            if data.newMode == 'Barter' and data.arg then
+            -- PAID SERVICES. `arg` is the actor the window belongs to (pushGuiMode passes it
+            -- through uiModeChanged for every mode), which is the NPC the server has to
+            -- arbitrate. Barter is the only one that moves STOCK, but all seven pay the NPC
+            -- out of one field -- getBarterGold -- so all seven have to be watched or the
+            -- purse forks per client again through whichever window is not covered.
+            if GOLD_SERVICE_MODES[data.newMode] and data.arg then
                 core.sendGlobalEvent('mpBarterOpen', { merchant = data.arg })
-            elseif data.oldMode == 'Barter' and data.newMode ~= 'Barter' then
+            elseif GOLD_SERVICE_MODES[data.oldMode] and not GOLD_SERVICE_MODES[data.newMode] then
                 core.sendGlobalEvent('mpBarterClose', {})
             end
         end,

@@ -238,6 +238,23 @@ local function setContainerContents(obj, items)
     -- permanently out of step with the server that is arbitrating it.
     local content = lootStore(obj, true)
     if not content then return end
+    -- On a LIVE actor this store is the whole inventory, EQUIPPED ITEMS INCLUDED, and the
+    -- rewrite below destroys and recreates every object in it. Without this, applying a
+    -- merchant's canonical stock stripped that merchant naked on every other client: the
+    -- armour came back as a fresh unequipped copy. Slots are remembered by recordId rather
+    -- than by object because the objects themselves do not survive the rewrite --
+    -- setEquipment accepts a recordId and searches the store, which is exactly what is left.
+    local equipped = nil
+    if types.Actor.objectIsInstance(obj) then
+        local oke, eq = pcall(function() return types.Actor.getEquipment(obj) end)
+        if oke and eq then
+            equipped = {}
+            for slot, item in pairs(eq) do
+                local okr, rid = pcall(function() return item.recordId end)
+                if okr and rid then equipped[slot] = rid end
+            end
+        end
+    end
     pcall(function()
         for _, item in ipairs(content:getAll()) do
             item:remove()
@@ -247,6 +264,10 @@ local function setContainerContents(obj, items)
             if okc then created:moveInto(content) end
         end
     end)
+    -- After the refill, not inside it: the replacements have to be in the store to be found.
+    if equipped and next(equipped) then
+        pcall(function() types.Actor.setEquipment(obj, equipped) end)
+    end
     -- Never re-diff a network apply as a local op.
     local watch = containerWatch[obj.id]
     if watch then watch.last = snapshotContainer(obj) or watch.last end
