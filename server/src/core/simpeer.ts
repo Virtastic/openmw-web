@@ -136,9 +136,22 @@ export class SimPeerSupervisor {
       return;
     }
     // The cap is checked HERE and nowhere else, so there is exactly one way to create a peer.
-    if (this.peers.size >= this.deps.settings.maxPeers) {
+    //
+    // 0 MEANS UNLIMITED, AND IS THE DEFAULT, because a peer is not a luxury -- it is what makes
+    // the cell a player is standing in simulate at all. Refusing one does not shed load, it
+    // hands that player frozen NPCs and melee that never lands while everything else reports
+    // healthy. The legible place to run out of capacity is world CREATION, which refuses with
+    // platform_full and tells the player; a world that exists must simulate all of itself.
+    //
+    // A finite cap is therefore an operator's deliberate risk, and hitting it is an ERROR, not
+    // a warning: somebody is playing an unsimulated cell right now.
+    const cap = this.deps.settings.maxPeers;
+    if (cap > 0 && this.peers.size >= cap) {
       metrics.simPeerRefused.inc({ reason: 'at_cap' });
-      log('warn', 'simpeer.at_cap', { key, running: this.peers.size, cap: this.deps.settings.maxPeers });
+      log('error', 'simpeer.at_cap', {
+        key, running: this.peers.size, cap,
+        note: 'a player is in this cell and nothing will simulate it; raise [simPeer].maxPeers (0 = unlimited)',
+      });
       return;
     }
     const blocked = this.blockedUntil.get(key);

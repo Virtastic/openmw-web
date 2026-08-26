@@ -116,6 +116,18 @@ test('sim peer: an interior gets a legal name too, and still maps back', () => {
   assert.equal(sup.keyOfAccount(name), 'Balmora, Council Club');
 });
 
+// A CAPPED PEER IS A BROKEN CELL, NOT SHED LOAD. Every occupied cell needs its own engine to
+// be simulated at all, so refusing one hands that player frozen NPCs and melee that never
+// lands while every health check still reads green. maxPeers = 0 means unlimited and is the
+// shipped default; capacity is meant to run out at world CREATION, which refuses visibly.
+test('sim peer: maxPeers 0 means unlimited — every occupied cell gets an engine', () => {
+  const { sup, spawned } = harness({ maxPeers: 0 });
+  const cells = ['-2,-9', '-1,-9', '0,-9', '1,-9', '2,-9', 'Balmora, Council Club'];
+  for (const c of cells) sup.ensure(c, { cellKey: c, x: 0, y: 0, z: 0 });
+  assert.equal(spawned.length, cells.length, 'no cell may be left without a simulator');
+  assert.deepEqual(sup.keys().sort(), [...cells].sort());
+});
+
 test('sim peer: the cap is enforced, and refusing is not a crash', () => {
   const { sup, spawned } = harness({ maxPeers: 2 });
   sup.ensure('a');

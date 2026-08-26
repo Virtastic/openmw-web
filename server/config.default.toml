@@ -480,13 +480,19 @@ startCell = "Seyda Neen"
 # anchoring one exterior cell (2026-08-24, host load 1.4). Startup to SessionHello was 11.4 s
 # with that data set, which is why [simPeer] startTimeoutMs is generous. A peer anchoring
 # several busy cells will cost more.
-# 8, from the 487 MB measurement above against the 8g mem_limit in docker-compose.prod.yml:
-# 8 x 487MB = 3.9GB of peers, leaving over half the container for the world process, its stores
-# and headroom. Was 2, which predates one-peer-per-cell and meant a third occupied cell simply
-# went unsimulated. Raise it only WITH a measurement on the box you deploy to -- each peer is a
-# full engine ticking actors (~20% of a core when busy), so CPU runs out on a small host before
-# RAM does.
-maxPeers = 8
+# 0 = UNLIMITED, and that is the right default. A peer is not a luxury to ration: it is what
+# makes the cell a player is standing in simulate at all. Capping peers does not shed load, it
+# hands whoever is in the uncovered cell frozen NPCs and melee that never lands, while every
+# health check and log line still reads green. There is no graceful degradation available here.
+#
+# Run out of capacity at world CREATION instead -- that path refuses with platform_full and the
+# player is told. A world that exists must simulate all of itself.
+#
+# Each peer measured 487 MB RSS with full retail data and about 20% of a core while busy, so
+# size the HOST for the cells you expect to be occupied at once (see [worlds] memBudgetMb).
+# Setting a finite number here is a deliberate risk, and the server logs simpeer.at_cap as an
+# ERROR when it bites, because somebody is playing an unsimulated cell at that moment.
+maxPeers = 0
 idleReapMs = 120000               # reap a peer whose world has had no humans this long
 startTimeoutMs = 120000           # retail data load is slow; generous, and failure is non-fatal
 restartBackoffMs = 15000          # after a crash, wait before respawning (no hot crash loop)
