@@ -350,11 +350,20 @@ end
 local function openContainerNow(object, now, live)
     if not (object and object:isValid()) then return end
     local snapshot = snapshotContainer(object, live)
-    if snapshot and sendAddressed('ContainerOpen', object, { contents = countsToItems(snapshot) }) then
+    -- A merchant's purse rides the open alongside its stock: same object, same refKey, and it
+    -- becomes canonical on the same first-opener rule.
+    local gold = nil
+    if live and types.Actor.objectIsInstance(object) then
+        local okg, g = pcall(function() return types.Actor.getBarterGold(object) end)
+        if okg and type(g) == 'number' then gold = g end
+    end
+    if snapshot and sendAddressed('ContainerOpen', object,
+            { contents = countsToItems(snapshot), gold = gold }) then
         containerWatch[object.id] = {
             obj = object,
             last = snapshot,
             live = live, -- a merchant stays alive while we watch it; a corpse does not
+            gold = gold, -- baseline to diff the purse against when the window closes
             -- Poll on the NEXT tick, not a quarter second from now. A harvest can resolve and the
             -- object can go away inside that gap, and the take is then unreportable.
             nextPoll = 0,
@@ -405,6 +414,16 @@ function objects.onBarterClose()
     for id, watch in pairs(containerWatch) do
         if watch.live and watch.obj and watch.obj:isValid() then
             diffContainer(watch.obj, watch)
+            -- The purse delta, reported once for the whole trade. A DELTA rather than the new
+            -- total: two players trading with one merchant at the same time would each compute
+            -- a different absolute from their own view and the later write would erase the
+            -- earlier trade. Deltas commute, so both land.
+            if watch.gold ~= nil then
+                local okg, nowGold = pcall(function() return types.Actor.getBarterGold(watch.obj) end)
+                if okg and type(nowGold) == 'number' and nowGold ~= watch.gold then
+                    objects.sendGoldOp(watch.obj, math.floor(nowGold - watch.gold))
+                end
+            end
             containerWatch[id] = nil
         end
     end
@@ -561,16 +580,26 @@ handlers.MP_DoorState = function(data)
     end
 end
 
+-- The merchant's purse is server truth like the stock. Applied whenever it is present so a
+-- trader a second player already traded with does not offer THIS player a full purse again.
+local function applyMerchantGold(obj, gold)
+    if not (obj and obj:isValid()) or type(gold) ~= 'number' then return end
+    if not types.Actor.objectIsInstance(obj) then return end
+    pcall(function() types.Actor.setBarterGold(obj, math.max(0, math.floor(gold))) end)
+end
+
 handlers.MP_ContainerState = function(data)
     local obj = resolveBody(data)
     local key = data.net and netKey(data.net) or (obj and refKeyOfObj(obj))
     if key then trackContainerData(key, data.items or {}, data.stateSeq) end
     if obj then setContainerContents(obj, data.items or {}) end
+    applyMerchantGold(obj, data.gold)
 end
 
 handlers.MP_ContainerUpdate = function(data)
     local obj = resolveBody(data)
     local key = data.net and netKey(data.net) or (obj and refKeyOfObj(obj))
+    applyMerchantGold(obj, data.gold)
     local delta = data.delta or {}
     if key then
         local tracked = containerData[key] or { items = {}, seq = 0 }
@@ -873,6 +902,23 @@ function objects.sendContainerOp(obj, op, itemId, n)
 end
 
 -- Direct-address variant for test commands driving a container we only know by netId.
+-- Merchant purse delta. Same addressing and refusal protocol as a take/put, so it inherits the
+-- chargen-cell and unaddressable guards rather than needing its own.
+function objects.sendGoldOp(obj, delta)
+    if delta == 0 then return nil end
+    if isChargenCell(cellKeyOfObj(obj)) then return nil end
+    local addr = addrOf(obj)
+    if not addr then
+        dropOut('ContainerOpRequest', 'unaddressable-gold', tostring(obj.recordId))
+        return nil
+    end
+    opCounter = opCounter + 1
+    local body = { opId = opCounter, op = 'gold', goldDelta = delta, cellKey = cellKeyOfObj(obj) }
+    for k, v in pairs(addr) do body[k] = v end
+    mp.sendEvent('ContainerOpRequest', body)
+    return opCounter
+end
+
 function objects.sendContainerOpByNet(netId, op, itemId, n, cellKey)
     opCounter = opCounter + 1
     pendingOps[opCounter] = { op = op, itemId = itemId, n = n, key = netKey(netId), obj = netToObj[netId], at = core.getRealTime() }

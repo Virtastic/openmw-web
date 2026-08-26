@@ -22,6 +22,10 @@ const MAX_RECORD_ID = 64;
 const MAX_COUNT = 10000;
 const MAX_CELL_KEY = 128;
 const MAX_CONTAINER_ENTRIES = 512;
+// A single barter window cannot move more gold than the richest vendor in the game holds many
+// times over. This does not stop a player selling honestly; it bounds GRIEFING -- a negative
+// delta drains a merchant's purse for everyone in the world, and nothing else caps it.
+const MAX_GOLD_DELTA = 1000000;
 
 const WORLD_EVENTS = new Set([
   'ObjectSpawnRequest',
@@ -715,6 +719,9 @@ export class WorldState {
       }
       // origin: a copy, not an alias — `items` is mutated in place by every take/put.
       cont = { items: contents, stateSeq: 1, origin: contents.map((i) => ({ ...i })) };
+      // A merchant's purse becomes canonical on the same first-opener rule as the stock.
+      const gold = finite(body.get('gold'));
+      if (gold !== undefined && gold >= 0) cont.gold = Math.floor(gold);
       doc.containers[ref.key] = cont;
       this.cells.markDirty(cellKey);
     }
@@ -722,6 +729,7 @@ export class WorldState {
       ...objRefToJs(ref),
       items: cont.items.map((i) => ({ ...i })),
       stateSeq: cont.stateSeq,
+      ...(cont.gold !== undefined ? { gold: cont.gold } : {}),
     });
   }
 
@@ -733,7 +741,13 @@ export class WorldState {
     const op = body.get('op');
     const itemId = str(body.get('itemId'), MAX_RECORD_ID);
     const n = itemCount(body.get('n'));
-    if (opId === undefined || (op !== 'take' && op !== 'put') || !itemId || n === undefined) {
+    // 'gold' is the merchant-purse op and carries a SIGNED delta instead of an item, so it is
+    // validated separately from take/put rather than bent through itemCount (which requires >= 1).
+    const isGold = op === 'gold';
+    const goldDelta = isGold ? finite(body.get('goldDelta')) : undefined;
+    if (opId === undefined || (op !== 'take' && op !== 'put' && !isGold)
+        || (isGold ? (goldDelta === undefined || !Number.isInteger(goldDelta)
+                     || Math.abs(goldDelta) > MAX_GOLD_DELTA) : (!itemId || n === undefined))) {
       this.invalid(player, 'ContainerOpRequest');
       return;
     }
@@ -742,6 +756,29 @@ export class WorldState {
       player.peer.sendEvent('ContainerOpResult', { opId, ok, ...(reason ? { reason } : {}), stateSeq });
     if (!cont) {
       reply(false, 'nostate', 0); // container never opened -> no canonical to transact on
+      return;
+    }
+    if (isGold) {
+      // A DELTA, not an absolute. Two players trading with the same merchant at once would
+      // each compute a different absolute from their own stale view and the later write would
+      // erase the earlier trade; deltas commute, so both land.
+      const before = cont.gold ?? 0;
+      const after = Math.max(0, before + (goldDelta ?? 0));
+      cont.gold = after;
+      cont.stateSeq += 1;
+      this.cells.markDirty(cellKey);
+      reply(true, undefined, cont.stateSeq);
+      this.relayCellExcept(cellKey, player.id, 'ContainerUpdate', {
+        ...objRefToJs(ref), gold: after, stateSeq: cont.stateSeq,
+      });
+      log('debug', 'world.merchant_gold', { by: player.name, before, after, cellKey });
+      return;
+    }
+    // Past the gold branch this is take/put, so both are present -- but the validation above is
+    // now a disjunction and no longer narrows them for the compiler. Re-assert rather than
+    // cast: a cast would also silence a REAL regression here later.
+    if (!itemId || n === undefined) {
+      this.invalid(player, 'ContainerOpRequest');
       return;
     }
     if (op === 'put' && this.contained(player)) {

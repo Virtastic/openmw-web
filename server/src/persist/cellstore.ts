@@ -57,7 +57,11 @@ export interface CellDoc {
   // already standing there has no idea what was originally inside, and TES3MP's answer —
   // kick everyone, or let them desync — is the failure this exists to avoid. It also
   // makes merchant gold come back, the other half of that same complaint.
-  containers: Record<string, { items: ContainerItems; stateSeq: number; origin?: ContainerItems }>;
+  // `gold` is a MERCHANT's purse, present only for containers that are actually traders.
+  // It has to be canonical for the same reason the stock does: left per-client, every player
+  // sells into a purse that never empties, which is the other half of the merchant
+  // duplication. Trainers touch this field and nothing else.
+  containers: Record<string, { items: ContainerItems; stateSeq: number; origin?: ContainerItems; gold?: number }>;
   // M4: last actor snapshot folded when the cell went dormant ({actors:[...]}, JSON-safe),
   // and per-actor highest processed deathNo (dedup + death persistence).
   actorOverrides?: unknown;
