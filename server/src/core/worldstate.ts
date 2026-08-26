@@ -719,9 +719,14 @@ export class WorldState {
       }
       // origin: a copy, not an alias — `items` is mutated in place by every take/put.
       cont = { items: contents, stateSeq: 1, origin: contents.map((i) => ({ ...i })) };
-      // A merchant's purse becomes canonical on the same first-opener rule as the stock.
+      // A merchant's purse becomes canonical on the same first-opener rule as the stock, and
+      // goldOrigin is captured for the same reason `origin` is: a restock has to have
+      // something to restore to, and only the first opener ever sees the untouched figure.
       const gold = finite(body.get('gold'));
-      if (gold !== undefined && gold >= 0) cont.gold = Math.floor(gold);
+      if (gold !== undefined && gold >= 0) {
+        cont.gold = Math.floor(gold);
+        cont.goldOrigin = cont.gold;
+      }
       doc.containers[ref.key] = cont;
       this.cells.markDirty(cellKey);
     }

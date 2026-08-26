@@ -61,7 +61,7 @@ export interface CellDoc {
   // It has to be canonical for the same reason the stock does: left per-client, every player
   // sells into a purse that never empties, which is the other half of the merchant
   // duplication. Trainers touch this field and nothing else.
-  containers: Record<string, { items: ContainerItems; stateSeq: number; origin?: ContainerItems; gold?: number }>;
+  containers: Record<string, { items: ContainerItems; stateSeq: number; origin?: ContainerItems; gold?: number; goldOrigin?: number }>;
   // M4: last actor snapshot folded when the cell went dormant ({actors:[...]}, JSON-safe),
   // and per-actor highest processed deathNo (dedup + death persistence).
   actorOverrides?: unknown;
@@ -273,8 +273,13 @@ export class CellStore {
         // "first open" and adopts the opener's client-declared contents as canonical, so the
         // very next open after a reset re-seeded the full roll. A row that persists means
         // there is no "first open" ever again.
+        // gold rides along for the same reason the row does: dropping it re-arms the faucet
+        // for the PURSE, because containerOpen adopts the opener's client-declared gold when
+        // the field is missing. A carried-forward merchant stays as drained as it was.
         doc.containers[key] = { items: cont.items.map((i) => ({ ...i })), stateSeq: cont.stateSeq + 1,
-          ...(cont.origin ? { origin: cont.origin.map((i) => ({ ...i })) } : {}) };
+          ...(cont.origin ? { origin: cont.origin.map((i) => ({ ...i })) } : {}),
+          ...(cont.gold !== undefined ? { gold: cont.gold } : {}),
+          ...(cont.goldOrigin !== undefined ? { goldOrigin: cont.goldOrigin } : {}) };
         continue;
       }
       if (!cont.origin) continue; // pre-restock doc: nothing to restore it to
@@ -282,7 +287,10 @@ export class CellStore {
       // stateSeq keeps CLIMBING across a reset. A client that reconnects mid-reset must
       // never see a lower seq than one it already applied, or its own staleness guard
       // would reject the restock as an out-of-date frame.
-      doc.containers[key] = { items, stateSeq: cont.stateSeq + 1, origin: cont.origin.map((i) => ({ ...i })) };
+      // A restock refills the purse too -- a merchant whose stock is back but whose gold is
+      // still zero cannot buy anything, which is half a restock.
+      doc.containers[key] = { items, stateSeq: cont.stateSeq + 1, origin: cont.origin.map((i) => ({ ...i })),
+        ...(cont.goldOrigin !== undefined ? { gold: cont.goldOrigin, goldOrigin: cont.goldOrigin } : {}) };
     }
     this.cache.set(cellKey, doc);
     this.dirty.add(cellKey);

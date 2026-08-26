@@ -37,6 +37,51 @@ test('resetCell restocks containers to their first-seen contents, climbing state
   await cells.close();
 });
 
+test("a reset refills a merchant's purse, and never drops it", async () => {
+  const dir = tmpDataDir();
+  const cells = new CellStore(dir);
+  const doc = await cells.get('Balmora, Bar');
+  doc.containers['c:42:0'] = {
+    items: [{ id: 'gold_001', n: 3 }],
+    stateSeq: 7,
+    origin: [{ id: 'gold_001', n: 100 }],
+    gold: 12,          // sold into, nearly empty
+    goldOrigin: 800,   // what the first opener saw
+  };
+  cells.markDirty('Balmora, Bar');
+
+  const restored = await cells.resetCell('Balmora, Bar');
+  const cont = restored.containers['c:42:0'];
+  assert.ok(cont, 'the container survives the reset');
+  // Half a restock is no restock: a merchant whose stock is back but whose purse is still
+  // empty cannot buy anything from anyone.
+  assert.equal(cont.gold, 800, 'the purse is refilled to what the first opener saw');
+  assert.equal(cont.goldOrigin, 800, 'and the base survives so the NEXT reset can refill too');
+  await cells.close();
+});
+
+test('a carried-forward container keeps its drained purse instead of re-arming it', async () => {
+  const dir = tmpDataDir();
+  // restockOnReset false = shared world: the row is carried forward looted as it stands.
+  const cells = new CellStore(dir, false);
+  const doc = await cells.get('Balmora, Bar');
+  doc.containers['c:42:0'] = {
+    items: [{ id: 'gold_001', n: 3 }], stateSeq: 7,
+    origin: [{ id: 'gold_001', n: 100 }], gold: 12, goldOrigin: 800,
+  };
+  cells.markDirty('Balmora, Bar');
+
+  const restored = await cells.resetCell('Balmora, Bar');
+  const cont = restored.containers['c:42:0'];
+  assert.ok(cont, 'the row is carried forward, not dropped');
+  // Dropping the field would re-arm the faucet for the PURSE exactly as dropping the row
+  // re-armed it for the stock: containerOpen adopts the opener's client-declared gold
+  // whenever the field is missing, so the next player to walk up would refill the merchant
+  // from their own client. 12, not 800 and not undefined.
+  assert.equal(cont.gold, 12, 'the drained purse is carried forward, not reset and not dropped');
+  await cells.close();
+});
+
 test('a reset hands standing players the restored truth instead of kicking them', async (t) => {
   const dataDir = tmpDataDir();
   const server = await startServer({ requireGameData: false,
