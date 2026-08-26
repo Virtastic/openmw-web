@@ -31,12 +31,21 @@ local MAP_FLUSH = 5.0
 -- forward over a couple of seconds rather than teleporting it.
 local SLEW_FRACTION = 0.2
 local SLEW_MIN_HOURS = 0.02 -- below this the difference is engine jitter; leave it alone
--- Above this, SNAP instead of slewing. Slew exists to absorb drift between two clocks that
--- already agree; it is the wrong tool for ADOPTING a clock. Arriving in a world whose time is
--- half a day from your own, a 20%-per-tick slew crawls — so two players standing next to each
--- other saw one in daylight and one at night, for minutes. A jump that large is a new world,
--- not drift.
-local SNAP_HOURS = 1.0
+-- Above this, SNAP instead of slewing. This was 1.0, and at that value it caught the one case
+-- it must never catch: ANOTHER PLAYER RESTING. A rest is 1-24 hours, so every rest snapped,
+-- and the sky teleported for everyone else in the world -- the exact opposite of what the
+-- header of this file promises.
+--
+-- The old justification was "a jump this large is a new world, not drift". That is no longer
+-- true of anything reaching this branch: arrival is adopted OUTRIGHT and separately, by
+-- `adoptedClock` in the WorldTime handler below, which takes the world's time in one step and
+-- says so. By the time the slew loop runs, arrival has already been absorbed, so a large delta
+-- here is a rest -- and a rest is precisely what should roll the sky rather than teleport it.
+--
+-- Sized to sit above the largest rest the game can produce (a single wait tops out at 24
+-- hours) with room to spare. What is left above the line is a genuine desync or a missed
+-- adoption, where taking the world's time in one step is still right.
+local SNAP_HOURS = 48.0
 -- An unexplained local jump this large means the ENGINE advanced time (rest/wait/script).
 local LOCAL_JUMP_HOURS = 0.05
 local MAX_REQUEST_HOURS = 30 * 24 -- server cap (worldtime.ts MAX_ADVANCE_HOURS)
@@ -242,7 +251,7 @@ local function tickClock(now)
         if lastTickAt then targetAbs = targetAbs + (now - lastTickAt) * (timeScale or 0) / 3600 end
         local delta = targetAbs - localAbs
         if math.abs(delta) >= SLEW_MIN_HOURS then
-            -- Big gap = we just arrived somewhere; take the world's time as given.
+            -- A gap this big is a desync, not arrival (see SNAP_HOURS) -- take it in one step.
             local step = (math.abs(delta) >= SNAP_HOURS) and delta or (delta * SLEW_FRACTION)
             local newAbs = localAbs + step
             if writeLocalTime(fromAbs(newAbs)) then

@@ -38,6 +38,57 @@ None of that covers the five client fixes made after the deployed engine was bui
 is baked into `openmw.data`, so a scenario run tests the engine as BUILT, not the tree. Those
 are on 72/72 Lua checks until the next engine build reaches the harness.
 
+**Proven, not assumed (2026-08-26).** The bundle the harness serves is measurably behind the
+tree: `lootStore` and `objects.onBarterOpen` are present in `objects.lua` on the harness host
+and absent from `play/openmw.data` built 25 minutes LATER. Do not date-check this -- the
+mtimes look current. Probe for a symbol.
+
+A per-file staleness sweep by grepping a source line against the bundle is NOT reliable and
+should not be repeated: line endings differ between the tree and the bundle, so it reports
+both false CURRENT and false STALE. Bare identifiers are the only trustworthy probe.
+
+### The 10 scenario failures, triaged (all against the STALE bundle)
+
+Seven of ten are client-side behaviour and cannot be attributed until an engine carrying
+today's Lua reaches the harness. Recorded so the triage is not paid for twice.
+
+| Scenario | Failure | Cluster |
+|---|---|---|
+| `s47-worlds-ui` | timeout: the new session appears in the list | session/world creation UI |
+| `s48-switch-reconnect` | timeout: session created | session/world creation UI |
+| `s57-world-revival` | timeout: session created | session/world creation UI |
+| `s53-charslots` | timeout: reconnect lands on the selected character | session/world creation UI |
+| `s92-connection-lost` | timeout: in-game "connection lost" notice | in-game notices |
+| `s99-overlays` | timeout: eviction shows a notice | in-game notices |
+| `s81-reconnect` | got `* you are now in the public world.` instead of a reconnecting notice | in-game notices |
+| `s43-avatar-load` | timeout: roster reached 8 remote players | roster |
+| `s44-far-tier-correct` | precondition: A walked only 1840 units, short of the far-tier threshold | movement |
+| `s70-time` | B snapped instead of slewing (no intermediate sample) | movement |
+
+Two notes worth keeping. `s43`'s bots ARE connected -- the server log shows `w8_0`..`w8_7`
+chatting, spawning and hitting throughout -- while the soak reporter says `alive=0/8
+rss=NaNMB ping=NaNms`, so the reporter's probe is broken independently of whatever makes the
+roster fall short.
+
+`s44` and `s70` are now both RESOLVED, and neither was what it looked like. The movement
+envelope was never involved -- it only fires above 12000 units/sec, and both were investigated
+on an idle box (load 2.01 across 24 cores), so neither was load either.
+
+* `s44` was a MIS-CALIBRATED SCENARIO. The harness `walk:` command hardcodes `run = false`
+  (`player.lua`), so it walks at roughly 115 units/sec; 16s covers ~1840 units against an
+  assertion demanding 2400. No healthy build could ever have passed it. `WALK_MS` is now 28000,
+  sized off the measured rate with margin because walk speed varies with the character's stats.
+
+* `s70` was a REAL PRODUCT BUG and the scenario was right to fail. `SNAP_HOURS` was 1.0, so a
+  delta of an hour or more snapped instead of slewing -- and a rest is 1-24 hours, so EVERY
+  rest by another player teleported everyone else's sky, the exact opposite of what
+  `world.lua`'s own header promises. The snap branch justified itself as "we just arrived
+  somewhere", but arrival is adopted outright and separately by `adoptedClock`, so arrival can
+  never reach that branch; what reaches it is a rest. Now 48.0, above the largest rest the game
+  can produce. An 8-hour rest slews in ~27 ticks at TICK 0.25s, so the sky rolls forward over
+  about seven seconds instead of jumping.
+
+
 ---
 
 ## P1 — known defects, not yet fixed
@@ -139,24 +190,25 @@ loot bug already fixed here.
 
 ### Shared state that currently forks per player (duplication)
 
-* **Merchants — STOCK now shared, GOLD still not.** The stock half is fixed: opening a barter
-  window registers the merchant on the same authoritative container path a chest uses (deferred
-  open, take/put watch, ContainerOpRequest arbitrated server-side), so two players can no longer
-  each buy the same unique item. What remains is the PURSE: `getBarterGold`/`setBarterGold` exist
-  and are not yet synced, so a trader's gold is still per-client and each player can sell into a
-  purse that never empties. Trainers share this exact gap and no other. Original entry follows.
+* ~~**Merchants and trainers.**~~ FIXED, both halves. STOCK: opening a barter window registers
+  the merchant on the same authoritative container path a chest uses (deferred open, take/put
+  watch, `ContainerOpRequest` arbitrated server-side), so two players cannot each buy the same
+  unique item. PURSE: the client reads `getBarterGold` on open, the server keeps it beside the
+  container on the same first-opener rule, and later openers apply the canonical figure with
+  `setBarterGold`.
 
-  Historic: No reference to barter, trader stock or trader gold anywhere. A shop's
-  inventory and purse are therefore per-client: two players can each buy the SAME unique item
-  from the same merchant, and each sell the same loot to a purse that never depletes. This is
-  the corpse-loot bug at economic scale, and it is reachable in the first ten minutes of play.
-  Cost of ignoring it: the shared economy is meaningless, which undermines loot mattering at all.
+  The transaction is a SIGNED DELTA, not a new total -- two players trading with one merchant
+  at once would each compute a different absolute from their own view and the later write would
+  erase the earlier trade. Deltas commute. The delta is also bounded: a forged one cannot
+  enrich the sender, but an unbounded negative one would drain a trader for the whole world.
 
-* **Trainers — the SAME problem as merchants, not a separate one.** Re-checked: the skill gain
-  and the buyer's gold are both on the buyer and both already synced (PlayerSkills, and gold is
-  an inventory item). The only shared state training touches is the trainer's purse --
-  `trainingwindow.cpp:202` does `setGoldPool(getGoldPool() + price)`. So merchants and trainers
-  are one item: BARTER GOLD AND TRADER STOCK ARE NOT SHARED. Fixing that fixes both.
+  Trainers touch this field and no other (`trainingwindow.cpp:202` does
+  `setGoldPool(getGoldPool() + price)`), so they are fixed by the same change. The skill gain
+  and the buyer's gold were already synced.
+
+  Covered by `economy.test.ts`, negative-controlled (raising the cap fails the test). NOT yet
+  exercised end-to-end in a browser -- the harness runs against a stale engine bundle, so the
+  client half is verified only by review and Lua parse.
 
 * ~~**Soul gems / recharge.**~~ FIXED by the item-state work: `itemData.soul` and
   `enchantmentCharge` now persist, so a filled gem stays filled and a drained item stays

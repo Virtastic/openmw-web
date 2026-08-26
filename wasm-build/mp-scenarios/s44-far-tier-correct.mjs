@@ -16,7 +16,12 @@ const PUPPET_SPAWN_TIMEOUT = 15_000;
 // Long enough to carry A well past the far tier's 1024-unit reposition threshold. A shorter
 // walk lets the puppet pass by never moving at all — the error stays under the threshold, so
 // a completely broken reposition path scores the same as a working one.
-const WALK_MS = 16000;
+// 16000 was not enough and the failure looked like a movement bug for a while. The harness
+// 'walk:' command hardcodes run = false (player.lua), so this is a WALK at roughly 115
+// units/sec -- 16s covers ~1840 units against an assertion demanding 2400, which no healthy
+// build could ever pass. Sized off the measured rate with margin rather than trimmed to just
+// clear it, because walk speed varies with the character's stats.
+const WALK_MS = 28000;
 const CONVERGE_TIMEOUT = 20_000;
 // puppet.lua SNAP_BY_TIER far = 2048 units, plus interpolation delay and the 2 Hz mirrors.
 // Beyond this the avatar is not "degraded", it is lost. Wide because repositioning is the
