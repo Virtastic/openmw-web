@@ -58,10 +58,15 @@ const worldsOf = async (acct) => {
   }
 };
 
-const playersIn = async (port) => {
+// Asked of the GATEWAY, by world id. The directory strips a world's internal host and port
+// from everything it serves -- there is a test asserting it must not leak them -- so this used
+// to poll http://127.0.0.1:undefined/status and read the silence as 'nobody is there'.
+// playerCount survives the sanitiser.
+const playersIn = async (id) => {
   try {
-    const st = await (await fetch(`http://127.0.0.1:${port}/status`, { signal: AbortSignal.timeout(1500) })).json();
-    return st.playerCount ?? 0;
+    const w = await (await fetch(`http://127.0.0.1:${GW_PORT}/worlds/${id}`,
+      { signal: AbortSignal.timeout(1500) })).json();
+    return w.playerCount ?? 0;
   } catch {
     return -1;
   }
@@ -126,7 +131,35 @@ export default async function run(ctx) {
     // switch died at 'no locker session' before touching the network -- so this scenario was
     // asserting against a path it could not reach. The gateway only serves this when harness
     // auth is already enabled, which is exactly where this runs.
-    const a = await ctx.launchClient('bot-a', '');
+    // THE PRODUCTION FLOW, and every part of it is load-bearing (see s47 for the evidence).
+    // The client dials THROUGH the gateway, because worldUrlOf derives a switch destination
+    // from the current connection's authority plus /w/<id> -- a client wired straight to a
+    // world derives a path no world serves. And it arrives in its OWN world, because a
+    // brand-new account is refused by public with "finish creating your character in your
+    // private world first". The launcher creates that world through the gateway with the
+    // player's locker session; this does the same.
+    const acctName = `bot-a-${ctx.runId}`;
+    const soloToken = await harnessSession(GW_PORT, acctName);
+    const soloId = 'solo-bot-a';
+    const mk = await fetch(`http://127.0.0.1:${GW_PORT}/worlds`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${soloToken}` },
+      body: JSON.stringify({ id: soloId, mode: 'private' }),
+    });
+    assert.equal(mk.status, 200, `the player's own world must be creatable (${mk.status})`);
+    const soloBy = Date.now() + 60_000;
+    let soloUp = false;
+    while (Date.now() < soloBy) {
+      try {
+        const w = await (await fetch(`http://127.0.0.1:${GW_PORT}/worlds/${soloId}`)).json();
+        if (w.up) { soloUp = true; break; }
+      } catch { /* still booting */ }
+      await ctx.sleep(1000);
+    }
+    assert.ok(soloUp, "the player's own world must come up");
+    const a = await ctx.launchClient('bot-a', '', {
+      mpUrl: `ws://127.0.0.1:${GW_PORT}/w/${soloId}`,
+    });
     await grantLockerSession(a, GW_PORT, `bot-a-${ctx.runId}`);
     const acct = a.name.toLowerCase();
 
@@ -136,14 +169,16 @@ export default async function run(ctx) {
     await a.eval("Module.__omwMPCmd='worldcreate:revivetest:private'");
     await a.waitFor("Number((window.__omwMP||{}).worldCount||0) > 1", STEP, 'session created');
 
-    let ownPort = 0;
+    // `up`, not a port: the gateway publishes no world ports, so the old `ownPort = w.port`
+    // captured undefined and then failed its own `> 0` check the instant the world came up.
+    let ownUp = false;
     const upBy = Date.now() + 60_000;
     while (Date.now() < upBy) {
       const w = (await worldsOf(acct)).find((x) => x.id === 'revivetest');
-      if (w?.up) { ownPort = w.port; break; }
+      if (w?.up) { ownUp = true; break; }
       await ctx.sleep(1000);
     }
-    assert.ok(ownPort > 0, 'the private world must come up');
+    assert.ok(ownUp, 'the private world must come up');
 
     await a.eval("Module.__omwMPCmd='socialtab:players'");
     await a.eval("Module.__omwMPCmd='socialtab:worlds'");
@@ -153,11 +188,11 @@ export default async function run(ctx) {
     let joined = false;
     const joinBy = Date.now() + 60_000;
     while (Date.now() < joinBy) {
-      if (await playersIn(ownPort) > 0) { joined = true; break; }
+      if (await playersIn('revivetest') > 0) { joined = true; break; }
       await ctx.sleep(1000);
     }
     assert.ok(joined, 'the player must first arrive in their own world');
-    ctx.log(`  in their own world on ${ownPort}`);
+    ctx.log('  in their own world');
 
     // --- leave for the public world, and let the empty one be reaped --------------------
     await a.eval("Module.__omwMPCmd='where:public'");
@@ -180,13 +215,12 @@ export default async function run(ctx) {
     // was revived under its owner AND that the ladder rescued itself with a fresh ticket.
     await a.eval("Module.__omwMPCmd='where:solo'");
 
-    let home = false, homePort = 0;
+    let home = false;
     const homeBy = Date.now() + 90_000;
     while (Date.now() < homeBy) {
       const w = (await worldsOf(acct)).find((x) => x.id === 'revivetest');
       if (w?.up) {
-        homePort = w.port;
-        if (await playersIn(homePort) > 0) { home = true; break; }
+        if (await playersIn('revivetest') > 0) { home = true; break; }
       }
       await ctx.sleep(1000);
     }
@@ -199,7 +233,7 @@ export default async function run(ctx) {
       + 'ladder must rescue itself with a fresh ticket rather than falling to the password path');
     assert.ok(!/AUTH_FAILED/.test(lastErr),
       `got home, but only after surfacing ${lastErr} to the player`);
-    ctx.log(`  ok: their world was revived on ${homePort} and they walked back in`);
+    ctx.log('  ok: their world was revived and they walked back in');
   } finally {
     stopGw();
   }

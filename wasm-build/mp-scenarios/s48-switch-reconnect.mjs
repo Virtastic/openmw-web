@@ -121,7 +121,35 @@ export default async function run(ctx) {
     // switch died at 'no locker session' before touching the network -- so this scenario was
     // asserting against a path it could not reach. The gateway only serves this when harness
     // auth is already enabled, which is exactly where this runs.
-    const a = await ctx.launchClient('bot-a', '');
+    // THE PRODUCTION FLOW, and every part of it is load-bearing (see s47 for the evidence).
+    // The client dials THROUGH the gateway, because worldUrlOf derives a switch destination
+    // from the current connection's authority plus /w/<id> -- a client wired straight to a
+    // world derives a path no world serves. And it arrives in its OWN world, because a
+    // brand-new account is refused by public with "finish creating your character in your
+    // private world first". The launcher creates that world through the gateway with the
+    // player's locker session; this does the same.
+    const acctName = `bot-a-${ctx.runId}`;
+    const soloToken = await harnessSession(GW_PORT, acctName);
+    const soloId = 'solo-bot-a';
+    const mk = await fetch(`http://127.0.0.1:${GW_PORT}/worlds`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${soloToken}` },
+      body: JSON.stringify({ id: soloId, mode: 'private' }),
+    });
+    assert.equal(mk.status, 200, `the player's own world must be creatable (${mk.status})`);
+    const soloBy = Date.now() + 60_000;
+    let soloUp = false;
+    while (Date.now() < soloBy) {
+      try {
+        const w = await (await fetch(`http://127.0.0.1:${GW_PORT}/worlds/${soloId}`)).json();
+        if (w.up) { soloUp = true; break; }
+      } catch { /* still booting */ }
+      await ctx.sleep(1000);
+    }
+    assert.ok(soloUp, "the player's own world must come up");
+    const a = await ctx.launchClient('bot-a', '', {
+      mpUrl: `ws://127.0.0.1:${GW_PORT}/w/${soloId}`,
+    });
     await grantLockerSession(a, GW_PORT, `bot-a-${ctx.runId}`);
     const acct = a.name.toLowerCase();
 
