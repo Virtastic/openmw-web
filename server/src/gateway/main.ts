@@ -16,7 +16,7 @@ import { WorldSupervisor, reapOrphanWorlds } from './worlds';
 import { startDirectory } from './directory';
 import { buildFrontDoor } from './frontdoor';
 import { loadConfig } from '../config';
-import { HARNESS_PASSWORD } from '../net/connection';
+import { HARNESS_PASSWORD } from '../auth/harness';
 import { log } from '../log';
 import { metrics } from '../metrics';
 

@@ -57,6 +57,22 @@ async function harnessSession(gwPort, account) {
   return (await r.json()).token;
 }
 
+// Injected AFTER boot, never through the URL. #mplocker in the address flips index.html into
+// locker/launcher mode -- a different asset path that never comes up in the harness and killed
+// the client outright. These two globals are the whole of what rebootIntoWorld reads, and the
+// base has to point at the GATEWAY: /auth/ticket lives there, while lockerHttpBase would
+// otherwise derive it from the WORLD's socket URL and get a server that does not serve it.
+async function grantLockerSession(client, gwPort, account) {
+  const token = await harnessSession(gwPort, account);
+  // Ends in a STRING on purpose. The last expression is what Runtime.evaluate serialises, and
+  // an assignment whose value is a function comes back as an unserialisable remote object --
+  // which rejects, and an unhandled rejection here takes the whole run down with no output at
+  // all rather than failing this scenario.
+  await client.eval(`window.__omwLockerToken = ${JSON.stringify(token)};`
+    + `window.__lockerHttpBase = function(){ return 'http://127.0.0.1:${gwPort}'; };`
+    + `'granted';`);
+}
+
 export default async function run(ctx) {
   const SHOTS = mkdtempSync(join(tmpdir(), 'omw-s47-'));
   const worldsDir = mkdtempSync(join(tmpdir(), 'omw-s47-worlds-'));
@@ -100,8 +116,8 @@ export default async function run(ctx) {
     // switch died at 'no locker session' before touching the network -- so this scenario was
     // asserting against a path it could not reach. The gateway only serves this when harness
     // auth is already enabled, which is exactly where this runs.
-    const lockerToken = await harnessSession(GW_PORT, `bot-a-${ctx.runId}`);
-    const a = await ctx.launchClient('bot-a', '', { lockerToken });
+    const a = await ctx.launchClient('bot-a', '');
+    await grantLockerSession(a, GW_PORT, `bot-a-${ctx.runId}`);
 
     // --- 1. The tab fetches the directory the first time it is opened ------------------
     await a.eval("Module.__omwMPCmd='socialtab:worlds'");
@@ -145,7 +161,12 @@ export default async function run(ctx) {
     // The part a player would notice most if it were broken. Pressing join goes through
     // joinWorld() -> MP_JoinWorld -> net.switchTo(): a disconnect and a redial of a
     // DIFFERENT world, with no page reload, so the engine and loaded assets stay put.
-    const sessionPort = listed.worlds.find((w) => w.id === 'my-session').port;
+    // NO PORT. The directory strips a world's internal host and port from everything it
+    // serves -- there is a test asserting it must not leak them, because an address there was
+    // once a configured guess defaulting to 127.0.0.1, i.e. a remote player's own machine.
+    // This used to read `.port` (undefined), poll http://127.0.0.1:undefined/status, and
+    // report the resulting silence as 'the player never arrived'. playerCount survives the
+    // sanitiser, so the gateway's own view is both correct and the only thing available.
 
     // A freshly spawned world takes time to answer /status; the UI only offers a join once
     // it is up, so the test must wait for the same condition rather than racing it.
@@ -168,14 +189,17 @@ export default async function run(ctx) {
     // believed it had moved.
     const joinedBy = Date.now() + 60_000;
     let arrived = false;
+    let lastSeen = 'the gateway was never reached';
     while (Date.now() < joinedBy) {
       try {
-        const st = await (await fetch(`http://127.0.0.1:${sessionPort}/status`)).json();
-        if ((st.playerCount ?? 0) > 0) { arrived = true; break; }
-      } catch { /* still switching */ }
+        const w = await (await fetch(`http://127.0.0.1:${gwPort}/worlds/my-session`)).json();
+        lastSeen = `playerCount=${w.playerCount ?? 0} up=${w.up}`;
+        if ((w.playerCount ?? 0) > 0) { arrived = true; break; }
+      } catch (err) { lastSeen = `gateway error: ${err}`; }
       await ctx.sleep(1000);
     }
-    assert.ok(arrived, 'the player must actually arrive in the world they joined');
+    ctx.log(`  destination world: ${lastSeen}`);
+    assert.ok(arrived, `the player must actually arrive in the world they joined — ${lastSeen}`);
     ctx.log('  join: player moved to my-session and the destination world sees them');
     ctx.log(`  after join: ${await a.screenshot(join(SHOTS, '3-joined-session.png'))}`);
 

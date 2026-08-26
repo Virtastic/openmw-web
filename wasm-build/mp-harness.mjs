@@ -348,16 +348,14 @@ async function launchClient(name, mpPort, extraParams = '', opts = {}) {
   const world = opts.retail
     ? `?stream&novid&skipintro=1&start=${encodeURIComponent(opts.startCell ?? 'Seyda Neen')}`
     : `?nomw&skipintro=1&start=${encodeURIComponent(opts.startCell ?? 'Village')}`;
-  // opts.lockerToken: a locker SESSION, which is a different thing from the world login the
-  // rest of this URL carries. The page needs one to change world at all -- rebootIntoWorld
-  // mints a fresh single-use ticket with it -- and ?mpauto=1 grants none, so without this
-  // every switch, join and character change died at 'no locker session' before touching the
-  // network. It rides in the FRAGMENT because that is where index.html reads it from, and it
-  // must come last for the same reason.
-  const frag = opts.lockerToken ? `#mplocker=${encodeURIComponent(opts.lockerToken)}` : '';
+  // NOTE: a locker session is NOT passed here. #mplocker in the URL flips index.html into
+  // locker/launcher mode at boot -- a different asset path entirely, which never comes up in
+  // the harness and killed the client outright. Scenarios that need one inject it AFTER the
+  // client is up (see grantLockerSession in s47), which is the only part rebootIntoWorld
+  // actually reads.
   const url = `http://127.0.0.1:${PLAY_PORT}/index.html${world}`
     + `&mp=${encodeURIComponent(mpUrl)}${auth}`
-    + extraParams + frag;
+    + extraParams;
   const chrome = spawn(CHROME, [
     '--headless=new', ...glArgs,
     // --no-sandbox only off the developer machine: Chrome's sandbox needs user namespaces

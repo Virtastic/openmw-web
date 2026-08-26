@@ -69,6 +69,22 @@ async function harnessSession(gwPort, account) {
   return (await r.json()).token;
 }
 
+// Injected AFTER boot, never through the URL. #mplocker in the address flips index.html into
+// locker/launcher mode -- a different asset path that never comes up in the harness and killed
+// the client outright. These two globals are the whole of what rebootIntoWorld reads, and the
+// base has to point at the GATEWAY: /auth/ticket lives there, while lockerHttpBase would
+// otherwise derive it from the WORLD's socket URL and get a server that does not serve it.
+async function grantLockerSession(client, gwPort, account) {
+  const token = await harnessSession(gwPort, account);
+  // Ends in a STRING on purpose. The last expression is what Runtime.evaluate serialises, and
+  // an assignment whose value is a function comes back as an unserialisable remote object --
+  // which rejects, and an unhandled rejection here takes the whole run down with no output at
+  // all rather than failing this scenario.
+  await client.eval(`window.__omwLockerToken = ${JSON.stringify(token)};`
+    + `window.__lockerHttpBase = function(){ return 'http://127.0.0.1:${gwPort}'; };`
+    + `'granted';`);
+}
+
 export default async function run(ctx) {
   const worldsDir = mkdtempSync(join(tmpdir(), 'omw-s48-worlds-'));
   const gw = spawn(process.execPath, [
@@ -105,8 +121,8 @@ export default async function run(ctx) {
     // switch died at 'no locker session' before touching the network -- so this scenario was
     // asserting against a path it could not reach. The gateway only serves this when harness
     // auth is already enabled, which is exactly where this runs.
-    const lockerToken = await harnessSession(GW_PORT, `bot-a-${ctx.runId}`);
-    const a = await ctx.launchClient('bot-a', '', { lockerToken });
+    const a = await ctx.launchClient('bot-a', '');
+    await grantLockerSession(a, GW_PORT, `bot-a-${ctx.runId}`);
     const acct = a.name.toLowerCase();
 
     // Create and enter a private session.
