@@ -114,6 +114,78 @@ Re-test before spending time on them.
 
 ---
 
+## P1b — single-player parity: systems the multiplayer layer never sees
+
+Audited against the question "can four friends play Morrowind the way one person can?" Each
+entry below is a system with NO representation in `scripts/mp/*.lua` or `server/src/core/*.ts`.
+
+**The distinction that matters, and it is not severity — it is direction.** An unsynced system
+that only affects the actor is harmless: reading a book, drinking a potion, picking a lock all
+resolve locally and nobody else needs to know. An unsynced system that touches SHARED state is a
+duplication bug wearing a feature's clothes: if the world does not agree about it, every player
+gets their own copy. The first group is a non-issue. The second is the same class as the corpse
+loot bug already fixed here.
+
+### Shared state that currently forks per player (duplication)
+
+* **Merchants.** No reference to barter, trader stock or trader gold anywhere. A shop's
+  inventory and purse are therefore per-client: two players can each buy the SAME unique item
+  from the same merchant, and each sell the same loot to a purse that never depletes. This is
+  the corpse-loot bug at economic scale, and it is reachable in the first ten minutes of play.
+  Cost of ignoring it: the shared economy is meaningless, which undermines loot mattering at all.
+
+* **Trainers.** No reference to training or trainer services. Skill gains bought from a trainer
+  are local, and the trainer's per-level limits are per-client. Less severe than merchants (the
+  gold does leave the buyer's own inventory, which IS synced) but the service is unbounded.
+
+* **Soul gems / recharge.** One incidental reference. Filling a gem and recharging an item are
+  shared-object operations if the item came from the world.
+
+### Systems that simply do not happen for other players
+
+* **Travel services** — silt strider, boat, guild guide. No references. A player using one
+  teleports themselves; whether the others see a sensible cell change or a player who vanished
+  and reappeared across the map is untested. Party travel exists as its own mechanism and is
+  NOT the same thing.
+
+* **Crime response** — arrest, jail, fines. Bounty itself IS synced (`diffCrime`), so the number
+  travels, but nothing arrests you, and what a guard does about another player's bounty is
+  undefined. TES3MP reports this class as a real source of quest breakage.
+
+* **Dialogue topics.** Open/close is synced (`mpDialogueClosed`); the topic list is not, so a
+  topic one player unlocks does not appear for another. Possibly the right trade -- TES3MP synced
+  these and earned "server freezes caused by infinite topic packet spam from local scripts" --
+  but it is currently neither documented nor tested.
+
+* **Disposition and persuasion.** No references. An NPC's disposition is per-client, so bribing
+  or admiring someone helps only you, and a player who angers an NPC does not anger it for the
+  party.
+
+* **Companions / followers.** No `AiFollow` handling. A recruited companion follows whoever
+  recruited them on that client only. Several main-quest and expansion arcs use companions.
+
+* **Vampirism and lycanthropy.** No references at all. Both change the player's record, spells
+  and how NPCs react. Whether they even survive a rejoin is unknown -- the restore path writes
+  attributes and skills, and the vampire clock is a per-character global that Phase 4 shadows,
+  so it may work by accident. Untested either way.
+
+* **Item repair.** Every `repair` match in the codebase is `questRepair`, the admin tool -- not
+  the hammer. Condition is per-item state on a shared object.
+
+### Confirmed working, so the audit is not one-sided
+
+Resting advances time for everyone (`WorldTimeRequest` with `reason='rest'`). Enchanting,
+spellmaking and alchemy propagate their new records through M7 `RecordCreate`. Bounty travels.
+Levitation/Mark/Recall have handling. Books, potions, lockpicking and sneak are local-only by
+nature and correctly need nothing.
+
+### How to size this list
+
+Nothing above is a crash or a corruption. They are absences, and absence reads as "the world
+does not agree with itself" rather than as an error -- which is exactly why they need finding by
+audit rather than by playing. Merchants are the one that would spoil a session soonest, and the
+one most likely to be hit within minutes of two people logging in together.
+
 ## P2 — claims nobody has tested
 
 * **The Morrowind / Tribunal / Bloodmoon main quests, played together.** TES3MP reports the
