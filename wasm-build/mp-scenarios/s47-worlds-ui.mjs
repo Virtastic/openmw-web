@@ -116,15 +116,17 @@ export default async function run(ctx) {
     // switch died at 'no locker session' before touching the network -- so this scenario was
     // asserting against a path it could not reach. The gateway only serves this when harness
     // auth is already enabled, which is exactly where this runs.
-    // CONNECT THROUGH THE GATEWAY, not straight at a world port -- this is the production
-    // topology and the scenario cannot test a join without it. worldUrlOf builds a switch
-    // destination from the CURRENT connection's authority plus the world's /w/<id> path, so a
-    // client dialled directly at a world derives ws://<that world>/w/<other world>, which no
-    // world serves. The gateway is the thing that splices /w/<id> through to a world, exactly
-    // as Caddy fronts it in production.
-    const a = await ctx.launchClient('bot-a', '', {
-      mpUrl: `ws://127.0.0.1:${GW_PORT}/w/vvardenfell`,
-    });
+    // KNOWN GAP, deliberately left dialling a world directly. The join step below cannot pass
+    // this way: worldUrlOf builds a switch destination from the CURRENT connection's authority
+    // plus the world's /w/<id> path, so a client dialled straight at a world derives
+    // ws://<that world>/w/<other world>, and no world serves that path -- the GATEWAY is what
+    // splices it through, exactly as Caddy fronts it in production.
+    //
+    // Dialling ws://<gateway>/w/vvardenfell instead is the right shape and was tried: the
+    // client then never reaches Joined at all, so the gateway's upgrade path needs work before
+    // a harness client can arrive through it. Left dialling the world directly so this fails
+    // FAST with the mirrors printed below, rather than hanging for the full join timeout.
+    const a = await ctx.launchClient('bot-a', '');
     await grantLockerSession(a, GW_PORT, `bot-a-${ctx.runId}`);
 
     // --- 1. The tab fetches the directory the first time it is opened ------------------
