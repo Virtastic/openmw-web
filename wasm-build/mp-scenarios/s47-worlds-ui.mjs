@@ -109,6 +109,40 @@ export default async function run(ctx) {
     assert.ok(await waitHttp(`http://127.0.0.1:${gwPort}/healthz`, 30_000), 'the gateway must come up');
     ctx.log(`gateway up on ${gwPort}`);
 
+    // THE SPLICE ITSELF, tested without a browser. /w/<id> on the gateway is how a real client
+    // reaches a world -- Caddy fronts it in production -- and it is what every world SWITCH
+    // resolves to, so if it does not work nothing downstream can. Node rather than the engine
+    // so a failure here is unambiguously the gateway and not the client.
+    // WAIT FOR THE WORLD TO BE UP FIRST. healthz only says the GATEWAY answers; the public
+    // world it supervises is spawned after and reported up only once its status poll
+    // succeeds. Dialling before then is a 502 by design ("a world that is down must fail the
+    // handshake, not hang"), so testing the splice against it measures the race, not the
+    // splice.
+    const upBy0 = Date.now() + 60_000;
+    let publicUp = false;
+    while (Date.now() < upBy0) {
+      try {
+        const l = await (await fetch(`http://127.0.0.1:${gwPort}/worlds`)).json();
+        if ((l.worlds ?? []).find((w) => w.id === 'vvardenfell')?.up) { publicUp = true; break; }
+      } catch { /* not answering yet */ }
+      await ctx.sleep(1000);
+    }
+    assert.ok(publicUp, 'the gateway must bring its public world up');
+
+    const spliced = await new Promise((resolve) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${gwPort}/w/vvardenfell`);
+      const done = (v) => { try { ws.close(); } catch { /* already gone */ } resolve(v); };
+      ws.addEventListener('open', () => done('open'), { once: true });
+      ws.addEventListener('error', () => done('error'), { once: true });
+      ws.addEventListener('close', (e) => done(`closed ${e.code}`), { once: true });
+      setTimeout(() => done('timeout'), 10_000);
+    });
+    ctx.log(`  gateway splice /w/vvardenfell: ${spliced}`);
+    assert.equal(spliced, 'open',
+      `the gateway must splice /w/<id> through to a world, got "${spliced}" — a world SWITCH `
+      + 'resolves to exactly this path, so nothing downstream can work without it');
+
+
     // The scenario's world must point at this gateway, or its Worlds tab correctly reports
     // "standalone" and there is nothing to test.
     // A LOCKER SESSION, which ?mpauto=1 does not grant. The page needs one to change world at
@@ -116,17 +150,45 @@ export default async function run(ctx) {
     // switch died at 'no locker session' before touching the network -- so this scenario was
     // asserting against a path it could not reach. The gateway only serves this when harness
     // auth is already enabled, which is exactly where this runs.
-    // KNOWN GAP, deliberately left dialling a world directly. The join step below cannot pass
-    // this way: worldUrlOf builds a switch destination from the CURRENT connection's authority
-    // plus the world's /w/<id> path, so a client dialled straight at a world derives
-    // ws://<that world>/w/<other world>, and no world serves that path -- the GATEWAY is what
-    // splices it through, exactly as Caddy fronts it in production.
+    // THROUGH THE GATEWAY, which is what a real player does and the only way this scenario can
+    // test a switch at all. worldUrlOf builds a switch destination from the CURRENT
+    // connection's authority plus the world's /w/<id> path, so a client dialled straight at a
+    // world derives ws://<that world>/w/<other world> -- a path no world serves, because the
+    // GATEWAY is what splices it through (Caddy fronts it the same way in production).
     //
-    // Dialling ws://<gateway>/w/vvardenfell instead is the right shape and was tried: the
-    // client then never reaches Joined at all, so the gateway's upgrade path needs work before
-    // a harness client can arrive through it. Left dialling the world directly so this fails
-    // FAST with the mirrors printed below, rather than hanging for the full join timeout.
-    const a = await ctx.launchClient('bot-a', '');
+    // This must come AFTER the public world is up. An earlier attempt dialled the gateway
+    // while that world was still booting, got the 502 a down world is supposed to answer with,
+    // and never recovered -- which read as "the gateway upgrade path is broken" and was really
+    // just a race. The splice assertion above proves the path itself works.
+    // ...into the player's OWN world, not the public one. A brand-new account is refused by
+    // public with "finish creating your character in your private world first" -- a real
+    // product rule, not a harness quirk -- so booting straight into public could never work.
+    // This is the production flow: the launcher creates your solo world through the gateway
+    // with your locker session, and you arrive there.
+    const acctName = `bot-a-${ctx.runId}`;
+    const soloToken = await harnessSession(gwPort, acctName);
+    const soloId = 'solo-bot-a';
+    const mk = await fetch(`http://127.0.0.1:${gwPort}/worlds`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${soloToken}` },
+      body: JSON.stringify({ id: soloId, mode: 'private' }),
+    });
+    assert.equal(mk.status, 200, `the player's own world must be creatable (${mk.status})`);
+    const soloUpBy = Date.now() + 60_000;
+    let soloUp = false;
+    while (Date.now() < soloUpBy) {
+      try {
+        const w = await (await fetch(`http://127.0.0.1:${gwPort}/worlds/${soloId}`)).json();
+        if (w.up) { soloUp = true; break; }
+      } catch { /* still booting */ }
+      await ctx.sleep(1000);
+    }
+    assert.ok(soloUp, "the player's own world must come up");
+    ctx.log(`  own world ${soloId} is up`);
+
+    const a = await ctx.launchClient('bot-a', '', {
+      mpUrl: `ws://127.0.0.1:${gwPort}/w/${soloId}`,
+    });
     await grantLockerSession(a, GW_PORT, `bot-a-${ctx.runId}`);
 
     // --- 1. The tab fetches the directory the first time it is opened ------------------
