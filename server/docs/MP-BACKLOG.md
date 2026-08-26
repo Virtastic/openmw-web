@@ -145,12 +145,16 @@ loot bug already fixed here.
   the corpse-loot bug at economic scale, and it is reachable in the first ten minutes of play.
   Cost of ignoring it: the shared economy is meaningless, which undermines loot mattering at all.
 
-* **Trainers.** No reference to training or trainer services. Skill gains bought from a trainer
-  are local, and the trainer's per-level limits are per-client. Less severe than merchants (the
-  gold does leave the buyer's own inventory, which IS synced) but the service is unbounded.
+* **Trainers — the SAME problem as merchants, not a separate one.** Re-checked: the skill gain
+  and the buyer's gold are both on the buyer and both already synced (PlayerSkills, and gold is
+  an inventory item). The only shared state training touches is the trainer's purse --
+  `trainingwindow.cpp:202` does `setGoldPool(getGoldPool() + price)`. So merchants and trainers
+  are one item: BARTER GOLD AND TRADER STOCK ARE NOT SHARED. Fixing that fixes both.
 
-* **Soul gems / recharge.** One incidental reference. Filling a gem and recharging an item are
-  shared-object operations if the item came from the world.
+* ~~**Soul gems / recharge.**~~ FIXED by the item-state work: `itemData.soul` and
+  `enchantmentCharge` now persist, so a filled gem stays filled and a drained item stays
+  drained. Both are operations on the player's OWN inventory, which was already synced -- the
+  gap was only that a rejoin reset them.
 
 ### Systems that simply do not happen for other players
 
