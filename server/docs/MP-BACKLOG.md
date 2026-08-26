@@ -226,10 +226,24 @@ which is why nobody reports it as a bug.
   grand soul gem returns as an empty one. Directly breaks enchanting, which is the entire point
   of trapping souls.
 
-* **Active magic effects are not persisted** -- no `activeSpells` or `effects` field anywhere in
-  the doc. Buffs expiring early is cosmetic; DISEASES are not. Blight, corprus and common
-  disease are active effects, so a relog cures them for free. Several quests turn on being
-  diseased.
+* **Active magic effects are not persisted** -- no `activeSpells` field in the doc. The scope of
+  this is MUCH narrower than first written here, and the original entry was wrong:
+
+  * ~~a relog cures blight, corprus and common disease~~ **FALSE.** Diseases are `ESM::Spell`
+    records of type `ST_Disease`/`ST_Blight` living in the actor's SPELL LIST
+    (`Spells::purgeCommonDisease`, `hasSpellType`), not in `activeSpells`. `snapSpells` iterates
+    exactly that store, so diseases, curses, abilities and powers are already captured and
+    re-added by `applyPhase2`. They persist correctly today. Verified in the engine source
+    before writing a fix that was not needed.
+  * What genuinely does not persist is TEMPORARY effects -- potion buffs, a cast spell still
+    running, an enchantment's timed effect. Losing those on a relog is cosmetic.
+
+  And restoring them is not merely unimplemented, it is **not expressible with the current
+  bindings**: `activeSpells:add()` sets `effect.mTimeLeft = effect.mDuration`, the full duration
+  from the record, so a restore would REFRESH every buff instead of resuming it -- a
+  relog-to-refresh exploit, and worse than the gap it closes. Doing this properly needs an engine
+  binding that can set remaining time. Not worth it for cosmetic buffs; recorded so nobody
+  reaches for the easy version.
 
 ### Why this group is easy to miss
 
