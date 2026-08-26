@@ -49,7 +49,18 @@ both false CURRENT and false STALE. Bare identifiers are the only trustworthy pr
 
 ### The 10 scenario failures, RE-RUN against a current engine (2026-08-26)
 
-**Final tally: five of the ten now PASS, one is excluded, four remain and share one cause.**
+**SEVEN of the ten PASS, confirmed in one run together (not one at a time):**
+
+```
+PASS  s44-far-tier-correct  99.3s      PASS  s81-reconnect        42.0s
+PASS  s47-worlds-ui         72.5s      PASS  s92-connection-lost  35.2s
+PASS  s48-switch-reconnect  66.1s      PASS  s99-overlays         51.2s
+PASS  s70-time              76.6s
+```
+
+One is excluded (`s43`, the only retail scenario, which cannot pass in a GPU-less container)
+and two remain: `s53-charslots` and `s57-world-revival`, both on the world-switch reload.
+
 
 | Scenario | State | Why |
 |---|---|---|
