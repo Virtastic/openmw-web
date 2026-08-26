@@ -244,6 +244,19 @@ Fixture faults fixed on the way, none of them the product: the world had to be n
 `--idle-reap-ms 4000` was shorter than a client boot, so the world was reaped ONE SECOND
 before the player finished arriving -- the scenario was racing its own fixture.
 
+#### OPEN, small but real: a Public press can be silently lost
+
+Found while stabilising `s57`, which passed alone and failed in a full run. The client's own
+mirror says where it stops: `publicStage` reaches `asked` and never advances. `where:public`
+asks the server for a world list and switches when the answer names an up public world --
+`asked` -> `list:<n>` -> `resolved:<url>`. Under load the request goes out and the answer does
+not come back, so nothing switches and the player simply stays put.
+
+To a player that is indistinguishable from a button that does nothing. The scenario presses up
+to three times now, which is what a person would do, and logs which attempt landed -- so the
+flake is visible rather than hidden. The product side is untouched and still open: either the
+request needs a timeout and retry of its own, or the answer needs to be guaranteed.
+
 #### The notice cluster (3) -- s99 FIXED, s92 pending a build
 
 * `s92-connection-lost` -- timeout waiting for the in-game "connection lost" notice.
