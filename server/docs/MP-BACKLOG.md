@@ -82,7 +82,7 @@ Re-test before spending time on them.
   refKey like any other object. **Unproven in play** — it wants a scenario with two clients
   looting one body.
 
-* **`ActorEquip` and `ActorAI` are dead protocol surface — and they are the ONLY two.** A full
+* **`ActorAI` is dead protocol surface — and it is now the ONLY one.** (`ActorEquip` FIXED: the holder diffs an actor's equipment and sends record ids, and the receiver hands them to puppet.lua's existing MP_Equip retry path, the same route a remote player's equipment already took.) A full
   protocol audit now backs that: all 54 server-sent events have a client handler, and on the
   inbound side every accepted event is sent by someone except these two (0 client references
   each). The social family looked dead to a naive scan and is not — `global.lua mpSocial`
