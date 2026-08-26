@@ -618,7 +618,13 @@ carry more than a record id -- and that one change closes three of the five.
 * **`ovhcloud` is unprotected**, and pushing to it deploys production. No PR, no review, and
   force-push is allowed. Left alone deliberately: releases are made by pushing to it, so a
   required-review rule would block the release path until that flow changes.
-* **The default branch is `main`, not `dev`**, so fork PRs pre-select the wrong target.
+* ~~**The default branch is `main`, not `dev`.**~~ FIXED -- it is `dev` now. This one was not
+  cosmetic: the whole point of the dev-branch workflow is that contributors open PRs against
+  `dev` for review, and a fork PR that pre-selects `main` quietly aims at the branch that
+  deploys nothing and is reviewed by nobody. Clones and the repo landing page follow it too.
+
+  `ovhcloud` above is deliberately NOT given the same treatment, and the distinction is the
+  point: that one is left open because releases are made by pushing to it.
 
 ---
 
