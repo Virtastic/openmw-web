@@ -169,10 +169,35 @@ end
 
 -- ---------------------------------------------------------------- container helpers
 
+-- WHERE A LOOTABLE OBJECT KEEPS ITS ITEMS. A chest keeps them in Container.content; a CORPSE
+-- keeps them in Actor.inventory, and a corpse is not a Container instance -- which is why
+-- looting a body was never reported to the server at all. Every client held its own copy of the
+-- dead NPC's inventory, so two players looting the same corpse each received the full loot and
+-- nothing anywhere noticed. On a server-authoritative design that is item duplication on every
+-- fight a party wins.
+--
+-- LIVE actors are deliberately excluded: activating one opens dialogue, not a container, and
+-- pickpocketing is its own mechanic with its own rules. Death is the line.
+local function lootStore(obj)
+    if not (obj and obj:isValid()) then return nil end
+    if types.Container.objectIsInstance(obj) then return types.Container.content(obj) end
+    if types.Actor.objectIsInstance(obj) then
+        local ok, dead = pcall(function() return types.Actor.isDead(obj) end)
+        if ok and dead then return types.Actor.inventory(obj) end
+    end
+    return nil
+end
+
+local function isLootable(obj)
+    return lootStore(obj) ~= nil
+end
+
 local function snapshotContainer(obj)
+    local store = lootStore(obj)
+    if not store then return nil end
     local counts = {}
     local ok = pcall(function()
-        for _, item in ipairs(types.Container.content(obj):getAll()) do
+        for _, item in ipairs(store:getAll()) do
             counts[item.recordId] = (counts[item.recordId] or 0) + item.count
         end
     end)
@@ -202,8 +227,8 @@ end
 -- Force a real local container to the given contents (server truth). Global-context
 -- inventory surgery: remove everything, recreate. Coarse but deterministic.
 local function setContainerContents(obj, items)
-    if not (obj and obj:isValid() and types.Container.objectIsInstance(obj)) then return end
-    local content = types.Container.content(obj)
+    local content = lootStore(obj)
+    if not content then return end
     pcall(function()
         for _, item in ipairs(content:getAll()) do
             item:remove()
@@ -219,8 +244,8 @@ local function setContainerContents(obj, items)
 end
 
 local function applyContainerDelta(obj, itemId, dn)
-    if not (obj and obj:isValid() and types.Container.objectIsInstance(obj)) then return end
-    local content = types.Container.content(obj)
+    local content = lootStore(obj)
+    if not content then return end
     pcall(function()
         if dn > 0 then
             local okc, created = pcall(function() return world.createObject(itemId, dn) end)
@@ -303,7 +328,9 @@ function objects.onActivate(object, actor)
         }
     end
 
-    if types.Container.objectIsInstance(object) then
+    -- Chests AND corpses: both are lootable, both must be reported, or the items in them
+    -- duplicate across everyone who opens them.
+    if isLootable(object) then
         -- Deferred: the contents may not exist yet at this instant (see CONTAINER_OPEN_DELAY).
         containerOpenPending[object.id] = { obj = object, at = now + CONTAINER_OPEN_DELAY }
     end

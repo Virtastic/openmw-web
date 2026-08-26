@@ -54,7 +54,7 @@ Re-test before spending time on them.
 
 ### NPCs and actors
 
-* **Corpse loot is not synchronised, so it duplicates.** `objects.lua` watches
+* ~~**Corpse loot is not synchronised, so it duplicates.**~~ FIXED — `objects.lua` watches
   `types.Container` instances only, and a dead NPC is an Actor, not a Container. The actor
   event family is `ActorAuthorityGrant/Revoke/Info`, `ActorSnapshot`, `ActorDeath`, `ActorAI`,
   `ActorEquip`, `ActorStatsDynamic` — there is **no actor-inventory event at all**. So looting a
@@ -62,6 +62,12 @@ Re-test before spending time on them.
   and the server is never told. For a design whose whole premise is server authority over items,
   this is the largest remaining hole — every fight with a party produces duplicate equipment.
   `noDrop` does not help; it strips unique-actor corpses in public worlds and nothing else.
+  **Fixed** by generalising the lootable path: a chest keeps items in `Container.content`, a
+  corpse in `Actor.inventory`, and both now go through the same deferred open, watch and
+  ContainerOpRequest. LIVE actors are deliberately excluded — activating one opens dialogue, and
+  pickpocketing is its own mechanic. The server needed no change: `docAndRef` resolves a corpse's
+  refKey like any other object. **Unproven in play** — it wants a scenario with two clients
+  looting one body.
 
 * **`ActorEquip` and `ActorAI` are dead protocol surface.** Both are in the server's relayed
   event set (`worldstate.ts`), and the client never sends or handles either. An NPC that draws a
