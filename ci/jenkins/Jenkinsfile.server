@@ -15,8 +15,12 @@ pipeline {
           checkout([$class: 'GitSCM',
                     branches: [[name: '*/dev']],
                     userRemoteConfigs: [[url: 'https://github.com/Virtastic/openmw-web.git']]])
-          sh 'git rev-parse HEAD > .source-commit; echo "building $(git log --oneline -1)"'
         }
+        // `cd /src` rather than a sh inside dir('/src'): that makes Jenkins create a sibling
+        // /src@tmp, and /src is a MOUNT, so the sibling lands at the container root -- owned
+        // by root while Jenkins runs as uid 1000. See Jenkinsfile.engine; the engine job died
+        // on exactly this and this job would have next time it ran.
+        sh 'cd /src && git rev-parse HEAD > .source-commit && echo "building $(git log --oneline -1)"'
       }
     }
     stage('Restage build inputs') { steps { sh '/src/ci/jenkins/restage-inputs.sh' } }

@@ -15,8 +15,13 @@ pipeline {
           checkout([$class: 'GitSCM',
                     branches: [[name: '*/dev']],
                     userRemoteConfigs: [[url: 'https://github.com/Virtastic/openmw-web.git']]])
-          sh 'git rev-parse HEAD > .source-commit; echo "building $(git log --oneline -1)"'
         }
+        // `cd /src` rather than another dir('/src'): a `sh` step inside dir(X) makes Jenkins
+        // create a sibling X@tmp, and /src is a MOUNT, so that sibling would have to be created
+        // at the container's root -- which is owned by root while Jenkins runs as uid 1000.
+        // Build 46 died on exactly that (AccessDeniedException: /src@tmp) after the container
+        // was rebuilt. checkout() alone needs no @tmp, so only the sh has to move out.
+        sh 'cd /src && git rev-parse HEAD > .source-commit && echo "building $(git log --oneline -1)"'
       }
     }
     stage('Restage build inputs') { steps { sh '/src/ci/jenkins/restage-inputs.sh' } }
