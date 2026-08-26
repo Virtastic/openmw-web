@@ -3632,7 +3632,23 @@
     // right because the identical line in launcher.html works, where the document differs.
     // Set the hash first, then force the reload, so the destination boots from the new
     // fragment whether or not the path happens to match.
-    var url = new URL('index.html', location.href);
+    // KEEP THE QUERY STRING. `new URL('index.html', ...)` has an EMPTY search, so the
+    // location.assign() below navigated to a bare index.html and dropped every query
+    // parameter the page was launched with -- ?stream, ?novid, ?skipintro, ?start=, the lot.
+    // The engine then boots as if it had been opened cold: a switch quietly changed how the
+    // game starts, and a SECOND switch landed on a page with Module loaded and no game
+    // running at all. It also made the equality test below always false, so the reload path
+    // that comment describes was never the one taken.
+    // ...MINUS the keys the new fragment supersedes. The launch URL may carry mp= in the
+    // QUERY (that is how the harness and a deep link start a session), and the destination
+    // for this switch goes in the FRAGMENT -- so keeping the query wholesale re-armed the OLD
+    // world's address and the page booted straight back into the world it was leaving. Same
+    // list as the fragment filter above, for the same reason.
+    var q = new URLSearchParams(location.search);
+    ['mp', 'mpticket', 'mpstart', 'mpnew'].forEach(function(k){ q.delete(k); });
+    if (swChar) { q.delete('mpchar'); q.delete('mpcharname'); }
+    var qs = q.toString();
+    var url = new URL('index.html' + (qs ? '?' + qs : ''), location.href);
     url.hash = keep.join('&');
     if (url.pathname === location.pathname && url.search === location.search) {
       location.hash = keep.join('&');

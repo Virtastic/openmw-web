@@ -147,6 +147,17 @@ export default async function run(ctx) {
     await a.waitFor("(window.__omwMP||{}).worldCount !== undefined", STEP,
       'the world list is back after the reload');
     await a.eval("Module.__omwMPCmd='where:public'");
+    // CATCH publicStage BEFORE THE RELOAD WIPES IT. global.lua sets it to `list:<n>` when a
+    // world list comes back and `resolved:<url>` when it picks the public world out of
+    // that list -- the two facts that say whether Public had anything to dial. Reading it
+    // seconds later only ever saw the fresh page's empty mirrors.
+    let stageSeen = '(never set)';
+    for (let i = 0; i < 60; i++) {
+      const v = String(await a.eval("(window.__omwMP||{}).publicStage||''").catch(() => ''));
+      if (v) { stageSeen = v; break; }
+      await ctx.sleep(100);
+    }
+    ctx.log(`  publicStage during the switch: ${stageSeen}`);
     // WHAT PUBLIC DECIDED. mpWhere either dials, says "you are already in the public world",
     // or says "the public world is not available right now" when it has no address -- three
     // outcomes that otherwise look identical from out here.
@@ -174,6 +185,18 @@ export default async function run(ctx) {
       // look is what the page itself logged while booting again.
       ctx.log(`  jsErrors: ${JSON.stringify(a.jsErrors?.() ?? [])}`);
       ctx.log(`  luaErrors: ${JSON.stringify(a.luaErrors?.() ?? [])}`);
+      // WHERE THE PAGE WENT. An empty log buffer with empty mirrors is a page that
+      // navigated somewhere blank, so the address it landed on is the question -- not
+      // whether a server answered.
+      const where = await a.eval('String(location.href)').catch((e) => `eval failed: ${e}`);
+      const ready = await a.eval('String(document.readyState)').catch(() => '?');
+      const hasMod = await a.eval("String(typeof Module)").catch(() => '?');
+      ctx.log(`  page: readyState=${ready} Module=${hasMod}`);
+      ctx.log(`  page url: ${where}`);
+      // The boot SCRUBS location.hash into __omwBootFrag, so the live URL never shows the
+      // fragment the page was actually given. This is the only place it survives.
+      const bootFrag = await a.eval('String(window.__omwBootFrag||"(none)")').catch(() => '?');
+      ctx.log(`  boot fragment: ${bootFrag}`);
       ctx.log(`  client log tail:
 ${a.logTail?.(45) ?? '(none)'}`);
     }
