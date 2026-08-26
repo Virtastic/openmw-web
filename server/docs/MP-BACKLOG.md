@@ -11,6 +11,31 @@ does not.
 
 ---
 
+## What is actually left
+
+Eight open items, and none of them is a line of code somebody forgot to write. Grouped by
+what would actually close them, because "open" has meant four different things in this file:
+
+**Needs a person or a machine we do not have (5).** Tree alpha on Brave (the workaround is in
+and the player is now told; confirming it needs Brave). The minimap (one impossible render
+path removed; needs a look after the next build). Intermittent camera spin (never reproduced,
+here or anywhere). The main quests played through together. Many worlds actually RUNNING --
+the refusal at the ceiling is tested, the load is a measurement on real hardware.
+
+**Decided, not deferred (3).** Temporary magic effects are not restored, because the binding
+sets time-left to the full duration and a restore would REFRESH every buff -- a
+relog-to-refresh exploit, worse than the gap. Peers being per-host is an architecture change,
+not a config one. `ovhcloud` stays unprotected because releases are made by pushing to it.
+
+**One engine limitation, with a route around it.** AI package state cannot be read for a
+foreign actor from a global script -- but an actor's own script can read its own, which is how
+companions work now.
+
+What is NOT on this list, and matters more than anything on it: none of the multiplayer work
+has been confirmed by a human playing the game. The suites passing is not the same thing.
+
+---
+
 ## P0 — unverified fixes (the largest risk right now)
 
 Everything below was fixed and deployed today, and **none of it has been confirmed by a human
@@ -444,9 +469,9 @@ loot bug already fixed here.
 
 ### Systems that simply do not happen for other players
 
-* **Travel services** — silt strider, boat, guild guide. Read in the engine rather than
-  guessed at this time. The PLAYER's half is already covered, by three separate mechanisms
-  that were not built for it:
+* ~~**Travel services**~~ — silt strider, boat, guild guide. RESOLVED, both halves. Read in
+  the engine rather than guessed. The PLAYER's half was already covered, by three separate
+  mechanisms that were not built for it:
 
   * The destination is a CELL CHANGE, which `PlayerState` already carries -- and the movement
     envelope deliberately forgives a cell change, because "a cell change IS a teleport by
@@ -476,8 +501,8 @@ loot bug already fixed here.
   reason to do -- the people left behind must stop drawing it, and the people at the
   destination must have it arrive.
 
-* **Crime response** — arrest, jail, fines. Traced end to end rather than grepped, and the
-  original entry ("nothing arrests you") does not survive it. `[sharing] crime = true` by
+* ~~**Crime response**~~ — arrest, jail, fines. WORKS; traced end to end rather than grepped,
+  and the original entry ("nothing arrests you") does not survive it. `[sharing] crime = true` by
   default, so a bounty relays to everyone and each client applies it to THEIR OWN player with
   `setCrimeLevel`. From there arrest is vanilla and untouched: guard AI pursues on the local
   crime level, which every client now has.
@@ -595,7 +620,8 @@ which is why nobody reports it as a bug.
   `itemData.soul`, and `snapInventory` returns `{ items, itemStates }` so the shape stays
   backward compatible with docs that predate it.
 
-* **Active magic effects are not persisted** -- no `activeSpells` field in the doc. The scope of
+* ~~**Active magic effects are not persisted**~~ -- WON'T FIX, and the reasoning is below
+  rather than a shrug. No `activeSpells` field in the doc. The scope of
   this is MUCH narrower than first written here, and the original entry was wrong:
 
   * ~~a relog cures blight, corprus and common disease~~ **FALSE.** Diseases are `ESM::Spell`
