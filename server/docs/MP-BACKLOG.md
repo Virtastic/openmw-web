@@ -27,6 +27,17 @@ and the contract gate all passed while combat was totally broken this morning.
 
 The diagnostics are self-silencing: on a healthy session they print nothing.
 
+**Partial progress (2026-08-26).** The browser suite now runs on the TEST host (chromium in a
+container from `Dockerfile.harness`, engine extracted from the deployed image), which removes
+the build box as a bottleneck. Green against the deployed engine so far: `s01-login`,
+`s30-objects`, `s31-container` ("no duplication — chest 1 -> 0, single winner"), `s32-doors`,
+and `s58-combat-forward`'s ARMED path. `s40-npc` SKIPPED — no sim-peer binary available — so it
+is not evidence of anything.
+
+None of that covers the five client fixes made after the deployed engine was built: client Lua
+is baked into `openmw.data`, so a scenario run tests the engine as BUILT, not the tree. Those
+are on 72/72 Lua checks until the next engine build reaches the harness.
+
 ---
 
 ## P1 — known defects, not yet fixed
@@ -101,12 +112,12 @@ Re-test before spending time on them.
   relays only a small conservative `WORLD_GLOBALS` set, which is what avoids TES3MP's
   two-players-fighting-over-one-variable ping-pong.
 
-* **`quests.lua` has NO automated coverage at all.** The Lua harness never loads it and the stub
-  has no `openmw.world`/`mwscript`, so the journal diff, faction and crime sync, and the global
-  sync above are all unexercised — the fairness fix was verified only by the file parsing and by
-  the other 68 checks still passing. This is the largest untested surface in the client, and it
-  covers precisely the systems TES3MP reports as its worst (quest and journal state). Closing it
-  needs a `world` stub for global-context scripts, which the harness does not have yet.
+* ~~**`quests.lua` has NO automated coverage at all.**~~ PARTLY CLOSED. The harness now has the
+  global-context stubs it lacked (`openmw.world` with mwscript/players/activeActors, and
+  `openmw.interfaces`), and quests.lua is loaded and driven by four checks covering the mwscript
+  global sync. Still uncovered inside that file: the journal diff, faction sync and crime sync.
+  So the file is no longer a blind spot, but it is not fully exercised either — and it still
+  covers the systems TES3MP reports as its worst.
 * **Dialogue topics are not synchronised.** Open/close is (`mpDialogueClosed`), the topic list is
   not, so a topic one player unlocks does not appear for another. TES3MP synced these and got
   "server freezes caused by infinite topic packet spam from local scripts" for its trouble — so
