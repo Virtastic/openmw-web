@@ -104,8 +104,14 @@ camera specifically does not.
   the journal model: a guest keeps loot, skills and levels but no quest progress, so only the
   host's campaign advances. That is a deliberate decision, and it is in tension with "play
   through the whole game together" -- over a long game, everyone but the host is a helper in
-  someone else's story. At minimum the guest should be TOLD on arrival; `JournalSync` already
-  carries a `borrowed` flag to do it with.
+  someone else's story.
+
+  BEING TOLD IS ALREADY DONE, and this line previously claimed otherwise -- written without
+  checking, which is the exact habit this file exists to prevent. `quests.lua` shows the guest a
+  notice at the moment it happens ("quests here advance the host's journal. Your own is set
+  aside and comes back when you go home") and another when their own journal returns. So nobody
+  is blindsided; the open question is only whether the RULE is the one you want, which is a
+  design call and not a defect.
 
 ## P0 — unverified fixes (the largest risk right now)
 
