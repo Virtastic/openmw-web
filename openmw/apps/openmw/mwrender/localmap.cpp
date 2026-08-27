@@ -250,6 +250,25 @@ namespace MWRender
         MapSegment& segment = mInterior ? mInteriorSegments[std::make_pair(segmentX, segmentY)]
                                         : mExteriorSegments[std::make_pair(segmentX, segmentY)];
         segment.mMapTexture = static_cast<osg::Texture2D*>(mLocalMapRTTs.back()->getColorTexture(nullptr));
+
+        // WHICH TEXTURE THE WIDGET WILL BE HANDED. Ten suspects have died on this bug and the
+        // survivors all reduce to one unproven assumption: that the texture stored here is the
+        // same object the camera later draws into. Everything else is now measured -- the camera
+        // is created, traversed, culls 109 drawables, its draw executes, the framebuffer raises
+        // no complaint -- and the panel is still the clear colour, which those facts together
+        // cannot explain.
+        //
+        // Taken at SETUP, before the camera has ever been culled: getColorTexture(nullptr)
+        // lazily creates the camera and its texture right here, and the cull later asks for the
+        // same nullptr key. That SHOULD be the same object. Printing the pointer is how it stops
+        // being a "should" -- compare it with the one logged from inside the draw.
+        static bool loggedTexture = false;
+        if (!loggedTexture)
+        {
+            loggedTexture = true;
+            Log(Debug::Warning) << "Local map: segment texture at setup = "
+                                << static_cast<const void*>(segment.mMapTexture.get());
+        }
     }
 
     void LocalMap::requestMap(const MWWorld::CellStore* cell)
@@ -919,7 +938,21 @@ namespace MWRender
         // the map is still blank, the draw runs and produces nothing, which is a different bug
         // in a different place.
         if (mDraws < 4)
-            Log(Debug::Warning) << "Local map: RTT camera DREW (draw #" << (mDraws + 1) << ")";
+        {
+            // ...and WHICH TEXTURE this draw is actually landing in. If this differs from the
+            // pointer logged at setup, the widget is holding an orphan that nothing ever renders
+            // into, and that is the whole bug -- every other measurement stays exactly as it is.
+            const void* attached = nullptr;
+            if (const osg::Camera* cam = renderInfo.getCurrentCamera())
+            {
+                const auto& map = cam->getBufferAttachmentMap();
+                const auto it = map.find(osg::Camera::COLOR_BUFFER);
+                if (it != map.end())
+                    attached = static_cast<const void*>(it->second._texture.get());
+            }
+            Log(Debug::Warning) << "Local map: RTT camera DREW (draw #" << (mDraws + 1)
+                                << ") into texture " << attached;
+        }
 
         // WHAT IS ACTUALLY IN THE TARGET. Build 59 established that this camera draws: created,
         // traversed, 109 drawables through the cull, draw executed -- and the HUD panel is still
