@@ -11,6 +11,51 @@ Ordered by what blocks the playthrough, then by what a human alone can close.
 
 ---
 
+## Live-play findings (2026-08-27 evening)
+
+Five bugs came from twenty minutes of somebody actually playing. None was reachable by any
+scenario in the suite, because each needs a real session: real cell transitions, a real
+friend request, a real environment change. That is the argument for the playthrough in one
+paragraph.
+
+* **Melee did nothing and "everything stops".** Sim peers were SIGKILLed at the 120 s start
+  deadline while several cold-started at once, leaving the cell with no authority: enemies
+  aggro, then freeze, and no damage is ever applied because nothing holds the cell. Not
+  memory -- 22 GB free on the box that produced it. Cold starts are serialised now, and a peer
+  already past its deadline does not hold the queue (which would trade a thrash for a stall).
+* **17 x `world.op_failed`.** `lToJs` and `jsToL` were not inverses: a mixed-key table became
+  `{__kv: ...}`, which `jsToL` waved through as userdata and the encoder rejected. Every relay
+  carrying such a payload was dropped silently. The error now names the offending keys.
+* **Loading screen flashed twice per area change.** The guard against it debounced on TIME,
+  measured from when the overlay was shown, with the cell load happening INSIDE that window --
+  so the echo always arrived after it expired. Keyed on the player's cell now.
+* **`AL error Invalid Enum (40962)`.** `updateListener` applied the underwater filter through
+  the Web Audio shim for STREAMS and through a raw EFX `alSourcei` for SOUNDS. Emscripten has
+  no EFX, so every environment change raised it. One loop was right and the one beside it was
+  missed.
+* **A party join did nothing at all.** `routeToParty` had two bare returns, so accepting an
+  invite that could not be routed produced no move, no message and no error. The membership
+  change was real; only the travel was impossible, and that is the thing to say.
+
+### The shape worth remembering
+
+Four separate guards failed the same way today -- each still reporting confidently about a
+world that had changed underneath it:
+
+| Guard | Premise that quietly stopped being true |
+| --- | --- |
+| memory governor | priced a world at a constant after peers went per-cell |
+| cell-load debounce | measured a window the cell load happened inside |
+| sim-peer deploy gate | read "no world at boot" as "the peer is broken" |
+| `/worlds` contract check | read "no world listed" as "the client cannot dial" |
+
+**A guard whose unit or premise has silently expired is more dangerous than no guard, because
+it reports healthy.** Two of these were triggered by a correct change (public worlds becoming
+opt-in) making an old assumption obsolete. When changing what the platform runs by default,
+grep for the checks that assumed the old default.
+
+---
+
 ## 1. Minimap — the one open product bug
 
 **State.** Reproduced with a one-command repro (`s74`). Ten suspects dead against real builds:
@@ -55,23 +100,30 @@ line rather than glanced at.
 
 ---
 
-## 3. `s43-avatar-load` at 8 concurrent players
+## 3. `s43-avatar-load` — DIAGNOSED AND FIXED
 
-**State.** Fails even alone. NOT a roster cap and NOT a propagation bug — both read in source:
-`players.ts` sends the whole `humansInWorld()` list with no cap or slice and announces every
-arrival; the client handler dedupes by id, appends and re-mirrors. The bots are exonerated too:
-`alive=0/8` was soak's own broken health metric (`fetch failed` → NaN), while `vis=7.0/7` proves
-all eight connected and saw each other.
+It was a SCENARIO bug, not a delivery gap, and the instrumentation earned itself on the first
+run. The wait asked for `target + 1` on the belief that the roster includes this client; it
+does not, so it stalled exactly one short every time:
 
-**So the observer's roster is what stalls.** One concrete lead: in a failing run's server log,
-`w8_0` through `w8_7` all appear EXCEPT `w8_4`.
+```
+roster: 0/9
+roster: 8/9   <- EXACTLY ONE SHORT, every run, for as long as the scenario existed
+```
 
-**Next step.** Instrument the wait rather than theorise — log the roster length on each poll, so
-the failure says whether it reaches 8 and stops (an off-by-one against the `target + 1`
-assumption) or stalls lower (a real delivery gap). No engine build; one scenario edit.
+It survived that long because the old message never carried a number -- which is why the first
+change made was to print one, not to guess. Fixed by counting entries whose id is not our own
+(`selfId` is mirrored beside the roster for exactly this), so it stays correct whichever way
+the engine later decides to treat self.
 
-**Scope.** 8 simultaneous players is well past the target of two-to-four friends. Worth
-understanding, not worth blocking on.
+**Result:** the scenario now clears 8 players and ramps to **62 of 64**. From a hard stop at 8
+to a two-player shortfall at 64 -- an eightfold improvement and a different class of problem,
+well outside the stated two-to-four-friend target. Worth understanding eventually; not worth
+blocking on.
+
+What is already ruled out for that remaining gap, by reading source: no roster cap or slice
+server-side (`players.ts` sends the whole `humansInWorld()` list and announces every arrival),
+and the client handler dedupes by id, appends and re-mirrors correctly.
 
 ---
 
