@@ -235,6 +235,31 @@ export function sendJson(res: ServerResponse, code: number, value: unknown): voi
 
 // ------------------------------------------------------------------- server
 
+// Bounds for /clientlog. Generous enough for a real burst of engine warnings on a bad boot,
+// small enough that the endpoint cannot be used as storage or a flood vector.
+const MAX_CLIENT_LOG_BYTES = 256 * 1024;
+const MAX_CLIENT_LOG_LINES = 500;
+const MAX_CLIENT_LOG_LINE = 2000;
+// Per-IP budget: a token bucket refilling at ~1 batch/sec with a burst of 20. A client shipping
+// on a 5 s timer never notices; something looping does.
+const CLIENT_LOG_BURST = 20;
+const clientLogBuckets = new Map<string, { tokens: number; at: number }>();
+
+function clientLogAllowed(ip: string): boolean {
+  const now = Date.now();
+  const b = clientLogBuckets.get(ip) ?? { tokens: CLIENT_LOG_BURST, at: now };
+  b.tokens = Math.min(CLIENT_LOG_BURST, b.tokens + (now - b.at) / 1000);
+  b.at = now;
+  if (b.tokens < 1) { clientLogBuckets.set(ip, b); return false; }
+  b.tokens -= 1;
+  clientLogBuckets.set(ip, b);
+  // Bounded: without this the map is a slow memory leak keyed by attacker-controlled IPs.
+  if (clientLogBuckets.size > 4096) {
+    for (const [k, v] of clientLogBuckets) if (now - v.at > 60_000) clientLogBuckets.delete(k);
+  }
+  return true;
+}
+
 export function createHttpServer(
   status: () => StatusSnapshot,
   metricsOpts: MetricsOptions,
@@ -260,6 +285,72 @@ export function createHttpServer(
       // Public by design (launchers poll it cross-origin); read-only and cheap.
       res.writeHead(200, { 'content-type': 'application/json', 'access-control-allow-origin': '*' });
       res.end(JSON.stringify(status()));
+      return;
+    }
+    // CLIENT LOGS, INTO THE SAME STREAM AS EVERYTHING ELSE.
+    //
+    // Every client-side fault this project has chased was invisible from the server: a Lua
+    // handler that threw and silently disabled a subsystem, a double loading overlay, an
+    // OpenAL enum error, a WebGL warning. They were only ever found by someone watching their
+    // own console, which does not scale past one person and leaves nothing to read afterwards.
+    // Server events already land in journald as structured JSON; this puts client events beside
+    // them so one query covers both halves of the conversation.
+    //
+    // Deliberately unauthenticated, because the most valuable reports come from a client that
+    // FAILED TO JOIN and therefore has no session to authenticate with. That makes it an open
+    // POST endpoint on the public internet, so it is bounded on every axis that matters:
+    // body size, line count, line length, and a per-IP rate limit. Nothing here is trusted --
+    // it is recorded as `client.log` with the reporting IP, never interpreted.
+    if (req.method === 'POST' && path === '/clientlog') {
+      res.setHeader('access-control-allow-origin', '*');
+      // clientIp, not the raw socket: behind the reverse proxy every request has the PROXY's
+      // address, so a raw-socket bucket would be one shared budget for the whole internet --
+      // the same bug that once made loginPerMinPerIp refuse the sixth person to sign in.
+      const ip = clientIp(req);
+      if (!clientLogAllowed(ip)) {
+        // 429 rather than a silent drop: a client shipping too fast should back off, and a
+        // silent success would have it keep going forever.
+        sendText(res, 429, 'slow down');
+        return;
+      }
+      let body = '';
+      let tooBig = false;
+      req.on('data', (chunk: Buffer) => {
+        if (tooBig) return;
+        body += chunk.toString('utf8');
+        if (body.length > MAX_CLIENT_LOG_BYTES) { tooBig = true; body = ''; }
+      });
+      req.on('end', () => {
+        if (tooBig) { sendText(res, 413, 'too large'); return; }
+        let lines: unknown;
+        let session = '';
+        try {
+          const parsed = JSON.parse(body) as { lines?: unknown; session?: unknown };
+          lines = parsed.lines;
+          session = typeof parsed.session === 'string' ? parsed.session.slice(0, 64) : '';
+        } catch { sendText(res, 400, 'bad json'); return; }
+        if (!Array.isArray(lines)) { sendText(res, 400, 'lines must be an array'); return; }
+        for (const raw of lines.slice(0, MAX_CLIENT_LOG_LINES)) {
+          if (typeof raw !== 'string') continue;
+          const text = raw.slice(0, MAX_CLIENT_LOG_LINE);
+          // Level is INFERRED here rather than taken from the client: a caller could otherwise
+          // mark everything 'error' and drown the operator's real alerts.
+          const level = /error|ABORT|fatal/i.test(text) ? 'error'
+            : /warn/i.test(text) ? 'warn' : 'info';
+          log(level, 'client.log', { ip, session, text });
+        }
+        res.writeHead(204);
+        res.end();
+      });
+      return;
+    }
+    if (req.method === 'OPTIONS' && path === '/clientlog') {
+      res.writeHead(204, {
+        'access-control-allow-origin': '*',
+        'access-control-allow-methods': 'POST, OPTIONS',
+        'access-control-allow-headers': 'content-type',
+      });
+      res.end();
       return;
     }
     if (req.method === 'GET' && path === '/metrics' && metricsOn) {

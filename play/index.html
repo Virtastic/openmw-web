@@ -470,7 +470,55 @@
    lastMsg = String(t).slice(0, 90);
    // keep the DOM log from growing unbounded
    while (logEl.childNodes.length > 400) logEl.removeChild(logEl.firstChild);
-   try { if (window.__omwLoading) window.__omwLoading.fromLog(String(t)); } catch(e){} }
+   try { if (window.__omwLoading) window.__omwLoading.fromLog(String(t)); } catch(e){}
+   try { if (window.__omwShipLog) window.__omwShipLog(String(t), cls); } catch(e){} }
+ // ---- CLIENT LOGS -> SERVER -------------------------------------------------------------
+ // Every client-side fault this project has chased was invisible from the server: a Lua handler
+ // that threw and silently disabled a subsystem, a doubled loading overlay, an OpenAL enum
+ // error. They were found by whoever happened to be watching their own console, which does not
+ // scale past one person and leaves nothing to read afterwards. Server events already land as
+ // structured JSON; this puts the client's beside them so one query covers both halves.
+ //
+ // WARNINGS AND ERRORS ONLY by default. The engine is chatty enough that shipping everything
+ // would cost real bandwidth on a phone and bury the lines that matter; ?clientlog=all opts in
+ // to the lot when someone is actually debugging, and ?clientlog=0 turns it off entirely.
+ window.__omwShipLog = (function(){
+   var mode = (/[?&]clientlog=(all|0|off)/.exec(location.search)||[])[1] || 'default';
+   if (mode === '0' || mode === 'off') return function(){};
+   var queue = [], sending = false, dropped = 0;
+   // A session id so one player's lines can be followed through a shared log. Random and
+   // per-load: it identifies a SESSION, never a person, and nothing links it to an account.
+   var session = Math.random().toString(36).slice(2, 10);
+   // Bounded: if the network is down the queue must not grow until the tab dies.
+   var MAX_QUEUE = 400;
+   function want(text, cls){
+     if (mode === 'all') return true;
+     if (cls === 'err') return true;
+     return /error|warn|failed|ABORT|Lua error/i.test(text);
+   }
+   function flush(){
+     if (sending || !queue.length) return;
+     sending = true;
+     var batch = queue.splice(0, 200);
+     if (dropped) { batch.unshift('[clientlog] ' + dropped + ' line(s) dropped (queue full)'); dropped = 0; }
+     // keepalive so a batch queued during unload still goes; failures are swallowed on purpose
+     // -- a logging path must never be able to break the game it is reporting on.
+     fetch('/clientlog', {
+       method: 'POST', keepalive: true,
+       headers: { 'content-type': 'application/json' },
+       body: JSON.stringify({ session: session, lines: batch })
+     }).catch(function(){}).then(function(){ sending = false; });
+   }
+   setInterval(flush, 5000);
+   // Last chance to ship whatever is pending when the tab goes away, which is exactly when a
+   // crash report is most likely to be sitting in the queue.
+   window.addEventListener('pagehide', flush);
+   return function(text, cls){
+     if (!want(text, cls)) return;
+     if (queue.length >= MAX_QUEUE) { dropped++; return; }
+     queue.push(text);
+   };
+ })();
  // Themed loading overlay controller. Driven by setStatus (engine download %), append()
  // log lines (game-data download / local mount phases), and hidden on the first engine frame.
  window.__omwLoading = (function(){
