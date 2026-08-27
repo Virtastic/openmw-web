@@ -121,6 +121,19 @@ to a two-player shortfall at 64 -- an eightfold improvement and a different clas
 well outside the stated two-to-four-friend target. Worth understanding eventually; not worth
 blocking on.
 
+**The remaining 2-of-64 is BOT-SIDE, not the roster.** Counted from the server log of a
+failing run: only 48 distinct bot names ever appear, across waves that should total 64. Bots
+are failing to START in the largest wave -- the same signature as the missing `w8_4` noted
+earlier -- rather than arriving and not being delivered. soak's own `alive=0/16` is unusable
+as evidence either way: its health fetch fails, so the figure is NaN.
+
+The bots spawn as a wave of `npx tsx` processes and the scenario's own comment already warns
+their cold start can outlast a 30 s timer; thirty-two at once is where that bites. Fixing it
+means staggering the wave, not touching anything in the roster path.
+
+NOT ON THE CRITICAL PATH: this is 64 simultaneous players against a stated target of two to
+four friends, and the product side of it is already proven correct by reading.
+
 What is already ruled out for that remaining gap, by reading source: no roster cap or slice
 server-side (`players.ts` sends the whole `humansInWorld()` list and announces every arrival),
 and the client handler dedupes by id, appends and re-mirrors correctly.
