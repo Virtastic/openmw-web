@@ -346,27 +346,25 @@ request needs a timeout and retry of its own, or the answer needs to be guarante
   Still unconfirmed on Brave itself. What is no longer true is that it needs someone to know
   to open a console.
 
-* **Minimap renders solid white/blue/black.** ONE SUSPECT ACTED ON, not yet confirmed as the
-  cause. Eliminated previously: no web-specific handling in `localmap.cpp`,
-  `GL_DEPTH24_STENCIL8` is valid WebGL2, and the `osg::PolygonMode` set there is `FILL` (the
-  GL default, so inert even though `glPolygonMode` does not exist in GLES).
+* **Minimap renders solid white/blue/black.** REPRODUCED HERE AT LAST, and the leading theory
+  is now DEAD. `s74-minimap-look` boots a client, lets the world settle and writes a HUD
+  screenshot to the repo root, so looking at this costs one command instead of an afternoon.
 
-  The remaining suspect was the RTT path, and it turned out to be checkable rather than
-  speculative: `localmap.cpp` asked for `FRAME_BUFFER_OBJECT` with `PIXEL_BUFFER_RTT` as the
-  FALLBACK. A pbuffer does not exist under WebGL at all, so that second argument named a path
-  that cannot possibly work -- anything declining the FBO path lands there and renders garbage
-  instead of failing loudly, which is the exact shape of this bug.
+  The shot from build 53 -- which INCLUDES the render-target fix -- still shows the map panel
+  in the HUD as a flat tan field with no map detail. So it was not the `PIXEL_BUFFER_RTT`
+  fallback. That change stays (a pbuffer cannot exist under WebGL and naming it as a fallback
+  was wrong regardless), but it is not the cause and nobody should spend time there again.
 
-  A survey settles that it was an outlier and not the house style: every other RTT camera in
-  the engine -- postprocessor, precipitation occlusion, shadows, `rtt.cpp`, multiview -- asks
-  for `FRAME_BUFFER_OBJECT` alone. The only three still naming the fallback were `localmap`,
-  `globalmap` and `characterpreview`: the minimap, the world map and the inventory doll. All
-  three now match everything else.
+  Eliminated now, with evidence rather than by reading: no web-specific handling in
+  `localmap.cpp`; `GL_DEPTH24_STENCIL8` is valid WebGL2; the `osg::PolygonMode` set there is
+  `FILL`, the GL default; and the RTT fallback. What is left is the local map's CONTENT --
+  what is drawn into the target rather than where it is drawn -- and the fact that the panel
+  shows a uniform colour rather than noise or black suggests the target is being cleared and
+  never painted, not that it is failing to exist.
 
-  NOT PROVEN. Nobody has reproduced the minimap here, so this is not "fixed" -- it is a path
-  that provably cannot work on the target platform, removed on its own merits. If the minimap
-  still breaks after the next engine build, the RTT theory is dead and the search moves on,
-  which is worth something too.
+  Also visible in the same shot, and worth its own look: the multiplayer intro modal ("You are
+  in the world") sits over the middle of the screen on a fresh character. That is by design,
+  but it means any future gameplay screenshot needs it dismissed first.
 
 ### Input (never reproduced; keyboard input demonstrably works)
 

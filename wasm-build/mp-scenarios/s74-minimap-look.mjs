@@ -1,0 +1,36 @@
+// Copyright (C) 2025-2026 Virtastic - https://virtastic.app
+// SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
+// s74: capture the HUD so the MINIMAP can actually be looked at.
+//
+// The minimap rendering solid white/blue/black has sat undiagnosed with a list of eliminated
+// suspects and no way to check the remaining one. The local map is drawn to a render target,
+// and localmap.cpp asked for FRAME_BUFFER_OBJECT with PIXEL_BUFFER_RTT as its FALLBACK -- and
+// a pbuffer does not exist under WebGL at all, so anything declining the FBO path landed on
+// something that cannot work and drew garbage instead of failing loudly. That fallback is gone
+// now.
+//
+// This scenario does not assert the minimap is CORRECT -- no automated check can tell a
+// plausible map from a wrong one, and pretending otherwise would be worse than not looking.
+// What it does is produce the artefact a person can look at in one step, instead of the bug
+// staying "undiagnosed" because checking it was a whole afternoon of setup.
+//
+// The minimap is part of the HUD, so ordinary gameplay is enough; no UI has to be opened.
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+// Written into the REPO, not /tmp. The harness runs in a --rm container, so anything left in
+// its own /tmp dies with it -- the first version of this produced the screenshot and threw it
+// away. The repo is the bind mount, so this lands on the host where a person can open it.
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+
+export default async function run(ctx) {
+  const a = await ctx.launchClient('map-look');
+
+  // Let the world settle. The local map renders as cells load, and a shot taken during the
+  // first frames says nothing about whether the RTT path works.
+  await ctx.sleep(8000);
+
+  const shot = await a.screenshot(join(ROOT, 'minimap-hud.png'));
+  ctx.log(`  HUD screenshot: ${shot}`);
+  ctx.log('  the minimap sits in the HUD corner — look at it rather than trusting this PASS');
+}
