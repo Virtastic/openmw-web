@@ -407,31 +407,34 @@ request needs a timeout and retry of its own, or the answer needs to be guarante
   Still unconfirmed on Brave itself. What is no longer true is that it needs someone to know
   to open a console.
 
-* **Minimap renders solid white/blue/black.** REPRODUCED HERE AT LAST, and the leading theory
-  is now DEAD. `s74-minimap-look` boots a client, lets the world settle and writes a HUD
-  screenshot to the repo root, so looking at this costs one command instead of an afternoon.
+* **Minimap renders solid white/blue/black.** REPRODUCED, and TWO theories now killed with
+  evidence rather than argued about. `s74-minimap-look` walks a character and screenshots the
+  HUD before and after: the scene changes, the map panel does not. Checking this costs one
+  command now, which is the main thing that changed.
 
-  The shot from build 53 -- which INCLUDES the render-target fix -- still shows the map panel
-  in the HUD as a flat tan field with no map detail. So it was not the `PIXEL_BUFFER_RTT`
-  fallback. That change stays (a pbuffer cannot exist under WebGL and naming it as a fallback
-  was wrong regardless), but it is not the cause and nobody should spend time there again.
+  Ruled out by that test, each against a real build:
 
-  Eliminated now, with evidence rather than by reading: no web-specific handling in
-  `localmap.cpp`; `GL_DEPTH24_STENCIL8` is valid WebGL2; the `osg::PolygonMode` set there is
-  `FILL`, the GL default; and the RTT fallback. What is left is the local map's CONTENT --
-  what is drawn into the target rather than where it is drawn -- and the fact that the panel
-  shows a uniform colour rather than noise or black suggests the target is being cleared and
-  never painted, not that it is failing to exist.
+  * FOG OF WAR. Fog lifts where you walk; the panel is identical after a 20-second walk.
+  * THE PIXEL_BUFFER_RTT FALLBACK. A pbuffer cannot exist under WebGL, so naming it as the
+    fallback was wrong -- but removing it changed nothing (build 53).
+  * THE ONE-FRAME RENDER WINDOW. The map camera was masked off on its second update visit, so
+    a first traversal that drew nothing would cost it its only chance. Giving it several
+    frames changed nothing either (build 54).
 
-  Also visible in the same shot, and worth its own look: the multiplayer intro modal ("You are
-  in the world") sits over the middle of the screen on a fresh character. That is by design,
-  but it means any future gameplay screenshot needs it dismissed first.
+  Both of those changes STAY -- each is right on its own merits -- but neither is the cause,
+  and nobody should spend time there again.
 
-### Input (never reproduced; keyboard input demonstrably works)
+  Ruled out earlier by reading: no web-specific handling in `localmap.cpp`,
+  `GL_DEPTH24_STENCIL8` is valid WebGL2, the `osg::PolygonMode` there is `FILL` (the GL
+  default), and `renderingmanager.cpp`'s `Mask_RenderToTexture` removal is on the INTERSECTION
+  visitor (raycasting), not on rendering.
 
-* ~~**Escape needs two presses to open the menu.**~~ NOT A BUG — confirmed working as intended
-  by the reporter (2026-08-26). Nothing was ever changed for it: the only match across the whole
-  branch is this backlog line, and `UiModeChanged`/input handling are untouched.
+  WHAT IS LEFT is the content rather than the plumbing: either the map camera traverses
+  nothing (a cull-mask question), or `getMapTexture` hands the widget nothing and the tan is
+  MyGUI's own default rather than anything the engine drew. A flat, uniform colour -- not
+  noise, not the black the camera clears to -- points at the second. That is the next thing to
+  check, and it wants one log line saying whether the texture is null.
+
 * **Intermittent camera/mouse spin.** ONE MECHANISM GUARDED, not confirmed as the cause --
   nobody has reproduced this, here or anywhere.
 
