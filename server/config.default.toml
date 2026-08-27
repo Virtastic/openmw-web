@@ -474,8 +474,10 @@ startCell = "Seyda Neen"
 # simpeer.cells_unsimulated -- frozen NPCs and melee that does not land, for whoever is there.
 #
 # THIS IS NOT THE PLATFORM'S MEMORY GOVERNOR — it cannot be, because it is per world process
-# and cannot see its siblings. N worlds means N peers. Size the box with [worlds] memBudgetMb
-# on the gateway; this stays as a per-world backstop.
+# and cannot see its siblings. N worlds does NOT mean N peers: each world runs one peer per
+# OCCUPIED CELL, so N worlds means N x (however many cells their players are spread across).
+# That is why the gateway budgets on the peer count worlds actually report rather than on a
+# fixed price per world -- see [worlds] peerCostMb. This stays as a per-world backstop.
 # MEASURED 487 MB RSS with full retail Morrowind + Tribunal + Bloodmoon, headless on Linux,
 # anchoring one exterior cell (2026-08-24, host load 1.4). Startup to SessionHello was 11.4 s
 # with that data set, which is why [simPeer] startTimeoutMs is generous. A peer anchoring

@@ -92,8 +92,14 @@ const worlds = new WorldSupervisor({
     // satisfied and simpeer.at_cap never fired.
     //
     // So the memory budget is passed too, and capacity() takes the lower of the two. Size a
-    // host by measuring one world+peer on it and setting [worlds] memBudgetMb/worldCostMb —
-    // not from a number in a comment, this one included.
+    // host by measuring on it and setting [worlds] memBudgetMb/worldCostMb/peerCostMb — not
+    // from a number in a comment, this one included.
+    //
+    // peerCostMb is there because the sentence above was itself overtaken: a world no longer
+    // costs "one world+peer" at all. Peers are one per OCCUPIED CELL, so a world's price is
+    // worldCostMb plus peerCostMb for every peer past the first, and the ceiling moves as
+    // players spread out. Measuring one world with one peer and stopping there is how this
+    // box would get undefended a second time, by the same reasoning in a different shape.
     maxWorlds: positiveInt(values['max-worlds'],
       config.worlds.maxWorlds > 0 ? config.worlds.maxWorlds : config.server.maxPlayers,
       'max-worlds'),
