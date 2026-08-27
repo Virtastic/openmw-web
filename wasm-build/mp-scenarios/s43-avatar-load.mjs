@@ -140,10 +140,46 @@ export default async function run(ctx) {
       // hoping. `npx tsx` cold start alone can outlast a 30s timer on a loaded box, and
       // sampling before the bots connect measures an empty scene while reporting it as a
       // crowd — the failure that made the first three runs of this scenario meaningless.
-      await c.waitFor(
-        // +1: the roster includes this client itself.
-        `JSON.parse((window.__omwMP||{}).players||'[]').length >= ${target + 1}`,
-        JOIN_TIMEOUT, `roster reached ${target} remote players`);
+      // POLLED BY HAND rather than with waitFor, so the failure SAYS what the roster reached.
+      //
+      // This wait has failed identically on every run and the message never carried a number,
+      // so three separate theories survived that the log could have killed outright. What is
+      // already ruled out, by reading the source rather than guessing: there is no roster cap or
+      // slice server-side (`players.ts` sends the whole humansInWorld() list and announces every
+      // arrival), and the client handler dedupes by id, appends and re-mirrors correctly. The
+      // bots are cleared too -- soak's own `alive=0/8` is a broken health metric (its fetch
+      // fails, so the number is NaN), while `vis=7.0/7` proves all eight connected and saw each
+      // other.
+      //
+      // So the question is exactly one number: does the observer reach `target` and stop one
+      // short (an off-by-one against the +1 self-assumption below), or stall lower (a real
+      // delivery gap)? Those need opposite fixes, and no amount of re-running the old wait
+      // separates them.
+      //
+      // +1: the roster is believed to include this client itself.
+      {
+        const want = target + 1;
+        const deadline = Date.now() + JOIN_TIMEOUT;
+        let best = -1;
+        let last = -1;
+        while (Date.now() < deadline) {
+          const n = Number(await c.eval("JSON.parse((window.__omwMP||{}).players||'[]').length"));
+          if (n > best) {
+            best = n;
+            ctx.log(`  roster: ${n}/${want}`);
+          }
+          last = n;
+          if (n >= want) break;
+          await ctx.sleep(2000);
+        }
+        if (last < want) {
+          throw new Error(`roster reached ${best}/${want} for ${target} remote players and stopped`
+            + ` there. ${best === target ? 'EXACTLY ONE SHORT: the roster does NOT include this'
+              + ' client itself, so the +1 above is wrong and this is a scenario bug, not a'
+              + ' delivery one.' : 'Short by more than one, so players really are missing --'
+              + ' compare against the server log, which names every player it accepted.'}`);
+        }
+      }
       await ctx.sleep(SETTLE_MS); // let poses stream and puppets finish spawning
       // The client must actually be RENDERING these avatars, not merely be told about them.
       // Without this the fps number is meaningless — an idle client that dropped every
