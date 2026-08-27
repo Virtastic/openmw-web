@@ -110,7 +110,13 @@ const worlds = new WorldSupervisor({
     idleReapMs: positiveInt(values['idle-reap-ms'], 120_000, 'idle-reap-ms'),
     startTimeoutMs: 120_000,
     restartBackoffMs: 15_000,
-    publicWorlds: values['public-world'] ?? ['vvardenfell'],
+    // NO PUBLIC WORLD UNLESS THE DEPLOYMENT ASKS FOR ONE. [worlds] publicEnabled defaults to
+    // false: the shared world is the most experimental surface here -- strangers, lobby
+    // containment, zoned PvP, server-side movement correction -- and it should be opted into
+    // rather than discovered running. An explicit --public-world on the command line still
+    // wins, so a harness or an operator who means it is not blocked.
+    publicWorlds: values['public-world']
+      ?? (config.worlds.publicEnabled ? ['vvardenfell'] : []),
     sharedDir,
   },
 });

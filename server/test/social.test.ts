@@ -402,3 +402,48 @@ test('a players row says whether you are already friends, or a request is pendin
   // Your own row is never a relationship.
   assert.deepEqual(h.social.relationTo('ann', 'ann'), {});
 });
+
+// ---------------------------------------------------------------- party routing feedback
+//
+// Reported from real play: "I joined their party and nothing happened." routeToParty had two
+// bare returns -- no party, and no recorded world -- so a player who accepted an invite and
+// could not be routed received NOTHING: no move, no message, no error. The membership change
+// was real and correct; only the travel was impossible, and nothing said so.
+//
+// Reachable whenever the leader is online but not yet placed in a cell (still loading, at
+// character creation, or a bot account that never occupies one) while the party has no world
+// recorded -- which is precisely the case that produced the report.
+test('party: accepting with nowhere to travel tells the joiner, instead of going quiet', () => {
+  const w = world();
+  const leader = w.add('leader', 'Leader');
+  const joiner = w.add('joiner', 'Joiner');
+  // Online, but never placed: no cell and no pose to route to.
+  (leader as unknown as { cellKey: string | null }).cellKey = null;
+  (leader as unknown as { pose: unknown }).pose = undefined;
+
+  assert.equal(w.social.partyInvite(leader, 'joiner'), 'ok');
+  // Through handleEvent, NOT partyAccept directly: routing lives in the op handler, so calling
+  // the method would bypass the behaviour this test exists for.
+  const body = new Map<string, unknown>([['acct', 'leader']]);
+  w.social.handleEvent(joiner, 'PartyAccept', body as never);
+
+  const told = w.events('joiner', 'PartyRouteUnavailable');
+  assert.equal(told.length, 1, 'the joiner must be told why nothing moved');
+  assert.equal(told[0]?.body.reason, 'leader_not_placed');
+  w.close();
+});
+
+// NEGATIVE CONTROL. When the leader IS placed, the joiner must be ROUTED rather than told why
+// it cannot happen -- otherwise this "fix" would have replaced a silent failure with a message
+// that fires on the working path too, which is worse than the bug.
+test('party: accepting when the leader is placed still routes, and says nothing', () => {
+  const w = world();
+  const leader = w.add('leader', 'Leader', { cellKey: '2,3' });
+  const joiner = w.add('joiner', 'Joiner');
+  assert.equal(w.social.partyInvite(leader, 'joiner'), 'ok');
+  const body = new Map<string, unknown>([['acct', 'leader']]);
+  w.social.handleEvent(joiner, 'PartyAccept', body as never);
+  assert.equal(w.events('joiner', 'PartyRouteUnavailable').length, 0);
+  assert.equal(w.events('joiner', 'InviteAccepted').length, 1, 'the joiner is routed to the leader');
+  w.close();
+});

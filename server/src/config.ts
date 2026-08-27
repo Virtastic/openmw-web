@@ -32,6 +32,12 @@ export interface Config {
   // enough: every occupied world carries its own sim peer, so worlds multiply RAM.
   worlds: {
     maxWorlds: number; // hard count ceiling (0 = derive from memory alone)
+    // Is the shared PUBLIC world offered at all? Default FALSE: it is the most experimental
+    // surface here -- strangers, lobby containment, PvP zoning, movement correction -- and a
+    // deployment should have to opt into it rather than discover it is live. When off the
+    // gateway starts no public world and the directory does not list one, so the client's
+    // Worlds tab has nothing to show and the Public button disappears on its own.
+    publicEnabled: boolean;
     memBudgetMb: number; // total RAM for worlds + peers (0 = no memory governor)
     worldCostMb: number; // measured: one world's node process + its FIRST sim peer
     peerCostMb: number; // measured: each ADDITIONAL peer in a world (one per occupied cell)
@@ -433,6 +439,7 @@ function validate(t: Tree): Config {
       // All optional: a config.toml written before the governor existed must keep booting,
       // and a single world server never reads this table at all.
       maxWorlds: optNum(t, 'worlds', 'maxWorlds', 0),
+      publicEnabled: optBool(t, 'worlds', 'publicEnabled', false),
       memBudgetMb: optNum(t, 'worlds', 'memBudgetMb', 0),
       worldCostMb: optNum(t, 'worlds', 'worldCostMb', 640),
       peerCostMb: optNum(t, 'worlds', 'peerCostMb', 487),

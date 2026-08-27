@@ -917,14 +917,32 @@ export class Social {
   private routeToParty(player: Player): void {
     const key = this.partyOf.get(player.accountKey);
     const party = key !== undefined ? this.parties.get(key) : undefined;
-    if (!party) return;
+    // SAY SO WHEN THERE IS NOWHERE TO GO. Both of the early exits below used to be bare
+    // returns, so a player who accepted an invite and could not be routed received NOTHING --
+    // no move, no message, no error. Reported from real play as "I joined their party and
+    // nothing happened", which is exactly what it looks like from the inside.
+    //
+    // It is reachable whenever the leader is online but not yet placed in a cell (still
+    // loading, at character creation, or a bot account that never occupies one) AND the party
+    // has no recorded world. The membership change is real and correct; only the travel is
+    // impossible, and that distinction is the thing to tell the player.
+    if (!party) {
+      player.peer.sendEvent('PartyRouteUnavailable', { reason: 'no_party', leaderName: '' });
+      return;
+    }
     const leader = this.onlinePlayer(party.leader);
     if (leader && leader.cellKey && leader.pose) {
       player.peer.sendEvent('InviteAccepted',
         { cellKey: leader.cellKey, x: leader.pose.x, y: leader.pose.y, z: leader.pose.z });
       return;
     }
-    if (!party.at) return;
+    if (!party.at) {
+      player.peer.sendEvent('PartyRouteUnavailable', {
+        reason: leader ? 'leader_not_placed' : 'leader_offline',
+        leaderName: this.d.displayName(party.leader) ?? '',
+      });
+      return;
+    }
     player.peer.sendEvent('PartyTravel', {
       target: party.at.mode === 'public' ? 'public' : 'party',
       worldId: party.at.id, mode: party.at.mode, host: party.at.host, port: party.at.port,

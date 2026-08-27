@@ -45,7 +45,26 @@ local myName = nil
 
 -- F3 world browser. worlds=nil means "not asked yet", {} means "asked, none joinable" —
 -- the two read very differently to a player and must not collapse into one blank list.
+-- Friend requests THIS CLIENT has just sent, keyed by lowercased display name.
+--
+-- The row already renders 'Request sent' -- but only once the SERVER roster comes back saying
+-- reqOut, which is a round trip away. Until then the button still read 'add friend', so
+-- clicking it appeared to do nothing and inviting the same person twice was the natural
+-- response. Recording the click locally flips the row immediately; the server's own reqOut
+-- takes over when it arrives, and the two agree.
+local sentFriendReq = {}
 local worlds = nil
+-- Whether the platform is offering a shared PUBLIC world at all. Driven purely by what the
+-- directory LISTS: with [worlds] publicEnabled off the gateway starts none and lists none, so
+-- there is no second switch here to forget. nil (list not fetched yet) is treated as 'no',
+-- because offering a button that then fails is worse than showing it a moment late.
+local function publicOffered()
+    if type(worlds) ~= 'table' then return false end
+    for _, w in ipairs(worlds) do
+        if w.mode == 'public' then return true end
+    end
+    return false
+end
 local worldsError = ''
 local worldDraft = ''
 local myWorldPort = nil -- so the world we are IN is marked rather than offered as a join
@@ -221,15 +240,24 @@ local function playersTab()
                 -- with, and to people whose request you had already sent.
                 local acct = string.lower(p.name) -- display-only fallback for local checks
                 local actions = {}
+                local lname = string.lower(p.name)
+                -- Once the server says you are friends, any locally remembered request is spent.
+                -- Without this the row would keep claiming 'Request sent' beside 'Friend'.
+                if p.friend then sentFriendReq[lname] = nil end
+                local pending = p.reqOut == true or sentFriendReq[lname] == true
                 if p.friend then
-                    -- Already friends: nothing to add. Said plainly, because an absent button
-                    -- reads as a missing feature.
-                    status = status
+                    -- Already friends: no add button, and the note below says 'Friend' so the
+                    -- absence is explained rather than looking like a missing feature.
                 elseif p.reqIn then
                     -- They asked YOU. Answering is the useful action here, not asking back.
                     actions[#actions + 1] = { 'accept friend', function() send('FriendAccept', { name = p.name }) end }
-                elseif not p.reqOut then
-                    actions[#actions + 1] = { 'add friend', function() send('FriendRequest', { name = p.name }) end }
+                elseif not pending then
+                    actions[#actions + 1] = { 'add friend', function()
+                        send('FriendRequest', { name = p.name })
+                        -- Flip the row NOW rather than waiting for the roster to come back.
+                        sentFriendReq[lname] = true
+                        render()
+                    end }
                 end
                 if not inParty(acct) then
                     actions[#actions + 1] = { 'party', function() send('PartyInvite', { name = p.name }) end }
@@ -250,7 +278,7 @@ local function playersTab()
                 -- The row says WHERE you stand, so a missing button is explained rather than
                 -- looking like something is broken.
                 local note = p.friend and 'Friend'
-                    or (p.reqOut and 'Request sent')
+                    or (pending and 'Request sent')
                     or (p.reqIn and 'Wants to be friends')
                     or nil
                 rows[#rows + 1] = personRow(p.name, { actions = actions, note = note })
@@ -429,16 +457,21 @@ local function partyTab()
                 render()
             end),
         }
-        rows[#rows + 1] = U.row {
-            -- No 'travel: party world' button: a party lives in the leader's own world
-            -- flipped to Party, or in the shared world. There is no third place to go.
-            U.button('travel: public', function()
+        -- No 'travel: party world' button: a party lives in the leader's own world flipped to
+        -- Party, or in the shared world. There is no third place to go -- and when the platform
+        -- offers no public world there is no second one either, so the button goes with it
+        -- rather than reporting "Asking the party to travel..." at a destination that does not
+        -- exist.
+        local partyActions = {}
+        if publicOffered() then
+            partyActions[#partyActions + 1] = U.button('travel: public', function()
                 status = 'Asking the party to travel...'
                 send('PartyTravel', { target = 'public' })
                 render()
-            end),
-            U.button('leave party', function() send('PartyLeave', {}) end),
-        }
+            end)
+        end
+        partyActions[#partyActions + 1] = U.button('leave party', function() send('PartyLeave', {}) end)
+        rows[#rows + 1] = U.row(partyActions)
     end
 
     for acct, inv in pairs(invites) do
@@ -637,12 +670,19 @@ local function switcherHeader()
             availability = 'offline'; where('offline'); status = 'Going offline (solo, hidden)...'; render()
         end),
     }
-    local place = U.row {
+    -- The Public button exists only when a public world does. A button that reports "Heading to
+    -- the shared world..." and then silently goes nowhere is worse than no button: the player
+    -- cannot tell a disabled feature from a broken one.
+    local placeItems = {
         U.text('Play in:'),
         U.button('Solo', function() where('solo'); status = 'Switching to your solo world...'; render() end),
         U.button('Party', function() where('party'); status = 'Opening your world to your party...'; render() end),
-        U.button('Public', function() where('public'); status = 'Heading to the shared world...'; render() end),
     }
+    if publicOffered() then
+        placeItems[#placeItems + 1] =
+            U.button('Public', function() where('public'); status = 'Heading to the shared world...'; render() end)
+    end
+    local place = U.row(placeItems)
     return U.column({
         U.text('Where', { header = true }),
         avail,
@@ -890,6 +930,22 @@ return {
         end,
         MP_ProfileResult = function(data)
             status = data.ok and 'Profile saved.' or ('Profile not saved: ' .. tostring(data.error or 'error'))
+            render()
+        end,
+        -- JOINING WORKED, TRAVELLING COULD NOT. The membership change is real; there is simply
+        -- nowhere to send you yet, because the leader is not standing in a cell and the party
+        -- has no world recorded. Previously the server returned in silence here and the player
+        -- saw an accepted invite do absolutely nothing.
+        MP_PartyRouteUnavailable = function(data)
+            local who = tostring(data.leaderName or '')
+            if who == '' then who = 'the party leader' end
+            if data.reason == 'leader_offline' then
+                status = 'Joined the party, but ' .. who .. ' is offline - you will travel when they are back.'
+            elseif data.reason == 'leader_not_placed' then
+                status = 'Joined the party, but ' .. who .. ' is not in the world yet - you will travel when they are.'
+            else
+                status = 'Joined the party, but there is nowhere to travel to yet.'
+            end
             render()
         end,
         MP_WorldList = function(data)

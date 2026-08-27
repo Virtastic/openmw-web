@@ -506,6 +506,17 @@ restartBackoffMs = 15000          # after a crash, wait before respawning (no ho
 # than sharing it. A count cap cannot see that, which is why there is a memory budget: the
 # gateway takes the LOWER of the two ceilings and logs which one bound it (gateway.capacity).
 [worlds]
+# Offer the shared PUBLIC world at all? OFF by default, deliberately.
+#
+# Public is the most experimental surface in multiplayer: strangers rather than friends, lobby
+# containment holding inventory back from real characters, zoned PvP, and server-side movement
+# correction that ACTS rather than merely counting. Every one of those is fine in a party of
+# friends and unproven against people you did not invite.
+#
+# With this off the gateway starts no public world and the directory lists none, so the client's
+# Worlds tab has nothing to show and the "Public" button disappears on its own -- there is no
+# second switch to remember. Turn it on when you want the shared world open.
+publicEnabled = false
 # 0 = derive the count ceiling from [server] maxPlayers (one solo world per seated player).
 maxWorlds = 0
 # Total RAM the gateway may spend on worlds and their peers. 0 DISABLES the memory governor
