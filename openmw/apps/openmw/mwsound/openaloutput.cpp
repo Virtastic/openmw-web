@@ -409,7 +409,10 @@ namespace
 #ifdef __EMSCRIPTEN__
         omw_efx_source_direct(source, filter);
 #else
-        omwSetSourceDirectFilter(source, filter);
+        // Real EFX on a desktop build. This used to call THIS FUNCTION, which is unbounded
+        // recursion -- latent only because this repo builds for the web, where the branch above
+        // is taken. Left as the real call so the file is correct rather than merely unused.
+        alSourcei(source, AL_DIRECT_FILTER, filter);
 #endif
     }
     inline void omwSetSourceSendFilter(ALuint source, ALuint slot, ALint filter)
@@ -417,7 +420,8 @@ namespace
 #ifdef __EMSCRIPTEN__
         omw_efx_source_send(source, slot, filter);
 #else
-        omwSetSourceSendFilter(source, slot, filter);
+        // Same latent self-call as the direct filter above; see the note there.
+        alSource3i(source, AL_AUXILIARY_SEND_FILTER, static_cast<ALint>(slot), 0, filter);
 #endif
     }
 
@@ -1898,8 +1902,16 @@ namespace MWSound
                     ALuint filter = (env == Env_Underwater) ? mWaterFilter : AL_FILTER_NULL;
                     for (Sound* sound : mActiveSounds)
                     {
+                        // THROUGH THE SHIM, like the streams below already were. A raw
+                        // alSourcei with AL_DIRECT_FILTER is an EFX call, and emscripten's
+                        // OpenAL is a Web Audio reimplementation that has no EFX -- so the enum
+                        // is unknown and every environment change raised
+                        // "AL error Invalid Enum (40962) @ updateListener", reported from real
+                        // play. The streams loop was already correct; this one was missed, which
+                        // is why the error appeared on entering and leaving water rather than
+                        // constantly.
                         if (sound->getUseEnv())
-                            alSourcei(GET_PTRID(sound->mHandle), AL_DIRECT_FILTER, filter);
+                            omwSetSourceDirectFilter(GET_PTRID(sound->mHandle), filter);
                     }
                     for (Stream* sound : mActiveStreams)
                     {
