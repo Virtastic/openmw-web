@@ -872,9 +872,30 @@ namespace MWRender
         camera->setClearMask(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
         camera->setRenderOrder(osg::Camera::PRE_RENDER);
 
-        camera->setCullMask(Mask_Scene | Mask_SimpleWater | Mask_Terrain | Mask_Object | Mask_Static);
-        camera->setCullMaskLeft(Mask_Scene | Mask_SimpleWater | Mask_Terrain | Mask_Object | Mask_Static);
-        camera->setCullMaskRight(Mask_Scene | Mask_SimpleWater | Mask_Terrain | Mask_Object | Mask_Static);
+        // Mask_Lighting IS PART OF THIS, and its absence is why the map rendered black.
+        //
+        // "Scene Root" IS the SceneUtil::LightManager (renderingmanager.cpp sets the name on it
+        // and calls setLightingMask(Mask_Lighting)). Its cull callback opens with:
+        //
+        //     if (!(cv->getTraversalMask() & node->getLightingMask())) { traverse(node, cv); return; }
+        //
+        // So a camera whose cull mask omits Mask_Lighting still TRAVERSES the whole scene -- it
+        // just binds no lighting state. Every drawable is collected and then shaded by nothing,
+        // which produces an entirely black target and not one error from anywhere.
+        //
+        // That is precisely why this bug survived twelve eliminated suspects: the camera is
+        // created, is traversed, culls 109 drawables, executes its draw, holds a valid RGBA8
+        // texture the widget really does display (the map WINDOW draws the player arrow and the
+        // fog overlay over it correctly), and the GL layer raises nothing. Every one of those
+        // observations is compatible with "drawn, unlit".
+        //
+        // water.cpp is the other camera that renders the world into a texture, and it includes
+        // Mask_Lighting in both of its cull masks. This was the only one that did not.
+        const auto mapCullMask = Mask_Scene | Mask_SimpleWater | Mask_Terrain | Mask_Object
+            | Mask_Static | Mask_Lighting;
+        camera->setCullMask(mapCullMask);
+        camera->setCullMaskLeft(mapCullMask);
+        camera->setCullMaskRight(mapCullMask);
         camera->setNodeMask(Mask_RenderToTexture);
         camera->setProjectionMatrix(mProjectionMatrix);
         camera->setViewMatrix(mViewMatrix);
