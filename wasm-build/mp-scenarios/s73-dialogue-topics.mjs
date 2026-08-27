@@ -27,6 +27,7 @@ import { fileURLToPath } from 'node:url';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const BOOT = { retail: true, joinTimeoutMs: 420_000 };
 
+const NL = new RegExp(String.fromCharCode(92) + 'r?' + String.fromCharCode(92) + 'n');
 const STEP = 20_000;
 // CANDIDATES, not one guess. addTopic needs a real dialogue RECORD, and which ids exist
 // depends entirely on the content loaded -- 'nerevarine' looked obvious and is not one. The
@@ -75,9 +76,33 @@ export default async function run(ctx) {
     if ((await topicsOf(a)).includes(cand)) { TOPIC = cand; break; }
   }
   if (!TOPIC) {
-    // A fixture problem, not a product one: none of the ids we know about exists in the loaded
-    // content, so there is nothing to share. Skipping says that; failing would blame the sync.
-    ctx.log(`SKIP: none of ${JSON.stringify(TOPIC_CANDIDATES)} is a topic in this content`);
+    // SAY WHY, using the engine's own words. player.lua prints '[mp] addTopic <id> failed: <err>'
+    // for every rejection, and that line has never once been read: a SKIP does not dump client
+    // logs, so the scenario has been reporting "not a topic in this content" as a conclusion
+    // when it was only ever a guess about the cause.
+    //
+    // It matters here because the guess is now known to be WRONG. All five candidates ARE real
+    // DIAL topic records in Morrowind.esm -- verified by parsing the retail file directly, which
+    // holds 1698 of them. So the reason addTopic refuses is something else, and the engine has
+    // been saying so the whole time into a log nobody printed.
+    const why = [...new Set((a.logTail?.(4000) ?? '').split(NL)
+      .filter((l) => /addTopic|topic record|journal/i.test(l))
+      .map((l) => l.trim()))];
+    ctx.log(`  engine's own words on the refusals (${why.length} distinct):`);
+    for (const l of why.slice(0, 8)) ctx.log(`    ${l.slice(0, 200)}`);
+    if (!why.length) ctx.log('    none — addTopic did not even report a failure, so the command may not be reaching the client');
+    // THE REASON, established by s75 rather than guessed at here. addTopic is silently invisible
+    // to `journal(player).topics` -- the collection this scenario polls AND the one quests.lua
+    // diffs -- so driving a topic in through the harness command and then looking for it here
+    // can never work. It is not the content: all five candidates are real DIAL records in
+    // Morrowind.esm, and the engine raises no complaint.
+    //
+    // Left as a SKIP rather than deleted, because the FEATURE is unproven rather than broken: a
+    // topic learned the way a player learns one (by talking, which records entries) would appear
+    // here normally. What is missing is a way to drive dialogue from a headless client. Whoever
+    // adds that can delete this branch and the scenario works as written.
+    ctx.log('SKIP: addTopic is invisible to journal().topics, so this cannot observe its own '
+      + 'input -- see s75-topic-probe, which characterises exactly that. NOT a content problem.');
     return;
   }
   ctx.log(`  A learned ${TOPIC}`);
