@@ -52,4 +52,12 @@ done
 # the same content-addressed dir. Unstamped (local dev) index.html keeps the plain relative path.
 sed -e "s/__ENGINE_VERSION__/$VER/g" -e "s|src=\"streamfs.js\"|src=\"$DIR/streamfs.js\"|g" \
   index.html > index.html.tmp && mv index.html.tmp index.html
-echo "version-engine: engine -> $PLAY/$DIR ; index.html stamped ($VER)"
+# PUBLISH THE HASH. The world server has to pin the SAME engine it is serving, and until now
+# the only record of which one that is was this log line and a directory name. A pin typed into
+# config.toml by hand is a constant that must be edited in lockstep with every deploy, and in
+# "refuse" mode a stale pin rejects EVERY client -- an outage caused by the security control.
+#
+# Writing it where the deploy can read it makes the pin follow the engine automatically. See
+# OMW_ENGINE_PIN in server/src/config.ts.
+printf "%s" "$VER" > "$PLAY/engine-version.txt"
+echo "version-engine: engine -> $PLAY/$DIR ; index.html stamped ($VER) ; hash -> $PLAY/engine-version.txt"

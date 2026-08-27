@@ -19,6 +19,15 @@ services:
       - /opt/openmw-mp/gamedata:/data/gamedata:ro
     environment:
       - NODE_ENV=production
+      # THE ENGINE BUILD THIS SERVER PINS, supplied by the deploy rather than typed into
+      # config.toml. Empty (the default) keeps today's behaviour exactly: [engine] pin from the
+      # config file, or first-arrival-wins if that is empty too.
+      #
+      # Set it from the hash version-engine.sh just stamped -- it writes it to
+      # <play>/engine-version.txt for exactly this -- and the pin can never drift from the
+      # engine actually being served. That matters because [engine] enforce = "refuse" with a
+      # stale pin refuses EVERY client, honest ones included.
+      - OMW_ENGINE_PIN=${OMW_ENGINE_PIN:-}
     # journald instead of the default json-file: json-file logs are DELETED when a deploy
     # recreates the container, destroying the evidence of whatever bug the deploy fixes.
     # journald persists across recreations (query history: `journalctl CONTAINER_NAME=openmw-mp`),

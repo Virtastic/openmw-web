@@ -501,7 +501,21 @@ function validate(t: Tree): Config {
     },
     engine: {
       enforce: reqEnum(t, 'engine', 'enforce', ['warn', 'refuse', 'off'] as const),
-      pin: optStr(t, 'engine', 'pin', ''),
+      // ENV WINS, AND THAT IS THE WHOLE POINT. A pin written into config.toml by hand is a
+      // 12-hex constant that must be edited in lockstep with every engine deploy, and the
+      // failure mode when it is not is total: in "refuse" mode a pin that no longer matches the
+      // engine being served rejects EVERY client, including all the honest ones. That is an
+      // outage caused by the security control, which is the worst way to have one.
+      //
+      // The deploy already knows the right answer -- version-engine.sh prints the hash it just
+      // stamped, and the engine is served from a directory named after it -- so the value can be
+      // handed in at deploy time and cannot drift from what is actually being served. A hand
+      // pin still works for a self-hoster who prefers to state it.
+      // .trim() then ||: a PRESENT BUT BLANK env var must fall through to the config rather
+      // than erase it. `${OMW_ENGINE_PIN:-}` in compose becomes an empty string when unset, and
+      // treating that as "the operator cleared the pin" would quietly turn a stated build back
+      // into first-arrival-wins on the next deploy.
+      pin: (process.env.OMW_ENGINE_PIN ?? '').trim() || optStr(t, 'engine', 'pin', ''),
     },
     time: { scale: reqNum(t, 'time', 'scale') },
     gui: { timeoutSec: reqNum(t, 'gui', 'timeoutSec') },

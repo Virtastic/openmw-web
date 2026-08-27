@@ -94,3 +94,45 @@ test('...but an ordinary client with no hash still is', async (t) => {
   assert.equal((bye as { code?: string }).code, 'BAD_ENGINE');
   c.close();
 });
+
+// ---------------------------------------------------------------- the pin's SOURCE
+//
+// The gate above is only as good as the value handed to it, and that value is where the
+// operational danger lives. A pin typed into config.toml is a 12-hex constant that has to be
+// edited in lockstep with every engine deploy; in "refuse" mode a pin that no longer matches
+// the engine being served refuses EVERY client, honest ones included. An outage caused by the
+// security control is the worst kind, and it is exactly why enforce has stayed at "warn".
+//
+// So the deploy supplies it: version-engine.sh writes the hash it just stamped to
+// <play>/engine-version.txt, docker-compose passes it as OMW_ENGINE_PIN, and the pin cannot
+// drift from what is actually being served. These cover the precedence that makes that safe.
+test('pin: OMW_ENGINE_PIN overrides the config file, so the deploy can set it', async () => {
+  const { loadConfig } = await import('../src/config');
+  const { mkdtempSync, writeFileSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+
+  const dir = mkdtempSync(join(tmpdir(), 'omw-pin-'));
+  writeFileSync(join(dir, 'config.toml'), '[engine]\npin = "aaaaaaaaaaaa"\n');
+
+  const before = process.env.OMW_ENGINE_PIN;
+  try {
+    process.env.OMW_ENGINE_PIN = 'bbbbbbbbbbbb';
+    assert.equal(loadConfig(dir).engine.pin, 'bbbbbbbbbbbb',
+      'the deployed engine must win over a hand-written constant that can go stale');
+
+    // BLANK MUST NOT WIN. An unset-but-present env var (empty string, which is what an
+    // unsubstituted ${OMW_ENGINE_PIN:-} becomes) has to fall through to the config file rather
+    // than silently CLEARING the operator's pin -- that would turn a stated build back into
+    // first-arrival-wins, quietly, on the next deploy.
+    process.env.OMW_ENGINE_PIN = '   ';
+    assert.equal(loadConfig(dir).engine.pin, 'aaaaaaaaaaaa',
+      'a blank env var must fall through to the config, not erase it');
+
+    delete process.env.OMW_ENGINE_PIN;
+    assert.equal(loadConfig(dir).engine.pin, 'aaaaaaaaaaaa');
+  } finally {
+    if (before === undefined) delete process.env.OMW_ENGINE_PIN;
+    else process.env.OMW_ENGINE_PIN = before;
+  }
+});
