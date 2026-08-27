@@ -156,14 +156,27 @@ export default async function run(ctx) {
       // delivery gap)? Those need opposite fixes, and no amount of re-running the old wait
       // separates them.
       //
-      // +1: the roster is believed to include this client itself.
+      // COUNT THE OTHERS, rather than assume where this client sits in the list. The wait used
+      // to ask for `target + 1` on the belief that the roster includes this client itself, and
+      // measured against a real run it does NOT: the roster reached 8/9 with 8 bots and stopped
+      // exactly one short, every time, for as long as this scenario has existed. That is a
+      // scenario bug wearing the costume of a delivery failure, and it survived because the old
+      // message never carried the number.
+      //
+      // Counting entries whose id is not our own is right whichever way the engine changes its
+      // mind: `selfId` is mirrored beside the roster for exactly this purpose (the UI needs it
+      // to stop offering players add-friend buttons for themselves), so if self is ever included
+      // this keeps working rather than silently over-waiting by one.
       {
-        const want = target + 1;
+        const want = target;
         const deadline = Date.now() + JOIN_TIMEOUT;
         let best = -1;
         let last = -1;
         while (Date.now() < deadline) {
-          const n = Number(await c.eval("JSON.parse((window.__omwMP||{}).players||'[]').length"));
+          const n = Number(await c.eval(
+            "(function(){var m=window.__omwMP||{};var me=String(m.selfId||'');"
+            + "var ps=JSON.parse(m.players||'[]');"
+            + "return ps.filter(function(p){return String(p.id)!==me;}).length;})()"));
           if (n > best) {
             best = n;
             ctx.log(`  roster: ${n}/${want}`);
@@ -173,11 +186,9 @@ export default async function run(ctx) {
           await ctx.sleep(2000);
         }
         if (last < want) {
-          throw new Error(`roster reached ${best}/${want} for ${target} remote players and stopped`
-            + ` there. ${best === target ? 'EXACTLY ONE SHORT: the roster does NOT include this'
-              + ' client itself, so the +1 above is wrong and this is a scenario bug, not a'
-              + ' delivery one.' : 'Short by more than one, so players really are missing --'
-              + ' compare against the server log, which names every player it accepted.'}`);
+          throw new Error(`roster reached ${best}/${want} OTHER players and stopped there.`
+            + ` Self is excluded from this count, so this is a real delivery gap -- compare`
+            + ` against the server log, which names every player it accepted.`);
         }
       }
       await ctx.sleep(SETTLE_MS); // let poses stream and puppets finish spawning

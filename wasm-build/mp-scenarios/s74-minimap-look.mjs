@@ -78,11 +78,19 @@ export default async function run(ctx) {
   // "Local map:" prefix. Printing what the GL layer says is free and it is the only remaining
   // place the answer can come from.
   const NL = new RegExp(String.fromCharCode(92) + 'r?' + String.fromCharCode(92) + 'n');
-  const all = a.logTail?.(4000) ?? '';
+  // THE WHOLE LOG, not a tail. logTail(n) returns the LAST n lines, and an FBO/attachment error
+  // happens at the FIRST render -- early in a boot that goes on to log far more than 4000
+  // lines. So the previous "GL-level complaints (0 distinct)" may simply have been looking
+  // past the only window the error could appear in, and reporting silence as evidence.
+  //
+  // That matters because the peer image DID log 'Error attaching FBO' in the same family of
+  // run, and because the panel is BLACK while this camera clears to BLUE: a clear that never
+  // lands is what an unattached framebuffer looks like from the outside.
+  const all = a.logTail?.(1000000) ?? '';
   const gl = [...new Set(all.split(NL)
     .filter((l) => /framebuffer|incomplete|GL_INVALID|FBO|glCheckFramebuffer|RenderStage/i.test(l))
     .map((l) => l.trim()))];
   ctx.log(`  GL-level complaints (${gl.length} distinct):`);
-  for (const l of gl.slice(0, 12)) ctx.log(`    ${l.slice(0, 200)}`);
+  for (const l of gl.slice(0, 20)) ctx.log(`    ${l.slice(0, 200)}`);
   if (!gl.length) ctx.log('    none — the framebuffer is not complaining, so incompleteness is NOT the cause');
 }

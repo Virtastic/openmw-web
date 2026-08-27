@@ -366,7 +366,23 @@ async function launchClient(name, mpPort, extraParams = '', opts = {}) {
     '--headless=new', ...glArgs,
     // --no-sandbox only off the developer machine: Chrome's sandbox needs user namespaces
     // that a CI VM usually does not grant, and it fails to launch at all rather than warning.
-    ...(process.env.CHROME_BIN ? ['--no-sandbox'] : []),
+    // --no-sandbox AND --disable-dev-shm-usage, both only off the developer machine.
+    //
+    // Chrome's sandbox needs user namespaces a CI VM usually does not grant, and without the
+    // flag it fails to launch at all rather than warning.
+    //
+    // /dev/shm is 64 MB in a default container and Chrome puts its shared render buffers there.
+    // One client fits; the SECOND one does not, and the way it fails is silent -- the browser
+    // starts, the page loads, and it simply never finishes joining. Measured in the peer image:
+    // the first client reached Joined in 8.7 s and the second timed out at 420 s, with the
+    // example suite and no sim peer involved, so nothing about retail data or the peer was
+    // implicated. --disable-dev-shm-usage moves those buffers to /tmp, which is disk-backed and
+    // unbounded.
+    //
+    // Harmless where it was already working: Debian's older chromium in Dockerfile.harness fits
+    // two clients inside 64 MB, which is exactly why this went unnoticed until an image with
+    // google-chrome 152 needed the same thing.
+    ...(process.env.CHROME_BIN ? ['--no-sandbox', '--disable-dev-shm-usage'] : []),
     '--disable-gpu-sandbox', '--no-first-run', '--no-default-browser-check',
     '--user-data-dir=' + profile, '--remote-debugging-port=0',
     '--window-size=1280,720', 'about:blank',
