@@ -135,7 +135,32 @@ export default async function run(ctx) {
   // Stop the armed loop and let its in-flight swing settle before clearing the inbox, or a
   // straggler health hit lands in the window the unarmed assertion is watching.
   stopArmed = true;
-  await ctx.sleep(2000);
+  // DRAIN UNTIL QUIET, rather than sleeping a guessed interval and clearing once. The armed
+  // loop swings every 1.5 s and a swing already in flight lands after the stop flag is set, so
+  // a fixed 2 s settle plus a single clear left a health hit sitting in the inbox -- and the
+  // unarmed assertion below then read THAT, reporting `damage.health = 7` where it wanted
+  // `damage.fatigue = 5` and failing as though fatigue forwarding were broken. It was not; the
+  // test was.
+  //
+  // Deliberately NOT fixed by selecting the first event that happens to carry a fatigue
+  // channel. That would pass just as happily on a build that quietly converted fatigue to
+  // health, which is the exact bug this scenario exists to catch. Draining to silence keeps
+  // the assertion strict: anything that arrives after this can only be an unarmed swing.
+  {
+    const quietFor = 3000;
+    const drainUntil = Date.now() + 30_000;
+    let lastSeen = Date.now();
+    peer.inbox.events.length = 0;
+    while (Date.now() < drainUntil) {
+      await ctx.sleep(250);
+      if (peer.inbox.events.some((e) => e.name === 'CombatHit')) {
+        peer.inbox.events.length = 0;
+        lastSeen = Date.now();
+        continue;
+      }
+      if (Date.now() - lastSeen >= quietFor) break;
+    }
+  }
   ctx.log('swinging UNARMED (fatigue damage) at ' + record);
   peer.inbox.events.length = 0;
   const fatUntil = Date.now() + 60_000;

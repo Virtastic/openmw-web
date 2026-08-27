@@ -12,6 +12,7 @@ local types = require('openmw.types')
 local mp = require('openmw.mp')
 local I = require('openmw.interfaces')
 local self = require('openmw.self')
+local nearby = require('openmw.nearby')
 
 local json = require('scripts.mp.json')
 local identity = require('scripts.mp.identity')
@@ -453,15 +454,22 @@ local function pollHarness()
         -- cell the harness happens to start in.
         if cmd == 'barter:open' then
             local best, bestD2 = nil, nil
-            local cell = self.cell
-            if cell then
-                for _, obj in ipairs(cell:getAll()) do
-                    if types.NPC.objectIsInstance(obj) and not types.Player.objectIsInstance(obj) then
-                        local okd, dead = pcall(function() return types.Actor.isDead(obj) end)
-                        if okd and not dead then
-                            local d2 = (obj.position - self.position):length2()
-                            if not bestD2 or d2 < bestD2 then best, bestD2 = obj, d2 end
-                        end
+            -- nearby.actors, NOT cell:getAll(). getAll is a GLOBAL-script API; a player script
+            -- is local and does not have it, so this read `attempt to call a nil value (method
+            -- 'getAll')` -- and because it ran inside onFrame it took the whole handler down
+            -- with it, which in OpenMW means player.lua's onFrame stops for the rest of the
+            -- session. One unavailable method silently disabled the client's entire per-frame
+            -- multiplayer subsystem, which is exactly the failure mode the Lua tests exist for.
+            --
+            -- nearby.actors is the local-script equivalent and is strictly better here anyway:
+            -- it spans the LOADED cells rather than only the one the player stands in, so a
+            -- merchant one cell over is still found.
+            for _, obj in ipairs(nearby.actors) do
+                if types.NPC.objectIsInstance(obj) and not types.Player.objectIsInstance(obj) then
+                    local okd, dead = pcall(function() return types.Actor.isDead(obj) end)
+                    if okd and not dead then
+                        local d2 = (obj.position - self.position):length2()
+                        if not bestD2 or d2 < bestD2 then best, bestD2 = obj, d2 end
                     end
                 end
             end
