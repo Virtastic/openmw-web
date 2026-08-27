@@ -56,4 +56,20 @@ export default async function run(ctx) {
   ctx.log(`  local-map diagnostics (${lines.length}):`);
   for (const l of lines.slice(0, 6)) ctx.log(`    ${l.trim()}`);
   if (!lines.length) ctx.log('    none — neither the RTT camera nor the null-texture path was reached');
+
+  // GL-LEVEL COMPLAINTS. The map camera is created, traversed, culls 109 drawables and its draw
+  // executes, and the target STILL reads back as zero even when the clear colour is bright blue.
+  // A clear that does not land is the signature of an INCOMPLETE FRAMEBUFFER: the stage runs,
+  // the driver rejects it, and nothing is written. OSG and the WebGL layer both say so out loud
+  // -- and this scenario was throwing those lines away, because it only ever grepped for its own
+  // "Local map:" prefix. Printing what the GL layer says is free and it is the only remaining
+  // place the answer can come from.
+  const NL = new RegExp(String.fromCharCode(92) + 'r?' + String.fromCharCode(92) + 'n');
+  const all = a.logTail?.(4000) ?? '';
+  const gl = [...new Set(all.split(NL)
+    .filter((l) => /framebuffer|incomplete|GL_INVALID|FBO|glCheckFramebuffer|RenderStage/i.test(l))
+    .map((l) => l.trim()))];
+  ctx.log(`  GL-level complaints (${gl.length} distinct):`);
+  for (const l of gl.slice(0, 12)) ctx.log(`    ${l.slice(0, 200)}`);
+  if (!gl.length) ctx.log('    none — the framebuffer is not complaining, so incompleteness is NOT the cause');
 }

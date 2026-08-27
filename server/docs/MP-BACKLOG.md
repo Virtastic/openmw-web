@@ -91,6 +91,43 @@ The strongest standing clue: the character PORTRAIT two panels away renders perf
 is also an `RTTNode` drawn into a MyGUI widget. The mechanism works; something about this
 camera specifically does not.
 
+### The blue-clear run, and a probe that turned out to be unsound
+
+Build 62 cleared the target to blue (51,102,204). Result: the readback STILL reported
+`min=0 max=0 mean=0`, and the HUD panel stayed black (sampled: 14,14,10).
+
+Read carefully, that combination indicts the PROBE. A final-draw callback can run after the
+camera's framebuffer has been unbound, in which case `glReadPixels` samples the default
+framebuffer -- black at that point in the frame -- no matter what the map camera did. The
+identical zero for a black clear and a bright blue clear is exactly what a probe reading the
+wrong buffer looks like, so the two readback numbers should be treated as MEANINGLESS rather
+than as evidence. Recorded because it was on the way to becoming a load-bearing fact.
+
+Three more suspects died on this pass, each by reading rather than building:
+
+* MSAA intermediate target -- `shouldAddMSAAIntermediateTarget()` needs `antialiasing > 1` and
+  the web default is 0, so no intermediate exists to fail to resolve. (`?aa=N` can turn it on
+  if anyone wants to test that path deliberately.)
+* Unsized colour format -- the real WebGL2 trap, and already handled: `SelectColorFormatOperation`
+  forces `GL_RGBA8` on Emscripten and IS registered in `engine.cpp` realize operations.
+  `characterpreview.cpp` additionally sets it explicitly, which is belt and braces, not the
+  difference between the two widgets.
+* Framebuffer incompleteness -- `s74` now prints every GL-level line (framebuffer / incomplete /
+  GL_INVALID / FBO / RenderStage). Zero distinct complaints. The driver is not objecting.
+
+WHAT THAT LEAVES, stated as a contradiction rather than a theory, because it is one: a camera
+whose framebuffer is complete, which draws, clearing to blue, into a texture the widget then
+displays as black. Those cannot all be true, so one of them is being measured wrong. The
+readback is already known bad. The next thing to verify is the one link never checked directly
+-- that the texture the HUD widget samples is the same object as the one this camera attaches.
+`localmap.cpp:228` takes it via `getColorTexture(nullptr)` at SETUP time, before the camera has
+ever been culled, and `getMapTexture(x, y)` hands the widget a per-SEGMENT texture; three
+cameras were created in the failing run, so segment-to-camera mapping is the place to look.
+
+DO NOT spend another build on a new theory before checking that link. Ten suspects have now
+died, and the two that produced the most confident-looking evidence (the readback, twice) were
+measuring the wrong buffer.
+
 ---
 
 ## What still needs a human
