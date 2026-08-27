@@ -82,10 +82,26 @@ export default async function run(ctx) {
   // ownId is the world this scenario later reaps and dials back into. It HAS to be the
   // player own world: `where:solo` returns them there, so a separate one would send them
   // somewhere that was never reaped and the revival round trip would never be exercised.
+  // MEASURE THE BOX, THEN BUDGET AGAINST IT. Every wait in this scenario is really "how long
+  // does an engine take to boot here", because a world switch reloads the page and boots it
+  // again -- and this is the only scenario that does that THREE times. Fixed numbers were
+  // wrong in both directions: 240s passed on a quiet box and failed at 291s on a busy one,
+  // then 420s failed at 475s. There is no constant that is both generous enough for the
+  // slowest machine and honest on the fastest.
+  //
+  // The first boot is the measurement: launchClient does not return until the client is
+  // Joined, so the wall time of this call IS a boot-and-join on this machine right now.
+  const bootStart = Date.now();
   const gw = await startGatewayAndClient(ctx, {
     gwPort: GW_PORT, idleReapMs: REAP_MS, ownId: OWN_ID,
   });
   const a = gw.client;
+  // A generous multiple, not a tight one: a reboot competes with whatever made the first boot
+  // slow, and the floor keeps a suspiciously fast first boot from setting an unusable budget.
+  const bootMs = Date.now() - bootStart;
+  const ARRIVE_MS = Math.max(180_000, bootMs * 8);
+  ctx.log(`  first boot took ${(bootMs / 1000).toFixed(1)}s; allowing `
+    + `${(ARRIVE_MS / 1000).toFixed(0)}s per arrival after a switch`);
   const stopGw = gw.stop;
   const acct = a.name.toLowerCase();
   try {
@@ -106,7 +122,7 @@ export default async function run(ctx) {
     // `up`, not a port: the gateway publishes no world ports, so the old `ownPort = w.port`
     // captured undefined and then failed its own `> 0` check the instant the world came up.
     let ownUp = false;
-    const upBy = Date.now() + 60_000;
+    const upBy = Date.now() + ARRIVE_MS;
     while (Date.now() < upBy) {
       const w = (await worldsOf(acct)).find((x) => x.id === 'priv-revivetest');
       if (w?.up) { ownUp = true; break; }
@@ -125,7 +141,7 @@ export default async function run(ctx) {
     await a.eval("Module.__omwMPCmd='worldjoin:priv-revivetest'");
 
     let joined = false;
-    const joinBy = Date.now() + 60_000;
+    const joinBy = Date.now() + ARRIVE_MS;
     while (Date.now() < joinBy) {
       if (await playersIn('priv-revivetest') > 0) { joined = true; break; }
       await ctx.sleep(1000);
@@ -169,7 +185,7 @@ export default async function run(ctx) {
     // reloads and the WHOLE ENGINE boots again -- the harness gives a first join 600s for
     // exactly that reason, and this scenario does it three times. 240s passed in isolation and
     // failed in a full run at 291s, which was measuring the box rather than the product.
-    const publicBy = Date.now() + 420_000;
+    const publicBy = Date.now() + ARRIVE_MS;
     let pressed = 0;
     let lastPress = 0;
     while (Date.now() < publicBy && !inPublic) {
