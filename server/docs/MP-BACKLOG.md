@@ -429,11 +429,18 @@ request needs a timeout and retry of its own, or the answer needs to be guarante
   default), and `renderingmanager.cpp`'s `Mask_RenderToTexture` removal is on the INTERSECTION
   visitor (raycasting), not on rendering.
 
-  WHAT IS LEFT is the content rather than the plumbing: either the map camera traverses
-  nothing (a cull-mask question), or `getMapTexture` hands the widget nothing and the tan is
-  MyGUI's own default rather than anything the engine drew. A flat, uniform colour -- not
-  noise, not the black the camera clears to -- points at the second. That is the next thing to
-  check, and it wants one log line saying whether the texture is null.
+  * A NULL MAP TEXTURE. Settled by a warning added for exactly this: it never fires, so
+    `getMapTexture` returns a real texture and the widget really is showing it.
+
+  SO THE TARGET EXISTS AND KEEPS ITS CLEAR COLOUR. The camera clears to BLACK, and the HUD has
+  a solid black panel -- which is the map showing precisely that. (An earlier note here pointed
+  at a tan panel on the other side of the HUD; that is a different widget, and the mistake is
+  left recorded because it is the kind that sends the next person to the wrong file.)
+
+  WHAT IS LEFT is a camera that is set up correctly, with a valid attached texture, drawing
+  NOTHING into it. That is a traversal question -- a cull mask, or the RTT not executing at all
+  under WebGL -- and no longer a question about textures, fallbacks, frame counts or fog. Four
+  suspects are dead and the remaining one is specific.
 
 * **Intermittent camera/mouse spin.** ONE MECHANISM GUARDED, not confirmed as the cause --
   nobody has reproduced this, here or anywhere.
