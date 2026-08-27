@@ -521,6 +521,30 @@ request needs a timeout and retry of its own, or the answer needs to be guarante
   is a build cycle away rather than a guess away, which is the state this bug should have been
   in from the start.
 
+  THE ANSWER IS NOW WIRED AND WAITING ON A BUILD. `localmap.cpp` hangs the scene under an
+  identity group inside the map camera and counts, once per session, how many drawables survive
+  that camera's own cull: `Local map: camera subgraph culled to N drawable(s)`. `s74` already
+  prints every `Local map:` line, so no scenario change is needed -- run it against the next dev
+  build and read N.
+
+  N is the whole verdict, and both outcomes are useful:
+
+  * **N == 0** -- the cull is the bug. The world is being thrown away before the draw, and the
+    view/projection matrices built in `LocalMapRenderToTexture`'s constructor (a hand-computed
+    near/far from cell bounds, an ortho frustum, `DO_NOT_COMPUTE_NEAR_FAR`) are where to look.
+  * **N > 0** -- the cull is fine and this camera is exonerated. The world reaches the draw and
+    still does not appear, which moves the fault downstream to the draw itself or the readback,
+    and makes the FBO's completeness under WebGL the next thing to check.
+
+  Two traps this had to avoid, both of which would have produced a confident wrong answer. The
+  count is taken AFTER the traversal, since asking beforehand reads an empty bin every time and
+  would "prove" the very bug under investigation. And leaves are counted from BOTH the bin's leaf
+  list and its state graphs: at cull time most leaves are still in state graphs, so counting only
+  `getRenderLeafList()` reports zero for a perfectly healthy cull. The callback sits on an
+  inserted group rather than on the camera because a cull callback on the camera itself runs
+  before that camera's render stage is pushed, and would count the MAIN view's bin -- a number
+  that is always large, always healthy, and about the wrong camera.
+
   NOTE ON THE METHOD, because it cost a run: the harness only dumps a client's console when a
   scenario FAILS, and `s74` passes by design (it produces artefacts rather than asserting). The
   engine diagnostics therefore went into a log nobody printed, and their absence briefly looked
