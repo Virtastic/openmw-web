@@ -253,6 +253,14 @@ export const metrics = {
   // saw and nobody else did.
   worldsRunning: reg(new Gauge('omwmp_worlds_running', 'World processes currently supervised.')),
   worldsCapacity: reg(new Gauge('omwmp_worlds_capacity', 'Worlds this gateway may run at once (the binding ceiling).')),
+  // THE TWO NUMBERS THE MEMORY CEILING IS ACTUALLY MADE OF. worlds_running is a count of
+  // processes and no longer predicts memory on its own: a world runs one sim peer per OCCUPIED
+  // CELL, so four players spread out cost roughly three times what four players in Balmora do
+  // while both read as one world. Peers are what spend the RAM, and committed_mb is what the
+  // governor is actually comparing against the budget -- graph that against the budget and the
+  // box filling up is visible BEFORE a player is refused, which is the whole point.
+  gatewayPeersRunning: reg(new Gauge('omwmp_gateway_peers_running', 'Sim peers across every supervised world (one per occupied cell).')),
+  gatewayCommittedMb: reg(new Gauge('omwmp_gateway_committed_mb', 'RAM the supervised worlds and their peers have committed, as the governor prices it.')),
   worldRefused: reg(
     new Counter('omwmp_world_refused_total', 'World starts declined.', ['reason'])),
 

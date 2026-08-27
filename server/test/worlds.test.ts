@@ -419,6 +419,29 @@ test('capacity: peerCostMb 0 prices every world at worldCostMb however many peer
   assert.ok(sup.ensure('d', 'private', 'dan'), 'the world the priced-peers run refused');
 });
 
+// The governor's INPUTS have to be visible, or the only evidence a box is filling up is the
+// 503 a player gets when it is already full. worlds_running cannot carry that on its own any
+// more: a world is one process whether its players share a cell or are scattered across four,
+// and those two cost wildly different amounts of RAM.
+test('observability: peers and committed RAM track what the worlds actually report', async () => {
+  const { sup, spawned, peers } = harness({
+    maxWorlds: 10, memBudgetMb: 4096, worldCostMb: 640, peerCostMb: 487,
+    gatewayReserveMb: 256, publicWorlds: [],
+  });
+  assert.deepEqual({ peers: sup.peersRunning, mb: sup.committed }, { peers: 0, mb: 0 },
+    'an empty gateway has committed nothing');
+
+  assert.ok(sup.ensure('a', 'private', 'ann'));
+  // Before any poll: priced as the one peer worldCostMb already includes, not as free.
+  assert.deepEqual({ peers: sup.peersRunning, mb: sup.committed }, { peers: 1, mb: 640 });
+
+  const a0 = spawned[0]!;
+  peers.set(Number(a0.args[a0.args.indexOf('--port') + 1]), 4);
+  await sup.poll();
+  assert.deepEqual({ peers: sup.peersRunning, mb: sup.committed }, { peers: 4, mb: 640 + 487 * 3 },
+    'four engines in one world must show as four, and be priced as four');
+});
+
 // A world that has not answered /status yet is charged FULL price, not nothing. It is starting,
 // crashed, or wedged -- in every case its memory is spent or about to be, and a guard that reads
 // the unknown as free is not a guard. Without a poll there is no lastStatus at all, so this is

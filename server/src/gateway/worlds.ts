@@ -136,6 +136,21 @@ export class WorldSupervisor {
     return this.worlds.size;
   }
 
+  /** Sim peers across every supervised world. A world reports its own live count on /status;
+   *  one that has not answered yet is counted as the single peer worldCostMb already assumes,
+   *  matching how committedMb() prices it. */
+  get peersRunning(): number {
+    let n = 0;
+    for (const w of this.worlds.values()) n += w.lastStatus?.peerCount ?? 1;
+    return n;
+  }
+
+  /** What committedMb() computes, exposed so it can be graphed against the budget. Public
+   *  because "how full is the box" is an operator's question, not an internal detail. */
+  get committed(): number {
+    return this.committedMb();
+  }
+
   /** RAM the running worlds have actually committed, counting the peers they are really
    *  running rather than the one each was once assumed to have.
    *

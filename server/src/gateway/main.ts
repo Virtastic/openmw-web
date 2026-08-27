@@ -185,6 +185,8 @@ log('info', 'gateway.capacity', {
     : {}),
 });
 metrics.worldsRunning.addCollector(() => worlds.running);
+metrics.gatewayPeersRunning.addCollector(() => worlds.peersRunning);
+metrics.gatewayCommittedMb.addCollector(() => worlds.committed);
 metrics.worldsCapacity.addCollector(() => {
   const c = worlds.capacity().cap;
   // A gauge must be a number; an unbounded cap renders as 0 ("not governed") rather than
