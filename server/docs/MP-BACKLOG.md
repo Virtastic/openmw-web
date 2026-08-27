@@ -130,6 +130,40 @@ measuring the wrong buffer.
 
 ---
 
+### Build 75: the widget layer is exonerated, and the map draws UNLIT
+
+Two more suspects dead, and the fault is now localised to one thing.
+
+* **The colour format was already correct.** The diagnostic reports `internalFormat=0x8058`
+  (GL_RGBA8) at 256x256, so the explicit `setColorBufferInternalFormat(GL_RGBA8)` added on the
+  strength of the character portrait having it was REDUNDANT. Written to disprove itself
+  cheaply, and it did. Harmless to keep; not the cause.
+* **The texture identity holds.** Setup and draw report the same pointer (`0x12e5ed00`), so
+  the widget is handed exactly the object the camera renders into.
+* **No GL complaints in the WHOLE log** (the earlier "0 distinct" was searching only the last
+  4000 lines and may have missed a first-render error; it now scans everything).
+
+**THE MAP WINDOW SETTLES IT.** `s74` now opens the full Map window as well as capturing the
+HUD, and the window shows: the PLAYER ARROW marker drawn correctly, the FOG OF WAR overlay
+drawn correctly (the window hardcodes fog on, `mapwindow.cpp:813`), and BLACK where terrain
+should be.
+
+So MyGUI, the widget binding, the marker overlay and the fog texture all work. The only thing
+missing is the map texture's CONTENT. A camera that is created, traversed, culls 109
+drawables, draws into a valid RGBA8 texture the widget really is showing, and produces black.
+
+**NEXT, and it is the only place left:** the map camera renders the scene UNLIT. `setDefaults`
+builds its own `osg::Light` and calls `configureStateSetSunOverride`, but an RTT camera sits
+outside the main view's light traversal -- `SceneUtil::LightManager` feeds per-frame lighting
+uniforms to the shaders, and a subgraph that never receives them renders every fragment black
+while reporting no error anywhere. That fits every measurement taken across twelve eliminated
+suspects, and nothing else on the list does.
+
+Cheapest test: force the map camera's stateset to a flat unlit/vertex-colour path (or dump the
+lighting uniforms actually bound during its cull) and see whether terrain appears. If it does,
+the fix is giving this camera the lighting state it is missing rather than anything about
+framebuffers, formats or traversal -- all of which are now proven fine.
+
 ## What still needs a human
 
 * **The main quests played through together.** The MECHANISM has coverage (`s62-questvars`
