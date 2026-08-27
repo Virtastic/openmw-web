@@ -609,6 +609,16 @@ for (const file of files) {
   let bootQueue = Promise.resolve(); // serializes client boots (see launchClient below)
   let server = null;
   let err = null;
+  // A SKIP IS NOT A PASS. Scenarios opt out by logging 'SKIP: <reason>' and returning, and
+  // while this harness had no notion of a skip every one of them was reported as a pass --
+  // so a summary reading "43 PASS" covered five scenarios that never ran, among them NPC
+  // combat, spell damage and NPC simulation. Coverage that is not there must not read as
+  // coverage that is.
+  //
+  // Read from the logged line rather than from a new ctx.skip() every scenario would have to
+  // adopt: the convention already exists wherever a scenario opts out, so this catches all of
+  // them at once and cannot drift from what the scenario actually prints.
+  let skipReason = null;
   const childLogs = []; // scenario-spawned processes (gateways), dumped on failure
   console.log(`\n=== scenario ${file} ===`);
   try {
@@ -653,7 +663,12 @@ for (const file of files) {
       serverStatus: server.status,
       serverKill: server.kill,
       sleep,
-      log: (...a) => console.log('[' + file + ']', ...a),
+      log: (...a) => {
+        const first = typeof a[0] === 'string' ? a[0] : '';
+        if (skipReason === null && /^\s*SKIP\b/i.test(first))
+          skipReason = first.replace(/^\s*SKIP:?\s*/i, '');
+        console.log('[' + file + ']', ...a);
+      },
       launchClient: async (name, extraParams, opts) => {
         // Serialize BOOTS even when a scenario asks for clients via Promise.all. Two retail
         // clients booting at once each want ~1.5 GB plus streamed game data; concurrently
@@ -718,7 +733,8 @@ for (const file of files) {
     server?.stop();
   }
   const secs = ((Date.now() - t0) / 1000).toFixed(1);
-  results.push({ file, ok: !err, secs });
+  // A scenario that FAILED is a failure even if it logged a skip on the way out.
+  results.push({ file, ok: !err, secs, skip: err ? null : skipReason });
   if (err) {
     console.error(`FAIL ${file} (${secs}s):\n${err.stack || err}`);
     const srv = server?.logTail?.();
@@ -728,10 +744,27 @@ for (const file of files) {
       if (t.trim()) console.error(`--- ${c.label.toUpperCase()} LOG ---\n${t}`);
     }
   }
+  else if (skipReason !== null) console.log(`SKIP ${file} (${secs}s): ${skipReason}`);
   else console.log(`PASS ${file} (${secs}s)`);
 }
 play.stop();
 
 console.log('\n=== mp-harness summary ===');
-for (const r of results) console.log(`${r.ok ? 'PASS' : 'FAIL'}  ${r.file}  (${r.secs}s)`);
+for (const r of results) {
+  const verdict = !r.ok ? 'FAIL' : (r.skip !== null ? 'SKIP' : 'PASS');
+  console.log(`${verdict}  ${r.file}  (${r.secs}s)` + (r.skip !== null ? `  -- ${r.skip}` : ''));
+}
+const passed = results.filter((r) => r.ok && r.skip === null).length;
+const skipped = results.filter((r) => r.ok && r.skip !== null);
+const failed = results.filter((r) => !r.ok).length;
+console.log(``);
+console.log(`${passed} passed, ${failed} failed, ${skipped.length} SKIPPED (did not run)`);
+if (skipped.length) {
+  // Repeated at the very bottom, because a per-line SKIP scrolls past and a bare count reads
+  // as a footnote. What did NOT run is exactly what a reader is most likely to mistake for
+  // coverage, so it gets the last word.
+  console.log(``);
+  console.log(`NOT RUN -- these assert nothing about the build:`);
+  for (const r of skipped) console.log(`  ${r.file}  -- ${r.skip}`);
+}
 process.exit(results.every((r) => r.ok) ? 0 : 1);
