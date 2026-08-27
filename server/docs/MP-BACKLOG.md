@@ -926,6 +926,29 @@ carry more than a record id -- and that one change closes three of the five.
 
 ## P3 — design gaps for the stated goal
 
+* **`s43-avatar-load` fails at 8 concurrent players.** UNRESOLVED, and recorded with what is
+  already ruled out so the next person does not re-derive it.
+
+  The scenario puts 8 bot clients in one cell and waits for an observing browser's roster to
+  reach 9 (8 + itself). It times out at 180 s, and it does so even when nothing else is running.
+
+  NOT a roster cap and NOT a propagation bug, both checked in the source: `players.ts` sends the
+  whole `humansInWorld()` list in `PlayerList` with no cap or slice, announces every arrival with
+  `PlayerJoinWorld`, and the client handler (`global.lua` `MP_PlayerJoinWorld`) dedupes by id,
+  appends and re-mirrors correctly. There is nothing in that path that stops at a number.
+
+  THE LEAD: in the server log for a failing run, `w8_0` through `w8_7` appear EXCEPT `w8_4`.
+  Seven bots joined and one did not. A wait for nine can then never satisfy no matter how long
+  the timeout, which fits the symptom exactly -- it fails at the same place every time rather
+  than flapping near the boundary. The bots are spawned as a wave of `npx tsx` processes and the
+  scenario's own comment already warns that their cold start can outlast a 30 s timer; a wave of
+  eight is the obvious place for one to be lost. Check the bot wave's own stderr before touching
+  anything in the roster path.
+
+  SCOPE: 8 simultaneous players is well past the stated target of two-to-four friends, so this
+  does not block that goal. It is recorded rather than fixed deliberately.
+
+
 * **Peers are per-world and per-host.** Coverage is uncapped now (`maxPeers = 0`), so every
   occupied cell gets an engine — but they all land on one box. Hundreds of players spread over
   hundreds of cells means hundreds of engines at ~487 MB and ~20% of a core each. Scaling past
