@@ -266,8 +266,17 @@ namespace MWRender
         if (!loggedTexture)
         {
             loggedTexture = true;
+            const osg::Texture2D* t = segment.mMapTexture.get();
             Log(Debug::Warning) << "Local map: segment texture at setup = "
-                                << static_cast<const void*>(segment.mMapTexture.get());
+                                << static_cast<const void*>(t)
+                                // The format actually in force. If the fix above is redundant
+                                // this reads 0x8058 (GL_RGBA8); anything else -- 0x1907 (GL_RGB)
+                                // especially -- names the culprit outright instead of leaving
+                                // the next person to infer it.
+                                << " internalFormat=0x" << std::hex
+                                << (t ? t->getInternalFormat() : 0) << std::dec
+                                << " size=" << (t ? t->getTextureWidth() : 0) << "x"
+                                << (t ? t->getTextureHeight() : 0);
         }
     }
 
@@ -796,6 +805,24 @@ namespace MWRender
         mViewMatrix.makeLookAt(osg::Vec3d(x, y, zmax + 5), osg::Vec3d(x, y, zmin), upVector);
 
         setUpdateCallback(new CameraLocalUpdateCallback);
+        // A SIZED COLOUR FORMAT, EXPLICITLY. This is the one difference between this camera and
+        // the character PORTRAIT, which is also an RTTNode drawn into a MyGUI widget and which
+        // renders perfectly two panels away: characterpreview.cpp sets GL_RGBA8 here and says
+        // why -- "sized format required for a renderable WebGL2 color attachment" -- and this
+        // camera did not, relying on the global default instead.
+        //
+        // An unsized format is not colour-renderable under WebGL2, so the attach fails at GL
+        // level, BELOW where OSG reports anything. That fits every measurement taken on this
+        // bug: the camera is created, traversed, culls 109 drawables and its draw callback
+        // fires; the texture pointer stored for the widget is identical to the one in the
+        // camera's attachment map; OSG raises no complaint -- and the panel shows BLACK while
+        // this camera clears to BLUE. A clear that does not land is an unattached framebuffer,
+        // and nothing else on the list explains that.
+        //
+        // There IS a global fix (Color::SelectColorFormatOperation forces RGBA8 on Emscripten),
+        // which is presumably why this was never set here. But the portrait needed the explicit
+        // call anyway, and being right twice costs one line.
+        setColorBufferInternalFormat(GL_RGBA8);
         setDepthBufferInternalFormat(GL_DEPTH24_STENCIL8);
     }
 
