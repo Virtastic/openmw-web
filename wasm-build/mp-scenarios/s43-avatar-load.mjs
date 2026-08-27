@@ -169,7 +169,17 @@ export default async function run(ctx) {
       // this keeps working rather than silently over-waiting by one.
       {
         const want = target;
-        const deadline = Date.now() + JOIN_TIMEOUT;
+        // BUDGET THE WAIT AGAINST HOW MANY BOTS ARE STILL ARRIVING. soak joins its fleet
+        // SEQUENTIALLY (`while (bots.length < target) await joinBot(...)`), so a wave that adds
+        // 32 bots takes ~32 joins worth of time -- and a flat budget that comfortably covers a
+        // wave of 8 expires part-way through a wave of 32. That is what produced the 62/64:
+        // the scenario gave up mid-ramp, and the 16 bots that had not been reached yet never
+        // appeared in the server log at all, which is exactly what was observed.
+        //
+        // Scaled by the number being ADDED, with the flat budget as the floor. Still a real
+        // assertion: it fails if bots stop arriving, not merely if they arrive unhurriedly.
+        const arriving = Math.max(0, target - (rows.length ? rows[rows.length - 1].n : 0));
+        const deadline = Date.now() + JOIN_TIMEOUT + arriving * 4000;
         let best = -1;
         let last = -1;
         while (Date.now() < deadline) {
