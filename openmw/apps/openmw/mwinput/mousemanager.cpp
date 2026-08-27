@@ -3,6 +3,8 @@
 // std::clamp, for the web-only pointer-lock spike guard below.
 #include <algorithm>
 
+#include <components/debug/debuglog.hpp>
+
 #include <MyGUI_Button.h>
 #include <MyGUI_InputManager.h>
 #include <MyGUI_RenderManager.h>
@@ -117,8 +119,24 @@ namespace MWInput
             //
             // Native builds are untouched: they have no pointer lock and no such event.
             constexpr float sMaxRelPerEvent = 1000.f;
+            const bool clamped = std::abs(xrel) > sMaxRelPerEvent || std::abs(yrel) > sMaxRelPerEvent;
             xrel = std::clamp(xrel, -sMaxRelPerEvent, sMaxRelPerEvent);
             yrel = std::clamp(yrel, -sMaxRelPerEvent, sMaxRelPerEvent);
+            // AND SAY WHEN IT FIRES. This bug has never been reproduced -- not here, not by the
+            // reporter on demand -- so the guard above is a mechanism that FITS the symptom
+            // rather than a proven cause. A silent guard leaves it that way forever: the spin
+            // stops (or does not) and nobody learns which.
+            //
+            // Logged once per session, not per event. A spike arrives in bursts, and a line per
+            // event would flood the console of the player who is already having a bad time.
+            static bool loggedSpike = false;
+            if (clamped && !loggedSpike)
+            {
+                loggedSpike = true;
+                Log(Debug::Warning) << "Pointer-lock delta clamped: got " << arg.xrel << "," << arg.yrel
+                                    << " in one event (cap " << sMaxRelPerEvent
+                                    << "). If the camera used to spin here, this was why.";
+            }
 #endif
 
             float x = xrel * cameraSensitivity * (Settings::input().mInvertXAxis ? -1 : 1) / 256.f;

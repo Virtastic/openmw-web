@@ -43,6 +43,75 @@ is the same limitation that keeps `s43` and `s72` from running here.
 
 ## What is actually left
 
+Nothing here is a line of code somebody forgot to write. Three categories, and the difference
+between them is the whole point -- "open" had come to mean four different things in this file.
+
+**Needs a human playing, and nothing else will do it (1).**
+
+* The main quests played through together. The MECHANISM has coverage: `s62-questvars`
+  exercises MWScript globals and per-object locals through the engine bridge, which is exactly
+  the path TES3MP's main quests break on. The CONTENT is a playthrough.
+
+**Guarded and self-reporting, which is as far as an unreproducible bug goes from here (2).**
+
+* CAMERA SPIN -- an unbounded pointer-lock delta is now clamped, and the clamp LOGS the first
+  time it fires with the offending value. It cannot be tested here (the guard only engages
+  under pointer lock, which a headless client cannot get) so instead it will say for itself
+  whether it was ever the cause.
+* TREE ALPHA on Brave -- the explicit `getExtension` call is the workaround, and when the
+  extension genuinely cannot be had the PLAYER is told, by name, that a browser shield is
+  hiding it. Confirming needs Brave; the failure no longer needs anyone to open a console.
+
+**One bug reproduced and narrowed to a single question (1).**
+
+* MINIMAP -- reproduced here for the first time, with a one-command repro. Four suspects dead
+  against real builds: fog of war, the pbuffer fallback, the one-frame render window, a null
+  texture. What is left is a camera set up correctly, with a valid attached texture, drawing
+  NOTHING into it -- a traversal question, and the only place still worth looking.
+
+**Decisions, not omissions (2).** Peers being per-host is an architecture change, not a config
+one -- hundreds of cells means hundreds of engines on one box, and spreading them is a
+different system. `ovhcloud` stays unprotected because releases are made by pushing to it, so
+a required-review rule would block the release path until that flow changes. Both are recorded
+so nobody mistakes them for oversights.
+
+And the thing that outweighs every line above: none of the multiplayer work has been confirmed
+by a human playing the game. Ten green scenarios and 714 passing tests are not that.
+
+---
+
+## Browser suite: all ten green in one run
+
+```
+PASS s44-far-tier-correct  97.0s   PASS s73-dialogue-topics  107.8s (skips: see below)
+PASS s47-worlds-ui         67.7s   PASS s81-reconnect         40.6s
+PASS s48-switch-reconnect  61.3s   PASS s92-connection-lost   35.6s
+PASS s53-charslots         64.3s   PASS s99-overlays          50.8s
+PASS s57-world-revival    146.9s   PASS s70-time              76.7s
+```
+
+Run together, not one at a time -- they share a machine and several spawn worlds, so passing
+individually proves much less.
+
+Two lessons from getting here are worth more than the green:
+
+**A test that measures the machine is not a test.** `s44` asserted a distance covered in a
+fixed time and `s57` used fixed timeouts; both passed on a quiet box and failed on a busy one
+while every other scenario merely got slower. `s44` now walks until it is far enough, and
+`s57` budgets against its own measured boot. Neither can fail for being on a slow machine
+again.
+
+**Check the local fact before blaming the network.** `s73` failed as a broken relay and was
+actually `addTopic` throwing, because a dialogue topic is a RECORD and the id did not exist.
+It now verifies the sender learned the topic at all before asserting anything about the
+receiver -- and skips, rather than failing, when the content has no topic it can use. On this
+container it skips: retail data is staged and no vanilla dialogue record can be found, which
+is the same limitation that keeps `s43` and `s72` from running here.
+
+---
+
+## What is actually left
+
 Seven items. Two of the eight that used to be here were closed by DOING them rather than by
 declaring them blocked -- the minimap was reproduced and six worlds were actually run -- which
 is worth noting, because "needs a person" was doing some hiding.
@@ -442,21 +511,21 @@ request needs a timeout and retry of its own, or the answer needs to be guarante
   under WebGL -- and no longer a question about textures, fallbacks, frame counts or fog. Four
   suspects are dead and the remaining one is specific.
 
-* **Intermittent camera/mouse spin.** ONE MECHANISM GUARDED, not confirmed as the cause --
-  nobody has reproduced this, here or anywhere.
+* **Intermittent camera/mouse spin.** GUARDED AND SELF-REPORTING, which is as far as an
+  unreproducible bug can honestly be taken from here.
 
   `mousemanager.cpp` fed `arg.xrel`/`yrel` straight into `player.yaw()`/`pitch()` with no
   bound. Under pointer lock a browser can deliver a single mousemove carrying a movementX of
   several THOUSAND pixels -- on lock acquisition, on regaining focus, after a tab restore --
-  and that is not a look, it is the camera whipping round. It matches the reported symptom
-  exactly, including why it is intermittent: it happens when focus changes, not while playing.
+  which is not a look but the camera whipping round, and explains why the report says
+  INTERMITTENT: it happens when focus changes, not while playing. Clamped per event, web build
+  only.
 
-  Clamped per event, web build only (native has no pointer lock and no such event). The cap is
-  far above any genuine flick, so it can only catch the artefact and cannot become a
-  sensitivity limit by the back door.
-
-Both were reported against a build that predates this cycle. Neither reproduces in the harness.
-Re-test before spending time on them.
+  It cannot be tested here: the guard only engages under pointer lock, which a headless
+  harness client cannot obtain, and a test that injects a synthetic event without it would
+  pass while proving nothing. So instead the clamp LOGS the first time it fires, with the
+  offending delta. If a player ever hits this again the log says so, and if the spin stops we
+  learn whether this was why -- a silent guard would have left that unknown forever.
 
 ### NPCs and actors
 
@@ -763,11 +832,22 @@ carry more than a record id -- and that one change closes three of the five.
 
 ## P2 — claims nobody has tested
 
-* **The Morrowind / Tribunal / Bloodmoon main quests, played together.** TES3MP reports the
-  Tribunal main quest as "utterly broken" in multiplayer and expects the others to break the
-  same way, through scripted events rather than the journal. Our journal model differs (guests
-  borrow the host's journal via `journalTarget`), so the failure mode is likely different — but
-  nobody has played one through.
+* **The Morrowind / Tribunal / Bloodmoon main quests, played together.** The MECHANISM has
+  coverage; the CONTENT needs a person, and those are worth separating.
+
+  TES3MP reports the Tribunal main quest as "utterly broken" and expects the others to fail
+  the same way -- through scripted events rather than the journal. That specific mechanism is
+  what `s62-questvars` exercises: MWScript globals and per-object locals driven through the
+  ENGINE bridge on one client and asserted on the other's engine-backed mirror, including the
+  two things easy to get wrong (time globals must not travel that path, and an applied update
+  must not bounce back).
+
+  Our journal model also differs from theirs -- guests borrow the host's journal via
+  `journalTarget` -- so the failure mode would not be the same one even if it existed.
+
+  None of which is the same as playing one through. That remains outstanding and is a
+  playthrough, not a test.
+
 * ~~**`[cellReset]`.**~~ NOW EXERCISED. The operator-triggered reset was already covered; what
   had never run in a test was the TIMER that makes it a policy rather than a button --
   `scheduleCellReset` and `sweepResets` had no coverage at all, which is an uncomfortable place
