@@ -6,11 +6,16 @@
 
 #include <osg/ComputeBoundsVisitor>
 #include <osg/Fog>
+#include <osg/Group>
 #include <osg/LightSource>
 #include <osg/PolygonMode>
 #include <osg/Texture2D>
 
 #include <osgDB/ReadFile>
+
+#include <osgUtil/CullVisitor>
+#include <osgUtil/RenderBin>
+#include <osgUtil/StateGraph>
 
 #include <components/debug/debuglog.hpp>
 #include <components/esm3/fogstate.hpp>
@@ -83,6 +88,30 @@ namespace MWRender
     {
     public:
         void operator()(LocalMapRenderToTexture* node, osg::NodeVisitor* nv);
+    };
+
+    // WHETHER THE CAMERA'S SUBGRAPH SURVIVES ITS OWN CULL -- the last unchecked step on this
+    // defect. Everything upstream of the draw is now proven against a real build: the camera is
+    // created and added to the scene, it IS traversed, and its texture is real and attached (the
+    // null-texture path never fires). Five suspects died that way -- fog of war, the pbuffer
+    // fallback, the one-frame render window, a null texture, traversal -- and what is left is a
+    // correct-looking camera that clears its target and draws nothing into it.
+    //
+    // The cull is the one step in between that has never been looked at, and it is a plausible
+    // culprit rather than a leftover: this camera's view and projection are hand-built for a
+    // top-down orthographic shot with a near/far computed from cell bounds, so a frustum that
+    // excludes the world -- or a child node-mask that rejects it -- produces EXACTLY the observed
+    // symptom and nothing else in the pipeline would complain.
+    //
+    // One number decides it. A cull that keeps the world leaves a positive drawable count in this
+    // camera's own render bin; a cull that throws the world away leaves zero. Positive means the
+    // fault is in the draw or the readback, and this camera is exonerated; zero means the cull is
+    // the bug and the matrices are where to look. Once per session, and it costs one walk of one
+    // bin -- deliberately cheap enough to leave in place rather than carry as a patch.
+    class MapCullDiagnostic : public osg::NodeCallback
+    {
+    public:
+        void operator()(osg::Node* node, osg::NodeVisitor* nv) override;
     };
 
     LocalMap::LocalMap(osg::Group* root)
@@ -798,7 +827,67 @@ namespace MWRender
         // override sun for local map
         SceneUtil::configureStateSetSunOverride(light, stateset);
 
-        camera->addChild(mSceneRoot);
+        // The scene hangs under an identity group ONLY so the cull diagnostic has somewhere to sit
+        // that is INSIDE this camera's own render stage. A cull callback on the camera itself runs
+        // before that stage is pushed, so it would count the main view's bin -- a number that is
+        // always large, always healthy, and says nothing whatsoever about the map. The group adds
+        // no state and no transform; it is a place to stand.
+        osg::ref_ptr<osg::Group> sceneHolder = new osg::Group;
+        sceneHolder->setName("LocalMapSceneHolder");
+        sceneHolder->setCullCallback(new MapCullDiagnostic);
+        sceneHolder->addChild(mSceneRoot);
+        camera->addChild(sceneHolder);
+    }
+
+    namespace
+    {
+        // Leaves live in TWO places during cull. A bin's own leaf list is only populated once the
+        // bin has been sorted, and at cull time most of them are still sitting in StateGraphs --
+        // so counting just getRenderLeafList() would report zero for a perfectly healthy cull and
+        // frame the wrong suspect. Both are walked, recursively, the same way the shadow
+        // technique walks them.
+        unsigned int countCulledDrawables(osgUtil::StateGraph* sg)
+        {
+            if (!sg)
+                return 0;
+            unsigned int n = static_cast<unsigned int>(sg->_leaves.size());
+            for (const auto& child : sg->_children)
+                n += countCulledDrawables(child.second.get());
+            return n;
+        }
+
+        unsigned int countCulledDrawables(osgUtil::RenderBin* bin)
+        {
+            if (!bin)
+                return 0;
+            unsigned int n = static_cast<unsigned int>(bin->getRenderLeafList().size());
+            for (osgUtil::StateGraph* sg : bin->getStateGraphList())
+                n += countCulledDrawables(sg);
+            for (const auto& child : bin->getRenderBinList())
+                n += countCulledDrawables(child.second.get());
+            return n;
+        }
+    }
+
+    void MapCullDiagnostic::operator()(osg::Node* node, osg::NodeVisitor* nv)
+    {
+        // AFTER the traversal, not before: the question is what the cull PRODUCED, and asking
+        // before it has run reads an empty bin every time and would "prove" the bug that is
+        // being investigated.
+        traverse(node, nv);
+
+        static bool logged = false;
+        if (logged)
+            return;
+        // A cull visitor is the only visitor with a render bin to ask. Update and intersection
+        // traversals reach this node too, and answering for one of those would be a number about
+        // the wrong thing.
+        osgUtil::CullVisitor* cv = dynamic_cast<osgUtil::CullVisitor*>(nv);
+        if (!cv)
+            return;
+        logged = true;
+        Log(Debug::Warning) << "Local map: camera subgraph culled to "
+                            << countCulledDrawables(cv->getCurrentRenderBin()) << " drawable(s)";
     }
 
     void CameraLocalUpdateCallback::operator()(LocalMapRenderToTexture* node, osg::NodeVisitor* nv)
