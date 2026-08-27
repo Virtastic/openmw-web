@@ -837,18 +837,17 @@ namespace MWRender
         SceneUtil::setCameraClearDepth(camera);
         camera->setComputeNearFarMode(osg::Camera::DO_NOT_COMPUTE_NEAR_FAR);
         camera->setReferenceFrame(osg::Camera::ABSOLUTE_RF_INHERIT_VIEWPOINT);
-        // NO PIXEL_BUFFER FALLBACK. PIXEL_BUFFER_RTT is a pbuffer, which does not exist under
-        // WebGL at all -- so on this build the second argument names a path that cannot
-        // possibly work, and anything that declines the FBO path lands there and renders
-        // garbage instead of failing loudly. The minimap rendering solid white/blue/black is
-        // exactly that shape, and these three cameras were the only ones in the engine still
-        // naming the fallback; every other RTT here already asks for FRAME_BUFFER_OBJECT
-        // alone.
+        // FALLBACK RESTORED. This was changed to FRAME_BUFFER_OBJECT alone on the ARGUMENT that a
+        // pbuffer cannot exist under WebGL, so naming it as a fallback was dead code. The commit
+        // doing it said outright that it "has not been reproduced, so it is not proven to be the
+        // cause" -- and it was reported afterwards that the map had been working in earlier
+        // builds. Changing rendering behaviour on reasoning rather than measurement is exactly
+        // what this file has spent fourteen suspects paying for.
         //
-        // Stated honestly: this has not been reproduced, so it is not proven to be the cause.
-        // It is removing a path that provably cannot work on the target platform, which is
-        // worth doing on its own merits.
-        camera->setRenderTargetImplementation(osg::Camera::FRAME_BUFFER_OBJECT);
+        // The original symptom was "solid white/blue/black": white and blue mean SOMETHING was
+        // being drawn. Restoring the two-argument form puts that back, and if the map returns
+        // the removal was the regression.
+        camera->setRenderTargetImplementation(osg::Camera::FRAME_BUFFER_OBJECT, osg::Camera::PIXEL_BUFFER_RTT);
         // DIAGNOSTIC CLEAR COLOUR -- REVERT ONCE THIS BUG IS NAMED. Deliberately not black.
         //
         // Build 60 read the target and found min=0 max=0 mean=0 at its centre. That is a real
