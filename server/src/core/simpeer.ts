@@ -73,9 +73,9 @@ export function peerAccountName(key: string): string {
 // startTimeoutMs, at which point the sweeper kills peers that were seconds from ready.
 const MAX_CONCURRENT_STARTS = 1;
 
-// Split peer output on a real newline. Named rather than inlined because an escaped '
-' in
-// this file has been eaten by tooling twice today.
+// Split peer output on a real newline. Named rather than inlined because a backslash-n
+// escape in this file has been eaten by tooling three times today -- including inside the
+// comment that warned about it.
 const NEWLINE = String.fromCharCode(10);
 
 export class SimPeerSupervisor {

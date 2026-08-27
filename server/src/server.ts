@@ -1329,7 +1329,16 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   const devBots = config.dev.bots > 0
     ? await startTestBots({
       roster, social, accounts, players: playerStore,
-      isPublic: worldModeAtBoot === 'public',
+      // WHERE AN UNPARTIED BOT HANGS OUT. It used to be the public world and nothing else,
+      // which breaks the moment [worlds] publicEnabled is off: isPublic is then false in
+      // every world, so unpartied bots exist NOWHERE and cannot be friended or invited --
+      // the exact flows they are here to exercise.
+      //
+      // With no public world, the gathering place is a PARTY world instead. Each world
+      // process decides for itself from shared config, with no cross-process messaging, the
+      // same way party-following already works.
+      isPublic: worldModeAtBoot === 'public'
+        || (!config.worlds.publicEnabled && worldModeAtBoot === 'party'),
       count: Math.min(config.dev.bots, 16), // a sanity ceiling; this is a dev aid, not a load test
       names: config.dev.botNames,
       prefix: config.dev.botPrefix,

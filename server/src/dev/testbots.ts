@@ -47,7 +47,12 @@ export interface TestBotDeps {
   looks?: string[];
   /** Character docs live here; a bot needs one to have a character at all. */
   players: PlayerStore;
-  /** Is THIS world the public one? An unpartied bot hangs out there and nowhere else. */
+  /** Is THIS world the gathering place -- where an unpartied bot hangs out?
+   *
+   *  The public world when there is one. When [worlds] publicEnabled is off there is no
+   *  public world at all, so a PARTY world takes the role: otherwise this would be false
+   *  everywhere and unpartied bots would exist nowhere, which makes them unfriendable and
+   *  uninvitable -- the two flows they exist to exercise. Set in server.ts. */
   isPublic: boolean;
 }
 
@@ -243,7 +248,7 @@ export async function startTestBots(deps: TestBotDeps): Promise<RunningTestBots>
       const members = social.partyMembersOf(b.accountKey);
       const belongsHere = members.length > 0
         ? members.some((m) => humansHere.includes(m)) // follow the party
-        : deps.isPublic;                              // unpartied: hang out in public
+        : deps.isPublic;                              // unpartied: hang out at the gathering place
       const present = here.has(b.accountKey);
       if (belongsHere && !present) arrive(b);
       else if (!belongsHere && present) depart(b);

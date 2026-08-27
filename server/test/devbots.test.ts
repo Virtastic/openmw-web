@@ -388,3 +388,44 @@ test('a party member in another world reads online, and the leader can remove th
     15000).catch(() => null);
   assert.ok(gone, 'the leader could not remove a party member');
 });
+
+// ---------------------------------------------------------------- gathering place
+//
+// An unpartied bot used to hang out in the public world "and nowhere else". That breaks the
+// moment [worlds] publicEnabled is off -- which is now the DEFAULT, because public is the most
+// experimental surface here. With no public world, isPublic is false in every world, so an
+// unpartied bot would exist nowhere at all: unfriendable and uninvitable, which are precisely
+// the two flows bots exist to exercise.
+//
+// With public disabled the PARTY world takes the role. Each world process decides for itself
+// from shared config, the same way party-following already works, with no cross-process talk.
+test('with public disabled, unpartied bots gather in a party world instead', async (t) => {
+  const dataDir = tmpDataDir();
+  const cfg = (mode: string) => ({
+    requireGameData: false, dataDir, port: 0, host: '127.0.0.1', worldMode: mode,
+    configOverride: {
+      dev: { bots: 1, botPrefix: 'Bot', botNames: ['Kestrel'] },
+      login: { allowHarnessAuth: true },
+      worlds: { publicEnabled: false },
+    } as never,
+  });
+
+  const party = await startServer(cfg('party'));
+  t.after(() => party.close());
+  const priv = await startServer(cfg('private'));
+  t.after(() => priv.close());
+
+  const namesIn = async (s: { port: number }): Promise<string[]> => {
+    const r = await fetch(`http://127.0.0.1:${s.port}/status`);
+    const body = await r.json() as { players?: { name: string }[] };
+    return (body.players ?? []).map((p) => p.name);
+  };
+
+  await new Promise((r) => setTimeout(r, 3000)); // reconcile ticks every 2s
+  assert.ok((await namesIn(party)).includes('Kestrel'),
+    'with no public world, the party world is where an unpartied bot belongs');
+  // NEGATIVE CONTROL: it must not appear in EVERY world, or a bot stops being a player and
+  // becomes scenery -- the exact failure the presence rule was written to avoid.
+  assert.ok(!(await namesIn(priv)).includes('Kestrel'),
+    'a private world is not a gathering place');
+});
