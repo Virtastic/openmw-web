@@ -80,7 +80,16 @@ for _ in 1 2 3 4 5 6 7 8 9 10; do
   [ -n "$WID" ] && break
   sleep 3
 done
-if [ -n "$WID" ]; then
+# AN EMPTY DIRECTORY IS A VALID STATE NOW. [worlds] publicEnabled defaults to false, so a
+# correctly configured server runs NO always-on world: players get their own on demand. The
+# checks below asked questions about "the world" and read its absence as a fault, which failed
+# the deploy of a healthy server -- the same mistake the sim-peer gate made an hour earlier.
+#
+# Distinguish "no world by design" from "the directory is broken" by looking for an explicitly
+# EMPTY list, rather than treating any absence of an id as a fault.
+if [ -z "$WID" ] && get "$BASE/worlds" | tr -d " " | grep -q '"worlds":\[\]'; then
+  pass "/worlds answers with an empty list (public disabled; worlds are made on demand)"
+elif [ -n "$WID" ]; then
   WS=000
   for _ in 1 2 3 4 5 6 7 8 9 10; do
     WS=$(code --http1.1 -H 'Connection: Upgrade' -H 'Upgrade: websocket' \
@@ -96,7 +105,11 @@ fi
 # 5. The directory must not advertise an address. `host` was a configured guess defaulting to
 #    127.0.0.1 — a remote player's own machine — and `port` leaked a world's internal port.
 W=$(get "$BASE/worlds")
-grep -q '"wsPath"' <<<"$W" && pass "/worlds returns wsPath" || fail "/worlds returns wsPath" "client has no way to dial"
+# Only meaningful when a world is listed: with none there is nothing to dial. host/port stay
+# asserted either way -- their ABSENCE must hold always.
+if [ -n "$WID" ]; then
+  grep -q '"wsPath"' <<<"$W" && pass "/worlds returns wsPath" || fail "/worlds returns wsPath" "client has no way to dial"
+fi
 grep -q '"host"'   <<<"$W" && fail "/worlds omits host" "advertising an address; 127.0.0.1 means the player's OWN machine" || pass "/worlds omits host"
 grep -q '"port"'   <<<"$W" && fail "/worlds omits port" "leaking a world's internal port" || pass "/worlds omits port"
 
