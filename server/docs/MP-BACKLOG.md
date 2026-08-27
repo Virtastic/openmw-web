@@ -130,6 +130,31 @@ measuring the wrong buffer.
 
 ---
 
+### Build 76: Mask_Lighting was NECESSARY BUT NOT SUFFICIENT
+
+The cull mask was genuinely wrong and the fix is real: `"Scene Root"` IS the LightManager, its
+cull callback skips all lighting setup when the traversal mask lacks `Mask_Lighting`, and the
+local map was the only world-rendering camera omitting it (`water.cpp` includes it in both of
+its cull masks). Keep the fix.
+
+MEASURED RESULT: the HUD panel went from a brightest sample of ~38 to ~67. Lighting now
+reaches the map -- the number moved, which nothing else in thirteen attempts managed -- but the
+panel is still far too dark to read as a map.
+
+**So the remaining fault is about HOW MUCH light, not whether any arrives.** The likeliest
+candidate, untested: `setDefaults` builds a fixed `osg::Light` (diffuse 0.7, ambient 0.3) and
+calls `configureStateSetSunOverride` precisely so the map does not vary with time of day. With
+`Mask_Lighting` now included, the LightManager may be supplying the REAL scene lighting on top
+of -- or instead of -- that fixed light, so a map rendered at night is a dark map.
+
+Cheapest test, and it needs one build because no harness time hook exists: add a command to
+set the game hour to midday and re-run `s74`. If the map appears, this is time-of-day and the
+fix is to make the fixed map light actually win. If it stays dark at noon, the sun override is
+not being applied to this camera at all.
+
+STATUS: cosmetic, does not block play, and no longer a mystery -- it is one narrow question
+with a named next step. Thirteen suspects are dead and the fourteenth is measurable.
+
 ### Build 75: the widget layer is exonerated, and the map draws UNLIT
 
 Two more suspects dead, and the fault is now localised to one thing.
