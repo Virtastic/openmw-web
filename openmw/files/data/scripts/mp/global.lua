@@ -1957,6 +1957,9 @@ local eventHandlers = {
     mpTestBounty = function(data) quests.testSetBounty(data.n) end,
     mpTestFaction = function(data) quests.testJoinFaction(data.id, data.rank) end,
     mpTestDialogue = function(data) quests.testActivateNpc(data.id) end,
+    -- Marks a topic as locally learned for the DIFF only; see quests.testLearnTopic for why
+    -- the engine gives no way to do this for real from a script.
+    mpTestLearnTopic = function(data) quests.testLearnTopic(data.id) end,
     mpTestMemberVar = function(data) quests.testSetMemberVar(data.id, data.name, data.value) end,
 }
 

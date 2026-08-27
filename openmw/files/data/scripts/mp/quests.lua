@@ -266,6 +266,30 @@ end
 --     of a packet storm between two clients, not volume;
 --   * they ride the same slow diff beat as globals, factions and bounty.
 local knownTopics = nil -- nil until the first snapshot; a set of topic id -> true
+-- Topics this client APPLIED because somebody else learned them. Test-visible only.
+local appliedTopics = {}
+
+-- A TEST SEAM, and the reason it has to exist is a real engine limitation rather than
+-- convenience. `types.Player.addTopic` is the only topic WRITE the Lua API offers and there is
+-- no matching READ of "topics this player knows" -- `journal(player).topics` is journal TEXT
+-- data, the topics a player has accumulated dialogue ENTRIES for. Measured directly
+-- (s75-topic-probe): five real topic records added, zero engine complaints, nothing visible
+-- here afterwards.
+--
+-- So a topic learned the way a PLAYER learns one (by talking, which records entries) is
+-- broadcast normally, and a topic added programmatically is invisible to this diff. That left
+-- the sync untestable: s73 drove learning with addTopic and then polled this collection, so it
+-- could never observe its own input and skipped for months behind a wrong explanation.
+--
+-- This set lets a scenario say "treat this as locally learned" and exercise the REAL path from
+-- there: diff -> send -> server relay -> receiver applies. What it does not simulate is the
+-- engine's own bookkeeping, which is exactly the part no test could observe anyway. Empty in
+-- normal play, so it costs one table lookup per diff and changes nothing for a player.
+local testLearned = {}
+
+function quests.testLearnTopic(id)
+    if type(id) == 'string' and id ~= '' then testLearned[id] = true end
+end
 
 local function topicSet()
     local player = playerObj()
@@ -275,6 +299,7 @@ local function topicSet()
         -- types.Player.journal(player).topics -- the topic store hangs off the JOURNAL
         -- binding, not off the player directly.
         for id in pairs(types.Player.journal(player).topics) do out[id] = true end
+        for id in pairs(testLearned) do out[id] = true end
         return out
     end)
     return ok and set or nil
@@ -310,6 +335,11 @@ function quests.applyTopics(list)
         if type(id) == 'string' and id ~= '' and not knownTopics[id] then
             knownTopics[id] = true
             pcall(function() types.Player.addTopic(player, id) end)
+            -- OBSERVABLE RECEIPT. addTopic itself leaves no trace a script can read, so without
+            -- this the receiving half of topic sync cannot be asserted on at all -- which is
+            -- half of why this feature went unproven for so long. Recorded, not mirrored here;
+            -- the mirror below publishes it on the ordinary beat.
+            appliedTopics[#appliedTopics + 1] = id
         end
     end
 end
@@ -633,6 +663,12 @@ local function mirror()
     local j = {}
     for id, idx in pairs(journal) do j[id] = idx end
     mp.testSet('journal', json.encode(j))
+    -- WHAT THIS CLIENT APPLIED BECAUSE SOMEONE ELSE LEARNED IT. The receiving half of topic
+    -- sync has no other outward signal at all: addTopic leaves nothing a script can read back,
+    -- so "B got the topic" was previously unassertable and the whole feature went unproven.
+    -- Published on the ordinary mirror beat rather than at apply time, so a burst of topics
+    -- costs one message rather than one each.
+    mp.testSet('topicsApplied', json.encode(appliedTopics))
     -- Whose campaign is on screen. Mirrored so a visit can be OBSERVED end to end rather
     -- than inferred: the stash is engine-side state with no other outward signal.
     local pl = playerObj()

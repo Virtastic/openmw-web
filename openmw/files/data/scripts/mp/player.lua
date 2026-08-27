@@ -488,6 +488,13 @@ local function pollHarness()
         -- scenario can prove the whole path -- local discovery, relay, remote apply -- without
         -- retail dialogue. Topics are just record ids, so unlike companions or merchants this
         -- one feature IS testable against the demo content.
+        -- LEARN IT THE WAY THE DIFF SEES IT. 'topic:' below calls addTopic, which marks a
+        -- topic known but is invisible to journal(player).topics -- the collection the sync
+        -- diffs -- so a scenario using it can never observe its own input (s75 measures
+        -- exactly that). This one marks the topic locally learned so the real diff -> send ->
+        -- relay -> apply path runs end to end.
+        local diffTopic = cmd:match('^learntopic:(.+)$')
+        if diffTopic then core.sendGlobalEvent('mpTestLearnTopic', { id = diffTopic }) end
         local learnTopic = cmd:match('^topic:(.+)$')
         if learnTopic then
             -- SAY WHEN IT FAILS. addTopic looks the id up in the ESM store and THROWS if there

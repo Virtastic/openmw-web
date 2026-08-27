@@ -27,34 +27,11 @@ import { fileURLToPath } from 'node:url';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const BOOT = { retail: true, joinTimeoutMs: 420_000 };
 
-const NL = new RegExp(String.fromCharCode(92) + 'r?' + String.fromCharCode(92) + 'n');
-const STEP = 20_000;
-// CANDIDATES, not one guess. addTopic needs a real dialogue RECORD, and which ids exist
-// depends entirely on the content loaded -- 'nerevarine' looked obvious and is not one. The
-// scenario tries these in order and uses the first that actually takes, so it does not hinge
-// on any single id being present in whatever Morrowind build the harness has staged.
-const TOPIC_CANDIDATES = ['background', 'little advice', 'latest rumors', 'my trade', 'services'];
 
-// CLEARED BEFORE ASKING. The mirror is write-once from the page's point of view: after the
-// first publish it is never null again, so a second call would wait on a condition that is
-// already true and hand back the PREVIOUS answer. That would have made the loop below spin on
-// a stale list and the whole test meaningless.
-const topicsOf = async (c) => {
-  await c.eval("if (window.__omwMP) window.__omwMP.topics = null; 'cleared';");
-  await c.eval("Module.__omwMPCmd='topics'");
-  // typeof, not truthiness. A player who knows NO topics publishes an EMPTY STRING, and `'' ||
-  // null` is null -- so "answered with nothing" and "has not answered yet" were the same value
-  // and this waited out its whole timeout on a fresh character. The mirror starts undefined and
-  // is cleared to null above, neither of which is a string, so this separates them cleanly.
-  await c.waitFor("typeof (window.__omwMP||{}).topics === 'string'", STEP,
-    'the client listed its topics');
-  return String(await c.eval("(window.__omwMP||{}).topics||''")).split(',').filter(Boolean);
-};
 
 export default async function run(ctx) {
   if (!existsSync(join(ROOT, 'play', 'mwdata', 'Morrowind.esm'))) {
-    ctx.log('SKIP: play/mwdata/Morrowind.esm absent (a dialogue topic is a RECORD, and the '
-      + 'example suite has none)');
+    ctx.log('SKIP: play/mwdata/Morrowind.esm absent (a topic is a RECORD, and the example suite has none)');
     return;
   }
   const [a, b] = await Promise.all([
@@ -62,69 +39,51 @@ export default async function run(ctx) {
     ctx.launchClient('topic-b', '', BOOT),
   ]);
 
-  // Baseline first. The demo content may hand out topics of its own, and asserting on an
-  // absolute list would break the moment it changed; what matters is the DELTA.
-  const beforeB = await topicsOf(b);
-  ctx.log(`  B starts with ${beforeB.length} topics`);
+  // What B has APPLIED from other players. This is the only outward signal the receiving half
+  // of topic sync has: addTopic leaves nothing a script can read back, which is why this
+  // feature went unproven for so long and why s73 skipped behind a wrong explanation.
+  const appliedOn = async (c) =>
+    JSON.parse(await c.eval("(window.__omwMP||{}).topicsApplied||'[]'"));
 
-  // A learns one, the way a conversation would -- whichever of the candidates this content has.
-  let TOPIC = null;
-  for (const cand of TOPIC_CANDIDATES) {
-    if (beforeB.includes(cand)) continue; // must be new to B or it proves nothing
-    await a.eval(`Module.__omwMPCmd='topic:${cand}'`);
-    await ctx.sleep(1500);
-    if ((await topicsOf(a)).includes(cand)) { TOPIC = cand; break; }
-  }
-  if (!TOPIC) {
-    // SAY WHY, using the engine's own words. player.lua prints '[mp] addTopic <id> failed: <err>'
-    // for every rejection, and that line has never once been read: a SKIP does not dump client
-    // logs, so the scenario has been reporting "not a topic in this content" as a conclusion
-    // when it was only ever a guess about the cause.
-    //
-    // It matters here because the guess is now known to be WRONG. All five candidates ARE real
-    // DIAL topic records in Morrowind.esm -- verified by parsing the retail file directly, which
-    // holds 1698 of them. So the reason addTopic refuses is something else, and the engine has
-    // been saying so the whole time into a log nobody printed.
-    const why = [...new Set((a.logTail?.(4000) ?? '').split(NL)
-      .filter((l) => /addTopic|topic record|journal/i.test(l))
-      .map((l) => l.trim()))];
-    ctx.log(`  engine's own words on the refusals (${why.length} distinct):`);
-    for (const l of why.slice(0, 8)) ctx.log(`    ${l.slice(0, 200)}`);
-    if (!why.length) ctx.log('    none — addTopic did not even report a failure, so the command may not be reaching the client');
-    // THE REASON, established by s75 rather than guessed at here. addTopic is silently invisible
-    // to `journal(player).topics` -- the collection this scenario polls AND the one quests.lua
-    // diffs -- so driving a topic in through the harness command and then looking for it here
-    // can never work. It is not the content: all five candidates are real DIAL records in
-    // Morrowind.esm, and the engine raises no complaint.
-    //
-    // Left as a SKIP rather than deleted, because the FEATURE is unproven rather than broken: a
-    // topic learned the way a player learns one (by talking, which records entries) would appear
-    // here normally. What is missing is a way to drive dialogue from a headless client. Whoever
-    // adds that can delete this branch and the scenario works as written.
-    ctx.log('SKIP: addTopic is invisible to journal().topics, so this cannot observe its own '
-      + 'input -- see s75-topic-probe, which characterises exactly that. NOT a content problem.');
-    return;
-  }
+  const beforeB = await appliedOn(b);
+  ctx.log(`  B has applied ${beforeB.length} remote topics so far`);
+
+  // A REAL topic record from Morrowind.esm (the file holds 1698; these were verified by parsing
+  // it directly rather than guessed). The id has to be real because the RECEIVER calls addTopic,
+  // which throws on an unknown record -- so a made-up id would test nothing on B's side.
+  const TOPIC = 'little advice';
+
+  // 'learntopic:', not 'topic:'. The latter calls addTopic, which is invisible to the collection
+  // quests.lua diffs, so nothing would ever be broadcast. This marks it locally learned for the
+  // diff and lets the real path run: diff -> TopicsLearned -> server relay -> B applies.
+  await a.eval(`Module.__omwMPCmd='learntopic:${TOPIC}'`);
   ctx.log(`  A learned ${TOPIC}`);
 
-  // Re-asked each round rather than smuggling a side effect into a waitFor expression: the
-  // mirror only refreshes when the client is told to publish it, so the poll has to drive that.
-  let learned = false;
+  let got = false;
   const by = Date.now() + 60_000;
   while (Date.now() < by) {
-    if ((await topicsOf(b)).includes(TOPIC)) { learned = true; break; }
+    const applied = await appliedOn(b);
+    if (applied.includes(TOPIC)) { got = true; break; }
     await ctx.sleep(1000);
   }
-  assert.ok(learned, `B never learned ${TOPIC} from A`);
-  ctx.log(`  ok: B can now ask about ${TOPIC}`);
+  assert.ok(got, `B never applied ${TOPIC} from A -- the sync did not carry it`);
+  ctx.log(`  ok: B applied ${TOPIC}`);
 
-  // THE LOOP GUARD, which is the whole reason this is safe to ship. B has just applied a topic
-  // it did not have; if B's own diff reads that as a local discovery it sends it straight back
-  // to A, and the two of them trade it forever. B's topic count must move by exactly the one
-  // topic, and A must not end up hearing about its own.
-  const afterB = await topicsOf(b);
-  const gained = afterB.filter((t) => !beforeB.includes(t));
-  assert.deepEqual(gained, [TOPIC],
-    `B should have gained exactly one topic, gained: ${JSON.stringify(gained)}`);
-  ctx.log('  ok: exactly one topic crossed, and nothing bounced back');
+  // THE LOOP GUARD, and the whole reason this is safe to ship. B has just applied a topic it did
+  // not have; if B's own diff read that back as a local discovery it would send it to A, A would
+  // apply and re-send, and the two would trade it forever. That is the shape of the TES3MP
+  // "infinite topic packet spam" failure -- a LOOP, not volume.
+  //
+  // Asserted on A: A must never receive its own topic back. Checked after a settle long enough
+  // for a round trip to have happened if one were going to.
+  await ctx.sleep(6000);
+  const appliedOnA = await appliedOn(a);
+  assert.ok(!appliedOnA.includes(TOPIC),
+    `A applied its OWN topic back — the echo guard is not holding: ${JSON.stringify(appliedOnA)}`);
+
+  // ...and B must have applied it exactly once, not once per round trip.
+  const afterB = await appliedOn(b);
+  const times = afterB.filter((t) => t === TOPIC).length;
+  assert.equal(times, 1, `B applied ${TOPIC} ${times} times — it is bouncing`);
+  ctx.log('  ok: exactly one crossing, and nothing bounced back');
 }
