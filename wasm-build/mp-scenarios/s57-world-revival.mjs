@@ -194,6 +194,13 @@ export default async function run(ctx) {
         pressed++;
         lastPress = Date.now();
         ctx.log(`  pressing Public (attempt ${pressed}, publicStage="${lastStage}")`);
+        // RE-GRANTED IMMEDIATELY BEFORE THE PRESS, not once before the loop. The token is
+        // injected into `window` rather than carried in the URL, so it dies with any reload --
+        // and granting it before the loop meant that by the time a press actually happened the
+        // page underneath could already be a new one. Proven, not guessed: at failure the page
+        // reported switchTo cleared (so rebootIntoWorld DID run) and hasLockerToken=false (so
+        // it threw on the very first thing it checks).
+        await grantLockerSession(a, GW_PORT, gw.account);
         await a.eval("Module.__omwMPCmd='socialtab:worlds'");
         await a.eval("Module.__omwMPCmd='where:public'");
       }
@@ -209,6 +216,14 @@ export default async function run(ctx) {
       // arrived -- so the page's own state is the only place left to look. An empty log with
       // empty mirrors means it navigated somewhere blank; a full log means it booted and could
       // not connect. Those are different bugs.
+      // THE TWO THINGS THAT DECIDE THIS. `switchTo` still set means the page never consumed
+      // the destination Lua published; cleared means it TRIED and rebootIntoWorld threw. And a
+      // missing locker token is the most likely reason it would throw, because a switch
+      // reloads the page and the token is injected into window rather than carried in the URL.
+      const sw = await a.eval("String((window.__omwMP||{}).switchTo||'(cleared)')").catch(() => '?');
+      const tok = await a.eval("String(!!window.__omwLockerToken)").catch(() => '?');
+      const base = await a.eval("String(typeof window.__lockerHttpBase)").catch(() => '?');
+      ctx.log(`  switchTo="${sw}" hasLockerToken=${tok} lockerHttpBase=${base}`);
       ctx.log(`  jsErrors: ${JSON.stringify(a.jsErrors?.() ?? [])}`);
       ctx.log(`  luaErrors: ${JSON.stringify(a.luaErrors?.() ?? [])}`);
       const where = await a.eval('String(location.href)').catch((e) => `eval failed: ${e}`);
