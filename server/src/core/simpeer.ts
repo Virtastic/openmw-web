@@ -73,6 +73,11 @@ export function peerAccountName(key: string): string {
 // startTimeoutMs, at which point the sweeper kills peers that were seconds from ready.
 const MAX_CONCURRENT_STARTS = 1;
 
+// Split peer output on a real newline. Named rather than inlined because an escaped '
+' in
+// this file has been eaten by tooling twice today.
+const NEWLINE = String.fromCharCode(10);
+
 export class SimPeerSupervisor {
   private peers = new Map<string, Peer>();
   // key -> where that peer must stand. Survives a crash-restart so a respawned peer returns
@@ -348,5 +353,8 @@ function defaultSpawner(binary: string): Spawner {
   // 'ignore' discarded the peer's stderr, so a peer that crash-looped every 20 seconds left
   // no trace of WHY — the fatal line only appeared by running the exact command by hand. Pipe
   // it and surface the tail on exit: a supervised child that can die must not die silently.
-  return (_key, env, args) => spawn(binary, args, { env, stdio: ['ignore', 'ignore', 'pipe'], detached: false });
+    // stdout is PIPED now rather than discarded. OpenMW writes most of its own log there, so
+    // throwing it away left the process actually simulating the world as the one component
+    // nobody could see. Both streams are forwarded into the structured log; see start().
+  return (_key, env, args) => spawn(binary, args, { env, stdio: ['ignore', 'pipe', 'pipe'], detached: false });
 }

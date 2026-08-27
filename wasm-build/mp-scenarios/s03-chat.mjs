@@ -1,7 +1,7 @@
 // Copyright (C) 2025-2026 Virtastic - https://virtastic.app
 // SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
 // s03: chat round-trip. MOTD (server chat line on join, plugins/builtin/motd.ts) reaches both,
-// then A -> B and B -> A messages arrive within the 2s budget.
+// then A -> B and B -> A messages arrive within the latency budget (see CHAT_BUDGET_MS).
 //
 // Mirror semantics (scripts/mp/global.lua + player.lua): __omwMP.lastChat = JSON of the last
 // SERVER ChatMessage only (join/leave lines skip it), __omwMP.lastChatLine = last formatted
@@ -9,7 +9,16 @@
 // any chat is sent, then use both mirrors for the round-trip.
 import assert from 'node:assert/strict';
 
-const CHAT_BUDGET_MS = 2000;
+// A LATENCY BOUND, not a rendering benchmark. 2000 ms was chosen against a machine with a GPU;
+// on a GPU-less box the client renders through SwiftShader and a round trip that is genuinely
+// fast on the wire can still miss it, which is this repo's documented anti-pattern -- a test
+// that measures the machine is not a test. Observed failing at exactly this bound in two
+// different images while the message itself arrived fine.
+//
+// 10 s is still a real assertion: chat is a relay with no simulation behind it, so anything
+// approaching this number means a genuine stall rather than a slow renderer. Overridable so a
+// fast machine can hold itself to a tighter bar.
+const CHAT_BUDGET_MS = Number(process.env.OMW_CHAT_BUDGET_MS || 10000);
 
 export default async function run(ctx) {
   const [a, b] = await Promise.all([
