@@ -43,6 +43,67 @@ is the same limitation that keeps `s43` and `s72` from running here.
 
 ## What is actually left
 
+Seven items. Two of the eight that used to be here were closed by DOING them rather than by
+declaring them blocked -- the minimap was reproduced and six worlds were actually run -- which
+is worth noting, because "needs a person" was doing some hiding.
+
+**Two rendering bugs with a mechanism acted on, awaiting a look (2).**
+
+* MINIMAP -- reproduced here for the first time. `s74-minimap-look` walks a character and
+  screenshots the HUD before and after: the scene changes, the map panel does not, which rules
+  out fog of war and confirms the map is never painted. One theory (the pbuffer fallback) was
+  tested and KILLED. The current one -- the map camera got exactly one frame, and a lazily
+  created FBO can make that frame a no-op -- is in and needs the same test run against it.
+* TREE ALPHA on Brave -- the explicit `getExtension` call is the workaround and the player is
+  now told when it fails. Confirming needs Brave.
+
+**Needs a person (2).** The camera spin: a mechanism is guarded (an unbounded pointer-lock
+delta) but nobody has reproduced it. The main quests played through together.
+
+**Decided, not deferred (2).** Peers being per-host is an architecture change, not a config
+one. `ovhcloud` stays unprotected because releases are made by pushing to it.
+
+**One engine limitation, with a route around it (1).** AI package state cannot be read for a
+foreign actor from a global script -- but an actor's own script can read its own, which is how
+companions work now.
+
+What is NOT on this list, and matters more than anything on it: none of the multiplayer work
+has been confirmed by a human playing the game. The suites passing is not the same thing.
+
+---
+
+## Browser suite: all ten green in one run
+
+```
+PASS s44-far-tier-correct  97.0s   PASS s73-dialogue-topics  107.8s (skips: see below)
+PASS s47-worlds-ui         67.7s   PASS s81-reconnect         40.6s
+PASS s48-switch-reconnect  61.3s   PASS s92-connection-lost   35.6s
+PASS s53-charslots         64.3s   PASS s99-overlays          50.8s
+PASS s57-world-revival    146.9s   PASS s70-time              76.7s
+```
+
+Run together, not one at a time -- they share a machine and several spawn worlds, so passing
+individually proves much less.
+
+Two lessons from getting here are worth more than the green:
+
+**A test that measures the machine is not a test.** `s44` asserted a distance covered in a
+fixed time and `s57` used fixed timeouts; both passed on a quiet box and failed on a busy one
+while every other scenario merely got slower. `s44` now walks until it is far enough, and
+`s57` budgets against its own measured boot. Neither can fail for being on a slow machine
+again.
+
+**Check the local fact before blaming the network.** `s73` failed as a broken relay and was
+actually `addTopic` throwing, because a dialogue topic is a RECORD and the id did not exist.
+It now verifies the sender learned the topic at all before asserting anything about the
+receiver -- and skips, rather than failing, when the content has no topic it can use. On this
+container it skips: retail data is staged and no vanilla dialogue record can be found, which
+is the same limitation that keeps `s43` and `s72` from running here.
+
+---
+
+## What is actually left
+
 Eight open items, and none of them is a line of code somebody forgot to write. Grouped by
 what would actually close them, because "open" has meant four different things in this file:
 
