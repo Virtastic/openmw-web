@@ -184,6 +184,15 @@ namespace MWRender
             new LocalMapRenderToTexture(mSceneRoot, mMapResolution, mMapWorldSize, left, top, upVector, zmin, zmax));
 
         mRoot->addChild(mLocalMapRTTs.back());
+        // ...and was one ever created. If this logs and the callback above does not, the node
+        // is in the graph and never visited, which is a cull/traversal fault rather than a
+        // setup one.
+        static bool loggedCreate = false;
+        if (!loggedCreate)
+        {
+            loggedCreate = true;
+            Log(Debug::Warning) << "Local map: RTT camera created and added to the scene";
+        }
 
         MapSegment& segment = mInterior ? mInteriorSegments[std::make_pair(segmentX, segmentY)]
                                         : mExteriorSegments[std::make_pair(segmentX, segmentY)];
@@ -794,6 +803,17 @@ namespace MWRender
 
     void CameraLocalUpdateCallback::operator()(LocalMapRenderToTexture* node, osg::NodeVisitor* nv)
     {
+        // DOES THIS EVER RUN. The map camera is created, its texture is real and attached, and
+        // nothing is drawn into it -- so the open question is whether the node is traversed at
+        // all. Four other theories died on the way here (fog, the pbuffer fallback, the
+        // one-frame window, a null texture), each because it was TESTED rather than argued, and
+        // this is the cheapest way to test the one that is left. Once per session.
+        static bool loggedTraversal = false;
+        if (!loggedTraversal)
+        {
+            loggedTraversal = true;
+            Log(Debug::Warning) << "Local map: RTT update callback ran (node IS traversed)";
+        }
         // Counted DOWN rather than flipped off after one visit, so a first traversal that did
         // not actually draw (a lazily created FBO under WebGL) does not cost the map its only
         // chance. mActive is kept because the cleanup pass in cleanupCameras() keys off it.
