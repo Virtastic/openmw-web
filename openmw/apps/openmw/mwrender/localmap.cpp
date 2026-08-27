@@ -66,6 +66,16 @@ namespace MWRender
         osg::Matrix mProjectionMatrix;
         osg::Matrix mViewMatrix;
         bool mActive;
+        // HOW MANY FRAMES THIS CAMERA STILL GETS. It used to be exactly one: the update
+        // callback masked the node off on its second visit, so the map had a single frame in
+        // which to be drawn. That is fine when the first draw definitely happens -- and under
+        // WebGL it may not, because the texture and its framebuffer are created lazily and the
+        // first traversal can be a no-op. The camera is then switched off forever and the map
+        // stays exactly as it was cleared, which is the reported "solid colour" minimap.
+        //
+        // A few frames instead of one. The cost is a handful of extra render-to-texture draws
+        // per cell visited, once; the alternative is a map that never appears at all.
+        int mFramesLeft;
     };
 
     class CameraLocalUpdateCallback
@@ -689,6 +699,9 @@ namespace MWRender
         : RTTNode(res, res, 0, false, 0, StereoAwareness::Unaware_MultiViewShaders, shouldAddMSAAIntermediateTarget())
         , mSceneRoot(sceneRoot)
         , mActive(true)
+        // 3: enough to survive a first traversal that draws nothing, small enough that the
+        // extra cost is invisible. See mFramesLeft.
+        , mFramesLeft(3)
     {
         setNodeMask(Mask_RenderToTexture);
 
@@ -781,10 +794,16 @@ namespace MWRender
 
     void CameraLocalUpdateCallback::operator()(LocalMapRenderToTexture* node, osg::NodeVisitor* nv)
     {
-        if (!node->mActive)
+        // Counted DOWN rather than flipped off after one visit, so a first traversal that did
+        // not actually draw (a lazily created FBO under WebGL) does not cost the map its only
+        // chance. mActive is kept because the cleanup pass in cleanupCameras() keys off it.
+        if (node->mFramesLeft > 0)
+            node->mFramesLeft--;
+        else
+        {
             node->setNodeMask(0);
-
-        node->mActive = false;
+            node->mActive = false;
+        }
 
         // Rtt-nodes do not forward update traversal to their cameras so we can traverse safely.
         // Traverse in case there are nested callbacks.

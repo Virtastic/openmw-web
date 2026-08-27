@@ -29,8 +29,22 @@ export default async function run(ctx) {
   // Let the world settle. The local map renders as cells load, and a shot taken during the
   // first frames says nothing about whether the RTT path works.
   await ctx.sleep(8000);
+  const before = await a.screenshot(join(ROOT, 'minimap-before-walk.png'));
 
-  const shot = await a.screenshot(join(ROOT, 'minimap-hud.png'));
-  ctx.log(`  HUD screenshot: ${shot}`);
-  ctx.log('  the minimap sits in the HUD corner — look at it rather than trusting this PASS');
+  // WALK FIRST, then look again. The map panel on a character who has just spawned shows
+  // unexplored FOG OF WAR, which in Morrowind is a flat tan field -- indistinguishable in a
+  // screenshot from "the map never draws", and the first version of this scenario captured
+  // exactly that and nearly reported it as the bug. Fog lifts where the player has been, so a
+  // walked character is the only one whose map means anything.
+  //
+  // Two shots, deliberately: if the panel is identical before and after a walk, fog is not
+  // lifting or the map is not drawing; if it changes, both are working and the reported bug is
+  // something else or is gone.
+  await a.eval("Module.__omwMPCmd='walk:0,1,20000'");
+  await ctx.sleep(22000);
+
+  const after = await a.screenshot(join(ROOT, 'minimap-after-walk.png'));
+  ctx.log(`  before walking: ${before}`);
+  ctx.log(`  after walking:  ${after}`);
+  ctx.log('  compare the map panel in the HUD corner — identical means it never drew');
 }
