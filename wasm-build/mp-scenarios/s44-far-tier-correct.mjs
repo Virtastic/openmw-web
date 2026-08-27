@@ -21,7 +21,10 @@ const PUPPET_SPAWN_TIMEOUT = 15_000;
 // units/sec -- 16s covers ~1840 units against an assertion demanding 2400, which no healthy
 // build could ever pass. Sized off the measured rate with margin rather than trimmed to just
 // clear it, because walk speed varies with the character's stats.
-const WALK_MS = 28000;
+// One BURST, not the whole walk -- the loop below repeats until the distance is actually
+// there. Short enough that a fast box overshoots very little, long enough that a slow one is
+// not paying the round-trip cost every second.
+const WALK_MS = 12000;
 const CONVERGE_TIMEOUT = 20_000;
 // puppet.lua SNAP_BY_TIER far = 2048 units, plus interpolation delay and the 2 Hz mirrors.
 // Beyond this the avatar is not "degraded", it is lost. Wide because repositioning is the
@@ -66,13 +69,29 @@ export default async function run(ctx) {
   const puppetBefore = await puppetOf(b, idA);
   assert.ok(puppetBefore, 'B must mirror a puppet for A before the walk');
 
-  await a.eval(`Module.__omwMPCmd='walk:0,1,${WALK_MS}'`);
-  await ctx.sleep(WALK_MS + 500);
-  const endPose = await poseOf(a);
-  const walked = dist(startPose, endPose);
-  ctx.log(`A walked ${walked.toFixed(1)} units`);
+  // WALK UNTIL FAR ENOUGH, rather than for a fixed time. Distance covered in N seconds is a
+  // measurement of the BOX, not of the product: the same 28s produced 1840 units on a quiet
+  // machine and 1120 on a busy one, and this assertion failed on the second while every other
+  // scenario in the run merely got slower. Chasing that by raising the duration is endless --
+  // it was raised once already, from 16s -- because there is no duration that is both long
+  // enough for the slowest box and not wasteful on the fastest.
+  //
+  // What the scenario actually needs is the two players FAR APART; walking is only the means.
+  // So it walks in bursts until the distance is there, and fails only if it cannot get there
+  // AT ALL in a generous window. On a fast box this now finishes SOONER than the old fixed
+  // sleep, which is a nice side effect of asking for the right thing.
+  const NEEDED = 2400;
+  let walked = 0;
+  const walkBy = Date.now() + 180_000;
+  while (Date.now() < walkBy) {
+    await a.eval(`Module.__omwMPCmd='walk:0,1,${WALK_MS}'`);
+    await ctx.sleep(WALK_MS + 500);
+    walked = dist(startPose, await poseOf(a));
+    ctx.log(`  A has walked ${walked.toFixed(1)} of ${NEEDED} units`);
+    if (walked > NEEDED) break;
+  }
   // Must exceed the far reposition threshold, or the check below proves nothing.
-  assert.ok(walked > 2400,
+  assert.ok(walked > NEEDED,
     `A must walk past the far-tier reposition threshold for this test to mean anything, got ${walked.toFixed(1)} units`);
 
   // Now that they are apart, everyone must actually BE degraded — otherwise this scenario
