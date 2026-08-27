@@ -7,7 +7,17 @@
 // 1 -> 0 with no duplication (conservation at the source of truth).
 import assert from 'node:assert/strict';
 
-const STEP_TIMEOUT = 15_000;
+// A SYNC BOUND, not a frame-rate benchmark. 15 s was chosen against a machine with a GPU; on
+// the GPU-less test box the clients render through SwiftShader and their JOINS alone measured
+// 23-28 s, so a container round trip that is genuinely prompt still misses this. Observed
+// passing when run completely alone and failing in any group -- which is the signature of a
+// test measuring the machine rather than the product, the failure mode this repo has already
+// been bitten by twice (s44, s57).
+//
+// 30 s is still a real assertion: the mirror publishes twice a second and the op is one
+// server round trip, so anything approaching this is a genuine stall in container sync and
+// not a slow renderer. Overridable so a fast machine can hold itself to a tighter bar.
+const STEP_TIMEOUT = Number(process.env.OMW_STEP_TIMEOUT_MS || 30_000);
 
 export default async function run(ctx) {
   const [a, b] = await Promise.all([
