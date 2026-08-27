@@ -260,9 +260,40 @@ export class SimPeerSupervisor {
     // Keep only the tail: a peer logs verbosely at startup and the useful part is the last
     // thing it said before dying. Bounded so a chatty peer cannot grow this without limit.
     let stderrTail = '';
-    child.stderr?.on('data', (chunk: Buffer) => {
-      stderrTail = (stderrTail + chunk.toString()).slice(-4000);
-    });
+    // FORWARD WHAT THE PEER SAYS, not just its last words. The tail below is surfaced only
+    // when the peer DIES, so while it was running -- which is exactly when it is simulating
+    // the cell players are standing in -- everything it said went nowhere, and its stdout was
+    // discarded outright. A peer struggling without crashing was invisible.
+    //
+    // BOTH STREAMS MUST BE CONSUMED, not merely piped. A piped stream with no reader fills
+    // its buffer and BLOCKS the child -- which for a sim peer means the cell silently stops
+    // being simulated, the same symptom this supervisor exists to prevent.
+    //
+    // At debug so the default operator view stays readable (OpenMW is verbose at startup),
+    // except lines naming a real fault, which ride at warn so they surface without anyone
+    // having predicted they would be wanted. Tagged with the cell key: several peers run at
+    // once and untagged lines from different cells cannot be told apart.
+    const forward = (stream: NodeJS.ReadableStream | null | undefined, isErr: boolean): void => {
+      if (!stream) return;
+      let pending = '';
+      stream.on('data', (chunk: Buffer) => {
+        const text = chunk.toString();
+        if (isErr) stderrTail = (stderrTail + text).slice(-4000);
+        pending += text;
+        const parts = pending.split(NEWLINE);
+        pending = parts.pop() ?? '';
+        // A peer emitting one enormous line must not grow this without bound.
+        if (pending.length > 8192) pending = pending.slice(-8192);
+        for (const line of parts) {
+          const t = line.trim();
+          if (t === '') continue;
+          const bad = /fatal|error|exception|terminate|assert/i.test(t);
+          log(bad ? 'warn' : 'debug', 'simpeer.output', { key, text: t.slice(0, 1000) });
+        }
+      });
+    };
+    forward(child.stdout, false);
+    forward(child.stderr, true);
 
     child.on('exit', (code, signal) => {
       // Only act if this is still the CURRENT peer for the key: a stop() followed by a
