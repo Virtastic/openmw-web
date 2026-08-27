@@ -803,7 +803,26 @@ namespace MWRender
         // It is removing a path that provably cannot work on the target platform, which is
         // worth doing on its own merits.
         camera->setRenderTargetImplementation(osg::Camera::FRAME_BUFFER_OBJECT);
-        camera->setClearColor(osg::Vec4(0.f, 0.f, 0.f, 1.f));
+        // DIAGNOSTIC CLEAR COLOUR -- REVERT ONCE THIS BUG IS NAMED. Deliberately not black.
+        //
+        // Build 60 read the target and found min=0 max=0 mean=0 at its centre. That is a real
+        // measurement and it is also ambiguous, because BLACK IS WHAT THIS CAMERA CLEARS TO:
+        // "the clear landed and the geometry wrote nothing" and "we are reading a buffer that
+        // nothing ever touched" produce byte-for-byte the same answer. Every remaining theory
+        // sits on one side or the other of that line, so leaving it unresolved would mean
+        // guessing.
+        //
+        // A distinctive colour separates them in a single run, and answers a second question
+        // for free -- whether the HUD widget is showing THIS texture at all:
+        //   * readback reports ~(51,102,204) -> the clear lands, so the target is this camera's
+        //     and the geometry is what produces nothing: look at depth state and shaders.
+        //   * readback still reports 0 -> the draw is not reaching this texture, and the fault
+        //     is the target/binding rather than anything about the scene.
+        //   * the HUD panel turns BLUE -> the widget really is bound to this camera's output,
+        //     which retires the last "MyGUI is showing something else" theory outright.
+        //   * the HUD panel stays BLACK while the readback reports blue -> it is showing a
+        //     DIFFERENT texture, and that is the bug, sitting in the widget rather than here.
+        camera->setClearColor(osg::Vec4(0.2f, 0.4f, 0.8f, 1.f));
         camera->setClearMask(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
         camera->setRenderOrder(osg::Camera::PRE_RENDER);
 
