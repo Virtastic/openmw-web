@@ -46,5 +46,14 @@ export default async function run(ctx) {
   const after = await a.screenshot(join(ROOT, 'minimap-after-walk.png'));
   ctx.log(`  before walking: ${before}`);
   ctx.log(`  after walking:  ${after}`);
-  ctx.log('  compare the map panel in the HUD corner — identical means it never drew');
+  ctx.log('  compare the map panel in the HUD corner -- identical means it never drew');
+
+  // PRINT THE ENGINE'S OWN LINES. The harness only dumps a client's console when a scenario
+  // FAILS, and this one passes by design -- it produces artefacts rather than asserting. So
+  // the local-map diagnostics went into a log nobody read, and their absence looked like
+  // evidence when it was just a log that was never shown.
+  const lines = (a.logTail?.(400) ?? '').split('\n').filter((l) => /Local map:/i.test(l));
+  ctx.log(`  local-map diagnostics (${lines.length}):`);
+  for (const l of lines.slice(0, 6)) ctx.log(`    ${l.trim()}`);
+  if (!lines.length) ctx.log('    none — neither the RTT camera nor the null-texture path was reached');
 }

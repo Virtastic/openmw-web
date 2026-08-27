@@ -501,15 +501,30 @@ request needs a timeout and retry of its own, or the answer needs to be guarante
   * A NULL MAP TEXTURE. Settled by a warning added for exactly this: it never fires, so
     `getMapTexture` returns a real texture and the widget really is showing it.
 
+  * THE NODE NOT BEING TRAVERSED. Two warnings, one at RTT creation and one in the update
+    callback, both fire: `Local map: RTT camera created and added to the scene` and `RTT update
+    callback ran (node IS traversed)`. So the camera exists, is in the graph, and is visited.
+
   SO THE TARGET EXISTS AND KEEPS ITS CLEAR COLOUR. The camera clears to BLACK, and the HUD has
   a solid black panel -- which is the map showing precisely that. (An earlier note here pointed
   at a tan panel on the other side of the HUD; that is a different widget, and the mistake is
   left recorded because it is the kind that sends the next person to the wrong file.)
 
-  WHAT IS LEFT is a camera that is set up correctly, with a valid attached texture, drawing
-  NOTHING into it. That is a traversal question -- a cull mask, or the RTT not executing at all
-  under WebGL -- and no longer a question about textures, fallbacks, frame counts or fog. Four
-  suspects are dead and the remaining one is specific.
+  WHAT IS LEFT, with five suspects dead: a camera that is CREATED, TRAVERSED, and has a VALID
+  ATTACHED TEXTURE, drawing nothing into it. Not the texture, not the fallback, not the frame
+  count, not fog, not traversal. What has never been checked is whether the camera's SUBGRAPH
+  survives its own cull -- its view and projection are built for a top-down orthographic shot,",
+  and a frustum or child node-mask that excludes the world would produce exactly this: a
+  correctly wired camera drawing an empty scene into a real texture, every frame.
+
+  That is one question and it has a cheap answer -- log the camera's cull result count -- but it
+  is a build cycle away rather than a guess away, which is the state this bug should have been
+  in from the start.
+
+  NOTE ON THE METHOD, because it cost a run: the harness only dumps a client's console when a
+  scenario FAILS, and `s74` passes by design (it produces artefacts rather than asserting). The
+  engine diagnostics therefore went into a log nobody printed, and their absence briefly looked
+  like evidence. `s74` prints them itself now.
 
 * **Intermittent camera/mouse spin.** GUARDED AND SELF-REPORTING, which is as far as an
   unreproducible bug can honestly be taken from here.
