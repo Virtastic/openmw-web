@@ -495,6 +495,14 @@ local function pollHarness()
         -- relay -> apply path runs end to end.
         local diffTopic = cmd:match('^learntopic:(.+)$')
         if diffTopic then core.sendGlobalEvent('mpTestLearnTopic', { id = diffTopic }) end
+        -- OPEN A UI MODE (ui:Map, ui:Inventory, ...). Added for the minimap investigation and
+        -- kept because it is generally useful: the HUD minimap and the full Map WINDOW read
+        -- the SAME per-cell texture through two different widgets, so opening the window is
+        -- the cheapest way to tell a broken RENDER from a broken HUD widget. If the window
+        -- draws the cell and the HUD panel does not, the texture has content and the fault is
+        -- in the small widget; if both are blank, nothing is being drawn at all.
+        local uiMode = cmd:match('^ui:(%a+)$')
+        if uiMode then pcall(function() I.UI.addMode(uiMode) end) end
         local learnTopic = cmd:match('^topic:(.+)$')
         if learnTopic then
             -- SAY WHEN IT FAILS. addTopic looks the id up in the ESM store and THROWS if there

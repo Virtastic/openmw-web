@@ -44,6 +44,19 @@ export default async function run(ctx) {
   await ctx.sleep(22000);
 
   const after = await a.screenshot(join(ROOT, 'minimap-after-walk.png'));
+
+  // THE FULL MAP WINDOW, as a discriminator the HUD panel alone cannot give. Both widgets read
+  // the SAME per-cell texture (LocalMap::getMapTexture) through different MyGUI widgets, so:
+  //   * window draws the cell, HUD panel blank -> the texture HAS content and the fault is the
+  //     small widget;
+  //   * both blank -> nothing is being drawn into the texture at all, and the widget layer is
+  //     exonerated.
+  // The texture pointer is already proven identical at setup and at draw, so this is the next
+  // link in the chain and the only one still unmeasured.
+  await a.eval("Module.__omwMPCmd='ui:Map'");
+  await ctx.sleep(3000);
+  const win = await a.screenshot(join(ROOT, 'minimap-window.png'));
+  ctx.log(`  map WINDOW: ${win}`);
   ctx.log(`  before walking: ${before}`);
   ctx.log(`  after walking:  ${after}`);
   ctx.log('  compare the map panel in the HUD corner -- identical means it never drew');
