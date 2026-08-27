@@ -3471,6 +3471,11 @@
 #omw-social .ft{ padding:9px 20px; border-top:1px solid var(--line-soft); min-height:34px;
   font-size:12px; color:var(--muted); }
 #omw-social .note{ color:var(--faint); font-size:12.5px; line-height:1.6; margin-top:8px; }
+/* Settings rows: label on the left, the control on the right, matching the person rows'
+   alignment so the tab does not read as a different panel. */
+#omw-social .setrow{ display:flex; align-items:center; justify-content:space-between;
+  gap:12px; padding:10px 4px; border-bottom:1px solid var(--line); }
+#omw-social .setlbl{ font-size:14px; }
 
 /* ================= FEATURE TOUR — shown once, when the character is ready ================= */
 /* Handle picker: same panel language as the onboarding modal. Above the BOOT LOADING SCREEN
@@ -4033,6 +4038,31 @@
 
   // ================================ SOCIAL ================================
   var socialOpen = false, seenOpenSocial = 0, sTab = 'friends', seenSocialResult = '';
+  // CHAT VISIBILITY, remembered per browser. Some players want the world without a chat box
+  // in the corner, and the only way to get that was not to look at it. localStorage rather
+  // than a server setting: it is a per-PERSON display preference, not a property of the
+  // character or the world, and it should survive a reload without a round trip.
+  //
+  // Wrapped in try/catch because storage throws outright in a private window and in some
+  // embedded contexts; a preference that cannot be read must not stop the game loading.
+  function chatHidden(){
+    try { return localStorage.getItem('omw.chatHidden') === '1'; } catch(e){ return false; }
+  }
+  function setChatHidden(v){
+    try { localStorage.setItem('omw.chatHidden', v ? '1' : '0'); } catch(e){}
+    applyChatVisibility();
+  }
+  // One place decides whether the chat box is on screen, so the chargen gate and this
+  // preference cannot fight over the same style property and leave it in a mixed state.
+  function applyChatVisibility(){
+    try {
+      var show = chatReady && !chatHidden();
+      chatEl.style.display = show ? '' : 'none';
+      if (!show && chatOpen) closeChat();
+    } catch(e){}
+  }
+  // Set by the chargen gate below; chat exists only once the character does.
+  var chatReady = false;
   var netHold = false;
   // NOT persisted, and not a guess. Which world you are in is the server's fact, delivered
   // as the whereNow mirror; this is only the latest value of it. Keeping a localStorage copy
@@ -4141,7 +4171,7 @@
     var otherPlayers = players.filter(function(p){
       if (selfId && p.id != null) return String(p.id) !== selfId;
       return String(p.name||'').toLowerCase() !== selfName; });
-    [['friends','Friends', friends.length],['party','Party', partyN],['players','Players', otherPlayers.length + (selfDisplay ? 1 : 0)]]
+    [['friends','Friends', friends.length],['party','Party', partyN],['players','Players', otherPlayers.length + (selfDisplay ? 1 : 0)],['settings','Settings', null]]
       .forEach(function(t){
         var d = el('div','nv'+(sTab===t[0]?' on':''), esc(t[1]) + (t[2]!=null ? ' <span class="n">'+t[2]+'</span>' : ''));
         d.setAttribute('data-t', t[0]); // stable hook for the click regression test
@@ -4336,10 +4366,28 @@
           : p.reqIn ? 'Wants to be friends' : null;
         sec.appendChild(personRow(p.name, note, false, acts));
       });
+    } else if (sTab === 'settings'){
+      // A SETTINGS TAB, back by request -- but only with controls somebody actually wants. The
+      // previous one carried presence filtering nobody used and was removed for it; the lesson
+      // was "do not ship a tab to hold one unused control", not "never have a tab".
+      sec.appendChild(el('h3',null,'Settings'));
+
+      var chatRow = el('div','setrow');
+      var lbl = el('div','setlbl','Chat');
+      var sub = el('div','note','The chat box in the corner. Hiding it does not leave any'
+        + ' channel - messages are still delivered, and unhiding shows what you missed.');
+      var btn = el('button','btn', chatHidden() ? 'Show chat' : 'Hide chat');
+      btn.setAttribute('data-t','chat-toggle'); // stable hook for a regression test
+      btn.onclick = function(){
+        setChatHidden(!chatHidden());
+        btn.textContent = chatHidden() ? 'Show chat' : 'Hide chat';
+        setStatus(chatHidden() ? 'Chat hidden.' : 'Chat shown.');
+      };
+      chatRow.appendChild(lbl);
+      chatRow.appendChild(btn);
+      sec.appendChild(chatRow);
+      sec.appendChild(sub);
     }
-    // No Settings tab and no Privacy pane: presence filtering was a control nobody asked for
-    // sitting in front of the features people actually use. Removed rather than hidden — a
-    // dead tab is still a thing to explain.
     sBody.appendChild(sec);
   }
 
@@ -4653,7 +4701,10 @@
     var r = (m.chargenDone === '1');
     if (r !== ready){
       ready = r;
-      chatEl.style.display = ready ? '' : 'none';
+      // Through the shared applier: the player's own hide-chat preference has to win over
+      // "chargen finished", or unlocking multiplayer would silently turn chat back on.
+      chatReady = ready;
+      applyChatVisibility();
       // The moment multiplayer unlocks, walk a first-timer through what just appeared.
       if (ready && !tourSeen('unlocked')) openTour('unlocked');
     }
