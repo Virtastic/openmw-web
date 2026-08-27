@@ -513,7 +513,7 @@ request needs a timeout and retry of its own, or the answer needs to be guarante
   WHAT IS LEFT, with five suspects dead: a camera that is CREATED, TRAVERSED, and has a VALID
   ATTACHED TEXTURE, drawing nothing into it. Not the texture, not the fallback, not the frame
   count, not fog, not traversal. What has never been checked is whether the camera's SUBGRAPH
-  survives its own cull -- its view and projection are built for a top-down orthographic shot,",
+  survives its own cull -- its view and projection are built for a top-down orthographic shot,
   and a frustum or child node-mask that excludes the world would produce exactly this: a
   correctly wired camera drawing an empty scene into a real texture, every frame.
 
