@@ -30,9 +30,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends wget gnupg ca-c
  && rm -f /tmp/chrome.deb && rm -rf /var/lib/apt/lists/*
 
 # CHROME_BIN is what mp-harness.mjs launches; --no-sandbox is added whenever it is set, which is
-# required in a container. SMOKE_GL=swiftshader because there is no GPU here.
+# required in a container.
+#
+# SMOKE_GL=angle-swiftshader, NOT the raw swiftshader Dockerfile.harness uses, and that
+# difference is why this image could not run a single scenario. mp-harness.mjs says it in its
+# own comment: raw SwiftShader GL does not implement every entry point the engine probes, the
+# engine resolves GL dynamically, and a missing one comes back null. The symptom is not an
+# error, it is a WEDGE -- measured here, the browser sat at 0.0% CPU for 18 minutes with a
+# crashpad process beside it, while the native sim peer ran perfectly at 21.5% and 491 MB. The
+# half everyone expects to be fragile was fine; the browser was the problem.
+#
+# Raw swiftshader survives in Dockerfile.harness only because that image ships Debian's older
+# chromium. This one carries google-chrome 152, where it does not. angle-swiftshader runs ANGLE
+# -- the translator the engine targets in a real browser -- over SwiftShader's Vulkan, which is
+# what mp-harness.mjs already recommends for a GPU-less Linux box.
 ENV CHROME_BIN=/usr/bin/google-chrome \
-    SMOKE_GL=swiftshader \
+    SMOKE_GL=angle-swiftshader \
     JOIN_TIMEOUT_MS=900000 \
     LOADING_CLEAR_MS=240000 \
     OMW_SIM_PEER_BIN=/usr/local/bin/openmw

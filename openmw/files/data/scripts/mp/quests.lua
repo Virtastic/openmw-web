@@ -287,10 +287,6 @@ local appliedTopics = {}
 -- normal play, so it costs one table lookup per diff and changes nothing for a player.
 local testLearned = {}
 
-function quests.testLearnTopic(id)
-    if type(id) == 'string' and id ~= '' then testLearned[id] = true end
-end
-
 local function topicSet()
     local player = playerObj()
     if not player then return nil end
@@ -303,6 +299,22 @@ local function topicSet()
         return out
     end)
     return ok and set or nil
+end
+
+-- BASELINE FIRST, THEN LEARN. A client that has not diffed yet has knownTopics == nil, and the
+-- first diff is deliberately a BASELINE rather than a broadcast -- otherwise logging in would
+-- announce every topic a character has ever learned. Setting the flag before that first
+-- snapshot therefore gets the topic absorbed as pre-existing knowledge and it is never sent,
+-- which is precisely what happened on the first real run of s73: A 'learned' the topic, no
+-- TopicsLearned ever left, and B waited out its timeout for something nobody had said.
+--
+-- Taking the baseline here, before the flag is set, makes the seam behave like a genuine
+-- post-login discovery no matter how early a scenario calls it -- which is the whole point of
+-- a seam that is supposed to exercise the real path.
+function quests.testLearnTopic(id)
+    if type(id) ~= 'string' or id == '' then return end
+    if knownTopics == nil then knownTopics = topicSet() or {} end
+    testLearned[id] = true
 end
 
 local function diffTopics()
