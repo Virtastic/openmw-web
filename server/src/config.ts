@@ -33,7 +33,8 @@ export interface Config {
   worlds: {
     maxWorlds: number; // hard count ceiling (0 = derive from memory alone)
     memBudgetMb: number; // total RAM for worlds + peers (0 = no memory governor)
-    worldCostMb: number; // measured: one world's node process + its sim peer
+    worldCostMb: number; // measured: one world's node process + its FIRST sim peer
+    peerCostMb: number; // measured: each ADDITIONAL peer in a world (one per occupied cell)
     gatewayReserveMb: number; // held back for the gateway process itself
   };
   simPeer: {
@@ -434,6 +435,7 @@ function validate(t: Tree): Config {
       maxWorlds: optNum(t, 'worlds', 'maxWorlds', 0),
       memBudgetMb: optNum(t, 'worlds', 'memBudgetMb', 0),
       worldCostMb: optNum(t, 'worlds', 'worldCostMb', 640),
+      peerCostMb: optNum(t, 'worlds', 'peerCostMb', 487),
       gatewayReserveMb: optNum(t, 'worlds', 'gatewayReserveMb', 256),
     },
     simPeer: {

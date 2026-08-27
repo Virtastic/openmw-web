@@ -930,6 +930,42 @@ carry more than a record id -- and that one change closes three of the five.
   occupied cell gets an engine — but they all land on one box. Hundreds of players spread over
   hundreds of cells means hundreds of engines at ~487 MB and ~20% of a core each. Scaling past
   one host means peers on separate machines, which is an architecture change, not a config one.
+
+  SPLIT IN TWO, because filing it as one item hid a live defect behind a deferred decision.
+  Spreading peers across machines is genuinely architecture and stays deferred. Being *bounded*
+  on the one box is not, and it had silently stopped working: FIXED.
+
+  The gateway's memory governor priced a world at a constant `worldCostMb` (640 MB = one node
+  process + one sim peer), which was honest for exactly as long as a world ran one peer. Moving
+  to one peer per occupied cell made a four-cell party cost about 2100 MB in a single world, so
+  a budget sized on the old arithmetic permitted roughly **three times** the RAM the box has —
+  and every per-world cap read as satisfied the whole way to the OOM kill. That is precisely the
+  failure the governor was written to prevent, reintroduced underneath it by a change one layer
+  down. Worth naming as a shape: **a governor whose UNIT quietly stopped being true is more
+  dangerous than no governor, because it reports healthy.**
+
+  The fix budgets against what the worlds have actually committed rather than a fixed price.
+  Each world now reports `peerCount` on `/status` (live, from the supervisor's own count), and
+  `capacity()` charges `worldCostMb + peerCostMb × (peers − 1)`. The ceiling therefore MOVES as
+  players spread across cells, which is correct — that is when the host really fills up.
+
+  Three details that each would have reintroduced the bug quietly:
+  - A world that has not answered `/status` yet is charged FULL price. It is starting, crashed,
+    or wedged; its memory is spent or about to be, and a guard that reads the unknown as free is
+    not a guard.
+  - An absent `peerCount` normalises to **1, not 0** — a world from an older build during a
+    rolling restart runs at least the peer `worldCostMb` already includes, and reading it as 0
+    would price that world as free.
+  - `peerCostMb = 0` is a documented opt-out restoring the old arithmetic, so an embedder that
+    never multiplies peers is unaffected. It doubles as the negative control.
+
+  Negative-controlled: forcing `extraPeers = 0` makes the multi-peer test fail while the
+  opt-out test and all pre-existing capacity tests still pass — so the test measures the pricing
+  and not the harness.
+
+  STILL DEFERRED, and unchanged by this: peers cannot cross hosts, so the ceiling is one box.
+  What is different is that reaching it now refuses world creation legibly (`world.at_cap` with
+  `reason: 'memory'`) instead of being discovered by the OOM killer.
 * **`ovhcloud` is unprotected**, and pushing to it deploys production. No PR, no review, and
   force-push is allowed. Left alone deliberately: releases are made by pushing to it, so a
   required-review rule would block the release path until that flow changes.

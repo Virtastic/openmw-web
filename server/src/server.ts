@@ -856,6 +856,9 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     allowsRegistration: config.login.allowRegistration && config.login.inviteCode === '',
     playerCount: roster.humansInWorld().length,
     connectedCount: roster.humanCount, // F3: keeps a world alive while a player is loading / at chargen
+    // Live, not configured: the supervisor's own count of running engines. The gateway budgets
+    // memory on this because one world is no longer one peer -- it is one per occupied cell.
+    peerCount: simPeers.running,
     pvp: config.rules.pvp,
     players: roster.humansInWorld().map((p) => ({
       id: p.id,

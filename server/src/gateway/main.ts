@@ -99,6 +99,7 @@ const worlds = new WorldSupervisor({
       'max-worlds'),
     memBudgetMb: config.worlds.memBudgetMb,
     worldCostMb: config.worlds.worldCostMb,
+    peerCostMb: config.worlds.peerCostMb,
     gatewayReserveMb: config.worlds.gatewayReserveMb,
     idleReapMs: positiveInt(values['idle-reap-ms'], 120_000, 'idle-reap-ms'),
     startTimeoutMs: 120_000,
@@ -161,12 +162,18 @@ const directory = await startDirectory({
 // SAY THE CEILING OUT LOUD, AT BOOT. A platform that refuses a world at 03:00 must not be the
 // first time anyone learns what its limit was, and "no memory governor configured" is a
 // condition an operator should be told about rather than discover from an OOM kill.
+//
+// This is the BEST CASE and is logged as such. The memory ceiling is computed from what the
+// running worlds have committed, and a world costs one sim peer per OCCUPIED CELL — so the real
+// ceiling falls as players spread out. The live number is the worlds_capacity gauge, which
+// re-reads capacity() on every scrape; this line is the ceiling on an empty box.
 const cap = worlds.capacity();
 log('info', 'gateway.capacity', {
-  cap: cap.cap,
+  capIfEmpty: cap.cap,
   reason: cap.reason,
   memBudgetMb: config.worlds.memBudgetMb,
   worldCostMb: config.worlds.worldCostMb,
+  peerCostMb: config.worlds.peerCostMb,
   ...(config.worlds.memBudgetMb <= 0
     ? { warning: 'no [worlds] memBudgetMb set: only the count cap applies, and worlds carry a sim peer each' }
     : {}),

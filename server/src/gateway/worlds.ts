@@ -46,13 +46,27 @@ export interface WorldSettings {
   // process runs its own SimPeerSupervisor), so worlds multiply the peer's cost rather than
   // sharing it. A cap derived from maxPlayers therefore let the supervisor spawn worlds until
   // the OOM killer took the container, while [simPeer].maxPeers — which is per-world — read as
-  // satisfied the whole time. Budget in megabytes, converted to a world count at boot.
+  // satisfied the whole time. Budget in megabytes, spent against what the worlds have actually
+  // committed — NOT converted to a fixed world count, which is what it used to do and what the
+  // move to one peer per occupied cell invalidated. See capacity().
   //
   // OPTIONAL because a test (and an embedder driving fake spawners) wants a pure count cap and
   // has no memory to govern. main.ts — the real deployment path — always supplies these, and
   // logs at boot when it cannot, so "no budget" is a stated condition rather than a silent one.
   memBudgetMb?: number; // total RAM this gateway may spend on worlds + their peers (0/absent = no budget)
-  worldCostMb?: number; // MEASURED cost of one occupied world: node process + its sim peer (~640)
+  worldCostMb?: number; // MEASURED cost of one occupied world: node process + its FIRST sim peer (~640)
+  // MEASURED cost of each ADDITIONAL sim peer in a world beyond the first (~487).
+  //
+  // This exists because the premise under worldCostMb stopped being true. It was measured when
+  // a world ran exactly one peer, so "one world = one peer = 640 MB" was a fair unit and the
+  // governor could budget in whole worlds. A world now runs ONE PEER PER OCCUPIED CELL, so a
+  // world with four occupied cells costs about 2100 MB, and a governor still counting it as 640
+  // permits roughly three times the RAM the box has -- which is precisely the OOM this governor
+  // was written to prevent, reintroduced underneath it by a change one layer down.
+  //
+  // Absent/0 keeps the old whole-world arithmetic, so an embedder that never multiplies peers
+  // is unaffected and no existing deployment silently changes behaviour.
+  peerCostMb?: number;
   gatewayReserveMb?: number; // held back for the gateway process itself
   idleReapMs: number; // a non-public world with no players this long is stopped
   startTimeoutMs: number;
@@ -92,13 +106,16 @@ interface World {
   // connects); after someone has joined, the shorter idle-reap applies once they leave.
   everConnected?: boolean;
   ownerAccount?: string;
-  lastStatus?: { playerCount: number; connectedCount: number; maxPlayers: number; name: string };
+  lastStatus?: { playerCount: number; connectedCount: number; peerCount: number; maxPlayers: number; name: string };
 }
 
 export interface WorldDeps {
   settings: WorldSettings;
   spawner?: (id: string, args: string[], env: NodeJS.ProcessEnv) => ChildProcess;
-  fetchStatus?: (port: number) => Promise<{ playerCount: number; connectedCount: number; maxPlayers: number; name: string } | null>;
+  // peerCount is OPTIONAL here and required on World.lastStatus: a world from an older build --
+  // or a test fake that predates peers being per-cell -- simply does not report it, and poll()
+  // normalises the absence to 1 rather than making every caller restate the default.
+  fetchStatus?: (port: number) => Promise<{ playerCount: number; connectedCount: number; peerCount?: number; maxPlayers: number; name: string } | null>;
   now?: () => number;
 }
 
@@ -119,21 +136,54 @@ export class WorldSupervisor {
     return this.worlds.size;
   }
 
+  /** RAM the running worlds have actually committed, counting the peers they are really
+   *  running rather than the one each was once assumed to have.
+   *
+   *  A world with no status yet is counted at full price. It is starting, crashed, or wedged,
+   *  and in every one of those cases its memory is either already spent or about to be — an
+   *  OOM guard that assumes the unknown is free is not a guard. */
+  private committedMb(): number {
+    const s = this.deps.settings;
+    const worldCost = s.worldCostMb ?? 0;
+    const peerCost = s.peerCostMb ?? 0;
+    let total = 0;
+    for (const w of this.worlds.values()) {
+      // The first peer is already inside worldCostMb; only the extras are added, so a
+      // single-peer world costs exactly what it always did.
+      const extraPeers = Math.max(0, (w.lastStatus?.peerCount ?? 1) - 1);
+      total += worldCost + peerCost * extraPeers;
+    }
+    return total;
+  }
+
   /** How many worlds this gateway may run at once, and why. The memory budget and the hard
    *  count cap are BOTH ceilings; the lower one wins, and `reason` names it so an operator
    *  reading `world.at_cap` knows which number to change. A zero/absent budget means the
-   *  operator has opted out and only the count cap applies. */
+   *  operator has opted out and only the count cap applies.
+   *
+   *  The memory ceiling is computed from what is COMMITTED right now, not from a fixed
+   *  per-world price. That distinction is the whole fix: worlds no longer cost a constant, so
+   *  a ceiling derived once from `usable / worldCostMb` describes a deployment that stopped
+   *  existing when peers went per-cell. The number this returns therefore MOVES as players
+   *  spread across cells — and it must, because that is when the box actually fills up. */
   capacity(): { cap: number; reason: 'count' | 'memory'; fromMemory: number } {
     const s = this.deps.settings;
     const budget = s.memBudgetMb ?? 0;
     const cost = s.worldCostMb ?? 0;
     const usable = budget - (s.gatewayReserveMb ?? 0);
-    // A budget too small for even one world is still one world: refusing to start anything
-    // would make a misconfigured budget indistinguishable from a broken gateway, and the
-    // operator sees the honest ceiling in gateway.capacity either way.
-    const fromMemory = budget > 0 && cost > 0
-      ? Math.max(1, Math.floor(usable / cost))
-      : Number.POSITIVE_INFINITY;
+    let fromMemory = Number.POSITIVE_INFINITY;
+    if (budget > 0 && cost > 0) {
+      const running = this.worlds.size;
+      // How many MORE worlds fit beside what is already committed. Floor, and never negative:
+      // once the running worlds have overspent the budget the answer is "no more", which
+      // pins the cap at the current count instead of going backwards and reading as a cap
+      // that has already been breached.
+      const free = Math.max(0, Math.floor((usable - this.committedMb()) / cost));
+      // A budget too small for even one world is still one world: refusing to start anything
+      // would make a misconfigured budget indistinguishable from a broken gateway, and the
+      // operator sees the honest ceiling in gateway.capacity either way.
+      fromMemory = Math.max(1, running + free);
+    }
     return fromMemory < s.maxWorlds
       ? { cap: fromMemory, reason: 'memory', fromMemory }
       : { cap: s.maxWorlds, reason: 'count', fromMemory };
@@ -330,7 +380,10 @@ export class WorldSupervisor {
     await Promise.all([...this.worlds.values()].map(async (w) => {
       const st = await fetchStatus(w.port);
       if (st) {
-        w.lastStatus = st;
+        // Normalised HERE so the rest of the supervisor reads a definite number. Absent means a
+        // world that predates the field, which runs at least the one peer worldCostMb already
+        // includes -- reading it as 0 would price such a world as free to the memory governor.
+        w.lastStatus = { ...st, peerCount: st.peerCount ?? 1 };
         // Public worlds are never idle-reaped; see startPublic. This is guarded HERE (never
         // start the idle clock) and again in sweep() (never act on it). That redundancy is
         // DELIBERATE and verified: removing either guard alone keeps the property, removing
@@ -503,14 +556,19 @@ function delay(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-async function defaultFetchStatus(port: number): Promise<{ playerCount: number; connectedCount: number; maxPlayers: number; name: string } | null> {
+async function defaultFetchStatus(port: number): Promise<{ playerCount: number; connectedCount: number; peerCount: number; maxPlayers: number; name: string } | null> {
   try {
     const r = await fetch(`http://127.0.0.1:${port}/status`, { signal: AbortSignal.timeout(2000) });
     if (!r.ok) return null;
-    const j = await r.json() as { playerCount?: number; connectedCount?: number; maxPlayers?: number; name?: string };
+    const j = await r.json() as { playerCount?: number; connectedCount?: number; peerCount?: number; maxPlayers?: number; name?: string };
     return {
       playerCount: typeof j.playerCount === 'number' ? j.playerCount : 0,
       connectedCount: typeof j.connectedCount === 'number' ? j.connectedCount : (typeof j.playerCount === 'number' ? j.playerCount : 0),
+      // DEFAULTS TO 1, NOT 0. A world that predates this field, or one answering from an older
+      // build during a rolling restart, is running at least the peer it was always assumed to
+      // run -- and worldCostMb already includes exactly one. Defaulting to 0 would make such a
+      // world look FREE to the governor, which is the failure this field exists to stop.
+      peerCount: typeof j.peerCount === 'number' ? j.peerCount : 1,
       maxPlayers: typeof j.maxPlayers === 'number' ? j.maxPlayers : 0,
       name: typeof j.name === 'string' ? j.name : `world:${port}`,
     };

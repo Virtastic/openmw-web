@@ -525,6 +525,22 @@ memBudgetMb = 8192
 # Re-measure on YOUR host with YOUR game data: server/scripts/measure-capacity.ts. A peer
 # anchoring several busy cells will cost more than one standing in Seyda Neen.
 worldCostMb = 640
+# MEASURED cost of each ADDITIONAL sim peer a world runs, beyond the first.
+#
+# 487 is the peer half of the measurement above (sim peer 487 MB + world process 136 MB), so
+# this is the same sample, not a second guess.
+#
+# THIS EXISTS BECAUSE worldCostMb STOPPED BEING A WHOLE ANSWER. It was measured when a world
+# ran exactly one peer, so a world was a fixed 640 MB and the governor could turn a budget into
+# a world count once at boot. A world now runs ONE PEER PER OCCUPIED CELL: four players in four
+# cells is four engines, about 2100 MB, and a governor still pricing that world at 640 permits
+# roughly three times the RAM the box has. That is the exact OOM this governor was written to
+# prevent, reintroduced underneath it by a change one layer down.
+#
+# The ceiling therefore MOVES as players spread out, which is correct -- that is when the host
+# actually fills. Set to 0 to price every world at worldCostMb regardless of how many peers it
+# runs; that is the old arithmetic, and it is only safe if your worlds never exceed one peer.
+peerCostMb = 487
 # Held back for the gateway process itself before worlds are budgeted. Measured at 118 MB with
 # one world supervised; 256 leaves room for the directory, the SSO front door and the locker.
 gatewayReserveMb = 256

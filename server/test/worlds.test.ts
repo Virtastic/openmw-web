@@ -43,6 +43,10 @@ function harness(over: Partial<WorldSettings> = {}) {
   let clock = 1_000_000;
   // Player counts the fake /status will report, keyed by port.
   const counts = new Map<number, number>();
+  // Sim peers the fake /status will report, keyed by port. Defaults to 1 -- the same default the
+  // real fetch applies to a world that does not report the field -- so every existing test keeps
+  // pricing a world at exactly worldCostMb.
+  const peers = new Map<number, number>();
   const sup = new WorldSupervisor({
     settings,
     now: () => clock,
@@ -51,9 +55,15 @@ function harness(over: Partial<WorldSettings> = {}) {
       spawned.push({ id, args, child });
       return child as unknown as ChildProcess;
     },
-    fetchStatus: async (port) => ({ playerCount: counts.get(port) ?? 0, connectedCount: counts.get(port) ?? 0, maxPlayers: 32, name: `w${port}` }),
+    fetchStatus: async (port) => ({
+      playerCount: counts.get(port) ?? 0,
+      connectedCount: counts.get(port) ?? 0,
+      peerCount: peers.get(port) ?? 1,
+      maxPlayers: 32,
+      name: `w${port}`,
+    }),
   });
-  return { sup, spawned, counts, advance: (ms: number) => { clock += ms; } };
+  return { sup, spawned, counts, peers, advance: (ms: number) => { clock += ms; } };
 }
 
 test('worlds: each world gets its own data dir and port', () => {
@@ -348,4 +358,79 @@ test('capacity: a budget below one world still admits one, and says so', () => {
   assert.equal(sup.capacity().cap, 1);
   assert.ok(sup.ensure('a', 'private', 'ann'));
   assert.equal(sup.ensure('b', 'private', 'bob'), null);
+});
+
+// THE SECOND HALF OF THE SAME BUG, and it was introduced by the fix to the FIRST half's
+// neighbour. The governor above prices a world at a constant, which was honest while a world
+// ran exactly one sim peer. It no longer does: peers are one per OCCUPIED CELL, so a party
+// spread over four cells is four engines in a single world -- about 2100 MB against the 640 the
+// governor still charges. A budget sized on the old arithmetic then permits roughly three times
+// the RAM the box has, and every per-world cap reads as satisfied right up to the OOM kill.
+//
+// This is the same failure the memory governor was written to prevent, reintroduced underneath
+// it by a change one layer down, which is why it is worth a test rather than a comment.
+test('capacity: a world running several peers is priced for all of them', async () => {
+  const { sup, spawned, peers } = harness({
+    maxWorlds: 10, memBudgetMb: 4096, worldCostMb: 640, peerCostMb: 487,
+    gatewayReserveMb: 256, publicWorlds: [],
+  });
+  // 3840 usable after the reserve. At the old fixed price of 640 a world, that is 6.
+  assert.equal(sup.capacity().cap, 6);
+
+  assert.ok(sup.ensure('a', 'private', 'ann'));
+  const a0 = spawned[0]!;
+  const port = Number(a0.args[a0.args.indexOf('--port') + 1]);
+  peers.set(port, 4); // four occupied cells in one world -> four engines
+  await sup.poll();
+
+  // 640 + 3x487 = 2101 committed by ONE world, leaving 1739 -> two more at 640.
+  assert.deepEqual(
+    { cap: sup.capacity().cap, reason: sup.capacity().reason },
+    { cap: 3, reason: 'memory' },
+    'a four-peer world must not be priced as a one-peer world',
+  );
+
+  assert.ok(sup.ensure('b', 'private', 'bob'));
+  assert.ok(sup.ensure('c', 'private', 'cid'));
+  assert.equal(sup.ensure('d', 'private', 'dan'), null, 'refused by RAM the peers already spent');
+});
+
+// NEGATIVE CONTROL. Identical sequence with peerCostMb at 0 -- the documented opt-out that
+// restores the old whole-world arithmetic -- and the extra peers cost nothing again, so the cap
+// stays at 6 and the fourth world is admitted. Make committedMb() ignore peerCount and the test
+// above reports 6 and fails while this one still passes, which is the discrimination that
+// matters: it separates "the governor prices peers" from "the harness ran out of ports".
+test('capacity: peerCostMb 0 prices every world at worldCostMb however many peers it runs', async () => {
+  const { sup, spawned, peers } = harness({
+    maxWorlds: 10, memBudgetMb: 4096, worldCostMb: 640, peerCostMb: 0,
+    gatewayReserveMb: 256, publicWorlds: [],
+  });
+  assert.equal(sup.capacity().cap, 6);
+
+  assert.ok(sup.ensure('a', 'private', 'ann'));
+  const a0 = spawned[0]!;
+  const port = Number(a0.args[a0.args.indexOf('--port') + 1]);
+  peers.set(port, 4);
+  await sup.poll();
+
+  assert.equal(sup.capacity().cap, 6, 'opted out, so the extra peers are free');
+  assert.ok(sup.ensure('b', 'private', 'bob'));
+  assert.ok(sup.ensure('c', 'private', 'cid'));
+  assert.ok(sup.ensure('d', 'private', 'dan'), 'the world the priced-peers run refused');
+});
+
+// A world that has not answered /status yet is charged FULL price, not nothing. It is starting,
+// crashed, or wedged -- in every case its memory is spent or about to be, and a guard that reads
+// the unknown as free is not a guard. Without a poll there is no lastStatus at all, so this is
+// also the path every freshly created world takes for its first few seconds.
+test('capacity: a world with no status yet still costs its budget', () => {
+  const { sup } = harness({
+    maxWorlds: 10, memBudgetMb: 2304, worldCostMb: 640, peerCostMb: 487,
+    gatewayReserveMb: 256, publicWorlds: [],
+  });
+  assert.equal(sup.capacity().cap, 3); // 2048 usable / 640
+  assert.ok(sup.ensure('a', 'private', 'ann'));
+  assert.ok(sup.ensure('b', 'private', 'bob'));
+  assert.ok(sup.ensure('c', 'private', 'cid'));
+  assert.equal(sup.ensure('d', 'private', 'dan'), null, 'unpolled worlds are not free');
 });
