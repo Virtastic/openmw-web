@@ -85,7 +85,11 @@ test('sim peer: ensure is idempotent — humans arriving repeatedly do not fork 
 // tick only ever asked for one.
 test('sim peer: one peer per occupied cell, each standing in its own', () => {
   const { sup, spawned } = harness();
+  // Cold starts are SERIALISED (one retail data load at a time), so the second cell starts on
+  // the next pass rather than alongside the first. Both still get an engine, which is the
+  // property this test is about; noteHello stands in for the first peer finishing its load.
   sup.ensure('-2,-9', { cellKey: '-2,-9', x: 1, y: 2, z: 3 });
+  sup.noteHello('-2,-9');
   sup.ensure('0,-9', { cellKey: '0,-9', x: 4, y: 5, z: 6 });
   assert.equal(spawned.length, 2, 'two occupied cells need two engines');
   // Each boots INTO its own cell (--start), which is what makes it simulate that cell rather
@@ -123,7 +127,14 @@ test('sim peer: an interior gets a legal name too, and still maps back', () => {
 test('sim peer: maxPeers 0 means unlimited — every occupied cell gets an engine', () => {
   const { sup, spawned } = harness({ maxPeers: 0 });
   const cells = ['-2,-9', '-1,-9', '0,-9', '1,-9', '2,-9', 'Balmora, Council Club'];
-  for (const c of cells) sup.ensure(c, { cellKey: c, x: 0, y: 0, z: 0 });
+  // Cold starts are serialised -- one retail data load at a time -- so this drives the queue the
+  // way the supervisor's own caller does: each pass starts the next cell once the previous peer
+  // has reported hello. The property under test is that NO CELL IS LEFT WITHOUT ONE, which is
+  // about coverage and not about how many engines may load simultaneously.
+  for (const c of cells) {
+    sup.ensure(c, { cellKey: c, x: 0, y: 0, z: 0 });
+    sup.noteHello(c);
+  }
   assert.equal(spawned.length, cells.length, 'no cell may be left without a simulator');
   assert.deepEqual(sup.keys().sort(), [...cells].sort());
 });
@@ -131,8 +142,11 @@ test('sim peer: maxPeers 0 means unlimited — every occupied cell gets an engin
 test('sim peer: the cap is enforced, and refusing is not a crash', () => {
   const { sup, spawned } = harness({ maxPeers: 2 });
   sup.ensure('a');
+  sup.noteHello('a');
   sup.ensure('b');
-  sup.ensure('c'); // over the cap
+  sup.noteHello('b');
+  sup.ensure('c');
+  sup.noteHello('c'); // over the cap
   assert.equal(spawned.length, 2, 'the third world gets no peer');
   assert.equal(sup.running, 2);
   // Refusal must be survivable: that world falls back to client authority, which still works.
@@ -142,7 +156,9 @@ test('sim peer: the cap is enforced, and refusing is not a crash', () => {
 test('sim peer: an idle world is reaped, a busy one is not', async () => {
   const { sup, spawned, advance } = harness();
   sup.ensure('busy');
+  sup.noteHello('busy');
   sup.ensure('idle');
+  sup.noteHello('idle');
   sup.markIdle('idle');
 
   advance(30_000); // less than idleReapMs
@@ -271,11 +287,13 @@ test('sim peer: one wedged before hello is reaped, one that reported hello is no
   // ~360 MB: the idle reaper only counts players, and the crash backoff only fires on an
   // EXIT that never arrives.
   const { sup, spawned, advance } = harness({ startTimeoutMs: 30_000 });
-  sup.ensure('wedged');
+  // Cold starts are serialised, so 'healthy' is started FIRST and reaches hello; only then does
+  // 'wedged' get its slot. Same end state -- one peer up, one stuck before hello -- reached the
+  // way the supervisor now actually gets there.
   sup.ensure('healthy');
-  assert.equal(spawned.length, 2);
-
   sup.noteHello('healthy'); // only this one reaches hello
+  sup.ensure('wedged');
+  assert.equal(spawned.length, 2);
 
   advance(10_000);
   sup.sweep();
@@ -287,4 +305,44 @@ test('sim peer: one wedged before hello is reaped, one that reported hello is no
   await tick();
   assert.ok(sup.has('healthy'), 'a peer that reported hello is left alone');
   assert.ok(!sup.has('wedged'), 'a peer that never reached hello is stopped');
+});
+
+// ---------------------------------------------------------------- cold-start serialisation
+//
+// Peers are one per OCCUPIED CELL, so a player crossing a few cells asks for several at once. A
+// peer loading retail data reaches hello in ~11 s alone; several contend for disk and CPU and
+// take far longer, and the sweeper SIGKILLs any that has not said hello inside startTimeoutMs.
+// They therefore die seconds before they would have been ready, the cell is left with no
+// authority, and the next pass starts the same race again.
+//
+// Observed live, not theorised: `simpeer.start_timeout waitedMs=120577` next to
+// `simpeer.crashed signal=SIGKILL`, then `cells_unsimulated` for the cell the player stood in.
+// To the player that is enemies aggroing and then freezing, and melee that never lands.
+test('simpeer: only one peer cold-starts at a time', () => {
+  const { sup, spawned } = harness({ maxPeers: 0 });
+
+  sup.ensure('0,0');
+  assert.equal(spawned.length, 1, 'the first cell starts immediately');
+
+  // A second occupied cell while the first is still starting must WAIT, not pile on.
+  sup.ensure('0,-9');
+  assert.equal(spawned.length, 1, 'a second cold start must be deferred, not run concurrently');
+
+  // Once the first is ready, the queue moves.
+  sup.noteHello('0,0');
+  sup.ensure('0,-9');
+  assert.equal(spawned.length, 2, 'the deferred cell starts once the first peer is ready');
+});
+
+// NEGATIVE CONTROL. Deferral must be temporary — a cell that waited has to start on a later
+// pass, or this trades a thrash for a permanent coverage hole, which is strictly worse: the
+// player gets frozen NPCs either way but nothing ever recovers.
+test('simpeer: a deferred cell is not forgotten', () => {
+  const { sup, spawned } = harness({ maxPeers: 0 });
+  sup.ensure('0,0');
+  sup.ensure('1,1');
+  assert.equal(spawned.length, 1);
+  sup.noteHello('0,0');
+  sup.ensure('1,1');   // the caller's next beat
+  assert.equal(spawned.length, 2, 'the retry must succeed rather than stay blocked');
 });

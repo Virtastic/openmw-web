@@ -159,3 +159,45 @@ test('lser fixture vectors from the engine', (t) => {
     assert.deepEqual(lToJs(lserDecode(blob)), expected, bin);
   }
 });
+
+// ---------------------------------------------------------------- lToJs/jsToL round trip
+//
+// These two must be inverses, and for one shape they were not. lToJs renders a table whose keys
+// are neither 1..n nor all-string as {__kv: [[k, v], ...]}; jsToL waved anything with a `__` key
+// through as a userdata wrapper; and the encoder knows only __refnum/__vec/__transform/__color,
+// so it reached the end of its list and threw "cannot encode object".
+//
+// The cost was not a visible error. The world op was dropped, the message never reached the cell
+// owner, and whatever it carried silently did not happen -- observed live as repeated
+// world.op_failed on the dev server with no indication of which payload was at fault.
+test('lToJs/jsToL: a mixed-key table survives the round trip', () => {
+  const mixed: LTable = new Map();
+  mixed.set(1, 'first');
+  mixed.set('name', 'value');
+  mixed.set(7, 'sparse');
+
+  const asJs = lToJs(mixed) as { __kv: unknown[] };
+  assert.ok(Array.isArray(asJs.__kv), 'precondition: a mixed-key table renders as __kv');
+
+  // The bug: this threw instead of encoding.
+  const back = jsToL(asJs as never);
+  assert.ok(back instanceof Map, 'jsToL must rebuild the table, not pass __kv through as userdata');
+  assert.equal(back.get(1), 'first');
+  assert.equal(back.get('name'), 'value');
+  assert.equal(back.get(7), 'sparse');
+
+  // And it must survive the wire, which is what actually failed in production.
+  assert.doesNotThrow(() => lserEncode(back));
+});
+
+// NEGATIVE CONTROL. A genuine userdata wrapper must still pass through untouched -- if the __kv
+// branch were written loosely enough to swallow these, every refnum and vector on the wire would
+// silently turn into a table and the bug would be far worse than the one being fixed.
+test('lToJs/jsToL: real userdata wrappers still pass through', () => {
+  const ref = { __refnum: { index: 42, contentFile: 1 } };
+  assert.equal(jsToL(ref as never), ref, 'a refnum must not be rebuilt as a table');
+  assert.doesNotThrow(() => lserEncode(jsToL(ref as never)));
+  const vec = { __vec3: [1, 2, 3] };
+  assert.equal(jsToL(vec as never), vec);
+  assert.doesNotThrow(() => lserEncode(jsToL(vec as never)));
+});

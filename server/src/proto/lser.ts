@@ -174,7 +174,12 @@ function encodeValue(w: Writer, v: LValue, depth: number): void {
     for (const c of v.__color) w.f32(c);
     return;
   }
-  throw new LserError('UNSUPPORTED', 'cannot encode object (not a Map or known userdata wrapper)');
+  // NAME THE SHAPE. This threw with no clue what it was looking at, so 17 identical lines on the
+  // dev server said only that something, somewhere, failed to encode. The keys are enough to
+  // identify the payload immediately and cost nothing on a path that is about to throw anyway.
+  throw new LserError('UNSUPPORTED',
+    'cannot encode object (not a Map or known userdata wrapper); keys: '
+      + JSON.stringify(Object.keys(v as object).slice(0, 12)));
 }
 
 // undefined encodes to the empty blob, mirroring the engine's nil handling.
@@ -346,6 +351,27 @@ export function jsToL(v: JsLike): LValue {
     return t;
   }
   const keys = Object.keys(v);
+  // THE __kv ROUND TRIP. lToJs renders a table whose keys are neither 1..n nor all-string as
+  // `{__kv: [[k, v], ...]}`, and this function used to wave anything with a `__` key through as
+  // a userdata wrapper -- so the encoder, which knows only __refnum/__vec/__transform/__color,
+  // reached the end of its list and threw "cannot encode object". Any relayed payload holding a
+  // mixed-key table therefore failed to encode and the whole world op was lost.
+  //
+  // It surfaces as silence rather than an error to the player: the op is dropped, the message
+  // never reaches the cell owner, and whatever it carried simply does not happen. Seen live as
+  // repeated `world.op_failed` on the dev server.
+  //
+  // lToJs and jsToL have to be inverses. Reconstructing the Map here makes them so.
+  if (Array.isArray((v as { __kv?: unknown }).__kv)) {
+    const t: LTable = new Map();
+    for (const pair of (v as unknown as { __kv: [JsLike, JsLike][] }).__kv) {
+      if (!Array.isArray(pair) || pair.length !== 2) continue;
+      const [k, item] = pair;
+      if (item === null || item === undefined) continue; // nil -> absent key, as below
+      t.set(jsToL(k) as string | number, jsToL(item));
+    }
+    return t;
+  }
   if (keys.some((k) => k.startsWith('__'))) return v as LUserdata; // userdata wrapper passes through
   const t: LTable = new Map();
   for (const k of keys) {

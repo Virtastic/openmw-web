@@ -68,6 +68,11 @@ export function peerAccountName(key: string): string {
   return 'simpeer-' + key.replace(/[^A-Za-z0-9_-]/g, '_');
 }
 
+// How many peers may be COLD STARTING at once. One, deliberately: a retail data load is disk
+// and CPU bound, so two of them together take more than twice as long each and can cross
+// startTimeoutMs, at which point the sweeper kills peers that were seconds from ready.
+const MAX_CONCURRENT_STARTS = 1;
+
 export class SimPeerSupervisor {
   private peers = new Map<string, Peer>();
   // key -> where that peer must stand. Survives a crash-restart so a respawned peer returns
@@ -158,6 +163,38 @@ export class SimPeerSupervisor {
     if (blocked !== undefined && this.now() < blocked) {
       metrics.simPeerRefused.inc({ reason: 'backoff' });
       return; // a recent crash; do not hot-loop the engine
+    }
+    // ONE COLD START AT A TIME. A peer loading retail data reaches hello in about 11 s when it
+    // has the machine to itself; several loading at once contend for disk and CPU and take far
+    // longer. Since peers are one per OCCUPIED CELL, a player walking across a few cells asks
+    // for several at once -- and the sweeper kills any that has not said hello inside
+    // startTimeoutMs, so they get SIGKILLed just before they would have finished, the cell is
+    // left with no authority, and the next pass starts the whole race again.
+    //
+    // Seen live rather than theorised: `simpeer.start_timeout waitedMs=120577` beside
+    // `simpeer.crashed signal=SIGKILL`, then `simpeer.cells_unsimulated` for the cell the
+    // player was standing in. To that player it is enemies that aggro and then freeze, and
+    // melee that never lands -- there is no authority left to apply damage. Memory was not the
+    // constraint (22 GB free on the box that produced those lines); serialisation was.
+    //
+    // Deferring costs a few seconds on the second cell. NOT deferring costs the cell its
+    // simulation entirely, which is the failure this whole supervisor exists to prevent.
+    // A DOOMED PEER MUST NOT HOLD THE QUEUE. Counting every not-yet-hello peer would let one
+    // wedged engine block every other cell until the sweeper reaps it -- up to startTimeoutMs of
+    // nothing starting anywhere, which trades a thrash for a stall and is no better for the
+    // player standing in an unsimulated cell. A peer already past its deadline is about to be
+    // killed, so it no longer occupies the slot.
+    const startCutoff = this.now() - this.deps.settings.startTimeoutMs;
+    const starting = [...this.peers.values()]
+      .filter((p) => p.helloAt === undefined && p.startedAt > startCutoff).length;
+    if (starting >= MAX_CONCURRENT_STARTS) {
+      metrics.simPeerRefused.inc({ reason: 'start_queue' });
+      // Not an error: the caller re-runs on its own beat, so this retries by itself. Logged at
+      // debug volume only when it actually bites, so a busy world does not spam.
+      log('info', 'simpeer.start_deferred', {
+        key, starting, note: 'another peer is still cold-starting; will retry on the next pass',
+      });
+      return;
     }
     this.start(key);
   }
