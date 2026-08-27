@@ -2,9 +2,12 @@
 // See WASM_ADAPTATIONS.md at the repository root for details of the changes.
 #include "localmap.hpp"
 
+#include <algorithm>
 #include <cstdint>
+#include <vector>
 
 #include <osg/ComputeBoundsVisitor>
+#include <osg/GL>
 #include <osg/Fog>
 #include <osg/Group>
 #include <osg/LightSource>
@@ -891,13 +894,63 @@ namespace MWRender
         }
     }
 
-    void MapDrawDiagnostic::operator()(osg::RenderInfo&) const
+    void MapDrawDiagnostic::operator()(osg::RenderInfo& renderInfo) const
     {
         // The first few only. If this never appears the draw is not running; if it appears and
         // the map is still blank, the draw runs and produces nothing, which is a different bug
         // in a different place.
         if (mDraws < 4)
             Log(Debug::Warning) << "Local map: RTT camera DREW (draw #" << (mDraws + 1) << ")";
+
+        // WHAT IS ACTUALLY IN THE TARGET. Build 59 established that this camera draws: created,
+        // traversed, 109 drawables through the cull, draw executed -- and the HUD panel is still
+        // solid black, which is exactly this camera's clear colour.
+        //
+        // Two very different bugs remain and no amount of reasoning separates them. Either the
+        // draw writes colour and the widget is showing something else, or the draw runs and
+        // produces nothing. Reading the target answers it outright: non-black pixels mean the
+        // render is fine and the fault is in what MyGUI binds; all-black means the geometry
+        // reached the rasteriser and wrote no colour, which points at depth or shaders.
+        //
+        // Read in the FINAL draw callback, where this camera's framebuffer is still bound, and
+        // ONCE -- glReadPixels stalls the pipeline, which is acceptable for a single diagnostic
+        // frame and would not be as a per-frame cost.
+        //
+        // Sampled from the CENTRE, not the corner: a corner of a top-down map shot is plausibly
+        // dark on its own merits, and reporting that as "black" would manufacture the very
+        // conclusion this is meant to test.
+        if (mDraws == 0)
+        {
+            int w = 16, h = 16, x0 = 0, y0 = 0;
+            if (const osg::Camera* cam = renderInfo.getCurrentCamera())
+            {
+                if (const osg::Viewport* vp = cam->getViewport())
+                {
+                    x0 = static_cast<int>(vp->width()) / 2 - w / 2;
+                    y0 = static_cast<int>(vp->height()) / 2 - h / 2;
+                    if (x0 < 0) x0 = 0;
+                    if (y0 < 0) y0 = 0;
+                }
+            }
+            std::vector<unsigned char> px(static_cast<size_t>(w) * h * 4, 0);
+            glReadPixels(x0, y0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
+            unsigned int mn = 255, mx = 0;
+            unsigned long sum = 0;
+            size_t n = 0;
+            for (size_t i = 0; i + 3 < px.size(); i += 4)
+            {
+                for (int c = 0; c < 3; ++c)
+                {
+                    const unsigned int v = px[i + c];
+                    mn = std::min(mn, v);
+                    mx = std::max(mx, v);
+                    sum += v;
+                    ++n;
+                }
+            }
+            Log(Debug::Warning) << "Local map: target centre pixels min=" << mn << " max=" << mx
+                                << " mean=" << (n ? sum / n : 0) << " (at " << x0 << "," << y0 << ")";
+        }
         ++mDraws;
     }
 
