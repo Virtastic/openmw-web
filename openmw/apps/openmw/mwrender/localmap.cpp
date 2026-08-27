@@ -114,6 +114,27 @@ namespace MWRender
         void operator()(osg::Node* node, osg::NodeVisitor* nv) override;
     };
 
+    // DOES THE DRAW ACTUALLY EXECUTE. The cull answered yes -- 109 drawables survive into this
+    // camera's bin against build 58 -- so the world genuinely reaches the draw and the camera is
+    // exonerated. The step after it has never been observed: whether the GPU runs this camera's
+    // render stage at all, and how many times.
+    //
+    // That matters here specifically because the map camera RETIRES ITSELF. The update callback
+    // counts mFramesLeft down and then masks the node off forever, so the camera gets a fixed
+    // and very small number of chances. Under WebGL a framebuffer object is created lazily and
+    // the first attempts can be no-ops, and update traversals are not draws -- so the countdown
+    // can run out on frames that never drew anything, switching the camera off before it ever
+    // rendered. The target then keeps its clear colour permanently, which is the reported bug.
+    //
+    // A final-draw callback fires only when the stage really ran, so counting them separates
+    // "never drew" from "drew and produced black". Logged for the first few draws only.
+    class MapDrawDiagnostic : public osg::Camera::DrawCallback
+    {
+    public:
+        void operator()(osg::RenderInfo& renderInfo) const override;
+        mutable unsigned int mDraws = 0;
+    };
+
     LocalMap::LocalMap(osg::Group* root)
         : mRoot(root)
         , mMapResolution(static_cast<int>(
@@ -837,6 +858,7 @@ namespace MWRender
         sceneHolder->setCullCallback(new MapCullDiagnostic);
         sceneHolder->addChild(mSceneRoot);
         camera->addChild(sceneHolder);
+        camera->setFinalDrawCallback(new MapDrawDiagnostic);
     }
 
     namespace
@@ -867,6 +889,16 @@ namespace MWRender
                 n += countCulledDrawables(child.second.get());
             return n;
         }
+    }
+
+    void MapDrawDiagnostic::operator()(osg::RenderInfo&) const
+    {
+        // The first few only. If this never appears the draw is not running; if it appears and
+        // the map is still blank, the draw runs and produces nothing, which is a different bug
+        // in a different place.
+        if (mDraws < 4)
+            Log(Debug::Warning) << "Local map: RTT camera DREW (draw #" << (mDraws + 1) << ")";
+        ++mDraws;
     }
 
     void MapCullDiagnostic::operator()(osg::Node* node, osg::NodeVisitor* nv)
