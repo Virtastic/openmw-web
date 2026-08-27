@@ -121,6 +121,16 @@ to a two-player shortfall at 64 -- an eightfold improvement and a different clas
 well outside the stated two-to-four-friend target. Worth understanding eventually; not worth
 blocking on.
 
+**FINAL STATE: 48 concurrent players verified, the 64 step is harness scaling.** With the
+wait budgeted against how many bots are still arriving, the ramp now clears 8/8, 16/16, 32/32
+and 48/48 cleanly -- it used to hard-stop at 8 -- and falls short only at 64. soak joins its
+fleet sequentially, so the last wave adds 16 more one at a time on a box also running the
+browser client under software rendering.
+
+Twelve times the stated two-to-four-friend target is verified. CLOSED: the remaining gap is
+the test harness, not the product, and the product side is separately proven by reading (no
+roster cap or slice server-side, and a client handler that dedupes, appends and re-mirrors).
+
 **The remaining 2-of-64 is BOT-SIDE, not the roster.** Counted from the server log of a
 failing run: only 48 distinct bot names ever appear, across waves that should total 64. Bots
 are failing to START in the largest wave -- the same signature as the missing `w8_4` noted
