@@ -13,9 +13,19 @@
 // is absent as carefully as it asserts the feature works. A test that only proved delivery
 // would pass just as happily on the version that melts the server.
 //
-// Runs on demo content: unlike companions or merchants, a topic is a record id and needs no
-// retail dialogue to exercise.
+// RETAIL, and the reason is worth writing down because the first version of this file asserted
+// the opposite. "A topic is just a record id" is wrong: it is a RECORD. addTopic looks the id
+// up in the ESM store and throws "topic record not found" if it is not there, and the Example
+// Suite ships no Morrowind dialogue at all -- so on demo content the player never learns the
+// topic and nothing downstream can possibly work. That is what this scenario found on its first
+// run, by checking the LOCAL fact before blaming the network.
 import assert from 'node:assert/strict';
+import { existsSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+const BOOT = { retail: true, joinTimeoutMs: 420_000 };
 
 const STEP = 20_000;
 const TOPIC = 'nerevarine';
@@ -27,14 +37,24 @@ const TOPIC = 'nerevarine';
 const topicsOf = async (c) => {
   await c.eval("if (window.__omwMP) window.__omwMP.topics = null; 'cleared';");
   await c.eval("Module.__omwMPCmd='topics'");
-  await c.waitFor('((window.__omwMP||{}).topics||null) !== null', STEP, 'the client listed its topics');
+  // typeof, not truthiness. A player who knows NO topics publishes an EMPTY STRING, and `'' ||
+  // null` is null -- so "answered with nothing" and "has not answered yet" were the same value
+  // and this waited out its whole timeout on a fresh character. The mirror starts undefined and
+  // is cleared to null above, neither of which is a string, so this separates them cleanly.
+  await c.waitFor("typeof (window.__omwMP||{}).topics === 'string'", STEP,
+    'the client listed its topics');
   return String(await c.eval("(window.__omwMP||{}).topics||''")).split(',').filter(Boolean);
 };
 
 export default async function run(ctx) {
+  if (!existsSync(join(ROOT, 'play', 'mwdata', 'Morrowind.esm'))) {
+    ctx.log('SKIP: play/mwdata/Morrowind.esm absent (a dialogue topic is a RECORD, and the '
+      + 'example suite has none)');
+    return;
+  }
   const [a, b] = await Promise.all([
-    ctx.launchClient('topic-a'),
-    ctx.launchClient('topic-b'),
+    ctx.launchClient('topic-a', '', BOOT),
+    ctx.launchClient('topic-b', '', BOOT),
   ]);
 
   // Baseline first. The demo content may hand out topics of its own, and asserting on an
@@ -45,6 +65,19 @@ export default async function run(ctx) {
 
   // A learns it, the way a conversation would.
   await a.eval(`Module.__omwMPCmd='topic:${TOPIC}'`);
+
+  // CONFIRM THE LOCAL FACT BEFORE BLAMING THE NETWORK. If A does not have the topic either,
+  // nothing downstream can work and the fault is addTopic, not the sync -- and those are
+  // different bugs in different files. This mirror is read from the PLAYER script, where
+  // addTopic ran, so it is the same context that did the writing.
+  let aHas = false;
+  const aBy = Date.now() + 20_000;
+  while (Date.now() < aBy) {
+    if ((await topicsOf(a)).includes(TOPIC)) { aHas = true; break; }
+    await ctx.sleep(500);
+  }
+  ctx.log(`  A knows ${TOPIC}: ${aHas}`);
+  assert.ok(aHas, `A never learned ${TOPIC} locally — addTopic failed, before any sync is involved`);
 
   // The diff runs on the same slow beat as globals, factions and bounty, so this is not
   // instant -- and it should not be. Waiting on the fact rather than sleeping a guessed

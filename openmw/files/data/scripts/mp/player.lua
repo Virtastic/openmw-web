@@ -482,7 +482,12 @@ local function pollHarness()
         -- one feature IS testable against the demo content.
         local learnTopic = cmd:match('^topic:(.+)$')
         if learnTopic then
-            pcall(function() types.Player.addTopic(self, learnTopic) end)
+            -- SAY WHEN IT FAILS. addTopic looks the id up in the ESM store and THROWS if there
+            -- is no such dialogue record -- a topic is a record, not just a string. Swallowing
+            -- that made a scenario look like a broken sync when the topic simply did not exist
+            -- in the loaded content.
+            local ok, err = pcall(function() types.Player.addTopic(self, learnTopic) end)
+            if not ok then print('[mp] addTopic ' .. tostring(learnTopic) .. ' failed: ' .. tostring(err)) end
         end
         if cmd == 'topics' then
             local names = {}
