@@ -14,6 +14,7 @@
 #include <MyGUI_TextIterator.h>
 #include <MyGUI_Window.h>
 
+#include <components/debug/debuglog.hpp>
 #include <components/esm3/esmwriter.hpp>
 #include <components/esm3/globalmap.hpp>
 #include <components/myguiplatform/myguitexture.hpp>
@@ -634,7 +635,24 @@ namespace MWGui
                     needRedraw = true;
                 }
                 else
+                {
+                    // SAY SO, ONCE. A null map texture means the widget keeps MyGUI's own
+                    // default fill -- a flat, uniform colour -- which is indistinguishable from
+                    // "the map rendered and came out blank" in a screenshot. Two theories about
+                    // the web minimap (the pbuffer fallback, then the one-frame render window)
+                    // were tested and killed without this line being available to separate the
+                    // two cases; it costs one warning per cell and settles which half is at
+                    // fault.
+                    static bool warned = false;
+                    if (!warned)
+                    {
+                        warned = true;
+                        Log(Debug::Warning) << "Local map: getMapTexture returned null for cell "
+                                            << entry.mCellX << "," << entry.mCellY
+                                            << " -- the map panel will show MyGUI's default fill";
+                    }
                     entry.mMapTexture = std::make_unique<MyGUIPlatform::OSGTexture>(std::string(), nullptr);
+                }
             }
             if (!entry.mFogTexture && mFogOfWarToggled && mFogOfWarEnabled)
             {

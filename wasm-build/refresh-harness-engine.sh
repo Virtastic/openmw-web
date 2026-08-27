@@ -10,6 +10,12 @@
 #
 # Do not date-check the bundle to decide whether it is current. The mtimes look fine. Probe for
 # a bare identifier, which is what --verify does.
+#
+# --verify ONLY WORKS FOR LUA. openmw.data is the virtual filesystem -- client scripts and
+# game assets -- so a Lua identifier appears in it as plain text. A C++ change does not: it
+# is compiled into openmw.wasm with its symbols gone, and probing for one reports STALE on a
+# bundle that is perfectly current. That false negative was hit for real. For an engine-side
+# change, trust the build number instead.
 set -euo pipefail
 
 CONTAINER="${CONTAINER:-morrowind-test}"
