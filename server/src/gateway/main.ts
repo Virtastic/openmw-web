@@ -202,6 +202,13 @@ metrics.worldsCapacity.addCollector(() => {
 
 log('info', 'gateway.start', {
   port: directory.port, worldsDir, sharedDir, serverEntry,
+  // WHETHER ANY WORLD RUNS AT BOOT, stated rather than inferred. With [worlds] publicEnabled
+  // off there is no always-on world, so nothing spawns a sim peer until a player creates their
+  // own -- and a deploy check that reads silence as "the peer is broken" would fail every
+  // deploy of a correctly configured server. It did exactly that once; this is the fact it
+  // needs to tell the two apart.
+  publicEnabled: config.worlds.publicEnabled,
+  publicWorlds: (values['public-world'] ?? (config.worlds.publicEnabled ? ['vvardenfell'] : [])).length,
 });
 
 let shuttingDown = false;

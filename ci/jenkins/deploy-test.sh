@@ -148,7 +148,17 @@ if [ "$HEALTHY" = "1" ]; then
     PEERCRASH=$($SSH "$TEST_HOST" "docker logs $NAME 2>&1 | grep 'simpeer.crashed' | tail -1" || true)
     SPAWNABLE=$($SSH "$TEST_HOST" "docker logs $NAME 2>&1 | grep -m1 'simpeer.ready_to_spawn'" || true)
 
-    if [ -z "$SPAWNABLE" ]; then
+    # NO WORLD AT BOOT IS A VALID STATE NOW. simpeer.ready_to_spawn is logged by a WORLD
+    # process, and with [worlds] publicEnabled off the gateway starts none until a player
+    # creates their own -- so silence here means "nothing has needed a peer yet", not "the peer
+    # is broken". Reading it as broken failed a deploy of a perfectly good server.
+    #
+    # The gateway states which it is at boot, so the two are distinguishable rather than
+    # guessed at.
+    NOPUBLIC=$($SSH "$TEST_HOST" "docker logs $NAME 2>&1 | grep -m1 '\"publicEnabled\":false'" || true)
+    if [ -z "$SPAWNABLE" ] && [ -n "$NOPUBLIC" ]; then
+      echo "    no world runs at boot (public disabled) - peer capability not exercised here"
+    elif [ -z "$SPAWNABLE" ]; then
       echo "FAILED: the server cannot spawn a sim peer at all. Check the image was built from"
       echo "        server/Dockerfile.simpeer (the alpine server/Dockerfile has NO peer binary),"
       echo "        and that /data/gamedata contains Morrowind.esm."
