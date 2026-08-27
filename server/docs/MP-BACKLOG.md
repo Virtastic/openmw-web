@@ -130,6 +130,33 @@ measuring the wrong buffer.
 
 ---
 
+### Where to pick the minimap up (and how NOT to)
+
+The time-of-day theory is dead too, without spending a build on it:
+`configureStateSetSunOverride` already defaults to `ON | OVERRIDE`, so the map's fixed sun
+(diffuse 0.7, ambient 0.3) DOES win over whatever the LightManager binds. The map window at
+build 76 is pixel-for-pixel what it was at build 75: fog overlay and player arrow drawn
+correctly over black terrain.
+
+**STOP GUESSING AND BUILDING.** Fourteen suspects have died, each costing a ~20 minute build,
+and the last four were eliminated by READING in minutes. The remaining candidates are all deep
+in shader/state territory where a guess is worth little and a measurement is worth everything.
+
+Two approaches that would actually settle it, neither of which is another theory:
+
+1. **Compare against upstream on a desktop build.** This same code renders a working local map
+   in stock OpenMW. Build the native peer (`openmw-simpeer` already exists and builds), run it
+   non-headless, and diff the map camera's state against the web build. The difference IS the
+   bug, and it stops being a guessing game.
+2. **Dump the actual shader inputs.** Log the uniforms and defines bound during the map
+   camera's cull -- not what `setDefaults` asked for, but what the leaf drawables actually see.
+   Every theory so far has been about intent; nothing has yet observed the state at the point
+   of the draw.
+
+It is COSMETIC and does not block play. Given the cost per iteration, it should not be picked
+up again until someone can do (1) or (2) -- another round of hypothesis-then-build is the one
+approach now known not to work.
+
 ### Build 76: Mask_Lighting was NECESSARY BUT NOT SUFFICIENT
 
 The cull mask was genuinely wrong and the fix is real: `"Scene Root"` IS the LightManager, its
