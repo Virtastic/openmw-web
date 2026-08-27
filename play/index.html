@@ -3599,13 +3599,26 @@
     }
     window.__omwLoading.show('Changing world', 'Getting you a seat…');
     var ticket = '';
-    try {
-      // Bounded: an unreachable gateway used to leave the player behind a locked loading
-      // screen with nothing said, because only the Public path had a watchdog.
-      var r = await fetch(base + '/auth/ticket', { method: 'POST',
-        headers: { authorization: 'Bearer ' + tok }, signal: AbortSignal.timeout(10000) });
-      if (r.ok) ticket = (await r.json()).ticket || '';
-    } catch (e) { /* reported below */ }
+    // RETRIED, because one slow answer must not cost the player their world change. Bounded
+    // still -- an unreachable gateway used to leave them behind a locked loading screen with
+    // nothing said, because only the Public path had a watchdog -- but a single 10s attempt
+    // treats a momentarily busy server exactly like a dead one. The whole switch is already a
+    // page reload the player is waiting through; a second try costs them nothing they were not
+    // already spending, and the alternative is "Could not change world" for a hiccup.
+    //
+    // Three attempts with a short pause: the first covers the common case, and the delay lets a
+    // spike pass rather than hammering a server that is already struggling.
+    for (var attempt = 0; attempt < 3 && !ticket; attempt++) {
+      if (attempt) await new Promise(function(res){ setTimeout(res, 1500); });
+      try {
+        var r = await fetch(base + '/auth/ticket', { method: 'POST',
+          headers: { authorization: 'Bearer ' + tok }, signal: AbortSignal.timeout(10000) });
+        if (r.ok) ticket = (await r.json()).ticket || '';
+        // A 4xx is a real refusal -- a spent or rejected session -- and retrying it just
+        // delays the honest message. Only a timeout or a 5xx is worth a second look.
+        else if (r.status < 500) break;
+      } catch (e) { /* timed out or unreachable; try again below */ }
+    }
     // A login ticket is single use, so the one that got us HERE is spent. Without a fresh one
     // the destination refuses us and the reconnect ladder retries a dead credential forever,
     // which is what made a switch look like it silently did nothing.
@@ -3679,14 +3692,21 @@
   // comment). Deferred rather than immediate: at boot there is no UI to put it in yet.
   (function warnMissingS3TC(){
     if (!window.__omwMissingS3TC) return;
+    // NOT FOR AUTOMATION. ?mpauto is a harness client with nobody at the keyboard, and the
+    // test renderer (SwiftShader) genuinely has no compressed formats -- so this would fire on
+    // every scenario, every time, and put a panel in front of a bot that cannot dismiss it. A
+    // diagnostic that interferes with the thing it is diagnosing is worse than the bug.
+    if (/[?&]mpauto=1/.test(location.search)) return;
     setTimeout(function(){
       try {
+        // NOT URGENT. This is information, not a decision the player has to make before they
+        // can carry on -- the game is entirely playable, the foliage just looks wrong.
         showNotice('Your browser is hiding a graphics feature',
           'This game stores its textures in a compressed format (S3TC) that your browser is not '
           + 'making available — most often a privacy or fingerprinting shield. Trees and other '
           + 'foliage will look solid black until it is allowed. Turning shields off for this '
           + 'site, or switching browser, fixes it. Nothing is wrong with your save.',
-          GLYPH_WORLD, true);
+          GLYPH_WORLD, false);
       } catch (e) { /* no UI yet; the console line above still carries it */ }
     }, 8000);
   })();

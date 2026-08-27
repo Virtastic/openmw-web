@@ -203,6 +203,21 @@ export default async function run(ctx) {
       await ctx.sleep(1000);
     }
     ctx.log(`  reached public: ${inPublic} (publicStage="${lastStage}")`);
+    if (!inPublic) {
+      // THE CLIENT'S OWN ACCOUNT, restored after a refactor dropped it. Everything visible
+      // from out here says the same unhelpful thing -- the switch was issued and nobody
+      // arrived -- so the page's own state is the only place left to look. An empty log with
+      // empty mirrors means it navigated somewhere blank; a full log means it booted and could
+      // not connect. Those are different bugs.
+      ctx.log(`  jsErrors: ${JSON.stringify(a.jsErrors?.() ?? [])}`);
+      ctx.log(`  luaErrors: ${JSON.stringify(a.luaErrors?.() ?? [])}`);
+      const where = await a.eval('String(location.href)').catch((e) => `eval failed: ${e}`);
+      const frag = await a.eval('String(window.__omwBootFrag||"(none)")').catch(() => '?');
+      ctx.log(`  page url: ${where}`);
+      ctx.log(`  boot fragment: ${frag}`);
+      ctx.log(`  client log tail:
+${a.logTail?.(40) ?? '(none)'}`);
+    }
     assert.ok(inPublic, 'the player must actually reach the public world before anything is idle');
     ctx.log('  switched to the public world');
 
