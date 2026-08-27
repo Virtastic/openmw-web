@@ -709,18 +709,28 @@ carry more than a record id -- and that one change closes three of the five.
 
   Still unexercised: reset while a cell is under active simulation by a peer, and reset of a
   cell with scripted content, which is the specific thing that broke TES3MP.
-* **Many worlds at once.** The REFUSAL is now covered; the LOAD is still not. The capacity
-  governor's arithmetic was already tested, but nothing exercised a real request arriving at the
-  ceiling -- and a cap that is computed and never enforced is not a cap. There is now a test
-  that fills the platform and asserts the next create is refused with 503, which is the status
-  `WorldBrowser` maps to `platform_full` and the client turns into "The server has no room for
-  another world right now". A refusal nobody can read is a bug report about the game being
-  broken. Negative-controlled by making the over-capacity path answer 200.
+* ~~**Many worlds at once.**~~ RUN, not just reasoned about. Six populated world processes,
+  two players each, on one shared directory, measured on test-vm:
 
-  What remains genuinely untested is the thing the original entry meant: many worlds actually
-  RUNNING at once. That is a load measurement on real hardware, not a unit test, and the
-  numbers must not be published from a busy box -- capacity figures were once published 10x
-  wrong for exactly that reason.
+  ```
+  [soak] PASS: 6 populated worlds survived 3 minutes on one shared dir
+  world processes: 134-141 MB RSS each (mean ~137)
+  total node RSS:  1188 MB   host load at 1 min: 0.76 on 24 cores
+  ```
+
+  That CORROBORATES the figure already in the config rather than replacing it: `worldCostMb`
+  documents "node process 136 MB", and six independent processes came in at 137. The
+  remaining 500-odd MB of the 640 budget is the sim peer, which these worlds do not run --
+  so 640 stays the right number for a world with retail data and a peer, and this measures
+  the half that was reachable here.
+
+  The refusal path is covered separately: a full platform answers 503, which the client turns
+  into "The server has no room for another world right now". Negative-controlled.
+
+  What is still not measured is the peer half at scale -- six ENGINES rather than six node
+  processes -- which needs retail data and a box that is not also running the browser suite.
+  Per the standing rule, no capacity figure from a loaded machine: the load above is recorded
+  precisely so this one can be trusted.
 
 ---
 
