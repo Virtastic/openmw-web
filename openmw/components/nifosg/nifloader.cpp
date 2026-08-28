@@ -63,6 +63,7 @@
 #include "fog.hpp"
 #include "matrixtransform.hpp"
 #include "particle.hpp"
+#include <components/resource/nifstats.hpp>
 
 namespace
 {
@@ -825,7 +826,11 @@ namespace NifOsg
                 if (!skip)
                 {
                     if (isNiGeometry)
+                    {
+                        OPENMW_NIF_STAT_BEGIN(nifGeomBegin);
                         handleNiGeometry(nifNode, parent, node, composite, args.mBoundTextures, args.mAnimFlags);
+                        OPENMW_NIF_STAT_END(Resource::NifStage::Geom, nifGeomBegin);
+                    }
                     else // isBSGeometry
                         handleBSGeometry(nifNode, parent, node, composite, args.mBoundTextures, args.mAnimFlags);
 

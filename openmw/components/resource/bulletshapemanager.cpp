@@ -23,6 +23,7 @@
 #include "niffilemanager.hpp"
 #include "objectcache.hpp"
 #include "scenemanager.hpp"
+#include "nifstats.hpp"
 
 namespace Resource
 {
@@ -117,7 +118,9 @@ namespace Resource
         if (Misc::getFileExtension(name.value()) == "nif")
         {
             NifBullet::BulletNifLoader loader;
+            OPENMW_NIF_STAT_BEGIN(nifStatBegin);
             shape = loader.load(*mNifFileManager->get(name));
+            OPENMW_NIF_STAT_END(Resource::NifStage::Bullet, nifStatBegin);
         }
         else
         {

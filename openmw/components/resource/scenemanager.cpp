@@ -60,6 +60,7 @@
 #include "imagemanager.hpp"
 #include "niffilemanager.hpp"
 #include "objectcache.hpp"
+#include "nifstats.hpp"
 
 namespace
 {
@@ -787,7 +788,13 @@ namespace Resource
     {
         const std::string_view ext = Misc::getFileExtension(normalizedFilename.value());
         if (ext == "nif")
-            return NifOsg::Loader::load(*nifFileManager->get(normalizedFilename), imageManager, materialMgr);
+        {
+            OPENMW_NIF_STAT_BEGIN(nifStatBegin);
+            osg::ref_ptr<osg::Node> loaded
+                = NifOsg::Loader::load(*nifFileManager->get(normalizedFilename), imageManager, materialMgr);
+            OPENMW_NIF_STAT_END(Resource::NifStage::Build, nifStatBegin);
+            return loaded;
+        }
         else if (ext == "spt")
         {
             Log(Debug::Warning) << "Ignoring SpeedTree data file " << normalizedFilename;
