@@ -1595,13 +1595,20 @@
          var __tier = (/[?&]tier=(low|mid|high)/.exec(location.search) || [])[1]
                    || (__devMem >= 8 ? 'high' : (__devMem > 0 && __devMem <= 4 ? 'low' : 'mid'));
          // Only the knobs whose cost scales with the scene. Everything else stays common.
+         // lru = streamfs chunk slots (~1MB each), i.e. the JS-side cache ceiling on top of the
+         // wasm heap. MEASURED in Balmora at matched workload: the old flat 128 was thrashing --
+         // 215 evictions / 2684ms main-thread stall / 356MB fetched, vs 0 / 1923ms / 268MB at 384.
+         // The working set settles at 259 chunks, so high:384 is headroom, not a guess. A streamfs
+         // miss blocks the main thread, so this buys frame time, not just bandwidth.
          var TIER = {
-           low:  { vd: '8192',  minSize: '0.02',  shadowRes: '2048', shadowDist: '512',  rtt: '512',  actors: '3072' },
-           mid:  { vd: '12288', minSize: '0.01',  shadowRes: '4096', shadowDist: '768',  rtt: '1024', actors: '4096' },
-           high: { vd: '16384', minSize: '0.005', shadowRes: '8192', shadowDist: '1024', rtt: '1024', actors: '4096' }
+           low:  { vd: '8192',  minSize: '0.02',  shadowRes: '2048', shadowDist: '512',  rtt: '512',  actors: '3072', lru: 96 },
+           mid:  { vd: '12288', minSize: '0.01',  shadowRes: '4096', shadowDist: '768',  rtt: '1024', actors: '4096', lru: 192 },
+           high: { vd: '16384', minSize: '0.005', shadowRes: '8192', shadowDist: '1024', rtt: '1024', actors: '4096', lru: 384 }
          }[__tier];
+         // streamfs.js is parsed before this runs, so it resolves LRU_MAX lazily from this global.
+         try { window.__omwLruDefault = TIER.lru; } catch(e){}
          try { window.__omwTier = { tier: __tier, deviceMemory: __devMem || null }; } catch(e){}
-         append('[tier] '+__tier+' (navigator.deviceMemory='+(__devMem||'unknown')+')');
+         append('[tier] '+__tier+' (navigator.deviceMemory='+(__devMem||'unknown')+', lru='+TIER.lru+')');
          // IMPORTANT: OpenMW loads user settings from <last active config dir>/settings.cfg.
          // In this build the only config dir is '/' (where openmw.cfg lives), NOT the XDG
          // path — write the file to BOTH so the engine actually reads it.

@@ -39,7 +39,16 @@
   const _q = (typeof location !== 'undefined' && location.search) || '';
   const _n = (re, dflt) => { const m = re.exec(_q); return m ? (parseInt(m[1], 10) || dflt) : dflt; };
   const CHUNK = _n(/[?&]chunk=(\d+)/, 1024) * 1024;   // 1MB default (was 4MB)
-  const LRU_MAX = _n(/[?&]lru=(\d+)/, 128);           // 128 slots (was 32) -- same ~128MB ceiling
+  // Slot count is TIER-DEPENDENT and resolved lazily in init(), not here: index.html picks the
+  // tier from navigator.deviceMemory and publishes window.__omwLruDefault, and this file is parsed
+  // before that runs. 0 means "not decided yet"; an explicit ?lru= always wins.
+  //
+  // MEASURED 2026-08-28 (Balmora, matched workload -- hits within 0.1%): 128 slots was thrashing.
+  //     lru=128 -> 215 evictions, 343 misses, 2684ms main-thread stall, 356MB fetched
+  //     lru=384 ->   0 evictions, 259 misses, 1923ms main-thread stall, 268MB fetched
+  // -28% stall and -25% bytes. The working set settles at 259 chunks, so 384 is headroom rather
+  // than a guess. A miss BLOCKS the main thread (fetchChunkSync spins), so this is frame time.
+  let LRU_MAX = _n(/[?&]lru=(\d+)/, 0);
 
   // cache is a Map used as an LRU: insertion order IS the recency order (delete+set moves to end),
   // so eviction pops the first (oldest) key. No separate order array → O(1) hit path, no linear scan.
@@ -172,6 +181,9 @@
 
     init() {
       if (S.worker) return;
+      // Resolve the tier default now that index.html has run. Slots are ~1MB each, so this is
+      // also the JS-side memory ceiling: 384MB high / 192MB mid / 96MB low, on top of the wasm heap.
+      if (!LRU_MAX) LRU_MAX = (typeof window !== 'undefined' && window.__omwLruDefault | 0) || 128;
       if (!self.crossOriginIsolated) throw new Error('streamfs needs crossOriginIsolated (COOP/COEP)');
       const ctrlBuf = new SharedArrayBuffer(8);
       const dataBuf = new SharedArrayBuffer(CHUNK);
