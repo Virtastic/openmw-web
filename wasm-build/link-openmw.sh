@@ -85,16 +85,31 @@ cp "$ROOT/openmw/files/data/mp.omwscripts" "$ROOT/fsroot/resources/vfs/mp.omwscr
 ICU_TARGET="$ROOT/fsroot/icu/icudt68l.dat"
 ICU_STAGED="$ROOT/fsroot/icudt68l.dat"
 ICU_DAT="${EMSDK_BIN}/cache/ports/icu/icu/source/data/in/icudt68l.dat"
-# TRIM. The upstream package is 28.6 MB of a 32 MB openmw.data, and the engine's whole use of ICU
-# is MessageFormat + Locale/Calendar in components/l10n plus getDisplayLanguage() in
-# settingswindow.cpp, over the six locales the VFS ships. trim-icu-data.py drops the locale trees we
-# do not ship, the feature groups nothing calls (collation, break iteration, timezones, currency,
-# units, regions, transliteration, spellout) and the legacy charset converters (the engine calls no
-# ucnv_* API; Morrowind's cp1252 text is decoded by esm3/esmreader's own tables). 28.6 MB -> 1.9 MB.
-# --verify-l10n fails the build if a locale is added under resources/vfs/l10n without being added to
-# --keep, which would otherwise fall back to root and silently show that language in English.
+# TRIM -- DISABLED. See wasm-build/trim-icu-data.py.
+# The finding is real (28.6 MB of a 32 MB openmw.data, for six locales and a MessageFormat), but
+# the naive TOC filter is NOT a safe way to get it, and this was proven by running it:
+#
+#   With the trim, the engine boots normally all the way to "Reserving texture unit for sky RTT"
+#   and then dies with `unhandled rejection: null function`. Restoring the full package with every
+#   other change in place boots clean. Bisected: dropping FEATURE GROUPS (coll/zone/curr/...) alone
+#   is fine; dropping other LOCALES is what breaks it.
+#
+# Why: the package still contains ICU's locale INDEX resources, which continue to advertise the
+# ~800 locales whose .res entries were removed. ICU opens one, gets nothing back, and calls a
+# virtual on the null -- the same bare "null function" this data caused when it was absent
+# entirely. Filtering the built .dat cannot fix that; the index has to be regenerated, which is
+# exactly what upstream's ICU_DATA_FILTER_FILE does and what the script's header wrongly dismissed.
+#
+# To land this properly: build the ICU data with ICU_DATA_FILTER_FILE (needs a native ICU build in
+# the deps stack), or extend trim-icu-data.py to rewrite res_index.res for every kept tree. Until
+# then ship the full package -- 26 MB is worth having, but not at the cost of a boot crash.
+ICU_TRIM="${ICU_TRIM:-0}"
 trim_icu() {   # trim_icu <src> <dst>
-  python3 "$ROOT/wasm-build/trim-icu-data.py" "$1" "$2"     --verify-l10n "$ROOT/fsroot/resources/vfs/l10n"
+  if [ "$ICU_TRIM" = "1" ]; then
+    python3 "$ROOT/wasm-build/trim-icu-data.py" "$1" "$2"       --verify-l10n "$ROOT/fsroot/resources/vfs/l10n"
+  else
+    cp "$1" "$2"
+  fi
 }
 
 if [ -s "$ICU_TARGET" ]; then

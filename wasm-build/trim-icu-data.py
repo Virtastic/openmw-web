@@ -11,11 +11,18 @@
 # mwgui/settingswindow.cpp. The VFS ships six locales (de, en, fr, pl, ru, sv). Everything else in
 # that package is downloaded so it can be ignored.
 #
-# WHY NOT ICU_DATA_FILTER_FILE. That is the upstream way, and it means rebuilding the ICU data
-# from source with ICU's own data tooling -- a native ICU build the wasm dep stack does not
-# otherwise need. The .dat is a flat TOC archive (udata "CmnD" format), so filtering the built
-# package directly is both smaller and reproducible from what the emsdk cache already ships.
+# !! DOES NOT WORK YET -- DISABLED IN link-openmw.sh (ICU_TRIM=0). Verified by running it: with
+# !! the trim the engine boots to "Reserving texture unit for sky RTT" and dies with
+# !! `null function`; the full package with every other change in place boots clean. Bisected:
+# !! dropping feature groups is safe, dropping other LOCALES is what breaks it -- because the
+# !! package keeps ICU's locale INDEX resources, which still advertise the ~800 locales whose
+# !! data was removed. ICU opens one, gets null, calls a virtual on it.
+# !!
+# !! To finish this: regenerate res_index.res for every kept tree, or build the data upstream-style
+# !! with ICU_DATA_FILTER_FILE (needs a native ICU build in the deps stack). The note below
+# !! dismissing ICU_DATA_FILTER_FILE was wrong -- index regeneration is exactly what it is for.
 #
+# WHY NOT ICU_DATA_FILTER_FILE (the original, incorrect reasoning, kept for context).
 # FORMAT (little-endian, verified against icudt68l.dat):
 #   u16 headerSize | u8 0xda | u8 0x27 | UDataInfo(20B: dataFormat="CmnD") | pad to headerSize
 #   then, at headerSize:  u32 count | count x (u32 nameOffset, u32 dataOffset) | names | data
