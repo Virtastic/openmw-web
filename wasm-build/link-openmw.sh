@@ -117,11 +117,13 @@ ninja components openmw-lib
 ninja apps/openmw/CMakeFiles/openmw.dir/main.cpp.o
 
 # X11 no-op stubs (osgViewer's X11 backend symbols; see wasm-build/x11_stubs.c).
-"$EMSDK_BIN/emcc" -O2 -pthread -fwasm-exceptions -c "$ROOT/wasm-build/x11_stubs.c" -o "$BUILD/x11_stubs.o"
+"$EMSDK_BIN/emcc" -O2 -pthread -fwasm-exceptions -msimd128 -c "$ROOT/wasm-build/x11_stubs.c" -o "$BUILD/x11_stubs.o"
 
 "$EMSDK_BIN/em++" \
   -D_LIBCPP_ENABLE_CXX17_REMOVED_FEATURES -DBT_USE_DOUBLE_PRECISION \
-  -fwasm-exceptions \
+  `# -msimd128 must match configure-openmw.sh: every hand-built dep already carries it, and` \
+  `# main.cpp.o is compiled HERE rather than by cmake, so it would otherwise be the odd one out.` \
+  -fwasm-exceptions -msimd128 \
   -include "$OMW_FORCE_INC/mygui_char_traits_fix.h" -include "$OMW_FORCE_INC/gl_compat.h" \
   -Wno-missing-template-arg-list-after-template-kw -Wno-error=missing-template-arg-list-after-template-kw \
   -pthread \
@@ -132,6 +134,10 @@ ninja apps/openmw/CMakeFiles/openmw.dir/main.cpp.o
   --use-port=libjpeg --use-port=zlib --use-port=ogg --use-port=vorbis \
   -sALLOW_MEMORY_GROWTH=1 -sMAX_WEBGL_VERSION=2 -sMIN_WEBGL_VERSION=2 -sFULL_ES3=1 \
   -sEXIT_RUNTIME=0 -sPTHREAD_POOL_SIZE=8 -sINITIAL_MEMORY=1610612736 \
+  `# MAXIMUM_MEMORY defaults to 2GB (emsdk src/settings.js:211), so ALLOW_MEMORY_GROWTH over a` \
+  `# 1.5GB initial had only ~512MB of headroom -- the shadow map alone was ~1GB before it was` \
+  `# halved. wasm32 addresses 4GB and Chrome supports it, so take the other half.` \
+  -sMAXIMUM_MEMORY=4294967296 \
   -sASSERTIONS=0 -sMALLOC=mimalloc \
   -sENVIRONMENT=web,worker \
   ${OMW_PROFILING:+--profiling-funcs} \

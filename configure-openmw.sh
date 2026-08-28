@@ -47,8 +47,10 @@ emcmake cmake -S "$ROOT/openmw" -B "$ROOT/build-wasm" -G Ninja \
   -DBUILD_DOCS=OFF -DBUILD_BENCHMARKS=OFF -DBUILD_UNITTESTS=OFF -DBUILD_COMPONENTS_TESTS=OFF \
   -DBUILD_OPENMW_MP=OFF -DUSE_QT=OFF -DUSE_SYSTEM_TINYXML=OFF \
   -DOPENMW_USE_SYSTEM_SQLITE3=OFF -DOPENMW_USE_SYSTEM_YAML_CPP=OFF -DOPENMW_USE_SYSTEM_ICU=ON \
-  -DCMAKE_CXX_FLAGS="-D_LIBCPP_ENABLE_CXX17_REMOVED_FEATURES -DBT_USE_DOUBLE_PRECISION -fwasm-exceptions -include $OMW_FORCE_INC/mygui_char_traits_fix.h -include $OMW_FORCE_INC/gl_compat.h -Wno-missing-template-arg-list-after-template-kw -Wno-error=missing-template-arg-list-after-template-kw -pthread -I$BOOST/../bullet3/src -I$DW/include -I$BOOST" \
-  -DCMAKE_C_FLAGS="-pthread" \
+  `# -msimd128: every hand-built dep (build-deps.sh, build-osg.sh) already compiles with it; the` \
+  `# engine's own TUs did not, so skinning/NIF/terrain/mechanics got no autovectorisation at all.` \
+  -DCMAKE_CXX_FLAGS="-D_LIBCPP_ENABLE_CXX17_REMOVED_FEATURES -DBT_USE_DOUBLE_PRECISION -fwasm-exceptions -msimd128 -include $OMW_FORCE_INC/mygui_char_traits_fix.h -include $OMW_FORCE_INC/gl_compat.h -Wno-missing-template-arg-list-after-template-kw -Wno-error=missing-template-arg-list-after-template-kw -pthread -I$BOOST/../bullet3/src -I$DW/include -I$BOOST" \
+  -DCMAKE_C_FLAGS="-pthread -msimd128" \
   -DBoost_INCLUDE_DIR="$BOOST" -DBoost_NO_BOOST_CMAKE=OFF \
   -DBoost_USE_STATIC_RUNTIME=ON -DBoost_USE_STATIC_LIBS=ON \
   -DBoost_DIR="$DW/lib/cmake/Boost-1.85.0" \

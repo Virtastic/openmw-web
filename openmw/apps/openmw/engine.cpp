@@ -5,6 +5,7 @@
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
 #include <osg/NodeVisitor>
+#include <osg/DisplaySettings>
 #include <osg/Geometry>
 #include <osg/Group>
 #include <osg/Geode>
@@ -1332,6 +1333,27 @@ void OMW::Engine::go()
     // separate thread from the GL context. Under emscripten that proxies GL calls to a
     // null GL thread and aborts. Force everything onto the single GL thread.
     mViewer->setThreadingModel(osgViewer::ViewerBase::SingleThreaded);
+
+    // Actually USE the VAOs we force-enable. osg::State decides per draw with
+    //     _forceVertexArrayObject || (_isVertexArrayObjectSupported && drawable->_useVertexArrayObject)
+    // The emscripten patch in State.cpp forces _isVertexArrayObjectSupported true, but
+    // Drawable::_useVertexArrayObject defaults FALSE and nothing ever sets it, and
+    // _forceVertexArrayObject is only assigned from this DisplaySettings hint -- which defaults to
+    // NO_PREFERENCE. So the expression was false for every drawable and no VAO was ever bound:
+    // each draw re-issued its glVertexAttribPointer/glEnableVertexAttribArray calls individually,
+    // which is exactly the per-draw JS<->wasm<->ANGLE cost the force-enable existed to remove.
+    // VERTEX_ARRAY_OBJECT sets both _forceVertexBufferObject and _forceVertexArrayObject.
+    //
+    // Must be set before the viewer is realized -- State reads the hint once, in
+    // initializeExtensionProcs(), and never looks again.
+    //
+    // WATCH THE DYNAMIC GEOMETRY. Forced VAOs previously broke MorphGeometry's per-frame vertex
+    // rewrite under ANGLE (heads rendered as a collapsed cone; see WASM_ADAPTATIONS.md). Both
+    // MorphGeometry and RigGeometry have since moved their arrays onto dedicated VBOs, which is
+    // the condition a VAO needs, so this should now be safe -- but verify on an NPC's face and
+    // limbs, not on a static vista. Measure with ?glcount=1: GL calls per frame should fall
+    // sharply while the draw count stays identical.
+    osg::DisplaySettings::instance()->setVertexBufferHint(osg::DisplaySettings::VERTEX_ARRAY_OBJECT);
 #endif
 
     // Do not try to outsmart the OS thread scheduler (see bug #4785).
