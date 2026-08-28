@@ -1400,12 +1400,19 @@ void OMW::Engine::go()
     // bindVertexArray 501.4, vertexAttribPointer 237.4, enableVertexAttribArray 236.5. Not close;
     // the same. That is the signature of a flag that was already set.
     //
-    // What those numbers DO show is a real defect one layer down, still open. VAOs are being bound
-    // (501/frame) AND their attribute state re-specified anyway (237 + 236 attrib calls/frame). A
-    // reused VAO replays its bindings with zero attrib calls in steady state, so today's binds are
-    // pure overhead. That is a VAO-lifetime question in State/Geometry, not a DisplaySettings one,
-    // and it is where the F48 win lives if it exists at all.
+    // A follow-up measurement corrected a wrong reading of those numbers, recorded here because it
+    // was nearly written up as a new finding. The 501 binds/frame against only 237
+    // vertexAttribPointer looked like "VAOs bound but re-specified anyway = pure overhead". It is
+    // the opposite. osg::Drawable::draw sets `vas->setRequiresSetArrays(getDataVariance()==DYNAMIC)`
+    // after each draw, and Geometry::drawImplementation early-returns on !getRequiresSetArrays() --
+    // so a STATIC drawable specifies its attributes once and every later frame is bind-and-draw.
+    // A cold drawable issues 3-5 attrib pointers; measured steady state is 0.64 per bind, i.e.
+    // roughly 80-85% of bound drawables are skipping re-specification. The binds are what BUY that
+    // skip. VAO reuse is working as designed.
     //
+    // Remaining headroom here is small and bounded: attribute calls are 501 of 4385 GL calls per
+    // frame (~11%), and only the share belonging to genuinely-static geometry is recoverable. Worth
+    // a look only after the uniform traffic (43%) is dealt with.
     // The `null function` this path used to trap on was real: OSG was configured
     // OPENGL_PROFILE=GLES2 against a WebGL2/ES3 target, so isVAOSupported could never resolve
     // honestly. build-osg.sh now says GLES2+GLES3 (F50) and OSG_GLES3_FEATURES is 1.

@@ -14,6 +14,7 @@
 
 #include <osg/Program>
 #include <osg/Shader>
+#include <osg/Uniform>
 #include <osg/ref_ptr>
 
 namespace osgViewer
@@ -51,6 +52,18 @@ namespace Shader
 
         osg::ref_ptr<osg::Program> getProgram(osg::ref_ptr<osg::Shader> vertexShader,
             osg::ref_ptr<osg::Shader> fragmentShader, const osg::Program* programTemplate = nullptr);
+
+        /// Interned sampler uniform: one shared osg::Uniform per (name, unit).
+        ///
+        /// osg::Program::PerContextProgram::apply dedups uniform uploads by POINTER IDENTITY
+        /// (`lastAppliedUniform != &uniform` -> re-upload). ShaderVisitor used to allocate a fresh
+        /// `new osg::Uniform(name, unit)` on every stateset, so consecutive draws sharing a program
+        /// always saw a different pointer and re-sent glUniform1iv with a byte-identical value.
+        /// Measured in Balmora: uniform1iv was 6.4% of all GL calls (26,783 in 5s).
+        ///
+        /// Safe to share unconditionally because the key IS the value -- a "diffuseMap"->unit-0
+        /// uniform carries no other state, and these are never set() after construction.
+        osg::ref_ptr<osg::Uniform> getSamplerUniform(const std::string& name, int unit);
 
         const osg::Program* getProgramTemplate() const { return mProgramTemplate; }
         void setProgramTemplate(const osg::Program* program) { mProgramTemplate = program; }
@@ -124,6 +137,10 @@ namespace Shader
         typedef std::vector<osg::ref_ptr<osg::Shader>> ShaderList;
         typedef std::map<osg::ref_ptr<osg::Shader>, ShaderList> LinkedShadersMap;
         LinkedShadersMap mLinkedShaders;
+
+        // Keyed on (unit, name): the same sampler name can legitimately land on different units
+        // in different materials, and those must stay distinct uniforms.
+        std::map<std::pair<int, std::string>, osg::ref_ptr<osg::Uniform>> mSamplerUniforms;
 
         std::mutex mMutex;
 

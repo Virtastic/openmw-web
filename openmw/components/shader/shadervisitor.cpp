@@ -767,7 +767,7 @@ namespace Shader
         {
             const int unitSoftEffect
                 = mShaderManager.reserveGlobalTextureUnits(Shader::ShaderManager::Slot::OpaqueDepthTexture);
-            writableStateSet->addUniform(new osg::Uniform("opaqueDepthTex", unitSoftEffect));
+            writableStateSet->addUniform(mShaderManager.getSamplerUniform("opaqueDepthTex", unitSoftEffect));
             addedState->addUniform("opaqueDepthTex");
         }
 
@@ -804,7 +804,9 @@ namespace Shader
 
         for (const auto& [unit, name] : reqs.mTextures)
         {
-            writableStateSet->addUniform(new osg::Uniform(name.c_str(), unit), osg::StateAttribute::ON);
+            // Interned: see ShaderManager::getSamplerUniform. A fresh Uniform per stateset defeated
+            // osg::Program's pointer-identity upload cache and re-sent this every stateset change.
+            writableStateSet->addUniform(mShaderManager.getSamplerUniform(name, unit), osg::StateAttribute::ON);
             addedState->addUniform(name);
         }
 

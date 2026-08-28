@@ -974,6 +974,15 @@ namespace Shader
         return getProgram(std::move(vert), std::move(frag), programTemplate);
     }
 
+    osg::ref_ptr<osg::Uniform> ShaderManager::getSamplerUniform(const std::string& name, int unit)
+    {
+        std::lock_guard<std::mutex> lock(mMutex);
+        auto& uniform = mSamplerUniforms[{ unit, name }];
+        if (!uniform)
+            uniform = new osg::Uniform(name.c_str(), unit);
+        return uniform;
+
+    }
     osg::ref_ptr<osg::Program> ShaderManager::getProgram(osg::ref_ptr<osg::Shader> vertexShader,
         osg::ref_ptr<osg::Shader> fragmentShader, const osg::Program* programTemplate)
     {
