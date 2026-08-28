@@ -25,8 +25,21 @@
 //   StreamFS.mountLocal('/mwdata/Morrowind.bsa', fileHandle, sizeBytes);
 (function () {
   'use strict';
-  const CHUNK = 4 * 1024 * 1024; // 4MB chunks (fewer network round-trips when streaming BSAs from S3)
-  const LRU_MAX = 32;            // ~128MB resident chunk cache per file set
+  // Chunk size and cache depth. MEASURED on a Balmora boot with retail data (see
+  // window.__streamfsStats): at 4MB x 32 slots the cache THRASHED -- 27 evictions against 32 slots,
+  // 59 misses, 1269ms of main-thread stall, for 229MB read. A BSA read is a mesh or a texture:
+  // small, and scattered all over the archive. Pulling 4MB to serve a 20KB texture meant a handful
+  // of live regions could not stay resident at once.
+  //
+  // Same ~128MB budget, four times as many distinct regions. Smaller chunks also make each miss
+  // cheaper, and a miss BLOCKS the main thread (fetchChunkSync spins -- Atomics.wait is banned on
+  // the main thread), so miss cost is frame time, not just bandwidth.
+  //
+  // Tunable at runtime for A/B without a rebuild: ?chunk=<KB>&lru=<slots>.
+  const _q = (typeof location !== 'undefined' && location.search) || '';
+  const _n = (re, dflt) => { const m = re.exec(_q); return m ? (parseInt(m[1], 10) || dflt) : dflt; };
+  const CHUNK = _n(/[?&]chunk=(\d+)/, 1024) * 1024;   // 1MB default (was 4MB)
+  const LRU_MAX = _n(/[?&]lru=(\d+)/, 128);           // 128 slots (was 32) -- same ~128MB ceiling
 
   // cache is a Map used as an LRU: insertion order IS the recency order (delete+set moves to end),
   // so eviction pops the first (oldest) key. No separate order array → O(1) hit path, no linear scan.
