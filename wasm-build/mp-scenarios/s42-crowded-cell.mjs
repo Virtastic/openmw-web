@@ -27,6 +27,12 @@ import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+// Windows: Node's spawn() will not resolve a .cmd shim without shell:true, so a bare 'npx'
+// dies with ENOENT and takes the whole scenario run down. Same class of macOS-only hardcode
+// as the harness's CHROME_BIN default. Resolve the platform's actual executable name instead
+// of setting shell:true, which would re-quote the argv and break the --cellkey values.
+const NPX = process.platform === 'win32' ? 'npx.cmd' : 'npx';
+
 const ROOT = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 // Default 2, not 4. Each retail client pins ~1.5 GB of WASM heap, so 4 needs ~6 GB of
 // headroom; on a workstation already using swap the machine thrashes, boots take minutes,
@@ -231,7 +237,7 @@ export default async function run(ctx) {
   // 3. Crowd the cell with protocol bots on the SAME server and cell, then re-measure.
   //    --attach: the bots do not spawn their own server and do not claim authority (the
   //    browser holder already has it), so they are pure fan-out load and pure receivers.
-  const soak = spawn('npx', ['tsx', 'bots/soak.ts',
+  const soak = spawn(NPX, ['tsx', 'bots/soak.ts',
     '--attach', String(ctx.serverPort), '--onecell', '--cellkey', cellKey,
     '--bots', String(BOTS), '--minutes', String(BOT_MINUTES)],
     { cwd: join(ROOT, 'server'), stdio: ['ignore', 'pipe', 'pipe'] });

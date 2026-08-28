@@ -84,6 +84,13 @@ export async function startGatewayAndClient(ctx, opts = {}) {
     '--shared', ctx.serverDataDir,
     '--base-port', String(gwPort + 200),
     '--max-worlds', String(maxWorlds),
+    // ASK FOR THE PUBLIC WORLD. The server defaults [worlds] publicEnabled to FALSE
+    // (config.ts:442) and gateway/main.ts:113 states it outright -- no public world unless the
+    // deployment asks. This helper never asked, then asserted 60s later that one came up, so
+    // s47/s53/s57 failed on "the gateway must bring its public world up" with the gateway
+    // correctly reporting publicEnabled:false, publicWorlds:0. Harness/server drift, not a
+    // product fault: the assertion was written when public-by-default was the behaviour.
+    '--public-world', 'vvardenfell',
     ...(idleReapMs ? ['--idle-reap-ms', String(idleReapMs)] : []),
     // Spawned worlds must boot WITHOUT real game data, a peer binary or a server password --
     // a harness has none of those, and server.mjs refuses on all three.
