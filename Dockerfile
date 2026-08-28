@@ -28,13 +28,28 @@ COPY configure-openmw.sh /build/configure-openmw.sh
 # holding objects from a prior run made ninja report "no work to do" and LINK STALE OBJECTS into a
 # broken openmw.wasm (null-function crash at runtime) even though the source had changed. A clean
 # compile every build (~13 min) is slower but deterministic and correct — non-negotiable for releases.
+# PARALLELISM IS MEMORY-BOUND, NOT CORE-BOUND. ninja defaults to nproc+2, which on the 32-core
+# builder means 34 concurrent clang processes against 15.5 GB of RAM. OpenMW translation units
+# peak around 1-2 GB each, so the box runs out and the kernel OOM killer takes the largest
+# process it can find -- which is Jenkins itself:
+#
+#   oom-kill: ... global_oom, task=java
+#   Out of memory: Killed process 388785 (java)
+#
+# The build then dies with "exit code -1" and no compiler error, because nothing was wrong with
+# the code -- the CI server was killed underneath it. Two builds were lost to this before the
+# kernel log was read.
+#
+# 8 fits comfortably at ~1-2 GB a job. Override BUILD_JOBS on a bigger box, and budget by RAM
+# rather than by core count.
+ARG BUILD_JOBS=8
 RUN \
     # Hermetic guard: fsroot/gamedata (the ?nomw demo) is gitignored, so a clean actions/checkout
     # omits it and the link would silently bake an EMPTY demo (green build, broken ?nomw). Fail loud
     # instead — the build context must carry the rsynced gamedata.
     { test -n "$(ls -A fsroot/gamedata 2>/dev/null)" || { echo 'FATAL: fsroot/gamedata is missing/empty — the ?nomw demo would bake empty. Ensure it is rsynced into the build context.' >&2; exit 1; }; } \
  && bash configure-openmw.sh \
- && ninja -C build-wasm components openmw-lib \
+ && ninja -C build-wasm -j "${BUILD_JOBS:-8}" components openmw-lib \
  && bash wasm-build/link-openmw.sh \
  && mkdir -p play \
  && cp build-wasm/openmw.js build-wasm/openmw.wasm build-wasm/openmw.data play/ \
