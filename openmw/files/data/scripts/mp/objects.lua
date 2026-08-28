@@ -385,8 +385,18 @@ local function openContainerNow(object, now, live)
         local okg, g = pcall(function() return types.Actor.getBarterGold(object) end)
         if okg and type(g) == 'number' then gold = g end
     end
-    if snapshot and sendAddressed('ContainerOpen', object,
-            { contents = countsToItems(snapshot), gold = gold }) then
+    -- WAS THE WATCH ARMED, AND IF NOT WHY. s31 fails with the item provably moved out of the
+    -- player's inventory and into the chest, no ContainerOpRequest on the wire, and no dropOut
+    -- refusal either -- so the request is never PRODUCED. The watch armed here is what produces
+    -- it, and both of its preconditions can fail without a word: an unreadable snapshot, or a
+    -- ContainerOpen that could not be addressed. One line separates them.
+    local _armed = snapshot and sendAddressed('ContainerOpen', object,
+        { contents = countsToItems(snapshot), gold = gold })
+    if not _armed then
+        print('[mp] container watch NOT armed for ' .. tostring(object.recordId)
+            .. ' snapshot=' .. tostring(snapshot ~= nil) .. ' (a put here is never reported)')
+    end
+    if _armed then
         containerWatch[object.id] = {
             obj = object,
             last = snapshot,
