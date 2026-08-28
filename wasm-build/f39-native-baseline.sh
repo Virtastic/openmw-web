@@ -21,6 +21,17 @@
 #   Note also the LuaJIT/5.4 split: any Lua-heavy comparison is not apples-to-apples either, which
 #   is itself one of the "where wasm loses" points in the report.
 #
+# I ALSO TRIED THE OBVIOUS ESCAPE AND IT DOES NOT WORK EITHER. WSL2 exposes the GPU, and the
+# passthrough is genuinely available -- `/dev/dxg` is present in the container, /usr/lib/wsl/lib
+# carries libd3d12.so, and Mesa ships d3d12_dri.so. So hardware GL is reachable in principle.
+# But it still would not answer F39, for a reason no amount of plumbing fixes:
+#     web    : Chrome -> ANGLE -> D3D11 -> GPU
+#     native : OpenMW -> Mesa  -> D3D12 -> GPU   (via the WSL translation layer)
+# Both sides are translated, differently. The delta would be measuring two translation stacks
+# against each other as much as two engines, which is worse than no number -- a wrong number here
+# would reorder the whole Phase 3 roadmap in the wrong direction.
+# A trustworthy F39 needs native OpenMW on Windows talking to the driver directly.
+#
 # TWO MISTAKES BAKED OUT OF THIS SCRIPT, both of which produced convincing but wrong numbers:
 #   1. Bind-mounting the game data from Windows. Docker Desktop's bind mounts are slow enough that
 #      90 MB of ESM read dominated the measurement -- the first run "measured" 17.2s of ESM load
