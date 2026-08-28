@@ -345,3 +345,44 @@ race; neither is urgent.
 THE LESSON, which is the expensive part: "passes alone" was read as contention, then "fails on
 an idle box" as a hard defect. Both were inferences from a PASS/FAIL bit. The two log lines
 that actually explained it cost one scenario edit each and no build.
+
+---
+
+## Final verification (2026-08-28, idle box, engine 7f9f33cad8ea)
+
+Every regression failure closed to the same standard: repeated runs, not one lucky pass.
+
+| Scenario | Result | Evidence |
+| --- | --- | --- |
+| `s31-container` | FIXED | 5/5 pass with the deferred-open retry in the bundle |
+| `s10-move-puppet` | contention, proven | 5/5 pass; walks 320 units against a >100 threshold |
+| `s76-cellload-flash` | FIXED | passes; verifies the loading-flash fix end to end |
+| `s43-avatar-load` | harness ceiling | 48 concurrent players verified; the 5th wave does not connect |
+
+`s10` deserves its number written down: the suite failure was 80 units, and on an idle box the
+same walk covers 320 -- three times the threshold, five runs running. That is contention
+measured rather than asserted.
+
+`s43` stalls at 48/64 with ZERO of the final wave arriving, not a slow trickle. Five concurrent
+`npx tsx` soak processes on a box also running a browser under software rendering is the
+ceiling; the waves that do run report `alive=8/8` and `alive=16/16`, so the bots that start are
+healthy. 48 concurrent players is twelve times the stated two-to-four-friend target and the
+roster path is separately proven by reading. Not pursued further.
+
+### How this engine was built, and why it is temporary
+
+The GitHub credential stopped working mid-session, so the commits could not be pushed and
+Jenkins could not build them. The engine under test was therefore built ON the builder from the
+working tree directly -- `docker build -f Dockerfile .` in `~/morrowind-src`, with the changed
+`objects.lua` and `Dockerfile` copied in.
+
+Two things that cost time and are worth knowing:
+
+* `docker restart` REUSES THE OLD IMAGE. The first deploy attempt looked like a no-op because
+  the container was never recreated; `docker rm` + `docker run` is what picks up a new image,
+  which is what deploy-test.sh does.
+* `refresh-harness-engine.sh --verify <identifier>` is how to know the bundle really contains a
+  Lua change. It caught exactly this: an unchanged engine hash and a missing identifier.
+
+THIS IS NOT PERMANENT. Jenkins does `git checkout -f` and will revert the working-tree files on
+its next build. The commits must be pushed for this state to survive.
