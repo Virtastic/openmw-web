@@ -1582,6 +1582,26 @@
          // set in the head IIFE, so JS and SDL agree on the size (no resize war / FBO thrash).
          var rW = (typeof window!=='undefined' && window.__renderW) || 1280;
          var rH = (typeof window!=='undefined' && window.__renderH) || 720;
+         // F31: pick a quality TIER from the device rather than shipping one profile to everyone.
+         // The settings below were tuned on a machine that could take them -- a 16384 view distance
+         // with 'object paging min size' halved and an 8192 shadow map is a lot to ask of an 8GB
+         // laptop with other tabs open, and the failure there is not a low frame rate, it is the
+         // tab being killed. navigator.deviceMemory is coarse and unreliable as a number -- the
+         // spec buckets it and caps at 8, but this dev machine reports 32, and Firefox/Safari do
+         // not implement it at all. So treat it only as a floor hint, and default to the MIDDLE
+         // tier when it is absent rather than assuming the best case.
+         // ?tier=low|mid|high forces one (QA, and a support answer for "it runs badly").
+         var __devMem = (typeof navigator !== 'undefined' && navigator.deviceMemory) || 0;
+         var __tier = (/[?&]tier=(low|mid|high)/.exec(location.search) || [])[1]
+                   || (__devMem >= 8 ? 'high' : (__devMem > 0 && __devMem <= 4 ? 'low' : 'mid'));
+         // Only the knobs whose cost scales with the scene. Everything else stays common.
+         var TIER = {
+           low:  { vd: '8192',  minSize: '0.02',  shadowRes: '2048', shadowDist: '512',  rtt: '512',  actors: '3072' },
+           mid:  { vd: '12288', minSize: '0.01',  shadowRes: '4096', shadowDist: '768',  rtt: '1024', actors: '4096' },
+           high: { vd: '16384', minSize: '0.005', shadowRes: '8192', shadowDist: '1024', rtt: '1024', actors: '4096' }
+         }[__tier];
+         try { window.__omwTier = { tier: __tier, deviceMemory: __devMem || null }; } catch(e){}
+         append('[tier] '+__tier+' (navigator.deviceMemory='+(__devMem||'unknown')+')');
          // IMPORTANT: OpenMW loads user settings from <last active config dir>/settings.cfg.
          // In this build the only config dir is '/' (where openmw.cfg lives), NOT the XDG
          // path — write the file to BOTH so the engine actually reads it.
@@ -1603,13 +1623,13 @@
            // resolution tiers write; a user's saved value overrides this defaults layer.
            (/[?&]rs=(0?\.\d+|1(?:\.0+)?)/.test(location.search) ? 'internal render scale = ' + RegExp.$1 + '\n' : '') +
            '[Camera]\n' +
-           'viewing distance = ' + ((/[?&]vd=(\d+)/.exec(location.search)||[])[1] || '16384') + '.0\n' +  // 2 cells: radial distant-terrain vista (paired with 'distant terrain=true' below). ?vd=N overrides (QA)
+           'viewing distance = ' + ((/[?&]vd=(\d+)/.exec(location.search)||[])[1] || TIER.vd) + '.0\n' +  // 2 cells: radial distant-terrain vista (paired with 'distant terrain=true' below). ?vd=N overrides (QA)
            'small feature culling pixel size = 3.0\n' +
            '[Terrain]\n' +
            'distant terrain = ' + (/[?&]dt=0/.test(location.search) ? 'false' : 'true') + '\n' +  // QuadTree LOD: radial terrain+statics to the view distance (else only the 3x3 active cells render = square boundary). ?dt=0 disables (QA)
            'object paging = true\n' +
            'object paging active grid = true\n' +
-           'object paging min size = 0.005\n' +   // render/merge the distant backdrop rocks + trees
+           'object paging min size = ' + TIER.minSize + '\n' +   // render/merge the distant backdrop rocks + trees
            // Merge factor: how aggressively object paging batches statics into single merged
            // meshes. Profiling showed the frame is CPU-bound on GL draw submission (~1770
            // drawables, Draw 5-7ms), and distance rendering is the driver — more merging =
@@ -1636,7 +1656,7 @@
            // rtt size 1024 (was 512): sharper reflection/refraction (max-fidelity default). GPU cost
            // only (we're CPU-bound), and water.frag's reflectionBlur is rtt-aware (~3 texels) so the
            // sharper buffer reads sharper instead of over-blurring. ?rtt=N overrides (QA).
-           'rtt size = ' + ((/[?&]rtt=(\d+)/.exec(location.search)||[])[1] || '1024') + '\n' +
+           'rtt size = ' + ((/[?&]rtt=(\d+)/.exec(location.search)||[])[1] || TIER.rtt) + '\n' +
            'rain ripple detail = 2\n' +            // dense rain ripples (cheap)
            'small feature culling pixel size = 30.0\n' +
            '[Fog]\n' +
@@ -1675,7 +1695,7 @@
            // 8192 (was 16384, user request 2026-07-07): a 16384 depth map is ~1GB — the single biggest
            // memory consumer — and 8192 (~256MB) frees that headroom (e.g. for SSAA) at a still-crisp
            // texel density over the 2048 shadow range. ?shadowres=N / ?shadowmaps=N override (QA).
-           'shadow map resolution = ' + ((/[?&]shadowres=(\d+)/.exec(location.search)||[])[1] || '8192') + '\n' +
+           'shadow map resolution = ' + ((/[?&]shadowres=(\d+)/.exec(location.search)||[])[1] || TIER.shadowRes) + '\n' +
            'number of shadow maps = ' + ((/[?&]shadowmaps=(\d+)/.exec(location.search)||[])[1] || '1') + '\n' +
            'actor shadows = true\n' +
            'player shadows = true\n' +
@@ -1691,7 +1711,7 @@
            // exterior shadows visibly blocky (interiors were fine: a small volume gets the whole map), so
            // halve the range again — outdoor texel density doubles, at the cost of shadows fading out
            // nearer the camera. ?shadowdist=N (QA) to compare.
-           'maximum shadow map distance = ' + ((/[?&]shadowdist=(\d+)/.exec(location.search)||[])[1] || '1024') + '\n' +
+           'maximum shadow map distance = ' + ((/[?&]shadowdist=(\d+)/.exec(location.search)||[])[1] || TIER.shadowDist) + '\n' +
            '[Cells]\n' +
            'preload cell cache max = 18\n' +   // engine asked for 18 for exterior preloading
            // PRELOADING IS SYNCHRONOUS ON THIS BUILD. The WorkQueue runs inline under emscripten
@@ -1708,7 +1728,7 @@
              ('preload doors = false\n' +
               'preload exterior grid = false\n')) +
            '[Game]\n' +
-           'actors processing range = 4096\n' +   // AI-process fewer distant NPCs/creatures (towns)
+           'actors processing range = ' + TIER.actors + '\n' +   // AI-process fewer distant NPCs/creatures (towns)
            '[Shaders]\n' +
            // max lights: dynamic point lights evaluated per object. Higher = richer lit scenes but
            // more per-object shading cost. ?maxlights=N overrides (QA); default measured for 60fps.
