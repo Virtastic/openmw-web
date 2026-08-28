@@ -17,7 +17,7 @@ namespace Resource
             std::atomic<uint64_t> mNanos{ 0 };
         };
 
-        Bucket sBuckets[4];
+        Bucket sBuckets[5];
         std::atomic<uint64_t> sSincePublish{ 0 };
 
         // Publishing crosses into JS, so do it every 64 loads rather than every load -- the same
@@ -45,6 +45,8 @@ namespace Resource
         const double bulletN = static_cast<double>(sBuckets[2].mCount.load(std::memory_order_relaxed));
         const double geomMs = sBuckets[3].mNanos.load(std::memory_order_relaxed) / 1e6;
         const double geomN = static_cast<double>(sBuckets[3].mCount.load(std::memory_order_relaxed));
+        const double texMs = sBuckets[4].mNanos.load(std::memory_order_relaxed) / 1e6;
+        const double texN = static_cast<double>(sBuckets[4].mCount.load(std::memory_order_relaxed));
 
         // NB: no comma inside the EM_ASM code block -- the preprocessor splits the variadic macro
         // on commas. Assign fields one statement at a time (same trap as engine.cpp's phase stats).
@@ -58,10 +60,12 @@ namespace Resource
             s.bulletCount = $5;
             s.geomMs = $6;
             s.geomCount = $7;
+            s.textureMs = $8;
+            s.textureCount = $9;
             s.totalMs = $0 + $1 + $2;
             window.__omwNifStats = s;
         },
-            parseMs, buildMs, bulletMs, parseN, buildN, bulletN, geomMs, geomN);
+            parseMs, buildMs, bulletMs, parseN, buildN, bulletN, geomMs, geomN, texMs, texN);
     }
 }
 

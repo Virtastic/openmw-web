@@ -18,6 +18,10 @@
 //   Geom   -- handleNiGeometry, a SUBSET of Build: the vertex/index conversion a baked format
 //             turns into a memcpy. This is the upper bound on what baking removes from Build;
 //             the rest of Build is osg Node/StateSet/controller construction that survives.
+//   Texture -- ImageManager::getImage called from INSIDE the NIF build (nifloader.cpp:1088).
+//             Also a subset of Build, and the reason Build cannot be read as CPU time: this is a
+//             blocking VFS read through streamfs plus a DDS decode. If it dominates, no mesh
+//             format helps -- the lever is texture delivery, not mesh representation.
 //
 // Web-only on purpose: the peer image builds this same tree natively and must not pay for it.
 
@@ -33,6 +37,7 @@ namespace Resource
         Build,
         Bullet,
         Geom,
+        Texture,
     };
 
     using NifClock = std::chrono::steady_clock;
