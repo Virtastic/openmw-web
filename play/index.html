@@ -3345,13 +3345,20 @@
        var scheduled = false;
        function scheduleNext(){
          if (scheduled) return; scheduled = true;
-         // Visible: vsync-align via rAF. Hidden: pace with a timer (~30fps target; browsers throttle
-         // background timers further) instead of an immediate postMessage — an unpaced background
+         // Visible: run the frame INSIDE the rAF callback. Hidden: pace with a timer (~30fps
+         // target; browsers throttle background timers further) and go through the
+         // MessageChannel, which is NOT throttled in a background tab — an unpaced background
          // MessageChannel loop pins a CPU core at 100% for a tab nobody is looking at.
+         //
+         // F42: this used to post a MessageChannel message FROM the rAF callback and do the frame
+         // in the message handler, which meant the engine's GL submission landed in a macrotask
+         // dispatched AFTER the vsync-aligned slot the compositor was waiting on — de-aligning
+         // exactly what rAF was there to align, and costing a frame of input-to-photon. The
+         // MessageChannel is only needed for the hidden case, which is already its own branch.
          if (document.hidden) setTimeout(function(){ mc.port2.postMessage(0); }, 33);
-         else requestAnimationFrame(function(){ mc.port2.postMessage(0); });
+         else requestAnimationFrame(pumpFrame);
        }
-       mc.port1.onmessage = function(){
+       function pumpFrame(){
          scheduled = false;
          var a = performance.now();
          try { if (Module._omw_pump_frame) Module._omw_pump_frame(); } catch(e){}
@@ -3366,7 +3373,9 @@
          var dt = b - __t0;
          if (dt >= 1000){ window.__fps = Math.round(__frames*1000/dt); window.__frameMs = +(__accum/__frames).toFixed(2); __frames = 0; __accum = 0; __t0 = b; }
          scheduleNext();
-       };
+       }
+       // The hidden-tab path still arrives as a message; visible frames call pumpFrame directly.
+       mc.port1.onmessage = pumpFrame;
        // If the tab hides while an rAF-scheduled tick is frozen, take over directly.
        // (The stale rAF firing later causes at most one harmless extra tick.)
        document.addEventListener('visibilitychange', function(){
