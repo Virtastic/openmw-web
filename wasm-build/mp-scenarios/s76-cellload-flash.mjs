@@ -39,7 +39,11 @@ export default async function run(ctx) {
   // A real teleport door in Seyda Neen. Activating it is the exact path a player takes, and it
   // is what raises the signal -- the handler fires on ACTIVATION, before the teleport, so the
   // overlay is on screen before the main loop blocks.
-  await c.eval("Module.__omwMPCmd='dlg:seyda neen, arrille\'s tradehouse'");
+  // JSON.stringify the whole command: this door id contains an APOSTROPHE and hand-quoting
+  // it broke the eval outright ("Unexpected identifier 's'"). Morrowind cell and record ids
+  // are full of apostrophes, so build the string rather than quoting by eye.
+  const DOOR = "seyda neen, arrille's tradehouse";
+  await c.eval("Module.__omwMPCmd=" + JSON.stringify("dlg:" + DOOR));
   await ctx.sleep(1500);
 
   // Watch across the WHOLE load and well past it. The echo arrives after arrival, which is

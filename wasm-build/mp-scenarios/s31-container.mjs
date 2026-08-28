@@ -43,6 +43,24 @@ export default async function run(ctx) {
   const chestHas = (n) =>
     `(JSON.parse((window.__omwMP||{}).containerItems||"{}")["n:${netId}"]||{})[${JSON.stringify(itemId)}] === ${n}`
     + (n === 0 ? ` || !((JSON.parse((window.__omwMP||{}).containerItems||"{}")["n:${netId}"]||{})[${JSON.stringify(itemId)}])` : '');
+  // DID THE ITEM ACTUALLY LEAVE A'S INVENTORY? This split matters and nothing was measuring
+  // it. mpChestPut walks the inventory for a matching recordId and calls moveInto, then returns
+  // SILENTLY if the chest is missing or the item is not found -- so a failure here has two very
+  // different causes and they need opposite fixes:
+  //
+  //   still in inventory -> the transfer never happened (moveInto no-op, or the silent return;
+  //                         note this scenario puts an EQUIPPED item, which is a candidate)
+  //   gone from inventory -> the transfer worked and the MIRROR is not reflecting it
+  //
+  // count:<id> already exists as a harness command and publishes to the `count` mirror, so this
+  // costs nothing and needs no engine change.
+  await ctx.sleep(1500);
+  await a.eval("if (window.__omwMP) window.__omwMP.count = null; 'cleared';");
+  await a.eval(`Module.__omwMPCmd='count:${itemId}'`);
+  await a.waitFor("typeof (window.__omwMP||{}).count === 'string'", 10_000, 'A reported its count');
+  const stillHeld = await a.eval('(window.__omwMP||{}).count');
+  ctx.log(`  after the put, A still holds ${stillHeld} of the item`
+    + ' (0 = it moved and the mirror is at fault; 1 = the transfer never happened)');
   await a.waitFor(chestHas(1), STEP_TIMEOUT, 'chest holds 1 item on A');
   // B opens too (nil contents; the server already has canonical state) -> gets ContainerState.
   await b.eval(`Module.__omwMPCmd='chest:open:${netId}'`);

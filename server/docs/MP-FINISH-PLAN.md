@@ -278,3 +278,38 @@ whether the put reaches the server at all, or whether it is refused (the contain
 arbitrated first-opener, so a lock that was never granted would refuse silently).
 
 Shared containers are core co-op: two players looting one chest is the thing this is for.
+
+### s31 narrowed: the put works, the WATCH never fires
+
+Measured rather than reasoned, with `count:<id>` after the put:
+
+```
+after the put, A still holds 0 of the item
+```
+
+So `moveInto` SUCCEEDS -- the item leaves A's inventory and enters the chest. What never
+happens is the publication: A's `containerItems` mirror stays empty, and the client log
+contains no container lines at all -- not a `ContainerOpRequest`, and not one of the
+`dropOut(...)` refusals either. It is not being refused; it is never being produced.
+
+That points at the container WATCH. `mpChestPut` deliberately does a native `moveInto` so that
+"the container watch (armed by chest:open) diffs the inventory change into the
+ContainerOpRequest -- the same path a UI put takes". If the watch is not armed, the transfer
+happens locally and the server is never told.
+
+OPEN QUESTION worth answering before assuming a product bug: does the watch require the
+container UI to be genuinely OPEN? A real player always has it open when moving items, so a
+watch that depends on it would work in play and fail only under the harness, which drives
+`chest:open` through `objects.onActivate` without a real window. That would make s31 a harness
+limitation rather than a co-op defect -- but it cannot be settled without engine-side logging
+in the watch, and the builder is currently down.
+
+NEXT: log when the watch arms and when it diffs. One build, and it distinguishes "the watch
+never armed" from "it armed and saw nothing".
+
+### Why this took so long to see
+
+The failure dump was 30 lines of one repeating WebGL warning
+(`GL_INVALID_ENUM: glDrawElements`), which filled the entire tail and pushed every useful line
+out. `logTail` now collapses repeats and reports their count, so a rare line -- always the
+interesting one -- survives. That is fixed for every future failure, not just this one.

@@ -391,7 +391,18 @@ async function launchClient(name, mpPort, extraParams = '', opts = {}) {
   const logs = [];
   const handle = {
     name,
-    logTail: (n = 30) => logs.slice(-n).join('\n'),
+    // DISTINCT lines, newest last. A raw tail is useless the moment the engine repeats
+    // itself: one WebGL warning (GL_INVALID_ENUM: glDrawElements) recurs every frame and filled
+    // all 30 slots, so the failure dump for a container bug contained nothing but that line and
+    // the actual drop reason was pushed out. Collapsing repeats keeps the RARE line -- always
+    // the interesting one -- and still reports how often the noisy one fired.
+    logTail: (n = 30) => {
+      const seen = new Map();
+      for (const l of logs) seen.set(l, (seen.get(l) ?? 0) + 1);
+      const out = [];
+      for (const [line, count] of seen) out.push(count > 1 ? line + '  (x' + count + ')' : line);
+      return out.slice(-n).join(String.fromCharCode(10));
+    },
     // A Lua event handler that throws takes its whole subsystem down SILENTLY: the engine
     // logs the error and carries on, so the game still runs, the mirrors still update from
     // whatever else is working, and scenarios fail somewhere far away with a misleading
