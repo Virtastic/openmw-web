@@ -207,3 +207,46 @@ and 6 do not block that, and `s43` does not either.
 The honest risk left after all of it is not a defect — it is the journal model. Every mechanism
 can work perfectly and the experience can still disappoint if "only the host progresses" turns
 out to be the wrong rule for the game people actually want to play together.
+
+---
+
+## Builder OOM: the whole chain, so it is not re-derived
+
+Two builds died with `exit code -1` and no compiler error. That is not a build failure -- it is
+the CI server being killed underneath one:
+
+```
+oom-kill: ... global_oom, task=java
+Out of memory: Killed process 388785 (java)
+```
+
+The chain, hypervisor upward:
+
+| Layer | Fact |
+| --- | --- |
+| Proxmox host | 62 GB physical, 53 used |
+| VM allocation | jenkins-build 40 GB max + test-app-server 24 GB = 64 GB, OVER-COMMITTED |
+| Ballooning | jenkins-build squeezed to its 16 GB floor |
+| Guest | sees 15.5 GB total, 32 cores |
+| Build | `ninja` with no `-j` defaults to nproc+2 = 34 concurrent clang jobs |
+| Translation units | ~1-2 GB each at peak |
+| Result | guest OOMs, kernel kills the biggest process it can find: Jenkins |
+
+FIXED IN CODE: `ARG BUILD_JOBS=8` in the root `Dockerfile`, budgeting by RAM rather than cores.
+`server/Dockerfile.simpeer` already had exactly this arg and comment for the same reason; the
+wasm build never got one.
+
+WHY THE CONTAINER LOOKED HEALTHY: `OOMKilled=false`, `ExitCode=0`. The JVM was killed at HOST
+level and Jenkins ran its normal shutdown, so every container-level signal said "clean stop".
+Only `dmesg` told the truth -- and it had been telling it the whole time.
+
+STILL OPEN, and both are hardware judgement calls rather than code:
+
+* The builder VM is currently memory-starved (227 MB free) and cannot fork sshd. It needs
+  `qm reset 200` from the Proxmox host. A hard reset can damage a filesystem mid-write, which
+  is why it is not done automatically.
+* The host is over-committed, so ballooning will squeeze the builder to 16 GB again whenever
+  the test box is busy. Either lower jenkins-build max memory to something honest or raise its
+  balloon floor -- a trade against test-app-server, which is the box people play on.
+
+NOT BLOCKING PLAY: the game server is the other VM entirely.
