@@ -250,3 +250,31 @@ STILL OPEN, and both are hardware judgement calls rather than code:
   balloon floor -- a trade against test-app-server, which is the box people play on.
 
 NOT BLOCKING PLAY: the game server is the other VM entirely.
+
+---
+
+## s31-container is a REAL defect, not a timing artifact (correction)
+
+It was triaged twice as contention -- it passed when run completely alone -- and its step
+budget was widened from 15 s to 30 s on that basis. Against the deployed engine on an IDLE box
+(load 0) it still fails:
+
+```
+timeout (30000ms) waiting for: chest holds 1 item on A
+```
+
+Thirty seconds at load 0 is not a slow renderer. The assertion is on A's OWN mirror: A equips
+an item, spawns a chest, opens it, puts the item in, and A's own `containerItems` never shows
+it. No second client and no network round trip is required for that to be visible, which makes
+"contention" the wrong explanation regardless of how often it passed alone.
+
+WHY THE MISCLASSIFICATION HAPPENED, since it is the same trap as everything else here: passing
+when run alone was treated as proof of contention. It is equally consistent with a race that
+a quiet box usually wins. "Passes alone" narrows the cause; it does not identify it.
+
+NEXT: run `s31` on its own and capture the FULL server log -- the suite only dumps a boot-time
+tail, so no ContainerOpRequest is visible in the failing run. The question to answer first is
+whether the put reaches the server at all, or whether it is refused (the container path is
+arbitrated first-opener, so a lock that was never granted would refuse silently).
+
+Shared containers are core co-op: two players looting one chest is the thing this is for.
