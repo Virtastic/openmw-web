@@ -85,15 +85,27 @@ cp "$ROOT/openmw/files/data/mp.omwscripts" "$ROOT/fsroot/resources/vfs/mp.omwscr
 ICU_TARGET="$ROOT/fsroot/icu/icudt68l.dat"
 ICU_STAGED="$ROOT/fsroot/icudt68l.dat"
 ICU_DAT="${EMSDK_BIN}/cache/ports/icu/icu/source/data/in/icudt68l.dat"
+# TRIM. The upstream package is 28.6 MB of a 32 MB openmw.data, and the engine's whole use of ICU
+# is MessageFormat + Locale/Calendar in components/l10n plus getDisplayLanguage() in
+# settingswindow.cpp, over the six locales the VFS ships. trim-icu-data.py drops the locale trees we
+# do not ship, the feature groups nothing calls (collation, break iteration, timezones, currency,
+# units, regions, transliteration, spellout) and the legacy charset converters (the engine calls no
+# ucnv_* API; Morrowind's cp1252 text is decoded by esm3/esmreader's own tables). 28.6 MB -> 1.9 MB.
+# --verify-l10n fails the build if a locale is added under resources/vfs/l10n without being added to
+# --keep, which would otherwise fall back to root and silently show that language in English.
+trim_icu() {   # trim_icu <src> <dst>
+  python3 "$ROOT/wasm-build/trim-icu-data.py" "$1" "$2"     --verify-l10n "$ROOT/fsroot/resources/vfs/l10n"
+}
+
 if [ -s "$ICU_TARGET" ]; then
   echo "   ICU data already staged at fsroot/icu/icudt68l.dat"
 elif [ -s "$ICU_STAGED" ]; then
   mkdir -p "$ROOT/fsroot/icu"
-  cp "$ICU_STAGED" "$ICU_TARGET"
+  trim_icu "$ICU_STAGED" "$ICU_TARGET"
   echo "   ICU data staged from fsroot/icudt68l.dat"
 elif [ -f "$ICU_DAT" ]; then
   mkdir -p "$ROOT/fsroot/icu"
-  cp "$ICU_DAT" "$ICU_TARGET"
+  trim_icu "$ICU_DAT" "$ICU_TARGET"
   echo "   ICU data staged from the emsdk ports cache"
 else
   echo "!! ICU data package not found. Looked in:" >&2
