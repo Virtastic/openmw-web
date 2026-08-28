@@ -1093,6 +1093,21 @@
  // 'warning: 2 FS.syncfs operations in flight at once'). Coalesce to exactly one in-flight
  // sync plus at most one queued re-sync, so a request during a sync still gets flushed after.
  // ALL callers — JS and the C++ EM_ASM save hooks — route through this.
+ // --- Boot timeline (F24). Time-to-playable is the number a browser game is judged on, and
+ // nothing measured it: there is an FPS readout and __streamfsStats, but no record of where the
+ // seconds between clicking the link and holding a controller actually go. Stamps are cheap and
+ // always on; read them with window.__omwBoot in the console, or as performance marks in devtools.
+ // Values are ms from navigation start, so they line up with the network panel without arithmetic.
+ window.__omwBoot = {};
+ window.__omwMark = function(name){
+   try {
+     if (window.__omwBoot[name] !== undefined) return;      // first one wins; boot happens once
+     window.__omwBoot[name] = Math.round(performance.now());
+     if (performance.mark) performance.mark('omw:' + name);
+   } catch(e){}
+ };
+ window.__omwMark('scriptStart');
+
  window.__omwSyncing = false;
  window.__omwSyncAgain = false;
  window.__omwSyncfs = function(){
@@ -1601,6 +1616,14 @@
            // fewer draw calls with IDENTICAL visuals (same objects, just pre-combined).
            // ?merge=N overrides for A/B.
            'object paging merge factor = ' + ((/[?&]merge=(\d+)/.exec(location.search)||[])[1] || '250') + '\n' +
+           // LOD knobs, left at engine defaults until now — which were tuned for the stock 7168
+           // view distance. We render to 16384 with 'object paging min size' halved to 0.005, so
+           // there is far more terrain and far more small geometry out there than these defaults
+           // assume. 'vertex lod mod' exists for exactly this: it thins terrain vertex density at
+           // range, and the far LOD is already behind distant fog from 12288 out, so there is
+           // little there to see. Negative = fewer vertices. ?vlod=N / ?lodfactor=N to sweep (QA).
+           'vertex lod mod = ' + ((/[?&]vlod=(-?\d+)/.exec(location.search)||[])[1] || '-1') + '\n' +
+           'lod factor = ' + ((/[?&]lodfactor=([0-9.]+)/.exec(location.search)||[])[1] || '1.0') + '\n' +
            '[Water]\n' +
            'shader = true\n' +                     // real water shader (reflections/refractions)
            // reflection detail: 0=sky only (no scene geometry re-rendered into the reflection),
@@ -1671,12 +1694,33 @@
            'maximum shadow map distance = ' + ((/[?&]shadowdist=(\d+)/.exec(location.search)||[])[1] || '1024') + '\n' +
            '[Cells]\n' +
            'preload cell cache max = 18\n' +   // engine asked for 18 for exterior preloading
+           // PRELOADING IS SYNCHRONOUS ON THIS BUILD. The WorkQueue runs inline under emscripten
+           // (workqueue.cpp: item->doWork() on the caller), so every "preload" is a full cell load
+           // — NIF parse, collision build, object-paging merge — inside the frame that speculated
+           // about it. The subsystem whose whole job is avoiding a stall is generating them.
+           // Doors are the worst case: walking past one triggers an interior load in that frame.
+           // So: preload LESS while it is synchronous. The work still happens when the player
+           // actually arrives, and at least then it is not speculative.
+           // !! REVERSE THIS once the WorkQueue has real workers — with threads, preloading
+           // aggressively is free and correct. The right value flips sign on that change. !!
+           // ?preload=1 restores the engine defaults for A/B.
+           (/[?&]preload=1\b/.test(location.search) ? '' :
+             ('preload doors = false\n' +
+              'preload exterior grid = false\n')) +
            '[Game]\n' +
            'actors processing range = 4096\n' +   // AI-process fewer distant NPCs/creatures (towns)
            '[Shaders]\n' +
            // max lights: dynamic point lights evaluated per object. Higher = richer lit scenes but
            // more per-object shading cost. ?maxlights=N overrides (QA); default measured for 60fps.
            'max lights = ' + ((/[?&]maxlights=(\d+)/.exec(location.search)||[])[1] || '16') + '\n' +
+           // maximum light distance decides which objects come back with a NON-EMPTY light list —
+           // and a non-empty list is what makes LightListCallback allocate a StateSet and upload a
+           // full 16-mat4 LightBuffer (1KB) for that object, per camera pass, per frame. So this
+           // knob, not 'max lights', sets how many objects pay that cost. The engine default 8192
+           // was tuned for a 7168 view distance; ours is 16384, over far more geometry.
+           // Morrowind's point lights are lanterns and campfires with small authored radii, so a
+           // much shorter cull should be visually free. ?lightdist=N to sweep (QA).
+           'maximum light distance = ' + ((/[?&]lightdist=(\d+)/.exec(location.search)||[])[1] || '4096') + '\n' +
            // Per-pixel lighting: MW geometry is low-poly, so per-VERTEX lighting looks faceted
            // (flat-shaded walls, banding on terrain). Per-pixel smooths the gradients across each
            // face. Pure fragment-shader path (already GLES-ported); fill cost is bounded by
@@ -3283,6 +3327,9 @@
      } catch(e){}
    } },
    onRuntimeInitialized: function(){
+     // wasm compiled, instantiated and the runtime is up. Everything before this is download +
+     // WebAssembly.compile; everything after is game data, the ESM store and engine init.
+     if (window.__omwMark) window.__omwMark('runtimeInit');
      // Drive the engine frame from a MessageChannel: unlike setTimeout/requestAnimationFrame,
      // MessageChannel messages are NOT throttled when the tab is hidden/backgrounded, so the
      // game keeps running (and stays interactive) even in the background. omw_pump_frame() is a
@@ -3308,6 +3355,10 @@
          scheduled = false;
          var a = performance.now();
          try { if (Module._omw_pump_frame) Module._omw_pump_frame(); } catch(e){}
+         // End of boot: the first frame the engine actually rendered. Stamped here rather than in
+         // the 500ms status poller so it is exact to one frame. __omwRunning is set by the engine's
+         // own loop, so this fires once the player can genuinely see something.
+         if (Module.__omwRunning !== undefined && window.__omwMark) window.__omwMark('firstFrame');
          var b = performance.now();
          __frames++; __accum += (b - a);
          // ?glcount: exact GL calls THIS frame (cumulative delta bracketed by the pump).
