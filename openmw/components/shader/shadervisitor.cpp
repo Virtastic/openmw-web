@@ -621,7 +621,11 @@ namespace Shader
 
         if (defineMap["diffuseMap"] == "0")
         {
-            writableStateSet->addUniform(new osg::Uniform("useDiffuseMapForShadowAlpha", false));
+            // Always false at this site, and never set() afterwards -- one shared instance keeps
+            // OSG's pointer-identity upload dedup working across statesets.
+            static const osg::ref_ptr<osg::Uniform> sNoDiffuseShadowAlpha
+                = new osg::Uniform("useDiffuseMapForShadowAlpha", false);
+            writableStateSet->addUniform(sNoDiffuseShadowAlpha);
             addedState->addUniform("useDiffuseMapForShadowAlpha");
         }
 
@@ -629,7 +633,7 @@ namespace Shader
         defineMap["parallax"] = reqs.mNormalHeight ? "1" : "0";
         defineMap["reconstructNormalZ"] = reqs.mReconstructNormalZ ? "1" : "0";
 
-        writableStateSet->addUniform(new osg::Uniform("colorMode", reqs.mColorMode));
+        writableStateSet->addUniform(mShaderManager.getConstUniform("colorMode", reqs.mColorMode));
         addedState->addUniform("colorMode");
 
 #ifdef __EMSCRIPTEN__
@@ -703,7 +707,7 @@ namespace Shader
         defineMap["adjustCoverage"] = "0";
         if (reqs.mAlphaFunc != osg::AlphaFunc::ALWAYS)
         {
-            writableStateSet->addUniform(new osg::Uniform("alphaRef", reqs.mAlphaRef));
+            writableStateSet->addUniform(mShaderManager.getConstUniform("alphaRef", reqs.mAlphaRef));
             addedState->addUniform("alphaRef");
 
             if (!removedState->getAttributePair(osg::StateAttribute::ALPHAFUNC))
@@ -767,7 +771,7 @@ namespace Shader
         {
             const int unitSoftEffect
                 = mShaderManager.reserveGlobalTextureUnits(Shader::ShaderManager::Slot::OpaqueDepthTexture);
-            writableStateSet->addUniform(mShaderManager.getSamplerUniform("opaqueDepthTex", unitSoftEffect));
+            writableStateSet->addUniform(mShaderManager.getConstUniform("opaqueDepthTex", unitSoftEffect));
             addedState->addUniform("opaqueDepthTex");
         }
 
@@ -806,7 +810,7 @@ namespace Shader
         {
             // Interned: see ShaderManager::getSamplerUniform. A fresh Uniform per stateset defeated
             // osg::Program's pointer-identity upload cache and re-sent this every stateset change.
-            writableStateSet->addUniform(mShaderManager.getSamplerUniform(name, unit), osg::StateAttribute::ON);
+            writableStateSet->addUniform(mShaderManager.getConstUniform(name, unit), osg::StateAttribute::ON);
             addedState->addUniform(name);
         }
 
