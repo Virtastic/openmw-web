@@ -514,6 +514,9 @@ namespace SceneUtil
 
         mLights.clear();
         mLightsInViewSpace.clear();
+        // The cached StateSets hold this frame's light positions/colours in view space, so they
+        // are only valid for the frame that built them.
+        mLightListStateSetCache.clear();
     }
 
     void LightManager::addLight(LightSource* lightSource, const osg::Matrixf& worldMat, size_t frameNum)
@@ -540,6 +543,19 @@ namespace SceneUtil
     osg::ref_ptr<osg::StateSet> LightManager::getLightListStateSet(
         const LightList& lightList, size_t frameNum, const osg::RefMatrix* viewMatrix)
     {
+        // Cache hit? The light list determines the contents entirely, so two objects lit by the
+        // same lamps get the same StateSet object -- which also means osg::State sees the SAME
+        // uniform pointer twice in a row and can skip the re-upload. Cleared each frame in
+        // update(), so the per-frame values below stay correct.
+        std::vector<int> key;
+        key.reserve(lightList.size());
+        for (const auto* bound : lightList)
+            key.push_back(bound->mLightSource->getId());
+
+        auto cached = mLightListStateSetCache.find(key);
+        if (cached != mLightListStateSetCache.end())
+            return cached->second;
+
         osg::ref_ptr<osg::StateSet> stateset = new osg::StateSet;
         osg::ref_ptr<osg::Uniform> data = generateLightBufferUniform();
 
@@ -561,6 +577,7 @@ namespace SceneUtil
         stateset->addUniform(data);
         stateset->addUniform(new osg::Uniform("PointLightCount", static_cast<int>(lightList.size())));
 
+        mLightListStateSetCache.emplace(std::move(key), stateset);
         return stateset;
     }
 

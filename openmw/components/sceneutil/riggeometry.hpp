@@ -103,6 +103,10 @@ namespace SceneUtil
         };
         osg::ref_ptr<InfluenceData> mData;
         std::vector<Bone*> mNodes;
+        // Scratch for cull(), kept across frames so skinning does not heap-allocate per rig per
+        // frame. A crowded street is one rig per body part per actor, so this was a lot of churn
+        // for a buffer whose size almost never changes.
+        std::vector<osg::Matrixf> mBoneMatrices;
 
         unsigned int mLastFrameNumber{ 0 };
         bool mBoundsFirstFrame{ true };

@@ -263,6 +263,15 @@ namespace SceneUtil
         using LightSourceViewBoundCollection = std::vector<LightSourceViewBound>;
         std::map<osg::observer_ptr<osg::Camera>, LightSourceViewBoundCollection> mLightsInViewSpace;
 
+        // Per-frame cache of the StateSet built for a given light list (F2). Without it,
+        // getLightListStateSet() allocated a fresh StateSet AND a fresh maxLights-sized
+        // FLOAT_MAT4 uniform for every lit object, on every cull, for every camera pass -- and
+        // because each was a NEW uniform pointer, osg::State's per-location upload dedup could
+        // never skip the 1KB re-upload either. Objects in one room overwhelmingly share a light
+        // list, so a hit here removes both costs at once. Keyed on the light-source ids, which
+        // are what actually determine the contents. Cleared every frame in update().
+        std::map<std::vector<int>, osg::ref_ptr<osg::StateSet>> mLightListStateSetCache;
+
         size_t mLightingMask;
 
         osg::ref_ptr<osg::Light> mSun;

@@ -413,7 +413,18 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     // tooltip. The sim peer has no crosshair and no GUI. Purely presentational — it has no
     // effect on AI, physics or scripts — so skipping it changes nothing about the simulation.
     static const bool sHeadless = std::getenv("OPENMW_HEADLESS") != nullptr;
-    if (!sHeadless)
+#ifdef __EMSCRIPTEN__
+    // ...and on the web, throttle it even when we DO have a crosshair. A tooltip does not need
+    // 60Hz: at 20Hz the delay before an item name appears is under a frame of human perception,
+    // and two thirds of the graph descents stop happening. The player cannot move far enough in
+    // 33ms to make the answer stale.
+    // Measure the cost first with ?perfstats=1: the Focus bucket already exists. If it is a
+    // fraction of a millisecond, revert this -- it is only worth the asymmetry if it shows up.
+    const bool skipFocusThisFrame = (frameNumber % 3 != 0);
+#else
+    constexpr bool skipFocusThisFrame = false;
+#endif
+    if (!sHeadless && !skipFocusThisFrame)
     {
         ScopedProfile<UserStatsType::Focus> profile(frameStart, frameNumber, *timer, *stats);
         mWorld->updateFocusObject();

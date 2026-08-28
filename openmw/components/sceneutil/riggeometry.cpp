@@ -169,7 +169,9 @@ namespace SceneUtil
         osg::Vec3Array* normalDst = static_cast<osg::Vec3Array*>(geom.getNormalArray());
         osg::Vec4Array* tangentDst = static_cast<osg::Vec4Array*>(geom.getTexCoordArray(7));
 
-        std::vector<osg::Matrixf> boneMatrices(mNodes.size());
+        // Reused member, not a fresh vector each frame (see mBoneMatrices).
+        std::vector<osg::Matrixf>& boneMatrices = mBoneMatrices;
+        boneMatrices.assign(mNodes.size(), osg::Matrixf());
         std::vector<Bone*>::const_iterator bone = mNodes.begin();
         std::vector<BoneInfo>::const_iterator boneInfo = mData->mBones.begin();
         for (osg::Matrixf& boneMat : boneMatrices)
@@ -196,9 +198,17 @@ namespace SceneUtil
                     continue;
                 const float* boneMatPtr = boneMatrices[index].ptr();
                 float* resultMatPtr = resultMat.ptr();
-                for (int i = 0; i < 16; ++i, ++resultMatPtr, ++boneMatPtr)
-                    if (i % 4 != 3)
-                        *resultMatPtr += *boneMatPtr * weight;
+                // The weighted accumulate touches the 3x4 block and skips the homogeneous column
+                // (elements 3, 7, 11, 15). Written as four unrolled rows of three rather than
+                // `for (i = 0; i < 16) if (i % 4 != 3)`: same arithmetic, but the modulo and the
+                // branch are gone, so it vectorises under -msimd128 instead of being a scalar
+                // loop with a per-element test.
+                for (int row = 0; row < 4; ++row, resultMatPtr += 4, boneMatPtr += 4)
+                {
+                    resultMatPtr[0] += boneMatPtr[0] * weight;
+                    resultMatPtr[1] += boneMatPtr[1] * weight;
+                    resultMatPtr[2] += boneMatPtr[2] * weight;
+                }
             }
 
             resultMat *= transform;
