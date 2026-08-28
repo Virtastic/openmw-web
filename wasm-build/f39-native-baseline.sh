@@ -56,6 +56,46 @@
 # Usage (from the repo root):
 #   docker run --rm --user root -m 8g -v "$PWD/play/mwdata:/data:ro" #     -v "$PWD/wasm-build:/lb:ro" openmw-simpeer:local bash /lb/f39-native-baseline.sh
 
+#
+# ============================================================================================
+# RESULT (2026-08-28). F39 IS MEASURED. Done with a portable OpenMW 0.51.0 Windows release
+# extracted (not installed) and pointed at the same Steam Data Files, with the web build's
+# settings.cfg copied across. Both in Balmora (-2,-2), same RTX 4080 Laptop, 1280x720.
+#
+#     native OpenMW 0.51.0 : 13689 frames / 67s in-game = 204 fps  ->  4.89 ms/frame
+#     web (perf/opentes3)  : __frameMs median over 12 samples      ->  5.87 ms/frame
+#     ratio                : the browser build is 1.20x native on per-frame CPU
+#
+#     web frame breakdown  : cull 1.22ms + draw 2.78ms = 4.00ms of 5.87ms -> 68% in cull+draw
+#     web GL per frame     : 4784 calls across 789 draws -> 6.1 GL calls per draw
+#
+# WHAT THIS SETTLES, and it reorders the roadmap:
+#   * 1.20x is far closer to native than the report's 1.1-1.5x guess implied at the pessimistic
+#     end, and it is achieved while the web build renders a HEAVIER scene than native default
+#     (16384 view distance, object paging min size 0.005) -- see F39's settings table.
+#   * 68% of the frame is cull+draw. That is the empirical mandate for F20 (instancing), F35
+#     (occlusion culling) and F48 (VAOs), and it demotes everything that competes for attention
+#     outside the render path.
+#   * 6.1 GL calls per draw is the F48 number specifically. A VAO collapses the per-draw
+#     attribute rebinding that makes up most of that, which is why F48 was called the best
+#     effort-to-payoff item on the page -- and it is currently BLOCKED on the null
+#     glGenVertexArrays described in engine.cpp and build-osg.sh (F50).
+#
+# HONEST CAVEATS, none of which move the conclusion much:
+#   - Native is upstream 0.51.0; the web build is this fork at 0.52.0-dev. Some delta is
+#     fork-vs-upstream, not wasm-vs-native.
+#   - The web `__fps` counter reads ~20 because the browser pane was not displayed and rAF is
+#     throttled when hidden. `__frameMs` measures work per pump and is unaffected -- that is why
+#     the comparison uses it and not fps.
+#   - The native fps is frames-over-window, with the in-game window inferred from the log; it is
+#     good to a few percent, not exact.
+#   - Native ran vsync off and unthrottled; the web is rAF-paced. Again: per-frame CPU cost is
+#     the comparable quantity, not frames per second.
+#   - Standing still in both. A walking route would add streaming and cell-transition cost, which
+#     is where the browser build is expected to do WORSE (F3, F4, F14, F27) -- so 1.20x is the
+#     optimistic end of the range, not the average.
+# ============================================================================================
+
 set -uo pipefail
 
 SRC=/data
