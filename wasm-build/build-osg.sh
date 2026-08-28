@@ -20,6 +20,28 @@
 # - OSG_CPP_EXCEPTIONS_AVAILABLE=ON (GLES profile defaults it OFF, which kills
 #   the png plugin among other things).
 # - GL/EGL/GLES libs all point at emscripten's libGL-getprocaddr.a.
+#
+# WHY THIS IS GLES2 AND NOT GLES3, AND WHAT IT COSTS (F50 — tried it, 2026-08-28).
+# The runtime target is WebGL2, which IS OpenGL ES 3.0 — link-openmw.sh says so twice
+# (-sMIN_WEBGL_VERSION=2, -sFULL_ES3=1). Declaring GLES2 here has a concrete price:
+# GLExtensions.cpp:760 gates isVAOSupported on OSG_GLES3_FEATURES, which the GLES2 profile never
+# defines, so VAO support reads false and osg-emscripten.patch has to force it true. That in turn
+# is why F48 (actually USING vertex array objects, which is the single biggest per-draw win
+# available) dies with `null function`: the capability is forced on, but glGenVertexArrays and
+# glBindVertexArray are still resolved through getProcAddress, which returns null on emscripten,
+# and nothing on the GLES2 path ever expected to need them. DisplaySettings likewise picks
+# SHADER_GLES2 rather than SHADER_GLES3 from these macros.
+#
+# Flipping to -DOPENGL_PROFILE=GLES3 -DOSG_GLES3_AVAILABLE=ON does NOT work as-is. OSG fails to
+# compile with:
+#     Image.cpp / Texture.cpp / Texture2DArray.cpp / Texture3D.cpp:
+#       use of undeclared identifier 'GL_RED' / 'GL_GREEN' / 'GL_BLUE' / 'GL_UNPACK_ROW_LENGTH'
+# Those are all valid ES 3.0 tokens, so this is not OSG rejecting the profile — it is this script
+# not giving the ES3 path its headers. Every GL library below points at libGL-getprocaddr.a and the
+# GLES2 headers arrive implicitly; the ES3 path wants GLES3/gl3.h and never sees it.
+#
+# So F50 is a header/include job here, not a flag flip. Until someone does it, F48 needs the VAO
+# entry points bridged in osg-emscripten.patch the way glBlitFramebuffer already is.
 set -euo pipefail
 
 ROOT="${ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
