@@ -2,6 +2,10 @@
 // See WASM_ADAPTATIONS.md at the repository root for details of the changes.
 #include "imagemanager.hpp"
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
+
 #include <cstdlib>
 
 #include <cassert>
@@ -262,6 +266,44 @@ namespace Resource
                 image->setOrigin(osg::Image::TOP_LEFT);
             }
 
+#ifdef __EMSCRIPTEN__
+            // F17 measurement. WebGL2 rejects glGenerateMipmap on block-compressed data, so the OSG
+            // patch drops MIN_FILTER to LINEAR for any compressed texture that arrives without
+            // stored mips -- costing not just aliasing but GPU texture-cache thrash at range, and
+            // this build renders to 16384 units.
+            //
+            // The plan's own instruction for F17 is "instrument how many textures actually hit that
+            // branch" before building an offline mip pipeline: if retail DDS mostly carries mips and
+            // only the optional asset pack offends, the fix is a one-time repack, not a pipeline.
+            // Counted here rather than in the OSG patch because this needs no deps rebuild.
+            // Read it from JS as window.__omwTexStats.
+            {
+                static int sTotal = 0, sCompressed = 0, sCompressedNoMips = 0;
+                ++sTotal;
+                if (image->isCompressed())
+                {
+                    ++sCompressed;
+                    if (!image->isMipmap())
+                        ++sCompressedNoMips;
+                }
+                // Republish on a cadence rather than every image: this runs for every texture the
+                // game loads, and the point is the ratio, not the exact instant.
+                if ((sTotal & 0x3F) == 0)
+                {
+                    // Field-by-field, not an object literal: EM_ASM is a variadic macro, so the
+                    // commas inside `{ a: $0, b: $1 }` would split it into extra macro arguments.
+                    // clang-format off
+                    EM_ASM({
+                        var s = window.__omwTexStats || {};
+                        s.total = $0;
+                        s.compressed = $1;
+                        s.compressedNoMips = $2;
+                        window.__omwTexStats = s;
+                    }, sTotal, sCompressed, sCompressedNoMips);
+                    // clang-format on
+                }
+            }
+#endif
             mCache->addEntryToObjectCache(path.value(), image);
             return image;
         }
