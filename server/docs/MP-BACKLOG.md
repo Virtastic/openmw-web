@@ -130,6 +130,27 @@ measuring the wrong buffer.
 
 ---
 
+### The revert changed nothing: this was NOT introduced today
+
+Restoring `setRenderTargetImplementation(FRAME_BUFFER_OBJECT, PIXEL_BUFFER_RTT)` -- the one
+change today that altered how the map RENDERS -- moved the panel from 67 to 65. No difference.
+So removing that fallback was not the regression, and the apology for it was premature.
+
+That also settles the "it worked in earlier builds" report, and the answer was already in this
+file: the ORIGINAL entry, written before any of today's work, says **"Minimap renders solid
+white/blue/black"**. It was never drawing a map. A solid white or blue panel is easy to
+remember as working, and going from solid-colour to solid-black reads as a regression when
+both are the same bug.
+
+**The lesson is the one this file keeps teaching, aimed at the investigation itself:** the
+first question should have been "what did it look like when it worked?", not "what changed
+today?". Fifteen suspects, ~15 builds, and a wrong self-accusation all sit downstream of not
+asking it. The measurement that settled it took 70 seconds.
+
+The two changes today that are independently correct STAY: `Mask_Lighting` (the local map was
+the only world-rendering camera omitting it, and it is the one thing that ever moved the
+number) and the restored fallback (matches upstream; harmless).
+
 ### Where to pick the minimap up (and how NOT to)
 
 The time-of-day theory is dead too, without spending a build on it:
