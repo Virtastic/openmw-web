@@ -47,6 +47,11 @@ local pendingOps = {} -- opId -> {op=, itemId=, n=, key=, obj=}
 local recentPickups = {} -- obj.id -> time (belt+braces beside the byId echo skip)
 local doorPending = {} -- obj.id -> {obj=, at=}
 local containerOpenPending = {} -- obj.id -> {obj=, at=}: deferred first read, see above
+-- How many times a deferred open may retry while the object is not yet addressable. A freshly
+-- spawned object needs its net registration to land first; a handful of ticks covers that, and
+-- a bound stops an object that will NEVER be addressable from retrying for the session.
+local CONTAINER_OPEN_RETRIES = 5
+local openRetries = {} -- obj.id -> attempts so far
 -- obj.id -> {obj=, slots=, until_=}: equipment to put back on an actor whose inventory was
 -- just rewritten by a canonical ContainerState. Retried rather than applied once, because the
 -- recreated items do not exist until a later frame.
@@ -390,13 +395,32 @@ local function openContainerNow(object, now, live)
     -- refusal either -- so the request is never PRODUCED. The watch armed here is what produces
     -- it, and both of its preconditions can fail without a word: an unreadable snapshot, or a
     -- ContainerOpen that could not be addressed. One line separates them.
-    local _armed = snapshot and sendAddressed('ContainerOpen', object,
+    -- RETRY ONCE THE OBJECT IS ADDRESSABLE. This used to be one-shot: if ContainerOpen could not
+    -- be addressed at this instant it returned, armed nothing, and never tried again -- so an
+    -- object opened moments after being spawned had no watch, and every put into it moved the
+    -- item with NO ContainerOpRequest and NO refusal. Silently invisible, which is how s31
+    -- failed intermittently: the item always moved, and whether anyone noticed was a race
+    -- against net registration.
+    --
+    -- Rescheduling rather than arming regardless: the watch's baseline snapshot is only
+    -- meaningful once the server can be told about it, and an armed watch on an unaddressable
+    -- object would diff into requests that go nowhere.
+    local armed = snapshot and sendAddressed('ContainerOpen', object,
         { contents = countsToItems(snapshot), gold = gold })
-    if not _armed then
-        print('[mp] container watch NOT armed for ' .. tostring(object.recordId)
-            .. ' snapshot=' .. tostring(snapshot ~= nil) .. ' (a put here is never reported)')
+    if not armed then
+        local tries = (openRetries[object.id] or 0) + 1
+        if object:isValid() and tries <= CONTAINER_OPEN_RETRIES then
+            openRetries[object.id] = tries
+            containerOpenPending[object.id] = { obj = object, at = now + CONTAINER_OPEN_DELAY, live = live }
+        else
+            openRetries[object.id] = nil
+            -- Give up LOUDLY. The whole failure mode here is silence.
+            dropOut('ContainerOpen', 'never-addressable', tostring(object.recordId))
+        end
+        return
     end
-    if _armed then
+    openRetries[object.id] = nil
+    if armed then
         containerWatch[object.id] = {
             obj = object,
             last = snapshot,
@@ -1028,6 +1052,9 @@ function objects.reset()
     recentPickups = {}
     doorPending = {}
     containerOpenPending = {}
+    -- Retry counters go with the pending opens they belong to, or a world switch would
+    -- carry a stale attempt count into the next world and give up early there.
+    openRetries = {}
     lockWatch = {}
     enableWatch = {}
     nextEnablePoll = 0
