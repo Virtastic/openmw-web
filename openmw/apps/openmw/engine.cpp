@@ -1095,6 +1095,45 @@ void OMW::Engine::prepareEngine()
     mLuaManager->initPostLoad();
 
     // scripts
+#ifdef __EMSCRIPTEN__
+    // F27, first slice. MWScript is lexed and parsed at RUNTIME, lazily, the first time each
+    // script executes (scriptmanagerimp.cpp:39 pulls mScriptText out of the store, wraps it in an
+    // istringstream and runs the full Compiler::Scanner). GOTY ships ~2000 of them, so the normal
+    // experience is: play, trip a script, pay for a lexer -- unpredictably, on the main thread,
+    // during play.
+    //
+    // The real fix is to bake bytecode offline and drop components/compiler (5,005 lines) out of
+    // the wasm entirely. That needs a serialisation format for mParser.getProgram() plus the
+    // locals table, and a loader; it is the rest of F27.
+    //
+    // This is the part that is one line: compile them all up front instead. It does not remove the
+    // work, it MOVES it -- out of unpredictable mid-play stalls and into the loading screen, where
+    // a stall is free and the player is already waiting. That is the same trade every other Phase 2
+    // bake makes, just paid at boot rather than at build time, and it is a strict improvement on
+    // paying it at a random moment while walking through Balmora.
+    //
+    // MEASURED, and left OFF because of what the number said. Booting with retail data and
+    // window.__omwBoot (F24), comparing post-runtime boot work (firstFrame - runtimeInit, because
+    // the wasm compile itself varies by seconds between runs depending on the HTTP cache):
+    //
+    //     lazy          4505 - 362  = 4143ms      "compiled 1206 of 1207 scripts"
+    //     compile-all   7733 - 2078 = 5655ms      => ~1.5s added to boot
+    //
+    // 1.5s is too much to spend on a loading screen for a game whose whole delivery pitch is a
+    // URL -- F24 exists because time-to-playable is the number this product is judged on. So this
+    // does not move the work to a better place, it moves it to the worst place.
+    //
+    // What the measurement actually establishes is that the REST of F27 is worth doing: 1.5s of
+    // lexing and parsing, for a result that is identical on every machine and every run, is
+    // exactly the thing an offline bake deletes rather than relocates. Serialise
+    // mParser.getProgram() plus the locals table, ship it, drop components/compiler (5,005 lines)
+    // out of the wasm, and the 1.5s goes to zero instead of moving.
+    //
+    // OPENMW_COMPILE_ALL=1 opts in, for anyone who would rather take the boot cost than the
+    // mid-play stalls until that lands.
+    if (std::getenv("OPENMW_COMPILE_ALL") != nullptr)
+        mCompileAll = true;
+#endif
     if (mCompileAll)
     {
         std::pair<int, int> result = mScriptManager->compileAll();
