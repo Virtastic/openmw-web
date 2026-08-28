@@ -1384,26 +1384,31 @@ void OMW::Engine::go()
     // null GL thread and aborts. Force everything onto the single GL thread.
     mViewer->setThreadingModel(osgViewer::ViewerBase::SingleThreaded);
 
-    // Actually USE the VAOs we force-enable. osg::State decides per draw with
+    // F48 -- MEASURED AND CLOSED 2026-08-28. Nothing to do here; the call that used to sit on
+    // this line was a no-op, and the interesting result is why.
+    //
+    // The finding said OSG force-enables VAO *support* but never sets the per-drawable flag, so
+    // State.cpp's test
     //     _forceVertexArrayObject || (_isVertexArrayObjectSupported && drawable->_useVertexArrayObject)
-    // The emscripten patch in State.cpp forces _isVertexArrayObjectSupported true, but
-    // Drawable::_useVertexArrayObject defaults FALSE and nothing ever sets it, and
-    // _forceVertexArrayObject is only assigned from this DisplaySettings hint -- which defaults to
-    // NO_PREFERENCE. So the expression was false for every drawable and no VAO was ever bound:
-    // each draw re-issued its glVertexAttribPointer/glEnableVertexAttribArray calls individually,
-    // which is exactly the per-draw JS<->wasm<->ANGLE cost the force-enable existed to remove.
-    // VERTEX_ARRAY_OBJECT sets both _forceVertexBufferObject and _forceVertexArrayObject.
+    // was false for every draw. The proposed fix was DisplaySettings::VERTEX_ARRAY_OBJECT, which
+    // sets _forceVertexBufferObject and _forceVertexArrayObject. But osg-emscripten.patch ALREADY
+    // sets both, unconditionally, in State::State() under `#elif defined(__EMSCRIPTEN__)`. The
+    // hint was assigning flags that were already true.
     //
-    // Must be set before the viewer is realized -- State reads the hint once, in
-    // initializeExtensionProcs(), and never looks again.
+    // A/B in Balmora (Chrome, RTX 4080, ~726 draws/frame), behind ?forcevao=1 so both arms ran the
+    // same binary: every counter came back identical to one decimal place -- total 4385.3,
+    // bindVertexArray 501.4, vertexAttribPointer 237.4, enableVertexAttribArray 236.5. Not close;
+    // the same. That is the signature of a flag that was already set.
     //
-    // WATCH THE DYNAMIC GEOMETRY. Forced VAOs previously broke MorphGeometry's per-frame vertex
-    // rewrite under ANGLE (heads rendered as a collapsed cone; see WASM_ADAPTATIONS.md). Both
-    // MorphGeometry and RigGeometry have since moved their arrays onto dedicated VBOs, which is
-    // the condition a VAO needs, so this should now be safe -- but verify on an NPC's face and
-    // limbs, not on a static vista. Measure with ?glcount=1: GL calls per frame should fall
-    // sharply while the draw count stays identical.
-    osg::DisplaySettings::instance()->setVertexBufferHint(osg::DisplaySettings::VERTEX_ARRAY_OBJECT);
+    // What those numbers DO show is a real defect one layer down, still open. VAOs are being bound
+    // (501/frame) AND their attribute state re-specified anyway (237 + 236 attrib calls/frame). A
+    // reused VAO replays its bindings with zero attrib calls in steady state, so today's binds are
+    // pure overhead. That is a VAO-lifetime question in State/Geometry, not a DisplaySettings one,
+    // and it is where the F48 win lives if it exists at all.
+    //
+    // The `null function` this path used to trap on was real: OSG was configured
+    // OPENGL_PROFILE=GLES2 against a WebGL2/ES3 target, so isVAOSupported could never resolve
+    // honestly. build-osg.sh now says GLES2+GLES3 (F50) and OSG_GLES3_FEATURES is 1.
 #endif
 
     // Do not try to outsmart the OS thread scheduler (see bug #4785).

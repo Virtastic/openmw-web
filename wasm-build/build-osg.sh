@@ -21,27 +21,27 @@
 #   the png plugin among other things).
 # - GL/EGL/GLES libs all point at emscripten's libGL-getprocaddr.a.
 #
-# WHY THIS IS GLES2 AND NOT GLES3, AND WHAT IT COSTS (F50 — tried it, 2026-08-28).
-# The runtime target is WebGL2, which IS OpenGL ES 3.0 — link-openmw.sh says so twice
-# (-sMIN_WEBGL_VERSION=2, -sFULL_ES3=1). Declaring GLES2 here has a concrete price:
+# WHY THE PROFILE IS `GLES2+GLES3` (F50, resolved 2026-08-28).
+# The runtime target is WebGL2, which IS OpenGL ES 3.0 -- link-openmw.sh says so twice
+# (-sMIN_WEBGL_VERSION=2, -sFULL_ES3=1). This was configured GLES2, and that had a price:
 # GLExtensions.cpp:760 gates isVAOSupported on OSG_GLES3_FEATURES, which the GLES2 profile never
-# defines, so VAO support reads false and osg-emscripten.patch has to force it true. That in turn
-# is why F48 (actually USING vertex array objects, which is the single biggest per-draw win
-# available) dies with `null function`: the capability is forced on, but glGenVertexArrays and
-# glBindVertexArray are still resolved through getProcAddress, which returns null on emscripten,
-# and nothing on the GLES2 path ever expected to need them. DisplaySettings likewise picks
-# SHADER_GLES2 rather than SHADER_GLES3 from these macros.
+# defines, so VAO support read false and osg-emscripten.patch had to force it true. Anything that
+# then went near the DisplaySettings VAO path trapped with `null function`, because the capability
+# was forced on while glGenVertexArrays/glBindVertexArray were still resolved through
+# getProcAddress. DisplaySettings likewise picked SHADER_GLES2 rather than SHADER_GLES3.
 #
-# Flipping to -DOPENGL_PROFILE=GLES3 -DOSG_GLES3_AVAILABLE=ON does NOT work as-is. OSG fails to
-# compile with:
-#     Image.cpp / Texture.cpp / Texture2DArray.cpp / Texture3D.cpp:
-#       use of undeclared identifier 'GL_RED' / 'GL_GREEN' / 'GL_BLUE' / 'GL_UNPACK_ROW_LENGTH'
-# Those are all valid ES 3.0 tokens, so this is not OSG rejecting the profile — it is this script
-# not giving the ES3 path its headers. Every GL library below points at libGL-getprocaddr.a and the
-# GLES2 headers arrive implicitly; the ES3 path wants GLES3/gl3.h and never sees it.
+# A pure `-DOPENGL_PROFILE=GLES3` does NOT build. Image.cpp / Texture.cpp / Texture2DArray.cpp /
+# Texture3D.cpp fail with `use of undeclared identifier 'GL_RED' / 'GL_GREEN' / 'GL_BLUE' /
+# 'GL_UNPACK_ROW_LENGTH'`. Those are valid ES 3.0 tokens -- the ES3-only path wants GLES3/gl3.h and
+# every GL library here points at libGL-getprocaddr.a, which brings the GLES2 headers implicitly.
 #
-# So F50 is a header/include job here, not a flag flip. Until someone does it, F48 needs the VAO
-# entry points bridged in osg-emscripten.patch the way glBlitFramebuffer already is.
+# `GLES2+GLES3` is the fix: OSG defines BOTH feature macros, so the ES3 gates (isVAOSupported,
+# SHADER_GLES3) resolve honestly while the GLES2 headers still satisfy the tokens above. Verified:
+# deps/wasm/include/osg/GL carries `#define OSG_GLES3_FEATURES 1`, OSG builds clean, engine boots.
+#
+# This did NOT turn into a frame-time win, and that is worth recording rather than rediscovering:
+# osg-emscripten.patch already forces _forceVertexArrayObject in State::State(), so VAOs were
+# always being bound. See the F48 note in apps/openmw/engine.cpp for the measurement.
 set -euo pipefail
 
 ROOT="${ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
@@ -78,7 +78,7 @@ emcmake cmake .. \
   -DDYNAMIC_OPENTHREADS:BOOL=OFF \
   -DEGL_LIBRARY:FILEPATH="$SYSROOT_LIBGL" \
   -DGLESV2_LIBRARY="$SYSROOT_LIBGL" \
-  -DOPENGL_PROFILE:STRING=GLES2 \
+  -DOPENGL_PROFILE:STRING=GLES2+GLES3 \
   -DOPENGL_egl_LIBRARY="$SYSROOT_LIBGL" \
   -DOPENGL_gl_LIBRARY="$SYSROOT_LIBGL" \
   -DOSG_CPP_EXCEPTIONS_AVAILABLE:BOOL=ON \
@@ -86,6 +86,7 @@ emcmake cmake .. \
   -DOSG_GL2_AVAILABLE:BOOL=OFF \
   -DOSG_GL3_AVAILABLE:BOOL=OFF \
   -DOSG_GLES2_AVAILABLE:BOOL=ON \
+  -DOSG_GLES3_AVAILABLE:BOOL=ON \
   -DOSG_GL_DISPLAYLISTS_AVAILABLE:BOOL=OFF \
   -DOSG_GL_FIXED_FUNCTION_AVAILABLE:BOOL=OFF \
   -DOSG_GL_MATRICES_AVAILABLE:BOOL=OFF \
