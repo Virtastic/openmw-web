@@ -451,15 +451,16 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         {
             osgViewer::Viewer::Cameras cams;
             mViewer->getCameras(cams);
-            static bool s_en = false;
-            if (!s_en)
-            {
-                for (osg::Camera* c : cams)
-                    if (c->getStats())
-                        c->getStats()->collectStats("rendering", true);
-                stats->collectStats("engine", true); // ScopedProfile subsystem buckets (*_time_taken)
-                s_en = true;
-            }
+            // Re-arm EVERY frame rather than latching with a static. The latch version left
+            // collectStats("engine") reading FALSE and the attribute map empty: whatever it armed
+            // on the first perfstats frame was not what the ScopedProfiles later wrote through, so
+            // every subsystem bucket stayed 0 while cull/draw worked. Both are idempotent map
+            // assignments (osg/Stats:73), so re-arming is cheaper than reasoning about which
+            // object won the race.
+            for (osg::Camera* c : cams)
+                if (c->getStats())
+                    c->getStats()->collectStats("rendering", true);
+            stats->collectStats("engine", true); // ScopedProfile buckets (prefix + "_time_taken")
             double cull = 0.0, draw = 0.0, v = 0.0;
             for (osg::Camera* c : cams)
             {
@@ -471,7 +472,28 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                 if (cs->getAttribute(frameNumber, "Draw traversal time taken", v))
                     draw += v;
             }
+            // DIAGNOSTIC (?perfkeys=1): the subsystem buckets below were reading zero while cull/draw
+            // read fine, from this same osg::Stats. Rather than guess at the cause a fourth time,
+            // publish the frame's actual attribute keys so the names and presence can be read
+            // directly from the console. Costs a string build, so it is behind its own env flag.
+            if (getenv("OPENMW_PERF_KEYS"))
+            {
+                std::string keys;
+                for (const auto& [k, val] : stats->getAttributeMap(frameNumber))
+                {
+                    keys += k;
+                    keys += '=';
+                    keys += std::to_string(val);
+                    keys += '\n';
+                }
+                const bool engineOn = stats->collectStats("engine");
+                EM_ASM({ window.__omwPhaseKeys = UTF8ToString($0); window.__omwPhaseEngineOn = !!$1; },
+                    keys.c_str(), engineOn ? 1 : 0);
+            }
+
             // Rest-phase subsystem breakdown (engine ScopedProfile buckets, prefix + "_time_taken").
+            // NB: Lua is inline on this build (see mwlua/worker.cpp), so UserStatsType::Lua never
+            // fires and only LuaSyncUpdate does -- report the sum or the bucket reads a false 0.
             auto sub = [&](const char* key) { double x = 0.0; stats->getAttribute(frameNumber, key, x); return x * 1000.0; };
             // clang-format off
             // NB: no comma inside the EM_ASM code block — the C preprocessor would split it as a
@@ -490,7 +512,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                 window.__omwPhase.script = $9;
             },
                 cull * 1000.0, draw * 1000.0, sub("physics_time_taken"), sub("mechanics_time_taken"),
-                sub("world_time_taken"), sub("lua_time_taken"), sub("gui_time_taken"),
+                sub("world_time_taken"), (sub("lua_time_taken") + sub("luasyncupdate_time_taken")), sub("gui_time_taken"),
                 sub("input_time_taken"), sub("sound_time_taken"), sub("script_time_taken"));
             // clang-format on
         }

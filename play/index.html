@@ -1214,6 +1214,9 @@
        if (/[?&]rsdbg=1\b/.test(location.search)) ENV.OPENMW_RS_DEBUG='1';
        // ?perfstats=1 (QA): engine pushes per-frame Cull/Draw ms to window.__omwPhase (no F3 HUD).
        if (/[?&]perfstats=1\b/.test(location.search)) ENV.OPENMW_PERF_STATS='1';
+       // ?perfkeys=1 (QA): dump the frame's raw osg::Stats attribute keys to window.__omwPhaseKeys
+       // and whether the "engine" collection group is on. Diagnostic for empty __omwPhase buckets.
+       if (/[?&]perfkeys=1/.test(location.search)) ENV.OPENMW_PERF_KEYS='1';
        // NOTE: OPENMW_DECOMPRESS_TEXTURES removed — OSG now reports S3TC support (GLExtensions
        // patch), so DXT textures upload COMPRESSED via glCompressedTexImage2D (no CPU decompress).
        // USER CONFIG/DATA LIVE ON IDBFS: pointing XDG at the /userdata mount makes the
