@@ -313,3 +313,35 @@ The failure dump was 30 lines of one repeating WebGL warning
 (`GL_INVALID_ENUM: glDrawElements`), which filled the entire tail and pushed every useful line
 out. `logTail` now collapses repeats and reports their count, so a rare line -- always the
 interesting one -- survives. That is fixed for every future failure, not just this one.
+
+### s31 resolved: an intermittent RACE, not a hard defect (second correction)
+
+It passed on the next run at 79 s with no code change. So it is neither contention (it failed
+on an idle box) nor a hard defect (it passes) -- it is a race, and I mis-classified it twice
+in opposite directions before measuring properly.
+
+The two measurements together give the shape:
+
+```
+after open, the chest is ABSENT in containerItems
+after the put, A still holds 0 of the item
+```
+
+The item always moves. What varies is whether the watch was armed to notice. `onActivate` arms
+it only if `sendAddressed(ContainerOpen, ...)` succeeds, and addressability depends on the
+object having completed NET REGISTRATION. The scenario spawns a chest and opens it 500 ms
+later; win that race and the put is reported, lose it and the item moves invisibly with no
+error anywhere -- no request, no refusal.
+
+REAL-WORLD IMPACT IS LOW, and worth stating so nobody over-reacts: this needs an object opened
+within moments of being spawned. Chests that already exist in the world -- which is every
+chest a player meets -- registered long ago. It is reachable in play only for something newly
+created, and the failure is silent rather than corrupting.
+
+THE FIX, when someone wants it: arm the watch regardless and let the ContainerOpen retry once
+the object is addressable, or defer the open until registration completes. Either removes the
+race; neither is urgent.
+
+THE LESSON, which is the expensive part: "passes alone" was read as contention, then "fails on
+an idle box" as a hard defect. Both were inferences from a PASS/FAIL bit. The two log lines
+that actually explained it cost one scenario edit each and no build.

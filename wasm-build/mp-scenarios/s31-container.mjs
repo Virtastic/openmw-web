@@ -39,6 +39,20 @@ export default async function run(ctx) {
   // A opens (registers canonical contents = empty), puts the item in.
   await a.eval(`Module.__omwMPCmd='chest:open'`);
   await ctx.sleep(500);
+  // DID THE OPEN REGISTER AT ALL? This needs no engine change and splits the two remaining
+  // causes. objects.onActivate arms the container watch only if a contents snapshot could be
+  // read AND ContainerOpen could be addressed; on success the server answers with canonical
+  // state, so `containerData` gains a key for this chest and the mirror publishes it -- EMPTY,
+  // but present.
+  //
+  //   key present after open -> the open registered and the watch is armed; the PUT DIFF is
+  //                             what fails
+  //   key absent            -> ContainerOpen never landed, so nothing was ever watching, and
+  //                             the put was always going to be invisible
+  const openedKey = await a.eval(
+    `Object.prototype.hasOwnProperty.call(JSON.parse((window.__omwMP||{}).containerItems||"{}"), "n:${netId}")`);
+  ctx.log(`  after open, the chest is ${openedKey ? 'REGISTERED' : 'ABSENT'} in containerItems`
+    + ' (absent = ContainerOpen never landed, so no watch was ever armed)');
   await a.eval(`Module.__omwMPCmd='chest:put:${itemId}'`);
   const chestHas = (n) =>
     `(JSON.parse((window.__omwMP||{}).containerItems||"{}")["n:${netId}"]||{})[${JSON.stringify(itemId)}] === ${n}`
