@@ -47,6 +47,11 @@
 
 #include "vismask.hpp"
 
+#ifdef __EMSCRIPTEN__
+#include <atomic>
+#include <emscripten.h>
+#endif
+
 namespace MWRender
 {
 
@@ -822,6 +827,47 @@ namespace MWRender
         osg::ref_ptr<osg::Group> group = new osg::Group;
         osg::ref_ptr<osg::Group> mergeGroup = new osg::Group;
         osg::ref_ptr<Resource::TemplateMultiRef> templateRefs = new Resource::TemplateMultiRef;
+#ifdef __EMSCRIPTEN__
+        // F20 sizing probe. ObjectPaging ALREADY groups refs by source node (NodeMap above), which
+        // is the grouping drawElementsInstanced would need -- it just deep-clones per instance
+        // instead. So the entire payoff of F20 is the instance-count distribution: a group of size
+        // 1 cannot be instanced at all, and the win scales with how much mass sits in large groups.
+        // Publish it rather than assume it, then decide.
+        {
+            static std::atomic<uint64_t> sGroups{ 0 };
+            static std::atomic<uint64_t> sInstances{ 0 };
+            static std::atomic<uint64_t> sSingleton{ 0 };   // groups with exactly 1 instance
+            static std::atomic<uint64_t> sInstIn5Plus{ 0 }; // instances living in groups of >= 5
+            static std::atomic<uint64_t> sMaxGroup{ 0 };
+            for (const auto& pair : nodes)
+            {
+                const uint64_t n = pair.second.mInstances.size();
+                sGroups.fetch_add(1, std::memory_order_relaxed);
+                sInstances.fetch_add(n, std::memory_order_relaxed);
+                if (n == 1)
+                    sSingleton.fetch_add(1, std::memory_order_relaxed);
+                if (n >= 5)
+                    sInstIn5Plus.fetch_add(n, std::memory_order_relaxed);
+                uint64_t prev = sMaxGroup.load(std::memory_order_relaxed);
+                while (n > prev && !sMaxGroup.compare_exchange_weak(prev, n, std::memory_order_relaxed))
+                    ;
+            }
+            EM_ASM({
+                var s = {};
+                s.groups = $0;
+                s.instances = $1;
+                s.singletonGroups = $2;
+                s.instancesInGroups5Plus = $3;
+                s.maxGroup = $4;
+                window.__omwPagingStats = s;
+            },
+                static_cast<double>(sGroups.load(std::memory_order_relaxed)),
+                static_cast<double>(sInstances.load(std::memory_order_relaxed)),
+                static_cast<double>(sSingleton.load(std::memory_order_relaxed)),
+                static_cast<double>(sInstIn5Plus.load(std::memory_order_relaxed)),
+                static_cast<double>(sMaxGroup.load(std::memory_order_relaxed)));
+        }
+#endif
         osgUtil::StateToCompile stateToCompile(0, nullptr);
         CopyOp copyop(activeGrid, copyMask);
         for (const auto& pair : nodes)
