@@ -315,6 +315,14 @@
  //  - powerPreference:'high-performance' (A2): pick the discrete GPU on dual-GPU machines.
  (function(){
    var orig = HTMLCanvasElement.prototype.getContext;
+   // F10 SPIKE DIAGNOSTIC (?ctxtrace=1): under -sPROXY_TO_PTHREAD the game canvas is transferred
+   // to the worker, and SOMETHING on the main thread still calls getContext on it, which throws
+   // 'Cannot get context from a canvas that has transferred its control to offscreen'. The
+   // message names no caller, so capture one. Reading the SDL2 port narrowed it to two sites and
+   // ruled one out: SDL_emscriptenmouse.c builds its cursor on a FRESH document.createElement
+   // canvas (innocent), while SDL_emscriptenframebuffer.c:82 does
+   // Browser.createContext(Module['canvas'], false, true) on the GAME canvas. This says which.
+   var CTX_TRACE = /[?&]ctxtrace=1/.test(location.search);
    HTMLCanvasElement.prototype.getContext = function(type, attrs){
      if (type === 'webgl2' || type === 'webgl' || type === 'experimental-webgl'){
        attrs = attrs || {};
@@ -328,6 +336,13 @@
            && (attrs.powerPreference == null || attrs.powerPreference === 'default'))
          attrs.powerPreference = 'high-performance';
        // desynchronized disabled — suspected first-frame hang in headless preview.
+     }
+     if (CTX_TRACE) {
+       // Console is useless here: the status line logs every frame and evicts anything older.
+       try { (globalThis.__ctxTrace = globalThis.__ctxTrace || []).push({
+         type: type,
+         gameCanvas: this === document.getElementById('canvas'),
+         stack: new Error().stack }); } catch(e){}
      }
      var ctx = orig.call(this, type, attrs);
      // Enable EXT_texture_filter_anisotropic on the context: WebGL2 reports it in the extension
