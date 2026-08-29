@@ -38,6 +38,22 @@ fi
 EMSDK_BIN="${EMSDK_BIN:-/opt/homebrew/Cellar/emscripten/6.0.1/libexec}"
 SYSROOT="$EMSDK_BIN/cache/sysroot/lib/wasm32-emscripten"
 LIB="$ROOT/deps/wasm/lib"
+
+# GAME AUDIO GUARD. build-deps.sh:141 enables the mp3/vorbis/pcm decoders, but deps/wasm is
+# GITIGNORED -- so a checkout can have the right source and a libavcodec.a built before that
+# line existed. That is exactly what happened: the engine linked fine, booted fine, and every
+# sound failed with 'Failed to load audio ... Failed to open input' because
+# avcodec_find_decoder() returned null. FFmpegDecoder is the ONLY decoder OpenMW has, so this is
+# total silence, not degraded audio, and nothing in the build noticed for months.
+#
+# Cheap to check, so check: the symbol is either in the archive or it is not.
+if [ -f "$LIB/libavcodec.a" ] && ! grep -q ff_mp3_decoder "$LIB/libavcodec.a" 2>/dev/null; then
+  echo "!! deps/wasm/lib/libavcodec.a has no mp3 decoder -- THE GAME WILL BE SILENT." >&2
+  echo "   Staged deps predate build-deps.sh's --enable-decoder line. Rebuild just ffmpeg:" >&2
+  echo "     bash wasm-build/build-deps.sh ffmpeg" >&2
+  echo "   Verify with: grep -c ff_mp3_decoder deps/wasm/lib/libavcodec.a" >&2
+  echo "   Continuing -- a silent build is still a build, but you have been told." >&2
+fi
 INC="$ROOT/deps/wasm/include"
 # Force-included into every translation unit. These are build INPUTS, so they live in the
 # repo — they used to exist only in the maintainer's gitignored deps/wasm/include, which meant
