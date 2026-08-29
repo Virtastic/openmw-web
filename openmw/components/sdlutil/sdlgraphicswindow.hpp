@@ -14,6 +14,13 @@ namespace SDLUtil
     {
         SDL_Window* mWindow;
         SDL_GLContext mContext;
+#ifdef OPENMW_PROXY_GL
+        // F10: under -sPROXY_TO_PTHREAD the context is created by
+        // emscripten_webgl_create_context on this thread rather than by SDL, because SDL's
+        // emscripten backend creates GL through EGL bound to the MAIN-THREAD canvas. mContext
+        // stays null on that path; this is the real handle.
+        int mProxyGlContext = 0;
+#endif
 
         bool mValid;
         bool mRealized;

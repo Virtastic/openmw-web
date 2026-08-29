@@ -184,10 +184,10 @@ namespace MWGui
         if (std::getenv("OPENMW_MP_URL") != nullptr)
         {
             EM_ASM({
-                window.__omwAllowLeave = true;
+                globalThis.__omwAllowLeave = true;
                 if (typeof Module !== 'undefined')
                     Module.__omwRunning = false;
-                window.location.href = 'launcher.html#characters';
+                globalThis.location.href = 'launcher.html#characters';
             });
             return;
         }

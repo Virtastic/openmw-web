@@ -246,7 +246,7 @@ namespace MWGui
         // size -> ratio 1 -> GUI would shrink on retina), so read the explicit JS ratio instead.
         (void)dw;
         (void)w;
-        const double guiScale = EM_ASM_DOUBLE({ return window.__guiScale || 1.0; });
+        const double guiScale = EM_ASM_DOUBLE({ return globalThis.__guiScale || 1.0; });
         mScalingFactor = Settings::gui().mScalingFactor * static_cast<float>(guiScale > 0 ? guiScale : 1.0);
 #else
         mScalingFactor = Settings::gui().mScalingFactor * (w > 0 ? static_cast<float>(dw) / static_cast<float>(w) : 1.f);
@@ -1391,7 +1391,7 @@ namespace MWGui
         // is only refreshed on browser resize, not tier change, so it's stale here). Self-consistent
         // with the boot formula: at boot x==__renderW and __guiScale==__renderW/innerWidth, so no jump.
         {
-            const double cssW = EM_ASM_DOUBLE({ return window.innerWidth || 1; });
+            const double cssW = EM_ASM_DOUBLE({ return globalThis.innerWidth || 1; });
             const float ratio = cssW > 0.0 ? static_cast<float>(x / cssW) : 1.f;
             mScalingFactor = Settings::gui().mScalingFactor * ratio;
             mGuiPlatform->getRenderManagerPtr()->setScalingFactor(mScalingFactor);

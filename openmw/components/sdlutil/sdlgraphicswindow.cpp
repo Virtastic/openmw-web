@@ -1,6 +1,9 @@
 #include "sdlgraphicswindow.hpp"
 
 #include <SDL_video.h>
+#ifdef OPENMW_PROXY_GL
+#include <emscripten/html5_webgl.h>
+#endif
 
 #ifdef OPENMW_GL4ES_MANUAL_INIT
 #include "gl4esinit.h"
@@ -127,12 +130,76 @@ namespace SDLUtil
         SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, minor);
 #endif
 
+#ifdef OPENMW_PROXY_GL
+        // F10: create the WebGL context OURSELVES against the OffscreenCanvas, on this thread.
+        //
+        // SDL2's emscripten backend creates GL through EGL, and emscripten's EGL is hard-wired to
+        // the MAIN-THREAD canvas. Proven by stack trace under -sPROXY_TO_PTHREAD:
+        //     _eglCreateContext -> Browser.createContext -> getContext  (on the game canvas)
+        // which throws 'Cannot get context from a canvas that has transferred its control to
+        // offscreen' the moment the canvas belongs to the worker. There is no OffscreenCanvas
+        // support anywhere in SDL2's src/video/emscripten, so this cannot be configured around.
+        //
+        // THE FOUR ATTRIBUTES BELOW ARE NOT DEFAULTS -- they are the play/index.html getContext
+        // wrapper, which patches HTMLCanvasElement.prototype and therefore does NOTHING for a
+        // context created here. Each fixes a real bug and must travel with the context:
+        //   alpha=false            an alpha canvas composites the PAGE BACKGROUND through any
+        //                          fragment with dst-alpha<1 -- halos on particles, weather and
+        //                          GUI edges -- and treats pixels as premultiplied while OpenMW
+        //                          blends straight alpha. Desktop renders opaque; so must we.
+        //   powerPreference=high   dual-GPU laptops otherwise render on the iGPU.
+        //   antialias=false        OpenMW does its own AA; the default would cost a resolve.
+        //   depth/stencil          OSG expects a packed depth-stencil target.
+        // The two getExtension() calls the wrapper also made (EXT_texture_filter_anisotropic,
+        // EXT_color_buffer_float) are enabled after makeCurrent below, for the same reason.
+        EmscriptenWebGLContextAttributes attrs;
+        emscripten_webgl_init_context_attributes(&attrs);
+        attrs.majorVersion = 2; // WebGL2 == GLES 3.0, which is what the engine targets
+        attrs.minorVersion = 0;
+        attrs.alpha = EM_FALSE;
+        attrs.premultipliedAlpha = EM_FALSE;
+        attrs.antialias = EM_FALSE;
+        attrs.depth = EM_TRUE;
+        attrs.stencil = EM_TRUE;
+        attrs.powerPreference = EM_WEBGL_POWER_PREFERENCE_HIGH_PERFORMANCE;
+        // Render into the canvas this thread owns. With -sOFFSCREENCANVASES_TO_PTHREAD=#canvas
+        // the transfer already happened; we are just naming the same target.
+        attrs.explicitSwapControl = EM_FALSE;
+        const EMSCRIPTEN_WEBGL_CONTEXT_HANDLE ctx = emscripten_webgl_create_context("#canvas", &attrs);
+        if (ctx <= 0)
+        {
+            OSG_FATAL << "Error: emscripten_webgl_create_context failed for #canvas (handle "
+                      << ctx << "). Under PROXY_TO_PTHREAD the canvas must have been transferred"
+                         " with -sOFFSCREENCANVASES_TO_PTHREAD." << std::endl;
+            return;
+        }
+        if (emscripten_webgl_make_context_current(ctx) != EMSCRIPTEN_RESULT_SUCCESS)
+        {
+            OSG_FATAL << "Error: emscripten_webgl_make_context_current failed" << std::endl;
+            return;
+        }
+        // See the attribute note above: these two were enabled by the index.html wrapper.
+        // EXT_texture_filter_anisotropic -- WebGL2 advertises anisotropy in the extension string,
+        // so OSG believes it usable, but GL_TEXTURE_MAX_ANISOTROPY_EXT is only ACCEPTED after
+        // getExtension(); without this glTexParameterf raises GL_INVALID_ENUM.
+        // EXT_color_buffer_float -- makes RGBA16F/32F colour-renderable, else post-processing
+        // float targets are FBO-incomplete and render black.
+        emscripten_webgl_enable_extension(ctx, "EXT_texture_filter_anisotropic");
+        emscripten_webgl_enable_extension(ctx, "EXT_color_buffer_float");
+        mProxyGlContext = ctx;
+        // SDL still owns the window (input, sizing); it just does not own the GL context.
+        mContext = nullptr;
+#else
         mContext = SDL_GL_CreateContext(mWindow);
+#endif
+#ifndef OPENMW_PROXY_GL
+        // Proxy path deliberately leaves mContext null: SDL owns the window, not the context.
         if (!mContext)
         {
             OSG_FATAL << "Error: Unable to create OpenGL graphics context: " << SDL_GetError() << std::endl;
             return;
         }
+#endif
 
 #ifdef OPENMW_GL4ES_MANUAL_INIT
         openmw_gl4es_init(mWindow);
@@ -200,7 +267,12 @@ namespace SDLUtil
             return false;
         }
 
+#ifdef OPENMW_PROXY_GL
+        // The context is ours, not SDL's (see makeCurrentImplementation above).
+        return emscripten_webgl_make_context_current(mProxyGlContext) == EMSCRIPTEN_RESULT_SUCCESS;
+#else
         return SDL_GL_MakeCurrent(mWindow, mContext) == 0;
+#endif
     }
 
     bool GraphicsWindowSDL2::releaseContextImplementation()
@@ -211,7 +283,12 @@ namespace SDLUtil
             return false;
         }
 
+#ifdef OPENMW_PROXY_GL
+        // 0 is emscripten's "no context"; releasing is how OSG hands the thread off.
+        return emscripten_webgl_make_context_current(0) == EMSCRIPTEN_RESULT_SUCCESS;
+#else
         return SDL_GL_MakeCurrent(nullptr, nullptr) == 0;
+#endif
     }
 
     void GraphicsWindowSDL2::closeImplementation()
@@ -233,7 +310,13 @@ namespace SDLUtil
         if (!mRealized)
             return;
 
+#ifdef OPENMW_PROXY_GL
+        // With explicitSwapControl=false the browser presents when the frame callback returns,
+        // so there is nothing to swap -- and SDL_GL_SwapWindow would drive SDL's EGL, which does
+        // not own this context. Deliberately a no-op rather than an omission.
+#else
         SDL_GL_SwapWindow(mWindow);
+#endif
     }
 
     void GraphicsWindowSDL2::setSyncToVBlank(bool on)
