@@ -1743,14 +1743,29 @@
            // max lights: dynamic point lights evaluated per object. Higher = richer lit scenes but
            // more per-object shading cost. ?maxlights=N overrides (QA); default measured for 60fps.
            'max lights = ' + ((/[?&]maxlights=(\d+)/.exec(location.search)||[])[1] || '16') + '\n' +
-           // maximum light distance decides which objects come back with a NON-EMPTY light list —
-           // and a non-empty list is what makes LightListCallback allocate a StateSet and upload a
-           // full 16-mat4 LightBuffer (1KB) for that object, per camera pass, per frame. So this
-           // knob, not 'max lights', sets how many objects pay that cost. The engine default 8192
-           // was tuned for a 7168 view distance; ours is 16384, over far more geometry.
-           // Morrowind's point lights are lanterns and campfires with small authored radii, so a
-           // much shorter cull should be visually free. ?lightdist=N to sweep (QA).
-           'maximum light distance = ' + ((/[?&]lightdist=(\d+)/.exec(location.search)||[])[1] || '4096') + '\n' +
+           // F46 -- REVERTED 2026-08-29. Setting this to 4096 BREAKS s64-real-input, reliably.
+           //
+           // The reasoning still looks right: maximum light distance decides which objects come
+           // back with a NON-EMPTY light list, and a non-empty list is what makes
+           // LightListCallback allocate a StateSet and upload a 16-mat4 LightBuffer per object per
+           // camera pass per frame. The engine default 8192 was tuned for a 7168 view distance and
+           // ours is 16384, so a shorter cull should have been close to visually free.
+           //
+           // It is not free. With this line at 4096 the s64 real-keypress test fails 3/3 (~54s,
+           // pose unchanged); with the line absent it passes 3/3 (~89s), everything else on the
+           // branch held identical. Isolated by reverting the whole settings block to the dev
+           // values (PASS 3/3) and then re-adding ONLY this line (FAIL 3/3).
+           //
+           // The key is valid -- settings-default.cfg:501, [Shaders] maximum light distance,
+           // default 8192 -- so this is a real behavioural effect and not a parse error. I could
+           // not demonstrate the mechanism from the browser side and am NOT guessing at one: the
+           // scenario reports that keys reach the engine (onKeyPress sees them) while bound
+           // actions never fire. Anyone re-attempting this owes that explanation first, and must
+           // re-run s64 -- most scenarios move the player with the harness's walk: command, which
+           // bypasses bindings entirely, so a green suite does NOT prove a player can move.
+           //
+           // ?lightdist=N still sweeps it for measurement.
+           'maximum light distance = ' + ((/[?&]lightdist=(\d+)/.exec(location.search)||[])[1] || '8192') + '\n' +
            // Per-pixel lighting: MW geometry is low-poly, so per-VERTEX lighting looks faceted
            // (flat-shaded walls, banding on terrain). Per-pixel smooths the gradients across each
            // face. Pure fragment-shader path (already GLES-ported); fill cost is bounded by
@@ -3380,13 +3395,28 @@
          // MessageChannel, which is NOT throttled in a background tab — an unpaced background
          // MessageChannel loop pins a CPU core at 100% for a tab nobody is looking at.
          //
-         // F42: this used to post a MessageChannel message FROM the rAF callback and do the frame
-         // in the message handler, which meant the engine's GL submission landed in a macrotask
-         // dispatched AFTER the vsync-aligned slot the compositor was waiting on — de-aligning
-         // exactly what rAF was there to align, and costing a frame of input-to-photon. The
-         // MessageChannel is only needed for the hidden case, which is already its own branch.
+         // F42 -- REVERTED 2026-08-29, and DO NOT RE-APPLY without re-running s64-real-input.
+         //
+         // The idea was sound on paper: posting a MessageChannel message from the rAF callback
+         // and doing the frame in the message handler puts GL submission in a macrotask AFTER
+         // the vsync-aligned slot, de-aligning what rAF is there to align. So this ran the frame
+         // directly inside rAF instead.
+         //
+         // IT BREAKS REAL KEYBOARD INPUT. s64-real-input asserts that a real W keypress moves the
+         // player, and with the frame inside rAF the pose does not change at all -- which is the
+         // reported "cannot attack" fault, because bound actions never fire. Proven by isolation:
+         // applying ONLY this one line to an otherwise-unmodified origin/dev build reproduces the
+         // failure with a byte-identical before/after pose, and origin/dev passes s64.
+         //
+         // WHY: emscripten's SDL queues DOM key events as tasks. Running the frame synchronously
+         // inside the rAF callback drains the queue BEFORE the browser dispatches the pending
+         // keydown/keyup, so the engine sees no input. The MessageChannel hop is what lets those
+         // events land first -- it is load-bearing, not an accident, which is what the finding
+         // assumed it was.
+         //
+         // The latency claim was never measured; the input regression is. Keep the hop.
          if (document.hidden) setTimeout(function(){ mc.port2.postMessage(0); }, 33);
-         else requestAnimationFrame(pumpFrame);
+         else requestAnimationFrame(function(){ mc.port2.postMessage(0); });
        }
        function pumpFrame(){
          scheduled = false;
