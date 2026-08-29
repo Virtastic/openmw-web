@@ -255,7 +255,7 @@ namespace Gui
         loadFonts();
         const double fontMs = std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::steady_clock::now() - fontBegin).count() / 1000.0;
-        EM_ASM({ window.__omwFontMs = $0; }, fontMs);
+        EM_ASM({ globalThis.__omwFontMs = $0; }, fontMs);
 #else
         loadFonts();
 #endif

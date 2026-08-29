@@ -117,4 +117,7 @@ openmw-oblivion-wt/
 # ICU data package, copied from the emsdk cache by link-openmw.sh (~28MB of upstream output).
 fsroot/icu/
 render-check-*.png
+# Same class: local render/minimap debug captures dropped in the repo root by scenarios and
+# by hand during investigation. Artifacts of looking at something, not inputs to anything.
+minimap-*.png
 .localbuild/

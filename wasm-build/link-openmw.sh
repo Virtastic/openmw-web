@@ -166,6 +166,12 @@ ninja apps/openmw/CMakeFiles/openmw.dir/main.cpp.o
   `# halved. wasm32 addresses 4GB and Chrome supports it, so take the other half.` \
   -sMAXIMUM_MEMORY=4294967296 \
   -sASSERTIONS=0 -sMALLOC=mimalloc \
+  `# F10 SPIKE (OMW_PROXY=1): run main() -- and therefore the whole engine -- on a pthread` \
+  `# instead of the browser main thread. The gate for this is answered (play/f10-gate.html):` \
+  `# a real blocking Atomics.wait works off-main-thread, and WebGL2 on a transferred` \
+  `# OffscreenCanvas works on the real ANGLE D3D11 path. Behind an env flag so the default` \
+  `# build is untouched while this is being brought up.` \
+  ${OMW_PROXY:+-sPROXY_TO_PTHREAD -sOFFSCREENCANVAS_SUPPORT=1 -sOFFSCREENCANVASES_TO_PTHREAD=#canvas} \
   -sENVIRONMENT=web,worker \
   ${OMW_PROFILING:+--profiling-funcs} \
   ${OMW_CLOSURE:+--closure=1} \

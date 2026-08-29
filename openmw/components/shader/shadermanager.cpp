@@ -923,10 +923,10 @@ namespace Shader
                     key += "|" + k + "=" + v;
                 // clang-format off
                 EM_ASM({
-                    var list = window.__omwShaderKeys || [];
+                    var list = globalThis.__omwShaderKeys || [];
                     list.push(UTF8ToString($0));
-                    window.__omwShaderKeys = list;
-                    window.__omwShaderMisses = $1;
+                    globalThis.__omwShaderKeys = list;
+                    globalThis.__omwShaderMisses = $1;
                 }, key.c_str(), sMisses);
                 // clang-format on
             }

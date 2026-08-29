@@ -487,7 +487,7 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                     keys += '\n';
                 }
                 const bool engineOn = stats->collectStats("engine");
-                EM_ASM({ window.__omwPhaseKeys = UTF8ToString($0); window.__omwPhaseEngineOn = !!$1; },
+                EM_ASM({ globalThis.__omwPhaseKeys = UTF8ToString($0); globalThis.__omwPhaseEngineOn = !!$1; },
                     keys.c_str(), engineOn ? 1 : 0);
             }
 
@@ -499,17 +499,17 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
             // NB: no comma inside the EM_ASM code block — the C preprocessor would split it as a
             // macro argument. Build the object with separate statements instead.
             EM_ASM({
-                window.__omwPhase = {};
-                window.__omwPhase.cull = $0;
-                window.__omwPhase.draw = $1;
-                window.__omwPhase.physics = $2;
-                window.__omwPhase.mechanics = $3;
-                window.__omwPhase.world = $4;
-                window.__omwPhase.lua = $5;
-                window.__omwPhase.gui = $6;
-                window.__omwPhase.input = $7;
-                window.__omwPhase.sound = $8;
-                window.__omwPhase.script = $9;
+                globalThis.__omwPhase = {};
+                globalThis.__omwPhase.cull = $0;
+                globalThis.__omwPhase.draw = $1;
+                globalThis.__omwPhase.physics = $2;
+                globalThis.__omwPhase.mechanics = $3;
+                globalThis.__omwPhase.world = $4;
+                globalThis.__omwPhase.lua = $5;
+                globalThis.__omwPhase.gui = $6;
+                globalThis.__omwPhase.input = $7;
+                globalThis.__omwPhase.sound = $8;
+                globalThis.__omwPhase.script = $9;
             },
                 cull * 1000.0, draw * 1000.0, sub("physics_time_taken"), sub("mechanics_time_taken"),
                 sub("world_time_taken"), (sub("lua_time_taken") + sub("luasyncupdate_time_taken")), sub("gui_time_taken"),
@@ -663,10 +663,10 @@ void OMW::Engine::createWindow()
     // persisted by the pre-scale scheme must not shrink the canvas — that would blur the GUI.
     // clang-format off
     const int width = EM_ASM_INT({
-        return Math.max(320, Math.round(window.__renderW || ((window.innerWidth || 1280) * (window.devicePixelRatio || 1))));
+        return Math.max(320, Math.round(globalThis.__renderW || ((globalThis.innerWidth || 1280) * (globalThis.devicePixelRatio || 1))));
     });
     const int height = EM_ASM_INT({
-        return Math.max(240, Math.round(window.__renderH || ((window.innerHeight || 720) * (window.devicePixelRatio || 1))));
+        return Math.max(240, Math.round(globalThis.__renderH || ((globalThis.innerHeight || 720) * (globalThis.devicePixelRatio || 1))));
     });
     // clang-format on
     Settings::video().mResolutionX.set(width);
@@ -1550,9 +1550,9 @@ void OMW::Engine::go()
                 // IDBFS state and hand the page a clear end-of-session overlay (__omwOnQuit).
                 // clang-format off
                 EM_ASM({
-                    try { if (window.__omwSyncfs) window.__omwSyncfs(); else if (typeof FS !== 'undefined' && FS.syncfs) FS.syncfs(false, function(){}); } catch(e){}
+                    try { if (globalThis.__omwSyncfs) globalThis.__omwSyncfs(); else if (typeof FS !== 'undefined' && FS.syncfs) FS.syncfs(false, function(){}); } catch(e){}
                     try { Module.__omwRunning = 0; } catch(e){}
-                    try { if (window.__omwOnQuit) window.__omwOnQuit(); } catch(e){}
+                    try { if (globalThis.__omwOnQuit) globalThis.__omwOnQuit(); } catch(e){}
                 });
                 // clang-format on
                 g_emTick = nullptr; // stop future pump ticks

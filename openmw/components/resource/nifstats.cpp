@@ -63,7 +63,7 @@ namespace Resource
             s.textureMs = $8;
             s.textureCount = $9;
             s.totalMs = $0 + $1 + $2;
-            window.__omwNifStats = s;
+            globalThis.__omwNifStats = s;
         },
             parseMs, buildMs, bulletMs, parseN, buildN, bulletN, geomMs, geomN, texMs, texN);
     }

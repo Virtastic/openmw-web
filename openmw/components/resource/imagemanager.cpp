@@ -294,11 +294,11 @@ namespace Resource
                     // commas inside `{ a: $0, b: $1 }` would split it into extra macro arguments.
                     // clang-format off
                     EM_ASM({
-                        var s = window.__omwTexStats || {};
+                        var s = globalThis.__omwTexStats || {};
                         s.total = $0;
                         s.compressed = $1;
                         s.compressedNoMips = $2;
-                        window.__omwTexStats = s;
+                        globalThis.__omwTexStats = s;
                     }, sTotal, sCompressed, sCompressedNoMips);
                     // clang-format on
                 }

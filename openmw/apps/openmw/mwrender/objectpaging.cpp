@@ -859,7 +859,7 @@ namespace MWRender
                 s.singletonGroups = $2;
                 s.instancesInGroups5Plus = $3;
                 s.maxGroup = $4;
-                window.__omwPagingStats = s;
+                globalThis.__omwPagingStats = s;
             },
                 static_cast<double>(sGroups.load(std::memory_order_relaxed)),
                 static_cast<double>(sInstances.load(std::memory_order_relaxed)),
