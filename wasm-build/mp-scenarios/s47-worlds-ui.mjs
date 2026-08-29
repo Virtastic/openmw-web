@@ -92,6 +92,9 @@ export default async function run(ctx) {
     '--shared', ctx.serverDataDir,
     '--base-port', String(basePort),
     '--max-worlds', '4',
+    // Same as _gateway.mjs: [worlds] publicEnabled defaults to false, so a gateway that is not
+    // told to run a public world will not have one, and this scenario asserts one is up.
+    '--public-world', 'vvardenfell',
     // Worlds this gateway spawns must boot WITHOUT real game data, a peer binary or a
     // server password — a harness has none of those. server.mjs refuses on all three, so
     // every spawned world died and the scenario saw only an empty world list.
