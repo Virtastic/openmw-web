@@ -165,7 +165,7 @@ export async function sendMail(
 /** EHLO wants a hostname; the sender's domain is the closest honest thing we have. */
 function hostnameForEhlo(from: string): string {
   const at = from.lastIndexOf('@');
-  return at === -1 ? 'openmw-mp' : from.slice(at + 1) || 'openmw-mp';
+  return at === -1 ? 'openmw-web' : from.slice(at + 1) || 'openmw-web';
 }
 
 // ---------------------------------------------------------------------------------------
@@ -246,12 +246,12 @@ export function notifyEvent(cfg: NotifyConfig, event: string, fields: Record<str
       headers: { 'content-type': 'application/json' },
       // Slack, Discord and Mattermost all accept {text}; anything else gets the structured
       // fields alongside it and can pick what it wants.
-      body: JSON.stringify({ text: `openmw-mp: ${summary}`, event, ...fields }),
+      body: JSON.stringify({ text: `OpenMW-Web: ${summary}`, event, ...fields }),
     }).catch((err: unknown) => log('warn', 'notify.webhook_failed', { event, error: String(err) }));
   }
 
   if (cfg.host !== '' && cfg.to !== '') {
-    void sendMail(cfg, cfg.to, `openmw-mp: ${event}`, summary)
+    void sendMail(cfg, cfg.to, `OpenMW-Web: ${event}`, summary)
       .catch((err: unknown) => log('warn', 'notify.mail_failed', { event, error: String(err) }));
   }
 }

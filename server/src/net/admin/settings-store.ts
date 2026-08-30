@@ -102,7 +102,7 @@ function rotate(dataDir: string): void {
 
 function header(): string {
   return [
-    '# Written by the openmw-mp admin dashboard. Safe to delete: everything here is a',
+    '# Written by the OpenMW-Web admin dashboard. Safe to delete: everything here is a',
     '# layer ON TOP of your own config.toml, which the dashboard never edits.',
     '#',
     '# Comments you add to THIS file will be lost on the next dashboard save. Put anything',

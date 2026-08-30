@@ -60,7 +60,7 @@ export function verifyTotp(secret: string, token: string): boolean {
 }
 
 /** otpauth:// URI an authenticator app scans as a QR code. */
-export function totpUri(secret: string, account: string, issuer = 'openmw-mp'): string {
+export function totpUri(secret: string, account: string, issuer = 'OpenMW-Web'): string {
   return `otpauth://totp/${encodeURIComponent(`${issuer}:${account}`)}` +
     `?secret=${secret}&issuer=${encodeURIComponent(issuer)}&algorithm=SHA1&digits=6&period=30`;
 }

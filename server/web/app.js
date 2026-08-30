@@ -675,7 +675,7 @@ function waitForRestart() {
 // login
 // ---------------------------------------------------------------------------------------
 function pageLogin(totpRequired = false, notice = '') {
-  setTitle('Sign in', 'Administration for this openmw-mp server.');
+  setTitle('Sign in', 'Administration for this OpenMW-Web server.');
   view().innerHTML = html`
     <div class="vt-wizard" style="max-width:24rem">
       ${raw(notice ? html`<div class="alert alert-info">${notice}</div>` : '')}
@@ -1606,7 +1606,7 @@ async function pageMaintenance() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `openmw-mp-backup-${new Date().toISOString().slice(0, 10)}.tar.gz`;
+    a.download = `openmw-web-backup-${new Date().toISOString().slice(0, 10)}.tar.gz`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -1680,13 +1680,13 @@ async function pageHelp() {
               '<a href="#settings">Settings</a> and save again.'))}
             ${raw(faq('I am locked out &mdash; forgotten password, no email set up',
               'On the machine running the server:<br>' +
-              '<code>docker compose run --rm openmw-mp node dist/server.mjs --data /data --admin-reset &lt;name&gt;</code>' +
+              '<code>docker compose run --rm openmw-web node dist/server.mjs --data /data --admin-reset &lt;name&gt;</code>' +
               '<br>That clears the password and two-factor on that account and prints a temporary ' +
               'password. Requires shell access to the box, which is the point.'))}
             ${raw(faq('Where are the logs?',
               'Recent activity is on the <a href="#logs">Logs</a> page. A longer history survives ' +
               'restarts and crashes in <code>logs/server.log</code> inside your data folder, and ' +
-              '<code>docker compose logs openmw-mp</code> shows the container\'s own output.'))}
+              '<code>docker compose logs openmw-web</code> shows the container\'s own output.'))}
           </dl>
         </div></div>
       </div>

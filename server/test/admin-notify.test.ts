@@ -178,7 +178,7 @@ test('a webhook fires only for events on the operator list', async (t) => {
   const payload = received[0] as { text: string; event: string; account: string };
   assert.equal(payload.event, 'admin.account_deleted');
   assert.equal(payload.account, 'someone');
-  assert.match(payload.text, /openmw-mp/, 'chat services render {text}');
+  assert.match(payload.text, /OpenMW-Web/, 'chat services render {text}');
 });
 
 test('a dead webhook never throws into the caller', async () => {

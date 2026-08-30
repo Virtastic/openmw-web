@@ -10,7 +10,7 @@
 # copying them for your own box will not work. This file is the one for you.
 #
 # WHAT RUNS HERE
-#   openmw-mp   the multiplayer server, and the admin dashboard at /admin
+#   openmw-web  the server itself, and the admin dashboard at /admin
 #   caddy       HTTPS in front of it (automatic certificates when you have a domain)
 #
 # WHAT DOES NOT RUN HERE
@@ -21,25 +21,29 @@
 #   you use; the server is the part you host.
 
 services:
-  openmw-mp:
-    # A PUBLISHED IMAGE, not a local build, and the reason matters.
+  openmw-web:
+    # BUILT LOCALLY. Nothing is pulled from a registry and nothing is published.
     #
-    # The server runs its own headless copy of the OpenMW engine to simulate NPCs, and
-    # refuses to start without it. That binary is compiled from the engine source in this
-    # repo — a long build that wants a lot of memory — so making every self-hoster do it
-    # would turn "running in two minutes" into an afternoon, on a machine that may not have
-    # the RAM for it. The release workflow builds it once and publishes it here.
+    # Two images are possible here and they are not interchangeable:
     #
-    # `build` is kept as a fallback: if the registry is unreachable or you are running a
-    # modified checkout, `docker compose build` produces the same image locally. Expect it
-    # to take a while.
-    image: ghcr.io/virtastic/openmw-mp:latest
-    pull_policy: missing
+    #   server/Dockerfile            (this one) builds in about a minute. The server, the
+    #                                admin dashboard, everything except a compiled OpenMW.
+    #                                Without that engine it cannot simulate a world, so it
+    #                                serves the dashboard and refuses players — which is
+    #                                exactly what you want while setting things up.
+    #
+    #   server/Dockerfile.simpeer    --target tier2, from the repo root. Same server plus a
+    #                                headless OpenMW compiled from source, which is what
+    #                                actually lets players in. That compile is long and
+    #                                memory-hungry; see the notes in that file.
+    #
+    # Start with this one. Switch the build block below to the simpeer file when you want a
+    # world people can actually join.
     build:
-      context: .
-      dockerfile: server/Dockerfile.simpeer
-      target: tier2
-    container_name: openmw-mp
+      context: ./server
+      dockerfile: Dockerfile
+    image: openmw-web:local
+    container_name: openmw-web
     # The image's own default starts the multi-world gateway, which is how the hosted
     # platform runs. A self-hosted box wants one world, so this entrypoint picks the mode
     # from <data>/.mode instead — and the dashboard can switch between them with a restart.
@@ -94,10 +98,10 @@ services:
 
   caddy:
     image: caddy:2-alpine
-    container_name: openmw-mp-caddy
+    container_name: openmw-web-caddy
     restart: unless-stopped
     depends_on:
-      - openmw-mp
+      - openmw-web
     ports:
       - "80:80"
       - "443:443"

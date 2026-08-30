@@ -23,7 +23,7 @@ test('session flow end to end', async (t) => {
     const a = await TestClient.connect(server.port);
     a.hello();
     const helloOk = await a.waitJson('SessionHelloOk');
-    assert.equal(helloOk['serverName'], 'openmw-mp');
+    assert.equal(helloOk['serverName'], 'OpenMW-Web server');
     assert.equal(helloOk['contentPolicy'], 'names');
     a.register('Alice', 'correct horse');
     const w = await a.waitJson('SessionWelcome');
@@ -38,7 +38,7 @@ test('session flow end to end', async (t) => {
     assert.deepEqual(list.value, { players: [{ id: w['playerId'], name: 'Alice' }] });
     // motd plugin proves the hook bus.
     const motd = await a.waitEvent('ChatMessage');
-    assert.deepEqual(motd.value, { channel: 'server', text: 'Welcome to openmw-mp.' });
+    assert.deepEqual(motd.value, { channel: 'server', text: 'Welcome.' });
 
     await tt.test('second player joins; chat round-trips as LSER events', async () => {
       const b = await TestClient.connect(server.port);

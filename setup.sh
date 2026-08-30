@@ -2,7 +2,7 @@
 # Copyright (C) 2025-2026 Virtastic - https://virtastic.app
 # SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
 #
-# One-command setup for a self-hosted openmw-mp server, on macOS and Linux.
+# One-command setup for a self-hosted openmw-web server, on macOS and Linux.
 # Windows has setup.ps1 next to this file.
 #
 #   ./setup.sh            start the server and open the admin dashboard
@@ -179,10 +179,10 @@ STATUS=starting
 READY=no
 CONFIGURED=no
 while [ "$i" -lt 90 ]; do
-  RUNNING=$(docker inspect -f '{{.State.Running}}' openmw-mp 2>/dev/null || echo missing)
+  RUNNING=$(docker inspect -f '{{.State.Running}}' openmw-web 2>/dev/null || echo missing)
   if [ "$RUNNING" != true ]; then
     warn "The server stopped. Its last words:"
-    $DC logs --tail 30 openmw-mp
+    $DC logs --tail 30 openmw-web
     die "Server did not stay up. The log above says why."
   fi
   # -k because a self-signed certificate is the default here; this is a loopback request to
@@ -190,7 +190,7 @@ while [ "$i" -lt 90 ]; do
   if curl -skf -o /dev/null --max-time 3 "https://localhost/admin" 2>/dev/null; then
     READY=yes
     STATUS=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' \
-      openmw-mp 2>/dev/null || echo none)
+      openmw-web 2>/dev/null || echo none)
     [ "$STATUS" = healthy ] && CONFIGURED=yes
     break
   fi
@@ -202,10 +202,10 @@ printf '\n'
 
 if [ "$READY" != yes ]; then
   warn "The dashboard did not come up. Recent log:"
-  $DC logs --tail 20 openmw-mp
+  $DC logs --tail 20 openmw-web
   say ""
   say "The containers are running, so this may just be slow. Try https://localhost/admin"
-  say "in a moment, or run:  $DC logs -f openmw-mp"
+  say "in a moment, or run:  $DC logs -f openmw-web"
   exit 1
 fi
 
@@ -240,7 +240,7 @@ fi
 say "  The first thing it asks for is an administrator account. After that a short wizard"
 say "  sets the server up. Nothing else needs a terminal."
 say ""
-say "  Logs:    $DC logs -f openmw-mp"
+say "  Logs:    $DC logs -f openmw-web"
 say "  Stop:    ./setup.sh --stop"
 say "  Update:  ./setup.sh --update"
 say ""

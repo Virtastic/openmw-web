@@ -27,7 +27,7 @@ test('dashboard: page is public, api needs the bearer, unknown action refused', 
 
   const page = await fetch(`${base}/admin`);
   assert.equal(page.status, 200, 'the page itself does nothing without a token, so it is servable');
-  assert.match(await page.text(), /openmw-mp admin/);
+  assert.match(await page.text(), /OpenMW-Web admin/);
 
   assert.equal((await fetch(`${base}/admin/api/overview`)).status, 401, 'no token');
   assert.equal((await fetch(`${base}/admin/api/overview`, {

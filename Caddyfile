@@ -1,7 +1,7 @@
 # Copyright (C) 2025-2026 Virtastic - https://virtastic.app
 # SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
 #
-# HTTPS for a self-hosted openmw-mp server. Used by the root docker-compose.yml.
+# HTTPS for a self-hosted openmw-web server. Used by the root docker-compose.yml.
 #
 # Two modes, chosen by two variables the setup script writes into .env:
 #
@@ -60,7 +60,7 @@
 	handle {
 		# Tells the server it is behind HTTPS, which is how it decides whether cookies may
 		# carry the Secure flag. Caddy sets the header itself.
-		reverse_proxy openmw-mp:8080
+		reverse_proxy openmw-web:8080
 	}
 
 	log {

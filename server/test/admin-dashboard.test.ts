@@ -658,7 +658,7 @@ test('the dashboard page and its vendored assets are served', async (t) => {
   const { base } = await boot(t);
   const page = await fetch(`${base}/admin`);
   assert.equal(page.status, 200);
-  assert.match(await page.text(), /openmw-mp admin/);
+  assert.match(await page.text(), /OpenMW-Web admin/);
 
   for (const asset of ['app.js', 'app.css', 'vendor/adminlte.min.css', 'vendor/bootstrap.bundle.min.js']) {
     const r = await fetch(`${base}/admin/static/${asset}`);

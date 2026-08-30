@@ -8,8 +8,8 @@ Scratch notes for the first run-through, not documentation. Delete this file bef
 docker compose up -d
 ```
 
-That brings up two containers: `openmw-mp` (the server plus the dashboard) and
-`openmw-mp-caddy` (HTTPS in front of it). First start takes a few seconds.
+That brings up two containers: `openmw-web` (the server plus the dashboard) and
+`openmw-web-caddy` (HTTPS in front of it). First start takes a few seconds.
 
 Then open **https://localhost/admin**
 
@@ -29,7 +29,7 @@ Get it either way:
 ```bash
 cat data/setup-token
 # or
-docker compose logs openmw-mp | grep -A4 "FIRST-TIME SETUP"
+docker compose logs openmw-web | grep -A4 "FIRST-TIME SETUP"
 ```
 
 Or skip the copying and let the script do it:
@@ -65,7 +65,7 @@ explanation. Sign back in and you land on the dashboard.
 
 ## Expected state on a first run
 
-`docker compose ps` will show **openmw-mp as `unhealthy`**, and that is correct. With no
+`docker compose ps` will show **openmw-web as `unhealthy`**, and that is correct. With no
 Morrowind files the server cannot simulate a world, so it refuses players and reports
 itself unhealthy — while still serving the dashboard so you can fix it. It would be worse
 to exit, because then the page explaining the problem would be gone too.
@@ -89,7 +89,7 @@ Once real game data is in `gamedata/` and the container is restarted, it goes he
 ## If you get stuck
 
 ```bash
-docker compose logs -f openmw-mp        # what the server is doing
+docker compose logs -f openmw-web        # what the server is doing
 cat data/logs/server.log                # survives crashes and restarts
 docker compose down                     # stop; your data/ is kept
 ```
@@ -97,7 +97,7 @@ docker compose down                     # stop; your data/ is kept
 Locked out of the dashboard:
 
 ```bash
-docker compose run --rm openmw-mp node dist/server.mjs --data /data --admin-reset Michael
+docker compose run --rm openmw-web node dist/server.mjs --data /data --admin-reset Michael
 ```
 
 Prints a temporary password and clears two-factor on that account.

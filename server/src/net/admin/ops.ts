@@ -68,7 +68,7 @@ export async function exportDataDir(dataDir: string, res: ServerResponse): Promi
 
   res.writeHead(200, {
     'content-type': 'application/gzip',
-    'content-disposition': `attachment; filename="openmw-mp-backup-${stamp}.tar.gz"`,
+    'content-disposition': `attachment; filename="openmw-web-backup-${stamp}.tar.gz"`,
     'cache-control': 'no-store',
   });
   tar.stdout.pipe(res);

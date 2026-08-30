@@ -1,7 +1,7 @@
 # Copyright (C) 2025-2026 Virtastic - https://virtastic.app
 # SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
 #
-# One-command setup for a self-hosted openmw-mp server, on Windows.
+# One-command setup for a self-hosted openmw-web server, on Windows.
 # macOS and Linux have setup.sh next to this file.
 #
 #   .\setup.ps1            start the server and open the admin dashboard
@@ -186,17 +186,17 @@ public class OmwCertBypass {
 } catch { }
 
 for ($i = 0; $i -lt 90; $i++) {
-  $running = docker inspect -f '{{.State.Running}}' openmw-mp 2>$null
+  $running = docker inspect -f '{{.State.Running}}' openmw-web 2>$null
   if ($running -ne 'true') {
     Write-Warn "The server stopped. Its last words:"
-    Invoke-Compose logs --tail 30 openmw-mp
+    Invoke-Compose logs --tail 30 openmw-web
     Write-Fail "Server did not stay up. The log above says why."
   }
   try {
     $resp = Invoke-WebRequest -Uri 'https://localhost/admin' -UseBasicParsing -TimeoutSec 3 -ErrorAction Stop
     if ($resp.StatusCode -eq 200) {
       $ready = $true
-      $h = docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' openmw-mp 2>$null
+      $h = docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' openmw-web 2>$null
       if ($h -eq 'healthy') { $configured = $true }
       break
     }
@@ -208,10 +208,10 @@ Write-Host ''
 
 if (-not $ready) {
   Write-Warn "The dashboard did not come up. Recent log:"
-  Invoke-Compose logs --tail 20 openmw-mp
+  Invoke-Compose logs --tail 20 openmw-web
   Write-Host ""
   Write-Host "The containers are running, so this may just be slow. Try https://localhost/admin"
-  Write-Host "in a moment, or run:  $($DC -join ' ') logs -f openmw-mp"
+  Write-Host "in a moment, or run:  $($DC -join ' ') logs -f openmw-web"
   exit 1
 }
 
@@ -253,7 +253,7 @@ if (-not $domain) {
 Write-Host "  The first thing it asks for is an administrator account. After that a short wizard"
 Write-Host "  sets the server up. Nothing else needs a terminal."
 Write-Host ""
-Write-Host "  Logs:    $($DC -join ' ') logs -f openmw-mp"
+Write-Host "  Logs:    $($DC -join ' ') logs -f openmw-web"
 Write-Host "  Stop:    .\setup.ps1 -Stop"
 Write-Host "  Update:  .\setup.ps1 -Update"
 Write-Host ""

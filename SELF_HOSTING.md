@@ -206,7 +206,7 @@ That warning is expected, and the dashboard says so rather than leaving you gues
 **Locked out?** If you lose the only administrator password:
 
 ```bash
-docker compose run --rm openmw-mp node dist/server.mjs --data /data --admin-reset <name>
+docker compose run --rm openmw-web node dist/server.mjs --data /data --admin-reset <name>
 ```
 
 That clears the password and any two-factor on that account and prints a temporary one.
