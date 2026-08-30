@@ -220,10 +220,28 @@ then the game connects to nothing. Verify with an explicit upgrade, not a browse
 ```bash
 curl -i -N --http1.1 -H 'Connection: Upgrade' -H 'Upgrade: websocket' \
   -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' \
-  https://morrowind.dev.virtastic.app/w/vvardenfell        # expect 101
+  https://morrowind.dev.virtastic.app/w/vvardenfell        # 101 ONLY if that world is running
 ```
 
 HTTP/2 cannot carry a WebSocket upgrade — without `--http1.1` you get a misleading 404/502.
+
+**A 502 here is usually CORRECT, not a fault.** `[worlds] publicEnabled` is OFF by default and
+deliberately so (config.default.toml), and the gateway starts no world until a player creates
+their own — so `vvardenfell` does not exist on a default deployment and dialling it 502s. Verified
+on dev 2026-08-30: `/worlds` returns `{"worlds":[]}` and the gateway's own boot line reads
+`{"event":"gateway.start","publicEnabled":false,"publicWorlds":0}` while both containers are
+healthy. deploy-test.sh already encodes this ("NO WORLD AT BOOT IS A VALID STATE NOW... Reading it
+as broken failed a deploy of a perfectly good server").
+
+So check the CAUSE before calling it an outage:
+
+```bash
+curl -s https://morrowind.dev.virtastic.app/worlds          # [] = no world is running
+# on the test host: docker logs openmw-mp-test | grep gateway.start   # publicEnabled true/false
+```
+
+Expect 101 only when a public world is actually up — i.e. `publicEnabled = true`, or the gateway
+was started with `--public-world vvardenfell`.
 
 ### Simulation authority: one peer, every occupied cell
 
