@@ -1026,19 +1026,42 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // not an env var: an operator cannot reach it, so a real deployment can never opt out of
   // running its own simulation. This is not tier 1 returning through the back door — a server
   // built this way has no peer, so its cells simply have no holder.
-  if (!gameData.ok && opts.requireGameData !== false) {
+  //
+  // SETUP MODE is the one exception, and it is not a loophole in the above.
+  //
+  // A server nobody has configured yet is not "a broken world reporting itself healthy" —
+  // it is a server that has never claimed to have a world at all. Refusing to boot it means
+  // a fresh `docker compose up` dies before serving anything, so the operator cannot reach
+  // the page that would tell them what is missing: the failure and its own instructions are
+  // behind the same door. That is unusable for exactly the people self-hosting this.
+  //
+  // So: no dashboard owner yet AND no usable game data => come up with the admin surface and
+  // /healthz only, refuse every game connection with the reason, and say so loudly in the
+  // log. The moment setup is finished the exemption is gone, and a CONFIGURED server missing
+  // its data fails exactly as hard as before — which is the case the reasoning above is
+  // actually about.
+  const setupPending = !accounts.hasDashboardOwner();
+  const setupMode = setupPending && !gameData.ok && opts.requireGameData !== false;
+  if (setupMode) {
+    log('warn', 'server.setup_mode', {
+      reason: gameData.reason,
+      note: 'no game data and no admin account yet — serving /admin for setup only. '
+        + 'Players cannot connect until game data is in place and the server is restarted.',
+    });
+  }
+  if (!gameData.ok && opts.requireGameData !== false && !setupMode) {
     throw new Error(`no usable game data at ${gameDataDir(sharedDir)} — ${gameData.reason}. `
       + 'Drop your Morrowind Data Files (Morrowind.esm/.bsa, and Tribunal/Bloodmoon if you own '
       + 'them) there: the server simulates the world itself and needs its own copy.');
   }
   config.simPeer.binary = findPeerBinary(config.simPeer.binary);
-  if (!config.simPeer.binary && opts.requireGameData !== false) {
+  if (!config.simPeer.binary && opts.requireGameData !== false && !setupMode) {
     throw new Error('no sim-peer binary: set [simPeer].binary, or install the headless openmw '
       + 'build at one of the conventional paths. The server cannot simulate NPCs without it.');
   }
   // The peer is not a user and has no SSO identity, so the shared server password is its only
   // credential — and an empty one now refuses every system connection (see checkAuthGate).
-  if (config.server.password === '' && opts.requireGameData !== false) {
+  if (config.server.password === '' && opts.requireGameData !== false && !setupMode) {
     throw new Error('[server].password is empty — set one so the sim peer can authenticate. '
       + 'It is the peer\'s only credential, and an unset password refuses all peers.');
   }
@@ -1341,6 +1364,20 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       metrics.connRefused.inc({ reason: 'ip_cap' });
       if (ws.readyState === WebSocket.OPEN) ws.send(disconnectMsg('RATE', 'too many connections from your address'));
       ws.close(1008, 'RATE');
+      return;
+    }
+    // Setup mode: the admin surface is up so the operator can finish configuring, but there
+    // is no world to join yet. Saying so beats a connection that appears to work and then
+    // drops a player into cells nothing can simulate.
+    if (setupMode) {
+      log('info', 'conn.setup_mode_refused', { ip });
+      metrics.connRefused.inc({ reason: 'setup_mode' });
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(disconnectMsg('SHUTDOWN',
+          'this server has not been set up yet — the operator needs to add game data'));
+      }
+      ws.close(1013, 'SETUP');
+      ipTracker.release(ip);
       return;
     }
     // Maintenance mode, refused here for the same reason an IP ban is: before a roster slot,

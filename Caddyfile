@@ -1,0 +1,67 @@
+# Copyright (C) 2025-2026 Virtastic - https://virtastic.app
+# SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
+#
+# HTTPS for a self-hosted openmw-mp server. Used by the root docker-compose.yml.
+#
+# Two modes, chosen by two variables the setup script writes into .env:
+#
+#   SERVER_DOMAIN=mp.example.com   TLS_MODE=
+#       Caddy gets a real certificate from Let's Encrypt automatically. Point the domain's
+#       DNS at this machine and open ports 80 and 443; there is nothing else to do. This is
+#       the good path — a domain costs a few pounds a year and removes every warning.
+#
+#   SERVER_DOMAIN=                 TLS_MODE=tls internal
+#       Caddy serves a certificate it signed itself. Everything is still encrypted, but
+#       your browser will warn on the first visit because nothing independent vouches for
+#       that certificate. Expected, and the setup wizard says so rather than letting you
+#       find out alone.
+#
+# TLS_MODE is a variable rather than a fixed directive because "get a public certificate"
+# is the ABSENCE of a directive, not a different one — hardcoding `tls internal` here would
+# quietly override Let's Encrypt for people who did everything right.
+#
+# WebSockets need no special handling: reverse_proxy upgrades them on its own. Caddy also
+# redirects HTTP to HTTPS by itself for any site it terminates, so there is no :80 block.
+
+{
+	# Add `email you@example.com` if you want Let's Encrypt to warn you about renewal
+	# problems. Deliberately not required: needing an email address to start a game server
+	# is friction, and Caddy renews unattended regardless.
+	admin off
+}
+
+{$SERVER_DOMAIN:localhost} {
+	{$TLS_MODE:tls internal}
+
+	encode zstd gzip
+
+	root * /srv/client
+
+	# ONE ORIGIN, AND WHY IT MATTERS.
+	#
+	# The game page hands the server a session ticket, and it refuses to hand that ticket to
+	# a different hostname. So the client and the server cannot be split across two names —
+	# a separate mp.example.com simply will not work. Both are served from here.
+	#
+	# The rule is "a real file wins, everything else is the server". That needs no list of
+	# the server's paths, so it cannot drift as the server grows new ones, and it degrades
+	# correctly: with no client files staged, /srv/client is empty, nothing matches, and
+	# every request goes to the server — which is exactly right for a server-only host.
+	@static file
+	handle @static {
+		# The engine ships brotli siblings; serve them when the browser accepts them.
+		precompressed br gzip
+		file_server
+	}
+
+	handle {
+		# Tells the server it is behind HTTPS, which is how it decides whether cookies may
+		# carry the Secure flag. Caddy sets the header itself.
+		reverse_proxy openmw-mp:8080
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}

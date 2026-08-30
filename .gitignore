@@ -121,3 +121,10 @@ render-check-*.png
 # by hand during investigation. Artifacts of looking at something, not inputs to anything.
 minimap-*.png
 .localbuild/
+
+# Self-hosting stack working dirs (root docker-compose.yml). Operator data and their own
+# game files: never committed, same rule as play/mwdata/ and fsroot/gamedata/.
+/data/
+/gamedata/
+/client/
+/.env

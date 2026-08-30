@@ -135,14 +135,74 @@ Three consequences an operator must know up front:
 1. **The sim peer is mandatory.** The server refuses to boot without a usable `openmw`
    binary and game data. That means **you supply your own legally-owned Morrowind
    `Data Files` on the server** (never bundled, never distributed — see the licensing
-   notes below).
+   notes below). The one exception is a server nobody has configured yet: it starts in
+   setup mode so you can reach the admin dashboard, and refuses players until the data
+   is in place.
 2. **One origin.** The game page and the server share a hostname. The page refuses to
    hand its session ticket to a server on a different host, so a separate
    `mp.example.com` cannot work — you reverse-proxy the server's paths from the same
-   vhost that serves the game.
-3. **Sign-in is OAuth** (Google / Discord / Microsoft). You need at least one OAuth app;
-   [`docs/MULTIPLAYER-SETUP.md`](docs/MULTIPLAYER-SETUP.md) walks through creating one
+   vhost that serves the game. The quick start below sets that up for you.
+3. **Sign-in is OAuth** (Google / Discord / Microsoft) *or* a username and password —
+   both work, and one account can use either. If you want OAuth,
+   [`docs/MULTIPLAYER-SETUP.md`](docs/MULTIPLAYER-SETUP.md) walks through creating an app
    in about five minutes, plus the optional S3 storage locker.
+
+### Quick start (recommended)
+
+One command, then everything else happens in a browser. You need
+[Docker](https://docs.docker.com/get-started/get-docker/) and nothing else — no Node, no
+compiler, no editing TOML by hand.
+
+```bash
+git clone https://github.com/Virtastic/openmw-web.git
+cd openmw-web
+./setup.sh          # Windows: .\setup.ps1
+```
+
+The script checks Docker is installed and running, works out whether you have
+`docker compose` or the older `docker-compose`, warns you if something is already using
+ports 80 or 443, builds the server, waits for it to report itself healthy, and then opens
+the admin dashboard for you.
+
+The first screen asks you to create an administrator account. After that a short wizard
+covers the rest: single-player or multiplayer, how players sign in, which Morrowind
+content you are running, whether players bring their own game files or you supply them,
+whether the server is reachable from the internet, and where uploads are stored. Every
+answer is written to configuration you can review and change afterwards.
+
+**Copy your Morrowind files into `gamedata/`** next to `docker-compose.yml` — at minimum
+`Morrowind.esm` and `Morrowind.bsa`, plus `Tribunal`/`Bloodmoon` if you own them. The
+wizard shows you which files it found and which are missing. You can do this before or
+after running the script; the server starts either way and tells you what it needs.
+
+To serve the game client from the same host (which multiplayer requires), unpack a release
+zip into `client/`. Caddy serves those files at `/` and hands everything else to the
+server. Leave it empty to run server-only and point players at a client you host elsewhere.
+
+Useful afterwards:
+
+```bash
+./setup.sh --update    # pull a newer version and restart
+./setup.sh --stop      # stop everything; your data in ./data is kept
+```
+
+**HTTPS.** With a domain pointed at the machine, set `SERVER_DOMAIN` in `.env`, blank out
+`TLS_MODE`, and Caddy gets a real certificate automatically. Without one it serves a
+certificate it signed itself: still encrypted, but your browser warns on the first visit.
+That warning is expected, and the dashboard says so rather than leaving you guessing.
+
+**Locked out?** If you lose the only administrator password:
+
+```bash
+docker compose run --rm openmw-mp node dist/server.mjs --data /data --admin-reset <name>
+```
+
+That clears the password and any two-factor on that account and prints a temporary one.
+
+### The manual path
+
+Everything below sets the same thing up by hand. Use it if you want to run without Docker,
+or you are integrating with infrastructure you already have.
 
 ### Step by step
 

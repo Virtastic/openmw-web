@@ -1,0 +1,101 @@
+# Copyright (C) 2025-2026 Virtastic - https://virtastic.app
+# SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
+#
+# SELF-HOSTING STACK. Run ./setup.sh (macOS/Linux) or .\setup.ps1 (Windows) and it will
+# bring this up for you, or `docker compose up -d` if you prefer doing it by hand. Then
+# open the admin dashboard and the setup wizard walks you through the rest.
+#
+# This is NOT how morrowind.virtastic.app is deployed. That uses docker-compose.prod.yml
+# and infra/, which assume a shared edge proxy, prebuilt CI images and a specific VPS —
+# copying them for your own box will not work. This file is the one for you.
+#
+# WHAT RUNS HERE
+#   openmw-mp   the multiplayer server, and the admin dashboard at /admin
+#   caddy       HTTPS in front of it (automatic certificates when you have a domain)
+#
+# WHAT DOES NOT RUN HERE
+#   The game client itself. Players do not install anything — they open the web client in
+#   a browser and type in your server's address. Building the client from source needs a
+#   ~13 minute WebAssembly compile and a prepared toolchain image, so it is not part of a
+#   "get running in two minutes" setup. Point your players at whichever copy of the client
+#   you use; the server is the part you host.
+
+services:
+  openmw-mp:
+    build:
+      context: ./server
+    image: openmw-mp:local
+    container_name: openmw-mp
+    # THIS IS WHAT MAKES THE DASHBOARD'S RESTART BUTTON WORK. The server exits cleanly on
+    # SIGTERM and Docker starts it again; without this policy the button would stop the
+    # server and leave the operator with no way to bring it back from a browser.
+    restart: unless-stopped
+    volumes:
+      # Everything that must survive: accounts, characters, world state, the settings the
+      # dashboard writes, and logs.
+      - ./data:/data
+      # YOUR OWN MORROWIND FILES. Copy Morrowind.esm/.bsa (and Tribunal/Bloodmoon if you
+      # own them) into ./gamedata next to this file. Read-only: the server never modifies
+      # your game data. The dashboard's mod list controls load order without touching them.
+      - ./gamedata:/data/gamedata:ro
+    environment:
+      - NODE_ENV=production
+      # Object storage for player uploads, if you chose S3 in the setup wizard. Keys live
+      # in .env next to this file, never in the config the dashboard writes — so a settings
+      # backup can never carry your credentials.
+      - S3_ACCESS_KEY_ID=${S3_ACCESS_KEY_ID:-}
+      - S3_SECRET_ACCESS_KEY=${S3_SECRET_ACCESS_KEY:-}
+    expose:
+      - "8080"
+    # Ports are published by Caddy, not here, so the server is only reachable over HTTPS.
+    # To run without Caddy (a trusted LAN, or your own proxy in front), comment out the
+    # caddy service below and uncomment this:
+    # ports:
+    #   - "8080:8080"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+    # Keep the last few log files rather than growing without bound. The server also writes
+    # its own rotated log to data/logs/server.log, which survives the container being
+    # recreated — that is the copy to read after a crash.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: openmw-mp-caddy
+    restart: unless-stopped
+    depends_on:
+      - openmw-mp
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # The game client's static files, if you are serving them yourself. Unpack a release
+      # zip into ./client and Caddy serves it at / while the server keeps /admin and the
+      # rest — same hostname, which multiplayer REQUIRES (the page will not hand its session
+      # ticket to a different host). Leave it empty to run server-only.
+      - ./client:/srv/client:ro
+      # Certificates and account keys. Losing this means re-issuing certificates on every
+      # restart, which Let's Encrypt rate-limits — so it is a named volume, not a temp dir.
+      - caddy-data:/data
+      - caddy-config:/config
+    environment:
+      # Set SERVER_DOMAIN in .env once you have a domain pointed at this machine and Caddy
+      # will get a real certificate automatically. Left empty it serves a self-signed one,
+      # which works fine but makes browsers warn on the first visit.
+      - SERVER_DOMAIN=${SERVER_DOMAIN:-}
+      # Empty when a domain is set (so Let's Encrypt issues a public certificate), and
+      # "tls internal" when there is none. See the Caddyfile for why this is a variable.
+      - TLS_MODE=${TLS_MODE:-tls internal}
+
+volumes:
+  caddy-data:
+  caddy-config:

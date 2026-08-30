@@ -444,6 +444,47 @@ test('the dashboard page and its vendored assets are served', async (t) => {
   }
 });
 
+test('an unconfigured server starts in setup mode instead of refusing to boot', async (t) => {
+  // A server normally REFUSES to start without game data, because one that cannot run its
+  // own sim peer is a world whose NPCs never move while it reports itself healthy. But a
+  // brand-new install has no game data yet by definition, and dying at boot puts the
+  // failure and the page explaining it behind the same locked door.
+  //
+  // So: nobody has set this up AND there is no game data => come up for setup only.
+  // Note the absence of requireGameData:false here — that seam is what the other tests use,
+  // and using it would test nothing about this behaviour.
+  const dataDir = tmpDataDir();
+  const server = await startServer({ dataDir, port: 0, host: '127.0.0.1' });
+  t.after(() => server.close());
+  const base = `http://127.0.0.1:${server.port}`;
+
+  assert.equal((await fetch(`${base}/admin`)).status, 200, 'the setup page must be reachable');
+  const state = await (await fetch(`${base}/admin/api/state`)).json() as { firstRun: boolean };
+  assert.equal(state.firstRun, true);
+  assert.equal((await fetch(`${base}/healthz`)).status, 200);
+});
+
+test('setup mode ends once an owner exists, so a configured server fails loudly again', async (t) => {
+  // The exemption above must be exactly that — an exemption for the unconfigured case, not
+  // a permanent way to run a broken world. Once setup has happened, missing game data is
+  // back to being a hard boot failure.
+  const dataDir = tmpDataDir();
+  const first = await startServer({ dataDir, port: 0, host: '127.0.0.1' });
+  const created = await fetch(`http://127.0.0.1:${first.port}/admin/api/setup/owner`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(OWNER),
+  });
+  assert.equal(created.status, 200);
+  await first.close();
+
+  await assert.rejects(
+    () => startServer({ dataDir, port: 0, host: '127.0.0.1' }),
+    /no usable game data/,
+    'a configured server with no game data must refuse to start, as it always did',
+  );
+});
+
 test('/healthz is not swallowed by the admin gate', async (t) => {
   // The container healthcheck, the setup script's readiness poll and the restart flow all
   // depend on this answering without a credential.
