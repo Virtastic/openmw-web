@@ -15,6 +15,8 @@ import { QuestRepair } from './core/quest-repair';
 import { adminRoutes as adminDashboardRoutes } from './net/admin/routes';
 import { exportDataDir, summariseMetrics } from './net/admin/ops';
 import { orderedContent } from './net/admin/api-mods';
+import { ResetTokens, sendMail, notifyEvent, type MailConfig } from './net/admin/notify';
+import { passwordProblem } from './net/admin/auth';
 import { deleteAccount } from './persist/erase';
 import { PlayerStore } from './persist/playerstore';
 import { CellStore } from './persist/cellstore';
@@ -58,7 +60,7 @@ import { lockerRoutes } from './data/locker-routes';
 import { LockerSessionStore, AdminSessionStore } from './auth/identities';
 import { IpConnTracker, IpRateLimiter } from './net/ratelimit';
 import { disconnectMsg } from './proto/session';
-import { log, recentLogs } from './log';
+import { log, recentLogs, onLog } from './log';
 import { startTestBots } from './dev/testbots';
 import { metrics } from './metrics';
 import { SimPeerSupervisor } from './core/simpeer';
@@ -564,6 +566,38 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   });
   const lockerSessions = new LockerSessionStore();
   const adminSessions = new AdminSessionStore();
+  const resetTokens = new ResetTokens();
+  // Operational alerts ride the log stream the server already writes, filtered by the
+  // operator's [notifications].events list. Nothing is sent unless they configured it.
+  const unhookNotifier = onLog((entry) => {
+    const { ts, level, event, ...fields } = entry;
+    if (event.startsWith('notify.')) return; // never report on the reporter
+    notifyEvent({
+      ...mailCfg(),
+      to: config.notifications.to,
+      webhookUrl: config.notifications.webhookUrl,
+      events: config.notifications.events,
+    }, event, fields);
+  });
+
+  // Logged AFTER the notifier is wired up, deliberately: a dashboard-written config that
+  // failed to load means the settings an operator saved are silently not in effect, which
+  // is precisely the thing they must not discover by accident. Emitting it before the
+  // subscriber existed would have made it the one event that never notifies anyone.
+  if (config.dashboardFallback) {
+    log('error', 'admin.config_fallback', {
+      usedInstead: config.dashboardFallback,
+      note: 'settings saved in the dashboard did not load; an earlier version was used. '
+        + 'Review Settings and save again.',
+    });
+  }
+  const mailCfg = (): MailConfig => ({
+    host: config.notifications.smtpHost,
+    port: config.notifications.smtpPort,
+    user: config.notifications.smtpUser,
+    pass: config.notifications.smtpPass,
+    from: config.notifications.from,
+  });
   // Maintenance mode: set from the dashboard, read by the connection path. Process state
   // rather than config on purpose — it is a live operational switch, and it should not
   // survive the restart an operator performs to bring the server back up.
@@ -874,6 +908,48 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       process.kill(process.pid, 'SIGTERM');
     },
     exportData: async (res) => exportDataDir(opts.dataDir, res),
+
+    mailConfigured: () => config.notifications.smtpHost !== '',
+    sendPasswordReset: async (name) => {
+      // Every failure path here is silent BY DESIGN. The endpoint answers identically
+      // whether the account exists, has no address, or has no dashboard access, because a
+      // difference in any of those is an account-and-email enumeration oracle. The operator
+      // who typed their own name knows which it was; an attacker learns nothing.
+      try {
+        const account = await accounts.get(name);
+        if (!account?.email || !account.dashboardRole) return;
+        const token = resetTokens.mint(name.toLowerCase());
+        const base = config.locker.publicBase || `http://127.0.0.1:${port}`;
+        await sendMail(mailCfg(), account.email,
+          'Reset your openmw-mp admin password',
+          [
+            `Someone asked to reset the password for "${account.name}" on ${config.server.name}.`,
+            '',
+            'Open this link to choose a new one. It works once and expires in 30 minutes:',
+            `${base}/admin#reset=${token}`,
+            '',
+            'If this was not you, nothing has changed and you can ignore this message.',
+          ].join('\n'));
+        log('info', 'admin.reset_sent', { account: name.toLowerCase() });
+      } catch (err) {
+        log('warn', 'admin.reset_send_failed', { error: String(err) });
+      }
+    },
+    applyPasswordReset: async (token, password) => {
+      const accountKey = resetTokens.consume(token);
+      if (!accountKey) return { ok: false, message: 'that link has expired or was already used' };
+      const weak = passwordProblem(password, accountKey);
+      if (weak) return { ok: false, message: `password ${weak}` };
+      if (!await accounts.setPassword(accountKey, password)) {
+        return { ok: false, message: 'account not found' };
+      }
+      // Any session opened with the old password is no longer the person's session as far
+      // as we can tell, so end all of them.
+      adminSessions.revokeAccount(accountKey);
+      await accounts.flush();
+      log('warn', 'admin.password_reset', { account: accountKey });
+      return { ok: true, message: 'password changed — sign in with it now' };
+    },
     deleteAccount: async (key) => {
       // Erasure was written to run offline against a quiet data dir. Live, the risk is the
       // account store's write-behind flushing a cached copy back after the delete, so: cut
@@ -993,7 +1069,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       locker, sessions: lockerSessions,
       eraseSaves: (acct) => eraseSaves(sharedDir, acct, lockerStorage),
     }),
-  )));
+  )), () => (setupMode ? blockers : []));
   // Derived at scrape time from the roster, so no teardown path can strand the gauge.
   // humansInWorld, not inWorld: the sim peer is infrastructure. Counting it here would make
   // every world look like it has a player in it — the reason maxPlayers and the roster exclude
@@ -1027,43 +1103,46 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // running its own simulation. This is not tier 1 returning through the back door — a server
   // built this way has no peer, so its cells simply have no holder.
   //
-  // SETUP MODE is the one exception, and it is not a loophole in the above.
+  // SETUP MODE, and why it replaces refusing to boot.
   //
-  // A server nobody has configured yet is not "a broken world reporting itself healthy" —
-  // it is a server that has never claimed to have a world at all. Refusing to boot it means
-  // a fresh `docker compose up` dies before serving anything, so the operator cannot reach
-  // the page that would tell them what is missing: the failure and its own instructions are
-  // behind the same door. That is unusable for exactly the people self-hosting this.
+  // The rule above is right about the danger: a server with no peer must never look like a
+  // working world. It was wrong about the remedy. Dying at startup puts the problem and the
+  // only page that explains it behind the same door — a fresh `docker compose up` exits
+  // before serving anything, and an operator who finishes the setup wizard and presses
+  // Restart gets a container that crash-loops with the dashboard gone. Both observed.
   //
-  // So: no dashboard owner yet AND no usable game data => come up with the admin surface and
-  // /healthz only, refuse every game connection with the reason, and say so loudly in the
-  // log. The moment setup is finished the exemption is gone, and a CONFIGURED server missing
-  // its data fails exactly as hard as before — which is the case the reasoning above is
-  // actually about.
-  const setupPending = !accounts.hasDashboardOwner();
-  const setupMode = setupPending && !gameData.ok && opts.requireGameData !== false;
-  if (setupMode) {
-    log('warn', 'server.setup_mode', {
-      reason: gameData.reason,
-      note: 'no game data and no admin account yet — serving /admin for setup only. '
-        + 'Players cannot connect until game data is in place and the server is restarted.',
-    });
-  }
-  if (!gameData.ok && opts.requireGameData !== false && !setupMode) {
-    throw new Error(`no usable game data at ${gameDataDir(sharedDir)} — ${gameData.reason}. `
-      + 'Drop your Morrowind Data Files (Morrowind.esm/.bsa, and Tribunal/Bloodmoon if you own '
-      + 'them) there: the server simulates the world itself and needs its own copy.');
-  }
+  // Setup mode keeps the safety property and drops the self-lockout. When the world cannot
+  // be simulated the server comes up, serves ONLY the admin surface, refuses every game
+  // connection with the reason, logs it at error level, and reports itself UNHEALTHY so a
+  // healthcheck or a monitor still sees a broken server. Nothing about it claims to be a
+  // working world; it is a wrench you can reach, instead of a locked door.
+  //
+  // Note this is no longer conditional on whether setup has happened. Tying it to "no owner
+  // yet" meant completing the wizard armed the crash-loop for the very next restart, which
+  // is the worst possible moment. requireGameData:false remains the code-level seam the test
+  // suite uses; an operator still cannot reach it.
   config.simPeer.binary = findPeerBinary(config.simPeer.binary);
-  if (!config.simPeer.binary && opts.requireGameData !== false && !setupMode) {
-    throw new Error('no sim-peer binary: set [simPeer].binary, or install the headless openmw '
-      + 'build at one of the conventional paths. The server cannot simulate NPCs without it.');
+  const blockers: string[] = [];
+  if (!gameData.ok) {
+    blockers.push(`${gameData.reason} — copy your Morrowind Data Files (Morrowind.esm and `
+      + 'Morrowind.bsa at minimum) into the game data folder');
   }
-  // The peer is not a user and has no SSO identity, so the shared server password is its only
-  // credential — and an empty one now refuses every system connection (see checkAuthGate).
-  if (config.server.password === '' && opts.requireGameData !== false && !setupMode) {
-    throw new Error('[server].password is empty — set one so the sim peer can authenticate. '
-      + 'It is the peer\'s only credential, and an unset password refuses all peers.');
+  if (!config.simPeer.binary) {
+    blockers.push('no headless openmw binary found: set [simPeer].binary, or use an image '
+      + 'that includes one. The server simulates NPCs itself and cannot without it');
+  }
+  if (config.server.password === '') {
+    blockers.push('[server].password is empty — the sim peer authenticates with it, and an '
+      + 'empty one refuses every peer');
+  }
+  const setupMode = blockers.length > 0 && opts.requireGameData !== false;
+  if (setupMode) {
+    log('error', 'server.setup_mode', {
+      blockers,
+      note: 'The world cannot run yet, so players are refused and this server reports '
+        + 'itself unhealthy. The admin dashboard at /admin is up: fix the items above there '
+        + 'or on disk, then restart.',
+    });
   }
   config.simPeer.enabled = gameData.ok && config.simPeer.binary !== '';
   log('info', 'simpeer.ready_to_spawn', {
@@ -1561,6 +1640,9 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       clearInterval(presenceTick);
       unhookGauge();
       unhookBufferedGauge();
+      // The test suite builds dozens of servers in one process; a subscriber left behind
+      // would keep a closed server's config alive and fire on the next server's log lines.
+      unhookNotifier();
       clearInterval(simPeerTick);
       simPeers.stopAll(); // never leave an engine running after the server it fed is gone
       moveBroadcaster.stop();

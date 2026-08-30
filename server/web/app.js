@@ -549,6 +549,16 @@ function pageLogin(totpRequired = false) {
         </div>
         <button class="btn btn-primary w-100" id="liGo">Sign in</button>
         <div id="liErr" class="text-danger small mt-2"></div>
+        <div class="mt-3 small"><a href="#" id="liForgot">Forgot your password?</a></div>
+        <div id="liForgotBox" class="mt-2" hidden>
+          <p class="small text-secondary mb-2">We will email a reset link to the address on
+            the account, if it has one and this server can send mail.</p>
+          <div class="input-group input-group-sm">
+            <input class="form-control" id="liForgotName" placeholder="your username">
+            <button class="btn btn-outline-secondary" id="liForgotGo">Send</button>
+          </div>
+          <div id="liForgotMsg" class="small mt-2"></div>
+        </div>
       </div></div>
     </div>`;
   const submit = async () => {
@@ -567,10 +577,61 @@ function pageLogin(totpRequired = false) {
     }
   };
   $('#liGo').onclick = submit;
-  view().querySelectorAll('input').forEach((i) => {
+  view().querySelectorAll('#liName, #liPass, #liTotp').forEach((i) => {
     i.onkeydown = (ev) => { if (ev.key === 'Enter') submit(); };
   });
+  $('#liForgot').onclick = (e) => {
+    e.preventDefault();
+    $('#liForgotBox').hidden = false;
+    $('#liForgotName').value = $('#liName').value;
+    $('#liForgotName').focus();
+  };
+  $('#liForgotGo').onclick = async () => {
+    const msg = $('#liForgotMsg');
+    try {
+      const r = await api('/forgot-password', { method: 'POST', body: { name: $('#liForgotName').value.trim() } });
+      // Deliberately the same answer either way: the server will not say whether that
+      // account exists, and neither will this.
+      msg.className = 'small mt-2 text-success';
+      msg.textContent = r.message;
+    } catch (e) {
+      msg.className = 'small mt-2 text-danger';
+      msg.textContent = e.status === 501
+        ? 'This server has no email configured, so it cannot send a reset link. Ask whoever runs it to use --admin-reset.'
+        : e.message;
+    }
+  };
   setTimeout(() => $('#liName').focus(), 30);
+}
+
+/** Reset link landing: /admin#reset=<token>. */
+function pageReset(token) {
+  setTitle('Choose a new password', '');
+  view().innerHTML = html`
+    <div class="vt-wizard" style="max-width:24rem">
+      <div class="card"><div class="card-body p-4">
+        <div class="mb-3"><label class="form-label">New password</label>
+          <input class="form-control" id="rsPass" type="password" autocomplete="new-password">
+          <div class="form-text">At least 12 characters.</div></div>
+        <div class="mb-3"><label class="form-label">Confirm</label>
+          <input class="form-control" id="rsPass2" type="password" autocomplete="new-password"></div>
+        <button class="btn btn-primary w-100" id="rsGo">Set password</button>
+        <div id="rsErr" class="text-danger small mt-2"></div>
+      </div></div>
+    </div>`;
+  $('#rsGo').onclick = async () => {
+    if ($('#rsPass').value !== $('#rsPass2').value) {
+      $('#rsErr').textContent = 'The two passwords do not match.';
+      return;
+    }
+    try {
+      const r = await api('/reset-password', { method: 'POST', body: { token, password: $('#rsPass').value } });
+      if (!r.ok) { $('#rsErr').textContent = r.message; return; }
+      toast(r.message);
+      location.hash = '';
+      go('#login');
+    } catch (e) { $('#rsErr').textContent = e.message; }
+  };
 }
 
 // ---------------------------------------------------------------------------------------
@@ -1278,6 +1339,11 @@ const NEEDS = {
 async function route() {
   paintChrome();
   const hash = location.hash || '#overview';
+
+  // A reset link arrives as /admin#reset=<token> and has to work before anything else,
+  // including first-run: the whole point is that the person cannot sign in.
+  const reset = /^#reset=(.+)$/.exec(hash);
+  if (reset) return pageReset(decodeURIComponent(reset[1]));
 
   if (state.firstRun) { step = state.authed ? 1 : 0; return renderWizard(); }
   if (!state.authed) return pageLogin();

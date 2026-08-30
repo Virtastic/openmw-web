@@ -98,6 +98,24 @@ function rotateIfBig(): void {
   } catch { /* rotation is best effort; never let it break logging */ }
 }
 
+// --- subscribers ------------------------------------------------------------------------
+// One tap for anything that wants to react to events the server already logs — currently
+// the notifier (email/webhook on a ban, a console command, a config rollback). A subscriber
+// rather than notifyEvent() calls at each site, because the alternative is remembering to
+// add one every time a notable event is logged, and the ones people forget are exactly the
+// ones worth being told about.
+type Subscriber = (entry: LogEntry) => void;
+const subscribers: Subscriber[] = [];
+
+/** Returns an unsubscribe function. Throwing subscribers are isolated, never fatal. */
+export function onLog(fn: Subscriber): () => void {
+  subscribers.push(fn);
+  return () => {
+    const i = subscribers.indexOf(fn);
+    if (i !== -1) subscribers.splice(i, 1);
+  };
+}
+
 export function log(level: LogLevel, event: string, fields?: Record<string, unknown>): void {
   if (ORDER[level] < ORDER[minLevel]) return;
   const entry: LogEntry = { ts: new Date().toISOString(), level, event, ...fields };
@@ -106,6 +124,12 @@ export function log(level: LogLevel, event: string, fields?: Record<string, unkn
 
   ring.push(entry);
   if (ring.length > RING_SIZE) ring.splice(0, ring.length - RING_SIZE);
+
+  for (const fn of subscribers) {
+    // A broken notifier must never take down the thing it is reporting on, and must never
+    // recurse: anything it logs about its own failure comes back through here.
+    try { fn(entry); } catch { /* deliberately swallowed */ }
+  }
 
   if (logPath) {
     try {

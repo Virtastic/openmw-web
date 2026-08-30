@@ -14,8 +14,13 @@ maxPlayers = 256
 # THE SIM PEER'S CREDENTIAL, and nothing else — it is never checked against a player. `system`
 # is a flag the CLIENT sets in SessionHello, so this is the only thing separating "I am the
 # server's own simulator" from any registered account claiming to be. An EMPTY value refuses
-# every system connection rather than skipping the check, and a server that intends to run
-# (i.e. every server: the peer is mandatory) refuses to boot without one.
+# every system connection rather than skipping the check.
+#
+# GENERATED, not configured. Left empty, the server mints one on first start and keeps it in
+# <dataDir>/peer-password, exactly as it does for the gateway token. Only two processes ever
+# see this value, so making an operator invent one was a setup step with no upside and an
+# obvious failure mode: skip it, and the world silently never simulates. Set it explicitly
+# here if you would rather manage the secret yourself; a configured value always wins.
 password = ""
 
 [login]
@@ -377,6 +382,41 @@ enabled = false
 # While disabled the route answers 404, exactly like any other unknown path, so a prober
 # cannot tell that this server has metrics at all.
 token = ""
+
+[notifications]
+# Outgoing mail and webhooks. ENTIRELY OPTIONAL: with no smtpHost set, nothing is ever sent,
+# nothing fails, and the dashboard simply does not offer password recovery — an operator who
+# never configured mail should not see a "forgot password" link that quietly does nothing.
+#
+# Two things use this:
+#   1. Password recovery for dashboard accounts. Single sign-on accounts do not need it —
+#      the identity provider already owns their recovery.
+#   2. Telling you something happened while you were not watching (see `events`).
+#
+# Credentials here are your real mail account. They are stored like every other secret: the
+# dashboard masks them and never sends them back to a browser.
+smtpHost = ""
+# 465 uses TLS from the first byte; anything else (587, 25) upgrades with STARTTLS and is
+# REFUSED if the server does not offer it. Plaintext submission is never attempted.
+smtpPort = 587
+smtpUser = ""
+smtpPass = ""
+# Envelope sender. Many providers require this to match the authenticated account.
+from = ""
+# Where operational notifications go. Password resets always go to the account's own address.
+to = ""
+# Posted as {"text": "...", "event": "...", ...} — the shape Slack, Discord and Mattermost
+# all accept. Empty disables webhooks.
+webhookUrl = ""
+# Which structured log events raise a notification. These are the ones worth waking up for:
+# a config rollback means a save did not survive a restart, and the rest are actions with
+# consequences for a real person. Add any event name the server logs.
+events = [
+  "admin.config_fallback",
+  "admin.console",
+  "admin.account_deleted",
+  "admin.maintenance",
+]
 
 [auth]
 # Phase B: single sign-on ALONGSIDE the account+password path, never instead of it.

@@ -264,6 +264,8 @@ export function createHttpServer(
   status: () => StatusSnapshot,
   metricsOpts: MetricsOptions,
   extraRoutes?: HttpRoute,
+  /** Reasons this server cannot host a world yet; empty means healthy. See /healthz. */
+  notReady?: () => string[],
 ): Server {
   const metricsOn = metricsOpts.enabled && metricsOpts.token !== '';
   return createServer((req, res) => {
@@ -277,6 +279,16 @@ export function createHttpServer(
     }
     const path = url.pathname;
     if (req.method === 'GET' && path === '/healthz') {
+      // A server in setup mode is RUNNING but cannot host a world, so it must not answer
+      // "ok" — a container that reports itself healthy while turning every player away is
+      // exactly the silent failure the old boot-time refusal existed to prevent. 503 keeps
+      // the process alive (so the operator can fix it in the dashboard) while still failing
+      // the Docker healthcheck and any monitor watching this endpoint.
+      const blockers = notReady?.() ?? [];
+      if (blockers.length > 0) {
+        sendText(res, 503, `not ready:\n${blockers.map((b) => `- ${b}`).join('\n')}\n`);
+        return;
+      }
       res.writeHead(200, { 'content-type': 'text/plain' });
       res.end('ok');
       return;

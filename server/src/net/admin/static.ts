@@ -13,7 +13,24 @@ import { fileURLToPath } from 'node:url';
 import { join, extname, normalize, sep } from 'node:path';
 import type { ServerResponse } from 'node:http';
 
-const WEB_ROOT = fileURLToPath(new URL('../../../web/', import.meta.url));
+// TWO LAYOUTS, ONE FILE.
+//
+// Running from source this module is at src/net/admin/static.ts, so web/ is three levels
+// up. Running from the bundle it is inlined into dist/server.mjs, one level up. Neither
+// path works in both places, so both are tried and the first that exists wins.
+//
+// config.default.toml gets away with a single '../' only because src/config.ts and
+// dist/server.mjs happen to sit at the same depth. Nothing enforces that, and this file is
+// the case where the coincidence runs out — the dev server served the dashboard perfectly
+// while the container answered 500, because only the bundle takes the second path.
+const WEB_ROOT = ((): string => {
+  for (const rel of ['../../../web/', '../web/']) {
+    const candidate = fileURLToPath(new URL(rel, import.meta.url));
+    if (existsSync(candidate)) return candidate;
+  }
+  // Nothing found: keep the source-layout path so error messages point somewhere sensible.
+  return fileURLToPath(new URL('../../../web/', import.meta.url));
+})();
 
 const TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',

@@ -461,16 +461,32 @@ test('an unconfigured server starts in setup mode instead of refusing to boot', 
   assert.equal((await fetch(`${base}/admin`)).status, 200, 'the setup page must be reachable');
   const state = await (await fetch(`${base}/admin/api/state`)).json() as { firstRun: boolean };
   assert.equal(state.firstRun, true);
-  assert.equal((await fetch(`${base}/healthz`)).status, 200);
+  // Reachable, but honest about it: 503 keeps the container failing its healthcheck so a
+  // monitor still sees a server that cannot host anyone, while the process stays up.
+  assert.equal((await fetch(`${base}/healthz`)).status, 503);
 });
 
-test('setup mode ends once an owner exists, so a configured server fails loudly again', async (t) => {
-  // The exemption above must be exactly that — an exemption for the unconfigured case, not
-  // a permanent way to run a broken world. Once setup has happened, missing game data is
-  // back to being a hard boot failure.
+test('setup mode survives finishing the wizard, and reports itself unhealthy throughout', async (t) => {
+  // THE REGRESSION THIS EXISTS TO PREVENT.
+  //
+  // Setup mode was first written as "no owner yet AND no game data". That armed a trap:
+  // completing the wizard made the first half false, so the Restart button the wizard
+  // itself offers took the server down permanently and took the dashboard with it. The
+  // operator was locked out at the exact moment they succeeded. Observed in a real
+  // container, not theorised.
+  //
+  // So it depends on whether the world can actually run, and nothing else. Unhealthy is how
+  // it stays honest: the process lives so a human can fix it in the browser, while every
+  // healthcheck and monitor still sees a broken server.
   const dataDir = tmpDataDir();
   const first = await startServer({ dataDir, port: 0, host: '127.0.0.1' });
-  const created = await fetch(`http://127.0.0.1:${first.port}/admin/api/setup/owner`, {
+  const base = `http://127.0.0.1:${first.port}`;
+
+  const before = await fetch(`${base}/healthz`);
+  assert.equal(before.status, 503, 'a server that cannot host a world must not answer "ok"');
+  assert.match(await before.text(), /not ready/);
+
+  const created = await fetch(`${base}/admin/api/setup/owner`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(OWNER),
@@ -478,11 +494,22 @@ test('setup mode ends once an owner exists, so a configured server fails loudly 
   assert.equal(created.status, 200);
   await first.close();
 
-  await assert.rejects(
-    () => startServer({ dataDir, port: 0, host: '127.0.0.1' }),
-    /no usable game data/,
-    'a configured server with no game data must refuse to start, as it always did',
-  );
+  // The restart the wizard offers. This is the call that used to throw.
+  const second = await startServer({ dataDir, port: 0, host: '127.0.0.1' });
+  t.after(() => second.close());
+  assert.equal((await fetch(`http://127.0.0.1:${second.port}/admin`)).status, 200,
+    'the dashboard has to survive the restart, or setup is a one-way door');
+  assert.equal((await fetch(`http://127.0.0.1:${second.port}/healthz`)).status, 503,
+    'still not hosting a world, so still unhealthy');
+});
+
+test('healthz says ok only when the world can actually run', async (t) => {
+  // requireGameData:false is the in-process seam the suite uses; it means "assume the world
+  // is runnable", so this is the healthy case.
+  const { base } = await boot(t);
+  const r = await fetch(`${base}/healthz`);
+  assert.equal(r.status, 200);
+  assert.equal(await r.text(), 'ok');
 });
 
 test('/healthz is not swallowed by the admin gate', async (t) => {

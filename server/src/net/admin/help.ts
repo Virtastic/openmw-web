@@ -44,7 +44,9 @@ export const HELP: Record<string, FieldHelp> = {
   'server.motd': { text: 'Message of the day, shown in chat when a player joins.' },
   'server.maxPlayers': { text: 'Hard cap on simultaneous players. Each one costs memory, so raise it only as far as your box can carry.' },
   'server.password': {
-    text: 'Optional join password. Empty means anyone who can reach the server may try to log in.',
+    text: 'Not a join password — players never see this. It is the shared secret between the ' +
+      'server and its own headless simulator, and it is generated for you on first start ' +
+      '(kept in the data folder as "peer-password"). Leave it alone unless you have a reason.',
   },
 
   // --- login ----------------------------------------------------------------------------

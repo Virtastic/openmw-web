@@ -82,6 +82,12 @@ export interface AdminDeps {
   restart(reason: string): void;
   exportData(res: ServerResponse): Promise<void>;
   deleteAccount(key: string): Promise<{ ok: boolean; message: string }>;
+
+  /** Is outgoing mail set up? Gates whether password recovery is offered at all. */
+  mailConfigured(): boolean;
+  /** Fire-and-forget: never reveals whether the account or its address exists. */
+  sendPasswordReset(name: string): Promise<void>;
+  applyPasswordReset(token: string, password: string): Promise<{ ok: boolean; message: string }>;
 }
 
 const ROLE_SET = new Set<string>(DASHBOARD_ROLES);
@@ -149,6 +155,38 @@ export function adminRoutes(deps: AdminDeps) {
         return true;
       }
       json(res, 200, { token: result.token, role: result.role, name: result.name });
+      return true;
+    }
+
+    // --- password recovery ------------------------------------------------------------------
+    // Offered only when mail is actually configured. A "forgot password" link that silently
+    // does nothing is worse than no link: it makes an operator think help is coming.
+    if (method === 'POST' && path === '/admin/api/forgot-password') {
+      const body = await readJson<{ name?: string }>(req, res);
+      if (body === undefined) return true;
+      if (!deps.mailConfigured()) {
+        json(res, 501, { error: 'no mail is configured on this server' });
+        return true;
+      }
+      if (!deps.loginLimiter.allow(clientIp(req))) {
+        json(res, 429, { error: 'too many attempts, wait a minute' });
+        return true;
+      }
+      // Always the same answer, whether or not that account exists or has an address on
+      // file. Anything else turns this into a way to enumerate accounts and email addresses.
+      void deps.sendPasswordReset(String(body.name ?? ''));
+      json(res, 200, { ok: true, message: 'if that account can receive mail, a reset link is on its way' });
+      return true;
+    }
+    if (method === 'POST' && path === '/admin/api/reset-password') {
+      const body = await readJson<{ token?: string; password?: string }>(req, res);
+      if (body === undefined) return true;
+      if (!deps.loginLimiter.allow(clientIp(req))) {
+        json(res, 429, { error: 'too many attempts, wait a minute' });
+        return true;
+      }
+      const result = await deps.applyPasswordReset(String(body.token ?? ''), String(body.password ?? ''));
+      json(res, result.ok ? 200 : 400, result);
       return true;
     }
 

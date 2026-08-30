@@ -237,6 +237,12 @@ export interface Config {
     actorSilenceSec: number;
   };
   metrics: { enabled: boolean; token: string };
+  // Optional outgoing mail + webhooks: dashboard password recovery, and operational alerts.
+  // Empty smtpHost = the whole feature is off and recovery is not offered.
+  notifications: {
+    smtpHost: string; smtpPort: number; smtpUser: string; smtpPass: string;
+    from: string; to: string; webhookUrl: string; events: string[];
+  };
   // Phase B SSO. Password login stays on by default, so a self-hoster who never touches
   // this section sees no change at all.
   auth: AuthConfig;
@@ -621,6 +627,16 @@ function validate(t: Tree): Config {
       enabled: reqBool(t, 'metrics', 'enabled'),
       token: reqStr(t, 'metrics', 'token'),
     },
+    notifications: {
+      smtpHost: reqStr(t, 'notifications', 'smtpHost'),
+      smtpPort: reqNum(t, 'notifications', 'smtpPort'),
+      smtpUser: reqStr(t, 'notifications', 'smtpUser'),
+      smtpPass: reqStr(t, 'notifications', 'smtpPass'),
+      from: reqStr(t, 'notifications', 'from'),
+      to: reqStr(t, 'notifications', 'to'),
+      webhookUrl: reqStr(t, 'notifications', 'webhookUrl'),
+      events: reqStrArray(t, 'notifications', 'events'),
+    },
     auth: validateAuth(t),
     plugins: plugins as string[],
   };
@@ -788,6 +804,37 @@ export function loadConfig(dataDir: string, override?: DeepPartial<Config>, shar
       // Unwritable shared dir: leave it empty and stay failed-closed rather than inventing a
       // per-process secret, which would differ between the gateway and every world and refuse
       // every create anyway -- but confusingly, and differently each restart.
+    }
+  }
+
+  // THE SIM PEER'S PASSWORD GENERATES ITSELF, for the same reason and by the same mechanism.
+  //
+  // [server].password is ONLY the shared secret between this server and its own headless
+  // simulator -- connection.ts checks it exclusively for a peer declaring system=true, and
+  // never against a player. So there is nobody for an operator to tell it to, no reason for
+  // them to choose it, and no way for them to get it wrong except by leaving it empty, which
+  // refuses every peer and stops the world simulating.
+  //
+  // Requiring a human to invent a value that only two processes ever see is the kind of step
+  // that reads as arbitrary and gets skipped. Minting one removes a blocker from first-run
+  // setup entirely. An explicitly configured value still wins, so an operator who wants to
+  // manage the secret can.
+  if (!cfg.server.password) {
+    const dir = sharedDir || dataDir;
+    const path = join(dir, 'peer-password');
+    try {
+      if (existsSync(path)) {
+        cfg.server.password = readFileSync(path, 'utf8').trim();
+      } else {
+        mkdirSync(dir, { recursive: true });
+        const minted = randomBytes(32).toString('base64url');
+        writeFileSync(path, minted, { mode: 0o600 });
+        cfg.server.password = minted;
+      }
+    } catch {
+      // Same failed-closed reasoning: an unreadable dir leaves this empty, the peer cannot
+      // authenticate, and the server says so rather than inventing a value the peer -- which
+      // reads the same file -- would not agree with.
     }
   }
   return cfg;

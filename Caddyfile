@@ -49,9 +49,12 @@
 	# every request goes to the server — which is exactly right for a server-only host.
 	@static file
 	handle @static {
-		# The engine ships brotli siblings; serve them when the browser accepts them.
-		precompressed br gzip
-		file_server
+		file_server {
+			# The engine ships brotli siblings next to openmw.wasm/.data; serve those when
+			# the browser accepts them rather than re-compressing multi-megabyte files on
+			# every request.
+			precompressed br gzip
+		}
 	}
 
 	handle {

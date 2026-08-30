@@ -22,10 +22,29 @@
 
 services:
   openmw-mp:
+    # A PUBLISHED IMAGE, not a local build, and the reason matters.
+    #
+    # The server runs its own headless copy of the OpenMW engine to simulate NPCs, and
+    # refuses to start without it. That binary is compiled from the engine source in this
+    # repo — a long build that wants a lot of memory — so making every self-hoster do it
+    # would turn "running in two minutes" into an afternoon, on a machine that may not have
+    # the RAM for it. The release workflow builds it once and publishes it here.
+    #
+    # `build` is kept as a fallback: if the registry is unreachable or you are running a
+    # modified checkout, `docker compose build` produces the same image locally. Expect it
+    # to take a while.
+    image: ghcr.io/virtastic/openmw-mp:latest
+    pull_policy: missing
     build:
-      context: ./server
-    image: openmw-mp:local
+      context: .
+      dockerfile: server/Dockerfile.simpeer
+      target: tier2
     container_name: openmw-mp
+    # The image's own default starts the multi-world gateway, which is how the hosted
+    # platform runs. A self-hosted box wants one world, so this entrypoint picks the mode
+    # from <data>/.mode instead — and the dashboard can switch between them with a restart.
+    entrypoint: ["/usr/local/bin/docker-entrypoint.sh"]
+    command: []
     # THIS IS WHAT MAKES THE DASHBOARD'S RESTART BUTTON WORK. The server exits cleanly on
     # SIGTERM and Docker starts it again; without this policy the button would stop the
     # server and leave the operator with no way to bring it back from a browser.
@@ -89,9 +108,14 @@ services:
       - caddy-config:/config
     environment:
       # Set SERVER_DOMAIN in .env once you have a domain pointed at this machine and Caddy
-      # will get a real certificate automatically. Left empty it serves a self-signed one,
-      # which works fine but makes browsers warn on the first visit.
-      - SERVER_DOMAIN=${SERVER_DOMAIN:-}
+      # will get a real certificate automatically. "localhost" means no domain: Caddy then
+      # serves a certificate it signed itself, which works but makes browsers warn once.
+      #
+      # The default is "localhost" rather than empty ON PURPOSE. Caddy's {$VAR:default}
+      # falls back only when a variable is UNSET, and compose sets it either way — so an
+      # empty value reached the Caddyfile as an empty site address, which is a syntax error
+      # ("server block without any key"). Found by running the stack; it looks fine on paper.
+      - SERVER_DOMAIN=${SERVER_DOMAIN:-localhost}
       # Empty when a domain is set (so Let's Encrypt issues a public certificate), and
       # "tls internal" when there is none. See the Caddyfile for why this is a variable.
       - TLS_MODE=${TLS_MODE:-tls internal}

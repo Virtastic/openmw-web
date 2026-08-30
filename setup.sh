@@ -125,10 +125,10 @@ if [ ! -f .env ]; then
   cat > .env <<'ENVEOF'
 # Settings the containers read at startup. Safe to edit; re-run ./setup.sh afterwards.
 
-# A domain pointed at this machine. Set it and you get a real HTTPS certificate
-# automatically. Leave it empty for a self-signed one (your browser will warn once).
-SERVER_DOMAIN=
-# Leave as-is when SERVER_DOMAIN is empty; blank it out when you set a domain.
+# A domain pointed at this machine, or "localhost" if you do not have one. With a real
+# domain you get a real HTTPS certificate automatically; localhost gets a self-signed one.
+SERVER_DOMAIN=localhost
+# Leave as-is for localhost; blank this line out once you set a real domain above.
 TLS_MODE=tls internal
 
 # Object storage for player uploads, only if you choose S3 in the setup wizard.
@@ -191,7 +191,7 @@ fi
 
 # ---------------------------------------------------------------------------------------
 DOMAIN=$(grep -E '^SERVER_DOMAIN=' .env 2>/dev/null | cut -d= -f2- || true)
-if [ -n "$DOMAIN" ]; then URL="https://$DOMAIN/admin"; else URL="https://localhost/admin"; fi
+if [ -n "$DOMAIN" ] && [ "$DOMAIN" != localhost ]; then URL="https://$DOMAIN/admin"; else DOMAIN=""; URL="https://localhost/admin"; fi
 
 step "Ready"
 say ""

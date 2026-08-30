@@ -150,6 +150,15 @@ COPY server/package.json server/package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 COPY --from=server-build /app/dist ./dist
 COPY server/config.default.toml ./
+# The admin dashboard's page and its vendored AdminLTE/Bootstrap assets, read from disk at
+# runtime (src/net/admin/static.ts) rather than bundled — same as config.default.toml.
+COPY server/web ./web
+# Mode-switch entrypoint: reads <data>/.mode and starts either the single world or the
+# gateway. NOT the default CMD below, because this image's default is what production
+# already runs and changing it here would change that deployment. Self-hosters opt in by
+# setting `entrypoint:` in their compose file; see the root docker-compose.yml.
+COPY server/docker-entrypoint.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 RUN useradd -m app && mkdir -p /data && chown app /data
 USER app
 EXPOSE 8080

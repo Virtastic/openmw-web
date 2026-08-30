@@ -122,10 +122,10 @@ if (-not (Test-Path '.env')) {
   $envText = @'
 # Settings the containers read at startup. Safe to edit; re-run .\setup.ps1 afterwards.
 
-# A domain pointed at this machine. Set it and you get a real HTTPS certificate
-# automatically. Leave it empty for a self-signed one (your browser will warn once).
-SERVER_DOMAIN=
-# Leave as-is when SERVER_DOMAIN is empty; blank it out when you set a domain.
+# A domain pointed at this machine, or "localhost" if you do not have one. With a real
+# domain you get a real HTTPS certificate automatically; localhost gets a self-signed one.
+SERVER_DOMAIN=localhost
+# Leave as-is for localhost; blank this line out once you set a real domain above.
 TLS_MODE=tls internal
 
 # Object storage for player uploads, only if you choose S3 in the setup wizard.
@@ -190,6 +190,7 @@ if (Test-Path '.env') {
   $line = Select-String -Path '.env' -Pattern '^SERVER_DOMAIN=(.*)$' -ErrorAction SilentlyContinue
   if ($line) { $domain = $line.Matches[0].Groups[1].Value.Trim() }
 }
+if ($domain -eq 'localhost') { $domain = '' }
 $url = if ($domain) { "https://$domain/admin" } else { 'https://localhost/admin' }
 
 Write-Step "Ready"

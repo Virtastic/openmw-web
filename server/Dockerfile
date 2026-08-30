@@ -40,6 +40,10 @@ COPY config.default.toml ./
 # config.default.toml does.
 COPY web ./web
 COPY docker-entrypoint.sh /usr/local/bin/
+# Explicit: a checkout on Windows does not carry the executable bit, so relying on the
+# source file's mode would produce an image that fails to start on some machines and not
+# others — the worst kind of "works here".
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 USER node
 EXPOSE 8080
 # busybox wget ships with alpine; /healthz is served on the same port as the WS endpoint.
