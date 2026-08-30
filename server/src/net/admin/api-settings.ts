@@ -4,7 +4,7 @@
 //
 // The field list is DERIVED from the loaded config object rather than hand-listed. A
 // hand-written schema is a second copy of config.ts that drifts the first time someone adds
-// a knob and forgets this file — and "every knob is reachable" is only true if it stays true
+// a knob and forgets this file, and "every knob is reachable" is only true if it stays true
 // automatically. Types come from the live values; help text is looked up by path and is
 // optional, so a brand-new field appears in the UI on the day it is added, unlabelled but
 // editable, instead of being invisible.
@@ -18,11 +18,11 @@ export const SECTION_GROUPS: { group: string; sections: string[]; note?: string 
   { group: 'Gameplay', sections: ['rules', 'economy', 'sharing', 'time', 'cellReset', 'gui'] },
   { group: 'Access', sections: ['admin', 'auth', 'moderation', 'authority'] },
   { group: 'Storage', sections: ['locker'] },
-  { group: 'Operations', sections: ['limits', 'metrics', 'integrations', 'dev'] },
+  { group: 'Operations', sections: ['limits', 'metrics', 'notifications', 'integrations', 'dev'] },
   {
     group: 'Platform (advanced)',
     sections: ['simPeer', 'gateway', 'worlds'],
-    note: 'Multi-world hosting. A single self-hosted server does not need any of this — ' +
+    note: 'Multi-world hosting. A single self-hosted server does not need any of this, ' +
       'these settings are read by the gateway supervisor, which most deployments never run. ' +
       'Note that this dashboard is not available while the gateway is running: it administers ' +
       'a world, and the gateway does not have one of its own.',
@@ -35,7 +35,7 @@ export const SECTION_GROUPS: { group: string; sections: string[]; note?: string 
 //
 // PATTERN-BASED, NOT A LIST. The first version was an explicit set and it had already gone
 // stale by the time anyone looked: [notifications].smtpPass (a real mail account password)
-// and webhookUrl (a bearer capability — anyone holding a Slack or Discord webhook URL can
+// and webhookUrl (a bearer capability, anyone holding a Slack or Discord webhook URL can
 // post as it) were both absent, and both were readable in plaintext by the `viewer` role,
 // the one the UI describes as "can look, and nothing else".
 //
@@ -129,8 +129,9 @@ export function settingsView(dataDir: string, config: unknown): {
 
   for (const [name, body] of Object.entries(cfg)) {
     // `stated` is a Set the loader adds for its own bookkeeping, and dashboardFallback is
-    // status rather than configuration. Neither is a knob.
-    if (name === 'stated' || name === 'dashboardFallback') continue;
+    // status rather than configuration. Neither is a knob. `setup` is the wizard's own
+    // record of your answers, edited by re-running Setup, not by a settings form.
+    if (name === 'stated' || name === 'dashboardFallback' || name === 'setup') continue;
     if (body === null || typeof body !== 'object' || Array.isArray(body)) continue;
 
     const over = (overrides[name] as Tree | undefined) ?? {};
@@ -153,7 +154,7 @@ export function settingsView(dataDir: string, config: unknown): {
     }
     sections.push({ name, label: labelFor(name), ...(SECTION_HELP[name] ? { help: SECTION_HELP[name] } : {}), fields });
 
-    // Nested tables become their own sections, e.g. auth.discord — so provider credentials
+    // Nested tables become their own sections, e.g. auth.discord, so provider credentials
     // are editable instead of showing up as an "unsupported" blob.
     for (const [key, value] of Object.entries(body as Record<string, unknown>)) {
       if (value === null || typeof value !== 'object' || Array.isArray(value)) continue;
@@ -188,7 +189,7 @@ export function settingsView(dataDir: string, config: unknown): {
  * Save one section.
  *
  * Values arrive as whatever JSON the form built and are written as they came. Types are NOT
- * coerced here and unknown keys are NOT rejected here — an earlier version of this comment
+ * coerced here and unknown keys are NOT rejected here, an earlier version of this comment
  * claimed both, and neither was true. What actually protects the file is checkDashboardTree
  * below: it runs the real validator over the merged result, which is a typed whitelist, so a
  * wrong type is refused with the validator's own message and a key nothing reads is inert.
@@ -204,13 +205,13 @@ export function applySection(
   sharedDir?: string,
 ): { ok: true } | { ok: false; error: string } {
   if (!/^[a-zA-Z]+(\.[a-zA-Z]+)?$/.test(section)) {
-    return { ok: false, error: `"${section}" is not a settings section. This looks like a bug — please report it.` };
+    return { ok: false, error: `"${section}" is not a settings section. This looks like a bug, please report it.` };
   }
 
   const patch: Tree = {};
   for (const [key, raw] of Object.entries(body)) {
     if (!/^[a-zA-Z][a-zA-Z0-9_]*$/.test(key)) {
-      return { ok: false, error: `"${key}" is not a valid setting name. This looks like a bug — please report it.` };
+      return { ok: false, error: `"${key}" is not a valid setting name. This looks like a bug, please report it.` };
     }
     // The mask coming back means "unchanged": leave whatever is stored alone.
     if (raw === SECRET_MASK) continue;
@@ -252,6 +253,9 @@ export interface WizardAnswers {
   /** Step 9 */
   storage?: 'local' | 's3';
   s3?: { endpoint?: string; bucket?: string; region?: string };
+  /** Step 3's inline credential sub-forms: clientId/clientSecret per ticked provider, plus
+   *  the redirect URI the browser derived from its own origin. */
+  ssoCreds?: Record<string, { clientId?: string; clientSecret?: string; redirectUri?: string }>;
   /** Marks the wizard as finished so the dashboard stops offering it as the landing page. */
   completed?: boolean;
 }
@@ -278,11 +282,18 @@ export function applyWizard(
   if (a.serverName !== undefined && a.serverName !== '') set('server', 'name', a.serverName);
 
   // The wizard's own bookkeeping, in its own section rather than bolted onto [admin]. These
-  // were collected, echoed back on the review screen, and then dropped — so the content
+  // were collected, echoed back on the review screen, and then dropped, so the content
   // profile silently reset to nothing on the next visit, and "have you run setup?" was a
   // per-browser localStorage flag that answered differently on every machine.
   if (a.contentProfile) set('setup', 'contentProfile', a.contentProfile);
   if (a.hosting) set('setup', 'hosting', a.hosting);
+  // The pivot answers, ALL of them. An earlier version kept only two, which meant the
+  // dashboard could never branch on "is this single player?" and re-running the wizard
+  // presented every question blank, the two complaints that forced this rewrite.
+  if (a.deploymentMode) set('setup', 'deploymentMode', a.deploymentMode);
+  if (a.deliveryModel) set('setup', 'deliveryModel', a.deliveryModel);
+  if (a.storage) set('setup', 'storage', a.storage);
+  if (a.loginMethods) set('setup', 'loginMethods', a.loginMethods.filter((m) => typeof m === 'string'));
   if (a.completed) set('setup', 'completed', true);
 
   if (a.owners && a.owners.length > 0) {
@@ -308,7 +319,16 @@ export function applyWizard(
     });
     for (const p of ['discord', 'google', 'microsoft']) {
       const auth = (next.auth as Tree | undefined) ?? {};
-      auth[p] = { ...((auth[p] as Tree | undefined) ?? {}), enabled: has(p) };
+      // Credentials typed into the wizard land here too, the step that asks "which
+      // providers?" is the step that takes their keys, not a pointer at a settings page.
+      const creds = a.ssoCreds?.[p] ?? {};
+      auth[p] = {
+        ...((auth[p] as Tree | undefined) ?? {}),
+        enabled: has(p),
+        ...(creds.clientId ? { clientId: String(creds.clientId) } : {}),
+        ...(creds.clientSecret ? { clientSecret: String(creds.clientSecret) } : {}),
+        ...(creds.redirectUri ? { redirectUri: String(creds.redirectUri) } : {}),
+      };
       next.auth = auth;
     }
   }

@@ -47,6 +47,16 @@
 	# the server's paths, so it cannot drift as the server grows new ones, and it degrades
 	# correctly: with no client files staged, /srv/client is empty, nothing matches, and
 	# every request goes to the server — which is exactly right for a server-only host.
+	# The ROOT path always goes to the server, even when client files are staged: the
+	# server serves the sign-in landing page there, and the game (launcher.html and
+	# friends) is what that page links into. Without this, a staged client's index.html
+	# would shadow the login screen and a bare host would drop players into the launcher
+	# with no explanation of how this server signs people in.
+	@root path /
+	handle @root {
+		reverse_proxy openmw-web:8080
+	}
+
 	@static file
 	handle @static {
 		file_server {

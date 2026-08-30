@@ -6,7 +6,7 @@
 // what it is, in a sentence or two. An operator who has never read this codebase should be
 // able to decide from the tooltip alone; one who has should not find it insulting.
 //
-// A field with no entry still renders and still saves — help is additive, never a gate.
+// A field with no entry still renders and still saves, help is additive, never a gate.
 
 export interface FieldHelp {
   text: string;
@@ -33,6 +33,7 @@ export const SECTION_HELP: Record<string, string> = {
   metrics: 'Prometheus endpoint for external monitoring.',
   integrations: 'Optional third-party hooks. Off unless you configure them.',
   dev: 'Development and testing aids. Should be off on anything real.',
+  notifications: 'Outgoing email and webhook alerts. Entirely optional, with no SMTP host set nothing is sent, and password recovery is simply not offered.',
   simPeer: 'The headless OpenMW the server runs itself to simulate NPCs.',
   gateway: 'Multi-world platform hosting. A single self-hosted world does not need this.',
   worlds: 'Multi-world capacity planning. Only read when running in gateway mode.',
@@ -44,7 +45,7 @@ export const HELP: Record<string, FieldHelp> = {
   'server.motd': { text: 'Message of the day, shown in chat when a player joins.' },
   'server.maxPlayers': { text: 'Hard cap on simultaneous players. Each one costs memory, so raise it only as far as your box can carry.' },
   'server.password': {
-    text: 'Not a join password — players never see this. It is the shared secret between the ' +
+    text: 'Not a join password, players never see this. It is the shared secret between the ' +
       'server and its own headless simulator, and it is generated for you on first start ' +
       '(kept in the data folder as "peer-password"). Leave it alone unless you have a reason.',
   },
@@ -56,17 +57,35 @@ export const HELP: Record<string, FieldHelp> = {
   'login.resumeWindowSec': { text: 'How long a dropped player may silently resume their session before they have to log in again.' },
   'login.allowHarnessAuth': {
     text: 'Test-only fixed-password login used by the automated browser harness.',
-    danger: 'NEVER enable this on a server reachable from the internet. It is a login bypass — it exists so tests can skip authentication, and it will let anyone in.',
+    danger: 'NEVER enable this on a server reachable from the internet. It is a login bypass, it exists so tests can skip authentication, and it will let anyone in.',
   },
+
+  // --- auth -----------------------------------------------------------------------------
+  'auth.allowPasswordLogin': { text: 'Whether players may sign in with a username and password held on this server. The setup wizard sets this from your sign-in choices.' },
+  'auth.requireSso': {
+    text: 'Force every player through a single sign-on provider; password sign-in is refused even for accounts that have one.',
+    danger: 'With no working SSO provider configured, turning this on locks every player out of the game. Make sure at least one provider below has its keys filled in and works before flipping it.',
+  },
+  'auth.returnUrl': { text: 'Where the browser is sent after a successful sign-on. Leave empty to return to this server\'s own address.' },
+
+  // --- notifications --------------------------------------------------------------------
+  'notifications.smtpHost': { text: 'Your mail provider\'s SMTP server, e.g. smtp.fastmail.com. Empty means email is off, no reset links, no alerts, no errors.' },
+  'notifications.smtpPort': { text: 'Almost always 465 (TLS from the start) or 587 (upgraded). Your provider\'s docs say which.' },
+  'notifications.smtpUser': { text: 'The mailbox to send as, usually your full email address.' },
+  'notifications.smtpPass': { text: 'That mailbox\'s password, or an app-specific password if your provider issues those (most do, and prefer them).' },
+  'notifications.from': { text: 'The From address on outgoing mail. Many providers require it to match the account you send as.' },
+  'notifications.to': { text: 'Where alert emails go, normally your own address. Password-reset mail ignores this and goes to the account that asked.' },
+  'notifications.webhookUrl': { text: 'A Discord or Slack webhook URL. Events are posted to it as messages, an easy way to see bans and restarts in a channel you already read.' },
+  'notifications.events': { text: 'Which events send an alert. Event names match the audit log, e.g. admin.action, admin.config_changed.' },
 
   // --- content --------------------------------------------------------------------------
   'content.enforce': {
-    text: 'Do all players have to be running the same game files? "names" (default) compares file names, sizes and load order. "strict" also compares checksums, catching a file that was edited in place — but refuses anyone whose client cannot report hashes. "off" disables the check entirely. This is a consistency check so everyone sees the same world, not an anti-cheat measure, and it is unrelated to content-table.json.',
+    text: 'Do all players have to be running the same game files? "names" (default) compares file names, sizes and load order. "strict" also compares checksums, catching a file that was edited in place, but refuses anyone whose client cannot report hashes. "off" disables the check entirely. This is a consistency check so everyone sees the same world, not an anti-cheat measure, and it is unrelated to content-table.json.',
   },
 
   // --- rules / economy ------------------------------------------------------------------
   'economy.noDrop': { text: 'Named and unique NPCs drop nothing when killed. Intended for public worlds, where otherwise the first player to reach a unique item takes it from everyone forever.' },
-  'economy.refuseUnownedDrops': { text: 'Refuse an attempt to drop an item the server does not believe the player is holding. Off by default while the item-tracking path matures — expect occasional false refusals if you turn it on.' },
+  'economy.refuseUnownedDrops': { text: 'Refuse an attempt to drop an item the server does not believe the player is holding. Off by default while the item-tracking path matures, expect occasional false refusals if you turn it on.' },
 
   // --- sharing --------------------------------------------------------------------------
   'sharing.journal': { text: 'Share quest journal progress between players. Off gives everyone their own private journal.' },
@@ -80,13 +99,13 @@ export const HELP: Record<string, FieldHelp> = {
   // --- time / gui / cellReset -----------------------------------------------------------
   'time.scale': { text: 'Game seconds per real second. 30 is Morrowind\'s own default; 0 freezes the clock so time only moves when someone rests.' },
   'gui.timeoutSec': { text: 'How long a server-sent dialog waits for an answer before giving up on it.' },
-  'cellReset.cells': { text: 'Cells wiped on a schedule — containers restocked, doors and objects reset. Empty means nothing is ever reset.' },
+  'cellReset.cells': { text: 'Cells wiped on a schedule, containers restocked, doors and objects reset. Empty means nothing is ever reset.' },
   'cellReset.intervalSec': { text: 'How often the cells listed above are reset. Default is three days.' },
   'cellReset.litterSweepSec': { text: 'Shared-lobby housekeeping: how often cells full of strangers\' leftover changes get swept. Players standing in a cell are skipped. 0 disables it.' },
 
   // --- limits ---------------------------------------------------------------------------
   'limits.maxConnsPerIp': { text: 'Simultaneous connections allowed from one address. Raise it if several people play from one household and get refused.' },
-  'limits.loginPerMinPerIp': { text: 'Login and registration attempts allowed per address per minute. This is your brute-force budget — lower is safer, too low locks out a household sharing an address.' },
+  'limits.loginPerMinPerIp': { text: 'Login and registration attempts allowed per address per minute. This is your brute-force budget, lower is safer, too low locks out a household sharing an address.' },
   'limits.trustCloudflareIp': {
     text: 'Believe Cloudflare\'s CF-Connecting-IP header when identifying a client.',
     danger: 'Only enable this if traffic genuinely reaches you through Cloudflare. If it does not, anyone can forge that header and hand themselves a fresh rate-limit budget on demand.',
@@ -128,13 +147,13 @@ export const HELP: Record<string, FieldHelp> = {
   'locker.publicBase': { text: 'Public URL players\' browsers should use to reach files stored on this server\'s disk. Only needed when not using S3.' },
 
   // --- metrics / integrations / dev ------------------------------------------------------
-  'metrics.enabled': { text: 'Expose /metrics in Prometheus format for external monitoring. The dashboard\'s own metrics page does not need this — it reads the same counters directly.' },
+  'metrics.enabled': { text: 'Expose /metrics in Prometheus format for external monitoring. The dashboard\'s own metrics page does not need this, it reads the same counters directly.' },
   'metrics.token': { text: 'Bearer token required to read /metrics. While empty, the endpoint answers 404 rather than 401, so its existence is not advertised.' },
   'integrations.attioApiKey': { text: 'Attio CRM key. Empty means nothing is ever sent anywhere.' },
   'integrations.attioBaseUrl': { text: 'Attio API base URL. Change only for a self-hosted or regional endpoint.' },
   'dev.bots': {
     text: 'Spawn fake players for load testing.',
-    danger: 'Leave this off on a real server — bots consume player slots and appear to everyone as real players.',
+    danger: 'Leave this off on a real server, bots consume player slots and appear to everyone as real players.',
   },
 
   // --- simPeer / gateway / worlds --------------------------------------------------------
@@ -142,13 +161,13 @@ export const HELP: Record<string, FieldHelp> = {
   'simPeer.startCell': { text: 'Cell the sim peer loads into first.' },
   'simPeer.maxPeers': { text: 'Most sim peers to run at once. Each is a full OpenMW process, so this is a memory ceiling as much as a count.' },
   'simPeer.idleReapMs': { text: 'Shut down a sim peer whose area has had no players for this long.' },
-  'gateway.url': { text: 'Where clients of this world can find the world directory. Empty means no gateway — a single self-hosted world is a complete setup and does not need one.' },
+  'gateway.url': { text: 'Where clients of this world can find the world directory. Empty means no gateway, a single self-hosted world is a complete setup and does not need one.' },
   'gateway.serverToken': {
     text: 'Shared secret proving a world process belongs to this platform. Generated automatically; you should not normally set it by hand.',
     danger: 'Changing this breaks the trust between the gateway and every world it runs until they all agree again.',
   },
   'worlds.maxWorlds': { text: 'Gateway mode only: hard ceiling on simultaneously running worlds.' },
-  'worlds.publicEnabled': { text: 'Gateway mode only: offer the shared public world. Off by default — it is the most experimental surface here and a deployment should opt in.' },
+  'worlds.publicEnabled': { text: 'Gateway mode only: offer the shared public world. Off by default, it is the most experimental surface here and a deployment should opt in.' },
   'worlds.memBudgetMb': { text: 'Gateway mode only: total memory the supervisor may commit to worlds and their sim peers. 0 disables the memory governor.' },
 };
 

@@ -170,7 +170,10 @@ export interface Config {
   // in-game panel.
   admin: { owners: string[]; allowConsole: boolean; dashboardToken: string };
   /** What the setup wizard recorded. Bookkeeping, not tuning &mdash; see config.default.toml. */
-  setup: { completed: boolean; contentProfile: string; hosting: string };
+  setup: {
+    completed: boolean; contentProfile: string; hosting: string;
+    deploymentMode: string; deliveryModel: string; storage: string; loginMethods: string[];
+  };
   /** DEV/TEST ONLY, and OFF unless deliberately switched on. Fake players that accept friend
    *  requests and party invites, for exercising the social flows without a second human. They
    *  occupy real roster slots and real friend/party rows, so a public server running them is
@@ -629,6 +632,10 @@ function validate(t: Tree): Config {
       completed: reqBool(t, 'setup', 'completed'),
       contentProfile: reqStr(t, 'setup', 'contentProfile'),
       hosting: reqStr(t, 'setup', 'hosting'),
+      deploymentMode: reqStr(t, 'setup', 'deploymentMode'),
+      deliveryModel: reqStr(t, 'setup', 'deliveryModel'),
+      storage: reqStr(t, 'setup', 'storage'),
+      loginMethods: reqStrArray(t, 'setup', 'loginMethods'),
     },
     metrics: {
       enabled: reqBool(t, 'metrics', 'enabled'),

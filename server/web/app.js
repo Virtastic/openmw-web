@@ -3,7 +3,7 @@
 //
 // The admin dashboard, as one vanilla ES module. No framework and no build step: this file
 // is served exactly as it is written, which means what you read here is what runs, and a
-// stack trace points at a real line. The server is the only source of truth — this page
+// stack trace points at a real line. The server is the only source of truth, this page
 // holds no state a reload would not rebuild.
 //
 // The session token lives in sessionStorage, never a cookie: nothing is auto-attached by
@@ -45,7 +45,7 @@ async function api(path, opts = {}) {
     body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
   });
   if (res.status === 401 && token.get()) {
-    // The session died under us — expired, revoked, or the account was demoted. Send the
+    // The session died under us, expired, revoked, or the account was demoted. Send the
     // operator back to the door rather than leaving a page that silently does nothing.
     token.clear();
     await refreshState();
@@ -84,7 +84,7 @@ function toast(message, kind = 'success') {
 
 /**
  * One confirmation path for every irreversible action. `typeToConfirm` demands the operator
- * retypes an exact string — reserved for things with no undo at all, where a mis-aimed
+ * retypes an exact string, reserved for things with no undo at all, where a mis-aimed
  * click on a phone would otherwise be enough.
  */
 function confirmAction({ title, body, danger = 'Confirm', typeToConfirm = null }) {
@@ -120,34 +120,40 @@ function confirmAction({ title, body, danger = 'Confirm', typeToConfirm = null }
   });
 }
 
+// `mp: true` marks pages that only mean something with other people on the server. A
+// single-player deployment hides them entirely, a roster, moderation commands and a
+// public-account browser on a world with exactly one person in it are the "why am I seeing
+// multiplayer options?" complaint, verbatim.
 const NAV = [
   { group: 'Server', items: [
-    { hash: '#overview', label: 'Overview', icon: '▣', role: 'viewer' },
-    { hash: '#console', label: 'Players & commands', icon: '⌘', role: 'moderator' },
-    { hash: '#mods', label: 'Game data & mods', icon: '⛁', role: 'viewer' },
+    { hash: '#overview', label: 'Overview', icon: 'bi-speedometer2', role: 'viewer' },
+    { hash: '#console', label: 'Players & commands', icon: 'bi-people', role: 'moderator', mp: true },
+    { hash: '#mods', label: 'Game data & mods', icon: 'bi-collection', role: 'viewer' },
   ] },
   { group: 'Configuration', items: [
-    { hash: '#settings', label: 'Settings', icon: '⚙', role: 'viewer' },
-    { hash: '#setup', label: 'Setup wizard', icon: '✦', role: 'owner' },
+    { hash: '#settings', label: 'Settings', icon: 'bi-sliders', role: 'viewer' },
+    { hash: '#setup', label: 'Setup wizard', icon: 'bi-magic', role: 'owner' },
   ] },
   { group: 'People', items: [
-    { hash: '#accounts', label: 'Accounts', icon: '☺', role: 'moderator' },
-    { hash: '#sessions', label: 'Admin sessions', icon: '🔑', role: 'owner' },
-    { hash: '#security', label: 'My security', icon: '🛡', role: 'viewer' },
+    { hash: '#accounts', label: 'Accounts', icon: 'bi-person-lines-fill', role: 'moderator' },
+    { hash: '#sessions', label: 'Admin sessions', icon: 'bi-key', role: 'owner' },
+    { hash: '#security', label: 'My security', icon: 'bi-shield-lock', role: 'viewer' },
   ] },
   { group: 'Diagnostics', items: [
-    { hash: '#logs', label: 'Logs', icon: '☰', role: 'moderator' },
-    { hash: '#audit', label: 'Audit trail', icon: '✓', role: 'moderator' },
-    { hash: '#metrics', label: 'Metrics', icon: '📈', role: 'moderator' },
+    { hash: '#logs', label: 'Logs', icon: 'bi-journal-text', role: 'moderator' },
+    { hash: '#audit', label: 'Audit trail', icon: 'bi-clipboard-check', role: 'moderator' },
+    { hash: '#metrics', label: 'Metrics', icon: 'bi-graph-up', role: 'moderator' },
   ] },
   { group: 'Danger zone', items: [
-    { hash: '#maintenance', label: 'Maintenance & restart', icon: '⏻', role: 'owner' },
-    { hash: '#help', label: 'Help & docs', icon: '?', role: 'viewer' },
+    { hash: '#maintenance', label: 'Maintenance & restart', icon: 'bi-power', role: 'owner' },
+    { hash: '#help', label: 'Help & docs', icon: 'bi-question-circle', role: 'viewer' },
   ] },
 ];
 
 const RANK = { viewer: 0, moderator: 1, owner: 2 };
 const can = (need) => state.authed && RANK[state.role] >= RANK[need];
+/** True when this deployment was set up as a private, one-person world. */
+const singlePlayer = () => state.setup?.deploymentMode === 'single';
 
 function paintChrome() {
   const nav = $('#mainNav');
@@ -155,26 +161,24 @@ function paintChrome() {
   if (!state.authed) { nav.innerHTML = ''; }
   else {
     nav.innerHTML = NAV.map((g) => {
-      const items = g.items.filter((i) => can(i.role));
+      const items = g.items.filter((i) => can(i.role) && !(i.mp && singlePlayer()));
       if (!items.length) return '';
       return html`<li class="nav-header">${g.group}</li>` + items.map((i) => html`
         <li class="nav-item">
           <a href="${i.hash}" class="nav-link ${raw(i.hash === current ? 'active' : '')}">
-            <span class="nav-icon me-2">${i.icon}</span><p>${i.label}</p>
+            <i class="nav-icon bi ${i.icon}"></i><p>${i.label}</p>
           </a>
         </li>`).join('');
     }).join('');
   }
-  $('#btnLogout').hidden = !state.authed;
-  $('#topUser').textContent = state.authed ? `${state.name} · ${state.role}` : '';
-  $('#sidebarFooter').textContent = state.authed ? '' : 'not signed in';
+  $('#topUserWrap').hidden = !state.authed;
+  $('#topUser').textContent = state.authed ? state.name : '';
+  $('#topRole').textContent = state.authed ? `Signed in as ${state.role}` : '';
 
   const m = $('#topMaintenance');
   m.innerHTML = state.maintenance?.on
     ? html`<span class="badge text-bg-warning">maintenance mode</span>` : '';
 
-  // These two slots existed in the markup from the start and nothing ever wrote to them, so
-  // the top bar carried a permanent blank gap and the footer an empty version.
   $('#topWorld').textContent = state.serverName || '';
   $('#footVersion').textContent = state.version ? `v${state.version}` : '';
 
@@ -183,13 +187,20 @@ function paintChrome() {
     ? html`<div class="alert alert-warning">
         <strong>Configuration was rolled back.</strong> The settings last saved here failed to
         load, so the server started from an earlier version (<code>${state.configFallback}</code>)
-        instead. Nothing was lost — review Settings and save again.
+        instead. Nothing was lost, review Settings and save again.
       </div>` : '';
 }
 
 function setTitle(title, lead = '') {
   $('#pageTitle').textContent = title;
   $('#pageLead').textContent = lead;
+  // The breadcrumb everyone expects an admin panel to have. Two levels is all the depth
+  // this app has, so it is Home / page, not a synthetic hierarchy.
+  const home = location.hash && location.hash !== '#overview';
+  $('#crumbs').innerHTML = home
+    ? html`<li class="breadcrumb-item"><a href="#overview">Home</a></li>
+       <li class="breadcrumb-item active">${title}</li>`
+    : html`<li class="breadcrumb-item active">Home</li>`;
 }
 
 const go = (hash) => { if (location.hash === hash) route(); else location.hash = hash; };
@@ -204,11 +215,33 @@ const BLANK_ANSWERS = {
   deploymentMode: null, loginMethods: ['password'], contentProfile: null,
   deliveryModel: null, hosting: null, domain: '', serverName: '', storage: 'local',
   s3: { endpoint: '', bucket: '', region: 'auto' },
+  ssoCreds: { discord: {}, google: {}, microsoft: {} },
 };
 
+/**
+ * Re-entering Setup on a configured server starts from what was chosen last time, read back
+ * from the server. Without this, "Setup/Reconfigure" presented every question blank and
+ * saved the blanks over the real answers, a reconfigure tool that silently resets.
+ */
+function seedFromServer() {
+  // Fills gaps only: an answer already given in this browser session, typed or clicked -
+  // beats the stored one, so seeding never undoes an edit in progress.
+  const s = state.setup || {};
+  answers.deploymentMode ||= s.deploymentMode || null;
+  answers.contentProfile ||= s.contentProfile || null;
+  answers.hosting ||= s.hosting || null;
+  answers.deliveryModel ||= s.deliveryModel || null;
+  if (s.storage && answers.storage === 'local') answers.storage = s.storage;
+  if (Array.isArray(s.loginMethods) && s.loginMethods.length
+      && answers.loginMethods.length === 1 && answers.loginMethods[0] === 'password') {
+    answers.loginMethods = [...s.loginMethods];
+  }
+  answers.serverName ||= state.serverName || '';
+}
+
 // Answers and position survive a reload. Setup is the longest uninterrupted stretch of
-// typing in the whole product, and losing it to an accidental refresh — or to the restart
-// the server itself may perform — would mean starting the questionnaire again.
+// typing in the whole product, and losing it to an accidental refresh, or to the restart
+// the server itself may perform, would mean starting the questionnaire again.
 const WIZ_KEY = 'omwmp_wizard';
 function loadWizard() {
   try {
@@ -230,18 +263,16 @@ const restored = loadWizard();
 const answers = restored.answers;
 let step = restored.step;
 
-// The order is the one that was specified, and only the SERVER NAME was ever marked
-// "multiplayer only". An earlier version also skipped the sign-in, extra-admins and hosting
-// questions for a single-player server, which was me inventing a rule: a private world still
-// has a login (it is how you get in), can still have a second administrator, and can still
-// be reachable from outside. Those questions are asked either way now.
+// Single player is the short path: no other players means no question about how they sign
+// in, no co-admins to invite, no server name to advertise. You still get the hosting
+// question (a private world can still be reachable from outside, and that matters), and you
+// can always re-run Setup after switching to multiplayer to answer the rest.
 const wizardSteps = () => {
   const mp = answers.deploymentMode === 'multiplayer';
   return [
     'owner',
     'mode',
-    'login',
-    'admins',
+    ...(mp ? ['login', 'admins'] : []),
     'content',
     'delivery',
     'hosting',
@@ -297,7 +328,7 @@ function wireChoices(onPick) {
       //
       // The multiplayer path asks about sign-in methods, public hosting and a server name;
       // single-player skips all three. Without this, someone who picks multiplayer, answers
-      // those, then changes their mind still had them applied at the end — a "just me"
+      // those, then changes their mind still had them applied at the end, a "just me"
       // server quietly configured with SSO providers it never offered to anyone. The
       // questions are hidden on the way back but the values were not.
       if (key === 'deploymentMode' && answers.deploymentMode !== value) {
@@ -317,8 +348,8 @@ function wireChoices(onPick) {
 function renderWizard() {
   // Persist here rather than at each mutation site: every path that changes an answer or the
   // step ends up calling this, so one line covers all of them. The first version saved only
-  // from the choice-tile handler, which meant every typed answer — server name, domain, S3
-  // bucket — was lost on a reload while the clicked ones survived. A half-restored form is
+  // from the choice-tile handler, which meant every typed answer, server name, domain, S3
+  // bucket, was lost on a reload while the clicked ones survived. A half-restored form is
   // worse than none.
   saveWizard();
   const steps = wizardSteps();
@@ -341,7 +372,7 @@ function renderWizard() {
 /**
  * The one-time key from /admin#setup=… , kept so it survives the hash being cleared.
  *
- * A cached key can go stale — the server mints a new one if setup never completed and the
+ * A cached key can go stale, the server mints a new one if setup never completed and the
  * data folder was reset, which is exactly what happens while someone is trying things out.
  * When that happens the key must be forgettable, or the manual-entry field stays hidden
  * (there IS a key, just the wrong one) and the operator is stuck on "wrong setup key" with
@@ -372,7 +403,7 @@ function stepOwner() {
   wizardShell(html`
     <h5>Create your administrator account</h5>
     <p class="text-secondary small">This is the account you will sign in with. It has full
-      control of the server, so give it a real password — you can add a second factor once
+      control of the server, so give it a real password, you can add a second factor once
       you are in.</p>
     ${raw(!state.needsSetupKey || setupKey ? '' : html`
       <div class="mb-3">
@@ -401,7 +432,7 @@ function stepOwner() {
   { back: false, next: 'Create account', onNext: async () => {
     const n = $('#oName').value.trim(), p = $('#oPass').value, p2 = $('#oPass2').value;
     if (p !== p2) { $('#oErr').textContent = 'The two passwords do not match.'; return; }
-    // Only required when the server says so — from this machine or this network it is not
+    // Only required when the server says so, from this machine or this network it is not
     // asked for at all, because the whole point is that setup happens in the browser.
     const key = ($('#oKey')?.value.trim() || setupKey || '');
     if (state.needsSetupKey && !key) { $('#oErr').textContent = 'The setup key is required.'; return; }
@@ -415,7 +446,7 @@ function stepOwner() {
       renderWizard();
     } catch (e) {
       // A rejected key is almost always a stale one. Drop it and re-render so the manual
-      // field appears — otherwise the operator is told the key is wrong while being given
+      // field appears, otherwise the operator is told the key is wrong while being given
       // nowhere to put a right one.
       if (e.status === 401 && (setupKey || e.body?.needsKey)) {
         forgetSetupKey();
@@ -451,11 +482,11 @@ function stepLogin() {
       <span><strong>${label}</strong><small>${blurb}</small></span></label>`;
 
   // What the combination actually means, said back to them. "Tick some boxes" is not an
-  // answer to "am I using SSO, passwords, or both" — the point of the question.
+  // answer to "am I using SSO, passwords, or both", the point of the question.
   let summary;
   if (has('password') && sso.length) {
     summary = html`<strong>Both.</strong> Players can sign in with a password or with
-      ${sso.join(', ')} — and the same person can use either on one account.`;
+      ${sso.join(', ')}, and the same person can use either on one account.`;
   } else if (has('password')) {
     summary = html`<strong>Passwords only.</strong> Accounts live on this server and nothing
       external is involved.`;
@@ -469,7 +500,7 @@ function stepLogin() {
 
   wizardShell(html`
     <h5>How will players sign in?</h5>
-    <p class="text-secondary small">Pick as many as you like. They work side by side — this is
+    <p class="text-secondary small">Pick as many as you like. They work side by side, this is
       how you choose single sign-on, passwords, or both together.</p>
     ${raw(box('password', 'Username and password',
       'Accounts held on this server. Nothing external required, and it always works.'))}
@@ -478,10 +509,34 @@ function stepLogin() {
     ${raw(box('google', 'Google', 'Needs a Google OAuth client.'))}
     ${raw(box('microsoft', 'Microsoft', 'Needs a Microsoft app registration.'))}
     <div class="vt-section-note mt-3">${raw(summary)}</div>
-    ${raw(sso.length ? html`<div class="vt-section-note mt-2">Each provider needs a client ID
-      and secret from its developer console. Tick them here and paste the details afterwards
-      under <strong>Settings → Single sign-on</strong>; until you do, that provider simply is
-      not offered.</div>` : '')}`,
+    ${raw(['discord', 'google', 'microsoft'].filter(has).map((p) => {
+      const c = answers.ssoCreds?.[p] || {};
+      const helpUrl = {
+        discord: 'https://discord.com/developers/applications',
+        google: 'https://console.cloud.google.com/apis/credentials',
+        microsoft: 'https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationsListBlade',
+      }[p];
+      // Ticking a provider opens its keys right here, the step that asks the question is
+      // the step that takes the answer, not a pointer at a settings page for later.
+      return html`
+      <div class="vt-card card mt-2"><div class="card-body py-3">
+        <div class="d-flex align-items-center mb-2">
+          <strong>${LOGIN_LABEL[p]} keys</strong>
+          <a class="ms-auto small" href="${helpUrl}" target="_blank" rel="noreferrer noopener">
+            open ${LOGIN_LABEL[p]}'s developer console ↗</a>
+        </div>
+        <p class="small text-secondary mb-2">Create an application there, set its redirect URL
+          to <code>${location.origin}/auth/${p}/callback</code>, and paste its two values here.
+          You can also skip this and fill it in later under Settings → Single sign-on -
+          until then, ${LOGIN_LABEL[p]} simply is not offered on the sign-in page.</p>
+        <div class="row g-2">
+          <div class="col-sm-6"><label class="form-label small">Client ID</label>
+            <input class="form-control form-control-sm vt-mono" data-cred="${p}:clientId" value="${c.clientId || ''}"></div>
+          <div class="col-sm-6"><label class="form-label small">Client secret</label>
+            <input class="form-control form-control-sm vt-mono" type="password" data-cred="${p}:clientSecret" value="${c.clientSecret || ''}"></div>
+        </div>
+      </div></div>`;
+    }).join(''))}`,
   { disabled: answers.loginMethods.length === 0 });
 
   view().querySelectorAll('[data-login]').forEach((el) => {
@@ -494,20 +549,68 @@ function stepLogin() {
       renderWizard();
     };
   });
+  view().querySelectorAll('[data-cred]').forEach((el) => {
+    el.oninput = () => {
+      const [p, k] = el.dataset.cred.split(':');
+      answers.ssoCreds ||= {};
+      // The redirect URI rides along: the provider was told this exact URL above, and the
+      // server cannot derive its own public origin, the browser is standing at it.
+      answers.ssoCreds[p] = {
+        ...(answers.ssoCreds[p] || {}),
+        [k]: el.value.trim(),
+        redirectUri: `${location.origin}/auth/${p}/callback`,
+      };
+      saveWizard();
+    };
+  });
 }
+
+/** Accounts created on this step, so the review screen can list them. Not persisted, each
+ *  one is created the moment the Add button is pressed, so a reload loses nothing. */
+const addedAdmins = [];
 
 function stepAdmins() {
   wizardShell(html`
     <h5>Anyone else helping you run this?</h5>
-    <p class="text-secondary small">You can skip this and add people later from the Accounts
-      page. They need an account on the server first — this only grants dashboard access.</p>
-    <div class="vt-section-note">
+    <p class="text-secondary small">Create their sign-in here and hand them the details. Skip
+      it freely, the Accounts page can do this any time later.</p>
+    <div class="vt-section-note mb-3">
       <strong>Owner</strong> can change everything, including settings and other people's access.<br>
       <strong>Moderator</strong> can kick, ban, mute and read logs, but cannot change configuration.<br>
       <strong>Viewer</strong> can look, and nothing else.
     </div>
-    <p class="small text-secondary mt-3 mb-0">Head to Accounts once setup is finished.</p>`,
-  { next: 'Skip for now' });
+    <div class="row g-2 align-items-end">
+      <div class="col-sm-4"><label class="form-label small">Username</label>
+        <input class="form-control" id="adName" autocomplete="off"></div>
+      <div class="col-sm-4"><label class="form-label small">Password</label>
+        <input class="form-control" id="adPass" type="password" autocomplete="new-password"></div>
+      <div class="col-sm-2"><label class="form-label small">Role</label>
+        <select class="form-select" id="adRole">
+          <option value="moderator" selected>moderator</option>
+          <option value="viewer">viewer</option>
+          <option value="owner">owner</option>
+        </select></div>
+      <div class="col-sm-2"><button class="btn btn-outline-primary w-100" id="adGo">Add</button></div>
+    </div>
+    <div class="form-text">At least 12 characters. They can change it once they sign in.</div>
+    <div id="adErr" class="text-danger small mt-1"></div>
+    ${raw(addedAdmins.length ? html`<ul class="list-unstyled small mt-3 mb-0">
+      ${raw(addedAdmins.map((a) => html`<li class="py-1">
+        <i class="bi bi-check-circle text-success me-1"></i>
+        <strong>${a.name}</strong>, ${a.role}</li>`).join(''))}
+    </ul>` : '')}`,
+  { next: addedAdmins.length ? 'Continue' : 'Skip for now' });
+
+  $('#adGo').onclick = async () => {
+    const name = $('#adName').value.trim();
+    try {
+      const r = await api('/accounts/create', { method: 'POST', body: {
+        name, password: $('#adPass').value, role: $('#adRole').value,
+      } });
+      addedAdmins.push({ name: r.name, role: r.role });
+      renderWizard();
+    } catch (e) { $('#adErr').textContent = e.message; }
+  };
 }
 
 function stepContent() {
@@ -545,20 +648,61 @@ function stepHosting() {
     ${raw(choice('hosting', 'public', 'Yes, from anywhere',
       'The server needs HTTPS. With a domain name pointed here you get a real certificate automatically; without one you get a self-signed certificate and your browser will warn you the first time.'))}
     ${raw(answers.hosting === 'public' ? html`
-      <div class="vt-section-note mt-3">
+      <div class="mt-3 mb-2">
+        <label class="form-label">Domain name <span class="text-secondary">(optional)</span></label>
+        <div class="input-group">
+          <input class="form-control" id="wzDomain" value="${answers.domain}"
+            placeholder="mp.example.com" autocomplete="off">
+          <button class="btn btn-outline-secondary" id="wzDomainCheck" type="button">Check it</button>
+        </div>
+        <div class="form-text">A domain you own, pointed at this machine. Leave it empty to
+          use the raw address, everything still works, browsers just show a one-time
+          certificate warning because nothing independent vouches for it.</div>
+        <div id="wzDomainResult" class="mt-2"></div>
+      </div>
+      <div class="vt-section-note">
         <strong>One thing this wizard cannot do for you.</strong> HTTPS is handled by the
-        proxy in front of this server, which reads its settings from a file called
-        <code>.env</code> next to your <code>docker-compose.yml</code> — outside the server,
-        so nothing in here can write it.
-        <p class="mt-2 mb-1">With a domain pointed at this machine, set:</p>
-        <pre class="vt-mono small mb-1">SERVER_DOMAIN=mp.example.com
-TLS_MODE=</pre>
-        <p class="mb-0">and restart. You get a real certificate automatically. Without a
-          domain, leave it alone: the connection is still encrypted, your browser will just
-          warn you once because the certificate is self-signed.</p>
+        proxy in front of this server, which reads a file called <code>.env</code> next to
+        your <code>docker-compose.yml</code>, outside the server, so nothing in here can
+        write it. ${raw(answers.domain ? html`Put this line in it and restart:
+        <pre class="vt-mono small mb-0 mt-2">SERVER_DOMAIN=${answers.domain}</pre>` : html`If
+        you add a domain above, this box shows you the exact line to put in it.`)}
       </div>` : '')}`,
-  { disabled: !answers.hosting });
+  { disabled: !answers.hosting, onNext: () => {
+    answers.domain = $('#wzDomain')?.value.trim() ?? answers.domain;
+    step++; renderWizard();
+  } });
   wireChoices();
+  const d = $('#wzDomain');
+  if (d) d.onchange = () => { answers.domain = d.value.trim(); saveWizard(); renderWizard(); };
+
+  // The check the operator cannot do themselves: is the DNS record right, and does HTTPS
+  // answer? Run by the server, reported back in plain language with the next step named.
+  const chk = $('#wzDomainCheck');
+  if (chk) chk.onclick = async () => {
+    const domain = $('#wzDomain').value.trim();
+    const out = $('#wzDomainResult');
+    if (!domain) { out.innerHTML = html`<div class="alert alert-secondary py-2 small mb-0">Type a domain first.</div>`; return; }
+    answers.domain = domain;
+    saveWizard();
+    out.innerHTML = html`<div class="text-secondary small">
+      <span class="spinner-border spinner-border-sm me-1"></span> Checking ${domain}…</div>`;
+    try {
+      const r = await api('/setup/check-domain', { method: 'POST', body: { domain } });
+      const line = (ok, msg) => html`<div class="d-flex gap-2 py-1 small">
+        <i class="bi ${raw(ok === true ? 'bi-check-circle-fill text-success'
+          : ok === 'warn' ? 'bi-exclamation-triangle-fill text-warning'
+          : 'bi-x-circle-fill text-danger')}"></i><div>${msg}</div></div>`;
+      out.innerHTML = html`<div class="vt-section-note">
+        ${raw(line(r.dns.ok, r.dns.message))}
+        ${raw(r.https.status === 'skipped' ? '' : line(
+          r.https.status === 'ok' ? true : r.https.status === 'self-signed' ? 'warn' : false,
+          r.https.message))}
+      </div>`;
+    } catch (e) {
+      out.innerHTML = html`<div class="alert alert-danger py-2 small mb-0">${e.message}</div>`;
+    }
+  };
 }
 
 function stepName() {
@@ -590,7 +734,7 @@ function stepStorage() {
       </div>
       <div class="vt-section-note mt-3">Access keys are read from the environment
         (<code>S3_ACCESS_KEY_ID</code> and <code>S3_SECRET_ACCESS_KEY</code>), never stored in
-        configuration — so they cannot end up in a backup or a screenshot of this page.</div>` : '')}`);
+        configuration, so they cannot end up in a backup or a screenshot of this page.</div>` : '')}`);
   wireChoices();
   const e = $('#s3e'), b = $('#s3b'), r = $('#s3r');
   if (e) e.oninput = () => { answers.s3.endpoint = e.value.trim(); };
@@ -618,7 +762,7 @@ async function stepFiles() {
       <td class="text-end">${raw(badge(present.has(f.toLowerCase())))}</td></tr>`).join('');
 
   // THE HALF THAT WAS MISSING. Checking only the plugins and archives passes a folder that
-  // produces a game with no voice, no music and no intro, and calls it complete — the loose
+  // produces a game with no voice, no music and no intro, and calls it complete, the loose
   // asset directories are not inside any .bsa.
   const media = mods?.media ?? {};
   const mediaDirs = profile?.media || [];
@@ -644,7 +788,7 @@ async function stepFiles() {
       <div class="text-secondary small text-uppercase mb-1">Plugins and archives</div>
       <table class="table table-sm align-middle mb-3">${raw(fileRows)}</table>
       <div class="text-secondary small text-uppercase mb-1">Loose media
-        <span class="text-lowercase">— not inside any archive</span></div>
+        <span class="text-lowercase">- not inside any archive</span></div>
       <table class="table table-sm align-middle mb-3">${raw(mediaRows)}</table>` : '')}
     ${raw(profile?.note ? html`<div class="vt-section-note mb-3">${profile.note}</div>` : '')}
     ${raw(mods ? uploadPanel(mods) : '')}
@@ -654,7 +798,7 @@ async function stepFiles() {
         ${raw(missingMedia.length ? html`
           <div class="mt-1">The empty folders matter as much as the plugins:
             <span class="vt-mono">${missingMedia.join(', ')}</span>. Without them the game runs
-            with no voice, no music and no intro — and nothing will warn you, because it
+            with no voice, no music and no intro, and nothing will warn you, because it
             technically works.</div>` : '')}
         <div class="mt-2">You can finish setup anyway. The dashboard keeps working and tells
           you what it needs, but players cannot join until the server can simulate the world.</div>
@@ -692,15 +836,32 @@ function stepReview() {
       ${raw(line('Content', CONTENT_LABEL[answers.contentProfile] || '(unset)'))}
       ${raw(line('Game files', answers.deliveryModel === 'serve' ? 'Served by this server' : 'Players bring their own'))}
       ${raw(mp ? line('Reachable', answers.hosting === 'public'
-        ? 'From the internet — set SERVER_DOMAIN in .env for a real certificate'
+        ? 'From the internet, set SERVER_DOMAIN in .env for a real certificate'
         : 'Local network only') : '')}
-      ${raw(line('Uploads', answers.storage === 's3' ? `S3 — ${answers.s3.bucket || 'bucket unset'}` : 'On this server'))}
+      ${raw(line('Uploads', answers.storage === 's3' ? `S3, ${answers.s3.bucket || 'bucket unset'}` : 'On this server'))}
+      ${raw(addedAdmins.length ? line('Extra admins',
+        addedAdmins.map((a) => `${a.name} (${a.role})`).join(', ')) : '')}
     </dl>
+    ${raw(mp ? html`
+      <div class="vt-section-note mb-3">
+        <strong>Getting players in.</strong> Send them this address, they open it in a
+        browser, nothing to install:
+        <pre class="vt-mono mb-1 mt-2" id="joinLink">${answers.domain ? `https://${answers.domain}` : location.origin}</pre>
+        <button class="btn btn-sm btn-outline-secondary" id="copyJoin">Copy link</button>
+        ${raw(answers.deliveryModel === 'verify' ? html`<p class="small mb-0 mt-2">Each player
+          also needs their own copy of Morrowind's Data Files, since you chose that players
+          bring their own.</p>` : '')}
+      </div>` : '')}
     <div class="vt-section-note">Saving writes these to
       <code>config.dashboard.toml</code>. Your own <code>config.toml</code> is never touched,
-      and the server will restart to pick the changes up.</div>`,
+      and the server will restart to pick the changes up. Everything else, gameplay rules,
+      loot, rate limits, all of it, lives under <strong>Settings</strong> afterwards.</div>`,
   { next: 'Save and restart', onNext: async () => {
     try {
+      // ssoCreds for unticked providers must not ride along and resurrect stale keys.
+      for (const p of Object.keys(answers.ssoCreds || {})) {
+        if (!answers.loginMethods.includes(p)) delete answers.ssoCreds[p];
+      }
       await api('/setup', { method: 'POST', body: { ...answers, completed: true } });
       clearWizard();
       toast('Settings saved. Restarting the server…');
@@ -708,6 +869,13 @@ function stepReview() {
       waitForRestart();
     } catch (e) { toast(e.message, 'danger'); }
   } });
+  const cj = $('#copyJoin');
+  if (cj) cj.onclick = async () => {
+    try {
+      await navigator.clipboard.writeText($('#joinLink').textContent.trim());
+      toast('Join link copied.');
+    } catch { toast('Could not copy, select the link and copy it yourself.', 'danger'); }
+  };
 }
 
 /** Poll until the server answers again, then go to the overview. */
@@ -723,14 +891,14 @@ function waitForRestart() {
       const r = await fetch('/admin/api/state');
       if (r.ok) {
         await refreshState();
-        // ADMIN SESSIONS DO NOT SURVIVE A RESTART — they live in memory. So the last act of
+        // ADMIN SESSIONS DO NOT SURVIVE A RESTART, they live in memory. So the last act of
         // the setup wizard signs you out, and without this the operator answered ten
         // questions, watched a spinner, and landed on a login form under a cheerful green
         // "Server is back up" with nothing saying why. Say it plainly instead.
         if (!state.authed) {
           token.clear();
           pageLogin(false, 'The server restarted, so you have been signed out. '
-            + 'Everything you set up was saved — sign in to carry on.');
+            + 'Everything you set up was saved, sign in to carry on.');
           return;
         }
         go('#overview');
@@ -740,7 +908,7 @@ function waitForRestart() {
     } catch { /* still down, expected */ }
     if (tries > 60) {
       view().innerHTML = html`<div class="alert alert-danger">The server has not come back.
-        Check the container logs — if it is not configured to restart automatically you may
+        Check the container logs, if it is not configured to restart automatically you may
         need to start it yourself.</div>`;
       return;
     }
@@ -859,30 +1027,35 @@ function pageReset(token) {
 async function pageOverview() {
   setTitle('Overview', 'What this server is doing right now.');
   const o = await api('/overview');
-  const stat = (label, value, sub = '') => html`
+  // AdminLTE's small-box widget, the coloured stat tiles the framework is known for,
+  // used here as designed instead of a plain card impersonating one.
+  const stat = (label, value, icon, tone, href = '') => html`
     <div class="col-6 col-lg-3">
-      <div class="card mb-3"><div class="card-body">
-        <div class="text-secondary small text-uppercase">${label}</div>
-        <div class="fs-3">${value}</div>
-        <div class="small text-secondary">${sub}</div>
-      </div></div>
+      <div class="small-box text-bg-${raw(tone)} mb-3">
+        <div class="inner"><h3>${value}</h3><p>${label}</p></div>
+        <i class="small-box-icon bi ${icon}"></i>
+        ${raw(href ? html`<a href="${href}" class="small-box-footer">
+          More <i class="bi bi-arrow-right-circle"></i></a>` : '<div class="small-box-footer">&nbsp;</div>')}
+      </div>
     </div>`;
   const up = Math.round(o.uptime / 60);
   const rows = o.players.length ? o.players.map((p) => html`
     <tr><td>${p.name}</td><td class="text-secondary">${p.account}</td>
-      <td>${p.cellKey || "—"}</td><td>${p.rank}</td></tr>`).join('')
+      <td>${p.cellKey || "-"}</td><td>${p.rank}</td></tr>`).join('')
     : html`<tr><td colspan="4" class="vt-empty">Nobody is in the world right now.</td></tr>`;
 
   const checklist = setupChecklist();
   view().innerHTML = html`
     <div class="row">
-      ${raw(stat('Players', `${o.players.length}`, `of ${o.maxPlayers} slots`))}
-      ${raw(stat('World', o.world.id, o.world.mode))}
-      ${raw(stat('Uptime', up < 60 ? `${up}m` : `${Math.round(up / 60)}h`, ''))}
-      ${raw(stat('Your role', state.role, state.name))}
+      ${raw(stat(singlePlayer() ? 'In the world' : `Players (of ${o.maxPlayers})`,
+        `${o.players.length}`, 'bi-people', 'primary', singlePlayer() ? '' : '#console'))}
+      ${raw(stat('World', o.world.id, 'bi-globe-americas', 'success', '#mods'))}
+      ${raw(stat('Uptime', up < 60 ? `${up}m` : `${Math.round(up / 60)}h`, 'bi-clock-history', 'secondary'))}
+      ${raw(stat('Your role', state.role, 'bi-person-badge', 'warning', '#security'))}
     </div>
     ${raw(checklist)}
-    <div class="card"><div class="card-header"><h3 class="card-title">In world</h3></div>
+    <div class="card card-outline card-primary">
+      <div class="card-header"><h3 class="card-title">In world</h3></div>
       <div class="table-responsive"><table class="table table-hover mb-0">
         <thead><tr><th>Name</th><th>Account</th><th>Location</th><th>Rank</th></tr></thead>
         <tbody>${raw(rows)}</tbody></table></div></div>`;
@@ -925,128 +1098,235 @@ function wireChecklist() {
 // ---------------------------------------------------------------------------------------
 // console: players, moderation actions, and the full command set
 // ---------------------------------------------------------------------------------------
+// Every operation is a FORM, not a slash-command syntax quiz. The commands still run
+// through the server's one executor (one audit trail, one rank check); the forms just build
+// the line so the operator never has to know it existed. A raw command box survives at the
+// bottom for whatever the forms have not caught up with.
+
+/** Run a command line and show its output in the shared output pane. */
+async function runCmd(line) {
+  const out = $('#cmdOut');
+  try {
+    const r = await api('/command', { method: 'POST', body: { line } });
+    out.textContent = r.message || (r.ok ? 'Done.' : 'Failed.');
+    out.scrollIntoView({ block: 'nearest' });
+    return r.ok;
+  } catch (e) { out.textContent = e.message; return false; }
+}
+
+/** One quoted argument. Player names can contain spaces; commands split on them. */
+const q = (s) => (/\s/.test(s) ? `"${s}"` : s);
+
 async function pageConsole() {
-  setTitle('Players & commands', 'Moderation actions and the full admin command set.');
-  const [o, cmds] = await Promise.all([api('/overview'), api('/commands')]);
+  setTitle('Players & commands', 'Who is here, and everything you can do about it.');
+  const [o, reports] = await Promise.all([
+    api('/overview'),
+    api('/reports?limit=20').catch(() => ({ reports: [] })),
+  ]);
+  const owner = can('owner');
 
-  const rows = o.players.length ? o.players.map((p) => html`
-    <tr><td>${p.name}</td><td class="text-secondary small">${p.account}</td>
-      <td>${p.cellKey || "—"}</td>
-      <td class="text-end">
-        <button class="btn btn-sm btn-outline-secondary" data-act="kick" data-t="${p.account}">kick</button>
-        <button class="btn btn-sm btn-outline-secondary" data-act="mute" data-t="${p.account}">mute</button>
-        <button class="btn btn-sm btn-outline-danger" data-act="ban" data-t="${p.account}">ban</button>
+  const rosterRows = o.players.length ? o.players.map((p) => html`
+    <tr><td>${p.name}</td><td class="text-secondary small">${p.cellKey || '-'}</td>
+      <td class="text-end text-nowrap">
+        <button class="btn btn-sm btn-outline-secondary" data-act="kick" data-t="${p.name}"
+          title="Disconnect them; they can rejoin">kick</button>
+        <button class="btn btn-sm btn-outline-secondary" data-act="mute" data-t="${p.name}"
+          title="They stay, but cannot chat">mute</button>
+        <button class="btn btn-sm btn-outline-secondary" data-act="unmute" data-t="${p.name}">unmute</button>
+        <button class="btn btn-sm btn-outline-danger" data-act="ban" data-t="${p.name}"
+          title="Kick them and refuse the account from now on">ban</button>
       </td></tr>`).join('')
-    : html`<tr><td colspan="4" class="vt-empty">Nobody is in the world right now.</td></tr>`;
+    : html`<tr><td colspan="3" class="vt-empty">Nobody is in the world right now.</td></tr>`;
 
-  const cmdRows = cmds.commands.map((c) => html`
-    <tr><td><code>${c.usage}</code>${raw(c.inGameOnly
-        ? ' <span class="badge text-bg-secondary">in-game only</span>' : '')}</td>
-      <td class="small text-secondary">${c.help}</td></tr>`).join('');
+  const reportRows = (reports.reports || []).map((r) => html`
+    <tr><td class="small text-secondary text-nowrap">${(r.at || '').slice(5, 16).replace('T', ' ')}</td>
+      <td>${r.by}</td><td>${r.about || '-'}</td><td class="small">${r.text}</td></tr>`).join('');
+
+  // A form card: icon + title in a proper AdminLTE card header, inputs, one action button.
+  const tool = (icon, title, blurb, bodyHtml, btnId, btnLabel, extra = '') => html`
+    <div class="card card-outline card-secondary mb-3"><div class="card-header">
+      <h3 class="card-title"><i class="bi ${icon} me-2"></i>${title}</h3></div>
+      <div class="card-body">
+        <p class="small text-secondary">${raw(blurb)}</p>
+        ${raw(bodyHtml)}
+        <button class="btn btn-sm btn-primary mt-2" id="${btnId}">${btnLabel}</button>
+        ${raw(extra)}
+      </div></div>`;
 
   view().innerHTML = html`
-    <div class="card mb-3"><div class="card-header"><h3 class="card-title">In world</h3></div>
-      <div class="table-responsive"><table class="table table-hover mb-0">
-        <tbody>${raw(rows)}</tbody></table></div></div>
+    <div class="row">
+      <div class="col-lg-7">
+        <div class="card card-outline card-primary mb-3">
+          <div class="card-header"><h3 class="card-title">
+            <i class="bi bi-people me-2"></i>In the world, ${o.players.length}
+            of ${o.maxPlayers}</h3></div>
+          <div class="table-responsive"><table class="table table-hover mb-0">
+            <thead><tr><th>Player</th><th>Where</th><th></th></tr></thead>
+            <tbody>${raw(rosterRows)}</tbody></table></div>
+        </div>
 
-    <div class="card mb-3"><div class="card-body">
-      <h5 class="card-title">Broadcast a message</h5>
-      <div class="input-group">
-        <input class="form-control" id="bcast" placeholder="Server restarting in five minutes">
-        <button class="btn btn-primary" id="bcastGo">Send</button>
-      </div></div></div>
+        ${raw(tool('bi-megaphone', 'Broadcast',
+          'A message to everyone currently playing, shown in their chat.',
+          html`<input class="form-control" id="bcMsg" placeholder="Server restarting in five minutes">`,
+          'bcGo', 'Send to everyone'))}
 
-    <div class="card mb-3"><div class="card-body">
-      <h5 class="card-title">Command console</h5>
-      <p class="text-secondary small">The same commands available in-game, run as you. Type
-        <code>/help</code> to list what your role permits.</p>
-      <div class="input-group mb-2">
-        <span class="input-group-text">/</span>
-        <input class="form-control vt-mono" id="cmdLine" placeholder="list" autocomplete="off">
-        <button class="btn btn-primary" id="cmdGo">Run</button>
+        ${raw(tool('bi-card-text', 'Message of the day',
+          'Shown to every player when they join. Leave it empty and press save to clear it.',
+          html`<input class="form-control" id="motdMsg">`,
+          'motdGo', 'Save message'))}
+
+        <div class="card card-outline card-warning mb-3"><div class="card-header">
+          <h3 class="card-title"><i class="bi bi-flag me-2"></i>Player reports</h3></div>
+          <div class="table-responsive"><table class="table table-sm mb-0">
+            <thead><tr><th>When</th><th>From</th><th>About</th><th>Report</th></tr></thead>
+            <tbody>${raw(reportRows || html`<tr><td colspan="4" class="vt-empty">No reports. Good.</td></tr>`)}</tbody>
+          </table></div></div>
       </div>
-      <div class="vt-out vt-mono" id="cmdOut">Ready.</div>
-    </div></div>
 
-    <div class="card mb-3"><div class="card-header d-flex align-items-center">
-      <h3 class="card-title">Player reports</h3>
-      <button class="btn btn-sm btn-outline-secondary ms-auto" id="repRefresh">Refresh</button>
-    </div>
-    <div class="table-responsive"><table class="table table-sm mb-0">
-      <thead><tr><th>When</th><th>From</th><th>About</th><th>Reason</th></tr></thead>
-      <tbody id="repBody"><tr><td colspan="4" class="vt-empty">Loading…</td></tr></tbody>
-    </table></div></div>
+      <div class="col-lg-5">
+        <div class="card mb-3"><div class="card-header">
+          <h3 class="card-title"><i class="bi bi-terminal me-2"></i>Output</h3></div>
+          <div class="card-body"><div class="vt-out vt-mono" id="cmdOut">Results of anything you run appear here.</div></div></div>
 
-    <div class="card"><div class="card-header"><h3 class="card-title">Available commands</h3></div>
-      <div class="table-responsive"><table class="table table-sm mb-0">
-        <tbody>${raw(cmdRows)}</tbody></table></div></div>`;
+        ${raw(tool('bi-chat-left-text', 'Read a chat log',
+          'What a player has said recently, the moderation trail for a report.',
+          html`<div class="row g-2">
+            <div class="col-7"><input class="form-control" id="clName" placeholder="player name"></div>
+            <div class="col-5"><input class="form-control" id="clMin" type="number" value="60" title="minutes back"></div>
+          </div>`,
+          'clGo', 'Show chat'))}
 
-  // The report inbox had a route and settings and help text, and no way to read it — a
-  // moderator could switch on chat logging and then never see a filed report.
-  const loadReports = async () => {
-    try {
-      const { reports } = await api('/reports?limit=50');
-      $('#repBody').innerHTML = reports.length ? reports.map((r) => html`
-        <tr><td class="text-secondary small text-nowrap">${(r.ts || '').replace('T', ' ').slice(0, 16)}</td>
-          <td>${r.reporter}</td><td>${r.target}</td>
-          <td class="small">${r.reason}</td></tr>`).join('')
-        : html`<tr><td colspan="4" class="vt-empty">No reports filed.</td></tr>`;
-    } catch (e) {
-      $('#repBody').innerHTML = html`<tr><td colspan="4" class="vt-empty">${e.message}</td></tr>`;
-    }
-  };
-  $('#repRefresh').onclick = loadReports;
-  void loadReports();
+        ${raw(tool('bi-journal-bookmark', 'Quests',
+          'See where a player\'s journal is, and if a quest is stuck, push its stage forward. '
+          + 'Run it with just a name first to list their quests and stages.',
+          html`<div class="row g-2">
+            <div class="col-12"><input class="form-control" id="qName" placeholder="player name"></div>
+            <div class="col-7"><input class="form-control vt-mono" id="qId" placeholder="quest id (optional)"></div>
+            <div class="col-5"><input class="form-control" id="qStage" type="number" placeholder="set stage"></div>
+          </div>`,
+          'qGo', 'Look up / repair'))}
 
+        ${raw(tool('bi-box-seam', 'Give an item',
+          'Puts an item in a player\'s inventory, usually to repair something lost to a bug.',
+          html`<div class="row g-2">
+            <div class="col-6"><input class="form-control" id="gvName" placeholder="player name"></div>
+            <div class="col-4"><input class="form-control vt-mono" id="gvItem" placeholder="gold_001"></div>
+            <div class="col-2"><input class="form-control" id="gvCount" type="number" value="1"></div>
+          </div>`,
+          'gvGo', 'Give'))}
+
+        ${raw(tool('bi-person-check', 'Bans',
+          'Lift a ban, or ban by address when someone keeps coming back on new accounts.',
+          html`<div class="row g-2">
+            <div class="col-12"><input class="form-control" id="bnName" placeholder="account name or IP address"></div>
+          </div>`,
+          'unbanGo', 'Unban', html`
+          <button class="btn btn-sm btn-outline-danger mt-2 ms-1" id="ipbanGo">IP-ban</button>`))}
+
+        ${raw(owner ? tool('bi-award', 'Set a rank',
+          'In-game moderation power: 0 player, 1 helper, 2 moderator, 3 admin. This is '
+          + 'separate from dashboard access, which lives on the Accounts page.',
+          html`<div class="row g-2">
+            <div class="col-8"><input class="form-control" id="rkName" placeholder="account name"></div>
+            <div class="col-4"><select class="form-select" id="rkRank">
+              <option value="0">0, player</option><option value="1">1, helper</option>
+              <option value="2">2, moderator</option><option value="3">3, admin</option>
+            </select></div>
+          </div>`,
+          'rkGo', 'Set rank') : '')}
+
+        <div class="card mb-3"><div class="card-header">
+          <h3 class="card-title"><i class="bi bi-code-slash me-2"></i>Anything else</h3></div>
+          <div class="card-body">
+            <p class="small text-secondary">The raw command line, for whatever has no form
+              yet. Type <span class="vt-mono">help</span> for the full list.</p>
+            <div class="input-group">
+              <span class="input-group-text vt-mono">/</span>
+              <input class="form-control vt-mono" id="rawCmd">
+              <button class="btn btn-outline-secondary" id="rawGo">Run</button>
+            </div>
+          </div></div>
+      </div>
+    </div>`;
+
+  // Roster buttons, through the same /action contract the old dashboard used.
   view().querySelectorAll('[data-act]').forEach((b) => {
     b.onclick = async () => {
-      const { act, t } = b.dataset;
-      if (act === 'ban') {
+      const kind = b.dataset.act, target = b.dataset.t;
+      if (kind === 'ban') {
         const ok = await confirmAction({
-          title: `Ban ${t}?`,
-          body: html`<p>They will be disconnected and unable to log in again until unbanned.</p>`,
+          title: `Ban ${target}?`,
+          body: html`<p>They are disconnected now and the account is refused from now on,
+            until someone lifts the ban here.</p>`,
           danger: 'Ban',
         });
         if (!ok) return;
       }
       try {
-        const r = await api('/action', { method: 'POST', body: { kind: act, target: t, detail: '' } });
-        toast(r.message, r.ok ? 'success' : 'danger');
-        route();
+        const r = await api('/action', { method: 'POST', body: { kind, target } });
+        toast(r.message || `${kind} done.`, r.ok === false ? 'danger' : 'success');
+        if (kind === 'kick' || kind === 'ban') route();
       } catch (e) { toast(e.message, 'danger'); }
     };
   });
-  $('#bcastGo').onclick = async () => {
-    const text = $('#bcast').value.trim();
-    if (!text) return;
-    const r = await api('/action', { method: 'POST', body: { kind: 'broadcast', target: '', detail: text } });
-    toast(r.message, r.ok ? 'success' : 'danger');
-    $('#bcast').value = '';
+
+  $('#bcGo').onclick = async () => {
+    const msg = $('#bcMsg').value.trim();
+    if (!msg) return;
+    try {
+      await api('/action', { method: 'POST', body: { kind: 'broadcast', detail: msg } });
+      toast('Sent to everyone.');
+      $('#bcMsg').value = '';
+    } catch (e) { toast(e.message, 'danger'); }
   };
-  const runCmd = async () => {
-    const line = $('#cmdLine').value.trim();
-    if (!line) return;
-    const out = $('#cmdOut');
-    // /console ships script to someone's machine. It is the one command where a fat-fingered
-    // Enter has consequences on a stranger's computer, so it asks first.
-    if (/^console\b/i.test(line)) {
+  $('#motdGo').onclick = () => runCmd(`motd ${$('#motdMsg').value.trim()}`.trim());
+  $('#clGo').onclick = () => {
+    const n = $('#clName').value.trim();
+    if (n) runCmd(`chatlog ${q(n)} ${Number($('#clMin').value) || 60}`);
+  };
+  $('#qGo').onclick = () => {
+    const n = $('#qName').value.trim(), id = $('#qId').value.trim(), st = $('#qStage').value;
+    if (!n) return;
+    if (id && st !== '') runCmd(`quest set ${q(n)} ${id} ${Number(st)}`);
+    else runCmd(`quest ${q(n)}${id ? ` ${id}` : ''}`);
+  };
+  $('#gvGo').onclick = () => {
+    const n = $('#gvName').value.trim(), item = $('#gvItem').value.trim();
+    if (n && item) runCmd(`give ${q(n)} ${item} ${Number($('#gvCount').value) || 1}`);
+  };
+  $('#unbanGo').onclick = () => {
+    const n = $('#bnName').value.trim();
+    if (n) runCmd(`unban ${q(n)}`);
+  };
+  $('#ipbanGo').onclick = async () => {
+    const n = $('#bnName').value.trim();
+    if (!n) return;
+    const ok = await confirmAction({
+      title: `IP-ban ${n}?`,
+      body: html`<p>Blocks the network address, not just the account, anyone sharing it
+        (a household, a campus) is blocked too. Use an ordinary ban first when you can.</p>`,
+      danger: 'IP-ban',
+    });
+    if (ok) runCmd(`ipban ${q(n)}`);
+  };
+  const rk = $('#rkGo');
+  if (rk) rk.onclick = async () => {
+    const n = $('#rkName').value.trim(), r = $('#rkRank').value;
+    if (!n) return;
+    if (r === '3') {
       const ok = await confirmAction({
-        title: 'Run script on a player\'s machine?',
-        body: html`<p>This executes code inside another person's game client. Every use is
-          recorded in the audit trail against your account.</p>
-          <p class="vt-mono small">/${line}</p>`,
-        danger: 'Run it',
+        title: `Make ${n} a rank-3 admin?`,
+        body: html`<p>Rank 3 can run script on other players' machines in-game. Only give it
+          to someone you would hand the keys to.</p>`,
+        danger: 'Set rank 3',
       });
       if (!ok) return;
     }
-    try {
-      const r = await api('/command', { method: 'POST', body: { line } });
-      out.textContent = r.message || '(no output)';
-      $('#cmdLine').value = '';
-    } catch (e) { out.textContent = e.message; }
+    runCmd(`setrank ${q(n)} ${r}`);
   };
-  $('#cmdGo').onclick = runCmd;
-  $('#cmdLine').onkeydown = (e) => { if (e.key === 'Enter') runCmd(); };
+  const rawGo = () => { const l = $('#rawCmd').value.trim(); if (l) runCmd(l.replace(/^\//, '')); };
+  $('#rawGo').onclick = rawGo;
+  $('#rawCmd').onkeydown = (e) => { if (e.key === 'Enter') rawGo(); };
 }
 
 // ---------------------------------------------------------------------------------------
@@ -1104,7 +1384,9 @@ function renderSection(s) {
       input = html`<input class="form-control vt-mono" id="${id}" data-type="stringArray"
         value="${(f.value || []).join(', ')}" placeholder="comma separated">`;
     } else if (f.type === 'unsupported') {
-      input = html`<span class="text-secondary small">Not editable here — use config.toml.</span>`;
+      input = html`<span class="text-secondary small">This one is structured data a simple
+        form cannot edit. If you need to change it, ask on the support Discord (link under
+        Help), for everything else on this page the forms are enough.</span>`;
     } else {
       input = html`<input class="form-control ${raw(f.secret ? 'vt-mono' : '')}" id="${id}"
         data-type="string" type="${raw(f.secret ? 'password' : 'text')}" value="${f.value}">`;
@@ -1120,11 +1402,17 @@ function renderSection(s) {
       </div>`;
   }).join('');
 
+  // Structurally inert for this deployment shape ≠ hidden: the section stays fully editable
+  // (they can change their mind), it just says up front that nothing reads it right now.
+  const MP_ONLY = new Set(['auth', 'moderation', 'login']);
+  const inert = singlePlayer() && MP_ONLY.has(s.name.split('.')[0]);
+
   return html`
-    <div class="card mb-3" data-section="${s.name}">
+    <div class="card mb-3 ${raw(inert ? 'opacity-75' : '')}" data-section="${s.name}">
       <div class="card-header d-flex align-items-center">
         <h3 class="card-title">${s.label || s.name}
-          <span class="vt-mono text-secondary small ms-2">[${s.name}]</span></h3>
+          <span class="vt-mono text-secondary small ms-2">[${s.name}]</span>
+          ${raw(inert ? '<span class="badge text-bg-secondary ms-2">not used, this is a single-player server</span>' : '')}</h3>
         <button class="btn btn-sm btn-primary ms-auto" data-save="${s.name}">Save</button>
       </div>
       <div class="card-body">
@@ -1173,7 +1461,7 @@ function wireSettings() {
   });
 }
 
-/** Offer the restart right where the change was made — telling a non-technical operator to
+/** Offer the restart right where the change was made, telling a non-technical operator to
  *  "restart the container" and leaving them to work out how is not a finished feature. */
 function restartPrompt() {
   const b = $('#banner');
@@ -1203,7 +1491,7 @@ async function pageMods() {
   const editable = can('owner');
 
   // Move buttons as well as dragging. HTML5 drag-and-drop does not fire for touch at all, so
-  // drag alone meant load order simply could not be changed on a phone or tablet — and the
+  // drag alone meant load order simply could not be changed on a phone or tablet, and the
   // grab cursor advertised an affordance that device does not have. The buttons are also the
   // keyboard path.
   const rows = m.entries.map((e, i) => html`
@@ -1222,7 +1510,7 @@ async function pageMods() {
 
   view().innerHTML = html`
     ${raw(!m.exists ? html`<div class="alert alert-warning">
-      No game data folder at <code>${m.dir}</code>. Multiplayer still works without it — the
+      No game data folder at <code>${m.dir}</code>. Multiplayer still works without it, the
       server just cannot simulate NPCs itself.</div>` : '')}
     ${raw(m.missing.length ? html`<div class="alert alert-warning">
       These were in your load order but are no longer on disk, so they have been dropped:
@@ -1242,7 +1530,7 @@ async function pageMods() {
 
   if (!editable) return;
 
-  // Reload the page after an upload so the new files appear in the load order immediately —
+  // Reload the page after an upload so the new files appear in the load order immediately -
   // "I added it and nothing happened" is the exact confusion this whole page exists to avoid.
   wireUpload(() => { toast('Files added. Restart to load them.'); route(); });
 
@@ -1324,7 +1612,7 @@ function drawQr(el, text) {
       + `viewBox="0 0 ${size} ${size}" role="img" aria-label="Two-factor setup QR code">`
       + `<rect width="${size}" height="${size}" fill="#fff"/><g fill="#000">${rects}</g></svg>`;
   } catch {
-    // No QR is fine — the key is printed right below it and typing it in is a supported
+    // No QR is fine, the key is printed right below it and typing it in is a supported
     // flow in every authenticator app.
     el.innerHTML = '';
   }
@@ -1344,7 +1632,7 @@ function uploadPanel(m) {
         <p class="small text-secondary">Morrowind's <strong>Data Files</strong> folder is more
           than the plugins: <code>Sound</code>, <code>Music</code>, <code>Video</code>,
           <code>Fonts</code>, <code>Splash</code> and <code>BookArt</code> sit loose beside
-          them and are not inside any archive. Add the <em>whole folder</em> — with only the
+          them and are not inside any archive. Add the <em>whole folder</em>, with only the
           .esm and .bsa the game runs silently, with no voice, music or intro.</p>
         <p class="small text-secondary">
           <label class="btn btn-sm btn-outline-secondary mb-0">Choose the Data Files folder<input
@@ -1352,14 +1640,14 @@ function uploadPanel(m) {
           <label class="btn btn-sm btn-outline-secondary mb-0 ms-1">Or individual files<input
             type="file" id="upPick" multiple hidden
             accept=".esm,.esp,.bsa,.ba2,.omwaddon,.omwgame,.mp3,.wav,.bik,.fnt,.tex,.dds,.tga,.bmp,.zip"></label>
-          <span class="ms-2">Large folders are fine — files upload one at a time and nothing
+          <span class="ms-2">Large folders are fine, files upload one at a time and nothing
           is held in memory.</span></p>
         <div id="upDrop" class="vt-drop">
           <div class="text-secondary">Drop your whole <strong>Data Files</strong> folder here</div>
         </div>
         <div id="upList" class="mt-2 small"></div>
         <p class="small text-secondary mt-2 mb-0">You can also copy files straight into
-          <code>${m.dir}</code> — with the supplied Docker setup that is the
+          <code>${m.dir}</code>, with the supplied Docker setup that is the
           <code>gamedata</code> folder next to your <code>docker-compose.yml</code>.</p>`)}
     </div></div>`;
 }
@@ -1372,7 +1660,7 @@ function wireUpload(onDone) {
   const list = $('#upList');
 
   // A Data Files folder is thousands of files, so this reports progress in aggregate rather
-  // than one row per file — a list that long is not information, it is a wall.
+  // than one row per file, a list that long is not information, it is a wall.
   const send = async (entries) => {
     if (!entries.length) return;
     const row = document.createElement('div');
@@ -1386,7 +1674,7 @@ function wireUpload(onDone) {
       row.innerHTML = html`<div><strong>${done}</strong> of ${entries.length} added
         · ${(bytes / 1048576).toFixed(0)} MB${raw(extra)}</div>
         ${raw(skipped.length ? html`<div class="small text-secondary">${skipped.length} skipped
-          (not game data — that is normal for a folder with extras in it)</div>` : '')}
+          (not game data, that is normal for a folder with extras in it)</div>` : '')}
         ${raw(failed.length ? html`<div class="small text-danger">${failed.length} failed:
           ${failed.slice(0, 3).join(', ')}</div>` : '')}`;
     };
@@ -1397,7 +1685,7 @@ function wireUpload(onDone) {
         // Raw body, not multipart: the server streams it straight to disk, and a multipart
         // parser for a 400 MB archive would be a dependency plus a memory problem. The PATH
         // travels in the query, because loose media is loaded by path and must keep its
-        // directory — "Music/Explore/mx_explore_1.mp3", not "mx_explore_1.mp3".
+        // directory, "Music/Explore/mx_explore_1.mp3", not "mx_explore_1.mp3".
         const r = await fetch(`/admin/api/mods/upload?name=${encodeURIComponent(path)}`, {
           method: 'POST',
           headers: { authorization: `Bearer ${token.get()}`, 'content-type': 'application/octet-stream' },
@@ -1424,7 +1712,7 @@ function wireUpload(onDone) {
   }));
 
   /** Walk a dropped directory tree. Drag-and-drop gives entries, not paths, so the tree has
-   *  to be traversed by hand — dataTransfer.files alone silently yields only loose files. */
+   *  to be traversed by hand, dataTransfer.files alone silently yields only loose files. */
   const walkEntry = async (entry, prefix, out) => {
     if (entry.isFile) {
       const file = await new Promise((res, rej) => entry.file(res, rej));
@@ -1476,7 +1764,7 @@ async function pageAccounts() {
       <tr>
         <td>${a.name}${raw(a.banned ? ' <span class="badge text-bg-danger">banned</span>' : '')}
           ${raw(a.twoFactor ? ' <span class="badge text-bg-success">2FA</span>' : '')}</td>
-        <td class="text-secondary small">${a.username || '—'}</td>
+        <td class="text-secondary small">${a.username || '-'}</td>
         <td>${a.rank}</td>
         <td>
           ${raw(can('owner') ? html`
@@ -1485,20 +1773,43 @@ async function pageAccounts() {
             <option value="viewer" ${raw(a.dashboardRole === 'viewer' ? 'selected' : '')}>viewer</option>
             <option value="moderator" ${raw(a.dashboardRole === 'moderator' ? 'selected' : '')}>moderator</option>
             <option value="owner" ${raw(a.dashboardRole === 'owner' ? 'selected' : '')}>owner</option>
-          </select>` : html`<span class="text-secondary">${a.dashboardRole || '—'}</span>`)}
+          </select>` : html`<span class="text-secondary">${a.dashboardRole || '-'}</span>`)}
         </td>
         <td class="text-secondary small">${(a.lastSeenAt || '').slice(0, 10)}</td>
-        <td class="text-end">${raw(can('owner')
-          ? html`<button class="btn btn-sm btn-outline-danger" data-del="${a.name}">erase</button>` : '')}</td>
+        <td class="text-end text-nowrap">
+          ${raw(a.banned && can('moderator')
+            ? html`<button class="btn btn-sm btn-outline-secondary" data-unban="${a.name}">unban</button> ` : '')}
+          ${raw(can('owner')
+            ? html`<button class="btn btn-sm btn-outline-danger" data-del="${a.name}">erase</button>` : '')}</td>
       </tr>`).join('');
     $('#accBody').innerHTML = rows || html`<tr><td colspan="6" class="vt-empty">No accounts match.</td></tr>`;
 
     view().querySelectorAll('[data-role-for]').forEach((sel) => {
       sel.onchange = async () => {
+        // Promotion to owner hands over everything, settings, other people's access, the
+        // backup with the password hashes in it. Not a change to make on a mis-click.
+        if (sel.value === 'owner') {
+          const ok = await confirmAction({
+            title: `Make ${sel.dataset.roleFor} an owner?`,
+            body: html`<p>Owners can change every setting, grant and remove anyone's access -
+              including yours, and download full backups.</p>`,
+            danger: 'Make owner',
+          });
+          if (!ok) { render($('#accQ').value); return; }
+        }
         try {
           await api('/accounts/role', { method: 'POST', body: { name: sel.dataset.roleFor, role: sel.value } });
           toast(`Updated access for ${sel.dataset.roleFor}.`);
         } catch (e) { toast(e.message, 'danger'); render($('#accQ').value); }
+      };
+    });
+    view().querySelectorAll('[data-unban]').forEach((b) => {
+      b.onclick = async () => {
+        try {
+          const r = await api('/action', { method: 'POST', body: { kind: 'unban', target: b.dataset.unban } });
+          toast(r.message || `${b.dataset.unban} unbanned.`);
+          render($('#accQ').value);
+        } catch (e) { toast(e.message, 'danger'); }
       };
     });
     view().querySelectorAll('[data-del]').forEach((b) => {
@@ -1506,7 +1817,7 @@ async function pageAccounts() {
         const name = b.dataset.del;
         const ok = await confirmAction({
           title: `Erase ${name}?`,
-          body: html`<p>This permanently deletes the account and everything belonging to it —
+          body: html`<p>This permanently deletes the account and everything belonging to it -
             characters, saved games and stored files. It cannot be undone, and it is the same
             erasure a data-deletion request requires.</p>`,
           danger: 'Erase permanently',
@@ -1523,7 +1834,28 @@ async function pageAccounts() {
   };
 
   view().innerHTML = html`
-    <div class="card"><div class="card-header">
+    ${raw(can('owner') ? html`
+    <div class="card card-outline card-secondary mb-3"><div class="card-header">
+      <h3 class="card-title"><i class="bi bi-person-plus me-2"></i>Add someone</h3></div>
+      <div class="card-body">
+        <div class="row g-2 align-items-end">
+          <div class="col-sm-4"><label class="form-label small">Username</label>
+            <input class="form-control" id="naName" autocomplete="off"></div>
+          <div class="col-sm-4"><label class="form-label small">Password</label>
+            <input class="form-control" id="naPass" type="password" autocomplete="new-password"></div>
+          <div class="col-sm-2"><label class="form-label small">Access</label>
+            <select class="form-select" id="naRole">
+              <option value="moderator" selected>moderator</option>
+              <option value="viewer">viewer</option>
+              <option value="owner">owner</option>
+            </select></div>
+          <div class="col-sm-2"><button class="btn btn-primary w-100" id="naGo">Create</button></div>
+        </div>
+        <div class="form-text">Creates the account and grants dashboard access in one go.
+          To grant access to someone who already plays here, use their row below instead.</div>
+        <div id="naErr" class="text-danger small"></div>
+      </div></div>` : '')}
+    <div class="card card-outline card-primary"><div class="card-header">
       <input class="form-control" id="accQ" placeholder="Search accounts…" value="${q}">
     </div>
     <div class="table-responsive"><table class="table table-hover mb-0">
@@ -1531,6 +1863,17 @@ async function pageAccounts() {
         <th>Last seen</th><th></th></tr></thead>
       <tbody id="accBody"><tr><td colspan="6" class="vt-empty">Loading…</td></tr></tbody>
     </table></div></div>`;
+  const na = $('#naGo');
+  if (na) na.onclick = async () => {
+    try {
+      const r = await api('/accounts/create', { method: 'POST', body: {
+        name: $('#naName').value.trim(), password: $('#naPass').value, role: $('#naRole').value,
+      } });
+      toast(`${r.name} created as ${r.role}.`);
+      $('#naName').value = ''; $('#naPass').value = ''; $('#naErr').textContent = '';
+      render($('#accQ').value);
+    } catch (e) { $('#naErr').textContent = e.message; }
+  };
   let timer;
   $('#accQ').oninput = () => { clearTimeout(timer); timer = setTimeout(() => render($('#accQ').value), 200); };
   await render(q);
@@ -1572,7 +1915,7 @@ async function pageSecurity() {
         ${raw(on ? '<span class="badge text-bg-success ms-2">on</span>'
                  : '<span class="badge text-bg-secondary ms-2">off</span>')}</h5>
       <p class="small text-secondary">Adds a six-digit code to your password sign-in, so your
-        password alone is not enough to get in. Single sign-on is unaffected — the provider
+        password alone is not enough to get in. Single sign-on is unaffected, the provider
         already asks for a second factor of its own.</p>
       <div id="totpArea">${raw(on ? html`
         <p class="small">Two-factor is on for <strong>${state.name}</strong>.</p>
@@ -1604,7 +1947,7 @@ async function pageSecurity() {
   $('#totpStart').onclick = async () => {
     const r = await api('/totp/enroll', { method: 'POST' });
     // A QR code, because "scan this" with nothing to scan is an instruction that cannot be
-    // followed — it left people hand-typing a 32-character base32 string into a phone.
+    // followed, it left people hand-typing a 32-character base32 string into a phone.
     // Drawn here rather than vendoring a library: a QR encoder is a few hundred lines and
     // this page needs exactly one, at one size, from one short string.
     $('#totpArea').innerHTML = html`
@@ -1618,7 +1961,7 @@ async function pageSecurity() {
         <button class="btn btn-primary" id="totpConfirm">Confirm</button>
       </div>
       <div class="small text-secondary">You have to enter a working code before this is
-        switched on — that is what stops you locking yourself out with a key your phone
+        switched on, that is what stops you locking yourself out with a key your phone
         never actually accepted.</div>`;
     drawQr($('#totpQr'), r.uri);
     $('#totpConfirm').onclick = async () => {
@@ -1686,7 +2029,7 @@ async function pageMaintenance() {
         something when the server restarts.</p>
       <div class="mb-3"><label class="form-label">Message shown to players</label>
         <input class="form-control" id="mMsg" value="${m.message || ''}"
-          placeholder="Back in ten minutes — updating mods"></div>
+          placeholder="Back in ten minutes, updating mods"></div>
       <button class="btn ${raw(m.on ? 'btn-success' : 'btn-warning')}" id="mToggle">
         ${raw(m.on ? 'Turn maintenance mode off' : 'Turn maintenance mode on')}</button>
     </div></div>
@@ -1703,7 +2046,7 @@ async function pageMaintenance() {
       <p class="small text-secondary">Everything in the data folder: accounts, characters,
         world state, settings and logs.</p>
       <div class="vt-field-danger mb-3"><strong>Careful:</strong> the archive contains password
-        hashes and any credentials you have configured. Treat it like a password — store it
+        hashes and any credentials you have configured. Treat it like a password, store it
         somewhere private, and do not post it when asking for help.</div>
       <a class="btn btn-outline-secondary" href="/admin/api/export" id="mExport">Download backup</a>
     </div></div>`;
@@ -1784,7 +2127,7 @@ async function pageHelp() {
             ${raw(faq('Nobody can connect from outside my network',
               'Two things have to be true. Your router must forward ports 80 and 443 to this ' +
               'machine, and the server must have been set up for internet hosting rather than ' +
-              'local-network-only &mdash; re-run <a href="#setup">Setup</a> if you chose the latter.'))}
+              'local-network-only, re-run <a href="#setup">Setup</a> if you chose the latter.'))}
             ${raw(faq('Where do players actually go?',
               'They open the game in a browser at this server\'s address. They do not install ' +
               'anything. If you are hosting the client files yourself they are served from the ' +
@@ -1814,7 +2157,7 @@ async function pageHelp() {
               'Something you saved could not be loaded, so the server started from the previous ' +
               'version instead of refusing to start at all. Nothing was lost. Review ' +
               '<a href="#settings">Settings</a> and save again.'))}
-            ${raw(faq('I am locked out &mdash; forgotten password, no email set up',
+            ${raw(faq('I am locked out, forgotten password, no email set up',
               'On the machine running the server:<br>' +
               '<code>docker compose run --rm openmw-web node dist/server.mjs --data /data --admin-reset &lt;name&gt;</code>' +
               '<br>That clears the password and two-factor on that account and prints a temporary ' +
@@ -1843,7 +2186,7 @@ async function pageHelp() {
           <h5 class="card-title">Where your settings live</h5>
           <p class="small text-secondary mb-2">Changes made here are written to
             <code>config.dashboard.toml</code> in your data folder. If you also keep a
-            <code>config.toml</code> by hand, this dashboard never touches it &mdash; yours is
+            <code>config.toml</code> by hand, this dashboard never touches it, yours is
             layered underneath, so your comments and values survive.</p>
           <p class="small text-secondary mb-0">The last few versions are kept alongside it. If a
             saved setting ever stops the server loading, it falls back to the newest one that
@@ -1863,7 +2206,7 @@ async function pageHelp() {
           <p class="small text-secondary mb-0">Interface built with
             <a href="https://github.com/ColorlibHQ/AdminLTE" target="_blank" rel="noreferrer noopener">AdminLTE</a>
             and <a href="https://getbootstrap.com" target="_blank" rel="noreferrer noopener">Bootstrap</a>,
-            both MIT licensed and served from this server rather than a CDN &mdash; so this page
+            both MIT licensed and served from this server rather than a CDN, so this page
             works with no internet connection.</p>
         </div></div>
       </div>
@@ -1907,7 +2250,7 @@ async function route() {
   if (state.firstRun) {
     // Keep a restored position rather than resetting: this runs on every load, so
     // overwriting `step` here is what made the saved progress unreachable. Only clamp to the
-    // bounds the current auth state allows — step 0 is the create-account screen, which is
+    // bounds the current auth state allows, step 0 is the create-account screen, which is
     // pointless once an account exists.
     if (!state.authed) step = 0;
     else if (step < 1) step = 1;
@@ -1924,8 +2267,8 @@ async function route() {
   }
   // AFTER the role check, not before. Reachable by hash, so a viewer who typed or followed
   // a link to it used to answer every question and then get a bare "forbidden" toast at the
-  // final save — and the file-upload panel on the way through failed on every drop.
-  if (hash === '#setup') { if (step < 1) step = 1; return renderWizard(); }
+  // final save, and the file-upload panel on the way through failed on every drop.
+  if (hash === '#setup') { if (step < 1) step = 1; seedFromServer(); return renderWizard(); }
 
   const page = ROUTES[hash] || pageOverview;
   try {

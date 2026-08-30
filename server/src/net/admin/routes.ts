@@ -16,6 +16,7 @@
 //   POST /admin/api/logout             [viewer]
 //   POST /admin/api/setup/owner        [-]         FIRST RUN ONLY: create the first owner
 //   POST /admin/api/setup              [owner]     wizard answers -> config
+//   POST /admin/api/setup/check-domain [owner]     is DNS pointed here, is HTTPS answering
 //   GET  /admin/api/overview           [viewer]    (unchanged shape)
 //   GET  /admin/api/reports            [moderator] (unchanged shape)
 //   POST /admin/api/action             [moderator] (unchanged shape)
@@ -51,6 +52,7 @@ import { serveWebFile } from './static';
 import type { SetupToken } from './setup-token';
 import { generateSecret, totpUri, verifyTotp } from './totp';
 import { settingsView, applySection, applyWizard, type WizardAnswers } from './api-settings';
+import { checkDomain } from './setup-check';
 import { modsView, saveMods, uploadContent, gameDataWritable } from './api-mods';
 import type { LogEntry } from '../../log';
 
@@ -77,7 +79,7 @@ export interface AdminDeps {
   /** Run one ADMIN_COMMANDS entry as `actor`. Returns the same text the chat path returns. */
   runCommand(actor: { accountKey: string; name: string; rank: number }, line: string):
     Promise<{ ok: boolean; message: string }>;
-  /** Which commands exist, and what each needs — drives the console UI. */
+  /** Which commands exist, and what each needs, drives the console UI. */
   commandCatalog(): { name: string; usage: string; help: string; minRank: number; inGameOnly?: boolean }[];
   recentLogs(limit: number, filter: string): LogEntry[];
   metricsSnapshot(): unknown;
@@ -102,7 +104,7 @@ const ROLE_SET = new Set<string>(DASHBOARD_ROLES);
 /**
  * What each legacy /action kind requires, mirroring the ranks in core/admin.ts: kick is
  * rank 1 there, ban/unban/ipban are rank 2. mute and broadcast have no in-game command and
- * are moderator-shaped by nature. resetCell wipes a cell's contents and is owner-only —
+ * are moderator-shaped by nature. resetCell wipes a cell's contents and is owner-only -
  * it has no command equivalent, so nothing else was gating it at all.
  */
 const ACTION_ROLE: Record<string, DashboardRole> = {
@@ -112,15 +114,15 @@ const ACTION_ROLE: Record<string, DashboardRole> = {
   broadcast: 'moderator',
   ban: 'moderator',
   unban: 'moderator',
-  // No in-game equivalent, so nothing was gating this anywhere. It wipes a cell's contents —
-  // containers, dropped items, doors — for everyone. Owner.
+  // No in-game equivalent, so nothing was gating this anywhere. It wipes a cell's contents -
+  // containers, dropped items, doors, for everyone. Owner.
   resetCell: 'owner',
 };
 
 export function adminRoutes(deps: AdminDeps) {
   // PER SERVER, not per module. These were module-level and it was wrong even though a real
   // deployment could never see it: one process runs one server, so the shared state looked
-  // harmless. The test suite builds dozens in a single process and caught it immediately —
+  // harmless. The test suite builds dozens in a single process and caught it immediately -
   // one server completing setup made every subsequently created server report itself as
   // already claimed. State that belongs to an instance goes on the instance.
 
@@ -142,7 +144,9 @@ export function adminRoutes(deps: AdminDeps) {
 
   return async (req: IncomingMessage, res: ServerResponse, url: URL): Promise<boolean> => {
     const path = url.pathname;
-    if (path !== '/admin' && !path.startsWith('/admin/')) return false;
+    // "/" and "/play" belong to this router too: the sign-in landing page lives with the
+    // dashboard's static assets, and this is the only place that serves them.
+    if (path !== '/admin' && !path.startsWith('/admin/') && path !== '/' && path !== '/play') return false;
 
     // HEAD is a GET without a body, and Node drops the body for us. Matching only on the
     // literal method meant HEAD /admin answered 404, which uptime checks and link checkers
@@ -152,8 +156,18 @@ export function adminRoutes(deps: AdminDeps) {
     // --- the page and its assets ---------------------------------------------------------
     // Served unauthenticated on purpose: the HTML and JS can do nothing without a token, and
     // a login form that requires a login to fetch is not a login form. Unlike the old
-    // dashboard this is NOT gated on a token being configured — accounts are the way in now,
+    // dashboard this is NOT gated on a token being configured, accounts are the way in now,
     // and hiding the page would hide first-run setup, which is the whole point.
+    // The front door. "/" used to 404, which is what a player following the join link saw
+    // first. This is a sign-in landing page whose options mirror what the operator enabled;
+    // when the game client is staged in front of us its files win, but the ROOT path is
+    // routed here deliberately (see Caddyfile), the login screen is the default entry now,
+    // not launcher.html.
+    if (method === 'GET' && (path === '/' || path === '/play')) {
+      if (serveWebFile(res, 'play.html')) return true;
+      json(res, 500, { error: 'landing page missing' });
+      return true;
+    }
     if (method === 'GET' && (path === '/admin' || path === '/admin/')) {
       if (serveWebFile(res, 'index.html')) return true;
       json(res, 500, { error: 'dashboard assets missing' });
@@ -173,7 +187,7 @@ export function adminRoutes(deps: AdminDeps) {
       // Rate-limited despite being unauthenticated, for two reasons. It scans the whole
       // account table to answer "first run?", so it was a cheap amplification target. And it
       // reports whether a presented credential worked, which made it an unlimited, unlogged
-      // oracle for guessing an operator-chosen [admin].dashboardToken — session tokens are
+      // oracle for guessing an operator-chosen [admin].dashboardToken, session tokens are
       // 32 random bytes and not worth guessing, but that one is typed by a human.
       if (!deps.apiLimiter.allow(clientIp(req))) {
         json(res, 429, { error: 'rate limited' });
@@ -206,6 +220,10 @@ export function adminRoutes(deps: AdminDeps) {
         // Server-side, so the getting-started nudge answers the same on every machine
         // instead of being a per-browser localStorage flag.
         setupCompleted: (deps.config() as { setup?: { completed?: boolean } }).setup?.completed === true,
+        // The wizard's stored answers, whole. The page branches on these, a single-player
+        // deployment hides the multiplayer pages, and re-entering Setup pre-fills from them
+        // instead of presenting every question blank and saving blanks back over the answers.
+        setup: (deps.config() as { setup?: Record<string, unknown> }).setup ?? {},
         // Surfaced even to a logged-out page so a boot-time revert is visible immediately,
         // not only to whoever eventually logs in.
         configFallback: (deps.config() as { dashboardFallback?: string }).dashboardFallback ?? null,
@@ -281,7 +299,7 @@ export function adminRoutes(deps: AdminDeps) {
       // THE KEY IS FOR STRANGERS, NOT FOR YOU.
       //
       // Requiring it unconditionally was wrong. The whole promise is "start it, open /admin,
-      // the browser walks you through the rest" — and demanding a value that only exists in
+      // the browser walks you through the rest", and demanding a value that only exists in
       // a log line or a file sends you straight back to a terminal, which is the one thing
       // this was built to avoid.
       //
@@ -289,7 +307,7 @@ export function adminRoutes(deps: AdminDeps) {
       // claimed by whoever finds it first. That risk does not exist for a request coming
       // from this machine or this network, and the person who just ran `docker compose up`
       // is, essentially always, exactly there. So: local or LAN, no key. From the internet,
-      // key required — and that operator has a shell on the box by definition, because they
+      // key required, and that operator has a shell on the box by definition, because they
       // put it on the internet.
       //
       // clientIp(), not the socket peer: behind the bundled Caddy every peer is the proxy's
@@ -315,14 +333,14 @@ export function adminRoutes(deps: AdminDeps) {
       }
       const result = await (setupInFlight = (setupInFlight ?? Promise.resolve()).then(async () => {
         if (deps.accounts.hasDashboardOwner()) return { error: 'setup has already been completed on this server' };
-        // An account may already exist — someone played on this server before anyone set the
+        // An account may already exist, someone played on this server before anyone set the
         // dashboard up. Promoting it is legitimate, but ONLY on proof of its password. The
         // setup key proves access to the machine; it does not entitle the holder to take over
         // a specific player's identity, and that account may belong to somebody else.
         const existing = await deps.accounts.get(name);
         if (existing) {
           // NO strength check on this path. The password is not being set, it is being
-          // proved — running new-password rules over one that already exists means an
+          // proved, running new-password rules over one that already exists means an
           // account with a weak but genuine password can never be adopted by its owner,
           // which is a lockout dressed up as a security control.
           if (!await deps.accounts.verifyLogin(name, password)) {
@@ -340,8 +358,8 @@ export function adminRoutes(deps: AdminDeps) {
         await deps.accounts.setDashboardRole(name, 'owner');
         deps.accounts.setRank(name, 3); // in-game parity: the first owner is an owner in-world
         // Also record them in [admin].owners so the every-boot promotion keeps them rank 3
-        // even with a cold account cache. Not fatal if it fails — the role is what gates the
-        // dashboard — so a read-only data dir still yields a usable login.
+        // even with a cold account cache. Not fatal if it fails, the role is what gates the
+        // dashboard, so a read-only data dir still yields a usable login.
         applyWizard(deps.dataDir, { owners: [name] }, deps.sharedDir);
         await deps.accounts.flush();
         deps.setupToken.disarm();
@@ -391,7 +409,7 @@ export function adminRoutes(deps: AdminDeps) {
       // the command console and calls into the server directly, so gating the whole route at
       // moderator quietly handed out capabilities the in-game table puts at rank 2: the same
       // moderator refused /ban in the console succeeded with {kind:"ban"} here. resetCell is
-      // worse — it destroys world state and has no in-game equivalent, so it had no rank gate
+      // worse, it destroys world state and has no in-game equivalent, so it had no rank gate
       // anywhere. Mapped to the ranks core/admin.ts already defines.
       const needed = ACTION_ROLE[kind];
       if (needed && !roleAtLeast(ctx.role, needed)) {
@@ -426,7 +444,7 @@ export function adminRoutes(deps: AdminDeps) {
       //
       // moderator -> 2, not 1. The UI promises a moderator can "kick, ban, mute, broadcast,
       // read chat history and logs", and ban/unban/ipban are rank 2 in core/admin.ts. Mapping
-      // to 1 meant the console refused a ban that the older /action endpoint allowed — the
+      // to 1 meant the console refused a ban that the older /action endpoint allowed, the
       // same person, the same server, two different answers. Rank 2 keeps the dangerous
       // things (setrank, console) at rank 3, which is owner-only either way.
       const rank = ctx.role === 'owner' ? 3 : ctx.role === 'moderator' ? 2 : 0;
@@ -456,6 +474,25 @@ export function adminRoutes(deps: AdminDeps) {
       return true;
     }
 
+    // Live verification for the wizard's hosting step: does the domain resolve, and does an
+    // HTTPS request to it actually answer? Run FROM THE SERVER, so it tests the path players
+    // will use rather than the operator's own machine. The one blind spot is hairpin NAT -
+    // some home routers cannot reach their own public address from inside, so a failure is
+    // reported as "could not confirm", never "definitely broken".
+    if (method === 'POST' && path === '/admin/api/setup/check-domain') {
+      const ctx = await gate(req, res, auth, 'owner');
+      if (!ctx) return true;
+      const body = await readJson<{ domain?: string }>(req, res);
+      if (body === undefined) return true;
+      const domain = String(body.domain ?? '').trim().toLowerCase();
+      if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(domain)) {
+        json(res, 400, { error: 'that does not look like a domain name (e.g. mp.example.com)' });
+        return true;
+      }
+      json(res, 200, await checkDomain(domain));
+      return true;
+    }
+
     // --- onboarding wizard -------------------------------------------------------------------
     if (method === 'POST' && path === '/admin/api/setup') {
       const ctx = await gate(req, res, auth, 'owner');
@@ -478,7 +515,7 @@ export function adminRoutes(deps: AdminDeps) {
       });
       return true;
     }
-    // Upload streams straight to disk, so it must NOT go through readJson's buffering — a
+    // Upload streams straight to disk, so it must NOT go through readJson's buffering, a
     // 400 MB archive is not a JSON body. Owner only: this writes files the engine will load.
     if (method === 'POST' && path === '/admin/api/mods/upload') {
       const ctx = await gate(req, res, auth, 'owner');
@@ -539,6 +576,38 @@ export function adminRoutes(deps: AdminDeps) {
       json(res, 200, { accounts: all });
       return true;
     }
+    // Create an account with dashboard access in one step, the wizard's "anyone else
+    // helping you run this?" question, and the Accounts page's add button. Without this,
+    // giving a co-admin access meant telling them to register in the game first, which is
+    // a terminal-shaped answer to a browser-shaped question.
+    if (method === 'POST' && path === '/admin/api/accounts/create') {
+      const ctx = await gate(req, res, auth, 'owner');
+      if (!ctx) return true;
+      const body = await readJson<{ name?: string; password?: string; role?: string }>(req, res);
+      if (body === undefined) return true;
+      const name = String(body.name ?? '').trim();
+      const password = String(body.password ?? '');
+      const role = String(body.role ?? 'moderator');
+      if (!ROLE_SET.has(role)) { json(res, 400, { error: 'unknown role' }); return true; }
+      if (!validAccountName(name)) {
+        json(res, 400, { error: 'name must be 2-24 characters: letters, numbers, spaces, _ or -' });
+        return true;
+      }
+      const weak = passwordProblem(password, name);
+      if (weak) { json(res, 400, { error: `password ${weak}` }); return true; }
+      const created = await deps.accounts.register(name, password);
+      if (typeof created === 'string') {
+        json(res, 400, { error: created === 'exists'
+          ? 'that name is taken, to grant an existing account access, use its row in the list instead'
+          : 'invalid name' });
+        return true;
+      }
+      await deps.accounts.setDashboardRole(name, role as DashboardRole);
+      await deps.accounts.flush();
+      log('warn', 'admin.account_created', { account: name.toLowerCase(), role, by: ctx.accountKey });
+      json(res, 200, { ok: true, name, role });
+      return true;
+    }
     if (method === 'POST' && path === '/admin/api/accounts/role') {
       const ctx = await gate(req, res, auth, 'owner');
       if (!ctx) return true;
@@ -554,7 +623,7 @@ export function adminRoutes(deps: AdminDeps) {
       if (role !== 'owner') {
         const owners = deps.accounts.listAll().filter((a) => a.dashboardRole === 'owner');
         if (owners.length <= 1 && owners[0]?.name.toLowerCase() === name.toLowerCase()) {
-          json(res, 400, { error: 'this is the only owner — promote someone else first' });
+          json(res, 400, { error: 'this is the only owner, promote someone else first' });
           return true;
         }
       }
@@ -630,7 +699,7 @@ export function adminRoutes(deps: AdminDeps) {
       // Proving one live code before saving is what stops an operator locking themselves out
       // with a secret their phone never actually accepted.
       if (!verifyTotp(pending.secret, String(body.code ?? ''))) {
-        json(res, 400, { error: 'that code did not match — check your phone\'s clock' }); return true;
+        json(res, 400, { error: 'that code did not match, check your phone\'s clock' }); return true;
       }
       await deps.accounts.setTotpSecret(ctx.accountName, pending.secret);
       await deps.accounts.flush();
@@ -690,7 +759,7 @@ export function adminRoutes(deps: AdminDeps) {
     // serve this repo's docs; building it meant vendoring a markdown parser to display
     // PROTOCOL.md and STATUS.md, which are written for the next engineer, not for someone
     // hosting a server. The documentation an operator actually needs is the per-field help
-    // next to the field (help.ts) and the troubleshooting on the Help page — both already
+    // next to the field (help.ts) and the troubleshooting on the Help page, both already
     // here, neither requiring a parser. The deep material stays on GitHub, linked.
 
     json(res, 404, { error: 'not found' });

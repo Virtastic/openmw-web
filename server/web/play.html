@@ -1,0 +1,78 @@
+<!doctype html>
+<!--
+  Copyright (C) 2025-2026 Virtastic - https://virtastic.app
+  SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
+
+  The front door. Served by the game server itself at "/", so a player who is handed the
+  join link sees a sign-in screen, not a 404, and not launcher.html cold. Which sign-in
+  options appear is driven by /auth/providers, i.e. by what the operator enabled in setup:
+  nothing here needs configuring, and an option that is off simply is not shown.
+
+  Self-contained on purpose: one file, inline styles, no framework. It must render when
+  nothing else on the box works, because "the login page is down" is how every other
+  problem gets reported.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Play</title>
+<style>
+  :root {
+    --ember: #e06c5a; --ember-dark: #c65a2e; --gold: #eecb78; --gold-dim: #c69a52;
+    --ash: #1a140a; --ash-soft: #241c10; --parchment: #f6f4ee;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    background: radial-gradient(ellipse at 50% -20%, #3a2a14 0%, var(--ash) 60%);
+    color: var(--parchment); font: 16px/1.5 system-ui, sans-serif; padding: 1rem;
+  }
+  .card {
+    width: 100%; max-width: 26rem; background: var(--ash-soft);
+    border: 1px solid #ffffff1a; border-radius: .75rem; padding: 2rem;
+    box-shadow: 0 12px 48px #000a;
+  }
+  h1 { font-size: 1.4rem; color: var(--gold); font-weight: 600; letter-spacing: .01em; }
+  .sub { color: #b6ac97; font-size: .9rem; margin: .25rem 0 1.5rem; }
+  .btn {
+    display: block; width: 100%; text-align: center; padding: .8rem 1rem; margin-top: .6rem;
+    border-radius: .5rem; border: 1px solid #ffffff26; background: #ffffff0d;
+    color: var(--parchment); text-decoration: none; font-size: .95rem; cursor: pointer;
+    transition: background .12s, border-color .12s;
+  }
+  .btn:hover { background: #ffffff1a; border-color: var(--gold-dim); }
+  .btn.primary { background: var(--ember-dark); border-color: var(--ember-dark); font-weight: 600; }
+  .btn.primary:hover { background: var(--ember); border-color: var(--ember); }
+  .rule { display: flex; align-items: center; gap: .75rem; margin: 1.1rem 0 .5rem;
+    color: #8e8677; font-size: .75rem; text-transform: uppercase; letter-spacing: .08em; }
+  .rule::before, .rule::after { content: ""; flex: 1; height: 1px; background: #ffffff1f; }
+  .note {
+    margin-top: 1.25rem; padding: .75rem .9rem; border-radius: .5rem; font-size: .85rem;
+    background: #ffffff0a; border-left: 3px solid var(--gold-dim); color: #cfc6b4;
+  }
+  .note a { color: var(--gold); }
+  .foot { margin-top: 1.5rem; text-align: center; font-size: .75rem; color: #8e8677; }
+  .foot a { color: #b6ac97; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main class="card">
+  <h1 id="name">Play Morrowind</h1>
+  <p class="sub" id="sub">Sign in to play. The game runs in your browser, there is nothing to install.</p>
+
+  <div id="options"><p class="sub">Checking how this server signs people in…</p></div>
+
+  <div class="note" id="noclient" hidden>
+    <strong>The game itself is not installed on this server yet.</strong> Signing in works,
+    but there is nothing to play. If you run this server: stage the game client files, or
+    see the <a href="/admin">admin dashboard</a> for what is left to do.
+  </div>
+
+  <p class="foot">Powered by <a href="https://github.com/Virtastic/openmw-web"
+    rel="noreferrer noopener">OpenMW-Web</a> · <a href="/admin">server administration</a></p>
+</main>
+<script src="/admin/static/play.js"></script>
+</body>
+</html>
