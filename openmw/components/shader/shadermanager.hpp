@@ -14,6 +14,7 @@
 
 #include <osg/Program>
 #include <osg/Shader>
+#include <osg/Uniform>
 #include <osg/ref_ptr>
 
 namespace osgViewer
@@ -51,6 +52,22 @@ namespace Shader
 
         osg::ref_ptr<osg::Program> getProgram(osg::ref_ptr<osg::Shader> vertexShader,
             osg::ref_ptr<osg::Shader> fragmentShader, const osg::Program* programTemplate = nullptr);
+
+        /// Interned constant uniform: one shared osg::Uniform per (name, value).
+        ///
+        /// osg::Program::PerContextProgram::apply dedups uniform uploads by POINTER IDENTITY
+        /// (`lastAppliedUniform != &uniform` -> re-upload). ShaderVisitor used to allocate a fresh
+        /// `new osg::Uniform(name, unit)` on every stateset, so consecutive draws sharing a program
+        /// always saw a different pointer and re-sent glUniform1iv with a byte-identical value.
+        /// Measured in Balmora: uniform1iv was 6.4% of all GL calls (26,783 in 5s).
+        ///
+        /// Safe to share ONLY because the key IS the value and these are never set() after
+        /// construction. Do NOT route osg_FrontMaterial_* through here: NiMaterialColorController
+        /// mutates those in place (nifosg/controller.cpp) to animate spell glows and enchant
+        /// pulses, so sharing one instance would drive every object with the same base material
+        /// from a single object's animation.
+        osg::ref_ptr<osg::Uniform> getConstUniform(const std::string& name, int value);
+        osg::ref_ptr<osg::Uniform> getConstUniform(const std::string& name, float value);
 
         const osg::Program* getProgramTemplate() const { return mProgramTemplate; }
         void setProgramTemplate(const osg::Program* program) { mProgramTemplate = program; }
@@ -124,6 +141,11 @@ namespace Shader
         typedef std::vector<osg::ref_ptr<osg::Shader>> ShaderList;
         typedef std::map<osg::ref_ptr<osg::Shader>, ShaderList> LinkedShadersMap;
         LinkedShadersMap mLinkedShaders;
+
+        // Keyed on (value, name): the same name can legitimately carry different values in
+        // different materials, and those must stay distinct uniforms.
+        std::map<std::pair<int, std::string>, osg::ref_ptr<osg::Uniform>> mConstIntUniforms;
+        std::map<std::pair<float, std::string>, osg::ref_ptr<osg::Uniform>> mConstFloatUniforms;
 
         std::mutex mMutex;
 

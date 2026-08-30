@@ -315,6 +315,14 @@
  //  - powerPreference:'high-performance' (A2): pick the discrete GPU on dual-GPU machines.
  (function(){
    var orig = HTMLCanvasElement.prototype.getContext;
+   // F10 SPIKE DIAGNOSTIC (?ctxtrace=1): under -sPROXY_TO_PTHREAD the game canvas is transferred
+   // to the worker, and SOMETHING on the main thread still calls getContext on it, which throws
+   // 'Cannot get context from a canvas that has transferred its control to offscreen'. The
+   // message names no caller, so capture one. Reading the SDL2 port narrowed it to two sites and
+   // ruled one out: SDL_emscriptenmouse.c builds its cursor on a FRESH document.createElement
+   // canvas (innocent), while SDL_emscriptenframebuffer.c:82 does
+   // Browser.createContext(Module['canvas'], false, true) on the GAME canvas. This says which.
+   var CTX_TRACE = /[?&]ctxtrace=1/.test(location.search);
    HTMLCanvasElement.prototype.getContext = function(type, attrs){
      if (type === 'webgl2' || type === 'webgl' || type === 'experimental-webgl'){
        attrs = attrs || {};
@@ -328,6 +336,13 @@
            && (attrs.powerPreference == null || attrs.powerPreference === 'default'))
          attrs.powerPreference = 'high-performance';
        // desynchronized disabled — suspected first-frame hang in headless preview.
+     }
+     if (CTX_TRACE) {
+       // Console is useless here: the status line logs every frame and evicts anything older.
+       try { (globalThis.__ctxTrace = globalThis.__ctxTrace || []).push({
+         type: type,
+         gameCanvas: this === document.getElementById('canvas'),
+         stack: new Error().stack }); } catch(e){}
      }
      var ctx = orig.call(this, type, attrs);
      // Enable EXT_texture_filter_anisotropic on the context: WebGL2 reports it in the extension
@@ -1093,6 +1108,21 @@
  // 'warning: 2 FS.syncfs operations in flight at once'). Coalesce to exactly one in-flight
  // sync plus at most one queued re-sync, so a request during a sync still gets flushed after.
  // ALL callers — JS and the C++ EM_ASM save hooks — route through this.
+ // --- Boot timeline (F24). Time-to-playable is the number a browser game is judged on, and
+ // nothing measured it: there is an FPS readout and __streamfsStats, but no record of where the
+ // seconds between clicking the link and holding a controller actually go. Stamps are cheap and
+ // always on; read them with window.__omwBoot in the console, or as performance marks in devtools.
+ // Values are ms from navigation start, so they line up with the network panel without arithmetic.
+ window.__omwBoot = {};
+ window.__omwMark = function(name){
+   try {
+     if (window.__omwBoot[name] !== undefined) return;      // first one wins; boot happens once
+     window.__omwBoot[name] = Math.round(performance.now());
+     if (performance.mark) performance.mark('omw:' + name);
+   } catch(e){}
+ };
+ window.__omwMark('scriptStart');
+
  window.__omwSyncing = false;
  window.__omwSyncAgain = false;
  window.__omwSyncfs = function(){
@@ -1199,6 +1229,9 @@
        if (/[?&]rsdbg=1\b/.test(location.search)) ENV.OPENMW_RS_DEBUG='1';
        // ?perfstats=1 (QA): engine pushes per-frame Cull/Draw ms to window.__omwPhase (no F3 HUD).
        if (/[?&]perfstats=1\b/.test(location.search)) ENV.OPENMW_PERF_STATS='1';
+       // ?perfkeys=1 (QA): dump the frame's raw osg::Stats attribute keys to window.__omwPhaseKeys
+       // and whether the "engine" collection group is on. Diagnostic for empty __omwPhase buckets.
+       if (/[?&]perfkeys=1/.test(location.search)) ENV.OPENMW_PERF_KEYS='1';
        // NOTE: OPENMW_DECOMPRESS_TEXTURES removed — OSG now reports S3TC support (GLExtensions
        // patch), so DXT textures upload COMPRESSED via glCompressedTexImage2D (no CPU decompress).
        // USER CONFIG/DATA LIVE ON IDBFS: pointing XDG at the /userdata mount makes the
@@ -1567,6 +1600,33 @@
          // set in the head IIFE, so JS and SDL agree on the size (no resize war / FBO thrash).
          var rW = (typeof window!=='undefined' && window.__renderW) || 1280;
          var rH = (typeof window!=='undefined' && window.__renderH) || 720;
+         // F31: pick a quality TIER from the device rather than shipping one profile to everyone.
+         // The settings below were tuned on a machine that could take them -- a 16384 view distance
+         // with 'object paging min size' halved and an 8192 shadow map is a lot to ask of an 8GB
+         // laptop with other tabs open, and the failure there is not a low frame rate, it is the
+         // tab being killed. navigator.deviceMemory is coarse and unreliable as a number -- the
+         // spec buckets it and caps at 8, but this dev machine reports 32, and Firefox/Safari do
+         // not implement it at all. So treat it only as a floor hint, and default to the MIDDLE
+         // tier when it is absent rather than assuming the best case.
+         // ?tier=low|mid|high forces one (QA, and a support answer for "it runs badly").
+         var __devMem = (typeof navigator !== 'undefined' && navigator.deviceMemory) || 0;
+         var __tier = (/[?&]tier=(low|mid|high)/.exec(location.search) || [])[1]
+                   || (__devMem >= 8 ? 'high' : (__devMem > 0 && __devMem <= 4 ? 'low' : 'mid'));
+         // Only the knobs whose cost scales with the scene. Everything else stays common.
+         // lru = streamfs chunk slots (2MB each), i.e. the JS-side cache ceiling on top of the
+         // wasm heap. MEASURED in Balmora at matched workload: the old flat 128 was thrashing --
+         // 215 evictions / 2684ms main-thread stall / 356MB fetched, vs 0 / 1923ms / 268MB at 384.
+         // The working set settles at 259 chunks, so high:384 is headroom, not a guess. A streamfs
+         // miss blocks the main thread, so this buys frame time, not just bandwidth.
+         var TIER = {
+           low:  { vd: '8192',  minSize: '0.02',  shadowRes: '2048', shadowDist: '512',  rtt: '512',  actors: '3072', lru: 48 },
+           mid:  { vd: '12288', minSize: '0.01',  shadowRes: '4096', shadowDist: '768',  rtt: '1024', actors: '4096', lru: 96 },
+           high: { vd: '16384', minSize: '0.005', shadowRes: '8192', shadowDist: '1024', rtt: '1024', actors: '4096', lru: 192 }
+         }[__tier];
+         // streamfs.js is parsed before this runs, so it resolves LRU_MAX lazily from this global.
+         try { window.__omwLruDefault = TIER.lru; } catch(e){}
+         try { window.__omwTier = { tier: __tier, deviceMemory: __devMem || null }; } catch(e){}
+         append('[tier] '+__tier+' (navigator.deviceMemory='+(__devMem||'unknown')+', lru='+TIER.lru+')');
          // IMPORTANT: OpenMW loads user settings from <last active config dir>/settings.cfg.
          // In this build the only config dir is '/' (where openmw.cfg lives), NOT the XDG
          // path — write the file to BOTH so the engine actually reads it.
@@ -1588,19 +1648,27 @@
            // resolution tiers write; a user's saved value overrides this defaults layer.
            (/[?&]rs=(0?\.\d+|1(?:\.0+)?)/.test(location.search) ? 'internal render scale = ' + RegExp.$1 + '\n' : '') +
            '[Camera]\n' +
-           'viewing distance = ' + ((/[?&]vd=(\d+)/.exec(location.search)||[])[1] || '16384') + '.0\n' +  // 2 cells: radial distant-terrain vista (paired with 'distant terrain=true' below). ?vd=N overrides (QA)
+           'viewing distance = ' + ((/[?&]vd=(\d+)/.exec(location.search)||[])[1] || TIER.vd) + '.0\n' +  // 2 cells: radial distant-terrain vista (paired with 'distant terrain=true' below). ?vd=N overrides (QA)
            'small feature culling pixel size = 3.0\n' +
            '[Terrain]\n' +
            'distant terrain = ' + (/[?&]dt=0/.test(location.search) ? 'false' : 'true') + '\n' +  // QuadTree LOD: radial terrain+statics to the view distance (else only the 3x3 active cells render = square boundary). ?dt=0 disables (QA)
            'object paging = true\n' +
            'object paging active grid = true\n' +
-           'object paging min size = 0.005\n' +   // render/merge the distant backdrop rocks + trees
+           'object paging min size = ' + TIER.minSize + '\n' +   // render/merge the distant backdrop rocks + trees
            // Merge factor: how aggressively object paging batches statics into single merged
            // meshes. Profiling showed the frame is CPU-bound on GL draw submission (~1770
            // drawables, Draw 5-7ms), and distance rendering is the driver — more merging =
            // fewer draw calls with IDENTICAL visuals (same objects, just pre-combined).
            // ?merge=N overrides for A/B.
            'object paging merge factor = ' + ((/[?&]merge=(\d+)/.exec(location.search)||[])[1] || '250') + '\n' +
+           // LOD knobs, left at engine defaults until now — which were tuned for the stock 7168
+           // view distance. We render to 16384 with 'object paging min size' halved to 0.005, so
+           // there is far more terrain and far more small geometry out there than these defaults
+           // assume. 'vertex lod mod' exists for exactly this: it thins terrain vertex density at
+           // range, and the far LOD is already behind distant fog from 12288 out, so there is
+           // little there to see. Negative = fewer vertices. ?vlod=N / ?lodfactor=N to sweep (QA).
+           'vertex lod mod = ' + ((/[?&]vlod=(-?\d+)/.exec(location.search)||[])[1] || '-1') + '\n' +
+           'lod factor = ' + ((/[?&]lodfactor=([0-9.]+)/.exec(location.search)||[])[1] || '1.0') + '\n' +
            '[Water]\n' +
            'shader = true\n' +                     // real water shader (reflections/refractions)
            // reflection detail: 0=sky only (no scene geometry re-rendered into the reflection),
@@ -1613,7 +1681,7 @@
            // rtt size 1024 (was 512): sharper reflection/refraction (max-fidelity default). GPU cost
            // only (we're CPU-bound), and water.frag's reflectionBlur is rtt-aware (~3 texels) so the
            // sharper buffer reads sharper instead of over-blurring. ?rtt=N overrides (QA).
-           'rtt size = ' + ((/[?&]rtt=(\d+)/.exec(location.search)||[])[1] || '1024') + '\n' +
+           'rtt size = ' + ((/[?&]rtt=(\d+)/.exec(location.search)||[])[1] || TIER.rtt) + '\n' +
            'rain ripple detail = 2\n' +            // dense rain ripples (cheap)
            'small feature culling pixel size = 30.0\n' +
            '[Fog]\n' +
@@ -1652,7 +1720,7 @@
            // 8192 (was 16384, user request 2026-07-07): a 16384 depth map is ~1GB — the single biggest
            // memory consumer — and 8192 (~256MB) frees that headroom (e.g. for SSAA) at a still-crisp
            // texel density over the 2048 shadow range. ?shadowres=N / ?shadowmaps=N override (QA).
-           'shadow map resolution = ' + ((/[?&]shadowres=(\d+)/.exec(location.search)||[])[1] || '8192') + '\n' +
+           'shadow map resolution = ' + ((/[?&]shadowres=(\d+)/.exec(location.search)||[])[1] || TIER.shadowRes) + '\n' +
            'number of shadow maps = ' + ((/[?&]shadowmaps=(\d+)/.exec(location.search)||[])[1] || '1') + '\n' +
            'actor shadows = true\n' +
            'player shadows = true\n' +
@@ -1668,15 +1736,51 @@
            // exterior shadows visibly blocky (interiors were fine: a small volume gets the whole map), so
            // halve the range again — outdoor texel density doubles, at the cost of shadows fading out
            // nearer the camera. ?shadowdist=N (QA) to compare.
-           'maximum shadow map distance = ' + ((/[?&]shadowdist=(\d+)/.exec(location.search)||[])[1] || '1024') + '\n' +
+           'maximum shadow map distance = ' + ((/[?&]shadowdist=(\d+)/.exec(location.search)||[])[1] || TIER.shadowDist) + '\n' +
            '[Cells]\n' +
            'preload cell cache max = 18\n' +   // engine asked for 18 for exterior preloading
+           // PRELOADING IS SYNCHRONOUS ON THIS BUILD. The WorkQueue runs inline under emscripten
+           // (workqueue.cpp: item->doWork() on the caller), so every "preload" is a full cell load
+           // — NIF parse, collision build, object-paging merge — inside the frame that speculated
+           // about it. The subsystem whose whole job is avoiding a stall is generating them.
+           // Doors are the worst case: walking past one triggers an interior load in that frame.
+           // So: preload LESS while it is synchronous. The work still happens when the player
+           // actually arrives, and at least then it is not speculative.
+           // !! REVERSE THIS once the WorkQueue has real workers — with threads, preloading
+           // aggressively is free and correct. The right value flips sign on that change. !!
+           // ?preload=1 restores the engine defaults for A/B.
+           (/[?&]preload=1\b/.test(location.search) ? '' :
+             ('preload doors = false\n' +
+              'preload exterior grid = false\n')) +
            '[Game]\n' +
-           'actors processing range = 4096\n' +   // AI-process fewer distant NPCs/creatures (towns)
+           'actors processing range = ' + TIER.actors + '\n' +   // AI-process fewer distant NPCs/creatures (towns)
            '[Shaders]\n' +
            // max lights: dynamic point lights evaluated per object. Higher = richer lit scenes but
            // more per-object shading cost. ?maxlights=N overrides (QA); default measured for 60fps.
            'max lights = ' + ((/[?&]maxlights=(\d+)/.exec(location.search)||[])[1] || '16') + '\n' +
+           // F46 -- REVERTED 2026-08-29. Setting this to 4096 BREAKS s64-real-input, reliably.
+           //
+           // The reasoning still looks right: maximum light distance decides which objects come
+           // back with a NON-EMPTY light list, and a non-empty list is what makes
+           // LightListCallback allocate a StateSet and upload a 16-mat4 LightBuffer per object per
+           // camera pass per frame. The engine default 8192 was tuned for a 7168 view distance and
+           // ours is 16384, so a shorter cull should have been close to visually free.
+           //
+           // It is not free. With this line at 4096 the s64 real-keypress test fails 3/3 (~54s,
+           // pose unchanged); with the line absent it passes 3/3 (~89s), everything else on the
+           // branch held identical. Isolated by reverting the whole settings block to the dev
+           // values (PASS 3/3) and then re-adding ONLY this line (FAIL 3/3).
+           //
+           // The key is valid -- settings-default.cfg:501, [Shaders] maximum light distance,
+           // default 8192 -- so this is a real behavioural effect and not a parse error. I could
+           // not demonstrate the mechanism from the browser side and am NOT guessing at one: the
+           // scenario reports that keys reach the engine (onKeyPress sees them) while bound
+           // actions never fire. Anyone re-attempting this owes that explanation first, and must
+           // re-run s64 -- most scenarios move the player with the harness's walk: command, which
+           // bypasses bindings entirely, so a green suite does NOT prove a player can move.
+           //
+           // ?lightdist=N still sweeps it for measurement.
+           'maximum light distance = ' + ((/[?&]lightdist=(\d+)/.exec(location.search)||[])[1] || '8192') + '\n' +
            // Per-pixel lighting: MW geometry is low-poly, so per-VERTEX lighting looks faceted
            // (flat-shaded walls, banding on terrain). Per-pixel smooths the gradients across each
            // face. Pure fragment-shader path (already GLES-ported); fill cost is bounded by
@@ -3283,6 +3387,9 @@
      } catch(e){}
    } },
    onRuntimeInitialized: function(){
+     // wasm compiled, instantiated and the runtime is up. Everything before this is download +
+     // WebAssembly.compile; everything after is game data, the ESM store and engine init.
+     if (window.__omwMark) window.__omwMark('runtimeInit');
      // Drive the engine frame from a MessageChannel: unlike setTimeout/requestAnimationFrame,
      // MessageChannel messages are NOT throttled when the tab is hidden/backgrounded, so the
      // game keeps running (and stays interactive) even in the background. omw_pump_frame() is a
@@ -3298,16 +3405,42 @@
        var scheduled = false;
        function scheduleNext(){
          if (scheduled) return; scheduled = true;
-         // Visible: vsync-align via rAF. Hidden: pace with a timer (~30fps target; browsers throttle
-         // background timers further) instead of an immediate postMessage — an unpaced background
+         // Visible: run the frame INSIDE the rAF callback. Hidden: pace with a timer (~30fps
+         // target; browsers throttle background timers further) and go through the
+         // MessageChannel, which is NOT throttled in a background tab — an unpaced background
          // MessageChannel loop pins a CPU core at 100% for a tab nobody is looking at.
+         //
+         // F42 -- REVERTED 2026-08-29, and DO NOT RE-APPLY without re-running s64-real-input.
+         //
+         // The idea was sound on paper: posting a MessageChannel message from the rAF callback
+         // and doing the frame in the message handler puts GL submission in a macrotask AFTER
+         // the vsync-aligned slot, de-aligning what rAF is there to align. So this ran the frame
+         // directly inside rAF instead.
+         //
+         // IT BREAKS REAL KEYBOARD INPUT. s64-real-input asserts that a real W keypress moves the
+         // player, and with the frame inside rAF the pose does not change at all -- which is the
+         // reported "cannot attack" fault, because bound actions never fire. Proven by isolation:
+         // applying ONLY this one line to an otherwise-unmodified origin/dev build reproduces the
+         // failure with a byte-identical before/after pose, and origin/dev passes s64.
+         //
+         // WHY: emscripten's SDL queues DOM key events as tasks. Running the frame synchronously
+         // inside the rAF callback drains the queue BEFORE the browser dispatches the pending
+         // keydown/keyup, so the engine sees no input. The MessageChannel hop is what lets those
+         // events land first -- it is load-bearing, not an accident, which is what the finding
+         // assumed it was.
+         //
+         // The latency claim was never measured; the input regression is. Keep the hop.
          if (document.hidden) setTimeout(function(){ mc.port2.postMessage(0); }, 33);
          else requestAnimationFrame(function(){ mc.port2.postMessage(0); });
        }
-       mc.port1.onmessage = function(){
+       function pumpFrame(){
          scheduled = false;
          var a = performance.now();
          try { if (Module._omw_pump_frame) Module._omw_pump_frame(); } catch(e){}
+         // End of boot: the first frame the engine actually rendered. Stamped here rather than in
+         // the 500ms status poller so it is exact to one frame. __omwRunning is set by the engine's
+         // own loop, so this fires once the player can genuinely see something.
+         if (Module.__omwRunning !== undefined && window.__omwMark) window.__omwMark('firstFrame');
          var b = performance.now();
          __frames++; __accum += (b - a);
          // ?glcount: exact GL calls THIS frame (cumulative delta bracketed by the pump).
@@ -3315,7 +3448,9 @@
          var dt = b - __t0;
          if (dt >= 1000){ window.__fps = Math.round(__frames*1000/dt); window.__frameMs = +(__accum/__frames).toFixed(2); __frames = 0; __accum = 0; __t0 = b; }
          scheduleNext();
-       };
+       }
+       // The hidden-tab path still arrives as a message; visible frames call pumpFrame directly.
+       mc.port1.onmessage = pumpFrame;
        // If the tab hides while an rAF-scheduled tick is frozen, take over directly.
        // (The stale rAF firing later causes at most one harmless extra tick.)
        document.addEventListener('visibilitychange', function(){

@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<!-- Copyright (C) 2025-2026 Virtastic - https://virtastic.app
+     SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
+
+     F10 GATE PROBE. The plan gates "move the engine off the browser main thread"
+     (-sPROXY_TO_PTHREAD + OffscreenCanvas) on two questions, and says to answer them before
+     attempting the port, because F3/F4/F29/F38 all stop existing rather than merely improve if
+     the answer is yes:
+
+       1. Does a real BLOCKING Atomics.wait work off the main thread? This is the whole point.
+          On the main thread it is banned, which is why streamfs.js spins instead
+          (fetchChunkSync), and that spin is the measured 1.5s of stall this session cut with
+          chunk tuning. In a worker it should block for real -- verify, do not assume.
+       2. Does WebGL2 survive on an OffscreenCanvas in a worker under ANGLE? The engine renders
+          through ANGLE in Chrome, and a transferred canvas is a different code path.
+
+     Answering these needs no engine build, so it costs a page load rather than a port.
+     Serve from play/server.py (it sets COOP/COEP; SharedArrayBuffer needs crossOriginIsolated)
+     and read window.__f10 in the console. -->
+<head><meta charset="utf-8"><title>F10 gate probe</title></head>
+<body>
+<pre id="out">running…</pre>
+<canvas id="c" width="64" height="64"></canvas>
+<script>
+const results = { crossOriginIsolated: self.crossOriginIsolated === true };
+const log = (m) => { document.getElementById('out').textContent += '\n' + m; };
+
+// The worker is built inline so this probe stays one file with nothing to wire up.
+const workerSrc = `
+self.onmessage = async (e) => {
+  const out = { };
+  const { sab, canvas } = e.data;
+
+  // --- Q1: does a real blocking Atomics.wait work here? -----------------------------------
+  // Measured, not asserted: park for 250ms and report the wall time actually spent. A
+  // main-thread Atomics.wait throws TypeError; a worker should block and return 'timed-out'.
+  try {
+    const i32 = new Int32Array(sab);
+    const t0 = performance.now();
+    const verdict = Atomics.wait(i32, 0, 0, 250);
+    out.atomicsWait = { ok: true, verdict, elapsedMs: Math.round(performance.now() - t0) };
+  } catch (err) {
+    out.atomicsWait = { ok: false, error: String(err) };
+  }
+
+  // --- Q2: does WebGL2 work on a transferred OffscreenCanvas? ------------------------------
+  // Not just getContext: actually clear to a known colour and read the pixel back, because a
+  // context that exists but never composites is exactly the failure mode worth catching.
+  try {
+    const gl = canvas.getContext('webgl2');
+    if (!gl) { out.webgl2 = { ok: false, error: 'getContext("webgl2") returned null' }; }
+    else {
+      gl.clearColor(0.25, 0.5, 0.75, 1);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      const px = new Uint8Array(4);
+      gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+      const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+      out.webgl2 = {
+        ok: true,
+        pixel: [px[0], px[1], px[2], px[3]],
+        // 0.5*255 = 127.5 and GL truncates, so the middle channel is 127, not 128.
+        pixelCorrect: px[0] === 64 && px[1] === 127 && px[2] === 191,
+        renderer: dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER),
+        maxTextureSize: gl.getParameter(gl.MAX_TEXTURE_SIZE),
+        glError: gl.getError()
+      };
+    }
+  } catch (err) {
+    out.webgl2 = { ok: false, error: String(err) };
+  }
+
+  // --- Q3: both at once, which is what the engine would actually do -------------------------
+  // A render thread that also blocks on I/O is the real shape of F10. If blocking breaks the
+  // GL context or vice versa, that is the finding.
+  try {
+    const i32 = new Int32Array(sab);
+    Atomics.wait(i32, 0, 0, 50);
+    const gl = canvas.getContext('webgl2');
+    gl.clearColor(1, 0, 0, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    const px = new Uint8Array(4);
+    gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+    out.blockThenDraw = { ok: true, pixel: [px[0], px[1], px[2]], stillWorks: px[0] === 255 };
+  } catch (err) {
+    out.blockThenDraw = { ok: false, error: String(err) };
+  }
+
+  self.postMessage(out);
+};
+`;
+
+(async () => {
+  try {
+    if (!self.crossOriginIsolated) {
+      log('NOT crossOriginIsolated — SharedArrayBuffer is unavailable; serve via play/server.py');
+    }
+    const sab = new SharedArrayBuffer(4);
+    const canvas = document.getElementById('c').transferControlToOffscreen();
+    const blob = new Blob([workerSrc], { type: 'text/javascript' });
+    const w = new Worker(URL.createObjectURL(blob));
+    const done = new Promise((res) => { w.onmessage = (e) => res(e.data); });
+    w.postMessage({ sab, canvas }, [canvas]);
+    Object.assign(results, await done);
+  } catch (err) {
+    results.fatal = String(err);
+  }
+  window.__f10 = results;
+  log(JSON.stringify(results, null, 1));
+})();
+</script>
+</body>
+</html>

@@ -38,6 +38,22 @@ fi
 EMSDK_BIN="${EMSDK_BIN:-/opt/homebrew/Cellar/emscripten/6.0.1/libexec}"
 SYSROOT="$EMSDK_BIN/cache/sysroot/lib/wasm32-emscripten"
 LIB="$ROOT/deps/wasm/lib"
+
+# GAME AUDIO GUARD. build-deps.sh:141 enables the mp3/vorbis/pcm decoders, but deps/wasm is
+# GITIGNORED -- so a checkout can have the right source and a libavcodec.a built before that
+# line existed. That is exactly what happened: the engine linked fine, booted fine, and every
+# sound failed with 'Failed to load audio ... Failed to open input' because
+# avcodec_find_decoder() returned null. FFmpegDecoder is the ONLY decoder OpenMW has, so this is
+# total silence, not degraded audio, and nothing in the build noticed for months.
+#
+# Cheap to check, so check: the symbol is either in the archive or it is not.
+if [ -f "$LIB/libavcodec.a" ] && ! grep -q ff_mp3_decoder "$LIB/libavcodec.a" 2>/dev/null; then
+  echo "!! deps/wasm/lib/libavcodec.a has no mp3 decoder -- THE GAME WILL BE SILENT." >&2
+  echo "   Staged deps predate build-deps.sh's --enable-decoder line. Rebuild just ffmpeg:" >&2
+  echo "     bash wasm-build/build-deps.sh ffmpeg" >&2
+  echo "   Verify with: grep -c ff_mp3_decoder deps/wasm/lib/libavcodec.a" >&2
+  echo "   Continuing -- a silent build is still a build, but you have been told." >&2
+fi
 INC="$ROOT/deps/wasm/include"
 # Force-included into every translation unit. These are build INPUTS, so they live in the
 # repo — they used to exist only in the maintainer's gitignored deps/wasm/include, which meant
@@ -85,15 +101,42 @@ cp "$ROOT/openmw/files/data/mp.omwscripts" "$ROOT/fsroot/resources/vfs/mp.omwscr
 ICU_TARGET="$ROOT/fsroot/icu/icudt68l.dat"
 ICU_STAGED="$ROOT/fsroot/icudt68l.dat"
 ICU_DAT="${EMSDK_BIN}/cache/ports/icu/icu/source/data/in/icudt68l.dat"
+# TRIM -- DISABLED. See wasm-build/trim-icu-data.py.
+# The finding is real (28.6 MB of a 32 MB openmw.data, for six locales and a MessageFormat), but
+# the naive TOC filter is NOT a safe way to get it, and this was proven by running it:
+#
+#   With the trim, the engine boots normally all the way to "Reserving texture unit for sky RTT"
+#   and then dies with `unhandled rejection: null function`. Restoring the full package with every
+#   other change in place boots clean. Bisected: dropping FEATURE GROUPS (coll/zone/curr/...) alone
+#   is fine; dropping other LOCALES is what breaks it.
+#
+# Why: the package still contains ICU's locale INDEX resources, which continue to advertise the
+# ~800 locales whose .res entries were removed. ICU opens one, gets nothing back, and calls a
+# virtual on the null -- the same bare "null function" this data caused when it was absent
+# entirely. Filtering the built .dat cannot fix that; the index has to be regenerated, which is
+# exactly what upstream's ICU_DATA_FILTER_FILE does and what the script's header wrongly dismissed.
+#
+# To land this properly: build the ICU data with ICU_DATA_FILTER_FILE (needs a native ICU build in
+# the deps stack), or extend trim-icu-data.py to rewrite res_index.res for every kept tree. Until
+# then ship the full package -- 26 MB is worth having, but not at the cost of a boot crash.
+ICU_TRIM="${ICU_TRIM:-0}"
+trim_icu() {   # trim_icu <src> <dst>
+  if [ "$ICU_TRIM" = "1" ]; then
+    python3 "$ROOT/wasm-build/trim-icu-data.py" "$1" "$2"       --verify-l10n "$ROOT/fsroot/resources/vfs/l10n"
+  else
+    cp "$1" "$2"
+  fi
+}
+
 if [ -s "$ICU_TARGET" ]; then
   echo "   ICU data already staged at fsroot/icu/icudt68l.dat"
 elif [ -s "$ICU_STAGED" ]; then
   mkdir -p "$ROOT/fsroot/icu"
-  cp "$ICU_STAGED" "$ICU_TARGET"
+  trim_icu "$ICU_STAGED" "$ICU_TARGET"
   echo "   ICU data staged from fsroot/icudt68l.dat"
 elif [ -f "$ICU_DAT" ]; then
   mkdir -p "$ROOT/fsroot/icu"
-  cp "$ICU_DAT" "$ICU_TARGET"
+  trim_icu "$ICU_DAT" "$ICU_TARGET"
   echo "   ICU data staged from the emsdk ports cache"
 else
   echo "!! ICU data package not found. Looked in:" >&2
@@ -117,11 +160,13 @@ ninja components openmw-lib
 ninja apps/openmw/CMakeFiles/openmw.dir/main.cpp.o
 
 # X11 no-op stubs (osgViewer's X11 backend symbols; see wasm-build/x11_stubs.c).
-"$EMSDK_BIN/emcc" -O2 -pthread -fwasm-exceptions -c "$ROOT/wasm-build/x11_stubs.c" -o "$BUILD/x11_stubs.o"
+"$EMSDK_BIN/emcc" -O2 -pthread -fwasm-exceptions -msimd128 -c "$ROOT/wasm-build/x11_stubs.c" -o "$BUILD/x11_stubs.o"
 
 "$EMSDK_BIN/em++" \
   -D_LIBCPP_ENABLE_CXX17_REMOVED_FEATURES -DBT_USE_DOUBLE_PRECISION \
-  -fwasm-exceptions \
+  `# -msimd128 must match configure-openmw.sh: every hand-built dep already carries it, and` \
+  `# main.cpp.o is compiled HERE rather than by cmake, so it would otherwise be the odd one out.` \
+  -fwasm-exceptions -msimd128 \
   -include "$OMW_FORCE_INC/mygui_char_traits_fix.h" -include "$OMW_FORCE_INC/gl_compat.h" \
   -Wno-missing-template-arg-list-after-template-kw -Wno-error=missing-template-arg-list-after-template-kw \
   -pthread \
@@ -132,7 +177,17 @@ ninja apps/openmw/CMakeFiles/openmw.dir/main.cpp.o
   --use-port=libjpeg --use-port=zlib --use-port=ogg --use-port=vorbis \
   -sALLOW_MEMORY_GROWTH=1 -sMAX_WEBGL_VERSION=2 -sMIN_WEBGL_VERSION=2 -sFULL_ES3=1 \
   -sEXIT_RUNTIME=0 -sPTHREAD_POOL_SIZE=8 -sINITIAL_MEMORY=1610612736 \
+  `# MAXIMUM_MEMORY defaults to 2GB (emsdk src/settings.js:211), so ALLOW_MEMORY_GROWTH over a` \
+  `# 1.5GB initial had only ~512MB of headroom -- the shadow map alone was ~1GB before it was` \
+  `# halved. wasm32 addresses 4GB and Chrome supports it, so take the other half.` \
+  -sMAXIMUM_MEMORY=4294967296 \
   -sASSERTIONS=0 -sMALLOC=mimalloc \
+  `# F10 SPIKE (OMW_PROXY=1): run main() -- and therefore the whole engine -- on a pthread` \
+  `# instead of the browser main thread. The gate for this is answered (play/f10-gate.html):` \
+  `# a real blocking Atomics.wait works off-main-thread, and WebGL2 on a transferred` \
+  `# OffscreenCanvas works on the real ANGLE D3D11 path. Behind an env flag so the default` \
+  `# build is untouched while this is being brought up.` \
+  ${OMW_PROXY:+-sPROXY_TO_PTHREAD -sOFFSCREENCANVAS_SUPPORT=1 -sOFFSCREENCANVASES_TO_PTHREAD=#canvas} \
   -sENVIRONMENT=web,worker \
   ${OMW_PROFILING:+--profiling-funcs} \
   ${OMW_CLOSURE:+--closure=1} \

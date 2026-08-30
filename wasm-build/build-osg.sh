@@ -20,6 +20,28 @@
 # - OSG_CPP_EXCEPTIONS_AVAILABLE=ON (GLES profile defaults it OFF, which kills
 #   the png plugin among other things).
 # - GL/EGL/GLES libs all point at emscripten's libGL-getprocaddr.a.
+#
+# WHY THE PROFILE IS `GLES2+GLES3` (F50, resolved 2026-08-28).
+# The runtime target is WebGL2, which IS OpenGL ES 3.0 -- link-openmw.sh says so twice
+# (-sMIN_WEBGL_VERSION=2, -sFULL_ES3=1). This was configured GLES2, and that had a price:
+# GLExtensions.cpp:760 gates isVAOSupported on OSG_GLES3_FEATURES, which the GLES2 profile never
+# defines, so VAO support read false and osg-emscripten.patch had to force it true. Anything that
+# then went near the DisplaySettings VAO path trapped with `null function`, because the capability
+# was forced on while glGenVertexArrays/glBindVertexArray were still resolved through
+# getProcAddress. DisplaySettings likewise picked SHADER_GLES2 rather than SHADER_GLES3.
+#
+# A pure `-DOPENGL_PROFILE=GLES3` does NOT build. Image.cpp / Texture.cpp / Texture2DArray.cpp /
+# Texture3D.cpp fail with `use of undeclared identifier 'GL_RED' / 'GL_GREEN' / 'GL_BLUE' /
+# 'GL_UNPACK_ROW_LENGTH'`. Those are valid ES 3.0 tokens -- the ES3-only path wants GLES3/gl3.h and
+# every GL library here points at libGL-getprocaddr.a, which brings the GLES2 headers implicitly.
+#
+# `GLES2+GLES3` is the fix: OSG defines BOTH feature macros, so the ES3 gates (isVAOSupported,
+# SHADER_GLES3) resolve honestly while the GLES2 headers still satisfy the tokens above. Verified:
+# deps/wasm/include/osg/GL carries `#define OSG_GLES3_FEATURES 1`, OSG builds clean, engine boots.
+#
+# This did NOT turn into a frame-time win, and that is worth recording rather than rediscovering:
+# osg-emscripten.patch already forces _forceVertexArrayObject in State::State(), so VAOs were
+# always being bound. See the F48 note in apps/openmw/engine.cpp for the measurement.
 set -euo pipefail
 
 ROOT="${ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
@@ -56,7 +78,7 @@ emcmake cmake .. \
   -DDYNAMIC_OPENTHREADS:BOOL=OFF \
   -DEGL_LIBRARY:FILEPATH="$SYSROOT_LIBGL" \
   -DGLESV2_LIBRARY="$SYSROOT_LIBGL" \
-  -DOPENGL_PROFILE:STRING=GLES2 \
+  -DOPENGL_PROFILE:STRING=GLES2+GLES3 \
   -DOPENGL_egl_LIBRARY="$SYSROOT_LIBGL" \
   -DOPENGL_gl_LIBRARY="$SYSROOT_LIBGL" \
   -DOSG_CPP_EXCEPTIONS_AVAILABLE:BOOL=ON \
@@ -64,6 +86,7 @@ emcmake cmake .. \
   -DOSG_GL2_AVAILABLE:BOOL=OFF \
   -DOSG_GL3_AVAILABLE:BOOL=OFF \
   -DOSG_GLES2_AVAILABLE:BOOL=ON \
+  -DOSG_GLES3_AVAILABLE:BOOL=ON \
   -DOSG_GL_DISPLAYLISTS_AVAILABLE:BOOL=OFF \
   -DOSG_GL_FIXED_FUNCTION_AVAILABLE:BOOL=OFF \
   -DOSG_GL_MATRICES_AVAILABLE:BOOL=OFF \

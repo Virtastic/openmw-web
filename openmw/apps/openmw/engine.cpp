@@ -5,6 +5,7 @@
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
 #include <osg/NodeVisitor>
+#include <osg/DisplaySettings>
 #include <osg/Geometry>
 #include <osg/Group>
 #include <osg/Geode>
@@ -412,7 +413,18 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     // tooltip. The sim peer has no crosshair and no GUI. Purely presentational — it has no
     // effect on AI, physics or scripts — so skipping it changes nothing about the simulation.
     static const bool sHeadless = std::getenv("OPENMW_HEADLESS") != nullptr;
-    if (!sHeadless)
+#ifdef __EMSCRIPTEN__
+    // ...and on the web, throttle it even when we DO have a crosshair. A tooltip does not need
+    // 60Hz: at 20Hz the delay before an item name appears is under a frame of human perception,
+    // and two thirds of the graph descents stop happening. The player cannot move far enough in
+    // 33ms to make the answer stale.
+    // Measure the cost first with ?perfstats=1: the Focus bucket already exists. If it is a
+    // fraction of a millisecond, revert this -- it is only worth the asymmetry if it shows up.
+    const bool skipFocusThisFrame = (frameNumber % 3 != 0);
+#else
+    constexpr bool skipFocusThisFrame = false;
+#endif
+    if (!sHeadless && !skipFocusThisFrame)
     {
         ScopedProfile<UserStatsType::Focus> profile(frameStart, frameNumber, *timer, *stats);
         mWorld->updateFocusObject();
@@ -439,15 +451,16 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         {
             osgViewer::Viewer::Cameras cams;
             mViewer->getCameras(cams);
-            static bool s_en = false;
-            if (!s_en)
-            {
-                for (osg::Camera* c : cams)
-                    if (c->getStats())
-                        c->getStats()->collectStats("rendering", true);
-                stats->collectStats("engine", true); // ScopedProfile subsystem buckets (*_time_taken)
-                s_en = true;
-            }
+            // Re-arm EVERY frame rather than latching with a static. The latch version left
+            // collectStats("engine") reading FALSE and the attribute map empty: whatever it armed
+            // on the first perfstats frame was not what the ScopedProfiles later wrote through, so
+            // every subsystem bucket stayed 0 while cull/draw worked. Both are idempotent map
+            // assignments (osg/Stats:73), so re-arming is cheaper than reasoning about which
+            // object won the race.
+            for (osg::Camera* c : cams)
+                if (c->getStats())
+                    c->getStats()->collectStats("rendering", true);
+            stats->collectStats("engine", true); // ScopedProfile buckets (prefix + "_time_taken")
             double cull = 0.0, draw = 0.0, v = 0.0;
             for (osg::Camera* c : cams)
             {
@@ -459,26 +472,47 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                 if (cs->getAttribute(frameNumber, "Draw traversal time taken", v))
                     draw += v;
             }
+            // DIAGNOSTIC (?perfkeys=1): the subsystem buckets below were reading zero while cull/draw
+            // read fine, from this same osg::Stats. Rather than guess at the cause a fourth time,
+            // publish the frame's actual attribute keys so the names and presence can be read
+            // directly from the console. Costs a string build, so it is behind its own env flag.
+            if (getenv("OPENMW_PERF_KEYS"))
+            {
+                std::string keys;
+                for (const auto& [k, val] : stats->getAttributeMap(frameNumber))
+                {
+                    keys += k;
+                    keys += '=';
+                    keys += std::to_string(val);
+                    keys += '\n';
+                }
+                const bool engineOn = stats->collectStats("engine");
+                EM_ASM({ globalThis.__omwPhaseKeys = UTF8ToString($0); globalThis.__omwPhaseEngineOn = !!$1; },
+                    keys.c_str(), engineOn ? 1 : 0);
+            }
+
             // Rest-phase subsystem breakdown (engine ScopedProfile buckets, prefix + "_time_taken").
+            // NB: Lua is inline on this build (see mwlua/worker.cpp), so UserStatsType::Lua never
+            // fires and only LuaSyncUpdate does -- report the sum or the bucket reads a false 0.
             auto sub = [&](const char* key) { double x = 0.0; stats->getAttribute(frameNumber, key, x); return x * 1000.0; };
             // clang-format off
             // NB: no comma inside the EM_ASM code block — the C preprocessor would split it as a
             // macro argument. Build the object with separate statements instead.
             EM_ASM({
-                window.__omwPhase = {};
-                window.__omwPhase.cull = $0;
-                window.__omwPhase.draw = $1;
-                window.__omwPhase.physics = $2;
-                window.__omwPhase.mechanics = $3;
-                window.__omwPhase.world = $4;
-                window.__omwPhase.lua = $5;
-                window.__omwPhase.gui = $6;
-                window.__omwPhase.input = $7;
-                window.__omwPhase.sound = $8;
-                window.__omwPhase.script = $9;
+                globalThis.__omwPhase = {};
+                globalThis.__omwPhase.cull = $0;
+                globalThis.__omwPhase.draw = $1;
+                globalThis.__omwPhase.physics = $2;
+                globalThis.__omwPhase.mechanics = $3;
+                globalThis.__omwPhase.world = $4;
+                globalThis.__omwPhase.lua = $5;
+                globalThis.__omwPhase.gui = $6;
+                globalThis.__omwPhase.input = $7;
+                globalThis.__omwPhase.sound = $8;
+                globalThis.__omwPhase.script = $9;
             },
                 cull * 1000.0, draw * 1000.0, sub("physics_time_taken"), sub("mechanics_time_taken"),
-                sub("world_time_taken"), sub("lua_time_taken"), sub("gui_time_taken"),
+                sub("world_time_taken"), (sub("lua_time_taken") + sub("luasyncupdate_time_taken")), sub("gui_time_taken"),
                 sub("input_time_taken"), sub("sound_time_taken"), sub("script_time_taken"));
             // clang-format on
         }
@@ -629,10 +663,10 @@ void OMW::Engine::createWindow()
     // persisted by the pre-scale scheme must not shrink the canvas — that would blur the GUI.
     // clang-format off
     const int width = EM_ASM_INT({
-        return Math.max(320, Math.round(window.__renderW || ((window.innerWidth || 1280) * (window.devicePixelRatio || 1))));
+        return Math.max(320, Math.round(globalThis.__renderW || ((globalThis.innerWidth || 1280) * (globalThis.devicePixelRatio || 1))));
     });
     const int height = EM_ASM_INT({
-        return Math.max(240, Math.round(window.__renderH || ((window.innerHeight || 720) * (window.devicePixelRatio || 1))));
+        return Math.max(240, Math.round(globalThis.__renderH || ((globalThis.innerHeight || 720) * (globalThis.devicePixelRatio || 1))));
     });
     // clang-format on
     Settings::video().mResolutionX.set(width);
@@ -1083,6 +1117,45 @@ void OMW::Engine::prepareEngine()
     mLuaManager->initPostLoad();
 
     // scripts
+#ifdef __EMSCRIPTEN__
+    // F27, first slice. MWScript is lexed and parsed at RUNTIME, lazily, the first time each
+    // script executes (scriptmanagerimp.cpp:39 pulls mScriptText out of the store, wraps it in an
+    // istringstream and runs the full Compiler::Scanner). GOTY ships ~2000 of them, so the normal
+    // experience is: play, trip a script, pay for a lexer -- unpredictably, on the main thread,
+    // during play.
+    //
+    // The real fix is to bake bytecode offline and drop components/compiler (5,005 lines) out of
+    // the wasm entirely. That needs a serialisation format for mParser.getProgram() plus the
+    // locals table, and a loader; it is the rest of F27.
+    //
+    // This is the part that is one line: compile them all up front instead. It does not remove the
+    // work, it MOVES it -- out of unpredictable mid-play stalls and into the loading screen, where
+    // a stall is free and the player is already waiting. That is the same trade every other Phase 2
+    // bake makes, just paid at boot rather than at build time, and it is a strict improvement on
+    // paying it at a random moment while walking through Balmora.
+    //
+    // MEASURED, and left OFF because of what the number said. Booting with retail data and
+    // window.__omwBoot (F24), comparing post-runtime boot work (firstFrame - runtimeInit, because
+    // the wasm compile itself varies by seconds between runs depending on the HTTP cache):
+    //
+    //     lazy          4505 - 362  = 4143ms      "compiled 1206 of 1207 scripts"
+    //     compile-all   7733 - 2078 = 5655ms      => ~1.5s added to boot
+    //
+    // 1.5s is too much to spend on a loading screen for a game whose whole delivery pitch is a
+    // URL -- F24 exists because time-to-playable is the number this product is judged on. So this
+    // does not move the work to a better place, it moves it to the worst place.
+    //
+    // What the measurement actually establishes is that the REST of F27 is worth doing: 1.5s of
+    // lexing and parsing, for a result that is identical on every machine and every run, is
+    // exactly the thing an offline bake deletes rather than relocates. Serialise
+    // mParser.getProgram() plus the locals table, ship it, drop components/compiler (5,005 lines)
+    // out of the wasm, and the 1.5s goes to zero instead of moving.
+    //
+    // OPENMW_COMPILE_ALL=1 opts in, for anyone who would rather take the boot cost than the
+    // mid-play stalls until that lands.
+    if (std::getenv("OPENMW_COMPILE_ALL") != nullptr)
+        mCompileAll = true;
+#endif
     if (mCompileAll)
     {
         std::pair<int, int> result = mScriptManager->compileAll();
@@ -1332,6 +1405,39 @@ void OMW::Engine::go()
     // separate thread from the GL context. Under emscripten that proxies GL calls to a
     // null GL thread and aborts. Force everything onto the single GL thread.
     mViewer->setThreadingModel(osgViewer::ViewerBase::SingleThreaded);
+
+    // F48 -- MEASURED AND CLOSED 2026-08-28. Nothing to do here; the call that used to sit on
+    // this line was a no-op, and the interesting result is why.
+    //
+    // The finding said OSG force-enables VAO *support* but never sets the per-drawable flag, so
+    // State.cpp's test
+    //     _forceVertexArrayObject || (_isVertexArrayObjectSupported && drawable->_useVertexArrayObject)
+    // was false for every draw. The proposed fix was DisplaySettings::VERTEX_ARRAY_OBJECT, which
+    // sets _forceVertexBufferObject and _forceVertexArrayObject. But osg-emscripten.patch ALREADY
+    // sets both, unconditionally, in State::State() under `#elif defined(__EMSCRIPTEN__)`. The
+    // hint was assigning flags that were already true.
+    //
+    // A/B in Balmora (Chrome, RTX 4080, ~726 draws/frame), behind ?forcevao=1 so both arms ran the
+    // same binary: every counter came back identical to one decimal place -- total 4385.3,
+    // bindVertexArray 501.4, vertexAttribPointer 237.4, enableVertexAttribArray 236.5. Not close;
+    // the same. That is the signature of a flag that was already set.
+    //
+    // A follow-up measurement corrected a wrong reading of those numbers, recorded here because it
+    // was nearly written up as a new finding. The 501 binds/frame against only 237
+    // vertexAttribPointer looked like "VAOs bound but re-specified anyway = pure overhead". It is
+    // the opposite. osg::Drawable::draw sets `vas->setRequiresSetArrays(getDataVariance()==DYNAMIC)`
+    // after each draw, and Geometry::drawImplementation early-returns on !getRequiresSetArrays() --
+    // so a STATIC drawable specifies its attributes once and every later frame is bind-and-draw.
+    // A cold drawable issues 3-5 attrib pointers; measured steady state is 0.64 per bind, i.e.
+    // roughly 80-85% of bound drawables are skipping re-specification. The binds are what BUY that
+    // skip. VAO reuse is working as designed.
+    //
+    // Remaining headroom here is small and bounded: attribute calls are 501 of 4385 GL calls per
+    // frame (~11%), and only the share belonging to genuinely-static geometry is recoverable. Worth
+    // a look only after the uniform traffic (43%) is dealt with.
+    // The `null function` this path used to trap on was real: OSG was configured
+    // OPENGL_PROFILE=GLES2 against a WebGL2/ES3 target, so isVAOSupported could never resolve
+    // honestly. build-osg.sh now says GLES2+GLES3 (F50) and OSG_GLES3_FEATURES is 1.
 #endif
 
     // Do not try to outsmart the OS thread scheduler (see bug #4785).
@@ -1444,9 +1550,9 @@ void OMW::Engine::go()
                 // IDBFS state and hand the page a clear end-of-session overlay (__omwOnQuit).
                 // clang-format off
                 EM_ASM({
-                    try { if (window.__omwSyncfs) window.__omwSyncfs(); else if (typeof FS !== 'undefined' && FS.syncfs) FS.syncfs(false, function(){}); } catch(e){}
+                    try { if (globalThis.__omwSyncfs) globalThis.__omwSyncfs(); else if (typeof FS !== 'undefined' && FS.syncfs) FS.syncfs(false, function(){}); } catch(e){}
                     try { Module.__omwRunning = 0; } catch(e){}
-                    try { if (window.__omwOnQuit) window.__omwOnQuit(); } catch(e){}
+                    try { if (globalThis.__omwOnQuit) globalThis.__omwOnQuit(); } catch(e){}
                 });
                 // clang-format on
                 g_emTick = nullptr; // stop future pump ticks

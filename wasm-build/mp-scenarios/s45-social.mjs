@@ -77,7 +77,18 @@ export default async function run(ctx) {
   await a.waitFor(`JSON.parse((window.__omwMP||{}).invites||'[]').length > 0`, STEP, 'A received the invite');
   await a.eval(`Module.__omwMPCmd='social:InviteAccept:${friendOfA.acct}'`);
   await a.waitFor("(window.__omwMP||{}).invitedTo !== undefined", STEP, 'A acted on the invite');
-  await ctx.sleep(1500); // the teleport lands a frame or two after the event
+  // WAIT FOR THE TELEPORT, do not assume a duration. This was `sleep(1500)` and it made the
+  // scenario fail on a build where the feature works: the engine applies the teleport (verified
+  // by instrumenting LuaManager::applyDelayedActions -- before=(...,204909,...)
+  // after=(...,205429,...)), but the pose the test reads is a 2Hz mirror
+  // (POSE_MIRROR_INTERVAL in scripts/mp/player.lua), and under software GL on a loaded box the
+  // whole round trip runs well past 1500ms. Sampling the pose showed it flip to the new position
+  // and stay there -- the move was real, the deadline was not.
+  await a.waitFor(
+    `(() => { try { const p = JSON.parse((window.__omwMP||{}).pose);
+       return Math.hypot(p.x-${posBefore.x}, p.y-${posBefore.y}, p.z-${posBefore.z}) > 100;
+     } catch (e) { return false; } })()`,
+    STEP, 'A travelled to the host after accepting');
   const posAfter = JSON.parse(await a.eval("(window.__omwMP||{}).pose||'null'"));
   const moved = Math.hypot(posAfter.x - posBefore.x, posAfter.y - posBefore.y, posAfter.z - posBefore.z);
   const gap = Math.hypot(posAfter.x - hostPos.x, posAfter.y - hostPos.y, posAfter.z - hostPos.z);

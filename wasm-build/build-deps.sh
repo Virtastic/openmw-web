@@ -124,7 +124,7 @@ build_mygui() {
   cp -f "$SRC/mygui/MyGUIEngine/include/"*.h "$DW/include/MYGUI/" 2>/dev/null || true
 }
 
-# --- FFmpeg 6 (bink + binkaudio decoders only, static) -> libav*/libsw*.a  (installs into $DW)
+# --- FFmpeg 6 (bink video + game audio: mp3/pcm/vorbis, static) -> libav*/libsw*.a (into $DW)
 build_ffmpeg() {
   log "ffmpeg"
   cd "$SRC/ffmpeg-6.1.2"
@@ -134,7 +134,13 @@ build_ffmpeg() {
     --disable-x86asm --disable-inline-asm --disable-asm \
     --disable-everything --disable-programs --disable-doc --disable-network \
     --disable-pthreads --disable-autodetect --disable-shared --enable-static \
-    --enable-decoder=bink,binkaudio_dct,binkaudio_rdft --enable-demuxer=bink --enable-protocol=file \
+    `# Bink is the VIDEO codec. The rest is GAME AUDIO: Morrowind ships music and voice as mp3 and`  \
+    `# sound effects as PCM wav. FFmpegDecoder is the ONLY decoder OpenMW has -- it serves`          \
+    `# soundmanagerimp.cpp:175 for every sound, not just video -- so without these`                  \
+    `# avcodec_find_decoder() returns null for every non-video asset and the game is silent.`        \
+    --enable-decoder=bink,binkaudio_dct,binkaudio_rdft,mp3,pcm_s16le,pcm_u8,pcm_s24le,vorbis \
+    --enable-demuxer=bink,mp3,wav,ogg --enable-parser=mpegaudio \
+    --enable-protocol=file \
     --extra-cflags="$CFLAGS_COMMON" --prefix="$DW"
   emmake make -j"$JOBS"
   emmake make install         # stages libav*/libsw*.a + headers into $DW

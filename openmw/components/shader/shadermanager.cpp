@@ -2,6 +2,10 @@
 // See WASM_ADAPTATIONS.md at the repository root for details of the changes.
 #include "shadermanager.hpp"
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
+
 #include <algorithm>
 #include <cassert>
 #include <chrono>
@@ -897,6 +901,36 @@ namespace Shader
         ShaderMap::iterator shaderIt = mShaders.find(std::make_pair(templateName, defines));
         if (shaderIt == mShaders.end())
         {
+#ifdef __EMSCRIPTEN__
+            // F14 measurement, and the prerequisite for the bake itself.
+            //
+            // A cache MISS here is a permutation being built for the first time: the $link inlining
+            // pass, dedupeTopLevelDefinitions, and adjustSourceForGLES with its ~22 inline
+            // std::regex constructions plus per-member regexes in loops -- all over the full merged
+            // source, in wasm, on the main thread, at the moment a new material first appears.
+            //
+            // Baking that offline needs one thing first: knowing WHICH permutations the game
+            // actually asks for. The define space is large and partly data-driven, so it cannot be
+            // enumerated from the source -- it has to be recorded from a real playthrough. This is
+            // that recorder. Count misses, and publish the keys so a build step can consume them.
+            //
+            // Zero cost on the hit path: this block is only reached when the permutation is new.
+            {
+                static int sMisses = 0;
+                ++sMisses;
+                std::string key = templateName;
+                for (const auto& [k, v] : defines)
+                    key += "|" + k + "=" + v;
+                // clang-format off
+                EM_ASM({
+                    var list = globalThis.__omwShaderKeys || [];
+                    list.push(UTF8ToString($0));
+                    globalThis.__omwShaderKeys = list;
+                    globalThis.__omwShaderMisses = $1;
+                }, key.c_str(), sMisses);
+                // clang-format on
+            }
+#endif
             std::string shaderSource = templateIt->second;
             std::vector<std::string> linkedShaderNames;
             if (!createSourceFromTemplate(shaderSource, linkedShaderNames, templateName, defines))
@@ -938,6 +972,24 @@ namespace Shader
             throw std::runtime_error("failed initializing shader: " + templateName);
 
         return getProgram(std::move(vert), std::move(frag), programTemplate);
+    }
+
+    osg::ref_ptr<osg::Uniform> ShaderManager::getConstUniform(const std::string& name, int value)
+    {
+        std::lock_guard<std::mutex> lock(mMutex);
+        auto& uniform = mConstIntUniforms[{ value, name }];
+        if (!uniform)
+            uniform = new osg::Uniform(name.c_str(), value);
+        return uniform;
+    }
+
+    osg::ref_ptr<osg::Uniform> ShaderManager::getConstUniform(const std::string& name, float value)
+    {
+        std::lock_guard<std::mutex> lock(mMutex);
+        auto& uniform = mConstFloatUniforms[{ value, name }];
+        if (!uniform)
+            uniform = new osg::Uniform(name.c_str(), value);
+        return uniform;
     }
 
     osg::ref_ptr<osg::Program> ShaderManager::getProgram(osg::ref_ptr<osg::Shader> vertexShader,

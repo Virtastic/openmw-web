@@ -63,6 +63,7 @@
 #include "fog.hpp"
 #include "matrixtransform.hpp"
 #include "particle.hpp"
+#include <components/resource/nifstats.hpp>
 
 namespace
 {
@@ -825,7 +826,11 @@ namespace NifOsg
                 if (!skip)
                 {
                     if (isNiGeometry)
+                    {
+                        OPENMW_NIF_STAT_BEGIN(nifGeomBegin);
                         handleNiGeometry(nifNode, parent, node, composite, args.mBoundTextures, args.mAnimFlags);
+                        OPENMW_NIF_STAT_END(Resource::NifStage::Geom, nifGeomBegin);
+                    }
                     else // isBSGeometry
                         handleBSGeometry(nifNode, parent, node, composite, args.mBoundTextures, args.mAnimFlags);
 
@@ -1080,7 +1085,11 @@ namespace NifOsg
             if (!mImageManager)
                 return nullptr;
 
-            return mImageManager->getImage(Misc::ResourceHelpers::correctTexturePath(path, *mImageManager->getVFS()));
+            OPENMW_NIF_STAT_BEGIN(nifTexBegin);
+            osg::ref_ptr<osg::Image> image
+                = mImageManager->getImage(Misc::ResourceHelpers::correctTexturePath(path, *mImageManager->getVFS()));
+            OPENMW_NIF_STAT_END(Resource::NifStage::Texture, nifTexBegin);
+            return image;
         }
 
         static osg::ref_ptr<osg::Texture2D> attachTexture(const std::string& name, osg::ref_ptr<osg::Image> image,

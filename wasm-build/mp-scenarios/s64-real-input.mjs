@@ -23,6 +23,15 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
+// CRITICAL. Almost every other scenario moves the player with the harness's walk: command,
+// which goes through I.Controls.overrideMovementControls and BYPASSES key bindings entirely.
+// This is the only scenario that presses a REAL key, so it is the only one that can tell you a
+// player can actually move and attack. It has already earned this twice: it caught both F42
+// (frame pump inside rAF, so queued keydown never reached the engine) and F46 (maximum light
+// distance = 4096), each of which left the suite otherwise green while shipping a build nobody
+// could play. A failure here invalidates the rest of the run rather than sitting beside it.
+export const critical = true;
+
 export const bootTimeoutMs = 420_000;
 
 const BOOT = { retail: true, joinTimeoutMs: 420_000 };

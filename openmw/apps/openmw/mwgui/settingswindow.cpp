@@ -381,10 +381,10 @@ namespace MWGui
             // selecting it is a no-op. Fall back to the device-pixel window size pre-harness.
             // clang-format off
             const int nativeW = EM_ASM_INT({
-                return Math.max(320, Math.round(window.__renderW || ((window.innerWidth || 1280) * (window.devicePixelRatio || 1))));
+                return Math.max(320, Math.round(globalThis.__renderW || ((globalThis.innerWidth || 1280) * (globalThis.devicePixelRatio || 1))));
             });
             const int nativeH = EM_ASM_INT({
-                return Math.max(240, Math.round(window.__renderH || ((window.innerHeight || 720) * (window.devicePixelRatio || 1))));
+                return Math.max(240, Math.round(globalThis.__renderH || ((globalThis.innerHeight || 720) * (globalThis.devicePixelRatio || 1))));
             });
             // clang-format on
             // Explicit SCENE render-scale ladder (a quality/perf dial, NOT monitor modes): 'Full'

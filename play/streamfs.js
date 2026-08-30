@@ -25,8 +25,45 @@
 //   StreamFS.mountLocal('/mwdata/Morrowind.bsa', fileHandle, sizeBytes);
 (function () {
   'use strict';
-  const CHUNK = 4 * 1024 * 1024; // 4MB chunks (fewer network round-trips when streaming BSAs from S3)
-  const LRU_MAX = 32;            // ~128MB resident chunk cache per file set
+  // Chunk size and cache depth. MEASURED on a Balmora boot with retail data (see
+  // window.__streamfsStats): at 4MB x 32 slots the cache THRASHED -- 27 evictions against 32 slots,
+  // 59 misses, 1269ms of main-thread stall, for 229MB read. A BSA read is a mesh or a texture:
+  // small, and scattered all over the archive. Pulling 4MB to serve a 20KB texture meant a handful
+  // of live regions could not stay resident at once.
+  //
+  // Same ~128MB budget, four times as many distinct regions. Smaller chunks also make each miss
+  // cheaper, and a miss BLOCKS the main thread (fetchChunkSync spins -- Atomics.wait is banned on
+  // the main thread), so miss cost is frame time, not just bandwidth.
+  //
+  // Tunable at runtime for A/B without a rebuild: ?chunk=<KB>&lru=<slots>.
+  const _q = (typeof location !== 'undefined' && location.search) || '';
+  const _n = (re, dflt) => { const m = re.exec(_q); return m ? (parseInt(m[1], 10) || dflt) : dflt; };
+  // CHUNK AND LRU MUST BE TUNED TOGETHER -- measured 2026-08-28, Balmora boot, at a constant
+  // ~384MB cache budget so the comparison is memory-neutral:
+  //
+  //     1MB x 384 slots : 259 cold misses, 2253ms stall, 270MB fetched, NIF load 2457ms
+  //     2MB x 192 slots : 150 cold misses, 1380ms stall, 307MB fetched, NIF load 1568ms  <-- best
+  //     4MB x  96 slots :  89 cold misses, 1346ms stall, 337MB fetched, NIF load 1613ms
+  //
+  // With the LRU large enough that evictions are 0, every remaining miss is a COLD miss, and the
+  // only way to cut those is to cover more bytes per fetch. 2MB folds neighbouring cold misses
+  // into one round trip (-42% misses, -39% stall) and takes 36% off total mesh load time, since
+  // ~59% of that is I/O (see components/resource/nifstats.hpp). 4MB keeps cutting misses but each
+  // fetch costs more and pulls more unused bytes, so stall stops improving and boot gets worse.
+  //
+  // This supersedes the original F4 note below, which found 1MB beat 4MB -- that was measured at a
+  // 32-to-128 slot LRU, where 4MB chunks thrashed. The chunk size was never the whole story.
+  const CHUNK = _n(/[?&]chunk=(\d+)/, 2048) * 1024;   // 2MB default
+  // Slot count is TIER-DEPENDENT and resolved lazily in init(), not here: index.html picks the
+  // tier from navigator.deviceMemory and publishes window.__omwLruDefault, and this file is parsed
+  // before that runs. 0 means "not decided yet"; an explicit ?lru= always wins.
+  //
+  // MEASURED 2026-08-28 (Balmora, matched workload -- hits within 0.1%): 128 slots was thrashing.
+  //     lru=128 -> 215 evictions, 343 misses, 2684ms main-thread stall, 356MB fetched
+  //     lru=384 ->   0 evictions, 259 misses, 1923ms main-thread stall, 268MB fetched
+  // -28% stall and -25% bytes. The working set settles at 259 chunks, so 384 is headroom rather
+  // than a guess. A miss BLOCKS the main thread (fetchChunkSync spins), so this is frame time.
+  let LRU_MAX = _n(/[?&]lru=(\d+)/, 0);
 
   // cache is a Map used as an LRU: insertion order IS the recency order (delete+set moves to end),
   // so eviction pops the first (oldest) key. No separate order array → O(1) hit path, no linear scan.
@@ -159,6 +196,9 @@
 
     init() {
       if (S.worker) return;
+      // Resolve the tier default now that index.html has run. Slots are ~1MB each, so this is
+      // also the JS-side memory ceiling: 384MB high / 192MB mid / 96MB low, on top of the wasm heap.
+      if (!LRU_MAX) LRU_MAX = (typeof window !== 'undefined' && window.__omwLruDefault | 0) || 128;
       if (!self.crossOriginIsolated) throw new Error('streamfs needs crossOriginIsolated (COOP/COEP)');
       const ctrlBuf = new SharedArrayBuffer(8);
       const dataBuf = new SharedArrayBuffer(CHUNK);

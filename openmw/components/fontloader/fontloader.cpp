@@ -28,6 +28,11 @@
 
 #include <components/settings/values.hpp>
 
+#ifdef __EMSCRIPTEN__
+#include <chrono>
+#include <emscripten.h>
+#endif
+
 namespace
 {
     MyGUI::xml::ElementPtr getProperty(MyGUI::xml::ElementPtr resourceNode, std::string_view propertyName)
@@ -241,7 +246,19 @@ namespace Gui
         MyGUI::ResourceManager::getInstance().registerLoadXmlDelegate("Resource")
             = MyGUI::newDelegate(this, &FontLoader::overrideLineHeight);
 
+#ifdef __EMSCRIPTEN__
+        // F43 sizing: fonts are rasterised from TTF through FreeType on every boot, and the
+        // finding proposes shipping pre-baked atlases instead (which would also drop FreeType and
+        // HarfBuzz from the link). That is only worth doing if the rasterisation is actually
+        // expensive -- measure before building an offline pipeline for it.
+        const auto fontBegin = std::chrono::steady_clock::now();
         loadFonts();
+        const double fontMs = std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - fontBegin).count() / 1000.0;
+        EM_ASM({ globalThis.__omwFontMs = $0; }, fontMs);
+#else
+        loadFonts();
+#endif
     }
 
     void FontLoader::loadFonts()

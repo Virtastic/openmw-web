@@ -646,11 +646,15 @@ for (const file of files) {
   // adopt: the convention already exists wherever a scenario opts out, so this catches all of
   // them at once and cannot drift from what the scenario actually prints.
   let skipReason = null;
+  // Hoisted out of the try: the scenario module is imported inside it, but the result is
+  // recorded after the finally, where that binding is out of scope.
+  let isCritical = false;
   const childLogs = []; // scenario-spawned processes (gateways), dumped on failure
   console.log(`\n=== scenario ${file} ===`);
   try {
     // Import first: a scenario may declare server rules it needs (e.g. pvp = true).
-    const { default: run, serverRules, serverEnv } = await import(pathToFileURL(join(SCENARIO_DIR, file)));
+    const { default: run, serverRules, serverEnv, critical } = await import(pathToFileURL(join(SCENARIO_DIR, file)));
+    isCritical = !!critical;
     const envForRun = typeof serverEnv === 'function' ? serverEnv(RUN_ID) : (serverEnv ?? {});
     server = await startGameServer(serverRules, envForRun);
     await run({
@@ -761,7 +765,7 @@ for (const file of files) {
   }
   const secs = ((Date.now() - t0) / 1000).toFixed(1);
   // A scenario that FAILED is a failure even if it logged a skip on the way out.
-  results.push({ file, ok: !err, secs, skip: err ? null : skipReason });
+  results.push({ file, ok: !err, secs, skip: err ? null : skipReason, critical: isCritical });
   if (err) {
     console.error(`FAIL ${file} (${secs}s):\n${err.stack || err}`);
     const srv = server?.logTail?.();
@@ -793,5 +797,18 @@ if (skipped.length) {
   console.log(``);
   console.log(`NOT RUN -- these assert nothing about the build:`);
   for (const r of skipped) console.log(`  ${r.file}  -- ${r.skip}`);
+}
+const criticalFails = results.filter((r) => !r.ok && r.critical);
+if (criticalFails.length) {
+  // A CRITICAL scenario is one that proves something the rest of the suite cannot. s64 is the
+  // only scenario that presses a real key -- everything else moves the player through the
+  // walk: command, which bypasses key bindings -- so when it fails, a green count beside it is
+  // actively misleading. Both F42 and F46 shipped as 'landed' with the suite otherwise green.
+  // Given the last word for the same reason SKIPs are.
+  console.log(``);
+  console.log(`CRITICAL FAILURE -- the rest of this run cannot be trusted:`);
+  for (const r of criticalFails) console.log(`  ${r.file}`);
+  console.log(`  A critical scenario proves something no other scenario covers. Fix this first;`);
+  console.log(`  passes elsewhere do not mean the build is playable.`);
 }
 process.exit(results.every((r) => r.ok) ? 0 : 1);

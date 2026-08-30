@@ -6,7 +6,12 @@
 # Skips already-fresh .br files. Audio/video tars (mp3/bik) barely compress — skipped.
 set -euo pipefail
 ROOT="${ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
-Q="${Q:-5}"  # quality: 5 is a good speed/ratio tradeoff for 100MB+ files
+# Two qualities, because the two file classes have opposite economics.
+# ENGINE_Q: openmw.{js,wasm,data} are compressed ONCE per release and then served to every visitor,
+#   so spend the CPU -- q11 buys ~10-20% over q5 on wasm, which is pure first-load win forever.
+# Q: the 100MB+ ESMs and the tar, where q11 costs many minutes for a much smaller relative gain.
+ENGINE_Q="${ENGINE_Q:-11}"
+Q="${Q:-5}"
 
 for f in "$ROOT"/play/openmw.js "$ROOT"/play/openmw.wasm "$ROOT"/play/openmw.data \
          "$ROOT"/play/mwdata/Morrowind.esm "$ROOT"/play/mwdata/Tribunal.esm \
@@ -16,8 +21,12 @@ for f in "$ROOT"/play/openmw.js "$ROOT"/play/openmw.wasm "$ROOT"/play/openmw.dat
     echo "fresh: $f.br"
     continue
   fi
-  echo "brotli -q $Q: $f"
-  brotli -f -q "$Q" -o "$f.br" "$f"
+  case "${f##*/}" in
+    openmw.js|openmw.wasm|openmw.data) q="$ENGINE_Q" ;;
+    *)                                 q="$Q" ;;
+  esac
+  echo "brotli -q $q: $f"
+  brotli -f -q "$q" -o "$f.br" "$f"
 done
 # Summary only — never fail the script here (mwdata/*.br is absent in the CI build context, and
 # under `set -euo pipefail` a non-zero ls would abort the whole build).

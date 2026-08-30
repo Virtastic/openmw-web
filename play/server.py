@@ -3,6 +3,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Part of openmw-web.
 import http.server, socketserver, os, re, io, json, socket, threading, webbrowser
+import hmac, hashlib, urllib.request, urllib.parse, urllib.error
+from datetime import datetime, timezone
 
 # Load play/.env (KEY=VALUE, # comments) WITHOUT clobbering real env vars, so the launcher
 # flag can live in a git-ignored file next to this server. Env always wins over .env.
@@ -42,6 +44,98 @@ LAUNCHER = os.environ.get('OPENMW_LAUNCHER', '1').strip().lower() not in ('0', '
 # WebSocket upgrade with ONE code path — and /w/<worldId> is an upgrade, so a response-parsing
 # proxy would need the splice logic anyway.
 MP_UPSTREAM = os.environ.get('OPENMW_MP_UPSTREAM', '127.0.0.1:8080').strip()
+
+# --- Optional S3 backing for mwdata/, LOCAL TESTING ONLY -----------------------------------
+# The operator-hosted mwdata/ path normally reads a Data Files copy off local disk. Setting
+# these lets the same manifest+mount client code (play/index.html) instead pull those bytes
+# through this dev server from an S3-compatible bucket (e.g. a local MinIO) — useful for
+# exercising the S3 code path without standing up the per-account locker/auth flow, on a
+# server that is not reachable from the internet. Credentials never reach the browser: this
+# process signs each request and proxies the bytes, the same "no bucket URLs handed to a
+# client" posture as the rest of this codebase (see docs/LEGAL.md — this is local dev tooling,
+# not a distribution mechanism).
+S3_ENDPOINT = os.environ.get('OMW_MWDATA_S3_ENDPOINT', '').strip().rstrip('/')
+S3_BUCKET = os.environ.get('OMW_MWDATA_S3_BUCKET', '').strip()
+S3_REGION = os.environ.get('OMW_MWDATA_S3_REGION', 'us-east-1').strip()
+S3_PREFIX = os.environ.get('OMW_MWDATA_S3_PREFIX', '').strip().strip('/')
+S3_ACCESS_KEY = os.environ.get('S3_ACCESS_KEY_ID', '').strip()
+S3_SECRET_KEY = os.environ.get('S3_SECRET_ACCESS_KEY', '').strip()
+S3_ENABLED = bool(S3_ENDPOINT and S3_BUCKET and S3_ACCESS_KEY and S3_SECRET_KEY)
+
+
+def _s3_sign(method, path, query=''):
+    """SigV4 header-signed GET, over a specific bucket path (object or bucket-level list)."""
+    host = urllib.parse.urlparse(S3_ENDPOINT).netloc
+    now = datetime.now(timezone.utc)
+    amz_date = now.strftime('%Y%m%dT%H%M%SZ')
+    short_date = now.strftime('%Y%m%d')
+    payload_hash = hashlib.sha256(b'').hexdigest()
+    headers = {'host': host, 'x-amz-content-sha256': payload_hash, 'x-amz-date': amz_date}
+    signed_headers = ';'.join(sorted(headers))
+    canonical_headers = ''.join('%s:%s\n' % (k, headers[k]) for k in sorted(headers))
+    canonical_request = '\n'.join([method, path, query, canonical_headers, signed_headers, payload_hash])
+    scope = '%s/%s/s3/aws4_request' % (short_date, S3_REGION)
+    string_to_sign = '\n'.join([
+        'AWS4-HMAC-SHA256', amz_date, scope,
+        hashlib.sha256(canonical_request.encode()).hexdigest(),
+    ])
+
+    def hmac_sha256(key, msg):
+        return hmac.new(key, msg.encode(), hashlib.sha256).digest()
+
+    k_date = hmac_sha256(('AWS4' + S3_SECRET_KEY).encode(), short_date)
+    k_region = hmac_sha256(k_date, S3_REGION)
+    k_service = hmac_sha256(k_region, 's3')
+    k_signing = hmac_sha256(k_service, 'aws4_request')
+    signature = hmac.new(k_signing, string_to_sign.encode(), hashlib.sha256).hexdigest()
+    auth = ('AWS4-HMAC-SHA256 Credential=%s/%s, SignedHeaders=%s, Signature=%s'
+            % (S3_ACCESS_KEY, scope, signed_headers, signature))
+    headers['Authorization'] = auth
+    url = '%s%s' % (S3_ENDPOINT, path) + ('?' + query if query else '')
+    return url, headers
+
+
+def _s3_key(rel_path):
+    return '%s/%s' % (S3_PREFIX, rel_path) if S3_PREFIX else rel_path
+
+
+def _s3_list_manifest():
+    """List the bucket (under S3_PREFIX) and build the same {p, s} shape as the local walk."""
+    out = []
+    token = None
+    while True:
+        q = {'list-type': '2', 'max-keys': '1000'}
+        if S3_PREFIX:
+            q['prefix'] = S3_PREFIX + '/'
+        if token:
+            q['continuation-token'] = token
+        query = urllib.parse.urlencode(sorted(q.items()))
+        url, headers = _s3_sign('GET', '/%s/' % S3_BUCKET, query)
+        req = urllib.request.Request(url, headers=headers, method='GET')
+        with urllib.request.urlopen(req, timeout=30) as r:
+            xml = r.read().decode('utf-8', 'replace')
+        for m in re.finditer(r'<Contents>(.*?)</Contents>', xml, re.S):
+            block = m.group(1)
+            key = re.search(r'<Key>([^<]+)</Key>', block)
+            size = re.search(r'<Size>([^<]+)</Size>', block)
+            if not key or not size:
+                continue
+            rel = key.group(1)
+            if S3_PREFIX:
+                if not rel.startswith(S3_PREFIX + '/'):
+                    continue
+                rel = rel[len(S3_PREFIX) + 1:]
+            if not rel or rel.endswith('/'):
+                continue  # a "directory marker" object, not game data
+            out.append({'p': rel, 's': int(size.group(1))})
+        is_trunc = re.search(r'<IsTruncated>([^<]+)</IsTruncated>', xml)
+        next_token = re.search(r'<NextContinuationToken>([^<]+)</NextContinuationToken>', xml)
+        if is_trunc and is_trunc.group(1) == 'true' and next_token:
+            token = next_token.group(1)
+            continue
+        break
+    return out
+
 
 def _is_gateway_path(path):
     p = path.split('?', 1)[0]
@@ -142,24 +236,61 @@ class H(http.server.SimpleHTTPRequestHandler):
         # it removes the pre-packed .tar archives, which existed only in the maintainer's tree
         # and which no retail install could ever supply.
         if self.path.split('?', 1)[0] == '/mwdata-manifest.json':
-            root = os.path.join(os.getcwd(), 'mwdata')
-            out = []
-            for dirpath, _, names in os.walk(root):
-                for n in names:
-                    if n.startswith('.') or n.endswith('.br'):
-                        continue  # dotfiles and brotli siblings aren't game data
-                    p = os.path.join(dirpath, n)
-                    try:
-                        out.append({'p': os.path.relpath(p, root).replace(os.sep, '/'),
-                                    's': os.path.getsize(p)})
-                    except OSError:
-                        pass
+            if S3_ENABLED:
+                try:
+                    out = _s3_list_manifest()
+                except (urllib.error.URLError, OSError) as e:
+                    self.send_error(502, 'mwdata S3 list failed: %s' % e)
+                    return None
+            else:
+                root = os.path.join(os.getcwd(), 'mwdata')
+                out = []
+                for dirpath, _, names in os.walk(root):
+                    for n in names:
+                        if n.startswith('.') or n.endswith('.br'):
+                            continue  # dotfiles and brotli siblings aren't game data
+                        p = os.path.join(dirpath, n)
+                        try:
+                            out.append({'p': os.path.relpath(p, root).replace(os.sep, '/'),
+                                        's': os.path.getsize(p)})
+                        except OSError:
+                            pass
             body = json.dumps(out).encode()
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
             self.send_header('Content-Length', str(len(body)))
             self.end_headers()
             return io.BytesIO(body)
+        # S3-backed mwdata/: proxy the object through, forwarding Range so StreamFS's chunked
+        # reads work exactly as they do against local disk. Credentials are signed here and
+        # never reach the browser.
+        if S3_ENABLED and self.path.split('?', 1)[0].startswith('/mwdata/'):
+            rel = urllib.parse.unquote(self.path.split('?', 1)[0][len('/mwdata/'):])
+            key = _s3_key(rel)
+            url, headers = _s3_sign('GET', '/%s/%s' % (S3_BUCKET, urllib.parse.quote(key)))
+            rng = self.headers.get('Range')
+            if rng:
+                headers['Range'] = rng
+            req = urllib.request.Request(url, headers=headers, method='GET')
+            try:
+                up = urllib.request.urlopen(req, timeout=30)
+            except urllib.error.HTTPError as e:
+                self.send_response(e.code)
+                for h in ('Content-Range', 'Content-Length', 'Accept-Ranges', 'Content-Type'):
+                    if e.headers.get(h):
+                        self.send_header(h, e.headers[h])
+                self.end_headers()
+                return None
+            except (urllib.error.URLError, OSError) as e:
+                self.send_error(502, 'mwdata S3 fetch failed: %s' % e)
+                return None
+            self.send_response(up.status)
+            for h in ('Content-Range', 'Content-Length', 'Accept-Ranges'):
+                if up.headers.get(h):
+                    self.send_header(h, up.headers[h])
+            self.send_header('Content-Type', self.guess_type(rel))
+            self.end_headers()
+            return up
         # HTTP Range support (python's SimpleHTTPRequestHandler has none) — required for the
         # ?stream lazy-BSA mode (emscripten FS.createLazyFile reads the archives in chunks).
         rng = self.headers.get('Range')
@@ -242,6 +373,9 @@ print(f"openmw-web: serving {url}  "
       f"(local only; set OPENMW_HOST=0.0.0.0 to expose on your network)")
 print(f"           multiplayer paths (/w/ /auth/ /locker/ /worlds /ws) -> {MP_UPSTREAM}  "
       f"(set OPENMW_MP_UPSTREAM to change)")
+if S3_ENABLED:
+    print(f"           mwdata/ served from S3: {S3_ENDPOINT}/{S3_BUCKET}"
+          f"{'/' + S3_PREFIX if S3_PREFIX else ''}  (local disk mwdata/ ignored)")
 if os.environ.get('OPENMW_OPEN', '1').strip().lower() not in ('0', 'false', 'no', ''):
     print("opening your browser… (needs desktop Chrome/Chromium; OPENMW_OPEN=0 to skip)")
     webbrowser.open(url)

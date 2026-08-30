@@ -23,6 +23,12 @@ import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+// Windows: Node's spawn() will not resolve a .cmd shim without shell:true, so a bare 'npx'
+// dies with ENOENT and takes the whole scenario run down. Same class of macOS-only hardcode
+// as the harness's CHROME_BIN default. Resolve the platform's actual executable name instead
+// of setting shell:true, which would re-quote the argv and break the --cellkey values.
+const NPX = process.platform === 'win32' ? 'npx.cmd' : 'npx';
+
 const ROOT = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 // Steps are cumulative avatar counts, not wave sizes.
 const STEPS = (process.env.S43_STEPS ?? '8,16,32,48,64').split(',').map(Number);
@@ -121,7 +127,7 @@ export default async function run(ctx) {
     for (const target of STEPS) {
       const add = target - spawned;
       if (add <= 0) continue;
-      const w = spawn('npx', ['tsx', 'bots/soak.ts',
+      const w = spawn(NPX, ['tsx', 'bots/soak.ts',
         '--attach', String(ctx.serverPort), '--onecell', '--cellkey', cellKey,
         // Distinct name prefix per wave: bot names are account keys, so a second wave
         // reusing soak0..soakN supersedes the first wave's sessions instead of adding

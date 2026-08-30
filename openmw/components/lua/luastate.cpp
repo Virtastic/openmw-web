@@ -188,6 +188,25 @@ namespace LuaUtil
         if (sProfilerEnabled)
             lua_sethook(mLuaState.get(), &countHook, LUA_MASKCOUNT, countHookStep);
 
+#ifdef __EMSCRIPTEN__
+        // F41: generational GC instead of Lua 5.4's default incremental collector.
+        //
+        // On the web Lua runs INLINE on the main thread (mwlua/worker.cpp spawns no worker here),
+        // so a collection is not merely bookkeeping -- it lands inside the frame budget, and the
+        // frame finds out afterwards. Generational suits the allocation shape this engine actually
+        // produces: the per-frame churn is short-lived tables and strings from event payloads,
+        // which is exactly what a minor collection sweeps cheaply, while the long-lived world
+        // state stays in the old generation instead of being re-traversed.
+        //
+        // Not a measured win yet -- the original argument for touching this leaned on F40, which
+        // was withdrawn (the MP hot path is binary, not JSON). Kept because the knob being at its
+        // default is not itself evidence either way, and this is the cheap half of finding out.
+        // OPENMW_LUA_GC_INCREMENTAL=1 restores the default collector for A/B; measure with
+        // lua_gc(LUA_GCCOUNT) against the frame stats before concluding anything.
+        if (std::getenv("OPENMW_LUA_GC_INCREMENTAL") == nullptr)
+            lua_gc(mLuaState.get(), LUA_GCGEN, 0, 0);
+#endif
+
         protectedCall([&](LuaView& view) {
             auto& sol = view.sol();
             sol.open_libraries(sol::lib::base, sol::lib::coroutine, sol::lib::math, sol::lib::bit32, sol::lib::string,

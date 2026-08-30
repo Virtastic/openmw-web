@@ -278,8 +278,8 @@ A few things to watch for, which are why the link step is scripted:
 ### Dependency stack
 
 All deps are cross-compiled to static libs in `deps/wasm/lib`, with headers in
-`deps/wasm/include`: OSG 3.6.5, Bullet (double-precision), MyGUI, FFmpeg 5 (with
-`--enable-decoder=bink,binkaudio`), Boost (program_options plus iostreams), Lua 5.4,
+`deps/wasm/include`: OSG 3.6.5, Bullet (double-precision), MyGUI, FFmpeg 6 (bink video plus the
+mp3/pcm/vorbis decoders game audio needs), Boost (program_options plus iostreams), Lua 5.4,
 LZ4, and RecastNavigation. SDL2, FreeType, HarfBuzz, png, jpeg, zlib, ogg, and vorbis
 come from emscripten ports at link time; OpenAL is emscripten's built-in.
 

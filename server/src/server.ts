@@ -3,7 +3,7 @@
 // Composition root: wires config, stores, gates, plugins, HTTP and WS into a running
 // server. main.ts is the CLI face; tests call startServer() directly.
 
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { WebSocket } from 'ws';
 import { loadConfig, type Config, type DeepPartial } from './config';
@@ -958,6 +958,34 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     const udDir = config.simPeer.userDataDir || join(opts.dataDir, 'peer-userdata');
     mkdirSync(cfgDir, { recursive: true });
     mkdirSync(udDir, { recursive: true });
+    // F15: seed this world's navmesh cache from a prebuilt db, if one is configured.
+    //
+    // The peer caches navmesh to <user-data>/navmesh.db and a warm restart regenerates NOTHING --
+    // measured on the peer image: cold adds 138 collision shapes and builds a 3.55MB db, warm adds
+    // 0 and the file comes back byte-identical. The catch is that every world has its own
+    // user-data dir on purpose (two worlds must not share one), so each newly spawned world pays
+    // the cold cost again -- and the gateway spawns and idle-reaps worlds continuously.
+    //
+    // COPIED, never symlinked or shared: openmw disables writes when it detects another process
+    // on the same navmeshdb ('writes to navmeshdb are disabled to avoid concurrent writes from
+    // multiple processes'), which would leave every world after the first unable to extend its
+    // own cache. Each world gets its own writable copy that starts warm.
+    //
+    // Only seeds when the destination is absent, so a world that has already built its own cache
+    // is never clobbered, and a restart of an existing world keeps whatever it learned.
+    const navmeshTemplate = config.simPeer.navmeshTemplate;
+    const navmeshDest = join(udDir, 'navmesh.db');
+    if (navmeshTemplate && !existsSync(navmeshDest)) {
+      try {
+        copyFileSync(navmeshTemplate, navmeshDest);
+        log('info', 'simpeer.navmesh_seeded',
+          { from: navmeshTemplate, to: navmeshDest, bytes: statSync(navmeshDest).size });
+      } catch (err) {
+        // Never fatal: a missing or unreadable template just means this world generates its own
+        // navmesh the slow way, which is exactly the behaviour before this existed.
+        log('warn', 'simpeer.navmesh_seed_failed', { from: navmeshTemplate, error: String(err) });
+      }
+    }
     // Resources ship beside the binary (…/bin/openmw -> …/share/openmw/resources); override
     // via OMW_SIMPEER_RESOURCES if a build lays them out differently.
     const resources = process.env.OMW_SIMPEER_RESOURCES

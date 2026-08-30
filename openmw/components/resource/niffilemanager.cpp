@@ -7,6 +7,7 @@
 #include <components/vfs/manager.hpp>
 
 #include "objectcache.hpp"
+#include "nifstats.hpp"
 
 namespace Resource
 {
@@ -48,7 +49,9 @@ namespace Resource
 
         auto file = std::make_shared<Nif::NIFFile>(name);
         Nif::Reader reader(*file, mEncoder);
+        OPENMW_NIF_STAT_BEGIN(nifStatBegin);
         reader.parse(mVFS->get(name));
+        OPENMW_NIF_STAT_END(Resource::NifStage::Parse, nifStatBegin);
         obj = new NifFileHolder(file);
         mCache->addEntryToObjectCache(name.value(), obj);
         return file;

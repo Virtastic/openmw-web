@@ -54,6 +54,21 @@ export interface Config {
     idleReapMs: number; // reap a peer whose world has had no humans this long
     startTimeoutMs: number;
     restartBackoffMs: number;
+    /**
+     * Optional prebuilt navmesh.db seeded into a new world's peer user-data (F15).
+     *
+     * The peer already caches navmesh to <user-data>/navmesh.db and a warm restart regenerates
+     * NOTHING -- measured on the peer image: a cold start adds 138 collision shapes and builds a
+     * 3.55MB db, a warm start adds 0 and leaves the file byte-identical. But every world gets its
+     * OWN user-data dir (worlds must not share one), so each newly spawned world pays the cold
+     * cost again, and the gateway spawns and reaps worlds continuously.
+     *
+     * Seeding from one prebuilt db gets that back without an offline navmesh generator. Copied,
+     * not shared: openmw refuses concurrent writers to a single navmeshdb.
+     *
+     * Empty (the default) disables seeding, so existing deployments behave exactly as before.
+     */
+    navmeshTemplate: string;
   };
   login: {
     allowRegistration: boolean;
@@ -457,6 +472,7 @@ function validate(t: Tree): Config {
       idleReapMs: reqNum(t, 'simPeer', 'idleReapMs'),
       startTimeoutMs: reqNum(t, 'simPeer', 'startTimeoutMs'),
       restartBackoffMs: reqNum(t, 'simPeer', 'restartBackoffMs'),
+      navmeshTemplate: optStr(t, 'simPeer', 'navmeshTemplate', ''),
     },
     login: {
       allowRegistration: reqBool(t, 'login', 'allowRegistration'),
