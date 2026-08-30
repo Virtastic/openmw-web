@@ -120,14 +120,15 @@ function confirmAction({ title, body, danger = 'Confirm', typeToConfirm = null }
   });
 }
 
-// `mp: true` marks pages that only mean something with other people on the server. A
-// single-player deployment hides them entirely, a roster, moderation commands and a
-// public-account browser on a world with exactly one person in it are the "why am I seeing
-// multiplayer options?" complaint, verbatim.
+// NOTHING IS HIDDEN BY DEPLOYMENT MODE. The roster and moderation page used to be hidden on
+// a "single player" server, from when that answer was taken to mean nobody else could ever
+// be there. It does not: it describes who the world is FOR, and friends can join either
+// way. Hiding the page that shows who is currently playing, on a server they are playing
+// on, is a worse fault than showing a page that happens to be empty.
 const NAV = [
   { group: 'Server', items: [
     { hash: '#overview', label: 'Overview', icon: 'bi-speedometer2', role: 'viewer' },
-    { hash: '#console', label: 'Players & commands', icon: 'bi-people', role: 'moderator', mp: true },
+    { hash: '#console', label: 'Players & commands', icon: 'bi-people', role: 'moderator' },
     { hash: '#mods', label: 'Game data & mods', icon: 'bi-collection', role: 'viewer' },
   ] },
   { group: 'Configuration', items: [
@@ -170,7 +171,7 @@ function paintChrome() {
   if (!state.authed || setupPending) { nav.innerHTML = ''; }
   else {
     nav.innerHTML = NAV.map((g) => {
-      const items = g.items.filter((i) => can(i.role) && !(i.mp && singlePlayer()));
+      const items = g.items.filter((i) => can(i.role));
       if (!items.length) return '';
       return html`<li class="nav-header">${g.group}</li>` + items.map((i) => html`
         <li class="nav-item">
@@ -301,14 +302,18 @@ let step = restored.step;
 // the world is for, not whether anyone else can ever reach it, and people who do join still
 // need a way to sign in.
 const wizardSteps = () => {
-  const mp = answers.deploymentMode === 'multiplayer';
+  // EVERY RUN ASKS THE SAME ELEVEN QUESTIONS. The server name used to be multiplayer-only,
+  // which made the step count change from 11 to 12 the moment the mode was chosen, and a
+  // total that moves under you is unsettling on the one screen where you most want to know
+  // how much is left. A world you play alone still has a name, and it is shown on its own
+  // sign-in page, so asking is not a wasted step.
   return [
     'owner',
     'mode',
     'content',
     'delivery',
     'hosting',
-    ...(mp ? ['name'] : []),
+    'name',
     'login',
     'registration',
     'admins',
@@ -385,8 +390,13 @@ function wireChoices(onPick) {
       // modes now, so clearing them means going back one step to flip the mode and silently
       // losing the domain you had already typed, and with it the certificate that domain
       // was about to get.
-      if (key === 'deploymentMode' && answers.deploymentMode !== value && value === 'single') {
-        answers.serverName = '';
+      // The mode's whole job now: preselect the sign-up policy that suits it. Not forced,
+      // and the next-but-one step shows what was chosen and lets it be changed, which is
+      // the difference between a helpful default and the silent one this used to apply.
+      if (key === 'deploymentMode' && answers.deploymentMode !== value) {
+        if (answers.registration === null) {
+          answers.registration = value === 'single' ? 'invite' : 'open';
+        }
       }
       answers[key] = value;
       if (onPick) onPick();
