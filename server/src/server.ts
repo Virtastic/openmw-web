@@ -1034,7 +1034,15 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     motd,
     contentPolicy: config.content.enforce,
     enginePolicy: config.engine.enforce,
-    requiresPassword: config.server.password !== '',
+    // ALWAYS FALSE, and the field is kept only because launchers read it.
+    //
+    // This used to be `config.server.password !== ''`, which was already misleading and
+    // became actively wrong once that value started generating itself: [server].password is
+    // exclusively the sim peer's credential and is never checked against a player (see
+    // checkAuthGate in net/connection.ts, which says so at length). Reporting true made a
+    // launcher prompt for a join password that nothing would ever verify — a door with no
+    // lock and no handle. There is no player-facing server password in this protocol.
+    requiresPassword: false,
     allowsRegistration: config.login.allowRegistration && config.login.inviteCode === '',
     playerCount: roster.humansInWorld().length,
     connectedCount: roster.humanCount, // F3: keeps a world alive while a player is loading / at chargen

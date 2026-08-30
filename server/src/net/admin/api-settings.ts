@@ -23,7 +23,9 @@ export const SECTION_GROUPS: { group: string; sections: string[]; note?: string 
     group: 'Platform (advanced)',
     sections: ['simPeer', 'gateway', 'worlds'],
     note: 'Multi-world hosting. A single self-hosted server does not need any of this — ' +
-      'these settings are read by the gateway supervisor, which most deployments never run.',
+      'these settings are read by the gateway supervisor, which most deployments never run. ' +
+      'Note that this dashboard is not available while the gateway is running: it administers ' +
+      'a world, and the gateway does not have one of its own.',
   },
 ];
 

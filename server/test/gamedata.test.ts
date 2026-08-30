@@ -5,7 +5,7 @@
 // the feature away from every self-hoster who cannot put Morrowind on a server.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { detectGameData, buildPeerCfg, gameDataDir } from '../src/core/gamedata';
@@ -137,18 +137,36 @@ test('a non-directory path is handled, not thrown on', () => {
   mkdirSync(join(d, 'sub'), { recursive: true }); // keep tmp tidy-ish
 });
 
-// THE SIM PEER IS MANDATORY. There is no mode to resolve: a deployment either runs its own
-// simulation or refuses to start, because a server with no peer has no eligible cell holder
-// and its NPCs never move for anyone. What used to live here tested the 'auto'/'on'/'off'
-// knob and the tier-1 fallback to client-simulated NPCs; both are gone.
-test('a real deployment refuses to boot without game data', async () => {
+// THE SIM PEER IS MANDATORY. A server with no peer has no eligible cell holder and its NPCs
+// never move for anyone, so it must never look like a working world.
+//
+// It used to enforce that by refusing to start. That was the right rule with the wrong
+// remedy: exiting at boot puts the problem and the only page that explains it behind the
+// same door, so a fresh `docker compose up` died before serving anything and an operator who
+// finished the setup wizard and pressed Restart got a crash-loop with no dashboard.
+//
+// Now it comes up serving ONLY the admin surface, refuses every game connection with the
+// reason, and answers /healthz with 503 so a healthcheck or a monitor still sees a broken
+// server. Nothing about it claims to be playable — it is a wrench you can reach instead of a
+// locked door.
+test('without game data a real deployment comes up for setup, and reports itself unhealthy', async () => {
   const { startServer } = await import('../src/server');
   const { tmpDataDir } = await import('./helpers');
   // requireGameData omitted: this is the production path, where the check is live.
-  await assert.rejects(
-    () => startServer({ dataDir: tmpDataDir(), port: 0, host: '127.0.0.1' }),
-    /no usable game data/,
-    'booting without game data must fail loudly, naming what is missing');
+  const server = await startServer({ dataDir: tmpDataDir(), port: 0, host: '127.0.0.1' });
+  try {
+    const base = `http://127.0.0.1:${server.port}`;
+    assert.equal((await fetch(`${base}/admin`)).status, 200,
+      'the page that explains the problem has to be reachable');
+
+    const health = await fetch(`${base}/healthz`);
+    assert.equal(health.status, 503, 'but it must not claim to be healthy');
+
+    assert.equal(server.gameData.ok, false);
+    assert.match(server.gameData.reason, /game data/);
+  } finally {
+    await server.close();
+  }
 });
 
 test('a real deployment refuses to boot without a server password for the peer', async () => {
@@ -160,14 +178,28 @@ test('a real deployment refuses to boot without a server password for the peer',
   mkdirSync(gd, { recursive: true });
   for (const f of ['Morrowind.esm', 'Morrowind.bsa']) writeFileSync(join(gd, f), 'x');
 
-  // Game data and a binary present, but no [server].password: the peer's only credential.
-  // An empty password now refuses every system connection, so booting would produce a world
-  // whose peer can never authenticate -- exactly the silent failure this check exists for.
-  await assert.rejects(
-    () => startServer({
-      dataDir: dir, port: 0, host: '127.0.0.1',
-      configOverride: { simPeer: { binary: '/usr/bin/true' }, server: { password: '' } },
-    }),
-    /password is empty/,
-    'no server password must fail at boot, not at the peer\'s first login attempt');
+  // THIS USED TO REQUIRE THE OPERATOR TO SET ONE, AND NOW MINTS IT.
+  //
+  // [server].password is the peer's only credential and is never checked against a player,
+  // so there was nobody for an operator to tell it to and no way for them to get it right
+  // except by not leaving it empty. Requiring a human to invent a value only two processes
+  // ever see was a setup step with no upside and an obvious failure mode: skip it, and the
+  // world silently never simulates. It now generates itself into <dataDir>/peer-password,
+  // exactly as the gateway token already did.
+  //
+  // The property being tested is unchanged in substance — a server never comes up with a
+  // peer that cannot authenticate — only the remedy is different: mint one rather than
+  // refuse to start.
+  const server = await startServer({
+    dataDir: dir, port: 0, host: '127.0.0.1',
+    configOverride: { simPeer: { binary: '/usr/bin/true' }, server: { password: '' } },
+  });
+  try {
+    assert.notEqual(server.config.server.password, '',
+      'an empty password must be filled in, not left to fail at the peer\'s first login');
+    assert.equal(existsSync(join(dir, 'peer-password')), true,
+      'and persisted, so the peer and the server agree across restarts');
+  } finally {
+    await server.close();
+  }
 });
