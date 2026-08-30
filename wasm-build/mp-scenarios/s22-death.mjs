@@ -10,6 +10,7 @@ import assert from 'node:assert/strict';
 const RESPAWN = { x: 216831, y: 204909, z: 513 }; // must match mp-harness config.toml [rules]
 const RESPAWN_EPS = 128;
 const RESPAWN_TIMEOUT = 15_000;
+const WALK_TIMEOUT = 120_000; // see the waitFor below: this polls a 2Hz mirror under load
 
 const dist = (p, q) => Math.hypot(p.x - q.x, p.y - q.y, p.z - q.z);
 
@@ -27,7 +28,11 @@ export default async function run(ctx) {
     `(() => { try { const p = JSON.parse((window.__omwMP||{}).pose);
        return Math.hypot(p.x-${RESPAWN.x}, p.y-${RESPAWN.y}, p.z-${RESPAWN.z}) > 250;
      } catch (e) { return false; } })()`,
-    30_000, 'A walked away from the respawn point');
+    // 120s, not 30s: the walk itself runs 2500ms, but this waits on the 2Hz pose MIRROR, and
+    // under full-suite load on software GL that round trip is far slower than when the scenario
+    // runs alone. 30s passed standalone (39.9s total) and timed out in the suite -- the fix was
+    // right, the deadline was still guessed.
+    WALK_TIMEOUT, 'A walked away from the respawn point');
   const before = JSON.parse(await a.eval('(window.__omwMP||{}).pose||"null"'));
   assert.ok(before && dist(before, RESPAWN) > 250, 'A must be away from the respawn point');
 
