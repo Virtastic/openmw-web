@@ -319,17 +319,34 @@ function renderWizard() {
   return stepReview();
 }
 
-/** The one-time key from /admin#setup=… , stashed so it survives the hash being replaced. */
-let setupKey = (() => {
+/**
+ * The one-time key from /admin#setup=… , kept so it survives the hash being cleared.
+ *
+ * A cached key can go stale — the server mints a new one if setup never completed and the
+ * data folder was reset, which is exactly what happens while someone is trying things out.
+ * When that happens the key must be forgettable, or the manual-entry field stays hidden
+ * (there IS a key, just the wrong one) and the operator is stuck on "wrong setup key" with
+ * nowhere to type the right one. See the 401 handler in stepOwner.
+ */
+const SETUP_KEY_STORE = 'omwmp_setup_key';
+function readSetupKey() {
   const m = /^#setup=(.+)$/.exec(location.hash);
-  if (!m) return sessionStorage.getItem('omwmp_setup_key') || '';
-  const key = decodeURIComponent(m[1]);
-  try { sessionStorage.setItem('omwmp_setup_key', key); } catch { /* private mode */ }
-  // Out of the address bar immediately: it is a credential, and the address bar is the most
-  // screenshotted, most shoulder-surfed, most pasted-into-a-support-thread part of a browser.
-  history.replaceState(null, '', location.pathname);
-  return key;
-})();
+  if (m) {
+    const key = decodeURIComponent(m[1]);
+    try { sessionStorage.setItem(SETUP_KEY_STORE, key); } catch { /* private mode */ }
+    // Out of the address bar: it is a credential, and the address bar is the most
+    // screenshotted, most shoulder-surfed, most pasted-into-a-support-thread part of a
+    // browser. The value is already saved above, so nothing is lost.
+    history.replaceState(null, '', location.pathname + location.search);
+    return key;
+  }
+  try { return sessionStorage.getItem(SETUP_KEY_STORE) || ''; } catch { return ''; }
+}
+function forgetSetupKey() {
+  try { sessionStorage.removeItem(SETUP_KEY_STORE); } catch { /* nothing to do */ }
+  setupKey = '';
+}
+let setupKey = readSetupKey();
 
 function stepOwner() {
   if (state.authed) { step++; return renderWizard(); }
@@ -365,18 +382,29 @@ function stepOwner() {
   { back: false, next: 'Create account', onNext: async () => {
     const n = $('#oName').value.trim(), p = $('#oPass').value, p2 = $('#oPass2').value;
     if (p !== p2) { $('#oErr').textContent = 'The two passwords do not match.'; return; }
-    const key = setupKey || ($('#oKey')?.value.trim() ?? '');
+    const key = ($('#oKey')?.value.trim() || setupKey || '');
     if (!key) { $('#oErr').textContent = 'The setup key is required.'; return; }
     try {
       const r = await api('/setup/owner', { method: 'POST', body: { name: n, password: p, setupKey: key } });
-      setupKey = key;
       token.set(r.token);
-      try { sessionStorage.removeItem('omwmp_setup_key'); } catch { /* nothing to do */ }
+      forgetSetupKey(); // spent
       await refreshState();
       step++;
       saveWizard();
       renderWizard();
-    } catch (e) { $('#oErr').textContent = e.message; }
+    } catch (e) {
+      // A rejected key is almost always a stale one. Drop it and re-render so the manual
+      // field appears — otherwise the operator is told the key is wrong while being given
+      // nowhere to put a right one.
+      if (e.status === 401 && setupKey) {
+        forgetSetupKey();
+        renderWizard();
+        $('#oName').value = n;
+        $('#oErr').textContent = `${e.message} Paste the current one below.`;
+        return;
+      }
+      $('#oErr').textContent = e.message;
+    }
   } });
 }
 
