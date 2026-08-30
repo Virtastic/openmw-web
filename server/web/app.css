@@ -105,6 +105,13 @@
   min-height: 6rem; max-height: 40vh; overflow-y: auto;
 }
 
+/* --- upload ------------------------------------------------------------------------ */
+.vt-drop {
+  border: 2px dashed var(--bs-border-color); border-radius: .5rem; padding: 1.5rem;
+  text-align: center; transition: border-color .12s, background .12s;
+}
+.vt-drop.over { border-color: var(--vt-ember); background: rgba(224, 108, 90, .07); }
+
 /* --- misc -------------------------------------------------------------------------- */
 .vt-drag { cursor: grab; user-select: none; }
 .vt-drag:active { cursor: grabbing; }

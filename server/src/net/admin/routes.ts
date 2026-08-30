@@ -47,10 +47,10 @@ import { clientIp } from '../http';
 import { log } from '../../log';
 import { json, readJson } from './util';
 import { gate, passwordLogin, passwordProblem, resolveAuth, type AuthDeps } from './auth';
-import { serveWebFile, readWebFile } from './static';
+import { serveWebFile } from './static';
 import { generateSecret, totpUri, verifyTotp } from './totp';
 import { settingsView, applySection, applyWizard, type WizardAnswers } from './api-settings';
-import { modsView, saveMods } from './api-mods';
+import { modsView, saveMods, uploadContent, gameDataWritable } from './api-mods';
 import type { LogEntry } from '../../log';
 
 export interface AdminDeps {
@@ -335,7 +335,20 @@ export function adminRoutes(deps: AdminDeps) {
     // --- mods ---------------------------------------------------------------------------------
     if (method === 'GET' && path === '/admin/api/mods') {
       if (!await gate(req, res, auth, 'viewer')) return true;
-      json(res, 200, modsView(deps.gameDataDir, deps.dataDir));
+      json(res, 200, { ...(modsView(deps.gameDataDir, deps.dataDir) as object), writable: gameDataWritable(deps.gameDataDir) });
+      return true;
+    }
+    // Upload streams straight to disk, so it must NOT go through readJson's buffering — a
+    // 400 MB archive is not a JSON body. Owner only: this writes files the engine will load.
+    if (method === 'POST' && path === '/admin/api/mods/upload') {
+      const ctx = await gate(req, res, auth, 'owner');
+      if (!ctx) return true;
+      const result = await uploadContent(
+        req, res, deps.gameDataDir, url.searchParams.get('name') ?? '',
+      );
+      if (!result.ok) { json(res, result.status, { error: result.error }); return true; }
+      log('info', 'admin.mods_uploaded', { by: ctx.accountKey, file: result.file });
+      json(res, 200, { ok: true, file: result.file, bytes: result.bytes, restartRequired: true });
       return true;
     }
     if (method === 'PUT' && path === '/admin/api/mods') {
@@ -533,15 +546,12 @@ export function adminRoutes(deps: AdminDeps) {
       return true;
     }
 
-    // --- help text for the docs page ------------------------------------------------------------------
-    if (method === 'GET' && path === '/admin/api/docs') {
-      if (!await gate(req, res, auth, 'viewer')) return true;
-      const name = url.searchParams.get('name') ?? '';
-      const file = readWebFile(`docs/${name.replace(/[^a-zA-Z0-9._-]/g, '')}`);
-      if (!file) { json(res, 404, { error: 'not found' }); return true; }
-      json(res, 200, { markdown: file.body.toString('utf8') });
-      return true;
-    }
+    // NO in-dashboard markdown renderer, deliberately. The plan called for one that would
+    // serve this repo's docs; building it meant vendoring a markdown parser to display
+    // PROTOCOL.md and STATUS.md, which are written for the next engineer, not for someone
+    // hosting a server. The documentation an operator actually needs is the per-field help
+    // next to the field (help.ts) and the troubleshooting on the Help page — both already
+    // here, neither requiring a parser. The deep material stays on GitHub, linked.
 
     json(res, 404, { error: 'not found' });
     return true;

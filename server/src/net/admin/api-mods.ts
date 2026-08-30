@@ -10,8 +10,13 @@
 // drag-to-reorder UI rewrites constantly, and TOML's array-of-tables is a poor fit for
 // something regenerated on every save.
 
-import { existsSync, readdirSync, readFileSync, writeFileSync, renameSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import {
+  existsSync, readdirSync, readFileSync, writeFileSync, renameSync, statSync,
+  createWriteStream, mkdirSync, accessSync, constants, unlinkSync,
+} from 'node:fs';
+import { rm } from 'node:fs/promises';
+import { join, basename } from 'node:path';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 import { log } from '../../log';
 
 export const MODLIST_FILE = 'modlist.json';
@@ -168,6 +173,121 @@ export function saveMods(
   } catch (err) {
     return { ok: false, error: `could not write ${MODLIST_FILE}: ${String(err)}` };
   }
+}
+
+// --- upload ------------------------------------------------------------------------------
+// The onboarding wizard has to be able to receive game data, or a non-technical operator has
+// no way to get files onto the server at all — "copy them into the folder" assumes shell
+// access to a box that may not be the machine they are sitting at.
+
+/** What may be written into the game data folder. Nothing else, ever. */
+const UPLOAD_EXT = /\.(esm|esp|bsa|ba2|omwaddon|omwgame)$/i;
+/** Morrowind.bsa alone is ~430 MB and Tamriel Rebuilt ships larger; 8 GB is headroom, not a
+ *  target. The point of the cap is that a stuck or hostile client cannot fill the disk. */
+const MAX_UPLOAD_BYTES = 8 * 1024 * 1024 * 1024;
+
+export type UploadResult = { ok: true; file: string; bytes: number } | { ok: false; status: number; error: string };
+
+/**
+ * Accept a client-supplied filename, or refuse it. Never repairs one.
+ *
+ * REFUSE, don't sanitise. Running basename() over "../../owned.esp" yields "owned.esp",
+ * which is safe — nothing escapes the folder — but it silently writes a file the operator
+ * never named, under a name they did not choose. A browser's File.name never contains a
+ * path separator, so anything that does is a confused client or a probe, and both are
+ * better served by a clear refusal than by a quiet rename.
+ *
+ * Both separators are checked, not just the platform's: a Windows client can send a
+ * backslash to a Linux server, where basename() would not treat it as one.
+ */
+export function safeUploadName(raw: string): string | null {
+  const name = raw.trim();
+  if (name === '' || name.length > 200) return null;
+  if (name.includes('/') || name.includes('\\')) return null;
+  if (name.includes('\0')) return null;
+  if (name.startsWith('.')) return null;      // hidden files, and "..'
+  if (name !== basename(name)) return null;   // belt and braces: anything path-like at all
+  if (!UPLOAD_EXT.test(name)) return null;
+  return name;
+}
+
+/** Can we actually write there? A read-only mount is the likeliest reason and deserves a
+ *  readable answer rather than an EACCES the operator has to interpret. */
+export function gameDataWritable(dir: string): boolean {
+  try {
+    mkdirSync(dir, { recursive: true });
+    accessSync(dir, constants.W_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Stream one content file into the game data folder.
+ *
+ * Modelled on putBlob in data/fsstorage.ts, including the parts that look redundant and are
+ * not: the `over` guard exists because destroy() does not stop already-buffered chunks from
+ * arriving, and without it the second handler answers a response that has already been sent
+ * and takes the process down.
+ */
+export async function uploadContent(
+  req: IncomingMessage,
+  res: ServerResponse,
+  gameDataDir: string,
+  rawName: string,
+): Promise<UploadResult> {
+  const name = safeUploadName(rawName);
+  if (!name) {
+    return { ok: false, status: 400,
+      error: 'that is not a game data file — expected .esm, .esp, .bsa, .omwaddon or .omwgame' };
+  }
+  if (!gameDataWritable(gameDataDir)) {
+    return { ok: false, status: 409,
+      error: 'the game data folder is read-only, so files cannot be uploaded. Copy them in '
+        + 'directly, or make the mount writable (remove ":ro" from the gamedata volume).' };
+  }
+
+  const target = join(gameDataDir, name);
+  const tmp = `${target}.${process.pid}.upload`;
+  const out = createWriteStream(tmp);
+  let written = 0;
+  let over = false;
+
+  try {
+    await new Promise<void>((ok, fail) => {
+      req.on('data', (chunk: Buffer) => {
+        if (over) return;
+        written += chunk.length;
+        if (written > MAX_UPLOAD_BYTES) {
+          over = true;
+          out.destroy();
+          req.destroy();
+          fail(new Error('over cap'));
+          return;
+        }
+        if (!out.write(chunk)) { req.pause(); out.once('drain', () => req.resume()); }
+      });
+      req.on('error', fail);
+      req.on('end', () => out.end(ok));
+      out.on('error', fail);
+    });
+    // Rename last: a half-received file must never appear in the folder under its real name,
+    // because the load-order scan would pick it up and the engine would choke on it.
+    if (existsSync(target)) unlinkSync(target);
+    renameSync(tmp, target);
+  } catch (err) {
+    await rm(tmp, { force: true });
+    if (over) {
+      log('warn', 'admin.upload_over_cap', { name, written });
+      return { ok: false, status: 413, error: 'file is larger than the 8 GB limit' };
+    }
+    log('error', 'admin.upload_failed', { name, error: String(err) });
+    return { ok: false, status: 500, error: `could not save ${name}` };
+  }
+
+  log('info', 'admin.upload', { file: name, bytes: written });
+  return { ok: true, file: name, bytes: written };
 }
 
 /**

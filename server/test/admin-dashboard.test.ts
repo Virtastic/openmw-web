@@ -27,14 +27,17 @@ async function boot(t: { after(fn: () => unknown): void }, override = {}) {
   });
   t.after(() => server.close());
   const base = `http://127.0.0.1:${server.port}`;
-  const call = (path: string, opts: { method?: string; token?: string; body?: unknown } = {}) =>
+  // `raw` sends bytes rather than JSON — the upload endpoint streams its body to disk.
+  const call = (path: string, opts: { method?: string; token?: string; body?: unknown; raw?: Buffer } = {}) =>
     fetch(`${base}/admin/api${path}`, {
       method: opts.method ?? 'GET',
       headers: {
         ...(opts.token ? { authorization: `Bearer ${opts.token}` } : {}),
         ...(opts.body !== undefined ? { 'content-type': 'application/json' } : {}),
+        ...(opts.raw !== undefined ? { 'content-type': 'application/octet-stream' } : {}),
       },
       ...(opts.body !== undefined ? { body: JSON.stringify(opts.body) } : {}),
+      ...(opts.raw !== undefined ? { body: opts.raw } : {}),
     });
   return { server, dataDir, base, call };
 }
@@ -398,6 +401,81 @@ test('files added to the folder after a list was saved still load', async (t) =>
   assert.ok(fresh, 'a newly copied file appears');
   assert.equal(fresh.enabled, true);
   assert.equal(fresh.isNew, true, 'and is marked as not yet reviewed');
+});
+
+// ---------------------------------------------------------------------------------------
+// upload
+// ---------------------------------------------------------------------------------------
+
+test('safeUploadName refuses everything that is not a plain content filename', async () => {
+  const { safeUploadName } = await import('../src/net/admin/api-mods');
+
+  assert.equal(safeUploadName('BetterClothes.esp'), 'BetterClothes.esp');
+  assert.equal(safeUploadName('Morrowind.bsa'), 'Morrowind.bsa');
+  assert.equal(safeUploadName('Tamriel_Data.esm'), 'Tamriel_Data.esm');
+
+  // Traversal, in the several spellings a client might send. basename() handles the forward
+  // slash; the backslash matters because Windows treats it as a separator too.
+  for (const bad of [
+    '../../etc/passwd', '..\\..\\windows\\system32\\evil.esp', '/etc/cron.d/x.esp',
+    'sub/dir/file.esp', 'a\\b.esp',
+  ]) {
+    const out = safeUploadName(bad);
+    assert.ok(out === null || (!out.includes('/') && !out.includes('\\') && !out.includes('..')),
+      `${bad} must not survive as a path`);
+  }
+
+  // Wrong type: the game data folder is scanned by the engine, so only engine files go in.
+  for (const bad of ['evil.sh', 'config.toml', 'accounts.db', 'x.esp.exe', 'noextension']) {
+    assert.equal(safeUploadName(bad), null, `${bad} must be refused`);
+  }
+  // Hidden files, empty names, absurd lengths, embedded NULs.
+  assert.equal(safeUploadName('.hidden.esp'), null);
+  assert.equal(safeUploadName(''), null);
+  assert.equal(safeUploadName(`${'a'.repeat(300)}.esp`), null);
+  assert.equal(safeUploadName('ok\0.esp'), null);
+});
+
+test('uploading a content file puts it in the load order', async (t) => {
+  const { call, dataDir } = await boot(t);
+  const token = await makeOwner(call);
+  mkdirSync(join(dataDir, 'gamedata'), { recursive: true });
+
+  const body = Buffer.from('not really an esp, but the server does not parse it');
+  const up = await call('/mods/upload?name=Uploaded.esp', {
+    method: 'POST', token, raw: body,
+  });
+  assert.equal(up.status, 200);
+  assert.equal((await up.json() as { file: string }).file, 'Uploaded.esp');
+  assert.equal(readFileSync(join(dataDir, 'gamedata', 'Uploaded.esp'), 'utf8'), body.toString());
+
+  const listed = await (await call('/mods', { token })).json() as { entries: { file: string }[] };
+  assert.ok(listed.entries.some((e) => e.file === 'Uploaded.esp'), 'it shows up straight away');
+});
+
+test('upload refuses a traversing name without writing anything', async (t) => {
+  const { call, dataDir } = await boot(t);
+  const token = await makeOwner(call);
+  mkdirSync(join(dataDir, 'gamedata'), { recursive: true });
+
+  const r = await call('/mods/upload?name=..%2F..%2Fowned.esp', {
+    method: 'POST', token, raw: Buffer.from('x'),
+  });
+  assert.equal(r.status, 400);
+  assert.equal(existsSync(join(dataDir, 'owned.esp')), false, 'nothing escaped the folder');
+});
+
+test('upload is owner-only', async (t) => {
+  const { call, server } = await boot(t);
+  const ownerToken = await makeOwner(call);
+  await server.accounts.register('Mod', 'a-sufficiently-long-password');
+  await call('/accounts/role', { method: 'POST', token: ownerToken, body: { name: 'Mod', role: 'moderator' } });
+  const modToken = (await (await call('/login', {
+    method: 'POST', body: { name: 'Mod', password: 'a-sufficiently-long-password' },
+  })).json() as { token: string }).token;
+
+  const r = await call('/mods/upload?name=Sneaky.esp', { method: 'POST', token: modToken, raw: Buffer.from('x') });
+  assert.equal(r.status, 403, 'writing files the engine loads is an owner action');
 });
 
 // ---------------------------------------------------------------------------------------

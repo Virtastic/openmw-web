@@ -461,19 +461,21 @@ async function stepFiles() {
 
   wizardShell(html`
     <h5>Game data files</h5>
-    <p class="text-secondary small">The server looks for content in
-      <code>${mods?.dir || 'the game data folder'}</code>. Copy your Morrowind files there —
-      with Docker that is the <code>gamedata</code> folder next to your
-      <code>docker-compose.yml</code>.</p>
+    <p class="text-secondary small">The server needs its own copy of Morrowind to simulate the
+      world. Add the files below, or copy them into
+      <code>${mods?.dir || 'the game data folder'}</code> yourself.</p>
     ${raw(profile ? html`<table class="table table-sm align-middle">${raw(rows)}</table>` : '')}
-    ${raw(profile?.note ? html`<div class="vt-section-note">${profile.note}</div>` : '')}
+    ${raw(profile?.note ? html`<div class="vt-section-note mb-3">${profile.note}</div>` : '')}
+    ${raw(mods ? uploadPanel(mods) : '')}
     ${raw(missingCount > 0 ? html`
-      <div class="alert alert-warning mt-3 mb-0">
-        ${missingCount} expected file${raw(missingCount === 1 ? ' is' : 's are')} not there yet.
-        You can finish setup anyway — multiplayer works without game data on the server, you
-        just will not get server-side NPC simulation until the files are in place.
-      </div>` : html`<div class="alert alert-success mt-3 mb-0">Everything this profile expects is present.</div>`)}`,
+      <div class="alert alert-warning mb-0">
+        ${missingCount} expected file${raw(missingCount === 1 ? ' is' : 's are')} still missing.
+        You can finish setup without them — the dashboard keeps working and will tell you what
+        it needs — but players cannot join until the server can simulate the world.
+      </div>` : html`<div class="alert alert-success mb-0">Everything this profile expects is present.</div>`)}`,
   { next: 'Continue' });
+  // Re-render this step after an upload so the found/missing table updates in place.
+  wireUpload(() => renderWizard());
 }
 
 function stepReview() {
@@ -969,14 +971,7 @@ async function pageMods() {
     ${raw(m.missing.length ? html`<div class="alert alert-warning">
       These were in your load order but are no longer on disk, so they have been dropped:
       <span class="vt-mono">${m.missing.join(', ')}</span></div>` : '')}
-    <div class="card mb-3"><div class="card-body">
-      <h5 class="card-title">How to add files</h5>
-      <p class="small text-secondary mb-0">Copy <code>.esm</code>, <code>.esp</code> and
-      <code>.bsa</code> files into <code>${m.dir}</code>. With the supplied Docker setup that
-      is the <code>gamedata</code> folder next to your <code>docker-compose.yml</code>; they
-      appear here as soon as you reload this page. The three base-game masters always load
-      first and cannot be reordered — Morrowind itself requires that.</p>
-    </div></div>
+    ${raw(editable ? uploadPanel(m) : '')}
     <div class="card"><div class="card-header d-flex align-items-center">
       <h3 class="card-title">Load order</h3>
       ${raw(editable ? html`<button class="btn btn-sm btn-primary ms-auto" id="modSave">Save order</button>` : '')}
@@ -990,6 +985,10 @@ async function pageMods() {
       <p class="small text-secondary mb-0 vt-mono">${m.archives.join(', ')}</p></div></div>` : '')}`;
 
   if (!editable) return;
+
+  // Reload the page after an upload so the new files appear in the load order immediately —
+  // "I added it and nothing happened" is the exact confusion this whole page exists to avoid.
+  wireUpload(() => { toast('Files added. Restart to load them.'); route(); });
 
   // Drag to reorder. HTML5 drag-and-drop rather than a library: it is a table of a dozen
   // rows, and pulling in a sortable dependency for it would cost more than it saves.
@@ -1016,6 +1015,82 @@ async function pageMods() {
       toast('Load order saved. Restart to apply.');
       restartPrompt();
     } catch (e) { toast(e.message, 'danger'); }
+  };
+}
+
+/** Add-files panel, shared by the mods page and the wizard's game-data step. */
+function uploadPanel(m) {
+  return html`
+    <div class="card mb-3"><div class="card-body">
+      <h5 class="card-title">Add game data files</h5>
+      ${raw(m.writable === false ? html`
+        <div class="alert alert-warning mb-0">
+          The game data folder is read-only, so files cannot be uploaded from here. Copy them
+          into <code>${m.dir}</code> directly, or remove <code>:ro</code> from the
+          <code>gamedata</code> volume in <code>docker-compose.yml</code> and restart.
+        </div>` : html`
+        <p class="small text-secondary">Drop your Morrowind files here, or
+          <label class="text-decoration-underline" style="cursor:pointer">choose them<input
+            type="file" id="upPick" multiple hidden accept=".esm,.esp,.bsa,.ba2,.omwaddon,.omwgame"></label>.
+          Accepted: <code>.esm .esp .bsa .omwaddon .omwgame</code>. Large files are fine —
+          they upload one at a time and nothing is held in memory.</p>
+        <div id="upDrop" class="vt-drop">
+          <div class="text-secondary">Drop files here</div>
+        </div>
+        <div id="upList" class="mt-2 small"></div>
+        <p class="small text-secondary mt-2 mb-0">You can also copy files straight into
+          <code>${m.dir}</code> — with the supplied Docker setup that is the
+          <code>gamedata</code> folder next to your <code>docker-compose.yml</code>.</p>`)}
+    </div></div>`;
+}
+
+/** Wire the upload panel. `onDone` runs after the last file finishes. */
+function wireUpload(onDone) {
+  const drop = $('#upDrop');
+  const pick = $('#upPick');
+  if (!drop) return; // read-only folder: no panel rendered
+  const list = $('#upList');
+
+  const send = async (files) => {
+    for (const file of files) {
+      const row = document.createElement('div');
+      row.className = 'py-1';
+      row.innerHTML = html`<span class="vt-mono">${file.name}</span>
+        <span class="text-secondary" data-state>uploading…</span>`;
+      list.append(row);
+      const state = row.querySelector('[data-state]');
+      try {
+        // Raw body, not multipart: the server streams it straight to disk, and a multipart
+        // parser for a 400 MB archive would be a dependency plus a memory problem.
+        const r = await fetch(`/admin/api/mods/upload?name=${encodeURIComponent(file.name)}`, {
+          method: 'POST',
+          headers: { authorization: `Bearer ${token.get()}`, 'content-type': 'application/octet-stream' },
+          body: file,
+          duplex: 'half',
+        });
+        const body = await r.json().catch(() => null);
+        if (!r.ok) {
+          state.textContent = body?.error || `failed (${r.status})`;
+          state.className = 'text-danger';
+        } else {
+          state.textContent = `added, ${(body.bytes / 1048576).toFixed(1)} MB`;
+          state.className = 'text-success';
+        }
+      } catch (e) {
+        state.textContent = e.message;
+        state.className = 'text-danger';
+      }
+    }
+    if (onDone) onDone();
+  };
+
+  pick.onchange = () => send([...pick.files]);
+  drop.ondragover = (e) => { e.preventDefault(); drop.classList.add('over'); };
+  drop.ondragleave = () => drop.classList.remove('over');
+  drop.ondrop = (e) => {
+    e.preventDefault();
+    drop.classList.remove('over');
+    send([...e.dataTransfer.files]);
   };
 }
 
@@ -1268,45 +1343,120 @@ async function pageMaintenance() {
 // ---------------------------------------------------------------------------------------
 // help
 // ---------------------------------------------------------------------------------------
-function pageHelp() {
-  setTitle('Help & docs', 'How this server works, and where to look when it does not.');
+async function pageHelp() {
+  setTitle('Help', 'How this server works, and what to do when it does not.');
+
+  // Read the server's own readiness rather than describing it in the abstract: if something
+  // is wrong right now, saying so here beats a generic troubleshooting list.
+  let blockers = [];
+  try {
+    const r = await fetch('/healthz');
+    if (r.status === 503) {
+      blockers = (await r.text()).split('\n').filter((l) => l.startsWith('- ')).map((l) => l.slice(2));
+    }
+  } catch { /* the page is still useful without it */ }
+
+  const faq = (q, a) => html`<dt class="mt-3">${q}</dt><dd class="text-secondary">${raw(a)}</dd>`;
+
   view().innerHTML = html`
+    ${raw(blockers.length ? html`
+      <div class="alert alert-warning">
+        <h5 class="alert-heading">This server cannot host players yet</h5>
+        <ul class="mb-2">${raw(blockers.map((b) => html`<li>${b}</li>`).join(''))}</ul>
+        <hr>
+        <p class="mb-0 small">The dashboard works and your settings are safe. Fix the above,
+          then <a href="#maintenance">restart</a>.</p>
+      </div>` : '')}
+
     <div class="row">
       <div class="col-lg-7">
         <div class="card mb-3"><div class="card-body">
-          <h5 class="card-title">Common problems</h5>
-          <dl class="small">
-            <dt>Players cannot connect from outside my network</dt>
-            <dd class="text-secondary">The server has to be reachable: forward the port on your
-              router, and if you set this up as "local network only" re-run the setup wizard and
-              choose internet hosting instead.</dd>
-            <dt>My browser warns the connection is not private</dt>
-            <dd class="text-secondary">Expected without a domain name — the certificate is
-              self-signed. Point a domain at this machine and re-run the network step to get a
-              real certificate automatically.</dd>
-            <dt>I added mod files and nothing changed</dt>
-            <dd class="text-secondary">Files are picked up from the game data folder, but the
-              server only reads them at startup. Check the mod list, then restart.</dd>
-            <dt>A setting I saved did not take effect</dt>
-            <dd class="text-secondary">Configuration is read once when the server starts. Use
-              Restart on the Maintenance page after saving.</dd>
-            <dt>I am locked out of the dashboard</dt>
-            <dd class="text-secondary">Run the server with <code>--admin-reset &lt;name&gt;</code>
-              to clear an account's password and two-factor, then sign in and set a new one.</dd>
+          <h5 class="card-title">Getting players in</h5>
+          <dl class="small mb-0">
+            ${raw(faq('Nobody can connect from outside my network',
+              'Two things have to be true. Your router must forward ports 80 and 443 to this ' +
+              'machine, and the server must have been set up for internet hosting rather than ' +
+              'local-network-only &mdash; re-run <a href="#setup">Setup</a> if you chose the latter.'))}
+            ${raw(faq('Where do players actually go?',
+              'They open the game in a browser at this server\'s address. They do not install ' +
+              'anything. If you are hosting the client files yourself they are served from the ' +
+              'same address; otherwise point players at whichever copy of the client you use.'))}
+            ${raw(faq('Do players need their own copy of Morrowind?',
+              'That is what the "how do players get the game files" question in setup decides. ' +
+              'If you chose that players bring their own, everyone needs a legal copy. Morrowind ' +
+              'is not free to redistribute, so only serve the files yourself if you are entitled to.'))}
+          </dl>
+        </div></div>
+
+        <div class="card mb-3"><div class="card-body">
+          <h5 class="card-title">When something is wrong</h5>
+          <dl class="small mb-0">
+            ${raw(faq('My browser says the connection is not private',
+              'Expected when you have no domain name: the certificate is one this server signed ' +
+              'itself, so nothing independent vouches for it. The connection is still encrypted. ' +
+              'Point a domain at this machine and set <code>SERVER_DOMAIN</code> in your ' +
+              '<code>.env</code> to get a real certificate automatically.'))}
+            ${raw(faq('I added mod files and nothing changed',
+              'The server reads the game data folder only at startup. Check they appear on the ' +
+              '<a href="#mods">Game data &amp; mods</a> page, then restart.'))}
+            ${raw(faq('A setting I saved did not take effect',
+              'Configuration is read once, when the server starts. Every save says so and offers ' +
+              'a Restart button; you can also restart from <a href="#maintenance">Maintenance</a>.'))}
+            ${raw(faq('The dashboard says my configuration was rolled back',
+              'Something you saved could not be loaded, so the server started from the previous ' +
+              'version instead of refusing to start at all. Nothing was lost. Review ' +
+              '<a href="#settings">Settings</a> and save again.'))}
+            ${raw(faq('I am locked out &mdash; forgotten password, no email set up',
+              'On the machine running the server:<br>' +
+              '<code>docker compose run --rm openmw-mp node dist/server.mjs --data /data --admin-reset &lt;name&gt;</code>' +
+              '<br>That clears the password and two-factor on that account and prints a temporary ' +
+              'password. Requires shell access to the box, which is the point.'))}
+            ${raw(faq('Where are the logs?',
+              'Recent activity is on the <a href="#logs">Logs</a> page. A longer history survives ' +
+              'restarts and crashes in <code>logs/server.log</code> inside your data folder, and ' +
+              '<code>docker compose logs openmw-mp</code> shows the container\'s own output.'))}
           </dl>
         </div></div>
       </div>
+
       <div class="col-lg-5">
         <div class="card mb-3"><div class="card-body">
-          <h5 class="card-title">About</h5>
-          <p class="small text-secondary mb-2">This dashboard controls one openmw-mp server.
-            Settings you change here are written to <code>config.dashboard.toml</code>, layered
-            on top of any <code>config.toml</code> you maintain by hand — that file is never
-            modified by this interface.</p>
-          <p class="small text-secondary mb-0">Built with
-            <a href="https://github.com/ColorlibHQ/AdminLTE">AdminLTE</a> and
-            <a href="https://getbootstrap.com">Bootstrap</a>, both MIT licensed and served
-            from this server rather than a CDN.</p>
+          <h5 class="card-title">Who can do what</h5>
+          <dl class="small mb-0">
+            <dt>Owner</dt><dd class="text-secondary">Everything: settings, mods, accounts,
+              restart, backups, and running script on a player's machine.</dd>
+            <dt>Moderator</dt><dd class="text-secondary">Kick, ban, mute, broadcast, read chat
+              history and logs. Cannot change configuration or grant access.</dd>
+            <dt>Viewer</dt><dd class="text-secondary">Read-only.</dd>
+          </dl>
+        </div></div>
+
+        <div class="card mb-3"><div class="card-body">
+          <h5 class="card-title">Where your settings live</h5>
+          <p class="small text-secondary mb-2">Changes made here are written to
+            <code>config.dashboard.toml</code> in your data folder. If you also keep a
+            <code>config.toml</code> by hand, this dashboard never touches it &mdash; yours is
+            layered underneath, so your comments and values survive.</p>
+          <p class="small text-secondary mb-0">The last few versions are kept alongside it. If a
+            saved setting ever stops the server loading, it falls back to the newest one that
+            works rather than refusing to start.</p>
+        </div></div>
+
+        <div class="card"><div class="card-body">
+          <h5 class="card-title">More</h5>
+          <p class="small mb-2">
+            <a href="https://github.com/Virtastic/openmw-web/blob/main/SELF_HOSTING.md"
+               target="_blank" rel="noreferrer noopener">Self-hosting guide</a> &middot;
+            <a href="https://github.com/Virtastic/openmw-web/issues"
+               target="_blank" rel="noreferrer noopener">Report a problem</a> &middot;
+            <a href="https://discord.gg/PzFfDkbSue"
+               target="_blank" rel="noreferrer noopener">Discord</a>
+          </p>
+          <p class="small text-secondary mb-0">Interface built with
+            <a href="https://github.com/ColorlibHQ/AdminLTE" target="_blank" rel="noreferrer noopener">AdminLTE</a>
+            and <a href="https://getbootstrap.com" target="_blank" rel="noreferrer noopener">Bootstrap</a>,
+            both MIT licensed and served from this server rather than a CDN &mdash; so this page
+            works with no internet connection.</p>
         </div></div>
       </div>
     </div>`;

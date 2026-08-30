@@ -54,9 +54,15 @@ services:
       # dashboard writes, and logs.
       - ./data:/data
       # YOUR OWN MORROWIND FILES. Copy Morrowind.esm/.bsa (and Tribunal/Bloodmoon if you
-      # own them) into ./gamedata next to this file. Read-only: the server never modifies
-      # your game data. The dashboard's mod list controls load order without touching them.
-      - ./gamedata:/data/gamedata:ro
+      # own them) into ./gamedata next to this file, or upload them through the dashboard.
+      #
+      # Writable, which is a deliberate change from read-only: uploading is the only route
+      # onto this box for someone who does not have a shell on it, and that is most of the
+      # people this setup is for. Nothing writes here except an upload you asked for; the
+      # mod list changes load order without touching the files. Add ":ro" back if you would
+      # rather copy files in yourself — the dashboard detects it and says so instead of
+      # failing with a permissions error.
+      - ./gamedata:/data/gamedata
     environment:
       - NODE_ENV=production
       # Object storage for player uploads, if you chose S3 in the setup wizard. Keys live
