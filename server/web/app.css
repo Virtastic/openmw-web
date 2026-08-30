@@ -1,0 +1,118 @@
+/*
+ * Copyright (C) 2025-2026 Virtastic - https://virtastic.app
+ * SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
+ *
+ * Virtastic skin over AdminLTE. Palette is the same volcanic-Vvardenfell set the player
+ * launcher uses — ember, ash and gold — so the admin side does not look like a different
+ * product from the one it administers.
+ */
+
+:root {
+  --vt-ember: #e06c5a;
+  --vt-ember-dark: #c65a2e;
+  --vt-gold: #eecb78;
+  --vt-gold-dim: #c69a52;
+  --vt-ash: #1a140a;
+  --vt-ash-soft: #241c10;
+  --vt-parchment: #f6f4ee;
+  --vt-sage: #a9c48a;
+
+  --bs-primary: var(--vt-ember-dark);
+  --bs-primary-rgb: 198, 90, 46;
+  --bs-link-color: var(--vt-ember-dark);
+  --bs-link-hover-color: var(--vt-ember);
+}
+
+/* --- brand ------------------------------------------------------------------------- */
+.app-sidebar { --bs-bg-opacity: 1; background-color: var(--vt-ash) !important; }
+.sidebar-brand { background-color: var(--vt-ash-soft); border-bottom: 1px solid #ffffff14; }
+.brand-image { width: 28px; height: 28px; margin-right: .5rem; }
+.brand-text { color: var(--vt-gold); letter-spacing: .02em; }
+
+.sidebar-menu .nav-link { color: #cfc6b4; border-radius: .375rem; margin: 1px .5rem; }
+.sidebar-menu .nav-link:hover { background: #ffffff12; color: var(--vt-parchment); }
+.sidebar-menu .nav-link.active { background: var(--vt-ember-dark); color: #fff; }
+.sidebar-menu .nav-header {
+  color: var(--vt-gold-dim); text-transform: uppercase; font-size: .7rem;
+  letter-spacing: .08em; padding: .75rem 1rem .25rem;
+}
+.vt-burger { font-size: 1.1rem; line-height: 1; }
+
+.btn-primary {
+  --bs-btn-bg: var(--vt-ember-dark); --bs-btn-border-color: var(--vt-ember-dark);
+  --bs-btn-hover-bg: var(--vt-ember); --bs-btn-hover-border-color: var(--vt-ember);
+  --bs-btn-active-bg: #a94a24; --bs-btn-active-border-color: #a94a24;
+  --bs-btn-disabled-bg: var(--vt-ember-dark); --bs-btn-disabled-border-color: var(--vt-ember-dark);
+}
+
+/* --- settings forms ---------------------------------------------------------------- */
+/* Help sits under the field, always visible rather than behind a hover: a tooltip you have
+   to discover is no help to the person who did not know the field existed. */
+.vt-field { padding: .85rem 0; border-bottom: 1px solid var(--bs-border-color); }
+.vt-field:last-child { border-bottom: 0; }
+.vt-field-key { font-family: var(--bs-font-monospace); font-size: .9rem; font-weight: 600; }
+.vt-field-help { font-size: .85rem; color: var(--bs-secondary-color); margin-top: .35rem; }
+.vt-field-danger {
+  font-size: .85rem; margin-top: .35rem; padding: .5rem .65rem; border-radius: .375rem;
+  background: rgba(220, 53, 69, .08); border-left: 3px solid var(--bs-danger);
+}
+.vt-overridden::after {
+  content: "edited here"; font-size: .65rem; text-transform: uppercase; letter-spacing: .05em;
+  background: var(--vt-gold); color: #3a2c10; padding: .1rem .35rem; border-radius: .25rem;
+  margin-left: .5rem; vertical-align: middle;
+}
+.vt-section-note {
+  font-size: .875rem; background: rgba(238, 203, 120, .12);
+  border-left: 3px solid var(--vt-gold-dim); padding: .6rem .75rem; border-radius: .375rem;
+}
+
+/* --- wizard ------------------------------------------------------------------------ */
+.vt-wizard { max-width: 46rem; margin: 0 auto; }
+.vt-steps { display: flex; flex-wrap: wrap; gap: .35rem; margin-bottom: 1.5rem; }
+.vt-steps span {
+  flex: 1 1 auto; height: 4px; border-radius: 2px; background: var(--bs-border-color);
+  min-width: 12px;
+}
+.vt-steps span.done { background: var(--vt-gold-dim); }
+.vt-steps span.now { background: var(--vt-ember); }
+.vt-choice {
+  display: block; width: 100%; text-align: left; padding: 1rem 1.15rem; margin-bottom: .6rem;
+  border: 2px solid var(--bs-border-color); border-radius: .5rem; background: var(--bs-body-bg);
+  cursor: pointer;
+}
+.vt-choice:hover { border-color: var(--vt-gold-dim); }
+.vt-choice.sel { border-color: var(--vt-ember); background: rgba(224, 108, 90, .07); }
+.vt-choice strong { display: block; }
+.vt-choice small { color: var(--bs-secondary-color); }
+
+/* --- console / logs ---------------------------------------------------------------- */
+.vt-mono {
+  font-family: var(--bs-font-monospace); font-size: .82rem; white-space: pre-wrap;
+  word-break: break-word;
+}
+.vt-log { max-height: 60vh; overflow-y: auto; background: var(--vt-ash); color: #d6cfc0;
+  border-radius: .5rem; padding: .75rem; }
+.vt-log div { padding: .1rem 0; border-bottom: 1px solid #ffffff0d; }
+.vt-log .lvl-error { color: #ff8f80; }
+.vt-log .lvl-warn { color: var(--vt-gold); }
+.vt-log .lvl-debug { color: #8e8677; }
+.vt-log .ev { color: var(--vt-sage); }
+
+.vt-out {
+  background: var(--vt-ash); color: #d6cfc0; border-radius: .5rem; padding: .75rem;
+  min-height: 6rem; max-height: 40vh; overflow-y: auto;
+}
+
+/* --- misc -------------------------------------------------------------------------- */
+.vt-drag { cursor: grab; user-select: none; }
+.vt-drag:active { cursor: grabbing; }
+tr.vt-dragging { opacity: .4; }
+.vt-empty { color: var(--bs-secondary-color); text-align: center; padding: 2.5rem 1rem; }
+
+/* AdminLTE's sidebar collapses under lg; make sure long tables scroll instead of pushing
+   the layout sideways on a phone, since an operator checking in from one is a real case. */
+.table-responsive { -webkit-overflow-scrolling: touch; }
+@media (max-width: 575.98px) {
+  .app-content-header h3 { font-size: 1.25rem; }
+  .vt-wizard { padding: 0 .25rem; }
+}

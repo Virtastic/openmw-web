@@ -74,6 +74,24 @@ export interface Account {
   username?: string;
   marketingOptIn?: boolean;
   usernameChangedAt?: string; // rename rate-limit anchor
+  // Web dashboard access, deliberately SEPARATE from `rank`. "May run /console in-game" and
+  // "may edit [economy] in a browser" are different questions that usually travel together
+  // and occasionally must not: a trusted in-world admin is not automatically someone who
+  // should be able to rewrite the server's storage backend from a phone. Absent = no
+  // dashboard access at all, which is the default for every account that ever registers.
+  dashboardRole?: DashboardRole;
+  // TOTP shared secret (base32) for the PASSWORD login path. Absent = not enrolled.
+  totpSecret?: string;
+}
+
+// Ordered least -> most privileged; `roleAtLeast` relies on the index.
+export const DASHBOARD_ROLES = ['viewer', 'moderator', 'owner'] as const;
+export type DashboardRole = (typeof DASHBOARD_ROLES)[number];
+
+/** Does `have` meet or exceed `need`? Absent role = no access to anything gated. */
+export function roleAtLeast(have: DashboardRole | undefined, need: DashboardRole): boolean {
+  if (!have) return false;
+  return DASHBOARD_ROLES.indexOf(have) >= DASHBOARD_ROLES.indexOf(need);
 }
 
 export const MAX_CHARACTERS = 8;
@@ -481,6 +499,73 @@ export class AccountStore {
     const account = this.cache.get(name.toLowerCase());
     if (!account) return;
     this.mutate(account, (doc) => { doc.rank = rank; return 'ok'; });
+  }
+
+  // --- Web dashboard access -------------------------------------------------------------
+  // These take the name and load through get(), unlike setRank/setBanned which only touch
+  // the cache: the dashboard acts on accounts that are not online and so were never cached.
+
+  async setDashboardRole(name: string, role: DashboardRole | undefined): Promise<boolean> {
+    const account = await this.get(name);
+    if (!account) return false;
+    this.cache.set(name.toLowerCase(), account); // mutate() writes through the cached object
+    this.mutate(account, (doc) => {
+      if (role) doc.dashboardRole = role;
+      else delete doc.dashboardRole;
+      return 'ok';
+    });
+    return true;
+  }
+
+  /** Set (or replace) the password. Used by the lockout-recovery CLI path. */
+  async setPassword(name: string, password: string): Promise<boolean> {
+    const account = await this.get(name);
+    if (!account) return false;
+    const pwHash = await hash(password, ARGON2_OPTS);
+    this.cache.set(name.toLowerCase(), account);
+    this.mutate(account, (doc) => { doc.pwHash = pwHash; return 'ok'; });
+    return true;
+  }
+
+  async setTotpSecret(name: string, secret: string | undefined): Promise<boolean> {
+    const account = await this.get(name);
+    if (!account) return false;
+    this.cache.set(name.toLowerCase(), account);
+    this.mutate(account, (doc) => {
+      if (secret) doc.totpSecret = secret;
+      else delete doc.totpSecret;
+      return 'ok';
+    });
+    return true;
+  }
+
+  /**
+   * Every account on disk. Small by construction — a self-hosted world's account table is
+   * hundreds of rows, not millions — so the dashboard's browser and the first-run check can
+   * both afford a full scan rather than carrying an index that has to be kept true.
+   */
+  listAll(): Account[] {
+    const rows = this.db.prepare('SELECT key, doc FROM accounts').all() as
+      { key: string; doc: string }[];
+    const out: Account[] = [];
+    for (const r of rows) {
+      // Pending writes win, exactly as get() does: a dirty cached doc is what this process is
+      // about to flush, so listing the disk copy would show a value we already superseded.
+      const cached = this.cache.get(r.key);
+      if (cached && this.dirty.has(r.key)) { out.push(cached); continue; }
+      try { out.push(JSON.parse(r.doc) as Account); } catch { /* unreadable row: skip */ }
+    }
+    return out;
+  }
+
+  /**
+   * Does anyone hold dashboard `owner` yet? This is the first-run test: false means the
+   * onboarding wizard runs, true means it does not. Deliberately NOT "is rank 3" — an
+   * in-world owner seeded by [admin].owners has not necessarily ever opened the dashboard,
+   * and treating them as one would skip setup on a server nobody has actually configured.
+   */
+  hasDashboardOwner(): boolean {
+    return this.listAll().some((a) => a.dashboardRole === 'owner');
   }
 
   setBanned(name: string, banned: boolean): void {

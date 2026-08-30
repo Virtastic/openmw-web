@@ -50,8 +50,12 @@ const ARCHIVE_EXT = /\.bsa$/i;
 /**
  * Inspect `dir` and decide whether a sim peer could actually run against it.
  * Never throws: an unreadable or absent folder is simply tier 1.
+ *
+ * `order` is the operator's load order from the dashboard's mod manager (modlist.json),
+ * already reconciled against the folder. Omitted, or empty, means the historical behaviour:
+ * alphabetical within each tier.
  */
-export function detectGameData(dir: string): GameData {
+export function detectGameData(dir: string, order?: { file: string; enabled: boolean }[]): GameData {
   const none = (reason: string): GameData => ({
     ok: false, dir, contentFiles: [], archives: [], missing: [], reason,
   });
@@ -113,7 +117,29 @@ export function detectGameData(dir: string): GameData {
   modEsp.sort(byName);
   archives.sort(byName);
 
-  const all = [...contentFiles, ...modEsm, ...modEsp];
+  // The operator's own load order, when the dashboard's mod manager has written one,
+  // replaces the alphabetical guess for the MOD tier only. Masters keep their fixed order —
+  // Morrowind requires it — and .esm still precedes .esp, so this reorders within the tiers
+  // rather than letting a UI produce a load order the engine would reject.
+  //
+  // Three states, and they are genuinely different: listed-and-enabled loads where the
+  // operator put it, listed-and-disabled does NOT load, and a file the list has never heard
+  // of loads at the end. That last case is a mod copied in since the list was saved, and
+  // dropping it would produce "I added the mod and nothing happened" — unfalsifiable from
+  // the operator's side of the screen.
+  let orderedMods = [...modEsm, ...modEsp];
+  if (order && order.length > 0) {
+    const known = new Set(orderedMods.map((m) => m.toLowerCase()));
+    const mentioned = new Set(order.map((e) => e.file.toLowerCase()));
+    const chosen = order
+      .filter((e) => e.enabled && !officialLower.has(e.file.toLowerCase()) && known.has(e.file.toLowerCase()))
+      .map((e) => e.file);
+    const unmentioned = orderedMods.filter((m) => !mentioned.has(m.toLowerCase()));
+    const rank = (f: string): number => (/\.esm$/i.test(f) ? 0 : 1);
+    orderedMods = [...chosen, ...unmentioned].sort((a, b) => rank(a) - rank(b));
+  }
+
+  const all = [...contentFiles, ...orderedMods];
   const mods = modEsm.length + modEsp.length;
   return {
     ok: true, dir, contentFiles: all, archives, missing: [],

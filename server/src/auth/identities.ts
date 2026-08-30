@@ -360,6 +360,76 @@ export class LockerSessionStore {
   }
 }
 
+/**
+ * Browser sessions for the web dashboard. Same shape as LockerSessionStore, kept separate
+ * rather than reused: this token governs SERVER CONTROL (config, mods, console) where that
+ * one governs file uploads, so it wants its own TTL and its own revocation. Demoting an
+ * admin must kill their dashboard session without touching their locker session.
+ *
+ * Opaque token in a JSON body, held client-side in sessionStorage — the convention every
+ * other credential in this codebase already follows. No cookie, therefore no CSRF surface
+ * to defend: a cross-site form post cannot attach a header the browser does not store.
+ */
+export class AdminSessionStore {
+  private readonly tokens = new Map<string, AdminSession>();
+  constructor(private readonly ttlMs = 4 * 60 * 60 * 1000) {}
+
+  mint(accountKey: string, ip: string): string {
+    this.sweep();
+    const token = randomBytes(32).toString('base64url');
+    const now = Date.now();
+    this.tokens.set(token, { accountKey, ip, issuedAt: now, expiresAt: now + this.ttlMs });
+    return token;
+  }
+
+  resolve(token: string): string | undefined {
+    if (token === '') return undefined;
+    const e = this.tokens.get(token);
+    if (!e || e.expiresAt <= Date.now()) { if (e) this.tokens.delete(token); return undefined; }
+    return e.accountKey;
+  }
+
+  revoke(token: string): void {
+    this.tokens.delete(token);
+  }
+
+  revokeAccount(accountKey: string): void {
+    for (const [t, e] of [...this.tokens]) if (e.accountKey === accountKey) this.tokens.delete(t);
+  }
+
+  /** Live sessions for the dashboard's session manager. The token itself is never returned —
+   *  an `id` derived from it is enough to revoke one, and a listing that leaked bearer
+   *  credentials would turn "see who is logged in" into "become anyone who is logged in". */
+  list(): (AdminSession & { id: string })[] {
+    this.sweep();
+    return [...this.tokens].map(([token, e]) => ({ ...e, id: sessionId(token) }));
+  }
+
+  revokeById(id: string): boolean {
+    for (const [t] of [...this.tokens]) {
+      if (sessionId(t) === id) { this.tokens.delete(t); return true; }
+    }
+    return false;
+  }
+
+  private sweep(): void {
+    const now = Date.now();
+    for (const [t, e] of [...this.tokens]) if (e.expiresAt <= now) this.tokens.delete(t);
+  }
+}
+
+export interface AdminSession {
+  accountKey: string;
+  ip: string;
+  issuedAt: number;
+  expiresAt: number;
+}
+
+/** Stable, non-reversible handle for a session token, safe to hand to a browser. */
+function sessionId(token: string): string {
+  return createHash('sha256').update(token).digest('base64url').slice(0, 16);
+}
+
 export class SessionIndex {
   private readonly byToken = new Map<string, { accountKey: string; accountName: string }>();
 

@@ -27,6 +27,10 @@ export interface Config {
   /** "section.key" paths the operator explicitly stated (see statedPaths). Empty for a config
    *  built purely from the shipped defaults. Populated by loadConfig, not by validate(). */
   stated?: Set<string>;
+  /** Set when the dashboard's own override file failed to validate and an older snapshot (or
+   *  none at all) was used instead. The dashboard surfaces this and the notifier reports it:
+   *  a silent revert is precisely the thing an operator must not discover by accident. */
+  dashboardFallback?: string;
   // F3 supervisor sizing. Read by the GATEWAY process only (dist/gateway.mjs); a single world
   // server ignores it. See gateway/worlds.ts capacity() for why a count cap alone is not
   // enough: every occupied world carries its own sim peer, so worlds multiply RAM.
@@ -269,6 +273,15 @@ type Tree = { [key: string]: unknown };
 
 function isTree(v: unknown): v is Tree {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
+/** Where the web dashboard writes. Never config.toml — that file belongs to the operator. */
+export const DASHBOARD_FILE = 'config.dashboard.toml';
+/** How many previous versions to keep for the boot-time fallback ladder. */
+export const DASHBOARD_SNAPSHOTS = 5;
+
+export function snapshotNames(): string[] {
+  return Array.from({ length: DASHBOARD_SNAPSHOTS }, (_, i) => `${DASHBOARD_FILE}.${i + 1}`);
 }
 
 function deepMerge(base: Tree, over: Tree): Tree {
@@ -633,8 +646,61 @@ function statedPaths(...trees: (Tree | undefined)[]): Set<string> {
   return out;
 }
 
+/** Defaults + shared + operator config.toml, without any dashboard layer. */
+function baseTree(dataDir: string, sharedDir?: string): Tree {
+  let base = parse(readFileSync(DEFAULTS_URL, 'utf8')) as Tree;
+  if (sharedDir && sharedDir !== dataDir) {
+    const sharedPath = join(sharedDir, 'config.toml');
+    if (existsSync(sharedPath)) base = deepMerge(base, parse(readFileSync(sharedPath, 'utf8')) as Tree);
+  }
+  const operatorPath = join(dataDir, 'config.toml');
+  if (existsSync(operatorPath)) base = deepMerge(base, parse(readFileSync(operatorPath, 'utf8')) as Tree);
+  return base;
+}
+
+/**
+ * Would this dashboard override tree produce a valid config? Returns the validator's own
+ * message, or null when it is fine.
+ *
+ * The settings API calls this BEFORE writing, so a bad value is refused at the form with a
+ * readable reason instead of being persisted and then discovered at the next boot by the
+ * fallback ladder. The ladder is the net; this is the guardrail.
+ */
+export function checkDashboardTree(
+  dataDir: string,
+  tree: Record<string, unknown>,
+  sharedDir?: string,
+): string | null {
+  try {
+    validate(deepMerge(baseTree(dataDir, sharedDir), tree as Tree));
+    return null;
+  } catch (err) {
+    return err instanceof Error ? err.message : String(err);
+  }
+}
+
+/** Dashboard-written overrides, newest first, then the empty layer. See loadConfig. */
+function dashboardLayers(dataDir: string): { tree: Tree; from: string; broken?: true }[] {
+  const out: { tree: Tree; from: string; broken?: true }[] = [];
+  for (const name of [DASHBOARD_FILE, ...snapshotNames()]) {
+    const path = join(dataDir, name);
+    if (!existsSync(path)) continue;
+    try {
+      out.push({ tree: parse(readFileSync(path, 'utf8')) as Tree, from: name });
+    } catch {
+      // Unparseable, as opposed to parseable-but-invalid. Recorded rather than merely
+      // skipped: whichever layer we end up on, the operator has to be told we did not use
+      // the file they last saved. A silent revert is the failure this whole ladder exists
+      // to avoid, and skipping quietly would reintroduce it for the corrupt case only.
+      out.push({ tree: {}, from: name, broken: true });
+    }
+  }
+  out.push({ tree: {}, from: '(none)' });
+  return out;
+}
+
 export function loadConfig(dataDir: string, override?: DeepPartial<Config>, sharedDir?: string): Config {
-  let tree = parse(readFileSync(DEFAULTS_URL, 'utf8')) as Tree;
+  let base = parse(readFileSync(DEFAULTS_URL, 'utf8')) as Tree;
   const operatorTrees: (Tree | undefined)[] = [];
   // F3: one config.toml in the SHARED dir drives the gateway AND every world it spawns (worlds
   // get empty data dirs). Merged first, so a world may still override with its own config.toml.
@@ -643,23 +709,57 @@ export function loadConfig(dataDir: string, override?: DeepPartial<Config>, shar
     if (existsSync(sharedPath)) {
       const shared = parse(readFileSync(sharedPath, 'utf8')) as Tree;
       operatorTrees.push(shared);
-      tree = deepMerge(tree, shared);
+      base = deepMerge(base, shared);
     }
   }
   const operatorPath = join(dataDir, 'config.toml');
   if (existsSync(operatorPath)) {
     const operator = parse(readFileSync(operatorPath, 'utf8')) as Tree;
     operatorTrees.push(operator);
-    tree = deepMerge(tree, operator);
+    base = deepMerge(base, operator);
   }
-  if (override) { operatorTrees.push(override as Tree); tree = deepMerge(tree, override as Tree); }
-  // Worlds spawned by the gateway have no config.toml of their own, so the one flag the
-  // browser harness must be able to set on them travels in the environment it already
-  // controls. Deliberately env-only and single-purpose: production sets neither.
-  if (process.env.OMW_ALLOW_HARNESS_AUTH === '1') {
-    tree = deepMerge(tree, { login: { allowHarnessAuth: true } } as Tree);
+
+  // THE DASHBOARD LAYER, AND WHY IT CAN BE ROLLED BACK.
+  //
+  // Settings edited in the browser land in their own file rather than being written back into
+  // the operator's config.toml, for two reasons. First, smol-toml's stringify drops comments,
+  // so a round trip through it would silently delete the rationale an operator wrote next to
+  // their own values. Second, a file this process OWNS can be reverted without touching
+  // anything a human authored.
+  //
+  // That second property is the safety net: a non-technical operator who saves a bad value
+  // and restarts must not get a server that refuses to boot. So the layers are tried
+  // newest-first and the first one that VALIDATES wins; the empty layer is always last, which
+  // means a dashboard edit can never be the reason the server fails to start. An invalid
+  // config.toml still fails loudly — that one is the operator's own file and silently
+  // ignoring it would be the wrong kind of quiet.
+  let cfg: Config | undefined;
+  let fallbackFrom: string | undefined;
+  const layers = dashboardLayers(dataDir);
+  for (const [i, layer] of layers.entries()) {
+    let tree = deepMerge(base, layer.tree);
+    if (override) tree = deepMerge(tree, override as Tree);
+    // Worlds spawned by the gateway have no config.toml of their own, so the one flag the
+    // browser harness must be able to set on them travels in the environment it already
+    // controls. Deliberately env-only and single-purpose: production sets neither.
+    if (process.env.OMW_ALLOW_HARNESS_AUTH === '1') {
+      tree = deepMerge(tree, { login: { allowHarnessAuth: true } } as Tree);
+    }
+    try {
+      cfg = validate(tree);
+    } catch (err) {
+      if (i === layers.length - 1) throw err; // nothing left to blame but the operator's own files
+      continue;
+    }
+    // Fell back if we skipped past a layer, OR if the layer we landed on is one we could
+    // not read at all (the file exists, we ignored its contents).
+    if (i > 0 || layer.broken) fallbackFrom = layer.broken ? `${layer.from} (unreadable)` : layer.from;
+    operatorTrees.push(layer.tree);
+    if (override) operatorTrees.push(override as Tree);
+    break;
   }
-  const cfg = validate(tree);
+  if (!cfg) throw new Error('config: no candidate layer validated'); // unreachable; keeps TS honest
+  cfg.dashboardFallback = fallbackFrom;
   cfg.stated = statedPaths(...operatorTrees);
   // THE GATEWAY CREDENTIAL GENERATES ITSELF. A world process proves to the gateway that it is
   // part of the platform with a shared secret, and without one a player cannot create a world

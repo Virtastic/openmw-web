@@ -12,7 +12,10 @@ import { AttioHook } from './integrations/attio';
 import { ContentTable } from './core/content-table';
 import { PartyRules } from './core/party-rules';
 import { QuestRepair } from './core/quest-repair';
-import { adminDashboardRoutes } from './net/admin-http';
+import { adminRoutes as adminDashboardRoutes } from './net/admin/routes';
+import { exportDataDir, summariseMetrics } from './net/admin/ops';
+import { orderedContent } from './net/admin/api-mods';
+import { deleteAccount } from './persist/erase';
 import { PlayerStore } from './persist/playerstore';
 import { CellStore } from './persist/cellstore';
 import { RecordStore } from './persist/recordstore';
@@ -24,7 +27,7 @@ import { Quests } from './core/quests';
 import { Social } from './core/social';
 import { SocialStore } from './core/socialstore';
 import { WorldM7 } from './core/m7';
-import { Roster } from './core/players';
+import { Roster, type Player } from './core/players';
 import { ContentGate, EngineGate } from './core/manifest';
 import {
   CommandRegistry,
@@ -34,7 +37,7 @@ import {
   type CommandContext,
 } from './core/commands';
 import { Moderation } from './core/moderation';
-import { Admin } from './core/admin';
+import { Admin, ADMIN_COMMANDS } from './core/admin';
 import { ResumeStore } from './core/resume';
 import { broadcastChat, type ChatMessageBody } from './core/chat';
 import { HookBus } from './plugins/loader';
@@ -52,16 +55,16 @@ import { Locker, loadVanillaManifest } from './data/locker';
 import { lockerStorageFrom, blobRoutes, FsStorage } from './data/fsstorage';
 import { saveRoutes, eraseSaves } from './data/save-routes';
 import { lockerRoutes } from './data/locker-routes';
-import { LockerSessionStore } from './auth/identities';
+import { LockerSessionStore, AdminSessionStore } from './auth/identities';
 import { IpConnTracker, IpRateLimiter } from './net/ratelimit';
 import { disconnectMsg } from './proto/session';
-import { log } from './log';
+import { log, recentLogs } from './log';
 import { startTestBots } from './dev/testbots';
 import { metrics } from './metrics';
 import { SimPeerSupervisor } from './core/simpeer';
 import { WorldBrowser } from './core/worldbrowser';
 import { parseExterior, isChargenCell } from './core/movement';
-import { detectGameData, findPeerBinary, gameDataDir, buildPeerCfg, buildPeerSettings } from './core/gamedata';
+import { detectGameData, findPeerBinary, gameDataDir, buildPeerCfg, buildPeerSettings, type GameData } from './core/gamedata';
 
 export const VERSION = '1.1.0';
 
@@ -113,6 +116,10 @@ export interface RunningServer {
   // The same surface plugins get. Exposed so an embedder (and the test suite) can drive
   // world actions and server-pushed GUI without loading a plugin.
   api: PluginApi;
+  /** Account store, so tests can seed players without going through the wire protocol. */
+  accounts: AccountStore;
+  /** What the content scan decided at boot, including the operator's saved load order. */
+  gameData: GameData;
   flush(): Promise<void>;
   close(): Promise<void>;
 }
@@ -556,6 +563,11 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     acceptByNameAndSize: config.locker.acceptByNameAndSize,
   });
   const lockerSessions = new LockerSessionStore();
+  const adminSessions = new AdminSessionStore();
+  // Maintenance mode: set from the dashboard, read by the connection path. Process state
+  // rather than config on purpose — it is a live operational switch, and it should not
+  // survive the restart an operator performs to bring the server back up.
+  const maintenance = { on: false, message: '' };
   let socialRef: Social | undefined; // read by quest party-credit (built above)
   const socialStore = new SocialStore(sharedDir);
   const social = new Social({
@@ -788,11 +800,97 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     motd: () => motd,
   };
 
-  // Phase 3.8 web dashboard. Bearer-gated and OFF unless a token is configured; it acts
-  // on accounts without being in the world, so it gets its own rotatable credential
-  // rather than piggybacking on someone's rank.
+  // The web dashboard. Its three original endpoints keep their exact shapes (scripts point
+  // at them); everything else is new surface gated on account roles rather than the shared
+  // token, which now survives only as an automation credential.
   const adminRoutes = adminDashboardRoutes({
-    token: config.admin.dashboardToken,
+    dataDir: opts.dataDir,
+    sharedDir,
+    config: () => config,
+    accounts,
+    sessions: adminSessions,
+    loginLimiter: new IpRateLimiter(config.limits.loginPerMinPerIp),
+    // A valid session is still bounded. Generous enough that a person clicking around never
+    // notices, tight enough that a stolen token cannot be used to hammer /console.
+    apiLimiter: new IpRateLimiter(600),
+    sharedToken: config.admin.dashboardToken,
+    gameDataDir: gameDataDir(sharedDir),
+
+    runCommand: async (actor, line) => {
+      const parts = line.replace(/^\//, '').trim().split(/\s+/);
+      const cmd = (parts.shift() ?? '').toLowerCase();
+      // A synthetic actor: the dashboard operator is not standing in the world, so they get
+      // a Player shaped just enough for the command table to rank-check and name them in the
+      // audit line. Commands that move the actor's own body (/tp, /tpto) are refused rather
+      // than given a fake position — see commandCatalog's inGameOnly below.
+      const online = roster.activeForAccount(actor.accountKey);
+      const synthetic = online ?? ({
+        id: -1,
+        name: actor.name,
+        accountKey: actor.accountKey,
+        charId: actor.accountKey,
+        rank: actor.rank,
+        ip: '(dashboard)',
+        inWorld: false,
+        moveSeq: 0,
+        poseVersion: 0,
+        peer: { disconnect: () => {}, send: () => {} },
+      } as unknown as Player);
+      if (!online && (cmd === 'tp' || cmd === 'tpto')) {
+        return { ok: false, message: `/${cmd} moves you, so it only works while you are in the world.` };
+      }
+      const message = await admin.exec(synthetic, cmd, parts);
+      log('info', 'admin.console', { by: actor.accountKey, cmd });
+      return { ok: true, message };
+    },
+    commandCatalog: () => Object.entries(ADMIN_COMMANDS).map(([name, spec]) => ({
+      name,
+      usage: spec.usage,
+      help: spec.help,
+      minRank: spec.minRank,
+      ...(name === 'tp' || name === 'tpto' ? { inGameOnly: true } : {}),
+    })),
+
+    recentLogs: (limit, filter) => recentLogs(limit, filter),
+    metricsSnapshot: () => summariseMetrics(),
+
+    maintenance: {
+      get: () => ({ on: maintenance.on, message: maintenance.message }),
+      set: (on, message) => {
+        maintenance.on = on;
+        maintenance.message = message;
+        if (on) {
+          for (const p of roster.humansInWorld()) {
+            p.peer.disconnect('SHUTDOWN', message || 'server is going into maintenance');
+          }
+        }
+      },
+    },
+    restart: (reason) => {
+      log('warn', 'server.restart_requested', { reason });
+      // The SAME graceful path SIGTERM already takes — connections closed, stores flushed —
+      // rather than a second shutdown implementation that would drift from it. Docker's
+      // restart policy brings the process back with whatever was just saved.
+      process.kill(process.pid, 'SIGTERM');
+    },
+    exportData: async (res) => exportDataDir(opts.dataDir, res),
+    deleteAccount: async (key) => {
+      // Erasure was written to run offline against a quiet data dir. Live, the risk is the
+      // account store's write-behind flushing a cached copy back after the delete, so: cut
+      // the session, drain the queue, and only then erase.
+      roster.activeForAccount(key)?.peer.disconnect('KICKED', 'account erased');
+      await accounts.flush();
+      const report = await deleteAccount(opts.dataDir, key);
+      if (!report.account && !report.player) {
+        return { ok: false, message: 'nothing found under that name' };
+      }
+      return {
+        ok: true,
+        message: `erased ${key}: account=${report.account} character=${report.player} ` +
+          `bans=${report.bans} identities=${report.identities}`,
+      };
+    },
+
     overview: () => ({
       world: { id: worldId, mode: worldMode },
       maxPlayers: config.server.maxPlayers,
@@ -912,7 +1010,8 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // connects (see connection.ts handleHello) — the server cannot DERIVE that list, because a
   // real client's includes engine-resource entries (builtin.omwscripts, *.omwgame) that no
   // data folder contains.
-  const gameData = detectGameData(gameDataDir(sharedDir));
+  // The operator's saved load order, if the dashboard's mod manager has ever written one.
+  const gameData = detectGameData(gameDataDir(sharedDir), orderedContent(gameDataDir(sharedDir), opts.dataDir));
   log('info', 'gamedata.detect', { ok: gameData.ok, reason: gameData.reason });
 
   // THE SIM PEER IS NOT OPTIONAL. There is exactly one mode: the server runs its own headless
@@ -1244,6 +1343,19 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       ws.close(1008, 'RATE');
       return;
     }
+    // Maintenance mode, refused here for the same reason an IP ban is: before a roster slot,
+    // an argon2 hash or any world state is spent on someone who is not getting in. The
+    // operator's message goes back verbatim so "back in ten minutes" actually reaches them.
+    if (maintenance.on) {
+      log('info', 'conn.maintenance_refused', { ip });
+      metrics.connRefused.inc({ reason: 'maintenance' });
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(disconnectMsg('SHUTDOWN', maintenance.message || 'server is under maintenance'));
+      }
+      ws.close(1012, 'MAINTENANCE');
+      ipTracker.release(ip);
+      return;
+    }
     const conn: Connection = new Connection(ws, ip, ctx, () => {
       connections.delete(conn);
       ipTracker.release(ip);
@@ -1390,6 +1502,8 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     port,
     config,
     api,
+    accounts,
+    gameData,
     flush: async () => {
       // Drain background writes first: they WRITE, so they must finish before the flush that
       // is supposed to persist everything, let alone before the stores close.

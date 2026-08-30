@@ -7,9 +7,10 @@
 
 import { existsSync } from 'node:fs';
 import { parseArgs } from 'node:util';
+import { randomBytes } from 'node:crypto';
 import { startServer } from './server';
 import { deleteAccount } from './persist/erase';
-import { log } from './log';
+import { log, enableFileLog } from './log';
 
 const { values } = parseArgs({
   options: {
@@ -17,6 +18,9 @@ const { values } = parseArgs({
     shared: { type: 'string' },
     port: { type: 'string' },
     'delete-account': { type: 'string' },
+    // Clears an account's password and second factor and makes it a dashboard owner, for
+    // an operator locked out of their own server. See below.
+    'admin-reset': { type: 'string' },
     // Where this world's clients can reach the world directory. The GATEWAY passes this when
     // it spawns a world: a spawned world has no config.toml of its own, so gateway.url stayed
     // "" and the in-game world browser was disabled — clicking Public asked for the world
@@ -52,9 +56,39 @@ if (eraseTarget !== undefined) {
   process.exit(0);
 }
 
+// LOCKOUT RECOVERY. A self-hoster who forgets the only owner password has no way back in
+// through a browser, and "edit the SQLite file by hand" is not an answer for the audience
+// this dashboard is built for. Clears the password and any second factor so the next sign-in
+// can set new ones; deliberately requires shell access to the box, which is the proof of
+// ownership that matters here.
+const resetTarget = values['admin-reset'];
+if (resetTarget !== undefined) {
+  if (resetTarget.length === 0) {
+    console.error('usage: --admin-reset <account name>');
+    process.exit(2);
+  }
+  const { AccountStore } = await import('./core/accounts');
+  const store = new AccountStore(values.shared ?? dataDir);
+  const account = await store.get(resetTarget);
+  if (!account) {
+    console.error(`no account named "${resetTarget}" in ${values.shared ?? dataDir}`);
+    process.exit(1);
+  }
+  const temp = randomBytes(9).toString('base64url');
+  await store.setPassword(resetTarget, temp);
+  await store.setTotpSecret(resetTarget, undefined);
+  await store.setDashboardRole(resetTarget, 'owner');
+  await store.close();
+  console.log(`reset "${account.name}".`);
+  console.log(`temporary password: ${temp}`);
+  console.log('sign in at /admin with that, then change it under My security.');
+  process.exit(0);
+}
+
 // --shared: accounts, identities, friends and bans live here instead of in the world's own
 // data dir, so several worlds share one identity. Omitted = the data dir itself, which is
 // exactly the previous behaviour for anyone running a single world.
+enableFileLog(dataDir);
 const server = await startServer({
   dataDir, port,
   ...(values.shared ? { sharedDir: values.shared } : {}),

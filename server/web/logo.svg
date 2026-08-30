@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Virtastic">
+  <title>Virtastic</title>
+  <defs>
+    <linearGradient id="ember" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0" stop-color="#c65a2e"/>
+      <stop offset="1" stop-color="#eecb78"/>
+    </linearGradient>
+  </defs>
+  <circle cx="32" cy="32" r="30" fill="#1a140a"/>
+  <!-- Red Mountain: the silhouette the whole island is arranged around. -->
+  <path d="M8 46 L26 20 L34 30 L41 17 L56 46 Z" fill="url(#ember)"/>
+  <path d="M41 17 L47 26 L36 26 Z" fill="#1a140a" opacity=".45"/>
+  <circle cx="41" cy="15" r="3.4" fill="#eecb78"/>
+</svg>

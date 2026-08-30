@@ -12,6 +12,7 @@ COPY tsconfig.json esbuild.mjs ./
 COPY src ./src
 COPY test ./test
 COPY config.default.toml ./
+COPY web ./web
 RUN npm run build
 
 # Test gate: `docker build --target test` fails the deploy if typecheck or tests fail.
@@ -28,14 +29,22 @@ RUN npm ci --omit=dev
 FROM node:22-alpine
 WORKDIR /app
 ENV NODE_ENV=production
+# tar is used by the dashboard's backup export. busybox tar is present in alpine already,
+# but the GNU one handles a data dir changing under it more gracefully.
+RUN apk add --no-cache tar
 COPY --from=prod-deps /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY config.default.toml ./
+# The admin dashboard's page and its vendored AdminLTE/Bootstrap assets. Served from disk
+# at runtime (see src/net/admin/static.ts), not bundled, so they resolve the same way
+# config.default.toml does.
+COPY web ./web
+COPY docker-entrypoint.sh /usr/local/bin/
 USER node
 EXPOSE 8080
 # busybox wget ships with alpine; /healthz is served on the same port as the WS endpoint.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
   CMD wget -qO- http://127.0.0.1:8080/healthz || exit 1
-# Heap cap well under the compose mem_limit so the process degrades (GC pressure) rather
-# than getting OOM-killed mid-flush.
-CMD ["node", "--max-old-space-size=256", "dist/server.mjs", "--data", "/data"]
+# The entrypoint picks single-world or gateway mode from <data>/.mode, so the dashboard can
+# switch a deployment between them with nothing more than a restart.
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]

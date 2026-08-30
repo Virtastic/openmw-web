@@ -48,12 +48,27 @@ test('dashboard: page is public, api needs the bearer, unknown action refused', 
   assert.equal(bad.status, 400);
 });
 
-test('dashboard is entirely absent when no token is configured', async (t) => {
+test('with no token configured the page still serves, but the api stays shut', async (t) => {
+  // This REVERSED a previous rule ("no token = no dashboard at all"). Accounts are now the
+  // way in, and first-run setup happens in the browser, so a server with no token must still
+  // serve the page — otherwise a fresh install has no route to configuring itself. The page
+  // is inert without a credential, which is what made hiding it unnecessary.
   const dataDir = tmpDataDir();
-  const server = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1' }); // default: empty token
+  const server = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1' });
   t.after(() => server.close());
-  const r = await fetch(`http://127.0.0.1:${server.port}/admin`);
-  assert.equal(r.status, 404, 'an operator who never set a token has no dashboard at all');
+  const base = `http://127.0.0.1:${server.port}`;
+
+  assert.equal((await fetch(`${base}/admin`)).status, 200, 'the setup page has to be reachable');
+  assert.equal((await fetch(`${base}/admin/api/overview`)).status, 401, 'data still requires a credential');
+
+  const state = await (await fetch(`${base}/admin/api/state`)).json() as { firstRun: boolean; authed: boolean };
+  assert.equal(state.firstRun, true, 'a server nobody has set up reports itself as first-run');
+  assert.equal(state.authed, false);
+
+  // An empty shared token must never authenticate an empty Authorization header.
+  assert.equal((await fetch(`${base}/admin/api/overview`, {
+    headers: { authorization: 'Bearer ' },
+  })).status, 401, 'an unconfigured token is not a blank password');
 });
 
 test('dashboard kick and ban act on a live player; anomalies surface per account', async (t) => {
