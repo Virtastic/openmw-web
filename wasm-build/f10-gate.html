@@ -16,8 +16,17 @@
           through ANGLE in Chrome, and a transferred canvas is a different code path.
 
      Answering these needs no engine build, so it costs a page load rather than a port.
-     Serve from play/server.py (it sets COOP/COEP; SharedArrayBuffer needs crossOriginIsolated)
-     and read window.__f10 in the console. -->
+
+     TO RUN IT: copy this file into play/ and load it from play/server.py, then read
+     window.__f10 in the console.
+
+         cp wasm-build/f10-gate.html play/ && open http://127.0.0.1:8910/f10-gate.html
+
+     It has to be served from play/ because SharedArrayBuffer needs crossOriginIsolated and
+     play/server.py is what sets the COOP/COEP headers. It LIVES here rather than in play/
+     because play/ is the served web root -- diagnostics do not belong in the thing users load.
+     (It is not in the Dockerfile's explicit play/ copy list either way, so it never shipped.)
+     Delete the copy from play/ when you are done. -->
 <head><meta charset="utf-8"><title>F10 gate probe</title></head>
 <body>
 <pre id="out">running…</pre>
