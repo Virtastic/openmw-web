@@ -14,7 +14,7 @@ import { startServer } from '../src/server';
 import { tmpDataDir } from './helpers';
 import { ResetTokens, notifyEvent } from '../src/net/admin/notify';
 
-const OWNER = { name: 'TheOwner', password: 'a-long-enough-passphrase' };
+const OWNER = { name: 'owner@example.com', password: 'a-long-enough-passphrase' };
 
 async function boot(t: { after(fn: () => unknown): void }, override = {}) {
   const dataDir = tmpDataDir();

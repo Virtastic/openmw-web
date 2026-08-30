@@ -17,7 +17,7 @@ import { tmpDataDir } from './helpers';
 import { verifyTotp, generateSecret } from '../src/net/admin/totp';
 import { passwordProblem } from '../src/net/admin/auth';
 
-const OWNER = { name: 'TheOwner', password: 'a-long-enough-passphrase' };
+const OWNER = { name: 'owner@example.com', password: 'a-long-enough-passphrase' };
 
 async function boot(t: { after(fn: () => unknown): void }, override = {}) {
   const dataDir = tmpDataDir();

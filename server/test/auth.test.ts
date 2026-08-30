@@ -803,7 +803,7 @@ test('SSO into the admin dashboard: role required, session lands as /admin#t=', 
   // Claim the dashboard and grant that account a role, the way an owner actually would.
   const owner = await fetch(`${h.base}/admin/api/setup/owner`, {
     method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ name: 'RealOwner', password: 'a-long-enough-passphrase' }),
+    body: JSON.stringify({ name: 'realowner@example.com', password: 'a-long-enough-passphrase' }),
   });
   assert.equal(owner.status, 200);
   const ownerToken = (await owner.json() as { token: string }).token;

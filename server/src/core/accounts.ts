@@ -139,10 +139,62 @@ const ARGON2_OPTS = { algorithm: Algorithm.Argon2id, memoryCost: 19456, timeCost
 // the hash of a value nobody uses, and knowing a hash does not help you produce a password.
 const DECOY_HASH =
   '$argon2id$v=19$m=19456,t=2,p=1$RU6yeWfVvzoWBMQhyahFpg$K4iaLtJpJx++1tpgeJ4ot/gUn8Fueld+CkWt63pKBvQ';
-const NAME_RE = /^[A-Za-z0-9_ -]{2,24}$/;
+// A login identifier is either a plain name or an email address. Plain names were the only
+// option and the cap was 24, which rejected an email outright — and since the dashboard's
+// setup wizard now asks for one, that rejection was the first thing a new operator hit.
+//
+// `name` is the LOGIN identifier only. What other players see is `username` (see the Account
+// doc comment and server.ts's displayName), so putting an email here does not put it in
+// chat, nametags or the friends list.
+const NAME_RE = /^[A-Za-z0-9_ -]{2,32}$/;
+
+// Deliberately narrower than RFC 5322: no quoted local parts, and the local charset is only
+// letters, digits and . _ % + -. That is every address a real mailbox actually uses, and it
+// contains no "/", no "\" and no space — which matters, because the lowercased name becomes
+// a storage key that is concatenated into blob paths (locker.ts: `gamedata/${key}/...`).
+// Consecutive dots are refused separately, so ".." can never appear either.
+// Distinct from EMAIL_RE above, which validates the PROFILE email and is deliberately loose
+// (it only has to catch typos). This one gates a value that becomes an account key, so it is
+// strict on purpose.
+const LOGIN_EMAIL_RE =
+  /^[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+$/;
+
+export function looksLikeEmail(name: string): boolean {
+  return name.length <= 254 && !name.includes('..')
+    && !name.startsWith('.') && !name.includes('.@') && LOGIN_EMAIL_RE.test(name);
+}
 
 export function validAccountName(name: string): boolean {
-  return NAME_RE.test(name);
+  return NAME_RE.test(name) || looksLikeEmail(name);
+}
+
+/**
+ * Why a name was refused, in the words of what the person actually typed.
+ *
+ * "must be 2-24 characters: letters, numbers, spaces, _ or -" states the rule and leaves
+ * you to diff it against your own input, which is how someone types an email address, reads
+ * "letters, numbers", and concludes the server is broken. Name the offending character.
+ */
+export function accountNameProblem(name: string): string | null {
+  if (validAccountName(name)) return null;
+  const trimmed = name.trim();
+  if (trimmed === '') return 'is required.';
+  if (name !== trimmed) return 'has a space at the start or end. Remove it and try again.';
+  if (name.includes('@')) {
+    // They meant an email; say what is wrong with THIS email rather than offering the
+    // plain-name rule, which is not the rule they were trying to follow.
+    if (name.includes('..')) return 'has two dots in a row, which no mail provider allows.';
+    if (!/@[^@]+\.[^@]+$/.test(name)) return 'looks like an email but has no domain after the @ (for example name@example.com).';
+    if ((name.match(/@/g) ?? []).length > 1) return 'has more than one @.';
+    return 'is not a valid email address. Check it for stray characters.';
+  }
+  if (trimmed.length < 2) return 'is too short: at least 2 characters.';
+  if (trimmed.length > 32) return `is too long: ${trimmed.length} characters, and the limit is 32.`;
+  const bad = [...trimmed].find((c) => !/[A-Za-z0-9_ -]/.test(c));
+  if (bad !== undefined) {
+    return `cannot contain "${bad}". Use an email address, or letters, numbers, spaces, _ and - only.`;
+  }
+  return 'is not usable. Try an email address instead.';
 }
 
 export class AccountStore {

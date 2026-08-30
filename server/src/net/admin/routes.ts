@@ -41,7 +41,7 @@
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { AccountStore, DashboardRole } from '../../core/accounts';
-import { DASHBOARD_ROLES, validAccountName, roleAtLeast } from '../../core/accounts';
+import { DASHBOARD_ROLES, accountNameProblem, looksLikeEmail, roleAtLeast } from '../../core/accounts';
 import type { AdminSessionStore } from '../../auth/identities';
 import type { IpRateLimiter } from '../ratelimit';
 import { clientIp, isPrivateAddress } from '../http';
@@ -327,8 +327,21 @@ export function adminRoutes(deps: AdminDeps) {
 
       const name = String(body.name ?? '').trim();
       const password = String(body.password ?? '');
-      if (!validAccountName(name)) {
-        json(res, 400, { error: 'name must be 2-24 characters: letters, numbers, spaces, _ or -' });
+      // A NEW owner signs in with an email: it is the login identifier (players see
+      // `username`, never this), and holding it means password recovery works the day it is
+      // needed rather than requiring shell access to the box.
+      //
+      // An EXISTING account is exempt, whatever it is called. Someone who has been playing
+      // here as "Bob" and now sets up the dashboard must still be able to adopt their own
+      // account, and that path already proves the password below, so it is not the weaker
+      // check. Demanding an email here would lock the legitimate case out to enforce a
+      // convention that only governs names this server hands out.
+      const alreadyRegistered = (await deps.accounts.get(name)) !== undefined;
+      if (!alreadyRegistered && !looksLikeEmail(name)) {
+        const why = accountNameProblem(name);
+        json(res, 400, { error: why === null
+          ? 'use an email address to sign in, for example you@example.com'
+          : `that email address ${why}` });
         return true;
       }
       const result = await (setupInFlight = (setupInFlight ?? Promise.resolve()).then(async () => {
@@ -355,6 +368,13 @@ export function adminRoutes(deps: AdminDeps) {
             return { error: created === 'exists' ? 'name taken' : 'invalid name' };
           }
         }
+        // The sign-in address is also contact data, so "forgot my password" can work as
+        // soon as mail is configured. Without this the only recovery is --admin-reset,
+        // which needs a shell on the box: the exact dead end this dashboard exists to avoid.
+        // Only when the identifier IS an address: an adopted plain-named account would
+        // otherwise get "Bob" recorded as its email, and reset mail sent into the void.
+        const account = await deps.accounts.get(name);
+        if (account && looksLikeEmail(name) && !account.email) deps.accounts.setEmail(account, name);
         await deps.accounts.setDashboardRole(name, 'owner');
         deps.accounts.setRank(name, 3); // in-game parity: the first owner is an owner in-world
         // Also record them in [admin].owners so the every-boot promotion keeps them rank 3
@@ -623,10 +643,8 @@ export function adminRoutes(deps: AdminDeps) {
       const password = String(body.password ?? '');
       const role = String(body.role ?? 'moderator');
       if (!ROLE_SET.has(role)) { json(res, 400, { error: 'unknown role' }); return true; }
-      if (!validAccountName(name)) {
-        json(res, 400, { error: 'name must be 2-24 characters: letters, numbers, spaces, _ or -' });
-        return true;
-      }
+      const why = accountNameProblem(name);
+      if (why !== null) { json(res, 400, { error: `that name ${why}` }); return true; }
       const weak = passwordProblem(password, name);
       if (weak) { json(res, 400, { error: `password ${weak}` }); return true; }
       const created = await deps.accounts.register(name, password);

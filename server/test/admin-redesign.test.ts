@@ -8,8 +8,9 @@ import assert from 'node:assert/strict';
 import { startServer } from '../src/server';
 import { tmpDataDir } from './helpers';
 import { readDashboardTree } from '../src/net/admin/settings-store';
+import { validAccountName, accountNameProblem } from '../src/core/accounts';
 
-const OWNER = { name: 'TheOwner', password: 'a-long-enough-passphrase' };
+const OWNER = { name: 'owner@example.com', password: 'a-long-enough-passphrase' };
 
 async function boot(t: { after(fn: () => unknown): void }, override = {}) {
   const dataDir = tmpDataDir();
@@ -174,4 +175,60 @@ test('maintenance mode survives the restart it exists to precede', async (t) => 
   };
   assert.equal(state.maintenance.on, true, 'still in maintenance after the restart');
   assert.equal(state.maintenance.message, 'back in ten');
+});
+
+test('the owner signs in with an email, and a refused name says what is wrong with it', async (t) => {
+  const dataDir = tmpDataDir();
+  const server = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1' });
+  t.after(() => server.close());
+  const setup = (name: string, password = 'a-long-enough-passphrase') =>
+    fetch(`http://127.0.0.1:${server.port}/admin/api/setup/owner`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name, password }),
+    });
+
+  // A plain name is no longer enough for the OWNER: the wizard asks for an email so that
+  // password recovery works without a shell on the box.
+  const plain = await setup('admin');
+  assert.equal(plain.status, 400);
+  assert.match((await plain.json() as { error: string }).error, /email/i);
+
+  // And the refusal names the actual problem rather than reciting the rule. The old message
+  // ("2-24 characters: letters, numbers...") is what someone typing an email reads right
+  // past, which is exactly how this was reported.
+  const noDomain = await setup('me@localhost');
+  assert.match((await noDomain.json() as { error: string }).error, /domain after the @/);
+  const doubleDot = await setup('me..you@example.com');
+  assert.match((await doubleDot.json() as { error: string }).error, /two dots in a row/);
+
+  // The real thing works, and the address is kept as contact data so a reset can be sent.
+  const ok = await setup('Owner.Person+mp@example.co.uk');
+  assert.equal(ok.status, 200, 'plus-addressing and a multi-label domain are ordinary email');
+  const token = (await ok.json() as { token: string }).token;
+  const list = await (await fetch(`http://127.0.0.1:${server.port}/admin/api/accounts`, {
+    headers: { authorization: `Bearer ${token}` },
+  })).json() as { accounts: { name: string }[] };
+  assert.equal(list.accounts[0]?.name, 'Owner.Person+mp@example.co.uk');
+});
+
+test('account names: emails allowed, 32-char plain names allowed, paths still impossible', () => {
+  // Longer than the old 24-character cap, which was the other half of the report.
+  assert.equal(validAccountName('a'.repeat(32)), true);
+  assert.equal(validAccountName('a'.repeat(33)), false);
+  assert.match(accountNameProblem('a'.repeat(33)) ?? '', /33 characters, and the limit is 32/);
+
+  // Ordinary email shapes.
+  for (const good of ['a@b.co', 'first.last@example.com', 'x+tag@sub.domain.org']) {
+    assert.equal(validAccountName(good), true, `${good} should be a valid login`);
+  }
+
+  // The account name is lowercased into a storage key and concatenated into blob paths
+  // (locker.ts: `gamedata/${key}/...`), so nothing that could climb out may pass.
+  for (const bad of ['../../etc/passwd', 'a/b@example.com', 'a\b@example.com',
+                     '..@example.com', 'x@example..com', 'a b@example.com', 'two@@example.com']) {
+    assert.equal(validAccountName(bad), false, `${bad} must be refused`);
+  }
+
+  // And the message points at the offending character rather than reciting the rule.
+  assert.match(accountNameProblem('bob!') ?? '', /cannot contain "!"/);
 });

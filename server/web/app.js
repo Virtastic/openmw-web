@@ -156,14 +156,18 @@ const can = (need) => state.authed && RANK[state.role] >= RANK[need];
 const singlePlayer = () => state.setup?.deploymentMode === 'single';
 
 function paintChrome() {
-  // Signed out (or mid-first-run) there IS no dashboard: no sidebar, no top bar, just the
-  // one thing on a clean ground, the way AdminLTE's own login pages are laid out. Rendering
-  // the login form inside the full chrome left a dead dark sidebar hanging next to it.
-  document.body.classList.toggle('vt-bare', !state.authed || state.firstRun);
+  // Signed out, or anywhere inside first-time setup, there IS no dashboard: no sidebar, no
+  // top bar, just the one thing on a clean ground, the way AdminLTE's own login pages are
+  // laid out. This is also the enforcement half of the setup gate, there is literally
+  // nothing to click away to until the wizard is finished.
+  const setupPending = state.firstRun || (state.authed && state.setupCompleted !== true);
+  document.body.classList.toggle('vt-bare', !state.authed || setupPending);
 
   const nav = $('#mainNav');
   const current = location.hash || '#overview';
-  if (!state.authed) { nav.innerHTML = ''; }
+  // Nothing to click during setup, not even hidden behind CSS: an empty list cannot be
+  // reached by a keyboard, a screen reader, or a stylesheet that fails to load.
+  if (!state.authed || setupPending) { nav.innerHTML = ''; }
   else {
     nav.innerHTML = NAV.map((g) => {
       const items = g.items.filter((i) => can(i.role) && !(i.mp && singlePlayer()));
@@ -296,7 +300,12 @@ const STEP_LABEL = {
   files: 'Game data', review: 'Review',
 };
 
-function wizardShell(inner, { back = true, next = 'Continue', onNext = null, disabled = false } = {}) {
+/**
+ * `need` is the sentence shown when Continue is disabled. A greyed-out button with no
+ * explanation is the worst thing this wizard could do to someone who has never run a
+ * server: it says no and does not say why. Every step that can block passes one.
+ */
+function wizardShell(inner, { back = true, next = 'Continue', onNext = null, disabled = false, need = '' } = {}) {
   const steps = wizardSteps();
   const at = Math.min(step, steps.length - 1);
   const bar = steps.map((s, i) => html`
@@ -312,6 +321,8 @@ function wizardShell(inner, { back = true, next = 'Continue', onNext = null, dis
       <div class="card vt-card"><div class="card-body">${raw(inner)}</div></div>
       <div class="vt-wizard-nav">
         <button class="btn btn-outline-secondary" id="wzBack" ${raw(back && step > 0 ? '' : 'hidden')}>← Back</button>
+        ${raw(disabled && need ? html`<span class="vt-need text-secondary small">
+          <i class="bi bi-arrow-right-short"></i>${need}</span>` : '')}
         <button class="btn btn-primary btn-lg ms-auto" id="wzNext" ${raw(disabled ? 'disabled' : '')}>${next}</button>
       </div>
     </div>`;
@@ -411,6 +422,9 @@ function stepOwner() {
     <p class="text-secondary small">This is the account you will sign in with. It has full
       control of the server, so give it a real password, you can add a second factor once
       you are in.</p>
+    <div class="vt-section-note mb-3">Your email address is your sign-in. Players never see
+      it: in the game you appear under a separate display name. Holding it here is also what
+      lets you reset your own password later without touching the server.</div>
     ${raw(!state.needsSetupKey || setupKey ? '' : html`
       <div class="mb-3">
         <label class="form-label">Setup key</label>
@@ -421,9 +435,10 @@ function stepOwner() {
           folder. It stops working once this account exists.</div>
       </div>`)}
     <div class="mb-3">
-      <label class="form-label">Username</label>
-      <input class="form-control" id="oName" autocomplete="username" placeholder="admin">
-      <div class="form-text">2–24 characters: letters, numbers, spaces, underscore or hyphen.</div>
+      <label class="form-label">Email address</label>
+      <input class="form-control" id="oName" type="email" autocomplete="username"
+        placeholder="you@example.com" value="${answers.ownerEmail || ''}">
+      <div class="form-text">You will sign in with this.</div>
     </div>
     <div class="mb-3">
       <label class="form-label">Password</label>
@@ -437,6 +452,13 @@ function stepOwner() {
     <div id="oErr" class="text-danger small"></div>`,
   { back: false, next: 'Create account', onNext: async () => {
     const n = $('#oName').value.trim(), p = $('#oPass').value, p2 = $('#oPass2').value;
+    // Checked here as well as on the server so the answer is instant, and so the field that
+    // is wrong is the one that gets focus.
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(n)) {
+      $('#oErr').textContent = 'Enter an email address, for example you@example.com.';
+      $('#oName').focus();
+      return;
+    }
     if (p !== p2) { $('#oErr').textContent = 'The two passwords do not match.'; return; }
     // Only required when the server says so, from this machine or this network it is not
     // asked for at all, because the whole point is that setup happens in the browser.
@@ -456,6 +478,7 @@ function stepOwner() {
       // nowhere to put a right one.
       if (e.status === 401 && (setupKey || e.body?.needsKey)) {
         forgetSetupKey();
+        answers.ownerEmail = n; // survives the re-render, so it is not retyped
         renderWizard();
         $('#oName').value = n;
         $('#oErr').textContent = `${e.message} Paste the current one below.`;
@@ -474,7 +497,7 @@ function stepMode() {
       'A private world for one person. Registration stays closed and the multiplayer questions are skipped.'))}
     ${raw(choice('deploymentMode', 'multiplayer', 'Multiplayer',
       'Other people will join. You will be asked how they sign in, how they get the game files, and whether the server is reachable from the internet.'))}`,
-  { disabled: !answers.deploymentMode });
+  { disabled: !answers.deploymentMode, need: 'Choose one to carry on.' });
   wireChoices();
 }
 
@@ -543,7 +566,7 @@ function stepLogin() {
         </div>
       </div></div>`;
     }).join(''))}`,
-  { disabled: answers.loginMethods.length === 0 });
+  { disabled: answers.loginMethods.length === 0, need: 'Pick at least one, or nobody can sign in.' });
 
   view().querySelectorAll('[data-login]').forEach((el) => {
     el.onchange = () => {
@@ -586,8 +609,9 @@ function stepAdmins() {
       <strong>Viewer</strong> can look, and nothing else.
     </div>
     <div class="row g-2 align-items-end">
-      <div class="col-sm-4"><label class="form-label small">Username</label>
-        <input class="form-control" id="adName" autocomplete="off"></div>
+      <div class="col-sm-4"><label class="form-label small">Email address</label>
+        <input class="form-control" id="adName" type="email" autocomplete="off"
+          placeholder="them@example.com"></div>
       <div class="col-sm-4"><label class="form-label small">Password</label>
         <input class="form-control" id="adPass" type="password" autocomplete="new-password"></div>
       <div class="col-sm-2"><label class="form-label small">Role</label>
@@ -598,7 +622,7 @@ function stepAdmins() {
         </select></div>
       <div class="col-sm-2"><button class="btn btn-outline-primary w-100" id="adGo">Add</button></div>
     </div>
-    <div class="form-text">At least 12 characters. They can change it once they sign in.</div>
+    <div class="form-text">They sign in with that email. At least 12 characters; they can change it once they are in.</div>
     <div id="adErr" class="text-danger small mt-1"></div>
     ${raw(addedAdmins.length ? html`<ul class="list-unstyled small mt-3 mb-0">
       ${raw(addedAdmins.map((a) => html`<li class="py-1">
@@ -629,7 +653,7 @@ function stepContent() {
       'The Game of the Year edition. This is what most people have.'))}
     ${raw(choice('contentProfile', 'tamriel-rebuilt', 'Tamriel Rebuilt',
       'Game of the Year plus the Tamriel Rebuilt landmass. You will add its files in the mod list.'))}`,
-  { disabled: !answers.contentProfile });
+  { disabled: !answers.contentProfile, need: 'Choose which content this server runs.' });
   wireChoices();
 }
 
@@ -642,7 +666,7 @@ function stepDelivery() {
       'Everyone supplies their own Morrowind files. The server only checks that everybody is running the same thing, so the world stays consistent.'))}
     ${raw(choice('deliveryModel', 'serve', 'The server provides the files',
       'Players receive the data from this server. Only do this if you are entitled to distribute the copy you are hosting.'))}`,
-  { disabled: !answers.deliveryModel });
+  { disabled: !answers.deliveryModel, need: 'Choose how players get the files.' });
   wireChoices();
 }
 
@@ -717,8 +741,17 @@ function stepName() {
     <p class="text-secondary small">Shown to players when they browse or join.</p>
     <input class="form-control form-control-lg" id="wzName" value="${answers.serverName}"
       placeholder="My Morrowind server" maxlength="64">`,
-  { onNext: () => { answers.serverName = $('#wzName').value.trim(); step++; renderWizard(); } });
-  setTimeout(() => $('#wzName')?.focus(), 30);
+  { disabled: answers.serverName.trim() === '',
+    need: 'Give it a name so players know what they are joining.',
+    onNext: () => { answers.serverName = $('#wzName').value.trim(); step++; renderWizard(); } });
+  const nameInput = $('#wzName');
+  // Live, so the Continue button unlocks as they type rather than after they click away.
+  nameInput.oninput = () => {
+    answers.serverName = nameInput.value;
+    $('#wzNext').disabled = nameInput.value.trim() === '';
+  };
+  nameInput.onkeydown = (e) => { if (e.key === 'Enter' && !$('#wzNext').disabled) $('#wzNext').click(); };
+  setTimeout(() => nameInput?.focus(), 30);
 }
 
 function stepStorage() {
@@ -740,11 +773,20 @@ function stepStorage() {
       </div>
       <div class="vt-section-note mt-3">Access keys are read from the environment
         (<code>S3_ACCESS_KEY_ID</code> and <code>S3_SECRET_ACCESS_KEY</code>), never stored in
-        configuration, so they cannot end up in a backup or a screenshot of this page.</div>` : '')}`);
+        configuration, so they cannot end up in a backup or a screenshot of this page.</div>` : '')}`,
+  // Choosing S3 and leaving it blank produces a server that accepts uploads and then
+  // cannot store them, which surfaces much later as a player's failed upload.
+  { disabled: answers.storage === 's3'
+      && (answers.s3.endpoint.trim() === '' || answers.s3.bucket.trim() === ''),
+    need: 'Fill in the endpoint and bucket, or choose "On this server".' });
   wireChoices();
   const e = $('#s3e'), b = $('#s3b'), r = $('#s3r');
-  if (e) e.oninput = () => { answers.s3.endpoint = e.value.trim(); };
-  if (b) b.oninput = () => { answers.s3.bucket = b.value.trim(); };
+  const recheck = () => {
+    $('#wzNext').disabled = answers.storage === 's3'
+      && (answers.s3.endpoint.trim() === '' || answers.s3.bucket.trim() === '');
+  };
+  if (e) e.oninput = () => { answers.s3.endpoint = e.value.trim(); recheck(); };
+  if (b) b.oninput = () => { answers.s3.bucket = b.value.trim(); recheck(); };
   if (r) r.oninput = () => { answers.s3.region = r.value.trim(); };
 }
 
@@ -935,8 +977,9 @@ function pageLogin(totpRequired = false, notice = '') {
         <img src="/admin/static/logo.svg" alt="" style="width:56px;height:56px">
       </div>
       <div class="card vt-card"><div class="card-body p-4">
-        <div class="mb-3"><label class="form-label">Username</label>
-          <input class="form-control" id="liName" autocomplete="username"></div>
+        <div class="mb-3"><label class="form-label">Email or username</label>
+          <input class="form-control" id="liName" autocomplete="username"
+            placeholder="you@example.com"></div>
         <div class="mb-3"><label class="form-label">Password</label>
           <input class="form-control" id="liPass" type="password" autocomplete="current-password"></div>
         <div class="mb-3" ${raw(totpRequired ? '' : 'hidden')} id="liTotpWrap">
@@ -951,7 +994,7 @@ function pageLogin(totpRequired = false, notice = '') {
           <p class="small text-secondary mb-2">We will email a reset link to the address on
             the account, if it has one and this server can send mail.</p>
           <div class="input-group input-group-sm">
-            <input class="form-control" id="liForgotName" placeholder="your username">
+            <input class="form-control" id="liForgotName" placeholder="you@example.com">
             <button class="btn btn-outline-secondary" id="liForgotGo">Send</button>
           </div>
           <div id="liForgotMsg" class="small mt-2"></div>
@@ -1888,8 +1931,9 @@ async function pageAccounts() {
       <h3 class="card-title"><i class="bi bi-person-plus me-2"></i>Add someone</h3></div>
       <div class="card-body">
         <div class="row g-2 align-items-end">
-          <div class="col-sm-4"><label class="form-label small">Username</label>
-            <input class="form-control" id="naName" autocomplete="off"></div>
+          <div class="col-sm-4"><label class="form-label small">Email address</label>
+            <input class="form-control" id="naName" type="email" autocomplete="off"
+              placeholder="them@example.com"></div>
           <div class="col-sm-4"><label class="form-label small">Password</label>
             <input class="form-control" id="naPass" type="password" autocomplete="new-password"></div>
           <div class="col-sm-2"><label class="form-label small">Access</label>
@@ -2361,13 +2405,26 @@ async function route() {
       + 'An owner can grant it from the Accounts page.');
   }
 
-  if (state.firstRun) {
+  // SETUP IS A DOOR, NOT A SUGGESTION.
+  //
+  // Creating the owner account used to end first-run on its own, which dropped you into a
+  // full dashboard with every later question unanswered and every nav link live. A
+  // non-technical operator can wander off mid-setup that way and end up running a half
+  // configured server with nothing telling them so. The wizard now holds the whole page
+  // until it is finished: no nav, no other route reachable, and the only way past is to
+  // answer the questions (or deliberately skip the ones that are genuinely optional).
+  //
+  // Re-running setup later from the nav is a different thing, and that path stays free to
+  // come and go: `setupCompleted` is already true by then.
+  const inSetup = state.firstRun || (state.authed && state.setupCompleted !== true);
+  if (inSetup) {
     // Keep a restored position rather than resetting: this runs on every load, so
     // overwriting `step` here is what made the saved progress unreachable. Only clamp to the
     // bounds the current auth state allows, step 0 is the create-account screen, which is
     // pointless once an account exists.
     if (!state.authed) step = 0;
     else if (step < 1) step = 1;
+    seedFromServer();
     return renderWizard();
   }
   if (!state.authed) return pageLogin();

@@ -145,6 +145,8 @@ body.vt-bare #pageTitle { color: var(--vt-ember-dark); }
 .vt-card > .card-body > p:first-of-type { margin-bottom: 1.15rem; }
 
 .vt-wizard-nav { display: flex; align-items: center; gap: .5rem; margin-top: 1.25rem; }
+/* Sits beside a disabled Continue and says what is still needed. */
+.vt-need { margin-left: .25rem; }
 .vt-wizard-nav .btn-lg { padding-inline: 1.75rem; }
 
 .vt-choice {
