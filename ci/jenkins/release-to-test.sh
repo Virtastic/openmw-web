@@ -29,16 +29,38 @@ _cfg="$(dirname "$0")/config.env"
 BUILDER="${BUILDER:?set BUILDER in ci/jenkins/config.env (see config.env.example)}"
 DEST="${DEST:-morrowind-src}"
 
+# REF: which ref the builder checks out. Defaults to dev, so every existing invocation behaves
+# exactly as before. Set it to build a branch without merging first:
+#     CONFIRM=1 REF=perf/opentes3 ci/jenkins/release-to-test.sh engine
+REF="${REF:-dev}"
+
+# CONFIRM=1 IS REQUIRED, and this is not ceremony. deploy-test.sh says it plainly: "There is no
+# build-without-deploy, because an image that was never deployed has never been tested" -- so
+# running this ALWAYS replaces the shared test site, whichever ref you pass. The build server and
+# test host are shared with other sessions and nothing anywhere locks them (no flock/lockfile in
+# ci/ at all), so an unannounced run can swap the source tree under someone else's in-flight
+# build or take the test site out from under whoever is using it.
+if [ "${CONFIRM:-0}" != "1" ]; then
+  echo "REFUSING: this builds REF='$REF' and WILL REPLACE THE SHARED TEST DEPLOY." >&2
+  echo "          Announce it first, then re-run with CONFIRM=1." >&2
+  exit 1
+fi
+
 echo "==> releasing '$WHAT' to the test server via $BUILDER"
 
-ssh -o BatchMode=yes "$BUILDER" "WHAT='$WHAT' DEST='$DEST' bash -s" <<'REMOTE'
+ssh -o BatchMode=yes "$BUILDER" "WHAT='$WHAT' DEST='$DEST' REF='$REF' bash -s" <<'REMOTE'
 set -euo pipefail
 cd "$HOME/$DEST"
 export SRC="$HOME/$DEST"
 
-echo "==> fetching origin/dev"
-git fetch -q --depth=1 origin dev
-git checkout -f -q -B dev FETCH_HEAD
+echo "==> fetching origin/$REF"
+git fetch -q --depth=1 origin "$REF"
+# DETACHED, deliberately not -B dev. Pointing the builder's `dev` at a feature ref would make
+# `git log --oneline -1` -- which release-to-test.sh, build-engine.sh and deploy-test.sh all echo
+# -- report that branch AS dev, so anyone inspecting ~/morrowind-src later gets a false answer
+# about what is deployed. Nothing downstream reads the branch name, only .source-commit and
+# git log -1, so detaching costs nothing and keeps the record honest.
+git checkout -f -q --detach FETCH_HEAD
 git rev-parse HEAD > .source-commit
 echo "    building $(git log --oneline -1)"
 
