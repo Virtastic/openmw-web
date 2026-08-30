@@ -55,6 +55,11 @@ export default async function run(ctx) {
     // requirement, not a test detail.
     '--shared', ctx.serverDataDir,
     '--base-port', String(GW_PORT + 200), '--max-worlds', '4',
+    // ASK FOR THE PUBLIC WORLD. [worlds] publicEnabled defaults to FALSE (server config.ts) and
+    // gateway/main.ts says so outright -- no public world unless the deployment asks for one.
+    // This scenario travels the party to 'public', so without this there is nothing to travel to
+    // and the leader never receives a destination. Same gap as _gateway.mjs and s47.
+    '--public-world', 'vvardenfell',
     // Worlds this gateway spawns must boot WITHOUT real game data, a peer binary or a server
     // password — a harness has none. server.mjs refuses on all three, so every spawned world
     // died and the scenario saw only an empty world list.

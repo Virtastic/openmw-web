@@ -76,6 +76,28 @@ teleport" to "why doesn't the test see it".
   `pcall` + `player:teleport` in `global.lua` lands in `teleportPlayerTo()`, not
   `MP_InviteAccepted` — which produced a confident, completely wrong "the handler never runs".
 
+## s31-container: a different fault, characterised but not fixed
+
+Not the same cause, and NOT the "intermittent race" the repo history records — it failed 3/3
+consecutive runs here. The scenario's own diagnostic answers the question it was built to answer:
+
+    after the put, A still holds 0 of the item
+    (0 = it moved and the mirror is at fault; 1 = the transfer never happened)
+
+So the transfer WORKS and the container mirror does not reflect it on the actor's client. Every
+link in that chain reads correct:
+
+  - the server relays `ContainerUpdate` to the whole cell INCLUDING the requester
+    (`worldstate.ts`, after `cont.stateSeq++`)
+  - `objRefToJs` emits `{ net: netId }`, so the client's key is `n:<netId>` — matching what the
+    scenario looks up
+  - `MP_ContainerUpdate` updates `containerData[key]` BEFORE the own-echo `return`, so the actor's
+    own op still lands in the mirror source
+  - the mirror publishes every 0.5s from `objects.tick`, and the scenario waits 30s
+
+Reading has been exhausted; the next step is to instrument `MP_ContainerUpdate` (does it fire on
+A, and what key does it compute?) using `mp.testSet` — NOT `print`, for the reason above.
+
 ## The general lesson for this suite
 
 `__omwMP.pose` is a 2 Hz mirror, not live state. Any assertion about movement must poll it until
