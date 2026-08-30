@@ -27,7 +27,9 @@
 .app-sidebar { --bs-bg-opacity: 1; background-color: var(--vt-ash) !important; }
 .sidebar-brand { background-color: var(--vt-ash-soft); border-bottom: 1px solid #ffffff14; }
 .brand-image { width: 28px; height: 28px; margin-right: .5rem; }
-.brand-text { color: var(--vt-gold); letter-spacing: .02em; }
+/* AdminLTE sets .brand-link colour on the anchor, which wins over a bare .brand-text rule
+   by specificity. Scoped here so the gold actually lands rather than only appearing to. */
+.sidebar-brand .brand-link .brand-text { color: var(--vt-gold); letter-spacing: .02em; }
 
 .sidebar-menu .nav-link { color: #cfc6b4; border-radius: .375rem; margin: 1px .5rem; }
 .sidebar-menu .nav-link:hover { background: #ffffff12; color: var(--vt-parchment); }

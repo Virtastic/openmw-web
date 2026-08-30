@@ -44,6 +44,11 @@ COPY docker-entrypoint.sh /usr/local/bin/
 # source file's mode would produce an image that fails to start on some machines and not
 # others — the worst kind of "works here".
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+# /data owned by the user that runs. Every compose file here mounts a volume over it, which
+# is why its absence went unnoticed -- but `docker run` with no volume then failed on EACCES
+# at first write, and "it only works if you remember the -v" is a trap. tier2 already did
+# this; parity matters because the two images are meant to be interchangeable.
+RUN mkdir -p /data && chown node:node /data
 USER node
 EXPOSE 8080
 # busybox wget ships with alpine; /healthz is served on the same port as the WS endpoint.
