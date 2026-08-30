@@ -15,7 +15,7 @@ import {
   createWriteStream, mkdirSync, accessSync, constants, unlinkSync,
 } from 'node:fs';
 import { rm } from 'node:fs/promises';
-import { join, basename } from 'node:path';
+import { join, basename, dirname, resolve, sep } from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { log } from '../../log';
 
@@ -31,28 +31,85 @@ const OFFICIAL = ['Morrowind.esm', 'Tribunal.esm', 'Bloodmoon.esm'];
 const CONTENT_EXT = /\.(esm|esp|omwaddon|omwgame)$/i;
 const ARCHIVE_EXT = /\.(bsa|ba2)$/i;
 
-/** What each content profile expects to find, for the setup wizard's file check. */
-export const CONTENT_PROFILES: Record<string, { label: string; requires: string[]; note: string }> = {
+/**
+ * What each content profile expects, for the setup wizard's check.
+ *
+ * `requires` is the set of named files that must be present. `media` is the set of loose
+ * asset directories that must not be empty — and they matter as much as the plugins.
+ * Morrowind.bsa carries meshes and textures, but Sound, Music, Video, Fonts and Splash are
+ * loose on disk and belong to no archive. Checking only for the .esm and .bsa passes a
+ * folder that produces a game with no voice, no music and no intro, and reports it as
+ * complete. data/vanilla-manifest.ts learned this the same way and says so.
+ */
+export const CONTENT_PROFILES: Record<string, {
+  label: string; requires: string[]; media: string[]; note: string;
+}> = {
   morrowind: {
     label: 'Morrowind',
     requires: ['Morrowind.esm', 'Morrowind.bsa'],
-    note: 'The base game only.',
+    media: ['Sound', 'Music', 'Video', 'Fonts', 'Splash', 'BookArt'],
+    note: 'The base game. Copy the WHOLE "Data Files" folder — the plugins and archives are '
+      + 'only part of it, and the Sound, Music, Video, Fonts, Splash and BookArt folders sit '
+      + 'loose beside them. Without those the game runs, silently and with no intro.',
   },
   expansions: {
     label: 'Morrowind + Tribunal + Bloodmoon',
-    requires: ['Morrowind.esm', 'Morrowind.bsa', 'Tribunal.esm', 'Tribunal.bsa', 'Bloodmoon.esm', 'Bloodmoon.bsa'],
-    note: 'Game of the Year edition. Each expansion needs its .esm AND its .bsa — an .esm ' +
-      'without its archive loads and then renders every object as an error marker, which ' +
-      'looks like it worked.',
+    requires: [
+      'Morrowind.esm', 'Morrowind.bsa',
+      'Tribunal.esm', 'Tribunal.bsa',
+      'Bloodmoon.esm', 'Bloodmoon.bsa',
+    ],
+    media: ['Sound', 'Music', 'Video', 'Fonts', 'Splash', 'BookArt'],
+    note: 'Game of the Year edition. Each expansion needs its .esm AND its .bsa — an .esm '
+      + 'without its archive loads and then renders every object as an error marker, which '
+      + 'looks like it worked. Copy the whole "Data Files" folder, loose media included.',
   },
   'tamriel-rebuilt': {
     label: 'Tamriel Rebuilt',
     requires: ['Morrowind.esm', 'Morrowind.bsa', 'Tribunal.esm', 'Bloodmoon.esm'],
-    note: 'Tamriel Rebuilt needs the Game of the Year files plus its own TR_Mainland.esm and ' +
-      'TR_Data.bsa. Add those in the mod list once uploaded — file names vary by release, so ' +
-      'they are not checked automatically.',
+    media: ['Sound', 'Music', 'Video', 'Fonts', 'Splash', 'BookArt'],
+    note: 'Game of the Year edition plus the Tamriel Rebuilt landmass. Its own files '
+      + '(TR_Mainland.esm, TR_Data.bsa and friends) go in alongside; release names vary, so '
+      + 'they are not checked for by name — enable them in the load order once uploaded.',
   },
 };
+
+/** Which of a profile's loose media directories actually have files in them. */
+function mediaPresent(gameDataDir: string, dirs: string[]): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const d of dirs) {
+    out[d] = 0;
+    try {
+      // Case-insensitively: an operator's copy may be "sound" or "Sound" depending on where
+      // it came from, and refusing to see one because of its casing would be absurd.
+      const actual = readdirSync(gameDataDir)
+        .find((e) => e.toLowerCase() === d.toLowerCase());
+      if (!actual) continue;
+      const full = join(gameDataDir, actual);
+      if (!statSync(full).isDirectory()) continue;
+      out[d] = countFiles(full);
+    } catch { /* absent or unreadable: stays zero */ }
+  }
+  return out;
+}
+
+/** Files anywhere beneath `dir`. Stops counting at a limit — the answer only has to
+ *  distinguish "empty" from "has content", and Textures alone runs to thousands. */
+function countFiles(dir: string, limit = 50): number {
+  let n = 0;
+  const stack = [dir];
+  while (stack.length && n < limit) {
+    const cur = stack.pop()!;
+    let ents;
+    try { ents = readdirSync(cur, { withFileTypes: true }); } catch { continue; }
+    for (const e of ents) {
+      if (n >= limit) break;
+      if (e.isDirectory()) stack.push(join(cur, e.name));
+      else n++;
+    }
+  }
+  return n;
+}
 
 function listFiles(gameDataDir: string): { content: string[]; archives: string[] } {
   if (!existsSync(gameDataDir)) return { content: [], archives: [] };
@@ -131,8 +188,9 @@ export function reconcile(gameDataDir: string, dataDir: string): {
   return { entries, missing, archives };
 }
 
-export function modsView(gameDataDir: string, dataDir: string): unknown {
+export function modsView(gameDataDir: string, dataDir: string, profile?: string): unknown {
   const { entries, missing, archives } = reconcile(gameDataDir, dataDir);
+  const spec = profile ? CONTENT_PROFILES[profile] : undefined;
   return {
     dir: gameDataDir,
     exists: existsSync(gameDataDir),
@@ -140,6 +198,9 @@ export function modsView(gameDataDir: string, dataDir: string): unknown {
     missing,
     archives,
     profiles: CONTENT_PROFILES,
+    // Loose media, counted per directory, so the wizard can say "Music is empty" rather than
+    // pronouncing a folder complete because two plugins happen to be present.
+    media: spec ? mediaPresent(gameDataDir, spec.media) : undefined,
   };
 }
 
@@ -186,8 +247,21 @@ export function saveMods(
 // no way to get files onto the server at all — "copy them into the folder" assumes shell
 // access to a box that may not be the machine they are sitting at.
 
-/** What may be written into the game data folder. Nothing else, ever. */
-const UPLOAD_EXT = /\.(esm|esp|bsa|ba2|omwaddon|omwgame)$/i;
+// WHAT A REAL DATA FILES FOLDER CONTAINS, which is not just the plugins.
+//
+// These mirror data/vanilla-manifest.ts exactly, and that file explains why in a comment
+// worth repeating: hash a tree that has only the ESMs and "the game installs fine and runs
+// with no voice, no music and no intro". Morrowind.bsa carries meshes and textures, but
+// Sound, Music, Video, Fonts, Splash and BookArt are LOOSE on disk and belong to nobody's
+// archive. An upload path that accepted only .esm/.bsa produced precisely that broken
+// install, silently, and called it done.
+//
+// Kept as two constants rather than one so the split stays visible: core files are loaded by
+// NAME from the root, loose media by PATH from its directory.
+const CORE_EXT = /\.(esm|esp|bsa|ba2|omwaddon|omwgame)$/i;
+const MEDIA_EXT = /\.(mp3|wav|bik|fnt|tex|dds|tga|bmp|zip)$/i;
+/** Top-level directories loose media may live under. Anything else is not game data. */
+const MEDIA_DIRS = /^(Sound|Music|Video|Fonts|Splash|BookArt|Icons|Textures|Meshes)\//i;
 /** Morrowind.bsa alone is ~430 MB and Tamriel Rebuilt ships larger; 8 GB is headroom, not a
  *  target. The point of the cap is that a stuck or hostile client cannot fill the disk. */
 const MAX_UPLOAD_BYTES = 8 * 1024 * 1024 * 1024;
@@ -195,26 +269,52 @@ const MAX_UPLOAD_BYTES = 8 * 1024 * 1024 * 1024;
 export type UploadResult = { ok: true; file: string; bytes: number } | { ok: false; status: number; error: string };
 
 /**
- * Accept a client-supplied filename, or refuse it. Never repairs one.
+ * Accept a client-supplied relative path, or refuse it. Never repairs one.
  *
- * REFUSE, don't sanitise. Running basename() over "../../owned.esp" yields "owned.esp",
- * which is safe — nothing escapes the folder — but it silently writes a file the operator
- * never named, under a name they did not choose. A browser's File.name never contains a
- * path separator, so anything that does is a confused client or a probe, and both are
- * better served by a clear refusal than by a quiet rename.
+ * Subdirectories are now allowed, because they have to be: loose media is loaded BY PATH, so
+ * "Music/Explore/mx_explore_1.mp3" must land exactly there. The previous version refused any
+ * path separator at all, which made a complete Data Files upload impossible.
  *
- * Both separators are checked, not just the platform's: a Windows client can send a
- * backslash to a Linux server, where basename() would not treat it as one.
+ * That makes traversal a live concern rather than a theoretical one, so the rule is strict:
+ * a path is accepted only if every segment is ordinary, and only if it is either a core file
+ * sitting at the root or a media file under one of Morrowind's own asset directories.
+ * Anything else is refused outright rather than trimmed into something plausible — a
+ * browser sends webkitRelativePath, which is well-formed, so a malformed one is a confused
+ * client or a probe and deserves an answer, not a guess.
  */
-export function safeUploadName(raw: string): string | null {
-  const name = raw.trim();
-  if (name === '' || name.length > 200) return null;
-  if (name.includes('/') || name.includes('\\')) return null;
-  if (name.includes('\0')) return null;
-  if (name.startsWith('.')) return null;      // hidden files, and "..'
-  if (name !== basename(name)) return null;   // belt and braces: anything path-like at all
-  if (!UPLOAD_EXT.test(name)) return null;
-  return name;
+export function safeUploadPath(raw: string): string | null {
+  // Windows clients send backslashes to a Linux server, where they are ordinary characters
+  // rather than separators. Normalise first so the checks below see one shape.
+  const path = raw.trim().replace(/\\/g, '/');
+  if (path === '' || path.length > 400) return null;
+  if (path.includes('\0')) return null;
+  if (path.startsWith('/')) return null;                  // absolute
+  if (/^[a-zA-Z]:/.test(path)) return null;               // drive-relative, e.g. C:foo
+
+  const parts = path.split('/');
+  // A browser's directory picker includes the chosen folder as the first segment
+  // ("Data Files/Music/..."), which is a container, not part of the game's layout. Drop a
+  // leading segment only when what remains is recognisable, so this cannot be used to
+  // smuggle an extra level.
+  const segments = parts.length > 1 && !MEDIA_DIRS.test(`${parts[0]}/`) && !CORE_EXT.test(parts[0]!)
+    ? parts.slice(1)
+    : parts;
+  if (segments.length === 0) return null;
+
+  for (const seg of segments) {
+    if (seg === '' || seg === '.' || seg === '..') return null;
+    if (seg.startsWith('.')) return null;                 // hidden files and dotdirs
+    if (seg.length > 200) return null;
+    if (seg !== basename(seg)) return null;               // belt and braces
+  }
+
+  const rel = segments.join('/');
+  const file = segments[segments.length - 1]!;
+
+  // A core file belongs at the root and nowhere else; media belongs under a known asset
+  // directory and nowhere else. Neither can reach anywhere the engine does not read.
+  if (segments.length === 1) return CORE_EXT.test(file) ? rel : null;
+  return MEDIA_DIRS.test(rel) && MEDIA_EXT.test(file) ? rel : null;
 }
 
 /** Can we actually write there? A read-only mount is the likeliest reason and deserves a
@@ -243,18 +343,35 @@ export async function uploadContent(
   gameDataDir: string,
   rawName: string,
 ): Promise<UploadResult> {
-  const name = safeUploadName(rawName);
+  const name = safeUploadPath(rawName);
   if (!name) {
     return { ok: false, status: 400,
-      error: 'that is not a game data file — expected .esm, .esp, .bsa, .omwaddon or .omwgame' };
+      error: 'That is not part of a Morrowind Data Files folder. Expected a plugin or archive '
+        + '(.esm, .esp, .bsa, .omwaddon) at the top level, or media under Sound, Music, Video, '
+        + 'Fonts, Splash, BookArt, Icons, Textures or Meshes.' };
   }
   if (!gameDataWritable(gameDataDir)) {
     return { ok: false, status: 409,
-      error: 'the game data folder is read-only, so files cannot be uploaded. Copy them in '
+      error: 'The game data folder is read-only, so files cannot be uploaded. Copy them in '
         + 'directly, or make the mount writable (remove ":ro" from the gamedata volume).' };
   }
 
   const target = join(gameDataDir, name);
+  // SECOND CHECK, after the path has been resolved. safeUploadPath already refuses anything
+  // that could escape, but this is the assertion that actually matters and it costs nothing:
+  // whatever we are about to open must be inside the folder we meant.
+  const root = gameDataDir.endsWith(sep) ? gameDataDir : gameDataDir + sep;
+  if (!resolve(target).startsWith(resolve(root))) {
+    log('warn', 'admin.upload_escape_refused', { name: rawName });
+    return { ok: false, status: 400, error: 'refused: that path escapes the game data folder' };
+  }
+  // Media lives in subdirectories, so they have to exist before the stream opens.
+  try {
+    mkdirSync(dirname(target), { recursive: true });
+  } catch (err) {
+    log('error', 'admin.upload_mkdir_failed', { name, error: String(err) });
+    return { ok: false, status: 500, error: `Could not create the folder for ${name}.` };
+  }
   const tmp = `${target}.${process.pid}.upload`;
   const out = createWriteStream(tmp);
   let written = 0;

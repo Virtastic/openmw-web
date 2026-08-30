@@ -472,7 +472,10 @@ export function adminRoutes(deps: AdminDeps) {
     // --- mods ---------------------------------------------------------------------------------
     if (method === 'GET' && path === '/admin/api/mods') {
       if (!await gate(req, res, auth, 'viewer')) return true;
-      json(res, 200, { ...(modsView(deps.gameDataDir, deps.dataDir) as object), writable: gameDataWritable(deps.gameDataDir) });
+      json(res, 200, {
+        ...(modsView(deps.gameDataDir, deps.dataDir, url.searchParams.get('profile') ?? undefined) as object),
+        writable: gameDataWritable(deps.gameDataDir),
+      });
       return true;
     }
     // Upload streams straight to disk, so it must NOT go through readJson's buffering — a

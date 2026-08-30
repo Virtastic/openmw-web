@@ -578,11 +578,11 @@ test('files added to the folder after a list was saved still load', async (t) =>
 // ---------------------------------------------------------------------------------------
 
 test('safeUploadName refuses everything that is not a plain content filename', async () => {
-  const { safeUploadName } = await import('../src/net/admin/api-mods');
+  const { safeUploadPath } = await import('../src/net/admin/api-mods');
 
-  assert.equal(safeUploadName('BetterClothes.esp'), 'BetterClothes.esp');
-  assert.equal(safeUploadName('Morrowind.bsa'), 'Morrowind.bsa');
-  assert.equal(safeUploadName('Tamriel_Data.esm'), 'Tamriel_Data.esm');
+  assert.equal(safeUploadPath('BetterClothes.esp'), 'BetterClothes.esp');
+  assert.equal(safeUploadPath('Morrowind.bsa'), 'Morrowind.bsa');
+  assert.equal(safeUploadPath('Tamriel_Data.esm'), 'Tamriel_Data.esm');
 
   // Traversal, in the several spellings a client might send. basename() handles the forward
   // slash; the backslash matters because Windows treats it as a separator too.
@@ -590,20 +590,20 @@ test('safeUploadName refuses everything that is not a plain content filename', a
     '../../etc/passwd', '..\\..\\windows\\system32\\evil.esp', '/etc/cron.d/x.esp',
     'sub/dir/file.esp', 'a\\b.esp',
   ]) {
-    const out = safeUploadName(bad);
+    const out = safeUploadPath(bad);
     assert.ok(out === null || (!out.includes('/') && !out.includes('\\') && !out.includes('..')),
       `${bad} must not survive as a path`);
   }
 
   // Wrong type: the game data folder is scanned by the engine, so only engine files go in.
   for (const bad of ['evil.sh', 'config.toml', 'accounts.db', 'x.esp.exe', 'noextension']) {
-    assert.equal(safeUploadName(bad), null, `${bad} must be refused`);
+    assert.equal(safeUploadPath(bad), null, `${bad} must be refused`);
   }
   // Hidden files, empty names, absurd lengths, embedded NULs.
-  assert.equal(safeUploadName('.hidden.esp'), null);
-  assert.equal(safeUploadName(''), null);
-  assert.equal(safeUploadName(`${'a'.repeat(300)}.esp`), null);
-  assert.equal(safeUploadName('ok\0.esp'), null);
+  assert.equal(safeUploadPath('.hidden.esp'), null);
+  assert.equal(safeUploadPath(''), null);
+  assert.equal(safeUploadPath(`${'a'.repeat(300)}.esp`), null);
+  assert.equal(safeUploadPath('ok\0.esp'), null);
 });
 
 test('uploading a content file puts it in the load order', async (t) => {

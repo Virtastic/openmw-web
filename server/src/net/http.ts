@@ -94,14 +94,21 @@ function proxyIsTrusted(peer: string): boolean {
  * so testing the peer would answer "private" for the entire internet.
  */
 export function isPrivateAddress(addr: string): boolean {
+  // EXACTLY the ranges proxyIsTrusted has always accepted, and no more. Sharing one
+  // predicate between "is this a trusted proxy" and "is this requester on our network" is
+  // right — they are the same question — but only as long as sharing does not quietly widen
+  // either. An earlier version of this refactor added link-local (169.254/16 and fe80::)
+  // because they are private in the ordinary sense; that also made a link-local peer a
+  // TRUSTED PROXY, which would have let a directly-connected machine forge its own client
+  // address and buy itself a fresh rate-limit budget. Widening a security boundary is a
+  // decision, not a tidy-up. If link-local ever needs to be local-for-setup, split the two
+  // predicates rather than growing this one.
   if (LOOPBACK.has(addr)) return true;
   const v4 = addr.startsWith('::ffff:') ? addr.slice(7) : addr;
   if (/^(10|127)\./.test(v4)) return true;
   if (/^192\.168\./.test(v4)) return true;
   if (/^172\.(1[6-9]|2[0-9]|3[01])\./.test(v4)) return true;
-  if (/^169\.254\./.test(v4)) return true;   // link-local, e.g. a direct cable
-  if (/^f[cd]/i.test(addr)) return true;      // fc00::/7 unique-local
-  return /^fe80:/i.test(addr);                // IPv6 link-local
+  return /^f[cd]/i.test(addr); // fc00::/7 unique-local
 }
 
 // Set once at boot from [limits] trustCloudflareIp. A module-level switch rather than a

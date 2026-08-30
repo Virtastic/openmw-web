@@ -47,6 +47,24 @@
   --bs-btn-disabled-bg: var(--vt-ember-dark); --bs-btn-disabled-border-color: var(--vt-ember-dark);
 }
 
+/* --- card headings ------------------------------------------------------------------ */
+/* AdminLTE redefines Bootstrap's .card-title as `float:left; margin:0`, which is right for
+   a card HEADER (title left, tool buttons right) and wrong everywhere else: inside a card
+   body the heading floats and the next paragraph wraps around it, so "Add game data files"
+   ran straight into the sentence beneath it. Unfloat it in bodies, keep AdminLTE's
+   behaviour in headers. */
+.card-body > .card-title,
+.card-body > h5.card-title {
+  float: none;
+  display: block;
+  margin-bottom: .5rem;
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+/* Headers still float their title, so give the row a clean baseline for the button. */
+.card-header { display: flex; align-items: center; gap: .5rem; }
+.card-header .card-title { float: none; margin: 0; }
+
 /* --- settings forms ---------------------------------------------------------------- */
 /* Help sits under the field, always visible rather than behind a hover: a tooltip you have
    to discover is no help to the person who did not know the field existed. */
@@ -65,27 +83,67 @@
 }
 .vt-section-note {
   font-size: .875rem; background: rgba(238, 203, 120, .12);
-  border-left: 3px solid var(--vt-gold-dim); padding: .6rem .75rem; border-radius: .375rem;
+  border-left: 3px solid var(--vt-gold-dim); padding: .7rem .85rem;
+  border-radius: 0 .375rem .375rem 0; line-height: 1.5;
 }
+.vt-section-note code { background: rgba(0, 0, 0, .18); padding: .05rem .3rem; border-radius: .2rem; }
+.vt-section-note pre { background: rgba(0, 0, 0, .18); padding: .5rem .65rem; border-radius: .25rem; }
+.vt-section-note > :last-child { margin-bottom: 0; }
+
+/* Uploads and file lists inside the wizard read better as compact rows than as full tables. */
+.vt-card .table-sm td { padding: .4rem .5rem; border-color: rgba(128,128,128,.18); }
+.vt-card .table-sm tr:last-child td { border-bottom: 0; }
 
 /* --- wizard ------------------------------------------------------------------------ */
-.vt-wizard { max-width: 46rem; margin: 0 auto; }
-.vt-steps { display: flex; flex-wrap: wrap; gap: .35rem; margin-bottom: 1.5rem; }
-.vt-steps span {
-  flex: 1 1 auto; height: 4px; border-radius: 2px; background: var(--bs-border-color);
-  min-width: 12px;
+.vt-wizard { max-width: 44rem; margin: 0 auto; padding-top: .5rem; }
+
+/* Named steps, not anonymous ticks: on a ten-question form it matters that you can see
+   where you are and roughly how much is left. */
+.vt-steps { display: flex; gap: .3rem; margin-bottom: .35rem; }
+.vt-step { flex: 1 1 0; min-width: 0; }
+.vt-step-bar {
+  display: block; height: 4px; border-radius: 2px; background: var(--bs-border-color);
+  transition: background .2s;
 }
-.vt-steps span.done { background: var(--vt-gold-dim); }
-.vt-steps span.now { background: var(--vt-ember); }
+.vt-step-label {
+  display: block; margin-top: .35rem; font-size: .68rem; letter-spacing: .02em;
+  color: var(--bs-secondary-color); white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis;
+}
+.vt-step.done .vt-step-bar { background: var(--vt-gold-dim); }
+.vt-step.now .vt-step-bar { background: var(--vt-ember); }
+.vt-step.now .vt-step-label { color: var(--vt-ember); font-weight: 600; }
+.vt-stepcount {
+  font-size: .75rem; color: var(--bs-secondary-color); text-align: right;
+  margin: .5rem 0 .85rem;
+}
+
+/* The wizard card carries the whole conversation, so it gets room to breathe. */
+.vt-card { border: 0; box-shadow: 0 1px 3px rgba(0,0,0,.12), 0 8px 24px rgba(0,0,0,.08); }
+.vt-card .card-body { padding: 1.85rem; }
+.vt-card h5 {
+  font-size: 1.3rem; font-weight: 600; margin-bottom: .4rem; letter-spacing: -.01em;
+}
+.vt-card > .card-body > p:first-of-type { margin-bottom: 1.15rem; }
+
+.vt-wizard-nav { display: flex; align-items: center; gap: .5rem; margin-top: 1.25rem; }
+.vt-wizard-nav .btn-lg { padding-inline: 1.75rem; }
+
 .vt-choice {
   display: block; width: 100%; text-align: left; padding: 1rem 1.15rem; margin-bottom: .6rem;
   border: 2px solid var(--bs-border-color); border-radius: .5rem; background: var(--bs-body-bg);
-  cursor: pointer;
+  cursor: pointer; transition: border-color .12s, background .12s;
 }
 .vt-choice:hover { border-color: var(--vt-gold-dim); }
 .vt-choice.sel { border-color: var(--vt-ember); background: rgba(224, 108, 90, .07); }
 .vt-choice strong { display: block; }
-.vt-choice small { color: var(--bs-secondary-color); }
+.vt-choice small { color: var(--bs-secondary-color); line-height: 1.4; }
+/* Checkbox variant: the box sits beside the text rather than inside the flow of it, so a
+   two-line description does not tuck itself under the tick. */
+.vt-choice.vt-check { display: flex; align-items: flex-start; gap: .65rem; margin-bottom: .5rem; }
+.vt-choice.vt-check input { margin-top: .2rem; flex: 0 0 auto; }
+.vt-choice.vt-check span { display: block; }
+.vt-choice.vt-check small { display: block; }
 
 /* --- console / logs ---------------------------------------------------------------- */
 .vt-mono {

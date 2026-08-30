@@ -230,15 +230,21 @@ const restored = loadWizard();
 const answers = restored.answers;
 let step = restored.step;
 
+// The order is the one that was specified, and only the SERVER NAME was ever marked
+// "multiplayer only". An earlier version also skipped the sign-in, extra-admins and hosting
+// questions for a single-player server, which was me inventing a rule: a private world still
+// has a login (it is how you get in), can still have a second administrator, and can still
+// be reachable from outside. Those questions are asked either way now.
 const wizardSteps = () => {
   const mp = answers.deploymentMode === 'multiplayer';
   return [
     'owner',
     'mode',
-    ...(mp ? ['login', 'admins'] : []),
+    'login',
+    'admins',
     'content',
     'delivery',
-    ...(mp ? ['hosting'] : []),
+    'hosting',
     ...(mp ? ['name'] : []),
     'storage',
     'files',
@@ -246,17 +252,30 @@ const wizardSteps = () => {
   ];
 };
 
+/** Short labels for the progress rail, so the steps are named rather than anonymous ticks. */
+const STEP_LABEL = {
+  owner: 'Account', mode: 'Type', login: 'Sign-in', admins: 'Admins', content: 'Content',
+  delivery: 'Files', hosting: 'Access', name: 'Name', storage: 'Storage',
+  files: 'Game data', review: 'Review',
+};
+
 function wizardShell(inner, { back = true, next = 'Continue', onNext = null, disabled = false } = {}) {
   const steps = wizardSteps();
-  const bar = steps.map((_, i) =>
-    `<span class="${i < step ? 'done' : i === step ? 'now' : ''}"></span>`).join('');
+  const at = Math.min(step, steps.length - 1);
+  const bar = steps.map((s, i) => html`
+    <div class="vt-step ${raw(i < at ? 'done' : i === at ? 'now' : '')}">
+      <span class="vt-step-bar"></span>
+      <span class="vt-step-label">${STEP_LABEL[s] || s}</span>
+    </div>`).join('');
+
   view().innerHTML = html`
     <div class="vt-wizard">
       <div class="vt-steps">${raw(bar)}</div>
-      <div class="card"><div class="card-body p-4">${raw(inner)}</div></div>
-      <div class="d-flex justify-content-between mt-3">
-        <button class="btn btn-outline-secondary" id="wzBack" ${raw(back && step > 0 ? '' : 'hidden')}>Back</button>
-        <button class="btn btn-primary ms-auto" id="wzNext" ${raw(disabled ? 'disabled' : '')}>${next}</button>
+      <div class="vt-stepcount">Step ${at + 1} of ${steps.length}</div>
+      <div class="card vt-card"><div class="card-body">${raw(inner)}</div></div>
+      <div class="vt-wizard-nav">
+        <button class="btn btn-outline-secondary" id="wzBack" ${raw(back && step > 0 ? '' : 'hidden')}>← Back</button>
+        <button class="btn btn-primary btn-lg ms-auto" id="wzNext" ${raw(disabled ? 'disabled' : '')}>${next}</button>
       </div>
     </div>`;
   $('#wzBack').onclick = () => { step = Math.max(0, step - 1); renderWizard(); };
@@ -414,7 +433,7 @@ function stepMode() {
   wizardShell(html`
     <h5>What kind of server is this?</h5>
     <p class="text-secondary small">This decides which of the remaining questions you are asked.</p>
-    ${raw(choice('deploymentMode', 'single', 'Just me',
+    ${raw(choice('deploymentMode', 'single', 'Single Player',
       'A private world for one person. Registration stays closed and the multiplayer questions are skipped.'))}
     ${raw(choice('deploymentMode', 'multiplayer', 'Multiplayer',
       'Other people will join. You will be asked how they sign in, how they get the game files, and whether the server is reachable from the internet.'))}`,
@@ -424,28 +443,54 @@ function stepMode() {
 
 function stepLogin() {
   const has = (m) => answers.loginMethods.includes(m);
+  const sso = ['discord', 'google', 'microsoft'].filter(has)
+    .map((m) => LOGIN_LABEL[m] || m);
   const box = (id, label, blurb) => html`
-    <label class="vt-choice ${raw(has(id) ? 'sel' : '')}" style="cursor:pointer">
-      <input type="checkbox" class="form-check-input me-2" data-login="${id}" ${raw(has(id) ? 'checked' : '')}>
-      <strong style="display:inline">${label}</strong><small class="d-block ms-4">${blurb}</small></label>`;
+    <label class="vt-choice vt-check ${raw(has(id) ? 'sel' : '')}">
+      <input type="checkbox" class="form-check-input" data-login="${id}" ${raw(has(id) ? 'checked' : '')}>
+      <span><strong>${label}</strong><small>${blurb}</small></span></label>`;
+
+  // What the combination actually means, said back to them. "Tick some boxes" is not an
+  // answer to "am I using SSO, passwords, or both" — the point of the question.
+  let summary;
+  if (has('password') && sso.length) {
+    summary = html`<strong>Both.</strong> Players can sign in with a password or with
+      ${sso.join(', ')} — and the same person can use either on one account.`;
+  } else if (has('password')) {
+    summary = html`<strong>Passwords only.</strong> Accounts live on this server and nothing
+      external is involved.`;
+  } else if (sso.length) {
+    summary = html`<strong>Single sign-on only.</strong> Every player signs in through
+      ${sso.join(', ')}; password sign-in is switched off, so anyone without one of those
+      accounts cannot get in.`;
+  } else {
+    summary = html`<strong>Nothing selected.</strong> Pick at least one, or nobody can sign in.`;
+  }
+
   wizardShell(html`
     <h5>How will players sign in?</h5>
-    <p class="text-secondary small">Pick as many as you like — they work side by side, and one
-      person can use more than one on the same account.</p>
-    ${raw(box('password', 'Username and password', 'Accounts held on this server. Nothing external required.'))}
-    ${raw(box('discord', 'Discord', 'Needs a Discord application; you can paste the credentials in Settings afterwards.'))}
+    <p class="text-secondary small">Pick as many as you like. They work side by side — this is
+      how you choose single sign-on, passwords, or both together.</p>
+    ${raw(box('password', 'Username and password',
+      'Accounts held on this server. Nothing external required, and it always works.'))}
+    <div class="text-secondary small text-uppercase mt-3 mb-2">Single sign-on</div>
+    ${raw(box('discord', 'Discord', 'Needs a Discord application.'))}
     ${raw(box('google', 'Google', 'Needs a Google OAuth client.'))}
     ${raw(box('microsoft', 'Microsoft', 'Needs a Microsoft app registration.'))}
-    <div class="vt-section-note mt-3">Single sign-on needs credentials from each provider.
-      Tick them here and fill in the details later under Settings → Access; players can use
-      passwords in the meantime.</div>`,
+    <div class="vt-section-note mt-3">${raw(summary)}</div>
+    ${raw(sso.length ? html`<div class="vt-section-note mt-2">Each provider needs a client ID
+      and secret from its developer console. Tick them here and paste the details afterwards
+      under <strong>Settings → Single sign-on</strong>; until you do, that provider simply is
+      not offered.</div>` : '')}`,
   { disabled: answers.loginMethods.length === 0 });
+
   view().querySelectorAll('[data-login]').forEach((el) => {
     el.onchange = () => {
       const id = el.dataset.login;
       answers.loginMethods = el.checked
         ? [...new Set([...answers.loginMethods, id])]
         : answers.loginMethods.filter((m) => m !== id);
+      saveWizard();
       renderWizard();
     };
   });
@@ -555,35 +600,66 @@ function stepStorage() {
 
 async function stepFiles() {
   let mods = null;
-  try { mods = await api('/mods'); } catch { /* shown as unavailable below */ }
+  try {
+    mods = await api(`/mods?profile=${encodeURIComponent(answers.contentProfile || '')}`);
+  } catch { /* shown as unavailable below */ }
   const profile = mods?.profiles?.[answers.contentProfile];
   const present = new Set([
     ...(mods?.entries || []).map((e) => e.file.toLowerCase()),
     ...(mods?.archives || []).map((a) => a.toLowerCase()),
   ]);
-  const rows = (profile?.requires || []).map((f) => {
-    const ok = present.has(f.toLowerCase());
-    return html`<tr><td class="vt-mono">${f}</td>
-      <td class="text-end">${raw(ok
-        ? '<span class="badge text-bg-success">found</span>'
-        : '<span class="badge text-bg-secondary">missing</span>')}</td></tr>`;
+
+  const badge = (ok) => (ok
+    ? '<span class="badge text-bg-success">found</span>'
+    : '<span class="badge text-bg-secondary">missing</span>');
+
+  const fileRows = (profile?.requires || []).map((f) => html`
+    <tr><td class="vt-mono">${f}</td>
+      <td class="text-end">${raw(badge(present.has(f.toLowerCase())))}</td></tr>`).join('');
+
+  // THE HALF THAT WAS MISSING. Checking only the plugins and archives passes a folder that
+  // produces a game with no voice, no music and no intro, and calls it complete — the loose
+  // asset directories are not inside any .bsa.
+  const media = mods?.media ?? {};
+  const mediaDirs = profile?.media || [];
+  const mediaRows = mediaDirs.map((d) => {
+    const n = media[d] ?? 0;
+    return html`<tr><td class="vt-mono">${d}/</td>
+      <td class="text-end">${raw(n > 0
+        ? `<span class="badge text-bg-success">${n >= 50 ? '50+' : n} file${n === 1 ? '' : 's'}</span>`
+        : badge(false))}</td></tr>`;
   }).join('');
-  const missingCount = (profile?.requires || []).filter((f) => !present.has(f.toLowerCase())).length;
+
+  const missingFiles = (profile?.requires || []).filter((f) => !present.has(f.toLowerCase()));
+  const missingMedia = mediaDirs.filter((d) => (media[d] ?? 0) === 0);
+  const missingCount = missingFiles.length + missingMedia.length;
 
   wizardShell(html`
     <h5>Game data files</h5>
     <p class="text-secondary small">The server needs its own copy of Morrowind to simulate the
-      world. Add the files below, or copy them into
+      world. Add the whole <strong>Data Files</strong> folder below, or copy it into
       <code>${mods?.dir || 'the game data folder'}</code> yourself.</p>
-    ${raw(profile ? html`<table class="table table-sm align-middle">${raw(rows)}</table>` : '')}
+
+    ${raw(profile ? html`
+      <div class="text-secondary small text-uppercase mb-1">Plugins and archives</div>
+      <table class="table table-sm align-middle mb-3">${raw(fileRows)}</table>
+      <div class="text-secondary small text-uppercase mb-1">Loose media
+        <span class="text-lowercase">— not inside any archive</span></div>
+      <table class="table table-sm align-middle mb-3">${raw(mediaRows)}</table>` : '')}
     ${raw(profile?.note ? html`<div class="vt-section-note mb-3">${profile.note}</div>` : '')}
     ${raw(mods ? uploadPanel(mods) : '')}
     ${raw(missingCount > 0 ? html`
       <div class="alert alert-warning mb-0">
-        ${missingCount} expected file${raw(missingCount === 1 ? ' is' : 's are')} still missing.
-        You can finish setup without them — the dashboard keeps working and will tell you what
-        it needs — but players cannot join until the server can simulate the world.
-      </div>` : html`<div class="alert alert-success mb-0">Everything this profile expects is present.</div>`)}`,
+        <strong>${missingCount} item${raw(missingCount === 1 ? '' : 's')} still missing.</strong>
+        ${raw(missingMedia.length ? html`
+          <div class="mt-1">The empty folders matter as much as the plugins:
+            <span class="vt-mono">${missingMedia.join(', ')}</span>. Without them the game runs
+            with no voice, no music and no intro — and nothing will warn you, because it
+            technically works.</div>` : '')}
+        <div class="mt-2">You can finish setup anyway. The dashboard keeps working and tells
+          you what it needs, but players cannot join until the server can simulate the world.</div>
+      </div>` : html`<div class="alert alert-success mb-0">
+        Everything this profile expects is present, media included.</div>`)}`,
   { next: 'Continue' });
   // Re-render this step after an upload so the found/missing table updates in place.
   wireUpload(() => renderWizard());
@@ -1265,13 +1341,21 @@ function uploadPanel(m) {
           into <code>${m.dir}</code> directly, or remove <code>:ro</code> from the
           <code>gamedata</code> volume in <code>docker-compose.yml</code> and restart.
         </div>` : html`
-        <p class="small text-secondary">Drop your Morrowind files here, or
-          <label class="text-decoration-underline" style="cursor:pointer">choose them<input
-            type="file" id="upPick" multiple hidden accept=".esm,.esp,.bsa,.ba2,.omwaddon,.omwgame"></label>.
-          Accepted: <code>.esm .esp .bsa .omwaddon .omwgame</code>. Large files are fine —
-          they upload one at a time and nothing is held in memory.</p>
+        <p class="small text-secondary">Morrowind's <strong>Data Files</strong> folder is more
+          than the plugins: <code>Sound</code>, <code>Music</code>, <code>Video</code>,
+          <code>Fonts</code>, <code>Splash</code> and <code>BookArt</code> sit loose beside
+          them and are not inside any archive. Add the <em>whole folder</em> — with only the
+          .esm and .bsa the game runs silently, with no voice, music or intro.</p>
+        <p class="small text-secondary">
+          <label class="btn btn-sm btn-outline-secondary mb-0">Choose the Data Files folder<input
+            type="file" id="upDir" webkitdirectory directory multiple hidden></label>
+          <label class="btn btn-sm btn-outline-secondary mb-0 ms-1">Or individual files<input
+            type="file" id="upPick" multiple hidden
+            accept=".esm,.esp,.bsa,.ba2,.omwaddon,.omwgame,.mp3,.wav,.bik,.fnt,.tex,.dds,.tga,.bmp,.zip"></label>
+          <span class="ms-2">Large folders are fine — files upload one at a time and nothing
+          is held in memory.</span></p>
         <div id="upDrop" class="vt-drop">
-          <div class="text-secondary">Drop files here</div>
+          <div class="text-secondary">Drop your whole <strong>Data Files</strong> folder here</div>
         </div>
         <div id="upList" class="mt-2 small"></div>
         <p class="small text-secondary mt-2 mb-0">You can also copy files straight into
@@ -1287,46 +1371,96 @@ function wireUpload(onDone) {
   if (!drop) return; // read-only folder: no panel rendered
   const list = $('#upList');
 
-  const send = async (files) => {
-    for (const file of files) {
-      const row = document.createElement('div');
-      row.className = 'py-1';
-      row.innerHTML = html`<span class="vt-mono">${file.name}</span>
-        <span class="text-secondary" data-state>uploading…</span>`;
-      list.append(row);
-      const state = row.querySelector('[data-state]');
+  // A Data Files folder is thousands of files, so this reports progress in aggregate rather
+  // than one row per file — a list that long is not information, it is a wall.
+  const send = async (entries) => {
+    if (!entries.length) return;
+    const row = document.createElement('div');
+    row.className = 'py-2';
+    list.replaceChildren(row);
+    let done = 0;
+    let bytes = 0;
+    const skipped = [];
+    const failed = [];
+    const paint = (extra = '') => {
+      row.innerHTML = html`<div><strong>${done}</strong> of ${entries.length} added
+        · ${(bytes / 1048576).toFixed(0)} MB${raw(extra)}</div>
+        ${raw(skipped.length ? html`<div class="small text-secondary">${skipped.length} skipped
+          (not game data — that is normal for a folder with extras in it)</div>` : '')}
+        ${raw(failed.length ? html`<div class="small text-danger">${failed.length} failed:
+          ${failed.slice(0, 3).join(', ')}</div>` : '')}`;
+    };
+    paint(' · uploading…');
+
+    for (const { file, path } of entries) {
       try {
         // Raw body, not multipart: the server streams it straight to disk, and a multipart
-        // parser for a 400 MB archive would be a dependency plus a memory problem.
-        const r = await fetch(`/admin/api/mods/upload?name=${encodeURIComponent(file.name)}`, {
+        // parser for a 400 MB archive would be a dependency plus a memory problem. The PATH
+        // travels in the query, because loose media is loaded by path and must keep its
+        // directory — "Music/Explore/mx_explore_1.mp3", not "mx_explore_1.mp3".
+        const r = await fetch(`/admin/api/mods/upload?name=${encodeURIComponent(path)}`, {
           method: 'POST',
           headers: { authorization: `Bearer ${token.get()}`, 'content-type': 'application/octet-stream' },
           body: file,
           duplex: 'half',
         });
-        const body = await r.json().catch(() => null);
-        if (!r.ok) {
-          state.textContent = body?.error || `failed (${r.status})`;
-          state.className = 'text-danger';
-        } else {
-          state.textContent = `added, ${(body.bytes / 1048576).toFixed(1)} MB`;
-          state.className = 'text-success';
-        }
-      } catch (e) {
-        state.textContent = e.message;
-        state.className = 'text-danger';
+        if (r.status === 400) skipped.push(path);          // not game data; expected in bulk
+        else if (!r.ok) failed.push(path);
+        else { done++; bytes += file.size; }
+      } catch {
+        failed.push(path);
       }
+      if ((done + skipped.length + failed.length) % 25 === 0) paint(' · uploading…');
     }
+    paint('');
     if (onDone) onDone();
   };
 
-  pick.onchange = () => send([...pick.files]);
+  /** Turn a picker or a drop into {file, path} pairs, keeping each file's folder. */
+  const fromInput = (input) => [...input.files].map((f) => ({
+    file: f,
+    // webkitRelativePath is set by the directory picker and carries the whole subpath.
+    path: f.webkitRelativePath || f.name,
+  }));
+
+  /** Walk a dropped directory tree. Drag-and-drop gives entries, not paths, so the tree has
+   *  to be traversed by hand — dataTransfer.files alone silently yields only loose files. */
+  const walkEntry = async (entry, prefix, out) => {
+    if (entry.isFile) {
+      const file = await new Promise((res, rej) => entry.file(res, rej));
+      out.push({ file, path: prefix + entry.name });
+      return;
+    }
+    if (!entry.isDirectory) return;
+    const reader = entry.createReader();
+    for (;;) {
+      // readEntries returns at most 100 at a time and must be called until it returns none.
+      const batch = await new Promise((res, rej) => reader.readEntries(res, rej));
+      if (!batch.length) break;
+      for (const child of batch) await walkEntry(child, `${prefix + entry.name}/`, out);
+    }
+  };
+
+  if (pick) pick.onchange = () => send(fromInput(pick));
+  const dir = $('#upDir');
+  if (dir) dir.onchange = () => send(fromInput(dir));
+
   drop.ondragover = (e) => { e.preventDefault(); drop.classList.add('over'); };
   drop.ondragleave = () => drop.classList.remove('over');
-  drop.ondrop = (e) => {
+  drop.ondrop = async (e) => {
     e.preventDefault();
     drop.classList.remove('over');
-    send([...e.dataTransfer.files]);
+    const items = [...(e.dataTransfer.items ?? [])]
+      .map((i) => (i.webkitGetAsEntry ? i.webkitGetAsEntry() : null))
+      .filter(Boolean);
+    if (items.length) {
+      const out = [];
+      for (const entry of items) await walkEntry(entry, '', out);
+      send(out);
+      return;
+    }
+    // No entry API (older browser): loose files only, which is better than nothing.
+    send([...e.dataTransfer.files].map((f) => ({ file: f, path: f.name })));
   };
 }
 
