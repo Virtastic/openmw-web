@@ -44,7 +44,7 @@ import type { AccountStore, DashboardRole } from '../../core/accounts';
 import { DASHBOARD_ROLES, accountNameProblem, looksLikeEmail, roleAtLeast } from '../../core/accounts';
 import type { AdminSessionStore } from '../../auth/identities';
 import type { IpRateLimiter } from '../ratelimit';
-import { clientIp, isPrivateAddress } from '../http';
+import { clientIp, isPrivateAddress, redirect } from '../http';
 import { log } from '../../log';
 import { json, readJson } from './util';
 import { gate, passwordLogin, passwordProblem, resolveAuth, type AuthDeps } from './auth';
@@ -135,6 +135,13 @@ export function adminRoutes(deps: AdminDeps) {
    *  and it invalidates the cache when it does. */
   let firstRunCache: boolean | null = null;
 
+  /** Set when the wizard applies with completed:true. Config is only re-read at boot, so
+   *  without this the redirect on "/" would keep sending finished operators back to setup
+   *  for the seconds between saving and the restart landing. */
+  let setupCompletedNow = false;
+  const setupIsComplete = (): boolean => setupCompletedNow
+    || (deps.config() as { setup?: { completed?: boolean } }).setup?.completed === true;
+
   const auth: AuthDeps = {
     sharedToken: deps.sharedToken,
     accounts: deps.accounts,
@@ -165,6 +172,14 @@ export function adminRoutes(deps: AdminDeps) {
     // routed here deliberately (see Caddyfile), the login screen is the default entry now,
     // not launcher.html.
     if (method === 'GET' && (path === '/' || path === '/play')) {
+      // Before setup is finished there is nothing here to sign in to: no sign-in method has
+      // been chosen, the world cannot run, and the landing page would offer a player a door
+      // into a server that is not built yet. Send everyone to the one thing that matters
+      // until it is, which is also what the operator opening the bare address expects.
+      if (!setupIsComplete() || !deps.accounts.hasDashboardOwner()) {
+        redirect(res, '/admin');
+        return true;
+      }
       if (serveWebFile(res, 'play.html')) return true;
       json(res, 500, { error: 'landing page missing' });
       return true;
@@ -220,7 +235,10 @@ export function adminRoutes(deps: AdminDeps) {
         version: deps.version,
         // Server-side, so the getting-started nudge answers the same on every machine
         // instead of being a per-browser localStorage flag.
-        setupCompleted: (deps.config() as { setup?: { completed?: boolean } }).setup?.completed === true,
+        // Same in-process answer the "/" redirect uses, so the page unlocks the moment the
+        // wizard saves rather than only once the restart has landed. A restart that fails
+        // must not leave the operator sealed inside a wizard they already finished.
+        setupCompleted: setupIsComplete(),
         // The wizard's stored answers, whole. The page branches on these, a single-player
         // deployment hides the multiplayer pages, and re-entering Setup pre-fills from them
         // instead of presenting every question blank and saving blanks back over the answers.
@@ -561,6 +579,7 @@ export function adminRoutes(deps: AdminDeps) {
       // printing a line for the operator to paste into a file it cannot reach.
       const domain = body.hosting === 'internal' ? '' : String(body.domain ?? '').trim();
       writeCaddyfile(deps.dataDir, { domain });
+      if (body.completed === true) setupCompletedNow = true;
       log('info', 'admin.setup_applied', { by: ctx.accountKey, mode: body.deploymentMode });
       json(res, 200, { ok: true, restartRequired: true });
       return true;

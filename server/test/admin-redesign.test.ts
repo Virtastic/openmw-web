@@ -37,8 +37,23 @@ async function boot(t: { after(fn: () => unknown): void }, override = {}) {
   return { base, call, token, dataDir };
 }
 
-test('the front door: / serves the sign-in landing page, not a 404', async (t) => {
-  const { base } = await boot(t);
+test('the front door: / sends you to setup until it is done, then serves the sign-in page', async (t) => {
+  const { base, call, token } = await boot(t);
+
+  // Owner created (boot does that) but the wizard unfinished: there is no sign-in method
+  // chosen and no world to enter, so the landing page would be a door into a server that
+  // does not exist yet. Everyone goes to the one thing that matters.
+  for (const path of ['/', '/play']) {
+    const r = await fetch(`${base}${path}`, { redirect: 'manual' });
+    assert.equal(r.status, 302, `${path} should redirect while setup is unfinished`);
+    assert.equal(r.headers.get('location'), '/admin');
+  }
+
+  assert.equal((await call('/setup', { method: 'POST', token, body: {
+    deploymentMode: 'multiplayer', loginMethods: ['password'], completed: true,
+  } })).status, 200);
+
+  // Finished: the real landing page, and no 404 for a player following a join link.
   for (const path of ['/', '/play']) {
     const r = await fetch(`${base}${path}`);
     assert.equal(r.status, 200, `${path} should serve the landing page`);
