@@ -5,6 +5,9 @@
       "runtimeArgs": ["server.py"], "cwd": "play", "port": 8795, "autoPort": true },
     { "name": "openmw-mp", "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev", "--", "--data", "./devdata", "--port", "8080"],
-      "cwd": "server", "port": 8080 }
+      "cwd": "server", "port": 8080 },
+    { "name": "openmw-fresh", "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--", "--data", "./freshdata", "--port", "8090"],
+      "cwd": "server", "port": 8090 }
   ]
 }

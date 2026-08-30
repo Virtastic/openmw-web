@@ -485,7 +485,11 @@ export function adminRoutes(deps: AdminDeps) {
       const body = await readJson<{ domain?: string }>(req, res);
       if (body === undefined) return true;
       const domain = String(body.domain ?? '').trim().toLowerCase();
-      if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(domain)) {
+      // The last label must contain a letter: that shape-checks a NAME and rejects a bare
+      // IP address, so this endpoint cannot be pointed at internal addresses directly. The
+      // caller is an owner either way; this is belt and braces, not the trust boundary.
+      if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(domain)
+          || !/[a-z]/.test(domain.split('.').pop() ?? '')) {
         json(res, 400, { error: 'that does not look like a domain name (e.g. mp.example.com)' });
         return true;
       }
