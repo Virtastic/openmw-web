@@ -359,10 +359,19 @@ function wizardShell(inner, { back = true, next = 'Continue', onNext = null, dis
   $('#wzNext').onclick = onNext || (() => { step++; renderWizard(); });
 }
 
-function choice(name, value, title, blurb) {
+/**
+ * One option tile. `tag` marks the answer that is right for most people.
+ *
+ * Someone who has never run a server does not need more prose, they need to know which one
+ * to click. Every question that HAS a normal answer says so on the tile; the ones that are
+ * genuinely a decision (how big is this, do you own the files) deliberately do not, because
+ * a fake recommendation is worse than none.
+ */
+function choice(name, value, title, blurb, tag = '') {
   const sel = answers[name] === value ? 'sel' : '';
   return html`<button class="vt-choice ${raw(sel)}" data-choice="${name}" data-value="${value}">
-    <strong>${title}</strong><small>${blurb}</small></button>`;
+    <strong>${title}${raw(tag ? html` <span class="badge text-bg-success ms-1">${tag}</span>` : '')}</strong>
+    <small>${blurb}</small></button>`;
 }
 
 function wireChoices(onPick) {
@@ -650,7 +659,8 @@ function stepRegistration() {
     ${raw(choice('registration', 'open', 'Anyone',
       'Whoever reaches the server can sign up and play. Right for a public server; on one reachable from the internet it does mean strangers.'))}
     ${raw(choice('registration', 'invite', 'Only with an invite code',
-      'They can sign up, but they need a code you give them. The simplest way to run a friends-only server without making accounts by hand.'))}
+      'They can sign up themselves, but only if you gave them the code. The easiest way to '
+      + 'run something for friends without creating every account by hand.', 'Good default'))}
     ${raw(choice('registration', 'closed', 'Nobody, I will create the accounts',
       'Sign-ups are refused. You add people yourself from the Accounts page, and existing accounts keep working.'))}
     ${raw(answers.registration === 'invite' ? html`
@@ -723,38 +733,58 @@ function stepAdmins() {
 
 function stepContent() {
   wizardShell(html`
-    <h5>Which game content will this server run?</h5>
-    <p class="text-secondary small">This decides which files the server checks for in the next steps.</p>
+    <h5>Which version of Morrowind is this?</h5>
+    <p class="text-secondary small">Everyone playing here has to be running the same one. It
+      also tells the server which files to look for when you add them in a moment, so if you
+      are not sure, check what you own before choosing.</p>
     ${raw(choice('contentProfile', 'morrowind', 'Morrowind',
-      'The base game on its own.'))}
+      'The base game with neither expansion. An older disc copy, usually.'))}
     ${raw(choice('contentProfile', 'expansions', 'Morrowind + Tribunal + Bloodmoon',
-      'The Game of the Year edition. This is what most people have.'))}
+      'The Game of the Year edition, and what almost every copy sold in the last twenty '
+      + 'years is. If you bought it on Steam or GOG, this is you.', 'Most likely'))}
     ${raw(choice('contentProfile', 'tamriel-rebuilt', 'Tamriel Rebuilt',
-      'Game of the Year plus the Tamriel Rebuilt landmass. You will add its files in the mod list.'))}`,
+      'The Game of the Year edition plus the Tamriel Rebuilt fan expansion. Pick this only '
+      + 'if you already have its files; you add them on the Game data page afterwards.'))}`,
   { disabled: !answers.contentProfile, need: 'Choose which content this server runs.' });
   wireChoices();
 }
 
 function stepDelivery() {
   wizardShell(html`
-    <h5>How do players get the game files?</h5>
-    <p class="text-secondary small">Morrowind itself is not free to redistribute, so this comes
-      down to whether each player already owns a copy.</p>
-    ${raw(choice('deliveryModel', 'verify', 'Players bring their own copy',
-      'Everyone supplies their own Morrowind files. The server only checks that everybody is running the same thing, so the world stays consistent.'))}
-    ${raw(choice('deliveryModel', 'serve', 'The server provides the files',
-      'Players receive the data from this server. Only do this if you are entitled to distribute the copy you are hosting.'))}`,
+    <h5>How does everyone get the game files?</h5>
+    <p class="text-secondary small">Morrowind is not free software. Everyone playing needs the
+      game's <strong>Data Files</strong> folder, and this is about where their copy comes
+      from. It does not change how the game plays.</p>
+    ${raw(choice('deliveryModel', 'verify', 'Everyone brings their own copy',
+      'Each person points the game at their own Morrowind on their own machine. Nothing is '
+      + 'sent from here, and this server just checks that everybody is running matching files '
+      + 'so you all see the same world.', 'Usual choice'))}
+    ${raw(choice('deliveryModel', 'serve', 'This server hands out the files',
+      'You upload your Data Files here once and everyone receives them on joining. Easier for '
+      + 'the people joining, and it means you are distributing the game, so only pick this if '
+      + 'everyone involved owns a copy already (a group of friends who each bought it, for '
+      + 'instance).'))}
+    <div class="vt-section-note mt-3">
+      Either way <strong>this server needs its own copy</strong> to run the world, and the
+      next-but-one step is where you add it. Unsure? Take the first one; you can change it in
+      Settings later without anyone losing anything.
+    </div>`,
   { disabled: !answers.deliveryModel, need: 'Choose how players get the files.' });
   wireChoices();
 }
 
 function stepHosting() {
   wizardShell(html`
-    <h5>Will people reach this from the internet?</h5>
-    ${raw(choice('hosting', 'internal', 'Local network only',
-      'Only machines on your own network can connect. No certificate and no domain needed.'))}
-    ${raw(choice('hosting', 'public', 'Yes, from anywhere',
-      'The server needs HTTPS. With a domain name pointed here you get a real certificate automatically; without one you get a self-signed certificate and your browser will warn you the first time.'))}
+    <h5>Who needs to be able to reach this server?</h5>
+    <p class="text-secondary small">Either answer works, and you can change it later. The
+      difference is only whether the server is exposed beyond your own network.</p>
+    ${raw(choice('hosting', 'internal', 'Just my own network',
+      'Only machines in your house or office can connect. Nothing needs to be opened up on '
+      + 'your router, and there is no domain name to buy. The safest starting point.'))}
+    ${raw(choice('hosting', 'public', 'Anyone on the internet',
+      'For friends who are not in the building. This needs ports 80 and 443 forwarded to this '
+      + 'machine on your router, which is the one part nothing here can do for you. A domain '
+      + 'name is optional but makes it much smoother.'))}
     ${raw(answers.hosting === 'public' ? html`
       <div class="mt-3 mb-2">
         <label class="form-label">Domain name <span class="text-secondary">(optional)</span></label>
@@ -836,26 +866,43 @@ function stepName() {
 
 function stepStorage() {
   wizardShell(html`
-    <h5>Where should uploaded files live?</h5>
-    <p class="text-secondary small">Game data and saved games players upload have to go somewhere.</p>
+    <h5>Where should uploaded files be kept?</h5>
+    <p class="text-secondary small">Saved games, and any game data uploaded here, have to be
+      stored somewhere. This is only about where they sit on disk.</p>
     ${raw(choice('storage', 'local', 'On this server',
-      'Stored in the server\'s own data folder. Simplest, and fine until you run low on disk.'))}
-    ${raw(choice('storage', 's3', 'S3-compatible storage',
-      'Cloudflare R2, AWS S3, Backblaze B2 or MinIO. Keeps large uploads off this machine.'))}
+      'Kept in this server\'s own data folder, alongside everything else. Nothing to sign up '
+      + 'for and nothing else to pay for. Right for almost everyone, and you can move to the '
+      + 'option below later without losing anything.', 'Recommended'))}
+    ${raw(choice('storage', 's3', 'In cloud storage',
+      'A storage account you already have with Cloudflare R2, Amazon S3, Backblaze B2 or '
+      + 'similar. Worth it if this machine has a small disk, or you expect a lot of people. '
+      + 'Needs four values from that provider, below.'))}
     ${raw(answers.storage === 's3' ? html`
-      <div class="row g-2 mt-3">
+      <div class="vt-section-note mt-3 mb-3">
+        <strong>Where these come from.</strong> Sign in to your storage provider and create a
+        bucket (a named container for files), then create an access key for it. The provider
+        shows you all four values on those two screens. The secret is usually displayed once
+        and never again, so copy it before closing the page.
+      </div>
+      <div class="row g-2">
         <div class="col-12"><label class="form-label small">Endpoint</label>
-          <input class="form-control" id="s3e" value="${answers.s3.endpoint}" placeholder="https://….r2.cloudflarestorage.com"></div>
+          <input class="form-control" id="s3e" value="${answers.s3.endpoint}" placeholder="https://….r2.cloudflarestorage.com">
+          <div class="form-text">The web address of your storage provider, which they give
+            you next to the bucket. Starts with https://</div></div>
         <div class="col-sm-8"><label class="form-label small">Bucket</label>
-          <input class="form-control" id="s3b" value="${answers.s3.bucket}"></div>
+          <input class="form-control" id="s3b" value="${answers.s3.bucket}" placeholder="my-morrowind-server">
+          <div class="form-text">The name you gave the container when you created it.</div></div>
         <div class="col-sm-4"><label class="form-label small">Region</label>
-          <input class="form-control" id="s3r" value="${answers.s3.region}"></div>
+          <input class="form-control" id="s3r" value="${answers.s3.region}">
+          <div class="form-text">Leave as <code>auto</code> unless told otherwise.</div></div>
         <div class="col-sm-6"><label class="form-label small">Access key ID</label>
           <input class="form-control vt-mono" id="s3k" value="${answers.s3.accessKeyId || ''}"
-            autocomplete="off" spellcheck="false"></div>
+            autocomplete="off" spellcheck="false">
+          <div class="form-text">Like a username for the storage account.</div></div>
         <div class="col-sm-6"><label class="form-label small">Secret access key</label>
           <input class="form-control vt-mono" id="s3s" type="password"
-            value="${answers.s3.secretAccessKey || ''}" autocomplete="new-password"></div>
+            value="${answers.s3.secretAccessKey || ''}" autocomplete="new-password">
+          <div class="form-text">Its password. Treat it like one.</div></div>
       </div>
       <div class="vt-section-note mt-3">Your storage provider gives you these when you create
         the bucket. They are stored with the rest of your settings and masked whenever this
@@ -890,6 +937,21 @@ function s3Complete() {
   if (state.setup?.storageConfigured) return true;
   return (s.accessKeyId || '').trim() !== '' && (s.secretAccessKey || '').trim() !== '';
 }
+
+/**
+ * Where Morrowind usually is, so "find your Data Files folder" is an instruction someone can
+ * actually follow rather than a scavenger hunt.
+ *
+ * An ordinary string, NOT inline in the markup: `html` is a tagged template, and a Windows
+ * path written directly in one has its backslashes swallowed as escape sequences, so the
+ * page would have shown "C:Program Files (x86)Steam..." to the one audience least able to
+ * spot that it was wrong.
+ */
+const INSTALL_PATHS = [
+  'Steam    C:\\Program Files (x86)\\Steam\\steamapps\\common\\Morrowind\\Data Files',
+  'GOG      C:\\GOG Games\\Morrowind\\Data Files',
+  'Mac      ~/Library/Application Support/OpenMW/Data Files',
+].join('\n');
 
 async function stepFiles() {
   let mods = null;
@@ -928,16 +990,23 @@ async function stepFiles() {
   const missingCount = missingFiles.length + missingMedia.length;
 
   wizardShell(html`
-    <h5>Game data files</h5>
-    <p class="text-secondary small">The server needs its own copy of Morrowind to simulate the
-      world. Add the whole <strong>Data Files</strong> folder below, or copy it into
-      <code>${mods?.dir || 'the game data folder'}</code> yourself.</p>
+    <h5>Add your Morrowind files</h5>
+    <p class="text-secondary small">The server runs the world itself, so it needs its own copy
+      of the game. This is the one step that needs something from your computer.</p>
+    <div class="vt-section-note mb-3">
+      <strong>Find the folder called <code>Data Files</code></strong> inside wherever
+      Morrowind is installed, and drag it onto the box below. It is usually at:
+      <pre class="vt-mono small mb-1 mt-2">${INSTALL_PATHS}</pre>
+      Drag the whole folder, not the files inside it. It is a few gigabytes and takes a
+      while. If you would rather not use the browser, copy it into
+      <code>${mods?.dir || 'the game data folder'}</code> on the server instead.
+    </div>
 
     ${raw(profile ? html`
-      <div class="text-secondary small text-uppercase mb-1">Plugins and archives</div>
+      <div class="text-secondary small text-uppercase mb-1">The game itself</div>
       <table class="table table-sm align-middle mb-3">${raw(fileRows)}</table>
-      <div class="text-secondary small text-uppercase mb-1">Loose media
-        <span class="text-lowercase">- not inside any archive</span></div>
+      <div class="text-secondary small text-uppercase mb-1">Sound, music and video
+        <span class="text-lowercase">- these sit loose in the folder, so they are easy to miss</span></div>
       <table class="table table-sm align-middle mb-3">${raw(mediaRows)}</table>` : '')}
     ${raw(profile?.note ? html`<div class="vt-section-note mb-3">${profile.note}</div>` : '')}
     ${raw(mods ? uploadPanel(mods) : '')}
