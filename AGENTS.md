@@ -56,18 +56,43 @@ deliberate promotion.
 
 ## The loop
 
-**Merge to `dev`, then run one command.** Builds happen when somebody asks for one -- there is
-no polling and no webhook, because triggering Jenkins needs a credential this setup does not
-hand out (`/git/notifyCommit` answers 401 and the remote build URL 403 with anonymous read
-disabled). Asking is a single command, and it runs everything ON THE BUILD SERVER:
+**Merge to `dev`, then TRIGGER THE JENKINS JOB. That is the deploy path -- use it first.**
 
-```bash
-ci/jenkins/release-to-test.sh            # both images
-ci/jenkins/release-to-test.sh engine     # just the WASM engine  (~13 min)
-ci/jenkins/release-to-test.sh server     # just the gateway + sim peer
+```
+job: openmw-web-dev      https://build.dev.virtastic.app/job/openmw-web-dev/
+scm: */dev  (github.com/Virtastic/openmw-web.git)
 ```
 
-It fetches `origin/dev`, restages the build inputs git cannot carry, builds, and deploys --
+Trigger it with the Jenkins MCP tools (`triggerBuild` on `openmw-web-dev`; `getBuild` /
+`getBuildLog` to follow it). The pipeline lives in the repo at `ci/jenkins/Jenkinsfile` and runs
+`restage-inputs.sh` -> `build-engine.sh` -> `deploy-test.sh engine` -> the server stage.
+
+CORRECTION, 2026-08-30: this section previously said Jenkins could not be triggered at all --
+"needs a credential this setup does not hand out", `/git/notifyCommit` 401, remote build URL 403.
+That is no longer true. The Jenkins MCP server triggers it authenticated (verified: build #81),
+so the manual SSH route below is now the FALLBACK, not the normal way.
+
+**Why the job and not the script.** The job carries `disableConcurrentBuilds`. The SSH script
+ssh's straight past it, and NOTHING else locks the builder -- there is no flock or lockfile
+anywhere in `ci/`. Two overlapping runs share one `~/morrowind-src` and one set of image tags, so
+a manual run during a Jenkins build can swap the source tree mid-compile and produce a silently
+wrong image. Use the job; it serialises for you.
+
+**Fallback, when you need a ref Jenkins will not build (an unmerged branch):**
+
+```bash
+CONFIRM=1 ci/jenkins/release-to-test.sh engine                    # dev
+CONFIRM=1 REF=my-branch ci/jenkins/release-to-test.sh engine      # a branch, detached checkout
+```
+
+`CONFIRM=1` is required because there is no build-without-deploy -- this ALWAYS replaces the
+shared test site. Announce it first; you are holding a ~15 minute lock nothing enforces.
+
+DO NOT wrap it in `timeout`. A deploy runs well past 50 minutes with brotli -q 11 over a ~176MB
+`openmw.data`, and a timeout kills the SSH session mid-compression leaving the previous image in
+place -- which looks exactly like a deploy that is still running. (Learned the expensive way.)
+
+Either path fetches the ref, restages the build inputs git cannot carry, builds, and deploys --
 stopping at the first failure. The deploy runs the contract gate and fails on any miss.
 
 **CLIENT LUA IS BAKED INTO THE ENGINE.** `fsroot/resources/vfs/scripts/mp/*.lua` is packed into
