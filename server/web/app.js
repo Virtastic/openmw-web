@@ -587,6 +587,19 @@ async function stepFiles() {
   wireUpload(() => renderWizard());
 }
 
+/** Review the choices back in the words they were offered in, not the stored values. */
+const LOGIN_LABEL = {
+  password: 'Username and password',
+  discord: 'Discord',
+  google: 'Google',
+  microsoft: 'Microsoft',
+};
+const CONTENT_LABEL = {
+  morrowind: 'Morrowind',
+  expansions: 'Morrowind + Tribunal + Bloodmoon',
+  'tamriel-rebuilt': 'Tamriel Rebuilt',
+};
+
 function stepReview() {
   const line = (k, v) => html`<dt class="col-sm-5 fw-normal text-secondary">${k}</dt>
     <dd class="col-sm-7">${v}</dd>`;
@@ -596,8 +609,9 @@ function stepReview() {
     <dl class="row small mt-3">
       ${raw(line('Deployment', mp ? 'Multiplayer' : 'Single player'))}
       ${raw(mp ? line('Server name', answers.serverName || '(unset)') : '')}
-      ${raw(mp ? line('Sign-in methods', answers.loginMethods.join(', ')) : '')}
-      ${raw(line('Content', answers.contentProfile || '(unset)'))}
+      ${raw(mp ? line('Sign-in methods',
+        answers.loginMethods.map((m) => LOGIN_LABEL[m] || m).join(', ')) : '')}
+      ${raw(line('Content', CONTENT_LABEL[answers.contentProfile] || '(unset)'))}
       ${raw(line('Game files', answers.deliveryModel === 'serve' ? 'Served by this server' : 'Players bring their own'))}
       ${raw(mp ? line('Reachable', answers.hosting === 'public'
         ? 'From the internet — set SERVER_DOMAIN in .env for a real certificate'

@@ -171,7 +171,13 @@ export function saveMods(
     renameSync(tmp, path);
     return { ok: true };
   } catch (err) {
-    return { ok: false, error: `could not write ${MODLIST_FILE}: ${String(err)}` };
+    // A raw ENOENT/EACCES in a toast tells the reader nothing they can act on. Name the
+    // likely cause instead, and keep the detail in the log where it is useful.
+    log('error', 'admin.modlist_write_failed', { error: String(err) });
+    return {
+      ok: false,
+      error: 'Could not save the load order. The data folder may be read-only or full.',
+    };
   }
 }
 
@@ -283,7 +289,11 @@ export async function uploadContent(
       return { ok: false, status: 413, error: 'file is larger than the 8 GB limit' };
     }
     log('error', 'admin.upload_failed', { name, error: String(err) });
-    return { ok: false, status: 500, error: `could not save ${name}` };
+    return {
+      ok: false,
+      status: 500,
+      error: `Could not save ${name}. The game data folder may be read-only or out of space.`,
+    };
   }
 
   log('info', 'admin.upload', { file: name, bytes: written });

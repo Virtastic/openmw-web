@@ -183,10 +183,17 @@ export function settingsView(dataDir: string, config: unknown): {
 }
 
 /**
- * Save one section. Values arrive from a browser as whatever JSON the form built, so each
- * one is coerced to the type the CURRENT config has for that key — the loaded config is the
- * schema. A key that does not already exist is refused rather than written, because a typo
- * in a section form should not silently add a setting nothing ever reads.
+ * Save one section.
+ *
+ * Values arrive as whatever JSON the form built and are written as they came. Types are NOT
+ * coerced here and unknown keys are NOT rejected here — an earlier version of this comment
+ * claimed both, and neither was true. What actually protects the file is checkDashboardTree
+ * below: it runs the real validator over the merged result, which is a typed whitelist, so a
+ * wrong type is refused with the validator's own message and a key nothing reads is inert.
+ *
+ * The regexes are the narrower guard: section and key names end up as TOML table and key
+ * names, so they are restricted to a shape that cannot inject structure. They can only fire
+ * on a malformed client, since the form sends back names it was given.
  */
 export function applySection(
   dataDir: string,
@@ -194,11 +201,15 @@ export function applySection(
   body: Record<string, unknown>,
   sharedDir?: string,
 ): { ok: true } | { ok: false; error: string } {
-  if (!/^[a-zA-Z]+(\.[a-zA-Z]+)?$/.test(section)) return { ok: false, error: 'bad section name' };
+  if (!/^[a-zA-Z]+(\.[a-zA-Z]+)?$/.test(section)) {
+    return { ok: false, error: `"${section}" is not a settings section. This looks like a bug — please report it.` };
+  }
 
   const patch: Tree = {};
   for (const [key, raw] of Object.entries(body)) {
-    if (!/^[a-zA-Z][a-zA-Z0-9_]*$/.test(key)) return { ok: false, error: `bad key: ${key}` };
+    if (!/^[a-zA-Z][a-zA-Z0-9_]*$/.test(key)) {
+      return { ok: false, error: `"${key}" is not a valid setting name. This looks like a bug — please report it.` };
+    }
     // The mask coming back means "unchanged": leave whatever is stored alone.
     if (raw === SECRET_MASK) continue;
     patch[key] = raw;

@@ -131,14 +131,14 @@ export function validEmail(email: string): boolean {
 
 const ARGON2_OPTS = { algorithm: Algorithm.Argon2id, memoryCost: 19456, timeCost: 2, parallelism: 1 };
 
-// A hash of nothing in particular, used to spend the same time on a failed lookup as on a
-// real one. Computed once, lazily — hashing at module load would add ~50ms to every process
-// start including the test suite's many servers, to defend a path most of them never take.
-let decoy: Promise<string> | undefined;
-function decoyHash(): Promise<string> {
-  decoy ??= hash(randomBytes(32).toString('base64'), ARGON2_OPTS);
-  return decoy;
-}
+// A hash of a throwaway string, used to spend the same time on a failed lookup as on a real
+// one. A CONSTANT rather than something computed at startup: verifying costs the same either
+// way (the work is set by the parameters encoded in the string), while computing it lazily
+// meant a promise that, if it ever rejected, stayed rejected for the life of the process and
+// turned every subsequent failed login into a 500. Publishing it gives nothing away — it is
+// the hash of a value nobody uses, and knowing a hash does not help you produce a password.
+const DECOY_HASH =
+  '$argon2id$v=19$m=19456,t=2,p=1$RU6yeWfVvzoWBMQhyahFpg$K4iaLtJpJx++1tpgeJ4ot/gUn8Fueld+CkWt63pKBvQ';
 const NAME_RE = /^[A-Za-z0-9_ -]{2,24}$/;
 
 export function validAccountName(name: string): boolean {
@@ -323,7 +323,7 @@ export class AccountStore {
     // costs the same work and reveals nothing. Both the dashboard and the game login come
     // through here, so this covers both.
     if (!account?.pwHash) {
-      await verify(await decoyHash(), password).catch(() => false);
+      await verify(DECOY_HASH, password).catch(() => false);
       return null;
     }
     return (await verify(account.pwHash, password)) ? account : null;

@@ -72,8 +72,13 @@ function writeTree(dataDir: string, next: Tree): SaveResult {
     renameSync(tmp, path);
     return { ok: true };
   } catch (err) {
+    // The detail goes to the log; the operator gets something they can act on. A raw
+    // EACCES in a toast is a puzzle, not a message.
     log('error', 'admin.settings_write_failed', { error: String(err) });
-    return { ok: false, error: `could not write ${DASHBOARD_FILE}: ${String(err)}` };
+    return {
+      ok: false,
+      error: 'Could not save the settings file. The data folder may be read-only or full.',
+    };
   }
 }
 
