@@ -156,6 +156,11 @@ const can = (need) => state.authed && RANK[state.role] >= RANK[need];
 const singlePlayer = () => state.setup?.deploymentMode === 'single';
 
 function paintChrome() {
+  // Signed out (or mid-first-run) there IS no dashboard: no sidebar, no top bar, just the
+  // one thing on a clean ground, the way AdminLTE's own login pages are laid out. Rendering
+  // the login form inside the full chrome left a dead dark sidebar hanging next to it.
+  document.body.classList.toggle('vt-bare', !state.authed || state.firstRun);
+
   const nav = $('#mainNav');
   const current = location.hash || '#overview';
   if (!state.authed) { nav.innerHTML = ''; }
@@ -184,10 +189,11 @@ function paintChrome() {
 
   const banner = $('#banner');
   banner.innerHTML = state.configFallback
-    ? html`<div class="alert alert-warning">
-        <strong>Configuration was rolled back.</strong> The settings last saved here failed to
-        load, so the server started from an earlier version (<code>${state.configFallback}</code>)
-        instead. Nothing was lost, review Settings and save again.
+    ? html`<div class="callout callout-warning">
+        <h5><i class="bi bi-arrow-counterclockwise me-1"></i> Configuration was rolled back</h5>
+        The settings last saved here failed to load, so the server started from an earlier
+        version (<code>${state.configFallback}</code>) instead. Nothing was lost, review
+        <a href="#settings">Settings</a> and save again.
       </div>` : '';
 }
 
@@ -925,7 +931,10 @@ function pageLogin(totpRequired = false, notice = '') {
   view().innerHTML = html`
     <div class="vt-wizard" style="max-width:24rem">
       ${raw(notice ? html`<div class="alert alert-info">${notice}</div>` : '')}
-      <div class="card"><div class="card-body p-4">
+      <div class="text-center mb-3">
+        <img src="/admin/static/logo.svg" alt="" style="width:56px;height:56px">
+      </div>
+      <div class="card vt-card"><div class="card-body p-4">
         <div class="mb-3"><label class="form-label">Username</label>
           <input class="form-control" id="liName" autocomplete="username"></div>
         <div class="mb-3"><label class="form-label">Password</label>
@@ -1076,19 +1085,27 @@ function setupChecklist() {
     { done: localStorage.getItem('omwmp_mods_seen') === '1', label: 'Review the game data and mod list', hash: '#mods' },
   ];
   if (items.every((i) => i.done)) return '';
-  return html`<div class="card mb-3"><div class="card-body">
-    <div class="d-flex align-items-start">
-      <div class="flex-grow-1">
-        <h5 class="card-title">Getting started</h5>
-        <ul class="list-unstyled mb-0 small">
-          ${raw(items.map((i) => html`<li class="py-1">
-            ${raw(i.done ? '<span class="text-success">✓</span>' : '<span class="text-secondary">○</span>')}
-            ${raw(i.hash && !i.done ? html`<a href="${i.hash}">${i.label}</a>` : html`<span>${i.label}</span>`)}
-          </li>`).join(''))}
-        </ul>
+  const done = items.filter((i) => i.done).length;
+  const pct = Math.round((done / items.length) * 100);
+  return html`<div class="card card-success card-outline mb-3">
+    <div class="card-header">
+      <h3 class="card-title"><i class="bi bi-rocket-takeoff me-2"></i>Getting started</h3>
+      <div class="card-tools">
+        <button class="btn btn-tool" id="hideChecklist" title="Dismiss">
+          <i class="bi bi-x-lg"></i></button>
       </div>
-      <button class="btn btn-sm btn-link text-secondary" id="hideChecklist">dismiss</button>
-    </div></div></div>`;
+    </div>
+    <div class="card-body">
+      <div class="progress mb-3" style="height:8px" role="progressbar" aria-valuenow="${pct}">
+        <div class="progress-bar bg-success" style="width:${pct}%"></div>
+      </div>
+      <ul class="list-unstyled mb-0">
+        ${raw(items.map((i) => html`<li class="py-1">
+          <i class="bi ${raw(i.done ? 'bi-check-circle-fill text-success' : 'bi-circle text-secondary')} me-2"></i>
+          ${raw(i.hash && !i.done ? html`<a href="${i.hash}">${i.label}</a>` : html`<span class="${raw(i.done ? 'text-secondary' : '')}">${i.label}</span>`)}
+        </li>`).join(''))}
+      </ul>
+    </div></div>`;
 }
 function wireChecklist() {
   const b = $('#hideChecklist');
@@ -1407,13 +1424,19 @@ function renderSection(s) {
   const MP_ONLY = new Set(['auth', 'moderation', 'login']);
   const inert = singlePlayer() && MP_ONLY.has(s.name.split('.')[0]);
 
+  // A section holding a flagged-dangerous field wears the red header, so the risk is
+  // visible from the accordion, not only after scrolling into the field.
+  const hasDanger = s.fields.some((f) => f.danger);
+  const tone = hasDanger ? 'card-danger' : 'card-secondary';
   return html`
-    <div class="card mb-3 ${raw(inert ? 'opacity-75' : '')}" data-section="${s.name}">
+    <div class="card ${raw(tone)} card-outline mb-3 ${raw(inert ? 'opacity-75' : '')}" data-section="${s.name}">
       <div class="card-header d-flex align-items-center">
-        <h3 class="card-title">${s.label || s.name}
+        <h3 class="card-title">
+          ${raw(hasDanger ? '<i class="bi bi-exclamation-triangle me-2"></i>' : '')}${s.label || s.name}
           <span class="vt-mono text-secondary small ms-2">[${s.name}]</span>
           ${raw(inert ? '<span class="badge text-bg-secondary ms-2">not used, this is a single-player server</span>' : '')}</h3>
-        <button class="btn btn-sm btn-primary ms-auto" data-save="${s.name}">Save</button>
+        <button class="btn btn-sm btn-primary ms-auto" data-save="${s.name}">
+          <i class="bi bi-check-lg me-1"></i>Save</button>
       </div>
       <div class="card-body">
         ${raw(s.help ? html`<p class="text-secondary small">${s.help}</p>` : '')}
@@ -1465,9 +1488,11 @@ function wireSettings() {
  *  "restart the container" and leaving them to work out how is not a finished feature. */
 function restartPrompt() {
   const b = $('#banner');
-  b.innerHTML = html`<div class="alert alert-warning d-flex align-items-center">
-    <div class="flex-grow-1">Changes are saved but not live yet. The server needs to restart.</div>
-    <button class="btn btn-warning btn-sm" id="doRestart">Restart now</button></div>`;
+  b.innerHTML = html`<div class="callout callout-warning d-flex align-items-center">
+    <div class="flex-grow-1"><strong>Saved, not live yet.</strong>
+      The server reads its settings at startup, so it needs a restart.</div>
+    <button class="btn btn-warning btn-sm" id="doRestart">
+      <i class="bi bi-arrow-repeat me-1"></i>Restart now</button></div>`;
   $('#doRestart').onclick = async () => {
     const ok = await confirmAction({
       title: 'Restart the server?',
@@ -1516,16 +1541,16 @@ async function pageMods() {
       These were in your load order but are no longer on disk, so they have been dropped:
       <span class="vt-mono">${m.missing.join(', ')}</span></div>` : '')}
     ${raw(editable ? uploadPanel(m) : '')}
-    <div class="card"><div class="card-header d-flex align-items-center">
-      <h3 class="card-title">Load order</h3>
-      ${raw(editable ? html`<button class="btn btn-sm btn-primary ms-auto" id="modSave">Save order</button>` : '')}
+    <div class="card card-primary card-outline"><div class="card-header d-flex align-items-center">
+      <h3 class="card-title"><i class="bi bi-list-ol me-2"></i>Load order</h3>
+      ${raw(editable ? html`<button class="btn btn-sm btn-primary ms-auto" id="modSave">
+        <i class="bi bi-check-lg me-1"></i>Save order</button>` : '')}
     </div>
     <div class="table-responsive"><table class="table table-hover mb-0">
       <thead><tr><th style="width:2rem"></th><th style="width:3rem">Load</th><th>File</th><th></th></tr></thead>
       <tbody id="modBody">${raw(rows || html`<tr><td colspan="4" class="vt-empty">No content files found.</td></tr>`)}</tbody>
     </table></div></div>
-    ${raw(m.archives.length ? html`<div class="card mt-3"><div class="card-body">
-      <h5 class="card-title">Archives</h5>
+    ${raw(m.archives.length ? html`<div class="card card-secondary card-outline mt-3"><div class="card-header"><h3 class="card-title"><i class="bi bi-file-zip me-2"></i>Archives</h3></div><div class="card-body">
       <p class="small text-secondary mb-0 vt-mono">${m.archives.join(', ')}</p></div></div>` : '')}`;
 
   if (!editable) return;
@@ -1621,8 +1646,10 @@ function drawQr(el, text) {
 /** Add-files panel, shared by the mods page and the wizard's game-data step. */
 function uploadPanel(m) {
   return html`
-    <div class="card mb-3"><div class="card-body">
-      <h5 class="card-title">Add game data files</h5>
+    <div class="card card-secondary card-outline mb-3">
+      <div class="card-header"><h3 class="card-title">
+        <i class="bi bi-cloud-arrow-up me-2"></i>Add game data files</h3></div>
+      <div class="card-body">
       ${raw(m.writable === false ? html`
         <div class="alert alert-warning mb-0">
           The game data folder is read-only, so files cannot be uploaded from here. Copy them
@@ -1671,7 +1698,14 @@ function wireUpload(onDone) {
     const skipped = [];
     const failed = [];
     const paint = (extra = '') => {
-      row.innerHTML = html`<div><strong>${done}</strong> of ${entries.length} added
+      const total = done + skipped.length + failed.length;
+      const pct = Math.round((total / entries.length) * 100);
+      row.innerHTML = html`
+        <div class="progress mb-1" style="height:10px" role="progressbar" aria-valuenow="${pct}">
+          <div class="progress-bar ${raw(extra ? 'progress-bar-striped progress-bar-animated' : 'bg-success')}"
+            style="width:${pct}%"></div>
+        </div>
+        <div><strong>${done}</strong> of ${entries.length} added
         · ${(bytes / 1048576).toFixed(0)} MB${raw(extra)}</div>
         ${raw(skipped.length ? html`<div class="small text-secondary">${skipped.length} skipped
           (not game data, that is normal for a folder with extras in it)</div>` : '')}
@@ -1892,7 +1926,7 @@ async function pageSessions() {
       <td class="text-end"><button class="btn btn-sm btn-outline-danger" data-rev="${s.id}">revoke</button></td>
     </tr>`).join('');
   view().innerHTML = html`
-    <div class="card"><div class="table-responsive"><table class="table mb-0">
+    <div class="card card-primary card-outline"><div class="card-header"><h3 class="card-title"><i class="bi bi-key me-2"></i>Signed-in browsers</h3></div><div class="table-responsive"><table class="table mb-0">
       <thead><tr><th>Account</th><th>From</th><th>Signed in</th><th>Expires</th><th></th></tr></thead>
       <tbody>${raw(rows || html`<tr><td colspan="5" class="vt-empty">No active sessions.</td></tr>`)}</tbody>
     </table></div></div>`;
@@ -1910,10 +1944,12 @@ async function pageSecurity() {
   const on = state.twoFactor === true;
 
   view().innerHTML = html`
-    <div class="card" style="max-width:34rem"><div class="card-body">
-      <h5 class="card-title">Authenticator app
+    <div class="card card-primary card-outline" style="max-width:34rem">
+      <div class="card-header"><h3 class="card-title">
+        <i class="bi bi-shield-lock me-2"></i>Authenticator app
         ${raw(on ? '<span class="badge text-bg-success ms-2">on</span>'
-                 : '<span class="badge text-bg-secondary ms-2">off</span>')}</h5>
+                 : '<span class="badge text-bg-secondary ms-2">off</span>')}</h3></div>
+      <div class="card-body">
       <p class="small text-secondary">Adds a six-digit code to your password sign-in, so your
         password alone is not enough to get in. Single sign-on is unaffected, the provider
         already asks for a second factor of its own.</p>
@@ -1991,11 +2027,23 @@ async function pageLogs(filter = '', title = 'Logs', lead = 'Recent activity fro
     $('#logBox').innerHTML = rows || html`<div class="vt-empty">Nothing logged yet.</div>`;
   };
   view().innerHTML = html`
-    <div class="card"><div class="card-header d-flex align-items-center">
-      <h3 class="card-title">${title}</h3>
-      <button class="btn btn-sm btn-outline-secondary ms-auto" id="logRefresh">Refresh</button>
-    </div><div class="card-body"><div class="vt-log vt-mono" id="logBox">Loading…</div></div></div>`;
+    <div class="card card-secondary card-outline">
+      <div class="card-header">
+        <h3 class="card-title"><i class="bi ${raw(filter ? 'bi-clipboard-check' : 'bi-journal-text')} me-2"></i>${title}</h3>
+        <div class="card-tools">
+          <label class="me-2 small text-secondary">
+            <input type="checkbox" class="form-check-input me-1" id="logAuto">auto-refresh</label>
+          <button class="btn btn-tool" id="logRefresh" title="Refresh"><i class="bi bi-arrow-clockwise"></i></button>
+        </div>
+      </div>
+      <div class="card-body"><div class="vt-log vt-mono" id="logBox">Loading…</div></div></div>`;
   $('#logRefresh').onclick = draw;
+  // A live tail without a websocket: poll while the box is ticked and the page is open.
+  let timer = null;
+  $('#logAuto').onchange = (e) => {
+    if (e.target.checked) timer = setInterval(() => { if ($('#logBox')) draw(); else clearInterval(timer); }, 3000);
+    else clearInterval(timer);
+  };
   await draw();
 }
 
@@ -2005,8 +2053,9 @@ async function pageMetrics() {
   const groups = Object.entries(m.groups || {});
   view().innerHTML = groups.length ? html`
     <div class="row">${raw(groups.map(([name, rows]) => html`
-      <div class="col-lg-6"><div class="card mb-3">
-        <div class="card-header"><h3 class="card-title">${name}</h3></div>
+      <div class="col-lg-6"><div class="card card-info card-outline mb-3">
+        <div class="card-header"><h3 class="card-title">
+          <i class="bi bi-graph-up me-2"></i>${name}</h3></div>
         <div class="table-responsive"><table class="table table-sm mb-0">
           <tbody>${raw(rows.map((r) => html`<tr>
             <td class="vt-mono small">${r.name}</td>
@@ -2022,8 +2071,11 @@ async function pageMaintenance() {
   setTitle('Maintenance & restart', 'Take the server down gently, or bring it back.');
   const m = state.maintenance || { on: false, message: '' };
   view().innerHTML = html`
-    <div class="card mb-3" style="max-width:40rem"><div class="card-body">
-      <h5 class="card-title">Maintenance mode</h5>
+    <div class="card card-warning card-outline mb-3" style="max-width:40rem">
+      <div class="card-header"><h3 class="card-title">
+        <i class="bi bi-cone-striped me-2"></i>Maintenance mode
+        ${raw(m.on ? ' <span class="badge text-bg-warning ms-2">on</span>' : '')}</h3></div>
+      <div class="card-body">
       <p class="small text-secondary">Disconnects everyone and refuses new connections with a
         message. Use it before changing mods or settings so nobody is halfway through
         something when the server restarts.</p>
@@ -2034,21 +2086,26 @@ async function pageMaintenance() {
         ${raw(m.on ? 'Turn maintenance mode off' : 'Turn maintenance mode on')}</button>
     </div></div>
 
-    <div class="card mb-3" style="max-width:40rem"><div class="card-body">
-      <h5 class="card-title">Restart</h5>
+    <div class="card card-warning card-outline mb-3" style="max-width:40rem">
+      <div class="card-header"><h3 class="card-title">
+        <i class="bi bi-arrow-repeat me-2"></i>Restart</h3></div>
+      <div class="card-body">
       <p class="small text-secondary">Applies saved settings and mod changes. Players are
         disconnected and can reconnect once it is back, usually within a few seconds.</p>
       <button class="btn btn-warning" id="mRestart">Restart the server</button>
     </div></div>
 
-    <div class="card" style="max-width:40rem"><div class="card-body">
-      <h5 class="card-title">Download a backup</h5>
+    <div class="card card-secondary card-outline" style="max-width:40rem">
+      <div class="card-header"><h3 class="card-title">
+        <i class="bi bi-archive me-2"></i>Download a backup</h3></div>
+      <div class="card-body">
       <p class="small text-secondary">Everything in the data folder: accounts, characters,
         world state, settings and logs.</p>
       <div class="vt-field-danger mb-3"><strong>Careful:</strong> the archive contains password
         hashes and any credentials you have configured. Treat it like a password, store it
         somewhere private, and do not post it when asking for help.</div>
-      <a class="btn btn-outline-secondary" href="/admin/api/export" id="mExport">Download backup</a>
+      <a class="btn btn-outline-secondary" href="/admin/api/export" id="mExport">
+        <i class="bi bi-download me-1"></i>Download backup</a>
     </div></div>`;
 
   $('#mToggle').onclick = async () => {
@@ -2111,18 +2168,16 @@ async function pageHelp() {
 
   view().innerHTML = html`
     ${raw(blockers.length ? html`
-      <div class="alert alert-warning">
-        <h5 class="alert-heading">This server cannot host players yet</h5>
+      <div class="callout callout-danger">
+        <h5><i class="bi bi-exclamation-octagon me-1"></i> This server cannot host players yet</h5>
         <ul class="mb-2">${raw(blockers.map((b) => html`<li>${b}</li>`).join(''))}</ul>
-        <hr>
         <p class="mb-0 small">The dashboard works and your settings are safe. Fix the above,
           then <a href="#maintenance">restart</a>.</p>
       </div>` : '')}
 
     <div class="row">
       <div class="col-lg-7">
-        <div class="card mb-3"><div class="card-body">
-          <h5 class="card-title">Getting players in</h5>
+        <div class="card card-primary card-outline mb-3"><div class="card-header"><h3 class="card-title"><i class="bi bi-people me-2"></i>Getting players in</h3></div><div class="card-body">
           <dl class="small mb-0">
             ${raw(faq('Nobody can connect from outside my network',
               'Two things have to be true. Your router must forward ports 80 and 443 to this ' +
@@ -2139,8 +2194,7 @@ async function pageHelp() {
           </dl>
         </div></div>
 
-        <div class="card mb-3"><div class="card-body">
-          <h5 class="card-title">When something is wrong</h5>
+        <div class="card card-warning card-outline mb-3"><div class="card-header"><h3 class="card-title"><i class="bi bi-wrench-adjustable me-2"></i>When something is wrong</h3></div><div class="card-body">
           <dl class="small mb-0">
             ${raw(faq('My browser says the connection is not private',
               'Expected when you have no domain name: the certificate is one this server signed ' +
@@ -2171,8 +2225,7 @@ async function pageHelp() {
       </div>
 
       <div class="col-lg-5">
-        <div class="card mb-3"><div class="card-body">
-          <h5 class="card-title">Who can do what</h5>
+        <div class="card card-secondary card-outline mb-3"><div class="card-header"><h3 class="card-title"><i class="bi bi-person-badge me-2"></i>Who can do what</h3></div><div class="card-body">
           <dl class="small mb-0">
             <dt>Owner</dt><dd class="text-secondary">Everything: settings, mods, accounts,
               restart, backups, and running script on a player's machine.</dd>
@@ -2182,8 +2235,7 @@ async function pageHelp() {
           </dl>
         </div></div>
 
-        <div class="card mb-3"><div class="card-body">
-          <h5 class="card-title">Where your settings live</h5>
+        <div class="card card-secondary card-outline mb-3"><div class="card-header"><h3 class="card-title"><i class="bi bi-file-earmark-text me-2"></i>Where your settings live</h3></div><div class="card-body">
           <p class="small text-secondary mb-2">Changes made here are written to
             <code>config.dashboard.toml</code> in your data folder. If you also keep a
             <code>config.toml</code> by hand, this dashboard never touches it, yours is
@@ -2193,8 +2245,7 @@ async function pageHelp() {
             works rather than refusing to start.</p>
         </div></div>
 
-        <div class="card"><div class="card-body">
-          <h5 class="card-title">More</h5>
+        <div class="card card-secondary card-outline"><div class="card-header"><h3 class="card-title"><i class="bi bi-life-preserver me-2"></i>More</h3></div><div class="card-body">
           <p class="small mb-2">
             <a href="https://github.com/Virtastic/openmw-web/blob/main/SELF_HOSTING.md"
                target="_blank" rel="noreferrer noopener">Self-hosting guide</a> &middot;

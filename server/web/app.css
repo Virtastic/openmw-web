@@ -23,6 +23,24 @@
   --bs-link-hover-color: var(--vt-ember);
 }
 
+/* --- bare chrome: login and first-run --------------------------------------------------- */
+/* Signed out, the page is a centred sheet, not a dashboard with nobody in it. */
+body.vt-bare .app-sidebar,
+body.vt-bare .app-header,
+body.vt-bare .app-footer { display: none; }
+body.vt-bare .app-wrapper { display: block; }
+body.vt-bare .app-main {
+  min-height: 100vh;
+  margin-left: 0;
+  background:
+    radial-gradient(ellipse at 50% -20%, rgba(198, 90, 46, .18) 0%, transparent 55%),
+    var(--bs-tertiary-bg);
+}
+body.vt-bare .app-content-header { padding-top: 3rem; text-align: center; }
+body.vt-bare .app-content-header .breadcrumb { display: none; }
+body.vt-bare .app-content-header .row > div { width: 100%; }
+body.vt-bare #pageTitle { color: var(--vt-ember-dark); }
+
 /* --- brand ------------------------------------------------------------------------- */
 .app-sidebar { --bs-bg-opacity: 1; background-color: var(--vt-ash) !important; }
 .sidebar-brand { background-color: var(--vt-ash-soft); border-bottom: 1px solid #ffffff14; }
