@@ -393,3 +393,35 @@ test('S3 credentials are asked for in the browser, stored, and masked on read', 
     assert.notEqual(f?.value, 'the-actual-secret');
   }
 });
+
+test('re-running Setup does not blank what it does not re-ask', async (t) => {
+  // THE FLOW BUG. The wizard sends every answer on every save, and re-entering it started
+  // from blank, so a second run through Setup wrote domain="" over a working domain: the
+  // proxy config was regenerated without it and the certificate stopped being used. The
+  // page seeds itself from /state to avoid that, so /state has to actually carry the values.
+  const { call, token, dataDir } = await boot(t);
+  assert.equal((await call('/setup', { method: 'POST', token, body: {
+    deploymentMode: 'multiplayer', hosting: 'public', domain: 'mp.example.com',
+    registration: 'invite', inviteCode: 'come-in', storage: 's3',
+    s3: { endpoint: 'https://x.r2.cloudflarestorage.com', bucket: 'worlds', region: 'auto',
+          accessKeyId: 'AKIAEXAMPLE', secretAccessKey: 'the-actual-secret' },
+    completed: true,
+  } })).status, 200);
+
+  const state = await (await call('/state', { token })).json() as {
+    setup: Record<string, unknown>;
+  };
+  // Everything the wizard needs to pre-fill rather than re-ask.
+  assert.equal(state.setup.domain, 'mp.example.com', 'the domain must come back');
+  assert.equal(state.setup.registration, 'invite');
+  assert.equal(state.setup.s3Endpoint, 'https://x.r2.cloudflarestorage.com');
+  assert.equal(state.setup.s3Bucket, 'worlds');
+  // The keys themselves must NOT: they are secrets. A boolean is enough for the storage
+  // step to stop demanding two values the operator cannot see.
+  assert.equal(state.setup.storageConfigured, true);
+  assert.equal(JSON.stringify(state.setup).includes('the-actual-secret'), false,
+    '/state must never carry the secret itself');
+
+  // And the proxy config still names the domain, which is what the blanking broke.
+  assert.match(readFileSync(join(dataDir, 'caddy', 'Caddyfile'), 'utf8'), /^mp\.example\.com \{/m);
+});

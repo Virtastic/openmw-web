@@ -251,6 +251,18 @@ function seedFromServer() {
     answers.loginMethods = [...s.loginMethods];
   }
   answers.serverName ||= state.serverName || '';
+  // THE DOMAIN, which re-running Setup would otherwise blank. It is sent on every save, so
+  // an unseeded empty value overwrote the stored one, the proxy config was regenerated
+  // without it, and a working certificate quietly stopped being used.
+  answers.registration ||= s.registration || null;
+  answers.domain ||= s.domain || '';
+  // Storage details, for the same reason. The KEYS are masked by the server and never come
+  // back, so `storageConfigured` says whether it already holds a pair: without that the
+  // storage step demands two secrets the operator cannot see and cannot retype, which is a
+  // dead end on every re-entry.
+  answers.s3.endpoint ||= s.s3Endpoint || '';
+  answers.s3.bucket ||= s.s3Bucket || '';
+  answers.s3.region ||= s.s3Region || 'auto';
 }
 
 // Answers and position survive a reload. Setup is the longest uninterrupted stretch of
@@ -358,17 +370,13 @@ function wireChoices(onPick) {
     el.onclick = () => {
       const key = el.dataset.choice;
       const value = el.dataset.value;
-      // CHANGING THE DEPLOYMENT MODE DISCARDS THE ANSWERS THAT ONLY EXIST FOR THE OTHER ONE.
-      //
-      // The multiplayer path asks about sign-in methods, public hosting and a server name;
-      // single-player skips all three. Without this, someone who picks multiplayer, answers
-      // those, then changes their mind still had them applied at the end, a "just me"
-      // server quietly configured with SSO providers it never offered to anyone. The
-      // questions are hidden on the way back but the values were not.
-      if (key === 'deploymentMode' && answers.deploymentMode !== value) {
-        answers.loginMethods = ['password'];
-        answers.hosting = null;
-        answers.domain = '';
+      // CHANGING THE MODE CLEARS ONLY WHAT THE OTHER MODE DOES NOT ASK, which is now just
+      // the server name. This used to also wipe the sign-in methods, the hosting choice and
+      // the domain, from when those were multiplayer-only questions. They are asked in both
+      // modes now, so clearing them means going back one step to flip the mode and silently
+      // losing the domain you had already typed, and with it the certificate that domain
+      // was about to get.
+      if (key === 'deploymentMode' && answers.deploymentMode !== value && value === 'single') {
         answers.serverName = '';
       }
       answers[key] = value;
@@ -875,8 +883,12 @@ function stepStorage() {
 /** Every field S3 needs before it can actually store anything. */
 function s3Complete() {
   const s = answers.s3;
-  return s.endpoint.trim() !== '' && s.bucket.trim() !== ''
-    && (s.accessKeyId || '').trim() !== '' && (s.secretAccessKey || '').trim() !== '';
+  if (s.endpoint.trim() === '' || s.bucket.trim() === '') return false;
+  // Keys already stored count as present. They are masked and never sent back, so requiring
+  // them to be retyped would mean nobody could re-run Setup on a working S3 server without
+  // going and finding credentials they configured months ago.
+  if (state.setup?.storageConfigured) return true;
+  return (s.accessKeyId || '').trim() !== '' && (s.secretAccessKey || '').trim() !== '';
 }
 
 async function stepFiles() {
@@ -971,32 +983,33 @@ function stepReview() {
   wizardShell(html`
     <h5>Ready to apply</h5>
     <dl class="row small mt-3">
-      ${raw(line('Deployment', mp ? 'Multiplayer' : 'Single player'))}
+      ${raw(line('Server', mp ? 'For a group' : 'Mostly for me'))}
       ${raw(mp ? line('Server name', answers.serverName || '(unset)') : '')}
-      ${raw(mp ? line('Sign-in methods',
-        answers.loginMethods.map((m) => LOGIN_LABEL[m] || m).join(', ')) : '')}
+      ${raw(line('Sign-in methods',
+        answers.loginMethods.map((m) => LOGIN_LABEL[m] || m).join(', ') || '(none)'))}
       ${raw(line('Who can sign up', REGISTRATION_LABEL[answers.registration] || '(unset)'))}
       ${raw(line('Content', CONTENT_LABEL[answers.contentProfile] || '(unset)'))}
       ${raw(line('Game files', answers.deliveryModel === 'serve' ? 'Served by this server' : 'Players bring their own'))}
-      ${raw(mp ? line('Reachable', answers.hosting === 'public'
+      ${raw(line('Reachable', answers.hosting === 'public'
         ? (answers.domain
             ? `From the internet at ${answers.domain}, with a certificate issued automatically`
             : 'From the internet, using a self-signed certificate until you add a domain')
-        : 'Local network only') : '')}
+        : 'Local network only'))}
       ${raw(line('Uploads', answers.storage === 's3' ? `S3, ${answers.s3.bucket || 'bucket unset'}` : 'On this server'))}
       ${raw(addedAdmins.length ? line('Extra admins',
         addedAdmins.map((a) => `${a.name} (${a.role})`).join(', ')) : '')}
     </dl>
-    ${raw(mp ? html`
+    ${raw(html`
       <div class="vt-section-note mb-3">
-        <strong>Getting players in.</strong> Send them this address, they open it in a
-        browser, nothing to install:
+        <strong>${raw(mp ? 'Getting players in.' : 'Your address.')}</strong> ${raw(mp
+          ? 'Send them this address, they open it in a browser, nothing to install:'
+          : 'This is where you play, and where anyone you invite would join:')}
         <pre class="vt-mono mb-1 mt-2" id="joinLink">${answers.domain ? `https://${answers.domain}` : location.origin}</pre>
         <button class="btn btn-sm btn-outline-secondary" id="copyJoin">Copy link</button>
         ${raw(answers.deliveryModel === 'verify' ? html`<p class="small mb-0 mt-2">Each player
           also needs their own copy of Morrowind's Data Files, since you chose that players
           bring their own.</p>` : '')}
-      </div>` : '')}
+      </div>`)}
     <div class="vt-section-note">Saving writes these to
       <code>config.dashboard.toml</code>. Your own <code>config.toml</code> is never touched,
       and the server will restart to pick the changes up. Everything else, gameplay rules,

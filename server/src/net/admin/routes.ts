@@ -53,6 +53,7 @@ import type { SetupToken } from './setup-token';
 import { generateSecret, totpUri, verifyTotp } from './totp';
 import { settingsView, applySection, applyWizard, type WizardAnswers } from './api-settings';
 import { checkDomain } from './setup-check';
+import { readDashboardTree } from './settings-store';
 import { writeCaddyfile } from './caddy-config';
 import { modsView, saveMods, uploadContent, gameDataWritable } from './api-mods';
 import type { LogEntry } from '../../log';
@@ -140,7 +141,37 @@ export function adminRoutes(deps: AdminDeps) {
    *  for the seconds between saving and the restart landing. */
   let setupCompletedNow = false;
   const setupIsComplete = (): boolean => setupCompletedNow
-    || (deps.config() as { setup?: { completed?: boolean } }).setup?.completed === true;
+    || pending('setup').completed === true;
+
+  /**
+   * A config section as it will be AFTER the next restart: what the dashboard has written,
+   * over what is currently loaded.
+   *
+   * The wizard pre-fills from this, and the loaded config alone is the wrong source for
+   * that. Configuration is only re-read at boot, so a value saved a moment ago still reads
+   * as its old self — and since the wizard sends every answer on every save, re-entering it
+   * would write that stale (usually empty) value straight back over the real one. That is
+   * how a second run through Setup blanked a working domain and took the certificate with
+   * it. Reading the override file means the wizard sees its own last answer.
+   */
+  const pending = (section: string): Record<string, unknown> => {
+    const loaded = (deps.config() as Record<string, unknown>)[section];
+    const base = (loaded !== null && typeof loaded === 'object' && !Array.isArray(loaded))
+      ? loaded as Record<string, unknown> : {};
+    let saved: Record<string, unknown> = {};
+    try {
+      const tree = readDashboardTree(deps.dataDir)[section];
+      if (tree !== null && typeof tree === 'object' && !Array.isArray(tree)) {
+        saved = tree as Record<string, unknown>;
+      }
+    } catch { /* unreadable override file: the loaded values are still a fair answer */ }
+    return { ...base, ...saved };
+  };
+
+  const lockerStr = (key: string): string => {
+    const v = pending('locker')[key];
+    return typeof v === 'string' ? v : '';
+  };
 
   const auth: AuthDeps = {
     sharedToken: deps.sharedToken,
@@ -242,7 +273,16 @@ export function adminRoutes(deps: AdminDeps) {
         // The wizard's stored answers, whole. The page branches on these, a single-player
         // deployment hides the multiplayer pages, and re-entering Setup pre-fills from them
         // instead of presenting every question blank and saving blanks back over the answers.
-        setup: (deps.config() as { setup?: Record<string, unknown> }).setup ?? {},
+        setup: {
+          ...pending('setup'),
+          // Storage details the wizard must pre-fill on a re-run. The KEYS are deliberately
+          // absent: they are secrets, and the page only needs to know a pair is already
+          // stored so it stops demanding two values the operator cannot see.
+          s3Endpoint: lockerStr('endpoint'),
+          s3Bucket: lockerStr('bucket'),
+          s3Region: lockerStr('region') || 'auto',
+          storageConfigured: lockerStr('accessKeyId') !== '' && lockerStr('secretAccessKey') !== '',
+        },
         // Surfaced even to a logged-out page so a boot-time revert is visible immediately,
         // not only to whoever eventually logs in.
         configFallback: (deps.config() as { dashboardFallback?: string }).dashboardFallback ?? null,
