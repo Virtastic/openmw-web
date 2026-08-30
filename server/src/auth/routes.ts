@@ -39,6 +39,8 @@ export interface AuthDeps {
   tickets: LoginTicketStore;
   sessions: SessionIndex;
   lockerSessions?: LockerSessionStore; // Phase 3.5: minted at SSO login so the browser can upload before joining
+  /** When set, return=admin flows can mint dashboard sessions for role-holding accounts. */
+  adminSessions?: import('./identities').AdminSessionStore;
   accounts: AccountStore;
   bans: BanStore;
   limiter: IpRateLimiter; // shares the operator's per-IP auth budget
@@ -132,7 +134,16 @@ export function createAuthRoutes(deps: AuthDeps, also?: HttpRoute): HttpRoute {
     // gone. Carried on the pending state, which is server-side and keyed by `state`.
     const pending = oidc.peek(started.state);
     if (pending) {
-      pending.returnUrl = resolveReturn(config.auth.returnUrl, req, url.searchParams.get('return'));
+      // return=admin flags the round trip as a DASHBOARD sign-in: the callback mints an
+      // admin session instead of a game ticket, and lands back on /admin. This is decision
+      // #1 made real — password and SSO side by side on the admin login, not either/or.
+      if (url.searchParams.get('return') === 'admin') {
+        pending.adminMode = true;
+        const origin = requestOrigin(req);
+        pending.returnUrl = origin === '' ? '' : `${origin}/admin`;
+      } else {
+        pending.returnUrl = resolveReturn(config.auth.returnUrl, req, url.searchParams.get('return'));
+      }
       // The invite code is carried across the round trip so an invite-only server stays
       // invite-only through SSO (it is checked at account CREATION, in the callback).
       const invite = url.searchParams.get('invite');
@@ -207,6 +218,28 @@ export function createAuthRoutes(deps: AuthDeps, also?: HttpRoute): HttpRoute {
     // account at ticket redemption, in connection.ts.
     if (bans.isAccountBanned(resolved.accountKey) || (await accounts.get(resolved.accountKey))?.banned)
       return fail(req, res, 'banned', `banned account ${resolved.accountKey} attempted an SSO login`, ip);
+
+    // ---- dashboard sign-in: an admin session, not a game ticket.
+    if (pending.adminMode) {
+      const account = await accounts.get(resolved.accountKey);
+      const back = pending.returnUrl ?? '';
+      if (!account?.dashboardRole || !deps.adminSessions) {
+        // A real account with no dashboard access: not an attack, just someone who plays
+        // here clicking the admin sign-in. Land them on the login page with the reason.
+        log('warn', 'auth.admin_sso_no_role', { provider, account: resolved.accountKey, ip });
+        if (back === '') { sendText(res, 403, 'this account has no dashboard access'); return true; }
+        redirect(res, returnTo(back, 'ssoerr=no_access'));
+        return true;
+      }
+      // TOTP is deliberately not demanded on this path: the identity provider is already a
+      // second factor, and stacking ours on top would make SSO strictly worse than password.
+      const adminToken = deps.adminSessions.mint(resolved.accountKey, ip);
+      log('warn', 'admin.sso_login', { provider, account: resolved.accountKey, ip });
+      metrics.auth.inc({ op: 'sso', result: 'success' });
+      if (back === '') { sendText(res, 200, adminToken); return true; }
+      redirect(res, returnTo(back, `t=${encodeURIComponent(adminToken)}`));
+      return true;
+    }
 
     const ticket = tickets.mint(resolved.accountKey, resolved.accountName);
     // Locker session token: lets this browser reach /locker/* to upload its game data

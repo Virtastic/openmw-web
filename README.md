@@ -32,6 +32,24 @@ asks it what happened. Play solo, invite a party, or step into a public world wi
 strangers in it. See [Multiplayer](#multiplayer) below, and
 [`docs/MULTIPLAYER-SETUP.md`](docs/MULTIPLAYER-SETUP.md) to run your own.
 
+## Host your own server
+
+One command, then a browser does the rest. No config files, no terminal steps after this:
+
+```bash
+git clone https://github.com/Virtastic/openmw-web.git
+cd openmw-web
+./setup.sh        # Windows: .\setup.ps1
+```
+
+The script checks Docker is installed (and points you at the installer if not), starts
+the stack, and opens `https://localhost/admin` in your browser, where a setup wizard
+walks you through everything: your admin account, single player or multiplayer, how
+players sign in, which game files you have, and where the server lives on the network.
+Every setting has plain-language help next to it. See
+[`SELF_HOSTING.md`](SELF_HOSTING.md) for details, and re-run `./setup.sh --update`
+whenever the dashboard tells you a new release is out.
+
 The `openmw/` tree tracks upstream
 [`OpenMW/openmw`](https://github.com/OpenMW/openmw) at commit
 `bc1d9c97a3881bb961a0b74e6e49bbba772b86a1` (recorded in

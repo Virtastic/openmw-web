@@ -46,7 +46,10 @@ services:
     container_name: openmw-web
     # The image's own default starts the multi-world gateway, which is how the hosted
     # platform runs. A self-hosted box wants one world, so this entrypoint picks the mode
-    # from <data>/.mode instead — and the dashboard can switch between them with a restart.
+    # from <data>/.mode instead. Switching is deliberately NOT a dashboard control: the
+    # dashboard administers a world, and the gateway does not have one of its own, so a
+    # button that flips this would sign you out of the thing you flipped it with. Write
+    # "gateway" into <data>/.mode by hand and restart if you really run multi-world.
     entrypoint: ["/usr/local/bin/docker-entrypoint.sh"]
     command: []
     # THIS IS WHAT MAKES THE DASHBOARD'S RESTART BUTTON WORK. The server exits cleanly on

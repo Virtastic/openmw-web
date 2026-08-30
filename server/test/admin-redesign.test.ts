@@ -147,3 +147,31 @@ test('check-domain validates input and is owner-gated; no live DNS in tests', as
     method: 'POST', body: { domain: 'example.com' },
   })).status, 401, 'no credential, no probe: this endpoint makes outbound requests');
 });
+
+test('maintenance mode survives the restart it exists to precede', async (t) => {
+  // Its stated use case is "turn it on, change things, restart" and every settings change
+  // ends in a restart, so in-memory state switched itself off at exactly the wrong moment
+  // and readmitted players into the half-edited server.
+  const dataDir = tmpDataDir();
+  const first = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1' });
+  const call1 = (path: string, opts: RequestInit = {}) => fetch(`http://127.0.0.1:${first.port}/admin/api${path}`, opts);
+  const owner = await call1('/setup/owner', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(OWNER),
+  });
+  const token = (await owner.json() as { token: string }).token;
+  await call1('/maintenance', {
+    method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ on: true, message: 'back in ten' }),
+  });
+  await first.close();
+
+  // The "restart": a second process over the same data dir.
+  const second = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1' });
+  t.after(() => second.close());
+  const state = await (await fetch(`http://127.0.0.1:${second.port}/admin/api/state`)).json() as {
+    maintenance: { on: boolean; message: string };
+  };
+  assert.equal(state.maintenance.on, true, 'still in maintenance after the restart');
+  assert.equal(state.maintenance.message, 'back in ten');
+});

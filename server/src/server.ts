@@ -3,7 +3,7 @@
 // Composition root: wires config, stores, gates, plugins, HTTP and WS into a running
 // server. main.ts is the CLI face; tests call startServer() directly.
 
-import { copyFileSync, existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { WebSocket } from 'ws';
 import { loadConfig, type Config, type DeepPartial } from './config';
@@ -604,10 +604,19 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     pass: config.notifications.smtpPass,
     from: config.notifications.from,
   });
-  // Maintenance mode: set from the dashboard, read by the connection path. Process state
-  // rather than config on purpose — it is a live operational switch, and it should not
-  // survive the restart an operator performs to bring the server back up.
+  // Maintenance mode: set from the dashboard, read by the connection path. PERSISTED to a
+  // marker file, because its stated use case is "turn it on, change settings, restart" —
+  // and every settings change ends in a restart. In-memory it silently switched itself off
+  // at exactly that restart and readmitted players into the half-edited server, which is
+  // the one thing it exists to prevent. The dashboard's own toggle is how it comes off.
+  const maintenanceFile = join(opts.dataDir, 'maintenance');
   const maintenance = { on: false, message: '' };
+  try {
+    const saved = JSON.parse(readFileSync(maintenanceFile, 'utf8')) as { on?: boolean; message?: string };
+    maintenance.on = saved.on === true;
+    maintenance.message = String(saved.message ?? '');
+    if (maintenance.on) log('warn', 'server.maintenance_restored', { message: maintenance.message });
+  } catch { /* no marker: not in maintenance, the common case */ }
   let socialRef: Social | undefined; // read by quest party-credit (built above)
   const socialStore = new SocialStore(sharedDir);
   const social = new Social({
@@ -901,6 +910,13 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       set: (on, message) => {
         maintenance.on = on;
         maintenance.message = message;
+        try {
+          if (on) writeFileSync(maintenanceFile, JSON.stringify({ on, message }));
+          else rmSync(maintenanceFile, { force: true });
+        } catch (e) {
+          // A read-only data dir: the switch still works for this process's lifetime.
+          log('warn', 'server.maintenance_persist_failed', { error: String(e) });
+        }
         if (on) {
           for (const p of roster.humansInWorld()) {
             p.peer.disconnect('SHUTDOWN', message || 'server is going into maintenance');
@@ -1065,6 +1081,8 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     config,
     oidc,
     identities,
+    adminSessions, // return=admin SSO flows mint dashboard sessions from the same store
+
     tickets,
     sessions,
     lockerSessions,

@@ -945,6 +945,7 @@ function pageLogin(totpRequired = false, notice = '') {
         </div>
         <button class="btn btn-primary w-100" id="liGo">Sign in</button>
         <div id="liErr" class="text-danger small mt-2"></div>
+        <div id="liSso"></div>
         <div class="mt-3 small"><a href="#" id="liForgot">Forgot your password?</a></div>
         <div id="liForgotBox" class="mt-2" hidden>
           <p class="small text-secondary mb-2">We will email a reset link to the address on
@@ -998,6 +999,20 @@ function pageLogin(totpRequired = false, notice = '') {
     }
   };
   setTimeout(() => $('#liName').focus(), 30);
+
+  // SSO side by side with the password, driven by what the server actually offers. The
+  // fetch is best-effort: with no providers (or no network) the password form stands alone.
+  fetch('/auth/providers').then((r) => r.json()).then((auth) => {
+    const box = $('#liSso');
+    const providers = (auth.providers || []).filter((p) => LOGIN_LABEL[p]);
+    if (!box || !providers.length) return;
+    box.innerHTML = html`
+      <div class="text-center text-secondary small my-3 text-uppercase" style="letter-spacing:.06em">or</div>
+      ${raw(providers.map((p) => html`
+        <a class="btn btn-outline-secondary w-100 mb-2" href="/auth/${p}/start?return=admin">
+          Continue with ${LOGIN_LABEL[p]}</a>`).join(''))}
+      <div class="form-text text-center">Works for accounts that already have dashboard access.</div>`;
+  }).catch(() => { /* password-only, which always works */ });
 }
 
 /** Reset link landing: /admin#reset=<token>. */
@@ -2106,6 +2121,17 @@ async function pageMaintenance() {
         somewhere private, and do not post it when asking for help.</div>
       <a class="btn btn-outline-secondary" href="/admin/api/export" id="mExport">
         <i class="bi bi-download me-1"></i>Download backup</a>
+    </div></div>
+
+    <div class="card card-secondary card-outline mt-3" style="max-width:40rem">
+      <div class="card-header"><h3 class="card-title">
+        <i class="bi bi-cloud-download me-2"></i>Updates</h3></div>
+      <div class="card-body">
+      <p class="small text-secondary">You are running
+        <span class="vt-mono">v${state.version || '?'}</span>. Checking asks GitHub for the
+        newest release; nothing happens automatically.</p>
+      <button class="btn btn-outline-secondary" id="mUpdates">Check for updates</button>
+      <div id="mUpdatesOut" class="mt-2 small"></div>
     </div></div>`;
 
   $('#mToggle').onclick = async () => {
@@ -2131,6 +2157,28 @@ async function pageMaintenance() {
     if (!ok) return;
     await api('/restart', { method: 'POST' });
     waitForRestart();
+  };
+  $('#mUpdates').onclick = async () => {
+    const out = $('#mUpdatesOut');
+    out.innerHTML = html`<span class="spinner-border spinner-border-sm me-1"></span> Asking GitHub…`;
+    try {
+      const r = await api('/updates');
+      if (!r.ok) {
+        out.innerHTML = html`<div class="text-secondary">Could not check: ${r.reason}</div>`;
+      } else if (r.behind) {
+        out.innerHTML = html`<div class="vt-section-note">
+          <strong>v${r.latest} is out</strong> (you run v${r.current}).
+          To update, run the setup script again on the machine hosting this:
+          <pre class="vt-mono small mb-1 mt-2">./setup.sh --update</pre>
+          (or <span class="vt-mono">setup.ps1 -Update</span> on Windows). It pulls the new
+          version and restarts; your data and settings stay.
+          ${raw(r.url ? html`<div class="mt-1"><a href="${r.url}" target="_blank" rel="noreferrer noopener">What changed</a></div>` : '')}
+        </div>`;
+      } else {
+        out.innerHTML = html`<div class="text-success">
+          <i class="bi bi-check-circle me-1"></i>You are on the newest release.</div>`;
+      }
+    } catch (e) { out.textContent = e.message; }
   };
   // The export streams with an auth header, which a plain link cannot send.
   $('#mExport').onclick = async (e) => {
@@ -2297,6 +2345,21 @@ async function route() {
   // including first-run: the whole point is that the person cannot sign in.
   const reset = /^#reset=(.+)$/.exec(hash);
   if (reset) return pageReset(decodeURIComponent(reset[1]));
+
+  // An SSO round trip lands back here as /admin#t=<session token> (a fragment, so it is
+  // never sent to a server or written to a log). Consume it and clear the address bar.
+  const sso = /^#t=(.+)$/.exec(hash);
+  if (sso) {
+    token.set(decodeURIComponent(sso[1]));
+    history.replaceState(null, '', location.pathname);
+    await refreshState();
+    return go('#overview');
+  }
+  if (hash.startsWith('#ssoerr=')) {
+    history.replaceState(null, '', location.pathname);
+    return pageLogin(false, 'That sign-in worked, but the account has no dashboard access. '
+      + 'An owner can grant it from the Accounts page.');
+  }
 
   if (state.firstRun) {
     // Keep a restored position rather than resetting: this runs on every load, so

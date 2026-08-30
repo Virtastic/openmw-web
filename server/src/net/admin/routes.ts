@@ -497,6 +497,36 @@ export function adminRoutes(deps: AdminDeps) {
       return true;
     }
 
+    // Update check, on demand rather than on a timer: it calls out to GitHub, and a LAN
+    // server with no internet must not accumulate failed requests in its logs for a
+    // feature nobody asked it to run. The answer names the fix (setup script, --update)
+    // because a container cannot `docker pull` itself.
+    if (method === 'GET' && path === '/admin/api/updates') {
+      if (!await gate(req, res, auth, 'owner')) return true;
+      try {
+        const ctl = new AbortController();
+        const timer = setTimeout(() => ctl.abort(), 6000);
+        const r = await fetch('https://api.github.com/repos/Virtastic/openmw-web/releases/latest', {
+          headers: { accept: 'application/vnd.github+json', 'user-agent': 'openmw-web-dashboard' },
+          signal: ctl.signal,
+        });
+        clearTimeout(timer);
+        if (!r.ok) { json(res, 200, { ok: false, current: deps.version, reason: `GitHub answered ${r.status}` }); return true; }
+        const rel = await r.json() as { tag_name?: string; html_url?: string };
+        const latest = String(rel.tag_name ?? '').replace(/^v/, '');
+        json(res, 200, {
+          ok: true,
+          current: deps.version,
+          latest,
+          behind: latest !== '' && latest !== deps.version,
+          url: rel.html_url ?? '',
+        });
+      } catch {
+        json(res, 200, { ok: false, current: deps.version, reason: 'could not reach GitHub (offline is fine; check by hand when convenient)' });
+      }
+      return true;
+    }
+
     // --- onboarding wizard -------------------------------------------------------------------
     if (method === 'POST' && path === '/admin/api/setup') {
       const ctx = await gate(req, res, auth, 'owner');

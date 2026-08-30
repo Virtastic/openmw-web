@@ -120,6 +120,9 @@ export interface Pending {
   linkAccountKey?: string; // set by /auth/link/:provider — bind, do not log in
   linkAccountName?: string;
   invite?: string; // [login].inviteCode carried across the round trip
+  // This round trip signs in to the ADMIN DASHBOARD, not the game: the callback mints an
+  // admin session (for an account that holds a dashboard role) instead of a game ticket.
+  adminMode?: boolean;
   // Where to send the browser when this round trip finishes. Resolved at /auth/start from
   // the origin the browser actually used, so one build serves any hostname; carried here
   // because the callback arrives from the provider and cannot re-derive the caller's intent.

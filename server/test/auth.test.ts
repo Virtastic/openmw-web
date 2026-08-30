@@ -779,3 +779,56 @@ test('the /auth routes do not disturb the rest of the HTTP surface', async (t) =
     assert.equal(fragment(res.headers.get('location')).get('mperror'), 'provider_disabled');
   });
 });
+
+// ------------------------------------------------------------------- admin dashboard SSO
+
+// Decision #1 of the dashboard plan: password AND single sign-on side by side on the admin
+// login. return=admin flags the round trip; the callback mints a dashboard session instead
+// of a game ticket, and only for an account that actually holds a dashboard role.
+test('SSO into the admin dashboard: role required, session lands as /admin#t=', async (t) => {
+  const h = await boot(t);
+
+  const adminSso = async (sub: string) => {
+    const { authorize, cookie } = await startFlow(h, 'custom', '?return=admin');
+    const code = h.idp.issueCode(authorize, { sub, nameHint: 'DashUser' });
+    const res = await callback(h, 'custom', code, authorize.searchParams.get('state') ?? '', cookie);
+    return res.headers.get('location') ?? '';
+  };
+
+  // A fresh account holds no dashboard role: signed in fine, turned away with the reason.
+  const first = await adminSso('admin-sso-1');
+  assert.match(first, /\/admin#ssoerr=no_access$/,
+    'an account without a dashboard role gets an explanation, not a session');
+
+  // Claim the dashboard and grant that account a role, the way an owner actually would.
+  const owner = await fetch(`${h.base}/admin/api/setup/owner`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ name: 'RealOwner', password: 'a-long-enough-passphrase' }),
+  });
+  assert.equal(owner.status, 200);
+  const ownerToken = (await owner.json() as { token: string }).token;
+  const listed = await (await fetch(`${h.base}/admin/api/accounts`, {
+    headers: { authorization: `Bearer ${ownerToken}` },
+  })).json() as { accounts: { name: string }[] };
+  const ssoAccount = listed.accounts.find((a) => a.name === 'DashUser');
+  assert.ok(ssoAccount, 'the failed attempt still created the game account');
+  assert.equal((await fetch(`${h.base}/admin/api/accounts/role`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${ownerToken}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ name: ssoAccount!.name, role: 'moderator' }),
+  })).status, 200);
+
+  // Same identity again: this time the fragment carries a dashboard session token...
+  const second = await adminSso('admin-sso-1');
+  const m = /\/admin#t=([^&]+)$/.exec(second);
+  assert.ok(m, `expected /admin#t=<token>, got ${second}`);
+  const adminToken = decodeURIComponent(m![1]!);
+
+  // ...that the admin API accepts, at the granted role. No TOTP challenge on this path:
+  // the identity provider is already a second factor.
+  const state = await (await fetch(`${h.base}/admin/api/state`, {
+    headers: { authorization: `Bearer ${adminToken}` },
+  })).json() as { authed: boolean; role: string };
+  assert.equal(state.authed, true);
+  assert.equal(state.role, 'moderator');
+});
