@@ -173,6 +173,7 @@ export interface Config {
   setup: {
     completed: boolean; contentProfile: string; hosting: string;
     deploymentMode: string; deliveryModel: string; storage: string; loginMethods: string[];
+    domain: string;
   };
   /** DEV/TEST ONLY, and OFF unless deliberately switched on. Fake players that accept friend
    *  requests and party invites, for exercising the social flows without a second human. They
@@ -636,6 +637,7 @@ function validate(t: Tree): Config {
       deliveryModel: reqStr(t, 'setup', 'deliveryModel'),
       storage: reqStr(t, 'setup', 'storage'),
       loginMethods: reqStrArray(t, 'setup', 'loginMethods'),
+      domain: reqStr(t, 'setup', 'domain'),
     },
     metrics: {
       enabled: reqBool(t, 'metrics', 'enabled'),

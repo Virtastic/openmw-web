@@ -287,6 +287,10 @@ export function applyWizard(
   // per-browser localStorage flag that answered differently on every machine.
   if (a.contentProfile) set('setup', 'contentProfile', a.contentProfile);
   if (a.hosting) set('setup', 'hosting', a.hosting);
+  // The domain is what the proxy config is rendered from, so an internal-only server
+  // explicitly clears it rather than keeping a stale name that would still be served.
+  if (a.hosting === 'internal') set('setup', 'domain', '');
+  else if (a.domain !== undefined) set('setup', 'domain', a.domain.trim());
   // The pivot answers, ALL of them. An earlier version kept only two, which meant the
   // dashboard could never branch on "is this single player?" and re-running the wizard
   // presented every question blank, the two complaints that forced this rewrite.

@@ -691,12 +691,14 @@ function stepHosting() {
         <div id="wzDomainResult" class="mt-2"></div>
       </div>
       <div class="vt-section-note">
-        <strong>One thing this wizard cannot do for you.</strong> HTTPS is handled by the
-        proxy in front of this server, which reads a file called <code>.env</code> next to
-        your <code>docker-compose.yml</code>, outside the server, so nothing in here can
-        write it. ${raw(answers.domain ? html`Put this line in it and restart:
-        <pre class="vt-mono small mb-0 mt-2">SERVER_DOMAIN=${answers.domain}</pre>` : html`If
-        you add a domain above, this box shows you the exact line to put in it.`)}
+        <strong>HTTPS is handled for you.</strong> ${raw(answers.domain
+          ? html`When you finish setup, the certificate for
+            <strong>${answers.domain}</strong> is requested automatically and usually arrives
+            within a few seconds. There is no file to edit and nothing to restart.`
+          : html`Without a domain the connection is still encrypted, using a certificate this
+            server signs itself, so browsers warn once and you click through. Add a domain
+            above at any time (now or later from Settings) and a real certificate replaces
+            it on its own.`)}
       </div>` : '')}`,
   { disabled: !answers.hosting, onNext: () => {
     answers.domain = $('#wzDomain')?.value.trim() ?? answers.domain;
@@ -884,7 +886,9 @@ function stepReview() {
       ${raw(line('Content', CONTENT_LABEL[answers.contentProfile] || '(unset)'))}
       ${raw(line('Game files', answers.deliveryModel === 'serve' ? 'Served by this server' : 'Players bring their own'))}
       ${raw(mp ? line('Reachable', answers.hosting === 'public'
-        ? 'From the internet, set SERVER_DOMAIN in .env for a real certificate'
+        ? (answers.domain
+            ? `From the internet at ${answers.domain}, with a certificate issued automatically`
+            : 'From the internet, using a self-signed certificate until you add a domain')
         : 'Local network only') : '')}
       ${raw(line('Uploads', answers.storage === 's3' ? `S3, ${answers.s3.bucket || 'bucket unset'}` : 'On this server'))}
       ${raw(addedAdmins.length ? line('Extra admins',
@@ -1755,20 +1759,35 @@ function wireUpload(onDone) {
     let bytes = 0;
     const skipped = [];
     const failed = [];
+    // WHY a file failed, not just that it did. The first version pushed a filename onto one
+    // undifferentiated list and showed three of them, so a dead session — every single
+    // request 401ing — looked identical to three corrupt files, and the operator was told
+    // "2,847 failed: Sound/Fx/a.wav, ..." with no cause and nothing to do about it.
+    const reasons = new Map();
+    const note = (why) => reasons.set(why, (reasons.get(why) ?? 0) + 1);
+    /** Set when continuing is pointless: session gone, server gone, disk full. */
+    let stopped = null;
+
     const paint = (extra = '') => {
       const total = done + skipped.length + failed.length;
       const pct = Math.round((total / entries.length) * 100);
+      // Honesty in the bar itself. It used to turn green at the end whatever happened, so an
+      // upload where nothing landed still finished looking like success. That is the
+      // "it said they all failed, then said it was complete" report, exactly.
+      const tone = extra ? 'progress-bar-striped progress-bar-animated'
+        : done === 0 ? 'bg-danger' : failed.length ? 'bg-warning' : 'bg-success';
       row.innerHTML = html`
         <div class="progress mb-1" style="height:10px" role="progressbar" aria-valuenow="${pct}">
-          <div class="progress-bar ${raw(extra ? 'progress-bar-striped progress-bar-animated' : 'bg-success')}"
-            style="width:${pct}%"></div>
+          <div class="progress-bar ${raw(tone)}" style="width:${pct}%"></div>
         </div>
         <div><strong>${done}</strong> of ${entries.length} added
         · ${(bytes / 1048576).toFixed(0)} MB${raw(extra)}</div>
         ${raw(skipped.length ? html`<div class="small text-secondary">${skipped.length} skipped
           (not game data, that is normal for a folder with extras in it)</div>` : '')}
-        ${raw(failed.length ? html`<div class="small text-danger">${failed.length} failed:
-          ${failed.slice(0, 3).join(', ')}</div>` : '')}`;
+        ${raw([...reasons].map(([why, n]) => html`<div class="small text-danger">
+          ${n} file${raw(n === 1 ? '' : 's')}: ${why}</div>`).join(''))}
+        ${raw(stopped ? html`<div class="alert alert-danger py-2 px-3 small mt-2 mb-0">
+          ${raw(stopped)}</div>` : '')}`;
     };
     paint(' · uploading…');
 
@@ -1784,15 +1803,60 @@ function wireUpload(onDone) {
           body: file,
           duplex: 'half',
         });
-        if (r.status === 400) skipped.push(path);          // not game data; expected in bulk
-        else if (!r.ok) failed.push(path);
-        else { done++; bytes += file.size; }
+        if (r.status === 400) { skipped.push(path); }      // not game data; expected in bulk
+        else if (r.status === 401 || r.status === 403) {
+          // Admin sessions live in memory, so a server restart (or a long upload outliving
+          // its four hours) invalidates them mid-run. Every remaining request would 401 too:
+          // stop, and say the one thing that fixes it.
+          stopped = 'You were signed out while this was uploading, so the rest were refused. '
+            + 'Nothing already added was lost. Sign in again and drop the same folder in, '
+            + 'files that are already there are simply skipped.';
+          failed.push(path);
+          break;
+        } else if (r.status === 429) {
+          // Backing off beats failing: this endpoint shares the session's request budget.
+          await new Promise((res) => setTimeout(res, 2000));
+          const retry = await fetch(`/admin/api/mods/upload?name=${encodeURIComponent(path)}`, {
+            method: 'POST',
+            headers: { authorization: `Bearer ${token.get()}`, 'content-type': 'application/octet-stream' },
+            body: file,
+            duplex: 'half',
+          });
+          if (retry.ok) { done++; bytes += file.size; }
+          else { failed.push(path); note('refused because uploads were coming too fast'); }
+        } else if (!r.ok) {
+          failed.push(path);
+          const body = await r.json().catch(() => null);
+          note(body?.error || `rejected by the server (${r.status})`);
+        } else { done++; bytes += file.size; }
       } catch {
-        failed.push(path);
+        // A dropped connection, which on a folder this size is a matter of time. One retry
+        // covers a blip; a server that is actually down ends the run rather than grinding
+        // through thousands of guaranteed failures.
+        try {
+          const retry = await fetch(`/admin/api/mods/upload?name=${encodeURIComponent(path)}`, {
+            method: 'POST',
+            headers: { authorization: `Bearer ${token.get()}`, 'content-type': 'application/octet-stream' },
+            body: file,
+            duplex: 'half',
+          });
+          if (retry.ok) { done++; bytes += file.size; }
+          else { failed.push(path); note('could not be sent'); }
+        } catch {
+          failed.push(path);
+          stopped = 'The connection to the server dropped, so the rest were not attempted. '
+            + 'Check it is still running, then drop the same folder in again, anything '
+            + 'already uploaded is skipped.';
+          break;
+        }
       }
       if ((done + skipped.length + failed.length) % 25 === 0) paint(' · uploading…');
     }
     paint('');
+    // Say it out loud too: the panel can be scrolled off on a long page.
+    if (stopped) toast('Upload stopped before it finished, see the message above.', 'danger');
+    else if (done === 0 && failed.length) toast('Nothing was added, every file was refused.', 'danger');
+    else if (failed.length) toast(`${done} added, ${failed.length} could not be.`, 'warning');
     if (onDone) onDone();
   };
 
@@ -2291,8 +2355,8 @@ async function pageHelp() {
             ${raw(faq('My browser says the connection is not private',
               'Expected when you have no domain name: the certificate is one this server signed ' +
               'itself, so nothing independent vouches for it. The connection is still encrypted. ' +
-              'Point a domain at this machine and set <code>SERVER_DOMAIN</code> in your ' +
-              '<code>.env</code> to get a real certificate automatically.'))}
+              'Point a domain at this machine, then set it in <a href="#setup">Setup</a> &mdash; ' +
+              'a real certificate is fetched automatically, with nothing to edit or restart.'))}
             ${raw(faq('I added mod files and nothing changed',
               'The server reads the game data folder only at startup. Check they appear on the ' +
               '<a href="#mods">Game data &amp; mods</a> page, then restart.'))}

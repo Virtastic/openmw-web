@@ -403,6 +403,10 @@ deliveryModel = ""
 storage = ""
 # Which sign-in methods the wizard enabled, e.g. ["password", "discord"].
 loginMethods = []
+# The domain players reach this server on. NOT informational: the dashboard renders the
+# reverse proxy's whole configuration from it, so setting it here is what gets you a
+# certificate. Empty means no domain, i.e. localhost with a self-signed one.
+domain = ""
 
 [notifications]
 # Outgoing mail and webhooks. ENTIRELY OPTIONAL: with no smtpHost set, nothing is ever sent,

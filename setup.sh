@@ -125,11 +125,8 @@ if [ ! -f .env ]; then
   cat > .env <<'ENVEOF'
 # Settings the containers read at startup. Safe to edit; re-run ./setup.sh afterwards.
 
-# A domain pointed at this machine, or "localhost" if you do not have one. With a real
-# domain you get a real HTTPS certificate automatically; localhost gets a self-signed one.
-SERVER_DOMAIN=localhost
-# Leave as-is for localhost; blank this line out once you set a real domain above.
-TLS_MODE=tls internal
+# Your domain is NOT set here. It is a question in the setup wizard, and answering it
+# configures HTTPS for you — no file to edit and nothing to restart.
 
 # Object storage for player uploads, only if you choose S3 in the setup wizard.
 S3_ACCESS_KEY_ID=
@@ -210,8 +207,10 @@ if [ "$READY" != yes ]; then
 fi
 
 # ---------------------------------------------------------------------------------------
-DOMAIN=$(grep -E '^SERVER_DOMAIN=' .env 2>/dev/null | cut -d= -f2- || true)
-if [ -n "$DOMAIN" ] && [ "$DOMAIN" != localhost ]; then URL="https://$DOMAIN/admin"; else DOMAIN=""; URL="https://localhost/admin"; fi
+# The domain lives in the server's own config now (the wizard writes it), so the local
+# address is always the right one to open: it works whether or not a domain is set.
+URL="https://localhost/admin"
+DOMAIN=$(sed -n 's/^[[:space:]]*domain[[:space:]]*=[[:space:]]*"\(..*\)"/\1/p' data/config.dashboard.toml 2>/dev/null | head -1 || true)
 
 step "Ready"
 say ""
@@ -225,7 +224,7 @@ fi
 if [ -z "$DOMAIN" ]; then
   say "  Your browser will warn that the connection is not private. That is expected —"
   say "  the certificate is one this server signed itself, because no domain is configured."
-  say "  Click Advanced, then Proceed. Set SERVER_DOMAIN in .env to remove the warning."
+  say "  Click Advanced, then Proceed. Add a domain in the wizard to remove the warning."
   say ""
 fi
 say "  The first thing it asks for is an administrator account. After that a short wizard"

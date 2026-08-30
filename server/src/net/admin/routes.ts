@@ -53,6 +53,7 @@ import type { SetupToken } from './setup-token';
 import { generateSecret, totpUri, verifyTotp } from './totp';
 import { settingsView, applySection, applyWizard, type WizardAnswers } from './api-settings';
 import { checkDomain } from './setup-check';
+import { writeCaddyfile } from './caddy-config';
 import { modsView, saveMods, uploadContent, gameDataWritable } from './api-mods';
 import type { LogEntry } from '../../log';
 
@@ -555,6 +556,11 @@ export function adminRoutes(deps: AdminDeps) {
       if (body === undefined) return true;
       const result = applyWizard(deps.dataDir, body, deps.sharedDir);
       if (!result.ok) { json(res, 400, { error: result.error }); return true; }
+      // Apply the hosting answer to the proxy immediately. Caddy watches this file, so the
+      // certificate is requested within seconds — the wizard sets up HTTPS itself instead of
+      // printing a line for the operator to paste into a file it cannot reach.
+      const domain = body.hosting === 'internal' ? '' : String(body.domain ?? '').trim();
+      writeCaddyfile(deps.dataDir, { domain });
       log('info', 'admin.setup_applied', { by: ctx.accountKey, mode: body.deploymentMode });
       json(res, 200, { ok: true, restartRequired: true });
       return true;
@@ -572,7 +578,9 @@ export function adminRoutes(deps: AdminDeps) {
     // Upload streams straight to disk, so it must NOT go through readJson's buffering, a
     // 400 MB archive is not a JSON body. Owner only: this writes files the engine will load.
     if (method === 'POST' && path === '/admin/api/mods/upload') {
-      const ctx = await gate(req, res, auth, 'owner');
+      // Budget-exempt: one request per file, and a Data Files folder is thousands of them.
+      // See the parameter's own comment in auth.ts for why that is safe here.
+      const ctx = await gate(req, res, auth, 'owner', true);
       if (!ctx) return true;
       const result = await uploadContent(
         req, res, deps.gameDataDir, url.searchParams.get('name') ?? '',

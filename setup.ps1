@@ -122,11 +122,8 @@ if (-not (Test-Path '.env')) {
   $envText = @'
 # Settings the containers read at startup. Safe to edit; re-run .\setup.ps1 afterwards.
 
-# A domain pointed at this machine, or "localhost" if you do not have one. With a real
-# domain you get a real HTTPS certificate automatically; localhost gets a self-signed one.
-SERVER_DOMAIN=localhost
-# Leave as-is for localhost; blank this line out once you set a real domain above.
-TLS_MODE=tls internal
+# Your domain is NOT set here. It is a question in the setup wizard, and answering it
+# configures HTTPS for you - no file to edit and nothing to restart.
 
 # Object storage for player uploads, only if you choose S3 in the setup wizard.
 S3_ACCESS_KEY_ID=
@@ -218,7 +215,7 @@ if (-not $ready) {
 # ---------------------------------------------------------------------------------------
 $domain = ''
 if (Test-Path '.env') {
-  $line = Select-String -Path '.env' -Pattern '^SERVER_DOMAIN=(.*)$' -ErrorAction SilentlyContinue
+  $line = Select-String -Path 'data/config.dashboard.toml' -Pattern '^\s*domain\s*=\s*"(.*)"' -ErrorAction SilentlyContinue
   if ($line) { $domain = $line.Matches[0].Groups[1].Value.Trim() }
 }
 if ($domain -eq 'localhost') { $domain = '' }
@@ -239,7 +236,7 @@ if (-not $configured) {
 if (-not $domain) {
   Write-Host "  Your browser will warn that the connection is not private. That is expected -"
   Write-Host "  the certificate is one this server signed itself, because no domain is configured."
-  Write-Host "  Click Advanced, then Proceed. Set SERVER_DOMAIN in .env to remove the warning."
+  Write-Host "  Click Advanced, then Proceed. Add a domain in the wizard to remove the warning."
   Write-Host ""
 }
 Write-Host "  The first thing it asks for is an administrator account. After that a short wizard"

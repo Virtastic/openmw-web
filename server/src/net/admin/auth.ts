@@ -116,6 +116,21 @@ export async function gate(
   res: ServerResponse,
   deps: AuthDeps,
   need: DashboardRole,
+  /**
+   * Exempt this route from the per-request budget.
+   *
+   * For BULK FILE UPLOAD, and only that. Morrowind's Data Files folder is thousands of
+   * files sent one request each, and the budget is 600/minute — ten a second, which is
+   * exactly the rate a local upload runs at. So the one operation the wizard depends on
+   * sat permanently on the limit and failed intermittently, reported to the operator as
+   * "everything failed" with no cause.
+   *
+   * Safe because the budget buys nothing here: the route is owner-only, and an owner can
+   * already restart the server and rewrite every setting. What actually bounds an upload is
+   * the disk and the network, not a token bucket. Every other route keeps the budget, which
+   * is what protects the cheap-to-call, expensive-to-serve endpoints it was written for.
+   */
+  exemptFromBudget = false,
 ): Promise<AuthContext | null> {
   // Messages are written for the person reading them, not for a log. The dashboard surfaces
   // these verbatim in a toast, and "forbidden" tells someone nothing about what to do next.
@@ -124,7 +139,7 @@ export async function gate(
     json(res, 401, { error: 'You are not signed in any more. Sign in again to continue.' });
     return null;
   }
-  if (!deps.apiLimiter.allow(clientIp(req))) {
+  if (!exemptFromBudget && !deps.apiLimiter.allow(clientIp(req))) {
     json(res, 429, { error: 'Too many requests. Wait a moment and try again.' });
     return null;
   }

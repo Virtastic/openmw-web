@@ -14,6 +14,7 @@ import { PartyRules } from './core/party-rules';
 import { QuestRepair } from './core/quest-repair';
 import { adminRoutes as adminDashboardRoutes } from './net/admin/routes';
 import { exportDataDir, summariseMetrics } from './net/admin/ops';
+import { writeCaddyfile } from './net/admin/caddy-config';
 import { orderedContent } from './net/admin/api-mods';
 import { ResetTokens, sendMail, notifyEvent, type MailConfig } from './net/admin/notify';
 import { SetupToken } from './net/admin/setup-token';
@@ -609,6 +610,12 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // and every settings change ends in a restart. In-memory it silently switched itself off
   // at exactly that restart and readmitted players into the half-edited server, which is
   // the one thing it exists to prevent. The dashboard's own toggle is how it comes off.
+  // The reverse proxy's config, regenerated from the current answers on every boot. Written
+  // here rather than only when the wizard saves, so a data directory restored from a backup,
+  // or one whose file was deleted, comes back with a working proxy instead of needing the
+  // wizard re-run. No-ops when the content already matches.
+  writeCaddyfile(opts.dataDir, { domain: config.setup.domain });
+
   const maintenanceFile = join(opts.dataDir, 'maintenance');
   const maintenance = { on: false, message: '' };
   try {

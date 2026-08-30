@@ -125,6 +125,15 @@ minimap-*.png
 # Self-hosting stack working dirs (root docker-compose.yml). Operator data and their own
 # game files: never committed, same rule as play/mwdata/ and fsroot/gamedata/.
 /data/
+# ...except the proxy's bootstrap config. Caddy is mounted straight at this directory and
+# needs a valid file the moment it starts, which is before the server has written one on a
+# fresh clone. The server overwrites it with the real thing (see net/admin/caddy-config.ts);
+# this copy only has to be good enough to serve the dashboard so setup can happen at all.
+!/data/
+/data/*
+!/data/caddy/
+/data/caddy/*
+!/data/caddy/Caddyfile
 /gamedata/
 /client/
 /.env

@@ -5,6 +5,8 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { startServer } from '../src/server';
 import { tmpDataDir } from './helpers';
 import { readDashboardTree } from '../src/net/admin/settings-store';
@@ -231,4 +233,88 @@ test('account names: emails allowed, 32-char plain names allowed, paths still im
 
   // And the message points at the offending character rather than reciting the rule.
   assert.match(accountNameProblem('bob!') ?? '', /cannot contain "!"/);
+});
+
+test('a Data Files folder can be uploaded without tripping the request budget', async (t) => {
+  // THE BUG THIS PINS. Uploads are one request per file and the shared per-request budget is
+  // 600/minute, ten a second, which is exactly the rate a local upload runs at. So the one
+  // operation onboarding depends on sat on the limit and failed part-way through, and the
+  // page reported it as "everything failed" with no cause. 700 files is past the burst, so
+  // this fails outright if the exemption is ever removed.
+  const dataDir = tmpDataDir();
+  const server = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1' });
+  t.after(() => server.close());
+  const base = `http://127.0.0.1:${server.port}`;
+  const owner = await fetch(`${base}/admin/api/setup/owner`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(OWNER),
+  });
+  const token = (await owner.json() as { token: string }).token;
+
+  let ok = 0;
+  let throttled = 0;
+  for (let i = 0; i < 700; i++) {
+    const r = await fetch(`${base}/admin/api/mods/upload?name=${encodeURIComponent(`Sound/Fx/clip${i}.wav`)}`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/octet-stream' },
+      body: Buffer.from('RIFF'),
+    });
+    if (r.status === 429) throttled++;
+    else if (r.ok) ok++;
+  }
+  assert.equal(throttled, 0, 'not one file may be refused for arriving too fast');
+  assert.equal(ok, 700, 'every file lands');
+
+  // The budget still guards everything else: that is the point of exempting one route
+  // rather than raising the limit for all of them.
+  let apiThrottled = false;
+  for (let i = 0; i < 800 && !apiThrottled; i++) {
+    apiThrottled = (await fetch(`${base}/admin/api/overview`, {
+      headers: { authorization: `Bearer ${token}` },
+    })).status === 429;
+  }
+  assert.equal(apiThrottled, true, 'ordinary API calls are still budgeted');
+});
+
+test('the wizard configures HTTPS itself instead of naming a file to edit', async (t) => {
+  // The hosting step used to end with "here is the line, go put it in a .env we cannot
+  // reach". For an audience assumed never to have opened a shell, that is not a setup step,
+  // it is where setup stops. The proxy config is rendered into the shared data directory
+  // instead, and Caddy runs with --watch, so writing it IS applying it.
+  const dataDir = tmpDataDir();
+  const server = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1' });
+  t.after(() => server.close());
+  const base = `http://127.0.0.1:${server.port}`;
+  const owner = await fetch(`${base}/admin/api/setup/owner`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(OWNER),
+  });
+  const token = (await owner.json() as { token: string }).token;
+  const caddyfile = join(dataDir, 'caddy', 'Caddyfile');
+
+  // Written at boot, before anyone has answered anything, so a restored backup or a deleted
+  // file comes back with a working proxy rather than needing the wizard re-run.
+  const atBoot = readFileSync(caddyfile, 'utf8');
+  assert.match(atBoot, /^localhost \{/m, 'no domain yet: localhost only');
+  assert.match(atBoot, /tls internal/, 'and a certificate it signs itself');
+
+  // Answering the hosting question applies it.
+  assert.equal((await fetch(`${base}/admin/api/setup`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ hosting: 'public', domain: 'mp.example.com', completed: true }),
+  })).status, 200);
+  const withDomain = readFileSync(caddyfile, 'utf8');
+  assert.match(withDomain, /^mp\.example\.com \{/m, 'the domain gets its own site block');
+  assert.doesNotMatch(withDomain.split('localhost {')[0]!, /tls internal/,
+    'and NO tls directive, which is how Caddy is told to fetch a public certificate');
+  // localhost survives alongside it: a mistyped domain must never take the dashboard away,
+  // because the operator's own machine is how they would fix it.
+  assert.match(withDomain, /^localhost \{/m);
+
+  // Going internal-only clears the domain rather than leaving a stale name being served.
+  assert.equal((await fetch(`${base}/admin/api/setup`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ hosting: 'internal', completed: true }),
+  })).status, 200);
+  assert.doesNotMatch(readFileSync(caddyfile, 'utf8'), /mp\.example\.com/);
 });

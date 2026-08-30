@@ -202,8 +202,10 @@ Useful afterwards:
 ./setup.sh --stop      # stop everything; your data in ./data is kept
 ```
 
-**HTTPS.** With a domain pointed at the machine, set `SERVER_DOMAIN` in `.env`, blank out
-`TLS_MODE`, and Caddy gets a real certificate automatically. Without one it serves a
+**HTTPS.** Answer the wizard's hosting question with your domain and a real certificate is
+fetched automatically, usually within seconds — the dashboard writes the proxy's whole
+configuration and the proxy reloads itself, so there is no file to edit and nothing to
+restart. Without a domain it serves a
 certificate it signed itself: still encrypted, but your browser warns on the first visit.
 That warning is expected, and the dashboard says so rather than leaving you guessing.
 
