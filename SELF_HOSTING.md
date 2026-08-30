@@ -164,12 +164,16 @@ The script checks Docker is installed and running, works out whether you have
 ports 80 or 443, builds the server, waits for it to report itself healthy, and then opens
 the admin dashboard for you.
 
-The first screen asks you to create an administrator account. It also wants a **setup key**,
-which the script fills in for you — it is proof that whoever claims the first admin account
-has access to this machine, so a server reachable from the internet cannot be claimed by
-whoever finds it first. If you ever need it by hand it is printed in the log at startup and
-saved as `setup-token` in your data folder. It stops working the moment the first
-administrator exists.
+The first screen asks you to create an administrator account — a username and a password,
+and nothing else. Everything from there happens in the browser.
+
+There is one exception, and you will only meet it if you go looking for it. If you set the
+server up from *outside* its own network — a VPS you are administering over the internet,
+say — that screen also asks for a **setup key**, because otherwise the first stranger to
+find `/admin` could claim the server. The key is printed in the log at startup and saved as
+`setup-token` in the data folder, both of which need access to the machine. From your own
+computer or your own LAN you are never asked. It stops working once the first administrator
+exists either way.
 
 After that a short wizard covers the rest: single-player or multiplayer, how players sign
 in, which Morrowind content you are running, whether players bring their own game files or

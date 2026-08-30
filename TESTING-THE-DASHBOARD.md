@@ -18,34 +18,26 @@ no domain configured, so Caddy serves a certificate it signed itself. Click *Adv
 *Proceed*. The connection is still encrypted; nothing independent vouches for the
 certificate, which is what the warning means.
 
-## The setup key
+That is the whole start-up procedure. No key to copy, no script to run, no terminal after
+the first command — the browser takes it from here.
 
-The first screen asks for a **setup key** as well as a username and password. It is proof
-that whoever claims the first admin account can read this machine's files — without it, a
-server reachable from the internet could be claimed by whoever found it first.
+`./setup.sh` (or `.\setup.ps1`) exists for convenience only: it checks Docker is installed
+and running, warns about port clashes, waits for the server and opens the browser for you.
+It is not required.
 
-Get it either way:
+### About the setup key you will not be asked for
 
-```bash
-cat data/setup-token
-# or
-docker compose logs openmw-web | grep -A4 "FIRST-TIME SETUP"
-```
+There is a key, and from your own machine or your own network you never see it. It is only
+demanded when the first admin account is claimed from *outside* the network — a VPS over
+the internet — because otherwise whoever found `/admin` first could take the server. That
+operator has a shell on the box by definition, and the key is in the startup log and in
+`data/setup-token`.
 
-Or skip the copying and let the script do it:
-
-```bash
-./setup.sh          # macOS/Linux
-.\setup.ps1         # Windows
-```
-
-which reads the key, waits for the server, and opens the browser on the right URL.
-
-The key stops working the moment the first administrator exists, and the file is deleted.
+Worth knowing only because it explains the line in the log.
 
 ## What you should see
 
-1. **Create your administrator account** — username, password (12+ characters), setup key.
+1. **Create your administrator account** — username and password (12+ characters).
 2. **What kind of server is this?** — *Just me* skips four of the following questions;
    *Multiplayer* asks all of them.
 3. *(multiplayer)* **How will players sign in?** — tick any combination.

@@ -78,12 +78,30 @@ const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 // (which is what this used to do) let a client pick its own address: evading IP bans and
 // maxConnsPerIp, and attributing its failed logins to a victim's address to lock THEM out.
 function proxyIsTrusted(peer: string): boolean {
-  if (LOOPBACK.has(peer)) return true;
-  const v4 = peer.startsWith('::ffff:') ? peer.slice(7) : peer;
+  return isPrivateAddress(peer);
+}
+
+/**
+ * Is this address on the same machine or the same private network?
+ *
+ * Used for the trusted-proxy boundary above, and by first-run setup to tell "the person who
+ * just started this server" from "whoever found it on the internet". Those are the same
+ * question — can this address only exist on the near side of a router — so they share one
+ * definition rather than two that could drift apart.
+ *
+ * Note this must be given a REAL client address, i.e. the output of clientIp(), not the raw
+ * socket peer. Behind the bundled Caddy every socket peer is the proxy's own private address,
+ * so testing the peer would answer "private" for the entire internet.
+ */
+export function isPrivateAddress(addr: string): boolean {
+  if (LOOPBACK.has(addr)) return true;
+  const v4 = addr.startsWith('::ffff:') ? addr.slice(7) : addr;
   if (/^(10|127)\./.test(v4)) return true;
   if (/^192\.168\./.test(v4)) return true;
   if (/^172\.(1[6-9]|2[0-9]|3[01])\./.test(v4)) return true;
-  return /^f[cd]/i.test(peer); // fc00::/7 unique-local
+  if (/^169\.254\./.test(v4)) return true;   // link-local, e.g. a direct cable
+  if (/^f[cd]/i.test(addr)) return true;      // fc00::/7 unique-local
+  return /^fe80:/i.test(addr);                // IPv6 link-local
 }
 
 // Set once at boot from [limits] trustCloudflareIp. A module-level switch rather than a

@@ -67,10 +67,13 @@ export class SetupToken {
     process.stdout.write(
       `\n${'='.repeat(72)}\n`
       + '  FIRST-TIME SETUP\n\n'
-      + '  Nobody administers this server yet. Open the dashboard and use this key:\n\n'
-      + `      /admin#setup=${this.token}\n\n`
-      + `  It is also in ${join(this.dataDir, FILE)}, and stops working once the first\n`
-      + '  administrator account exists. ./setup.sh and setup.ps1 do this for you.\n'
+      + '  Nobody administers this server yet. Open /admin in a browser and it will\n'
+      + '  walk you through it. From this machine or this network, that is all.\n\n'
+      + '  Setting it up from somewhere else -- over the internet, say -- needs this key,\n'
+      + '  so that a stranger who finds the page cannot claim the server first:\n\n'
+      + `      ${this.token}\n\n`
+      + `  Also saved to ${join(this.dataDir, FILE)}. It stops working the moment the\n`
+      + '  first administrator account exists.\n'
       + `${'='.repeat(72)}\n\n`,
     );
   }

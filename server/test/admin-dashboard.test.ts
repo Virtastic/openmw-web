@@ -45,9 +45,10 @@ async function boot(t: { after(fn: () => unknown): void }, override = {}) {
 type Call = Awaited<ReturnType<typeof boot>>['call'];
 
 /** Claim the first admin account, reading the setup key the server wrote at boot. */
-async function makeOwner(call: Call, dataDir: string) {
-  const setupKey = readFileSync(join(dataDir, 'setup-token'), 'utf8').trim();
-  const r = await call('/setup/owner', { method: 'POST', body: { ...OWNER, setupKey } });
+/** Claim the first admin account. No setup key: the test client is on loopback, which is
+ *  the ordinary case the product is built around. */
+async function makeOwner(call: Call, _dataDir: string) {
+  const r = await call('/setup/owner', { method: 'POST', body: OWNER });
   assert.equal(r.status, 200, 'first-run owner creation should succeed');
   return (await r.json() as { token: string }).token;
 }
@@ -56,31 +57,51 @@ async function makeOwner(call: Call, dataDir: string) {
 // setup key — the gate on claiming the first admin account
 // ---------------------------------------------------------------------------------------
 
-test('claiming the first admin account requires the setup key', async (t) => {
+test('from this machine, setup needs no key at all', async (t) => {
+  // THE PRODUCT PROMISE. Start it, open /admin, the browser walks you through the rest —
+  // with no step that sends you to a terminal. Requiring the key unconditionally broke
+  // exactly that, so it is only demanded of a request arriving from outside this network.
+  // The test client connects over loopback, which is the normal case.
+  const { call, dataDir } = await boot(t);
+
+  const state = await (await call('/state')).json() as { firstRun: boolean; needsSetupKey: boolean };
+  assert.equal(state.firstRun, true);
+  assert.equal(state.needsSetupKey, false, 'a local visitor is never asked for the key');
+
+  const created = await call('/setup/owner', { method: 'POST', body: OWNER });
+  assert.equal(created.status, 200, 'no key, no terminal, no ceremony');
+
+  // The key is still spent, so it cannot be used later from anywhere.
+  assert.equal(existsSync(join(dataDir, 'setup-token')), false);
+  assert.equal((await call('/setup/owner', {
+    method: 'POST', body: { name: 'Second', password: 'another-long-passphrase' },
+  })).status, 409, 'and setup does not reopen');
+});
+
+test('from outside the network, setup demands the key', async (t) => {
   // THE VULNERABILITY THIS CLOSES. Setup used to be gated on "does any account hold the
   // dashboard owner role", which reads as a first-run check and is not one: dashboardRole is
   // a new field, so on every server upgrading to this build the answer is no, forever — and
   // this route creates a full owner. It was internet-reachable on the shipped topology.
-  const { call, dataDir } = await boot(t);
+  //
+  // A forwarded-for header from a loopback peer is how the server is told the real client
+  // address, so it is also how this test stands in for a request off the internet.
+  const { base, dataDir } = await boot(t);
+  const remote = (body: unknown, extra: Record<string, string> = {}) =>
+    fetch(`${base}/admin/api/setup/owner`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-forwarded-for': '203.0.113.7', ...extra },
+      body: JSON.stringify(body),
+    });
 
-  const noKey = await call('/setup/owner', { method: 'POST', body: OWNER });
-  assert.equal(noKey.status, 401, 'no key must not create an owner');
-  const wrongKey = await call('/setup/owner', {
-    method: 'POST', body: { ...OWNER, setupKey: 'not-the-key' },
-  });
-  assert.equal(wrongKey.status, 401);
+  assert.equal((await remote(OWNER)).status, 401, 'no key from the internet must not create an owner');
+  assert.equal((await remote({ ...OWNER, setupKey: 'not-the-key' })).status, 401);
 
   // The real key is written where only someone with access to the machine can read it.
   const key = readFileSync(join(dataDir, 'setup-token'), 'utf8').trim();
   assert.ok(key.length > 20);
-  const good = await call('/setup/owner', { method: 'POST', body: { ...OWNER, setupKey: key } });
-  assert.equal(good.status, 200);
-
-  // And it is spent: the file is gone and the key no longer works.
-  assert.equal(existsSync(join(dataDir, 'setup-token')), false);
-  assert.equal((await call('/setup/owner', {
-    method: 'POST', body: { name: 'Second', password: 'another-long-passphrase', setupKey: key },
-  })).status, 409);
+  assert.equal((await remote({ ...OWNER, setupKey: key })).status, 200);
+  assert.equal(existsSync(join(dataDir, 'setup-token')), false, 'and it is spent');
 });
 
 test('the setup key does not let you seize an existing account', async (t) => {

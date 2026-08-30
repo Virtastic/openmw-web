@@ -355,14 +355,14 @@ function stepOwner() {
     <p class="text-secondary small">This is the account you will sign in with. It has full
       control of the server, so give it a real password — you can add a second factor once
       you are in.</p>
-    ${raw(setupKey ? '' : html`
+    ${raw(!state.needsSetupKey || setupKey ? '' : html`
       <div class="mb-3">
         <label class="form-label">Setup key</label>
         <input class="form-control vt-mono" id="oKey" autocomplete="off">
-        <div class="form-text">Printed in the server's log when it started, and saved as
-          <code>setup-token</code> in your data folder. It stops working once this account
-          exists. If you started the server with <code>setup.sh</code> or
-          <code>setup.ps1</code> this was filled in for you.</div>
+        <div class="form-text">You are setting this server up from outside its own network,
+          so it needs the key as proof you have access to the machine. It was printed in the
+          log when the server started, and is saved as <code>setup-token</code> in the data
+          folder. It stops working once this account exists.</div>
       </div>`)}
     <div class="mb-3">
       <label class="form-label">Username</label>
@@ -382,8 +382,10 @@ function stepOwner() {
   { back: false, next: 'Create account', onNext: async () => {
     const n = $('#oName').value.trim(), p = $('#oPass').value, p2 = $('#oPass2').value;
     if (p !== p2) { $('#oErr').textContent = 'The two passwords do not match.'; return; }
+    // Only required when the server says so — from this machine or this network it is not
+    // asked for at all, because the whole point is that setup happens in the browser.
     const key = ($('#oKey')?.value.trim() || setupKey || '');
-    if (!key) { $('#oErr').textContent = 'The setup key is required.'; return; }
+    if (state.needsSetupKey && !key) { $('#oErr').textContent = 'The setup key is required.'; return; }
     try {
       const r = await api('/setup/owner', { method: 'POST', body: { name: n, password: p, setupKey: key } });
       token.set(r.token);
@@ -396,7 +398,7 @@ function stepOwner() {
       // A rejected key is almost always a stale one. Drop it and re-render so the manual
       // field appears — otherwise the operator is told the key is wrong while being given
       // nowhere to put a right one.
-      if (e.status === 401 && setupKey) {
+      if (e.status === 401 && (setupKey || e.body?.needsKey)) {
         forgetSetupKey();
         renderWizard();
         $('#oName').value = n;

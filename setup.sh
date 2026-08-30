@@ -222,15 +222,6 @@ if [ "$CONFIGURED" != yes ]; then
   say "  expected on a first run — the dashboard walks you through adding them."
   say ""
 fi
-# The setup key proves whoever claims the first admin account can read this machine's files.
-# Passing it in the URL means the documented path never has to go looking for it.
-SETUP_KEY=$(cat data/setup-token 2>/dev/null || true)
-if [ -n "$SETUP_KEY" ]; then
-  URL="$URL#setup=$SETUP_KEY"
-  say "  Opening with your one-time setup key. If you need it again it is in"
-  say "  data/setup-token, and in the server log."
-  say ""
-fi
 if [ -z "$DOMAIN" ]; then
   say "  Your browser will warn that the connection is not private. That is expected —"
   say "  the certificate is one this server signed itself, because no domain is configured."

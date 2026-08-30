@@ -233,17 +233,9 @@ if (-not $configured) {
   Write-Host "  expected on a first run - the dashboard walks you through adding them."
   Write-Host ""
 }
-# The setup key proves whoever claims the first admin account can read this machine's files.
-# Passing it in the URL means the documented path never has to go looking for it.
-if (Test-Path 'data/setup-token') {
-  $setupKey = (Get-Content 'data/setup-token' -Raw).Trim()
-  if ($setupKey) {
-    $url = "$url#setup=$setupKey"
-    Write-Host "  Opening with your one-time setup key. If you need it again it is in"
-    Write-Host "  data\setup-token, and in the server log."
-    Write-Host ""
-  }
-}
+# NO setup key in the URL. Setting the server up from this machine does not need one -- the
+# browser handles the whole thing. The key exists only for the case this script cannot be
+# used, i.e. claiming the server from somewhere else over the internet.
 if (-not $domain) {
   Write-Host "  Your browser will warn that the connection is not private. That is expected -"
   Write-Host "  the certificate is one this server signed itself, because no domain is configured."

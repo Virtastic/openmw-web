@@ -43,7 +43,7 @@ import type { AccountStore, DashboardRole } from '../../core/accounts';
 import { DASHBOARD_ROLES, validAccountName, roleAtLeast } from '../../core/accounts';
 import type { AdminSessionStore } from '../../auth/identities';
 import type { IpRateLimiter } from '../ratelimit';
-import { clientIp } from '../http';
+import { clientIp, isPrivateAddress } from '../http';
 import { log } from '../../log';
 import { json, readJson } from './util';
 import { gate, passwordLogin, passwordProblem, resolveAuth, type AuthDeps } from './auth';
@@ -183,9 +183,13 @@ export function adminRoutes(deps: AdminDeps) {
       // it, so cache it rather than re-scanning on every poll.
       if (firstRunCache === null) firstRunCache = !deps.accounts.hasDashboardOwner();
       const firstRun = firstRunCache && deps.setupToken.armed;
+      // Whether this particular visitor will be asked for the setup key, so the page only
+      // shows that field to someone who actually needs it. See the setup route for why.
+      const needsSetupKey = firstRun && !isPrivateAddress(clientIp(req));
       const ctx = await resolveAuth(req, auth);
       json(res, 200, {
         firstRun,
+        needsSetupKey,
         authed: !!ctx,
         role: ctx?.role ?? null,
         name: ctx?.accountName ?? null,
@@ -273,11 +277,32 @@ export function adminRoutes(deps: AdminDeps) {
         json(res, 409, { error: 'setup has already been completed on this server' });
         return true;
       }
-      if (!deps.setupToken.verify(String(body.setupKey ?? ''))) {
-        log('warn', 'admin.setup_bad_key', { ip: clientIp(req) });
+
+      // THE KEY IS FOR STRANGERS, NOT FOR YOU.
+      //
+      // Requiring it unconditionally was wrong. The whole promise is "start it, open /admin,
+      // the browser walks you through the rest" — and demanding a value that only exists in
+      // a log line or a file sends you straight back to a terminal, which is the one thing
+      // this was built to avoid.
+      //
+      // The risk it guards against is specific: a server reachable from the internet being
+      // claimed by whoever finds it first. That risk does not exist for a request coming
+      // from this machine or this network, and the person who just ran `docker compose up`
+      // is, essentially always, exactly there. So: local or LAN, no key. From the internet,
+      // key required — and that operator has a shell on the box by definition, because they
+      // put it on the internet.
+      //
+      // clientIp(), not the socket peer: behind the bundled Caddy every peer is the proxy's
+      // own private address, so testing the peer would wave through the entire internet.
+      const from = clientIp(req);
+      const local = isPrivateAddress(from);
+      if (!local && !deps.setupToken.verify(String(body.setupKey ?? ''))) {
+        log('warn', 'admin.setup_bad_key', { ip: from });
         json(res, 401, {
-          error: 'wrong setup key. It was printed in the server log when it started, and is '
-            + 'in the "setup-token" file in your data folder.',
+          error: 'This server is being set up from outside its own network, so it needs the '
+            + 'setup key. It was printed in the log when the server started, and is saved as '
+            + '"setup-token" in the data folder.',
+          needsKey: true,
         });
         return true;
       }
