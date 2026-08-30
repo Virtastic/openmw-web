@@ -139,6 +139,18 @@ worldGlobals = []
 # within a tolerance, backed by a header sniff of the uploaded bytes. true because legitimate
 # retail distributions differ; set false to accept ONLY exact hashes from vanilla-manifest.json.
 acceptByNameAndSize = true
+# S3 credentials. Set these in the dashboard (Settings -> Player file storage, or the setup
+# wizard's storage step) rather than by hand. They are masked whenever the dashboard reads
+# them back, so they are never shown in the browser once saved.
+#
+# Left empty, the environment is used instead (S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY),
+# which is how the hosted platform passes them. A value here wins.
+#
+# NOTE: these live in the data directory, so a backup you download contains them. The backup
+# page says so; treat that archive like a password either way, because it also holds every
+# account's password hash.
+accessKeyId = ""
+secretAccessKey = ""
 # Storage locker: a player uploads their own Morrowind data once, streams it back on any
 # device. S3-compatible (AWS, Cloudflare R2, Backblaze, MinIO). Credentials come from the
 # env (S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY) so they stay out of config files. An empty
@@ -403,6 +415,9 @@ deliveryModel = ""
 storage = ""
 # Which sign-in methods the wizard enabled, e.g. ["password", "discord"].
 loginMethods = []
+# "open", "invite" or "closed" - who may create an account. Asked whichever kind of server
+# this is; the real switches it sets are [login].allowRegistration and [login].inviteCode.
+registration = ""
 # The domain players reach this server on. NOT informational: the dashboard renders the
 # reverse proxy's whole configuration from it, so setting it here is what gets you a
 # certificate. Empty means no domain, i.e. localhost with a self-signed one.

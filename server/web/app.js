@@ -224,7 +224,11 @@ const go = (hash) => { if (location.hash === hash) route(); else location.hash =
 const BLANK_ANSWERS = {
   deploymentMode: null, loginMethods: ['password'], contentProfile: null,
   deliveryModel: null, hosting: null, domain: '', serverName: '', storage: 'local',
-  s3: { endpoint: '', bucket: '', region: 'auto' },
+  // Who may create an account. ITS OWN QUESTION, asked whichever kind of server this is:
+  // it used to be inferred from the deployment mode, so choosing "single player" silently
+  // closed registration, which is a decision the operator never made and could not see.
+  registration: null, inviteCode: '',
+  s3: { endpoint: '', bucket: '', region: 'auto', accessKeyId: '', secretAccessKey: '' },
   ssoCreds: { discord: {}, google: {}, microsoft: {} },
 };
 
@@ -273,20 +277,29 @@ const restored = loadWizard();
 const answers = restored.answers;
 let step = restored.step;
 
-// Single player is the short path: no other players means no question about how they sign
-// in, no co-admins to invite, no server name to advertise. You still get the hosting
-// question (a private world can still be reachable from outside, and that matters), and you
-// can always re-run Setup after switching to multiplayer to answer the rest.
+// SIGN-IN COMES AFTER THE DOMAIN, and that ordering is load-bearing rather than tidy.
+//
+// Ticking a single sign-on provider shows you the redirect URL to register with Discord or
+// Google, and that URL contains this server's public address. Asked before the domain is
+// known, the only address available is whatever the operator happens to be browsing on —
+// http://localhost:8090 — so the wizard confidently handed out a redirect URL that the
+// provider would later reject. Everything that needs the domain is asked after it.
+//
+// The sign-in and co-admin questions are asked in BOTH modes: "single player" describes who
+// the world is for, not whether anyone else can ever reach it, and people who do join still
+// need a way to sign in.
 const wizardSteps = () => {
   const mp = answers.deploymentMode === 'multiplayer';
   return [
     'owner',
     'mode',
-    ...(mp ? ['login', 'admins'] : []),
     'content',
     'delivery',
     'hosting',
     ...(mp ? ['name'] : []),
+    'login',
+    'registration',
+    'admins',
     'storage',
     'files',
     'review',
@@ -295,10 +308,14 @@ const wizardSteps = () => {
 
 /** Short labels for the progress rail, so the steps are named rather than anonymous ticks. */
 const STEP_LABEL = {
-  owner: 'Account', mode: 'Type', login: 'Sign-in', admins: 'Admins', content: 'Content',
-  delivery: 'Files', hosting: 'Access', name: 'Name', storage: 'Storage',
-  files: 'Game data', review: 'Review',
+  owner: 'Account', mode: 'Type', login: 'Sign-in', registration: 'Sign-ups',
+  admins: 'Admins', content: 'Content', delivery: 'Files', hosting: 'Access',
+  name: 'Name', storage: 'Storage', files: 'Game data', review: 'Review',
 };
+
+/** The address players actually reach this server on, which is what a provider must be
+ *  told. Falls back to the address the operator is browsing when no domain is set. */
+const publicOrigin = () => (answers.domain ? `https://${answers.domain}` : location.origin);
 
 /**
  * `need` is the sentence shown when Continue is disabled. A greyed-out button with no
@@ -376,6 +393,7 @@ function renderWizard() {
   if (name === 'owner') return stepOwner();
   if (name === 'mode') return stepMode();
   if (name === 'login') return stepLogin();
+  if (name === 'registration') return stepRegistration();
   if (name === 'admins') return stepAdmins();
   if (name === 'content') return stepContent();
   if (name === 'delivery') return stepDelivery();
@@ -492,11 +510,12 @@ function stepOwner() {
 function stepMode() {
   wizardShell(html`
     <h5>What kind of server is this?</h5>
-    <p class="text-secondary small">This decides which of the remaining questions you are asked.</p>
-    ${raw(choice('deploymentMode', 'single', 'Single Player',
-      'A private world for one person. Registration stays closed and the multiplayer questions are skipped.'))}
-    ${raw(choice('deploymentMode', 'multiplayer', 'Multiplayer',
-      'Other people will join. You will be asked how they sign in, how they get the game files, and whether the server is reachable from the internet.'))}`,
+    <p class="text-secondary small">Both are full servers. This only sets sensible starting
+      points, and nothing here stops people joining either way.</p>
+    ${raw(choice('deploymentMode', 'single', 'Mostly for me',
+      'Your own world, played on your own. Friends can still join if you want them to, and you decide who may sign up in a moment.'))}
+    ${raw(choice('deploymentMode', 'multiplayer', 'For a group',
+      'Built for other people from the start. You get one extra question, the name players see when they join.'))}`,
   { disabled: !answers.deploymentMode, need: 'Choose one to carry on.' });
   wireChoices();
 }
@@ -555,9 +574,20 @@ function stepLogin() {
             open ${LOGIN_LABEL[p]}'s developer console ↗</a>
         </div>
         <p class="small text-secondary mb-2">Create an application there, set its redirect URL
-          to <code>${location.origin}/auth/${p}/callback</code>, and paste its two values here.
-          You can also skip this and fill it in later under Settings → Single sign-on -
-          until then, ${LOGIN_LABEL[p]} simply is not offered on the sign-in page.</p>
+          to exactly this, then paste its two values below. You can also skip this and fill it
+          in later under Settings → Single sign-on; until then, ${LOGIN_LABEL[p]} simply is
+          not offered on the sign-in page.</p>
+        <div class="input-group input-group-sm mb-2">
+          <input class="form-control vt-mono" readonly value="${publicOrigin()}/auth/${p}/callback"
+            aria-label="Redirect URL for ${LOGIN_LABEL[p]}">
+          <button class="btn btn-outline-secondary" data-copy="${publicOrigin()}/auth/${p}/callback"
+            type="button">Copy</button>
+        </div>
+        ${raw(answers.domain ? '' : html`<div class="vt-field-danger small mb-2">
+          <strong>No domain set.</strong> That URL is the address you are browsing right now,
+          which is fine for trying this on your own machine and wrong for anyone else. If you
+          add a domain later, change this in ${LOGIN_LABEL[p]}'s console to match, or sign-in
+          will be refused.</div>`)}
         <div class="row g-2">
           <div class="col-sm-6"><label class="form-label small">Client ID</label>
             <input class="form-control form-control-sm vt-mono" data-cred="${p}:clientId" value="${c.clientId || ''}"></div>
@@ -578,17 +608,22 @@ function stepLogin() {
       renderWizard();
     };
   });
+  view().querySelectorAll('[data-copy]').forEach((b) => {
+    b.onclick = async () => {
+      try {
+        await navigator.clipboard.writeText(b.dataset.copy);
+        toast('Redirect URL copied.');
+      } catch { toast('Could not copy, select the box and copy it yourself.', 'danger'); }
+    };
+  });
   view().querySelectorAll('[data-cred]').forEach((el) => {
     el.oninput = () => {
       const [p, k] = el.dataset.cred.split(':');
       answers.ssoCreds ||= {};
-      // The redirect URI rides along: the provider was told this exact URL above, and the
-      // server cannot derive its own public origin, the browser is standing at it.
-      answers.ssoCreds[p] = {
-        ...(answers.ssoCreds[p] || {}),
-        [k]: el.value.trim(),
-        redirectUri: `${location.origin}/auth/${p}/callback`,
-      };
+      // Only the credentials are stored here. The redirect URI is derived from the domain at
+      // save time instead, so going back to change the domain cannot leave a stale URL
+      // behind that no longer matches what the provider was told.
+      answers.ssoCreds[p] = { ...(answers.ssoCreds[p] || {}), [k]: el.value.trim() };
       saveWizard();
     };
   });
@@ -597,6 +632,41 @@ function stepLogin() {
 /** Accounts created on this step, so the review screen can list them. Not persisted, each
  *  one is created the moment the Add button is pressed, so a reload loses nothing. */
 const addedAdmins = [];
+
+function stepRegistration() {
+  wizardShell(html`
+    <h5>Who can create an account?</h5>
+    <p class="text-secondary small">Separate from how people sign in. This is about who is
+      allowed to make an account here in the first place, and it applies whichever kind of
+      server you picked.</p>
+    ${raw(choice('registration', 'open', 'Anyone',
+      'Whoever reaches the server can sign up and play. Right for a public server; on one reachable from the internet it does mean strangers.'))}
+    ${raw(choice('registration', 'invite', 'Only with an invite code',
+      'They can sign up, but they need a code you give them. The simplest way to run a friends-only server without making accounts by hand.'))}
+    ${raw(choice('registration', 'closed', 'Nobody, I will create the accounts',
+      'Sign-ups are refused. You add people yourself from the Accounts page, and existing accounts keep working.'))}
+    ${raw(answers.registration === 'invite' ? html`
+      <div class="mt-3">
+        <label class="form-label">Invite code</label>
+        <input class="form-control" id="wzInvite" value="${answers.inviteCode}"
+          placeholder="something only your friends know" maxlength="64">
+        <div class="form-text">Give this to anyone you want to let in. You can change it
+          later under Settings, which cuts off anyone still passing the old one around.</div>
+      </div>` : '')}`,
+  { disabled: !answers.registration
+      || (answers.registration === 'invite' && answers.inviteCode.trim() === ''),
+    need: answers.registration === 'invite'
+      ? 'Type the code people will need.' : 'Choose who may sign up.' });
+  wireChoices();
+  const inv = $('#wzInvite');
+  if (inv) {
+    inv.oninput = () => {
+      answers.inviteCode = inv.value;
+      $('#wzNext').disabled = inv.value.trim() === '';
+    };
+    setTimeout(() => inv.focus(), 30);
+  }
+}
 
 function stepAdmins() {
   wizardShell(html`
@@ -772,24 +842,41 @@ function stepStorage() {
           <input class="form-control" id="s3b" value="${answers.s3.bucket}"></div>
         <div class="col-sm-4"><label class="form-label small">Region</label>
           <input class="form-control" id="s3r" value="${answers.s3.region}"></div>
+        <div class="col-sm-6"><label class="form-label small">Access key ID</label>
+          <input class="form-control vt-mono" id="s3k" value="${answers.s3.accessKeyId || ''}"
+            autocomplete="off" spellcheck="false"></div>
+        <div class="col-sm-6"><label class="form-label small">Secret access key</label>
+          <input class="form-control vt-mono" id="s3s" type="password"
+            value="${answers.s3.secretAccessKey || ''}" autocomplete="new-password"></div>
       </div>
-      <div class="vt-section-note mt-3">Access keys are read from the environment
-        (<code>S3_ACCESS_KEY_ID</code> and <code>S3_SECRET_ACCESS_KEY</code>), never stored in
-        configuration, so they cannot end up in a backup or a screenshot of this page.</div>` : '')}`,
+      <div class="vt-section-note mt-3">Your storage provider gives you these when you create
+        the bucket. They are stored with the rest of your settings and masked whenever this
+        page reads them back, so they are never shown again once saved. A backup you download
+        does contain them, along with every account's password hash, which is why the backup
+        page tells you to treat that file like a password.</div>` : '')}`,
   // Choosing S3 and leaving it blank produces a server that accepts uploads and then
   // cannot store them, which surfaces much later as a player's failed upload.
-  { disabled: answers.storage === 's3'
-      && (answers.s3.endpoint.trim() === '' || answers.s3.bucket.trim() === ''),
-    need: 'Fill in the endpoint and bucket, or choose "On this server".' });
+  // Half-configured S3 produces a server that accepts uploads and cannot store them, which
+  // shows up much later as a player's failed upload rather than as a setup error. The keys
+  // are part of that: an endpoint with no credentials is a broken deployment, not a partial
+  // one, so the wizard will not move on until all four are present.
+  { disabled: answers.storage === 's3' && !s3Complete(),
+    need: 'Fill in the endpoint, bucket and both keys, or choose "On this server".' });
   wireChoices();
-  const e = $('#s3e'), b = $('#s3b'), r = $('#s3r');
-  const recheck = () => {
-    $('#wzNext').disabled = answers.storage === 's3'
-      && (answers.s3.endpoint.trim() === '' || answers.s3.bucket.trim() === '');
-  };
+  const e = $('#s3e'), b = $('#s3b'), r = $('#s3r'), k = $('#s3k'), sec = $('#s3s');
+  const recheck = () => { $('#wzNext').disabled = answers.storage === 's3' && !s3Complete(); };
   if (e) e.oninput = () => { answers.s3.endpoint = e.value.trim(); recheck(); };
   if (b) b.oninput = () => { answers.s3.bucket = b.value.trim(); recheck(); };
   if (r) r.oninput = () => { answers.s3.region = r.value.trim(); };
+  if (k) k.oninput = () => { answers.s3.accessKeyId = k.value.trim(); recheck(); };
+  if (sec) sec.oninput = () => { answers.s3.secretAccessKey = sec.value.trim(); recheck(); };
+}
+
+/** Every field S3 needs before it can actually store anything. */
+function s3Complete() {
+  const s = answers.s3;
+  return s.endpoint.trim() !== '' && s.bucket.trim() !== ''
+    && (s.accessKeyId || '').trim() !== '' && (s.secretAccessKey || '').trim() !== '';
 }
 
 async function stepFiles() {
@@ -866,6 +953,11 @@ const LOGIN_LABEL = {
   google: 'Google',
   microsoft: 'Microsoft',
 };
+const REGISTRATION_LABEL = {
+  open: 'Anyone can sign up',
+  invite: 'Only with an invite code',
+  closed: 'Nobody, accounts are created by an admin',
+};
 const CONTENT_LABEL = {
   morrowind: 'Morrowind',
   expansions: 'Morrowind + Tribunal + Bloodmoon',
@@ -883,6 +975,7 @@ function stepReview() {
       ${raw(mp ? line('Server name', answers.serverName || '(unset)') : '')}
       ${raw(mp ? line('Sign-in methods',
         answers.loginMethods.map((m) => LOGIN_LABEL[m] || m).join(', ')) : '')}
+      ${raw(line('Who can sign up', REGISTRATION_LABEL[answers.registration] || '(unset)'))}
       ${raw(line('Content', CONTENT_LABEL[answers.contentProfile] || '(unset)'))}
       ${raw(line('Game files', answers.deliveryModel === 'serve' ? 'Served by this server' : 'Players bring their own'))}
       ${raw(mp ? line('Reachable', answers.hosting === 'public'
@@ -913,6 +1006,11 @@ function stepReview() {
       // ssoCreds for unticked providers must not ride along and resurrect stale keys.
       for (const p of Object.keys(answers.ssoCreds || {})) {
         if (!answers.loginMethods.includes(p)) delete answers.ssoCreds[p];
+      }
+      // Stamp the redirect URI from the domain as it stands NOW, so it always agrees with
+      // the URL the sign-in step showed after any back-and-forth over the domain.
+      for (const p of Object.keys(answers.ssoCreds || {})) {
+        answers.ssoCreds[p].redirectUri = `${publicOrigin()}/auth/${p}/callback`;
       }
       await api('/setup', { method: 'POST', body: { ...answers, completed: true } });
       clearWizard();
@@ -1481,10 +1579,12 @@ function renderSection(s) {
       </div>`;
   }).join('');
 
-  // Structurally inert for this deployment shape ≠ hidden: the section stays fully editable
-  // (they can change their mind), it just says up front that nothing reads it right now.
-  const MP_ONLY = new Set(['auth', 'moderation', 'login']);
-  const inert = singlePlayer() && MP_ONLY.has(s.name.split('.')[0]);
+  // NOTHING IS BADGED "not used" ANY MORE. It used to mark auth, login and moderation as
+  // inert on a single-player server, which was built on the idea that nobody else could ever
+  // be there. People can be: "single player" says who the world is for, not who can reach
+  // it. Telling an operator a section does nothing, while it quietly governs whether their
+  // friends can sign in, is worse than saying nothing at all.
+  const inert = false;
 
   // A section holding a flagged-dangerous field wears the red header, so the risk is
   // visible from the accordion, not only after scrolling into the field.

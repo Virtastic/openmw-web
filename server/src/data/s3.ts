@@ -275,9 +275,21 @@ export function s3FromEnv(cfg: {
   endpoint: string;
   region: string;
   bucket: string;
+  accessKeyId?: string;
+  secretAccessKey?: string;
 }): S3Storage | undefined {
-  const accessKeyId = process.env.S3_ACCESS_KEY_ID ?? '';
-  const secretAccessKey = process.env.S3_SECRET_ACCESS_KEY ?? '';
+  // CONFIG FIRST, THEN THE ENVIRONMENT.
+  //
+  // Environment-only was the rule, and it made "use S3" a setting the dashboard could ask
+  // about but never actually finish: the wizard collected an endpoint and a bucket, then
+  // told the operator to go and set two variables in a file it cannot reach. The dashboard
+  // configures everything, so it configures this.
+  //
+  // The environment still wins nothing but still works: a deployment already passing these
+  // in (the hosted platform does) keeps behaving exactly as before, because config is empty
+  // there. Anything set here is masked on read like every other credential.
+  const accessKeyId = cfg.accessKeyId || process.env.S3_ACCESS_KEY_ID || '';
+  const secretAccessKey = cfg.secretAccessKey || process.env.S3_SECRET_ACCESS_KEY || '';
   if (cfg.endpoint === '' || cfg.bucket === '' || accessKeyId === '' || secretAccessKey === '') return undefined;
   log('info', 's3.configured', { endpoint: cfg.endpoint, bucket: cfg.bucket, region: cfg.region });
   // 1h: an upload PUT of a multi-hundred-MB file needs a comfortable window, and a download

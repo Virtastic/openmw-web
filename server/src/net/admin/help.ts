@@ -78,6 +78,9 @@ export const HELP: Record<string, FieldHelp> = {
   'notifications.webhookUrl': { text: 'A Discord or Slack webhook URL. Events are posted to it as messages, an easy way to see bans and restarts in a channel you already read.' },
   'notifications.events': { text: 'Which events send an alert. Event names match the audit log, e.g. admin.action, admin.config_changed.' },
 
+  'locker.accessKeyId': { text: 'The access key your storage provider issued for this bucket. Set it here; the environment variable S3_ACCESS_KEY_ID is only a fallback for deployments that inject it.' },
+  'locker.secretAccessKey': { text: 'The secret that pairs with the access key. Masked once saved, so this page never shows it again.' },
+
   // --- content --------------------------------------------------------------------------
   'content.enforce': {
     text: 'Do all players have to be running the same game files? "names" (default) compares file names, sizes and load order. "strict" also compares checksums, catching a file that was edited in place, but refuses anyone whose client cannot report hashes. "off" disables the check entirely. This is a consistency check so everyone sees the same world, not an anti-cheat measure, and it is unrelated to content-table.json.',

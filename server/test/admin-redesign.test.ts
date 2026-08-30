@@ -333,3 +333,63 @@ test('the wizard configures HTTPS itself instead of naming a file to edit', asyn
   })).status, 200);
   assert.doesNotMatch(readFileSync(caddyfile, 'utf8'), /mp\.example\.com/);
 });
+
+test('registration is its own answer, and single player no longer closes it behind your back', async (t) => {
+  const { call, token, dataDir } = await boot(t);
+
+  // The bug: picking "single player" used to force allowRegistration=false, a decision the
+  // operator never made and could not see, on a server their friends may well be joining.
+  assert.equal((await call('/setup', { method: 'POST', token, body: {
+    deploymentMode: 'single', registration: 'open', completed: true,
+  } })).status, 200);
+  let written = readDashboardTree(dataDir) as { login?: Record<string, unknown> };
+  assert.equal(written.login?.allowRegistration, true,
+    'single player with open sign-ups stays open');
+
+  // Invite mode carries the code, and clears it again when sign-ups are opened up.
+  assert.equal((await call('/setup', { method: 'POST', token, body: {
+    deploymentMode: 'single', registration: 'invite', inviteCode: 'friends-only', completed: true,
+  } })).status, 200);
+  written = readDashboardTree(dataDir) as { login?: Record<string, unknown> };
+  assert.equal(written.login?.allowRegistration, true);
+  assert.equal(written.login?.inviteCode, 'friends-only');
+
+  // And closed really is closed, in either mode.
+  assert.equal((await call('/setup', { method: 'POST', token, body: {
+    deploymentMode: 'multiplayer', registration: 'closed', completed: true,
+  } })).status, 200);
+  written = readDashboardTree(dataDir) as { login?: Record<string, unknown> };
+  assert.equal(written.login?.allowRegistration, false, 'multiplayer can be closed too');
+  assert.equal(written.login?.inviteCode, '', 'and the stale code does not linger');
+});
+
+test('S3 credentials are asked for in the browser, stored, and masked on read', async (t) => {
+  // They used to be environment-only, so "use S3" was a setting the dashboard could ask
+  // about and never finish: it collected an endpoint and a bucket, then told the operator to
+  // go and set two variables in a file it cannot reach.
+  const { call, token, dataDir } = await boot(t);
+  assert.equal((await call('/setup', { method: 'POST', token, body: {
+    storage: 's3',
+    s3: { endpoint: 'https://x.r2.cloudflarestorage.com', bucket: 'worlds', region: 'auto',
+          accessKeyId: 'AKIAEXAMPLE', secretAccessKey: 'the-actual-secret' },
+    completed: true,
+  } })).status, 200);
+
+  const written = readDashboardTree(dataDir) as { locker?: Record<string, unknown> };
+  assert.equal(written.locker?.accessKeyId, 'AKIAEXAMPLE');
+  assert.equal(written.locker?.secretAccessKey, 'the-actual-secret');
+
+  // BOTH are secrets on the way back out. secretAccessKey matched the pattern already;
+  // accessKeyId did not, so it would have been readable in plaintext by a `viewer` — the
+  // role the UI describes as "can look, and nothing else".
+  const settings = await (await call('/settings', { token })).json() as {
+    sections: { name: string; fields: { key: string; value: unknown; secret?: boolean }[] }[];
+  };
+  const locker = settings.sections.find((s) => s.name === 'locker');
+  for (const key of ['accessKeyId', 'secretAccessKey']) {
+    const f = locker?.fields.find((x) => x.key === key);
+    assert.equal(f?.secret, true, `${key} must be treated as a secret`);
+    assert.notEqual(f?.value, 'AKIAEXAMPLE');
+    assert.notEqual(f?.value, 'the-actual-secret');
+  }
+});

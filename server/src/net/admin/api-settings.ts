@@ -42,7 +42,7 @@ export const SECTION_GROUPS: { group: string; sections: string[]; note?: string 
 // A list fails closed only if someone remembers to extend it, which is the wrong default for
 // this. The pattern matches the words credentials are actually named with, so the next one
 // added is masked because of what it is called rather than because it was remembered.
-const SECRET_RE = /pass|secret|token|apikey|webhook|credential/i;
+const SECRET_RE = /pass|secret|token|apikey|webhook|credential|accesskey/i;
 // Fields whose name gives nothing away. Keep this short; prefer naming things clearly.
 const SECRET_KEYS = new Set(['inviteCode']);
 export const SECRET_MASK = '••••••••';
@@ -237,8 +237,11 @@ export function applySection(
 export interface WizardAnswers {
   /** Step 2: what kind of deployment this is. Drives which later steps run at all. */
   deploymentMode?: 'single' | 'multiplayer';
-  /** Step 3: which login methods players may use. */
+  /** Which login methods players may use. */
   loginMethods?: string[];
+  /** Who may create an account. Independent of deploymentMode. */
+  registration?: 'open' | 'invite' | 'closed';
+  inviteCode?: string;
   /** Step 4: extra dashboard accounts are created through the accounts API, not here. */
   owners?: string[];
   /** Step 5: which game content this server expects. */
@@ -252,7 +255,7 @@ export interface WizardAnswers {
   serverName?: string;
   /** Step 9 */
   storage?: 'local' | 's3';
-  s3?: { endpoint?: string; bucket?: string; region?: string };
+  s3?: { endpoint?: string; bucket?: string; region?: string; accessKeyId?: string; secretAccessKey?: string };
   /** Step 3's inline credential sub-forms: clientId/clientSecret per ticked provider, plus
    *  the redirect URI the browser derived from its own origin. */
   ssoCreds?: Record<string, { clientId?: string; clientSecret?: string; redirectUri?: string }>;
@@ -298,6 +301,7 @@ export function applyWizard(
   if (a.deliveryModel) set('setup', 'deliveryModel', a.deliveryModel);
   if (a.storage) set('setup', 'storage', a.storage);
   if (a.loginMethods) set('setup', 'loginMethods', a.loginMethods.filter((m) => typeof m === 'string'));
+  if (a.registration) set('setup', 'registration', a.registration);
   if (a.completed) set('setup', 'completed', true);
 
   if (a.owners && a.owners.length > 0) {
@@ -305,12 +309,15 @@ export function applyWizard(
     set('admin', 'owners', [...new Set([...existing, ...a.owners])]);
   }
 
-  if (a.deploymentMode === 'single') {
-    // A private, one-person world: nobody else is going to register, and leaving signup open
-    // on a box someone port-forwarded is the failure this default exists to prevent.
-    merge('login', { allowRegistration: false });
-  } else if (a.deploymentMode === 'multiplayer') {
-    merge('login', { allowRegistration: true });
+  // WHO MAY SIGN UP IS ITS OWN ANSWER, not a side effect of the deployment mode. Deriving it
+  // meant choosing "single player" silently closed registration, a decision the operator
+  // never made and could not see, on a server other people may well be playing on.
+  if (a.registration === 'open') {
+    merge('login', { allowRegistration: true, inviteCode: '' });
+  } else if (a.registration === 'invite') {
+    merge('login', { allowRegistration: true, inviteCode: a.inviteCode ?? '' });
+  } else if (a.registration === 'closed') {
+    merge('login', { allowRegistration: false, inviteCode: '' });
   }
 
   if (a.loginMethods) {
@@ -349,6 +356,11 @@ export function applyWizard(
       ...(a.s3.endpoint ? { endpoint: a.s3.endpoint } : {}),
       ...(a.s3.bucket ? { bucket: a.s3.bucket } : {}),
       ...(a.s3.region ? { region: a.s3.region } : {}),
+      // The keys, asked for in the browser like everything else. They used to be the one
+      // thing the wizard collected an endpoint for and then refused to finish, sending the
+      // operator to set environment variables in a file the dashboard cannot reach.
+      ...(a.s3.accessKeyId ? { accessKeyId: a.s3.accessKeyId } : {}),
+      ...(a.s3.secretAccessKey ? { secretAccessKey: a.s3.secretAccessKey } : {}),
     });
   } else if (a.storage === 'local') {
     set('locker', 'endpoint', ''); // empty endpoint = this server's own disk

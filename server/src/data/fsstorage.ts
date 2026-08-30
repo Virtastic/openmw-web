@@ -153,11 +153,16 @@ export function fsStorageFrom(sharedDir: string, publicBase: string): FsStorage 
 /** S3 when the operator configured it, this server's disk otherwise. The locker is never
  *  inert now: an operator with no object-storage account still gets uploads and saves. */
 export function lockerStorageFrom(
-  cfg: { endpoint: string; region: string; bucket: string; publicBase: string },
+  cfg: { endpoint: string; region: string; bucket: string; publicBase: string;
+         accessKeyId?: string; secretAccessKey?: string },
   sharedDir: string,
   fallbackBase: string,
 ): S3Storage | FsStorage {
-  const s3 = s3FromEnv({ endpoint: cfg.endpoint, region: cfg.region, bucket: cfg.bucket });
+  const s3 = s3FromEnv({
+    endpoint: cfg.endpoint, region: cfg.region, bucket: cfg.bucket,
+    ...(cfg.accessKeyId ? { accessKeyId: cfg.accessKeyId } : {}),
+    ...(cfg.secretAccessKey ? { secretAccessKey: cfg.secretAccessKey } : {}),
+  });
   if (s3) return s3;
   if (cfg.endpoint !== '') {
     // The operator ASKED for S3 (endpoint in config) but the env keys are absent, so this
@@ -170,7 +175,7 @@ export function lockerStorageFrom(
     // deploy-mp.yml fails the deploy when it sees this event.
     log('error', 'locker.s3_creds_missing', {
       endpoint: cfg.endpoint, bucket: cfg.bucket,
-      fix: 'set S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY in the container env (prod: /opt/openmw-mp/data/s3.env), or clear [locker] endpoint to choose filesystem storage deliberately',
+      fix: 'add the access key and secret under Settings -> Player file storage in the dashboard (or set S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY in the container env), or clear [locker] endpoint to choose filesystem storage deliberately',
     });
   }
   if (cfg.publicBase === '') {

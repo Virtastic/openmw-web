@@ -123,6 +123,7 @@ export interface Config {
   locker: {
     endpoint: string; region: string; bucket: string; maxBytesPerAccount: number;
     acceptByNameAndSize: boolean; publicBase: string; maxSaveBytesPerAccount: number;
+    accessKeyId: string; secretAccessKey: string;
   };
   rules: {
     respawnCellKey: string;
@@ -173,7 +174,7 @@ export interface Config {
   setup: {
     completed: boolean; contentProfile: string; hosting: string;
     deploymentMode: string; deliveryModel: string; storage: string; loginMethods: string[];
-    domain: string;
+    domain: string; registration: string;
   };
   /** DEV/TEST ONLY, and OFF unless deliberately switched on. Fake players that accept friend
    *  requests and party invites, for exercising the social flows without a second human. They
@@ -532,6 +533,10 @@ function validate(t: Tree): Config {
       acceptByNameAndSize: optBool(t, 'locker', 'acceptByNameAndSize', true),
       publicBase: optStr(t, 'locker', 'publicBase', ''),
       maxSaveBytesPerAccount: optNum(t, 'locker', 'maxSaveBytesPerAccount', 536870912),
+      // Optional: empty falls back to the environment, which is how the hosted platform
+      // supplies them. See s3FromEnv.
+      accessKeyId: optStr(t, 'locker', 'accessKeyId', ''),
+      secretAccessKey: optStr(t, 'locker', 'secretAccessKey', ''),
     },
     rules: {
       respawnCellKey: reqStr(t, 'rules', 'respawnCellKey'),
@@ -638,6 +643,7 @@ function validate(t: Tree): Config {
       storage: reqStr(t, 'setup', 'storage'),
       loginMethods: reqStrArray(t, 'setup', 'loginMethods'),
       domain: reqStr(t, 'setup', 'domain'),
+      registration: reqStr(t, 'setup', 'registration'),
     },
     metrics: {
       enabled: reqBool(t, 'metrics', 'enabled'),
