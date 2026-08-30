@@ -405,7 +405,8 @@ function renderWizard() {
   saveWizard();
   const steps = wizardSteps();
   const name = steps[Math.min(step, steps.length - 1)];
-  setTitle('Set up this server', 'A few questions. Everything here can be changed later.');
+  setTitle('Set up this server',
+    'Ten or so questions, most of them a single click. Every answer can be changed later.');
 
   if (name === 'owner') return stepOwner();
   if (name === 'mode') return stepMode();
@@ -565,14 +566,19 @@ function stepLogin() {
 
   wizardShell(html`
     <h5>How will players sign in?</h5>
-    <p class="text-secondary small">Pick as many as you like. They work side by side, this is
-      how you choose single sign-on, passwords, or both together.</p>
-    ${raw(box('password', 'Username and password',
-      'Accounts held on this server. Nothing external required, and it always works.'))}
-    <div class="text-secondary small text-uppercase mt-3 mb-2">Single sign-on</div>
-    ${raw(box('discord', 'Discord', 'Needs a Discord application.'))}
-    ${raw(box('google', 'Google', 'Needs a Google OAuth client.'))}
-    ${raw(box('microsoft', 'Microsoft', 'Needs a Microsoft app registration.'))}
+    <p class="text-secondary small">Tick as many as you like; they work side by side, and one
+      person can use either on the same account. If you are not sure, the first one on its own
+      is a complete answer and needs nothing set up.</p>
+    ${raw(box('password', 'A username and password they choose here',
+      'An account that lives on this server. Nothing to configure, works for everyone, and '
+      + 'is what most servers use on its own.'))}
+    <div class="text-secondary small text-uppercase mt-3 mb-1">Or sign in with an account they already have</div>
+    <p class="text-secondary small">Nobody has to invent another password, and you never hold
+      one. The trade is about ten minutes per provider: you register this server with them and
+      paste back two values, which the next box walks you through.</p>
+    ${raw(box('discord', 'Discord', 'Sensible if your group already lives in a Discord server.'))}
+    ${raw(box('google', 'Google', 'Almost everyone has one, so nobody gets stuck.'))}
+    ${raw(box('microsoft', 'Microsoft', 'Useful for a school or workplace group.'))}
     <div class="vt-section-note mt-3">${raw(summary)}</div>
     ${raw(['discord', 'google', 'microsoft'].filter(has).map((p) => {
       const c = answers.ssoCreds?.[p] || {};
@@ -988,6 +994,9 @@ async function stepFiles() {
   const missingFiles = (profile?.requires || []).filter((f) => !present.has(f.toLowerCase()));
   const missingMedia = mediaDirs.filter((d) => (media[d] ?? 0) === 0);
   const missingCount = missingFiles.length + missingMedia.length;
+  // Carried to the review, which otherwise reads as "all set" on a server that cannot
+  // actually start a world.
+  gameDataIncomplete = missingCount > 0;
 
   wizardShell(html`
     <h5>Add your Morrowind files</h5>
@@ -1009,7 +1018,7 @@ async function stepFiles() {
         <span class="text-lowercase">- these sit loose in the folder, so they are easy to miss</span></div>
       <table class="table table-sm align-middle mb-3">${raw(mediaRows)}</table>` : '')}
     ${raw(profile?.note ? html`<div class="vt-section-note mb-3">${profile.note}</div>` : '')}
-    ${raw(mods ? uploadPanel(mods) : '')}
+    ${raw(mods ? uploadPanel(mods, true) : '')}
     ${raw(missingCount > 0 ? html`
       <div class="alert alert-warning mb-0">
         <strong>${missingCount} item${raw(missingCount === 1 ? '' : 's')} still missing.</strong>
@@ -1045,12 +1054,41 @@ const CONTENT_LABEL = {
   'tamriel-rebuilt': 'Tamriel Rebuilt',
 };
 
+/**
+ * The address to hand to players.
+ *
+ * NOT location.origin blindly. Setting up from the machine itself means that is
+ * "http://localhost:8090", which is every computer's word for itself: a player pasting it
+ * opens their own machine and finds nothing. The review used to print it under "send them
+ * this address", which is a wrong answer given confidently.
+ */
+function joinAddress() {
+  if (answers.domain) return `https://${answers.domain}`;
+  const host = location.hostname;
+  if (host === 'localhost' || host === '127.0.0.1' || host === '::1') {
+    return answers.hosting === 'public'
+      ? '(your public IP address, see below)'
+      : "(this machine's address on your network)";
+  }
+  return location.origin;
+}
+
+/** True when the profile's files are not all present, so the world cannot run yet. */
+let gameDataIncomplete = false;
+
 function stepReview() {
   const line = (k, v) => html`<dt class="col-sm-5 fw-normal text-secondary">${k}</dt>
     <dd class="col-sm-7">${v}</dd>`;
   const mp = answers.deploymentMode === 'multiplayer';
   wizardShell(html`
     <h5>Ready to apply</h5>
+    ${raw(gameDataIncomplete ? html`
+      <div class="callout callout-warning mb-3">
+        <strong>The game files are not all here yet.</strong> Everything below still saves and
+        the dashboard works, but nobody can join until the server has a complete copy of
+        Morrowind. Go <a href="#" id="backToFiles">back one step</a> to add it, or do it later
+        from <strong>Game data &amp; mods</strong>, which shows the same checklist.
+      </div>` : '')}
     <dl class="row small mt-3">
       ${raw(line('Server', mp ? 'For a group' : 'Mostly for me'))}
       ${raw(mp ? line('Server name', answers.serverName || '(unset)') : '')}
@@ -1073,16 +1111,26 @@ function stepReview() {
         <strong>${raw(mp ? 'Getting players in.' : 'Your address.')}</strong> ${raw(mp
           ? 'Send them this address, they open it in a browser, nothing to install:'
           : 'This is where you play, and where anyone you invite would join:')}
-        <pre class="vt-mono mb-1 mt-2" id="joinLink">${answers.domain ? `https://${answers.domain}` : location.origin}</pre>
+        <pre class="vt-mono mb-1 mt-2" id="joinLink">${joinAddress()}</pre>
         <button class="btn btn-sm btn-outline-secondary" id="copyJoin">Copy link</button>
+        ${raw(answers.hosting === 'public' && !answers.domain ? html`<p class="small mb-0 mt-2">
+          You chose to let people in over the internet but have not set a domain, so there is
+          no address this page can give you: what your friends need is your home connection's
+          public IP address, which you can find by searching the web for "what is my IP" on
+          this machine. A domain name is worth the few pounds a year, because that address
+          changes on its own and a domain does not.</p>` : '')}
         ${raw(answers.deliveryModel === 'verify' ? html`<p class="small mb-0 mt-2">Each player
           also needs their own copy of Morrowind's Data Files, since you chose that players
           bring their own.</p>` : '')}
       </div>`)}
-    <div class="vt-section-note">Saving writes these to
-      <code>config.dashboard.toml</code>. Your own <code>config.toml</code> is never touched,
-      and the server will restart to pick the changes up. Everything else, gameplay rules,
-      loot, rate limits, all of it, lives under <strong>Settings</strong> afterwards.</div>`,
+    <div class="vt-section-note">
+      <strong>What happens when you press the button.</strong> These answers are saved and the
+      server restarts, which takes a few seconds. You will be asked to sign in again, because
+      restarting ends the session you are in now. After that the full dashboard opens, and
+      everything else this server can do, gameplay rules, loot, rate limits, all of it, lives
+      under <strong>Settings</strong>. Nothing here is permanent; you can re-run this whole
+      setup at any time.
+    </div>`,
   { next: 'Save and restart', onNext: async () => {
     try {
       // ssoCreds for unticked providers must not ride along and resurrect stale keys.
@@ -1101,6 +1149,8 @@ function stepReview() {
       waitForRestart();
     } catch (e) { toast(e.message, 'danger'); }
   } });
+  const back = $('#backToFiles');
+  if (back) back.onclick = (e) => { e.preventDefault(); step--; renderWizard(); };
   const cj = $('#copyJoin');
   if (cj) cj.onclick = async () => {
     try {
@@ -1888,11 +1938,11 @@ function drawQr(el, text) {
 }
 
 /** Add-files panel, shared by the mods page and the wizard's game-data step. */
-function uploadPanel(m) {
+function uploadPanel(m, inWizard = false) {
   return html`
     <div class="card card-secondary card-outline mb-3">
       <div class="card-header"><h3 class="card-title">
-        <i class="bi bi-cloud-arrow-up me-2"></i>Add game data files</h3></div>
+        <i class="bi bi-cloud-arrow-up me-2"></i>${raw(inWizard ? 'Drop the folder here' : 'Add game data files')}</h3></div>
       <div class="card-body">
       ${raw(m.writable === false ? html`
         <div class="alert alert-warning mb-0">
@@ -1900,11 +1950,12 @@ function uploadPanel(m) {
           into <code>${m.dir}</code> directly, or remove <code>:ro</code> from the
           <code>gamedata</code> volume in <code>docker-compose.yml</code> and restart.
         </div>` : html`
-        <p class="small text-secondary">Morrowind's <strong>Data Files</strong> folder is more
-          than the plugins: <code>Sound</code>, <code>Music</code>, <code>Video</code>,
-          <code>Fonts</code>, <code>Splash</code> and <code>BookArt</code> sit loose beside
-          them and are not inside any archive. Add the <em>whole folder</em>, with only the
-          .esm and .bsa the game runs silently, with no voice, music or intro.</p>
+        ${raw(inWizard ? '' : html`<p class="small text-secondary">Morrowind's
+          <strong>Data Files</strong> folder is more than the plugins:
+          <code>Sound</code>, <code>Music</code>, <code>Video</code>, <code>Fonts</code>,
+          <code>Splash</code> and <code>BookArt</code> sit loose beside them and are not inside
+          any archive. Add the <em>whole folder</em>: with only the .esm and .bsa the game runs
+          silently, with no voice, music or intro.</p>`)}
         <p class="small text-secondary">
           <label class="btn btn-sm btn-outline-secondary mb-0">Choose the Data Files folder<input
             type="file" id="upDir" webkitdirectory directory multiple hidden></label>
