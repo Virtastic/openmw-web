@@ -30,15 +30,23 @@ export const SECTION_GROUPS: { group: string; sections: string[]; note?: string 
 // Values that are secrets. Never sent to the browser in full; a save that receives the mask
 // back unchanged leaves the stored value alone, so "edit another field on this form" cannot
 // silently blank a credential the operator never touched.
-const SECRET_KEYS = new Set([
-  'password', 'dashboardToken', 'serverToken', 'token', 'inviteCode',
-  'attioApiKey', 'clientSecret', 'secret',
-]);
+//
+// PATTERN-BASED, NOT A LIST. The first version was an explicit set and it had already gone
+// stale by the time anyone looked: [notifications].smtpPass (a real mail account password)
+// and webhookUrl (a bearer capability — anyone holding a Slack or Discord webhook URL can
+// post as it) were both absent, and both were readable in plaintext by the `viewer` role,
+// the one the UI describes as "can look, and nothing else".
+//
+// A list fails closed only if someone remembers to extend it, which is the wrong default for
+// this. The pattern matches the words credentials are actually named with, so the next one
+// added is masked because of what it is called rather than because it was remembered.
+const SECRET_RE = /pass|secret|token|apikey|webhook|credential/i;
+// Fields whose name gives nothing away. Keep this short; prefer naming things clearly.
+const SECRET_KEYS = new Set(['inviteCode']);
 export const SECRET_MASK = '••••••••';
 
-function isSecret(section: string, key: string): boolean {
-  return SECRET_KEYS.has(key) || key.toLowerCase().endsWith('secret') ||
-    (section === 'server' && key === 'password');
+function isSecret(_section: string, key: string): boolean {
+  return SECRET_RE.test(key) || SECRET_KEYS.has(key);
 }
 
 export interface FieldView {
@@ -54,8 +62,50 @@ export interface FieldView {
 
 export interface SectionView {
   name: string;
+  /** Human title. The raw name is a TOML table like [simPeer]; that is a fine identifier and
+   *  a poor heading for someone who has never opened a TOML file. */
+  label: string;
   help?: string;
   fields: FieldView[];
+}
+
+/** Titles for the settings sections. Anything unlisted falls back to its own name. */
+const SECTION_LABEL: Record<string, string> = {
+  server: 'Server identity',
+  login: 'Player accounts',
+  auth: 'Single sign-on',
+  content: 'Game files',
+  rules: 'Gameplay rules',
+  economy: 'Loot and ownership',
+  sharing: 'Shared progress',
+  time: 'In-game time',
+  gui: 'Dialogs',
+  cellReset: 'Area resets',
+  limits: 'Rate limits and anti-cheat',
+  moderation: 'Chat logs and reports',
+  admin: 'Administration',
+  authority: 'Simulation handover',
+  locker: 'Player file storage',
+  metrics: 'Monitoring',
+  integrations: 'Third-party integrations',
+  dev: 'Development aids',
+  notifications: 'Email and alerts',
+  simPeer: 'World simulation',
+  gateway: 'Multi-world gateway',
+  worlds: 'Multi-world capacity',
+  engine: 'Engine version',
+};
+
+function labelFor(name: string): string {
+  if (SECTION_LABEL[name]) return SECTION_LABEL[name]!;
+  const dot = name.indexOf('.');
+  if (dot !== -1) {
+    // auth.discord -> "Discord", which is what the operator recognises.
+    const child = name.slice(dot + 1);
+    return child.charAt(0).toUpperCase() + child.slice(1);
+  }
+  // camelCase -> spaced words, so an unlisted section is still readable.
+  return name.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/^./, (c) => c.toUpperCase());
 }
 
 function fieldType(v: unknown): FieldView['type'] {
@@ -99,7 +149,7 @@ export function settingsView(dataDir: string, config: unknown): {
         ...(h?.danger ? { danger: h.danger } : {}),
       });
     }
-    sections.push({ name, ...(SECTION_HELP[name] ? { help: SECTION_HELP[name] } : {}), fields });
+    sections.push({ name, label: labelFor(name), ...(SECTION_HELP[name] ? { help: SECTION_HELP[name] } : {}), fields });
 
     // Nested tables become their own sections, e.g. auth.discord — so provider credentials
     // are editable instead of showing up as an "unsupported" blob.
@@ -108,6 +158,7 @@ export function settingsView(dataDir: string, config: unknown): {
       const nestedName = `${name}.${key}`;
       const nestedOver = ((overrides[name] as Tree | undefined)?.[key] as Tree | undefined) ?? {};
       sections.push({
+        label: labelFor(nestedName),
         name: nestedName,
         fields: Object.entries(value as Record<string, unknown>).map(([k, v]) => {
           const secret = isSecret(key, k);
@@ -212,6 +263,14 @@ export function applyWizard(
   };
 
   if (a.serverName !== undefined && a.serverName !== '') set('server', 'name', a.serverName);
+
+  // The wizard's own bookkeeping, in its own section rather than bolted onto [admin]. These
+  // were collected, echoed back on the review screen, and then dropped — so the content
+  // profile silently reset to nothing on the next visit, and "have you run setup?" was a
+  // per-browser localStorage flag that answered differently on every machine.
+  if (a.contentProfile) set('setup', 'contentProfile', a.contentProfile);
+  if (a.hosting) set('setup', 'hosting', a.hosting);
+  if (a.completed) set('setup', 'completed', true);
 
   if (a.owners && a.owners.length > 0) {
     const existing = ((current.admin as Tree | undefined)?.owners as string[] | undefined) ?? [];

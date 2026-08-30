@@ -42,24 +42,81 @@ async function boot(t: { after(fn: () => unknown): void }, override = {}) {
   return { server, dataDir, base, call };
 }
 
-async function makeOwner(call: ReturnType<typeof boot> extends Promise<infer R> ? R extends { call: infer C } ? C : never : never) {
-  const r = await call('/setup/owner', { method: 'POST', body: OWNER });
+type Call = Awaited<ReturnType<typeof boot>>['call'];
+
+/** Claim the first admin account, reading the setup key the server wrote at boot. */
+async function makeOwner(call: Call, dataDir: string) {
+  const setupKey = readFileSync(join(dataDir, 'setup-token'), 'utf8').trim();
+  const r = await call('/setup/owner', { method: 'POST', body: { ...OWNER, setupKey } });
   assert.equal(r.status, 200, 'first-run owner creation should succeed');
   return (await r.json() as { token: string }).token;
 }
 
 // ---------------------------------------------------------------------------------------
-// first run
+// setup key — the gate on claiming the first admin account
 // ---------------------------------------------------------------------------------------
 
+test('claiming the first admin account requires the setup key', async (t) => {
+  // THE VULNERABILITY THIS CLOSES. Setup used to be gated on "does any account hold the
+  // dashboard owner role", which reads as a first-run check and is not one: dashboardRole is
+  // a new field, so on every server upgrading to this build the answer is no, forever — and
+  // this route creates a full owner. It was internet-reachable on the shipped topology.
+  const { call, dataDir } = await boot(t);
+
+  const noKey = await call('/setup/owner', { method: 'POST', body: OWNER });
+  assert.equal(noKey.status, 401, 'no key must not create an owner');
+  const wrongKey = await call('/setup/owner', {
+    method: 'POST', body: { ...OWNER, setupKey: 'not-the-key' },
+  });
+  assert.equal(wrongKey.status, 401);
+
+  // The real key is written where only someone with access to the machine can read it.
+  const key = readFileSync(join(dataDir, 'setup-token'), 'utf8').trim();
+  assert.ok(key.length > 20);
+  const good = await call('/setup/owner', { method: 'POST', body: { ...OWNER, setupKey: key } });
+  assert.equal(good.status, 200);
+
+  // And it is spent: the file is gone and the key no longer works.
+  assert.equal(existsSync(join(dataDir, 'setup-token')), false);
+  assert.equal((await call('/setup/owner', {
+    method: 'POST', body: { name: 'Second', password: 'another-long-passphrase', setupKey: key },
+  })).status, 409);
+});
+
+test('the setup key does not let you seize an existing account', async (t) => {
+  // The promote-existing branch skipped registration when the name was taken, so naming a
+  // real player handed over their account — full owner, no password needed. The key proves
+  // access to the machine; it does not entitle the holder to become a specific person.
+  const { call, dataDir, server } = await boot(t);
+  await server.accounts.register('Victim', 'the-victims-own-password');
+  const key = readFileSync(join(dataDir, 'setup-token'), 'utf8').trim();
+
+  const seize = await call('/setup/owner', {
+    method: 'POST', body: { name: 'Victim', password: 'attacker-chosen-passphrase', setupKey: key },
+  });
+  assert.equal(seize.status, 400);
+  assert.match((await seize.json() as { error: string }).error, /already exists/);
+
+  // The victim's own password still works, and still grants nothing.
+  assert.equal((await call('/login', {
+    method: 'POST', body: { name: 'Victim', password: 'the-victims-own-password' },
+  })).status, 401, 'still a plain player with no dashboard access');
+
+  // Knowing the existing password IS enough to adopt it, which is the legitimate case.
+  const adopt = await call('/setup/owner', {
+    method: 'POST', body: { name: 'Victim', password: 'the-victims-own-password', setupKey: key },
+  });
+  assert.equal(adopt.status, 200);
+});
+
 test('a fresh server reports first-run, and setup creates a working owner', async (t) => {
-  const { call } = await boot(t);
+  const { call, dataDir } = await boot(t);
 
   const before = await (await call('/state')).json() as { firstRun: boolean; authed: boolean };
   assert.equal(before.firstRun, true);
   assert.equal(before.authed, false);
 
-  const token = await makeOwner(call);
+  const token = await makeOwner(call, dataDir);
   assert.ok(token.length > 20, 'a session token comes back so setup flows straight into the dashboard');
 
   const after = await (await call('/state', { token })).json() as
@@ -71,8 +128,8 @@ test('a fresh server reports first-run, and setup creates a working owner', asyn
 });
 
 test('setup/owner closes permanently once an owner exists', async (t) => {
-  const { call } = await boot(t);
-  await makeOwner(call);
+  const { call, dataDir } = await boot(t);
+  await makeOwner(call, dataDir);
   // Without this the route would be a standing "make me an owner" door for anyone who can
   // reach the page.
   const second = await call('/setup/owner', {
@@ -82,13 +139,14 @@ test('setup/owner closes permanently once an owner exists', async (t) => {
 });
 
 test('weak passwords are refused at owner creation', async (t) => {
-  const { call } = await boot(t);
+  const { call, dataDir } = await boot(t);
+  const setupKey = readFileSync(join(dataDir, 'setup-token'), 'utf8').trim();
   for (const password of ['short', 'password123', 'aaaaaaaaaaaaaaa']) {
-    const r = await call('/setup/owner', { method: 'POST', body: { name: 'Admin', password } });
+    const r = await call('/setup/owner', { method: 'POST', body: { name: 'Admin', password, setupKey } });
     assert.equal(r.status, 400, `"${password}" should be refused`);
   }
   assert.equal((await call('/setup/owner', {
-    method: 'POST', body: { name: 'Admin', password: 'Admin-is-in-here-somewhere' },
+    method: 'POST', body: { name: 'Admin', password: 'Admin-is-in-here-somewhere', setupKey },
   })).status, 400, 'a password containing the username is refused');
 });
 
@@ -102,8 +160,8 @@ test('passwordProblem accepts a reasonable passphrase', () => {
 // ---------------------------------------------------------------------------------------
 
 test('login works, and failures never say which half was wrong', async (t) => {
-  const { call } = await boot(t);
-  await makeOwner(call);
+  const { call, dataDir } = await boot(t);
+  await makeOwner(call, dataDir);
 
   const good = await call('/login', { method: 'POST', body: OWNER });
   assert.equal(good.status, 200);
@@ -121,8 +179,8 @@ test('login works, and failures never say which half was wrong', async (t) => {
 });
 
 test('an account with no dashboard role cannot sign in to the dashboard', async (t) => {
-  const { call, server } = await boot(t);
-  await makeOwner(call);
+  const { call, dataDir, server } = await boot(t);
+  await makeOwner(call, dataDir);
   // A plain player account: exists, correct password, no dashboard access.
   const created = await server.accounts.register('PlainPlayer', 'a-perfectly-fine-password');
   assert.notEqual(typeof created, 'string');
@@ -131,19 +189,59 @@ test('an account with no dashboard role cannot sign in to the dashboard', async 
   assert.equal(r.status, 401, 'having an account is not having dashboard access');
 });
 
-test('the legacy shared token still works, as owner', async (t) => {
-  // Automation was written against this before accounts existed. Breaking it would be a
-  // silent outage in somebody's cron job.
+test('the legacy shared token works, and is a moderator rather than an owner', async (t) => {
+  // Automation was written against this before roles existed, so it has to keep working —
+  // but it was resolving to OWNER, which silently upgraded every copy sitting in a cron job
+  // or a CI config into a credential that can run script on players' machines, rewrite every
+  // setting and download the whole data directory. It is documented as covering what the old
+  // dashboard did, and every one of those routes is moderator or below.
   const { call } = await boot(t, { admin: { dashboardToken: 'legacy-automation-token' } });
-  const r = await call('/overview', { token: 'legacy-automation-token' });
-  assert.equal(r.status, 200);
-  const state = await (await call('/state', { token: 'legacy-automation-token' })).json() as { role: string };
-  assert.equal(state.role, 'owner');
+  const tok = 'legacy-automation-token';
+
+  assert.equal((await call('/overview', { token: tok })).status, 200);
+  assert.equal((await call('/reports', { token: tok })).status, 200);
+  assert.equal((await call('/action', {
+    method: 'POST', token: tok, body: { kind: 'broadcast', target: '', detail: 'hello' },
+  })).status, 200, 'the old action set still works');
+
+  const state = await (await call('/state', { token: tok })).json() as { role: string };
+  assert.equal(state.role, 'moderator');
+
+  // The dangerous additions are out of reach.
+  assert.equal((await call('/settings/server', {
+    method: 'PUT', token: tok, body: { name: 'Hijacked' },
+  })).status, 403, 'the shared token must not rewrite configuration');
+  assert.equal((await call('/export', { token: tok })).status, 403,
+    'nor download the data directory');
+  assert.equal((await call('/restart', { method: 'POST', token: tok })).status, 403);
+});
+
+test('a moderator cannot wipe a cell, which nothing else was gating', async (t) => {
+  // /action predates the command console and called into the server directly, so gating the
+  // whole route at moderator handed out capabilities the in-game table puts higher.
+  // resetCell is the worst of them: destructive world state with no in-game equivalent, so
+  // no rank check existed for it anywhere.
+  const { call, dataDir, server } = await boot(t);
+  const ownerToken = await makeOwner(call, dataDir);
+  await server.accounts.register('Mod2', 'a-sufficiently-long-password');
+  await call('/accounts/role', { method: 'POST', token: ownerToken, body: { name: 'Mod2', role: 'moderator' } });
+  const modToken = (await (await call('/login', {
+    method: 'POST', body: { name: 'Mod2', password: 'a-sufficiently-long-password' },
+  })).json() as { token: string }).token;
+
+  assert.equal((await call('/action', {
+    method: 'POST', token: modToken, body: { kind: 'resetCell', target: '0,0', detail: '' },
+  })).status, 403, 'wiping a cell is an owner action');
+
+  // Moderation itself still works for them.
+  assert.equal((await call('/action', {
+    method: 'POST', token: modToken, body: { kind: 'broadcast', target: '', detail: 'hi' },
+  })).status, 200);
 });
 
 test('a revoked session stops working immediately', async (t) => {
-  const { call } = await boot(t);
-  const token = await makeOwner(call);
+  const { call, dataDir } = await boot(t);
+  const token = await makeOwner(call, dataDir);
   assert.equal((await call('/overview', { token })).status, 200);
   assert.equal((await call('/logout', { method: 'POST', token })).status, 200);
   assert.equal((await call('/overview', { token })).status, 401, 'signing out must actually end the session');
@@ -177,8 +275,8 @@ const MATRIX: { path: string; method: string; need: 'viewer' | 'moderator' | 'ow
 const RANKS = { viewer: 0, moderator: 1, owner: 2 };
 
 test('every endpoint enforces exactly the role it should', async (t) => {
-  const { call, server } = await boot(t);
-  const ownerToken = await makeOwner(call);
+  const { call, dataDir, server } = await boot(t);
+  const ownerToken = await makeOwner(call, dataDir);
 
   // One account per role, promoted by the owner through the real API.
   const tokens: Record<string, string> = { owner: ownerToken };
@@ -213,8 +311,8 @@ test('every endpoint enforces exactly the role it should', async (t) => {
 });
 
 test('demoting an account kills its dashboard session on the next request', async (t) => {
-  const { call, server } = await boot(t);
-  const ownerToken = await makeOwner(call);
+  const { call, dataDir, server } = await boot(t);
+  const ownerToken = await makeOwner(call, dataDir);
   await server.accounts.register('Temp', 'a-sufficiently-long-password');
   await call('/accounts/role', { method: 'POST', token: ownerToken, body: { name: 'Temp', role: 'moderator' } });
   const login = await call('/login', { method: 'POST', body: { name: 'Temp', password: 'a-sufficiently-long-password' } });
@@ -228,8 +326,8 @@ test('demoting an account kills its dashboard session on the next request', asyn
 });
 
 test('the last owner cannot demote themselves out of the building', async (t) => {
-  const { call } = await boot(t);
-  const token = await makeOwner(call);
+  const { call, dataDir } = await boot(t);
+  const token = await makeOwner(call, dataDir);
   const r = await call('/accounts/role', { method: 'POST', token, body: { name: OWNER.name, role: 'viewer' } });
   assert.equal(r.status, 400);
   assert.match((await r.json() as { error: string }).error, /only owner/);
@@ -251,8 +349,8 @@ test('TOTP verifies its own codes and rejects everything else', () => {
 });
 
 test('enrolling two-factor requires proving a live code first', async (t) => {
-  const { call } = await boot(t);
-  const token = await makeOwner(call);
+  const { call, dataDir } = await boot(t);
+  const token = await makeOwner(call, dataDir);
 
   const enrol = await call('/totp/enroll', { method: 'POST', token });
   const { secret, uri } = await enrol.json() as { secret: string; uri: string };
@@ -272,7 +370,7 @@ test('enrolling two-factor requires proving a live code first', async (t) => {
 
 test('settings save to the dashboard file and never touch config.toml', async (t) => {
   const { call, dataDir } = await boot(t);
-  const token = await makeOwner(call);
+  const token = await makeOwner(call, dataDir);
 
   // An operator's own config.toml, with comments, exactly as they would write it.
   const operatorFile = join(dataDir, 'config.toml');
@@ -290,8 +388,8 @@ test('settings save to the dashboard file and never touch config.toml', async (t
 });
 
 test('an invalid value is refused at the form, not discovered at the next boot', async (t) => {
-  const { call } = await boot(t);
-  const token = await makeOwner(call);
+  const { call, dataDir } = await boot(t);
+  const token = await makeOwner(call, dataDir);
   const r = await call('/settings/server', { method: 'PUT', token, body: { maxPlayers: 'not a number' } });
   assert.equal(r.status, 400);
   assert.match((await r.json() as { error: string }).error, /maxPlayers/);
@@ -299,7 +397,7 @@ test('an invalid value is refused at the form, not discovered at the next boot',
 
 test('settings survive a restart, and the view reports what is overridden', async (t) => {
   const { call, dataDir, server } = await boot(t);
-  const token = await makeOwner(call);
+  const token = await makeOwner(call, dataDir);
   await call('/settings/server', { method: 'PUT', token, body: { name: 'Persisted Name' } });
   await server.close();
 
@@ -320,8 +418,8 @@ test('a corrupt dashboard file falls back instead of refusing to boot', async (t
 });
 
 test('secrets are masked in the settings view and unchanged by a save that echoes the mask', async (t) => {
-  const { call } = await boot(t, { admin: { dashboardToken: 'a-real-secret-value' } });
-  const token = await makeOwner(call);
+  const { call, dataDir } = await boot(t, { admin: { dashboardToken: 'a-real-secret-value' } });
+  const token = await makeOwner(call, dataDir);
   const view = await (await call('/settings', { token })).json() as
     { sections: { name: string; fields: { key: string; value: unknown; secret?: boolean }[] }[] };
   const adminSection = view.sections.find((s) => s.name === 'admin')!;
@@ -336,13 +434,64 @@ test('secrets are masked in the settings view and unchanged by a save that echoe
     'the shared token still works, so the save did not overwrite it with the mask');
 });
 
+test('every credential-shaped field is masked, including ones added later', async (t) => {
+  // The first version listed secret keys by name and had already gone stale: the SMTP
+  // password and the webhook URL were both sent in plaintext to anyone with the `viewer`
+  // role — the one described in the UI as "can look, and nothing else". Matching on the
+  // shape of the name means the next credential is covered because of what it is called,
+  // not because someone remembered to add it.
+  const { call, dataDir } = await boot(t, {
+    admin: { dashboardToken: 'shared-secret-value' },
+    notifications: { smtpPass: 'the-mail-password', webhookUrl: 'https://hooks.example/T/B/XYZ' },
+    metrics: { token: 'metrics-scrape-token' },
+    integrations: { attioApiKey: 'attio-key-value' },
+  });
+  const token = await makeOwner(call, dataDir);
+  const view = await (await call('/settings', { token })).json() as
+    { sections: { name: string; fields: { key: string; value: unknown; secret?: boolean }[] }[] };
+
+  const leaked: string[] = [];
+  const plaintext = [
+    'the-mail-password', 'https://hooks.example/T/B/XYZ', 'shared-secret-value',
+    'metrics-scrape-token', 'attio-key-value',
+  ];
+  for (const s of view.sections) {
+    for (const f of s.fields) {
+      if (typeof f.value === 'string' && plaintext.includes(f.value)) {
+        leaked.push(`${s.name}.${f.key}`);
+      }
+    }
+  }
+  assert.deepEqual(leaked, [], 'no credential may reach the browser in plaintext');
+
+  const find = (section: string, key: string) =>
+    view.sections.find((s) => s.name === section)?.fields.find((f) => f.key === key);
+  assert.equal(find('notifications', 'smtpPass')?.secret, true);
+  assert.equal(find('notifications', 'webhookUrl')?.secret, true);
+  assert.equal(find('metrics', 'token')?.secret, true);
+});
+
+test('settings sections carry a readable title, not just a TOML table name', async (t) => {
+  const { call, dataDir } = await boot(t);
+  const token = await makeOwner(call, dataDir);
+  const view = await (await call('/settings', { token })).json() as
+    { sections: { name: string; label: string }[] };
+  const sim = view.sections.find((s) => s.name === 'simPeer');
+  assert.equal(sim?.label, 'World simulation',
+    '"[simPeer]" is an identifier, not a heading for someone who has never seen a TOML file');
+  // Anything unlisted still gets something readable rather than a raw key.
+  for (const s of view.sections) {
+    assert.ok(s.label && s.label.length > 0, `${s.name} has no label`);
+  }
+});
+
 // ---------------------------------------------------------------------------------------
 // mods
 // ---------------------------------------------------------------------------------------
 
 test('the mod list reorders plugins and drops disabled ones', async (t) => {
   const { call, dataDir, server } = await boot(t);
-  const token = await makeOwner(call);
+  const token = await makeOwner(call, dataDir);
 
   const gd = join(dataDir, 'gamedata');
   mkdirSync(gd, { recursive: true });
@@ -376,7 +525,7 @@ test('the mod list reorders plugins and drops disabled ones', async (t) => {
 
 test('a mod list naming a file that is not there is refused', async (t) => {
   const { call, dataDir } = await boot(t);
-  const token = await makeOwner(call);
+  const token = await makeOwner(call, dataDir);
   mkdirSync(join(dataDir, 'gamedata'), { recursive: true });
   const r = await call('/mods', { method: 'PUT', token, body: {
     entries: [{ file: 'TypoedName.esp', enabled: true }],
@@ -386,7 +535,7 @@ test('a mod list naming a file that is not there is refused', async (t) => {
 
 test('files added to the folder after a list was saved still load', async (t) => {
   const { call, dataDir } = await boot(t);
-  const token = await makeOwner(call);
+  const token = await makeOwner(call, dataDir);
   const gd = join(dataDir, 'gamedata');
   mkdirSync(gd, { recursive: true });
   writeFileSync(join(gd, 'First.esp'), 'x');
@@ -438,7 +587,7 @@ test('safeUploadName refuses everything that is not a plain content filename', a
 
 test('uploading a content file puts it in the load order', async (t) => {
   const { call, dataDir } = await boot(t);
-  const token = await makeOwner(call);
+  const token = await makeOwner(call, dataDir);
   mkdirSync(join(dataDir, 'gamedata'), { recursive: true });
 
   const body = Buffer.from('not really an esp, but the server does not parse it');
@@ -455,7 +604,7 @@ test('uploading a content file puts it in the load order', async (t) => {
 
 test('upload refuses a traversing name without writing anything', async (t) => {
   const { call, dataDir } = await boot(t);
-  const token = await makeOwner(call);
+  const token = await makeOwner(call, dataDir);
   mkdirSync(join(dataDir, 'gamedata'), { recursive: true });
 
   const r = await call('/mods/upload?name=..%2F..%2Fowned.esp', {
@@ -466,8 +615,8 @@ test('upload refuses a traversing name without writing anything', async (t) => {
 });
 
 test('upload is owner-only', async (t) => {
-  const { call, server } = await boot(t);
-  const ownerToken = await makeOwner(call);
+  const { call, dataDir, server } = await boot(t);
+  const ownerToken = await makeOwner(call, dataDir);
   await server.accounts.register('Mod', 'a-sufficiently-long-password');
   await call('/accounts/role', { method: 'POST', token: ownerToken, body: { name: 'Mod', role: 'moderator' } });
   const modToken = (await (await call('/login', {
@@ -483,8 +632,8 @@ test('upload is owner-only', async (t) => {
 // ---------------------------------------------------------------------------------------
 
 test('the audit filter shows admin actions and hides the rest', async (t) => {
-  const { call } = await boot(t);
-  const token = await makeOwner(call);
+  const { call, dataDir } = await boot(t);
+  const token = await makeOwner(call, dataDir);
   await call('/settings/server', { method: 'PUT', token, body: { name: 'Audited' } });
 
   const audit = await (await call('/logs?filter=admin.', { token })).json() as
@@ -496,8 +645,8 @@ test('the audit filter shows admin actions and hides the rest', async (t) => {
 });
 
 test('maintenance mode reports itself in state', async (t) => {
-  const { call } = await boot(t);
-  const token = await makeOwner(call);
+  const { call, dataDir } = await boot(t);
+  const token = await makeOwner(call, dataDir);
   await call('/maintenance', { method: 'POST', token, body: { on: true, message: 'back in ten' } });
   const state = await (await call('/state')).json() as { maintenance: { on: boolean; message: string } };
   assert.equal(state.maintenance.on, true);
@@ -564,10 +713,11 @@ test('setup mode survives finishing the wizard, and reports itself unhealthy thr
   assert.equal(before.status, 503, 'a server that cannot host a world must not answer "ok"');
   assert.match(await before.text(), /not ready/);
 
+  const setupKey = readFileSync(join(dataDir, 'setup-token'), 'utf8').trim();
   const created = await fetch(`${base}/admin/api/setup/owner`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(OWNER),
+    body: JSON.stringify({ ...OWNER, setupKey }),
   });
   assert.equal(created.status, 200);
   await first.close();

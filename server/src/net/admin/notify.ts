@@ -78,6 +78,17 @@ export async function sendMail(
   body: string,
 ): Promise<void> {
   if (cfg.host === '') throw new Error('no SMTP host configured');
+
+  // SMTP is line-oriented, so a carriage return or newline in any of these ends the current
+  // command and starts another one. The reset path takes `to` from an account's email, and
+  // an account can get its email from an OIDC provider's `email` claim without passing
+  // through validEmail — so a hostile or compromised identity provider could plant
+  // "victim@x\r\nRCPT TO:<attacker@evil>" and add itself as an envelope recipient of a
+  // password reset. Refused at the sink, which is the one place every caller passes through.
+  for (const [what, value] of [['recipient', to], ['subject', subject], ['sender', cfg.from]]) {
+    if (/[\r\n\0]/.test(value!)) throw new Error(`illegal line break in ${what}`);
+  }
+
   const timeoutMs = 15_000;
 
   let sock: Socket | TLSSocket = cfg.port === 465
@@ -136,8 +147,10 @@ export async function sendMail(
       'Content-Type: text/plain; charset=utf-8',
       `Date: ${new Date().toUTCString()}`,
       '',
-      // Dot-stuffing: a line that is just "." would otherwise end the message early.
-      body.replace(/\r?\n\./g, '\n..'),
+      // Dot-stuffing: a line that is just "." would otherwise end the message early. The
+      // replacement keeps CRLF — emitting a bare LF into a CRLF stream is what the first
+      // version did, and some servers treat that as a protocol error rather than ignoring it.
+      body.replace(/\r?\n\./g, '\r\n..'),
       '.',
     ].join('\r\n');
     sock.write(`${message}\r\n`);

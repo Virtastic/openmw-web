@@ -40,7 +40,7 @@
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { AccountStore, DashboardRole } from '../../core/accounts';
-import { DASHBOARD_ROLES, validAccountName } from '../../core/accounts';
+import { DASHBOARD_ROLES, validAccountName, roleAtLeast } from '../../core/accounts';
 import type { AdminSessionStore } from '../../auth/identities';
 import type { IpRateLimiter } from '../ratelimit';
 import { clientIp } from '../http';
@@ -48,6 +48,7 @@ import { log } from '../../log';
 import { json, readJson } from './util';
 import { gate, passwordLogin, passwordProblem, resolveAuth, type AuthDeps } from './auth';
 import { serveWebFile } from './static';
+import type { SetupToken } from './setup-token';
 import { generateSecret, totpUri, verifyTotp } from './totp';
 import { settingsView, applySection, applyWizard, type WizardAnswers } from './api-settings';
 import { modsView, saveMods, uploadContent, gameDataWritable } from './api-mods';
@@ -63,6 +64,9 @@ export interface AdminDeps {
   loginLimiter: IpRateLimiter;
   apiLimiter: IpRateLimiter;
   sharedToken: string;
+  /** Gates creation of the first owner. See setup-token.ts for why this is not inferrable
+   *  from account state. */
+  setupToken: SetupToken;
 
   // --- the original moderation surface, unchanged ---
   overview(): unknown;
@@ -78,6 +82,8 @@ export interface AdminDeps {
   recentLogs(limit: number, filter: string): LogEntry[];
   metricsSnapshot(): unknown;
   gameDataDir: string;
+  /** Shown in the dashboard footer. */
+  version: string;
   maintenance: { get(): { on: boolean; message: string }; set(on: boolean, message: string): void };
   restart(reason: string): void;
   exportData(res: ServerResponse): Promise<void>;
@@ -92,7 +98,40 @@ export interface AdminDeps {
 
 const ROLE_SET = new Set<string>(DASHBOARD_ROLES);
 
+
+/**
+ * What each legacy /action kind requires, mirroring the ranks in core/admin.ts: kick is
+ * rank 1 there, ban/unban/ipban are rank 2. mute and broadcast have no in-game command and
+ * are moderator-shaped by nature. resetCell wipes a cell's contents and is owner-only —
+ * it has no command equivalent, so nothing else was gating it at all.
+ */
+const ACTION_ROLE: Record<string, DashboardRole> = {
+  kick: 'moderator',
+  mute: 'moderator',
+  unmute: 'moderator',
+  broadcast: 'moderator',
+  ban: 'moderator',
+  unban: 'moderator',
+  // No in-game equivalent, so nothing was gating this anywhere. It wipes a cell's contents —
+  // containers, dropped items, doors — for everyone. Owner.
+  resetCell: 'owner',
+};
+
 export function adminRoutes(deps: AdminDeps) {
+  // PER SERVER, not per module. These were module-level and it was wrong even though a real
+  // deployment could never see it: one process runs one server, so the shared state looked
+  // harmless. The test suite builds dozens in a single process and caught it immediately —
+  // one server completing setup made every subsequently created server report itself as
+  // already claimed. State that belongs to an instance goes on the instance.
+
+  /** Serialises first-owner creation. Without it two requests arriving together both pass
+   *  the "no owner yet" check and both become owner. */
+  let setupInFlight: Promise<{ ok: true } | { error: string }> | null = null;
+
+  /** Cached answer to "has anyone claimed this server yet". Only /setup/owner changes it,
+   *  and it invalidates the cache when it does. */
+  let firstRunCache: boolean | null = null;
+
   const auth: AuthDeps = {
     sharedToken: deps.sharedToken,
     accounts: deps.accounts,
@@ -105,7 +144,10 @@ export function adminRoutes(deps: AdminDeps) {
     const path = url.pathname;
     if (path !== '/admin' && !path.startsWith('/admin/')) return false;
 
-    const method = req.method ?? 'GET';
+    // HEAD is a GET without a body, and Node drops the body for us. Matching only on the
+    // literal method meant HEAD /admin answered 404, which uptime checks and link checkers
+    // read as "the dashboard is gone".
+    const method = req.method === 'HEAD' ? 'GET' : (req.method ?? 'GET');
 
     // --- the page and its assets ---------------------------------------------------------
     // Served unauthenticated on purpose: the HTML and JS can do nothing without a token, and
@@ -128,7 +170,19 @@ export function adminRoutes(deps: AdminDeps) {
     // Tells the page which of three worlds it is in: nobody has set this server up yet, or
     // you are logged out, or here is who you are. Unauthenticated by necessity.
     if (method === 'GET' && path === '/admin/api/state') {
-      const firstRun = !deps.accounts.hasDashboardOwner();
+      // Rate-limited despite being unauthenticated, for two reasons. It scans the whole
+      // account table to answer "first run?", so it was a cheap amplification target. And it
+      // reports whether a presented credential worked, which made it an unlimited, unlogged
+      // oracle for guessing an operator-chosen [admin].dashboardToken — session tokens are
+      // 32 random bytes and not worth guessing, but that one is typed by a human.
+      if (!deps.apiLimiter.allow(clientIp(req))) {
+        json(res, 429, { error: 'rate limited' });
+        return true;
+      }
+      // The answer only ever flips once, and this process is the only thing that can flip
+      // it, so cache it rather than re-scanning on every poll.
+      if (firstRunCache === null) firstRunCache = !deps.accounts.hasDashboardOwner();
+      const firstRun = firstRunCache && deps.setupToken.armed;
       const ctx = await resolveAuth(req, auth);
       json(res, 200, {
         firstRun,
@@ -136,6 +190,18 @@ export function adminRoutes(deps: AdminDeps) {
         role: ctx?.role ?? null,
         name: ctx?.accountName ?? null,
         maintenance: deps.maintenance.get(),
+        // Server-side truth for the "add two-factor" nudge. It used to be a localStorage
+        // flag, so the reminder reappeared on every other browser and never cleared on the
+        // one that mattered.
+        twoFactor: ctx && !ctx.viaSharedToken
+          ? !!(await deps.accounts.get(ctx.accountKey))?.totpSecret
+          : false,
+        // For the top bar and footer, which had markup slots and nothing filling them.
+        serverName: (deps.config() as { server?: { name?: string } }).server?.name ?? '',
+        version: deps.version,
+        // Server-side, so the getting-started nudge answers the same on every machine
+        // instead of being a per-browser localStorage flag.
+        setupCompleted: (deps.config() as { setup?: { completed?: boolean } }).setup?.completed === true,
         // Surfaced even to a logged-out page so a boot-time revert is visible immediately,
         // not only to whoever eventually logs in.
         configFallback: (deps.config() as { dashboardFallback?: string }).dashboardFallback ?? null,
@@ -191,50 +257,77 @@ export function adminRoutes(deps: AdminDeps) {
     }
 
     // --- FIRST RUN: create the first owner ------------------------------------------------
-    // Reachable without any credential, and ONLY while no dashboard owner exists. The moment
-    // one does, this route stops existing — otherwise it would be a permanent open door to
-    // making yourself an owner.
+    // Requires the setup key the server printed at boot (see setup-token.ts for why account
+    // state alone cannot gate this). Serialised through a single-flight promise: two requests
+    // arriving together would otherwise both pass the "no owner yet" check and both become
+    // owner.
     if (method === 'POST' && path === '/admin/api/setup/owner') {
-      if (deps.accounts.hasDashboardOwner()) {
-        json(res, 409, { error: 'setup already completed' });
-        return true;
-      }
       if (!deps.loginLimiter.allow(clientIp(req))) {
         json(res, 429, { error: 'too many attempts, wait a minute' });
         return true;
       }
-      const body = await readJson<{ name?: string; password?: string }>(req, res);
+      const body = await readJson<{ name?: string; password?: string; setupKey?: string }>(req, res);
       if (body === undefined) return true;
+
+      if (!deps.setupToken.armed || deps.accounts.hasDashboardOwner()) {
+        json(res, 409, { error: 'setup has already been completed on this server' });
+        return true;
+      }
+      if (!deps.setupToken.verify(String(body.setupKey ?? ''))) {
+        log('warn', 'admin.setup_bad_key', { ip: clientIp(req) });
+        json(res, 401, {
+          error: 'wrong setup key. It was printed in the server log when it started, and is '
+            + 'in the "setup-token" file in your data folder.',
+        });
+        return true;
+      }
+
       const name = String(body.name ?? '').trim();
       const password = String(body.password ?? '');
       if (!validAccountName(name)) {
         json(res, 400, { error: 'name must be 2-24 characters: letters, numbers, spaces, _ or -' });
         return true;
       }
-      const weak = passwordProblem(password, name);
-      if (weak) { json(res, 400, { error: `password ${weak}` }); return true; }
-
-      // An account may already exist (someone played first, then set the dashboard up).
-      // Promote it rather than refusing — but only because we have already established that
-      // NO owner exists yet, so this is the genuine first-run window.
-      const existing = await deps.accounts.get(name);
-      if (!existing) {
-        const created = await deps.accounts.register(name, password);
-        if (typeof created === 'string') {
-          json(res, 400, { error: created === 'exists' ? 'name taken' : 'invalid name' });
-          return true;
+      const result = await (setupInFlight = (setupInFlight ?? Promise.resolve()).then(async () => {
+        if (deps.accounts.hasDashboardOwner()) return { error: 'setup has already been completed on this server' };
+        // An account may already exist — someone played on this server before anyone set the
+        // dashboard up. Promoting it is legitimate, but ONLY on proof of its password. The
+        // setup key proves access to the machine; it does not entitle the holder to take over
+        // a specific player's identity, and that account may belong to somebody else.
+        const existing = await deps.accounts.get(name);
+        if (existing) {
+          // NO strength check on this path. The password is not being set, it is being
+          // proved — running new-password rules over one that already exists means an
+          // account with a weak but genuine password can never be adopted by its owner,
+          // which is a lockout dressed up as a security control.
+          if (!await deps.accounts.verifyLogin(name, password)) {
+            return { error: `an account named "${name}" already exists. Enter its existing `
+              + 'password to make it the administrator, or choose a different name.' };
+          }
+        } else {
+          const weak = passwordProblem(password, name);
+          if (weak) return { error: `password ${weak}` };
+          const created = await deps.accounts.register(name, password);
+          if (typeof created === 'string') {
+            return { error: created === 'exists' ? 'name taken' : 'invalid name' };
+          }
         }
-      }
-      await deps.accounts.setDashboardRole(name, 'owner');
+        await deps.accounts.setDashboardRole(name, 'owner');
+        deps.accounts.setRank(name, 3); // in-game parity: the first owner is an owner in-world
+        // Also record them in [admin].owners so the every-boot promotion keeps them rank 3
+        // even with a cold account cache. Not fatal if it fails — the role is what gates the
+        // dashboard — so a read-only data dir still yields a usable login.
+        applyWizard(deps.dataDir, { owners: [name] }, deps.sharedDir);
+        await deps.accounts.flush();
+        deps.setupToken.disarm();
+        firstRunCache = false;
+        return { ok: true as const };
+      }));
+
+      if ('error' in result) { json(res, 400, { error: result.error }); return true; }
       const key = name.toLowerCase();
-      deps.accounts.setRank(name, 3); // in-game parity: the first owner is an owner in-world too
-      // Also record them in [admin].owners so the every-boot promotion keeps them rank 3 even
-      // if the account cache is cold. Failure here is not fatal — the role is what gates the
-      // dashboard — so a read-only data dir still yields a usable login.
-      applyWizard(deps.dataDir, { owners: [name] }, deps.sharedDir);
-      await deps.accounts.flush();
       const token = deps.sessions.mint(key, clientIp(req));
-      log('info', 'admin.setup_owner', { account: key });
+      log('warn', 'admin.setup_owner', { account: key, ip: clientIp(req) });
       json(res, 200, { token, role: 'owner', name });
       return true;
     }
@@ -268,8 +361,21 @@ export function adminRoutes(deps: AdminDeps) {
       if (!ctx) return true;
       const body = await readJson<{ kind?: string; target?: string; detail?: string }>(req, res, 8192);
       if (body === undefined) return true;
+      const kind = String(body.kind ?? '');
+      // PER-ACTION ROLE, because "one privilege model" has to mean it. This endpoint predates
+      // the command console and calls into the server directly, so gating the whole route at
+      // moderator quietly handed out capabilities the in-game table puts at rank 2: the same
+      // moderator refused /ban in the console succeeded with {kind:"ban"} here. resetCell is
+      // worse — it destroys world state and has no in-game equivalent, so it had no rank gate
+      // anywhere. Mapped to the ranks core/admin.ts already defines.
+      const needed = ACTION_ROLE[kind];
+      if (needed && !roleAtLeast(ctx.role, needed)) {
+        log('warn', 'admin.denied', { account: ctx.accountKey, action: kind, need: needed, have: ctx.role });
+        json(res, 403, { error: `"${kind}" needs the ${needed} role`, need: needed });
+        return true;
+      }
       const result = await deps.action(
-        String(body.kind ?? ''), String(body.target ?? ''), String(body.detail ?? ''),
+        kind, String(body.target ?? ''), String(body.detail ?? ''),
       );
       log('info', 'admin.dashboard_action',
         { kind: body.kind, target: body.target, ok: result.ok, by: ctx.accountKey });
@@ -292,7 +398,13 @@ export function adminRoutes(deps: AdminDeps) {
       if (line === '') { json(res, 400, { ok: false, message: 'empty command' }); return true; }
       // The dashboard role maps onto the in-game rank the command table already enforces, so
       // there is exactly one privilege model rather than two that must be kept in agreement.
-      const rank = ctx.role === 'owner' ? 3 : ctx.role === 'moderator' ? 1 : 0;
+      //
+      // moderator -> 2, not 1. The UI promises a moderator can "kick, ban, mute, broadcast,
+      // read chat history and logs", and ban/unban/ipban are rank 2 in core/admin.ts. Mapping
+      // to 1 meant the console refused a ban that the older /action endpoint allowed — the
+      // same person, the same server, two different answers. Rank 2 keeps the dangerous
+      // things (setrank, console) at rank 3, which is owner-only either way.
+      const rank = ctx.role === 'owner' ? 3 : ctx.role === 'moderator' ? 2 : 0;
       const result = await deps.runCommand(
         { accountKey: ctx.accountKey, name: ctx.accountName, rank }, line,
       );

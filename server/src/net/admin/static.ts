@@ -59,6 +59,7 @@ export function readWebFile(rel: string): { body: Buffer; type: string } | undef
 export function serveWebFile(res: ServerResponse, rel: string): boolean {
   const file = readWebFile(rel);
   if (!file) return false;
+  const isPage = file.type.startsWith('text/html');
   res.writeHead(200, {
     'content-type': file.type,
     'content-length': file.body.length,
@@ -66,7 +67,27 @@ export function serveWebFile(res: ServerResponse, rel: string): boolean {
     // and a stale app.js against a new API is a confusing bug to chase.
     'cache-control': rel.startsWith('vendor/') ? 'public, max-age=86400' : 'no-cache',
     'x-content-type-options': 'nosniff',
+    ...(isPage ? PAGE_HEADERS : {}),
   });
   res.end(file.body);
   return true;
 }
+
+// Everything the dashboard loads is same-origin and vendored, so the strictest policy that
+// still works costs nothing and turns any missed escape into a blocked load rather than a
+// scripting hole.
+//
+// frame-ancestors matters as much as script-src here: the buttons on this page restart the
+// server, ban and erase accounts, and run script on a player's machine. Without it those are
+// one invisible iframe and a misplaced click away.
+//
+// 'unsafe-inline' for styles only — Bootstrap components set inline styles, and no inline
+// <style> or style attribute can execute anything. Scripts get no such exemption.
+const PAGE_HEADERS: Record<string, string> = {
+  'content-security-policy':
+    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+    + "img-src 'self' data:; font-src 'self'; connect-src 'self'; "
+    + "object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+  'x-frame-options': 'DENY',
+  'referrer-policy': 'no-referrer',
+};

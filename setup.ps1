@@ -161,26 +161,57 @@ Write-Step "Waiting for the server"
 
 # Poll the container's own healthcheck rather than sleeping a fixed amount: a first build on
 # a slow machine takes a while, and a fixed wait is either wrong or wasteful.
-$status = 'starting'
+# WAIT FOR THE DASHBOARD, NOT FOR "healthy". A server with no Morrowind files answers
+# /healthz with 503 on purpose - running, but unable to host players - and that is the normal
+# state of a first run. Waiting for 'healthy' waits for something that will never happen on
+# the very run this script exists to support. So poll what we are about to open instead.
+$ready = $false
+$configured = $false
+
+# Self-signed certificate by default: accept it for this loopback check only. PowerShell 5.1
+# has no -SkipCertificateCheck, so the callback is the available lever.
+try {
+  Add-Type -TypeDefinition @'
+using System.Net;
+using System.Security.Cryptography.X509Certificates;
+public class OmwCertBypass {
+  public static void Enable() {
+    ServicePointManager.ServerCertificateValidationCallback =
+      delegate(object s, X509Certificate c, X509Chain ch, System.Net.Security.SslPolicyErrors e) { return true; };
+    ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12;
+  }
+}
+'@ -ErrorAction SilentlyContinue
+  [OmwCertBypass]::Enable()
+} catch { }
+
 for ($i = 0; $i -lt 90; $i++) {
-  $status = docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' openmw-mp 2>$null
-  if (-not $status) { $status = 'missing' }
-  if ($status -eq 'healthy') { break }
-  if ($status -eq 'missing' -or $status -eq 'exited') {
+  $running = docker inspect -f '{{.State.Running}}' openmw-mp 2>$null
+  if ($running -ne 'true') {
     Write-Warn "The server stopped. Its last words:"
     Invoke-Compose logs --tail 30 openmw-mp
     Write-Fail "Server did not stay up. The log above says why."
   }
+  try {
+    $resp = Invoke-WebRequest -Uri 'https://localhost/admin' -UseBasicParsing -TimeoutSec 3 -ErrorAction Stop
+    if ($resp.StatusCode -eq 200) {
+      $ready = $true
+      $h = docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' openmw-mp 2>$null
+      if ($h -eq 'healthy') { $configured = $true }
+      break
+    }
+  } catch { }
   Write-Host -NoNewline '.'
   Start-Sleep -Seconds 1
 }
 Write-Host ''
 
-if ($status -ne 'healthy') {
-  Write-Warn "The server has not reported itself healthy yet. Recent log:"
+if (-not $ready) {
+  Write-Warn "The dashboard did not come up. Recent log:"
   Invoke-Compose logs --tail 20 openmw-mp
   Write-Host ""
-  Write-Host "It may just be slow to start. Check https://localhost/admin in a moment."
+  Write-Host "The containers are running, so this may just be slow. Try https://localhost/admin"
+  Write-Host "in a moment, or run:  $($DC -join ' ') logs -f openmw-mp"
   exit 1
 }
 
@@ -197,6 +228,22 @@ Write-Step "Ready"
 Write-Host ""
 Write-Host "  Admin dashboard:  $url" -ForegroundColor Green
 Write-Host ""
+if (-not $configured) {
+  Write-Host "  The server is up but has no Morrowind files yet, so players cannot join. That is"
+  Write-Host "  expected on a first run - the dashboard walks you through adding them."
+  Write-Host ""
+}
+# The setup key proves whoever claims the first admin account can read this machine's files.
+# Passing it in the URL means the documented path never has to go looking for it.
+if (Test-Path 'data/setup-token') {
+  $setupKey = (Get-Content 'data/setup-token' -Raw).Trim()
+  if ($setupKey) {
+    $url = "$url#setup=$setupKey"
+    Write-Host "  Opening with your one-time setup key. If you need it again it is in"
+    Write-Host "  data\setup-token, and in the server log."
+    Write-Host ""
+  }
+}
 if (-not $domain) {
   Write-Host "  Your browser will warn that the connection is not private. That is expected -"
   Write-Host "  the certificate is one this server signed itself, because no domain is configured."

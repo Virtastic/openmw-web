@@ -130,6 +130,15 @@ export function validEmail(email: string): boolean {
 }
 
 const ARGON2_OPTS = { algorithm: Algorithm.Argon2id, memoryCost: 19456, timeCost: 2, parallelism: 1 };
+
+// A hash of nothing in particular, used to spend the same time on a failed lookup as on a
+// real one. Computed once, lazily — hashing at module load would add ~50ms to every process
+// start including the test suite's many servers, to defend a path most of them never take.
+let decoy: Promise<string> | undefined;
+function decoyHash(): Promise<string> {
+  decoy ??= hash(randomBytes(32).toString('base64'), ARGON2_OPTS);
+  return decoy;
+}
 const NAME_RE = /^[A-Za-z0-9_ -]{2,24}$/;
 
 export function validAccountName(name: string): boolean {
@@ -307,7 +316,16 @@ export class AccountStore {
   // SSO-only account a clean refusal instead of an argon2 throw.
   async verifyLogin(name: string, password: string): Promise<Account | null> {
     const account = await this.get(name);
-    if (!account || !account.pwHash) return null;
+    // BURN THE SAME TIME ON A MISS. argon2id at these parameters takes tens of milliseconds,
+    // so returning early for "no such account" or "SSO-only account with no password" made
+    // the response time itself an account oracle — far outside network jitter, and the
+    // identical error body did nothing to hide it. Verifying against a fixed throwaway hash
+    // costs the same work and reveals nothing. Both the dashboard and the game login come
+    // through here, so this covers both.
+    if (!account?.pwHash) {
+      await verify(await decoyHash(), password).catch(() => false);
+      return null;
+    }
     return (await verify(account.pwHash, password)) ? account : null;
   }
 

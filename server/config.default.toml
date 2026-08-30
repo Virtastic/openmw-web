@@ -383,6 +383,18 @@ enabled = false
 # cannot tell that this server has metrics at all.
 token = ""
 
+[setup]
+# Written by the admin dashboard's setup wizard, and read back by it. Not settings in the
+# usual sense — they record what you told the wizard, so it can show you where you got to
+# on a different machine or after a restart. Safe to edit or delete; the worst that happens
+# is the dashboard offers to walk you through setup again.
+completed = false
+# "morrowind", "expansions" or "tamriel-rebuilt" — which files the wizard checks for.
+contentProfile = ""
+# "public" or "internal". Informational: HTTPS itself is configured in .env, outside the
+# server, because the proxy that terminates it is a different container.
+hosting = ""
+
 [notifications]
 # Outgoing mail and webhooks. ENTIRELY OPTIONAL: with no smtpHost set, nothing is ever sent,
 # nothing fails, and the dashboard simply does not offer password recovery — an operator who

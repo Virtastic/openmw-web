@@ -164,11 +164,23 @@ The script checks Docker is installed and running, works out whether you have
 ports 80 or 443, builds the server, waits for it to report itself healthy, and then opens
 the admin dashboard for you.
 
-The first screen asks you to create an administrator account. After that a short wizard
-covers the rest: single-player or multiplayer, how players sign in, which Morrowind
-content you are running, whether players bring their own game files or you supply them,
-whether the server is reachable from the internet, and where uploads are stored. Every
-answer is written to configuration you can review and change afterwards.
+The first screen asks you to create an administrator account. It also wants a **setup key**,
+which the script fills in for you — it is proof that whoever claims the first admin account
+has access to this machine, so a server reachable from the internet cannot be claimed by
+whoever finds it first. If you ever need it by hand it is printed in the log at startup and
+saved as `setup-token` in your data folder. It stops working the moment the first
+administrator exists.
+
+After that a short wizard covers the rest: single-player or multiplayer, how players sign
+in, which Morrowind content you are running, whether players bring their own game files or
+you supply them, whether the server is reachable from the internet, and where uploads are
+stored. Every answer is written to configuration you can review and change afterwards.
+
+**The server starts before it is ready, on purpose.** With no Morrowind files it comes up,
+serves the dashboard, refuses players with a clear reason, and reports itself unhealthy —
+rather than exiting, which would leave you with a failure and no way to reach the page that
+explains it. `docker compose ps` showing `unhealthy` on a fresh install is expected; the
+dashboard tells you exactly what is missing.
 
 **Copy your Morrowind files into `gamedata/`** next to `docker-compose.yml` — at minimum
 `Morrowind.esm` and `Morrowind.bsa`, plus `Tribunal`/`Bloodmoon` if you own them. The

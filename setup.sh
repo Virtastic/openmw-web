@@ -164,28 +164,48 @@ step "Waiting for the server"
 # a slow box takes a while, and a fixed wait is either wrong or wasteful.
 i=0
 STATUS=starting
+# WAIT FOR THE DASHBOARD, NOT FOR "healthy".
+#
+# A server with no Morrowind files yet answers /healthz with 503 on purpose — it is running,
+# it just cannot host players, and telling a monitor otherwise would be a lie. That is also
+# the NORMAL state of a first run, which this script's own message two steps up promises is
+# fine. Waiting for the container to report `healthy` therefore waits for something that
+# will never happen on the very run this script exists to support: 90 seconds of dots and
+# then a failure, with the browser never opening.
+#
+# So poll the thing we are about to open. If /admin answers, the operator has somewhere to
+# go, and whether the world is playable yet is a question the dashboard itself answers far
+# better than an exit code can.
+READY=no
+CONFIGURED=no
 while [ "$i" -lt 90 ]; do
-  STATUS=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' \
-    openmw-mp 2>/dev/null || echo missing)
-  case "$STATUS" in
-    healthy) break ;;
-    missing|exited)
-      warn "The server stopped. Its last words:"
-      $DC logs --tail 30 openmw-mp
-      die "Server did not stay up. The log above says why."
-      ;;
-  esac
+  RUNNING=$(docker inspect -f '{{.State.Running}}' openmw-mp 2>/dev/null || echo missing)
+  if [ "$RUNNING" != true ]; then
+    warn "The server stopped. Its last words:"
+    $DC logs --tail 30 openmw-mp
+    die "Server did not stay up. The log above says why."
+  fi
+  # -k because a self-signed certificate is the default here; this is a loopback request to
+  # a server we just started, not a trust decision.
+  if curl -skf -o /dev/null --max-time 3 "https://localhost/admin" 2>/dev/null; then
+    READY=yes
+    STATUS=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' \
+      openmw-mp 2>/dev/null || echo none)
+    [ "$STATUS" = healthy ] && CONFIGURED=yes
+    break
+  fi
   i=$((i + 1))
   printf '.'
   sleep 1
 done
 printf '\n'
 
-if [ "$STATUS" != healthy ]; then
-  warn "The server has not reported itself healthy yet. Recent log:"
+if [ "$READY" != yes ]; then
+  warn "The dashboard did not come up. Recent log:"
   $DC logs --tail 20 openmw-mp
   say ""
-  say "It may just be slow to start. Check https://localhost/admin in a moment."
+  say "The containers are running, so this may just be slow. Try https://localhost/admin"
+  say "in a moment, or run:  $DC logs -f openmw-mp"
   exit 1
 fi
 
@@ -197,6 +217,20 @@ step "Ready"
 say ""
 say "  Admin dashboard:  $URL"
 say ""
+if [ "$CONFIGURED" != yes ]; then
+  say "  The server is up but has no Morrowind files yet, so players cannot join. That is"
+  say "  expected on a first run — the dashboard walks you through adding them."
+  say ""
+fi
+# The setup key proves whoever claims the first admin account can read this machine's files.
+# Passing it in the URL means the documented path never has to go looking for it.
+SETUP_KEY=$(cat data/setup-token 2>/dev/null || true)
+if [ -n "$SETUP_KEY" ]; then
+  URL="$URL#setup=$SETUP_KEY"
+  say "  Opening with your one-time setup key. If you need it again it is in"
+  say "  data/setup-token, and in the server log."
+  say ""
+fi
 if [ -z "$DOMAIN" ]; then
   say "  Your browser will warn that the connection is not private. That is expected —"
   say "  the certificate is one this server signed itself, because no domain is configured."

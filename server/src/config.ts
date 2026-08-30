@@ -169,6 +169,8 @@ export interface Config {
   // dashboard is off, which is the right default for a self-hoster who only wants the
   // in-game panel.
   admin: { owners: string[]; allowConsole: boolean; dashboardToken: string };
+  /** What the setup wizard recorded. Bookkeeping, not tuning &mdash; see config.default.toml. */
+  setup: { completed: boolean; contentProfile: string; hosting: string };
   /** DEV/TEST ONLY, and OFF unless deliberately switched on. Fake players that accept friend
    *  requests and party invites, for exercising the social flows without a second human. They
    *  occupy real roster slots and real friend/party rows, so a public server running them is
@@ -622,6 +624,11 @@ function validate(t: Tree): Config {
       rttProbeSec: reqNum(t, 'authority', 'rttProbeSec'),
       reviewSec: reqNum(t, 'authority', 'reviewSec'),
       actorSilenceSec: reqNum(t, 'authority', 'actorSilenceSec'),
+    },
+    setup: {
+      completed: reqBool(t, 'setup', 'completed'),
+      contentProfile: reqStr(t, 'setup', 'contentProfile'),
+      hosting: reqStr(t, 'setup', 'hosting'),
     },
     metrics: {
       enabled: reqBool(t, 'metrics', 'enabled'),

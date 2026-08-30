@@ -173,6 +173,11 @@ function paintChrome() {
   m.innerHTML = state.maintenance?.on
     ? html`<span class="badge text-bg-warning">maintenance mode</span>` : '';
 
+  // These two slots existed in the markup from the start and nothing ever wrote to them, so
+  // the top bar carried a permanent blank gap and the footer an empty version.
+  $('#topWorld').textContent = state.serverName || '';
+  $('#footVersion').textContent = state.version ? `v${state.version}` : '';
+
   const banner = $('#banner');
   banner.innerHTML = state.configFallback
     ? html`<div class="alert alert-warning">
@@ -195,12 +200,35 @@ const go = (hash) => { if (location.hash === hash) route(); else location.hash =
 // Order is deliberate and each answer narrows the next question: identity, then what kind of
 // server this is, then everything that only makes sense given that answer. A single-player
 // deployment never sees the questions that only matter with strangers on the box.
-const answers = {
+const BLANK_ANSWERS = {
   deploymentMode: null, loginMethods: ['password'], contentProfile: null,
   deliveryModel: null, hosting: null, domain: '', serverName: '', storage: 'local',
   s3: { endpoint: '', bucket: '', region: 'auto' },
 };
-let step = 0;
+
+// Answers and position survive a reload. Setup is the longest uninterrupted stretch of
+// typing in the whole product, and losing it to an accidental refresh — or to the restart
+// the server itself may perform — would mean starting the questionnaire again.
+const WIZ_KEY = 'omwmp_wizard';
+function loadWizard() {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(WIZ_KEY) || 'null');
+    if (saved && typeof saved === 'object') {
+      return { answers: { ...BLANK_ANSWERS, ...saved.answers }, step: Number(saved.step) || 0 };
+    }
+  } catch { /* corrupt or absent: start clean rather than fail */ }
+  return { answers: { ...BLANK_ANSWERS }, step: 0 };
+}
+function saveWizard() {
+  try { sessionStorage.setItem(WIZ_KEY, JSON.stringify({ answers, step })); } catch { /* private mode */ }
+}
+function clearWizard() {
+  try { sessionStorage.removeItem(WIZ_KEY); } catch { /* nothing to do */ }
+}
+
+const restored = loadWizard();
+const answers = restored.answers;
+let step = restored.step;
 
 const wizardSteps = () => {
   const mp = answers.deploymentMode === 'multiplayer';
@@ -244,14 +272,36 @@ function choice(name, value, title, blurb) {
 function wireChoices(onPick) {
   view().querySelectorAll('[data-choice]').forEach((el) => {
     el.onclick = () => {
-      answers[el.dataset.choice] = el.dataset.value;
+      const key = el.dataset.choice;
+      const value = el.dataset.value;
+      // CHANGING THE DEPLOYMENT MODE DISCARDS THE ANSWERS THAT ONLY EXIST FOR THE OTHER ONE.
+      //
+      // The multiplayer path asks about sign-in methods, public hosting and a server name;
+      // single-player skips all three. Without this, someone who picks multiplayer, answers
+      // those, then changes their mind still had them applied at the end — a "just me"
+      // server quietly configured with SSO providers it never offered to anyone. The
+      // questions are hidden on the way back but the values were not.
+      if (key === 'deploymentMode' && answers.deploymentMode !== value) {
+        answers.loginMethods = ['password'];
+        answers.hosting = null;
+        answers.domain = '';
+        answers.serverName = '';
+      }
+      answers[key] = value;
       if (onPick) onPick();
+      saveWizard();
       renderWizard();
     };
   });
 }
 
 function renderWizard() {
+  // Persist here rather than at each mutation site: every path that changes an answer or the
+  // step ends up calling this, so one line covers all of them. The first version saved only
+  // from the choice-tile handler, which meant every typed answer — server name, domain, S3
+  // bucket — was lost on a reload while the clicked ones survived. A half-restored form is
+  // worse than none.
+  saveWizard();
   const steps = wizardSteps();
   const name = steps[Math.min(step, steps.length - 1)];
   setTitle('Set up this server', 'A few questions. Everything here can be changed later.');
@@ -269,6 +319,18 @@ function renderWizard() {
   return stepReview();
 }
 
+/** The one-time key from /admin#setup=… , stashed so it survives the hash being replaced. */
+let setupKey = (() => {
+  const m = /^#setup=(.+)$/.exec(location.hash);
+  if (!m) return sessionStorage.getItem('omwmp_setup_key') || '';
+  const key = decodeURIComponent(m[1]);
+  try { sessionStorage.setItem('omwmp_setup_key', key); } catch { /* private mode */ }
+  // Out of the address bar immediately: it is a credential, and the address bar is the most
+  // screenshotted, most shoulder-surfed, most pasted-into-a-support-thread part of a browser.
+  history.replaceState(null, '', location.pathname);
+  return key;
+})();
+
 function stepOwner() {
   if (state.authed) { step++; return renderWizard(); }
   wizardShell(html`
@@ -276,6 +338,15 @@ function stepOwner() {
     <p class="text-secondary small">This is the account you will sign in with. It has full
       control of the server, so give it a real password — you can add a second factor once
       you are in.</p>
+    ${raw(setupKey ? '' : html`
+      <div class="mb-3">
+        <label class="form-label">Setup key</label>
+        <input class="form-control vt-mono" id="oKey" autocomplete="off">
+        <div class="form-text">Printed in the server's log when it started, and saved as
+          <code>setup-token</code> in your data folder. It stops working once this account
+          exists. If you started the server with <code>setup.sh</code> or
+          <code>setup.ps1</code> this was filled in for you.</div>
+      </div>`)}
     <div class="mb-3">
       <label class="form-label">Username</label>
       <input class="form-control" id="oName" autocomplete="username" placeholder="admin">
@@ -294,11 +365,16 @@ function stepOwner() {
   { back: false, next: 'Create account', onNext: async () => {
     const n = $('#oName').value.trim(), p = $('#oPass').value, p2 = $('#oPass2').value;
     if (p !== p2) { $('#oErr').textContent = 'The two passwords do not match.'; return; }
+    const key = setupKey || ($('#oKey')?.value.trim() ?? '');
+    if (!key) { $('#oErr').textContent = 'The setup key is required.'; return; }
     try {
-      const r = await api('/setup/owner', { method: 'POST', body: { name: n, password: p } });
+      const r = await api('/setup/owner', { method: 'POST', body: { name: n, password: p, setupKey: key } });
+      setupKey = key;
       token.set(r.token);
+      try { sessionStorage.removeItem('omwmp_setup_key'); } catch { /* nothing to do */ }
       await refreshState();
       step++;
+      saveWizard();
       renderWizard();
     } catch (e) { $('#oErr').textContent = e.message; }
   } });
@@ -394,15 +470,20 @@ function stepHosting() {
     ${raw(choice('hosting', 'public', 'Yes, from anywhere',
       'The server needs HTTPS. With a domain name pointed here you get a real certificate automatically; without one you get a self-signed certificate and your browser will warn you the first time.'))}
     ${raw(answers.hosting === 'public' ? html`
-      <div class="mt-3">
-        <label class="form-label">Domain name pointed at this server <span class="text-secondary">(optional)</span></label>
-        <input class="form-control" id="wzDomain" value="${answers.domain}" placeholder="mp.example.com">
-        <div class="form-text">Leave blank if you do not have one. You can add it later.</div>
+      <div class="vt-section-note mt-3">
+        <strong>One thing this wizard cannot do for you.</strong> HTTPS is handled by the
+        proxy in front of this server, which reads its settings from a file called
+        <code>.env</code> next to your <code>docker-compose.yml</code> — outside the server,
+        so nothing in here can write it.
+        <p class="mt-2 mb-1">With a domain pointed at this machine, set:</p>
+        <pre class="vt-mono small mb-1">SERVER_DOMAIN=mp.example.com
+TLS_MODE=</pre>
+        <p class="mb-0">and restart. You get a real certificate automatically. Without a
+          domain, leave it alone: the connection is still encrypted, your browser will just
+          warn you once because the certificate is self-signed.</p>
       </div>` : '')}`,
   { disabled: !answers.hosting });
   wireChoices();
-  const d = $('#wzDomain');
-  if (d) d.oninput = () => { answers.domain = d.value.trim(); };
 }
 
 function stepName() {
@@ -491,7 +572,7 @@ function stepReview() {
       ${raw(line('Content', answers.contentProfile || '(unset)'))}
       ${raw(line('Game files', answers.deliveryModel === 'serve' ? 'Served by this server' : 'Players bring their own'))}
       ${raw(mp ? line('Reachable', answers.hosting === 'public'
-        ? `From the internet${answers.domain ? ` (${answers.domain})` : ' (self-signed certificate)'}`
+        ? 'From the internet — set SERVER_DOMAIN in .env for a real certificate'
         : 'Local network only') : '')}
       ${raw(line('Uploads', answers.storage === 's3' ? `S3 — ${answers.s3.bucket || 'bucket unset'}` : 'On this server'))}
     </dl>
@@ -501,7 +582,7 @@ function stepReview() {
   { next: 'Save and restart', onNext: async () => {
     try {
       await api('/setup', { method: 'POST', body: { ...answers, completed: true } });
-      localStorage.setItem('omwmp_setup_done', '1');
+      clearWizard();
       toast('Settings saved. Restarting the server…');
       await api('/restart', { method: 'POST' });
       waitForRestart();
@@ -520,7 +601,22 @@ function waitForRestart() {
     tries++;
     try {
       const r = await fetch('/admin/api/state');
-      if (r.ok) { await refreshState(); go('#overview'); toast('Server is back up.'); return; }
+      if (r.ok) {
+        await refreshState();
+        // ADMIN SESSIONS DO NOT SURVIVE A RESTART — they live in memory. So the last act of
+        // the setup wizard signs you out, and without this the operator answered ten
+        // questions, watched a spinner, and landed on a login form under a cheerful green
+        // "Server is back up" with nothing saying why. Say it plainly instead.
+        if (!state.authed) {
+          token.clear();
+          pageLogin(false, 'The server restarted, so you have been signed out. '
+            + 'Everything you set up was saved — sign in to carry on.');
+          return;
+        }
+        go('#overview');
+        toast('Server is back up.');
+        return;
+      }
     } catch { /* still down, expected */ }
     if (tries > 60) {
       view().innerHTML = html`<div class="alert alert-danger">The server has not come back.
@@ -536,10 +632,11 @@ function waitForRestart() {
 // ---------------------------------------------------------------------------------------
 // login
 // ---------------------------------------------------------------------------------------
-function pageLogin(totpRequired = false) {
+function pageLogin(totpRequired = false, notice = '') {
   setTitle('Sign in', 'Administration for this openmw-mp server.');
   view().innerHTML = html`
     <div class="vt-wizard" style="max-width:24rem">
+      ${raw(notice ? html`<div class="alert alert-info">${notice}</div>` : '')}
       <div class="card"><div class="card-body p-4">
         <div class="mb-3"><label class="form-label">Username</label>
           <input class="form-control" id="liName" autocomplete="username"></div>
@@ -653,7 +750,7 @@ async function pageOverview() {
   const up = Math.round(o.uptime / 60);
   const rows = o.players.length ? o.players.map((p) => html`
     <tr><td>${p.name}</td><td class="text-secondary">${p.account}</td>
-      <td>${p.cellKey || '—'}</td><td>${p.rank}</td></tr>`).join('')
+      <td>${p.cellKey || "—"}</td><td>${p.rank}</td></tr>`).join('')
     : html`<tr><td colspan="4" class="vt-empty">Nobody is in the world right now.</td></tr>`;
 
   const checklist = setupChecklist();
@@ -667,7 +764,7 @@ async function pageOverview() {
     ${raw(checklist)}
     <div class="card"><div class="card-header"><h3 class="card-title">In world</h3></div>
       <div class="table-responsive"><table class="table table-hover mb-0">
-        <thead><tr><th>Name</th><th>Account</th><th>Cell</th><th>Rank</th></tr></thead>
+        <thead><tr><th>Name</th><th>Account</th><th>Location</th><th>Rank</th></tr></thead>
         <tbody>${raw(rows)}</tbody></table></div></div>`;
   wireChecklist();
 }
@@ -677,8 +774,12 @@ function setupChecklist() {
   if (localStorage.getItem('omwmp_checklist_hidden') === '1') return '';
   const items = [
     { done: !!state.name, label: 'Create an administrator account' },
-    { done: localStorage.getItem('omwmp_setup_done') === '1', label: 'Run the setup wizard', hash: '#setup' },
-    { done: localStorage.getItem('omwmp_2fa_done') === '1', label: 'Add two-factor authentication to your account', hash: '#security' },
+    // Owner-only: pointing a viewer at the wizard sent them through every question to a
+    // "forbidden" at the end.
+    ...(can('owner')
+      ? [{ done: state.setupCompleted === true, label: 'Run the setup wizard', hash: '#setup' }]
+      : []),
+    { done: state.twoFactor === true, label: 'Add two-factor authentication to your account', hash: '#security' },
     { done: localStorage.getItem('omwmp_mods_seen') === '1', label: 'Review the game data and mod list', hash: '#mods' },
   ];
   if (items.every((i) => i.done)) return '';
@@ -710,7 +811,7 @@ async function pageConsole() {
 
   const rows = o.players.length ? o.players.map((p) => html`
     <tr><td>${p.name}</td><td class="text-secondary small">${p.account}</td>
-      <td>${p.cellKey || '—'}</td>
+      <td>${p.cellKey || "—"}</td>
       <td class="text-end">
         <button class="btn btn-sm btn-outline-secondary" data-act="kick" data-t="${p.account}">kick</button>
         <button class="btn btn-sm btn-outline-secondary" data-act="mute" data-t="${p.account}">mute</button>
@@ -747,9 +848,35 @@ async function pageConsole() {
       <div class="vt-out vt-mono" id="cmdOut">Ready.</div>
     </div></div>
 
+    <div class="card mb-3"><div class="card-header d-flex align-items-center">
+      <h3 class="card-title">Player reports</h3>
+      <button class="btn btn-sm btn-outline-secondary ms-auto" id="repRefresh">Refresh</button>
+    </div>
+    <div class="table-responsive"><table class="table table-sm mb-0">
+      <thead><tr><th>When</th><th>From</th><th>About</th><th>Reason</th></tr></thead>
+      <tbody id="repBody"><tr><td colspan="4" class="vt-empty">Loading…</td></tr></tbody>
+    </table></div></div>
+
     <div class="card"><div class="card-header"><h3 class="card-title">Available commands</h3></div>
       <div class="table-responsive"><table class="table table-sm mb-0">
         <tbody>${raw(cmdRows)}</tbody></table></div></div>`;
+
+  // The report inbox had a route and settings and help text, and no way to read it — a
+  // moderator could switch on chat logging and then never see a filed report.
+  const loadReports = async () => {
+    try {
+      const { reports } = await api('/reports?limit=50');
+      $('#repBody').innerHTML = reports.length ? reports.map((r) => html`
+        <tr><td class="text-secondary small text-nowrap">${(r.ts || '').replace('T', ' ').slice(0, 16)}</td>
+          <td>${r.reporter}</td><td>${r.target}</td>
+          <td class="small">${r.reason}</td></tr>`).join('')
+        : html`<tr><td colspan="4" class="vt-empty">No reports filed.</td></tr>`;
+    } catch (e) {
+      $('#repBody').innerHTML = html`<tr><td colspan="4" class="vt-empty">${e.message}</td></tr>`;
+    }
+  };
+  $('#repRefresh').onclick = loadReports;
+  void loadReports();
 
   view().querySelectorAll('[data-act]').forEach((b) => {
     b.onclick = async () => {
@@ -876,7 +1003,8 @@ function renderSection(s) {
   return html`
     <div class="card mb-3" data-section="${s.name}">
       <div class="card-header d-flex align-items-center">
-        <h3 class="card-title vt-mono">[${s.name}]</h3>
+        <h3 class="card-title">${s.label || s.name}
+          <span class="vt-mono text-secondary small ms-2">[${s.name}]</span></h3>
         <button class="btn btn-sm btn-primary ms-auto" data-save="${s.name}">Save</button>
       </div>
       <div class="card-body">
@@ -918,7 +1046,7 @@ function wireSettings() {
       }
       try {
         await api(`/settings/${encodeURIComponent(name)}`, { method: 'PUT', body });
-        toast(`Saved [${name}]. Restart the server to apply.`);
+        toast(`Saved. Restart the server to apply.`);
         restartPrompt();
       } catch (e) { toast(e.message, 'danger'); }
     };
@@ -954,14 +1082,22 @@ async function pageMods() {
   const m = await api('/mods');
   const editable = can('owner');
 
+  // Move buttons as well as dragging. HTML5 drag-and-drop does not fire for touch at all, so
+  // drag alone meant load order simply could not be changed on a phone or tablet — and the
+  // grab cursor advertised an affordance that device does not have. The buttons are also the
+  // keyboard path.
   const rows = m.entries.map((e, i) => html`
     <tr draggable="${raw(editable && !e.official ? 'true' : 'false')}" data-i="${i}" data-file="${e.file}">
       <td class="${raw(editable && !e.official ? 'vt-drag' : 'text-secondary')}">${raw(e.official ? '🔒' : '⠿')}</td>
       <td><input class="form-check-input" type="checkbox" data-en="${i}"
-        ${raw(e.enabled ? 'checked' : '')} ${raw(editable && !e.official ? '' : 'disabled')}></td>
+        ${raw(e.enabled ? 'checked' : '')} ${raw(editable && !e.official ? '' : 'disabled')}
+        aria-label="Load ${e.file}"></td>
       <td class="vt-mono">${e.file}
         ${raw(e.official ? ' <span class="badge text-bg-secondary">base game</span>' : '')}
         ${raw(e.isNew ? ' <span class="badge text-bg-warning">new</span>' : '')}</td>
+      <td class="text-end text-nowrap">${raw(editable && !e.official ? html`
+        <button class="btn btn-sm btn-outline-secondary" data-move="up" aria-label="Move ${e.file} earlier">↑</button>
+        <button class="btn btn-sm btn-outline-secondary" data-move="down" aria-label="Move ${e.file} later">↓</button>` : '')}</td>
     </tr>`).join('');
 
   view().innerHTML = html`
@@ -977,8 +1113,8 @@ async function pageMods() {
       ${raw(editable ? html`<button class="btn btn-sm btn-primary ms-auto" id="modSave">Save order</button>` : '')}
     </div>
     <div class="table-responsive"><table class="table table-hover mb-0">
-      <thead><tr><th style="width:2rem"></th><th style="width:3rem">On</th><th>File</th></tr></thead>
-      <tbody id="modBody">${raw(rows || html`<tr><td colspan="3" class="vt-empty">No content files found.</td></tr>`)}</tbody>
+      <thead><tr><th style="width:2rem"></th><th style="width:3rem">Load</th><th>File</th><th></th></tr></thead>
+      <tbody id="modBody">${raw(rows || html`<tr><td colspan="4" class="vt-empty">No content files found.</td></tr>`)}</tbody>
     </table></div></div>
     ${raw(m.archives.length ? html`<div class="card mt-3"><div class="card-body">
       <h5 class="card-title">Archives</h5>
@@ -993,6 +1129,22 @@ async function pageMods() {
   // Drag to reorder. HTML5 drag-and-drop rather than a library: it is a table of a dozen
   // rows, and pulling in a sortable dependency for it would cost more than it saves.
   const body = $('#modBody');
+
+  // Swap with the nearest reorderable neighbour, skipping the locked base-game rows so a
+  // plugin cannot be moved above a master the engine requires first.
+  body.querySelectorAll('[data-move]').forEach((btn) => {
+    btn.onclick = () => {
+      const tr = btn.closest('tr');
+      const movable = [...body.querySelectorAll('tr[draggable=true]')];
+      const at = movable.indexOf(tr);
+      const to = btn.dataset.move === 'up' ? at - 1 : at + 1;
+      if (to < 0 || to >= movable.length) return;
+      if (btn.dataset.move === 'up') body.insertBefore(tr, movable[to]);
+      else body.insertBefore(movable[to], tr);
+      btn.focus(); // keep the keyboard where the user left it
+    };
+  });
+
   let dragged = null;
   body.querySelectorAll('tr[draggable=true]').forEach((tr) => {
     tr.ondragstart = () => { dragged = tr; tr.classList.add('vt-dragging'); };
@@ -1016,6 +1168,46 @@ async function pageMods() {
       restartPrompt();
     } catch (e) { toast(e.message, 'danger'); }
   };
+}
+
+/**
+ * Draw an otpauth:// URI as a scannable QR code.
+ *
+ * Uses the vendored qrcode-generator (MIT, ~56KB, no dependencies) rather than a hand-rolled
+ * encoder. There WAS a hand-rolled one here: it produced perfectly plausible-looking squares
+ * that no scanner could read, which is strictly worse than showing no QR at all, and it was
+ * caught only by decoding the output in a test. QR is a solved problem with a lot of fiddly
+ * detail (format-info placement, mask selection, block interleaving) and no upside to
+ * re-deriving.
+ *
+ * SVG rather than canvas: it scales, prints, and needs no device-pixel-ratio handling. The
+ * white background is explicit because a scanner needs the contrast even in dark mode.
+ */
+function drawQr(el, text) {
+  try {
+    const qr = window.qrcode(0, 'M'); // 0 = smallest version that fits
+    qr.addData(text);
+    qr.make();
+    const n = qr.getModuleCount();
+    const px = 4;
+    const quiet = 4; // required by the spec; without it many scanners will not lock on
+    const size = (n + quiet * 2) * px;
+    let rects = '';
+    for (let r = 0; r < n; r++) {
+      for (let c = 0; c < n; c++) {
+        if (qr.isDark(r, c)) {
+          rects += `<rect x="${(c + quiet) * px}" y="${(r + quiet) * px}" width="${px}" height="${px}"/>`;
+        }
+      }
+    }
+    el.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" `
+      + `viewBox="0 0 ${size} ${size}" role="img" aria-label="Two-factor setup QR code">`
+      + `<rect width="${size}" height="${size}" fill="#fff"/><g fill="#000">${rects}</g></svg>`;
+  } catch {
+    // No QR is fine — the key is printed right below it and typing it in is a supported
+    // flow in every authenticator app.
+    el.innerHTML = '';
+  }
 }
 
 /** Add-files panel, shared by the mods page and the wizard's game-data step. */
@@ -1194,30 +1386,68 @@ async function pageSessions() {
 
 async function pageSecurity() {
   setTitle('My security', 'Two-factor authentication for your own account.');
+  const on = state.twoFactor === true;
+
   view().innerHTML = html`
     <div class="card" style="max-width:34rem"><div class="card-body">
-      <h5 class="card-title">Authenticator app</h5>
-      <p class="small text-secondary">Adds a six-digit code to your password sign-in. Single
-        sign-on logins are not affected — the provider already does this.</p>
-      <div id="totpArea"><button class="btn btn-primary" id="totpStart">Set up two-factor</button></div>
+      <h5 class="card-title">Authenticator app
+        ${raw(on ? '<span class="badge text-bg-success ms-2">on</span>'
+                 : '<span class="badge text-bg-secondary ms-2">off</span>')}</h5>
+      <p class="small text-secondary">Adds a six-digit code to your password sign-in, so your
+        password alone is not enough to get in. Single sign-on is unaffected — the provider
+        already asks for a second factor of its own.</p>
+      <div id="totpArea">${raw(on ? html`
+        <p class="small">Two-factor is on for <strong>${state.name}</strong>.</p>
+        <button class="btn btn-outline-danger" id="totpOff">Turn it off</button>`
+        : html`<button class="btn btn-primary" id="totpStart">Set up two-factor</button>`)}</div>
     </div></div>`;
+
+  const off = $('#totpOff');
+  if (off) {
+    off.onclick = async () => {
+      const okd = await confirmAction({
+        title: 'Turn off two-factor authentication?',
+        body: html`<p>Your password alone will be enough to sign in to this dashboard.</p>
+          <div class="mb-2"><label class="form-label small">Confirm your password</label>
+            <input class="form-control" id="totpOffPass" type="password" autocomplete="current-password"></div>`,
+        danger: 'Turn it off',
+      });
+      if (!okd) return;
+      try {
+        await api('/totp/disable', { method: 'POST', body: { password: $('#totpOffPass')?.value ?? '' } });
+        toast('Two-factor authentication is off.');
+        await refreshState();
+        route();
+      } catch (e) { toast(e.message, 'danger'); }
+    };
+    return;
+  }
+
   $('#totpStart').onclick = async () => {
     const r = await api('/totp/enroll', { method: 'POST' });
+    // A QR code, because "scan this" with nothing to scan is an instruction that cannot be
+    // followed — it left people hand-typing a 32-character base32 string into a phone.
+    // Drawn here rather than vendoring a library: a QR encoder is a few hundred lines and
+    // this page needs exactly one, at one size, from one short string.
     $('#totpArea').innerHTML = html`
-      <p class="small">Scan this in your authenticator app, or type the key in by hand:</p>
-      <p class="vt-mono">${r.secret}</p>
-      <p class="small text-secondary">${r.uri}</p>
+      <p class="small">Scan this with your authenticator app:</p>
+      <div id="totpQr" class="mb-2"></div>
+      <p class="small text-secondary mb-1">Or type this key in by hand:</p>
+      <p class="vt-mono mb-3" style="letter-spacing:.08em">${r.secret.replace(/(.{4})/g, '$1 ').trim()}</p>
       <div class="input-group mb-2" style="max-width:16rem">
-        <input class="form-control" id="totpCode" inputmode="numeric" placeholder="123456">
+        <input class="form-control" id="totpCode" inputmode="numeric" placeholder="123456"
+          autocomplete="one-time-code">
         <button class="btn btn-primary" id="totpConfirm">Confirm</button>
       </div>
-      <div class="small text-secondary">You must enter a working code before this is switched
-        on — that is what stops you locking yourself out with a key your phone never took.</div>`;
+      <div class="small text-secondary">You have to enter a working code before this is
+        switched on — that is what stops you locking yourself out with a key your phone
+        never actually accepted.</div>`;
+    drawQr($('#totpQr'), r.uri);
     $('#totpConfirm').onclick = async () => {
       try {
         await api('/totp/confirm', { method: 'POST', body: { code: $('#totpCode').value } });
-        localStorage.setItem('omwmp_2fa_done', '1');
         toast('Two-factor authentication is on.');
+        await refreshState();
         route();
       } catch (e) { toast(e.message, 'danger'); }
     };
@@ -1481,6 +1711,7 @@ const ROUTES = {
 };
 
 const NEEDS = {
+  '#setup': 'owner',
   '#console': 'moderator', '#settings': 'viewer', '#mods': 'viewer', '#accounts': 'moderator',
   '#sessions': 'owner', '#security': 'viewer', '#logs': 'moderator', '#audit': 'moderator',
   '#metrics': 'moderator', '#maintenance': 'owner', '#help': 'viewer', '#overview': 'viewer',
@@ -1495,17 +1726,29 @@ async function route() {
   const reset = /^#reset=(.+)$/.exec(hash);
   if (reset) return pageReset(decodeURIComponent(reset[1]));
 
-  if (state.firstRun) { step = state.authed ? 1 : 0; return renderWizard(); }
+  if (state.firstRun) {
+    // Keep a restored position rather than resetting: this runs on every load, so
+    // overwriting `step` here is what made the saved progress unreachable. Only clamp to the
+    // bounds the current auth state allows — step 0 is the create-account screen, which is
+    // pointless once an account exists.
+    if (!state.authed) step = 0;
+    else if (step < 1) step = 1;
+    return renderWizard();
+  }
   if (!state.authed) return pageLogin();
-  if (hash === '#setup') { step = 1; return renderWizard(); }
 
   const need = NEEDS[hash];
   if (need && !can(need)) {
     setTitle('Not available', '');
     view().innerHTML = html`<div class="alert alert-secondary">Your role
-      (<strong>${state.role}</strong>) does not have access to this page.</div>`;
+      (<strong>${state.role}</strong>) cannot open this page. Ask an owner if you need it.</div>`;
     return;
   }
+  // AFTER the role check, not before. Reachable by hash, so a viewer who typed or followed
+  // a link to it used to answer every question and then get a bare "forbidden" toast at the
+  // final save — and the file-upload panel on the way through failed on every drop.
+  if (hash === '#setup') { if (step < 1) step = 1; return renderWizard(); }
+
   const page = ROUTES[hash] || pageOverview;
   try {
     await page();

@@ -286,7 +286,11 @@ export function createHttpServer(
       // the Docker healthcheck and any monitor watching this endpoint.
       const blockers = notReady?.() ?? [];
       if (blockers.length > 0) {
-        sendText(res, 503, `not ready:\n${blockers.map((b) => `- ${b}`).join('\n')}\n`);
+        // The reasons name filesystem paths and configuration keys, and this endpoint is
+        // reachable from the internet on the shipped self-host topology. A container
+        // healthcheck only reads the status code, and the dashboard reads the detail through
+        // its own authenticated route — so anonymous callers get the status and nothing else.
+        sendText(res, 503, 'not ready\n');
         return;
       }
       res.writeHead(200, { 'content-type': 'text/plain' });

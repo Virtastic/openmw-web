@@ -66,8 +66,18 @@ export async function resolveAuth(
   if (presented === '') return null;
 
   if (sharedTokenOk(presented, deps.sharedToken)) {
+    // MODERATOR, not owner. This token predates roles and is documented as covering exactly
+    // what the old dashboard did: watch the world, read the report queue, kick/ban/mute/
+    // broadcast. Resolving it to owner silently upgraded every copy of it — and copies live
+    // in cron jobs, CI config and monitoring dashboards precisely because it was understood
+    // to be low-privilege — into a credential that can run script on players' machines,
+    // rewrite every setting and download the entire data directory.
+    //
+    // Every route the old dashboard exposed is moderator or below, so nothing that worked
+    // before stops working. Owner-level automation should be a real account with a real role,
+    // which is auditable by name rather than appearing in the log as a shared secret.
     return {
-      role: 'owner',
+      role: 'moderator',
       accountKey: '(shared-token)',
       accountName: '(shared-token)',
       viaSharedToken: true,
@@ -107,15 +117,23 @@ export async function gate(
   deps: AuthDeps,
   need: DashboardRole,
 ): Promise<AuthContext | null> {
+  // Messages are written for the person reading them, not for a log. The dashboard surfaces
+  // these verbatim in a toast, and "forbidden" tells someone nothing about what to do next.
   const ctx = await resolveAuth(req, deps);
-  if (!ctx) { json(res, 401, { error: 'unauthorized' }); return null; }
+  if (!ctx) {
+    json(res, 401, { error: 'You are not signed in any more. Sign in again to continue.' });
+    return null;
+  }
   if (!deps.apiLimiter.allow(clientIp(req))) {
-    json(res, 429, { error: 'rate limited' });
+    json(res, 429, { error: 'Too many requests. Wait a moment and try again.' });
     return null;
   }
   if (!roleAtLeast(ctx.role, need)) {
     log('warn', 'admin.denied', { account: ctx.accountKey, need, have: ctx.role });
-    json(res, 403, { error: 'forbidden', need });
+    json(res, 403, {
+      error: `Your role (${ctx.role}) cannot do this — it needs ${need}. Ask an owner.`,
+      need,
+    });
     return null;
   }
   return ctx;
@@ -138,23 +156,30 @@ export async function passwordLogin(
   totp: string,
 ): Promise<LoginResult> {
   if (!deps.loginLimiter.allow(ip)) {
-    return { ok: false, status: 429, error: 'too many attempts, wait a minute' };
+    return { ok: false, status: 429, error: 'Too many sign-in attempts. Wait a minute and try again.' };
   }
   const account = await deps.accounts.verifyLogin(name, password);
   if (!account || !account.dashboardRole || account.banned) {
     log('warn', 'admin.login_failed', { name, ip });
-    return { ok: false, status: 401, error: 'invalid credentials' };
+    return { ok: false, status: 401, error: 'That username and password did not match.' };
   }
   if (account.totpSecret) {
     // Import lazily-ish: keeping verifyTotp out of the module graph until an account is
     // actually enrolled is not worth the indirection, so this is a plain call.
     const { verifyTotp } = await import('./totp');
     if (totp === '') {
-      return { ok: false, status: 401, error: 'authenticator code required', totpRequired: true };
+      return { ok: false, status: 401, error: 'Enter the six-digit code from your authenticator app.', totpRequired: true };
     }
     if (!verifyTotp(account.totpSecret, totp)) {
       log('warn', 'admin.login_totp_failed', { name, ip });
-      return { ok: false, status: 401, error: 'invalid credentials', totpRequired: true };
+      return {
+        ok: false,
+        status: 401,
+        // Naming the likeliest cause: a phone whose clock has drifted is by far the most
+        // common reason a correct-looking code is refused.
+        error: 'That code did not match. Check your phone’s clock is set automatically.',
+        totpRequired: true,
+      };
     }
   }
   const key = account.name.toLowerCase();

@@ -17,7 +17,7 @@ import { join } from 'node:path';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import { openDb } from '../persist/sqlite';
-import { validAccountName, type AccountStore } from '../core/accounts';
+import { validAccountName, validEmail, type AccountStore } from '../core/accounts';
 import type { Identity, ProviderId } from './oidc';
 import { log } from '../log';
 
@@ -146,6 +146,16 @@ export async function resolveSsoAccount(
   // one the user already has (their onboarding choice wins). Awaited-flushed by the caller.
   const adoptEmail = async (accountKey: string): Promise<void> => {
     if (!identity.email) return;
+    // VALIDATE, even though it came from a provider. Every other setEmail caller runs this
+    // check; this path skipped it because the value arrives from an OIDC `email` claim and
+    // that felt trustworthy. It is not: [auth.custom] accepts any issuer an operator points
+    // it at, so the claim is attacker-controlled on a hostile or compromised provider. It
+    // then flows into an SMTP envelope on the password-reset path, where a line break buys
+    // an extra recipient. Two guards now — here and at the sink in admin/notify.ts.
+    if (!validEmail(identity.email)) {
+      log('warn', 'auth.email_claim_rejected', { iss: identity.iss });
+      return;
+    }
     const acc = await accounts.get(accountKey);
     if (acc && acc.email === undefined) {
       accounts.setEmail(acc, identity.email);

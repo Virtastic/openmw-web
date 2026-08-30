@@ -16,6 +16,7 @@ import { adminRoutes as adminDashboardRoutes } from './net/admin/routes';
 import { exportDataDir, summariseMetrics } from './net/admin/ops';
 import { orderedContent } from './net/admin/api-mods';
 import { ResetTokens, sendMail, notifyEvent, type MailConfig } from './net/admin/notify';
+import { SetupToken } from './net/admin/setup-token';
 import { passwordProblem } from './net/admin/auth';
 import { deleteAccount } from './persist/erase';
 import { PlayerStore } from './persist/playerstore';
@@ -566,6 +567,11 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   });
   const lockerSessions = new LockerSessionStore();
   const adminSessions = new AdminSessionStore();
+  // Claiming the first administrator account needs proof of access to this machine. Armed
+  // only while nobody holds the dashboard owner role; see setup-token.ts for why account
+  // state alone was not a safe gate.
+  const setupToken = new SetupToken(opts.dataDir);
+  if (!accounts.hasDashboardOwner()) setupToken.arm();
   const resetTokens = new ResetTokens();
   // Operational alerts ride the log stream the server already writes, filtered by the
   // operator's [notifications].events list. Nothing is sent unless they configured it.
@@ -848,7 +854,9 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     // notices, tight enough that a stolen token cannot be used to hammer /console.
     apiLimiter: new IpRateLimiter(600),
     sharedToken: config.admin.dashboardToken,
+    setupToken,
     gameDataDir: gameDataDir(sharedDir),
+    version: VERSION,
 
     runCommand: async (actor, line) => {
       const parts = line.replace(/^\//, '').trim().split(/\s+/);
