@@ -100,6 +100,50 @@ test('a reset with a bad token is refused, and a weak new password is too', asyn
 });
 
 // ---------------------------------------------------------------------------------------
+// SMTP
+// ---------------------------------------------------------------------------------------
+
+test('a line break in an address or subject is refused before anything is sent', async () => {
+  // SMTP is line-oriented, so a CR or LF ends the current command and begins another. The
+  // reset path takes the recipient from an account's email, and an account can get its email
+  // from an OIDC `email` claim — attacker-controlled on a hostile or compromised provider,
+  // and [auth.custom] accepts any issuer an operator points it at. Without this, a claim of
+  // "victim@x\r\nRCPT TO:<attacker@evil>" adds an envelope recipient to a password reset.
+  //
+  // Guarded at the sink because every caller passes through here. identities.ts also
+  // validates the claim now; this is the half that cannot be bypassed by a new caller.
+  const { sendMail } = await import('../src/net/admin/notify');
+  const cfg = { host: 'smtp.invalid', port: 587, user: '', pass: '', from: 'me@example.test' };
+
+  for (const bad of [
+    'victim@x.com\r\nRCPT TO:<attacker@evil.test>',
+    'victim@x.com\nBcc: attacker@evil.test',
+    'victim@x.com\rX-Injected: 1',
+  ]) {
+    await assert.rejects(() => sendMail(cfg, bad, 'subject', 'body'), /line break in recipient/,
+      `"${bad.replace(/[\r\n]/g, '\\n')}" must not reach the wire`);
+  }
+  await assert.rejects(
+    () => sendMail(cfg, 'ok@example.test', 'Subject\r\nBcc: attacker@evil.test', 'body'),
+    /line break in subject/);
+  await assert.rejects(
+    () => sendMail({ ...cfg, from: 'me@x\r\nEvil: 1' }, 'ok@example.test', 'subject', 'body'),
+    /line break in sender/);
+
+  // And with a clean address it gets as far as trying to connect, so the guard is not
+  // rejecting everything.
+  await assert.rejects(() => sendMail(cfg, 'ok@example.test', 'subject', 'body'),
+    (err: Error) => !/line break/.test(err.message));
+});
+
+test('sending is refused outright when no SMTP host is configured', async () => {
+  const { sendMail } = await import('../src/net/admin/notify');
+  await assert.rejects(
+    () => sendMail({ host: '', port: 587, user: '', pass: '', from: 'a@b.test' }, 'c@d.test', 's', 'b'),
+    /no SMTP host/);
+});
+
+// ---------------------------------------------------------------------------------------
 // notifications
 // ---------------------------------------------------------------------------------------
 
