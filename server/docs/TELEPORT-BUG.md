@@ -1,85 +1,85 @@
-# Lua-initiated player teleports silently do nothing
+# "Travel to a friend" is NOT broken — the scenarios were
 
-**Status:** open, root cause not found. Pre-existing on `origin/dev` — NOT introduced by
-`perf/opentes3`, verified by building `dev` and running the same scenarios against it.
+**Status:** RESOLVED. `s45-social` and `s22-death` now pass.
 
-**Impact:** "travel to a friend" is broken in multiplayer. You accept an invite and stay exactly
-where you are, with no error and no message. Almost certainly the same cause behind party travel
-and respawn.
+An earlier version of this document claimed Lua-initiated player teleports silently did nothing
+and that friend-travel was broken in multiplayer. **That was wrong.** The feature works. The
+scenarios were measuring it with a fixed sleep that is too short on a loaded box, and the failure
+looked exactly like a broken feature from the outside.
 
-## Scenarios this accounts for
+Keeping the trail because the wrong conclusion was reached carefully, from real evidence, and the
+thing that finally separated the two explanations is worth knowing.
 
-| scenario | assertion that fails | shared shape |
-|---|---|---|
-| `s45-social` | `accepting an invite did not move the character (0.0 units)` | server-initiated teleport |
-| `s54-party-travel` | `A received the party's destination` (timeout) | server-initiated teleport |
-| `s22-death` | `A must be away from the respawn point` | respawn teleport |
+## What actually happens
 
-Three independent call sites, all of which move the player from Lua, all failing. `s22` and `s54`
-have not been instrumented — they are listed because the shape matches, not because it is proven.
-
-## What is established, with evidence
-
-Instrumented `MP_InviteAccepted` in `scripts/mp/global.lua` and read the values back through
-`mp.testSet` (which lands on `window.__omwMP`):
+The player teleports. Instrumenting `LuaManager::applyDelayedActions` around the `TeleportPlayer`
+action shows the engine applying it correctly:
 
 ```
-target = (216831.0, 205429.0, 513.0)   cell=""
-player = (216831.0, 204909.0, 513.0)   posOk=true
-player:teleport(...) returned  ok=true  err=nil
+before = (216831, 204909, 513)
+after  = (216831, 205429, 513)     <- 520 units, exactly the intended destination
 ```
 
-1. **The server sends the right thing.** `SocialService.acceptInvite` (`core/social.ts`) returns the
-   HOST's `cellKey` and pose, not the accepting player's. The target above is ~520 units away,
-   consistent with the scenario walking B away before inviting.
-2. **The client handler runs** and receives that data intact.
-3. **The teleport call succeeds.** It is wrapped in `pcall`; `ok=true`, `err=nil`. It is not
-   throwing and not hitting the `notice('Could not travel to them just now.')` path.
-4. **The arguments are correct.** `inviteCellArg` returns `""` for an exterior cell key like
-   `26,25`, and `findCell` (`mwlua/objectbindings.cpp`) maps an empty name to the default exterior
-   worldspace and derives the cell FROM the position. That is the intended usage.
-5. **The action queue runs.** `teleport` on the player goes through
-   `LuaManager::addTeleportPlayerAction`, applied by `applyDelayedActions()` inside
-   `synchronizedUpdate()`, which `engine.cpp` calls every frame. `?perfstats=1` measures
-   `luasyncupdate` at 0.336ms/frame, so that phase is live.
-6. **The player does not move.** 1500ms later the pose is unchanged — 0.0 units.
+The test reads `window.__omwMP.pose`, which is a **2 Hz mirror** published by
+`POSE_MIRROR_INTERVAL` in `scripts/mp/player.lua`. Sampling it instead of reading it once shows
+the move arriving and then holding:
 
-Reading the position immediately after the call is NOT evidence of failure: the teleport is
-queued, so the same-frame read showing the old position is expected. The 0.0 measured by the
-scenario is taken 1500ms later and is the real signal.
+```
+pose y over 3s: 204909 204909 204909 205429 205429 205429 205429 205429 ...
+```
 
-## Ruled out
+Under software GL on a busy machine the whole round trip — event, queued action, applied
+teleport, next mirror tick — runs past the `sleep(1500)` the scenario allowed. One read at the
+deadline lands on the old value, so the assertion sees 0.0 units moved and reports that accepting
+an invite does nothing.
 
-- **Wrong coordinates / own position echoed back.** Target is 520 units away (measured).
-- **Wrong party leader.** `partyAccept` sets `leader: fromAcct` (the inviter), and the
-  `InviteAccept` path uses `acceptInvite`, which returns the host directly.
-- **Stale server pose.** `player.pose` is updated on every `PlayerMove` (`net/connection.ts:779`).
-- **Bad cell argument.** See 4 above.
-- **Server anti-cheat snapping the player back.** The plausibility check
-  (`net/connection.ts:744`) only REFUSES a pose server-side, in the lobby, after 3 strikes. It
-  never pushes a correction to the client.
-- **A crashing handler.** `pcall` reports success.
+## The fix
 
-## Where to look next
+Wait for the condition, do not assume a duration.
 
-The action is queued with correct arguments and reports success, and the queue is drained every
-frame — so either the `DelayedAction` does not execute, or the position is restored after it does.
-Instrument `LuaManager::applyDelayedActions` / the `TeleportPlayer` action directly, and log the
-player position immediately before and after it applies. If it applies correctly, something later
-in the frame is overwriting the position, and the MP pose-sync path is the obvious suspect.
+- `s45-social`: `sleep(1500)` -> `waitFor(moved > 100)`. **PASSES** (moved 480 units, ends 80 from
+  the host).
+- `s22-death`: `sleep(3500)` -> `waitFor(distance from respawn > 250)`. **PASSES**.
 
-## Traps that cost time here, worth knowing before you start
+Both had the same shape: a fixed sleep followed by a single read of the 2 Hz pose mirror.
+
+## Why the wrong conclusion was reachable
+
+Every one of these was true and none of it was the answer:
+
+- the server sends the host's real position, ~520 units away (not the accepting player's own —
+  the obvious suspect, correctly ruled out)
+- the client handler runs and receives it intact
+- `player:teleport(...)` returns `ok=true`, `err=nil`
+- the arguments are right: `inviteCellArg` returns `""` for an exterior key and `findCell` maps
+  `""` to the default worldspace, deriving the cell from the position
+- the action queue is drained every frame (`luasyncupdate` measured at 0.336ms)
+
+All of that says "the teleport is fine", and the observed 0.0 says "it did not happen". The
+missing step was instrumenting the ENGINE either side of the action rather than reasoning about
+it, which immediately showed the position changing — moving the question from "why doesn't it
+teleport" to "why doesn't the test see it".
+
+## If you are debugging this layer, five traps that cost real time
 
 - **`print()` from Lua is invisible.** The harness only dumps engine logs for some failure kinds;
   an assertion failure shows none. Use `mp.testSet(key, value)` and read `window.__omwMP`.
 - **`mp.testSet` takes (string, string) only.** A number throws, and a throwing handler dies
-  silently mid-way.
-- **Do not put a probe inside a `pcall` you also rely on.** An unguarded `player.position` threw
-  and killed the handler before `testSet('invitedTo')`, which cost a 900s scenario timeout; the
-  guarded version then swallowed its own error and made the handler look like it never ran.
+  silently part-way through.
+- **Never put a probe inside a `pcall` you also depend on.** An unguarded `player.position` threw
+  and killed the handler before `testSet('invitedTo')` — a 900s timeout. The guarded version then
+  swallowed its own error and made the handler look like it never ran.
 - **`openmw.data` must be redeployed for Lua changes.** Copying only `openmw.js`/`.wasm` leaves the
-  old scripts baked in and the build looks updated. Verify with
-  `grep -c <your-marker> play/openmw.data`.
+  old scripts baked in while everything looks updated. Verify with
+  `grep -c <marker> play/openmw.data`.
 - **Anchor edits on the enclosing function, not on a pattern.** Anchoring on the first
   `pcall` + `player:teleport` in `global.lua` lands in `teleportPlayerTo()`, not
-  `MP_InviteAccepted` — which produced a confident and completely wrong "the handler never runs".
+  `MP_InviteAccepted` — which produced a confident, completely wrong "the handler never runs".
+
+## The general lesson for this suite
+
+`__omwMP.pose` is a 2 Hz mirror, not live state. Any assertion about movement must poll it until
+the expected condition holds, with a generous timeout. A `sleep()` long enough on a developer GPU
+is not long enough under `angle-swiftshader` in a container, and the resulting failure is
+indistinguishable from a real product bug — which is how two working features got reported as
+broken.
