@@ -12,6 +12,7 @@ local types = require('openmw.types')
 local mp = require('openmw.mp')
 local I = require('openmw.interfaces')
 local self = require('openmw.self')
+local nearby = require('openmw.nearby')
 
 local json = require('scripts.mp.json')
 local identity = require('scripts.mp.identity')
@@ -453,15 +454,22 @@ local function pollHarness()
         -- cell the harness happens to start in.
         if cmd == 'barter:open' then
             local best, bestD2 = nil, nil
-            local cell = self.cell
-            if cell then
-                for _, obj in ipairs(cell:getAll()) do
-                    if types.NPC.objectIsInstance(obj) and not types.Player.objectIsInstance(obj) then
-                        local okd, dead = pcall(function() return types.Actor.isDead(obj) end)
-                        if okd and not dead then
-                            local d2 = (obj.position - self.position):length2()
-                            if not bestD2 or d2 < bestD2 then best, bestD2 = obj, d2 end
-                        end
+            -- nearby.actors, NOT cell:getAll(). getAll is a GLOBAL-script API; a player script
+            -- is local and does not have it, so this read `attempt to call a nil value (method
+            -- 'getAll')` -- and because it ran inside onFrame it took the whole handler down
+            -- with it, which in OpenMW means player.lua's onFrame stops for the rest of the
+            -- session. One unavailable method silently disabled the client's entire per-frame
+            -- multiplayer subsystem, which is exactly the failure mode the Lua tests exist for.
+            --
+            -- nearby.actors is the local-script equivalent and is strictly better here anyway:
+            -- it spans the LOADED cells rather than only the one the player stands in, so a
+            -- merchant one cell over is still found.
+            for _, obj in ipairs(nearby.actors) do
+                if types.NPC.objectIsInstance(obj) and not types.Player.objectIsInstance(obj) then
+                    local okd, dead = pcall(function() return types.Actor.isDead(obj) end)
+                    if okd and not dead then
+                        local d2 = (obj.position - self.position):length2()
+                        if not bestD2 or d2 < bestD2 then best, bestD2 = obj, d2 end
                     end
                 end
             end
@@ -480,6 +488,21 @@ local function pollHarness()
         -- scenario can prove the whole path -- local discovery, relay, remote apply -- without
         -- retail dialogue. Topics are just record ids, so unlike companions or merchants this
         -- one feature IS testable against the demo content.
+        -- LEARN IT THE WAY THE DIFF SEES IT. 'topic:' below calls addTopic, which marks a
+        -- topic known but is invisible to journal(player).topics -- the collection the sync
+        -- diffs -- so a scenario using it can never observe its own input (s75 measures
+        -- exactly that). This one marks the topic locally learned so the real diff -> send ->
+        -- relay -> apply path runs end to end.
+        local diffTopic = cmd:match('^learntopic:(.+)$')
+        if diffTopic then core.sendGlobalEvent('mpTestLearnTopic', { id = diffTopic }) end
+        -- OPEN A UI MODE (ui:Map, ui:Inventory, ...). Added for the minimap investigation and
+        -- kept because it is generally useful: the HUD minimap and the full Map WINDOW read
+        -- the SAME per-cell texture through two different widgets, so opening the window is
+        -- the cheapest way to tell a broken RENDER from a broken HUD widget. If the window
+        -- draws the cell and the HUD panel does not, the texture has content and the fault is
+        -- in the small widget; if both are blank, nothing is being drawn at all.
+        local uiMode = cmd:match('^ui:(%a+)$')
+        if uiMode then pcall(function() I.UI.addMode(uiMode) end) end
         local learnTopic = cmd:match('^topic:(.+)$')
         if learnTopic then
             -- SAY WHEN IT FAILS. addTopic looks the id up in the ESM store and THROWS if there

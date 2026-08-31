@@ -384,11 +384,56 @@ The engine build needs three **gitignored** inputs that are not in the repo. The
 
 - `deps/` — prebuilt cross-compiled dependency stack (OSG, Bullet double-precision, MyGUI,
   FFmpeg, Boost 1.85, ICU). ~600MB of the 2.3GB local tree is what the builder image needs.
+  `deps/wasm` is the wasm32 stack; `deps/wasm64` is the wasm64 one (see below). They are
+  separate trees and neither is derivable from the other.
 - `fsroot/gamedata/` — game data. Build fails loud if empty.
 - `fsroot/icudt68l.dat`
 
 The toolchain image `openmw-builder:1` (4.4GB) is prebuilt on the build server from
 `Dockerfile.builder`. It pins **emscripten 6.0.1** — a mismatch breaks the prebuilt deps.
+
+### wasm64 (MEMORY64)
+
+`OMW_WASM64=1` builds the engine for wasm64, which is what lifts the heap past the 4 GiB the
+wasm32 build already maxes out (`link-openmw.sh` links `-sMAXIMUM_MEMORY=4294967296`) — and
+therefore what a Tamriel Rebuilt load order needs. The variable is read by
+`wasm-build/build-deps.sh`, `wasm-build/build-osg.sh`, `configure-openmw.sh`,
+`wasm-build/link-openmw.sh` and `ci/jenkins/build-engine.sh`; unset, every one of them behaves
+exactly as before.
+
+It selects a parallel set of everything, because the two pointer models cannot share anything
+compiled:
+
+| | wasm32 (default) | wasm64 |
+|---|---|---|
+| deps prefix | `deps/wasm` | `deps/wasm64` |
+| build tree | `build-wasm32/` | `build-wasm64/` |
+| sysroot | `lib/wasm32-emscripten` | `lib/wasm64-emscripten` |
+| builder image | `openmw-builder:1` (`Dockerfile.builder`) | `openmw-builder64:1` (`Dockerfile.builder64`) |
+| flag | — | `-m64` |
+
+Things that will bite, in the order they bit:
+
+- **The emsdk sysroot cache lives inside the builder image.** wasm64 system libs built in a
+  container are gone when it exits, which is why `openmw-builder64:1` has to exist rather than
+  the build just passing `-m64`. For a local dev loop, mount a docker volume over
+  `/emsdk/upstream/emscripten/cache` and seed it once from the image.
+- **Mixing models is caught only at the final link**, as
+  `wasm32 object file can't be linked in wasm64 mode`. `build-deps.sh` stamps each source tree
+  with the model it was last built for and cleans when it changes — a *missing* stamp counts as
+  unknown and also cleans, because every pre-existing checkout is full of wasm32 objects.
+- **`libGL-mt-getprocaddr.a`, not `libGL-getprocaddr.a`** — emcc encodes the variant in the
+  name and `-pthread` makes it `-mt`. The wasm32 path only worked because the prebaked image
+  ships every variant. The scripts now probe for both.
+- **ffmpeg needs `-m64` in `--extra-ldflags` as well as `--extra-cflags`**, or its configure
+  probe compiles wasm64 and links wasm32 and reports only "C compiler test failed".
+  `WARNING: unknown architecture wasm64` is expected and harmless.
+- Browsers need Chrome/Edge 133+ or Firefox 134+; `play/index.html` and `play/launcher.html`
+  feature-detect memory64 and show the unsupported overlay otherwise.
+
+`wasm-build/memory64-gate.sh` answers "does this toolchain do wasm64 at all" in about a minute
+without building the engine — threads, >4 GiB allocation, wasm-EH, the JS pointer ABI and (with
+`--browser`) cross-origin isolation. Run it before blaming the engine.
 
 `Dockerfile.builder.dockerignore` exists because the main `.dockerignore` excludes `deps/`
 (correct for `Dockerfile`, fatal for `Dockerfile.builder`, which must bake deps in). BuildKit

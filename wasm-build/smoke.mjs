@@ -24,7 +24,15 @@ import zlib from 'node:zlib';
 const URL = process.argv[2] || 'http://localhost:8795/index.html?nomw&skipintro=1';
 const SECONDS = Number(process.argv[3] || 45);
 const LABEL = process.argv[4] || 'smoke';
-const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+// Chrome binary. Was hardcoded to the macOS path, which made this test unrunnable anywhere
+// else -- including the Windows and Linux boxes the wasm64 build was brought up on, where
+// "boot and render" is exactly the check you want. CHROME_PATH overrides.
+const CHROME = process.env.CHROME_PATH || (
+  process.platform === 'win32'
+    ? 'C:/Program Files/Google/Chrome/Application/chrome.exe'
+    : process.platform === 'darwin'
+      ? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+      : 'google-chrome');
 const PORT = 9333 + Math.floor((Date.now() % 500));
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -106,9 +114,13 @@ let contextLost = false;
 
 (async () => {
   const profile = mkdtempSync(join(tmpdir(), 'omw-smoke-'));
+  // --use-angle=metal is macOS-only. Asking for it on Windows/Linux leaves Chrome without a
+  // working GL backend, which shows up as a BLACK frame -- i.e. as a product failure, which is
+  // precisely the misdiagnosis this test exists to avoid.
+  const angle = process.platform === 'darwin' ? 'metal' : 'default';
   const glArgs = process.env.SMOKE_GL === 'swiftshader'
     ? ['--use-gl=swiftshader', '--enable-unsafe-swiftshader']
-    : ['--use-gl=angle', '--use-angle=metal', '--enable-unsafe-swiftshader'];
+    : ['--use-gl=angle', `--use-angle=${angle}`, '--enable-unsafe-swiftshader'];
   const args = [
     '--headless=new', ...glArgs,
     '--disable-gpu-sandbox', '--no-first-run', '--no-default-browser-check',

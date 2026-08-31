@@ -2285,10 +2285,10 @@ namespace MWGui
             // end-of-stream A/V clock stall) — that would hold this branch FOREVER with the last
             // movie frame blocking the viewport over a perfectly healthy game. If no new video
             // frame has been uploaded for 10 seconds, declare the video finished and tear down.
-            static unsigned lastFrameCounter = ~0u;
+            static std::size_t lastFrameCounter = ~static_cast<std::size_t>(0);
             static double lastFrameTime = 0.0;
             const double now = emscripten_get_now();
-            const unsigned counter = mVideoWidget->getFrameCounter();
+            const std::size_t counter = mVideoWidget->getFrameCounter();
             if (counter != lastFrameCounter || lastFrameTime == 0.0)
             {
                 lastFrameCounter = counter;
@@ -2297,7 +2297,7 @@ namespace MWGui
             if (now - lastFrameTime < 10000.0)
                 return; // still playing; Engine::frame renders the GUI this tick
             printf("updateVideoPlayback: no video frame for 10s — force-ending stalled video\n");
-            lastFrameCounter = ~0u;
+            lastFrameCounter = ~static_cast<std::size_t>(0);
             lastFrameTime = 0.0;
         }
 

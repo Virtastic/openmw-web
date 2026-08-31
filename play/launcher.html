@@ -810,11 +810,17 @@
  function engineUnsupported(){
    if (/[?&]forceUnsupported\b/.test(location.search)) return true;   // ?forceUnsupported to preview it
    const noSAB = typeof SharedArrayBuffer === 'undefined' || !self.crossOriginIsolated;
+   // The engine is a wasm64 build and needs WebAssembly Memory64 (Chrome/Edge 133+,
+   // Firefox 134+). Feature-detected for the same reason as everything else here: a browser
+   // without it cannot instantiate openmw.wasm at all, so this belongs in the gate rather
+   // than surfacing later as a LinkError on the game page.
+   let noMem64 = false;
+   try { new WebAssembly.Memory({ initial: 1, index: 'u64' }); } catch(e){ noMem64 = true; }
    // Touch signal OR-ed from two sources because neither is universal, then AND-ed with a narrow
    // viewport so touchscreen laptops (maxTouchPoints > 0, wide screen) are not caught by mistake.
    const touch = matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
    const phone = touch && Math.min(innerWidth, innerHeight) < 820;
-   return noSAB || phone;
+   return noSAB || noMem64 || phone;
  }
 
  (function gateOnCapability(){

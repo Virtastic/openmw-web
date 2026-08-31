@@ -1957,6 +1957,9 @@ local eventHandlers = {
     mpTestBounty = function(data) quests.testSetBounty(data.n) end,
     mpTestFaction = function(data) quests.testJoinFaction(data.id, data.rank) end,
     mpTestDialogue = function(data) quests.testActivateNpc(data.id) end,
+    -- Marks a topic as locally learned for the DIFF only; see quests.testLearnTopic for why
+    -- the engine gives no way to do this for real from a script.
+    mpTestLearnTopic = function(data) quests.testLearnTopic(data.id) end,
     mpTestMemberVar = function(data) quests.testSetMemberVar(data.id, data.name, data.value) end,
 }
 
@@ -2009,15 +2012,50 @@ end
 -- entering a building). Widen to every cell boundary if the exteriors turn out to stall too.
 local cellLoadSeq = 0
 local lastCellLoadAt = 0
+local lastCellLoadCell = nil
 local CELL_LOAD_DEBOUNCE = 2.0
+-- How long after a transition an ECHO is still plausible. Comfortably longer than a cell load,
+-- and short enough that a player who walks to a second door is not affected.
+local CELL_LOAD_ECHO_WINDOW = 10.0
+
+local function currentCellId()
+    local p = world.players[1]
+    local ok, id = pcall(function() return p and p.cell and p.cell.id or nil end)
+    if ok then return id end
+    return nil
+end
+
 local function signalCellLoad()
-    -- ONE SIGNAL PER TRANSITION. A single door was raising this more than once — the overlay
-    -- appeared, cleared as the player arrived, then appeared again a moment later over a world
-    -- that had already finished loading. Whatever raises the second one (a re-activation, the
-    -- door on the far side), a transition cannot legitimately start twice inside two seconds.
+    -- ONE SIGNAL PER TRANSITION. A single door raises this more than once -- the overlay
+    -- appears, clears as the player arrives, then appears AGAIN over a world that has already
+    -- finished loading. That is the double flash players see on every area change.
+    --
+    -- A TIME-ONLY DEBOUNCE CANNOT CATCH IT, which is why the previous one did not. The window
+    -- is measured from when the overlay is SHOWN, and the cell load happens inside it: the load
+    -- blocks the emscripten main loop for seconds, so by the time the echo arrives the 2 s
+    -- window has long expired and it passes straight through. The guard was structurally unable
+    -- to see the event it was written for.
+    --
+    -- So key on WHERE THE PLAYER IS instead. The legitimate signal fires BEFORE the teleport,
+    -- while they still stand in the origin cell; the echo fires after they have arrived, from a
+    -- different cell entirely. Same cell means a genuine new journey; different cell inside the
+    -- echo window means the journey we already announced.
     local now = core.getRealTime()
+    local cur = currentCellId()
+
     if now - lastCellLoadAt < CELL_LOAD_DEBOUNCE then return end
+
+    if lastCellLoadCell ~= nil and cur ~= nil and cur ~= lastCellLoadCell
+        and now - lastCellLoadAt < CELL_LOAD_ECHO_WINDOW then
+        -- Absorbed, and the origin is updated to where we actually are. A player who now uses
+        -- a second door from THIS cell matches on cell and signals normally, so at most one
+        -- overlay is ever swallowed, and only for a door used within seconds of arriving.
+        lastCellLoadCell = cur
+        return
+    end
+
     lastCellLoadAt = now
+    lastCellLoadCell = cur
     cellLoadSeq = cellLoadSeq + 1
     mp.testSet('cellLoad', tostring(cellLoadSeq))
 end

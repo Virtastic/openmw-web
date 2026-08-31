@@ -48,9 +48,20 @@ ROOT="${ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 # Honor the EM_LIBEXEC the caller exports (build-deps.sh:146) so the CI/Linux builder — where
 # emscripten lives under a different prefix — finds libGL. Falls back to the local Homebrew path.
 EM_LIBEXEC="${EM_LIBEXEC:-/opt/homebrew/Cellar/emscripten/6.0.1/libexec}"
-SYSROOT_LIBGL="$EM_LIBEXEC/cache/sysroot/lib/wasm32-emscripten/libGL-getprocaddr.a"
+
+# WASM64 (MEMORY64), set by build-deps.sh. Off by default, and the two models get SEPARATE build
+# trees: OSG is the largest dep here and a build-wasm/ dir half-populated with objects of the
+# other pointer size is the exact shape of the stale-object fault the root Dockerfile:26-40
+# refuses a cache mount over. See wasm-build/build-deps.sh for why -m64 rather than -sMEMORY64=1.
+if [ "${OMW_WASM64:-0}" = "1" ]; then
+  WASM_ARCH="wasm64"; ARCH_FLAG="-m64"; DW="$ROOT/deps/wasm64"; BUILD_DIR="build-wasm64"
+else
+  WASM_ARCH="wasm32"; ARCH_FLAG="";     DW="$ROOT/deps/wasm";   BUILD_DIR="build-wasm"
+fi
+SYSROOT_LIBGL="$EM_LIBEXEC/cache/sysroot/lib/$WASM_ARCH-emscripten/libGL-getprocaddr.a"
 SRC="$ROOT/deps/src/osg"
-BUILD="$SRC/build-wasm"
+BUILD="$SRC/$BUILD_DIR"
+mkdir -p "$DW/lib" "$DW/include"
 
 mkdir -p "$BUILD" && cd "$BUILD"
 
@@ -70,9 +81,9 @@ emcmake cmake .. \
   -DBUILD_OSG_APPLICATIONS:BOOL=OFF \
   -DBUILD_OSG_EXAMPLES:BOOL=OFF \
   -DCMAKE_BUILD_TYPE:STRING=Release \
-  -DPNG_LIBRARY:FILEPATH="$EM_LIBEXEC/cache/sysroot/lib/wasm32-emscripten/libpng-mt.a" \
-  -DCMAKE_CXX_FLAGS:STRING="-D_LIBCPP_ENABLE_CXX17_REMOVED_FEATURES -D_LIBCPP_ENABLE_CXX20_REMOVED_FEATURES -Wno-invalid-utf8 -Wno-register -pthread -fwasm-exceptions -msimd128 -fno-strict-aliasing -fno-strict-overflow" \
-  -DCMAKE_C_FLAGS:STRING="-pthread -fwasm-exceptions -msimd128 -fno-strict-aliasing -fno-strict-overflow" \
+  -DPNG_LIBRARY:FILEPATH="$EM_LIBEXEC/cache/sysroot/lib/$WASM_ARCH-emscripten/libpng-mt.a" \
+  -DCMAKE_CXX_FLAGS:STRING="-D_LIBCPP_ENABLE_CXX17_REMOVED_FEATURES -D_LIBCPP_ENABLE_CXX20_REMOVED_FEATURES -Wno-invalid-utf8 -Wno-register -pthread -fwasm-exceptions -msimd128 -fno-strict-aliasing -fno-strict-overflow $ARCH_FLAG" \
+  -DCMAKE_C_FLAGS:STRING="-pthread -fwasm-exceptions -msimd128 -fno-strict-aliasing -fno-strict-overflow $ARCH_FLAG" \
   -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
   -DDYNAMIC_OPENSCENEGRAPH:BOOL=OFF \
   -DDYNAMIC_OPENTHREADS:BOOL=OFF \
@@ -112,7 +123,7 @@ ninja osg osgUtil osgDB osgGA osgViewer osgAnimation osgFX osgParticle osgShadow
       osgdb_serializers_osgterrain osgdb_serializers_osgvolume || ninja
 
 # Collect outputs where the OpenMW link expects them.
-cp -f lib/*.a "$ROOT/deps/wasm/lib/"
+cp -f lib/*.a "$DW/lib/"
 
 # ...AND THE HEADERS. Only the libs were staged, so find_package(OpenSceneGraph) failed with
 # "Could NOT find OpenSceneGraph (missing: OSG_FOUND OPENTHREADS_FOUND)" even though every .a was
@@ -122,7 +133,7 @@ cp -f lib/*.a "$ROOT/deps/wasm/lib/"
 # BOTH trees are needed: the source include/ has the API, and the BUILD tree's include/ has the
 # generated osg/Config and osg/Version that encode which GL profile this build was configured
 # for. Staging only the source tree gives a header set that does not describe this build.
-mkdir -p "$ROOT/deps/wasm/include"
-cp -R "$SRC/include/." "$ROOT/deps/wasm/include/"
-cp -R "$BUILD/include/." "$ROOT/deps/wasm/include/"
-echo "OSG libs + headers staged into $ROOT/deps/wasm"
+mkdir -p "$DW/include"
+cp -R "$SRC/include/." "$DW/include/"
+cp -R "$BUILD/include/." "$DW/include/"
+echo "OSG libs + headers staged into $DW ($WASM_ARCH)"

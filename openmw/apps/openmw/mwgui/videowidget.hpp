@@ -3,6 +3,7 @@
 #ifndef OPENMW_MWGUI_VIDEOWIDGET_H
 #define OPENMW_MWGUI_VIDEOWIDGET_H
 
+#include <cstddef>
 #include <memory>
 
 #include <MyGUI_Widget.h>
@@ -74,7 +75,12 @@ namespace MWGui
         // Monotonic per-frame upload counter of the current video texture (0 if none).
         // Lets the cooperative driver detect a decoder that claims to be playing but has
         // stopped producing frames (end-of-stream clock stall) and force-end it.
-        unsigned getFrameCounter() const;
+        //
+        // size_t, not unsigned: the value hashes in an object POINTER, and under wasm64 that
+        // pointer is 64-bit. Truncating it to 32 bits let two images sitting in different 4 GiB
+        // regions produce the same counter -- which reads to the caller as "no new frame" and
+        // force-ends a perfectly healthy video after 10 seconds.
+        std::size_t getFrameCounter() const;
 
     private:
 #endif

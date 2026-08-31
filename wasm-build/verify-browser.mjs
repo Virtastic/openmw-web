@@ -50,7 +50,15 @@ const consoleOut = opts('--console-out')[0] || '/tmp/omw_cdp_console.log';
 const [w, h] = (opts('--window')[0] || '1280x800').split('x').map(Number);
 const useGpu = args.includes('--gpu');
 
-const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+// Chrome binary. Was hardcoded to the macOS path, which made this test unrunnable anywhere
+// else -- including the Windows and Linux boxes the wasm64 build was brought up on, where
+// "boot and render" is exactly the check you want. CHROME_PATH overrides.
+const CHROME = process.env.CHROME_PATH || (
+  process.platform === 'win32'
+    ? 'C:/Program Files/Google/Chrome/Application/chrome.exe'
+    : process.platform === 'darwin'
+      ? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+      : 'google-chrome');
 // --profile <dir> reuses a fixed user-data-dir so the Cache API (817MB assets) + IDBFS persist
 // across runs → fast, deterministic boots after the first warm-up. Omit for a throwaway profile.
 const profile = opts('--profile')[0] || `/tmp/omw_cdp_profile_${process.pid}`;

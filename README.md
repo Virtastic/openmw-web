@@ -282,6 +282,44 @@ ninja -C build-wasm components openmw-lib
 cp build-wasm/openmw.js build-wasm/openmw.wasm build-wasm/openmw.data play/
 ```
 
+### wasm64 (MEMORY64)
+
+The engine can be built for **wasm64**, which lifts the heap ceiling above the 4 GiB a 32-bit
+wasm module can address. That is what a Tamriel Rebuilt load order needs: the wasm32 build
+already links `-sMAXIMUM_MEMORY=4294967296`, i.e. the entire 32-bit address space, so there is
+no headroom left to give it.
+
+Set `OMW_WASM64=1` for **every** step — the dependency stack, the configure and the link must
+all agree:
+
+```bash
+export ROOT=$PWD OMW_WASM64=1
+
+./wasm-build/build-deps.sh            # -> deps/wasm64  (see Dependency stack below)
+./configure-openmw.sh
+ninja -C build-wasm64 components openmw-lib
+./wasm-build/link-openmw.sh
+cp build-wasm64/openmw.{js,wasm,data} play/
+```
+
+Notes, all of them learned the hard way:
+
+- The variable selects `deps/wasm64`, the `wasm64-emscripten` sysroot, `build-wasm64/` and the
+  `-m64` flag. With it unset everything is byte-for-byte the wasm32 build, so switching back is
+  unsetting a variable rather than reverting a commit.
+- **`-m64`, not `-sMEMORY64=1`.** Emscripten 6.0.1 accepts both but warns the `-s` spelling is
+  deprecated, and `-m64` is a compiler flag, so it reaches CMake's `try_compile` probes.
+- The two models **cannot share a build tree or a dep prefix**. A wasm32 archive in a wasm64
+  link fails with `wasm32 object file can't be linked in wasm64 mode` — loud, but only at the
+  final link. `build-deps.sh` stamps each source tree with the model it was last built for and
+  cleans when it changes.
+- Browsers need memory64: Chrome/Edge 133+ or Firefox 134+. `play/index.html` and
+  `play/launcher.html` feature-detect it and show the unsupported overlay otherwise.
+- `wasm-build/memory64-gate.sh` is the standalone check that the toolchain, threads, the >4 GiB
+  allocation and the JS pointer ABI all work, without building the engine. Run it first if
+  anything looks wrong; `--wasm32` builds the same program as a control and `--browser` runs it
+  in headless Chrome under COOP/COEP.
+
 A few things to watch for, which are why the link step is scripted:
 
 - `main.cpp.o` is passed directly on the link line. `ninja components openmw-lib`
@@ -296,7 +334,7 @@ A few things to watch for, which are why the link step is scripted:
 ### Dependency stack
 
 All deps are cross-compiled to static libs in `deps/wasm/lib`, with headers in
-`deps/wasm/include`: OSG 3.6.5, Bullet (double-precision), MyGUI, FFmpeg 6 (bink video plus the
+`deps/wasm/include` (`deps/wasm64/*` for the wasm64 build): OSG 3.6.5, Bullet (double-precision), MyGUI, FFmpeg 6 (bink video plus the
 mp3/pcm/vorbis decoders game audio needs), Boost (program_options plus iostreams), Lua 5.4,
 LZ4, and RecastNavigation. SDL2, FreeType, HarfBuzz, png, jpeg, zlib, ogg, and vorbis
 come from emscripten ports at link time; OpenAL is emscripten's built-in.

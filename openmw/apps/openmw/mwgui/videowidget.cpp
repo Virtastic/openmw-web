@@ -2,6 +2,9 @@
 // See WASM_ADAPTATIONS.md at the repository root for details of the changes.
 #include "videowidget.hpp"
 
+#include <cstddef>
+#include <cstdint>
+
 #include <osg-ffmpeg-videoplayer/videoplayer.hpp>
 
 #include <MyGUI_RenderManager.h>
@@ -110,15 +113,17 @@ namespace MWGui
 #endif
 
 #ifdef __EMSCRIPTEN__
-    unsigned VideoWidget::getFrameCounter() const
+    std::size_t VideoWidget::getFrameCounter() const
     {
         // NOTE: the decoder installs a brand-new osg::Image on the texture for every video
         // frame (VideoState::video_display), so getModifiedCount() alone is CONSTANT during
         // healthy playback — hash the image pointer in so the value changes per frame.
         osg::ref_ptr<osg::Texture2D> texture = mPlayer->getVideoTexture();
         if (texture && texture->getImage())
-            return static_cast<unsigned>(reinterpret_cast<uintptr_t>(texture->getImage()))
-                ^ texture->getImage()->getModifiedCount();
+            // No narrowing cast here: under wasm64 a pointer is 64-bit, and cutting it to
+            // 32 bits is exactly what would make two distinct images hash the same.
+            return reinterpret_cast<std::uintptr_t>(texture->getImage())
+                ^ static_cast<std::size_t>(texture->getImage()->getModifiedCount());
         return 0;
     }
 #endif

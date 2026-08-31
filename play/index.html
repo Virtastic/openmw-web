@@ -700,6 +700,21 @@
      + 'Use a desktop Chrome/Edge/Firefox, and serve via play/server.py or an HTTPS host '
      + 'sending COOP: same-origin and COEP: require-corp.', false);
  }
+ // MEMORY64. The engine is a wasm64 build -- it addresses more than the 4 GiB a 32-bit wasm
+ // module can reach, which is what makes a Tamriel Rebuilt load order fit at all. A browser
+ // without memory64 cannot instantiate it, and the error it produces is a bare
+ // LinkError/CompileError from deep inside openmw.js. Catch it here instead, with the same
+ // overlay the SharedArrayBuffer check uses, so the answer is "update your browser" rather
+ // than a stack trace.
+ //
+ // Feature-detected, not version-sniffed: constructing a 64-bit memory is precisely the
+ // capability required, and it is the same probe wasm-build/memory64-gate.html verifies.
+ if (!(function(){ try { new WebAssembly.Memory({ initial: 1, index: 'u64' }); return true; }
+                   catch(e){ return false; } })()){
+   fatalOverlay('Browser not supported',
+     'This build needs WebAssembly Memory64, which your browser does not support. '
+     + 'Chrome/Edge 133+ or Firefox 134+ is required.', false);
+ }
  // WebGL context loss: OSG/OpenMW has no GPU-resource restore path, so the correct handling
  // tier is: sync saves, tell the user, reload cleanly (state comes back from IndexedDB).
  (function(){
@@ -1048,12 +1063,17 @@
    document.addEventListener('paste', function(e){
      try {
        var t = e.clipboardData && e.clipboardData.getData('text/plain');
-       if (t && window.Module && Module.stringToNewUTF8 && Module._omw_set_clipboard){
-         var p = Module.stringToNewUTF8(t);
-         Module._omw_set_clipboard(p);
-         Module._free(p);
+       // ccall, NOT a raw Module._omw_set_clipboard(ptr). omw_set_clipboard takes a POINTER, and
+       // under wasm64 (MEMORY64) a raw export takes an i64 -- handing it a JS Number throws
+       // "TypeError: Cannot convert <n> to a BigInt". The catch below is silent, so that would
+       // not surface as an error at all: paste would simply stop working, with nothing logged.
+       // ccall marshals the string itself, which also removes the malloc/free pair entirely.
+       // Verified both ways by wasm-build/memory64-gate (the raw form passes on wasm32 and
+       // breaks on wasm64; ccall passes on both).
+       if (t && window.Module && Module.ccall){
+         Module.ccall('omw_set_clipboard', null, ['string'], [t]);
        }
-     } catch(ex){}
+     } catch(ex){ append('[clipboard] paste failed: ' + ex); }
    });
 
    // --- Pointer-lock helper: cursor warping is impossible in browsers — pointer lock is the

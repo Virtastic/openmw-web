@@ -6,10 +6,40 @@ set -e
 # ROOT and the emscripten libexec dir are env-overridable so this runs both locally (macOS/Homebrew
 # defaults below) and inside the CI builder image (which exports ROOT + EM_LIBEXEC).
 ROOT="${ROOT:-$(cd "$(dirname "$0")" && pwd)}"
-DW=$ROOT/deps/wasm
 EM_LIBEXEC="${EM_LIBEXEC:-/opt/homebrew/Cellar/emscripten/6.0.1/libexec}"
 SR="$EM_LIBEXEC/cache/sysroot"
-W32=$SR/lib/wasm32-emscripten
+
+# --- WASM64 (MEMORY64) -----------------------------------------------------------------------
+# OMW_WASM64=1 configures against the wasm64 dependency stack in deps/wasm64 (built by
+# wasm-build/build-deps.sh with the same variable). OFF by default, so the shipping wasm32
+# configuration is byte-for-byte what it was.
+#
+# -m64 rather than -sMEMORY64=1: emscripten 6.0.1 warns the -s spelling is deprecated, and -m64
+# is a compiler flag, so it reaches CMake try_compile probes -- which matters a great deal here,
+# because a probe compiled for the wrong pointer size fails in ways that read like a missing
+# dependency rather than a wrong flag.
+if [ "${OMW_WASM64:-0}" = "1" ]; then
+  WASM_ARCH=wasm64; ARCH_FLAG=-m64; DW=$ROOT/deps/wasm64
+else
+  WASM_ARCH=wasm32; ARCH_FLAG=;     DW=$ROOT/deps/wasm
+fi
+WARCH=$SR/lib/$WASM_ARCH-emscripten
+# SEPARATE BUILD TREE PER POINTER MODEL. Sharing build-wasm/ between the two would let ninja
+# consider wasm32 objects up to date for a wasm64 configure -- the same stale-object fault the
+# root Dockerfile:35 refuses a cache mount over, except here wasm-ld catches it at the final
+# link after a full compile. wasm32 deliberately KEEPS build-wasm/ so existing trees stay
+# valid; only wasm64 gets a new one. OMW_BUILD_DIR overrides for one-off experiments.
+BUILD_DIR="${OMW_BUILD_DIR:-$([ "$WASM_ARCH" = wasm64 ] && echo build-wasm64 || echo build-wasm)}"
+W32=$WARCH   # legacy name, kept so the -D lines below read unchanged
+
+# GL archive name varies with the build variant: under -pthread the port materialises as
+# libGL-mt-getprocaddr.a. The prebaked wasm32 builder image happens to ship every variant, so
+# the non-mt name was always found; a freshly-built wasm64 sysroot only has the one that was
+# actually built. Probe rather than assume, or CMake reports OPENGL_gl_LIBRARY-NOTFOUND and the
+# failure looks like a missing dependency instead of a missing filename.
+LIBGL_A="$WARCH/libGL-getprocaddr.a"
+[ -f "$LIBGL_A" ] || LIBGL_A="$WARCH/libGL-mt-getprocaddr.a"
+
 BOOST=$ROOT/deps/src/boost_1_85_0
 
 export MYGUI_HOME="$DW"
@@ -25,7 +55,7 @@ export PKG_CONFIG_PATH="$DW/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
 # is built as libpng-mt.a, and CMake's FindPNG only looks for libpng.a / libpng16.a. It then
 # reports the headers as found and the library as missing in the same breath, and
 # FindOSGPlugins fails on a dependency that is very much present.
-PNG_A="$SR/lib/wasm32-emscripten/libpng-mt.a"
+PNG_A="$WARCH/libpng-mt.a"
 
 # Force-included into every translation unit. These are build INPUTS, so they live in the
 # repo — they used to exist only in the maintainer's gitignored deps/wasm/include, which
@@ -34,7 +64,7 @@ PNG_A="$SR/lib/wasm32-emscripten/libpng-mt.a"
 OMW_FORCE_INC="$ROOT/wasm-build/include"
 [ -f "$DW/include/gl_compat.h" ] && OMW_FORCE_INC="$DW/include"
 
-emcmake cmake -S "$ROOT/openmw" -B "$ROOT/build-wasm" -G Ninja \
+emcmake cmake -S "$ROOT/openmw" -B "$ROOT/$BUILD_DIR" -G Ninja \
   -DMYGUI_STATIC=ON -DUSE_LUAJIT=OFF -DOSG_STATIC=ON -DOPENMW_USE_SYSTEM_OSG=ON -DOSGPlugins_LIB_DIR="$DW/lib" -DCMAKE_CXX_SCAN_FOR_MODULES=OFF \
   -DSDL2_DIR="$DW/lib/cmake/SDL2" -DPNG_LIBRARY:FILEPATH="$PNG_A" \
   -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DCMAKE_BUILD_TYPE=Release \
@@ -54,8 +84,8 @@ emcmake cmake -S "$ROOT/openmw" -B "$ROOT/build-wasm" -G Ninja \
   `# the MAIN-THREAD canvas -- proven by stack trace: _eglCreateContext -> Browser.createContext` \
   `# -> getContext on the transferred canvas, which throws once it belongs to the worker.` \
   `# Off by default so the shipping build keeps SDL's context exactly as it is.` \
-  -DCMAKE_CXX_FLAGS="${OMW_PROXY:+-DOPENMW_PROXY_GL} -D_LIBCPP_ENABLE_CXX17_REMOVED_FEATURES -DBT_USE_DOUBLE_PRECISION -fwasm-exceptions -msimd128 -include $OMW_FORCE_INC/mygui_char_traits_fix.h -include $OMW_FORCE_INC/gl_compat.h -Wno-missing-template-arg-list-after-template-kw -Wno-error=missing-template-arg-list-after-template-kw -pthread -I$BOOST/../bullet3/src -I$DW/include -I$BOOST" \
-  -DCMAKE_C_FLAGS="-pthread -msimd128" \
+  -DCMAKE_CXX_FLAGS="${OMW_PROXY:+-DOPENMW_PROXY_GL} -D_LIBCPP_ENABLE_CXX17_REMOVED_FEATURES -DBT_USE_DOUBLE_PRECISION $ARCH_FLAG -fwasm-exceptions -msimd128 -include $OMW_FORCE_INC/mygui_char_traits_fix.h -include $OMW_FORCE_INC/gl_compat.h -Wno-missing-template-arg-list-after-template-kw -Wno-error=missing-template-arg-list-after-template-kw -pthread -I$BOOST/../bullet3/src -I$DW/include -I$BOOST" \
+  -DCMAKE_C_FLAGS="-pthread -msimd128 $ARCH_FLAG" \
   -DBoost_INCLUDE_DIR="$BOOST" -DBoost_NO_BOOST_CMAKE=OFF \
   -DBoost_USE_STATIC_RUNTIME=ON -DBoost_USE_STATIC_LIBS=ON \
   -DBoost_DIR="$DW/lib/cmake/Boost-1.85.0" \
@@ -63,14 +93,14 @@ emcmake cmake -S "$ROOT/openmw" -B "$ROOT/build-wasm" -G Ninja \
   -DLUA_MATH_LIBRARY="$DW/lib/libopenal_stub.a" \
   -DLZ4_LIBRARY="$DW/lib/liblz4.a" -DLZ4_INCLUDE_DIR="$DW/include" \
   -DOPENAL_LIBRARY="$DW/lib/libopenal_stub.a" -DOPENAL_INCLUDE_DIR="$SR/include/AL" \
-  -DCMAKE_EXE_LINKER_FLAGS="-fwasm-exceptions -lopenal --use-port=sdl2 --use-port=freetype --use-port=harfbuzz --use-port=libpng --use-port=libjpeg --use-port=zlib --use-port=ogg --use-port=vorbis -sALLOW_MEMORY_GROWTH=1 -sMAX_WEBGL_VERSION=2 -sFULL_ES3=1 -sEXIT_RUNTIME=0 -sPTHREAD_POOL_SIZE=8 -sINITIAL_MEMORY=1610612736 -sASSERTIONS=0" \
+  -DCMAKE_EXE_LINKER_FLAGS="$ARCH_FLAG -fwasm-exceptions -lopenal --use-port=sdl2 --use-port=freetype --use-port=harfbuzz --use-port=libpng --use-port=libjpeg --use-port=zlib --use-port=ogg --use-port=vorbis -sALLOW_MEMORY_GROWTH=1 -sMAX_WEBGL_VERSION=2 -sFULL_ES3=1 -sEXIT_RUNTIME=0 -sPTHREAD_POOL_SIZE=8 -sINITIAL_MEMORY=1610612736 -sASSERTIONS=0" \
   -DZLIB_LIBRARY="$W32/libz.a" -DZLIB_INCLUDE_DIR="$SR/include" \
   -DOPENGL_INCLUDE_DIR="$SR/include" \
-  -DOPENGL_opengl_LIBRARY="$W32/libGL-getprocaddr.a" \
-  -DOPENGL_glx_LIBRARY="$W32/libGL-getprocaddr.a" \
-  -DOPENGL_gl_LIBRARY="$W32/libGL-getprocaddr.a" \
-  -DOPENGL_egl_LIBRARY="$W32/libGL-getprocaddr.a" \
-  -DOPENGL_GLES2_LIBRARY="$W32/libGL-getprocaddr.a" \
+  -DOPENGL_opengl_LIBRARY="$LIBGL_A" \
+  -DOPENGL_glx_LIBRARY="$LIBGL_A" \
+  -DOPENGL_gl_LIBRARY="$LIBGL_A" \
+  -DOPENGL_egl_LIBRARY="$LIBGL_A" \
+  -DOPENGL_GLES2_LIBRARY="$LIBGL_A" \
   -DICU_INCLUDE_DIR="$SR/include" \
   -DICU_UC_LIBRARY_RELEASE="$W32/libicu_common-mt.a" -DICU_UC_LIBRARY="$W32/libicu_common-mt.a" \
   -DICU_I18N_LIBRARY_RELEASE="$W32/libicu_i18n-mt.a" -DICU_I18N_LIBRARY="$W32/libicu_i18n-mt.a" \

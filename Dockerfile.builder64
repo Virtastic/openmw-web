@@ -1,0 +1,60 @@
+# Copyright (C) 2025-2026 Virtastic - https://virtastic.app
+# SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
+# openmw-builder64 — the WASM64 (MEMORY64) counterpart of Dockerfile.builder.
+#
+# WHY THIS IMAGE HAS TO EXIST AT ALL, rather than the build just passing -m64:
+# the emscripten sysroot cache lives INSIDE the image. Anything compiled into
+# cache/sysroot/lib/wasm64-emscripten/ is gone the moment the container exits, so a per-push
+# build that needs wasm64 system libraries would rebuild ICU (~30 s), libc-mt, libc++ and the
+# ports on EVERY run. The wasm32 path never had to think about this because openmw-builder:1
+# bakes a pre-warmed wasm32 cache as a layer. Same trick, different pointer size.
+#
+# Simpler than Dockerfile.builder in one respect: that image stages a PREBUILT wasm32 ICU from
+# deps/sysroot-extra, because building it was historically painful. For wasm64 there is no
+# prebuilt to stage and the emscripten ICU port cross-compiles cleanly with -m64 (verified:
+# libicu_common-mt.a / libicu_i18n-mt.a / libicu_stubdata-mt.a all generate), so it is simply
+# built here from the port. That also means no sysroot-extra dependency for this image.
+#
+# Prereqs in the build context (all gitignored): deps/wasm64 (built by
+# `OMW_WASM64=1 wasm-build/build-deps.sh`), deps/src/{bullet3/src,boost_1_85_0/boost}.
+# Build:  docker build -t openmw-builder64:1 -f Dockerfile.builder64 .
+# TODO if the toolchain changes: repin the emscripten/emsdk tag to match (emcc --version).
+FROM emscripten/emsdk:6.0.1
+# rsync is NOT needed by link-openmw.sh (it uses cp -a, deliberately -- see the note at the top
+# of that script), but ninja/brotli/git/pkg-config are all load-bearing for configure+link.
+RUN apt-get update && apt-get install -y --no-install-recommends ninja-build brotli git pkg-config && rm -rf /var/lib/apt/lists/*
+ENV ROOT=/build EM_LIBEXEC=/emsdk/upstream/emscripten OMW_WASM64=1
+WORKDIR /build
+COPY deps/wasm64 /build/deps/wasm64
+
+# Same absolute-path rewrite as Dockerfile.builder: deps/ is a maintainer artifact cross-built
+# elsewhere, so its cmake/pkgconfig files carry the build machine's paths.
+ARG HOST_REPO_DIR=__UNSET_HOST_REPO_DIR__
+RUN sed -i 's#^prefix=.*#prefix=/build/deps/wasm64#' /build/deps/wasm64/lib/pkgconfig/*.pc 2>/dev/null; \
+    ( grep -rlZ -e "/opt/homebrew/Cellar/emscripten/6.0.1/libexec/cache/sysroot" -e "$HOST_REPO_DIR" \
+        /build/deps/wasm64/lib/cmake /build/deps/wasm64/lib/pkgconfig 2>/dev/null \
+      | xargs -0 -r sed -i \
+          -e 's#/opt/homebrew/Cellar/emscripten/6.0.1/libexec/cache/sysroot#/emsdk/upstream/emscripten/cache/sysroot#g' \
+          -e "s#${HOST_REPO_DIR}#/build#g" ) ; true
+
+# Pre-warm the wasm64 sysroot: system libraries, the ICU port, GL, and every port the engine
+# and MyGUI link. A port only materialises when something links it, which is why these are
+# real link steps rather than an embuilder invocation.
+#
+# The final `test` lines are assertions, not decoration: without them a port that silently
+# failed to build would leave this image looking fine and fail much later, during the engine
+# link, as a bare "file not found" -- the exact trap build-deps.sh:build_em_ports documents.
+RUN printf 'int main(){return 0;}\n' > /tmp/p.c \
+ && emcc -m64 -pthread -sUSE_ICU=1 /tmp/p.c -o /tmp/icu.js \
+ && emcc -m64 -pthread -sMAX_WEBGL_VERSION=2 -sFULL_ES3=1 /tmp/p.c -o /tmp/gl.js \
+ && emcc -m64 -pthread -sUSE_SDL=2 -sUSE_FREETYPE=1 -sUSE_HARFBUZZ=1 -sUSE_LIBPNG=1 -sUSE_LIBJPEG=1 -sUSE_ZLIB=1 -sUSE_OGG=1 -sUSE_VORBIS=1 /tmp/p.c -o /tmp/ports.js \
+ && SR=/emsdk/upstream/emscripten/cache/sysroot/lib/wasm64-emscripten \
+ && ls "$SR"/libicu_common-mt.a "$SR"/libicu_i18n-mt.a "$SR"/libicu_stubdata-mt.a >/dev/null \
+ && ls "$SR"/libpng-mt.a >/dev/null \
+ `# GL is libGL-mt-getprocaddr.a under -pthread, NOT libGL-getprocaddr.a. The wasm32 image` \
+ `# never noticed because a prebaked sysroot ships every variant; a freshly built one has only` \
+ `# what was asked for. configure-openmw.sh and link-openmw.sh probe for both spellings.` \
+ && ls "$SR"/libGL-mt-getprocaddr.a >/dev/null \
+ && echo "wasm64 sysroot pre-warmed OK"
+
+COPY deps/src /build/deps/src

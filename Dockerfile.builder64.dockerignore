@@ -1,0 +1,32 @@
+# BuildKit picks this up instead of .dockerignore when building with -f Dockerfile.builder64.
+# Same reason as Dockerfile.builder.dockerignore: the builder image BAKES IN the prebuilt
+# cross-compiled dep tree, so unlike the main Dockerfile (which gets deps from this image and
+# must exclude them) deps/ MUST be in this context. Without this file the main .dockerignore
+# excludes `deps` and the COPY fails.
+#
+# Differs from the wasm32 one in exactly one way: this image needs deps/wasm64 and NOT
+# deps/wasm. Shipping the wasm32 stack here would add ~600 MB of archives that can never be
+# linked into this image's builds -- wasm-ld refuses to mix the two models.
+.git
+.github
+openmw/.git-upstream
+archive
+source-mw
+content
+node_modules
+infra
+build-wasm
+build-wasm32
+build-wasm64
+build-wasm.good
+build-native
+build-bullet-native
+build-mygui-native
+build-memory64-gate
+deps/native
+deps/wasm
+.wasm32-backup
+.logs
+wasm-build/mod-src
+play/mwdata
+play/moddata

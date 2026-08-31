@@ -36,8 +36,37 @@ if ! python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)'; 
 fi
 
 EMSDK_BIN="${EMSDK_BIN:-/opt/homebrew/Cellar/emscripten/6.0.1/libexec}"
-SYSROOT="$EMSDK_BIN/cache/sysroot/lib/wasm32-emscripten"
-LIB="$ROOT/deps/wasm/lib"
+
+# --- WASM64 (MEMORY64) -----------------------------------------------------------------------
+# OMW_WASM64=1 links the wasm64 engine against deps/wasm64. OFF by default. Must match whatever
+# configure-openmw.sh was run with: EVERY archive on the link line below has to agree on the
+# pointer model, and wasm-ld refuses the link outright if one does not
+# ("wasm32 object file cannot be linked in wasm64 mode"). That is the GOOD failure mode -- unlike
+# a stale archive, which links cleanly and ships a broken engine (see the ninja note further down).
+if [ "${OMW_WASM64:-0}" = "1" ]; then
+  WASM_ARCH=wasm64; ARCH_FLAG=-m64; LIB="$ROOT/deps/wasm64/lib"
+else
+  WASM_ARCH=wasm32; ARCH_FLAG=;     LIB="$ROOT/deps/wasm/lib"
+fi
+SYSROOT="$EMSDK_BIN/cache/sysroot/lib/$WASM_ARCH-emscripten"
+# Must match configure-openmw.sh, which configures into build-<arch> for the same reason: the
+# two models cannot share a tree without ninja handing stale objects to the link.
+# wasm32 deliberately KEEPS build-wasm/: renaming it would orphan every existing build tree
+# (and the build-wasm.good/ convention) for a full rebuild that buys nothing.
+BUILD_DIR="${OMW_BUILD_DIR:-$([ "$WASM_ARCH" = wasm64 ] && echo build-wasm64 || echo build-wasm)}"
+
+# Heap ceiling. wasm32 cannot exceed 4 GiB -- that is the address space, not a policy. wasm64
+# can, and lifting it is the entire point of the conversion.
+if [ "$WASM_ARCH" = "wasm64" ]; then
+  MAX_MEMORY="${OMW_MAX_MEMORY:-8589934592}"   # 8 GiB
+else
+  MAX_MEMORY="${OMW_MAX_MEMORY:-4294967296}"   # 4 GiB, the wasm32 wall
+fi
+
+# See configure-openmw.sh: under -pthread the GL port is libGL-mt-getprocaddr.a, and only the
+# variant actually built exists in a freshly-populated wasm64 sysroot.
+LIBGL_A="$SYSROOT/libGL-getprocaddr.a"
+[ -f "$LIBGL_A" ] || LIBGL_A="$SYSROOT/libGL-mt-getprocaddr.a"
 
 # GAME AUDIO GUARD. build-deps.sh:141 enables the mp3/vorbis/pcm decoders, but deps/wasm is
 # GITIGNORED -- so a checkout can have the right source and a libavcodec.a built before that
@@ -48,20 +77,23 @@ LIB="$ROOT/deps/wasm/lib"
 #
 # Cheap to check, so check: the symbol is either in the archive or it is not.
 if [ -f "$LIB/libavcodec.a" ] && ! grep -q ff_mp3_decoder "$LIB/libavcodec.a" 2>/dev/null; then
-  echo "!! deps/wasm/lib/libavcodec.a has no mp3 decoder -- THE GAME WILL BE SILENT." >&2
+  echo "!! $LIB/libavcodec.a has no mp3 decoder -- THE GAME WILL BE SILENT." >&2
   echo "   Staged deps predate build-deps.sh's --enable-decoder line. Rebuild just ffmpeg:" >&2
-  echo "     bash wasm-build/build-deps.sh ffmpeg" >&2
-  echo "   Verify with: grep -c ff_mp3_decoder deps/wasm/lib/libavcodec.a" >&2
+  echo "     OMW_WASM64=${OMW_WASM64:-0} bash wasm-build/build-deps.sh ffmpeg" >&2
+  echo "   Verify with: grep -c ff_mp3_decoder $LIB/libavcodec.a" >&2
   echo "   Continuing -- a silent build is still a build, but you have been told." >&2
 fi
-INC="$ROOT/deps/wasm/include"
+# Arch-aware, like LIB above: build-osg.sh stages the GENERATED osg/Config and osg/Version
+# headers next to the libs, and those describe the build they came from. Pulling wasm32 headers
+# into a wasm64 link would be a silent mismatch rather than a link error.
+INC="${LIB%/lib}/include"
 # Force-included into every translation unit. These are build INPUTS, so they live in the
 # repo — they used to exist only in the maintainer's gitignored deps/wasm/include, which meant
 # a clean checkout could not compile a single file ("gl_compat.h file not found"). A deps/
 # copy still wins if one is present, so an existing maintainer tree is untouched.
 OMW_FORCE_INC="$ROOT/wasm-build/include"
 [ -f "$INC/gl_compat.h" ] && OMW_FORCE_INC="$INC"
-BUILD="$ROOT/build-wasm"
+BUILD="$ROOT/$BUILD_DIR"
 
 cd "$BUILD"
 
@@ -160,13 +192,13 @@ ninja components openmw-lib
 ninja apps/openmw/CMakeFiles/openmw.dir/main.cpp.o
 
 # X11 no-op stubs (osgViewer's X11 backend symbols; see wasm-build/x11_stubs.c).
-"$EMSDK_BIN/emcc" -O2 -pthread -fwasm-exceptions -msimd128 -c "$ROOT/wasm-build/x11_stubs.c" -o "$BUILD/x11_stubs.o"
+"$EMSDK_BIN/emcc" $ARCH_FLAG -O2 -pthread -fwasm-exceptions -msimd128 -c "$ROOT/wasm-build/x11_stubs.c" -o "$BUILD/x11_stubs.o"
 
 "$EMSDK_BIN/em++" \
   -D_LIBCPP_ENABLE_CXX17_REMOVED_FEATURES -DBT_USE_DOUBLE_PRECISION \
   `# -msimd128 must match configure-openmw.sh: every hand-built dep already carries it, and` \
   `# main.cpp.o is compiled HERE rather than by cmake, so it would otherwise be the odd one out.` \
-  -fwasm-exceptions -msimd128 \
+  $ARCH_FLAG -fwasm-exceptions -msimd128 \
   -include "$OMW_FORCE_INC/mygui_char_traits_fix.h" -include "$OMW_FORCE_INC/gl_compat.h" \
   -Wno-missing-template-arg-list-after-template-kw -Wno-error=missing-template-arg-list-after-template-kw \
   -pthread \
@@ -179,8 +211,16 @@ ninja apps/openmw/CMakeFiles/openmw.dir/main.cpp.o
   -sEXIT_RUNTIME=0 -sPTHREAD_POOL_SIZE=8 -sINITIAL_MEMORY=1610612736 \
   `# MAXIMUM_MEMORY defaults to 2GB (emsdk src/settings.js:211), so ALLOW_MEMORY_GROWTH over a` \
   `# 1.5GB initial had only ~512MB of headroom -- the shadow map alone was ~1GB before it was` \
-  `# halved. wasm32 addresses 4GB and Chrome supports it, so take the other half.` \
-  -sMAXIMUM_MEMORY=4294967296 \
+  `# halved. wasm32 addresses 4GB, which the wasm32 build takes in full -- and that is the` \
+  `# whole reason the wasm64 build exists: 4GB is the ENTIRE 32-bit address space, so there` \
+  `# was no headroom left to give a Tamriel Rebuilt load order.` \
+  `#` \
+  `# 8GB on wasm64 is a deliberate first step rather than the maximum possible. Chrome caps` \
+  `# wasm memory at 16GB, but play/index.html:1607-1629 already tiers the engine by` \
+  `# navigator.deviceMemory and most players do not have 8GB free -- the ceiling only has to` \
+  `# be above what TR actually needs, and raising it further costs a bigger commit on` \
+  `# machines that cannot pay it. Revisit with a measured TR peak, not on principle.` \
+  "-sMAXIMUM_MEMORY=$MAX_MEMORY" \
   -sASSERTIONS=0 -sMALLOC=mimalloc \
   `# F10 SPIKE (OMW_PROXY=1): run main() -- and therefore the whole engine -- on a pthread` \
   `# instead of the browser main thread. The gate for this is answered (wasm-build/f10-gate.html):` \
@@ -209,7 +249,7 @@ ninja apps/openmw/CMakeFiles/openmw.dir/main.cpp.o
   "$LIB/libosgAnimation.a" "$LIB/libosgGA.a" "$LIB/libosgText.a" \
   "$LIB/libosgDB.a" "$LIB/libosgUtil.a" "$LIB/libosgSim.a" "$LIB/libosg.a" \
   "$LIB/libOpenThreads.a" "$LIB/libboost_iostreams.a" \
-  "$SYSROOT/libGL-getprocaddr.a" \
+  "$LIBGL_A" \
   "$LIB/libMyGUIEngineStatic.a" "$LIB/liblua.a" "$LIB/libopenal_stub.a" "$LIB/liblz4.a" \
   _deps/recastnavigation-build/DebugUtils/libDebugUtils.a \
   _deps/recastnavigation-build/DetourTileCache/libDetourTileCache.a \
@@ -222,9 +262,15 @@ ninja apps/openmw/CMakeFiles/openmw.dir/main.cpp.o
   "$BUILD/x11_stubs.o" \
   -sERROR_ON_UNDEFINED_SYMBOLS=0 \
   -lidbfs.js -lwebsocket.js -sFORCE_FILESYSTEM=1 \
-  -sEXPORTED_RUNTIME_METHODS=['FS','ENV','callMain','Browser','stringToNewUTF8','UTF8ToString'] \
+  `# ccall: play/index.html calls omw_set_clipboard, which takes a POINTER. Under MEMORY64 a` \
+  `# raw export takes an i64 and a JS Number throws 'Cannot convert .. to a BigInt', so that` \
+  `# call goes through ccall, which marshals the string. Proven by wasm-build/memory64-gate.` \
+  `# wasmMemory: the only way to read the live heap size (wasmMemory.buffer.byteLength). The` \
+  `# device tiering in play/index.html sizes itself against the heap, and on wasm64 the` \
+  `# ceiling is no longer a constant that can be assumed -- so it has to be observable.` \
+  -sEXPORTED_RUNTIME_METHODS=['FS','ENV','callMain','Browser','ccall','stringToNewUTF8','UTF8ToString','wasmMemory'] \
   -sEXPORTED_FUNCTIONS=['_main','_malloc','_free'] \
   --preload-file "$ROOT/fsroot@/"
 
 echo "Linked: $(ls -la openmw.js openmw.wasm openmw.data | awk '{print $9, $5}')"
-echo "Deploy: cp build-wasm/openmw.{js,wasm,data} play/"
+echo "Deploy: cp $BUILD_DIR/openmw.{js,wasm,data} play/"

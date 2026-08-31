@@ -387,18 +387,52 @@ namespace
         memcpy(&dest, &src, sizeof(src));
     }
 
+    // EXTENSION ENTRY POINTS ARE NOT LOOKUP-ABLE UNDER EMSCRIPTEN.
+    //
+    // emscripten's OpenAL implements NEITHER alcGetProcAddress NOR alGetProcAddress -- grep
+    // src/lib/libopenal.js, there are zero occurrences of either -- while still advertising
+    // ALC_SOFT_HRTF and ALC_SOFT_pause_device as present. So every SOFT extension looks
+    // available and none of its functions can actually be resolved.
+    //
+    // Because the link runs with -sERROR_ON_UNDEFINED_SYMBOLS=0 (link-openmw.sh) the missing
+    // imports become stubs rather than link errors. On wasm32 that was survivable by luck: the
+    // stub returned something, and the only call sites that would have dereferenced it were
+    // behind counts that come back zero. On wasm64 it is fatal at the CALL, before the result
+    // is ever used, because the stub hands JS a Number where the i64 return is expected:
+    //
+    //   TypeError: Cannot convert 32379232 to a BigInt
+    //     at MWSound::OpenALOutput::enumerateHrtf()
+    //     at MWSound::SoundManager::SoundManager(...)
+    //     at OMW::Engine::prepareEngine()
+    //
+    // Fixed here rather than at each call site: this is the one place every SOFT lookup goes
+    // through (HRTF, device pause/resume, AL_SOFT_events, reopen_device, and the EFX LOAD_FUNC
+    // macro below -- which already had to special-case emscripten for the same reason). Callers
+    // already null-check or are gated on an extension flag; the two that were not are handled
+    // where those flags are set.
     template <typename T>
     void getALCFunc(T& func, ALCdevice* device, const char* name)
     {
+#ifdef __EMSCRIPTEN__
+        (void)device;
+        (void)name;
+        func = nullptr;
+#else
         void* funcPtr = alcGetProcAddress(device, name);
         convertPointer(func, funcPtr);
+#endif
     }
 
     template <typename T>
     void getALFunc(T& func, const char* name)
     {
+#ifdef __EMSCRIPTEN__
+        (void)name;
+        func = nullptr;
+#else
         void* funcPtr = alGetProcAddress(name);
         convertPointer(func, funcPtr);
+#endif
     }
 
     // Route the per-source EFX state through the Web Audio shim under emscripten
@@ -1133,6 +1167,15 @@ namespace MWSound
         omw_efx_setup();
 #endif
         ALC.SOFT_HRTF = alcIsExtensionPresent(mDevice, "ALC_SOFT_HRTF");
+#ifdef __EMSCRIPTEN__
+        // emscripten ADVERTISES ALC_SOFT_HRTF but provides no alcGetProcAddress to resolve
+        // alcGetStringiSOFT with (see getALCFunc above), so the extension is present in name
+        // only. Taking it at its word makes every HRTF path hold a null function pointer.
+        // HRTF is not selectable through the WebAudio backend regardless -- the engine already
+        // reports "HRTF disabled" on this platform -- so report it absent and let the existing
+        // not-supported branches do exactly what they do on hardware without it.
+        ALC.SOFT_HRTF = false;
+#endif
 
         mContextAttributes.clear();
         mContextAttributes.reserve(15);
@@ -1960,12 +2003,19 @@ namespace MWSound
         if (mDevice == nullptr)
             return;
 
+        // Null-checked, because getALCFunc CANNOT resolve anything under emscripten (see its
+        // definition): emscripten advertises ALC_SOFT_pause_device while implementing no
+        // alcGetProcAddress, so this extension test passes and the lookup still yields nothing.
+        // The alListenerf(AL_GAIN, 0) below is the real mute on that platform and runs anyway.
         if (alcIsExtensionPresent(mDevice, "ALC_SOFT_PAUSE_DEVICE"))
         {
             LPALCDEVICEPAUSESOFT alcDevicePauseSOFT = nullptr;
             getALCFunc(alcDevicePauseSOFT, mDevice, "alcDevicePauseSOFT");
-            alcDevicePauseSOFT(mDevice);
-            getALCError(mDevice);
+            if (alcDevicePauseSOFT)
+            {
+                alcDevicePauseSOFT(mDevice);
+                getALCError(mDevice);
+            }
         }
 
         alListenerf(AL_GAIN, 0.0f);
@@ -1976,12 +2026,16 @@ namespace MWSound
         if (mDevice == nullptr)
             return;
 
+        // See pauseActiveDevice(): the lookup can legitimately come back null.
         if (alcIsExtensionPresent(mDevice, "ALC_SOFT_PAUSE_DEVICE"))
         {
             LPALCDEVICERESUMESOFT alcDeviceResumeSOFT = nullptr;
             getALCFunc(alcDeviceResumeSOFT, mDevice, "alcDeviceResumeSOFT");
-            alcDeviceResumeSOFT(mDevice);
-            getALCError(mDevice);
+            if (alcDeviceResumeSOFT)
+            {
+                alcDeviceResumeSOFT(mDevice);
+                getALCError(mDevice);
+            }
         }
 
         alListenerf(AL_GAIN, 1.0f);

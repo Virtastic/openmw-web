@@ -1,0 +1,87 @@
+<!doctype html>
+<!--
+  Copyright (C) 2025-2026 Virtastic - https://virtastic.app
+  SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
+
+  Browser half of the MEMORY64 gate. The node half (memory64-gate-run.mjs) already proves the
+  wasm features, because node is V8 -- what only a real page can answer is the part
+  play/index.html:694-700 depends on: crossOriginIsolated, SharedArrayBuffer, and a shared
+  memory64 module actually instantiating inside a cross-origin-isolated document.
+
+  Served with COOP/COEP by memory64-gate-browser.mjs. Opening this from file:// proves nothing
+  and will fail the isolation check by design.
+-->
+<meta charset="utf-8">
+<title>memory64 gate</title>
+<pre id="out">running…</pre>
+<script>
+  window.__gate = { done: false, lines: [], failures: 0, log: [] };
+  const G = window.__gate;
+  const say = (name, verdict, detail = '') => {
+    G.lines.push(`${String(name).padEnd(28)} ${verdict} ${detail}`);
+    document.getElementById('out').textContent = G.lines.join('\n');
+  };
+  const check = (name, cond, detail = '') => {
+    say(name, cond ? 'PASS' : 'FAIL', detail);
+    if (!cond) G.failures++;
+  };
+
+  // The gate play/index.html and play/launcher.html already apply, re-asserted here because a
+  // memory64 build that cannot be cross-origin isolated is a build that cannot ship.
+  check('crossOriginIsolated', self.crossOriginIsolated === true);
+  check('SharedArrayBuffer', typeof SharedArrayBuffer !== 'undefined');
+
+  // The probe Phase 4 proposes adding to the boot gate. It has to be true here, and false on
+  // a browser without memory64, or the overlay will not catch the case it exists for.
+  let m64 = false;
+  try {
+    new WebAssembly.Memory({ initial: 1, index: 'u64' });
+    m64 = true;
+  } catch (e) { /* older browser: exactly the case the boot gate must catch */ }
+  check('WebAssembly.Memory u64', m64);
+</script>
+<script src="gateweb64.js"></script>
+<script>
+  (async () => {
+    try {
+      const Module = await createGate({
+        print: (s) => { G.log.push(s); say('wasm', '   ', s); },
+        printErr: (s) => { G.log.push('ERR ' + s); },
+      });
+
+      // The play/index.html:1051-1054 clipboard round-trip, in a real page this time.
+      let rawWorked = false, rawError = '';
+      try {
+        const p = Module.stringToNewUTF8('clip-é-raw');
+        Module._gate_set_clipboard(p);
+        Module._free(p);
+        rawWorked = Module.ccall('gate_get_clipboard', 'string', [], []) === 'clip-é-raw';
+      } catch (e) { rawError = `(${e.constructor?.name}: ${String(e.message).slice(0, 70)})`; }
+      // Breaking is the CORRECT memory64 behaviour; see memory64-gate-run.mjs.
+      say('raw _export(ptr)', rawWorked ? 'UNEXPECTED-PASS' : 'BREAKS (expected)', rawError);
+      if (rawWorked) G.failures++;
+
+      let ccallWorked = false, ccallError = '';
+      try {
+        Module.ccall('gate_set_clipboard', null, ['string'], ['clip-é-ccall']);
+        ccallWorked = Module.ccall('gate_get_clipboard', 'string', [], []) === 'clip-é-ccall';
+      } catch (e) { ccallError = `(${e.constructor?.name}: ${String(e.message).slice(0, 70)})`; }
+      check('ccall string arg', ccallWorked, ccallError);
+
+      const buf = Module.wasmMemory?.buffer;
+      // Never let this quietly not run: a check that skips itself reports PASS by absence.
+      check('wasmMemory readable', !!buf, buf ? '' : '(not in EXPORTED_RUNTIME_METHODS)');
+      if (buf) {
+        say('heap at exit', '   ', `${(buf.byteLength / 1024 ** 3).toFixed(2)} GiB, ${buf.constructor.name}`);
+        // The engine's memory is shared:true. If growth silently handed back a non-shared
+        // buffer the pthread pool would be reading a stale heap.
+        check('memory is shared', buf instanceof SharedArrayBuffer);
+      }
+    } catch (e) {
+      say('module', 'FAIL', String(e && e.message || e));
+      G.failures++;
+    }
+    G.done = true;
+    say('result', G.failures ? `GATE FAILED (${G.failures})` : 'GATE PASSED', '');
+  })();
+</script>
