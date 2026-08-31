@@ -42,7 +42,7 @@
   if (auth.allowPasswordLogin) {
     out += hasClient
       ? '<a class="btn primary" href="/launcher.html">Play now (username &amp; password)</a>'
-      : '<span class="btn primary disabled" aria-disabled="true">Play now (not installed yet)</span>';
+      : '<span class="btn primary disabled" aria-disabled="true">Play now (player app not added)</span>';
   }
   if (sso.length) {
     if (auth.allowPasswordLogin) out += '<div class="rule">or continue with</div>';

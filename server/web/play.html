@@ -65,6 +65,8 @@
     background: rgba(211,168,78,.07); border-left: 3px solid var(--bronze); color: var(--ink);
   }
   .note a { color: var(--gold-hi); }
+  .note code { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: .9em;
+    background: rgba(0,0,0,.35); padding: .05rem .3rem; border-radius: 3px; color: var(--bronze-hi); }
   .foot { margin-top: 1.5rem; text-align: center; font-size: .75rem; color: var(--faint); }
   .foot a { color: var(--muted); }
   /* The same three-layer ground as play/launcher.html: ash, Red Mountain glowing from below
@@ -94,9 +96,13 @@
   <div id="options"><p class="sub">Checking how this server signs people in…</p></div>
 
   <div class="note" id="noclient" hidden>
-    <strong>The game itself is not installed on this server yet.</strong> Signing in works,
-    but there is nothing to play. If you run this server: stage the game client files, or
-    see the <a href="/admin">admin dashboard</a> for what is left to do.
+    <strong>The player app has not been added to this server yet.</strong>
+    <p style="margin:.5rem 0 0">This is not your Morrowind files, which are uploaded through
+      the dashboard and may well already be here. It is the small web app the browser runs to
+      play them, and it ships separately.</p>
+    <p style="margin:.5rem 0 0">If you run this server: unpack an openmw-web release into the
+      <code>client</code> folder next to your <code>docker-compose.yml</code>. Nothing else
+      changes, and this notice disappears on its own.</p>
   </div>
 
   <p class="foot">Powered by <a href="https://github.com/Virtastic/openmw-web"

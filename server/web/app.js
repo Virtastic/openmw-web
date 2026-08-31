@@ -1445,9 +1445,17 @@ function pageReset(token) {
 // ---------------------------------------------------------------------------------------
 // overview
 // ---------------------------------------------------------------------------------------
+/** Is the player-facing web app staged? Served by the proxy from ./client, not by this
+ *  server, so the only way to know is to ask for it the way a player's browser would. */
+let clientStaged = null;
+async function checkClientStaged() {
+  try { clientStaged = (await fetch('/launcher.html', { method: 'HEAD' })).ok; }
+  catch { clientStaged = null; } // unknown: say nothing rather than guess
+}
+
 async function pageOverview() {
   setTitle('Overview', 'What this server is doing right now.');
-  const o = await api('/overview');
+  const [o] = await Promise.all([api('/overview'), checkClientStaged()]);
   // AdminLTE's small-box widget, the coloured stat tiles the framework is known for,
   // used here as designed instead of a plain card impersonating one.
   const stat = (label, value, icon, tone, href = '') => html`
@@ -1495,6 +1503,14 @@ function setupChecklist() {
       : []),
     { done: state.twoFactor === true, label: 'Add two-factor authentication to your account', hash: '#security' },
     { done: localStorage.getItem('omwmp_mods_seen') === '1', label: 'Review the game data and mod list', hash: '#mods' },
+    // NOTHING USED TO SAY THIS. An operator could finish setup, upload every file, and still
+    // have no way for anyone to play, because the player-facing app ships separately and no
+    // screen mentioned it. Derived from a live check, so it clears itself once staged.
+    ...(clientStaged === false
+      ? [{ done: false, label: 'Add the player app: unpack an openmw-web release into the '
+             + '"client" folder next to docker-compose.yml. Your Morrowind files are separate '
+             + 'and are not what this is about.' }]
+      : []),
     // Only shown when there IS an unfinished provider, so it is a live problem rather than
     // a permanent nag: a sign-in button the operator chose and cannot see.
     ...((state.setup?.ssoNeedsKeys || []).length

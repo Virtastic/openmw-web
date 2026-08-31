@@ -38,6 +38,23 @@ ${tls}
 
 	root * /srv/client
 
+	# NOT EVERYTHING IN THE CLIENT FOLDER IS FOR THE PUBLIC.
+	#
+	# The folder served here is the repo's play/, which is where the player app actually
+	# lives, and it also carries development scaffolding: a local python server, the launcher
+	# shortcuts, and mwdata/ — the operator's own copy of Morrowind, hundreds of megabytes of
+	# a game they are not licensed to redistribute. Serving that to anyone who asked would be
+	# the worst bug in this file, so it is refused by path before the file server ever runs.
+	#
+	# A deny list rather than an allow list, deliberately: the client's own filenames change
+	# with every engine build (openmw.wasm, openmw.data, and their brotli siblings), and an
+	# allow list would silently stop serving the game the first time one was renamed. What
+	# must never leak is a short, stable set.
+	@private path /mwdata/* /server.py /__pycache__/* /.env* /START-HERE.txt /*.bat /*.command
+	handle @private {
+		respond "not found" 404
+	}
+
 	# The ROOT path always goes to the server, even when client files are staged: the server
 	# serves the sign-in landing page there, and the game (launcher.html and friends) is what
 	# that page links into.
