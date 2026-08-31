@@ -481,3 +481,16 @@ test('a sign-in provider with no keys is reported, not silently ignored', async 
   assert.deepEqual(state.setup.ssoNeedsKeys, []);
   assert.deepEqual(state.setup.ssoConfigured, ['discord']);
 });
+
+test('the reachability nonce is served, and is the only thing at that path', async (t) => {
+  // "Public" must not be a claim the operator can make unchecked. DNS resolving proves the
+  // name points SOMEWHERE, and something answering on 443 proves a machine is there; neither
+  // proves it is this one. A value this process invented coming back does.
+  const { base } = await boot(t);
+  const r = await fetch(`${base}/.well-known/openmw-web-verify`);
+  assert.equal(r.status, 200, 'unauthenticated on purpose: the probe arrives from outside');
+  const nonce = (await r.text()).trim();
+  assert.match(nonce, /^[0-9a-f]{32}$/, 'a random value, not a guessable constant');
+  // Stable within the process, so a probe issued now matches the answer given later.
+  assert.equal((await (await fetch(`${base}/.well-known/openmw-web-verify`)).text()).trim(), nonce);
+});

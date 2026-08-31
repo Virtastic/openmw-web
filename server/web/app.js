@@ -229,6 +229,9 @@ const BLANK_ANSWERS = {
   // it used to be inferred from the deployment mode, so choosing "single player" silently
   // closed registration, which is a decision the operator never made and could not see.
   registration: null, inviteCode: '',
+  // The exact domain string that passed the reachability check. Not a boolean: editing
+  // the domain afterwards must invalidate the result rather than inherit it.
+  domainVerified: '',
   s3: { endpoint: '', bucket: '', region: 'auto', accessKeyId: '', secretAccessKey: '' },
   ssoCreds: { discord: {}, google: {}, microsoft: {} },
 };
@@ -327,7 +330,7 @@ const wizardSteps = () => {
 const STEP_LABEL = {
   owner: 'Account', mode: 'Type', login: 'Sign-in', registration: 'Sign-ups',
   admins: 'Admins', content: 'Content', delivery: 'Files', hosting: 'Access',
-  name: 'Name', storage: 'Storage', files: 'Game data', review: 'Review',
+  name: 'Name', storage: 'Storage', files: 'Data', review: 'Review',
 };
 
 /** The address players actually reach this server on, which is what a provider must be
@@ -395,10 +398,11 @@ function wizardShell(inner, { back = true, next = 'Continue', onNext = null, dis
  * genuinely a decision (how big is this, do you own the files) deliberately do not, because
  * a fake recommendation is worse than none.
  */
-function choice(name, value, title, blurb, tag = '') {
+function choice(name, value, title, blurb, tag = '', tone = 'success') {
   const sel = answers[name] === value ? 'sel' : '';
   return html`<button class="vt-choice ${raw(sel)}" data-choice="${name}" data-value="${value}">
-    <strong>${title}${raw(tag ? html` <span class="badge text-bg-success ms-1">${tag}</span>` : '')}</strong>
+    <strong>${title}${raw(tag
+      ? html` <span class="badge text-bg-${raw(tone)} ms-1">${tag}</span>` : '')}</strong>
     <small>${blurb}</small></button>`;
 }
 
@@ -603,13 +607,17 @@ function stepOwner() {
 
 function stepMode() {
   wizardShell(html`
-    <h5>What kind of server is this?</h5>
-    <p class="text-secondary small">Both are full servers. This only sets sensible starting
-      points, and nothing here stops people joining either way.</p>
-    ${raw(choice('deploymentMode', 'single', 'Mostly for me',
-      'Your own world, played on your own. Friends can still join if you want them to, and you decide who may sign up in a moment.'))}
-    ${raw(choice('deploymentMode', 'multiplayer', 'For a group',
-      'Built for other people from the start. You get one extra question, the name players see when they join.'))}`,
+    <h5>Single player or multiplayer?</h5>
+    <p class="text-secondary small">This only sets sensible starting points. Nothing here stops
+      people joining either way, and you can change any of it later.</p>
+    ${raw(choice('deploymentMode', 'single', 'Single Player',
+      'Your own world, played on your own. Friends can still join if you invite them, and you '
+      + 'decide who may sign up in a moment.'))}
+    ${raw(choice('deploymentMode', 'multiplayer', 'Multiplayer',
+      'Built for other people from the start. Morrowind is a single-player game, so playing it '
+      + 'together is a real addition rather than a port: expect rough edges, and do not run a '
+      + 'campaign you would be upset to lose. You get one extra question, the name players see '
+      + 'when they join.', 'Experimental', 'warning'))}`,
   { disabled: !answers.deploymentMode, need: 'Choose one to carry on.' });
   wireChoices();
 }
@@ -874,9 +882,11 @@ function stepDelivery() {
       + 'everyone involved owns a copy already (a group of friends who each bought it, for '
       + 'instance).'))}
     <div class="vt-section-note mt-3">
-      Either way <strong>this server needs its own copy</strong> to run the world, and the
-      next-but-one step is where you add it. Unsure? Take the first one; you can change it in
-      Settings later without anyone losing anything.
+      Separately from this answer, <strong>the server itself needs a copy</strong>, because it
+      runs the world: it simulates every NPC and creature rather than any player's browser
+      doing it. That holds whichever option you pick here, and whether one person plays or
+      twenty. The Game data step near the end is where you add it. Unsure which to choose?
+      Take the first; you can change it in Settings later without anyone losing anything.
     </div>`,
   { disabled: !answers.deliveryModel, need: 'Choose how players get the files.' });
   wireChoices();
@@ -884,16 +894,18 @@ function stepDelivery() {
 
 function stepHosting() {
   wizardShell(html`
-    <h5>Who needs to be able to reach this server?</h5>
-    <p class="text-secondary small">Either answer works, and you can change it later. The
-      difference is only whether the server is exposed beyond your own network.</p>
-    ${raw(choice('hosting', 'internal', 'Just my own network',
-      'Only machines in your house or office can connect. Nothing needs to be opened up on '
-      + 'your router, and there is no domain name to buy. The safest starting point.'))}
-    ${raw(choice('hosting', 'public', 'Anyone on the internet',
-      'For friends who are not in the building. This needs ports 80 and 443 forwarded to this '
-      + 'machine on your router, which is the one part nothing here can do for you. A domain '
-      + 'name is optional but makes it much smoother.'))}
+    <h5>Internal or public?</h5>
+    <p class="text-secondary small">Whether this server is reachable only from your own
+      network, or from the internet. You can change it later.</p>
+    ${raw(choice('hosting', 'internal', 'Internal',
+      'Only machines on your own network can connect: your house, your office, your LAN party. '
+      + 'Nothing has to be opened on your router, there is no domain to buy, and there is no '
+      + 'certificate warning to explain to anyone. The safest starting point.', 'Simplest'))}
+    ${raw(choice('hosting', 'public', 'Public',
+      'Reachable from the internet, so people can join from anywhere. This needs a domain name '
+      + 'pointed at this machine and ports 80 and 443 forwarded to it on your router. Both are '
+      + 'checked below before you can continue, because a public server that is not actually '
+      + 'reachable looks identical to a working one until somebody tries to join.'))}
     ${raw(answers.hosting === 'public' ? html`
       <div class="mt-3 mb-2">
         <label class="form-label">Domain name <span class="text-secondary">(optional)</span></label>
@@ -917,16 +929,29 @@ function stepHosting() {
             above at any time (now or later from Settings) and a real certificate replaces
             it on its own.`)}
       </div>` : '')}`,
-  { disabled: !answers.hosting, onNext: () => {
-    const typed = $('#wzDomain')?.value;
-    if (typed !== undefined) answers.domain = cleanDomain(typed);
-    step++; renderWizard();
-  } });
+  // PUBLIC IS NOT A CLAIM THE OPERATOR GETS TO MAKE UNCHECKED. A public server whose domain
+  // does not actually reach it looks exactly like a working one from in here, and the
+  // failure surfaces later as friends who cannot join and a certificate that never issues.
+  // The check proves both halves (the name points here, and a request from outside arrives),
+  // so it is the gate rather than a convenience button.
+  { disabled: !answers.hosting
+      || (answers.hosting === 'public'
+          && (!answers.domain || answers.domainVerified !== answers.domain)),
+    need: answers.hosting === 'public'
+      ? (answers.domain ? 'Press Check it, and it has to come back reachable.'
+                        : 'A public server needs a domain name. Add one and check it.')
+      : 'Choose one to carry on.',
+    onNext: () => {
+      const typed = $('#wzDomain')?.value;
+      if (typed !== undefined) answers.domain = cleanDomain(typed);
+      step++; renderWizard();
+    } });
   wireChoices();
   const d = $('#wzDomain');
   // Normalise as they leave the field, so what they see from here on is what gets saved
   // and what the certificate will be issued for.
   if (d) d.onchange = () => { answers.domain = cleanDomain(d.value); saveWizard(); renderWizard(); };
+  if (d) d.oninput = () => { if (cleanDomain(d.value) !== answers.domainVerified) $('#wzNext').disabled = true; };
 
   // The check the operator cannot do themselves: is the DNS record right, and does HTTPS
   // answer? Run by the server, reported back in plain language with the next step named.
@@ -946,12 +971,18 @@ function stepHosting() {
         <i class="bi ${raw(ok === true ? 'bi-check-circle-fill text-success'
           : ok === 'warn' ? 'bi-exclamation-triangle-fill text-warning'
           : 'bi-x-circle-fill text-danger')}"></i><div>${msg}</div></div>`;
+      // The reachability row is the one that decides. DNS and HTTPS are shown because they
+      // say WHICH half is wrong, but neither on its own proves the name reaches this server.
+      answers.domainVerified = r.reachable.ok ? domain : '';
+      saveWizard();
       out.innerHTML = html`<div class="vt-section-note">
         ${raw(line(r.dns.ok, r.dns.message))}
+        ${raw(line(r.reachable.ok, r.reachable.message))}
         ${raw(r.https.status === 'skipped' ? '' : line(
           r.https.status === 'ok' ? true : r.https.status === 'self-signed' ? 'warn' : false,
           r.https.message))}
       </div>`;
+      $('#wzNext').disabled = !r.reachable.ok;
     } catch (e) {
       out.innerHTML = html`<div class="alert alert-danger py-2 small mb-0">${e.message}</div>`;
     }
@@ -984,12 +1015,12 @@ function stepStorage() {
       stored somewhere. This is only about where they sit on disk.</p>
     ${raw(choice('storage', 'local', 'On this server',
       'Kept in this server\'s own data folder, alongside everything else. Nothing to sign up '
-      + 'for and nothing else to pay for. Right for almost everyone, and you can move to the '
-      + 'option below later without losing anything.', 'Recommended'))}
-    ${raw(choice('storage', 's3', 'In cloud storage',
-      'A storage account you already have with Cloudflare R2, Amazon S3, Backblaze B2 or '
-      + 'similar. Worth it if this machine has a small disk, or you expect a lot of people. '
-      + 'Needs four values from that provider, below.'))}
+      + 'for and nothing else to pay for. Right for almost everyone, and you can move to S3 '
+      + 'later without losing anything.', 'Recommended'))}
+    ${raw(choice('storage', 's3', 'S3 storage',
+      'An S3-compatible account you already have: Amazon S3, Cloudflare R2, Backblaze B2, '
+      + 'MinIO or similar. Worth it if this machine has a small disk, or you expect a lot of '
+      + 'people. Needs four values from that provider, below.'))}
     ${raw(answers.storage === 's3' ? html`
       <div class="vt-section-note mt-3 mb-3">
         <strong>Where these come from.</strong> Sign in to your storage provider and create a
@@ -1113,9 +1144,16 @@ async function stepFiles() {
       <strong>Find the folder called <code>Data Files</code></strong> inside wherever
       Morrowind is installed, and drag it onto the box below. It is usually at:
       <pre class="vt-mono small mb-1 mt-2">${INSTALL_PATHS}</pre>
-      Drag the whole folder, not the files inside it. It is a few gigabytes and takes a
-      while. If you would rather not use the browser, copy it into
-      <code>${mods?.dir || 'the game data folder'}</code> on the server instead.
+      Drag the whole folder, not the files inside it.
+      <p class="mb-1 mt-2"><strong>Your browser will ask permission first.</strong> Chrome
+        shows "Upload N files to this site?" and Firefox asks something similar. That is
+        normal for a folder, and the count will be in the thousands. Click
+        <strong>Upload</strong>.</p>
+      <p class="mb-0">If the browser refuses the folder outright, which some do for locations
+        under <code>Program Files</code>, copy <code>Data Files</code> to your Desktop first
+        and drag that copy. It is a few gigabytes either way, so give it time. You can also
+        skip the browser entirely and copy the folder into
+        <code>${mods?.dir || 'the game data folder'}</code> on the server.</p>
     </div>
 
     ${raw(profile ? html`
@@ -1204,7 +1242,7 @@ function stepReview() {
         not appear on the sign-in page. Add them any time under Settings, single sign-on.
       </div>` : '')}
     <dl class="row small mt-3">
-      ${raw(line('Server', mp ? 'For a group' : 'Mostly for me'))}
+      ${raw(line('Server', mp ? 'Multiplayer (experimental)' : 'Single player'))}
       ${raw(mp ? line('Server name', answers.serverName || '(unset)') : '')}
       ${raw(line('Sign-in methods', answers.loginMethods.length
         ? answers.loginMethods.map((m) => LOGIN_LABEL[m] || m).join(', ')

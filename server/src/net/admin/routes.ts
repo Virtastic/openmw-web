@@ -52,7 +52,7 @@ import { serveWebFile } from './static';
 import type { SetupToken } from './setup-token';
 import { generateSecret, totpUri, verifyTotp } from './totp';
 import { settingsView, applySection, applyWizard, type WizardAnswers } from './api-settings';
-import { checkDomain, normaliseDomain } from './setup-check';
+import { checkDomain, normaliseDomain, VERIFY_PATH, VERIFY_NONCE } from './setup-check';
 import { readDashboardTree } from './settings-store';
 import { writeCaddyfile } from './caddy-config';
 import { modsView, saveMods, uploadContent, gameDataWritable } from './api-mods';
@@ -200,7 +200,8 @@ export function adminRoutes(deps: AdminDeps) {
     const path = url.pathname;
     // "/" and "/play" belong to this router too: the sign-in landing page lives with the
     // dashboard's static assets, and this is the only place that serves them.
-    if (path !== '/admin' && !path.startsWith('/admin/') && path !== '/' && path !== '/play') return false;
+    if (path !== '/admin' && !path.startsWith('/admin/') && path !== '/' && path !== '/play'
+        && path !== VERIFY_PATH) return false;
 
     // HEAD is a GET without a body, and Node drops the body for us. Matching only on the
     // literal method meant HEAD /admin answered 404, which uptime checks and link checkers
@@ -212,6 +213,17 @@ export function adminRoutes(deps: AdminDeps) {
     // a login form that requires a login to fetch is not a login form. Unlike the old
     // dashboard this is NOT gated on a token being configured, accounts are the way in now,
     // and hiding the page would hide first-run setup, which is the whole point.
+    // The reachability probe's target. Unauthenticated on purpose and safe by construction:
+    // it returns one random value this process invented, which proves only that you reached
+    // THIS server. That is the entire question the hosting step needs answered, and no other
+    // signal can answer it: DNS resolving proves the name points somewhere, and something
+    // answering on 443 proves a machine is there, but neither proves it is this one.
+    if (method === 'GET' && path === VERIFY_PATH) {
+      res.writeHead(200, { 'content-type': 'text/plain', 'cache-control': 'no-store' });
+      res.end(VERIFY_NONCE);
+      return true;
+    }
+
     // The front door. "/" used to 404, which is what a player following the join link saw
     // first. This is a sign-in landing page whose options mirror what the operator enabled;
     // when the game client is staged in front of us its files win, but the ROOT path is
