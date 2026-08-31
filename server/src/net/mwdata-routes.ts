@@ -28,6 +28,7 @@ import { join, relative, resolve, sep } from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { HttpRoute } from './http';
 import { log } from '../log';
+import { MODS_SUBDIR, resolveMods, type ModDoc } from '../core/mods';
 
 /** One entry of mwdata-manifest.json: `p`ath relative to the folder, and `s`ize. */
 interface Entry { p: string; s: number }
@@ -42,7 +43,7 @@ const SKIP_DIR = /^(\.|__pycache__$|node_modules$)/;
  * concatenates them onto "mwdata/" to fetch. A Windows operator's backslashes would produce
  * URLs that 404 on their own machine.
  */
-async function walk(root: string, dir = root, out: Entry[] = []): Promise<Entry[]> {
+async function walk(root: string, dir = root, out: Entry[] = [], skip?: string): Promise<Entry[]> {
   let names: string[];
   try {
     names = await readdir(dir);
@@ -52,9 +53,10 @@ async function walk(root: string, dir = root, out: Entry[] = []): Promise<Entry[
   for (const name of names) {
     if (SKIP_DIR.test(name)) continue;
     const full = join(dir, name);
+    if (skip !== undefined && dir === root && name === skip) continue;
     let st;
     try { st = await stat(full); } catch { continue; }
-    if (st.isDirectory()) await walk(root, full, out);
+    if (st.isDirectory()) await walk(root, full, out, skip);
     else if (st.isFile()) out.push({ p: relative(root, full).split(sep).join('/'), s: st.size });
   }
   return out;
@@ -65,6 +67,8 @@ export interface MwDataDeps {
   gameDataDir: string;
   /** The operator's stored answer. Only 'serve' publishes anything. */
   deliveryModel(): string;
+  /** Installed mods, in order. Read per request so a change lands without a restart. */
+  modDoc?(): ModDoc;
 }
 
 export function mwDataRoutes(deps: MwDataDeps): HttpRoute {
@@ -75,8 +79,9 @@ export function mwDataRoutes(deps: MwDataDeps): HttpRoute {
 
   return async (req: IncomingMessage, res: ServerResponse, url: URL): Promise<boolean> => {
     const isManifest = url.pathname === '/mwdata-manifest.json';
+    const isMods = url.pathname === '/mwdata-mods.json';
     const isFile = url.pathname.startsWith('/mwdata/');
-    if (!isManifest && !isFile) return false;
+    if (!isManifest && !isMods && !isFile) return false;
     if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405); res.end(); return true; }
 
     // Not serving? Then this path does not exist, and says so the same way for both routes:
@@ -84,15 +89,55 @@ export function mwDataRoutes(deps: MwDataDeps): HttpRoute {
     if (deps.deliveryModel() !== 'serve') { res.writeHead(404); res.end('not found'); return true; }
 
     if (isManifest) {
+      // BOTH directories. Creating gamedata/mods bumps gamedata's mtime once, when the folder
+      // first appears; every install after that bumps gamedata/mods and leaves the parent
+      // untouched — so a single-stat cache serves a stale manifest from the SECOND mod onwards,
+      // with a dashboard that looks right and a browser that never sees the files.
       let mtime = 0;
       try { mtime = (await stat(deps.gameDataDir)).mtimeMs; } catch { /* missing folder = empty */ }
+      try { mtime += (await stat(join(deps.gameDataDir, MODS_SUBDIR))).mtimeMs; } catch { /* no mods yet */ }
       if (!cache || cache.at !== mtime) {
-        const files = await walk(deps.gameDataDir);
+        const files = await walk(deps.gameDataDir, deps.gameDataDir, [], MODS_SUBDIR);
         cache = { at: mtime, body: JSON.stringify(files) };
         log('info', 'mwdata.manifest_built', { files: files.length });
       }
       res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-cache' });
       res.end(req.method === 'HEAD' ? undefined : cache.body);
+      return true;
+    }
+
+    // THE MOD STACK, as a SEPARATE file from the flat manifest.
+    //
+    // mwdata-manifest.json is a JSON ARRAY, and a cached older index.html does `list.length` and
+    // `list.forEach` on it. Wrapping it in an object to carry mod metadata would turn every one
+    // of those clients into "No game data on this server" — a failure that reads as the server
+    // breaking rather than as a version skew. So the array keeps its shape and its meaning, and
+    // this sidecar carries what is new. A 404 here is an ordinary answer meaning "no mods".
+    //
+    // Built from the same resolveMods() the peer's cfg comes from, so the browser and the
+    // headless engine cannot end up running different load orders.
+    if (isMods) {
+      const doc = deps.modDoc?.();
+      if (!doc || doc.mods.length === 0) { res.writeHead(404); res.end('not found'); return true; }
+      const stack = resolveMods(doc);
+      const enabled = doc.mods.filter((m) => m.enabled);
+      const mods = [];
+      for (const m of enabled) {
+        // Files are listed per mod so the client can mount each into its own data= root. Only
+        // for ENABLED mods: a disabled 20k-file mod would be a megabyte of JSON on every boot,
+        // describing files nothing will mount.
+        const files = await walk(join(deps.gameDataDir, MODS_SUBDIR, m.slug));
+        mods.push({
+          slug: m.slug,
+          name: m.name,
+          plugins: m.plugins.filter((p) => p.enabled).map((p) => p.file),
+          archives: m.archives,
+          files,
+        });
+      }
+      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-cache' });
+      res.end(req.method === 'HEAD' ? undefined
+        : JSON.stringify({ v: 2, mods, content: stack.content, archives: stack.archives }));
       return true;
     }
 

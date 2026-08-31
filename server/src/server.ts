@@ -59,6 +59,7 @@ import { Locker, loadVanillaManifest } from './data/locker';
 import { lockerStorageFrom, blobRoutes, FsStorage } from './data/fsstorage';
 import { mwDataRoutes } from './net/mwdata-routes';
 import { createSysInfo } from './net/admin/sysinfo';
+import { readModDoc, resolveMods } from './core/mods';
 import { saveRoutes, eraseSaves } from './data/save-routes';
 import { lockerRoutes } from './data/locker-routes';
 import { LockerSessionStore, AdminSessionStore } from './auth/identities';
@@ -1131,6 +1132,9 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     mwDataRoutes({
       gameDataDir: gameDataDir(sharedDir),
       deliveryModel: () => config.setup.deliveryModel,
+      // Re-read per request, like the delivery answer above: enabling a mod in the dashboard
+      // should reach the next player to load the page, not the next restart.
+      modDoc: () => readModDoc(opts.dataDir),
     }),
     saveRoutes({
       storage: lockerStorage, sessions: lockerSessions, dataDir: sharedDir,

@@ -49,7 +49,7 @@ test('/mwdata/* reaches the server rather than the folder in the source tree', (
   // what keeps the source-tree folder unreachable: this handler is matched before the static
   // file server ever looks in /srv/client.
   const out = renderCaddyfile({ domain: '' });
-  assert.match(out, /@mwdata path \/mwdata\/\* \/mwdata-manifest\.json/);
+  assert.match(out, /@mwdata path \/mwdata\/\* \/mwdata-manifest\.json \/mwdata-mods\.json/);
   assert.ok(out.indexOf('@mwdata') < out.indexOf('@static'),
     '@mwdata must be handled before the static root, or play/mwdata leaks');
 });

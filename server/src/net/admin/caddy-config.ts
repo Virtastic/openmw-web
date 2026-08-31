@@ -94,7 +94,7 @@ ${tls}
 	# Proxied BEFORE the static handler, so the folder in the source tree is still never
 	# served: these requests reach the server, which publishes the library the DASHBOARD
 	# uploaded into and refuses with 404 unless the stored answer says to serve it.
-	@mwdata path /mwdata/* /mwdata-manifest.json
+	@mwdata path /mwdata/* /mwdata-manifest.json /mwdata-mods.json
 	handle @mwdata {
 		reverse_proxy ${upstream}
 	}

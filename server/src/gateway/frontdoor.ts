@@ -15,6 +15,7 @@
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { detectGameData, gameDataDir } from '../core/gamedata';
+import { orderedContent } from '../net/admin/api-mods';
 import { loadConfig } from '../config';
 import { AccountStore, validEmail, validAccountName, MAX_CHARACTERS } from '../core/accounts';
 import { AttioHook } from '../integrations/attio';
@@ -339,7 +340,12 @@ export async function buildFrontDoor(
   // The launcher enforces the world's content requirement BEFORE the player starts, so it has
   // to be told what that is. Same detection the sim peer's config is generated from, so the
   // checklist and the world can never disagree.
-  const worldContent = detectGameData(gameDataDir(sharedDir));
+  // WITH the operator's load order. Without it this said "the checklist and the world can never
+  // disagree" while doing exactly that: a disabled expansion was still demanded of every player,
+  // because the checklist re-derived the content list alphabetically with everything present
+  // switched on. Mods make the same divergence much larger.
+  const worldContent = detectGameData(gameDataDir(sharedDir),
+    orderedContent(gameDataDir(sharedDir), sharedDir));
   const locker2 = lockerRoutes({
     locker, sessions: lockerSessions,
     requiredContent: () => (worldContent.ok ? worldContent.contentFiles : []),

@@ -18,13 +18,12 @@ import { rm } from 'node:fs/promises';
 import { join, basename, dirname, resolve, sep } from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { log } from '../../log';
+import { MODLIST_FILE, readModDoc, writeModDoc, type ModEntry } from '../../core/mods';
 
-export const MODLIST_FILE = 'modlist.json';
-
-export interface ModEntry {
-  file: string;
-  enabled: boolean;
-}
+// The document, its schema and its migration live in core/mods.ts, so the load-order half of
+// this file and the mod-manager half cannot drift into two readers of one file.
+export { MODLIST_FILE };
+export type { ModEntry };
 
 /** Morrowind's own masters. Always load first, in this order, never reorderable. */
 const OFFICIAL = ['Morrowind.esm', 'Tribunal.esm', 'Bloodmoon.esm'];
@@ -126,20 +125,9 @@ function listFiles(gameDataDir: string): { content: string[]; archives: string[]
   };
 }
 
+/** The base game's flat load order. Mods are a separate list; see core/mods.ts. */
 export function readModlist(dataDir: string): ModEntry[] {
-  const path = join(dataDir, MODLIST_FILE);
-  if (!existsSync(path)) return [];
-  try {
-    const parsed = JSON.parse(readFileSync(path, 'utf8')) as { entries?: unknown };
-    if (!Array.isArray(parsed.entries)) return [];
-    return parsed.entries.flatMap((e) => {
-      const row = e as { file?: unknown; enabled?: unknown };
-      return typeof row.file === 'string' ? [{ file: row.file, enabled: row.enabled !== false }] : [];
-    });
-  } catch (err) {
-    log('warn', 'admin.modlist_unreadable', { error: String(err) });
-    return [];
-  }
+  return readModDoc(dataDir).entries;
 }
 
 /**
@@ -225,21 +213,13 @@ export function saveMods(
     entries.push({ file: real, enabled: row.enabled !== false });
   }
 
-  const path = join(dataDir, MODLIST_FILE);
-  try {
-    const tmp = `${path}.tmp`;
-    writeFileSync(tmp, `${JSON.stringify({ entries }, null, 2)}\n`, 'utf8');
-    renameSync(tmp, path);
-    return { ok: true };
-  } catch (err) {
-    // A raw ENOENT/EACCES in a toast tells the reader nothing they can act on. Name the
-    // likely cause instead, and keep the detail in the log where it is useful.
-    log('error', 'admin.modlist_write_failed', { error: String(err) });
-    return {
-      ok: false,
-      error: 'Could not save the load order. The data folder may be read-only or full.',
-    };
-  }
+  // READ-MODIFY-WRITE, not write. The installed mods live in the same document, and rewriting
+  // the whole file from this one field would have deleted every one of them the moment somebody
+  // dragged a base-game plugin. writeModDoc keeps the temp-then-rename this used to do itself,
+  // and names the same likely causes in its error rather than surfacing a raw ENOENT.
+  const doc = readModDoc(dataDir);
+  const wrote = writeModDoc(dataDir, { ...doc, entries });
+  return wrote.ok ? { ok: true } : { ok: false, error: wrote.error };
 }
 
 // --- upload ------------------------------------------------------------------------------
