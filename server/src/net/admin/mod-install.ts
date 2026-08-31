@@ -21,6 +21,8 @@ import type { IncomingMessage } from 'node:http';
 import { log } from '../../log';
 import { findDataFolders, slugify, type Candidate } from '../../core/mod-archive';
 import { listEntries, readEntry, ZipError, type ZipEntry } from '../../core/zip';
+import { readMasters } from '../../core/esm';
+import { MOD_META as MODS_META_DIR } from '../../core/mod-conflicts';
 import {
   MODS_SUBDIR, readModDoc, writeModDoc, type InstalledMod, type ModDoc, type ModPlugin,
 } from '../../core/mods';
@@ -30,7 +32,7 @@ import {
 const STAGING = 'mod-staging';
 /** Per-mod file lists, for conflict detection. Kept away from STAGING, whose sweep would
  *  eventually delete them. */
-const MOD_META = 'mod-files';
+const MOD_META = MODS_META_DIR;
 /** A staged zip nobody committed is rubbish after this long. Swept on the next upload. */
 const STAGE_TTL_MS = 6 * 60 * 60 * 1000;
 
@@ -250,7 +252,13 @@ export async function commitInstall(
     // Only plugins directly in the mod's root are load-order entries. One inside Meshes/ is
     // somebody's backup, not something to name in content= — and naming a file the engine
     // cannot resolve aborts startup.
-    const rootPlugins = plugins.filter((p) => files.includes(p.file));
+    // Read each plugin's declared masters now, while the files are in front of us. A missing
+    // master aborts the engine at startup rather than skipping the mod, so the dashboard needs
+    // to be able to warn about a disable BEFORE it is saved.
+    const rootPlugins = plugins.filter((p) => files.includes(p.file)).map((p) => {
+      const masters = readMasters(join(root, p.file));
+      return masters.length ? { ...p, masters } : p;
+    });
     installed.push({
       slug,
       name: (choice.name || slug).slice(0, 120),

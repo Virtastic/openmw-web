@@ -2385,6 +2385,20 @@ const sizeOf = (n) => (n >= 1073741824 ? `${(n / 1073741824).toFixed(1)} GB`
 function modsCard(m, editable) {
   const mods = m.mods || [];
   const bsaClash = new Map((m.bsaCollisions || []).flatMap((c) => c.owners.map((o) => [o, c.name])));
+  const byName = new Map(mods.map((x) => [x.slug, x.name]));
+  // Grouped per mod so each card can say what IT does, rather than making the operator read a
+  // table of pairs and work out which half is theirs.
+  const group = (rows, key) => {
+    const out = new Map();
+    for (const r of rows || []) {
+      if (!out.has(r[key])) out.set(r[key], []);
+      out.get(r[key]).push(r);
+    }
+    return out;
+  };
+  const wins = group(m.conflicts, 'winner');
+  const loses = group(m.conflicts, 'loser');
+  const needs = group(m.missingMasters, 'mod');
 
   const card = (mod, i) => {
     const bits = [
@@ -2417,7 +2431,20 @@ function modsCard(m, editable) {
           Its folder is gone from the game data directory, so this will not load.</div>` : '')}
         ${raw(bsaClash.has(mod.slug) ? html`<div class="small mt-1">
           <span class="badge text-bg-secondary">${bsaClash.get(mod.slug)}</span>
-          also ships with another mod. Morrowind can only use one copy of an archive name.</div>` : '')}
+          also ships with another mod. Both are loaded; this one's copy is kept separate.</div>` : '')}
+        ${raw((needs.get(mod.slug) || []).map((n) => html`
+          <div class="alert alert-danger py-1 px-2 small mt-2 mb-0">
+            <strong>${n.plugin}</strong> needs <span class="vt-mono">${n.master}</span>, which is
+            not loaded. Morrowind refuses to start when a plugin's master is missing, so either
+            switch that back on or switch this mod off.</div>`).join(''))}
+        ${raw((wins.get(mod.slug) || []).map((c) => html`
+          <div class="small mt-1"><span class="badge text-bg-warning">replaces ${c.files}</span>
+            ${raw(c.files === 1 ? 'file' : 'files')} also in <strong>${byName.get(c.loser) || c.loser}</strong>,
+            because this mod is further down the list.</div>`).join(''))}
+        ${raw((loses.get(mod.slug) || []).map((c) => html`
+          <div class="small mt-1 text-secondary">${c.files}
+            ${raw(c.files === 1 ? 'file is' : 'files are')} overridden by
+            <strong>${byName.get(c.winner) || c.winner}</strong> below.</div>`).join(''))}
         ${raw(mod.plugins.length ? html`<details class="mt-2">
           <summary class="small text-secondary">What's inside</summary>
           <div class="small mt-1">${raw(mod.plugins.map((p) => html`

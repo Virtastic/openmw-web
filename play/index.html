@@ -2306,6 +2306,36 @@
            });
            append('[mods] ' + mod.name + ' (' + (mod.files || []).length + ' files)');
          }
+
+         // LAST GATE: a plugin whose master is not loaded aborts the engine at startup, and
+         // from the player's side that is a black screen with no message. The dashboard warns
+         // before a save, but it cannot know what the browser actually managed to mount, so the
+         // same rule is applied again here against the list being emitted.
+         //
+         // Cascading, because dropping one plugin orphans the next: A needs B, B needs C, and
+         // losing C has to take both. Repeats until a pass changes nothing.
+         var have = {}, needs = {};
+         (window.__mwRootFiles || new Map()).forEach(function(orig, lower){ have[lower] = 1; });
+         out.content.forEach(function(c){ have[c.toLowerCase()] = 1; });
+         doc.mods.forEach(function(m){
+           (m.masters || []).forEach(function(e){ needs[e.file.toLowerCase()] = e.needs || []; });
+         });
+         for (var pass = 0; pass < 8; pass++){
+           var dropped = 0;
+           out.content = out.content.filter(function(c){
+             var need = needs[c.toLowerCase()] || [];
+             for (var i = 0; i < need.length; i++){
+               if (!have[need[i].toLowerCase()]){
+                 append('[mods] ' + c + ' skipped — it needs ' + need[i] + ', which is not loaded', 'err');
+                 delete have[c.toLowerCase()];
+                 dropped++;
+                 return false;
+               }
+             }
+             return true;
+           });
+           if (!dropped) break;
+         }
          return out;
        }
 

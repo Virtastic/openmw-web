@@ -131,6 +131,12 @@ export function mwDataRoutes(deps: MwDataDeps): HttpRoute {
           slug: m.slug,
           name: m.name,
           plugins: m.plugins.filter((p) => p.enabled).map((p) => p.file),
+          // What each plugin declares it needs. The client cannot ask the files themselves —
+          // they are lazily mounted, not read — and a plugin whose master is absent aborts the
+          // engine, so it has to be told in order to drop one rather than emit it.
+          masters: m.plugins
+            .filter((p) => p.enabled && (p.masters?.length ?? 0) > 0)
+            .map((p) => ({ file: p.file, needs: p.masters })),
           archives: m.archives,
           files,
         });

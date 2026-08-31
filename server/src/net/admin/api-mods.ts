@@ -21,6 +21,7 @@ import { log } from '../../log';
 import {
   MODLIST_FILE, MODS_SUBDIR, readModDoc, resolveMods, writeModDoc, type ModEntry,
 } from '../../core/mods';
+import { computeConflicts, missingMasters } from '../../core/mod-conflicts';
 
 // The document, its schema and its migration live in core/mods.ts, so the load-order half of
 // this file and the mod-manager half cannot drift into two readers of one file.
@@ -203,7 +204,14 @@ export function modsView(gameDataDir: string, dataDir: string, profile?: string)
     })),
     ...(() => {
       const s = resolveMods(doc);
-      return { bsaCollisions: s.bsaCollisions, contentCollisions: s.contentCollisions };
+      return {
+        bsaCollisions: s.bsaCollisions,
+        contentCollisions: s.contentCollisions,
+        // Which mods overwrite which, and which plugins are about to lose a master. The first
+        // is information; the second is a warning, because the engine aborts on it.
+        conflicts: computeConflicts(dataDir, doc),
+        missingMasters: missingMasters(doc, entries.filter((e) => e.enabled).map((e) => e.file)),
+      };
     })(),
   };
 }
