@@ -134,7 +134,7 @@ const NAV = [
     // with a message of the day, read a chat log for, report, or hand an item. The page is
     // inert rather than merely unhelpful, so it is removed rather than trimmed.
     { hash: '#console', label: 'Players & commands', icon: 'bi-people', role: 'moderator', solo: false },
-    { hash: '#mods', label: 'Game data & mods', icon: 'bi-collection', role: 'viewer' },
+    { hash: '#mods', label: 'Game & mods', icon: 'bi-collection', role: 'viewer' },
   ] },
   // The setup wizard is first-run only and is deliberately NOT listed here. It is a sequence
   // of eleven questions whose answers reshape the deployment, and re-entering it on a running
@@ -2056,10 +2056,13 @@ function restartPrompt() {
 const isBase = (e) => e.file.toLowerCase() === 'morrowind.esm';
 
 async function pageMods() {
-  setTitle('Game data & mods', 'What loads, and in what order.');
+  setTitle('The game and its mods', 'Morrowind itself, and anything added on top of it.');
   localStorage.setItem('omwmp_mods_seen', '1');
   const m = await api('/mods');
   const editable = can('owner');
+  // Is Morrowind actually here? With nothing installed the page's job is to get the game in;
+  // once it IS in, the upload is a rare corrective action and the load order is the point.
+  const hasGame = (m.entries || []).length > 0;
 
   // Move buttons as well as dragging. HTML5 drag-and-drop does not fire for touch at all, so
   // drag alone meant load order simply could not be changed on a phone or tablet, and the
@@ -2087,16 +2090,23 @@ async function pageMods() {
     ${raw(m.missing.length ? html`<div class="alert alert-warning">
       These were in your load order but are no longer on disk, so they have been dropped:
       <span class="vt-mono">${m.missing.join(', ')}</span></div>` : '')}
-    ${raw(editable ? uploadPanel(m) : '')}
+    ${raw(editable && !hasGame ? uploadPanel(m) : '')}
     <div class="card card-primary card-outline"><div class="card-header d-flex align-items-center">
-      <h3 class="card-title"><i class="bi bi-list-ol me-2"></i>Load order</h3>
-      ${raw(editable ? html`<button class="btn btn-sm btn-primary ms-auto" id="modSave">
-        <i class="bi bi-check-lg me-1"></i>Save order</button>` : '')}
+      <h3 class="card-title"><i class="bi bi-controller me-2"></i>Morrowind</h3>
+      ${raw(editable && hasGame ? html`<button class="btn btn-sm btn-primary ms-auto" id="modSave">
+        <i class="bi bi-check-lg me-1"></i>Save changes</button>` : '')}
     </div>
+    ${raw(hasGame ? html`<div class="card-body pb-0"><p class="small text-secondary mb-0">
+      The game itself, and its two expansions. This is not a mod and cannot be removed here —
+      switch an expansion off to play without it.</p></div>` : '')}
     <div class="table-responsive"><table class="table table-hover mb-0">
       <thead><tr><th style="width:2rem"></th><th style="width:3rem">Load</th><th>File</th><th></th></tr></thead>
       <tbody id="modBody">${raw(rows || html`<tr><td colspan="4" class="vt-empty">No content files found.</td></tr>`)}</tbody>
-    </table></div></div>
+    </table></div>
+    ${raw(editable && hasGame ? html`<div class="card-body pt-2">
+      <details><summary class="small text-secondary">Add or replace game files</summary>
+        <div class="mt-2">${raw(uploadPanel(m, false, true))}</div></details></div>` : '')}
+    </div>
     ${raw(modsCard(m, editable))}`;
 
   if (editable) wireMods(m);
@@ -2489,12 +2499,8 @@ function modsCard(m, editable) {
     </div>`;
 }
 
-function uploadPanel(m, inWizard = false) {
-  return html`
-    <div class="card card-secondary card-outline mb-3">
-      <div class="card-header"><h3 class="card-title">
-        <i class="bi bi-cloud-arrow-up me-2"></i>${raw(inWizard ? 'Drop the folder here' : 'Add game data files')}</h3></div>
-      <div class="card-body">
+function uploadPanel(m, inWizard = false, bare = false) {
+  const body = html`
       ${raw(m.writable === false ? html`
         <div class="alert alert-warning mb-0">
           The game data folder is read-only, so files cannot be uploaded from here. Copy them
@@ -2516,8 +2522,15 @@ function uploadPanel(m, inWizard = false) {
         <div id="upList" class="mt-2 small"></div>
         <p class="small text-secondary mt-2 mb-0">You can also copy files straight into
           <code>${m.dir}</code>, with the supplied Docker setup that is the
-          <code>gamedata</code> folder next to your <code>docker-compose.yml</code>.</p>`)}
-    </div></div>`;
+          <code>gamedata</code> folder next to your <code>docker-compose.yml</code>.</p>`)}`;
+  // The wizard and the "no game data yet" case want this as its own card. Once the game IS
+  // installed the same markup lives inside the game card, behind a disclosure, because at that
+  // point it is a rare corrective action rather than the thing to do next.
+  return bare ? body : html`
+    <div class="card card-secondary card-outline mb-3">
+      <div class="card-header"><h3 class="card-title">
+        <i class="bi bi-cloud-arrow-up me-2"></i>${raw(inWizard ? 'Drop the folder here' : 'Add game data files')}</h3></div>
+      <div class="card-body">${raw(body)}</div></div>`;
 }
 
 /** One upload run at a time, across the whole page. Dropping a folder twice, or dropping
@@ -3047,7 +3060,8 @@ async function pageMaintenance() {
   setTitle('Maintenance & restart', 'Take the server down gently, or bring it back.');
   const m = state.maintenance || { on: false, message: '' };
   view().innerHTML = html`
-    <div class="card card-warning card-outline mb-3" style="max-width:40rem">
+    <div class="row">
+    <div class="col-12 col-xl-6"><div class="card card-warning card-outline mb-3">
       <div class="card-header"><h3 class="card-title">
         <i class="bi bi-cone-striped me-2"></i>Maintenance mode
         ${raw(m.on ? ' <span class="badge text-bg-warning ms-2">on</span>' : '')}</h3></div>
@@ -3060,18 +3074,18 @@ async function pageMaintenance() {
           placeholder="Back in ten minutes, updating mods"></div>
       <button class="btn ${raw(m.on ? 'btn-success' : 'btn-warning')}" id="mToggle">
         ${raw(m.on ? 'Turn maintenance mode off' : 'Turn maintenance mode on')}</button>
-    </div></div>
+    </div></div></div>
 
-    <div class="card card-warning card-outline mb-3" style="max-width:40rem">
+    <div class="col-12 col-xl-6"><div class="card card-warning card-outline mb-3">
       <div class="card-header"><h3 class="card-title">
         <i class="bi bi-arrow-repeat me-2"></i>Restart</h3></div>
       <div class="card-body">
       <p class="small text-secondary">Applies saved settings and mod changes. Players are
         disconnected and can reconnect once it is back, usually within a few seconds.</p>
       <button class="btn btn-warning" id="mRestart">Restart the server</button>
-    </div></div>
+    </div></div></div>
 
-    <div class="card card-secondary card-outline" style="max-width:40rem">
+    <div class="col-12 col-xl-6"><div class="card card-secondary card-outline mb-3">
       <div class="card-header"><h3 class="card-title">
         <i class="bi bi-archive me-2"></i>Download a backup</h3></div>
       <div class="card-body">
@@ -3082,9 +3096,11 @@ async function pageMaintenance() {
         somewhere private, and do not post it when asking for help.</div>
       <a class="btn btn-outline-secondary" href="/admin/api/export" id="mExport">
         <i class="bi bi-download me-1"></i>Download backup</a>
-    </div></div>
+    </div></div></div>
+    </div>
 
-    <div class="card card-secondary card-outline mt-3" style="max-width:40rem">
+    <div class="row"><div class="col-12 col-xl-6">
+    <div class="card card-secondary card-outline">
       <div class="card-header"><h3 class="card-title">
         <i class="bi bi-cloud-download me-2"></i>Updates</h3></div>
       <div class="card-body">
@@ -3093,7 +3109,7 @@ async function pageMaintenance() {
         newest release; nothing happens automatically.</p>
       <button class="btn btn-outline-secondary" id="mUpdates">Check for updates</button>
       <div id="mUpdatesOut" class="mt-2 small"></div>
-    </div></div>`;
+    </div></div></div></div>`;
 
   $('#mToggle').onclick = async () => {
     const on = !m.on;

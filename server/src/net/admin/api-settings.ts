@@ -74,6 +74,23 @@ export const MULTIPLAYER_ONLY = [
 export const SOLO_HIDE_FIELDS = ['admin.dashboardToken'];
 
 /**
+ * Sections where single player KEEPS only a named few fields, because listing the casualties
+ * would be longer than listing the survivors.
+ *
+ * [limits] is twenty-three knobs and twenty-one of them budget a connected player: messages per
+ * second, movement updates, actor streams, buffered bytes, connections per address, interest
+ * radius, the whole LOD ladder. None of that exists when the browser runs the engine and nobody
+ * connects. What survives is the sign-in rate limit, which still guards the front door, and
+ * whether a proxy's client-IP header is trusted, which is a property of the deployment.
+ *
+ * Inverted deliberately: a knob added to [limits] later is almost certainly another
+ * per-connection budget, so defaulting it to hidden here is right more often than not.
+ */
+export const SOLO_KEEP_FIELDS: Record<string, string[]> = {
+  limits: ['loginPerMinPerIp', 'trustCloudflareIp'],
+};
+
+/**
  * Fields the SERVER works out, which an operator must therefore not be asked for.
  *
  * locker.publicBase is the origin a browser reaches this server on. The wizard already asked
@@ -236,6 +253,7 @@ export function settingsView(dataDir: string, config: unknown): {
       const path = `${name}.${key}`;
       if (DERIVED_FIELDS.includes(path)) continue;
       if (soloMode && SOLO_HIDE_FIELDS.includes(path)) continue;
+      if (soloMode && SOLO_KEEP_FIELDS[name] && !SOLO_KEEP_FIELDS[name]!.includes(key)) continue;
       const type = fieldType(value);
       const secret = isSecret(name, key);
       const h = helpFor(name, key);

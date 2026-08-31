@@ -15,7 +15,9 @@ import { join } from 'node:path';
 
 import { LockerSessionStore } from '../src/auth/identities';
 import { createSysInfo } from '../src/net/admin/sysinfo';
-import { applySection, DERIVED_FIELDS, MULTIPLAYER_ONLY, SECTION_GROUPS, settingsView } from '../src/net/admin/api-settings';
+import {
+  applySection, DERIVED_FIELDS, MULTIPLAYER_ONLY, SECTION_GROUPS, SOLO_KEEP_FIELDS, settingsView,
+} from '../src/net/admin/api-settings';
 import { helpFor } from '../src/net/admin/help';
 import { readDashboardTree } from '../src/net/admin/settings-store';
 
@@ -352,4 +354,34 @@ test('filenames out of an uploaded zip are escaped, not injected', () => {
     'zip filenames must not be interpolated into a plain template inside raw()');
   // They must go through the escaping template instead.
   assert.match(chooser[0], /html`\$\{c\.plugins\.length === 1/);
+});
+
+test('[limits] keeps only the two knobs that still do anything in single player', () => {
+  // Twenty-one of its twenty-three budget a CONNECTED player: messages per second, movement
+  // updates, actor streams, buffered bytes, connections per address, interest radius, the LOD
+  // ladder. None of that exists when the browser runs the engine and nobody connects.
+  const limits = {
+    msgsPerSec: 60, moveMsgsPerSec: 40, bytesPerSec: 1, maxConnsPerIp: 3, interestRadius: 1,
+    lodNearHz: 1, renderLod: true, loginPerMinPerIp: 10, trustCloudflareIp: false,
+  };
+  const solo = settingsView(mkdtempSync(join(tmpdir(), 'set-')), {
+    setup: { deploymentMode: 'single' }, limits,
+  }).sections.find((s) => s.name === 'limits')!;
+  assert.deepEqual(solo.fields.map((f) => f.key).sort(), ['loginPerMinPerIp', 'trustCloudflareIp']);
+
+  // Multiplayer still gets all of them: this is a view, not a deletion.
+  const mp = settingsView(mkdtempSync(join(tmpdir(), 'set-')), {
+    setup: { deploymentMode: 'multiplayer' }, limits,
+  }).sections.find((s) => s.name === 'limits')!;
+  assert.equal(mp.fields.length, Object.keys(limits).length);
+});
+
+test('every name in the solo keep-list is a real field', () => {
+  // A typo here would hide the field it was meant to keep, silently.
+  const all = settingsView(mkdtempSync(join(tmpdir(), 'set-')), {
+    setup: { deploymentMode: 'multiplayer' },
+    limits: { loginPerMinPerIp: 1, trustCloudflareIp: false, msgsPerSec: 1 },
+  }).sections.find((s) => s.name === 'limits')!;
+  const known = new Set(all.fields.map((f) => f.key));
+  assert.deepEqual(SOLO_KEEP_FIELDS.limits!.filter((k) => !known.has(k)), []);
 });
