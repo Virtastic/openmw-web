@@ -1060,14 +1060,8 @@ async function stepFiles() {
         <strong>Could not read the game data folder.</strong> ${modsError || 'The server did not answer.'}
         Reload this page; if you were signed out, sign in again and Setup resumes here.
       </div>`)}
-    ${raw(!mods || !profile ? '' : missingCount > 0 ? html`
-      <div class="alert alert-warning mb-0">
-        <strong>${missingCount} still missing.</strong>
-        ${raw(answers.deploymentMode === 'single'
-          ? 'Fine to continue, none of it is required here.'
-          : 'You can continue, but players cannot join until it is complete.')}
-      </div>` : html`<div class="alert alert-success mb-0">
-        Everything this profile expects is present, media included.</div>`)}`,
+    ${raw(!mods || !profile || missingCount > 0 ? '' : html`
+      <div class="alert alert-success mb-0">Everything is here.</div>`)}`,
   { next: 'Continue' });
   // Re-render this step after an upload so the found/missing table updates in place.
   wireUpload(() => renderWizard());
