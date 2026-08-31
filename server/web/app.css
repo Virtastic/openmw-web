@@ -64,6 +64,31 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* THE GROUND IS THREE LAYERS, copied from play/launcher.html rather than approximated.
+   A flat ash was close enough to look deliberate and wrong enough to notice next to the
+   launcher: what is missing is the light. Red Mountain glows from BELOW the viewport
+   (at 132%, off the bottom edge), not from above, and a grain sits over everything to kill
+   the flat-digital look. */
+body::before {
+  content: ''; position: fixed; inset: 0; z-index: -2; pointer-events: none;
+  background:
+    radial-gradient(150% 72% at 50% 132%, rgba(198, 90, 46, .30), rgba(198, 90, 46, .05) 34%, transparent 60%),
+    radial-gradient(90% 60% at 50% 134%, rgba(233, 180, 90, .16), transparent 56%);
+  animation: vt-ember 9s ease-in-out infinite;
+}
+/* Faint ashfall grain. */
+body::after {
+  content: ''; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  opacity: .05; mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+@keyframes vt-ember { 0%, 100% { opacity: .82 } 50% { opacity: 1 } }
+
+/* Those layers sit at negative z-index, so every ancestor between them and the content has
+   to stay transparent or the atmosphere is painted over and the ground goes flat again.
+   AdminLTE gives app-main its own background, which did exactly that. */
+.app-wrapper, .app-main, .app-content, .app-content-header { background: transparent !important; }
+
 h1, h2, h3, h4, h5, .card-title, #pageTitle {
   font-family: var(--vt-serif);
   color: var(--vt-ink);
@@ -78,13 +103,9 @@ body.vt-bare .app-sidebar,
 body.vt-bare .app-header,
 body.vt-bare .app-footer { display: none; }
 body.vt-bare .app-wrapper { display: block; }
-body.vt-bare .app-main {
-  min-height: 100vh;
-  margin-left: 0;
-  background:
-    radial-gradient(ellipse at 50% -18%, rgba(198, 90, 46, .20) 0%, transparent 58%),
-    var(--vt-ash);
-}
+/* No bloom of its own: the real one is on body::before, rising from below like the
+   launcher's. This used to paint a second, top-down glow that fought it. */
+body.vt-bare .app-main { min-height: 100vh; margin-left: 0; }
 body.vt-bare .app-content-header { padding-top: 3rem; text-align: center; }
 body.vt-bare .app-content-header .breadcrumb { display: none; }
 body.vt-bare .app-content-header .row > div { width: 100%; }
@@ -444,4 +465,5 @@ code { color: var(--vt-bronze-hi); }
 }
 @media (prefers-reduced-motion: reduce) {
   .vt-choice, .btn, .vt-step-bar { transition: none; }
+  body::before { animation: none; }
 }

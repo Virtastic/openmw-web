@@ -32,7 +32,6 @@
   body {
     min-height: 100vh; display: flex; align-items: center; justify-content: center;
     background-color: var(--ash);
-    background-image: radial-gradient(ellipse at 50% -18%, rgba(198,90,46,.20) 0%, transparent 58%);
     color: var(--ink); font: 16px/1.6 var(--sans); -webkit-font-smoothing: antialiased; padding: 1rem;
   }
   .card {
@@ -66,6 +65,22 @@
   .note a { color: var(--gold-hi); }
   .foot { margin-top: 1.5rem; text-align: center; font-size: .75rem; color: var(--faint); }
   .foot a { color: var(--muted); }
+  /* The same three-layer ground as play/launcher.html: ash, Red Mountain glowing from below
+     the viewport, and an ashfall grain over it. Copied rather than approximated. */
+  body::before {
+    content: ''; position: fixed; inset: 0; z-index: -2; pointer-events: none;
+    background:
+      radial-gradient(150% 72% at 50% 132%, rgba(198,90,46,.30), rgba(198,90,46,.05) 34%, transparent 60%),
+      radial-gradient(90% 60% at 50% 134%, rgba(233,180,90,.16), transparent 56%);
+    animation: ember 9s ease-in-out infinite;
+  }
+  body::after {
+    content: ''; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+    opacity: .05; mix-blend-mode: overlay;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+  @keyframes ember { 0%, 100% { opacity: .82 } 50% { opacity: 1 } }
+  @media (prefers-reduced-motion: reduce) { body::before { animation: none; } }
   [hidden] { display: none !important; }
 </style>
 </head>
