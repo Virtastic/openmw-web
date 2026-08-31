@@ -36,6 +36,24 @@ ${address} {
 ${tls}
 	encode zstd gzip
 
+	# WITHOUT THESE THREE HEADERS THERE IS NO GAME.
+	#
+	# The engine is a pthreads build: it needs SharedArrayBuffer, and a browser only hands that
+	# out to a cross-origin-isolated page. Miss them and every browser on earth lands on
+	# "Browser not supported" — which reads as a client bug and is not one. play/server.py sent
+	# these from the start, so the game ran under the python dev server and not through this
+	# proxy, and the difference looked like Docker being broken.
+	#
+	# Site-wide rather than on the client's paths only: the isolation applies to the DOCUMENT,
+	# and the document at / is served by the server upstream, not from /srv/client.
+	header {
+		Cross-Origin-Opener-Policy "same-origin"
+		Cross-Origin-Embedder-Policy "require-corp"
+		# Lets our own assets be embedded by the isolated document. Same-origin would do here,
+		# but this matches what play/server.py sends, and one of the two is not worth diverging.
+		Cross-Origin-Resource-Policy "cross-origin"
+	}
+
 	root * /srv/client
 
 	# NOT EVERYTHING IN THE CLIENT FOLDER IS FOR THE PUBLIC.

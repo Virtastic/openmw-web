@@ -36,10 +36,20 @@
   try { hasClient = (await fetch('/index.html', { method: 'HEAD' })).ok; } catch { /* stays false */ }
   $('#noclient').hidden = hasClient;
 
+  // WHICH KIND OF SERVER THIS IS. The wizard's answer decides which of the two boot modes the
+  // player lands in, and it must be read before anybody signs in, because the mode is baked
+  // into the fragment handed over at that moment.
+  //
+  // Defaulting to multiplayer when this cannot be read would be the wrong way round: it is
+  // the mode that needs a running world, and offering it when the state is unknown produces
+  // a connection attempt to a server that may not simulate anything. Single player only needs
+  // the locker, which is always there.
+  let singlePlayer = true;
   try {
     const s = await (await fetch('/admin/api/state')).json();
     if (s.serverName) { $('#name').textContent = s.serverName; document.title = s.serverName; }
-  } catch { /* keep the default heading */ }
+    singlePlayer = s.setup?.deploymentMode !== 'multiplayer';
+  } catch { /* keep the default heading, and the safer mode */ }
 
   let auth = null;
   try { auth = await (await fetch('/auth/providers')).json(); } catch { /* handled below */ }
@@ -92,13 +102,27 @@
    * to a server, written to an access log, or leaked through Referer.
    */
   const enterGame = (res) => {
+    const acct = res.account ? `&mpaccount=${encodeURIComponent(res.account)}` : '';
+    const lock = res.locker ? `&mplocker=${encodeURIComponent(res.locker)}` : '';
+
+    // SINGLE PLAYER IS THE ABSENCE OF mp=, NOT A FLAG. index.html decides it is a multiplayer
+    // session purely from mp= being present, so sending one unconditionally — which this did
+    // — put a single-player server into multiplayer: the game announced itself as MULTIPLAYER
+    // and tried to join a world that, in this mode, nothing is simulating. cloud=1 is what the
+    // launcher sends for the same mode, and index.html's own gate looks for it.
+    if (singlePlayer) {
+      location.href = '/index.html'
+        + `#locker=${encodeURIComponent(location.origin)}${lock}${acct}&cloud=1`;
+      return;
+    }
+
     const ws = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`;
     location.href = '/index.html'
       + `#mp=${encodeURIComponent(ws)}`
       + `&mpticket=${encodeURIComponent(res.ticket)}`
-      + (res.account ? `&mpaccount=${encodeURIComponent(res.account)}` : '')
+      + acct
       + `&locker=${encodeURIComponent(location.origin)}`
-      + (res.locker ? `&mplocker=${encodeURIComponent(res.locker)}` : '')
+      + lock
       + (res.name ? `&mpcharname=${encodeURIComponent(res.name)}` : '');
   };
 

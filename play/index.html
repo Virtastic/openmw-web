@@ -643,7 +643,12 @@
      var kick = document.createElement('div');
      kick.style.cssText = 'font:600 10.5px/1 Optima,sans-serif;letter-spacing:.22em;'
        + 'text-transform:uppercase;color:#7c705c';
-     kick.textContent = opts.kicker || 'Multiplayer';
+     // The default used to be a flat 'Multiplayer', which is wrong on every fatal that is not
+     // about multiplayer — a browser too old for SharedArrayBuffer, a lost GPU context, a
+     // corrupt data file — and single player is the common case. Follow the actual mode; the
+     // capability gates below run before it is set, which is correct, because they are not
+     // multiplayer problems either.
+     kick.textContent = opts.kicker || (window.__omwMPEnabled ? 'Multiplayer' : 'Morrowind');
      var h = document.createElement('h2');
      h.style.cssText = 'margin:10px 0 10px;font:600 23px/1.2 "Hoefler Text",Baskerville,Georgia,serif;color:#f4ecd9';
      h.textContent = title;
