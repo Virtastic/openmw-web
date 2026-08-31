@@ -131,8 +131,13 @@ export const HELP: Record<string, FieldHelp> = {
     danger: 'This is the most powerful thing on the server. It is owner-only and every use is logged, but if you do not need it, turning it off removes the capability entirely.',
   },
   'admin.dashboardToken': {
-    text: 'Shared bearer token for scripted access to the admin API. Anyone holding it has full owner rights without an account, so treat it as a password and rotate it if it leaks. Leave it empty unless you are automating something.',
-    danger: 'A non-empty value here is a permanent full-access credential that bypasses accounts, roles and two-factor. Prefer a real account with a role.',
+    // Said "full owner rights" and "full-access", which stopped being true when the token was
+    // downgraded to moderator (see net/admin/auth.ts: it is documented as covering what the
+    // old dashboard did, and copies of it live in cron jobs, so owner was too much power to
+    // hand a secret people already treat as low-privilege). Overstating a risk is its own
+    // problem: help nobody can verify is help nobody believes.
+    text: 'Shared bearer token for scripted access to the admin API. It acts as a moderator with no account behind it, so treat it as a password and rotate it if it leaks. Leave it empty unless you are automating something.',
+    danger: 'A non-empty value here is a standing moderator credential that bypasses accounts and two-factor. It cannot change settings or add accounts, but it can act on players. Prefer a real account with a role.',
   },
 
   // --- authority ------------------------------------------------------------------------

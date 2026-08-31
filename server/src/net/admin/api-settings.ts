@@ -58,6 +58,37 @@ export const MULTIPLAYER_ONLY = [
   'simPeer', 'gateway', 'worlds',
 ];
 
+/**
+ * Individual fields hidden in single player, for a DIFFERENT reason than the sections above.
+ *
+ * Those are hidden because they do nothing here. This one works perfectly well: the admin API
+ * is real in single player and a token would authenticate against it. It is hidden because
+ * there is no plausible use for it — it exists so a cron job can drive the API of a server
+ * with players on it — and because leaving a standing credential on screen invites somebody
+ * to fill it in. A field whose only outcomes are "empty" or "a moderator credential you did
+ * not need" is not a choice worth offering one person running their own game.
+ *
+ * Hidden, never cleared: an existing value keeps working and comes back if the deployment
+ * ever becomes multiplayer.
+ */
+export const SOLO_HIDE_FIELDS = ['admin.dashboardToken'];
+
+/**
+ * Fields the SERVER works out, which an operator must therefore not be asked for.
+ *
+ * locker.publicBase is the origin a browser reaches this server on. The wizard already asked
+ * for the domain, generated the proxy config from it and issued a certificate for it, so
+ * asking again — in a different format, on a settings page, under a name that does not
+ * mention domains — is asking somebody to restate a fact the server acted on ten minutes
+ * ago. Every wrong answer is silent: uploads and savegames mint URLs pointing somewhere the
+ * browser cannot reach, and nothing says so until a transfer fails.
+ *
+ * Derived at boot instead (see server.ts). A value already in config.toml still wins, so a
+ * hand-tuned deployment behind an unusual proxy keeps working; it simply is not offered as a
+ * question to anyone who has not already answered it.
+ */
+export const DERIVED_FIELDS = ['locker.publicBase'];
+
 // Values that are secrets. Never sent to the browser in full; a save that receives the mask
 // back unchanged leaves the stored value alone, so "edit another field on this form" cannot
 // silently blank a credential the operator never touched.
@@ -156,6 +187,7 @@ export function settingsView(dataDir: string, config: unknown): {
   const cfg = config as Record<string, unknown>;
   const overrides = readDashboardTree(dataDir);
   const sections: SectionView[] = [];
+  const soloMode = (cfg.setup as { deploymentMode?: string } | undefined)?.deploymentMode === 'single';
 
   for (const [name, body] of Object.entries(cfg)) {
     // `stated` is a Set the loader adds for its own bookkeeping, and dashboardFallback is
@@ -167,14 +199,24 @@ export function settingsView(dataDir: string, config: unknown): {
     const over = (overrides[name] as Tree | undefined) ?? {};
     const fields: FieldView[] = [];
     for (const [key, value] of Object.entries(body as Record<string, unknown>)) {
+      // A nested table ([auth.discord]) gets its own editable section in the loop below, so
+      // it must NOT also appear here. It did both: the parent listed discord, google and
+      // microsoft as "structured data a simple form cannot edit", directly above the three
+      // forms that edit them. The row was not just redundant, it told the operator the
+      // opposite of what the next panel proved.
+      if (value !== null && typeof value === 'object' && !Array.isArray(value)) continue;
+      // Fields the operator is not asked for: derived by the server, or pointless in a
+      // one-person deployment. Filtered HERE rather than in the page, because the server
+      // already knows both facts and a field that is never sent cannot be saved by accident.
+      const path = `${name}.${key}`;
+      if (DERIVED_FIELDS.includes(path)) continue;
+      if (soloMode && SOLO_HIDE_FIELDS.includes(path)) continue;
       const type = fieldType(value);
       const secret = isSecret(name, key);
       const h = helpFor(name, key);
       fields.push({
         key,
         type,
-        // A nested table (e.g. [auth.discord]) is not editable as a flat field; it gets its
-        // own section entry below rather than being silently dropped.
         value: secret ? (value === '' ? '' : SECRET_MASK) : value,
         ...(secret ? { secret: true } : {}),
         ...(Object.hasOwn(over, key) ? { overridden: true } : {}),

@@ -554,7 +554,17 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // Phase C. The store is opened here so its lifetime matches the server's; social.stop()
   // clears presence timers that would otherwise keep the process alive on shutdown.
   // Phase 3.5 storage locker. S3 creds from env; disabled (inert) when no endpoint/keys.
-  const lockerStorage = lockerStorageFrom(config.locker, sharedDir, `http://127.0.0.1:${opts.port}`);
+  // The origin a browser reaches this server on, which used to be its own settings field.
+  // The operator answered it in the wizard: the domain there is what the proxy config was
+  // generated from and what the certificate was issued for, so restating it under another
+  // name was a second chance to get it wrong, silently — a bad value mints upload and
+  // savegame URLs the browser cannot reach, and nothing reports that until a transfer fails.
+  // An explicit [locker].publicBase still wins inside lockerStorageFrom, so a hand-tuned
+  // deployment behind an unusual proxy is unaffected.
+  const lockerBase = config.setup.domain
+    ? `https://${config.setup.domain}`
+    : `http://127.0.0.1:${opts.port}`;
+  const lockerStorage = lockerStorageFrom(config.locker, sharedDir, lockerBase);
   const locker = new Locker({
     dataDir: sharedDir,
     maxBytesPerAccount: config.locker.maxBytesPerAccount,

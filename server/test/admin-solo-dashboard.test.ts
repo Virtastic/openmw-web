@@ -16,6 +16,7 @@ import { join } from 'node:path';
 import { LockerSessionStore } from '../src/auth/identities';
 import { createSysInfo } from '../src/net/admin/sysinfo';
 import { MULTIPLAYER_ONLY, SECTION_GROUPS, settingsView } from '../src/net/admin/api-settings';
+import { helpFor } from '../src/net/admin/help';
 
 const app = readFileSync(join(process.cwd(), 'web', 'app.js'), 'utf8');
 
@@ -122,6 +123,58 @@ test('every hidden name is a real section, not a typo', () => {
   // A misspelling here hides nothing and is invisible: the page just keeps showing it.
   const known = new Set([...SECTION_GROUPS.flatMap((g) => g.sections), 'engine']);
   assert.deepEqual(MULTIPLAYER_ONLY.filter((s) => !known.has(s)), []);
+});
+
+// --- fields the operator is not asked for ----------------------------------------------------
+
+test('publicBase is never offered, in either mode', () => {
+  // The wizard already asked for the domain, generated the proxy config from it and got a
+  // certificate for it. Asking again under another name is a second chance to get it wrong,
+  // and every wrong answer is silent.
+  for (const mode of ['single', 'multiplayer']) {
+    const v = settingsView(mkdtempSync(join(tmpdir(), 'set-')), {
+      setup: { deploymentMode: mode }, locker: { publicBase: '', maxBytesPerAccount: 1 },
+    });
+    const locker = v.sections.find((s) => s.name === 'locker')!;
+    assert.deepEqual(locker.fields.filter((f) => f.key === 'publicBase'), [], `shown in ${mode}`);
+    assert.ok(locker.fields.some((f) => f.key === 'maxBytesPerAccount'), 'the section still renders');
+  }
+});
+
+test('the shared admin token is offered in multiplayer and not in single player', () => {
+  const build = (deploymentMode: string) => settingsView(mkdtempSync(join(tmpdir(), 'set-')), {
+    setup: { deploymentMode }, admin: { dashboardToken: '', allowConsole: false },
+  }).sections.find((s) => s.name === 'admin')!;
+
+  assert.ok(build('multiplayer').fields.some((f) => f.key === 'dashboardToken'));
+  const solo = build('single');
+  assert.deepEqual(solo.fields.filter((f) => f.key === 'dashboardToken'), []);
+  // The rest of [admin] still matters here, so the section must survive.
+  assert.ok(solo.fields.some((f) => f.key === 'allowConsole'));
+});
+
+test('a nested table is a form, not also an "unsupported" row above it', () => {
+  // [auth.discord] became its own editable section AND a flat field on the parent, so the
+  // parent said "structured data a simple form cannot edit" directly above the form editing it.
+  const v = settingsView(mkdtempSync(join(tmpdir(), 'set-')), {
+    setup: {}, auth: { allowPasswordLogin: true, discord: { enabled: false, clientId: '' } },
+  });
+  const auth = v.sections.find((s) => s.name === 'auth')!;
+  assert.deepEqual(auth.fields.filter((f) => f.key === 'discord'), [], 'no blob row on the parent');
+  assert.ok(auth.fields.some((f) => f.key === 'allowPasswordLogin'), 'flat fields still render');
+  assert.ok(v.sections.find((s) => s.name === 'auth.discord'), 'and the real form is still there');
+});
+
+test('no settings field claims the shared token grants owner rights', () => {
+  // It resolves to moderator (net/admin/auth.ts). The help said owner, which overstated a
+  // risk the operator cannot check, on the one field where being believed matters.
+  //
+  // Asserted against the delivered strings, not the source: a first version scanned the file
+  // and failed on a comment quoting the wording it was there to remove.
+  const h = helpFor('admin', 'dashboardToken')!;
+  const said = `${h.text ?? ''} ${h.danger ?? ''}`;
+  assert.doesNotMatch(said, /owner rights|full-access|full owner/);
+  assert.match(said, /moderator/);
 });
 
 test('the list ships with the settings payload', () => {

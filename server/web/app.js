@@ -136,9 +136,12 @@ const NAV = [
     { hash: '#console', label: 'Players & commands', icon: 'bi-people', role: 'moderator', solo: false },
     { hash: '#mods', label: 'Game data & mods', icon: 'bi-collection', role: 'viewer' },
   ] },
+  // The setup wizard is first-run only and is deliberately NOT listed here. It is a sequence
+  // of eleven questions whose answers reshape the deployment, and re-entering it on a running
+  // server meant walking back through every one of them to change any one of them. Redeploy
+  // to run it again.
   { group: 'Configuration', items: [
     { hash: '#settings', label: 'Settings', icon: 'bi-sliders', role: 'viewer' },
-    { hash: '#setup', label: 'Setup wizard', icon: 'bi-magic', role: 'owner' },
   ] },
   { group: 'People', items: [
     { hash: '#accounts', label: 'Accounts', icon: 'bi-person-lines-fill', role: 'moderator' },
@@ -1580,9 +1583,9 @@ function setupChecklist() {
     { done: !!state.name, label: 'Create an administrator account' },
     // Owner-only: pointing a viewer at the wizard sent them through every question to a
     // "forbidden" at the end.
-    ...(can('owner')
-      ? [{ done: state.setupCompleted === true, label: 'Run the setup wizard', hash: '#setup' }]
-      : []),
+    // No hash: the wizard is first-run only, so by the time this checklist is visible the
+    // item is always done and the link would lead nowhere.
+    ...(can('owner') ? [{ done: state.setupCompleted === true, label: 'Run the setup wizard' }] : []),
     { done: state.twoFactor === true, label: 'Add two-factor authentication to your account', hash: '#security' },
     { done: localStorage.getItem('omwmp_mods_seen') === '1', label: 'Review the game data and mod list', hash: '#mods' },
     // NOTHING USED TO SAY THIS. An operator could finish setup, upload every file, and still
@@ -3049,7 +3052,10 @@ async function route() {
   // AFTER the role check, not before. Reachable by hash, so a viewer who typed or followed
   // a link to it used to answer every question and then get a bare "forbidden" toast at the
   // final save, and the file-upload panel on the way through failed on every drop.
-  if (hash === '#setup') { if (step < 1) step = 1; seedFromServer(); return renderWizard(); }
+  // Only while setup is genuinely unfinished, which the gate above already handles. Reaching
+  // this line means it IS finished, so the hash is closed rather than reopening eleven
+  // questions on a configured server.
+  if (hash === '#setup') return go('#overview');
 
   const page = ROUTES[hash] || pageOverview;
   try {

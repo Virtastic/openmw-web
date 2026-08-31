@@ -6,7 +6,8 @@
 //
 //   1. A SESSION token minted by /admin/login (password + optional TOTP) or by the SSO
 //      round trip. Carries the account's dashboardRole.
-//   2. The legacy [admin].dashboardToken bearer, treated as `owner`. Automation was built
+//   2. The legacy [admin].dashboardToken bearer, treated as `moderator` (see below for why
+//      it is not `owner`, which is what this line used to claim). Automation was built
 //      against it before accounts existed and breaking that would be a silent outage in
 //      someone's cron job, so it keeps working — but it is no longer the only way in.
 //
