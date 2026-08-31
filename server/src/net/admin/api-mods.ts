@@ -292,13 +292,29 @@ export function safeUploadPath(raw: string): string | null {
   if (/^[a-zA-Z]:/.test(path)) return null;               // drive-relative, e.g. C:foo
 
   const parts = path.split('/');
-  // A browser's directory picker includes the chosen folder as the first segment
-  // ("Data Files/Music/..."), which is a container, not part of the game's layout. Drop a
-  // leading segment only when what remains is recognisable, so this cannot be used to
-  // smuggle an extra level.
-  const segments = parts.length > 1 && !MEDIA_DIRS.test(`${parts[0]}/`) && !CORE_EXT.test(parts[0]!)
-    ? parts.slice(1)
-    : parts;
+
+  // ANCHOR ON "Data Files" WHEREVER IT APPEARS.
+  //
+  // The instruction is "drag the Data Files folder", and a good half of the time what gets
+  // dragged is the folder ABOVE it: the one called Morrowind, which is what people think of
+  // as where the game lives. That arrives as "Morrowind/Data Files/Morrowind.esm", and with
+  // only a single leading segment dropped it left "Data Files/Morrowind.esm", which matches
+  // neither the core-file rule nor the media rule. Every file was refused, and the page
+  // called it "skipped, that is normal for a folder with extras in it" — a total failure
+  // reported as expected behaviour.
+  //
+  // Taking everything after the LAST "Data Files" segment costs nothing in safety: every
+  // remaining segment is still validated below, and the final rule still demands a core file
+  // at the root or a known media directory. It only means the operator can drop the folder
+  // they were most likely to reach for.
+  const anchor = parts.map((p) => p.toLowerCase()).lastIndexOf('data files');
+  const segments = anchor !== -1
+    ? parts.slice(anchor + 1)
+    // No "Data Files" anywhere: the browser's directory picker still names the chosen folder
+    // as the first segment, so drop one leading container when what remains is recognisable.
+    : (parts.length > 1 && !MEDIA_DIRS.test(`${parts[0]}/`) && !CORE_EXT.test(parts[0]!)
+      ? parts.slice(1)
+      : parts);
   if (segments.length === 0) return null;
 
   for (const seg of segments) {

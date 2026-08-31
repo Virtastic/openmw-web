@@ -2061,8 +2061,15 @@ function wireUpload(onDone) {
         </div>
         <div><strong>${done}</strong> of ${entries.length} added
         · ${(bytes / 1048576).toFixed(0)} MB${raw(extra)}</div>
-        ${raw(skipped.length ? html`<div class="small text-secondary">${skipped.length} skipped
+        ${raw(skipped.length && done > 0 ? html`<div class="small text-secondary">${skipped.length} skipped
           (not game data, that is normal for a folder with extras in it)</div>` : '')}
+        ${raw(done === 0 && skipped.length > 3 && !failed.length ? html`
+          <div class="alert alert-warning py-2 px-3 small mt-2 mb-0">
+            <strong>None of those were game files.</strong> The likeliest reason is that the
+            folder dropped was the one <em>containing</em>
+            <code>Data Files</code> rather than <code>Data Files</code> itself. Open it and
+            drag the <code>Data Files</code> folder from inside. Nothing was changed here.
+          </div>` : '')}
         ${raw([...reasons].map(([why, n]) => html`<div class="small text-danger">
           ${n} file${raw(n === 1 ? '' : 's')}: ${why}</div>`).join(''))}
         ${raw(stopped ? html`<div class="alert alert-danger py-2 px-3 small mt-2 mb-0">
