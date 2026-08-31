@@ -534,6 +534,11 @@ function stepOwner() {
           not on its network. It is in the startup log, and in <code>setup-token</code> in the
           data folder.</div>
       </div>`)}
+    <!-- A real form around the credentials. Chrome warns "Password field is not contained in
+         a form" otherwise, and it is right to: outside one, password managers cannot reliably
+         offer to save or fill, and Enter does nothing. Submission is handled in JS, so the
+         form never navigates. -->
+    <form id="oForm" autocomplete="on">
     <div class="mb-3">
       <label class="form-label">Email address</label>
       <input class="form-control" id="oName" type="email" autocomplete="username"
@@ -549,6 +554,7 @@ function stepOwner() {
       <label class="form-label">Confirm password</label>
       <input class="form-control" id="oPass2" type="password" autocomplete="new-password">
     </div>
+    </form>
     <div id="oErr" class="text-danger small"></div>`,
   { back: false, next: 'Create account', onNext: async () => {
     const n = $('#oName').value.trim(), p = $('#oPass').value, p2 = $('#oPass2').value;
@@ -596,6 +602,10 @@ function stepOwner() {
       $('#oErr').textContent = e.message;
     }
   } });
+  // Enter submits rather than reloading the page, and the form stays a form so password
+  // managers behave.
+  const oForm = $('#oForm');
+  if (oForm) oForm.onsubmit = (e) => { e.preventDefault(); $('#wzNext').click(); };
 }
 
 function stepMode() {
@@ -738,6 +748,35 @@ function stepLogin() {
       saveWizard();
     };
   });
+}
+
+function stepRegistration() {
+  wizardShell(html`
+    <h5>Who can create an account?</h5>
+    ${raw(choice('registration', 'open', 'Anyone',
+      'Anyone who reaches the server can sign up.'))}
+    ${raw(choice('registration', 'invite', 'Only with an invite code',
+      'They sign up themselves, but only with the code you give them.', 'Good default'))}
+    ${raw(choice('registration', 'closed', 'Nobody, I will create the accounts',
+      'Sign-ups refused. You add people from the Accounts page.'))}
+    ${raw(answers.registration === 'invite' ? html`
+      <div class="mt-3">
+        <label class="form-label">Invite code</label>
+        <input class="form-control" id="wzInvite" value="${answers.inviteCode}"
+          placeholder="something only your friends know" maxlength="64">
+      </div>` : '')}`,
+  { disabled: !answers.registration
+      || (answers.registration === 'invite' && answers.inviteCode.trim() === ''),
+    need: 'Choose who may sign up.' });
+  wireChoices();
+  const inv = $('#wzInvite');
+  if (inv) {
+    inv.oninput = () => {
+      answers.inviteCode = inv.value;
+      $('#wzNext').disabled = inv.value.trim() === '';
+    };
+    setTimeout(() => inv.focus(), 30);
+  }
 }
 
 function stepContent() {
@@ -1005,9 +1044,12 @@ async function stepFiles() {
     ...(mods?.archives || []).map((a) => a.toLowerCase()),
   ]);
 
+  // A tick and a cross, not two words in coloured pills. The question this screen answers is
+  // "is my upload complete", and a column of green ticks answers it at a glance in a way a
+  // column of the word "found" does not.
   const badge = (ok) => (ok
-    ? '<span class="badge text-bg-success">found</span>'
-    : '<span class="badge text-bg-secondary">missing</span>');
+    ? '<i class="bi bi-check-circle-fill text-success fs-5" title="present"></i>'
+    : '<i class="bi bi-x-circle text-danger fs-5" title="missing"></i>');
 
   const fileRows = (profile?.requires || []).map((f) => html`
     <tr><td class="vt-mono">${f}</td>
@@ -1021,8 +1063,8 @@ async function stepFiles() {
   const mediaRows = mediaDirs.map((d) => {
     const n = media[d] ?? 0;
     return html`<tr><td class="vt-mono">${d}/</td>
-      <td class="text-end">${raw(n > 0
-        ? `<span class="badge text-bg-success">${n >= 50 ? '50+' : n} file${n === 1 ? '' : 's'}</span>`
+      <td class="text-end text-nowrap">${raw(n > 0
+        ? `<span class="text-secondary small me-2">${n >= 50 ? '50+' : n} file${n === 1 ? '' : 's'}</span>${badge(true)}`
         : badge(false))}</td></tr>`;
   }).join('');
 
@@ -1061,7 +1103,10 @@ async function stepFiles() {
         Reload this page; if you were signed out, sign in again and Setup resumes here.
       </div>`)}
     ${raw(!mods || !profile || missingCount > 0 ? '' : html`
-      <div class="alert alert-success mb-0">Everything is here.</div>`)}`,
+      <div class="alert alert-success mb-0 d-flex align-items-center gap-2">
+        <i class="bi bi-check-circle-fill fs-4"></i>
+        <span><strong>All uploaded.</strong> Everything this server needs is here.</span>
+      </div>`)}`,
   { next: 'Continue' });
   // Re-render this step after an upload so the found/missing table updates in place.
   wireUpload(() => renderWizard());
@@ -1097,9 +1142,10 @@ function joinAddress() {
   if (answers.domain) return `https://${answers.domain}`;
   const host = location.hostname;
   if (host === 'localhost' || host === '127.0.0.1' || host === '::1') {
-    return answers.hosting === 'public'
-      ? '(your public IP address, see below)'
-      : "(this machine's address on your network)";
+    // Nobody can answer this from here. The browser says "localhost", which is every
+    // computer's word for itself; the server, in a container, sees only the Docker bridge.
+    // Saying so beats printing an address that reaches nothing.
+    return null;
   }
   return location.origin;
 }
@@ -1148,8 +1194,12 @@ function stepReview() {
         <strong>${raw(mp ? 'Getting players in.' : 'Your address.')}</strong> ${raw(mp
           ? 'Send them this address, they open it in a browser, nothing to install:'
           : 'This is where you play, and where anyone you invite would join:')}
-        <pre class="vt-mono mb-1 mt-2" id="joinLink">${joinAddress()}</pre>
-        <button class="btn btn-sm btn-outline-secondary" id="copyJoin">Copy link</button>
+        ${raw(joinAddress() ? html`
+          <pre class="vt-mono mb-1 mt-2" id="joinLink">${joinAddress()}</pre>
+          <button class="btn btn-sm btn-outline-secondary" id="copyJoin">Copy link</button>`
+          : html`<p class="mb-0 mt-1">You are set up from this machine, so the address here is
+            <code>localhost</code>, which only means "this computer". Open the dashboard from
+            another device and the address bar will show the one to share.</p>`)}
         ${raw(answers.hosting === 'public' && !answers.domain ? html`<p class="small mb-0 mt-2">
           You chose to let people in over the internet but have not set a domain, so there is
           no address this page can give you: what your friends need is your home connection's
@@ -1160,14 +1210,8 @@ function stepReview() {
           also needs their own copy of Morrowind's Data Files, since you chose that players
           bring their own.</p>` : '')}
       </div>`)}
-    <div class="vt-section-note">
-      <strong>What happens when you press the button.</strong> These answers are saved and the
-      server restarts, which takes a few seconds. You will be asked to sign in again, because
-      restarting ends the session you are in now. After that the full dashboard opens, and
-      everything else this server can do, gameplay rules, loot, rate limits, all of it, lives
-      under <strong>Settings</strong>. Nothing here is permanent; you can re-run this whole
-      setup at any time.
-    </div>`,
+    <p class="text-secondary small mb-0">Saving restarts the server, so you will sign in
+      again.</p>`,
   { next: 'Save and restart', onNext: async () => {
     try {
       // ssoCreds for unticked providers must not ride along and resurrect stale keys.
@@ -1248,6 +1292,7 @@ function pageLogin(totpRequired = false, notice = '') {
         <img src="/admin/static/logo.svg" alt="" style="width:56px;height:56px">
       </div>
       <div class="card vt-card"><div class="card-body p-4">
+        <form id="liForm" autocomplete="on">
         <div class="mb-3"><label class="form-label">Email or username</label>
           <input class="form-control" id="liName" autocomplete="username"
             placeholder="you@example.com"></div>
@@ -1257,7 +1302,8 @@ function pageLogin(totpRequired = false, notice = '') {
           <label class="form-label">Authenticator code</label>
           <input class="form-control" id="liTotp" inputmode="numeric" autocomplete="one-time-code" placeholder="123456">
         </div>
-        <button class="btn btn-primary w-100" id="liGo">Sign in</button>
+        <button class="btn btn-primary w-100" id="liGo" type="submit">Sign in</button>
+        </form>
         <div id="liErr" class="text-danger small mt-2"></div>
         <div id="liSso"></div>
         <div class="mt-3 small"><a href="#" id="liForgot">Forgot your password?</a></div>
@@ -1287,10 +1333,7 @@ function pageLogin(totpRequired = false, notice = '') {
       $('#liErr').textContent = e.message;
     }
   };
-  $('#liGo').onclick = submit;
-  view().querySelectorAll('#liName, #liPass, #liTotp').forEach((i) => {
-    i.onkeydown = (ev) => { if (ev.key === 'Enter') submit(); };
-  });
+  $('#liForm').onsubmit = (e) => { e.preventDefault(); submit(); };
   $('#liForgot').onclick = (e) => {
     e.preventDefault();
     $('#liForgotBox').hidden = false;
@@ -1997,7 +2040,7 @@ function uploadPanel(m, inWizard = false) {
         ${raw(inWizard ? '' : html`<p class="small text-secondary">Morrowind's
           <strong>Data Files</strong> folder is more than the plugins:
           <code>Sound</code>, <code>Music</code>, <code>Video</code>, <code>Fonts</code>,
-          <code>Splash</code> and <code>BookArt</code> sit loose beside them and are not inside
+          <code>Splash</code> sit loose beside them and are not inside
           any archive. Add the <em>whole folder</em>: with only the .esm and .bsa the game runs
           silently, with no voice, music or intro.</p>`)}
         <p class="small text-secondary">

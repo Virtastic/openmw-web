@@ -47,7 +47,7 @@ export const CONTENT_PROFILES: Record<string, {
   morrowind: {
     label: 'Morrowind',
     requires: ['Morrowind.esm', 'Morrowind.bsa'],
-    media: ['Sound', 'Music', 'Video', 'Fonts', 'Splash', 'BookArt'],
+    media: ['Sound', 'Music', 'Video', 'Fonts', 'Splash'],
     note: 'The base game. Copy the WHOLE "Data Files" folder, the plugins and archives are '
       + 'only part of it, and the Sound, Music, Video, Fonts, Splash and BookArt folders sit '
       + 'loose beside them. Without those the game runs, silently and with no intro.',
@@ -59,7 +59,7 @@ export const CONTENT_PROFILES: Record<string, {
       'Tribunal.esm', 'Tribunal.bsa',
       'Bloodmoon.esm', 'Bloodmoon.bsa',
     ],
-    media: ['Sound', 'Music', 'Video', 'Fonts', 'Splash', 'BookArt'],
+    media: ['Sound', 'Music', 'Video', 'Fonts', 'Splash'],
     note: 'Game of the Year edition. Each expansion needs its .esm AND its .bsa, an .esm '
       + 'without its archive loads and then renders every object as an error marker, which '
       + 'looks like it worked. Copy the whole "Data Files" folder, loose media included.',
@@ -67,7 +67,7 @@ export const CONTENT_PROFILES: Record<string, {
   'tamriel-rebuilt': {
     label: 'Tamriel Rebuilt',
     requires: ['Morrowind.esm', 'Morrowind.bsa', 'Tribunal.esm', 'Bloodmoon.esm'],
-    media: ['Sound', 'Music', 'Video', 'Fonts', 'Splash', 'BookArt'],
+    media: ['Sound', 'Music', 'Video', 'Fonts', 'Splash'],
     note: 'Game of the Year edition plus the Tamriel Rebuilt landmass. Its own files '
       + '(TR_Mainland.esm, TR_Data.bsa and friends) go in alongside; release names vary, so '
       + 'they are not checked for by name, enable them in the load order once uploaded.',

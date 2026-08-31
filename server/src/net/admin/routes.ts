@@ -102,6 +102,7 @@ export interface AdminDeps {
 
 const ROLE_SET = new Set<string>(DASHBOARD_ROLES);
 
+
 /** The single sign-on providers the wizard offers. */
 const SSO_PROVIDERS = ['discord', 'google', 'microsoft'];
 
@@ -288,6 +289,11 @@ export function adminRoutes(deps: AdminDeps) {
         twoFactor: ctx && !ctx.viaSharedToken
           ? !!(await deps.accounts.get(ctx.accountKey))?.totpSecret
           : false,
+        // Deliberately NOT reporting this machine's network interfaces. Inside a container
+        // they are the Docker bridge (172.18.0.2 and friends), which is reachable from
+        // nothing the operator cares about, and handing that over as "your address" is a
+        // wrong answer given confidently. The address that IS known to work is the one the
+        // browser used to get here, and the page reads that itself.
         // For the top bar and footer, which had markup slots and nothing filling them.
         serverName: (deps.config() as { server?: { name?: string } }).server?.name ?? '',
         version: deps.version,
