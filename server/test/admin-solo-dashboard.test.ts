@@ -9,11 +9,13 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { LockerSessionStore } from '../src/auth/identities';
 import { createSysInfo } from '../src/net/admin/sysinfo';
+import { MULTIPLAYER_ONLY, SECTION_GROUPS, settingsView } from '../src/net/admin/api-settings';
 
 const app = readFileSync(join(process.cwd(), 'web', 'app.js'), 'utf8');
 
@@ -93,6 +95,50 @@ test('multiplayer keeps its own dashboard', () => {
   // The fix must not be "delete the multiplayer view".
   assert.match(app, /stat\(`Players \(of \$\{o\.maxPlayers\}\)`/);
   assert.match(app, /stat\('World', o\.world\.id/);
+});
+
+// --- settings that need a world, or a second person ------------------------------------------
+
+test('the sections a lone player cannot use are named', () => {
+  // Each of these is read by the server's own world simulation, by a join handshake, or by
+  // there being somebody else. None of the three happens in single player.
+  for (const s of ['rules', 'economy', 'time', 'gui', 'cellReset', 'sharing', 'moderation',
+    'authority', 'content', 'engine', 'simPeer', 'gateway', 'worlds']) {
+    assert.ok(MULTIPLAYER_ONLY.includes(s), `${s} should be hidden in single player`);
+  }
+});
+
+test('sections that still do part of their job are NOT hidden', () => {
+  // The cut is "does nothing here", not "sounds multiplayer-ish". [admin] holds the
+  // dashboard's own owners and token, [limits] still rate-limits sign-in, [locker] is how the
+  // one player gets their files, [login]/[auth] are how they sign in.
+  for (const s of ['server', 'login', 'auth', 'admin', 'limits', 'locker', 'metrics',
+    'notifications', 'integrations', 'dev']) {
+    assert.ok(!MULTIPLAYER_ONLY.includes(s), `${s} still matters in single player`);
+  }
+});
+
+test('every hidden name is a real section, not a typo', () => {
+  // A misspelling here hides nothing and is invisible: the page just keeps showing it.
+  const known = new Set([...SECTION_GROUPS.flatMap((g) => g.sections), 'engine']);
+  assert.deepEqual(MULTIPLAYER_ONLY.filter((s) => !known.has(s)), []);
+});
+
+test('the list ships with the settings payload', () => {
+  const view = settingsView(mkdtempSync(join(tmpdir(), 'set-')), {
+    server: { name: 'x' }, rules: { pvp: true },
+  });
+  assert.deepEqual(view.multiplayerOnly, MULTIPLAYER_ONLY);
+});
+
+test('the page filters by it and drops groups left empty', () => {
+  // "Platform (advanced)" is simPeer/gateway/worlds and nothing else, so in single player it
+  // must go entirely rather than remain as a heading that opens onto nothing.
+  assert.match(app, /const hide = singlePlayer\(\) \? new Set\(settingsCache\.multiplayerOnly \|\| \[\]\) : new Set\(\);/);
+  assert.match(app, /\.filter\(\(g\) => g\.sections\.length\)/);
+  const platform = SECTION_GROUPS.find((g) => g.group.startsWith('Platform'))!;
+  assert.deepEqual(platform.sections.filter((s) => !MULTIPLAYER_ONLY.includes(s)), [],
+    'the whole Platform group must be hidden, or the group survives with a gap in it');
 });
 
 // --- pages that cannot work in a one-person deployment ---------------------------------------

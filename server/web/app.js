@@ -1874,7 +1874,22 @@ async function pageSettings() {
   const grouped = new Set(settingsCache.groups.flatMap((g) => g.sections));
   const others = settingsCache.sections.filter((s) => !grouped.has(s.name) && !s.name.includes('.'));
 
-  const groups = [...settingsCache.groups, ...(others.length ? [{ group: 'Other', sections: others.map((s) => s.name) }] : [])];
+  // A SINGLE-PLAYER SERVER IS NOT A MULTIPLAYER ONE WITH THE PLAYERS MISSING. Roughly half
+  // these sections are read by a world this deployment never runs, or describe how people
+  // treat each other when there is only one of them. Showing all 26 makes the handful that
+  // matter hard to find, and every hidden one is a question the operator cannot answer
+  // usefully. The server decides which those are; see MULTIPLAYER_ONLY.
+  //
+  // Hidden, not disabled, and never deleted: the values stay in the file, so a server that
+  // later becomes multiplayer gets them all back exactly as they were.
+  const hide = singlePlayer() ? new Set(settingsCache.multiplayerOnly || []) : new Set();
+  const keep = (names) => names.filter((n) => !hide.has(n));
+
+  const groups = [...settingsCache.groups, ...(others.length ? [{ group: 'Other', sections: others.map((s) => s.name) }] : [])]
+    .map((g) => ({ ...g, sections: keep(g.sections) }))
+    // A group whose every section is multiplayer-only ("Platform (advanced)") goes with them,
+    // rather than sitting there as a heading that opens onto nothing.
+    .filter((g) => g.sections.length);
   const readOnly = !can('owner');
 
   view().innerHTML = html`

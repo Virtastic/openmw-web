@@ -30,6 +30,34 @@ export const SECTION_GROUPS: { group: string; sections: string[]; note?: string 
   },
 ];
 
+/**
+ * Sections that cannot do anything in a single-player deployment.
+ *
+ * The test is structural, not stylistic: in single player the browser runs the engine and the
+ * server keeps accounts, a locker and (when the operator asked it to) a copy of the game
+ * files. It simulates no world and there is no second person, so every setting below is read
+ * by something that never runs here.
+ *
+ *   rules, economy, time, gui, cellReset   the server's own world simulation, which does not exist
+ *   sharing, moderation                    two or more people, one of whom needs moderating
+ *   authority                              handing cell ownership between peers; there is one peer
+ *   content, engine                        checks run against a client as it JOINS; nobody joins
+ *   simPeer, gateway, worlds               the headless engine and the multi-world supervisor
+ *
+ * Deliberately NOT hidden: [admin] carries the dashboard's own owners and token, [limits]
+ * still rate-limits sign-in, [locker] is how the one player gets their files, and
+ * [login]/[auth] are how they sign in. A section that does part of its job here stays.
+ *
+ * Hidden, never deleted: the values stay in the file untouched, so switching a server to
+ * multiplayer later brings them all back exactly as they were.
+ */
+export const MULTIPLAYER_ONLY = [
+  'rules', 'economy', 'time', 'gui', 'cellReset',
+  'sharing', 'moderation', 'authority',
+  'content', 'engine',
+  'simPeer', 'gateway', 'worlds',
+];
+
 // Values that are secrets. Never sent to the browser in full; a save that receives the mask
 // back unchanged leaves the stored value alone, so "edit another field on this form" cannot
 // silently blank a credential the operator never touched.
@@ -123,6 +151,7 @@ export function settingsView(dataDir: string, config: unknown): {
   groups: typeof SECTION_GROUPS;
   sections: SectionView[];
   fallback: string | null;
+  multiplayerOnly: string[];
 } {
   const cfg = config as Record<string, unknown>;
   const overrides = readDashboardTree(dataDir);
@@ -183,6 +212,9 @@ export function settingsView(dataDir: string, config: unknown): {
     groups: SECTION_GROUPS,
     sections,
     fallback: (cfg.dashboardFallback as string | undefined) ?? null,
+    // Sent rather than duplicated in the page: which sections need a world is a fact about
+    // the config, and it belongs next to the grouping that already lives here.
+    multiplayerOnly: MULTIPLAYER_ONLY,
   };
 }
 
