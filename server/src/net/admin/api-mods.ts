@@ -353,6 +353,9 @@ export function gameDataWritable(dir: string): boolean {
  * arriving, and without it the second handler answers a response that has already been sent
  * and takes the process down.
  */
+/** Bumped per request, so two overlapping uploads of one file never share a temp path. */
+let uploadSeq = 0;
+
 export async function uploadContent(
   req: IncomingMessage,
   res: ServerResponse,
@@ -388,7 +391,15 @@ export async function uploadContent(
     log('error', 'admin.upload_mkdir_failed', { name, error: String(err) });
     return { ok: false, status: 500, error: `Could not create the folder for ${name}.` };
   }
-  const tmp = `${target}.${process.pid}.upload`;
+  // UNIQUE PER REQUEST, not per process. This was `${target}.${process.pid}.upload`, and in a
+  // container the pid is always 1, so every upload of the same file shared one temp path.
+  // Two overlapping requests for Morrowind.bsa — a retry started while the first was still
+  // in flight, which on a 300MB archive is a long window — wrote into the same file, then the
+  // first rename moved it away and the second died with ENOENT. Observed on a real upload.
+  //
+  // data/fsstorage.ts carries this exact fix and the same explanation; the admin path was
+  // written later and did not inherit it.
+  const tmp = `${target}.${process.pid}.${uploadSeq++}.upload`;
   const out = createWriteStream(tmp);
   let written = 0;
   let over = false;
@@ -413,8 +424,19 @@ export async function uploadContent(
     });
     // Rename last: a half-received file must never appear in the folder under its real name,
     // because the load-order scan would pick it up and the engine would choke on it.
-    if (existsSync(target)) unlinkSync(target);
-    renameSync(tmp, target);
+    //
+    // No existsSync-then-unlink first. That was its own race — between the check and the
+    // rename another request can put the file back — and it is not needed: rename REPLACES
+    // the destination atomically. Windows is the exception, refusing while another handle is
+    // open, so that one case unlinks and retries rather than the other way round.
+    try {
+      renameSync(tmp, target);
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== 'EEXIST' && code !== 'EPERM' && code !== 'EACCES') throw err;
+      if (existsSync(target)) unlinkSync(target);
+      renameSync(tmp, target);
+    }
   } catch (err) {
     await rm(tmp, { force: true });
     if (over) {

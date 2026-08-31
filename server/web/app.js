@@ -1142,27 +1142,17 @@ async function stepFiles() {
   wizardShell(html`
     <h5>Add your Morrowind files</h5>
     ${raw(answers.deploymentMode === 'single' ? html`
-      <p class="text-secondary small">On a single-player server this is <strong>optional</strong>.
-        The game runs in your own browser against the copy you load there, so this server does
-        not need one to work. Add it here only if you would rather keep your library on the
-        server and have it follow you to any machine you sign in from.</p>`
+      <p class="text-secondary small"><strong>Optional.</strong> Your browser runs the game, so
+        the server does not need a copy. Add one to keep your library here instead.</p>`
       : html`
-      <p class="text-secondary small">The server runs the world itself, so it needs its own
-        copy of the game. This is the one step that needs something from your computer.</p>`)}
+      <p class="text-secondary small">The server runs the world, so it needs its own copy.</p>`)}
     <div class="vt-section-note mb-3">
       <strong>Find the folder called <code>Data Files</code></strong> inside wherever
       Morrowind is installed, and drag it onto the box below. It is usually at:
       <pre class="vt-mono small mb-1 mt-2">${INSTALL_PATHS}</pre>
-      Drag the whole folder, not the files inside it.
-      <p class="mb-1 mt-2"><strong>Your browser will ask permission first.</strong> Chrome
-        shows "Upload N files to this site?" and Firefox asks something similar. That is
-        normal for a folder, and the count will be in the thousands. Click
-        <strong>Upload</strong>.</p>
-      <p class="mb-0">If the browser refuses the folder outright, which some do for locations
-        under <code>Program Files</code>, copy <code>Data Files</code> to your Desktop first
-        and drag that copy. It is a few gigabytes either way, so give it time. You can also
-        skip the browser entirely and copy the folder into
-        <code>${mods?.dir || 'the game data folder'}</code> on the server.</p>
+      <p class="mb-0 mt-2">Your browser will ask "Upload N files?" with a count in the
+        thousands. That is normal, click Upload. If it refuses the folder, copy it to your
+        Desktop first and drag that.</p>
     </div>
 
     ${raw(profile ? html`
@@ -1171,21 +1161,13 @@ async function stepFiles() {
       <div class="text-secondary small text-uppercase mb-1">Sound, music and video
         <span class="text-lowercase">- these sit loose in the folder, so they are easy to miss</span></div>
       <table class="table table-sm align-middle mb-3">${raw(mediaRows)}</table>` : '')}
-    ${raw(profile?.note ? html`<div class="vt-section-note mb-3">${profile.note}</div>` : '')}
     ${raw(mods ? uploadPanel(mods, true) : '')}
     ${raw(missingCount > 0 ? html`
       <div class="alert alert-warning mb-0">
-        <strong>${missingCount} item${raw(missingCount === 1 ? '' : 's')} still missing.</strong>
-        ${raw(missingMedia.length ? html`
-          <div class="mt-1">The empty folders matter as much as the plugins:
-            <span class="vt-mono">${missingMedia.join(', ')}</span>. Without them the game runs
-            with no voice, no music and no intro, and nothing will warn you, because it
-            technically works.</div>` : '')}
-        <div class="mt-2">${raw(answers.deploymentMode === 'single'
-          ? 'That is fine on a single-player server: nothing here is required, and you can add '
-            + 'files any time from Game data and mods.'
-          : 'You can finish setup anyway. The dashboard keeps working and tells you what it '
-            + 'needs, but players cannot join until the server can simulate the world.')}</div>
+        <strong>${missingCount} still missing.</strong>
+        ${raw(answers.deploymentMode === 'single'
+          ? 'Fine to continue, none of it is required here.'
+          : 'You can continue, but players cannot join until it is complete.')}
       </div>` : html`<div class="alert alert-success mb-0">
         Everything this profile expects is present, media included.</div>`)}`,
   { next: 'Continue' });
@@ -2131,11 +2113,9 @@ function uploadPanel(m, inWizard = false) {
         <p class="small text-secondary">
           <label class="btn btn-sm btn-outline-secondary mb-0">Choose the Data Files folder<input
             type="file" id="upDir" webkitdirectory directory multiple hidden></label>
-          <label class="btn btn-sm btn-outline-secondary mb-0 ms-1">Or individual files<input
-            type="file" id="upPick" multiple hidden
-            accept=".esm,.esp,.bsa,.ba2,.omwaddon,.omwgame,.mp3,.wav,.bik,.fnt,.tex,.dds,.tga,.bmp,.zip"></label>
-          <span class="ms-2">Large folders are fine, files upload one at a time and nothing
-          is held in memory.</span></p>
+          <span class="ms-2">Whole folder only. Picking files one at a time was offered here
+          and it was a trap: the folder is thousands of files across a dozen subfolders, and
+          a hand-picked subset produces a game that starts and then misses things.</span></p>
         <div id="upDrop" class="vt-drop">
           <div class="text-secondary">Drop your whole <strong>Data Files</strong> folder here</div>
         </div>
@@ -2146,10 +2126,14 @@ function uploadPanel(m, inWizard = false) {
     </div></div>`;
 }
 
+/** One upload run at a time, across the whole page. Dropping a folder twice, or dropping
+ *  while a run is going, used to start a second pass that raced the first for the same file:
+ *  two requests writing one target, and whichever renamed second failed. */
+let uploadRunning = false;
+
 /** Wire the upload panel. `onDone` runs after the last file finishes. */
 function wireUpload(onDone) {
   const drop = $('#upDrop');
-  const pick = $('#upPick');
   if (!drop) return; // read-only folder: no panel rendered
   const list = $('#upList');
 
@@ -2157,6 +2141,15 @@ function wireUpload(onDone) {
   // than one row per file, a list that long is not information, it is a wall.
   const send = async (entries) => {
     if (!entries.length) return;
+    if (uploadRunning) {
+      toast('An upload is already running. Wait for it to finish before adding more.', 'warning');
+      return;
+    }
+    uploadRunning = true;
+    try { await runUpload(entries); } finally { uploadRunning = false; }
+  };
+
+  const runUpload = async (entries) => {
     const row = document.createElement('div');
     row.className = 'py-2';
     list.replaceChildren(row);
@@ -2203,7 +2196,17 @@ function wireUpload(onDone) {
     };
     paint(' · uploading…');
 
-    for (const { file, path } of entries) {
+    // EIGHT AT A TIME, not one. A Data Files folder is thousands of files and most of them
+    // are tiny voice clips, so the run was almost entirely round-trip latency: one request
+    // out, one answer back, repeat ten thousand times. Sending several at once turns that
+    // dead time into throughput, and the proxy speaks HTTP/2, so they share one connection
+    // rather than opening eight.
+    //
+    // Only safe because the temp-file collision is fixed: every request now writes its own
+    // temp path, so two uploads can never be mid-rename over the same target. Before that,
+    // this change would have turned a rare bug into the common case.
+    let cursor = 0;
+    const sendOne = async ({ file, path }) => {
       try {
         // Raw body, not multipart: the server streams it straight to disk, and a multipart
         // parser for a 400 MB archive would be a dependency plus a memory problem. The PATH
@@ -2224,7 +2227,7 @@ function wireUpload(onDone) {
             + 'Nothing already added was lost. Sign in again and drop the same folder in, '
             + 'files that are already there are simply skipped.';
           failed.push(path);
-          break;
+          return 'stop';
         } else if (r.status === 429) {
           // Backing off beats failing: this endpoint shares the session's request budget.
           await new Promise((res) => setTimeout(res, 2000));
@@ -2259,11 +2262,25 @@ function wireUpload(onDone) {
           stopped = 'The connection to the server dropped, so the rest were not attempted. '
             + 'Check it is still running, then drop the same folder in again, anything '
             + 'already uploaded is skipped.';
-          break;
+          return 'stop';
         }
       }
-      if ((done + skipped.length + failed.length) % 25 === 0) paint(' · uploading…');
-    }
+      return 'ok';
+    };
+
+    const LANES = 8;
+    const worker = async () => {
+      for (;;) {
+        if (stopped) return;
+        const i = cursor++;
+        if (i >= entries.length) return;
+        if (await sendOne(entries[i]) === 'stop') return;
+        // Repaint on a cadence rather than per file: at eight lanes the counters move fast
+        // enough that rendering each one is its own cost.
+        if ((done + skipped.length + failed.length) % 25 === 0) paint(' · uploading…');
+      }
+    };
+    await Promise.all(Array.from({ length: LANES }, worker));
     paint('');
     // Say it out loud too: the panel can be scrolled off on a long page.
     if (stopped) toast('Upload stopped before it finished, see the message above.', 'danger');
@@ -2297,7 +2314,6 @@ function wireUpload(onDone) {
     }
   };
 
-  if (pick) pick.onchange = () => send(fromInput(pick));
   const dir = $('#upDir');
   if (dir) dir.onchange = () => send(fromInput(dir));
 

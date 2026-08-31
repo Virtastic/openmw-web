@@ -5,6 +5,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { safeUploadPath } from '../src/net/admin/api-mods';
+import { startServer } from '../src/server';
+import { tmpDataDir } from './helpers';
+import { mkdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 test('the folder people actually drag is understood', () => {
   // The instruction says "drag Data Files". Half the time what gets dragged is the folder
@@ -40,4 +44,42 @@ test('anchoring on Data Files does not open a way out of the folder', () => {
   ]) {
     assert.equal(safeUploadPath(bad), null, `${bad} must be refused`);
   }
+});
+
+test('two uploads of one file do not fight over a temp path', async (t) => {
+  // THE REPORTED BUG. The temp file was `${target}.${process.pid}.upload`, and in a container
+  // the pid is always 1, so every upload of the same name shared one path. Two overlapping
+  // requests for Morrowind.bsa — a retry begun while the first was still in flight, which on
+  // a 300MB archive is a long window — wrote into the same file, then the first rename moved
+  // it away and the second died with ENOENT. The small files in the same run all succeeded,
+  // which is what made it look like large files specifically were broken.
+  const dataDir = tmpDataDir();
+  const gameData = join(dataDir, 'gamedata');
+  mkdirSync(gameData, { recursive: true });
+  const server = await startServer({
+    requireGameData: false, dataDir, port: 0, host: '127.0.0.1',
+  });
+  t.after(() => server.close());
+  const base = `http://127.0.0.1:${server.port}`;
+  const owner = await fetch(`${base}/admin/api/setup/owner`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ name: 'up@example.com', password: 'a-long-enough-passphrase' }),
+  });
+  const token = (await owner.json() as { token: string }).token;
+
+  const put = (body: Buffer) => fetch(
+    `${base}/admin/api/mods/upload?name=${encodeURIComponent('Morrowind.bsa')}`,
+    { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/octet-stream' }, body },
+  );
+  const results = await Promise.all([
+    put(Buffer.alloc(4096, 1)), put(Buffer.alloc(4096, 2)),
+    put(Buffer.alloc(4096, 3)), put(Buffer.alloc(4096, 4)),
+  ]);
+  assert.deepEqual(results.map((r) => r.status), [200, 200, 200, 200],
+    'every writer finishes; none is left renaming a file another one already moved');
+
+  // And one whole file survives, never a mix of two.
+  const got = readFileSync(join(gameData, 'Morrowind.bsa'));
+  assert.equal(got.length, 4096);
+  assert.ok([1, 2, 3, 4].some((b) => got.equals(Buffer.alloc(4096, b))), 'the file is torn');
 });
