@@ -188,3 +188,25 @@ test('saving a base load order does not delete the installed mods', () => {
   assert.deepEqual(readModDoc(d).mods.map((m) => m.slug), ['keepme']);
   assert.match(readFileSync(join(d, 'modlist.json'), 'utf8'), /"version": 2/);
 });
+
+// --- the wiring, not the unit ------------------------------------------------------------------
+//
+// buildPeerCfg was tested WITH a stack and passed. server.ts called it with two arguments and
+// nobody noticed, so the sim peer ran vanilla while every browser ran the operator's mod list.
+// The two then disagree about what content exists, and ContentGate — which exists to catch
+// exactly that — would refuse every player from a server that had just been configured.
+
+test('the server actually hands the mod stack to the peer config', () => {
+  const src = readFileSync(join(process.cwd(), 'src', 'server.ts'), 'utf8');
+  const call = /buildPeerCfg\([^)]*\)/.exec(src);
+  assert.ok(call, 'buildPeerCfg is not called from server.ts');
+  assert.match(call[0], /resolveMods\(/,
+    'the peer must load the same mods the players do, or the content gate refuses everyone');
+});
+
+test('the browser is handed the mod stack too', () => {
+  // The other half of the same mistake: both consumers of resolveMods must be wired, or the
+  // two halves of one deployment run different load orders.
+  const src = readFileSync(join(process.cwd(), 'src', 'server.ts'), 'utf8');
+  assert.match(src, /modDoc: \(\) => readModDoc\(/);
+});

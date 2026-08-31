@@ -338,12 +338,18 @@ export async function buildFrontDoor(
   // characters (/auth/characters). Character stats live in the SHARED PlayerStore.
   const players = new PlayerStore(sharedDir);
   // The launcher enforces the world's content requirement BEFORE the player starts, so it has
-  // to be told what that is. Same detection the sim peer's config is generated from, so the
-  // checklist and the world can never disagree.
-  // WITH the operator's load order. Without it this said "the checklist and the world can never
-  // disagree" while doing exactly that: a disabled expansion was still demanded of every player,
-  // because the checklist re-derived the content list alphabetically with everything present
-  // switched on. Mods make the same divergence much larger.
+  // to be told what that is.
+  //
+  // This used to claim "the checklist and the world can never disagree" while passing no load
+  // order at all, so a disabled expansion was still demanded of every player. It now reads the
+  // one in the SHARED directory, which is the right answer for the single-world case (there
+  // sharedDir and the world's dataDir are the same directory).
+  //
+  // IN GATEWAY MODE IT IS STILL AN APPROXIMATION, and deliberately so: every world is a child
+  // process with its own dataDir and its own load order, so there is no single answer for a
+  // front door that fronts all of them. A shared-dir list, when one exists, is the closest
+  // thing to a house default; without one this behaves exactly as it did before. Per-world
+  // checklists would mean asking each world, which is a different feature.
   const worldContent = detectGameData(gameDataDir(sharedDir),
     orderedContent(gameDataDir(sharedDir), sharedDir));
   const locker2 = lockerRoutes({

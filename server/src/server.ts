@@ -1289,7 +1289,15 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     // via OMW_SIMPEER_RESOURCES if a build lays them out differently.
     const resources = process.env.OMW_SIMPEER_RESOURCES
       || join(dirname(config.simPeer.binary), '..', 'share', 'openmw', 'resources');
-    writeFileSync(join(cfgDir, 'openmw.cfg'), buildPeerCfg(gameData, resources));
+    // WITH THE MODS. The peer simulates the world the players are in, so it has to load the
+    // same content they do. Without this it ran vanilla while every browser ran the mod list:
+    // the two disagree about what exists, and ContentGate — which is there to catch exactly
+    // that — would refuse every player from a server the operator had just configured.
+    //
+    // Read here rather than at boot, so the cfg written on a restart reflects whatever the
+    // dashboard last saved.
+    writeFileSync(join(cfgDir, 'openmw.cfg'),
+      buildPeerCfg(gameData, resources, resolveMods(readModDoc(opts.dataDir))));
     // Pace the peer. Headless means nothing else will.
     writeFileSync(join(cfgDir, 'settings.cfg'), buildPeerSettings());
     config.simPeer.configDir = cfgDir;

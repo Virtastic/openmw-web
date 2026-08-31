@@ -283,7 +283,10 @@ export async function commitInstall(
     for (const m of installed) await rm(join(gameDataDir, MODS_SUBDIR, m.slug), { recursive: true, force: true });
     return fail(500, wrote.error);
   }
+  // Both halves of the staging pair. Leaving the note behind describes an archive that has
+  // already been installed, and the sweep would not touch it for six hours.
   await rm(zipPath, { force: true });
+  await rm(join(dataDir, STAGING, `${token}.json`), { force: true });
   log('info', 'mods.installed', { slugs: installed.map((m) => m.slug) });
   return { ok: true, value: installed };
 }

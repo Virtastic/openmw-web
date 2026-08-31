@@ -2268,6 +2268,9 @@
          // (Collections::getPath iterates with rbegin), so two mods shipping "Data.bsa" would
          // silently collapse into one. We choose the filename in our own filesystem, and only
          // openmw.cfg ever refers to a BSA by name, so a clash is renamed on the way in.
+         // Plugin names that actually mounted, so the server's order can be filtered by them
+         // rather than rebuilt from it.
+         var ok = {};
          var claimed = {};
          for (const mod of doc.mods){
            var root = '/mwmods/' + mod.slug;
@@ -2287,7 +2290,12 @@
                var slash = dest.lastIndexOf('/');
                if (slash > root.length) { try { FS.mkdirTree(dest.slice(0, slash)); } catch(e){} }
                StreamFS.mount(dest, 'mwdata/mods/' + mod.slug + '/' + f.p, f.s);
-               mounted[keep.toLowerCase()] = keep;
+               // Keyed by the name the SERVER declared, mapping to the name we actually used.
+               // Keying it by the kept name meant a renamed archive was looked up under its
+               // original and missed, so the second mod's .bsa was silently dropped — which is
+               // the exact failure the rename exists to prevent.
+               mounted[f.p.toLowerCase()] = keep;
+               if (keep !== f.p) mounted[keep.toLowerCase()] = keep;
              }
            } catch (e) { failed = e; }
 
@@ -2299,13 +2307,24 @@
              continue;
            }
            out.dirs.push(root);
-           (mod.plugins || []).forEach(function(p){ out.content.push(mounted[p.toLowerCase()]); });
+           (mod.plugins || []).forEach(function(p){ ok[p.toLowerCase()] = mounted[p.toLowerCase()]; });
            (mod.archives || []).forEach(function(a){
              var real = mounted[a.toLowerCase()];
              if (real) out.archives.push(real);
            });
            append('[mods] ' + mod.name + ' (' + (mod.files || []).length + ' files)');
          }
+
+         // THE SERVER'S ORDER, not one rebuilt here. resolveMods() puts every mod master ahead
+         // of every mod plugin, which is what the engine expects; walking the mods and pushing
+         // each one's plugins in turn produces a different order the moment a later mod ships an
+         // .esm, and then the headless peer and the browser are running two different load
+         // orders from one list. Filtered by what mounted, because a name that did not arrive
+         // must never be emitted.
+         (doc.content || []).forEach(function(c){
+           var real = ok[c.toLowerCase()];
+           if (real) out.content.push(real);
+         });
 
          // LAST GATE: a plugin whose master is not loaded aborts the engine at startup, and
          // from the player's side that is a black screen with no message. The dashboard warns

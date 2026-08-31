@@ -122,3 +122,13 @@ test('mod data= lines come after the asset pack so a mod wins', () => {
   const j = index.indexOf("mods.dirs.forEach");
   assert.ok(i > 0 && j > i, 'mod dirs must be emitted after the asset pack');
 });
+
+test('a renamed archive is still emitted, under its new name', () => {
+  // The rename existed to stop two mods' identically-named .bsa files collapsing into one.
+  // `mounted` was keyed by the name we KEPT while archives were looked up by the name the
+  // server declared, so the renamed one missed and was dropped — the exact outcome the rename
+  // was there to prevent, and invisible because the first mod's archive still worked.
+  const fn = /async function mountServerMods\(\)\{[\s\S]*?\n       \}/.exec(index)!;
+  assert.match(fn[0], /mounted\[f\.p\.toLowerCase\(\)\] = keep;/,
+    'the lookup key must be what the server declared, not what we renamed it to');
+});
