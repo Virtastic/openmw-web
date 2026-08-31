@@ -814,8 +814,11 @@
    // Firefox 134+). Feature-detected for the same reason as everything else here: a browser
    // without it cannot instantiate openmw.wasm at all, so this belongs in the gate rather
    // than surfacing later as a LinkError on the game page.
+   // Same descriptor the engine actually requests (shared, 64-bit, 16 GiB maximum), not just
+   // "does memory64 exist" -- see the matching probe in index.html.
    let noMem64 = false;
-   try { new WebAssembly.Memory({ initial: 1, index: 'u64' }); } catch(e){ noMem64 = true; }
+   try { new WebAssembly.Memory({ initial: 1n, maximum: 262144n, shared: true, address: 'i64' }); }
+   catch(e){ noMem64 = true; }
    // Touch signal OR-ed from two sources because neither is universal, then AND-ed with a narrow
    // viewport so touchscreen laptops (maxTouchPoints > 0, wide screen) are not caught by mistake.
    const touch = matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;

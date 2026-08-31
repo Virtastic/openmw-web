@@ -178,8 +178,21 @@ check('scalar exports present',
 
 // --- 4. the boot gate --------------------------------------------------------------------
 check('memory64 probe true here',
-  (await evalIn(`(() => { try { new WebAssembly.Memory({initial:1, index:'u64'}); return true; }
-                          catch(e){ return false; } })()`)).value === true);
+  (await evalIn(`(() => { try {
+      new WebAssembly.Memory({initial:1n, maximum:262144n, shared:true, address:'i64'});
+      return true; } catch(e){ return false; } })()`)).value === true);
+
+// The declared ceiling, read off the live memory rather than trusted from the build script.
+const ceiling = await evalIn(`(() => {
+  const d = Module.wasmMemory.type ? Module.wasmMemory.type() : null;
+  return d && d.maximum ? Number(d.maximum) * 65536 : null;
+})()`);
+if (ceiling.value) {
+  const gib = ceiling.value / 1024 ** 3;
+  check('ceiling is V8 max (16 GiB)', Math.abs(gib - 16) < 0.01, `(${gib.toFixed(2)} GiB)`);
+} else {
+  info('ceiling', '(Memory.type() unavailable; skipped)');
+}
 
 // --- ENGINE ALLOCATOR ACROSS 4 GiB ---------------------------------------------------------
 // The closest honest proxy for "does a Tamriel Rebuilt load order fit", short of having TR.

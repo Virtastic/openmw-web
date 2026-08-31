@@ -57,8 +57,24 @@ BUILD_DIR="${OMW_BUILD_DIR:-$([ "$WASM_ARCH" = wasm64 ] && echo build-wasm64 || 
 
 # Heap ceiling. wasm32 cannot exceed 4 GiB -- that is the address space, not a policy. wasm64
 # can, and lifting it is the entire point of the conversion.
+#
+# WHY THERE IS A NUMBER HERE AT ALL, since a cap can only ever hurt: it is not optional. The
+# engine builds -pthread, so its memory is shared, and the spec requires a shared memory to
+# declare a maximum -- omitting it is a hard error:
+#   WebAssembly.Memory(): If shared is true, maximum property should be defined.
+#
+# So the only question is what number, and the answer is "as high as the runtime allows", not a
+# guess. V8 caps wasm64 memory at 16 GiB and rejects anything above it:
+#   Property 'maximum': value 278528 is above the upper bound      (17 GiB)
+# Declaring the maximum costs nothing at runtime -- it is a virtual reservation, growth stays
+# lazy, and a 16 GiB maximum with a 1-page initial creates instantly. A machine without the RAM
+# still fails at its own physical limit, which play/index.html:3373 already reports properly;
+# a lower cap here would just make it fail EARLIER, on an invented boundary.
+#
+# This was 8 GiB for one build. That was an arbitrary number of mine and it could only cost
+# headroom, so it is now the real ceiling.
 if [ "$WASM_ARCH" = "wasm64" ]; then
-  MAX_MEMORY="${OMW_MAX_MEMORY:-8589934592}"   # 8 GiB
+  MAX_MEMORY="${OMW_MAX_MEMORY:-17179869184}"  # 16 GiB -- V8's hard maximum for wasm64
 else
   MAX_MEMORY="${OMW_MAX_MEMORY:-4294967296}"   # 4 GiB, the wasm32 wall
 fi
