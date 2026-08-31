@@ -57,6 +57,7 @@ import { createAuthRoutes } from './auth/routes';
 import { ensureVanillaManifest } from './data/vanilla-manifest';
 import { Locker, loadVanillaManifest } from './data/locker';
 import { lockerStorageFrom, blobRoutes, FsStorage } from './data/fsstorage';
+import { mwDataRoutes } from './net/mwdata-routes';
 import { saveRoutes, eraseSaves } from './data/save-routes';
 import { lockerRoutes } from './data/locker-routes';
 import { LockerSessionStore, AdminSessionStore } from './auth/identities';
@@ -1102,6 +1103,13 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     adminRoutes,
     // Before the locker: blob URLs carry their capability in the path, not a Bearer header.
     blobRoutes(lockerStorage instanceof FsStorage ? lockerStorage : undefined),
+    // "This server hands out the files" — the wizard's other delivery answer. Reads the
+    // stored answer per request, so switching it off in the dashboard stops the serving
+    // without a restart.
+    mwDataRoutes({
+      gameDataDir: gameDataDir(sharedDir),
+      deliveryModel: () => config.setup.deliveryModel,
+    }),
     saveRoutes({
       storage: lockerStorage, sessions: lockerSessions, dataDir: sharedDir,
       maxBytesPerAccount: config.locker.maxSaveBytesPerAccount,

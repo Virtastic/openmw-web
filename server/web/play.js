@@ -45,10 +45,15 @@
   // a connection attempt to a server that may not simulate anything. Single player only needs
   // the locker, which is always there.
   let singlePlayer = true;
+  // The other wizard answer that changes what the game page is told: 'serve' means the
+  // operator's own library is published and nobody uploads anything, 'verify' means each
+  // player brings their own copy through their locker.
+  let hostedData = false;
   try {
     const s = await (await fetch('/admin/api/state')).json();
     if (s.serverName) { $('#name').textContent = s.serverName; document.title = s.serverName; }
     singlePlayer = s.setup?.deploymentMode !== 'multiplayer';
+    hostedData = s.setup?.deliveryModel === 'serve';
   } catch { /* keep the default heading, and the safer mode */ }
 
   let auth = null;
@@ -103,7 +108,10 @@
    */
   const enterGame = (res) => {
     const acct = res.account ? `&mpaccount=${encodeURIComponent(res.account)}` : '';
+    // The token always rides along: it is what buys server-side saves, whichever library the
+    // game data itself comes from. mwdata=1 is what picks the library.
     const lock = res.locker ? `&mplocker=${encodeURIComponent(res.locker)}` : '';
+    const data = hostedData ? '&mwdata=1' : '';
 
     // SINGLE PLAYER IS THE ABSENCE OF mp=, NOT A FLAG. index.html decides it is a multiplayer
     // session purely from mp= being present, so sending one unconditionally — which this did
@@ -112,7 +120,7 @@
     // launcher sends for the same mode, and index.html's own gate looks for it.
     if (singlePlayer) {
       location.href = '/index.html'
-        + `#locker=${encodeURIComponent(location.origin)}${lock}${acct}&cloud=1`;
+        + `#locker=${encodeURIComponent(location.origin)}${lock}${acct}${data}&cloud=1`;
       return;
     }
 
@@ -123,6 +131,7 @@
       + acct
       + `&locker=${encodeURIComponent(location.origin)}`
       + lock
+      + data
       + (res.name ? `&mpcharname=${encodeURIComponent(res.name)}` : '');
   };
 

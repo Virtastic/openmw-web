@@ -36,10 +36,22 @@ test('BOTH site blocks are isolated when a domain is set', () => {
   }
 });
 
-test('the operator copy of Morrowind is refused before the file server runs', () => {
+test('the development scaffolding in the source tree is refused outright', () => {
   const out = renderCaddyfile({ domain: '' });
-  assert.match(out, /@private path .*\/mwdata\/\*/);
+  assert.match(out, /@private path .*\/server\.py/);
   assert.match(out, /respond "not found" 404/);
+});
+
+test('/mwdata/* reaches the server rather than the folder in the source tree', () => {
+  // play/mwdata is a developer's own copy of Morrowind and must never be served. It is not
+  // denied here any more, because the same path is how the game page fetches an operator's
+  // published library — so it is PROXIED instead, and the server decides. The ordering is
+  // what keeps the source-tree folder unreachable: this handler is matched before the static
+  // file server ever looks in /srv/client.
+  const out = renderCaddyfile({ domain: '' });
+  assert.match(out, /@mwdata path \/mwdata\/\* \/mwdata-manifest\.json/);
+  assert.ok(out.indexOf('@mwdata') < out.indexOf('@static'),
+    '@mwdata must be handled before the static root, or play/mwdata leaks');
 });
 
 test('localhost keeps a site block even with a domain, so a typo cannot lock the operator out', () => {

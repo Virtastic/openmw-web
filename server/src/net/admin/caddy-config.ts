@@ -68,9 +68,24 @@ ${tls}
 	# with every engine build (openmw.wasm, openmw.data, and their brotli siblings), and an
 	# allow list would silently stop serving the game the first time one was renamed. What
 	# must never leak is a short, stable set.
-	@private path /mwdata/* /server.py /__pycache__/* /.env* /START-HERE.txt /*.bat /*.command
+	@private path /server.py /__pycache__/* /.env* /START-HERE.txt /*.bat /*.command
 	handle @private {
 		respond "not found" 404
+	}
+
+	# /mwdata/* IS THE SERVER'S ANSWER TO GIVE, NOT THIS FILE'S.
+	#
+	# It used to be denied outright here, which was right when the only thing behind it was
+	# play/mwdata — a developer's own copy of Morrowind sitting in the source tree, which must
+	# never be served. But it is also the path the game page fetches when the operator answered
+	# "this server hands out the files", so a flat 404 made that answer impossible to honour.
+	#
+	# Proxied BEFORE the static handler, so the folder in the source tree is still never
+	# served: these requests reach the server, which publishes the library the DASHBOARD
+	# uploaded into and refuses with 404 unless the stored answer says to serve it.
+	@mwdata path /mwdata/* /mwdata-manifest.json
+	handle @mwdata {
+		reverse_proxy ${upstream}
 	}
 
 	# The ROOT path always goes to the server, even when client files are staged: the server
