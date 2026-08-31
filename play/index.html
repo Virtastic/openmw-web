@@ -2152,6 +2152,28 @@
        // the data; the token still rides along and still buys saves below.
        var __hostedData = /[#&]mwdata=1\b/.test(location.hash || '');
        var __mpLocker = !!window.__omwLockerToken && !__hostedData;
+
+       // SCRUB THE CLOUD FRAGMENT, for the same reason the multiplayer branch scrubs its own.
+       //
+       // That branch erases the URL once it has read it, so a credential cannot be replayed
+       // out of history. The cloud-locker boot never reached it: the scrub is gated on an
+       // mpticket, and this door has no mp= at all. So #mplocker= — a bearer token for every
+       // /locker/* route, including the erase that destroys the library AND the savegames,
+       // good for 24h — sat in the address bar for the whole session, went into history, and
+       // rode browser profile sync to other machines. The account's email address sat next to
+       // it. A fragment is genuinely never sent to the server, which is why the token travels
+       // this way; that argument covers the trip, not the parking.
+       //
+       // Everything above has already read what it needs, and the readers that run later take
+       // the fragment from __omwBootFrag (see the world-switch rebuild). The token itself is
+       // held in __omwLockerToken and deliberately left out of that copy: nothing rebuilds a
+       // destination from a cloud boot, so keeping a live credential there would be storing it
+       // twice for no reason.
+       if (/[#&]cloud=1\b/.test(location.hash || '')) {
+         window.__omwBootFrag = String(location.hash || '').replace(/^#/, '')
+           .split('&').filter(function(p){ return !/^#?mplocker=/.test(p); }).join('&');
+         history.replaceState(null, '', location.pathname + location.search);
+       }
        if (__mpLocker) mountLockerMorrowind();       // MP: game data streams from your locker
        else if (__srcLocal) mountLocalMorrowind();   // bring-your-own local folder (single-player)
 

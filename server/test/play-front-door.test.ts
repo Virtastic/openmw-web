@@ -46,3 +46,33 @@ test('an unreadable state defaults to single player, the mode that needs no worl
   // Guessing multiplayer would mean dialling a world that may not be simulating anything.
   assert.match(play, /let singlePlayer = true;/);
 });
+
+// --- the credential must not be left in the address bar ------------------------------------
+//
+// The fragment is the right way to CARRY a token: it is never sent to the server, never
+// logged, never in a Referer. None of that argues for leaving it on screen afterwards. The
+// multiplayer branch has always erased it; the cloud-locker boot never reached that code,
+// because the scrub is gated on an mpticket and this door has no mp= at all. A 24h bearer for
+// every /locker/* route — erase included — stayed in the address bar, in history, and in
+// whatever profile sync copies history to.
+
+const index = readFileSync(join(process.cwd(), '..', 'play', 'index.html'), 'utf8');
+
+test('the cloud-locker boot erases its own fragment', () => {
+  const scrub = /if \(\/\[#&\]cloud=1\\b\/\.test\(location\.hash \|\| ''\)\) \{[\s\S]*?\n       \}/.exec(index);
+  assert.ok(scrub, 'no cloud-fragment scrub; the locker token stays in the URL');
+  assert.match(scrub[0], /history\.replaceState\(null, '', location\.pathname \+ location\.search\)/);
+});
+
+test('and does not keep the live token in the fragment it stashes', () => {
+  const scrub = /if \(\/\[#&\]cloud=1\\b\/\.test\(location\.hash \|\| ''\)\) \{[\s\S]*?\n       \}/.exec(index)!;
+  // __omwBootFrag outlives the scrub, so copying mplocker into it would move the credential
+  // rather than remove it.
+  assert.match(scrub[0], /mplocker/, 'the stash must explicitly drop mplocker');
+  assert.match(scrub[0], /filter\(/);
+});
+
+test('the multiplayer scrub is still in place', () => {
+  // Both doors, not one: fixing the cloud path by disturbing the MP path would be a trade.
+  assert.match(index, /window\.__omwBootFrag = String\(location\.hash \|\| ''\)\.replace\(\/\^#\/, ''\);/);
+});
