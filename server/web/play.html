@@ -18,42 +18,54 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Play</title>
 <style>
+  /* Verbatim from play/launcher.html, so the page a player sees before the game and the
+     page they see inside it are the same product rather than two near misses. */
   :root {
-    --ember: #e06c5a; --ember-dark: #c65a2e; --gold: #eecb78; --gold-dim: #c69a52;
-    --ash: #1a140a; --ash-soft: #241c10; --parchment: #f6f4ee;
+    --ash: #0c0a09; --panel: #16110d; --panel-2: #1e1711; --line: #3a2e20;
+    --ink: #ece0c6; --muted: #a5987e; --faint: #7c705c;
+    --bronze: #8a6838; --bronze-hi: #c69a52; --gold: #d3a84e; --gold-hi: #eecb78;
+    --ember: #c65a2e; --err: #e0836a; --ok: #a9c48a;
+    --serif: "Hoefler Text", "Baskerville", "Palatino Linotype", Palatino, Georgia, serif;
+    --sans: "Optima", "Gill Sans", "Gill Sans MT", -apple-system, "Segoe UI", Roboto, sans-serif;
   }
   * { box-sizing: border-box; margin: 0; }
   body {
     min-height: 100vh; display: flex; align-items: center; justify-content: center;
-    background: radial-gradient(ellipse at 50% -20%, #3a2a14 0%, var(--ash) 60%);
-    color: var(--parchment); font: 16px/1.5 system-ui, sans-serif; padding: 1rem;
+    background-color: var(--ash);
+    background-image: radial-gradient(ellipse at 50% -18%, rgba(198,90,46,.20) 0%, transparent 58%);
+    color: var(--ink); font: 16px/1.6 var(--sans); -webkit-font-smoothing: antialiased; padding: 1rem;
   }
   .card {
-    width: 100%; max-width: 26rem; background: var(--ash-soft);
-    border: 1px solid #ffffff1a; border-radius: .75rem; padding: 2rem;
+    width: 100%; max-width: 26rem;
+    background: linear-gradient(160deg, var(--panel-2), var(--panel));
+    border: 1px solid rgba(138,104,56,.38); border-radius: 7px; padding: 2rem;
     box-shadow: 0 12px 48px #000a;
   }
-  h1 { font-size: 1.4rem; color: var(--gold); font-weight: 600; letter-spacing: .01em; }
-  .sub { color: #b6ac97; font-size: .9rem; margin: .25rem 0 1.5rem; }
+  h1 { font-family: var(--serif); font-size: 1.7rem; color: var(--ink); font-weight: 600;
+    letter-spacing: .005em; text-shadow: 0 1px 0 rgba(0,0,0,.5), 0 0 34px rgba(211,168,78,.10); }
+  .sub { color: var(--muted); font-size: .9rem; margin: .25rem 0 1.5rem; }
   .btn {
     display: block; width: 100%; text-align: center; padding: .8rem 1rem; margin-top: .6rem;
-    border-radius: .5rem; border: 1px solid #ffffff26; background: #ffffff0d;
-    color: var(--parchment); text-decoration: none; font-size: .95rem; cursor: pointer;
+    border-radius: 4px; border: 1px solid var(--bronze); background: transparent;
+    color: var(--gold); text-decoration: none; cursor: pointer;
+    font: 600 12.5px/1 var(--sans); letter-spacing: .12em; text-transform: uppercase;
     transition: background .12s, border-color .12s;
   }
-  .btn:hover { background: #ffffff1a; border-color: var(--gold-dim); }
-  .btn.primary { background: var(--ember-dark); border-color: var(--ember-dark); font-weight: 600; }
-  .btn.primary:hover { background: var(--ember); border-color: var(--ember); }
+  .btn:hover { background: rgba(211,168,78,.10); border-color: var(--gold); color: var(--gold-hi); }
+  .btn.primary { background: linear-gradient(180deg, var(--gold), var(--bronze));
+    color: #1a1207; border-color: var(--gold-hi); }
+  .btn.primary:hover { background: linear-gradient(180deg, var(--gold-hi), var(--gold)); color: #1a1207; }
   .rule { display: flex; align-items: center; gap: .75rem; margin: 1.1rem 0 .5rem;
-    color: #8e8677; font-size: .75rem; text-transform: uppercase; letter-spacing: .08em; }
-  .rule::before, .rule::after { content: ""; flex: 1; height: 1px; background: #ffffff1f; }
+    color: var(--faint); font-size: .72rem; text-transform: uppercase; letter-spacing: .12em; }
+  .rule::before, .rule::after { content: ""; flex: 1; height: 1px;
+    background: linear-gradient(90deg, transparent, var(--bronze) 60%, transparent); }
   .note {
     margin-top: 1.25rem; padding: .75rem .9rem; border-radius: .5rem; font-size: .85rem;
-    background: #ffffff0a; border-left: 3px solid var(--gold-dim); color: #cfc6b4;
+    background: rgba(211,168,78,.07); border-left: 3px solid var(--bronze); color: var(--ink);
   }
-  .note a { color: var(--gold); }
-  .foot { margin-top: 1.5rem; text-align: center; font-size: .75rem; color: #8e8677; }
-  .foot a { color: #b6ac97; }
+  .note a { color: var(--gold-hi); }
+  .foot { margin-top: 1.5rem; text-align: center; font-size: .75rem; color: var(--faint); }
+  .foot a { color: var(--muted); }
   [hidden] { display: none !important; }
 </style>
 </head>

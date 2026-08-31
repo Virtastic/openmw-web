@@ -2,29 +2,78 @@
  * Copyright (C) 2025-2026 Virtastic - https://virtastic.app
  * SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
  *
- * Virtastic skin over AdminLTE. Palette is the same volcanic-Vvardenfell set the player
- * launcher uses, ember, ash and gold, so the admin side does not look like a different
- * product from the one it administers.
+ * THE LAUNCHER'S SKIN, OVER ADMINLTE.
+ *
+ * Values below are lifted verbatim from play/launcher.html's :root, not approximated, so the
+ * two surfaces cannot drift apart by a shade. The dashboard used to be a light Bootstrap page
+ * with an ember accent while the launcher was dark volcanic with bronze hardware: same
+ * product, two visual worlds, and the admin side looked like somebody else's software.
+ *
+ * What carries over: the palette, the ground, Palatino headings over Optima body, buttons as
+ * small uppercase letterspaced plates with a gold-to-bronze primary, and bronze hairlines on
+ * panels lit by a 160deg gradient.
+ *
+ * What deliberately does NOT: the corner brackets. They are the launcher's signature because
+ * it shows four cards; this page shows thirty settings sections and a dozen tables, and a
+ * bracket on each would be wallpaper. They appear once, on the wizard card, where the page is
+ * a plaque rather than a dashboard.
  */
 
 :root {
-  --vt-ember: #e06c5a;
-  --vt-ember-dark: #c65a2e;
-  --vt-gold: #eecb78;
-  --vt-gold-dim: #c69a52;
-  --vt-ash: #1a140a;
-  --vt-ash-soft: #241c10;
-  --vt-parchment: #f6f4ee;
-  --vt-sage: #a9c48a;
+  /* Volcanic Vvardenfell: ash + Dwemer bronze + a low Red Mountain ember.
+     Verbatim from play/launcher.html. */
+  --vt-ash: #0c0a09;
+  --vt-panel: #16110d;
+  --vt-panel-2: #1e1711;
+  --vt-line: #3a2e20;
+  --vt-ink: #ece0c6;
+  --vt-muted: #a5987e;
+  --vt-faint: #7c705c;
+  --vt-bronze: #8a6838;
+  --vt-bronze-hi: #c69a52;
+  --vt-gold: #d3a84e;
+  --vt-gold-hi: #eecb78;
+  --vt-ember: #c65a2e;
+  --vt-err: #e0836a;
+  --vt-ok: #a9c48a;
 
-  --bs-primary: var(--vt-ember-dark);
-  --bs-primary-rgb: 198, 90, 46;
-  --bs-link-color: var(--vt-ember-dark);
-  --bs-link-hover-color: var(--vt-ember);
+  --vt-serif: "Hoefler Text", "Baskerville", "Palatino Linotype", Palatino, Georgia, serif;
+  --vt-sans: "Optima", "Gill Sans", "Gill Sans MT", -apple-system, "Segoe UI", Roboto, sans-serif;
+
+  /* Bootstrap's own tokens, repointed. Restating these rather than fighting each component
+     later is what keeps the override sheet short. */
+  --bs-body-bg: var(--vt-ash);
+  --bs-body-color: var(--vt-ink);
+  --bs-body-font-family: var(--vt-sans);
+  --bs-emphasis-color: var(--vt-ink);
+  --bs-secondary-color: var(--vt-muted);
+  --bs-tertiary-bg: var(--vt-panel);
+  --bs-border-color: var(--vt-line);
+  --bs-primary: var(--vt-gold);
+  --bs-primary-rgb: 211, 168, 78;
+  --bs-link-color: var(--vt-gold);
+  --bs-link-hover-color: var(--vt-gold-hi);
+  --bs-heading-color: var(--vt-ink);
+  --bs-code-color: var(--vt-bronze-hi);
 }
 
+body {
+  background: var(--vt-ash);
+  color: var(--vt-ink);
+  font-family: var(--vt-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3, h4, h5, .card-title, #pageTitle {
+  font-family: var(--vt-serif);
+  color: var(--vt-ink);
+  letter-spacing: .005em;
+}
+#pageTitle { font-weight: 600; }
+
 /* --- bare chrome: login and first-run --------------------------------------------------- */
-/* Signed out, the page is a centred sheet, not a dashboard with nobody in it. */
+/* Signed out, the page is a centred sheet, not a dashboard with nobody in it. The ember
+   bloom overhead is the launcher's own Red Mountain glow. */
 body.vt-bare .app-sidebar,
 body.vt-bare .app-header,
 body.vt-bare .app-footer { display: none; }
@@ -33,131 +82,315 @@ body.vt-bare .app-main {
   min-height: 100vh;
   margin-left: 0;
   background:
-    radial-gradient(ellipse at 50% -20%, rgba(198, 90, 46, .18) 0%, transparent 55%),
-    var(--bs-tertiary-bg);
+    radial-gradient(ellipse at 50% -18%, rgba(198, 90, 46, .20) 0%, transparent 58%),
+    var(--vt-ash);
 }
 body.vt-bare .app-content-header { padding-top: 3rem; text-align: center; }
 body.vt-bare .app-content-header .breadcrumb { display: none; }
 body.vt-bare .app-content-header .row > div { width: 100%; }
-body.vt-bare #pageTitle { color: var(--vt-ember-dark); }
+body.vt-bare #pageTitle {
+  color: var(--vt-ink);
+  text-shadow: 0 1px 0 rgba(0, 0, 0, .5), 0 0 34px rgba(211, 168, 78, .10);
+}
 
-/* --- brand ------------------------------------------------------------------------- */
-.app-sidebar { --bs-bg-opacity: 1; background-color: var(--vt-ash) !important; }
-.sidebar-brand { background-color: var(--vt-ash-soft); border-bottom: 1px solid #ffffff14; }
+/* --- chrome ------------------------------------------------------------------------- */
+.app-header {
+  background: var(--vt-panel) !important;
+  border-bottom: 1px solid var(--vt-line) !important;
+}
+.app-header .nav-link { color: var(--vt-muted); }
+.app-header .nav-link:hover { color: var(--vt-gold-hi); }
+
+.app-sidebar { background: var(--vt-panel) !important; border-right: 1px solid var(--vt-line); }
+.sidebar-brand { background: var(--vt-panel-2); border-bottom: 1px solid var(--vt-line); }
 .brand-image { width: 28px; height: 28px; margin-right: .5rem; }
 /* AdminLTE sets .brand-link colour on the anchor, which wins over a bare .brand-text rule
    by specificity. Scoped here so the gold actually lands rather than only appearing to. */
-.sidebar-brand .brand-link .brand-text { color: var(--vt-gold); letter-spacing: .02em; }
+.sidebar-brand .brand-link .brand-text {
+  color: var(--vt-gold-hi); font-family: var(--vt-serif); letter-spacing: .02em;
+}
 
-.sidebar-menu .nav-link { color: #cfc6b4; border-radius: .375rem; margin: 1px .5rem; }
-.sidebar-menu .nav-link:hover { background: #ffffff12; color: var(--vt-parchment); }
-.sidebar-menu .nav-link.active { background: var(--vt-ember-dark); color: #fff; }
+/* AdminLTE drives the sidebar entirely through its own --lte-* variables, from selectors
+   like `.sidebar-wrapper .sidebar-menu > .nav-item > .nav-link`. Out-specifying every one of
+   those is a losing game and leaves the next AdminLTE update to break it; setting the
+   variables it already reads is the same result in five lines. */
+/* The attribute selector is load-bearing, not decoration: AdminLTE ships
+   `[data-bs-theme=dark] .app-sidebar { --lte-sidebar-color: … }`, which at (0,2,0) beats a
+   bare `.app-sidebar`. Matching its shape ties the specificity and this sheet loads second,
+   so the cascade settles it. */
+[data-bs-theme] .app-sidebar,
+.app-sidebar {
+  --lte-sidebar-color: var(--vt-muted);
+  --lte-sidebar-hover-color: var(--vt-ink);
+  --lte-sidebar-hover-bg: rgba(211, 168, 78, .08);
+  --lte-sidebar-menu-active-color: var(--vt-gold-hi);
+  --lte-sidebar-menu-active-bg: rgba(211, 168, 78, .14);
+  --lte-sidebar-submenu-bg: transparent;
+  --lte-sidebar-header-color: var(--vt-bronze-hi);
+}
+.sidebar-menu .nav-link { border-radius: 4px; margin: 1px .5rem; }
+.sidebar-menu .nav-link.active { box-shadow: inset 2px 0 0 var(--vt-gold); }
 .sidebar-menu .nav-header {
-  color: var(--vt-gold-dim); text-transform: uppercase; font-size: .7rem;
-  letter-spacing: .08em; padding: .75rem 1rem .25rem;
+  color: var(--vt-bronze-hi); text-transform: uppercase; font-size: .68rem;
+  letter-spacing: .12em; padding: .85rem 1rem .3rem;
 }
-.vt-burger { font-size: 1.1rem; line-height: 1; }
+.app-footer {
+  background: var(--vt-panel) !important; border-top: 1px solid var(--vt-line) !important;
+  color: var(--vt-faint);
+}
 
+/* --- buttons: small uppercase plates, as the launcher sets them --------------------- */
+.btn {
+  font: 600 12.5px/1 var(--vt-sans);
+  letter-spacing: .12em; text-transform: uppercase;
+  padding: 12px 20px; border-radius: 4px; border: 1px solid transparent;
+}
+.btn-sm { padding: 8px 13px; font-size: 11.5px; }
+.btn-lg { padding: 14px 26px; font-size: 13px; }
 .btn-primary {
-  --bs-btn-bg: var(--vt-ember-dark); --bs-btn-border-color: var(--vt-ember-dark);
-  --bs-btn-hover-bg: var(--vt-ember); --bs-btn-hover-border-color: var(--vt-ember);
-  --bs-btn-active-bg: #a94a24; --bs-btn-active-border-color: #a94a24;
-  --bs-btn-disabled-bg: var(--vt-ember-dark); --bs-btn-disabled-border-color: var(--vt-ember-dark);
+  background: linear-gradient(180deg, var(--vt-gold), var(--vt-bronze));
+  color: #1a1207; border-color: var(--vt-gold-hi);
 }
+.btn-primary:hover, .btn-primary:focus {
+  background: linear-gradient(180deg, var(--vt-gold-hi), var(--vt-gold));
+  color: #1a1207; border-color: var(--vt-gold-hi);
+}
+.btn-outline-secondary, .btn-secondary {
+  background: transparent; color: var(--vt-gold); border-color: var(--vt-bronze);
+}
+.btn-outline-secondary:hover, .btn-secondary:hover {
+  background: rgba(211, 168, 78, .10); color: var(--vt-gold-hi); border-color: var(--vt-gold);
+}
+.btn-danger, .btn-outline-danger {
+  background: transparent; color: var(--vt-err); border-color: rgba(224, 131, 106, .5);
+}
+.btn-danger:hover, .btn-outline-danger:hover {
+  background: rgba(224, 131, 106, .12); color: var(--vt-err); border-color: var(--vt-err);
+}
+.btn-warning { background: transparent; color: var(--vt-gold); border-color: var(--vt-bronze); }
+.btn-warning:hover { background: rgba(211, 168, 78, .12); color: var(--vt-gold-hi); }
+.btn:focus-visible { outline: 2px solid var(--vt-gold); outline-offset: 3px; }
+.btn-tool { border: 0; color: var(--vt-muted); padding: 4px 8px; }
+.btn-tool:hover { color: var(--vt-gold-hi); background: none; }
+/* The tri-state marks and inline links inside prose must not become plates. */
+.btn-link { text-transform: none; letter-spacing: 0; font-weight: 400; }
 
-/* --- card headings ------------------------------------------------------------------ */
+/* --- panels: bronze hairline over a lit gradient ------------------------------------ */
+.card, .small-box, .accordion-item {
+  background: linear-gradient(160deg, var(--vt-panel-2), var(--vt-panel));
+  border: 1px solid rgba(138, 104, 56, .38);
+  border-radius: 7px;
+  color: var(--vt-ink);
+}
+.card-header {
+  background: transparent; border-bottom: 1px solid var(--vt-line);
+  display: flex; align-items: center; gap: .5rem;
+}
+.card-header .card-title { float: none; margin: 0; font-size: 1.05rem; }
 /* AdminLTE redefines Bootstrap's .card-title as `float:left; margin:0`, which is right for
    a card HEADER (title left, tool buttons right) and wrong everywhere else: inside a card
-   body the heading floats and the next paragraph wraps around it, so "Add game data files"
-   ran straight into the sentence beneath it. Unfloat it in bodies, keep AdminLTE's
-   behaviour in headers. */
+   body the heading floats and the next paragraph wraps around it. */
 .card-body > .card-title,
 .card-body > h5.card-title {
-  float: none;
-  display: block;
-  margin-bottom: .5rem;
-  font-size: 1.05rem;
-  font-weight: 600;
+  float: none; display: block; margin-bottom: .5rem; font-size: 1.05rem; font-weight: 600;
 }
-/* Headers still float their title, so give the row a clean baseline for the button. */
-.card-header { display: flex; align-items: center; gap: .5rem; }
-.card-header .card-title { float: none; margin: 0; }
+/* AdminLTE's coloured outlines become bronze-family hairlines: on this ground its stock
+   blues and greens read as another product's palette leaking through. */
+.card-outline { border-top: 2px solid var(--vt-bronze); }
+.card-primary.card-outline { border-top-color: var(--vt-gold); }
+.card-success.card-outline { border-top-color: var(--vt-ok); }
+.card-warning.card-outline { border-top-color: var(--vt-ember); }
+.card-danger.card-outline { border-top-color: var(--vt-err); }
+.card-info.card-outline, .card-secondary.card-outline { border-top-color: var(--vt-bronze); }
+
+.small-box .inner h3 { font-family: var(--vt-serif); color: var(--vt-ink); font-weight: 600; }
+.small-box .inner p { color: var(--vt-muted); }
+.small-box .small-box-icon { color: rgba(211, 168, 78, .16); }
+.small-box .small-box-footer { color: var(--vt-bronze-hi); background: rgba(0, 0, 0, .18); }
+.small-box .small-box-footer:hover { color: var(--vt-gold-hi); }
+/* text-bg-* on a small-box paints a stock Bootstrap fill, which is the loudest way the old
+   palette shows through. Neutralise the fill and let the accent live in the icon and rule. */
+.small-box.text-bg-primary, .small-box.text-bg-success,
+.small-box.text-bg-warning, .small-box.text-bg-secondary {
+  background: linear-gradient(160deg, var(--vt-panel-2), var(--vt-panel)) !important;
+  color: var(--vt-ink) !important;
+}
+.small-box.text-bg-primary { border-top: 2px solid var(--vt-gold); }
+.small-box.text-bg-success { border-top: 2px solid var(--vt-ok); }
+.small-box.text-bg-warning { border-top: 2px solid var(--vt-ember); }
+.small-box.text-bg-secondary { border-top: 2px solid var(--vt-bronze); }
+
+.accordion-button {
+  background: var(--vt-panel-2); color: var(--vt-ink); font-family: var(--vt-serif);
+}
+.accordion-button:not(.collapsed) { background: var(--vt-panel); color: var(--vt-gold-hi); }
+.accordion-button:focus { box-shadow: 0 0 0 .2rem rgba(211, 168, 78, .2); }
+.accordion-body { background: transparent; }
+
+.callout {
+  background: rgba(211, 168, 78, .07); border-left: 3px solid var(--vt-gold);
+  border-radius: 0 6px 6px 0; padding: .9rem 1.1rem;
+}
+.callout-warning { border-left-color: var(--vt-ember); background: rgba(198, 90, 46, .09); }
+.callout-danger { border-left-color: var(--vt-err); background: rgba(224, 131, 106, .09); }
+.callout h5 { font-size: 1rem; margin-bottom: .35rem; }
+
+/* --- forms -------------------------------------------------------------------------- */
+.form-control, .form-select {
+  background: rgba(0, 0, 0, .28); border: 1px solid var(--vt-line); color: var(--vt-ink);
+  border-radius: 4px;
+}
+.form-control:focus, .form-select:focus {
+  background: rgba(0, 0, 0, .28); border-color: var(--vt-gold); color: var(--vt-ink);
+  box-shadow: 0 0 0 .2rem rgba(211, 168, 78, .16);
+}
+.form-control::placeholder { color: var(--vt-faint); }
+.form-text, .form-label { color: var(--vt-muted); }
+.form-label { font-size: .9rem; }
+.input-group-text { background: var(--vt-panel-2); border-color: var(--vt-line); color: var(--vt-muted); }
+.form-check-input { background-color: rgba(0, 0, 0, .3); border-color: var(--vt-bronze); }
+.form-check-input:checked { background-color: var(--vt-gold); border-color: var(--vt-gold-hi); }
+
+.table { --bs-table-color: var(--vt-ink); --bs-table-bg: transparent;
+  --bs-table-border-color: var(--vt-line); }
+.table > thead th {
+  color: var(--vt-bronze-hi); text-transform: uppercase; font-size: .7rem;
+  letter-spacing: .1em; font-weight: 600; border-bottom-color: var(--vt-line);
+}
+.table-hover > tbody > tr:hover > * { background: rgba(211, 168, 78, .06); color: var(--vt-ink); }
+
+.badge.text-bg-success { background: rgba(169, 196, 138, .18) !important; color: var(--vt-ok) !important; }
+.badge.text-bg-warning { background: rgba(198, 90, 46, .2) !important; color: var(--vt-gold-hi) !important; }
+.badge.text-bg-danger { background: rgba(224, 131, 106, .18) !important; color: var(--vt-err) !important; }
+.badge.text-bg-secondary { background: rgba(138, 104, 56, .22) !important; color: var(--vt-bronze-hi) !important; }
+
+.alert { border-radius: 6px; border: 1px solid var(--vt-line); background: var(--vt-panel-2); color: var(--vt-ink); }
+.alert-warning { border-color: rgba(198, 90, 46, .45); background: rgba(198, 90, 46, .10); }
+.alert-danger { border-color: rgba(224, 131, 106, .45); background: rgba(224, 131, 106, .10); }
+.alert-success { border-color: rgba(169, 196, 138, .4); background: rgba(169, 196, 138, .10); }
+.alert-info, .alert-secondary { border-color: var(--vt-line); background: rgba(211, 168, 78, .07); }
+
+.modal-content { background: linear-gradient(160deg, var(--vt-panel-2), var(--vt-panel));
+  border: 1px solid var(--vt-line); color: var(--vt-ink); }
+.modal-header, .modal-footer { border-color: var(--vt-line); }
+.dropdown-menu {
+  background: var(--vt-panel-2); border: 1px solid var(--vt-line); border-radius: 6px;
+}
+.dropdown-item { color: var(--vt-ink); }
+.dropdown-item:hover { background: rgba(211, 168, 78, .1); color: var(--vt-gold-hi); }
+.dropdown-header { color: var(--vt-bronze-hi); text-transform: uppercase;
+  font-size: .68rem; letter-spacing: .1em; }
+.progress { background: rgba(0, 0, 0, .35); }
+.progress-bar { background: linear-gradient(180deg, var(--vt-gold), var(--vt-bronze)); }
+.progress-bar.bg-success { background: var(--vt-ok); }
+.progress-bar.bg-danger { background: var(--vt-err); }
+.progress-bar.bg-warning { background: var(--vt-ember); }
+.breadcrumb-item, .breadcrumb-item a { color: var(--vt-muted); }
+.breadcrumb-item.active { color: var(--vt-bronze-hi); }
 
 /* --- settings forms ---------------------------------------------------------------- */
 /* Help sits under the field, always visible rather than behind a hover: a tooltip you have
    to discover is no help to the person who did not know the field existed. */
-.vt-field { padding: .85rem 0; border-bottom: 1px solid var(--bs-border-color); }
+.vt-field { padding: .85rem 0; border-bottom: 1px solid var(--vt-line); }
 .vt-field:last-child { border-bottom: 0; }
-.vt-field-key { font-family: var(--bs-font-monospace); font-size: .9rem; font-weight: 600; }
-.vt-field-help { font-size: .85rem; color: var(--bs-secondary-color); margin-top: .35rem; }
+.vt-field-key {
+  font-family: var(--bs-font-monospace); font-size: .9rem; font-weight: 600;
+  color: var(--vt-ink);
+}
+.vt-field-help { font-size: .85rem; color: var(--vt-muted); margin-top: .35rem; }
 .vt-field-danger {
-  font-size: .85rem; margin-top: .35rem; padding: .5rem .65rem; border-radius: .375rem;
-  background: rgba(220, 53, 69, .08); border-left: 3px solid var(--bs-danger);
+  font-size: .85rem; margin-top: .35rem; padding: .5rem .65rem; border-radius: 4px;
+  background: rgba(224, 131, 106, .1); border-left: 3px solid var(--vt-err);
 }
 .vt-overridden::after {
-  content: "edited here"; font-size: .65rem; text-transform: uppercase; letter-spacing: .05em;
-  background: var(--vt-gold); color: #3a2c10; padding: .1rem .35rem; border-radius: .25rem;
+  content: "edited here"; font-size: .65rem; text-transform: uppercase; letter-spacing: .08em;
+  background: var(--vt-gold); color: #1a1207; padding: .1rem .35rem; border-radius: 3px;
   margin-left: .5rem; vertical-align: middle;
 }
 .vt-section-note {
-  font-size: .875rem; background: rgba(238, 203, 120, .12);
-  border-left: 3px solid var(--vt-gold-dim); padding: .7rem .85rem;
-  border-radius: 0 .375rem .375rem 0; line-height: 1.5;
+  font-size: .875rem; background: rgba(211, 168, 78, .07);
+  border-left: 3px solid var(--vt-bronze); padding: .7rem .85rem;
+  border-radius: 0 4px 4px 0; line-height: 1.5; color: var(--vt-ink);
 }
-.vt-section-note code { background: rgba(0, 0, 0, .18); padding: .05rem .3rem; border-radius: .2rem; }
-.vt-section-note pre { background: rgba(0, 0, 0, .18); padding: .5rem .65rem; border-radius: .25rem; }
+.vt-section-note code, .vt-section-note pre {
+  background: rgba(0, 0, 0, .35); color: var(--vt-bronze-hi); border-radius: 3px;
+}
+.vt-section-note code { padding: .05rem .3rem; }
+.vt-section-note pre { padding: .5rem .65rem; }
 .vt-section-note > :last-child { margin-bottom: 0; }
 
-/* Uploads and file lists inside the wizard read better as compact rows than as full tables. */
-.vt-card .table-sm td { padding: .4rem .5rem; border-color: rgba(128,128,128,.18); }
+.vt-card .table-sm td { padding: .4rem .5rem; border-color: rgba(138, 104, 56, .22); }
 .vt-card .table-sm tr:last-child td { border-bottom: 0; }
 
 /* --- wizard ------------------------------------------------------------------------ */
 .vt-wizard { max-width: 44rem; margin: 0 auto; padding-top: .5rem; }
 
-/* Named steps, not anonymous ticks: on a ten-question form it matters that you can see
+/* Named steps, not anonymous ticks: on a twelve-question form it matters that you can see
    where you are and roughly how much is left. */
 .vt-steps { display: flex; gap: .3rem; margin-bottom: .35rem; }
 .vt-step { flex: 1 1 0; min-width: 0; }
 .vt-step-bar {
-  display: block; height: 4px; border-radius: 2px; background: var(--bs-border-color);
+  display: block; height: 3px; border-radius: 2px; background: var(--vt-line);
   transition: background .2s;
 }
 .vt-step-label {
-  display: block; margin-top: .35rem; font-size: .68rem; letter-spacing: .02em;
-  color: var(--bs-secondary-color); white-space: nowrap; overflow: hidden;
+  display: block; margin-top: .35rem; font-size: .66rem; letter-spacing: .06em;
+  text-transform: uppercase; color: var(--vt-faint); white-space: nowrap; overflow: hidden;
   text-overflow: ellipsis;
 }
-.vt-step.done .vt-step-bar { background: var(--vt-gold-dim); }
-.vt-step.now .vt-step-bar { background: var(--vt-ember); }
-.vt-step.now .vt-step-label { color: var(--vt-ember); font-weight: 600; }
+.vt-step.done .vt-step-bar { background: var(--vt-bronze); }
+.vt-step.now .vt-step-bar { background: var(--vt-gold); }
+.vt-step.now .vt-step-label { color: var(--vt-gold-hi); }
 .vt-stepcount {
-  font-size: .75rem; color: var(--bs-secondary-color); text-align: right;
-  margin: .5rem 0 .85rem;
+  font-size: .7rem; color: var(--vt-faint); text-align: right; margin: .5rem 0 .85rem;
+  text-transform: uppercase; letter-spacing: .1em;
 }
 
-/* The wizard card carries the whole conversation, so it gets room to breathe. */
-.vt-card { border: 0; box-shadow: 0 1px 3px rgba(0,0,0,.12), 0 8px 24px rgba(0,0,0,.08); }
-.vt-card .card-body { padding: 1.85rem; }
+/* The wizard card is the one place the launcher's corner brackets belong: it is a single
+   plaque carrying the whole conversation, which is exactly the shape they were drawn for. */
+.vt-card {
+  position: relative;
+  background: linear-gradient(160deg, var(--vt-panel-2), var(--vt-panel));
+  border: 1px solid rgba(138, 104, 56, .38);
+  box-shadow: 0 18px 46px rgba(0, 0, 0, .45);
+}
+.vt-card::after {
+  content: ''; position: absolute; inset: 13px; pointer-events: none; opacity: .7;
+  --c: var(--vt-bronze);
+  background:
+    linear-gradient(var(--c), var(--c)) left top/17px 1.5px no-repeat,
+    linear-gradient(var(--c), var(--c)) left top/1.5px 17px no-repeat,
+    linear-gradient(var(--c), var(--c)) right top/17px 1.5px no-repeat,
+    linear-gradient(var(--c), var(--c)) right top/1.5px 17px no-repeat,
+    linear-gradient(var(--c), var(--c)) left bottom/17px 1.5px no-repeat,
+    linear-gradient(var(--c), var(--c)) left bottom/1.5px 17px no-repeat,
+    linear-gradient(var(--c), var(--c)) right bottom/17px 1.5px no-repeat,
+    linear-gradient(var(--c), var(--c)) right bottom/1.5px 17px no-repeat;
+}
+.vt-card .card-body { padding: 2.1rem; position: relative; z-index: 1; }
 .vt-card h5 {
-  font-size: 1.3rem; font-weight: 600; margin-bottom: .4rem; letter-spacing: -.01em;
+  font-family: var(--vt-serif); font-size: 1.5rem; font-weight: 600;
+  margin-bottom: .5rem; letter-spacing: .005em; color: var(--vt-ink);
 }
 .vt-card > .card-body > p:first-of-type { margin-bottom: 1.15rem; }
 
 .vt-wizard-nav { display: flex; align-items: center; gap: .5rem; margin-top: 1.25rem; }
 /* Sits beside a disabled Continue and says what is still needed. */
-.vt-need { margin-left: .25rem; }
-.vt-wizard-nav .btn-lg { padding-inline: 1.75rem; }
+.vt-need { margin-left: .25rem; text-transform: none; letter-spacing: 0; }
 
 .vt-choice {
   display: block; width: 100%; text-align: left; padding: 1rem 1.15rem; margin-bottom: .6rem;
-  border: 2px solid var(--bs-border-color); border-radius: .5rem; background: var(--bs-body-bg);
-  cursor: pointer; transition: border-color .12s, background .12s;
+  border: 1px solid var(--vt-line); border-radius: 5px;
+  background: rgba(0, 0, 0, .22); color: var(--vt-ink);
+  cursor: pointer; transition: border-color .16s, background .16s, transform .16s;
 }
-.vt-choice:hover { border-color: var(--vt-gold-dim); }
-.vt-choice.sel { border-color: var(--vt-ember); background: rgba(224, 108, 90, .07); }
-.vt-choice strong { display: block; }
-.vt-choice small { color: var(--bs-secondary-color); line-height: 1.4; }
+.vt-choice:hover { border-color: rgba(211, 168, 78, .55); transform: translateY(-1px); }
+.vt-choice.sel {
+  border-color: var(--vt-gold); background: rgba(211, 168, 78, .1);
+  box-shadow: inset 2px 0 0 var(--vt-gold);
+}
+.vt-choice strong { display: block; font-weight: 600; }
+.vt-choice small { color: var(--vt-muted); line-height: 1.45; }
 /* Checkbox variant: the box sits beside the text rather than inside the flow of it, so a
    two-line description does not tuck itself under the tick. */
 .vt-choice.vt-check { display: flex; align-items: flex-start; gap: .65rem; margin-bottom: .5rem; }
@@ -167,34 +400,38 @@ body.vt-bare #pageTitle { color: var(--vt-ember-dark); }
 
 /* --- console / logs ---------------------------------------------------------------- */
 .vt-mono {
-  font-family: var(--bs-font-monospace); font-size: .82rem; white-space: pre-wrap;
-  word-break: break-word;
+  font-family: ui-monospace, Menlo, Consolas, monospace; font-size: .82rem;
+  white-space: pre-wrap; word-break: break-word;
 }
-.vt-log { max-height: 60vh; overflow-y: auto; background: var(--vt-ash); color: #d6cfc0;
-  border-radius: .5rem; padding: .75rem; }
-.vt-log div { padding: .1rem 0; border-bottom: 1px solid #ffffff0d; }
-.vt-log .lvl-error { color: #ff8f80; }
+.vt-log, .vt-out {
+  background: #060505; color: var(--vt-ink); border: 1px solid var(--vt-line);
+  border-radius: 5px; padding: .75rem;
+}
+.vt-log { max-height: 60vh; overflow-y: auto; }
+.vt-log div { padding: .1rem 0; border-bottom: 1px solid rgba(255, 255, 255, .04); }
+.vt-log .lvl-error { color: var(--vt-err); }
 .vt-log .lvl-warn { color: var(--vt-gold); }
-.vt-log .lvl-debug { color: #8e8677; }
-.vt-log .ev { color: var(--vt-sage); }
-
-.vt-out {
-  background: var(--vt-ash); color: #d6cfc0; border-radius: .5rem; padding: .75rem;
-  min-height: 6rem; max-height: 40vh; overflow-y: auto;
-}
+.vt-log .lvl-debug { color: var(--vt-faint); }
+.vt-log .ev { color: var(--vt-ok); }
+.vt-out { min-height: 6rem; max-height: 40vh; overflow-y: auto; }
 
 /* --- upload ------------------------------------------------------------------------ */
 .vt-drop {
-  border: 2px dashed var(--bs-border-color); border-radius: .5rem; padding: 1.5rem;
-  text-align: center; transition: border-color .12s, background .12s;
+  border: 1px dashed var(--vt-bronze); border-radius: 5px; padding: 1.5rem;
+  text-align: center; background: rgba(0, 0, 0, .18);
+  transition: border-color .16s, background .16s;
 }
-.vt-drop.over { border-color: var(--vt-ember); background: rgba(224, 108, 90, .07); }
+.vt-drop.over { border-color: var(--vt-gold); background: rgba(211, 168, 78, .1); }
 
 /* --- misc -------------------------------------------------------------------------- */
 .vt-drag { cursor: grab; user-select: none; }
 .vt-drag:active { cursor: grabbing; }
 tr.vt-dragging { opacity: .4; }
-.vt-empty { color: var(--bs-secondary-color); text-align: center; padding: 2.5rem 1rem; }
+.vt-empty { color: var(--vt-faint); text-align: center; padding: 2.5rem 1rem; }
+.text-secondary { color: var(--vt-muted) !important; }
+.text-success { color: var(--vt-ok) !important; }
+.text-danger { color: var(--vt-err) !important; }
+code { color: var(--vt-bronze-hi); }
 
 /* AdminLTE's sidebar collapses under lg; make sure long tables scroll instead of pushing
    the layout sideways on a phone, since an operator checking in from one is a real case. */
@@ -202,4 +439,9 @@ tr.vt-dragging { opacity: .4; }
 @media (max-width: 575.98px) {
   .app-content-header h3 { font-size: 1.25rem; }
   .vt-wizard { padding: 0 .25rem; }
+  .vt-card .card-body { padding: 1.4rem; }
+  .vt-card::after { inset: 8px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .vt-choice, .btn, .vt-step-bar { transition: none; }
 }
