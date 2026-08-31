@@ -11,7 +11,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { renderCaddyfile } from '../src/net/admin/caddy-config';
+import { renderCaddyfile, launcherEnabled } from '../src/net/admin/caddy-config';
 
 // Without all three, the engine cannot start. This is the one assertion in the file that
 // stands between a working install and a game that never boots.
@@ -58,4 +58,40 @@ test('localhost keeps a site block even with a domain, so a typo cannot lock the
   const out = renderCaddyfile({ domain: 'mp.example.test' });
   assert.match(out, /^localhost \{$/m);
   assert.match(out, /^mp\.example\.test \{$/m);
+});
+
+// --- the launcher is opt-in ------------------------------------------------------------------
+//
+// play/launcher.html is the hosted site's chooser: bundled sample, your own local Morrowind,
+// or multiplayer. None of those is a question for a player who came to THIS server, and "/"
+// already signs them in and starts the game. Environment only, and off unless asked for.
+
+test('the launcher is not served by default', () => {
+  const out = renderCaddyfile({ domain: '' });
+  assert.match(out, /@launcher path \/launcher\.html/);
+  // Redirected, not refused: the game page falls back to the launcher on a fatal and on a
+  // bootless load, and a 404 would strand a player at the worst possible moment.
+  // The wildcard matcher is load-bearing, not noise: without it Caddy reads the "/" as a
+  // path matcher and "302" as the destination, and the redirect silently never fires.
+  assert.match(out, /redir \* \/ 302/);
+});
+
+test('and IS served when the environment asks for it', () => {
+  const out = renderCaddyfile({ domain: '', launcher: true });
+  assert.doesNotMatch(out, /@launcher/);
+});
+
+test('the gate applies to a domain deployment too, in both blocks', () => {
+  const out = renderCaddyfile({ domain: 'mp.example.test' });
+  assert.equal(out.split('@launcher path').length - 1, 2);
+});
+
+test('only an explicit truthy value switches it on', () => {
+  // The default must be off, so an unset or empty variable cannot quietly expose it.
+  for (const v of [undefined, '', ' ', '0', 'false', 'no', 'off']) {
+    assert.equal(launcherEnabled(v === undefined ? {} : { OMW_ENABLE_LAUNCHER: v }), false, `"${v}"`);
+  }
+  for (const v of ['1', 'true', 'TRUE', 'yes', 'on', ' on ']) {
+    assert.equal(launcherEnabled({ OMW_ENABLE_LAUNCHER: v }), true, `"${v}"`);
+  }
 });

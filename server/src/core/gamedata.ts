@@ -80,11 +80,24 @@ export function detectGameData(dir: string, order?: { file: string; enabled: boo
   }
 
   // Pair each PRESENT official master with its archive.
+  //
+  // THE EXPANSIONS ARE OPTIONAL CONTENT, THE BASE GAME IS NOT. Every present master used to
+  // load unconditionally, so switching Tribunal off in the dashboard changed nothing and the
+  // checkbox was a lie. Playing vanilla Morrowind with the expansions installed but not loaded
+  // is a legitimate thing to want, and it is exactly what a load order is for.
+  //
+  // Morrowind.esm is never disableable: it is the game. The guard above already refuses a
+  // folder without it, and an explicit disable here would produce a world with no content.
+  const disabled = new Set(
+    (order ?? []).filter((e) => !e.enabled).map((e) => e.file.toLowerCase()));
   const missing: string[] = [];
   const contentFiles: string[] = [];
   for (const { esm, bsa } of OFFICIAL) {
     const foundEsm = has(esm);
     if (!foundEsm) continue;
+    if (esm.toLowerCase() !== 'morrowind.esm' && disabled.has(esm.toLowerCase())) continue;
+    // Only for a master that is actually loading: a missing .bsa beside a switched-off
+    // expansion is not an incomplete install, it is an expansion nobody asked to load.
     if (!has(bsa)) missing.push(bsa);
     contentFiles.push(foundEsm);
   }

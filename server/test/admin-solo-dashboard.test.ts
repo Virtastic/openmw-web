@@ -278,7 +278,10 @@ test('stat cards fill their column, so a row of them cannot go ragged', () => {
 test('the margin is on the column, not on a box that now fills it', () => {
   // A margin on a height:100% box overflows its column and brings the ragged row back.
   assert.doesNotMatch(app, /<div class="small-box text-bg-\$\{raw\(tone\)\} mb-3">/);
-  assert.match(app, /<div class="col-6 col-lg-3 mb-3">/);
+  // Three across, not four: with five or six cards a four-wide row strands one on its own.
+  // The class list is asserted loosely so a breakpoint tweak is not a test failure.
+  assert.match(app, /<div class="col-\d+(?: col-\w+-\d+)* mb-3">/);
+  assert.match(app, /col-lg-4 mb-3/, 'stat cards should be three across at desktop width');
 });
 
 test('every text-bg-* tone is neutralised, not a hand-kept list of four', () => {

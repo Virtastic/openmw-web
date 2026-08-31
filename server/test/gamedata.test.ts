@@ -209,3 +209,47 @@ test('a real deployment refuses to boot without a server password for the peer',
     await server.close();
   }
 });
+
+// --- the expansions are content, the base game is not ----------------------------------------
+//
+// All three official masters used to load whenever they were present, so the dashboard's
+// enable checkbox against Tribunal or Bloodmoon changed nothing at all. Playing vanilla with
+// the expansions installed but not loaded is an ordinary thing to want, and a checkbox that
+// does not do what it says is worse than one that is not there.
+
+test('an expansion switched off in the load order does not load', () => {
+  const r = detectGameData(dirWith(RETAIL), [
+    { file: 'Morrowind.esm', enabled: true },
+    { file: 'Tribunal.esm', enabled: false },
+    { file: 'Bloodmoon.esm', enabled: true },
+  ]);
+  assert.equal(r.ok, true, r.reason);
+  assert.deepEqual(r.contentFiles.filter((f) => /\.esm$/i.test(f)),
+    ['Morrowind.esm', 'Bloodmoon.esm']);
+});
+
+test('Morrowind.esm loads even when something says to disable it', () => {
+  // It is the game. Honouring this would produce a world with no content, from a checkbox the
+  // UI does not even offer.
+  const r = detectGameData(dirWith(RETAIL), [{ file: 'Morrowind.esm', enabled: false }]);
+  assert.equal(r.ok, true, r.reason);
+  assert.ok(r.contentFiles.includes('Morrowind.esm'));
+});
+
+test('a disabled expansion missing its archive is not an incomplete install', () => {
+  // The .bsa check exists because an .esm without its archive renders every object as an
+  // error marker. That cannot happen to a master nobody is loading, and refusing to start
+  // over it would be a dead end with no way out from the dashboard.
+  const r = detectGameData(
+    dirWith(['Morrowind.esm', 'Morrowind.bsa', 'Tribunal.esm']),
+    [{ file: 'Tribunal.esm', enabled: false }],
+  );
+  assert.equal(r.ok, true, r.reason);
+  assert.deepEqual(r.missing, []);
+});
+
+test('but an ENABLED expansion still requires its archive', () => {
+  const r = detectGameData(dirWith(['Morrowind.esm', 'Morrowind.bsa', 'Tribunal.esm']));
+  assert.equal(r.ok, false);
+  assert.deepEqual(r.missing, ['Tribunal.bsa']);
+});

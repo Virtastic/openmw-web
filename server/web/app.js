@@ -151,11 +151,9 @@ const NAV = [
   { group: 'Diagnostics', items: [
     { hash: '#logs', label: 'Logs', icon: 'bi-journal-text', role: 'moderator' },
     { hash: '#audit', label: 'Audit trail', icon: 'bi-clipboard-check', role: 'moderator' },
-    { hash: '#metrics', label: 'Metrics', icon: 'bi-graph-up', role: 'moderator' },
   ] },
   { group: 'Danger zone', items: [
     { hash: '#maintenance', label: 'Maintenance & restart', icon: 'bi-power', role: 'owner' },
-    { hash: '#help', label: 'Help & docs', icon: 'bi-question-circle', role: 'viewer' },
   ] },
 ];
 
@@ -199,7 +197,6 @@ function paintChrome() {
     ? html`<span class="badge text-bg-warning">maintenance mode</span>` : '';
 
   $('#topWorld').textContent = state.serverName || '';
-  $('#footVersion').textContent = state.version ? `v${state.version}` : '';
 
   const banner = $('#banner');
   banner.innerHTML = state.configFallback
@@ -1472,7 +1469,7 @@ async function pageOverview() {
   // The gap lives on the COLUMN, not the box: the box now fills its column's height, so a
   // margin on it would push past the bottom and reintroduce the ragged row this fixed.
   const stat = (label, value, icon, tone, href = '') => html`
-    <div class="col-6 col-lg-3 mb-3">
+    <div class="col-12 col-md-6 col-lg-4 mb-3">
       <div class="small-box text-bg-${raw(tone)}">
         <div class="inner"><h3>${value}</h3><p>${label}</p></div>
         <i class="small-box-icon bi ${icon}"></i>
@@ -1550,7 +1547,7 @@ const mb = (n) => (n >= 1073741824 ? `${(n / 1073741824).toFixed(1)} GB` : `${Ma
 function sysCards(sys) {
   if (!sys) return '';
   const box = (label, value, sub, icon, tone) => html`
-    <div class="col-6 col-lg-3 mb-3">
+    <div class="col-12 col-md-6 col-lg-4 mb-3">
       <div class="small-box text-bg-${raw(tone)}">
         <div class="inner"><h3>${value}</h3><p>${label}</p>
           ${raw(sub ? html`<p class="small mb-0 text-secondary">${sub}</p>` : '')}</div>
@@ -2048,6 +2045,16 @@ function restartPrompt() {
 // ---------------------------------------------------------------------------------------
 // mods
 // ---------------------------------------------------------------------------------------
+/**
+ * Morrowind.esm is the game; everything else is content you may choose not to load.
+ *
+ * The three official masters were treated as one locked block, so Tribunal and Bloodmoon
+ * could not be switched off even though playing vanilla with them installed is an ordinary
+ * thing to want. Their ORDER stays fixed (the canonical sequence is what every mod expects to
+ * load against), so they keep the lock icon and no move buttons; only the load checkbox opens.
+ */
+const isBase = (e) => e.file.toLowerCase() === 'morrowind.esm';
+
 async function pageMods() {
   setTitle('Game data & mods', 'What loads, and in what order.');
   localStorage.setItem('omwmp_mods_seen', '1');
@@ -2062,10 +2069,11 @@ async function pageMods() {
     <tr draggable="${raw(editable && !e.official ? 'true' : 'false')}" data-i="${i}" data-file="${e.file}">
       <td class="${raw(editable && !e.official ? 'vt-drag' : 'text-secondary')}">${raw(e.official ? '🔒' : '⠿')}</td>
       <td><input class="form-check-input" type="checkbox" data-en="${i}"
-        ${raw(e.enabled ? 'checked' : '')} ${raw(editable && !e.official ? '' : 'disabled')}
+        ${raw(e.enabled ? 'checked' : '')} ${raw(editable && !isBase(e) ? '' : 'disabled')}
         aria-label="Load ${e.file}"></td>
       <td class="vt-mono">${e.file}
-        ${raw(e.official ? ' <span class="badge text-bg-secondary">base game</span>' : '')}
+        ${raw(isBase(e) ? ' <span class="badge text-bg-secondary">base game</span>'
+          : e.official ? ' <span class="badge text-bg-secondary">expansion</span>' : '')}
         ${raw(e.isNew ? ' <span class="badge text-bg-warning">new</span>' : '')}</td>
       <td class="text-end text-nowrap">${raw(editable && !e.official ? html`
         <button class="btn btn-sm btn-outline-secondary" data-move="up" aria-label="Move ${e.file} earlier">↑</button>
@@ -2088,9 +2096,7 @@ async function pageMods() {
     <div class="table-responsive"><table class="table table-hover mb-0">
       <thead><tr><th style="width:2rem"></th><th style="width:3rem">Load</th><th>File</th><th></th></tr></thead>
       <tbody id="modBody">${raw(rows || html`<tr><td colspan="4" class="vt-empty">No content files found.</td></tr>`)}</tbody>
-    </table></div></div>
-    ${raw(m.archives.length ? html`<div class="card card-secondary card-outline mt-3"><div class="card-header"><h3 class="card-title"><i class="bi bi-file-zip me-2"></i>Archives</h3></div><div class="card-body">
-      <p class="small text-secondary mb-0 vt-mono">${m.archives.join(', ')}</p></div></div>` : '')}`;
+    </table></div></div>`;
 
   if (!editable) return;
 
@@ -2688,8 +2694,11 @@ async function pageLogs(filter = '', title = 'Logs', lead = 'Recent activity fro
     const rows = entries.slice().reverse().map((e) => {
       const { ts, level, event, ...rest } = e;
       const extra = Object.entries(rest).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(' ');
-      return html`<div class="lvl-${raw(esc(level))}"><span class="text-secondary">${ts.slice(11, 19)}</span>
-        <span class="ev">${event}</span> ${extra}</div>`;
+      // Time in its own column, message in another. As one run of inline text the timestamp
+      // was just the first word of a paragraph, so any long line wrapped and left the clock
+      // stranded on a line of its own above the entry it belonged to.
+      return html`<div class="lvl-${raw(esc(level))}"><span class="ts">${ts.slice(11, 19)}</span
+        ><span class="msg"><span class="ev">${event}</span> ${extra}</span></div>`;
     }).join('');
     $('#logBox').innerHTML = rows || html`<div class="vt-empty">Nothing logged yet.</div>`;
   };

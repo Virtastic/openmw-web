@@ -440,7 +440,13 @@ body.vt-bare #pageTitle {
   border-radius: 5px; padding: .75rem;
 }
 .vt-log { max-height: 60vh; overflow-y: auto; }
-.vt-log div { padding: .1rem 0; border-bottom: 1px solid rgba(255, 255, 255, .04); }
+.vt-log div { padding: .1rem 0; border-bottom: 1px solid rgba(255, 255, 255, .04);
+  display: flex; gap: .6rem; align-items: baseline; }
+/* The clock never wraps and never shrinks; the message wraps inside its own column and stays
+   aligned under itself. min-width:0 is what lets a flex child actually wrap instead of
+   forcing the row wider than the box. */
+.vt-log .ts { flex: 0 0 auto; color: var(--vt-faint); font-variant-numeric: tabular-nums; }
+.vt-log .msg { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
 .vt-log .lvl-error { color: var(--vt-err); }
 .vt-log .lvl-warn { color: var(--vt-gold); }
 .vt-log .lvl-debug { color: var(--vt-faint); }

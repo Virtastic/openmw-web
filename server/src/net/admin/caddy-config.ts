@@ -21,6 +21,15 @@ export interface ProxySettings {
   domain: string;
   /** Upstream container name and port, as compose names them. */
   upstream?: string;
+  /**
+   * Serve play/launcher.html, the hosted site's chooser. Off unless the operator opts in.
+   *
+   * It asks whether you want the bundled sample game, your own local Morrowind, or
+   * multiplayer — none of which is a question for somebody who arrived at a particular
+   * server to play on it. That is what "/" is for. Deliberately env-only and not a dashboard
+   * setting: it exists for developing the launcher itself, not for configuring a server.
+   */
+  launcher?: boolean;
 }
 
 /**
@@ -30,7 +39,9 @@ export interface ProxySettings {
  * the dashboard is the worst failure this file can cause, and the operator's own machine is
  * how they would fix it — a mistyped domain must not take the admin page down with it.
  */
-export function renderCaddyfile({ domain, upstream = 'openmw-web:8080' }: ProxySettings): string {
+export function renderCaddyfile(
+  { domain, upstream = 'openmw-web:8080', launcher = false }: ProxySettings,
+): string {
   const site = (address: string, tls: string): string => `
 ${address} {
 ${tls}
@@ -87,6 +98,26 @@ ${tls}
 	handle @mwdata {
 		reverse_proxy ${upstream}
 	}
+${launcher ? '' : `	# THE LAUNCHER IS OFF UNLESS SOMEBODY ASKED FOR IT (OMW_ENABLE_LAUNCHER=1).
+	#
+	# It is the hosted site's chooser: bundled sample, your own local Morrowind, or multiplayer.
+	# None of those is a question for a player who came to THIS server to play on it, and "/"
+	# already signs them in and starts the game.
+	#
+	# Redirected rather than refused, deliberately. The game page falls back to the launcher in
+	# several places — the no-fragment gate, the "Back to the launcher" button on a fatal — and
+	# a 404 would strand a player on a dead end at exactly the moment something already went
+	# wrong. Sending them to the front door is the answer those fallbacks actually wanted.
+	# "redir * / 302", with the explicit wildcard matcher. Caddy's redir takes an OPTIONAL
+	# leading matcher, so "redir / 302" parses as matcher "/" with destination "302": it then
+	# matches only the site root and redirects it to a relative URL called 302. Caddy accepts
+	# it, reloads cleanly, and logs the request as a NOP with no status — which is how a
+	# launcher that was supposed to be switched off went on being served.
+	@launcher path /launcher.html
+	handle @launcher {
+		redir * / 302
+	}
+`}
 
 	# The ROOT path always goes to the server, even when client files are staged: the server
 	# serves the sign-in landing page there, and the game (launcher.html and friends) is what
@@ -152,6 +183,19 @@ ${tls}
        site('localhost', '\ttls internal')];
 
   return `${header}${blocks.join('\n')}\n`;
+}
+
+/**
+ * Is the launcher switched on? Environment only, and off unless explicitly set.
+ *
+ * Not a config key and not a dashboard toggle: it decides whether a development page is
+ * exposed, which is a property of how this container was started rather than an answer about
+ * the server. Keeping it out of the config also keeps it out of the settings UI, where it
+ * would read as a feature an operator ought to have an opinion about.
+ */
+export function launcherEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const v = (env.OMW_ENABLE_LAUNCHER ?? '').trim().toLowerCase();
+  return v === '1' || v === 'true' || v === 'yes' || v === 'on';
 }
 
 /** Where the generated config lives inside the shared data directory. */

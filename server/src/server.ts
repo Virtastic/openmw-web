@@ -14,7 +14,7 @@ import { PartyRules } from './core/party-rules';
 import { QuestRepair } from './core/quest-repair';
 import { adminRoutes as adminDashboardRoutes } from './net/admin/routes';
 import { exportDataDir, summariseMetrics } from './net/admin/ops';
-import { writeCaddyfile } from './net/admin/caddy-config';
+import { writeCaddyfile, launcherEnabled } from './net/admin/caddy-config';
 import { orderedContent } from './net/admin/api-mods';
 import { ResetTokens, sendMail, notifyEvent, type MailConfig } from './net/admin/notify';
 import { SetupToken } from './net/admin/setup-token';
@@ -630,7 +630,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // here rather than only when the wizard saves, so a data directory restored from a backup,
   // or one whose file was deleted, comes back with a working proxy instead of needing the
   // wizard re-run. No-ops when the content already matches.
-  writeCaddyfile(opts.dataDir, { domain: config.setup.domain });
+  writeCaddyfile(opts.dataDir, { domain: config.setup.domain, launcher: launcherEnabled() });
 
   const maintenanceFile = join(opts.dataDir, 'maintenance');
   const maintenance = { on: false, message: '' };

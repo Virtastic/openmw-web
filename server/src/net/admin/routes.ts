@@ -54,7 +54,7 @@ import { generateSecret, totpUri, verifyTotp } from './totp';
 import { settingsView, applySection, applyWizard, type WizardAnswers } from './api-settings';
 import { checkDomain, normaliseDomain, VERIFY_PATH, VERIFY_NONCE } from './setup-check';
 import { readDashboardTree } from './settings-store';
-import { writeCaddyfile } from './caddy-config';
+import { writeCaddyfile, launcherEnabled } from './caddy-config';
 import { modsView, saveMods, uploadContent, gameDataWritable } from './api-mods';
 import type { LogEntry } from '../../log';
 
@@ -596,7 +596,7 @@ export function adminRoutes(deps: AdminDeps) {
           || section === 'setup' && Object.hasOwn(body, 'hosting' as string)) {
         const pend = pending('setup') as { domain?: unknown; hosting?: unknown };
         const domain = pend.hosting === 'internal' ? '' : normaliseDomain(String(pend.domain ?? ''));
-        writeCaddyfile(deps.dataDir, { domain });
+        writeCaddyfile(deps.dataDir, { domain, launcher: launcherEnabled() });
         log('info', 'admin.proxy_reconfigured', { by: ctx.accountKey, domain: domain || '(none)' });
       }
       log('info', 'admin.config_changed', { section, by: ctx.accountKey, keys: Object.keys(body) });
@@ -671,7 +671,7 @@ export function adminRoutes(deps: AdminDeps) {
       // Normalised here too: the API is reachable without the page, and a scheme or a
       // trailing slash reaching the proxy config is what made the join link nonsense.
       const domain = body.hosting === 'internal' ? '' : normaliseDomain(String(body.domain ?? ''));
-      writeCaddyfile(deps.dataDir, { domain });
+      writeCaddyfile(deps.dataDir, { domain, launcher: launcherEnabled() });
       if (body.completed === true) setupCompletedNow = true;
       log('info', 'admin.setup_applied', { by: ctx.accountKey, mode: body.deploymentMode });
       json(res, 200, { ok: true, restartRequired: true });
