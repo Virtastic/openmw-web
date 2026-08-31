@@ -95,3 +95,41 @@ test('only an explicit truthy value switches it on', () => {
     assert.equal(launcherEnabled({ OMW_ENABLE_LAUNCHER: v }), true, `"${v}"`);
   }
 });
+
+// --- internal hosting is plain HTTP on a chosen port --------------------------------------------
+//
+// This mode used to serve a SELF-SIGNED certificate, which is the wrong answer for all three of
+// its uses: a LAN browser shows a full-page warning, a forwarded port hands the internet a
+// certificate nothing trusts, and an upstream reverse proxy has to be told to ignore one it
+// should never have been offered. Whatever sits in front is where TLS belongs.
+
+test('internal hosting serves plain HTTP, with no certificate anywhere', () => {
+  const out = renderCaddyfile({ domain: '', internal: true, port: 8123 });
+  assert.match(out, /^:8123 \{$/m, 'should listen on the chosen port');
+  assert.doesNotMatch(out, /tls internal/, 'no self-signed certificate in this mode');
+  assert.doesNotMatch(out, /^localhost \{$/m, 'no second HTTPS site');
+  // Without this Caddy provisions a certificate for the site address and bounces plain
+  // requests, which is exactly what a proxy or a LAN client must not meet.
+  assert.match(out, /auto_https off/);
+});
+
+test('the port is honoured, and a fractional one cannot produce a broken address', () => {
+  assert.match(renderCaddyfile({ domain: '', internal: true, port: 80 }), /^:80 \{$/m);
+  assert.match(renderCaddyfile({ domain: '', internal: true, port: 8080.9 }), /^:8080 \{$/m);
+});
+
+test('internal still carries the isolation headers and the mod routes', () => {
+  // The mode changes TLS and nothing else: the engine still needs cross-origin isolation, and
+  // the game files still have to be reachable.
+  const out = renderCaddyfile({ domain: '', internal: true, port: 8080 });
+  for (const h of ISOLATION) assert.ok(out.includes(h), `missing: ${h}`);
+  assert.match(out, /@mwdata path/);
+});
+
+test('public hosting is unchanged: a real certificate, and localhost as a way back in', () => {
+  const out = renderCaddyfile({ domain: 'mp.example.test' });
+  assert.match(out, /^mp\.example\.test \{$/m);
+  assert.match(out, /^localhost \{$/m);
+  assert.match(out, /tls internal/);
+  assert.doesNotMatch(out, /auto_https off/, 'the public path must still provision certificates');
+});

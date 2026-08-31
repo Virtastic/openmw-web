@@ -614,11 +614,19 @@ export function adminRoutes(deps: AdminDeps) {
       // here. Now that it is, saving a domain has to do the same thing or it would be a text
       // box that silently changes nothing — the exact failure that got publicBase removed.
       // Caddy watches the file, so the certificate follows within seconds, no restart.
-      if (section === 'setup' && Object.hasOwn(body, 'domain' as string)
-          || section === 'setup' && Object.hasOwn(body, 'hosting' as string)) {
-        const pend = pending('setup') as { domain?: unknown; hosting?: unknown };
-        const domain = pend.hosting === 'internal' ? '' : normaliseDomain(String(pend.domain ?? ''));
-        writeCaddyfile(deps.dataDir, { domain, launcher: launcherEnabled() });
+      // The port matters as much as the domain here: internal hosting listens on it, so a
+      // change to it has to reach the proxy the same way a domain change does.
+      if (section === 'setup' && ['domain', 'hosting', 'httpPort']
+        .some((k) => Object.hasOwn(body, k))) {
+        const pend = pending('setup') as { domain?: unknown; hosting?: unknown; httpPort?: unknown };
+        const internal = pend.hosting === 'internal';
+        const domain = internal ? '' : normaliseDomain(String(pend.domain ?? ''));
+        writeCaddyfile(deps.dataDir, {
+          domain,
+          launcher: launcherEnabled(),
+          internal,
+          port: Number(pend.httpPort ?? 80),
+        });
         log('info', 'admin.proxy_reconfigured', { by: ctx.accountKey, domain: domain || '(none)' });
       }
       log('info', 'admin.config_changed', { section, by: ctx.accountKey, keys: Object.keys(body) });
@@ -692,8 +700,14 @@ export function adminRoutes(deps: AdminDeps) {
       // printing a line for the operator to paste into a file it cannot reach.
       // Normalised here too: the API is reachable without the page, and a scheme or a
       // trailing slash reaching the proxy config is what made the join link nonsense.
-      const domain = body.hosting === 'internal' ? '' : normaliseDomain(String(body.domain ?? ''));
-      writeCaddyfile(deps.dataDir, { domain, launcher: launcherEnabled() });
+      const internal = body.hosting === 'internal';
+      const domain = internal ? '' : normaliseDomain(String(body.domain ?? ''));
+      writeCaddyfile(deps.dataDir, {
+        domain,
+        launcher: launcherEnabled(),
+        internal,
+        port: Number(body.httpPort ?? 80),
+      });
       if (body.completed === true) setupCompletedNow = true;
       log('info', 'admin.setup_applied', { by: ctx.accountKey, mode: body.deploymentMode });
       json(res, 200, { ok: true, restartRequired: true });

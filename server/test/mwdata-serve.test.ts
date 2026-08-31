@@ -23,8 +23,10 @@ function fixture(): string {
 }
 
 /** Boot the route on a real server, the way the rest of the suite does. */
-async function serve(dir: string, model: string): Promise<{ base: string; stop(): Promise<void> }> {
-  const route = mwDataRoutes({ gameDataDir: dir, deliveryModel: () => model });
+async function serve(
+  dir: string, model: string, modDoc?: () => import('../src/core/mods').ModDoc,
+): Promise<{ base: string; stop(): Promise<void> }> {
+  const route = mwDataRoutes({ gameDataDir: dir, deliveryModel: () => model, ...(modDoc ? { modDoc } : {}) });
   const srv: Server = createServer((req, res) => {
     void (async () => {
       if (!(await route(req, res, new URL(req.url ?? '/', 'http://x')))) { res.writeHead(404); res.end(); }
@@ -102,5 +104,37 @@ test('the path cannot escape the game-data folder', async () => {
       const r = await fetch(`${s.base}${attempt}`, { redirect: 'manual' });
       assert.notEqual(await r.text(), 'not yours', `escaped via ${attempt}`);
     }
+  } finally { await s.stop(); }
+});
+
+// --- delivery does not depend on the locker's storage backend ---------------------------------
+//
+// The wizard's storage question asks where UPLOADED FILES are kept, and it used to say that
+// covered "any game data uploaded here". It does not, and it must not: the sim peer is a native
+// OpenMW process handed `data=<a filesystem path>`, so the shared game library has to be real
+// files on this machine or multiplayer cannot run at all. S3 is for the per-account locker and
+// savegames. These pin that the two are independent rather than merely untested together.
+
+test('game data and mods serve identically with S3 configured', async () => {
+  const dir = fixture();
+  mkdirSync(join(dir, 'mods', 'a-mod'), { recursive: true });
+  writeFileSync(join(dir, 'mods', 'a-mod', 'A.esp'), 'plugin');
+
+  const doc = {
+    version: 2 as const,
+    entries: [],
+    mods: [{
+      slug: 'a-mod', name: 'A', archive: '', source: '', installedAt: '', enabled: true,
+      plugins: [{ file: 'A.esp', enabled: true }], archives: [], files: 1, bytes: 6,
+    }],
+  };
+  // The route takes no storage at all -- which IS the assertion. If serving ever grew a
+  // dependency on the locker backend, this signature would have to change and this test would
+  // stop compiling, which is the warning we want.
+  const s = await serve(dir, 'serve', () => doc);
+  try {
+    assert.equal((await fetch(`${s.base}/mwdata/mods/a-mod/A.esp`)).status, 200);
+    const stack = await (await fetch(`${s.base}/mwdata-mods.json`)).json() as { content: string[] };
+    assert.deepEqual(stack.content, ['A.esp']);
   } finally { await s.stop(); }
 });

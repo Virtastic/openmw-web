@@ -637,7 +637,12 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // here rather than only when the wizard saves, so a data directory restored from a backup,
   // or one whose file was deleted, comes back with a working proxy instead of needing the
   // wizard re-run. No-ops when the content already matches.
-  writeCaddyfile(opts.dataDir, { domain: config.setup.domain, launcher: launcherEnabled() });
+  writeCaddyfile(opts.dataDir, {
+    domain: config.setup.domain,
+    launcher: launcherEnabled(),
+    internal: config.setup.hosting === 'internal',
+    port: config.setup.httpPort,
+  });
 
   const maintenanceFile = join(opts.dataDir, 'maintenance');
   const maintenance = { on: false, message: '' };

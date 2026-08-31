@@ -230,7 +230,7 @@ const go = (hash) => { if (location.hash === hash) route(); else location.hash =
 // deployment never sees the questions that only matter with strangers on the box.
 const BLANK_ANSWERS = {
   deploymentMode: null, loginMethods: ['password'], contentProfile: null,
-  deliveryModel: null, hosting: null, domain: '', serverName: '', storage: 'local',
+  deliveryModel: null, hosting: null, domain: '', httpPort: 80, serverName: '', storage: 'local',
   // Who may create an account. ITS OWN QUESTION, asked whichever kind of server this is:
   // it used to be inferred from the deployment mode, so choosing "single player" silently
   // closed registration, which is a decision the operator never made and could not see.
@@ -255,6 +255,7 @@ function seedFromServer() {
   answers.contentProfile ||= s.contentProfile || null;
   answers.hosting ||= s.hosting || null;
   answers.deliveryModel ||= s.deliveryModel || null;
+  answers.httpPort ||= s.httpPort || 80;
   if (s.storage && answers.storage === 'local') answers.storage = s.storage;
   if (Array.isArray(s.loginMethods) && s.loginMethods.length
       && answers.loginMethods.length === 1 && answers.loginMethods[0] === 'password') {
@@ -828,18 +829,40 @@ function stepDelivery() {
 
 function stepHosting() {
   wizardShell(html`
-    <h5>Internal or public?</h5>
-    <p class="text-secondary small">Whether this server is reachable only from your own
-      network, or from the internet. You can change it later.</p>
-    ${raw(choice('hosting', 'internal', 'Internal',
-      'Only machines on your own network can connect: your house, your office, your LAN party. '
-      + 'Nothing has to be opened on your router, there is no domain to buy, and there is no '
-      + 'certificate warning to explain to anyone. The safest starting point.', 'Simplest'))}
+    <h5>How will people reach this server?</h5>
+    <p class="text-secondary small">This decides whether the bundled proxy handles HTTPS for
+      you, or stays out of the way. You can change it later.</p>
+    ${raw(choice('hosting', 'internal', 'Internal or behind your own proxy',
+      'Plain HTTP on a port you choose. Right for a home network or a LAN party, for a port '
+      + 'you forward yourself, and for putting your own reverse proxy, tunnel or load balancer '
+      + 'in front. Nothing here handles certificates in this mode, because whatever sits in '
+      + 'front of it should.', 'Simplest'))}
     ${raw(choice('hosting', 'public', 'Public',
       'Reachable from the internet, so people can join from anywhere. This needs a domain name '
       + 'pointed at this machine and ports 80 and 443 forwarded to it on your router. Both are '
       + 'checked below before you can continue, because a public server that is not actually '
       + 'reachable looks identical to a working one until somebody tries to join.'))}
+    ${raw(answers.hosting === 'internal' ? html`
+      <div class="mt-3 mb-2">
+        <label class="form-label" for="wzPort">Port</label>
+        <input class="form-control" id="wzPort" type="number" min="1" max="65535"
+          value="${answers.httpPort || 80}" style="max-width:10rem">
+        <div class="form-text">The port this server answers on. Leave it at 80 unless something
+          else on this machine already uses it, or you want to forward a different one. If you
+          change it, publish the same port for the <code>caddy</code> service in your
+          <code>docker-compose.yml</code>.</div>
+      </div>
+      <div class="vt-field-danger">
+        <strong>Read this if players are not on this machine.</strong> Browsers only let the game
+        use the shared memory it needs on a <em>secure</em> address. That means
+        <code>http://localhost</code> is fine, and <code>https://</code> anything is fine, but
+        <code>http://</code> to an IP or a machine name is not: the game will refuse to start
+        with "browser not supported".
+        <p class="mb-0 mt-2">So this mode is right when you play on this machine, or when a
+        reverse proxy, tunnel or load balancer in front of it provides HTTPS. If people will
+        connect straight to this box over your network, choose <strong>Public</strong> and give
+        it a domain instead.</p>
+      </div>` : '')}
     ${raw(answers.hosting === 'public' ? html`
       <div class="mt-3 mb-2">
         <label class="form-label">Domain name <span class="text-secondary">(optional)</span></label>
@@ -878,6 +901,10 @@ function stepHosting() {
     onNext: () => {
       const typed = $('#wzDomain')?.value;
       if (typed !== undefined) answers.domain = cleanDomain(typed);
+      // Clamped rather than validated with a message: any number outside the range is a typo,
+      // and silently keeping 80 is friendlier than blocking the step over it.
+      const port = Number($('#wzPort')?.value);
+      if (Number.isFinite(port) && port >= 1 && port <= 65535) answers.httpPort = Math.trunc(port);
       step++; renderWizard();
     } });
   wireChoices();
@@ -946,9 +973,12 @@ function stepName() {
 
 function stepStorage() {
   wizardShell(html`
-    <h5>Where should uploaded files be kept?</h5>
-    <p class="text-secondary small">Saved games, and any game data uploaded here, have to be
-      stored somewhere. This is only about where they sit on disk.</p>
+    <h5>Where should players' files be kept?</h5>
+    <p class="text-secondary small">Savegames, and each player's own copy of Morrowind when
+      they bring one. This is only about where those sit.</p>
+    <div class="vt-section-note mb-3">Morrowind itself and any mods you install stay on this
+      server either way. The game engine reads them as real files from disk, so they cannot
+      live anywhere else.</div>
     ${raw(choice('storage', 'local', 'On this server',
       'Kept in this server\'s own data folder, alongside everything else. Nothing to sign up '
       + 'for and nothing else to pay for. Right for almost everyone, and you can move to S3 '

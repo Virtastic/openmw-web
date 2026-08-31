@@ -376,6 +376,7 @@ export interface WizardAnswers {
   deliveryModel?: 'verify' | 'serve';
   /** Step 7: reachable from the internet, or LAN only? */
   hosting?: 'public' | 'internal';
+  httpPort?: number;
   domain?: string;
   /** Step 8 */
   serverName?: string;
@@ -416,6 +417,11 @@ export function applyWizard(
   // per-browser localStorage flag that answered differently on every machine.
   if (a.contentProfile) set('setup', 'contentProfile', a.contentProfile);
   if (a.hosting) set('setup', 'hosting', a.hosting);
+  // A port only means anything for internal hosting; public is 443 by definition.
+  if (a.httpPort !== undefined && Number.isFinite(a.httpPort)) {
+    const n = Math.trunc(a.httpPort);
+    if (n >= 1 && n <= 65535) set('setup', 'httpPort', n);
+  }
   // The domain is what the proxy config is rendered from, so an internal-only server
   // explicitly clears it rather than keeping a stale name that would still be served.
   if (a.hosting === 'internal') set('setup', 'domain', '');

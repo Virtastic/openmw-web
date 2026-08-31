@@ -188,7 +188,7 @@ test('the deployment answers that are read at runtime are editable', () => {
   // server publishes its files, and what the data checklist expects.
   const v = settingsView(mkdtempSync(join(tmpdir(), 'set-')), {
     setup: {
-      domain: '', hosting: 'internal', deploymentMode: 'single',
+      domain: '', hosting: 'internal', httpPort: 80, deploymentMode: 'single',
       deliveryModel: 'serve', contentProfile: 'expansions',
       storage: 'local', loginMethods: ['password'], registration: 'open', completed: true,
     },
@@ -196,7 +196,8 @@ test('the deployment answers that are read at runtime are editable', () => {
   const setup = v.sections.find((s) => s.name === 'setup');
   assert.ok(setup, '[setup] must render as a section');
   const keys = setup.fields.map((f) => f.key).sort();
-  assert.deepEqual(keys, ['contentProfile', 'deliveryModel', 'deploymentMode', 'domain', 'hosting']);
+  assert.deepEqual(keys,
+    ['contentProfile', 'deliveryModel', 'deploymentMode', 'domain', 'hosting', 'httpPort']);
 });
 
 test('the answers that are only a RECORD are not offered', () => {

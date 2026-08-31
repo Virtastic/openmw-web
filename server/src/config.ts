@@ -174,6 +174,7 @@ export interface Config {
   setup: {
     completed: boolean; contentProfile: string; hosting: string;
     deploymentMode: string; deliveryModel: string; storage: string; loginMethods: string[];
+    httpPort: number;
     domain: string; registration: string;
   };
   /** DEV/TEST ONLY, and OFF unless deliberately switched on. Fake players that accept friend
@@ -639,6 +640,7 @@ function validate(t: Tree): Config {
       contentProfile: reqStr(t, 'setup', 'contentProfile'),
       hosting: reqStr(t, 'setup', 'hosting'),
       deploymentMode: reqStr(t, 'setup', 'deploymentMode'),
+      httpPort: optNum(t, 'setup', 'httpPort', 80),
       deliveryModel: reqStr(t, 'setup', 'deliveryModel'),
       storage: reqStr(t, 'setup', 'storage'),
       loginMethods: reqStrArray(t, 'setup', 'loginMethods'),

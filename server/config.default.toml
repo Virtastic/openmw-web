@@ -396,6 +396,10 @@ enabled = false
 token = ""
 
 [setup]
+# Which port the bundled reverse proxy listens on when hosting is "internal". Plain HTTP: that
+# mode is for a LAN, a forwarded port, or your own reverse proxy in front, and TLS belongs to
+# whatever is in front. Ignored when a domain is set, which always serves HTTPS on 443.
+httpPort = 80
 # Written by the admin dashboard's setup wizard, and read back by it. Not settings in the
 # usual sense — they record what you told the wizard, so it can show you where you got to
 # on a different machine or after a restart. Safe to edit or delete; the worst that happens

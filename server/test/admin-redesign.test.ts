@@ -136,7 +136,8 @@ test('wizard answers persist whole, and /state carries the setup record', async 
   const setup = settings.sections.find((s) => s.name === 'setup');
   assert.ok(setup, '[setup] should be editable now the wizard is first-run only');
   const keys = setup.fields.map((f) => f.key).sort();
-  assert.deepEqual(keys, ['contentProfile', 'deliveryModel', 'deploymentMode', 'domain', 'hosting']);
+  assert.deepEqual(keys,
+    ['contentProfile', 'deliveryModel', 'deploymentMode', 'domain', 'hosting', 'httpPort']);
 });
 
 test('wizard SSO credentials land in config, and read back masked', async (t) => {

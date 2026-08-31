@@ -29,7 +29,9 @@ export const SECTION_HELP: Record<string, string> = {
   moderation: 'Chat logging, the report inbox, and how long both are kept.',
   admin: 'Who owns this server and what the admin surfaces can do.',
   authority: 'How the server decides which peer simulates a cell. Diagnostics, rarely tuned.',
-  locker: 'Per-player cloud storage for game data and saves, backed by disk or S3.',
+  locker: 'Per-player storage: savegames, and each player\'s own copy of Morrowind when they '
+    + 'bring one. Backed by this server\'s disk or by S3. The shared game data and the mods you '
+    + 'install are NOT here — the engine reads those as real files, so they stay on this machine.',
   metrics: 'Prometheus endpoint for external monitoring.',
   integrations: 'Optional third-party hooks. Off unless you configure them.',
   dev: 'Development and testing aids. Should be off on anything real.',
@@ -147,7 +149,11 @@ export const HELP: Record<string, FieldHelp> = {
     text: 'The domain name players reach this server on. Setting it rewrites the reverse proxy config and a real certificate is fetched within seconds, with nothing to restart. Leave it empty for local network use, which keeps the self-signed certificate and the browser warning that comes with it.',
   },
   'setup.hosting': {
-    text: 'Whether this server is meant to be reachable from the internet ("public") or only from your own network ("internal"). Choosing internal clears the domain, since there is nothing for a certificate authority to check.',
+    text: '"public" gets a real certificate for your domain and serves HTTPS on 443. "internal" serves plain HTTP on the port below, for playing on this machine or for putting your own reverse proxy, tunnel or load balancer in front. Choosing internal clears the domain, since there is nothing for a certificate authority to check.',
+    danger: 'Browsers only allow the shared memory the engine needs on a secure address. http://localhost counts as secure and https:// anything counts, but plain http:// to an IP or hostname does not — players reaching an internal server that way get "browser not supported". Put HTTPS in front of it, or use public hosting with a domain.',
+  },
+  'setup.httpPort': {
+    text: 'The port the bundled proxy listens on for internal hosting. Change it if something else on this machine already has port 80, or if you forward a different one. Publish the same port for the caddy service in docker-compose.yml, or nothing outside the container reaches it. Ignored for public hosting, which is 443.',
   },
   'setup.deploymentMode': {
     text: 'Whether this is a private one-person world ("single") or a shared one ("multiplayer"). It decides which boot mode the sign-in page hands the player, whether the server needs its own copy of the game, and how much of this dashboard applies.',
