@@ -319,7 +319,6 @@ const wizardSteps = () => {
     'name',
     'login',
     'registration',
-    'admins',
     'storage',
     'files',
     'review',
@@ -329,7 +328,7 @@ const wizardSteps = () => {
 /** Short labels for the progress rail, so the steps are named rather than anonymous ticks. */
 const STEP_LABEL = {
   owner: 'Account', mode: 'Type', login: 'Sign-in', registration: 'Sign-ups',
-  admins: 'Admins', content: 'Content', delivery: 'Files', hosting: 'Access',
+  content: 'Content', delivery: 'Files', hosting: 'Access',
   name: 'Name', storage: 'Storage', files: 'Data', review: 'Review',
 };
 
@@ -483,7 +482,6 @@ function renderWizard() {
   if (name === 'mode') return stepMode();
   if (name === 'login') return stepLogin();
   if (name === 'registration') return stepRegistration();
-  if (name === 'admins') return stepAdmins();
   if (name === 'content') return stepContent();
   if (name === 'delivery') return stepDelivery();
   if (name === 'hosting') return stepHosting();
@@ -526,26 +524,21 @@ function stepOwner() {
   if (state.authed) { step++; return renderWizard(); }
   wizardShell(html`
     <h5>Create your administrator account</h5>
-    <p class="text-secondary small">This is the account you will sign in with. It has full
-      control of the server, so give it a real password, you can add a second factor once
-      you are in.</p>
-    <div class="vt-section-note mb-3">Your email address is your sign-in. Players never see
-      it: in the game you appear under a separate display name. Holding it here is also what
-      lets you reset your own password later without touching the server.</div>
+    <p class="text-secondary small">Full control of the server, so give it a real password.
+      You can add a second factor once you are in.</p>
     ${raw(!state.needsSetupKey || setupKey ? '' : html`
       <div class="mb-3">
         <label class="form-label">Setup key</label>
         <input class="form-control vt-mono" id="oKey" autocomplete="off">
-        <div class="form-text">You are setting this server up from outside its own network,
-          so it needs the key as proof you have access to the machine. It was printed in the
-          log when the server started, and is saved as <code>setup-token</code> in the data
-          folder. It stops working once this account exists.</div>
+        <div class="form-text">Proof you have access to the machine, needed because you are
+          not on its network. It is in the startup log, and in <code>setup-token</code> in the
+          data folder.</div>
       </div>`)}
     <div class="mb-3">
       <label class="form-label">Email address</label>
       <input class="form-control" id="oName" type="email" autocomplete="username"
         placeholder="you@example.com" value="${answers.ownerEmail || ''}">
-      <div class="form-text">You will sign in with this.</div>
+      <div class="form-text">Players never see it.</div>
     </div>
     <div class="mb-3">
       <label class="form-label">Password</label>
@@ -608,8 +601,6 @@ function stepOwner() {
 function stepMode() {
   wizardShell(html`
     <h5>Single player or multiplayer?</h5>
-    <p class="text-secondary small">This only sets sensible starting points. Nothing here stops
-      people joining either way, and you can change any of it later.</p>
     ${raw(choice('deploymentMode', 'single', 'Single Player',
       'Your own world, played on your own. Friends can still join if you invite them, and you '
       + 'decide who may sign up in a moment.'))}
@@ -667,19 +658,12 @@ function stepLogin() {
 
   wizardShell(html`
     <h5>How will players sign in?</h5>
-    <p class="text-secondary small">Tick as many as you like; they work side by side, and one
-      person can use either on the same account. If you are not sure, the first one on its own
-      is a complete answer and needs nothing set up.</p>
-    ${raw(box('password', 'A username and password they choose here',
-      'An account that lives on this server. Nothing to configure, works for everyone, and '
-      + 'is what most servers use on its own.'))}
-    <div class="text-secondary small text-uppercase mt-3 mb-1">Or sign in with an account they already have</div>
-    <p class="text-secondary small">Nobody has to invent another password, and you never hold
-      one. The trade is about ten minutes per provider: you register this server with them and
-      paste back two values, which the next box walks you through.</p>
-    ${raw(box('discord', 'Discord', 'Sensible if your group already lives in a Discord server.'))}
-    ${raw(box('google', 'Google', 'Almost everyone has one, so nobody gets stuck.'))}
-    ${raw(box('microsoft', 'Microsoft', 'Useful for a school or workplace group.'))}
+    <p class="text-secondary small">Tick as many as you like.</p>
+    ${raw(box('password', 'Username and password', 'Held on this server. Nothing to set up.'))}
+    <div class="text-secondary small text-uppercase mt-3 mb-2">Single sign-on</div>
+    ${raw(box('discord', 'Discord', ''))}
+    ${raw(box('google', 'Google', ''))}
+    ${raw(box('microsoft', 'Microsoft', ''))}
     <div class="vt-section-note mt-3">${raw(summary)}</div>
     ${raw(ssoNeedingKeys().length ? html`<div class="vt-field-danger mt-2">
       <strong>${ssoNeedingKeys().map((p) => LOGIN_LABEL[p]).join(' and ')}
@@ -790,8 +774,7 @@ function stepRegistration() {
       </div>` : '')}`,
   { disabled: !answers.registration
       || (answers.registration === 'invite' && answers.inviteCode.trim() === ''),
-    need: answers.registration === 'invite'
-      ? 'Type the code people will need.' : 'Choose who may sign up.' });
+    need: 'Choose who may sign up.' });
   wireChoices();
   const inv = $('#wzInvite');
   if (inv) {
@@ -851,9 +834,6 @@ function stepAdmins() {
 function stepContent() {
   wizardShell(html`
     <h5>Which version of Morrowind is this?</h5>
-    <p class="text-secondary small">Everyone playing here has to be running the same one. It
-      also tells the server which files to look for when you add them in a moment, so if you
-      are not sure, check what you own before choosing.</p>
     ${raw(choice('contentProfile', 'morrowind', 'Morrowind',
       'The base game with neither expansion. An older disc copy, usually.'))}
     ${raw(choice('contentProfile', 'expansions', 'Morrowind + Tribunal + Bloodmoon',
@@ -887,10 +867,7 @@ function stepDelivery() {
         because it runs the world: it simulates every NPC and creature rather than any
         player's browser doing it. The Game data step near the end is where you add it.
       </div>` : '')}
-    <div class="vt-section-note mt-3">
-      Unsure? Take the first; you can change it in Settings later without anyone losing
-      anything.
-    </div>`,
+`,
   { disabled: !answers.deliveryModel, need: 'Choose how players get the files.' });
   wireChoices();
 }
@@ -1101,10 +1078,18 @@ const INSTALL_PATHS = [
 ].join('\n');
 
 async function stepFiles() {
+  // A FAILURE HERE USED TO BE INVISIBLE. The error was swallowed, so `mods` stayed null: no
+  // upload panel rendered, no checklist, and, because "missing" is derived from a profile
+  // that never loaded, a green "everything this profile expects is present". A screen that
+  // says the files are fine when it could not look is worse than one that says nothing.
   let mods = null;
+  let modsError = '';
   try {
     mods = await api(`/mods?profile=${encodeURIComponent(answers.contentProfile || '')}`);
-  } catch { /* shown as unavailable below */ }
+  } catch (e) {
+    if (e.message === 'signed out') return; // api() is already sending them to sign in
+    modsError = e.message;
+  }
   const profile = mods?.profiles?.[answers.contentProfile];
   const present = new Set([
     ...(mods?.entries || []).map((e) => e.file.toLowerCase()),
@@ -1161,8 +1146,12 @@ async function stepFiles() {
       <div class="text-secondary small text-uppercase mb-1">Sound, music and video
         <span class="text-lowercase">- these sit loose in the folder, so they are easy to miss</span></div>
       <table class="table table-sm align-middle mb-3">${raw(mediaRows)}</table>` : '')}
-    ${raw(mods ? uploadPanel(mods, true) : '')}
-    ${raw(missingCount > 0 ? html`
+    ${raw(mods ? uploadPanel(mods, true) : html`
+      <div class="alert alert-danger mb-0">
+        <strong>Could not read the game data folder.</strong> ${modsError || 'The server did not answer.'}
+        Reload this page; if you were signed out, sign in again and Setup resumes here.
+      </div>`)}
+    ${raw(!mods || !profile ? '' : missingCount > 0 ? html`
       <div class="alert alert-warning mb-0">
         <strong>${missingCount} still missing.</strong>
         ${raw(answers.deploymentMode === 'single'
