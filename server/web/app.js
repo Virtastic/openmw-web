@@ -1290,18 +1290,33 @@ function waitForRestart() {
         return;
       }
     } catch { /* still down, expected */ }
-    // Say what is happening rather than leaving a bar moving in silence.
-    const d = $('#ldDetail');
-    if (d && tries > 4) d.textContent = `still waiting… ${tries}s`;
-    if (tries > 60) {
+    // A RESTART IS NOT ALWAYS QUICK. Measured at 87 seconds on a real one: the server flushes
+    // ten databases on the way out, Docker backs off before starting it again, and the
+    // healthcheck has its own grace period. The old copy promised "a few seconds" and then
+    // polled silently once a second, so a normal restart looked hung and filled the console
+    // with a hundred 502s from a proxy whose upstream was, correctly, not there.
+    const secs = Math.round((Date.now() - startedAt) / 1000);
+    const d = $('#ldStatus');
+    if (d) {
+      d.textContent = secs < 20 ? 'Applying your settings'
+        : secs < 60 ? 'Still starting up'
+        : 'Taking longer than usual';
+    }
+    const detail = $('#ldDetail');
+    if (detail && secs > 8) detail.textContent = `${secs}s`;
+
+    if (secs > 240) {
       document.body.classList.remove('vt-loading');
-      view().innerHTML = html`<div class="alert alert-danger">The server has not come back.
-        Check the container logs, if it is not configured to restart automatically you may
-        need to start it yourself.</div>`;
+      view().innerHTML = html`<div class="alert alert-danger">The server has not come back
+        after four minutes. Check the container logs; if it is not configured to restart
+        automatically you may need to start it yourself.</div>`;
       return;
     }
-    setTimeout(tick, 1000);
+    // Back off: a restart that takes a minute does not need sixty attempts, and each failed
+    // one is a console entry the operator has to scroll past.
+    setTimeout(tick, secs < 10 ? 1000 : secs < 30 ? 2000 : 4000);
   };
+  const startedAt = Date.now();
   setTimeout(tick, 1500);
 }
 
@@ -2104,7 +2119,28 @@ function wireUpload(onDone) {
       return;
     }
     uploadRunning = true;
-    try { await runUpload(entries); } finally { uploadRunning = false; }
+    // CONTINUE IS HELD WHILE FILES ARE IN FLIGHT. Leaving the step mid-run does not stop the
+    // uploads, but it does take away the only progress readout and the only place the
+    // outcome is reported, so an operator who wandered on would be told nothing about a run
+    // that was still going, and the next step would be checking a folder still being written.
+    const next = $('#wzNext');
+    const back = $('#wzBack');
+    const label = next?.textContent;
+    if (next) { next.disabled = true; next.textContent = 'Uploading…'; }
+    if (back) back.disabled = true;
+    try {
+      await runUpload(entries);
+    } finally {
+      uploadRunning = false;
+      // Only if the step is still on screen: onDone re-renders, which replaces this button.
+      const still = $('#wzNext');
+      if (still && still.textContent === 'Uploading…') {
+        still.disabled = false;
+        still.textContent = label ?? 'Continue';
+      }
+      const backNow = $('#wzBack');
+      if (backNow) backNow.disabled = false;
+    }
   };
 
   const runUpload = async (entries) => {
@@ -2247,12 +2283,18 @@ function wireUpload(onDone) {
     if (onDone) onDone();
   };
 
+  // WHAT THE SERVER WILL ACCEPT, mirrored so the obvious refusals never leave the browser.
+  // A Data Files folder carries readmes, .pk leftovers and installer junk; every one of them
+  // used to cost a request, a round trip and a red 400 in the console, which made an
+  // ordinary upload look like it was failing. Deliberately looser than the server's rule:
+  // this only drops extensions nothing could ever want, and the server still decides where
+  // anything else belongs.
+  const WANTED = /\.(esm|esp|bsa|ba2|omwaddon|omwgame|mp3|wav|bik|fnt|tex|dds|tga|bmp|zip)$/i;
+
   /** Turn a picker or a drop into {file, path} pairs, keeping each file's folder. */
-  const fromInput = (input) => [...input.files].map((f) => ({
-    file: f,
-    // webkitRelativePath is set by the directory picker and carries the whole subpath.
-    path: f.webkitRelativePath || f.name,
-  }));
+  const fromInput = (input) => [...input.files]
+    .map((f) => ({ file: f, path: f.webkitRelativePath || f.name }))
+    .filter((e) => WANTED.test(e.path));
 
   /** Walk a dropped directory tree. Drag-and-drop gives entries, not paths, so the tree has
    *  to be traversed by hand, dataTransfer.files alone silently yields only loose files. */
@@ -2286,11 +2328,12 @@ function wireUpload(onDone) {
     if (items.length) {
       const out = [];
       for (const entry of items) await walkEntry(entry, '', out);
-      send(out);
+      send(out.filter((e) => WANTED.test(e.path)));
       return;
     }
     // No entry API (older browser): loose files only, which is better than nothing.
-    send([...e.dataTransfer.files].map((f) => ({ file: f, path: f.name })));
+    send([...e.dataTransfer.files]
+      .map((f) => ({ file: f, path: f.name })).filter((x) => WANTED.test(x.path)));
   };
 }
 
