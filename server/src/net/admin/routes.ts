@@ -24,7 +24,11 @@
 //   GET  /admin/api/settings           [viewer]    every section, values + help
 //   PUT  /admin/api/settings/:section  [owner]
 //   GET  /admin/api/mods               [viewer]
-//   PUT  /admin/api/mods               [owner]
+//   PUT  /admin/api/mods               [owner]     load order + mod order/switches
+//   POST /admin/api/mods/upload        [owner]     one loose Data Files file
+//   POST /admin/api/mods/install       [owner]     a mod .zip -> staged, with its candidates
+//   POST /admin/api/mods/install/commit[owner]     which candidates to extract
+//   DEL  /admin/api/mods/:slug         [owner]     uninstall
 //   GET  /admin/api/logs               [moderator] ring buffer + on-disk history
 //   GET  /admin/api/metrics            [moderator] the existing registry, as JSON
 //   GET  /admin/api/accounts           [moderator]
@@ -55,7 +59,8 @@ import { settingsView, applySection, applyWizard, type WizardAnswers } from './a
 import { checkDomain, normaliseDomain, VERIFY_PATH, VERIFY_NONCE } from './setup-check';
 import { readDashboardTree } from './settings-store';
 import { writeCaddyfile, launcherEnabled } from './caddy-config';
-import { modsView, saveMods, uploadContent, gameDataWritable } from './api-mods';
+import { modsView, saveMods, uploadContent, gameDataWritable, MAX_UPLOAD_BYTES } from './api-mods';
+import { beginInstall, commitInstall, saveModOrder, uninstallMod, type Choice } from './mod-install';
 import type { LogEntry } from '../../log';
 
 export interface AdminDeps {
@@ -705,11 +710,73 @@ export function adminRoutes(deps: AdminDeps) {
     if (method === 'PUT' && path === '/admin/api/mods') {
       const ctx = await gate(req, res, auth, 'owner');
       if (!ctx) return true;
-      const body = await readJson<{ entries?: { file?: string; enabled?: boolean }[] }>(req, res);
+      const body = await readJson<{
+        entries?: { file?: string; enabled?: boolean }[];
+        mods?: { slug?: unknown; enabled?: unknown; plugins?: unknown }[];
+      }>(req, res);
       if (body === undefined) return true;
-      const result = saveMods(deps.gameDataDir, deps.dataDir, body.entries ?? []);
-      if (!result.ok) { json(res, 400, { error: result.error }); return true; }
-      log('info', 'admin.mods_changed', { by: ctx.accountKey, count: (body.entries ?? []).length });
+      // Both halves of the same document, and either may be absent: the base-game table and the
+      // mod list are separate cards and each saves on its own.
+      if (body.entries) {
+        const result = saveMods(deps.gameDataDir, deps.dataDir, body.entries);
+        if (!result.ok) { json(res, 400, { error: result.error }); return true; }
+      }
+      if (body.mods) {
+        const result = saveModOrder(deps.dataDir, body.mods);
+        if (!result.ok) { json(res, result.status, { error: result.error }); return true; }
+      }
+      log('info', 'admin.mods_changed', {
+        by: ctx.accountKey, entries: body.entries?.length ?? 0, mods: body.mods?.length ?? 0,
+      });
+      json(res, 200, { ok: true, restartRequired: true });
+      return true;
+    }
+
+    // --- installing a mod from a zip ------------------------------------------------------------
+    //
+    // Two requests, because a zip's central directory is at the end of the file: nothing can be
+    // said about the archive until all of it has landed. Budget-exempt like the file upload
+    // above, and for the same reason — a several-hundred-megabyte body is one request that must
+    // not be counted as an API storm.
+    if (method === 'POST' && path === '/admin/api/mods/install') {
+      const ctx = await gate(req, res, auth, 'owner', true);
+      if (!ctx) return true;
+      if (!gameDataWritable(deps.gameDataDir)) {
+        json(res, 409, { error: 'The game data folder is read-only, so mods cannot be installed. '
+          + 'Remove ":ro" from the gamedata volume and restart.' });
+        return true;
+      }
+      const staged = await beginInstall(
+        req, deps.dataDir, url.searchParams.get('name') ?? 'mod.zip', MAX_UPLOAD_BYTES,
+      );
+      if (!staged.ok) { json(res, staged.status, { error: staged.error }); return true; }
+      log('info', 'admin.mod_staged', { by: ctx.accountKey, archive: staged.value.archive });
+      json(res, 200, staged.value);
+      return true;
+    }
+    if (method === 'POST' && path === '/admin/api/mods/install/commit') {
+      const ctx = await gate(req, res, auth, 'owner');
+      if (!ctx) return true;
+      const body = await readJson<{ token?: string; choices?: Choice[] }>(req, res);
+      if (body === undefined) return true;
+      const done = await commitInstall(
+        deps.dataDir, deps.gameDataDir, String(body.token ?? ''),
+        Array.isArray(body.choices) ? body.choices : [],
+      );
+      if (!done.ok) { json(res, done.status, { error: done.error }); return true; }
+      log('info', 'admin.mod_installed', { by: ctx.accountKey, slugs: done.value.map((m) => m.slug) });
+      json(res, 200, { ok: true, installed: done.value, restartRequired: true });
+      return true;
+    }
+    // Prefix match, unlike every other route here: the slug is part of the path. Validated
+    // inside uninstallMod before it reaches the filesystem.
+    if (method === 'DELETE' && path.startsWith('/admin/api/mods/')) {
+      const ctx = await gate(req, res, auth, 'owner');
+      if (!ctx) return true;
+      const slug = decodeURIComponent(path.slice('/admin/api/mods/'.length));
+      const gone = await uninstallMod(deps.dataDir, deps.gameDataDir, slug);
+      if (!gone.ok) { json(res, gone.status, { error: gone.error }); return true; }
+      log('info', 'admin.mod_deleted', { by: ctx.accountKey, slug });
       json(res, 200, { ok: true, restartRequired: true });
       return true;
     }

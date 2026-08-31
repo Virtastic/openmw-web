@@ -18,7 +18,9 @@ import { rm } from 'node:fs/promises';
 import { join, basename, dirname, resolve, sep } from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { log } from '../../log';
-import { MODLIST_FILE, readModDoc, writeModDoc, type ModEntry } from '../../core/mods';
+import {
+  MODLIST_FILE, MODS_SUBDIR, readModDoc, resolveMods, writeModDoc, type ModEntry,
+} from '../../core/mods';
 
 // The document, its schema and its migration live in core/mods.ts, so the load-order half of
 // this file and the mod-manager half cannot drift into two readers of one file.
@@ -115,7 +117,10 @@ function listFiles(gameDataDir: string): { content: string[]; archives: string[]
   let names: string[];
   try {
     if (!statSync(gameDataDir).isDirectory()) return { content: [], archives: [] };
-    names = readdirSync(gameDataDir);
+    // Files only. Mods live in gamedata/mods/<slug>/, and a mod folder that happened to be
+    // named "Foo.esm" would otherwise be listed as a base-game plugin.
+    names = readdirSync(gameDataDir, { withFileTypes: true })
+      .filter((e) => !e.isDirectory()).map((e) => e.name);
   } catch {
     return { content: [], archives: [] };
   }
@@ -179,6 +184,7 @@ export function reconcile(gameDataDir: string, dataDir: string): {
 export function modsView(gameDataDir: string, dataDir: string, profile?: string): unknown {
   const { entries, missing, archives } = reconcile(gameDataDir, dataDir);
   const spec = profile ? CONTENT_PROFILES[profile] : undefined;
+  const doc = readModDoc(dataDir);
   return {
     dir: gameDataDir,
     exists: existsSync(gameDataDir),
@@ -189,6 +195,16 @@ export function modsView(gameDataDir: string, dataDir: string, profile?: string)
     // Loose media, counted per directory, so the wizard can say "Music is empty" rather than
     // pronouncing a folder complete because two plugins happen to be present.
     media: spec ? mediaPresent(gameDataDir, spec.media) : undefined,
+    // Installed mods, in load order, with `present` telling the page whether the folder is
+    // still there — the same courtesy `missing` does for base-game plugins.
+    mods: doc.mods.map((m) => ({
+      ...m,
+      present: existsSync(join(gameDataDir, MODS_SUBDIR, m.slug)),
+    })),
+    ...(() => {
+      const s = resolveMods(doc);
+      return { bsaCollisions: s.bsaCollisions, contentCollisions: s.contentCollisions };
+    })(),
   };
 }
 
@@ -244,7 +260,7 @@ const MEDIA_EXT = /\.(mp3|wav|bik|fnt|tex|dds|tga|bmp|zip)$/i;
 const MEDIA_DIRS = /^(Sound|Music|Video|Fonts|Splash|BookArt|Icons|Textures|Meshes)\//i;
 /** Morrowind.bsa alone is ~430 MB and Tamriel Rebuilt ships larger; 8 GB is headroom, not a
  *  target. The point of the cap is that a stuck or hostile client cannot fill the disk. */
-const MAX_UPLOAD_BYTES = 8 * 1024 * 1024 * 1024;
+export const MAX_UPLOAD_BYTES = 8 * 1024 * 1024 * 1024;
 
 export type UploadResult = { ok: true; file: string; bytes: number } | { ok: false; status: number; error: string };
 
