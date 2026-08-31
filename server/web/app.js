@@ -2096,8 +2096,10 @@ async function pageMods() {
     <div class="table-responsive"><table class="table table-hover mb-0">
       <thead><tr><th style="width:2rem"></th><th style="width:3rem">Load</th><th>File</th><th></th></tr></thead>
       <tbody id="modBody">${raw(rows || html`<tr><td colspan="4" class="vt-empty">No content files found.</td></tr>`)}</tbody>
-    </table></div></div>`;
+    </table></div></div>
+    ${raw(modsCard(m, editable))}`;
 
+  if (editable) wireMods(m);
   if (!editable) return;
 
   // Reload the page after an upload so the new files appear in the load order immediately -
@@ -2189,6 +2191,269 @@ function drawQr(el, text) {
 }
 
 /** Add-files panel, shared by the mods page and the wizard's game-data step. */
+/**
+ * The mods card's behaviour: upload a zip, choose what is in it, order the results.
+ *
+ * The chooser is rendered INLINE as a staged panel rather than in the confirm modal. The modal
+ * resolves a boolean and has its body replaced on each use; reading checkbox state back out of
+ * something that is in the middle of hiding is the kind of thing that works until it doesn't.
+ */
+function wireMods(m) {
+  const stage = $('#modStage');
+  const drop = $('#modZip');
+
+  const send = async (file) => {
+    if (!file) return;
+    if (!/\.zip$/i.test(file.name)) {
+      // Named before the upload rather than after: there is no point sending 400 MB to be told.
+      toast('Only .zip archives can be installed. If this is a .7z or .rar, open it and save it '
+        + 'as a .zip first.', 'err');
+      return;
+    }
+    if (uploadRunning) { toast('An upload is already running.', 'err'); return; }
+    uploadRunning = true;
+    stage.innerHTML = html`<div class="alert alert-secondary">Reading
+      <strong>${file.name}</strong> (${raw(sizeOf(file.size))})…</div>`;
+    try {
+      // Raw bytes with the name in the query, exactly as the Data Files upload does: a
+      // multipart parser for a several-hundred-megabyte archive would be a dependency and a
+      // memory problem. duplex:'half' is required to stream a File body.
+      const r = await fetch(`/admin/api/mods/install?name=${encodeURIComponent(file.name)}`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token.get()}`, 'content-type': 'application/octet-stream' },
+        body: file,
+        duplex: 'half',
+      });
+      const body = await r.json();
+      if (!r.ok) { stage.innerHTML = html`<div class="alert alert-danger">${body.error}</div>`; return; }
+      renderChooser(body);
+    } catch (e) {
+      stage.innerHTML = html`<div class="alert alert-danger">The upload did not finish: ${e.message}</div>`;
+    } finally {
+      uploadRunning = false;
+    }
+  };
+
+  /** What the archive turned out to contain, and which parts to install. */
+  const renderChooser = (staged) => {
+    const many = staged.candidates.length > 1;
+    stage.innerHTML = html`
+      <div class="card card-secondary card-outline mb-3"><div class="card-body">
+        <h5 class="mb-1">${staged.archive}</h5>
+        <p class="small text-secondary">${raw(many
+          ? `This archive holds ${staged.candidates.length} folders that look like game data. `
+            + 'Mods often ship a core install plus optional extras; pick the ones you want.'
+          : 'This is what was found inside.')}</p>
+        ${raw(staged.candidates.map((c, i) => html`
+          <label class="d-block border rounded p-2 mb-2">
+            <input class="form-check-input me-2" type="checkbox" data-cand="${i}"
+              ${raw(!many || i === 0 ? 'checked' : '')}>
+            <strong class="vt-mono">${c.path || '(the archive itself)'}</strong>
+            <div class="small text-secondary ms-4">
+              ${raw([
+                c.plugins.length ? `${c.plugins.length} plugin: ${c.plugins.join(', ')}` : '',
+                c.archives.length ? `archives: ${c.archives.join(', ')}` : '',
+                c.assetDirs.length ? c.assetDirs.join(', ') : '',
+                `${c.files} files · ${sizeOf(c.bytes)}`,
+              ].filter(Boolean).join('<br>'))}
+            </div>
+          </label>`).join(''))}
+        <label class="fld d-block mb-2"><span class="small text-secondary">Name it</span>
+          <input class="form-control" id="modName" maxlength="120"
+            value="${staged.archive.replace(/\.zip$/i, '')}"></label>
+        <button class="btn btn-primary btn-sm" id="modGo">Install</button>
+        <button class="btn btn-outline-secondary btn-sm ms-2" id="modCancel">Discard</button>
+      </div></div>`;
+
+    $('#modCancel').onclick = () => { stage.innerHTML = ''; };
+    $('#modGo').onclick = async () => {
+      const name = $('#modName').value.trim();
+      const choices = staged.candidates
+        .map((c, i) => ({ c, on: stage.querySelector(`[data-cand="${i}"]`).checked }))
+        .filter((x) => x.on)
+        .map(({ c }) => ({
+          path: c.path,
+          slug: c.suggestedSlug,
+          // With several parts chosen they become separate mods, so each needs a name that
+          // tells them apart; one part takes the name the operator typed.
+          name: staged.candidates.length > 1 && c.path ? `${name} — ${c.path}` : name,
+        }));
+      if (!choices.length) { toast('Tick at least one folder to install.', 'err'); return; }
+      $('#modGo').disabled = true;
+      try {
+        await api('/mods/install/commit', { method: 'POST', body: { token: staged.token, choices } });
+        toast('Installed. Restart to load it.');
+        route();
+      } catch (e) {
+        stage.innerHTML = html`<div class="alert alert-danger">${e.message}</div>`;
+      }
+    };
+  };
+
+  if (drop) {
+    $('#modZipPick').onchange = (e) => send(e.target.files[0]);
+    drop.ondragover = (e) => { e.preventDefault(); drop.classList.add('over'); };
+    drop.ondragleave = () => drop.classList.remove('over');
+    drop.ondrop = (e) => {
+      e.preventDefault();
+      drop.classList.remove('over');
+      send(e.dataTransfer.files[0]);
+    };
+  }
+
+  const list = $('#modList');
+  if (!list) return;
+
+  // Same two affordances as the load-order table: buttons for touch and keyboard, drag for a
+  // mouse. HTML5 drag events never fire on touch, so drag alone is not an option.
+  list.querySelectorAll('[data-modmove]').forEach((btn) => {
+    btn.onclick = () => {
+      const cardEl = btn.closest('.vt-mod');
+      const all = [...list.querySelectorAll('.vt-mod')];
+      const to = all.indexOf(cardEl) + (btn.dataset.modmove === 'up' ? -1 : 1);
+      if (to < 0 || to >= all.length) return;
+      if (btn.dataset.modmove === 'up') list.insertBefore(cardEl, all[to]);
+      else list.insertBefore(all[to], cardEl);
+      btn.focus();
+    };
+  });
+
+  let dragged = null;
+  list.querySelectorAll('.vt-mod[draggable=true]').forEach((el) => {
+    el.ondragstart = () => { dragged = el; el.classList.add('vt-dragging'); };
+    el.ondragend = () => { dragged?.classList.remove('vt-dragging'); dragged = null; };
+    el.ondragover = (e) => {
+      e.preventDefault();
+      if (!dragged || dragged === el) return;
+      const r = el.getBoundingClientRect();
+      list.insertBefore(dragged, e.clientY > r.top + r.height / 2 ? el.nextSibling : el);
+    };
+  });
+
+  list.querySelectorAll('[data-moddel]').forEach((btn) => {
+    btn.onclick = async () => {
+      const cardEl = btn.closest('.vt-mod');
+      const slug = cardEl.dataset.slug;
+      const mod = (m.mods || []).find((x) => x.slug === slug);
+      // Type-to-confirm, like every other delete here: the files go, and there is no undo.
+      if (!await confirmAction({
+        title: `Remove ${mod?.name ?? slug}?`,
+        body: 'Its folder and everything in it is deleted from the game data directory. '
+          + 'Your saves are not touched, but anything that depended on this mod will not load.',
+        typeToConfirm: slug,
+      })) return;
+      try {
+        await api(`/mods/${encodeURIComponent(slug)}`, { method: 'DELETE' });
+        toast('Removed. Restart to apply.');
+        route();
+      } catch (e) { toast(e.message, 'err'); }
+    };
+  });
+
+  const save = $('#modsSave');
+  if (save) {
+    save.onclick = async () => {
+      const mods = [...list.querySelectorAll('.vt-mod')].map((el) => ({
+        slug: el.dataset.slug,
+        enabled: el.querySelector('[data-modon]').checked,
+        plugins: [...el.querySelectorAll('[data-plug]')]
+          .map((p) => ({ file: p.dataset.plug, enabled: p.checked })),
+      }));
+      try {
+        await api('/mods', { method: 'PUT', body: { mods } });
+        toast('Mod changes saved.');
+        restartPrompt();
+      } catch (e) { toast(e.message, 'err'); }
+    };
+  }
+}
+
+const sizeOf = (n) => (n >= 1073741824 ? `${(n / 1073741824).toFixed(1)} GB`
+  : n >= 1048576 ? `${Math.round(n / 1048576)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
+
+/**
+ * Installed mods: one card each, in load order.
+ *
+ * A SEPARATE LIST FROM THE TABLE ABOVE, deliberately. That table is the base game's own files,
+ * which an operator drops in as a folder and never removes; these are packages that were
+ * installed and can be uninstalled. Mixing them would put a Delete button next to Morrowind.esm.
+ *
+ * ORDER MEANS FILE PRIORITY HERE, which is the thing the operator is really choosing: OpenMW
+ * gives a loose file to the LAST mod that provides it. Said in those words on the card, because
+ * "load order" means the other ordering to anyone who has modded before.
+ */
+function modsCard(m, editable) {
+  const mods = m.mods || [];
+  const bsaClash = new Map((m.bsaCollisions || []).flatMap((c) => c.owners.map((o) => [o, c.name])));
+
+  const card = (mod, i) => {
+    const bits = [
+      mod.plugins.length ? `${mod.plugins.length} plugin${mod.plugins.length > 1 ? 's' : ''}` : '',
+      mod.archives.length ? `${mod.archives.length} archive${mod.archives.length > 1 ? 's' : ''}` : '',
+      `${mod.files} files`, sizeOf(mod.bytes),
+    ].filter(Boolean);
+    return html`
+    <div class="card card-secondary card-outline mb-2 vt-mod" draggable="${raw(editable ? 'true' : 'false')}"
+      data-slug="${mod.slug}" data-i="${i}">
+      <div class="card-body py-2">
+        <div class="d-flex align-items-center gap-2">
+          ${raw(editable ? '<span class="vt-drag text-secondary">⠿</span>' : '')}
+          <div class="form-check form-switch mb-0">
+            <input class="form-check-input" type="checkbox" data-modon
+              ${raw(mod.enabled ? 'checked' : '')} ${raw(editable ? '' : 'disabled')}
+              aria-label="Load ${mod.name}">
+          </div>
+          <div class="flex-grow-1">
+            <strong>${mod.name}</strong>
+            <span class="vt-mono small text-secondary ms-2">${mod.slug}</span>
+          </div>
+          ${raw(editable ? html`
+            <button class="btn btn-sm btn-outline-secondary" data-modmove="up" aria-label="Move ${mod.name} earlier">↑</button>
+            <button class="btn btn-sm btn-outline-secondary" data-modmove="down" aria-label="Move ${mod.name} later">↓</button>
+            <button class="btn btn-sm btn-outline-secondary" data-moddel aria-label="Remove ${mod.name}">Remove</button>` : '')}
+        </div>
+        <div class="small text-secondary mt-1">${bits.join(' · ')}</div>
+        ${raw(mod.present === false ? html`<div class="alert alert-warning py-1 px-2 small mt-2 mb-0">
+          Its folder is gone from the game data directory, so this will not load.</div>` : '')}
+        ${raw(bsaClash.has(mod.slug) ? html`<div class="small mt-1">
+          <span class="badge text-bg-secondary">${bsaClash.get(mod.slug)}</span>
+          also ships with another mod. Morrowind can only use one copy of an archive name.</div>` : '')}
+        ${raw(mod.plugins.length ? html`<details class="mt-2">
+          <summary class="small text-secondary">What's inside</summary>
+          <div class="small mt-1">${raw(mod.plugins.map((p) => html`
+            <label class="me-3"><input type="checkbox" class="form-check-input me-1" data-plug="${p.file}"
+              ${raw(p.enabled ? 'checked' : '')} ${raw(editable ? '' : 'disabled')}>
+              <span class="vt-mono">${p.file}</span></label>`).join(''))}
+            ${raw(mod.archives.length ? html`<div class="text-secondary mt-1 vt-mono">${mod.archives.join(', ')}</div>` : '')}
+          </div></details>` : '')}
+      </div>
+    </div>`;
+  };
+
+  return html`
+    <div class="card card-primary card-outline mt-3">
+      <div class="card-header d-flex align-items-center">
+        <h3 class="card-title"><i class="bi bi-box-seam me-2"></i>Mods</h3>
+        ${raw(editable && mods.length ? html`<button class="btn btn-sm btn-primary ms-auto" id="modsSave">
+          <i class="bi bi-check-lg me-1"></i>Save changes</button>` : '')}
+      </div>
+      <div class="card-body">
+        ${raw(editable ? html`
+          <div id="modZip" class="vt-drop mb-3">
+            <div class="text-secondary">Drop a mod <strong>.zip</strong> here</div>
+            <label class="btn btn-sm btn-outline-secondary mt-2 mb-0">Choose a zip<input
+              type="file" id="modZipPick" accept=".zip" hidden></label>
+          </div>
+          <div id="modStage"></div>` : '')}
+        ${raw(mods.length ? html`
+          <p class="small text-secondary">When two mods contain the same file, the one further
+            down this list wins. Drag to change that.</p>
+          <div id="modList">${raw(mods.map(card).join(''))}</div>`
+          : html`<p class="vt-empty mb-0">No mods installed.</p>`)}
+      </div>
+    </div>`;
+}
+
 function uploadPanel(m, inWizard = false) {
   return html`
     <div class="card card-secondary card-outline mb-3">

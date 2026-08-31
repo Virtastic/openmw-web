@@ -298,3 +298,44 @@ test('an unavailable reading is omitted, never drawn as a confident zero', () =>
   assert.match(cards[0], /if \(sys\.disk\)/);
   assert.match(cards[0], /if \(sys\.network\)/);
 });
+
+// --- the mod manager page ---------------------------------------------------------------------
+
+test('the mods card is a separate list from the base game load order', () => {
+  // Mixing them would put a Remove button next to Morrowind.esm. One is files an operator
+  // dropped in; the other is packages that were installed and can be uninstalled.
+  assert.match(app, /function modsCard\(m, editable\)/);
+  assert.match(app, /id="modList"/);
+  assert.match(app, /id="modBody"/, 'the base-game table must still be there');
+});
+
+test('the upload asks before installing anything', () => {
+  // The whole point: an archive with a core folder and optional extras must not install both.
+  const wire = /function wireMods\(m\) \{[\s\S]*?\n\}/.exec(app);
+  assert.ok(wire, 'no wireMods');
+  assert.match(wire[0], /mods\/install\?name=/);
+  assert.match(wire[0], /renderChooser/);
+  assert.match(wire[0], /mods\/install\/commit/);
+  // And commit must be reachable only from the chooser, never straight from the upload.
+  assert.ok(wire[0].indexOf('renderChooser(body)') < wire[0].indexOf("api('/mods/install/commit'"));
+});
+
+test('a non-zip is refused in the browser, before the bytes are sent', () => {
+  // Telling somebody their .rar is unsupported after a 400 MB upload is the wrong moment.
+  const wire = /function wireMods\(m\) \{[\s\S]*?\n\}/.exec(app)!;
+  assert.match(wire[0], /\.zip\$\/i\.test\(file\.name\)/);
+  assert.ok(wire[0].indexOf('.zip$/i.test(file.name)') < wire[0].indexOf('mods/install?name='));
+});
+
+test('removing a mod is type-to-confirm, like every other delete here', () => {
+  const wire = /function wireMods\(m\) \{[\s\S]*?\n\}/.exec(app)!;
+  assert.match(wire[0], /typeToConfirm: slug/);
+});
+
+test('the zip streams rather than being buffered into a form', () => {
+  // A multipart parser for a several-hundred-megabyte archive is a dependency and a memory
+  // problem; the Data Files upload already settled this.
+  const wire = /function wireMods\(m\) \{[\s\S]*?\n\}/.exec(app)!;
+  assert.match(wire[0], /duplex: 'half'/);
+  assert.match(wire[0], /application\/octet-stream/);
+});
