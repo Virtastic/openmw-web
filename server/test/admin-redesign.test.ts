@@ -547,3 +547,59 @@ test('a multiplayer server still refuses to pretend it has a world', async (t) =
   assert.equal((await fetch(`http://127.0.0.1:${mp.port}/healthz`)).status, 503,
     'multiplayer with no game data is a broken server and must say so');
 });
+
+test('password sign-in mints a game ticket, and refuses everything it should', async (t) => {
+  // Tickets could previously only come from the SSO callback, or be reissued to someone who
+  // already held a locker session, which itself only came from SSO. So a server with
+  // allowPasswordLogin on offered players a method no client could complete: the wizard
+  // listed it, the account existed, and there was no route from a password to a ticket.
+  const dataDir = tmpDataDir();
+  const server = await startServer({
+    requireGameData: false, dataDir, port: 0, host: '127.0.0.1',
+    configOverride: { auth: { allowPasswordLogin: true }, limits: { loginPerMinPerIp: 600 } },
+  });
+  t.after(() => server.close());
+  const base = `http://127.0.0.1:${server.port}`;
+  const post = (body: unknown) => fetch(`${base}/auth/password`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+  });
+
+  await server.accounts.register('Player', 'a-real-players-passphrase');
+
+  const ok = await post({ name: 'Player', password: 'a-real-players-passphrase' });
+  assert.equal(ok.status, 200);
+  const body = await ok.json() as { ticket: string; account: string; name: string };
+  assert.ok(body.ticket && body.ticket.length > 16, 'a ticket comes back');
+  assert.equal(body.account, 'player');
+  assert.equal(body.name, 'Player');
+
+  // Wrong password and unknown account answer identically: anything else is a way to learn
+  // which names exist.
+  const bad = await post({ name: 'Player', password: 'not-the-password' });
+  const nobody = await post({ name: 'NoSuchPerson', password: 'not-the-password' });
+  assert.equal(bad.status, 401);
+  assert.equal(nobody.status, 401);
+  assert.deepEqual(await bad.json(), await nobody.json());
+});
+
+test('password sign-in is refused when the operator turned it off', async (t) => {
+  const dataDir = tmpDataDir();
+  const server = await startServer({
+    requireGameData: false, dataDir, port: 0, host: '127.0.0.1',
+    // A provider has to be enabled alongside: loadConfig refuses password-off with no SSO,
+    // because that combination is a server nobody can sign in to at all.
+    configOverride: {
+      auth: {
+        allowPasswordLogin: false,
+        google: { enabled: true, clientId: 'cid', clientSecret: 'sec', redirectUri: 'https://x/cb' },
+      },
+    },
+  });
+  t.after(() => server.close());
+  await server.accounts.register('Player', 'a-real-players-passphrase');
+  const r = await fetch(`http://127.0.0.1:${server.port}/auth/password`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ name: 'Player', password: 'a-real-players-passphrase' }),
+  });
+  assert.equal(r.status, 403, 'the setting is the gate, not just a hidden button');
+});

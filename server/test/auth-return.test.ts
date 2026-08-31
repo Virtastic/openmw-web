@@ -12,40 +12,45 @@ const { resolveReturn } = __testing;
 const req = (host: string, proto?: string): IncomingMessage =>
   ({ headers: proto ? { host, 'x-forwarded-proto': proto } : { host }, socket: {} } as unknown as IncomingMessage);
 
+// The default lands on "/", the server's own sign-in page, not on launcher.html. The
+// launcher is the hosted site's chooser; a self-hosted server's front door signs the player
+// in and boots the game itself.
 test('derives the return origin from the request when nothing is configured', () => {
   assert.equal(resolveReturn('', req('example.test', 'https'), null),
-    'https://example.test/launcher.html');
+    'https://example.test/');
 });
 
 test('the same build serves a different hostname with no config change', () => {
   assert.equal(resolveReturn('', req('other.test', 'https'), null),
-    'https://other.test/launcher.html');
+    'https://other.test/');
 });
 
 test('honours a same-origin ?return=', () => {
+  // An allowed URL is passed through untouched, which is the whole point of this one: it
+  // must NOT be replaced by the default the refusal tests below check for.
   assert.equal(resolveReturn('', req('example.test', 'https'), 'https://example.test/launcher.html'),
     'https://example.test/launcher.html');
 });
 
 test('REFUSES a cross-origin ?return= — this is the open-redirect guard', () => {
   assert.equal(resolveReturn('', req('example.test', 'https'), 'https://evil.test/steal'),
-    'https://example.test/launcher.html');
+    'https://example.test/');
 });
 
 test('refuses a same-host-different-port ?return=', () => {
   // A stale link from an older build is the likely source, and it is still not our origin.
   assert.equal(resolveReturn('', req('example.test', 'https'), 'https://example.test:8910/x'),
-    'https://example.test/launcher.html');
+    'https://example.test/');
 });
 
 test('refuses a scheme-relative ?return= that resolves off-origin', () => {
   assert.equal(resolveReturn('', req('example.test', 'https'), '//evil.test/steal'),
-    'https://example.test/launcher.html');
+    'https://example.test/');
 });
 
 test('refuses a javascript: ?return=', () => {
   assert.equal(resolveReturn('', req('example.test', 'https'), 'javascript:alert(1)'),
-    'https://example.test/launcher.html');
+    'https://example.test/');
 });
 
 test('strips query and fragment so a ticket can never land in a query string', () => {
@@ -63,7 +68,7 @@ test('a configured value pins the permitted origin instead of the request origin
 });
 
 test('falls back to http when the proxy reports no TLS', () => {
-  assert.equal(resolveReturn('', req('localhost:8910'), null), 'http://localhost:8910/launcher.html');
+  assert.equal(resolveReturn('', req('localhost:8910'), null), 'http://localhost:8910/');
 });
 
 test('no Host header yields empty, so the caller hands the ticket over as text', () => {

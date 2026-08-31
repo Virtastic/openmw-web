@@ -46,6 +46,19 @@ export interface AuthDeps {
   limiter: IpRateLimiter; // shares the operator's per-IP auth budget
 }
 
+/** Read a small JSON body. Capped hard: this is an unauthenticated endpoint. */
+async function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const c of req) {
+    size += (c as Buffer).length;
+    if (size > 4096) return {};
+    chunks.push(c as Buffer);
+  }
+  try { return JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string, unknown>; }
+  catch { return {}; }
+}
+
 // Appends the outcome to the operator's return URL as a fragment, replacing any fragment
 // the operator wrote there (a stale one would shadow ours).
 function returnTo(returnUrl: string, fragment: string): string {
@@ -88,7 +101,11 @@ function resolveReturn(configured: string, req: IncomingMessage, requested: stri
     } catch { /* fall through to the default below */ }
   }
   if (configured !== '') return configured;
-  return origin === '' ? '' : `${origin}/launcher.html`;
+  // "/" and not "/launcher.html". The launcher is a chooser for the hosted site; a
+  // self-hosted server's front door is its own sign-in page, and that is where a round trip
+  // started there has to come back to. [auth].returnUrl still overrides for deployments
+  // that front the game somewhere else.
+  return origin === '' ? '' : `${origin}/`;
 }
 
 // `also` is chained AFTER the SSO routes: createHttpServer takes exactly one extra-route
@@ -268,9 +285,64 @@ export function createAuthRoutes(deps: AuthDeps, also?: HttpRoute): HttpRoute {
     return true;
   };
 
-  return (req, res, url) => {
+  return async (req, res, url) => {
     const seg = url.pathname.split('/').filter((s) => s !== '');
-    if (req.method !== 'GET' || seg[0] !== 'auth') return also ? also(req, res, url) : false;
+    if (seg[0] !== 'auth') return also ? also(req, res, url) : false;
+
+    // PASSWORD SIGN-IN INTO THE GAME.
+    //
+    // Tickets could only be minted by the SSO callback, or reissued at /auth/ticket to
+    // somebody who already held a locker session, which itself only came from SSO. So a
+    // server with [auth].allowPasswordLogin on offered players a sign-in method that no
+    // client could complete: the setup wizard listed it, the account existed, and there was
+    // no route from a password to a ticket.
+    //
+    // Same checks as the SSO path, in the same order: the shared per-IP budget first, then
+    // the account, then the ban. verifyLogin burns argon2 work on a missing account too (see
+    // accounts.ts), so this cannot be used to learn which names exist by timing it.
+    if (seg.length === 2 && seg[1] === 'password') {
+      res.setHeader('access-control-allow-origin', req.headers.origin ?? '*');
+      res.setHeader('access-control-allow-headers', 'content-type');
+      res.setHeader('access-control-allow-methods', 'POST, OPTIONS');
+      if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return true; }
+      if (req.method !== 'POST') { sendJson(res, 405, { error: 'method_not_allowed' }); return true; }
+      const ip = clientIp(req);
+      if (!limiter.allow(ip)) {
+        metrics.rateLimited.inc({ budget: 'login' });
+        sendJson(res, 429, { error: 'too many attempts, wait a minute' });
+        return true;
+      }
+      if (!config.auth.allowPasswordLogin) {
+        sendJson(res, 403, { error: 'this server does not accept password sign-in' });
+        return true;
+      }
+      const body = await readBody(req);
+      const name = String(body.name ?? '').trim();
+      const password = String(body.password ?? '');
+      const account = await accounts.verifyLogin(name, password) ? await accounts.get(name) : undefined;
+      if (!account) {
+        log('warn', 'auth.password_failed', { ip });
+        metrics.auth.inc({ op: 'password', result: 'AUTH_FAILED' });
+        // One message for a wrong name and a wrong password: telling them apart is an
+        // account-enumeration oracle.
+        sendJson(res, 401, { error: 'that name and password do not match' });
+        return true;
+      }
+      const key = name.toLowerCase();
+      if (bans.isAccountBanned(key) || account.banned) {
+        log('warn', 'auth.password_banned', { account: key, ip });
+        sendJson(res, 403, { error: 'this account is banned' });
+        return true;
+      }
+      const ticket = tickets.mint(key, account.name);
+      const locker = lockerSessions ? lockerSessions.mint(key) : '';
+      log('info', 'auth.password_ok', { account: account.name, ip });
+      metrics.auth.inc({ op: 'password', result: 'success' });
+      sendJson(res, 200, { ticket, account: key, name: account.name, locker });
+      return true;
+    }
+
+    if (req.method !== 'GET') return also ? also(req, res, url) : false;
 
     if (seg.length === 2 && seg[1] === 'providers') {
       // Public and cheap, like /status: a client cannot render login buttons without it.
