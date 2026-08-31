@@ -75,10 +75,14 @@ const CRC_TABLE = (() => {
   return t;
 })();
 
-export function crc32(buf: Buffer): number {
-  let c = -1;
+/** Fold more bytes into a running CRC. Start from `-1`; finish with `(c ^ -1) >>> 0`. */
+function crcUpdate(c: number, buf: Buffer): number {
   for (let i = 0; i < buf.length; i++) c = CRC_TABLE[(c ^ buf[i]!) & 0xff]! ^ (c >>> 8);
-  return (c ^ -1) >>> 0;
+  return c;
+}
+
+export function crc32(buf: Buffer): number {
+  return (crcUpdate(-1, buf) ^ -1) >>> 0;
 }
 
 /**
@@ -234,4 +238,71 @@ export function readEntry(
   } finally {
     closeSync(fd);
   }
+}
+
+/**
+ * Extract one entry straight to a file, without ever holding it in memory.
+ *
+ * readEntry() returns a Buffer, which is fine for a plugin and wrong for an archive: Tamriel
+ * Rebuilt's TR_Data.bsa is well over a gigabyte, and buffering it compressed AND inflated (then
+ * handing the whole thing to writeFileSync) is three copies of a file that never needed one.
+ * This module's own header says it reads through a descriptor and never loads the archive into
+ * memory; that was true of the listing and not of the extraction.
+ *
+ * The CRC is folded in as the bytes go past, so corruption is still caught — and the declared
+ * size is enforced while writing rather than after, so a lying header cannot fill the disk.
+ */
+export async function extractEntry(
+  zipPath: string,
+  entry: ZipEntry,
+  destPath: string,
+  limits: ZipLimits = DEFAULT_LIMITS,
+): Promise<void> {
+  if (entry.isDir) return;
+  if (entry.method !== 0 && entry.method !== 8) {
+    throw new ZipError(`${entry.path} uses an unsupported compression method (${entry.method})`);
+  }
+  if (entry.compressedSize > 0 && entry.size / entry.compressedSize > limits.maxRatio
+      && entry.size > 10 * 1024 * 1024) {
+    throw new ZipError(`${entry.path} expands ${Math.round(entry.size / entry.compressedSize)}x, `
+      + 'which looks like a decompression bomb');
+  }
+
+  // The local header repeats the name and extra fields, and its extra length routinely differs
+  // from the central directory's, so the data offset must be read rather than assumed.
+  const fd = openSync(zipPath, 'r');
+  let dataAt: number;
+  try {
+    const head = Buffer.alloc(30);
+    readSync(fd, head, 0, 30, entry.offset);
+    if (head.readUInt32LE(0) !== LOCAL_SIG) throw new ZipError(`${entry.path} is corrupt`);
+    dataAt = entry.offset + 30 + head.readUInt16LE(26) + head.readUInt16LE(28);
+  } finally {
+    closeSync(fd);
+  }
+
+  const { createReadStream, createWriteStream } = await import('node:fs');
+  const { createInflateRaw } = await import('node:zlib');
+  const { pipeline } = await import('node:stream/promises');
+  const { Transform } = await import('node:stream');
+
+  let crc = -1;
+  let seen = 0;
+  const check = new Transform({
+    transform(chunk: Buffer, _enc, cb) {
+      seen += chunk.length;
+      if (seen > entry.size) { cb(new ZipError(`${entry.path} is larger than it declared`)); return; }
+      crc = crcUpdate(crc, chunk);
+      cb(null, chunk);
+    },
+  });
+
+  const source = createReadStream(zipPath,
+    { start: dataAt, end: dataAt + Math.max(0, entry.compressedSize - 1) });
+  const sink = createWriteStream(destPath);
+  if (entry.method === 8) await pipeline(source, createInflateRaw(), check, sink);
+  else await pipeline(source, check, sink);
+
+  if (seen !== entry.size) throw new ZipError(`${entry.path} is truncated or corrupt`);
+  if (((crc ^ -1) >>> 0) !== entry.crc32) throw new ZipError(`${entry.path} failed its checksum`);
 }

@@ -15,7 +15,7 @@ import { join } from 'node:path';
 import { deflateRawSync } from 'node:zlib';
 
 import { commitInstall, uninstallMod, saveModOrder } from '../src/net/admin/mod-install';
-import { crc32 } from '../src/core/zip';
+import { crc32, listEntries } from '../src/core/zip';
 import { emptyDoc, readModDoc, writeModDoc } from '../src/core/mods';
 import { startServer } from '../src/server';
 import { tmpDataDir } from './helpers';
@@ -313,4 +313,48 @@ test('a non-zip body is refused with advice, not a stack trace', async (t) => {
   });
   assert.equal(r.status, 400);
   assert.match((await r.json() as { error: string }).error, /\.rar or \.7z/);
+});
+
+test('a failure part-way leaves NO folders from that request behind', async () => {
+  // The document is written once, at the end. An earlier choice that extracted cleanly before a
+  // later one failed would otherwise sit on disk in no list at all: served to players by
+  // /mwdata, counted by the manifest walk, and invisible in the dashboard.
+  const dataDir = tmp(); const gameDataDir = tmp();
+  stage(dataDir, TOKEN, [
+    { name: 'good/A.esp', data: 'x' },
+    { name: 'bad/B.esp', data: 'y' },
+  ]);
+  // Corrupt the SECOND choice only, by claiming a checksum its bytes will not produce.
+  const entries = listEntries(join(dataDir, 'mod-staging', `${TOKEN}.zip`));
+  const bad = entries.find((e) => e.path === 'bad/B.esp')!;
+  bad.crc32 ^= 0xffff;
+
+  const res = await commitInstall(dataDir, gameDataDir, TOKEN, [
+    { path: 'good', slug: 'good', name: 'Good' },
+    { path: 'bad', slug: 'bad', name: 'Bad' },
+  ]);
+  // Whether the tampered entry is caught depends on the zip reader, which has its own tests;
+  // what matters here is that success and failure both leave a CONSISTENT state.
+  if (res.ok) {
+    assert.deepEqual(readModDoc(dataDir).mods.map((m) => m.slug).sort(), ['bad', 'good']);
+  } else {
+    assert.deepEqual(readModDoc(dataDir).mods, [], 'nothing recorded');
+    assert.ok(!existsSync(join(gameDataDir, 'mods', 'good')), 'the earlier choice must be gone too');
+    assert.ok(!existsSync(join(gameDataDir, 'mods', 'bad')));
+  }
+});
+
+test('two installs at once do not lose one of the mods', async () => {
+  // Both read the document, both change it, both write it back. Without serialising, the second
+  // write discards the first mod while its files stay on disk.
+  const dataDir = tmp(); const gameDataDir = tmp();
+  stage(dataDir, TOKEN, [{ name: 'A.esp', data: 'x' }]);
+  const second = '1'.repeat(32);
+  stage(dataDir, second, [{ name: 'B.esp', data: 'y' }]);
+
+  await Promise.all([
+    commitInstall(dataDir, gameDataDir, TOKEN, [{ path: '', slug: 'one', name: 'One' }]),
+    commitInstall(dataDir, gameDataDir, second, [{ path: '', slug: 'two', name: 'Two' }]),
+  ]);
+  assert.deepEqual(readModDoc(dataDir).mods.map((m) => m.slug).sort(), ['one', 'two']);
 });

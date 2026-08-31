@@ -20,7 +20,7 @@ import type { IncomingMessage } from 'node:http';
 
 import { log } from '../../log';
 import { findDataFolders, slugify, type Candidate } from '../../core/mod-archive';
-import { listEntries, readEntry, ZipError, type ZipEntry } from '../../core/zip';
+import { extractEntry, listEntries, ZipError, type ZipEntry } from '../../core/zip';
 import { readMasters } from '../../core/esm';
 import { MOD_META as MODS_META_DIR } from '../../core/mod-conflicts';
 import {
@@ -37,6 +37,23 @@ const MOD_META = MODS_META_DIR;
 const STAGE_TTL_MS = 6 * 60 * 60 * 1000;
 
 export type InstallResult<T> = { ok: true; value: T } | { ok: false; status: number; error: string };
+
+/**
+ * Serialises writes to modlist.json.
+ *
+ * Install, uninstall and reorder all read the document, change it and write it back. Two owners
+ * acting at once — or one owner with two tabs — interleave those reads and the second write
+ * silently discards the first change, which for an install means files on disk that no list
+ * mentions. The same shape as the setupInFlight single-flight in routes.ts, and for the same
+ * reason: one process, one document, one writer at a time.
+ */
+let writeChain: Promise<unknown> = Promise.resolve();
+function serialise<T>(fn: () => Promise<T>): Promise<T> {
+  const next = writeChain.then(fn, fn);
+  // Keep the chain alive whatever happens: a rejection here must not stop later writers.
+  writeChain = next.then(() => undefined, () => undefined);
+  return next;
+}
 
 const fail = (status: number, error: string): InstallResult<never> => ({ ok: false, status, error });
 
@@ -168,7 +185,16 @@ export async function beginInstall(
 export interface Choice { path: string; slug: string; name: string }
 
 /** Step two: extract the chosen folders, each into its own mod directory. */
-export async function commitInstall(
+export function commitInstall(
+  dataDir: string,
+  gameDataDir: string,
+  token: string,
+  choices: Choice[],
+): Promise<InstallResult<InstalledMod[]>> {
+  return serialise(() => commitInstallLocked(dataDir, gameDataDir, token, choices));
+}
+
+async function commitInstallLocked(
   dataDir: string,
   gameDataDir: string,
   token: string,
@@ -230,7 +256,7 @@ export async function commitInstall(
           throw new ZipError(`refused: ${e.path} escapes the mod folder`);
         }
         mkdirSync(dirname(dest), { recursive: true });
-        writeFileSync(dest, readEntry(zipPath, e));
+        await extractEntry(zipPath, e, dest);
         files.push(rel.split(sep).join('/'));
         bytes += e.size;
         const name = rel.slice(rel.lastIndexOf('/') + 1);
@@ -243,7 +269,16 @@ export async function commitInstall(
     } catch (e) {
       // Half a mod is worse than none: it would contribute a data= line and a content= naming
       // a plugin that may not have made it, which aborts the engine at startup.
+      //
+      // EVERY folder from this request, not just the one that failed. The document is written
+      // once at the end, so an earlier choice that extracted cleanly is on disk and in no list
+      // — served to players by /mwdata, counted by the manifest walk, and invisible in the
+      // dashboard, with no way to remove it from there.
       await rm(root, { recursive: true, force: true });
+      for (const done of installed) {
+        await rm(join(gameDataDir, MODS_SUBDIR, done.slug), { recursive: true, force: true });
+        await rm(join(dataDir, MOD_META, `${done.slug}.json`), { force: true });
+      }
       log('warn', 'mods.install_failed', { slug, error: String(e) });
       return fail(400, e instanceof ZipError ? e.message
         : `Could not install ${choice.name || slug}. The game data folder may be full.`);
@@ -292,7 +327,15 @@ export async function commitInstall(
 }
 
 /** Remove a mod: its folder, its entry, and its file list. */
-export async function uninstallMod(
+export function uninstallMod(
+  dataDir: string,
+  gameDataDir: string,
+  slug: string,
+): Promise<InstallResult<{ slug: string }>> {
+  return serialise(() => uninstallModLocked(dataDir, gameDataDir, slug));
+}
+
+async function uninstallModLocked(
   dataDir: string,
   gameDataDir: string,
   slug: string,

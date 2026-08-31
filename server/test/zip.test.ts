@@ -11,12 +11,12 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { deflateRawSync } from 'node:zlib';
 
-import { crc32, listEntries, normaliseEntryPath, readEntry, ZipError } from '../src/core/zip';
+import { crc32, extractEntry, listEntries, normaliseEntryPath, readEntry, ZipError } from '../src/core/zip';
 
 /** Build a real zip. `store: true` writes the entry uncompressed (method 0). */
 function makeZip(
@@ -172,4 +172,59 @@ test('crc32 matches the known vector', () => {
   // Guards the table generator: a wrong table would make every checksum agree with itself and
   // catch nothing.
   assert.equal(crc32(Buffer.from('123456789')), 0xcbf43926);
+});
+
+// --- extraction streams, it does not buffer -----------------------------------------------------
+//
+// readEntry() returns a Buffer, which is right for a plugin and wrong for an archive: Tamriel
+// Rebuilt's TR_Data.bsa is over a gigabyte, and holding it compressed AND inflated and then
+// handing the whole thing to writeFileSync is three copies of a file that never needed one.
+// This module's header claims it never loads the archive into memory; that was true of the
+// listing and, until extractEntry existed, false of the extraction.
+
+test('a large entry extracts without ever being held whole in memory', async () => {
+  // 64 MB of varied bytes: incompressible enough that a buffering implementation has to hold
+  // it, and large enough that the difference is measurable.
+  const big = Buffer.alloc(64 * 1024 * 1024);
+  for (let i = 0; i < big.length; i += 4096) big.writeUInt32LE(i, i);
+  const z = makeZip([{ name: 'TR_Data.bsa', data: big, store: true }]);
+  const [e] = listEntries(z);
+
+  const dest = join(mkdtempSync(join(tmpdir(), 'zx-')), 'out.bsa');
+  const before = process.memoryUsage().heapUsed;
+  await extractEntry(z, e!, dest);
+  const grew = process.memoryUsage().heapUsed - before;
+
+  assert.equal(statSync(dest).size, big.length, 'the file must arrive whole');
+  assert.ok(grew < 32 * 1024 * 1024,
+    `extraction grew the heap by ${Math.round(grew / 1048576)}MB for a 64MB file — it is buffering`);
+});
+
+test('extraction still catches a bad checksum', async () => {
+  // The CRC is folded in as the bytes go past, so streaming must not have cost the check.
+  const z = makeZip([{ name: 'a.esp', data: 'the real bytes', store: true }]);
+  const [e] = listEntries(z);
+  const dest = join(mkdtempSync(join(tmpdir(), 'zx-')), 'a.esp');
+  await assert.rejects(() => extractEntry(z, { ...e!, crc32: e!.crc32 ^ 0xffff }, dest),
+    (err: Error) => /failed its checksum/.test(err.message));
+});
+
+test('extraction refuses an entry that is bigger than it declared', async () => {
+  // Enforced WHILE writing rather than after, so a lying header cannot fill the disk first.
+  const z = makeZip([{ name: 'a.esp', data: 'x'.repeat(5000), store: true }]);
+  const [e] = listEntries(z);
+  const dest = join(mkdtempSync(join(tmpdir(), 'zx-')), 'a.esp');
+  await assert.rejects(() => extractEntry(z, { ...e!, size: 10 }, dest),
+    (err: Error) => /larger than it declared/.test(err.message));
+});
+
+test('a stored and a deflated entry both round-trip through extraction', async () => {
+  const body = Buffer.from('meshes and textures'.repeat(500));
+  for (const store of [true, false]) {
+    const z = makeZip([{ name: 'x.nif', data: body, store }]);
+    const [e] = listEntries(z);
+    const dest = join(mkdtempSync(join(tmpdir(), 'zx-')), 'x.nif');
+    await extractEntry(z, e!, dest);
+    assert.deepEqual(readFileSync(dest), body, store ? 'stored' : 'deflated');
+  }
 });
