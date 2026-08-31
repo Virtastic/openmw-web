@@ -128,7 +128,12 @@ function confirmAction({ title, body, danger = 'Confirm', typeToConfirm = null }
 const NAV = [
   { group: 'Server', items: [
     { hash: '#overview', label: 'Overview', icon: 'bi-speedometer2', role: 'viewer' },
-    { hash: '#console', label: 'Players & commands', icon: 'bi-people', role: 'moderator' },
+    // NOT IN SINGLE PLAYER, and not because it looks odd there: every control on it acts on
+    // a player connected to a world. In single player the browser runs the engine and never
+    // connects, so the roster is permanently empty and there is nobody to broadcast to, greet
+    // with a message of the day, read a chat log for, report, or hand an item. The page is
+    // inert rather than merely unhelpful, so it is removed rather than trimmed.
+    { hash: '#console', label: 'Players & commands', icon: 'bi-people', role: 'moderator', solo: false },
     { hash: '#mods', label: 'Game data & mods', icon: 'bi-collection', role: 'viewer' },
   ] },
   { group: 'Configuration', items: [
@@ -171,7 +176,8 @@ function paintChrome() {
   if (!state.authed || setupPending) { nav.innerHTML = ''; }
   else {
     nav.innerHTML = NAV.map((g) => {
-      const items = g.items.filter((i) => can(i.role));
+      // `solo: false` marks a page that cannot do anything in a one-person deployment.
+      const items = g.items.filter((i) => can(i.role) && !(i.solo === false && singlePlayer()));
       if (!items.length) return '';
       return html`<li class="nav-header">${g.group}</li>` + items.map((i) => html`
         <li class="nav-item">
@@ -1458,9 +1464,11 @@ async function pageOverview() {
   const [o] = await Promise.all([api('/overview'), checkClientStaged()]);
   // AdminLTE's small-box widget, the coloured stat tiles the framework is known for,
   // used here as designed instead of a plain card impersonating one.
+  // The gap lives on the COLUMN, not the box: the box now fills its column's height, so a
+  // margin on it would push past the bottom and reintroduce the ragged row this fixed.
   const stat = (label, value, icon, tone, href = '') => html`
-    <div class="col-6 col-lg-3">
-      <div class="small-box text-bg-${raw(tone)} mb-3">
+    <div class="col-6 col-lg-3 mb-3">
+      <div class="small-box text-bg-${raw(tone)}">
         <div class="inner"><h3>${value}</h3><p>${label}</p></div>
         <i class="small-box-icon bi ${icon}"></i>
         ${raw(href ? html`<a href="${href}" class="small-box-footer">
@@ -1537,8 +1545,8 @@ const mb = (n) => (n >= 1073741824 ? `${(n / 1073741824).toFixed(1)} GB` : `${Ma
 function sysCards(sys) {
   if (!sys) return '';
   const box = (label, value, sub, icon, tone) => html`
-    <div class="col-6 col-lg-3">
-      <div class="small-box text-bg-${raw(tone)} mb-3">
+    <div class="col-6 col-lg-3 mb-3">
+      <div class="small-box text-bg-${raw(tone)}">
         <div class="inner"><h3>${value}</h3><p>${label}</p>
           ${raw(sub ? html`<p class="small mb-0 text-secondary">${sub}</p>` : '')}</div>
         <i class="small-box-icon bi ${icon}"></i>
@@ -2175,10 +2183,7 @@ function uploadPanel(m, inWizard = false) {
           silently, with no voice, music or intro.</p>`)}
         <p class="small text-secondary">
           <label class="btn btn-sm btn-outline-secondary mb-0">Choose the Data Files folder<input
-            type="file" id="upDir" webkitdirectory directory multiple hidden></label>
-          <span class="ms-2">Whole folder only. Picking files one at a time was offered here
-          and it was a trap: the folder is thousands of files across a dozen subfolders, and
-          a hand-picked subset produces a game that starts and then misses things.</span></p>
+            type="file" id="upDir" webkitdirectory directory multiple hidden></label></p>
         <div id="upDrop" class="vt-drop">
           <div class="text-secondary">Drop your whole <strong>Data Files</strong> folder here</div>
         </div>
@@ -3011,6 +3016,13 @@ async function route() {
     return renderWizard();
   }
   if (!state.authed) return pageLogin();
+
+  // Hiding a nav link is not the same as closing the page: the hash still works when typed,
+  // bookmarked, or followed from an older link. Send it home rather than rendering a console
+  // whose every button would act on a world nobody is connected to.
+  if (singlePlayer() && NAV.some((g) => g.items.some((i) => i.hash === hash && i.solo === false))) {
+    return go('#overview');
+  }
 
   const need = NEEDS[hash];
   if (need && !can(need)) {

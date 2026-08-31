@@ -230,16 +230,27 @@ body.vt-bare #pageTitle {
 .small-box .small-box-footer { color: var(--vt-bronze-hi); background: rgba(0, 0, 0, .18); }
 .small-box .small-box-footer:hover { color: var(--vt-gold-hi); }
 /* text-bg-* on a small-box paints a stock Bootstrap fill, which is the loudest way the old
-   palette shows through. Neutralise the fill and let the accent live in the icon and rule. */
-.small-box.text-bg-primary, .small-box.text-bg-success,
-.small-box.text-bg-warning, .small-box.text-bg-secondary {
+   palette shows through. Neutralise the fill and let the accent live in the icon and rule.
+   Matched on the PREFIX rather than a list of four: the list silently did not cover
+   text-bg-info, so the first card to use it came back in Bootstrap cyan. A neutraliser that
+   has to be extended every time somebody picks a colour is not neutralising anything. */
+.small-box[class*="text-bg-"] {
   background: linear-gradient(160deg, var(--vt-panel-2), var(--vt-panel)) !important;
   color: var(--vt-ink) !important;
 }
 .small-box.text-bg-primary { border-top: 2px solid var(--vt-gold); }
 .small-box.text-bg-success { border-top: 2px solid var(--vt-ok); }
 .small-box.text-bg-warning { border-top: 2px solid var(--vt-ember); }
-.small-box.text-bg-secondary { border-top: 2px solid var(--vt-bronze); }
+.small-box.text-bg-secondary, .small-box.text-bg-info { border-top: 2px solid var(--vt-bronze); }
+
+/* EQUAL HEIGHT ACROSS THE ROW. Some stat cards carry a second line ("58 MB of 15.5 GB") and
+   some do not, which left the row ragged: the COLUMNS stretch to the tallest, but the box
+   inside each one was only as tall as its own text, so half the cards floated short with a
+   gap under them. Fill the column, and pin the footer to the bottom so the strips line up
+   even when the cards above them hold different amounts of text. */
+.row > [class*="col-"] > .small-box { height: 100%; display: flex; flex-direction: column; }
+.small-box > .inner { flex: 1 1 auto; }
+.small-box > .small-box-footer { margin-top: auto; }
 
 .accordion-button {
   background: var(--vt-panel-2); color: var(--vt-ink); font-family: var(--vt-serif);

@@ -95,6 +95,53 @@ test('multiplayer keeps its own dashboard', () => {
   assert.match(app, /stat\('World', o\.world\.id/);
 });
 
+// --- pages that cannot work in a one-person deployment ---------------------------------------
+
+test('Players & commands is marked unavailable in single player', () => {
+  // Every control on it acts on a player connected to a world. In single player the browser
+  // runs the engine and never connects, so there is nobody to broadcast to or hand an item.
+  assert.match(app, /hash: '#console'[^}]*solo: false/);
+});
+
+test('the sidebar filters those pages out', () => {
+  assert.match(app, /i\.solo === false && singlePlayer\(\)/);
+});
+
+test('and the hash is closed too, not merely unlinked', () => {
+  // A hidden link is still a working URL when typed, bookmarked, or followed from an older
+  // link, which would land on a console whose every button acts on an empty world.
+  const guard = /if \(singlePlayer\(\) && NAV\.some[\s\S]*?\n  \}/.exec(app);
+  assert.ok(guard, 'no route guard for solo-hidden pages');
+  assert.match(guard[0], /go\('#overview'\)/);
+});
+
+test('multiplayer still reaches the console', () => {
+  assert.match(app, /'#console': pageConsole/);
+});
+
+// --- the row of cards ----------------------------------------------------------------------
+
+const css = readFileSync(join(process.cwd(), 'web', 'app.css'), 'utf8');
+
+test('stat cards fill their column, so a row of them cannot go ragged', () => {
+  // Only some cards carry a second line. The columns always stretched to the tallest; the
+  // boxes inside them did not, so the shorter cards floated with a gap beneath.
+  assert.match(css, /\.row > \[class\*="col-"\] > \.small-box \{[^}]*height: 100%/);
+  assert.match(css, /\.small-box > \.small-box-footer \{ margin-top: auto; \}/);
+});
+
+test('the margin is on the column, not on a box that now fills it', () => {
+  // A margin on a height:100% box overflows its column and brings the ragged row back.
+  assert.doesNotMatch(app, /<div class="small-box text-bg-\$\{raw\(tone\)\} mb-3">/);
+  assert.match(app, /<div class="col-6 col-lg-3 mb-3">/);
+});
+
+test('every text-bg-* tone is neutralised, not a hand-kept list of four', () => {
+  // The list did not cover text-bg-info, so the first card to use it returned in Bootstrap
+  // cyan on a palette built to keep exactly that out.
+  assert.match(css, /\.small-box\[class\*="text-bg-"\] \{/);
+});
+
 test('an unavailable reading is omitted, never drawn as a confident zero', () => {
   const cards = /function sysCards\(sys\) \{[\s\S]*?\n\}/.exec(app);
   assert.ok(cards);
