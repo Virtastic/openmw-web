@@ -17,6 +17,11 @@ import { spawn } from 'node:child_process';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+// A file:// URL, not a bare path. An absolute Windows path is not a legal ESM specifier
+// ("Received protocol 'c:'"), so every child here died at import and the race this test
+// exists to catch was never actually run on this platform: sixteen identical failures that
+// looked like the bug reproducing.
+import { pathToFileURL } from 'node:url';
 
 const OPENERS = 16;
 
@@ -29,7 +34,7 @@ test('concurrent openers do not kill each other on the same migration', async ()
   // than every migration having to defend itself.
   const child = join(dir, 'open.mjs');
   writeFileSync(child, `
-    import { openDb } from ${JSON.stringify(join(process.cwd(), 'src', 'persist', 'sqlite.ts'))};
+    import { openDb } from ${JSON.stringify(pathToFileURL(join(process.cwd(), 'src', 'persist', 'sqlite.ts')).href)};
     // SYNCHRONISED START. Process startup under tsx varies by hundreds of milliseconds, so
     // simply spawning N children never lands them inside the window between "read the applied
     // set" and "COMMIT" — they queue up politely and the race never happens. Every child waits

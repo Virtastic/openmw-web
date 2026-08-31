@@ -92,7 +92,11 @@ test('archives never appear as content files', () => {
 test('the generated cfg has what the spike proved a peer needs', () => {
   const d = dirWith(RETAIL);
   const cfg = buildPeerCfg(detectGameData(d), '/opt/openmw/resources');
-  assert.match(cfg, new RegExp(`^data=${d}$`, 'm'));
+  // NOT a regex built from the path. `d` is a temp dir, and on Windows that is
+  // C:\Users\...\omw-gd-xxxx, whose backslashes read as escape sequences, so the pattern
+  // could never match its own input. The claim is "this exact line is present", and a line
+  // comparison makes it directly.
+  assert.ok(cfg.split('\n').includes(`data=${d}`), `expected a line "data=${d}" in:\n${cfg}`);
   assert.match(cfg, /^content=Morrowind\.esm$/m);
   assert.match(cfg, /^fallback-archive=Morrowind\.bsa$/m);
   assert.match(cfg, /^resources=\/opt\/openmw\/resources$/m);
@@ -124,7 +128,9 @@ test('findPeerBinary: nothing found is "", not a throw', async () => {
 });
 
 test('gameDataDir is the conventional path under the data dir', () => {
-  assert.equal(gameDataDir('/data'), '/data/gamedata');
+  // join(), so the separator is the platform's. Comparing against a hardcoded "/data/gamedata"
+  // asserted that the test was running on POSIX, not that the path was right.
+  assert.equal(gameDataDir('/data'), join('/data', 'gamedata'));
 });
 
 test('a non-directory path is handled, not thrown on', () => {

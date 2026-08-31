@@ -247,6 +247,32 @@ export function blobRoutes(storage: FsStorage | undefined): HttpRoute {
 //
 // Over the signed cap the stream is destroyed and the temp removed — a refused upload must
 // not leave bytes on the operator's disk.
+/**
+ * rename(), with a short retry for the transient Windows failures.
+ *
+ * POSIX rename replaces the destination atomically no matter who else holds it open. Windows
+ * does not: MoveFileEx onto a path another handle has open fails outright with EPERM, EACCES
+ * or EBUSY, so several concurrent uploads of the same slot — a mirror retrying mid-flight,
+ * or a second tab — leave one writer refused with a 500 while the others succeed. The
+ * condition lasts microseconds, so a few backed-off attempts clear it.
+ *
+ * Deliberately narrow: only those three codes retry, and only five times. Anything else, and
+ * anything still failing after ~50ms, is a real error and must still surface. On Linux, where
+ * the production server runs, this never retries at all.
+ */
+async function renameOverwriting(from: string, to: string): Promise<void> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await rename(from, to);
+      return;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (attempt >= 5 || (code !== 'EPERM' && code !== 'EACCES' && code !== 'EBUSY')) throw err;
+      await new Promise((r) => setTimeout(r, 2 * (attempt + 1)));
+    }
+  }
+}
+
 let putSeq = 0;
 async function putBlob(req: IncomingMessage, res: ServerResponse, path: string, cap: number): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
@@ -280,7 +306,7 @@ async function putBlob(req: IncomingMessage, res: ServerResponse, path: string, 
     });
     // Inside the try: a failed rename used to escape as an unhandled rejection and take the
     // whole process down, which is a far worse outcome than one refused upload.
-    await rename(tmp, path);
+    await renameOverwriting(tmp, path);
   } catch (err) {
     await rm(tmp, { force: true });
     if (over) { log('warn', 'blob.put_over_cap', { cap, written }); return; } // already answered
