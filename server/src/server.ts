@@ -1176,7 +1176,30 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     blockers.push('[server].password is empty — the sim peer authenticates with it, and an '
       + 'empty one refuses every peer');
   }
-  const setupMode = blockers.length > 0 && opts.requireGameData !== false;
+  // SINGLE PLAYER DOES NOT SIMULATE ANYTHING HERE, so none of the above applies to it.
+  //
+  // The two modes are genuinely different products sharing a server. In multiplayer this
+  // process owns the world and runs a headless OpenMW to move every NPC, so no game data
+  // means no world and the blockers above are exactly right. Single player is the launcher's
+  // "cloud locker": the engine runs in the player's own browser against their own uploaded
+  // files, and this server holds accounts, that library and their saves. It has no world to
+  // simulate, so demanding a sim peer and a server-side copy of Morrowind put a perfectly
+  // healthy locker into setup mode, refusing the player it was set up for and reporting
+  // itself unhealthy for a job it was never asked to do.
+  //
+  // Read from the wizard's stored answer, which until now nothing outside the dashboard UI
+  // ever consulted. Absent (an upgrade, or setup never finished) means multiplayer, so an
+  // existing deployment keeps every guard it had.
+  const singlePlayerOnly = config.setup.deploymentMode === 'single';
+  if (singlePlayerOnly && blockers.length > 0) {
+    log('info', 'server.single_player_mode', {
+      skipped: blockers,
+      note: 'Single player: the engine runs in the player\'s browser against their own '
+        + 'uploaded files, so this server needs neither game data nor a sim peer. It serves '
+        + 'accounts, the file locker and saves.',
+    });
+  }
+  const setupMode = blockers.length > 0 && opts.requireGameData !== false && !singlePlayerOnly;
   if (setupMode) {
     log('error', 'server.setup_mode', {
       blockers,

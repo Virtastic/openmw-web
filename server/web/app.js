@@ -881,12 +881,15 @@ function stepDelivery() {
       + 'the people joining, and it means you are distributing the game, so only pick this if '
       + 'everyone involved owns a copy already (a group of friends who each bought it, for '
       + 'instance).'))}
+    ${raw(answers.deploymentMode === 'multiplayer' ? html`
+      <div class="vt-section-note mt-3">
+        Separately from this answer, <strong>a multiplayer server needs its own copy</strong>,
+        because it runs the world: it simulates every NPC and creature rather than any
+        player's browser doing it. The Game data step near the end is where you add it.
+      </div>` : '')}
     <div class="vt-section-note mt-3">
-      Separately from this answer, <strong>the server itself needs a copy</strong>, because it
-      runs the world: it simulates every NPC and creature rather than any player's browser
-      doing it. That holds whichever option you pick here, and whether one person plays or
-      twenty. The Game data step near the end is where you add it. Unsure which to choose?
-      Take the first; you can change it in Settings later without anyone losing anything.
+      Unsure? Take the first; you can change it in Settings later without anyone losing
+      anything.
     </div>`,
   { disabled: !answers.deliveryModel, need: 'Choose how players get the files.' });
   wireChoices();
@@ -1138,8 +1141,14 @@ async function stepFiles() {
 
   wizardShell(html`
     <h5>Add your Morrowind files</h5>
-    <p class="text-secondary small">The server runs the world itself, so it needs its own copy
-      of the game. This is the one step that needs something from your computer.</p>
+    ${raw(answers.deploymentMode === 'single' ? html`
+      <p class="text-secondary small">On a single-player server this is <strong>optional</strong>.
+        The game runs in your own browser against the copy you load there, so this server does
+        not need one to work. Add it here only if you would rather keep your library on the
+        server and have it follow you to any machine you sign in from.</p>`
+      : html`
+      <p class="text-secondary small">The server runs the world itself, so it needs its own
+        copy of the game. This is the one step that needs something from your computer.</p>`)}
     <div class="vt-section-note mb-3">
       <strong>Find the folder called <code>Data Files</code></strong> inside wherever
       Morrowind is installed, and drag it onto the box below. It is usually at:
@@ -1172,8 +1181,11 @@ async function stepFiles() {
             <span class="vt-mono">${missingMedia.join(', ')}</span>. Without them the game runs
             with no voice, no music and no intro, and nothing will warn you, because it
             technically works.</div>` : '')}
-        <div class="mt-2">You can finish setup anyway. The dashboard keeps working and tells
-          you what it needs, but players cannot join until the server can simulate the world.</div>
+        <div class="mt-2">${raw(answers.deploymentMode === 'single'
+          ? 'That is fine on a single-player server: nothing here is required, and you can add '
+            + 'files any time from Game data and mods.'
+          : 'You can finish setup anyway. The dashboard keeps working and tells you what it '
+            + 'needs, but players cannot join until the server can simulate the world.')}</div>
       </div>` : html`<div class="alert alert-success mb-0">
         Everything this profile expects is present, media included.</div>`)}`,
   { next: 'Continue' });
@@ -1227,7 +1239,7 @@ function stepReview() {
   const mp = answers.deploymentMode === 'multiplayer';
   wizardShell(html`
     <h5>Ready to apply</h5>
-    ${raw(gameDataIncomplete ? html`
+    ${raw(gameDataIncomplete && mp ? html`
       <div class="callout callout-warning mb-3">
         <strong>The game files are not all here yet.</strong> Everything below still saves and
         the dashboard works, but nobody can join until the server has a complete copy of
