@@ -641,20 +641,13 @@ function stepLogin() {
 
   // What the combination actually means, said back to them. "Tick some boxes" is not an
   // answer to "am I using SSO, passwords, or both", the point of the question.
+  // One line saying what the ticks add up to. The point of the question is "am I using
+  // single sign-on, passwords, or both", and a list of ticked boxes is not that answer.
   let summary;
-  if (has('password') && sso.length) {
-    summary = html`<strong>Both.</strong> Players can sign in with a password or with
-      ${sso.join(', ')}, and the same person can use either on one account.`;
-  } else if (has('password')) {
-    summary = html`<strong>Passwords only.</strong> Accounts live on this server and nothing
-      external is involved.`;
-  } else if (sso.length) {
-    summary = html`<strong>Single sign-on only.</strong> Every player signs in through
-      ${sso.join(', ')}; password sign-in is switched off, so anyone without one of those
-      accounts cannot get in.`;
-  } else {
-    summary = html`<strong>Nothing selected.</strong> Pick at least one, or nobody can sign in.`;
-  }
+  if (has('password') && sso.length) summary = `Password or ${sso.join(', ')}.`;
+  else if (has('password')) summary = 'Passwords only.';
+  else if (sso.length) summary = `${sso.join(', ')} only. Password sign-in is off.`;
+  else summary = 'Nothing selected, so nobody can sign in.';
 
   wizardShell(html`
     <h5>How will players sign in?</h5>
@@ -745,90 +738,6 @@ function stepLogin() {
       saveWizard();
     };
   });
-}
-
-/** Accounts created on this step, so the review screen can list them. Not persisted, each
- *  one is created the moment the Add button is pressed, so a reload loses nothing. */
-const addedAdmins = [];
-
-function stepRegistration() {
-  wizardShell(html`
-    <h5>Who can create an account?</h5>
-    <p class="text-secondary small">Separate from how people sign in. This is about who is
-      allowed to make an account here in the first place, and it applies whichever kind of
-      server you picked.</p>
-    ${raw(choice('registration', 'open', 'Anyone',
-      'Whoever reaches the server can sign up and play. Right for a public server; on one reachable from the internet it does mean strangers.'))}
-    ${raw(choice('registration', 'invite', 'Only with an invite code',
-      'They can sign up themselves, but only if you gave them the code. The easiest way to '
-      + 'run something for friends without creating every account by hand.', 'Good default'))}
-    ${raw(choice('registration', 'closed', 'Nobody, I will create the accounts',
-      'Sign-ups are refused. You add people yourself from the Accounts page, and existing accounts keep working.'))}
-    ${raw(answers.registration === 'invite' ? html`
-      <div class="mt-3">
-        <label class="form-label">Invite code</label>
-        <input class="form-control" id="wzInvite" value="${answers.inviteCode}"
-          placeholder="something only your friends know" maxlength="64">
-        <div class="form-text">Give this to anyone you want to let in. You can change it
-          later under Settings, which cuts off anyone still passing the old one around.</div>
-      </div>` : '')}`,
-  { disabled: !answers.registration
-      || (answers.registration === 'invite' && answers.inviteCode.trim() === ''),
-    need: 'Choose who may sign up.' });
-  wireChoices();
-  const inv = $('#wzInvite');
-  if (inv) {
-    inv.oninput = () => {
-      answers.inviteCode = inv.value;
-      $('#wzNext').disabled = inv.value.trim() === '';
-    };
-    setTimeout(() => inv.focus(), 30);
-  }
-}
-
-function stepAdmins() {
-  wizardShell(html`
-    <h5>Anyone else helping you run this?</h5>
-    <p class="text-secondary small">Create their sign-in here and hand them the details. Skip
-      it freely, the Accounts page can do this any time later.</p>
-    <div class="vt-section-note mb-3">
-      <strong>Owner</strong> can change everything, including settings and other people's access.<br>
-      <strong>Moderator</strong> can kick, ban, mute and read logs, but cannot change configuration.<br>
-      <strong>Viewer</strong> can look, and nothing else.
-    </div>
-    <div class="row g-2 align-items-end">
-      <div class="col-sm-4"><label class="form-label small">Email address</label>
-        <input class="form-control" id="adName" type="email" autocomplete="off"
-          placeholder="them@example.com"></div>
-      <div class="col-sm-4"><label class="form-label small">Password</label>
-        <input class="form-control" id="adPass" type="password" autocomplete="new-password"></div>
-      <div class="col-sm-2"><label class="form-label small">Role</label>
-        <select class="form-select" id="adRole">
-          <option value="moderator" selected>moderator</option>
-          <option value="viewer">viewer</option>
-          <option value="owner">owner</option>
-        </select></div>
-      <div class="col-sm-2"><button class="btn btn-outline-primary w-100" id="adGo">Add</button></div>
-    </div>
-    <div class="form-text">They sign in with that email. At least 12 characters; they can change it once they are in.</div>
-    <div id="adErr" class="text-danger small mt-1"></div>
-    ${raw(addedAdmins.length ? html`<ul class="list-unstyled small mt-3 mb-0">
-      ${raw(addedAdmins.map((a) => html`<li class="py-1">
-        <i class="bi bi-check-circle text-success me-1"></i>
-        <strong>${a.name}</strong>, ${a.role}</li>`).join(''))}
-    </ul>` : '')}`,
-  { next: addedAdmins.length ? 'Continue' : 'Skip for now' });
-
-  $('#adGo').onclick = async () => {
-    const name = $('#adName').value.trim();
-    try {
-      const r = await api('/accounts/create', { method: 'POST', body: {
-        name, password: $('#adPass').value, role: $('#adRole').value,
-      } });
-      addedAdmins.push({ name: r.name, role: r.role });
-      renderWizard();
-    } catch (e) { $('#adErr').textContent = e.message; }
-  };
 }
 
 function stepContent() {
@@ -1239,8 +1148,6 @@ function stepReview() {
             : 'From the internet, using a self-signed certificate until you add a domain')
         : 'Local network only'))}
       ${raw(line('Uploads', answers.storage === 's3' ? `S3, ${answers.s3.bucket || 'bucket unset'}` : 'On this server'))}
-      ${raw(addedAdmins.length ? line('Extra admins',
-        addedAdmins.map((a) => `${a.name} (${a.role})`).join(', ')) : '')}
     </dl>
     ${raw(html`
       <div class="vt-section-note mb-3">
