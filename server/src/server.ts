@@ -59,6 +59,12 @@ import { Locker, loadVanillaManifest } from './data/locker';
 import { lockerStorageFrom, blobRoutes, FsStorage } from './data/fsstorage';
 import { mwDataRoutes } from './net/mwdata-routes';
 import { createSysInfo } from './net/admin/sysinfo';
+/** Just the parts of the storage backend the saves API needs. */
+type SaveStorageLike = {
+  presignGet(k: string): Promise<string>;
+  presignPut(k: string, n: number): Promise<string>;
+  objectSize?(k: string): Promise<number | undefined>;
+};
 import { presentMods, readModDoc, resolveMods } from './core/mods';
 import { saveRoutes, eraseSaves } from './data/save-routes';
 import { lockerRoutes } from './data/locker-routes';
@@ -956,6 +962,11 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       process.kill(process.pid, 'SIGTERM');
     },
     exportData: async (res) => exportDataDir(opts.dataDir, res),
+
+    // Savegames for the dashboard. Same storage and same shared dir the player path uses, so
+    // an imported save is indistinguishable from one the game uploaded.
+    saveStorage: () => (lockerStorage as SaveStorageLike | undefined),
+    maxSaveBytesPerAccount: config.locker.maxSaveBytesPerAccount,
 
     mailConfigured: () => config.notifications.smtpHost !== '',
     sendPasswordReset: async (name) => {

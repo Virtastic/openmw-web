@@ -1575,6 +1575,87 @@ function sysCards(sys) {
   return out;
 }
 
+/**
+ * One account's savegames.
+ *
+ * `mp` and `solo` are separate namespaces in storage — a character's multiplayer saves and its
+ * single-player ones do not mix — so the scope is shown rather than quietly flattened, and an
+ * import has to say which it is going into.
+ */
+function renderSaves(account, r) {
+  const mb = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
+  if (!r.storage) {
+    return html`<div class="text-secondary">File storage is switched off for this server, so
+      there are no savegames to show.</div>`;
+  }
+  const rows = r.saves.map((s) => html`
+    <tr><td class="vt-mono">${s.name}</td>
+      <td><span class="badge text-bg-secondary">${s.scope === 'solo' ? 'single player' : 'multiplayer'}</span></td>
+      <td class="text-secondary">${mb(s.size)}</td>
+      <td class="text-secondary">${(new Date(s.mtime)).toISOString().slice(0, 16).replace('T', ' ')}</td>
+      <td class="text-end">${raw(can('owner') ? html`<button class="btn btn-sm btn-outline-secondary"
+        data-savedl="${s.name}" data-savescope-of="${s.scope}">Download</button>` : '')}</td></tr>`).join('');
+  return html`
+    <div class="text-secondary mb-2">${r.saves.length}
+      ${raw(r.saves.length === 1 ? 'save' : 'saves')}, ${mb(r.usedBytes)} of ${mb(r.quotaBytes)} used.</div>
+    ${raw(r.saves.length ? html`<div class="table-responsive"><table class="table table-sm mb-2">
+      <tbody>${raw(rows)}</tbody></table></div>` : '')}
+    ${raw(can('owner') ? html`
+      <label class="btn btn-sm btn-outline-secondary mb-0">Import a save<input type="file"
+        accept=".omwsave" data-saveup hidden></label>
+      <select class="form-select form-select-sm d-inline-block ms-2" style="width:auto" data-savescope>
+        <option value="solo">into single player</option>
+        <option value="mp">into multiplayer</option>
+      </select>
+      <div class="mt-1" data-savemsg></div>` : '')}`;
+}
+
+/** Import: presign, PUT the bytes straight to storage, then record it. */
+function wireSaves(account, box, reload) {
+  // Fetch the presigned URL with the session token, then navigate to it. A plain link to the
+  // admin route would carry no Authorization header and be refused.
+  box.querySelectorAll('[data-savedl]').forEach((b) => {
+    b.onclick = async () => {
+      b.disabled = true;
+      try {
+        const q = `account=${encodeURIComponent(account)}`
+          + `&scope=${encodeURIComponent(b.dataset.savescopeOf)}`
+          + `&name=${encodeURIComponent(b.dataset.savedl)}`;
+        const { url } = await api(`/saves/file?${q}`);
+        window.location.href = url;
+      } catch (e) { toast(e.message, 'err'); } finally { b.disabled = false; }
+    };
+  });
+
+  const pick = box.querySelector('[data-saveup]');
+  if (!pick) return;
+  pick.onchange = async () => {
+    const file = pick.files[0];
+    if (!file) return;
+    const msg = box.querySelector('[data-savemsg]');
+    const scope = box.querySelector('[data-savescope]').value;
+    if (!/\.omwsave$/i.test(file.name)) {
+      msg.innerHTML = html`<span class="text-danger">A savegame is a .omwsave file.</span>`;
+      return;
+    }
+    msg.textContent = 'Uploading…';
+    try {
+      // The bytes go straight to storage, never through the admin API: a save can be hundreds
+      // of megabytes and this is the same two-step the game's own upload uses.
+      const { url } = await api('/saves/upload-url', { method: 'POST',
+        body: { account, scope, name: file.name, size: file.size } });
+      const put = await fetch(url, { method: 'PUT', body: file, duplex: 'half' });
+      if (!put.ok) throw new Error(`storage refused the upload (HTTP ${put.status})`);
+      await api('/saves/uploaded', { method: 'POST',
+        body: { account, scope, name: file.name, size: file.size } });
+      msg.innerHTML = html`<span class="text-success">Imported ${file.name}.</span>`;
+      reload();
+    } catch (e) {
+      msg.innerHTML = html`<span class="text-danger">${e.message}</span>`;
+    }
+  };
+}
+
 /** Post-onboarding nudges, derived from real state rather than a stored progress flag. */
 function setupChecklist() {
   if (localStorage.getItem('omwmp_checklist_hidden') === '1') return '';
@@ -2800,8 +2881,29 @@ async function pageAccounts() {
             ? html`<button class="btn btn-sm btn-outline-secondary" data-unban="${a.name}">unban</button> ` : '')}
           ${raw(can('owner')
             ? html`<button class="btn btn-sm btn-outline-danger" data-del="${a.name}">erase</button>` : '')}</td>
-      </tr>`).join('');
+      </tr>
+      <tr class="vt-saves-row"><td colspan="6" class="pt-0">
+        <details data-saves="${a.name}"><summary class="small text-secondary">Savegames</summary>
+          <div class="mt-2 small" data-saves-for="${a.name}">Loading…</div></details></td></tr>`).join('');
     $('#accBody').innerHTML = rows || html`<tr><td colspan="6" class="vt-empty">No accounts match.</td></tr>`;
+
+    // SAVEGAMES, loaded when the row is opened rather than for every account up front: a
+    // hundred accounts would be a hundred queries to answer a question nobody asked.
+    view().querySelectorAll('details[data-saves]').forEach((d) => {
+      d.ontoggle = async () => {
+        if (!d.open || d.dataset.loaded) return;
+        d.dataset.loaded = '1';
+        const account = d.dataset.saves;
+        const box = view().querySelector(`[data-saves-for="${CSS.escape(account)}"]`);
+        try {
+          const r = await api(`/saves?account=${encodeURIComponent(account)}`);
+          box.innerHTML = renderSaves(account, r);
+          wireSaves(account, box, () => { d.dataset.loaded = ''; d.ontoggle(); });
+        } catch (e) {
+          box.innerHTML = html`<div class="text-danger">${e.message}</div>`;
+        }
+      };
+    });
 
     view().querySelectorAll('[data-role-for]').forEach((sel) => {
       sel.onchange = async () => {

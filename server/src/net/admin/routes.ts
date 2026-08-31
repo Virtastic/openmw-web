@@ -29,6 +29,10 @@
 //   POST /admin/api/mods/install       [owner]     a mod .zip -> staged, with its candidates
 //   POST /admin/api/mods/install/commit[owner]     which candidates to extract
 //   DEL  /admin/api/mods/:slug         [owner]     uninstall
+//   GET  /admin/api/saves?account=     [moderator] one account's savegames
+//   GET  /admin/api/saves/file         [owner]     -> { url } for a presigned download
+//   POST /admin/api/saves/upload-url   [owner]     -> a presigned PUT for an import
+//   POST /admin/api/saves/uploaded     [owner]     confirm one landed
 //   GET  /admin/api/logs               [moderator] ring buffer + on-disk history
 //   GET  /admin/api/metrics            [moderator] the existing registry, as JSON
 //   GET  /admin/api/accounts           [moderator]
@@ -61,6 +65,7 @@ import { readDashboardTree } from './settings-store';
 import { writeCaddyfile, launcherEnabled } from './caddy-config';
 import { modsView, saveMods, uploadContent, gameDataWritable, MAX_UPLOAD_BYTES } from './api-mods';
 import { beginInstall, commitInstall, saveModOrder, uninstallMod, type Choice } from './mod-install';
+import { listSaves, saveDownload, saveUploadUrl, saveUploaded, type SavesDeps } from './api-saves';
 import type { LogEntry } from '../../log';
 
 export interface AdminDeps {
@@ -98,6 +103,12 @@ export interface AdminDeps {
   exportData(res: ServerResponse): Promise<void>;
   deleteAccount(key: string): Promise<{ ok: boolean; message: string }>;
 
+  /** Object storage for savegames, or undefined when the locker is switched off. */
+  saveStorage?(): { presignGet(k: string): Promise<string>;
+    presignPut(k: string, n: number): Promise<string>;
+    objectSize?(k: string): Promise<number | undefined>; } | undefined;
+  maxSaveBytesPerAccount?: number;
+
   /** Is outgoing mail set up? Gates whether password recovery is offered at all. */
   mailConfigured(): boolean;
   /** Fire-and-forget: never reveals whether the account or its address exists. */
@@ -131,6 +142,12 @@ const ACTION_ROLE: Record<string, DashboardRole> = {
 };
 
 export function adminRoutes(deps: AdminDeps) {
+  /** Saves live in the SHARED dir, like accounts: a character follows its player across worlds. */
+  const savesDeps = (): SavesDeps => ({
+    dataDir: deps.sharedDir ?? deps.dataDir,
+    storage: deps.saveStorage?.(),
+    maxBytesPerAccount: deps.maxSaveBytesPerAccount ?? 0,
+  });
   // PER SERVER, not per module. These were module-level and it was wrong even though a real
   // deployment could never see it: one process runs one server, so the shared state looked
   // harmless. The test suite builds dozens in a single process and caught it immediately -
@@ -778,6 +795,55 @@ export function adminRoutes(deps: AdminDeps) {
       if (!gone.ok) { json(res, gone.status, { error: gone.error }); return true; }
       log('info', 'admin.mod_deleted', { by: ctx.accountKey, slug });
       json(res, 200, { ok: true, restartRequired: true });
+      return true;
+    }
+
+    // --- savegames ------------------------------------------------------------------------------
+    //
+    // Reading is moderator, because "how much storage is this account using" is a support
+    // question. Downloading and importing are owner: one takes a copy of somebody's character
+    // off the server, the other writes into their account.
+    if (method === 'GET' && path === '/admin/api/saves') {
+      if (!await gate(req, res, auth, 'moderator')) return true;
+      const r = listSaves(savesDeps(), url.searchParams.get('account') ?? '');
+      if (!r.ok) { json(res, r.status, { error: r.error }); return true; }
+      json(res, 200, (r as { body: unknown }).body);
+      return true;
+    }
+    if (method === 'GET' && path === '/admin/api/saves/file') {
+      const ctx = await gate(req, res, auth, 'owner');
+      if (!ctx) return true;
+      const r = await saveDownload(savesDeps(), url.searchParams.get('account') ?? '',
+        url.searchParams.get('scope'), url.searchParams.get('name') ?? '');
+      if (!r.ok) { json(res, r.status, { error: r.error }); return true; }
+      // The presigned URL as JSON, not a 302. Admin auth is a Bearer token in a header, so a
+      // plain <a href> to this route would arrive unauthenticated and 401 -- and a redirect
+      // the page cannot follow is worse than a link it can. The URL that comes back carries
+      // its own capability and expires on its own.
+      json(res, 200, { url: (r as { redirect: string }).redirect });
+      return true;
+    }
+    if (method === 'POST' && path === '/admin/api/saves/upload-url') {
+      const ctx = await gate(req, res, auth, 'owner');
+      if (!ctx) return true;
+      const body = await readJson<{ account?: string; scope?: string; name?: string; size?: number }>(req, res);
+      if (body === undefined) return true;
+      const r = await saveUploadUrl(savesDeps(), String(body.account ?? ''), body.scope ?? null,
+        String(body.name ?? ''), Number(body.size ?? 0));
+      if (!r.ok) { json(res, r.status, { error: r.error }); return true; }
+      json(res, 200, (r as { body: unknown }).body);
+      return true;
+    }
+    if (method === 'POST' && path === '/admin/api/saves/uploaded') {
+      const ctx = await gate(req, res, auth, 'owner');
+      if (!ctx) return true;
+      const body = await readJson<{ account?: string; scope?: string; name?: string; size?: number }>(req, res);
+      if (body === undefined) return true;
+      const r = await saveUploaded(savesDeps(), String(body.account ?? ''), body.scope ?? null,
+        String(body.name ?? ''), Number(body.size ?? 0));
+      if (!r.ok) { json(res, r.status, { error: r.error }); return true; }
+      log('info', 'admin.save_import', { by: ctx.accountKey, account: body.account, name: body.name });
+      json(res, 200, (r as { body: unknown }).body);
       return true;
     }
 
