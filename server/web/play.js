@@ -32,18 +32,25 @@
   }
 
   let out = '';
-  // Password sign-in happens inside the game's own screen; this button carries the intent.
-  if (auth.allowPasswordLogin && hasClient) {
-    out += '<a class="btn primary" href="/launcher.html">Play now (username &amp; password)</a>';
-  }
   const sso = (auth.providers || []).filter((p) => NICE[p]);
+
+  // THE BUTTON IS SHOWN EVEN WITH NO CLIENT STAGED. It used to be conditional on both the
+  // password method AND the client being present, so a server without the game files
+  // rendered a heading, a warning, and nothing to click: a sign-in page with no way to sign
+  // in. Whether the game is installed is the operator's problem and is already said above;
+  // it is not a reason to hide the door.
+  if (auth.allowPasswordLogin) {
+    out += hasClient
+      ? '<a class="btn primary" href="/launcher.html">Play now (username &amp; password)</a>'
+      : '<span class="btn primary disabled" aria-disabled="true">Play now (not installed yet)</span>';
+  }
   if (sso.length) {
-    if (auth.allowPasswordLogin && hasClient) out += '<div class="rule">or continue with</div>';
+    if (auth.allowPasswordLogin) out += '<div class="rule">or continue with</div>';
     for (const p of sso) {
       out += `<a class="btn" href="/auth/${esc(p)}/start">Continue with ${NICE[p]}</a>`;
     }
   }
-  if (out === '' && !auth.allowPasswordLogin && !sso.length) {
+  if (!auth.allowPasswordLogin && !sso.length) {
     out = '<div class="note">This server has no sign-in method switched on yet. '
       + 'Its operator can fix that in the <a href="/admin">admin dashboard</a>.</div>';
   } else if (auth.allowRegistration === false) {

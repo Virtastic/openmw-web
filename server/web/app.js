@@ -1243,10 +1243,30 @@ function stepReview() {
 
 /** Poll until the server answers again, then go to the overview. */
 function waitForRestart() {
-  setTitle('Restarting…', 'This usually takes a few seconds.');
-  view().innerHTML = html`<div class="vt-empty">
-    <div class="spinner-border text-secondary mb-3"></div>
-    <p>Waiting for the server to come back…</p></div>`;
+  // THE GAME'S OWN LOADING SCREEN, not a Bootstrap spinner on an empty page. play/index.html
+  // shows this exact sheet while the engine downloads and boots, so the one moment the
+  // dashboard makes an operator wait looks like the product rather than like a framework
+  // default. Same glyph, same Palatino title, same bronze-to-gold indeterminate bar, same
+  // ember behind it.
+  document.body.classList.add('vt-loading');
+  setTitle('', '');
+  view().innerHTML = html`
+    <div class="ld-sheet">
+      <div class="ld-inner">
+        <div class="ld-glyph" aria-hidden="true">
+          <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round">
+            <circle cx="24" cy="24" r="17"/>
+            <circle cx="24" cy="24" r="2.2" fill="currentColor" stroke="none"/>
+            <path d="M24 7 27 24 24 41 21 24Z"/>
+            <path d="M7 24 24 21 41 24 24 27Z"/>
+          </svg>
+        </div>
+        <div class="ld-title">Restarting</div>
+        <div class="ld-status" id="ldStatus">Applying your settings</div>
+        <div class="ld-bar"><div class="ld-fill"></div></div>
+        <div class="ld-detail" id="ldDetail"></div>
+      </div>
+    </div>`;
   let tries = 0;
   const tick = async () => {
     tries++;
@@ -1258,6 +1278,7 @@ function waitForRestart() {
         // the setup wizard signs you out, and without this the operator answered ten
         // questions, watched a spinner, and landed on a login form under a cheerful green
         // "Server is back up" with nothing saying why. Say it plainly instead.
+        document.body.classList.remove('vt-loading');
         if (!state.authed) {
           token.clear();
           pageLogin(false, 'The server restarted, so you have been signed out. '
@@ -1269,7 +1290,11 @@ function waitForRestart() {
         return;
       }
     } catch { /* still down, expected */ }
+    // Say what is happening rather than leaving a bar moving in silence.
+    const d = $('#ldDetail');
+    if (d && tries > 4) d.textContent = `still waiting… ${tries}s`;
     if (tries > 60) {
+      document.body.classList.remove('vt-loading');
       view().innerHTML = html`<div class="alert alert-danger">The server has not come back.
         Check the container logs, if it is not configured to restart automatically you may
         need to start it yourself.</div>`;

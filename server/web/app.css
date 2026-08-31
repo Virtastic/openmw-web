@@ -467,3 +467,55 @@ code { color: var(--vt-bronze-hi); }
   .vt-choice, .btn, .vt-step-bar { transition: none; }
   body::before { animation: none; }
 }
+
+/* --- the loading sheet ---------------------------------------------------------------- */
+/* Lifted from play/index.html's #loading, which is what covers the canvas while the engine
+   downloads and boots. The dashboard makes an operator wait exactly once, at the restart
+   that ends setup, and that moment should look like the product rather than like a Bootstrap
+   spinner on an empty page. */
+body.vt-loading .app-sidebar,
+body.vt-loading .app-header,
+body.vt-loading .app-footer,
+body.vt-loading .app-content-header { display: none; }
+body.vt-loading .app-wrapper { display: block; }
+
+.ld-sheet {
+  position: fixed; inset: 0; z-index: 900;
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px; text-align: center;
+  background: var(--vt-ash); color: var(--vt-ink);
+}
+.ld-sheet .ld-inner { position: relative; width: 100%; max-width: 440px; }
+.ld-glyph {
+  width: 56px; height: 56px; margin: 0 auto 24px; color: var(--vt-bronze-hi);
+  animation: ld-spin 7s linear infinite;
+}
+.ld-glyph svg { width: 100%; height: 100%; display: block; }
+@keyframes ld-spin { to { transform: rotate(360deg); } }
+.ld-title {
+  margin: 0 0 10px; font-family: var(--vt-serif); font-weight: 600;
+  font-size: clamp(28px, 5vw, 40px); letter-spacing: .01em; color: var(--vt-ink);
+  text-shadow: 0 1px 0 rgba(0, 0, 0, .5), 0 0 34px rgba(211, 168, 78, .10);
+}
+.ld-status {
+  margin: 0 0 22px; font-size: 11.5px; letter-spacing: .2em; text-transform: uppercase;
+  font-weight: 600; color: var(--vt-bronze-hi);
+}
+.ld-bar {
+  position: relative; height: 4px; border-radius: 3px; overflow: hidden;
+  background: rgba(138, 104, 56, .28);
+}
+.ld-fill {
+  height: 100%; width: 34%; border-radius: 3px;
+  background: linear-gradient(90deg, var(--vt-bronze), var(--vt-gold), var(--vt-gold-hi));
+  animation: ld-slide 1.25s ease-in-out infinite;
+}
+@keyframes ld-slide { 0% { transform: translateX(-110%); } 100% { transform: translateX(330%); } }
+.ld-detail {
+  margin-top: 13px; min-height: 16px; color: var(--vt-faint);
+  font: 12px/1.4 ui-monospace, Menlo, Consolas, monospace;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ld-glyph { animation: none; }
+  .ld-fill { animation: none; width: 100%; }
+}
