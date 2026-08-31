@@ -102,6 +102,9 @@ export interface AdminDeps {
 
 const ROLE_SET = new Set<string>(DASHBOARD_ROLES);
 
+/** The single sign-on providers the wizard offers. */
+const SSO_PROVIDERS = ['discord', 'google', 'microsoft'];
+
 
 /**
  * What each legacy /action kind requires, mirroring the ranks in core/admin.ts: kick is
@@ -171,6 +174,18 @@ export function adminRoutes(deps: AdminDeps) {
   const lockerStr = (key: string): string => {
     const v = pending('locker')[key];
     return typeof v === 'string' ? v : '';
+  };
+
+  const providerTable = (p: string): Record<string, unknown> => {
+    const t = pending('auth')[p];
+    return (t !== null && typeof t === 'object' && !Array.isArray(t))
+      ? t as Record<string, unknown> : {};
+  };
+  const ssoEnabled = (p: string): boolean => providerTable(p).enabled === true;
+  const ssoHasKeys = (p: string): boolean => {
+    const t = providerTable(p);
+    return typeof t.clientId === 'string' && t.clientId !== ''
+      && typeof t.clientSecret === 'string' && t.clientSecret !== '';
   };
 
   const auth: AuthDeps = {
@@ -282,6 +297,12 @@ export function adminRoutes(deps: AdminDeps) {
           s3Bucket: lockerStr('bucket'),
           s3Region: lockerStr('region') || 'auto',
           storageConfigured: lockerStr('accessKeyId') !== '' && lockerStr('secretAccessKey') !== '',
+          // Providers switched ON but with no credentials. They are enabled in config and
+          // never offered on the sign-in page, because there is nothing to sign in with, so
+          // the operator picked a button they will then be unable to find. Named here so the
+          // wizard can pre-fill, and the getting-started checklist can nag until it is done.
+          ssoConfigured: SSO_PROVIDERS.filter((p) => ssoHasKeys(p)),
+          ssoNeedsKeys: SSO_PROVIDERS.filter((p) => ssoEnabled(p) && !ssoHasKeys(p)),
         },
         // Surfaced even to a logged-out page so a boot-time revert is visible immediately,
         // not only to whoever eventually logs in.

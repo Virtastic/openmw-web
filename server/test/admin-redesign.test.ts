@@ -456,3 +456,28 @@ test('a domain pasted out of the address bar is understood, not refused', async 
   assert.match(caddyfile, /^mp\.example\.com \{/m);
   assert.doesNotMatch(caddyfile, /https:\/\/mp/, 'no scheme in the site address');
 });
+
+test('a sign-in provider with no keys is reported, not silently ignored', async (t) => {
+  // Ticking Discord without filling in its keys leaves it enabled in config and never
+  // offered on the sign-in page, because there is nothing to sign in with. The operator
+  // picked a button they would then be unable to find, and nothing said why.
+  const { call, token } = await boot(t);
+  assert.equal((await call('/setup', { method: 'POST', token, body: {
+    loginMethods: ['password', 'discord'], completed: true,
+  } })).status, 200);
+
+  let state = await (await call('/state', { token })).json() as { setup: Record<string, unknown> };
+  assert.deepEqual(state.setup.ssoNeedsKeys, ['discord'],
+    'enabled but unusable, so the page can say so and the checklist can nag');
+  assert.deepEqual(state.setup.ssoConfigured, []);
+
+  // Supplying the keys clears it, so the nag ends by itself rather than needing dismissal.
+  assert.equal((await call('/setup', { method: 'POST', token, body: {
+    loginMethods: ['password', 'discord'],
+    ssoCreds: { discord: { clientId: 'id', clientSecret: 'secret' } },
+    completed: true,
+  } })).status, 200);
+  state = await (await call('/state', { token })).json() as { setup: Record<string, unknown> };
+  assert.deepEqual(state.setup.ssoNeedsKeys, []);
+  assert.deepEqual(state.setup.ssoConfigured, ['discord']);
+});

@@ -429,6 +429,39 @@ function wireChoices(onPick) {
   });
 }
 
+/**
+ * Make the browser's own Back button walk the wizard.
+ *
+ * It did nothing at all before: the wizard never touched history, so Back was inert on the
+ * one screen where people reach for it most, having just been asked eleven questions in a
+ * row. Inert is not harmful, but "I pressed Back and nothing happened" is its own small
+ * confusion, and the fix is a history entry per step.
+ *
+ * Only pushed when the step actually CHANGES. renderWizard also runs for re-renders within a
+ * step (picking a tile, typing a domain), and pushing on those would bury the previous
+ * question under a dozen identical entries that Back would have to chew through.
+ */
+let pushedStep = null;
+function pushWizardStep() {
+  if (pushedStep === step) return;
+  const first = pushedStep === null;
+  pushedStep = step;
+  try {
+    // replaceState for the first render, so Back from step one leaves the page the way it
+    // normally would rather than landing on a phantom entry.
+    history[first ? 'replaceState' : 'pushState']({ wizStep: step }, '', location.pathname);
+  } catch { /* history is unavailable in some embedded contexts; Back simply stays inert */ }
+}
+
+window.addEventListener('popstate', (e) => {
+  const to = e.state?.wizStep;
+  if (typeof to !== 'number') return;
+  pushedStep = to;   // do not re-push what the browser just navigated to
+  step = to;
+  saveWizard();
+  renderWizard();
+});
+
 function renderWizard() {
   // Persist here rather than at each mutation site: every path that changes an answer or the
   // step ends up calling this, so one line covers all of them. The first version saved only
@@ -440,6 +473,7 @@ function renderWizard() {
   const name = steps[Math.min(step, steps.length - 1)];
   setTitle('Set up this server',
     'Ten or so questions, most of them a single click. Every answer can be changed later.');
+  pushWizardStep();
 
   if (name === 'owner') return stepOwner();
   if (name === 'mode') return stepMode();
@@ -580,6 +614,23 @@ function stepMode() {
   wireChoices();
 }
 
+/**
+ * Ticked single sign-on providers that still have no keys.
+ *
+ * A provider without a client id and secret is enabled in configuration and NEVER OFFERED on
+ * the sign-in page, because there is nothing to sign in with. That silence is the problem:
+ * the operator ticks Discord, finishes setup, and then cannot find the Discord button they
+ * chose. Every place that shows the choice says which ones are unfinished.
+ */
+function ssoNeedingKeys() {
+  return ['discord', 'google', 'microsoft'].filter((p) => {
+    if (!answers.loginMethods.includes(p)) return false;
+    const c = answers.ssoCreds?.[p] || {};
+    const stored = (state.setup?.ssoConfigured || []).includes(p);
+    return !stored && (!(c.clientId || '').trim() || !(c.clientSecret || '').trim());
+  });
+}
+
 function stepLogin() {
   const has = (m) => answers.loginMethods.includes(m);
   const sso = ['discord', 'google', 'microsoft'].filter(has)
@@ -622,6 +673,13 @@ function stepLogin() {
     ${raw(box('google', 'Google', 'Almost everyone has one, so nobody gets stuck.'))}
     ${raw(box('microsoft', 'Microsoft', 'Useful for a school or workplace group.'))}
     <div class="vt-section-note mt-3">${raw(summary)}</div>
+    ${raw(ssoNeedingKeys().length ? html`<div class="vt-field-danger mt-2">
+      <strong>${ssoNeedingKeys().map((p) => LOGIN_LABEL[p]).join(' and ')}
+      ${raw(ssoNeedingKeys().length === 1 ? 'has' : 'have')} no keys yet, so
+      ${raw(ssoNeedingKeys().length === 1 ? 'it' : 'they')} will not appear on the sign-in
+      page at all.</strong> Fill them in below, or leave this and add them later under
+      Settings, single sign-on. Nothing breaks either way, but nobody can use
+      ${raw(ssoNeedingKeys().length === 1 ? 'it' : 'them')} until you do.</div>` : '')}
     ${raw(['discord', 'google', 'microsoft'].filter(has).map((p) => {
       const c = answers.ssoCreds?.[p] || {};
       const helpUrl = {
@@ -635,6 +693,9 @@ function stepLogin() {
       <div class="vt-card card mt-2"><div class="card-body py-3">
         <div class="d-flex align-items-center mb-2">
           <strong>${LOGIN_LABEL[p]} keys</strong>
+          ${raw(ssoNeedingKeys().includes(p)
+            ? '<span class="badge text-bg-warning ms-2">not filled in yet</span>'
+            : '<span class="badge text-bg-success ms-2">ready</span>')}
           <a class="ms-auto small" href="${helpUrl}" target="_blank" rel="noreferrer noopener">
             open ${LOGIN_LABEL[p]}'s developer console ↗</a>
         </div>
@@ -1135,11 +1196,19 @@ function stepReview() {
         Morrowind. Go <a href="#" id="backToFiles">back one step</a> to add it, or do it later
         from <strong>Game data &amp; mods</strong>, which shows the same checklist.
       </div>` : '')}
+    ${raw(ssoNeedingKeys().length ? html`
+      <div class="callout callout-warning mb-3">
+        <strong>${ssoNeedingKeys().map((p) => LOGIN_LABEL[p]).join(' and ')} still
+        ${raw(ssoNeedingKeys().length === 1 ? 'needs its keys' : 'need their keys')}.</strong>
+        Until then ${raw(ssoNeedingKeys().length === 1 ? 'that button does' : 'those buttons do')}
+        not appear on the sign-in page. Add them any time under Settings, single sign-on.
+      </div>` : '')}
     <dl class="row small mt-3">
       ${raw(line('Server', mp ? 'For a group' : 'Mostly for me'))}
       ${raw(mp ? line('Server name', answers.serverName || '(unset)') : '')}
-      ${raw(line('Sign-in methods',
-        answers.loginMethods.map((m) => LOGIN_LABEL[m] || m).join(', ') || '(none)'))}
+      ${raw(line('Sign-in methods', answers.loginMethods.length
+        ? answers.loginMethods.map((m) => LOGIN_LABEL[m] || m).join(', ')
+        : '(none)'))}
       ${raw(line('Who can sign up', REGISTRATION_LABEL[answers.registration] || '(unset)'))}
       ${raw(line('Content', CONTENT_LABEL[answers.contentProfile] || '(unset)'))}
       ${raw(line('Game files', answers.deliveryModel === 'serve' ? 'Served by this server' : 'Players bring their own'))}
@@ -1421,6 +1490,13 @@ function setupChecklist() {
       : []),
     { done: state.twoFactor === true, label: 'Add two-factor authentication to your account', hash: '#security' },
     { done: localStorage.getItem('omwmp_mods_seen') === '1', label: 'Review the game data and mod list', hash: '#mods' },
+    // Only shown when there IS an unfinished provider, so it is a live problem rather than
+    // a permanent nag: a sign-in button the operator chose and cannot see.
+    ...((state.setup?.ssoNeedsKeys || []).length
+      ? [{ done: false, hash: '#settings',
+           label: `Add the keys for ${(state.setup.ssoNeedsKeys).join(' and ')} sign-in, `
+             + 'which is switched on but cannot be used yet' }]
+      : []),
   ];
   if (items.every((i) => i.done)) return '';
   const done = items.filter((i) => i.done).length;
