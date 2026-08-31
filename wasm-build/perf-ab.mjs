@@ -13,6 +13,17 @@
 // the sampler prints the median and the spread so you can see whether the difference survives
 // the noise rather than reading a single figure.
 //
+// Also reports PEAK HEAP, which is how you answer "does this content load actually need
+// wasm64?" -- run it against a real load order and read peakHeapGiB / neededWasm64. For
+// Tamriel Rebuilt specifically:
+//
+//   1. install GOTY + TR through the admin dashboard (contentProfile "tamriel-rebuilt")
+//   2. node wasm-build/perf-ab.mjs tr-wasm64 "<url with that load order>" 60
+//
+// A peakHeapGiB above 4.00 is the acceptance criterion for the conversion: it is content the
+// wasm32 build could not have run at all. Below it, the ceiling is headroom rather than a fix,
+// and OMW_MAX_MEMORY should be re-sized against the measured number.
+//
 // Usage: node wasm-build/perf-ab.mjs <label> [url] [sampleSeconds]
 
 import { spawn } from 'node:child_process';
@@ -83,18 +94,22 @@ await sleep(10000);
 
 const frameMs = [];
 const fps = [];
+let peakHeap = 0;
 for (let i = 0; i < SAMPLE_SECONDS; i++) {
   await sleep(1000);
-  const s = await evalIn('JSON.stringify({ms: window.__frameMs || 0, fps: window.__fps || 0})');
+  const s = await evalIn(`JSON.stringify({ms: window.__frameMs || 0, fps: window.__fps || 0,
+    heap: (window.Module && Module.wasmMemory) ? Module.wasmMemory.buffer.byteLength : 0})`);
   if (!s) continue;
   const v = JSON.parse(s);
   if (v.ms > 0) frameMs.push(v.ms);
   if (v.fps > 0) fps.push(v.fps);
+  // PEAK, not final: the heap only ever grows, but a run that ends in a menu would otherwise
+  // under-report what the session actually needed. This is the number that sizes the ceiling.
+  if (v.heap > peakHeap) peakHeap = v.heap;
 }
 
 const med = (a) => { if (!a.length) return 0; const b = [...a].sort((x, y) => x - y); const m = b.length >> 1; return b.length % 2 ? b[m] : (b[m - 1] + b[m]) / 2; };
-const heap = await evalIn('Module.wasmMemory ? (Module.wasmMemory.buffer.byteLength/1024**3).toFixed(2) : "n/a"');
-
+const FOUR_GIB = 4 * 1024 ** 3;
 console.log(JSON.stringify({
   label: LABEL,
   samples: frameMs.length,
@@ -102,7 +117,11 @@ console.log(JSON.stringify({
   frameMsMin: frameMs.length ? Math.min(...frameMs) : 0,
   frameMsMax: frameMs.length ? Math.max(...frameMs) : 0,
   fpsMedian: med(fps),
-  heapGiB: heap,
+  peakHeapGiB: Number((peakHeap / 1024 ** 3).toFixed(2)),
+  // The question the wasm64 conversion exists to answer. If a real content load stays under
+  // 4 GiB the ceiling is not the binding constraint for it; if it goes over, this build is the
+  // only one that can run it at all.
+  neededWasm64: peakHeap > FOUR_GIB,
 }));
 
 try { chrome.kill('SIGKILL'); } catch {}
