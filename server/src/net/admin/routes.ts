@@ -52,7 +52,7 @@ import { serveWebFile } from './static';
 import type { SetupToken } from './setup-token';
 import { generateSecret, totpUri, verifyTotp } from './totp';
 import { settingsView, applySection, applyWizard, type WizardAnswers } from './api-settings';
-import { checkDomain } from './setup-check';
+import { checkDomain, normaliseDomain } from './setup-check';
 import { readDashboardTree } from './settings-store';
 import { writeCaddyfile } from './caddy-config';
 import { modsView, saveMods, uploadContent, gameDataWritable } from './api-mods';
@@ -563,7 +563,7 @@ export function adminRoutes(deps: AdminDeps) {
       if (!ctx) return true;
       const body = await readJson<{ domain?: string }>(req, res);
       if (body === undefined) return true;
-      const domain = String(body.domain ?? '').trim().toLowerCase();
+      const domain = normaliseDomain(String(body.domain ?? ''));
       // The last label must contain a letter: that shape-checks a NAME and rejects a bare
       // IP address, so this endpoint cannot be pointed at internal addresses directly. The
       // caller is an owner either way; this is belt and braces, not the trust boundary.
@@ -617,7 +617,9 @@ export function adminRoutes(deps: AdminDeps) {
       // Apply the hosting answer to the proxy immediately. Caddy watches this file, so the
       // certificate is requested within seconds — the wizard sets up HTTPS itself instead of
       // printing a line for the operator to paste into a file it cannot reach.
-      const domain = body.hosting === 'internal' ? '' : String(body.domain ?? '').trim();
+      // Normalised here too: the API is reachable without the page, and a scheme or a
+      // trailing slash reaching the proxy config is what made the join link nonsense.
+      const domain = body.hosting === 'internal' ? '' : normaliseDomain(String(body.domain ?? ''));
       writeCaddyfile(deps.dataDir, { domain });
       if (body.completed === true) setupCompletedNow = true;
       log('info', 'admin.setup_applied', { by: ctx.accountKey, mode: body.deploymentMode });

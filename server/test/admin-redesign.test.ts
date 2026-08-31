@@ -11,6 +11,7 @@ import { startServer } from '../src/server';
 import { tmpDataDir } from './helpers';
 import { readDashboardTree } from '../src/net/admin/settings-store';
 import { validAccountName, accountNameProblem } from '../src/core/accounts';
+import { normaliseDomain } from '../src/net/admin/setup-check';
 
 const OWNER = { name: 'owner@example.com', password: 'a-long-enough-passphrase' };
 
@@ -424,4 +425,34 @@ test('re-running Setup does not blank what it does not re-ask', async (t) => {
 
   // And the proxy config still names the domain, which is what the blanking broke.
   assert.match(readFileSync(join(dataDir, 'caddy', 'Caddyfile'), 'utf8'), /^mp\.example\.com \{/m);
+});
+
+test('a domain pasted out of the address bar is understood, not refused', async (t) => {
+  // What people type is not "mp.example.com", it is what they copied from the address bar.
+  // The check button refused that as "not a domain name" while Continue saved it verbatim,
+  // so the value that reached the proxy config was one the wizard had already called invalid
+  // and the join link came out as https://https://mp.example.com/.
+  const { call, token, dataDir } = await boot(t);
+
+  assert.equal(normaliseDomain('https://MP.Example.com:443/admin'), 'mp.example.com');
+  assert.equal(normaliseDomain('  http://mp.example.com/  '), 'mp.example.com');
+  assert.equal(normaliseDomain('mp.example.com.'), 'mp.example.com');
+  // www is a genuinely different host: rewriting it would fetch a certificate for a name
+  // the operator did not ask for.
+  assert.equal(normaliseDomain('www.example.com'), 'www.example.com');
+
+  // The check endpoint accepts it rather than lecturing about format.
+  assert.equal((await call('/setup/check-domain', {
+    method: 'POST', token, body: { domain: 'https://not-a-real-host-9x8y.example/' },
+  })).status, 200, 'a pasted URL is a domain the check can act on');
+
+  // And the saved value is the bare host, so the proxy config is well formed.
+  assert.equal((await call('/setup', { method: 'POST', token, body: {
+    hosting: 'public', domain: 'https://mp.example.com/', completed: true,
+  } })).status, 200);
+  assert.equal((readDashboardTree(dataDir) as { setup?: Record<string, unknown> })
+    .setup?.domain, 'mp.example.com');
+  const caddyfile = readFileSync(join(dataDir, 'caddy', 'Caddyfile'), 'utf8');
+  assert.match(caddyfile, /^mp\.example\.com \{/m);
+  assert.doesNotMatch(caddyfile, /https:\/\/mp/, 'no scheme in the site address');
 });

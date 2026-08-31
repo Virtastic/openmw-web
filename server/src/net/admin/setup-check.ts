@@ -37,6 +37,22 @@ function probe(domain: string, rejectUnauthorized: boolean): Promise<'answered' 
   });
 }
 
+/**
+ * A bare hostname from whatever was typed. Mirrors the page's own cleanDomain: people paste
+ * "https://mp.example.com/" because that is where a domain lives as far as they are
+ * concerned, and both ends must agree on what that means. "www." is deliberately left alone,
+ * being a genuinely different host.
+ */
+export function normaliseDomain(raw: string): string {
+  return String(raw ?? '')
+    .trim()
+    .replace(/^[a-z][a-z0-9+.-]*:\/\//i, '')
+    .replace(/\/.*$/, '')
+    .replace(/:\d+$/, '')
+    .replace(/\.$/, '')
+    .toLowerCase();
+}
+
 export async function checkDomain(domain: string): Promise<DomainCheck> {
   const addresses: string[] = [];
   for (const lookup of [resolve4(domain), resolve6(domain)]) {

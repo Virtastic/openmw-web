@@ -11,6 +11,7 @@
 
 import { readDashboardTree, saveSection, saveTree, type Tree } from './settings-store';
 import { SECTION_HELP, helpFor } from './help';
+import { normaliseDomain } from './setup-check';
 
 /** Sections grouped for the nav. Anything not listed still renders, under "Other". */
 export const SECTION_GROUPS: { group: string; sections: string[]; note?: string }[] = [
@@ -293,7 +294,7 @@ export function applyWizard(
   // The domain is what the proxy config is rendered from, so an internal-only server
   // explicitly clears it rather than keeping a stale name that would still be served.
   if (a.hosting === 'internal') set('setup', 'domain', '');
-  else if (a.domain !== undefined) set('setup', 'domain', a.domain.trim());
+  else if (a.domain !== undefined) set('setup', 'domain', normaliseDomain(a.domain));
   // The pivot answers, ALL of them. An earlier version kept only two, which meant the
   // dashboard could never branch on "is this single player?" and re-running the wizard
   // presented every question blank, the two complaints that forced this rewrite.

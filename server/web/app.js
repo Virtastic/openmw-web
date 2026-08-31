@@ -335,6 +335,29 @@ const STEP_LABEL = {
 const publicOrigin = () => (answers.domain ? `https://${answers.domain}` : location.origin);
 
 /**
+ * Turn what somebody actually typed into a bare hostname.
+ *
+ * People do not type "mp.example.com", they paste "https://mp.example.com/" out of the
+ * address bar, because that is where a domain lives as far as they are concerned. The check
+ * button refused that as "not a domain name" while Continue accepted it verbatim, so the
+ * value that got saved was one the wizard had already called invalid: it reached the proxy
+ * config as a site address and made the join link read https://https://mp.example.com/.
+ *
+ * Scheme, path, port, whitespace and case are all safe to strip. "www." deliberately is NOT:
+ * www.example.com and example.com are different hosts, and quietly rewriting one to the other
+ * would hand the operator a certificate for a name they did not ask for.
+ */
+function cleanDomain(raw) {
+  return String(raw ?? '')
+    .trim()
+    .replace(/^[a-z][a-z0-9+.-]*:\/\//i, '') // scheme
+    .replace(/\/.*$/, '')                    // path, and the trailing slash with it
+    .replace(/:\d+$/, '')                    // port
+    .replace(/\.$/, '')                      // fully-qualified trailing dot
+    .toLowerCase();
+}
+
+/**
  * `need` is the sentence shown when Continue is disabled. A greyed-out button with no
  * explanation is the worst thing this wizard could do to someone who has never run a
  * server: it says no and does not say why. Every step that can block passes one.
@@ -498,14 +521,23 @@ function stepOwner() {
     <div id="oErr" class="text-danger small"></div>`,
   { back: false, next: 'Create account', onNext: async () => {
     const n = $('#oName').value.trim(), p = $('#oPass').value, p2 = $('#oPass2').value;
-    // Checked here as well as on the server so the answer is instant, and so the field that
-    // is wrong is the one that gets focus.
+    // EVERY problem at once, not the first one. Someone filling in a form they have never
+    // seen typically gets two things wrong together, and reporting one at a time turns that
+    // into two rejections and two guesses about what else is waiting.
+    const problems = [];
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(n)) {
-      $('#oErr').textContent = 'Enter an email address, for example you@example.com.';
-      $('#oName').focus();
+      problems.push('The sign-in needs to be an email address, like you@example.com.');
+    }
+    if (p.length < 12) {
+      problems.push(`The password needs at least 12 characters; that one has ${p.length}.`);
+    } else if (p !== p2) {
+      problems.push('The two passwords are not the same.');
+    }
+    if (problems.length) {
+      $('#oErr').innerHTML = problems.map((t) => html`<div>${t}</div>`).join('');
+      (problems[0].startsWith('The sign-in') ? $('#oName') : $('#oPass')).focus();
       return;
     }
-    if (p !== p2) { $('#oErr').textContent = 'The two passwords do not match.'; return; }
     // Only required when the server says so, from this machine or this network it is not
     // asked for at all, because the whole point is that setup happens in the browser.
     const key = ($('#oKey')?.value.trim() || setupKey || '');
@@ -825,18 +857,22 @@ function stepHosting() {
             it on its own.`)}
       </div>` : '')}`,
   { disabled: !answers.hosting, onNext: () => {
-    answers.domain = $('#wzDomain')?.value.trim() ?? answers.domain;
+    const typed = $('#wzDomain')?.value;
+    if (typed !== undefined) answers.domain = cleanDomain(typed);
     step++; renderWizard();
   } });
   wireChoices();
   const d = $('#wzDomain');
-  if (d) d.onchange = () => { answers.domain = d.value.trim(); saveWizard(); renderWizard(); };
+  // Normalise as they leave the field, so what they see from here on is what gets saved
+  // and what the certificate will be issued for.
+  if (d) d.onchange = () => { answers.domain = cleanDomain(d.value); saveWizard(); renderWizard(); };
 
   // The check the operator cannot do themselves: is the DNS record right, and does HTTPS
   // answer? Run by the server, reported back in plain language with the next step named.
   const chk = $('#wzDomainCheck');
   if (chk) chk.onclick = async () => {
-    const domain = $('#wzDomain').value.trim();
+    const domain = cleanDomain($('#wzDomain').value);
+    $('#wzDomain').value = domain; // show them what is actually being checked
     const out = $('#wzDomainResult');
     if (!domain) { out.innerHTML = html`<div class="alert alert-secondary py-2 small mb-0">Type a domain first.</div>`; return; }
     answers.domain = domain;
