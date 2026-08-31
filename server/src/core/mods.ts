@@ -11,7 +11,7 @@
 // first time a write is interrupted. Later in the array wins a loose-file conflict, which is
 // OpenMW's rule for `data=` and therefore the one the operator is really choosing.
 
-import { readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { log } from '../log';
 
@@ -132,6 +132,34 @@ export function writeModDoc(dataDir: string, doc: ModDoc): { ok: true } | { ok: 
     log('error', 'admin.modlist_write_failed', { error: String(err) });
     return { ok: false, error: 'Could not save the mod list. The data folder may be read-only or full.' };
   }
+}
+
+/**
+ * The document with mods whose folder has gone missing dropped.
+ *
+ * A folder can vanish without the list knowing: an operator tidying gamedata by hand, a bind
+ * mount that came up empty, a restore from a backup taken before the install. The dashboard
+ * already reports that as `present: false`, but the CONFIG did not care — it went on emitting
+ * data= and content= for a mod with no files, and OpenMW aborts at startup on a content file it
+ * cannot open. The browser survived this because it verifies what it mounted; the sim peer had
+ * no such gate and simply died.
+ *
+ * Dropped for the purpose of building a config, never deleted from the document: the folder may
+ * be back on the next boot, and quietly rewriting the operator's mod list because a disk was
+ * slow would be its own bug.
+ */
+export function presentMods(gameDataDir: string, doc: ModDoc): ModDoc {
+  return {
+    ...doc,
+    mods: doc.mods.filter((m) => {
+      try {
+        return statSync(join(gameDataDir, MODS_SUBDIR, m.slug)).isDirectory();
+      } catch {
+        log('warn', 'mods.folder_missing', { slug: m.slug });
+        return false;
+      }
+    }),
+  };
 }
 
 /** What the enabled mods add to the engine's configuration. */

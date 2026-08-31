@@ -76,6 +76,10 @@ export function mwDataRoutes(deps: MwDataDeps): HttpRoute {
   // per boot. Cached until the folder's own mtime moves, so a dashboard upload invalidates it
   // without anything having to remember to.
   let cache: { at: number; body: string } | undefined;
+  // The mod sidecar is its own walk over every installed mod's tree. Tamriel Rebuilt is around
+  // 40,000 files, and this was rebuilt from scratch on every request — the client asks once per
+  // boot, but nothing stops anything else asking. Same mtime key as the manifest above.
+  let modCache: { at: string; body: string } | undefined;
 
   return async (req: IncomingMessage, res: ServerResponse, url: URL): Promise<boolean> => {
     const isManifest = url.pathname === '/mwdata-manifest.json';
@@ -119,6 +123,19 @@ export function mwDataRoutes(deps: MwDataDeps): HttpRoute {
     if (isMods) {
       const doc = deps.modDoc?.();
       if (!doc || doc.mods.length === 0) { res.writeHead(404); res.end('not found'); return true; }
+
+      // Keyed on the mods directory's mtime AND the enabled set, because switching a mod off
+      // changes the answer without moving a single file on disk.
+      let modsAt = '';
+      try { modsAt = String((await stat(join(deps.gameDataDir, MODS_SUBDIR))).mtimeMs); } catch { /* none */ }
+      const key = `${modsAt}|${doc.mods.map((m) => `${m.slug}:${m.enabled ? 1 : 0}`
+        + `:${m.plugins.filter((p) => p.enabled).map((p) => p.file).join(',')}`).join('|')}`;
+      if (modCache && modCache.at === key) {
+        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-cache' });
+        res.end(req.method === 'HEAD' ? undefined : modCache.body);
+        return true;
+      }
+
       const stack = resolveMods(doc);
       const enabled = doc.mods.filter((m) => m.enabled);
       const mods = [];
@@ -141,9 +158,10 @@ export function mwDataRoutes(deps: MwDataDeps): HttpRoute {
           files,
         });
       }
+      const body = JSON.stringify({ v: 2, mods, content: stack.content, archives: stack.archives });
+      modCache = { at: key, body };
       res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-cache' });
-      res.end(req.method === 'HEAD' ? undefined
-        : JSON.stringify({ v: 2, mods, content: stack.content, archives: stack.archives }));
+      res.end(req.method === 'HEAD' ? undefined : body);
       return true;
     }
 

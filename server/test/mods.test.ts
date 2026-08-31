@@ -12,7 +12,9 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { emptyDoc, readModDoc, resolveMods, writeModDoc, type InstalledMod } from '../src/core/mods';
+import {
+  emptyDoc, presentMods, readModDoc, resolveMods, writeModDoc, type InstalledMod,
+} from '../src/core/mods';
 import { buildPeerCfg, detectGameData } from '../src/core/gamedata';
 import { saveMods } from '../src/net/admin/api-mods';
 
@@ -198,15 +200,54 @@ test('saving a base load order does not delete the installed mods', () => {
 
 test('the server actually hands the mod stack to the peer config', () => {
   const src = readFileSync(join(process.cwd(), 'src', 'server.ts'), 'utf8');
-  const call = /buildPeerCfg\([^)]*\)/.exec(src);
+  const call = /buildPeerCfg\([\s\S]{0,200}?\);/.exec(src);
   assert.ok(call, 'buildPeerCfg is not called from server.ts');
   assert.match(call[0], /resolveMods\(/,
     'the peer must load the same mods the players do, or the content gate refuses everyone');
+  assert.match(call[0], /presentMods\(/,
+    'and must not name a plugin whose folder has gone, which aborts the engine at startup');
 });
 
 test('the browser is handed the mod stack too', () => {
-  // The other half of the same mistake: both consumers of resolveMods must be wired, or the
-  // two halves of one deployment run different load orders.
+  // The other half of the same mistake: both consumers must be wired, or the two halves of one
+  // deployment run different load orders. Asserted on the ingredients rather than the exact
+  // call text -- an earlier version pinned the literal and broke the moment presentMods was
+  // added between them, which is a test failing at a change rather than at a defect.
   const src = readFileSync(join(process.cwd(), 'src', 'server.ts'), 'utf8');
-  assert.match(src, /modDoc: \(\) => readModDoc\(/);
+  const wiring = /modDoc: \(\) =>[\s\S]{0,120}?\n/.exec(src);
+  assert.ok(wiring, 'mwDataRoutes is not given a modDoc');
+  assert.match(wiring[0], /readModDoc\(/);
+  assert.match(wiring[0], /presentMods\(/, 'a mod whose folder is gone must not be advertised');
+});
+
+// --- a mod whose folder has gone --------------------------------------------------------------
+
+test('a mod with no folder on disk is left out of the config', () => {
+  // The dashboard already reported this as present:false, but the CONFIG did not care: it went
+  // on emitting data= and content= for a mod with no files, and OpenMW aborts at startup on a
+  // content file it cannot open. The browser survived because it verifies what it mounted; the
+  // sim peer had no such gate and simply died.
+  const gd = retail();
+  mkdirSync(join(gd, 'mods', 'here'), { recursive: true });
+  const doc = { ...emptyDoc(), mods: [
+    mod({ slug: 'here', plugins: [{ file: 'Here.esp', enabled: true }] }),
+    mod({ slug: 'gone', plugins: [{ file: 'Gone.esp', enabled: true }], archives: ['Gone.bsa'] }),
+  ] };
+
+  assert.deepEqual(resolveMods(doc).content, ['Here.esp', 'Gone.esp'], 'unfiltered still has both');
+  const live = presentMods(gd, doc);
+  assert.deepEqual(live.mods.map((m) => m.slug), ['here']);
+  const stack = resolveMods(live);
+  assert.deepEqual(stack.content, ['Here.esp']);
+  assert.deepEqual(stack.archives, []);
+  assert.deepEqual(stack.dataDirs, ['mods/here']);
+});
+
+test('a missing folder is dropped from the config, never from the document', () => {
+  // The folder may be back on the next boot -- a bind mount that came up slow, a restore in
+  // progress. Rewriting the operator's mod list because a disk was not ready is its own bug.
+  const gd = retail();
+  const doc = { ...emptyDoc(), mods: [mod({ slug: 'gone' })] };
+  presentMods(gd, doc);
+  assert.deepEqual(doc.mods.map((m) => m.slug), ['gone'], 'the document must be untouched');
 });

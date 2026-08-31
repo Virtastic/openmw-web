@@ -2277,7 +2277,13 @@
            var mounted = {}, failed = null;
            try {
              FS.mkdirTree(root);
+             var n = 0;
              for (const f of (mod.files || [])){
+               // Yield periodically. Mounting is cheap per file but a big mod is tens of
+               // thousands of them, and doing that in one synchronous run freezes the tab
+               // during boot — the loading screen stops painting and it reads as a hang. The
+               // locker's own unpack learned this and yields on the same cadence.
+               if (++n % 500 === 0) await new Promise(function(r){ setTimeout(r, 0); });
                var dest = root + '/' + f.p, keep = f.p;
                var base = f.p.slice(f.p.lastIndexOf('/') + 1);
                if (/\.(bsa|ba2)$/i.test(base) && f.p.indexOf('/') < 0){
