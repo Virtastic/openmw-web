@@ -76,3 +76,49 @@ test('the multiplayer scrub is still in place', () => {
   // Both doors, not one: fixing the cloud path by disturbing the MP path would be a trade.
   assert.match(index, /window\.__omwBootFrag = String\(location\.hash \|\| ''\)\.replace\(\/\^#\/, ''\);/);
 });
+
+// --- the browser loading the operator's mods ---------------------------------------------------
+//
+// OpenMW is unforgiving here in a way that is worth stating: registerArchives() THROWS on a
+// fallback-archive= it cannot resolve, and content loading aborts on a missing content=. Either
+// one reaches the player as a black screen with no message. So every name the client emits has
+// to be a name it watched itself mount.
+
+test('mods come from the server list, not from guessing at file names', () => {
+  // buildLoadOrder only ever sees the TOP level of /mwdata, so a mod in its own folder would
+  // mount and contribute nothing at all. The server knows which plugin belongs to which mod.
+  assert.match(index, /async function mountServerMods\(\)/);
+  assert.match(index, /fetch\('mwdata-mods\.json'\)/);
+});
+
+test('a mod whose plugin did not arrive is dropped whole, not half-loaded', () => {
+  const fn = /async function mountServerMods\(\)\{[\s\S]*?\n       \}/.exec(index);
+  assert.ok(fn, 'mountServerMods not found');
+  assert.match(fn[0], /did not arrive/);
+  // The drop must happen BEFORE anything is pushed into the emitted lists.
+  assert.ok(fn[0].indexOf('continue;') < fn[0].indexOf('out.dirs.push(root)'));
+});
+
+test('no mods, or an unreadable list, is an ordinary answer', () => {
+  // 404 means this server has no mods. It must never be a reason to refuse the game.
+  const fn = /async function mountServerMods\(\)\{[\s\S]*?\n       \}/.exec(index)!;
+  assert.match(fn[0], /if \(!r\.ok\) return out;/);
+  assert.match(fn[0], /catch \(e\) \{ return out; \}/);
+});
+
+test('two mods shipping one archive name are renamed apart on mount', () => {
+  // Collections::getPath resolves a bare archive name with rbegin, so the last data= dir wins
+  // and one of them would silently vanish. We own the filesystem path, and only openmw.cfg
+  // refers to a BSA by name, so renaming on the way in costs nothing and removes the ambiguity.
+  const fn = /async function mountServerMods\(\)\{[\s\S]*?\n       \}/.exec(index)!;
+  assert.match(fn[0], /claimed\[/);
+  assert.match(fn[0], /mod\.slug \+ '-' \+ base/);
+});
+
+test('mod data= lines come after the asset pack so a mod wins', () => {
+  // The pack is a general-purpose optimisation; a mod the operator installed on purpose
+  // should beat it. It used to be last among archives outright.
+  const i = index.indexOf("if (window.__assetPack) cfg.push('data=/mods'");
+  const j = index.indexOf("mods.dirs.forEach");
+  assert.ok(i > 0 && j > i, 'mod dirs must be emitted after the asset pack');
+});

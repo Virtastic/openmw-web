@@ -2235,6 +2235,80 @@
        // so callers must only emit the cfg lines when this returns non-null.
        // ?noassets=1 skips it, for A/B measurement.
        var ASSET_PACK_NAME = 'openmw-web-assets.bsa';
+       /**
+        * The operator's installed mods, from the server's own list.
+        *
+        * WHY A LIST AND NOT A SCAN. buildLoadOrder derives everything from files at the TOP
+        * level of /mwdata, so a mod living in its own subfolder would mount and then contribute
+        * nothing: no content=, no fallback-archive=, invisible. The server already knows which
+        * plugin belongs to which mod and in what order, so it says so, and this stops guessing.
+        *
+        * EVERY NAME EMITTED IS VERIFIED MOUNTED. registerArchives() throws on a
+        * fallback-archive= it cannot resolve, and content loading aborts on a missing content=.
+        * A mod whose declared plugin failed to arrive is dropped WHOLE rather than half-loaded,
+        * because a hard startup abort presents to the player as a black screen with no message.
+        *
+        * Never throws and never blocks the boot: 404 means this server has no mods, which is
+        * the ordinary case, and a mod that cannot be mounted is not a reason to refuse the game.
+        */
+       async function mountServerMods(){
+         var out = { dirs: [], content: [], archives: [] };
+         if (/[?&]nomods=1\b/.test(location.search)) return out;
+         var doc;
+         try {
+           var r = await fetch('mwdata-mods.json');
+           if (!r.ok) return out;                       // 404 = no mods installed
+           doc = await r.json();
+         } catch (e) { return out; }
+         if (!doc || doc.v !== 2 || !Array.isArray(doc.mods) || !doc.mods.length) return out;
+
+         try { StreamFS.init(); } catch (e) { append('[mods] streamfs unavailable: '+e,'err'); return out; }
+
+         // Bare archive names are resolved by scanning the data= dirs and the LAST one wins
+         // (Collections::getPath iterates with rbegin), so two mods shipping "Data.bsa" would
+         // silently collapse into one. We choose the filename in our own filesystem, and only
+         // openmw.cfg ever refers to a BSA by name, so a clash is renamed on the way in.
+         var claimed = {};
+         for (const mod of doc.mods){
+           var root = '/mwmods/' + mod.slug;
+           var mounted = {}, failed = null;
+           try {
+             FS.mkdirTree(root);
+             for (const f of (mod.files || [])){
+               var dest = root + '/' + f.p, keep = f.p;
+               var base = f.p.slice(f.p.lastIndexOf('/') + 1);
+               if (/\.(bsa|ba2)$/i.test(base) && f.p.indexOf('/') < 0){
+                 if (claimed[base.toLowerCase()]) {
+                   keep = mod.slug + '-' + base;        // same archive name as an earlier mod
+                   dest = root + '/' + keep;
+                 }
+                 claimed[keep.toLowerCase()] = true;
+               }
+               var slash = dest.lastIndexOf('/');
+               if (slash > root.length) { try { FS.mkdirTree(dest.slice(0, slash)); } catch(e){} }
+               StreamFS.mount(dest, 'mwdata/mods/' + mod.slug + '/' + f.p, f.s);
+               mounted[keep.toLowerCase()] = keep;
+             }
+           } catch (e) { failed = e; }
+
+           // Declared but absent = do not load this mod at all.
+           var missing = (mod.plugins || []).filter(function(p){ return !mounted[p.toLowerCase()]; });
+           if (failed || missing.length){
+             append('[mods] ' + mod.name + ' skipped — '
+               + (failed ? String(failed) : missing.join(', ') + ' did not arrive'), 'err');
+             continue;
+           }
+           out.dirs.push(root);
+           (mod.plugins || []).forEach(function(p){ out.content.push(mounted[p.toLowerCase()]); });
+           (mod.archives || []).forEach(function(a){
+             var real = mounted[a.toLowerCase()];
+             if (real) out.archives.push(real);
+           });
+           append('[mods] ' + mod.name + ' (' + (mod.files || []).length + ' files)');
+         }
+         return out;
+       }
+
        async function mountAssetPack(){
          if (/[?&]noassets\b/.test(location.search)) return null;
          try {
@@ -3373,6 +3447,8 @@
            window.__noMovies = !haveVideo || /[?&]novid\b/.test(location.search);
          })
          .then(function(){ return mountAssetPack().then(function(n){ window.__assetPack = n; }); })
+         // After the pack, so a mod's archive registers later than it and therefore wins.
+         .then(function(){ return mountServerMods().then(function(m){ window.__serverMods = m; }); })
          .then(function(){
            // Rewrite openmw.cfg once the preloaded copy is present in MEMFS. Full GOTY load order,
            // and replace the OpenMW example-suite movie names with Morrowind's real .bik files
@@ -3394,13 +3470,23 @@
                // Load order from what was ACTUALLY found, same rules as the launcher path: naming
                // a content file or archive the VFS doesn't have is a hard startup failure, so a
                // base-game-only copy must never be handed content=Tribunal.esm.
+               var mods = window.__serverMods || { dirs: [], content: [], archives: [] };
                var lo = buildLoadOrder(window.__mwRootFiles);
                lo.fbarch.forEach(function(a){ cfg.push('fallback-archive='+a); });
-               // LAST among archives => highest BSA priority => overrides vanilla meshes. Gated on
-               // the mount having succeeded (a missing archive throws at startup). data=/mods is
-               // required for the bare filename to resolve (components/files/collections.cpp).
+               // The asset pack (Morrowind Optimization Patch + Project Atlas) sits ABOVE vanilla
+               // and BELOW the operator's mods. It used to be last among archives outright, which
+               // was right when the only other archives were Bethesda's — but a mod installed on
+               // purpose should beat a general-purpose optimisation pack, not lose to it.
+               // data=/mods is required for the bare filename to resolve
+               // (components/files/collections.cpp). Gated on the mount having succeeded: a
+               // fallback-archive= naming a file that is not there throws at startup.
                if (window.__assetPack) cfg.push('data=/mods', 'fallback-archive='+window.__assetPack);
+               // THE OPERATOR'S MODS, each its own data= root, in the order they set. A later
+               // data= wins a loose-file conflict, so this list IS the priority they chose.
+               mods.dirs.forEach(function(d){ cfg.push('data='+d); });
+               mods.archives.forEach(function(a){ cfg.push('fallback-archive='+a); });
                lo.content.forEach(function(c){ cfg.push('content='+c); });
+               mods.content.forEach(function(c){ cfg.push('content='+c); });
                if (window.__omwMPEnabled) cfg.push('content=mp.omwscripts'); // ?mp= (M0 multiplayer)
                if (!window.__noMovies)
                  cfg.push('fallback=Movies_Company_Logo,bethesda logo.bik',
