@@ -73,7 +73,7 @@ export interface AdminDeps {
   setupToken: SetupToken;
 
   // --- the original moderation surface, unchanged ---
-  overview(): unknown;
+  overview(): unknown | Promise<unknown>;
   reports(limit: number): Promise<unknown>;
   action(kind: string, target: string, detail: string): Promise<{ ok: boolean; message: string }>;
 
@@ -509,7 +509,7 @@ export function adminRoutes(deps: AdminDeps) {
     // --- the original three, byte-compatible ----------------------------------------------
     if (method === 'GET' && path === '/admin/api/overview') {
       if (!await gate(req, res, auth, 'viewer')) return true;
-      json(res, 200, deps.overview());
+      json(res, 200, await deps.overview());
       return true;
     }
     if (method === 'GET' && path === '/admin/api/reports') {

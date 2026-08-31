@@ -346,6 +346,8 @@ export class LockerSessionStore {
   private readonly tokens = new Map<string, { accountKey: string; expiresAt: number }>();
   constructor(private readonly ttlMs = 24 * 60 * 60 * 1000) {}
 
+  private readonly lastSeen = new Map<string, number>();
+
   mint(accountKey: string): string {
     this.sweep();
     const token = randomBytes(32).toString('base64url');
@@ -357,7 +359,28 @@ export class LockerSessionStore {
     if (token === '') return undefined;
     const e = this.tokens.get(token);
     if (!e || e.expiresAt <= Date.now()) { if (e) this.tokens.delete(token); return undefined; }
+    // WHO IS PLAYING, in the one deployment where nobody joins a world.
+    //
+    // The dashboard counts players from the WS roster, which is right for multiplayer and
+    // structurally always zero for single player: the browser runs the engine itself and
+    // never connects, so an operator watching their own session saw "0 in the world" while
+    // playing it. Every authenticated locker and save request passes through here, so this is
+    // the one place that sees that activity without a second mechanism to keep in step.
+    //
+    // A liveness signal, not a session: it says the account did something just now, so an
+    // idle or closed tab stops counting on its own rather than lingering until a 24h token
+    // expires.
+    this.lastSeen.set(e.accountKey, Date.now());
     return e.accountKey;
+  }
+
+  /** Accounts that touched the locker within `withinMs`, most recently active first. */
+  activeSince(withinMs: number): { account: string; lastSeen: number }[] {
+    const cutoff = Date.now() - withinMs;
+    return [...this.lastSeen]
+      .filter(([, at]) => at > cutoff)
+      .sort((a, b) => b[1] - a[1])
+      .map(([account, at]) => ({ account, lastSeen: at }));
   }
 
   revokeAccount(accountKey: string): void {

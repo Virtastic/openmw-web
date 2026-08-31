@@ -1473,11 +1473,37 @@ async function pageOverview() {
       <td>${p.cellKey || "-"}</td><td>${p.rank}</td></tr>`).join('')
     : html`<tr><td colspan="4" class="vt-empty">Nobody is in the world right now.</td></tr>`;
 
+  // A SINGLE-PLAYER DASHBOARD IS A DIFFERENT PAGE, not the multiplayer one with things
+  // greyed out. The world card named an internal id ("default") nobody chose and links to a
+  // page about a world that has no other inhabitants; the player table has columns for rank
+  // and location that only mean something when there are other people to outrank or find.
+  // What an operator running this for themselves actually wants to know is whether the
+  // machine is healthy, so that takes the space back.
+  const solo = singlePlayer();
+  const playing = o.playing || [];
+
+  if (solo) {
+    view().innerHTML = html`
+      <div class="row">
+        ${raw(stat('Playing now', `${playing.length}`, 'bi-controller', 'primary'))}
+        ${raw(stat('Uptime', up < 60 ? `${up}m` : `${Math.round(up / 60)}h`, 'bi-clock-history', 'secondary'))}
+        ${raw(sysCards(o.system))}
+      </div>
+      <div class="card card-outline card-primary">
+        <div class="card-header"><h3 class="card-title">Playing now</h3></div>
+        <div class="table-responsive"><table class="table table-hover mb-0">
+          <thead><tr><th>Account</th><th>Last seen</th></tr></thead>
+          <tbody>${raw(playing.length ? playing.map((p) => html`
+            <tr><td>${p.account}</td><td class="text-secondary">${ago(p.lastSeen)}</td></tr>`).join('')
+            : html`<tr><td colspan="2" class="vt-empty">Nobody is playing right now.</td></tr>`)}
+          </tbody></table></div></div>`;
+    return;
+  }
+
   const checklist = setupChecklist();
   view().innerHTML = html`
     <div class="row">
-      ${raw(stat(singlePlayer() ? 'In the world' : `Players (of ${o.maxPlayers})`,
-        `${o.players.length}`, 'bi-people', 'primary', singlePlayer() ? '' : '#console'))}
+      ${raw(stat(`Players (of ${o.maxPlayers})`, `${o.players.length}`, 'bi-people', 'primary', '#console'))}
       ${raw(stat('World', o.world.id, 'bi-globe-americas', 'success', '#mods'))}
       ${raw(stat('Uptime', up < 60 ? `${up}m` : `${Math.round(up / 60)}h`, 'bi-clock-history', 'secondary'))}
       ${raw(stat('Your role', state.role, 'bi-person-badge', 'warning', '#security'))}
@@ -1489,6 +1515,54 @@ async function pageOverview() {
         <thead><tr><th>Name</th><th>Account</th><th>Location</th><th>Rank</th></tr></thead>
         <tbody>${raw(rows)}</tbody></table></div></div>`;
   wireChecklist();
+}
+
+/** "just now" / "3m ago" — a timestamp is not what the question wanted. */
+function ago(at) {
+  const s = Math.max(0, Math.round((Date.now() - at) / 1000));
+  if (s < 45) return 'just now';
+  const m = Math.round(s / 60);
+  return m < 60 ? `${m}m ago` : `${Math.round(m / 60)}h ago`;
+}
+
+const mb = (n) => (n >= 1073741824 ? `${(n / 1073741824).toFixed(1)} GB` : `${Math.round(n / 1048576)} MB`);
+
+/**
+ * Machine health, as the cards that replace the multiplayer ones.
+ *
+ * Every card is omitted when its reading is unavailable rather than drawn as a zero: no
+ * /proc/net/dev outside Linux, no cpu delta on the very first poll after a restart. A
+ * confident 0% is worse than a card that is not there.
+ */
+function sysCards(sys) {
+  if (!sys) return '';
+  const box = (label, value, sub, icon, tone) => html`
+    <div class="col-6 col-lg-3">
+      <div class="small-box text-bg-${raw(tone)} mb-3">
+        <div class="inner"><h3>${value}</h3><p>${label}</p>
+          ${raw(sub ? html`<p class="small mb-0 text-secondary">${sub}</p>` : '')}</div>
+        <i class="small-box-icon bi ${icon}"></i>
+        <div class="small-box-footer">&nbsp;</div>
+      </div>
+    </div>`;
+  let out = '';
+  if (sys.cpu && sys.cpu.percent !== null) {
+    out += box('CPU', `${sys.cpu.percent}%`, `${sys.cpu.cores} cores`, 'bi-cpu', 'info');
+  }
+  if (sys.memory && sys.memory.totalBytes > 0) {
+    out += box('Memory', `${sys.memory.percent}%`,
+      `${mb(sys.memory.usedBytes)} of ${mb(sys.memory.totalBytes)}`, 'bi-memory', 'info');
+  }
+  if (sys.disk) {
+    // Free space, not used: "how much room is left" is the question an operator uploading
+    // game files is actually asking.
+    out += box('Disk free', mb(sys.disk.freeBytes), `${sys.disk.percent}% used`, 'bi-hdd', 'success');
+  }
+  if (sys.network) {
+    out += box('Network', `${mb(sys.network.rxBytesPerSec)}/s`,
+      `up ${mb(sys.network.txBytesPerSec)}/s`, 'bi-activity', 'secondary');
+  }
+  return out;
 }
 
 /** Post-onboarding nudges, derived from real state rather than a stored progress flag. */

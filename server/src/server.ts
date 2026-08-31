@@ -58,6 +58,7 @@ import { ensureVanillaManifest } from './data/vanilla-manifest';
 import { Locker, loadVanillaManifest } from './data/locker';
 import { lockerStorageFrom, blobRoutes, FsStorage } from './data/fsstorage';
 import { mwDataRoutes } from './net/mwdata-routes';
+import { createSysInfo } from './net/admin/sysinfo';
 import { saveRoutes, eraseSaves } from './data/save-routes';
 import { lockerRoutes } from './data/locker-routes';
 import { LockerSessionStore, AdminSessionStore } from './auth/identities';
@@ -260,6 +261,10 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     noDrop: config.economy.noDrop || worldMode === 'public',
   });
   const startedAt = Date.now();
+  // Rates are measured between calls, so this must outlive a single request. The data dir is
+  // the disk the operator actually cares about: it holds the game files, the locker and the
+  // saves, and it is the one that fills up.
+  const sysInfo = createSysInfo(sharedDir);
   // At flush time the store pulls the freshest position from the live session, so pose
   // updates never need to dirty the doc.
   playerStore.setLivePositionProvider((key) => {
@@ -999,10 +1004,17 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       };
     },
 
-    overview: () => ({
+    overview: async () => ({
       world: { id: worldId, mode: worldMode },
       maxPlayers: config.server.maxPlayers,
       uptime: Math.round((Date.now() - startedAt) / 1000),
+      system: await sysInfo(),
+      // SINGLE PLAYER HAS PLAYERS TOO, they just never join a world: the browser runs the
+      // engine and only ever talks to the locker. `players` below is the WS roster, so it is
+      // permanently empty in that mode and the dashboard reported "0 in the world" to an
+      // operator who was playing at that moment. Five minutes is a compromise between the
+      // save mirror's own cadence and not showing somebody who has closed the tab.
+      playing: lockerSessions.activeSince(5 * 60 * 1000),
       players: roster.humansInWorld().map((p) => ({
         id: p.id,
         name: p.name,
