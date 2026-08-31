@@ -154,6 +154,9 @@ export function slugify(name: string): string {
   const s = name.toLowerCase().replace(/\.zip$/i, '').replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '').slice(0, 64);
   // "mods" would nest inside itself, and an empty slug would resolve to the mods root and let a
-  // delete take every mod with it.
-  return s === '' || s === 'mods' ? `mod-${Date.now().toString(36)}` : s;
+  // delete take every mod with it. The rest are Windows device names: the server runs on Linux,
+  // but gamedata is routinely a bind mount from a Windows host, where creating a directory
+  // called "con" or "aux" fails outright.
+  const reserved = /^(mods|con|prn|aux|nul|com[1-9]|lpt[1-9])$/;
+  return s === '' || reserved.test(s) ? `mod-${Date.now().toString(36)}` : s;
 }

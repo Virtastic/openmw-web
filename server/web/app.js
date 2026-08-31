@@ -2251,10 +2251,18 @@ function wireMods(m) {
             <strong class="vt-mono">${c.path || '(the archive itself)'}</strong>
             <div class="small text-secondary ms-4">
               ${raw([
-                c.plugins.length ? `${c.plugins.length} plugin: ${c.plugins.join(', ')}` : '',
-                c.archives.length ? `archives: ${c.archives.join(', ')}` : '',
-                c.assetDirs.length ? c.assetDirs.join(', ') : '',
-                `${c.files} files · ${sizeOf(c.bytes)}`,
+                // EVERY ONE OF THESE IS A FILENAME OUT OF THE UPLOADED ZIP. They were joined
+                // into a string and passed through raw(), so an archive containing a file named
+                // with markup injected it straight into the owner's dashboard. The page's CSP
+                // (script-src 'self', no unsafe-inline) stops it executing, which makes this an
+                // injection rather than a takeover — not a reason to leave it. Built through the
+                // escaping template instead, one line at a time.
+                c.plugins.length ? html`${c.plugins.length === 1 ? 'plugin' : 'plugins'}:
+                  <span class="vt-mono">${c.plugins.join(', ')}</span>` : '',
+                c.archives.length ? html`archives:
+                  <span class="vt-mono">${c.archives.join(', ')}</span>` : '',
+                c.assetDirs.length ? html`${c.assetDirs.join(', ')}` : '',
+                html`${c.files} files &middot; ${sizeOf(c.bytes)}`,
               ].filter(Boolean).join('<br>'))}
             </div>
           </label>`).join(''))}

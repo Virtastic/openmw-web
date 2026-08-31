@@ -111,3 +111,13 @@ test('slugs are safe single path segments', () => {
   assert.match(slugify('!!!'), /^mod-/, 'an empty slug would resolve to the mods root itself');
   assert.match(slugify('mods'), /^mod-/, '"mods" would nest the folder inside itself');
 });
+
+test('slugs avoid names a filesystem will refuse', () => {
+  // The server runs on Linux, but gamedata is routinely a bind mount from a Windows host,
+  // where a directory called "con" or "aux" cannot be created at all.
+  for (const bad of ['CON', 'aux', 'NUL', 'com1', 'LPT9', 'mods']) {
+    assert.match(slugify(bad), /^mod-/, `slugify(${bad}) must not produce a reserved name`);
+  }
+  // And an ordinary name that merely contains one is untouched.
+  assert.equal(slugify('Console Improvements'), 'console-improvements');
+});

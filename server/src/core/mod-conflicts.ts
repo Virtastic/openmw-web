@@ -14,7 +14,7 @@
 // startup, which reaches the player as a black screen. That one has to be caught before the
 // save, and again in the browser as a backstop.
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { MODS_SUBDIR, type ModDoc } from './mods';
 
@@ -37,12 +37,29 @@ export interface MissingMaster {
   master: string;
 }
 
-const filesOf = (dataDir: string, slug: string): string[] => {
+/**
+ * Cached per file, keyed on its mtime.
+ *
+ * The dashboard polls, and a mod's file list is written once and then never changes until it is
+ * uninstalled. Tamriel Rebuilt is around 40,000 paths; re-reading and re-lowercasing that on
+ * every poll, for every installed mod, is megabytes of JSON parsing to answer a question whose
+ * inputs did not move.
+ */
+const fileCache = new Map<string, { at: number; files: Set<string> }>();
+
+const filesOf = (dataDir: string, slug: string): Set<string> => {
+  const path = join(dataDir, MOD_META, `${slug}.json`);
+  let at = 0;
+  try { at = statSync(path).mtimeMs; } catch { return new Set(); }
+  const hit = fileCache.get(path);
+  if (hit && hit.at === at) return hit.files;
   try {
-    const raw = JSON.parse(readFileSync(join(dataDir, MOD_META, `${slug}.json`), 'utf8'));
-    return Array.isArray(raw) ? raw.map((f) => String(f).toLowerCase()) : [];
+    const raw = JSON.parse(readFileSync(path, 'utf8'));
+    const files = new Set(Array.isArray(raw) ? raw.map((f) => String(f).toLowerCase()) : []);
+    fileCache.set(path, { at, files });
+    return files;
   } catch {
-    return []; // installed before file lists existed, or the list is gone: no conflicts to show
+    return new Set(); // installed before file lists existed, or the list is gone
   }
 };
 
@@ -57,7 +74,7 @@ export function computeConflicts(dataDir: string, doc: ModDoc): Conflict[] {
   const enabled = doc.mods.filter((m) => m.enabled);
   if (enabled.length < 2) return [];
 
-  const lists = new Map(enabled.map((m) => [m.slug, new Set(filesOf(dataDir, m.slug))]));
+  const lists = new Map(enabled.map((m) => [m.slug, filesOf(dataDir, m.slug)]));
   const out: Conflict[] = [];
 
   for (let i = 0; i < enabled.length; i++) {

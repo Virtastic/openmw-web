@@ -339,3 +339,17 @@ test('the zip streams rather than being buffered into a form', () => {
   assert.match(wire[0], /duplex: 'half'/);
   assert.match(wire[0], /application\/octet-stream/);
 });
+
+test('filenames out of an uploaded zip are escaped, not injected', () => {
+  // The candidate list renders plugin and archive names straight out of a stranger's archive.
+  // They were joined into a string and passed through raw(), so a file named with markup went
+  // into the owner's dashboard as markup. The page's CSP (script-src 'self', no unsafe-inline)
+  // stops it executing, which makes it an injection rather than a takeover — not a reason to
+  // leave it.
+  const chooser = /const renderChooser = \(staged\) => \{[\s\S]*?\n  \};/.exec(app);
+  assert.ok(chooser, 'renderChooser not found');
+  assert.doesNotMatch(chooser[0], /raw\(\[\s*\n\s*c\.plugins\.length \? `/,
+    'zip filenames must not be interpolated into a plain template inside raw()');
+  // They must go through the escaping template instead.
+  assert.match(chooser[0], /html`\$\{c\.plugins\.length === 1/);
+});
