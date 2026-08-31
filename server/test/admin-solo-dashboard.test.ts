@@ -15,8 +15,9 @@ import { join } from 'node:path';
 
 import { LockerSessionStore } from '../src/auth/identities';
 import { createSysInfo } from '../src/net/admin/sysinfo';
-import { MULTIPLAYER_ONLY, SECTION_GROUPS, settingsView } from '../src/net/admin/api-settings';
+import { applySection, DERIVED_FIELDS, MULTIPLAYER_ONLY, SECTION_GROUPS, settingsView } from '../src/net/admin/api-settings';
 import { helpFor } from '../src/net/admin/help';
+import { readDashboardTree } from '../src/net/admin/settings-store';
 
 const app = readFileSync(join(process.cwd(), 'web', 'app.js'), 'utf8');
 
@@ -175,6 +176,51 @@ test('no settings field claims the shared token grants owner rights', () => {
   const said = `${h.text ?? ''} ${h.danger ?? ''}`;
   assert.doesNotMatch(said, /owner rights|full-access|full owner/);
   assert.match(said, /moderator/);
+});
+
+// --- the wizard is first-run only, so its live answers moved to Settings ---------------------
+
+test('the deployment answers that are read at runtime are editable', () => {
+  // Closing the wizard left the domain editable by nothing, while Help still said to go and
+  // change it there. These five are read at runtime: proxy config, boot mode, whether the
+  // server publishes its files, and what the data checklist expects.
+  const v = settingsView(mkdtempSync(join(tmpdir(), 'set-')), {
+    setup: {
+      domain: '', hosting: 'internal', deploymentMode: 'single',
+      deliveryModel: 'serve', contentProfile: 'expansions',
+      storage: 'local', loginMethods: ['password'], registration: 'open', completed: true,
+    },
+  });
+  const setup = v.sections.find((s) => s.name === 'setup');
+  assert.ok(setup, '[setup] must render as a section');
+  const keys = setup.fields.map((f) => f.key).sort();
+  assert.deepEqual(keys, ['contentProfile', 'deliveryModel', 'deploymentMode', 'domain', 'hosting']);
+});
+
+test('the answers that are only a RECORD are not offered', () => {
+  // storage/loginMethods/registration had their effect written into [locker], [auth] and
+  // [login] at the time. Editing the record would change nothing while looking like it had.
+  for (const f of ['setup.storage', 'setup.loginMethods', 'setup.registration']) {
+    assert.ok(DERIVED_FIELDS.includes(f), `${f} must not be editable`);
+  }
+  // And clearing this one reopens first-run over a configured server.
+  assert.ok(DERIVED_FIELDS.includes('setup.completed'));
+});
+
+test('a pasted URL is normalised into a bare hostname on save', () => {
+  // People paste out of the address bar. A scheme reaching the proxy config makes the site
+  // address https://https://mp.example.com.
+  const dir = mkdtempSync(join(tmpdir(), 'set-'));
+  assert.deepEqual(applySection(dir, 'setup', { domain: 'https://MP.Example.com/' }), { ok: true });
+  // Read what was STORED. settingsView reports the config object it is handed, so asking it
+  // would only echo the unnormalised value back and prove nothing.
+  const stored = readDashboardTree(dir) as { setup?: { domain?: string } };
+  assert.equal(stored.setup?.domain, 'mp.example.com');
+});
+
+test('nothing user-facing still links to the closed wizard hash', () => {
+  // Two Help entries told the operator to "re-run Setup", which now bounces to Overview.
+  assert.doesNotMatch(app, /href="#setup"/);
 });
 
 test('the list ships with the settings payload', () => {

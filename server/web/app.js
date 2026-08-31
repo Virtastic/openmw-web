@@ -929,11 +929,13 @@ function stepHosting() {
 function stepName() {
   wizardShell(html`
     <h5>What is this server called?</h5>
-    <p class="text-secondary small">Shown to players when they browse or join.</p>
+    <p class="text-secondary small">${answers.deploymentMode === 'single'
+      ? 'Shown on your sign-in page and at the top of this dashboard.'
+      : 'Shown to players when they browse or join.'}</p>
     <input class="form-control form-control-lg" id="wzName" value="${answers.serverName}"
       placeholder="My Morrowind server" maxlength="64">`,
   { disabled: answers.serverName.trim() === '',
-    need: 'Give it a name so players know what they are joining.',
+    need: 'Give it a name.',
     onNext: () => { answers.serverName = $('#wzName').value.trim(); step++; renderWizard(); } });
   const nameInput = $('#wzName');
   // Live, so the Continue button unlocks as they type rather than after they click away.
@@ -2880,7 +2882,7 @@ async function pageHelp() {
             ${raw(faq('Nobody can connect from outside my network',
               'Two things have to be true. Your router must forward ports 80 and 443 to this ' +
               'machine, and the server must have been set up for internet hosting rather than ' +
-              'local-network-only, re-run <a href="#setup">Setup</a> if you chose the latter.'))}
+              'local-network-only, change that under <a href="#settings">Settings &rarr; Deployment</a>.'))}
             ${raw(faq('Where do players actually go?',
               'They open the game in a browser at this server\'s address. They do not install ' +
               'anything. If you are hosting the client files yourself they are served from the ' +
@@ -2897,7 +2899,8 @@ async function pageHelp() {
             ${raw(faq('My browser says the connection is not private',
               'Expected when you have no domain name: the certificate is one this server signed ' +
               'itself, so nothing independent vouches for it. The connection is still encrypted. ' +
-              'Point a domain at this machine, then set it in <a href="#setup">Setup</a> &mdash; ' +
+              'Point a domain at this machine, then set it under <a href="#settings">Settings ' +
+              '&rarr; Deployment</a> &mdash; ' +
               'a real certificate is fetched automatically, with nothing to edit or restart.'))}
             ${raw(faq('I added mod files and nothing changed',
               'The server reads the game data folder only at startup. Check they appear on the ' +
@@ -2981,7 +2984,6 @@ const ROUTES = {
 };
 
 const NEEDS = {
-  '#setup': 'owner',
   '#console': 'moderator', '#settings': 'viewer', '#mods': 'viewer', '#accounts': 'moderator',
   '#sessions': 'owner', '#security': 'viewer', '#logs': 'moderator', '#audit': 'moderator',
   '#metrics': 'moderator', '#maintenance': 'owner', '#help': 'viewer', '#overview': 'viewer',

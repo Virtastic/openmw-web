@@ -587,6 +587,18 @@ export function adminRoutes(deps: AdminDeps) {
       if (body === undefined) return true;
       const result = applySection(deps.dataDir, section, body, deps.sharedDir);
       if (!result.ok) { json(res, 400, { error: result.error }); return true; }
+      // A DOMAIN THAT DOES NOT REACH THE PROXY IS NOT A DOMAIN. The wizard's own save has
+      // always rewritten the Caddyfile; this path never did, because [setup] was not editable
+      // here. Now that it is, saving a domain has to do the same thing or it would be a text
+      // box that silently changes nothing — the exact failure that got publicBase removed.
+      // Caddy watches the file, so the certificate follows within seconds, no restart.
+      if (section === 'setup' && Object.hasOwn(body, 'domain' as string)
+          || section === 'setup' && Object.hasOwn(body, 'hosting' as string)) {
+        const pend = pending('setup') as { domain?: unknown; hosting?: unknown };
+        const domain = pend.hosting === 'internal' ? '' : normaliseDomain(String(pend.domain ?? ''));
+        writeCaddyfile(deps.dataDir, { domain });
+        log('info', 'admin.proxy_reconfigured', { by: ctx.accountKey, domain: domain || '(none)' });
+      }
       log('info', 'admin.config_changed', { section, by: ctx.accountKey, keys: Object.keys(body) });
       json(res, 200, { ok: true, restartRequired: true });
       return true;

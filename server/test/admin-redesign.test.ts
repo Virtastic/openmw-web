@@ -124,10 +124,19 @@ test('wizard answers persist whole, and /state carries the setup record', async 
   assert.ok(state.setup && typeof state.setup === 'object');
   assert.ok('deploymentMode' in state.setup, 'the config default supplies every key');
 
-  // The [setup] bookkeeping is not a settings form: re-running Setup edits it, not a card
-  // full of raw strings nobody should hand-edit.
-  const settings = await (await call('/settings', { token })).json() as { sections: { name: string }[] };
-  assert.equal(settings.sections.some((s) => s.name === 'setup'), false);
+  // [setup] IS a settings section now. It was excluded while the wizard could be re-run and
+  // owned these answers; the wizard is first-run only, and excluding it then left the domain
+  // editable by nothing at all while the Help page still said to go and change it there.
+  //
+  // Only the live half is offered. The rest is a record of an answer whose effect was written
+  // into [locker], [auth] and [login] at the time, so editing it would change nothing while
+  // looking exactly like it had.
+  const settings = await (await call('/settings', { token }))
+    .json() as { sections: { name: string; fields: { key: string }[] }[] };
+  const setup = settings.sections.find((s) => s.name === 'setup');
+  assert.ok(setup, '[setup] should be editable now the wizard is first-run only');
+  const keys = setup.fields.map((f) => f.key).sort();
+  assert.deepEqual(keys, ['contentProfile', 'deliveryModel', 'deploymentMode', 'domain', 'hosting']);
 });
 
 test('wizard SSO credentials land in config, and read back masked', async (t) => {

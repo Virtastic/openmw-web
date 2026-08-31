@@ -15,7 +15,7 @@ import { normaliseDomain } from './setup-check';
 
 /** Sections grouped for the nav. Anything not listed still renders, under "Other". */
 export const SECTION_GROUPS: { group: string; sections: string[]; note?: string }[] = [
-  { group: 'Core', sections: ['server', 'login', 'content'] },
+  { group: 'Core', sections: ['setup', 'server', 'login', 'content'] },
   { group: 'Gameplay', sections: ['rules', 'economy', 'sharing', 'time', 'cellReset', 'gui'] },
   { group: 'Access', sections: ['admin', 'auth', 'moderation', 'authority'] },
   { group: 'Storage', sections: ['locker'] },
@@ -87,7 +87,25 @@ export const SOLO_HIDE_FIELDS = ['admin.dashboardToken'];
  * hand-tuned deployment behind an unusual proxy keeps working; it simply is not offered as a
  * question to anyone who has not already answered it.
  */
-export const DERIVED_FIELDS = ['locker.publicBase'];
+export const DERIVED_FIELDS = [
+  'locker.publicBase',
+  // [setup] is the wizard's record of the answers, and only SOME of it is live configuration.
+  //
+  // domain, hosting, deploymentMode, deliveryModel and contentProfile are read at runtime:
+  // they decide the proxy config, whether the server publishes its game files, which boot
+  // mode the front door hands the player, and what the file checklist expects. Those are real
+  // settings and are offered below.
+  //
+  // The rest are a RECORD of an answer whose effect was written somewhere else at the time.
+  // storage chose between filesystem and S3, but the live knobs are [locker] endpoint and
+  // bucket. loginMethods and registration set [auth] and [login]. Editing the record now
+  // would change nothing at all while looking exactly like it had, which is worse than not
+  // offering it — the real knobs are on this same page, one section away.
+  'setup.storage', 'setup.loginMethods', 'setup.registration',
+  // Clearing this reopens the first-run gate over a configured server, which is a lockout
+  // dressed as a checkbox.
+  'setup.completed',
+];
 
 // Values that are secrets. Never sent to the browser in full; a save that receives the mask
 // back unchanged leaves the stored value alone, so "edit another field on this form" cannot
@@ -133,6 +151,7 @@ export interface SectionView {
 
 /** Titles for the settings sections. Anything unlisted falls back to its own name. */
 const SECTION_LABEL: Record<string, string> = {
+  setup: 'Deployment',
   server: 'Server identity',
   login: 'Player accounts',
   auth: 'Single sign-on',
@@ -191,9 +210,15 @@ export function settingsView(dataDir: string, config: unknown): {
 
   for (const [name, body] of Object.entries(cfg)) {
     // `stated` is a Set the loader adds for its own bookkeeping, and dashboardFallback is
-    // status rather than configuration. Neither is a knob. `setup` is the wizard's own
-    // record of your answers, edited by re-running Setup, not by a settings form.
-    if (name === 'stated' || name === 'dashboardFallback' || name === 'setup') continue;
+    // status rather than configuration. Neither is a knob.
+    //
+    // [setup] used to be skipped here too, on the grounds that the wizard owned it. The
+    // wizard is now first-run only, so skipping it left the domain — and the mode, and
+    // whether the server hands out its game files — editable by nothing at all. The Help page
+    // still said "set it in Setup", pointing at a page that no longer opens. The live parts of
+    // it are settings like any other; the parts that are only a record of an answer are held
+    // back in DERIVED_FIELDS above.
+    if (name === 'stated' || name === 'dashboardFallback') continue;
     if (body === null || typeof body !== 'object' || Array.isArray(body)) continue;
 
     const over = (overrides[name] as Tree | undefined) ?? {};
@@ -290,6 +315,14 @@ export function applySection(
     }
     // The mask coming back means "unchanged": leave whatever is stored alone.
     if (raw === SECRET_MASK) continue;
+    // People paste "https://mp.example.com/" out of the address bar, because that is where a
+    // domain lives as far as they are concerned. The wizard normalises on the way in and this
+    // path has to as well, or a scheme reaches the proxy config and the site address becomes
+    // https://https://mp.example.com.
+    if (section === 'setup' && key === 'domain' && typeof raw === 'string') {
+      patch[key] = normaliseDomain(raw);
+      continue;
+    }
     patch[key] = raw;
   }
   if (Object.keys(patch).length === 0) return { ok: true };

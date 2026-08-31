@@ -140,6 +140,27 @@ export const HELP: Record<string, FieldHelp> = {
     danger: 'A non-empty value here is a standing moderator credential that bypasses accounts and two-factor. It cannot change settings or add accounts, but it can act on players. Prefer a real account with a role.',
   },
 
+  // --- setup: the wizard's answers that are still live configuration ---------------------
+  // Reachable here because the wizard is first-run only. Without these the domain could not
+  // be changed at all after setup, and the Help page still told operators to go and change it.
+  'setup.domain': {
+    text: 'The domain name players reach this server on. Setting it rewrites the reverse proxy config and a real certificate is fetched within seconds, with nothing to restart. Leave it empty for local network use, which keeps the self-signed certificate and the browser warning that comes with it.',
+  },
+  'setup.hosting': {
+    text: 'Whether this server is meant to be reachable from the internet ("public") or only from your own network ("internal"). Choosing internal clears the domain, since there is nothing for a certificate authority to check.',
+  },
+  'setup.deploymentMode': {
+    text: 'Whether this is a private one-person world ("single") or a shared one ("multiplayer"). It decides which boot mode the sign-in page hands the player, whether the server needs its own copy of the game, and how much of this dashboard applies.',
+    danger: 'Switching to multiplayer means the server has to run the world itself: it needs the game files and the simulator, and it will refuse to start without them.',
+  },
+  'setup.deliveryModel': {
+    text: 'Where players get Morrowind from. "serve" publishes the Data Files you uploaded here, so nobody else has to supply anything. "verify" means each player brings their own copy and this server only checks that everyone matches.',
+    danger: 'Choosing "serve" means this server distributes the game. Only use it where everyone involved already owns a copy.',
+  },
+  'setup.contentProfile': {
+    text: 'Which edition the game data check expects: "morrowind", "expansions" (Tribunal and Bloodmoon), or "tamriel-rebuilt". It sets what the Game data page treats as missing.',
+  },
+
   // --- authority ------------------------------------------------------------------------
   'authority.rttProbeSec': { text: 'How often the server pings whoever holds a cell, to notice when they go quiet.' },
   'authority.reviewSec': { text: 'How often held cells are re-checked for liveness.' },
