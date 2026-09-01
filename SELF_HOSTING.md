@@ -12,87 +12,145 @@ cd openmw-web
 ```
 
 1. Unzip the latest `openmw-web-*.zip` from
-   [Releases](https://github.com/Virtastic/openmw-web/releases) into `play/` (the engine
-   is too big for git; the script reminds you if it is missing).
+   [Releases](https://github.com/Virtastic/openmw-web/releases) into `play/` (the engine is
+   too big for git; the script reminds you if it is missing).
 2. Your browser opens **http://localhost/admin**: create the admin account, answer the
-   wizard, drag your `Data Files` folder in when asked.
+   wizard, drag your `Data Files` folder in when it asks.
 3. Play at **http://localhost**.
 
-Everything below is the long version: the dashboard page by page, mods, Tamriel Rebuilt,
-multiplayer, HTTPS and domains, and a no-Docker path.
+That's it. Stuck, or a question this page doesn't answer? Ask in
+[Discord](https://discord.gg/PzFfDkbSue).
+
+Useful afterwards:
+
+```bash
+./setup.sh --update    # pull a newer version and restart
+./setup.sh --stop      # stop everything; your data is kept
+```
+
+Worth knowing:
+
+- **Multiplayer is experimental and off by default.** The wizard shows it greyed out; start
+  with `OMW_EXPERIMENTAL=multiplayer docker compose up -d` (or a `.env` file) to unlock it.
+- **The server supplies the game files** to everyone who plays on it - you upload your
+  `Data Files` once, in the wizard. Everyone playing still needs to own the game.
+- **The address can move when you answer the hosting question.** A fresh server is plain
+  HTTP; choose *Public* with a domain and it switches to HTTPS with a real certificate,
+  fetched automatically. The page hands you to the new address itself.
+- **A fresh install shows "unhealthy" in `docker compose ps`** until game data is in. That is
+  expected - the dashboard is up and tells you what is missing.
+- **Setting up from another machine** (a VPS over the internet) asks for a **setup key**,
+  printed in the server log at startup - so a stranger cannot claim `/admin` first. From your
+  own machine or LAN you are never asked.
+- **Locked out?** `docker compose run --rm openmw-web node dist/server.mjs --data /data
+  --admin-reset <name>` clears the password and two-factor and prints a temporary one.
+
+## The dashboard, page by page
+
+Each page needs a role: **viewer** reads, **moderator** acts on players, **owner** changes
+the server. Pages a role cannot use are not shown to it.
+
+| Page | Role | What it is for |
+| --- | --- | --- |
+| **Overview** | viewer | Uptime, who is on, memory, health |
+| **Players & commands** | moderator | Roster, chat, reports, commands. Multiplayer only |
+| **Mod manager** | viewer reads, owner changes | Install, order and remove mods (below) |
+| **Game files** | viewer reads, owner changes | The base game's files and the upload checklist |
+| **Core / Access / Storage / Operations** | viewer reads, owner changes | Every setting, with plain-language help |
+| **Accounts** | moderator; owner for roles, deletion, saves | Who exists, their role, their savegames |
+| **Admin sessions** | owner | Signed-in dashboard sessions, revocable |
+| **My security** | viewer | Your own password and two-factor |
+| **Logs / Audit trail** | moderator | What the server did; what administrators did |
+| **Updates** | owner | Whether a newer release exists |
+| **Maintenance** | owner | Close the doors before big changes. Multiplayer only |
+| **Backup** | owner | Download the data folder as `tar.gz`. Restoring is stop, replace, start |
+| **Restart** | owner | Restart the server |
+
+Two cautions: **a backup contains secrets** (password hashes, S3 keys - treat the file like a
+password), and **`[admin] dashboardToken` is a standing moderator credential** that bypasses
+accounts and two-factor; prefer a real account with a role.
+
+The setup wizard is first-run only. Change individual answers under Configuration instead of
+re-running it.
+
+### Mods
+
+The Mod manager installs mods from an archive - drop a `.zip` or `.7z` on the page. The
+server reads what is inside and shows the data folders it found; you tick the ones you want,
+because Nexus downloads routinely bundle a core install with optional extras. (RAR is not
+supported; re-save it as `.zip` or `.7z`.)
+
+Each mod gets its own folder and a card in the load-order list:
+
+- **Drag to reorder** (or use the arrows). Order is file priority: when two mods contain the
+  same file, the one further down wins - and the badges saying "replaces N" / "N overridden"
+  follow the list live as you drag.
+- **The switch** takes a mod out of the load order without deleting it.
+- **Details** shows what came from where, overlap explanations, and a checkbox per plugin.
+- **Remove** deletes the mod's folder. Saves are untouched.
+
+A plugin whose master is not loaded is flagged in red - that one aborts the game at startup,
+so fix it before playing. Restart the server after changing mods; the dashboard offers to.
+
+Installs show a real progress bar. A big `.7z` (Tamriel Data is 54,000 files) takes a few
+minutes; Back and Skip are disabled while it runs.
+
+### Tamriel Rebuilt
+
+Choose Tamriel Rebuilt on the wizard's content step and it asks for the archives on a step
+of its own, after the base game. It is **two** downloads and both are needed:
+
+| Archive | What it is |
+| --- | --- |
+| Tamriel Rebuilt | The landmass (`TR_Mainland.esm` and friends) |
+| Tamriel Data | The meshes, textures and sounds it draws from |
+
+Upload each **as you downloaded it**, without unpacking - the release is recognised by the
+file's hash, since release names vary. An unrecognised (newer) release installs the same and
+just says it cannot name the version. Parts come ticked except anything that *removes*
+vanilla content (TR ships one of those); forgetting the Tamriel Data half is flagged by name
+rather than turning into a continent of error markers.
+
+Tamriel Rebuilt is why the engine is 64-bit (wasm64): players need a browser with MEMORY64
+support and the RAM to match.
+
+### Savegames
+
+Open an account under **Accounts** to see its saves. A moderator can see the list;
+downloading or importing a save is owner-only. It exists so "my save is gone" never needs
+shell access.
+
+## Multiplayer server
+
+Multiplayer is a real addition to a single-player game - expect rough edges. Unlock it with
+`OMW_EXPERIMENTAL=multiplayer` and the wizard walks you through the rest. Three things to
+know:
+
+1. **The server simulates the world itself** (a headless copy of the engine runs NPCs, so a
+   modified client cannot author what an NPC did). That is why it must have its own game
+   data.
+2. **One origin.** The game page and the server share a hostname; a separate
+   `mp.example.com` cannot work. The Docker stack handles this for you.
+3. **Sign-in is your choice** - SSO (Google / Discord / Microsoft), passwords, or both. The
+   wizard collects the keys; creating the OAuth app at the provider is the one thing it
+   cannot do for you, and [`docs/MULTIPLAYER-SETUP.md`](docs/MULTIPLAYER-SETUP.md) walks
+   through it in about five minutes (plus optional S3 storage).
+
+Running without Docker, wiring your own reverse proxy, capacity planning, moderation ranks
+and the ops details live in [`docs/ADVANCED.md`](docs/ADVANCED.md).
 
 ## Static hosting without the dashboard
 
-Grab `openmw-web-<tag>.zip` from
-[Releases](https://github.com/Virtastic/openmw-web/releases) — it contains the
-prebuilt engine and everything below. No compiler needed.
+The release zip is also a self-contained static bundle: unzip it anywhere and run
+`python3 server.py` (or double-click `Start openmw-web`). No accounts, no dashboard, no
+mod manager - but playable in a minute, and players can point it at their own `Data Files`.
 
-## Quick start (local)
+To serve your own Morrowind with it, copy your `Data Files` contents into `mwdata/` next to
+`server.py` and run with `OPENMW_LAUNCHER=0`. Files stream on demand over HTTP range
+requests; nothing is repacked.
 
-```bash
-unzip openmw-web-*.zip -d openmw-web && cd openmw-web
-python3 server.py          # http://localhost:8910 (override with PORT=…)
-```
-
-Open the URL in **desktop Chrome/Chromium**. The root (`/`) serves the
-data-chooser launcher, same as the live site: players pick either the bundled
-free demo world or their own legally-owned Morrowind data, streamed straight
-from disk. Set `OPENMW_LAUNCHER=0` to skip the chooser and boot the game
-directly at `/` instead.
-
-## Serving your own Morrowind with the site
-
-If you own Morrowind and want the game to *come with* your server — so players
-open the page and start, with nothing to pick and nothing to upload — copy the
-contents of your `Data Files` folder into a `mwdata/` folder next to
-`server.py`:
-
-```
-openmw-web/
-├── server.py
-├── index.html
-└── mwdata/
-    ├── Morrowind.esm
-    ├── Morrowind.bsa
-    ├── Fonts/  Music/  Sound/  Splash/  Video/
-    └── …plus Tribunal/Bloodmoon and any mods, if you have them
-```
-
-Then start the server with the chooser turned off, so `/` boots straight into
-the game:
-
-```bash
-OPENMW_LAUNCHER=0 python3 server.py
-```
-
-(Leave it on if you'd rather players still got the choice — the chooser's own
-"bring your own copy" option keeps working either way.)
-
-The server lists whatever is actually in `mwdata/` and the page loads exactly
-that, so:
-
-- **The base game on its own is enough.** Expansions are optional — nothing
-  breaks if you don't own them.
-- **Mods work.** Extra `.esm`/`.esp`/`.bsa` dropped in are picked up
-  automatically (alphabetically; `?nomods=1` plays vanilla). This path has no
-  dashboard, so a precise custom load order means naming files to sort the way
-  you want, or running the Docker stack below, which has a mod manager that
-  installs archives and lets you order them by dragging.
-- **Nothing is repacked.** Copy the folder as-is; there are no archives to
-  build. Files are read in chunks over HTTP Range as the engine needs them, so
-  the browser never downloads the whole 1.5 GB up front.
-
-Your server needs **Range request** support for this (`server.py` has it; the
-nginx and Caddy configs below are fine as written).
-
-> **Do not put Morrowind data in a public release or a public web root you don't
-> control.** You may serve your own copy to yourself; redistributing Bethesda's
-> game data is a different thing entirely. See *Licensing notes for hosts*.
-
-## The serving contract
-
-The engine is multi-threaded WASM, which requires **cross-origin isolation**.
-Your server must send these headers on **every** response:
+Serving it with your own web server instead? The engine needs **cross-origin isolation** on
+every response, over HTTPS (or localhost):
 
 ```
 Cross-Origin-Opener-Policy: same-origin
@@ -100,34 +158,8 @@ Cross-Origin-Embedder-Policy: require-corp
 Cross-Origin-Resource-Policy: cross-origin
 ```
 
-Plus:
-
-- **HTTPS** (or `http://localhost`) — isolation is only granted on secure origins.
-- `application/wasm` MIME type for `.wasm`.
-- Serve the precompressed `.br` siblings with `Content-Encoding: br` when the
-  client accepts brotli — this turns the ~42 MB wasm into ~11 MB and the demo
-  data into ~34 MB over the wire. (`server.py` does this automatically.)
-- Support **Range requests** on `openmw.data` (used by the streaming loader).
-- Long cache lifetimes are safe on `openmw.{js,wasm,data}` — purge or rename on
-  redeploy.
-
-### nginx
-
-```nginx
-server {
-    listen 443 ssl http2;
-    root /srv/openmw-web;
-    types { application/wasm wasm; }
-
-    add_header Cross-Origin-Opener-Policy   same-origin   always;
-    add_header Cross-Origin-Embedder-Policy require-corp  always;
-    add_header Cross-Origin-Resource-Policy cross-origin  always;
-
-    brotli_static on;   # serve the .br siblings (ngx_brotli)
-}
-```
-
-### Caddy
+Plus `application/wasm` for `.wasm`, range-request support, and (nice to have) serving the
+precompressed `.br` siblings. Caddy:
 
 ```caddy
 example.com {
@@ -143,526 +175,28 @@ example.com {
 }
 ```
 
-Static hosts (Netlify, Cloudflare Pages, …) work too — set the same three
-headers in the host's headers config.
-
-## Multiplayer server
-
-Multiplayer (`server/`, Node 22) is optional — single-player hosting needs none of this.
-Since 1.1.0 it is not a bare relay any more but a small platform: a **gateway** process
-fronts many **world** processes (one shared public world, plus private/party worlds booted
-on demand and reaped when idle), and every world runs a **sim peer** — a headless copy of
-the OpenMW engine that simulates NPCs server-side so a modified client cannot author the
-world.
-
-Three consequences an operator must know up front:
-
-1. **The sim peer is mandatory.** The server refuses to boot without a usable `openmw`
-   binary and game data. That means **you supply your own legally-owned Morrowind
-   `Data Files` on the server** (never bundled, never distributed — see the licensing
-   notes below). The one exception is a server nobody has configured yet: it starts in
-   setup mode so you can reach the admin dashboard, and refuses players until the data
-   is in place.
-2. **One origin.** The game page and the server share a hostname. The page refuses to
-   hand its session ticket to a server on a different host, so a separate
-   `mp.example.com` cannot work — you reverse-proxy the server's paths from the same
-   vhost that serves the game. The quick start below sets that up for you.
-3. **Sign-in is OAuth** (Google / Discord / Microsoft) *or* a username and password —
-   both work, and one account can use either. If you want OAuth,
-   [`docs/MULTIPLAYER-SETUP.md`](docs/MULTIPLAYER-SETUP.md) walks through creating an app
-   in about five minutes, plus the optional S3 storage locker.
-
-### Quick start (recommended)
-
-This stack runs **either** mode: the wizard's first question is single player or multiplayer,
-and everything from here down to *The manual path* applies to both. Single-player hosting can
-also be done with the static server at the top of this file, which needs no Docker and has no
-dashboard.
-
-One command, then everything else happens in a browser. You need
-[Docker](https://docs.docker.com/get-started/get-docker/) and nothing else — no Node, no
-compiler, no editing TOML by hand.
-
-```bash
-git clone https://github.com/Virtastic/openmw-web.git
-cd openmw-web
-./setup.sh          # Windows: .\setup.ps1
-```
-
-The script checks Docker is installed and running, works out whether you have
-`docker compose` or the older `docker-compose`, warns you if something is already using
-ports 80 or 443, builds the server, waits for it to report itself healthy, and then opens
-the admin dashboard for you.
-
-The first screen asks you to create an administrator account — a username and a password,
-and nothing else. Everything from there happens in the browser.
-
-There is one exception, and you will only meet it if you go looking for it. If you set the
-server up from *outside* its own network — a VPS you are administering over the internet,
-say — that screen also asks for a **setup key**, because otherwise the first stranger to
-find `/admin` could claim the server. The key is printed in the log at startup and saved as
-`setup-token` in the data folder, both of which need access to the machine. From your own
-computer or your own LAN you are never asked. It stops working once the first administrator
-exists either way.
-
-After that a short wizard covers the rest: single-player or multiplayer, how players sign
-in, who may register, which Morrowind content you are running, how the server is reached,
-where uploads are stored, and the game files themselves — the server supplies the game to
-everyone who plays on it. Every answer is written to configuration you can review and change
-afterwards.
-
-One answer is **greyed out**, marked experimental, and cannot be chosen until you say so —
-multiplayer, on the first question. The wizard shows it rather than hiding it, so you can see
-it exists and decide. Set `OMW_EXPERIMENTAL` and restart:
-
-```bash
-OMW_EXPERIMENTAL=multiplayer docker compose up -d   # or a .env file beside the compose file
-```
-
-The greyed tile names the flag itself. This governs only what a **new** setup may choose: a
-server already configured for any of them keeps running exactly as it did, because taking a
-feature away from a working server through an environment variable would be a worse surprise
-than the one this prevents. The server refuses a
-gated answer even if it is submitted directly, so the greying is a courtesy rather than the
-lock.
-
-Two other answers are worth knowing before you give them:
-
-- **How the server is reached** has two shapes. *Public* wants a domain pointed at this
-  machine and ports 80 and 443 forwarded to it, and fetches a real certificate for you.
-  *Internal or behind your own proxy* is plain HTTP on a port you pick, which is right for a
-  home network, a LAN party, or your own reverse proxy or tunnel in front. The catch is a
-  browser rule rather than ours: the engine needs shared memory, which browsers grant only on
-  a secure origin. `http://localhost` counts as secure and `https://` anything counts, but
-  plain `http://` to an IP or a machine name does not, and players reaching it that way are
-  told the browser is unsupported. Internal mode is therefore right when you play on this
-  machine, or when something in front of it provides HTTPS.
-- **Which Morrowind content** decides what the file checklist demands, and choosing Tamriel
-  Rebuilt adds a step of its own; see *Tamriel Rebuilt* below.
-
-**The server starts before it is ready, on purpose.** With no Morrowind files it comes up,
-serves the dashboard, refuses players with a clear reason, and reports itself unhealthy —
-rather than exiting, which would leave you with a failure and no way to reach the page that
-explains it. `docker compose ps` showing `unhealthy` on a fresh install is expected; the
-dashboard tells you exactly what is missing.
-
-**Your Morrowind files** go in through the wizard: its game-data step takes the whole
-`Data Files` folder dragged into the browser, shows a checklist of what arrived, and tells you
-what is missing. Copying the files into `gamedata/` next to `docker-compose.yml` yourself does
-the same thing, before or after running the script — the server starts either way and says
-what it needs.
-
-**The game engine is a separate download when you start from a `git clone`.** The repository
-carries the game page (`play/`) but not the compiled engine, which is a build output of
-about half a gigabyte and is gitignored. Without it the dashboard works and the game page
-does not. Download `openmw-web-<version>.zip` from
-[Releases](https://github.com/Virtastic/openmw-web/releases) and unzip its contents into
-`play/`, letting it merge with what is there — the zip carries the page plus the engine in
-a versioned `e/` folder. No restart needed; the folder is served live. (`setup.sh` warns
-you when the engine is missing.) Building it yourself instead is the *Building* section of
-the README.
-
-Useful afterwards:
-
-```bash
-./setup.sh --update    # pull a newer version and restart
-./setup.sh --stop      # stop everything; your data in ./data is kept
-```
-
-**HTTPS.** Answer the wizard's hosting question with your domain and a real certificate is
-fetched automatically, usually within seconds — the dashboard writes the proxy's whole
-configuration and the proxy reloads itself, so there is no file to edit and nothing to
-restart. Without a domain it serves a certificate it signed itself: still encrypted, but your
-browser warns on the first visit. That warning is expected, and the dashboard says so rather
-than leaving you guessing.
-
-**The hosting answer can move the address.** A fresh server is plain HTTP on port 80, and
-stays that way if you choose *Internal* with the default port. Choose *Public* and the proxy
-switches to HTTPS (a real certificate with a domain, a self-signed one without); choose
-*Internal* with another port and it moves there. Either way the page hands you to the new
-address itself when the wizard saves — the old one stopping is supposed to happen, and
-bookmarks want updating.
-
-### The dashboard, page by page
-
-Everything after the wizard is the running server. The sidebar groups it, and each page needs a
-role: **viewer** reads, **moderator** acts on players, **owner** changes the server. A page a
-role cannot use is not shown to it at all.
-
-| Page | Role | What it is for |
-| --- | --- | --- |
-| **Overview** | viewer | Uptime, who is connected, memory, the health the container reports |
-| **Players & commands** | moderator | The roster, chat log, reports, and the command console. Multiplayer only: in single player the engine runs in the browser and never connects, so every control on the page would act on nobody |
-| **Mod manager** | viewer reads, owner changes | Install, order, switch off and remove mods. See below |
-| **Game files** | viewer reads, owner changes | The base game's own plugins, and the upload panel with the checklist for the edition you chose |
-| **Core / Access / Storage / Operations** | viewer reads, owner changes | Every setting, grouped, each with the same plain-language help the wizard used. Operations holds the multiplayer-only knobs and hides them on a single-player server |
-| **Accounts** | moderator; owner for roles, deletion and savegames | Who exists, their role, their saves, and the erasure path |
-| **Admin sessions** | owner | Every signed-in dashboard session, revocable one at a time |
-| **My security** | viewer | Your own password and two-factor. Everyone reaches this one, for their own account only |
-| **Logs** | moderator | The live ring buffer and the history on disk |
-| **Audit trail** | moderator | What administrators did, and when |
-| **Updates** | owner | Whether a newer release exists, and how to take it |
-| **Maintenance** | owner | Close the doors: disconnects everyone and refuses new connections. Use it before changing mods or settings, so nobody is halfway through something. Multiplayer only — in single player there are no connections to refuse, so the page is not shown |
-| **Backup** | owner | Download the whole data folder as a `tar.gz`. There is deliberately **no restore button**: restoring is stop, replace the folder, start |
-| **Restart** | owner | Restart the server, showing the same loading screen a player sees |
-
-The setup wizard is first-run only and deliberately absent from that list. It is a sequence of
-questions whose answers reshape the deployment, and re-entering it on a running server would
-mean walking back through all of them to change one. Change individual answers under
-Configuration instead.
-
-Two things worth knowing before you rely on them:
-
-- **A backup holds everything, secrets included.** Account password hashes and your S3 keys are
-  in that file. Treat it like a password.
-- **`[admin] dashboardToken` is a standing moderator credential** that bypasses accounts and
-  two-factor entirely. It cannot change settings or add accounts, but it can act on players.
-  Prefer a real account with a role; the setting exists because it predates roles.
-
-**Locked out?** If you lose the only administrator password:
-
-```bash
-docker compose run --rm openmw-web node dist/server.mjs --data /data --admin-reset <name>
-```
-
-That clears the password and any two-factor on that account and prints a temporary one.
-### Mods
-
-The dashboard's **Game data and mods** page installs mods from an archive, so nothing has to
-be unpacked into `gamedata/` by hand.
-
-Drop a `.zip` or a `.7z` on the page, or pick one. The server reads what is inside without
-extracting it and shows you the data folders it found, each with its plugins, its asset
-archives and its file count. You tick the ones you want. This step exists because Nexus has no
-packaging standard: one download routinely holds a core install, optional textures, and a
-compatibility patch, and installing all of them because they arrived together is how a game
-ends up broken a long way from the mod that broke it. RAR is not supported (the bundled p7zip
-is built without the non-free codec); open it and save it as a `.zip` or `.7z`.
-
-Each mod installs into its own folder under `gamedata/mods/`, and the page lists them in load
-order:
-
-- **Drag to reorder.** Order is file priority: when two mods contain the same file, the one
-  further down the list provides the copy the game uses. The arrow buttons do the same thing
-  for touch and keyboard.
-- **The switch** takes a mod out of the load order without deleting it.
-- **Details** opens what the archive was, what is in the mod, which files it overlaps with
-  and which mod wins each of them, and a checkbox per plugin so you can keep a mod's assets
-  while skipping one of its plugins.
-- **Remove** deletes the folder and everything in it. Saves are untouched, but anything that
-  depended on the mod will not load.
-
-Two things are flagged rather than left for you to discover in the game. A mod that replaces
-files another mod provides is marked with how many, on both mods, and the marks follow the
-list as you drag it. A plugin whose master is not loaded is marked in red, and that one is not
-a matter of taste: Morrowind aborts at startup when a master is missing, and the player sees a
-black screen with no message.
-
-Restart the server after changing mods; the dashboard offers to do it.
-
-Archives may hold up to 100,000 files and the upload cap is 8 GB, which is headroom rather
-than a target. Extraction of a very large `.7z` takes minutes and reports itself as
-"Installing" throughout: the format has no random access, so the whole archive is unpacked
-before the parts you chose are moved into place.
-
-### Tamriel Rebuilt
-
-[Tamriel Rebuilt](https://www.tamriel-rebuilt.org/) is not part of anyone's `Data Files`
-folder, so it is not something the game-data upload can pick up. Choose it on the wizard's
-content step and the wizard asks for it directly, on a step of its own after the base game.
-
-It is **two** downloads and both are needed:
-
-| Archive | What it is |
-| --- | --- |
-| Tamriel Rebuilt | The landmass: `TR_Mainland.esm`, plus optional Faction Integration and Firemoth Remover |
-| Tamriel Data | The meshes, textures and sounds it draws from: `Tamriel_Data.esm` and its assets |
-
-Upload each one **as you downloaded it**, without unpacking. The release is identified by the
-SHA-256 of the archive rather than by its filename, because release names vary between
-versions and browsers, chat clients and mod managers all rename downloads. A release the
-server has not been told about installs exactly the same way and says only that it cannot put
-a version number on it; the hash is printed on the page, which is what to send if you want it
-recognised in a later build.
-
-The optional parts are yours to tick. Firemoth Remover in particular removes a vanilla quest
-island on purpose, which is not something to apply to a server because it happened to be in
-the same archive.
-
-`TR_Mainland.esm` names `Tamriel_Data.esm` as one of its masters, so forgetting the assets
-half is reported by name on the step and on the mods page rather than turning into a continent
-of error markers at runtime.
-
-**Memory.** Tamriel Rebuilt is why the engine is built for wasm64: a 32-bit build cannot
-address enough memory to hold that load order. Players need a browser with `MEMORY64` support
-and a machine with the RAM to match.
-
-### Savegames
-
-Open an account from **Accounts** to see its saves with their sizes and dates. A moderator
-can see that list; downloading a save as a file and importing one back are **owner** only,
-because both move a player's data around. It exists so that "my save is gone" does not require
-shell access to the storage backend. An import is checked against the account's quota, and the
-file's size is read back from storage rather than trusted from the request.
-
-### The manual path
-
-Everything below sets the same thing up by hand. Use it if you want to run without Docker,
-or you are integrating with infrastructure you already have.
-
-### Step by step
-
-**1. Build the server.**
-
-```bash
-cd server
-npm ci
-npm run build     # emits dist/server.mjs (single world) and dist/gateway.mjs (gateway)
-```
-
-**2. Stage game data for the sim peer.** Copy the contents of your own `Data Files`
-into `<dataDir>/gamedata`. Without it the server refuses to boot — that is deliberate,
-not a bug. The peer binary is auto-probed from `/usr/local/bin/openmw`,
-`/usr/bin/openmw`, or `/opt/openmw/bin/openmw` (override with `[simPeer] binary`); the
-shipped production image (`server/Dockerfile.simpeer`, target `tier2`) builds and
-includes it.
-
-**3. Generate the vanilla manifest** so the locker accepts player uploads (generated
-from your own copy; until it exists the locker refuses every upload, which is the safe
-default):
-
-```bash
-node server/tools/gen-vanilla-manifest.mjs "/path/to/Morrowind/Data Files" \
-     --out <dataDir>/vanilla-manifest.json
-```
-
-**4. Write `<dataDir>/config.toml`.** Defaults live in `server/config.default.toml`
-(documented inline) and overrides deep-merge over them. Minimum viable:
-
-```toml
-[server]
-password = "<long random string>"   # the SIM PEER's credential — never typed by a player.
-                                    # Empty = the server refuses to boot.
-
-[auth]
-requireSso = true                   # SSO-only sign-in. Leave unset to also allow passwords.
-returnUrl  = "https://example.com/launcher.html"
-
-[auth.google]                       # and/or [auth.discord] / [auth.microsoft]
-enabled      = true
-clientId     = "..."
-clientSecret = "..."
-redirectUri  = "https://example.com/auth/google/callback"
-```
-
-Two silent footguns, both logged at boot: leave `requireSso` unset and password login
-stays open beside SSO (`frontdoor.password_login_open`); behind Cloudflare, set
-`[limits] trustCloudflareIp = true` or every player shares one rate-limit bucket
-(`net.client_ip_mode`). Storage is optional — with no S3 bucket configured, lockers and
-saves land on the server's own disk (set `[locker] publicBase` to the origin players
-reach the server on; see [`docs/MULTIPLAYER-SETUP.md`](docs/MULTIPLAYER-SETUP.md) §2).
-
-**5. Run it.**
-
-```bash
-# single world (development / small private server)
-node dist/server.mjs --data ./devdata --port 8080
-
-# the full platform: gateway + on-demand worlds + sim peers
-node dist/gateway.mjs --worlds /data/worlds --shared /data --port 8080 --base-port 9000
-```
-
-Or with Docker — one container runs the gateway, the worlds and the sim peers together:
-
-```bash
-docker compose -f server/docker-compose.prod.yml up -d
-```
-
-(S3 keys go in the environment / an `env_file`, never in `config.toml`.)
-
-**6. Reverse-proxy, same origin as the game page.** Forward these paths to the gateway
-and leave everything else on the static handler:
-
-```
-/w/*        # the gameplay WebSocket — needs Upgrade handling
-/ws         # local-dev direct dial — same
-/auth/*     # OAuth sign-in
-/locker/*   # game-data upload/stream
-/saves  /saves/*
-/worlds /worlds/*
-```
-
-The shipped [`deploy/Caddyfile`](deploy/Caddyfile) is a working reference. Non-negotiables
-it encodes: **strip `CF-Connecting-IP`, `X-Omw-Client-IP` and `True-Client-IP` from client
-requests** (a forged header otherwise grants a fresh login budget and walks past IP bans),
-preserve `X-Forwarded-Proto`, keep the COOP/COEP/CORP isolation headers on the game page,
-and do **not** expose `/admin`, `/metrics`, `/healthz` or `/status` to the internet.
-
-**7. Verify.**
-
-```bash
-curl -s localhost:8080/healthz          # gateway liveness
-curl -s localhost:8080/auth/providers   # your providers, "allowPasswordLogin":false
-curl -s localhost:8080/worlds           # the world directory
-```
-
-Then open the launcher in a browser: sign in, pick a handle, upload your Data Files
-once, and enter a world. For a two-player local test, use two browser profiles (each is
-one account). Players join through the launcher on your origin — there is no server
-address to type and no `?mp=` URL to hand out.
-
-### Configuration knobs you will actually touch
-
-| Key | What |
-|---|---|
-| `[server] name`, `motd`, `maxPlayers` | identity and capacity |
-| `[server] password` | **the sim peer's credential**, not a player password |
-| `[auth] requireSso`, `[auth.google/discord/microsoft]` | sign-in |
-| `[locker] *` | storage: S3 endpoint/bucket, or `publicBase` for disk mode; `maxSaveBytesPerAccount` |
-| `[login] allowRegistration`, `inviteCode`, `resumeWindowSec` | who may join; dropped-session rejoin window |
-| `[content] enforce`, `[engine] enforce` | load-order / engine-build matching (`names`, `strict`, `off`) |
-| `[sharing] *` | which quest families are world-shared vs per-player |
-| `[rules] pvp`, `pvpZone`, `difficulty`, `partyScaling`, `sayScope`, `timeSkip`, `respawn*` | gameplay policy |
-| `[admin] owners`, `allowConsole`, `dashboardToken` | moderation (below) |
-| `[cellReset] cells`, `intervalSec` | scheduled cell wipes |
-| `[limits] *` | rate limits, per-IP caps, `trustCloudflareIp`, avatar render LOD |
-| `[simPeer] *` | peer binary path, generated config dirs, start deadline |
-| `[dev] bots` | development bots (below) |
-
-### Operating it
-
-Ranks are stored per account: **0** player, **1** moderator (`/kick /tp /tpto`), **2** admin
-(`/ban /unban /give /motd`), **3** owner (`/setrank /console`). List your own account
-in `[admin] owners` and restart — it is promoted on boot, so you never hand-edit account
-files. Commands work as chat slash-commands and, for tooling, as the `AdminCommand`
-protocol message; both go through the same rank gate, and every action is logged as
-`admin.action` with actor, target and arguments.
-
-`/console` sends a script to a player's own client to execute. Treat it as remote code
-execution on someone else's machine: it is owner-only, every use is logged in full, and
-`[admin] allowConsole = false` removes it entirely.
-
-**Web admin dashboard.** A single-page dashboard lives at `/admin` (overview, report
-inbox, kick / ban / mute / broadcast / cell-reset actions). It is gated on a bearer
-token, `[admin] dashboardToken` — with the token empty the routes do not exist at all.
-It lives on the world process, which never faces the internet directly; reach it over
-loopback or an SSH tunnel, never a public proxy route.
-
-**Endpoints and signals.** `GET /healthz` is liveness on both processes. `GET /status`
-(world process) is the launcher-facing JSON summary — name, MOTD, players, policy flags,
-uptime, version; no IP addresses, no account data. `GET /metrics` is Prometheus text,
-gated on `[metrics] token`, answering 404 while disabled so it is invisible until turned
-on. `SIGUSR1` flushes state to disk; `SIGTERM`/`SIGINT` disconnect players cleanly and
-flush.
-
-**Development bots.** `[dev] bots = N` (or the `OMW_DEV_BOTS` env var; capped at 16)
-spawns bots that hold accounts and characters, accept friend and party invites, and
-stand where players begin — useful for testing menus and party flows alone. They
-register **real** accounts and reserve **real** handles, so the server says loudly at
-boot when they are running (`devbots.enabled`). Do not run them on a public server.
-
-Everything the server stores about players, and how to erase it, is documented in
-[`server/PRIVACY.md`](server/PRIVACY.md) — including the `--delete-account <name>` CLI
-for deletion requests. Read it before you take sign-ins from anyone but yourself.
+nginx and static hosts (Netlify, Cloudflare Pages) work the same way - set those three
+headers in the host's config. Static hosts cannot run the multiplayer server.
 
 ## Browser support
 
-Desktop Chrome/Chromium only (SharedArrayBuffer + WebGL2/ANGLE +
-`EXT_clip_control` + File System Access API). Firefox/Safari/mobile are not
-supported.
+Desktop Chrome or Chromium, with MEMORY64 (Chrome/Edge 133+). Firefox, Safari and mobile are
+not supported.
 
 ## Licensing notes for hosts
 
-The bundle is GPLv3 (see `LICENSE`, `NOTICE`, `THIRD-PARTY-LICENSES.md`). If
-you host it, link to the source (this repository or the matching
-`openmw-web-src-<tag>.tar.gz`) somewhere reasonable — the included pages
-already do this in their footers, so leaving them intact is enough. The demo
-world is freely-licensed content (see `CREDITS-DEMO-DATA.txt`); Morrowind
-game data is **not** included and must never be bundled by hosts either.
+The bundle is GPLv3 (see `LICENSE`, `NOTICE`, `THIRD-PARTY-LICENSES.md`). If you host it,
+link to the source (this repository or the matching `openmw-web-src-<tag>.tar.gz`) somewhere
+reasonable - the included pages already do this in their footers, so leaving them intact is
+enough. The demo world is freely-licensed content (see `CREDITS-DEMO-DATA.txt`).
 
-### Multiplayer servers and game data
-
-Since 1.1.0 a multiplayer server **requires game data**: every world runs a simulation
-peer — a headless OpenMW that simulates NPCs on the operator's machine so a modified
-client cannot author NPC behaviour for everyone else — and the server refuses to boot
-without a peer binary and usable game data. Two things follow, and neither changes the
-licensing stance above:
-
-- **Nothing is bundled.** The operator places *their own legally-owned* copy in
-  `<dataDir>/gamedata`, exactly as a player points the browser at their own `Data Files`.
-  Neither the releases nor the deploy workflows ship or touch any game data; distributing
-  it with a server would be as wrong as bundling it with the client.
-- **Player uploads stay private.** The cloud locker holds each account's own copy with no
-  deduplication and serves it back only to that account. The manifest gate exists so the
-  locker stays a backup locker for recognized game files, not general file hosting. The
-  full reasoning is written down in [`docs/LEGAL.md`](docs/LEGAL.md).
-
-The shipped production image (`server/Dockerfile.simpeer`, target `tier2`) includes the
-peer binary. Building it compiles OpenMW from source:
-
-```bash
-docker build --build-arg BUILD_JOBS=6 -f server/Dockerfile.simpeer -t openmw-simpeer .
-```
-
-**Set `BUILD_JOBS` to roughly one per gigabyte of RAM you can spare.** OpenMW translation units
-reach 1–2 GB each, and letting ninja use its default (`nproc + 2`) on a many-core machine with
-ordinary memory exhausts RAM — where it presents as a *hang* rather than an OOM kill: the build
-stops emitting output partway through and takes the Docker daemon with it. The default of 6 is
-deliberately conservative.
-
-### Sizing a gateway (read this before opening it to anyone)
-
-**Every occupied world costs a sim peer.** Each world is its own process and each one runs its
-own peer supervisor, so worlds *multiply* the peer's cost rather than sharing it.
-
-Measured on Linux/x86-64 with full retail Morrowind + Tribunal + Bloodmoon, one player anchoring
-one exterior cell, host load 1.4:
-
-| | RSS |
-| --- | --- |
-| sim peer (headless OpenMW) | 487 MB |
-| world process (node) | 136 MB |
-| **one occupied world** | **623 MB** |
-| gateway process (supervising one world) | 118 MB |
-
-The peer reached `SessionHello` 11.4 s after spawn with that data set. Budget **~640 MB per
-occupied world** and re-measure on your own hardware with your own game data —
-`server/scripts/measure-capacity.ts` does it against a running stack, and a peer anchoring
-several busy cells will cost more than one standing in Seyda Neen.
-
-`[simPeer] maxPeers` cannot govern this: it is per world process and cannot see its siblings.
-The ceiling that can is `[worlds]`, on the **gateway**:
-
-```toml
-[worlds]
-memBudgetMb = 8192      # total RAM for worlds and their peers
-worldCostMb = 640       # measured cost of one occupied world
-gatewayReserveMb = 256  # held back for the gateway itself
-```
-
-That budget admits 12 concurrent occupied worlds; `GET /healthz` reports the live ceiling as
-`{"capacity":12,"capacityReason":"memory"}`.
-
-The gateway takes the lower of this and the count cap, logs which one binds
-(`gateway.capacity` at boot), reports it on `GET /healthz`, and refuses a world with
-`world.at_cap` naming the reason. A player who cannot get in is told the server is full rather
-than being left to retry. `GET /metrics` on the gateway (same bearer as a world's) carries
-`omwmp_worlds_running`, `omwmp_worlds_capacity` and `omwmp_world_refused_total`.
-
-`--idle-reap-ms` overrides how long a non-public world may sit empty before it is stopped
-(default 120000). Its data survives; the world is revived when its owner dials back in.
-
-**Rolling restart: `kill -HUP` the gateway.** Worlds restart one at a time, emptiest first, and
-the next is not touched until the previous one answers `/status` again — so a world-code deploy
-is not an outage. Each world drains first (its players are told `SHUTDOWN` and the client waits
-for it to come back rather than treating it as fatal), and a world that will not return halts
-the rollout instead of turning one failure into a full one.
-
-**Leave `memBudgetMb` at 0 and there is no memory governor at all** — only a count cap, which
-defaults to `[server] maxPlayers`. That combination is how a container gets OOM-killed while
-every per-world cap reads as satisfied. Keep `memBudgetMb + gatewayReserveMb` at or below the
-container's own memory limit; raising one without the other only changes which of the two
-kills you first.
+**Morrowind game data is not included and must never be bundled by hosts.** A server
+supplies its operator's *own legally-owned* copy to its players, exactly as a player points
+the browser at their own `Data Files`; everyone playing still needs to own the game. The
+releases and deploy workflows ship no game data, and per-player uploads through the game
+launcher stay private to each account, gated by a manifest so the locker stays a backup for
+recognised game files rather than general file hosting. The full reasoning is in
+[`docs/LEGAL.md`](docs/LEGAL.md).
 
 ---
-WASM port © 2025–2026 [Virtastic](https://virtastic.app) — GPL-3.0-or-later
+WASM port © 2025–2026 [Virtastic](https://virtastic.app) - GPL-3.0-or-later

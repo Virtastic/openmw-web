@@ -8,7 +8,7 @@
 > ```
 >
 > Everything in this guide assumes you have done that; see
-> [`../SELF_HOSTING.md`](../SELF_HOSTING.md#quick-start-recommended) for the full note.
+> [`../SELF_HOSTING.md`](../SELF_HOSTING.md#quick-start) for the full note.
 
 > **Running the Docker stack?** Then most of this is already done for you. The setup wizard
 > asks which sign-in methods you want and takes the OAuth client ID and secret, and the S3
@@ -22,7 +22,8 @@ own disk when no bucket is configured. This guide covers the things only an oper
 provision (the OAuth app, optionally the bucket, and the upload manifest), then the config
 that turns it all on. The rest of the server walkthrough (game data for the sim peer, running
 it, the reverse proxy) is in
-[`../SELF_HOSTING.md`](../SELF_HOSTING.md#multiplayer-server).
+[`../SELF_HOSTING.md`](../SELF_HOSTING.md#multiplayer-server), and the no-Docker path in
+[`ADVANCED.md`](ADVANCED.md).
 
 Sign-in is a **choice**, not a fixed rule: single sign-on, a username and password, or both,
 and one account can use either. The public deployment at openmw-web.com sets
