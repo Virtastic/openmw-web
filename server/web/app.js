@@ -1201,7 +1201,7 @@ async function stepTamriel() {
       is not in the folder you just uploaded. It comes in <strong>two</strong> archives:
       <em>Tamriel Rebuilt</em>, the landmass, and <em>Tamriel Data</em>, its meshes and
       textures. Both are needed. Drop them here one at a time,
-      <strong>exactly as you downloaded them</strong> — do not unpack them first. The file
+      <strong>exactly as you downloaded them</strong>. Do not unpack them first: the file
       itself is what tells us which release it is.</p>
     ${raw(found.length ? html`
       <div class="alert alert-success d-flex align-items-start gap-2">
@@ -1282,7 +1282,7 @@ function wireTamriel() {
         ${raw(staged.candidates.length > 1 ? html`
           <p class="small text-secondary mb-2">This download holds
             ${staged.candidates.length} parts. The first is the mod itself; the rest are
-            optional extras that ship alongside it, and they are yours to choose — one of
+            optional extras that ship alongside it, and they are yours to choose: one of
             Tamriel Rebuilt's removes content from the vanilla game on purpose.</p>` : '')}
         ${raw(staged.candidates.map((c, i) => html`
           <label class="d-block border rounded p-2 mb-2">
@@ -2484,7 +2484,7 @@ async function pageGameFiles() {
         <i class="bi bi-check-lg me-1"></i>Save changes</button>` : '')}
     </div>
     ${raw(hasGame ? html`<div class="card-body pb-0"><p class="small text-secondary mb-0">
-      The game itself, and its two expansions. This is not a mod and cannot be removed here —
+      The game itself, and its two expansions. This is not a mod and cannot be removed here;
       switch an expansion off to play without it.</p></div>` : '')}
     <div class="table-responsive"><table class="table table-hover mb-0">
       <thead><tr><th style="width:2rem"></th><th style="width:3rem">Load</th><th>File</th><th></th></tr></thead>
@@ -3757,7 +3757,7 @@ async function pageBackup() {
         <i class="bi bi-download me-1"></i>Download backup</button>
       <p class="small text-secondary mt-3 mb-0">To restore one: stop the server, replace the
         <code>data</code> folder with the contents of the archive, start it again. There is
-        deliberately no restore button — overwriting a live server's accounts and world from a
+        deliberately no restore button: overwriting a live server's accounts and world from a
         browser is not something to put one click away.</p>
     </div></div></div></div>`;
 

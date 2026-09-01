@@ -147,7 +147,7 @@ export async function gate(
   if (!roleAtLeast(ctx.role, need)) {
     log('warn', 'admin.denied', { account: ctx.accountKey, need, have: ctx.role });
     json(res, 403, {
-      error: `Your role (${ctx.role}) cannot do this — it needs ${need}. Ask an owner.`,
+      error: `Your role (${ctx.role}) cannot do this: it needs ${need}. Ask an owner.`,
       need,
     });
     return null;
