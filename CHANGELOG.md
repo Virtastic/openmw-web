@@ -4,6 +4,68 @@ Notable changes to OpenMW-Web. Dates are release dates, newest first.
 
 ## Unreleased
 
+**Setting a server up no longer involves a terminal.** `./setup.sh` starts the stack and opens
+a browser, and everything after that is a wizard: the administrator account, single player or
+multiplayer, how people sign in, who may register, which edition of Morrowind this is, whether
+players bring their own copy or the server hands one out, how the server is reached, where
+uploads are stored, and the game files themselves. Answers are written to the same
+configuration a hand-editor would have produced, and every one of them can be changed
+afterwards from Settings. A server set up from outside its own network is additionally asked
+for a setup key, printed at startup and saved to the data folder, so the first stranger to find
+`/admin` cannot claim it; from your own machine or LAN you are never asked.
+
+**A server can be reached over plain HTTP on a port you choose.** The hosting question used to
+assume the internet. Answering "internal or behind your own proxy" now takes a port number and
+configures the bundled proxy for plain HTTP, which is what a home network, a LAN party, a
+tunnel, or your own reverse proxy in front actually wants. The page says plainly which browsers
+will refuse that: the engine needs shared memory, which browsers grant only on a secure origin,
+so `http://localhost` is fine and `http://` to an IP or a machine name is not.
+
+**Mods install from the dashboard, in an order you control.** Drop a `.zip` or a `.7z` in and
+the server reads what is inside it, shows you the data folders it found with their plugins and
+asset directories, and installs the ones you tick, each into its own folder. There is a list
+with the mods in load order: drag to reorder, switch one off without removing it, untick a
+single plugin to keep a mod's assets and skip its plugin, or remove it entirely. Nexus has no
+packaging standard, so a download routinely carries a core install plus optional extras;
+installing all of them silently is how a game ends up broken somewhere far from the mod that
+did it.
+
+**The dashboard says what overwrites what, while you are dragging.** Two mods providing the
+same file is normal and usually deliberate, and OpenMW's rule is that the one later in the list
+wins. Each mod now carries badges for how many files it replaces and how many of its own are
+overridden, with the pairs spelled out per mod, and they are recomputed as the list moves
+rather than describing the order the page was loaded with. A plugin whose master is not loaded
+is called out separately and in red, because that one is not a preference: the engine aborts at
+startup and the player sees a black screen.
+
+**Tamriel Rebuilt has a setup path of its own.** It is a separate download from the game, in
+two archives (the landmass and its assets), and neither is part of a `Data Files` folder, so
+choosing that edition previously left a server that reported itself complete and ran plain
+Morrowind. The wizard now asks for the archives, and identifies which release they are by the
+SHA-256 of the file rather than its name, because release names vary and every browser and chat
+client renames a download. A release the table has not been told about installs exactly the
+same and says so; refusing anything newer than a hard-coded list would be worse than not naming
+it. A plugin missing its master is reported by name, which is what catches the assets archive
+being forgotten.
+
+**Archives up to 100,000 files are accepted, and big uploads are not cut off.** The reader
+stopped at 20,000 entries, which is under half of Tamriel Data; a listing too large to read was
+silently truncated, so an archive could install looking complete with its last files missing;
+and Node's five-minute request cap aborted any upload slower than that, which on a 2.7 GB
+archive is most connections that are not localhost. All three are fixed, and the guard against
+a client dribbling headers forever is untouched.
+
+**An operator can see, export and import a player's savegames.** Support for "my save is gone"
+previously meant shell access to the storage backend. Saves are listed per account with their
+sizes and dates, downloadable as a file, and restorable by upload, with the quota enforced on
+the way in.
+
+**Streamed game data stops being re-downloaded every session.** The engine reads its data in
+chunks over HTTP Range, and browsers do not put range responses in the ordinary HTTP cache, so
+roughly 300 MB was fetched again on every boot no matter what the server's cache headers said.
+Chunks now persist in the Cache API, keyed so that a re-signed storage URL still hits and a
+replaced file does not.
+
 **The public world stops leaking items into real characters.** It is a social lobby with no
 quest progress and no stakes, but inventory persisted straight out of it — and quest items
 never deplete from a container, so any number of strangers could each take the same artifact

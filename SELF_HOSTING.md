@@ -51,8 +51,10 @@ that, so:
 - **The base game on its own is enough.** Expansions are optional — nothing
   breaks if you don't own them.
 - **Mods work.** Extra `.esm`/`.esp`/`.bsa` dropped in are picked up
-  automatically (alphabetically; `?nomods=1` plays vanilla). A precise custom
-  load order still needs a desktop mod manager.
+  automatically (alphabetically; `?nomods=1` plays vanilla). This path has no
+  dashboard, so a precise custom load order means naming files to sort the way
+  you want, or running the Docker stack below, which has a mod manager that
+  installs archives and lets you order them by dragging.
 - **Nothing is repacked.** Copy the folder as-is; there are no archives to
   build. Files are read in chunks over HTTP Range as the engine needs them, so
   the browser never downloads the whole 1.5 GB up front.
@@ -149,6 +151,11 @@ Three consequences an operator must know up front:
 
 ### Quick start (recommended)
 
+This stack runs **either** mode: the wizard's first question is single player or multiplayer,
+and everything from here down to *The manual path* applies to both. Single-player hosting can
+also be done with the static server at the top of this file, which needs no Docker and has no
+dashboard.
+
 One command, then everything else happens in a browser. You need
 [Docker](https://docs.docker.com/get-started/get-docker/) and nothing else — no Node, no
 compiler, no editing TOML by hand.
@@ -176,9 +183,24 @@ computer or your own LAN you are never asked. It stops working once the first ad
 exists either way.
 
 After that a short wizard covers the rest: single-player or multiplayer, how players sign
-in, which Morrowind content you are running, whether players bring their own game files or
-you supply them, whether the server is reachable from the internet, and where uploads are
-stored. Every answer is written to configuration you can review and change afterwards.
+in, who may register, which Morrowind content you are running, whether players bring their
+own game files or you supply them, how the server is reached, where uploads are stored, and
+the game files themselves. Every answer is written to configuration you can review and change
+afterwards.
+
+Two of those are worth knowing before you answer them:
+
+- **How the server is reached** has two shapes. *Public* wants a domain pointed at this
+  machine and ports 80 and 443 forwarded to it, and fetches a real certificate for you.
+  *Internal or behind your own proxy* is plain HTTP on a port you pick, which is right for a
+  home network, a LAN party, or your own reverse proxy or tunnel in front. The catch is a
+  browser rule rather than ours: the engine needs shared memory, which browsers grant only on
+  a secure origin. `http://localhost` counts as secure and `https://` anything counts, but
+  plain `http://` to an IP or a machine name does not, and players reaching it that way are
+  told the browser is unsupported. Internal mode is therefore right when you play on this
+  machine, or when something in front of it provides HTTPS.
+- **Which Morrowind content** decides what the file checklist demands, and choosing Tamriel
+  Rebuilt adds a step of its own; see *Tamriel Rebuilt* below.
 
 **The server starts before it is ready, on purpose.** With no Morrowind files it comes up,
 serves the dashboard, refuses players with a clear reason, and reports itself unhealthy —
@@ -216,6 +238,85 @@ docker compose run --rm openmw-web node dist/server.mjs --data /data --admin-res
 ```
 
 That clears the password and any two-factor on that account and prints a temporary one.
+
+### Mods
+
+The dashboard's **Game data and mods** page installs mods from an archive, so nothing has to
+be unpacked into `gamedata/` by hand.
+
+Drop a `.zip` or a `.7z` on the page, or pick one. The server reads what is inside without
+extracting it and shows you the data folders it found, each with its plugins, its asset
+archives and its file count. You tick the ones you want. This step exists because Nexus has no
+packaging standard: one download routinely holds a core install, optional textures, and a
+compatibility patch, and installing all of them because they arrived together is how a game
+ends up broken a long way from the mod that broke it. RAR is not supported (the bundled p7zip
+is built without the non-free codec); open it and save it as a `.zip` or `.7z`.
+
+Each mod installs into its own folder under `gamedata/mods/`, and the page lists them in load
+order:
+
+- **Drag to reorder.** Order is file priority: when two mods contain the same file, the one
+  further down the list provides the copy the game uses. The arrow buttons do the same thing
+  for touch and keyboard.
+- **The switch** takes a mod out of the load order without deleting it.
+- **Details** opens what the archive was, what is in the mod, which files it overlaps with
+  and which mod wins each of them, and a checkbox per plugin so you can keep a mod's assets
+  while skipping one of its plugins.
+- **Remove** deletes the folder and everything in it. Saves are untouched, but anything that
+  depended on the mod will not load.
+
+Two things are flagged rather than left for you to discover in the game. A mod that replaces
+files another mod provides is marked with how many, on both mods, and the marks follow the
+list as you drag it. A plugin whose master is not loaded is marked in red, and that one is not
+a matter of taste: Morrowind aborts at startup when a master is missing, and the player sees a
+black screen with no message.
+
+Restart the server after changing mods; the dashboard offers to do it.
+
+Archives may hold up to 100,000 files and the upload cap is 8 GB, which is headroom rather
+than a target. Extraction of a very large `.7z` takes minutes and reports itself as
+"Installing" throughout: the format has no random access, so the whole archive is unpacked
+before the parts you chose are moved into place.
+
+### Tamriel Rebuilt
+
+[Tamriel Rebuilt](https://www.tamriel-rebuilt.org/) is not part of anyone's `Data Files`
+folder, so it is not something the game-data upload can pick up. Choose it on the wizard's
+content step and the wizard asks for it directly, on a step of its own after the base game.
+
+It is **two** downloads and both are needed:
+
+| Archive | What it is |
+| --- | --- |
+| Tamriel Rebuilt | The landmass: `TR_Mainland.esm`, plus optional Faction Integration and Firemoth Remover |
+| Tamriel Data | The meshes, textures and sounds it draws from: `Tamriel_Data.esm` and its assets |
+
+Upload each one **as you downloaded it**, without unpacking. The release is identified by the
+SHA-256 of the archive rather than by its filename, because release names vary between
+versions and browsers, chat clients and mod managers all rename downloads. A release the
+server has not been told about installs exactly the same way and says only that it cannot put
+a version number on it; the hash is printed on the page, which is what to send if you want it
+recognised in a later build.
+
+The optional parts are yours to tick. Firemoth Remover in particular removes a vanilla quest
+island on purpose, which is not something to apply to a server because it happened to be in
+the same archive.
+
+`TR_Mainland.esm` names `Tamriel_Data.esm` as one of its masters, so forgetting the assets
+half is reported by name on the step and on the mods page rather than turning into a continent
+of error markers at runtime.
+
+**Memory.** Tamriel Rebuilt is why the engine is built for wasm64: a 32-bit build cannot
+address enough memory to hold that load order. Players need a browser with `MEMORY64` support
+and a machine with the RAM to match.
+
+### Savegames
+
+Open an account from **Accounts** to see its saves with their sizes and dates. A moderator
+can see that list; downloading a save as a file and importing one back are **owner** only,
+because both move a player's data around. It exists so that "my save is gone" does not require
+shell access to the storage backend. An import is checked against the account's quota, and the
+file's size is read back from storage rather than trusted from the request.
 
 ### The manual path
 

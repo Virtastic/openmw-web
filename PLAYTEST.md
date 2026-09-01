@@ -697,6 +697,87 @@ as-is` instead of throwing. Compiles clean under `em++`.
 The late-filling Major Skills list is the same restore settling, not a separate bug: phase 2 runs
 0.5 s after chargen, so a sheet opened inside that window shows a half-built character.
 
+## 12. The admin dashboard and mod manager
+
+**Nothing in this section has been through a browser.** It is covered by 1013 server tests and
+by direct runs against the real archives, but the wizard is behind a login no automated check
+here can pass, so every screen below is unseen. Start from a clean data folder: the wizard only
+runs once, and half of what follows is about the first run.
+
+### The wizard, once, in order
+
+- [ ] `./setup.sh` opens the dashboard; the first screen asks for an administrator account
+- [ ] From this machine it does **not** ask for a setup key (it should only ask from off-network)
+- [ ] Every step's Continue is disabled until answered, and says why in the greyed-out hint
+- [ ] Back walks the steps in reverse without losing typed answers
+- [ ] Reloading mid-wizard resumes on the same step with the same answers
+- [ ] The step count matches the rail, and does not jump around as you answer
+
+**Hosting.** Answer *Internal* and give a port: check the Caddyfile it writes uses that port and
+the proxy reloads. Then check a nonsense port (0, blank, letters) is refused rather than
+written; a bad listen directive takes the whole proxy down, dashboard included, and there would
+be no way back in from the browser.
+
+**Game data.** Drag the folder *above* `Data Files` (the one called Morrowind), which is what
+people actually reach for. Every file should be accepted, not "skipped, that is normal".
+
+- [ ] The checklist ticks each required file and each loose media folder as they arrive
+- [ ] Music/Sound/Video are checked, not just the .esm and .bsa
+- [ ] Uploading from a phone or another machine on the LAN works (this is the path that used to
+      die at Node's five-minute request cap; a slow link is the interesting case)
+
+### Tamriel Rebuilt
+
+Choose **Tamriel Rebuilt** on the content step; a step for it appears after Data.
+
+- [ ] The step does **not** appear for the other two content profiles
+- [ ] `Tamriel Rebuilt 26.08.23.7z` is recognised by name and version, not just accepted
+- [ ] Its three parts are listed with `00 Core` ticked and the other two **unticked**
+      (`02 Firemoth Remover` deletes a vanilla quest island; it must never install by default)
+- [ ] Installing only `00 Core` leaves a red warning naming `Tamriel_Data.esm` as a missing
+      master, with the drop zone open rather than folded away
+- [ ] `Tamriel_Data_26.08.7z` (885 MB, 54,369 files) uploads and installs; the warning clears
+- [ ] The HD variant (2.7 GB) also uploads. This is the real timeout test
+- [ ] An archive the hash table does not know says so and installs anyway, printing its hash
+- [ ] Skipping the step entirely gets a warning on the Review screen, not a silent "all set"
+
+**Expect a long silent wait on install.** A `.7z` has no random access, so the whole archive
+unpacks before the chosen parts move: 196 s measured for the standard Tamriel Data, longer for
+the HD one. The panel should say "Installing" the entire time. **Report if:** it looks finished,
+errors, or the page appears to die.
+
+### The mod list
+
+Install two mods that overlap (the Morrowind Optimization Patch and Weapon Sheathing do).
+
+- [ ] Row shows a readable name, not the raw Nexus filename with its digit tail
+- [ ] Names read `Mod: 00 Core`, with a colon
+- [ ] **Drag one below the other: the "replaces N" and "N overridden" badges swap sides as it
+      moves**, not after saving. This was the reported bug
+- [ ] The arrow buttons do the same, and keep keyboard focus
+- [ ] Switching a mod off clears its badges immediately
+- [ ] Details opens the overlap sentences, the plugin checkboxes and the archive name
+- [ ] Dragging from *inside* an open Details modal selects text; it must not reorder the list
+- [ ] Unticking one plugin keeps the mod's assets and drops only that plugin from the load order
+- [ ] Remove asks you to type the name, and takes the folder with it
+- [ ] Save, restart, and the order the page showed is the order `openmw.cfg` gets
+
+### Savegames
+
+- [ ] Accounts → a player → their saves, with sizes and dates
+- [ ] Download one; it is a real file
+- [ ] Upload it back; it appears, and a file over the quota is refused with a reason
+- [ ] A moderator can list but not download or import; an owner can do both
+
+### Then actually play it
+
+- [ ] The mods you installed load: the boot log lists `[mods] <name> (N files)` for each
+- [ ] No red "skipped, it needs X" lines
+- [ ] Second boot is faster and re-fetches far less (chunks now persist in the Cache API).
+      Watch the network panel: roughly 300 MB used to come down on every single boot
+- [ ] With Tamriel Rebuilt installed, travel to the mainland and look at it. Error markers
+      everywhere means the assets half is missing or unticked
+
 ## Known open (already triaged — not bugs to re-report)
 - Some textures skip mipmaps (`glGenerateMipmap` warning) → slight distant shimmer — OSG fix pending
 - No MSAA → jagged edges vs desktop — enhancement, deferred

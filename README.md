@@ -45,9 +45,15 @@ cd openmw-web
 The script checks Docker is installed (and points you at the installer if not), starts
 the stack, and opens `https://localhost/admin` in your browser, where a setup wizard
 walks you through everything: your admin account, single player or multiplayer, how
-players sign in, which game files you have, and where the server lives on the network.
-Every setting has plain-language help next to it. See
-[`SELF_HOSTING.md`](SELF_HOSTING.md) for details, and re-run `./setup.sh --update`
+players sign in, which game files you have, and where the server lives on the network
+(a public domain with a certificate fetched for you, or plain HTTP on a port you pick).
+Every setting has plain-language help next to it.
+
+Afterwards the dashboard is where the server is run. It installs **mods** from a `.zip`
+or `.7z`, shows what each one overwrites, and lets you set the load order by dragging;
+it has a setup path for **Tamriel Rebuilt**, which is a separate download in two
+archives; and it can export and re-import a player's **savegames** without shell access.
+See [`SELF_HOSTING.md`](SELF_HOSTING.md) for details, and re-run `./setup.sh --update`
 whenever the dashboard tells you a new release is out.
 
 The `openmw/` tree tracks upstream
@@ -253,7 +259,8 @@ You don't need to build anything to run your own instance. Every
 - Own Morrowind and want it served *with* the site, so players have nothing to pick
   and nothing to upload? Copy your `Data Files` into a `mwdata/` folder next to
   `server.py` and run it with `OPENMW_LAUNCHER=0`. It loads whatever is actually
-  there — base game alone, expansions, mods. See
+  there: base game alone, expansions, mods. (This path has no dashboard; the Docker
+  stack above is the one with the mod manager.) See
   [`SELF_HOSTING.md`](SELF_HOSTING.md#serving-your-own-morrowind-with-the-site).
 - **`openmw-web-src-<tag>.tar.gz`** is the exact source snapshot that built it (the
   GPLv3 Complete Corresponding Source).

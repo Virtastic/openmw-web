@@ -1,12 +1,23 @@
 # Multiplayer setup: SSO + storage locker
 
-Multiplayer sign-in is **SSO-only** in production (`requireSso = true`; no passwords),
-and players' game data lives in the **storage locker** — an S3-compatible bucket, or the
-server's own disk when no bucket is configured. This guide covers the things only an
-operator can provision (the OAuth app, optionally the bucket, and the upload manifest),
-then the config that turns it all on. The rest of the server walkthrough — game data for
-the sim peer, running it, the reverse proxy — is in
+> **Running the Docker stack?** Then most of this is already done for you. The setup wizard
+> asks which sign-in methods you want and takes the OAuth client ID and secret, and the S3
+> endpoint, bucket and keys, in the browser, and writes the configuration itself. What it
+> cannot do is create the OAuth app at Google, Discord or Microsoft, or create the bucket:
+> those are §1 and §2 below, and the wizard shows you the exact redirect URL to paste while
+> you are there. Read §4 only if you are configuring a server by hand.
+
+Players' game data lives in the **storage locker**: an S3-compatible bucket, or the server's
+own disk when no bucket is configured. This guide covers the things only an operator can
+provision (the OAuth app, optionally the bucket, and the upload manifest), then the config
+that turns it all on. The rest of the server walkthrough (game data for the sim peer, running
+it, the reverse proxy) is in
 [`../SELF_HOSTING.md`](../SELF_HOSTING.md#multiplayer-server).
+
+Sign-in is a **choice**, not a fixed rule: single sign-on, a username and password, or both,
+and one account can use either. The public deployment at openmw-web.com sets
+`requireSso = true` because it does not want to hold passwords; a server you run decides for
+itself, in the wizard.
 
 The OAuth app below is the one hard prerequisite nobody can create for you. Storage is
 optional: with no S3 configured the server stores lockers and savegames on its own disk
@@ -121,7 +132,7 @@ In your server's `config.toml` (in the data dir):
 
 ```toml
 [auth]
-requireSso  = true                                   # MP is SSO-only
+requireSso  = true                                   # or false to also allow passwords
 returnUrl   = "http://127.0.0.1:8910/launcher.html"  # your game/launcher URL
 
 [auth.google]
