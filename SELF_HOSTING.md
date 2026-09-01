@@ -188,19 +188,30 @@ own game files or you supply them, how the server is reached, where uploads are 
 the game files themselves. Every answer is written to configuration you can review and change
 afterwards.
 
-Three of the answers are **greyed out**, marked experimental, and cannot be chosen until you
-say so. Multiplayer, handing the game files out from this server, and keeping players' files in
-S3 are each real and each unfinished, and the wizard shows them rather than hiding them so you
-can see what exists and decide. Set `OMW_EXPERIMENTAL` and restart:
+Two of the answers are **greyed out**, marked experimental, and cannot be chosen until you say
+so, and the wizard shows them rather than hiding them so you can see what exists and decide:
+
+| Flag | The answer it unlocks |
+| --- | --- |
+| `multiplayer` | Multiplayer, on the first question |
+| `playerUploads` | "Everyone brings their own copy", on the game-files question |
+
+`playerUploads` is the one whose name is not obvious from the tile. That answer reads like the
+modest option and is the involved one: each player uploads their own Data Files to their own
+storage here and the game streams from it, which means an upload flow, a library per account, a
+hash check against the vanilla manifest, and storage that grows with every player who joins.
+The other answer, where this server publishes the copy you uploaded, is a static file route and
+much better travelled, so it is an ordinary choice.
+
+Set `OMW_EXPERIMENTAL` and restart:
 
 ```bash
-OMW_EXPERIMENTAL=multiplayer docker compose up -d          # or a .env file beside the compose file
-OMW_EXPERIMENTAL=multiplayer,s3 docker compose up -d       # comma separated
-OMW_EXPERIMENTAL=all docker compose up -d                  # every one of them
+OMW_EXPERIMENTAL=multiplayer docker compose up -d               # or a .env file beside the compose file
+OMW_EXPERIMENTAL=multiplayer,playerUploads docker compose up -d # comma separated
+OMW_EXPERIMENTAL=all docker compose up -d                       # both of them
 ```
 
-The names are `multiplayer`, `serveFiles` and `s3`, and each greyed tile names its own. This
-governs only what a **new** setup may choose: a server already configured for any of them keeps
+Each greyed tile names its own flag. This governs only what a **new** setup may choose: a server already configured for any of them keeps
 running exactly as it did, because taking a feature away from a working server through an
 environment variable would be a worse surprise than the one this prevents. The server refuses a
 gated answer even if it is submitted directly, so the greying is a courtesy rather than the

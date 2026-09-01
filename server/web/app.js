@@ -510,8 +510,7 @@ window.addEventListener('popstate', (e) => {
 /** Answers the server will refuse, and the flag that would allow each. */
 const GATED_ANSWERS = [
   ['deploymentMode', 'multiplayer', 'multiplayer'],
-  ['deliveryModel', 'serve', 'serveFiles'],
-  ['storage', 's3', 's3'],
+  ['deliveryModel', 'verify', 'playerUploads'],
 ];
 
 function renderWizard() {
@@ -521,9 +520,7 @@ function renderWizard() {
   // to unanswered here, which puts them on the same step with Continue disabled and the reason
   // written on the tile.
   for (const [key, value, flag] of GATED_ANSWERS) {
-    if (answers[key] === value && !state.experimental?.[flag]) {
-      answers[key] = key === 'storage' ? 'local' : null;
-    }
+    if (answers[key] === value && !state.experimental?.[flag]) answers[key] = null;
   }
   // Persist here rather than at each mutation site: every path that changes an answer or the
   // step ends up calling this, so one line covers all of them. The first version saved only
@@ -861,15 +858,16 @@ function stepDelivery() {
       game's <strong>Data Files</strong> folder, and this is about where their copy comes
       from. It does not change how the game plays.</p>
     ${raw(choice('deliveryModel', 'verify', 'Everyone brings their own copy',
-      'Each person points the game at their own Morrowind on their own machine. Nothing is '
-      + 'sent from here, and this server just checks that everybody is running matching files '
-      + 'so you all see the same world.', 'Usual choice'))}
+      'Each person uploads their own Morrowind to their own storage here once, and the game '
+      + 'streams from it. Nothing of yours is handed out, and the server checks everybody is '
+      + 'running matching files so you all see the same world.',
+      expLock('playerUploads', '') ? '' : 'Usual choice', 'success',
+      expLock('playerUploads', 'Players bringing their own copy through this server')))}
     ${raw(choice('deliveryModel', 'serve', 'This server hands out the files',
       'You upload your Data Files here once and everyone receives them on joining. Easier for '
       + 'the people joining, and it means you are distributing the game, so only pick this if '
       + 'everyone involved owns a copy already (a group of friends who each bought it, for '
-      + 'instance).', '', 'success',
-      expLock('serveFiles', 'Handing the game files out from this server')))}
+      + 'instance).'))}
     ${raw(answers.deploymentMode === 'multiplayer' ? html`
       <div class="vt-section-note mt-3">
         Separately from this answer, <strong>a multiplayer server needs its own copy</strong>,
@@ -1040,8 +1038,7 @@ function stepStorage() {
     ${raw(choice('storage', 's3', 'S3 storage',
       'An S3-compatible account you already have: Amazon S3, Cloudflare R2, Backblaze B2, '
       + 'MinIO or similar. Worth it if this machine has a small disk, or you expect a lot of '
-      + 'people. Needs four values from that provider, below.', '', 'success',
-      expLock('s3', 'Keeping players\' files in S3')))}
+      + 'people. Needs four values from that provider, below.'))}
     ${raw(answers.storage === 's3' ? html`
       <div class="vt-section-note mt-3 mb-3">
         <strong>Where these come from.</strong> Sign in to your storage provider and create a

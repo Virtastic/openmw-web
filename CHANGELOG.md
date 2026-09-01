@@ -15,10 +15,12 @@ for a setup key, printed at startup and saved to the data folder, so the first s
 `/admin` cannot claim it; from your own machine or LAN you are never asked.
 
 **The unfinished answers are shown, greyed out, and off until you ask for them.** Multiplayer,
-handing the game files out from this server, and keeping players' files in S3 are each real and
-each rough, and each was previously offered in the wizard beside answers that have been
-exercised for months. They are now disabled by default and marked experimental, with
-`OMW_EXPERIMENTAL=multiplayer,s3` (or `all`) turning on whichever you want. They are shown
+and the delivery answer where each player uploads their own copy of the game here and streams it
+from their own storage, are both real and both rough, and both were offered in the wizard beside
+answers that have been exercised for months. They are now disabled by default and marked
+experimental, with `OMW_EXPERIMENTAL=multiplayer,playerUploads` (or `all`) turning on whichever
+you want. The delivery answer where this server publishes the copy you uploaded is a static file
+route, and stays an ordinary choice. They are shown
 rather than hidden on purpose: an operator who came here for multiplayer and finds no mention
 of it concludes they have the wrong software, where a greyed tile naming the variable answers
 the question they actually have. Only a **new** setup is affected; a server already configured

@@ -707,8 +707,8 @@ export function adminRoutes(deps: AdminDeps) {
       const on = experimental();
       const gated: [boolean, string][] = [
         [body.deploymentMode === 'multiplayer' && !on.multiplayer, 'Multiplayer'],
-        [body.deliveryModel === 'serve' && !on.serveFiles, 'Serving the game files from here'],
-        [body.storage === 's3' && !on.s3, 'S3 storage'],
+        [body.deliveryModel === 'verify' && !on.playerUploads,
+          'Players bringing their own copy through this server'],
       ];
       const blocked = gated.filter(([hit]) => hit).map(([, name]) => name);
       if (blocked.length > 0) {

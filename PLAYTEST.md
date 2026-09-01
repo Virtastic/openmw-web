@@ -713,13 +713,15 @@ runs once, and half of what follows is about the first run.
 - [ ] Reloading mid-wizard resumes on the same step with the same answers
 - [ ] The step count matches the rail, and does not jump around as you answer
 
-**The experimental answers.** Multiplayer, "this server hands out the files" and S3 storage
-are greyed out by default.
+**The experimental answers.** Multiplayer, and "everyone brings their own copy" (the answer
+where each player uploads their own game data here), are greyed out by default. "This server
+hands out the files" and both storage answers are ordinary choices.
 
-- [ ] All three are **visible** and greyed, not missing; each says which flag turns it on
+- [ ] Both are **visible** and greyed, not missing; each says which flag turns it on
 - [ ] Clicking one does nothing (they are real `disabled` buttons)
+- [ ] S3 storage is **not** greyed: it is only where blobs are kept
 - [ ] Restart with `OMW_EXPERIMENTAL=multiplayer` and only multiplayer becomes selectable
-- [ ] `OMW_EXPERIMENTAL=all` unlocks all three
+- [ ] `OMW_EXPERIMENTAL=all` unlocks both
 - [ ] Pick multiplayer, turn the flag back off, reload mid-wizard: the answer is dropped and
       the step asks again, rather than carrying to a save that refuses it
 - [ ] A server already set up for multiplayer keeps working with the flag off. This is the one
