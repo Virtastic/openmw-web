@@ -1275,7 +1275,7 @@ function wireTamriel() {
       const choices = staged.candidates.map((c) => ({
         path: c.path,
         slug: c.suggestedSlug,
-        name: staged.candidates.length > 1 && c.path ? `${label} — ${c.path}` : label,
+        name: staged.candidates.length > 1 && c.path ? `${label}${NAME_SEP}${c.path}` : label,
       }));
       const files = staged.candidates.reduce((n, c) => n + c.files, 0);
       installPhase(stage, 'Installing', `unpacking ${files} file${files === 1 ? '' : 's'}`);
@@ -2705,7 +2705,7 @@ function wireMods(m) {
           slug: c.suggestedSlug,
           // With several parts chosen they become separate mods, so each needs a name that
           // tells them apart; one part takes the name the operator typed.
-          name: staged.candidates.length > 1 && c.path ? `${name} — ${c.path}` : name,
+          name: staged.candidates.length > 1 && c.path ? `${name}${NAME_SEP}${c.path}` : name,
         }));
       if (!choices.length) { toast('Tick at least one folder to install.', 'err'); return; }
       // The panel is REPLACED rather than the button merely disabled. Extraction is the longest
@@ -2808,6 +2808,9 @@ function wireMods(m) {
   }
 }
 
+/** Joins a mod's name to the folder inside the archive it came from. */
+const NAME_SEP = ': ';
+
 const sizeOf = (n) => (n >= 1073741824 ? `${(n / 1073741824).toFixed(1)} GB`
   : n >= 1048576 ? `${Math.round(n / 1048576)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
 
@@ -2841,12 +2844,17 @@ function modsCard(m, editable) {
   const needs = group(m.missingMasters, 'mod');
 
   // Stored names are routinely the raw Nexus download filename ("Cool Mod-45384-1-18-0-
-  // 1751572864.7z — 00 Core"). The row shows a readable name; the exact original, and every
+  // 1751572864.7z: 00 Core"). The row shows a readable name; the exact original, and every
   // explanation, lives in the details modal so the list itself stays scannable.
+  //
+  // BOTH SEPARATORS ARE SPLIT, one is written. Mods installed before the separator became a
+  // colon still have an em dash in the name stored in modlist.json, and rewriting somebody's
+  // saved names to change a punctuation mark is not worth doing; rendering them the new way
+  // costs one alternation and leaves the file alone.
   const pretty = (name) => {
-    const parts = String(name).split(' — ');
+    const parts = String(name).split(/ — |: /);
     parts[0] = (parts[0].replace(/\.(zip|7z|rar)$/i, '').replace(/(-\d+)+$/, '').trim()) || parts[0];
-    return parts.filter(Boolean).join(' — ');
+    return parts.filter(Boolean).join(NAME_SEP);
   };
 
   const card = (mod, i) => {

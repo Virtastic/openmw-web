@@ -528,6 +528,19 @@ test('the row shows a readable name, not the raw Nexus filename', () => {
   assert.ok(card[0].includes(String.raw`replace(/(-\d+)+$/, '')`), 'digit-tail strip missing');
 });
 
+test('a name and the folder it came from are joined by a colon, old or new', () => {
+  // The separator used to be an em dash, which reads as a pause in a sentence rather than a
+  // label. Names already in modlist.json keep theirs — rewriting saved names over punctuation
+  // is not worth doing — so the display has to render both and write one.
+  const pretty = /const pretty = \(name\) => \{[\s\S]*?\n  \};/.exec(app)!;
+  assert.ok(pretty[0].includes(String.raw`split(/ — |: /)`),
+    'both separators must be split, or a mod installed before the change loses its strip');
+  assert.ok(pretty[0].includes('join(NAME_SEP)'));
+  assert.ok(app.includes("const NAME_SEP = ': ';"));
+  // And nothing writes the old one any more.
+  assert.doesNotMatch(app, /` — \$\{c\.path\}`/);
+});
+
 test('conflicts are badges on the row and sentences only in the modal', () => {
   const card = /const card = \(mod, i\) => \{[\s\S]*?\n  \};/.exec(app)!;
   assert.match(card[0], /badge text-bg-warning">replaces \$\{winCount\}/);
