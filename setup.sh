@@ -120,7 +120,7 @@ fi
 # ---------------------------------------------------------------------------------------
 step "Preparing folders"
 
-mkdir -p data gamedata client
+mkdir -p data gamedata
 if [ ! -f .env ]; then
   cat > .env <<'ENVEOF'
 # Settings the containers read at startup. Safe to edit; re-run ./setup.sh afterwards.
@@ -137,8 +137,23 @@ fi
 
 if [ -z "$(ls -A gamedata 2>/dev/null)" ]; then
   warn "./gamedata is empty."
-  say "   Copy your Morrowind files there (Morrowind.esm and Morrowind.bsa at minimum)."
-  say "   You can do that later — the server will start and tell you what is missing."
+  say "   The setup wizard has an upload step: drag your Data Files folder into the browser"
+  say "   when it asks. Copying the files into ./gamedata yourself works too. Either can"
+  say "   wait — the server starts and tells you what is missing."
+fi
+
+# THE ENGINE IS NOT IN THE REPOSITORY. play/ carries the game page and its scripts, but
+# openmw.js/.wasm/.data are build outputs (~500 MB of them) and are gitignored, so a fresh
+# clone serves a page with no engine behind it: the dashboard works, the game does not, and
+# the failure is a boot screen that never finishes — nothing anywhere says why. Say it here,
+# where it can still be fixed before anyone is confused.
+if [ ! -f play/openmw.wasm ]; then
+  warn "The game engine is not in ./play (openmw.wasm is missing)."
+  say "   The admin dashboard will work, but nobody can PLAY until it is there."
+  say "   Download openmw-web-<version>.zip from:"
+  say "     https://github.com/Virtastic/openmw-web/releases"
+  say "   and unzip its contents into ./play (it is the same layout). Then reload the page —"
+  say "   no restart needed, the folder is read live."
 fi
 
 # ---------------------------------------------------------------------------------------

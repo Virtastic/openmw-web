@@ -732,6 +732,14 @@ the proxy reloads. Then check a nonsense port (0, blank, letters) is refused rat
 written; a bad listen directive takes the whole proxy down, dashboard included, and there would
 be no way back in from the browser.
 
+- [ ] Finishing the wizard with *Internal* from `https://localhost/admin` hands you to
+      `http://localhost/admin` showing the restart screen, instead of waiting forever on the
+      https page whose listener the save just removed
+
+**The engine warning.** In a fresh clone (no `play/openmw.wasm`), `./setup.sh` must warn that
+the engine is missing and name the Releases zip and the `play/` folder. After unzipping the
+release into `play/`, the game page must serve without any restart.
+
 **Game data.** Drag the folder *above* `Data Files` (the one called Morrowind), which is what
 people actually reach for. Every file should be accepted, not "skipped, that is normal".
 

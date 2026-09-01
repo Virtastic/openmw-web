@@ -112,7 +112,7 @@ if ($busy.Count -gt 0) {
 # ---------------------------------------------------------------------------------------
 Write-Step "Preparing folders"
 
-foreach ($d in 'data', 'gamedata', 'client') {
+foreach ($d in 'data', 'gamedata') {
   if (-not (Test-Path $d)) { New-Item -ItemType Directory -Path $d | Out-Null }
 }
 
@@ -135,8 +135,23 @@ S3_SECRET_ACCESS_KEY=
 
 if (-not (Get-ChildItem 'gamedata' -ErrorAction SilentlyContinue)) {
   Write-Warn ".\gamedata is empty."
-  Write-Host "   Copy your Morrowind files there (Morrowind.esm and Morrowind.bsa at minimum)."
-  Write-Host "   You can do that later - the server will start and tell you what is missing."
+  Write-Host "   The setup wizard has an upload step: drag your Data Files folder into the browser"
+  Write-Host "   when it asks. Copying the files into .\gamedata yourself works too. Either can"
+  Write-Host "   wait - the server starts and tells you what is missing."
+}
+
+# THE ENGINE IS NOT IN THE REPOSITORY. play/ carries the game page and its scripts, but
+# openmw.js/.wasm/.data are build outputs (~500 MB of them) and are gitignored, so a fresh
+# clone serves a page with no engine behind it: the dashboard works, the game does not, and
+# the failure is a boot screen that never finishes - nothing anywhere says why. Say it here,
+# where it can still be fixed before anyone is confused.
+if (-not (Test-Path 'play\openmw.wasm')) {
+  Write-Warn "The game engine is not in .\play (openmw.wasm is missing)."
+  Write-Host "   The admin dashboard will work, but nobody can PLAY until it is there."
+  Write-Host "   Download openmw-web-<version>.zip from:"
+  Write-Host "     https://github.com/Virtastic/openmw-web/releases"
+  Write-Host "   and unzip its contents into .\play (it is the same layout). Then reload the page -"
+  Write-Host "   no restart needed, the folder is read live."
 }
 
 # ---------------------------------------------------------------------------------------

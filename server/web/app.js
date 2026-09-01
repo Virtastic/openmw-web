@@ -1519,6 +1519,19 @@ function stepReview() {
       clearWizard();
       toast('Settings saved. Restarting the server…');
       await api('/restart', { method: 'POST' });
+      // THE SAVE MAY HAVE MOVED THE FRONT DOOR. Choosing internal hosting rewrites the proxy
+      // to plain HTTP on the chosen port, and Caddy applies that within seconds — so the
+      // https origin this page is running on is about to stop answering, and polling it
+      // would sit on the restart screen forever. Hand the operator to the new address; the
+      // #restarting fragment makes the fresh page show this same waiting sheet.
+      if (answers.hosting === 'internal') {
+        const port = Number(answers.httpPort) || 80;
+        const dest = `http://${location.hostname}${port === 80 ? '' : `:${port}`}`;
+        if (dest !== location.origin) {
+          location.href = `${dest}/admin#restarting`;
+          return;
+        }
+      }
       waitForRestart();
     } catch (e) { toast(e.message, 'danger'); }
   } });
@@ -4099,5 +4112,14 @@ $('#btnLogout').onclick = async () => {
   go('#login');
 };
 
-await refreshState();
-await route();
+// Arriving FROM the wizard's save, on a new origin: the old page redirected here because
+// its own origin was about to stop answering (see the internal-hosting branch of the review
+// step). The server is mid-restart, so booting normally would show a sign-in form that
+// errors until it comes back; show the same waiting sheet the old page would have.
+if (location.hash === '#restarting') {
+  history.replaceState(null, '', location.pathname);
+  waitForRestart();
+} else {
+  await refreshState();
+  await route();
+}

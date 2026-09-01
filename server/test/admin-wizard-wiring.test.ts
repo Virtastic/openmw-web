@@ -52,3 +52,29 @@ test('the step rail has a label for every step', () => {
   assert.ok(labels, 'STEP_LABEL not found');
   assert.deepEqual(steps.filter((s) => !new RegExp(`\\b${s}:`).test(labels[0])), []);
 });
+
+// --- the save that moves the front door ----------------------------------------------------
+//
+// Choosing internal hosting rewrites the proxy to plain HTTP, and Caddy applies it within
+// seconds — so the https origin the wizard is running on stops answering. Polling it for the
+// restart, which is what every other save does, would sit on the loading sheet forever.
+
+test('finishing the wizard on internal hosting hands over to the new origin', () => {
+  assert.ok(app.includes("if (answers.hosting === 'internal') {"),
+    'the review save must consider that its own origin is about to die');
+  assert.ok(app.includes('location.href = `${dest}/admin#restarting`;'),
+    'the operator must be sent to the address that will answer');
+  // Only when the origin actually changes: saving internal from http://localhost:80 stays put.
+  assert.ok(app.includes('if (dest !== location.origin) {'));
+});
+
+test('the new origin shows the restart sheet, not a sign-in form that errors', () => {
+  // The redirected page arrives mid-restart. Booting normally would paint a login form whose
+  // every attempt fails until the server is back, which reads as broken; #restarting routes
+  // it into the same waiting sheet the old page would have shown.
+  assert.ok(app.includes("if (location.hash === '#restarting') {"));
+  const boot = app.slice(app.indexOf("if (location.hash === '#restarting') {"));
+  assert.ok(boot.includes('waitForRestart();'));
+  assert.ok(boot.includes("history.replaceState(null, '', location.pathname);"),
+    'the fragment must not survive into bookmarks and reloads');
+});

@@ -44,10 +44,16 @@ cd openmw-web
 
 The script checks Docker is installed (and points you at the installer if not), starts
 the stack, and opens `https://localhost/admin` in your browser, where a setup wizard
-walks you through everything: your admin account, single player or multiplayer, how
-players sign in, which game files you have, and where the server lives on the network
-(a public domain with a certificate fetched for you, or plain HTTP on a port you pick).
-Every setting has plain-language help next to it.
+walks you through everything — your game files included, which you drag into the browser
+when it asks. One thing a `git clone` does not contain is the compiled engine (it is ~500 MB
+of build output): grab `openmw-web-<tag>.zip` from
+[Releases](https://github.com/Virtastic/openmw-web/releases) and unzip it into `play/`, or
+the game page will have nothing to boot. The script reminds you if it is missing.
+
+The wizard itself covers your admin account, single player or multiplayer, how players
+sign in, your game files, and where the server lives on the network (a public domain with
+a certificate fetched for you, or plain HTTP on a port you pick). Every setting has
+plain-language help next to it.
 
 Multiplayer is **experimental and off by default**, and so is the option where each player
 uploads their own copy of the game to this server. The wizard shows both greyed out;

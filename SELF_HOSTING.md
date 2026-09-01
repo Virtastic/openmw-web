@@ -211,9 +211,10 @@ OMW_EXPERIMENTAL=multiplayer,playerUploads docker compose up -d # comma separate
 OMW_EXPERIMENTAL=all docker compose up -d                       # both of them
 ```
 
-Each greyed tile names its own flag. This governs only what a **new** setup may choose: a server already configured for any of them keeps
-running exactly as it did, because taking a feature away from a working server through an
-environment variable would be a worse surprise than the one this prevents. The server refuses a
+Each greyed tile names its own flag. This governs only what a **new** setup may choose: a
+server already configured for any of them keeps running exactly as it did, because taking a
+feature away from a working server through an environment variable would be a worse surprise
+than the one this prevents. The server refuses a
 gated answer even if it is submitted directly, so the greying is a courtesy rather than the
 lock.
 
@@ -237,14 +238,20 @@ rather than exiting, which would leave you with a failure and no way to reach th
 explains it. `docker compose ps` showing `unhealthy` on a fresh install is expected; the
 dashboard tells you exactly what is missing.
 
-**Copy your Morrowind files into `gamedata/`** next to `docker-compose.yml` — at minimum
-`Morrowind.esm` and `Morrowind.bsa`, plus `Tribunal`/`Bloodmoon` if you own them. The
-wizard shows you which files it found and which are missing. You can do this before or
-after running the script; the server starts either way and tells you what it needs.
+**Your Morrowind files** go in through the wizard: its game-data step takes the whole
+`Data Files` folder dragged into the browser, shows a checklist of what arrived, and tells you
+what is missing. Copying the files into `gamedata/` next to `docker-compose.yml` yourself does
+the same thing, before or after running the script — the server starts either way and says
+what it needs.
 
-To serve the game client from the same host (which multiplayer requires), unpack a release
-zip into `client/`. Caddy serves those files at `/` and hands everything else to the
-server. Leave it empty to run server-only and point players at a client you host elsewhere.
+**The game engine is a separate download when you start from a `git clone`.** The repository
+carries the game page (`play/`) but not the compiled engine — `openmw.js`, `openmw.wasm` and
+`openmw.data` are build outputs, about half a gigabyte, and are gitignored. Without them the
+dashboard works and the game page does not. Download `openmw-web-<version>.zip` from
+[Releases](https://github.com/Virtastic/openmw-web/releases) and unzip its contents into
+`play/` — it is the same layout, so let it merge. No restart needed; the folder is served
+live. (`setup.sh` warns you when the engine is missing.) Building it yourself instead is the
+*Building* section of the README.
 
 Useful afterwards:
 
@@ -256,9 +263,15 @@ Useful afterwards:
 **HTTPS.** Answer the wizard's hosting question with your domain and a real certificate is
 fetched automatically, usually within seconds — the dashboard writes the proxy's whole
 configuration and the proxy reloads itself, so there is no file to edit and nothing to
-restart. Without a domain it serves a
-certificate it signed itself: still encrypted, but your browser warns on the first visit.
-That warning is expected, and the dashboard says so rather than leaving you guessing.
+restart. Without a domain it serves a certificate it signed itself: still encrypted, but your
+browser warns on the first visit. That warning is expected, and the dashboard says so rather
+than leaving you guessing.
+
+**If you choose *Internal* hosting, the address changes.** That answer turns HTTPS off — the
+proxy serves plain HTTP on the port you picked — so when the wizard saves, the dashboard moves
+from `https://localhost/admin` to `http://localhost/admin` (with `:port` if you chose one other
+than 80). The page hands you over itself; the thing to know is that the old `https://` address
+is *supposed* to stop answering, and bookmarks want updating.
 
 ### The dashboard, page by page
 
