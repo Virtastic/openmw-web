@@ -2,20 +2,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
 // Which half-finished features the setup wizard is allowed to offer.
 //
-// Two of them, and they are the two that are genuinely rough.
+// One of them: multiplayer. Morrowind is a single-player game, and making it not one is
+// where most of the sharp edges live; offering it beside answers that have been exercised
+// for months invites somebody to build a campaign on it and find out afterwards.
 //
-// Multiplayer is a real addition rather than a port: Morrowind is a single-player game, and
-// making it not one is where most of the sharp edges live.
-//
-// `playerUploads` is the delivery answer "everyone brings their own copy", which reads like the
-// modest option and is the involved one. It means each player uploads their own Data Files to
-// their own locker and streams the game from it: an upload wizard, a per-account library, a
-// hash check against the vanilla manifest, and storage that grows with every player who joins.
-// The other answer, the server publishing the operator's own library, is a static file route
-// and much better travelled.
-//
-// Offering either beside answers that have been exercised for months invites somebody to build
-// a campaign on one and find out afterwards.
+// (A second flag, playerUploads, briefly gated the delivery answer where each player uploads
+// their own copy of the game to a per-account locker here. That question is gone from the
+// dashboard entirely now — the server always supplies the game files, and personal cloud
+// copies are the game launcher's own feature — so the flag went with it.)
 //
 // So they are SHOWN AND DISABLED rather than hidden. Hiding them would make the wizard read as
 // though the feature does not exist, which is its own kind of lie, and an operator who came
@@ -23,11 +17,10 @@
 // the variable that turns it on tells the truth: this exists, it is not finished, and here is
 // how to say yes anyway.
 //
-// One variable, a comma-separated list, because these are the same decision made twice and
-// two variables would be two things to document and two to forget:
+// One variable, a comma-separated list, so a second experiment some day is a new name rather
+// than a new variable:
 //
 //   OMW_EXPERIMENTAL=multiplayer
-//   OMW_EXPERIMENTAL=multiplayer,playerUploads
 //   OMW_EXPERIMENTAL=all
 //
 // Nothing here affects a server that is ALREADY configured. This gates what the wizard may
@@ -36,7 +29,7 @@
 // variable would be a far worse surprise than the one this prevents.
 
 /** The gated features, by the name used in OMW_EXPERIMENTAL. */
-export const EXPERIMENTS = ['multiplayer', 'playerUploads'] as const;
+export const EXPERIMENTS = ['multiplayer'] as const;
 export type Experiment = (typeof EXPERIMENTS)[number];
 
 /** The variable an operator sets, named in the UI so the answer travels with the question. */
@@ -46,8 +39,8 @@ export const EXPERIMENTAL_ENV = 'OMW_EXPERIMENTAL';
  * Parse the list. Unknown names are ignored rather than refused: a typo should not stop the
  * server booting, and a name from a future version arriving in an older one is not an error.
  *
- * Accepts the flag names in any case and with either separator people actually type, so
- * `playerUploads`, `playeruploads` and `player-uploads` all mean the same thing.
+ * Accepts the flag names in any case and with either separator people actually type
+ * (underscores and dashes are stripped before matching).
  */
 export function parseExperimental(raw: string | undefined): Set<Experiment> {
   const out = new Set<Experiment>();
@@ -69,5 +62,5 @@ export function parseExperimental(raw: string | undefined): Set<Experiment> {
  */
 export function experimental(): Record<Experiment, boolean> {
   const on = parseExperimental(process.env[EXPERIMENTAL_ENV]);
-  return { multiplayer: on.has('multiplayer'), playerUploads: on.has('playerUploads') };
+  return { multiplayer: on.has('multiplayer') };
 }

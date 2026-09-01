@@ -108,10 +108,9 @@ export const DERIVED_FIELDS = [
   'locker.publicBase',
   // [setup] is the wizard's record of the answers, and only SOME of it is live configuration.
   //
-  // domain, hosting, deploymentMode, deliveryModel and contentProfile are read at runtime:
-  // they decide the proxy config, whether the server publishes its game files, which boot
-  // mode the front door hands the player, and what the file checklist expects. Those are real
-  // settings and are offered below.
+  // domain, hosting, deploymentMode and contentProfile are read at runtime: they decide the
+  // proxy config, which boot mode the front door hands the player, and what the file
+  // checklist expects. Those are real settings and are offered below.
   //
   // The rest are a RECORD of an answer whose effect was written somewhere else at the time.
   // storage chose between filesystem and S3, but the live knobs are [locker] endpoint and
@@ -119,6 +118,10 @@ export const DERIVED_FIELDS = [
   // would change nothing at all while looking exactly like it had, which is worse than not
   // offering it — the real knobs are on this same page, one section away.
   'setup.storage', 'setup.loginMethods', 'setup.registration',
+  // Not a question any more, anywhere: the server always supplies the game files ('serve'),
+  // and per-player cloud copies belong to the game launcher. Old configs saying 'verify' are
+  // still honoured at runtime; they just cannot be produced from here.
+  'setup.deliveryModel',
   // Clearing this reopens the first-run gate over a configured server, which is a lockout
   // dressed as a checkbox.
   'setup.completed',

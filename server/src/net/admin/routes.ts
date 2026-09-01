@@ -706,11 +706,13 @@ export function adminRoutes(deps: AdminDeps) {
       // a run begun while a feature was enabled can be finished after it was turned off, and
       // this endpoint is reachable without the page at all. Refused here, where it is a fact
       // about the server rather than about the markup.
+      // The delivery question is gone from the wizard: this server always supplies the game
+      // files, and personal cloud copies are the launcher's own feature. Forced here rather
+      // than trusted, because the endpoint is reachable without the page.
+      body.deliveryModel = 'serve';
       const on = experimental();
       const gated: [boolean, string][] = [
         [body.deploymentMode === 'multiplayer' && !on.multiplayer, 'Multiplayer'],
-        [body.deliveryModel === 'verify' && !on.playerUploads,
-          'Players bringing their own copy through this server'],
       ];
       const blocked = gated.filter(([hit]) => hit).map(([, name]) => name);
       if (blocked.length > 0) {

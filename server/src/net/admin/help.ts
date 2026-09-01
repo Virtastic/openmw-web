@@ -159,10 +159,6 @@ export const HELP: Record<string, FieldHelp> = {
     text: 'Whether this is a private one-person world ("single") or a shared one ("multiplayer"). It decides which boot mode the sign-in page hands the player, whether the server needs its own copy of the game, and how much of this dashboard applies.',
     danger: 'Switching to multiplayer means the server has to run the world itself: it needs the game files and the simulator, and it will refuse to start without them.',
   },
-  'setup.deliveryModel': {
-    text: 'Where players get Morrowind from. "serve" publishes the Data Files you uploaded here, so nobody else has to supply anything. "verify" means each player brings their own copy and this server only checks that everyone matches.',
-    danger: 'Choosing "serve" means this server distributes the game. Only use it where everyone involved already owns a copy.',
-  },
   'setup.contentProfile': {
     text: 'Which edition the game data check expects: "morrowind", "expansions" (Tribunal and Bloodmoon), or "tamriel-rebuilt". It sets what the Game data page treats as missing.',
   },

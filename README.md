@@ -58,10 +58,10 @@ sign in, your game files, and where the server lives on the network (a public do
 a certificate fetched for you, or plain HTTP on a port you pick). Every setting has
 plain-language help next to it.
 
-Multiplayer is **experimental and off by default**, and so is the option where each player
-uploads their own copy of the game to this server. The wizard shows both greyed out;
-`OMW_EXPERIMENTAL=multiplayer,playerUploads` (or `all`) turns them on. Single player, with the
-game files you supply, needs nothing set.
+Multiplayer is **experimental and off by default**: the wizard shows it greyed out, and
+`OMW_EXPERIMENTAL=multiplayer` turns it on. Single player needs nothing set. The server
+supplies the game files to everyone who plays on it — you upload your Data Files once in the
+wizard; per-player cloud copies are the game launcher's own feature, not a server option.
 
 Afterwards the dashboard is where the server is run: seventeen pages behind three roles,
 covering settings, accounts, logs, an audit trail, backups, maintenance and restarts. It

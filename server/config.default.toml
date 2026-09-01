@@ -418,16 +418,11 @@ hosting = ""
 # running multiplayer keeps running whatever the variable says, including this file being
 # edited by hand.
 deploymentMode = ""
-# "verify" or "serve", and the names undersell the difference.
-#
-# "serve" publishes the Data Files the operator uploaded, and players receive them on joining:
-# a static route over one library.
-#
-# "verify" means each player uploads their OWN copy to their own locker here and the game
-# streams from it, so it brings an upload flow, a library per account, a hash check against the
-# vanilla manifest, and storage that grows with every player. That is why it is EXPERIMENTAL:
-# the wizard greys it out unless OMW_EXPERIMENTAL contains "playerUploads". Same as above, this
-# gates a new setup only.
+# Always "serve" from the wizard: the server publishes the Data Files the operator uploaded,
+# and players receive them on joining. The old "verify" answer — each player uploading their
+# own copy to a per-account locker here — is no longer offered anywhere in the dashboard
+# (per-player cloud copies are the game launcher's own feature), but a config that already
+# says "verify" is still honoured at runtime.
 deliveryModel = ""
 # "local" or "s3": where uploaded files live.
 storage = ""

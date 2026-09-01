@@ -184,8 +184,9 @@ test('no settings field claims the shared token grants owner rights', () => {
 
 test('the deployment answers that are read at runtime are editable', () => {
   // Closing the wizard left the domain editable by nothing, while Help still said to go and
-  // change it there. These five are read at runtime: proxy config, boot mode, whether the
-  // server publishes its files, and what the data checklist expects.
+  // change it there. These are read at runtime: proxy config, boot mode, and what the data
+  // checklist expects. deliveryModel is deliberately NOT here any more: the server always
+  // supplies the game files, so there is no delivery control to offer.
   const v = settingsView(mkdtempSync(join(tmpdir(), 'set-')), {
     setup: {
       domain: '', hosting: 'internal', httpPort: 80, deploymentMode: 'single',
@@ -197,7 +198,7 @@ test('the deployment answers that are read at runtime are editable', () => {
   assert.ok(setup, '[setup] must render as a section');
   const keys = setup.fields.map((f) => f.key).sort();
   assert.deepEqual(keys,
-    ['contentProfile', 'deliveryModel', 'deploymentMode', 'domain', 'hosting', 'httpPort']);
+    ['contentProfile', 'deploymentMode', 'domain', 'hosting', 'httpPort']);
 });
 
 test('the answers that are only a RECORD are not offered', () => {

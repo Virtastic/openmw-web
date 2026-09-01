@@ -106,6 +106,8 @@ test('accounts/create makes a working dashboard login in one step, owner only', 
 test('wizard answers persist whole, and /state carries the setup record', async (t) => {
   const { call, token, dataDir } = await boot(t);
   const applied = await call('/setup', { method: 'POST', token, body: {
+    // deliveryModel 'verify' ON PURPOSE: the question is gone from the wizard and the server
+    // must force 'serve' even when the request claims otherwise.
     deploymentMode: 'single', contentProfile: 'expansions', deliveryModel: 'verify',
     hosting: 'internal', storage: 'local', loginMethods: ['password'], completed: true,
   } });
@@ -118,7 +120,7 @@ test('wizard answers persist whole, and /state carries the setup record', async 
   const written = readDashboardTree(dataDir) as { setup?: Record<string, unknown> };
   assert.equal(written.setup?.deploymentMode, 'single');
   assert.equal(written.setup?.contentProfile, 'expansions');
-  assert.equal(written.setup?.deliveryModel, 'verify');
+  assert.equal(written.setup?.deliveryModel, 'serve');
   assert.equal(written.setup?.hosting, 'internal');
   assert.equal(written.setup?.storage, 'local');
   assert.deepEqual(written.setup?.loginMethods, ['password']);
@@ -143,7 +145,7 @@ test('wizard answers persist whole, and /state carries the setup record', async 
   assert.ok(setup, '[setup] should be editable now the wizard is first-run only');
   const keys = setup.fields.map((f) => f.key).sort();
   assert.deepEqual(keys,
-    ['contentProfile', 'deliveryModel', 'deploymentMode', 'domain', 'hosting', 'httpPort']);
+    ['contentProfile', 'deploymentMode', 'domain', 'hosting', 'httpPort']);
 });
 
 test('wizard SSO credentials land in config, and read back masked', async (t) => {

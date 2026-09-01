@@ -7,8 +7,7 @@
 > OMW_EXPERIMENTAL=multiplayer docker compose up -d
 > ```
 >
-> Add `,playerUploads` if you also want the delivery answer where each player uploads their own
-> copy of the game here. Everything in this guide assumes you have done that; see
+> Everything in this guide assumes you have done that; see
 > [`../SELF_HOSTING.md`](../SELF_HOSTING.md#quick-start-recommended) for the full note.
 
 > **Running the Docker stack?** Then most of this is already done for you. The setup wizard

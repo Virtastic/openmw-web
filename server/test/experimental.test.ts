@@ -2,11 +2,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
 // Which wizard answers a fresh server is allowed to offer.
 //
-// Two of them: multiplayer, and the delivery answer where each player uploads their own copy
-// of the game to their own locker here. They are SHOWN AND DISABLED rather than hidden: an
-// operator who came here for multiplayer and finds no mention of it concludes they downloaded
-// the wrong software, where a greyed tile naming the variable that turns it on answers the
-// question they actually have.
+// One of them: multiplayer. It is SHOWN AND DISABLED rather than hidden: an operator who
+// came here for multiplayer and finds no mention of it concludes they downloaded the wrong
+// software, where a greyed tile naming the variable that turns it on answers the question
+// they actually have.
+//
+// The delivery question (and its playerUploads flag) is gone entirely: the server always
+// supplies the game files, and per-player cloud copies are the game launcher's own feature.
+// Half of this file now pins that it STAYS gone from the operator surfaces.
 //
 // The greying is not the gate, though. The wizard restores its answers from the browser and
 // the endpoint is reachable without the page, so the refusal has to live on the server; these
@@ -38,15 +41,9 @@ test('nothing is enabled by default, which is the whole point', () => {
   withEnv('', () => assert.equal(experimental().multiplayer, false));
 });
 
-test('one name enables one feature, and only that one', () => {
+test('one name enables one feature', () => {
   withEnv('multiplayer', () => {
-    assert.deepEqual(experimental(), { multiplayer: true, playerUploads: false });
-  });
-});
-
-test('several are comma separated, and "all" is a shorthand', () => {
-  withEnv('multiplayer,playerUploads', () => {
-    assert.deepEqual(experimental(), { multiplayer: true, playerUploads: true });
+    assert.deepEqual(experimental(), { multiplayer: true });
   });
   withEnv('all', () => {
     for (const name of EXPERIMENTS) assert.equal(experimental()[name], true);
@@ -56,8 +53,8 @@ test('several are comma separated, and "all" is a shorthand', () => {
 test('it is forgiving about how the name is typed, and about names it does not know', () => {
   // A typo must not stop the server booting, and a flag from a newer version arriving in an
   // older one is not an error either.
-  for (const spelling of ['playerUploads', 'playeruploads', 'player_uploads', 'PLAYER-UPLOADS', ' playerUploads ']) {
-    assert.equal(parseExperimental(spelling).has('playerUploads'), true, `rejected: ${spelling}`);
+  for (const spelling of ['multiplayer', 'MULTIPLAYER', 'multi_player', 'multi-player', ' multiplayer ']) {
+    assert.equal(parseExperimental(spelling).has('multiplayer'), true, `rejected: ${spelling}`);
   }
   assert.deepEqual([...parseExperimental('nonsense,multiplayer')], ['multiplayer']);
   assert.equal(parseExperimental('nonsense').size, 0);
@@ -86,16 +83,15 @@ test('a state that never loaded reads as locked, not as available', () => {
   assert.match(fn[0], /if \(state\.experimental\?\.\[flag\]\) return '';/);
 });
 
-test('the gated answer is the one where players upload, not the one where the server serves', () => {
-  // These were the wrong way round at first, and the client settles it: WITHOUT mwdata=1 the
-  // game reads the PLAYER'S locker, so "everyone brings their own copy" is the upload path —
-  // an upload wizard, a per-account library, a manifest hash check, and storage that grows
-  // with every player who joins. "This server hands out the files" is a static route over the
-  // operator's own library and is much better travelled, so it stays an ordinary answer.
+test('the delivery question is gone from the wizard, not merely gated', () => {
+  // The server always supplies the game files; per-player cloud copies belong to the game
+  // launcher. A greyed tile would still be a question, so there is no tile at all.
   assert.match(app, /expLock\('multiplayer', 'Multiplayer'\)/);
-  assert.match(app, /expLock\('playerUploads', 'Players bringing their own copy through this server'\)/);
-  assert.doesNotMatch(app, /expLock\('serveFiles'/, 'serve is not the upload path');
-  assert.doesNotMatch(app, /expLock\('s3'/, 'S3 is where blobs are kept, not a way of uploading them');
+  assert.doesNotMatch(app, /stepDelivery/, 'the delivery step must not exist');
+  assert.doesNotMatch(app, /playerUploads/, 'no trace of the removed flag in the page');
+  assert.doesNotMatch(app, /'delivery',/, 'no delivery entry in the step list');
+  // The answer still travels, as the one constant value the server also forces.
+  assert.match(app, /deliveryModel: 'serve'/);
 });
 
 test('an answer restored from the browser is dropped when its flag is off', () => {
@@ -109,15 +105,25 @@ test('an answer restored from the browser is dropped when its flag is off', () =
   assert.match(fn[0], /answers\[key\] = null;/);
 });
 
-test('the server refuses a gated answer whatever the page did', () => {
+test('the server refuses a gated answer and forces serve, whatever the page did', () => {
   const routes = readFileSync(join(process.cwd(), 'src', 'net', 'admin', 'routes.ts'), 'utf8');
   const handler = /if \(method === 'POST' && path === '\/admin\/api\/setup'\) \{[\s\S]*?\n    \}/.exec(routes)!;
   assert.match(handler[0], /body\.deploymentMode === 'multiplayer' && !on\.multiplayer/);
-  assert.match(handler[0], /body\.deliveryModel === 'verify' && !on\.playerUploads/);
-  assert.doesNotMatch(handler[0], /body\.storage === 's3'/);
+  // The endpoint is reachable without the page, so the missing question is enforced here.
+  assert.match(handler[0], /body\.deliveryModel = 'serve';/);
+  assert.doesNotMatch(handler[0], /playerUploads/);
   // Refused BEFORE anything is written, or a rejected answer still reaches the config.
   assert.ok(handler[0].indexOf('json(res, 400,') < handler[0].indexOf('applyWizard('),
     'the check must come before applyWizard');
+});
+
+test('the dashboard offers no delivery control either', () => {
+  // Removing the wizard question and leaving a settings toggle would be the same option with
+  // worse framing. Old configs saying verify are still honoured at runtime.
+  const api = readFileSync(join(process.cwd(), 'src', 'net', 'admin', 'api-settings.ts'), 'utf8');
+  assert.ok(api.includes("'setup.deliveryModel',"), 'the field must be in the not-offered list');
+  const help = readFileSync(join(process.cwd(), 'src', 'net', 'admin', 'help.ts'), 'utf8');
+  assert.doesNotMatch(help, /setup\.deliveryModel/, 'no help for a control that does not exist');
 });
 
 test('the state endpoint tells the page which answers it may offer', () => {

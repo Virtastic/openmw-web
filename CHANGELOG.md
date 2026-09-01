@@ -2,6 +2,40 @@
 
 Notable changes to OpenMW-Web. Dates are release dates, newest first.
 
+## Unreleased
+
+**Installing a big mod is minutes, not an hour, and it shows a real progress bar.** Tamriel
+Data is 54,000 files, and 7z writing them through Docker Desktop's file sharing was measured
+at 60+ minutes — extraction now happens on the container's own disk (about three minutes) and
+the files are copied onto the game-data folder sixteen at a time (measured 108 s, against
+756 s one at a time), because that layer charges per round trip rather than per byte. While it
+runs, the page polls the server for 7z's own extraction percentage and a placed-file count,
+so the phase card shows a moving bar instead of a spinner; Back and Skip are disabled until it
+finishes.
+
+**The delivery question is gone: the server supplies the game files.** The wizard no longer
+asks how players get their copy, and the dashboard no longer offers the setting. The old
+"everyone brings their own copy" answer — each player uploading their own Data Files to a
+per-account locker on the server — belongs to the game launcher, not the server setup, and
+its experimental flag went with it. A config that already says "verify" is still honoured at
+runtime.
+
+**A server nobody configured answers on plain HTTP.** First contact was a certificate
+warning; now http://localhost/admin just works, with https://localhost still answering
+self-signed for browsers that remember it. The wizard's hosting answer sets the real posture
+and the page hands you to whichever address that creates.
+
+**Maintenance mode is hidden on single-player servers**, where it had nothing to do: the
+switch refuses multiplayer connections and disconnects the roster, and in single player
+neither exists — the page claimed to close doors it cannot reach.
+
+**Small wizard honesty:** only the current step is named on the progress rail; the Tamriel
+Rebuilt chooser ticks every part by default except ones named as removers; and the
+internal-hosting lecture about shared memory moved out of the wizard into the docs.
+
+**The logo is the actual Virtastic mark everywhere**, favicons included, and og.png was
+regenerated from the brand asset.
+
 ## 1.2.0
 
 The dashboard release. 1.1.0 put a multiplayer service around the engine; 1.2.0 makes the

@@ -513,9 +513,11 @@ S3 settings; they only exist in the OVH console and on the test server.
   nothing is deployed.
 - **A fresh setup cannot choose multiplayer without `OMW_EXPERIMENTAL=multiplayer`.** The
   wizard greys the tile and `/admin/api/setup` refuses the answer, so a bring-up script that
-  posts `deploymentMode: "multiplayer"` gets a 400 with the reason. Add `,playerUploads` for
-  the delivery answer where players upload their own copy. Existing servers are unaffected:
-  the gate is on new setups only, and `config.toml` edited by hand is not gated at all.
+  posts `deploymentMode: "multiplayer"` gets a 400 with the reason. There is no delivery
+  question any more: `/admin/api/setup` forces `deliveryModel: "serve"` (the server supplies
+  the game files; per-player cloud copies are the launcher's own feature). Existing servers
+  are unaffected: the gate is on new setups only, a hand-edited `config.toml` is not gated,
+  and a config already saying `verify` is still honoured at runtime.
 - Tests that answer the wizard with a gated option set the variable themselves
   (`server/test/admin-redesign.test.ts` does); `server/test/experimental.test.ts` owns the
   off-by-default behaviour.

@@ -15,6 +15,7 @@
 import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { copyFile, rename, rm } from 'node:fs/promises';
 import { createHash, randomBytes } from 'node:crypto';
+import { tmpdir } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
 import type { IncomingMessage } from 'node:http';
 
@@ -272,22 +273,29 @@ async function commitInstallLocked(
   // A .7z has no cheap random access -- pulling one file at a time would re-walk a solid block
   // for each -- so it is unpacked once, whole, into a scratch directory and the chosen subtree
   // is taken from there. A zip streams entry by entry and needs no scratch space at all.
-  // The scratch lives INSIDE the mods folder (dot-prefixed, so no slug can collide with it):
-  // that puts it on the same volume as the destination, and moving a file into place is then a
-  // rename, not a second full write. Across a Windows bind mount the difference is minutes.
-  // A 7z spends most of the wait inside the whole-archive extraction, so that phase owns
-  // 0-70 and placing the files owns the rest; a zip decompresses per entry in the placing
-  // loop, which is then the whole bar.
-  const placeBase = kind === '7z' ? 70 : 0;
+  //
+  // THE SCRATCH IS LOCAL DISK, NOT THE GAME DATA VOLUME. gamedata is a bind mount under
+  // Docker Desktop, and 7z writing 54,000 small files through that file-sharing layer was
+  // measured at 60+ minutes for Tamriel Data — the same extraction to the container's own
+  // disk takes about three. The price is that placing files becomes a copy across the mount
+  // instead of a same-volume rename, which is why the placing loop below runs a POOL of
+  // copies: one at a time was measured at 756s for that archive, sixteen at a time at 108s —
+  // the mount charges per round trip, not per byte, so the round trips have to overlap.
+  // Extraction owns 0-60 of the bar and placing the rest; a zip decompresses per entry in
+  // the placing loop, which is then the whole bar.
+  const placeBase = kind === '7z' ? 60 : 0;
   installProgress.set(token, { pct: 0, note: 'unpacking the archive' });
 
   let scratch = '';
   if (kind === '7z') {
-    scratch = join(gameDataDir, MODS_SUBDIR, `.stage-${token}`);
+    const stageRoot = join(tmpdir(), 'omw-mod-stage');
+    scratch = join(stageRoot, token);
     try {
+      // A crash mid-install would orphan an earlier scratch, so leftovers go here, on the
+      // next install — both in today's stage root and in the mods folder, where an older
+      // build kept its scratch (.stage-*) and an upgrade would otherwise strand one forever.
+      await rm(stageRoot, { recursive: true, force: true });
       mkdirSync(join(gameDataDir, MODS_SUBDIR), { recursive: true }); // first install: no mods dir yet
-      // A crash mid-install would orphan an earlier scratch where the staging sweep cannot see
-      // it, so any leftover is removed here, on the next install.
       for (const n of readdirSync(join(gameDataDir, MODS_SUBDIR), { withFileTypes: true })) {
         if (n.isDirectory() && n.name.startsWith('.stage-')) {
           await rm(join(gameDataDir, MODS_SUBDIR, n.name), { recursive: true, force: true });
@@ -344,6 +352,9 @@ async function commitInstallLocked(
 
     try {
       mkdirSync(root, { recursive: true });
+      // Validate and book-keep first, serially — this is string work and the order of `files`
+      // and the plugin list must be the entry order, not whichever copy finished first.
+      const jobs: { src: string; dest: string; entry: ZipEntry }[] = [];
       for (const e of entries) {
         if (e.isDir || (prefix !== '' && !e.path.startsWith(prefix))) continue;
         const rel = e.path.slice(prefix.length);
@@ -355,23 +366,8 @@ async function commitInstallLocked(
           throw new ZipError(`refused: ${e.path} escapes the mod folder`);
         }
         mkdirSync(dirname(dest), { recursive: true });
-        if (kind === 'zip') await extractEntry(zipPath, e, dest);
-        else {
-          // Same volume, so this is a metadata operation. EXDEV (someone remounted mods
-          // elsewhere) falls back to the old copy.
-          try { await rename(join(scratch, e.path), dest); }
-          catch { await copyFile(join(scratch, e.path), dest); }
-        }
+        jobs.push({ src: join(scratch, e.path), dest, entry: e });
         files.push(rel.split(sep).join('/'));
-        placed++;
-        // Every 100 files, not every file: the map write is cheap but not free, and at
-        // Tamriel Data's 54,000 files once per file is 54,000 times nobody can see.
-        if (placed % 100 === 0) {
-          installProgress.set(token, {
-            pct: Math.min(99, placeBase + Math.round(((100 - placeBase) * placed) / entries.length)),
-            note: 'placing files',
-          });
-        }
         bytes += e.size;
         const name = rel.slice(rel.lastIndexOf('/') + 1);
         if (/\.(esp|esm|omwaddon|omwgame|omwscripts)$/i.test(name)) {
@@ -379,6 +375,45 @@ async function commitInstallLocked(
         } else if (/\.(bsa|ba2)$/i.test(name)) {
           archives.push(name);
         }
+      }
+
+      // Then move the bytes. A zip decompresses entry by entry and stays serial — the work is
+      // CPU, not round trips. A 7z's files already sit on local disk and the cost is the bind
+      // mount's per-operation latency, so SIXTEEN copies run at once (see the measurement at
+      // the scratch declaration). rename is tried first because on a same-volume layout (a
+      // native install, or an operator who moved the scratch) it is free; across the mount it
+      // fails once with EXDEV and the copy does the work.
+      if (kind === 'zip') {
+        for (const j of jobs) {
+          await extractEntry(zipPath, j.entry, j.dest);
+          placed++;
+          if (placed % 100 === 0) {
+            installProgress.set(token, {
+              pct: Math.min(99, Math.round((100 * placed) / jobs.length)), note: 'placing files',
+            });
+          }
+        }
+      } else {
+        let next = 0;
+        const worker = async () => {
+          for (;;) {
+            const n = next++;
+            if (n >= jobs.length) return;
+            const j = jobs[n]!;
+            try { await rename(j.src, j.dest); }
+            catch { await copyFile(j.src, j.dest); }
+            placed++;
+            // Every 100 files, not every file: the map write is cheap but not free, and at
+            // Tamriel Data's 54,000 files once per file is 54,000 times nobody can see.
+            if (placed % 100 === 0) {
+              installProgress.set(token, {
+                pct: Math.min(99, placeBase + Math.round(((100 - placeBase) * placed) / jobs.length)),
+                note: 'placing files',
+              });
+            }
+          }
+        };
+        await Promise.all(Array.from({ length: 16 }, worker));
       }
     } catch (e) {
       // Half a mod is worse than none: it would contribute a data= line and a content= naming

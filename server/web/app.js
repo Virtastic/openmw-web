@@ -160,7 +160,11 @@ const NAV = [
   // "Maintenance & restart", which named one of the four in the sidebar and hid the rest.
   { group: 'Danger zone', items: [
     { hash: '#updates', label: 'Updates', icon: 'bi-cloud-download', role: 'owner' },
-    { hash: '#maintenance', label: 'Maintenance', icon: 'bi-cone-striped', role: 'owner' },
+    // Multiplayer only, same rule as the console: the switch is enforced at the multiplayer
+    // connection gate and by disconnecting the roster. In single player nobody ever passes
+    // either — the browser runs the engine — so the page would claim to close doors it
+    // cannot reach.
+    { hash: '#maintenance', label: 'Maintenance', icon: 'bi-cone-striped', role: 'owner', solo: false },
     { hash: '#backup', label: 'Backup', icon: 'bi-archive', role: 'owner' },
     { hash: '#restart', label: 'Restart', icon: 'bi-arrow-repeat', role: 'owner' },
   ] },
@@ -232,7 +236,7 @@ const go = (hash) => { if (location.hash === hash) route(); else location.hash =
 // deployment never sees the questions that only matter with strangers on the box.
 const BLANK_ANSWERS = {
   deploymentMode: null, loginMethods: ['password'], contentProfile: null,
-  deliveryModel: null, hosting: null, domain: '', httpPort: 80, serverName: '', storage: 'local',
+  deliveryModel: 'serve', hosting: null, domain: '', httpPort: 80, serverName: '', storage: 'local',
   // Who may create an account. ITS OWN QUESTION, asked whichever kind of server this is:
   // it used to be inferred from the deployment mode, so choosing "single player" silently
   // closed registration, which is a decision the operator never made and could not see.
@@ -256,7 +260,6 @@ function seedFromServer() {
   answers.deploymentMode ||= s.deploymentMode || null;
   answers.contentProfile ||= s.contentProfile || null;
   answers.hosting ||= s.hosting || null;
-  answers.deliveryModel ||= s.deliveryModel || null;
   answers.httpPort ||= s.httpPort || 80;
   if (s.storage && answers.storage === 'local') answers.storage = s.storage;
   if (Array.isArray(s.loginMethods) && s.loginMethods.length
@@ -329,7 +332,6 @@ const wizardSteps = () => {
     'owner',
     'mode',
     'content',
-    'delivery',
     'hosting',
     'name',
     'login',
@@ -344,7 +346,7 @@ const wizardSteps = () => {
 /** Short labels for the progress rail, so the steps are named rather than anonymous ticks. */
 const STEP_LABEL = {
   owner: 'Account', mode: 'Type', login: 'Sign-in', registration: 'Sign-ups',
-  content: 'Content', delivery: 'Files', hosting: 'Access',
+  content: 'Content', hosting: 'Access',
   name: 'Name', storage: 'Storage', files: 'Data', tr: 'Tamriel', review: 'Review',
 };
 
@@ -513,7 +515,6 @@ window.addEventListener('popstate', (e) => {
 /** Answers the server will refuse, and the flag that would allow each. */
 const GATED_ANSWERS = [
   ['deploymentMode', 'multiplayer', 'multiplayer'],
-  ['deliveryModel', 'verify', 'playerUploads'],
 ];
 
 function renderWizard() {
@@ -542,7 +543,6 @@ function renderWizard() {
   if (name === 'login') return stepLogin();
   if (name === 'registration') return stepRegistration();
   if (name === 'content') return stepContent();
-  if (name === 'delivery') return stepDelivery();
   if (name === 'hosting') return stepHosting();
   if (name === 'name') return stepName();
   if (name === 'storage') return stepStorage();
@@ -854,33 +854,6 @@ function stepContent() {
   wireChoices();
 }
 
-function stepDelivery() {
-  wizardShell(html`
-    <h5>How does everyone get the game files?</h5>
-    <p class="text-secondary small">Morrowind is not free software. Everyone playing needs the
-      game's <strong>Data Files</strong> folder, and this is about where their copy comes
-      from. It does not change how the game plays.</p>
-    ${raw(choice('deliveryModel', 'verify', 'Everyone brings their own copy',
-      'Each person uploads their own Morrowind to their own storage here once, and the game '
-      + 'streams from it. Nothing of yours is handed out, and the server checks everybody is '
-      + 'running matching files so you all see the same world.',
-      expLock('playerUploads', '') ? '' : 'Usual choice', 'success',
-      expLock('playerUploads', 'Players bringing their own copy through this server')))}
-    ${raw(choice('deliveryModel', 'serve', 'This server hands out the files',
-      'You upload your Data Files here once and everyone receives them on joining. Easier for '
-      + 'the people joining, and it means you are distributing the game, so only pick this if '
-      + 'everyone involved owns a copy already (a group of friends who each bought it, for '
-      + 'instance).'))}
-    ${raw(answers.deploymentMode === 'multiplayer' ? html`
-      <div class="vt-section-note mt-3">
-        Separately from this answer, <strong>a multiplayer server needs its own copy</strong>,
-        because it runs the world: it simulates every NPC and creature rather than any
-        player's browser doing it. The Game data step near the end is where you add it.
-      </div>` : '')}
-`,
-  { disabled: !answers.deliveryModel, need: 'Choose how players get the files.' });
-  wireChoices();
-}
 
 function stepHosting() {
   wizardShell(html`
@@ -1159,11 +1132,8 @@ async function stepFiles() {
 
   wizardShell(html`
     <h5>Add your Morrowind files</h5>
-    ${raw(answers.deploymentMode === 'single' ? html`
-      <p class="text-secondary small"><strong>Optional.</strong> Your browser runs the game, so
-        the server does not need a copy. Add one to keep your library here instead.</p>`
-      : html`
-      <p class="text-secondary small">The server runs the world, so it needs its own copy.</p>`)}
+    <p class="text-secondary small">This server supplies the game to everyone who plays on
+      it, so it needs its own copy.</p>
     <div class="vt-section-note mb-3">
       <strong>Find the folder called <code>Data Files</code></strong> inside wherever
       Morrowind is installed, and drag it onto the box below. It is usually at:
@@ -1457,7 +1427,7 @@ function stepReview() {
   const mp = answers.deploymentMode === 'multiplayer';
   wizardShell(html`
     <h5>Ready to apply</h5>
-    ${raw(gameDataIncomplete && mp ? html`
+    ${raw(gameDataIncomplete ? html`
       <div class="callout callout-warning mb-3">
         <strong>The game files are not all here yet.</strong> Everything below still saves and
         the dashboard works, but nobody can join until the server has a complete copy of
@@ -1486,7 +1456,7 @@ function stepReview() {
         : '(none)'))}
       ${raw(line('Who can sign up', REGISTRATION_LABEL[answers.registration] || '(unset)'))}
       ${raw(line('Content', CONTENT_LABEL[answers.contentProfile] || '(unset)'))}
-      ${raw(line('Game files', answers.deliveryModel === 'serve' ? 'Served by this server' : 'Players bring their own'))}
+      ${raw(line('Game files', 'Served by this server'))}
       ${raw(line('Reachable', answers.hosting === 'public'
         ? (answers.domain
             ? `From the internet at ${answers.domain}, with a certificate issued automatically`
@@ -1511,9 +1481,7 @@ function stepReview() {
           public IP address, which you can find by searching the web for "what is my IP" on
           this machine. A domain name is worth the few pounds a year, because that address
           changes on its own and a domain does not.</p>` : '')}
-        ${raw(answers.deliveryModel === 'verify' ? html`<p class="small mb-0 mt-2">Each player
-          also needs their own copy of Morrowind's Data Files, since you chose that players
-          bring their own.</p>` : '')}
+
       </div>`)}
     <p class="text-secondary small mb-0">Saving restarts the server, so you will sign in
       again.</p>`,
@@ -3813,7 +3781,7 @@ async function pageRestart() {
       <p class="small text-secondary">The server reads its settings, its load order and its mod
         list at startup, so anything saved since the last start takes effect here. Players are
         disconnected and can reconnect once it is back, usually within a few seconds.</p>
-      ${raw(state.maintenance?.on ? '' : html`<div class="vt-section-note mb-3">
+      ${raw(state.maintenance?.on || singlePlayer() ? '' : html`<div class="vt-section-note mb-3">
         Nobody has been warned. If people are playing, turn on
         <a href="#maintenance">maintenance mode</a> first.</div>`)}
       <button class="btn btn-warning" id="mRestart">Restart the server</button>
@@ -3949,7 +3917,7 @@ async function pageHelp() {
               'same address; otherwise point players at whichever copy of the client you use.'))}
             ${raw(faq('Do players need their own copy of Morrowind?',
               'That is what the "how do players get the game files" question in setup decides. ' +
-              'If you chose that players bring their own, everyone needs a legal copy. Morrowind ' +
+              'This server supplies the game files, so everyone playing still needs to own a copy. Morrowind ' +
               'is not free to redistribute, so only serve the files yourself if you are entitled to.'))}
           </dl>
         </div></div>

@@ -206,35 +206,20 @@ computer or your own LAN you are never asked. It stops working once the first ad
 exists either way.
 
 After that a short wizard covers the rest: single-player or multiplayer, how players sign
-in, who may register, which Morrowind content you are running, whether players bring their
-own game files or you supply them, how the server is reached, where uploads are stored, and
-the game files themselves. Every answer is written to configuration you can review and change
+in, who may register, which Morrowind content you are running, how the server is reached,
+where uploads are stored, and the game files themselves — the server supplies the game to
+everyone who plays on it. Every answer is written to configuration you can review and change
 afterwards.
 
-Two of the answers are **greyed out**, marked experimental, and cannot be chosen until you say
-so, and the wizard shows them rather than hiding them so you can see what exists and decide:
-
-| Flag | The answer it unlocks |
-| --- | --- |
-| `multiplayer` | Multiplayer, on the first question |
-| `playerUploads` | "Everyone brings their own copy", on the game-files question |
-
-`playerUploads` is the one whose name is not obvious from the tile. That answer reads like the
-modest option and is the involved one: each player uploads their own Data Files to their own
-storage here and the game streams from it, which means an upload flow, a library per account, a
-hash check against the vanilla manifest, and storage that grows with every player who joins.
-The other answer, where this server publishes the copy you uploaded, is a static file route and
-much better travelled, so it is an ordinary choice.
-
-Set `OMW_EXPERIMENTAL` and restart:
+One answer is **greyed out**, marked experimental, and cannot be chosen until you say so —
+multiplayer, on the first question. The wizard shows it rather than hiding it, so you can see
+it exists and decide. Set `OMW_EXPERIMENTAL` and restart:
 
 ```bash
-OMW_EXPERIMENTAL=multiplayer docker compose up -d               # or a .env file beside the compose file
-OMW_EXPERIMENTAL=multiplayer,playerUploads docker compose up -d # comma separated
-OMW_EXPERIMENTAL=all docker compose up -d                       # both of them
+OMW_EXPERIMENTAL=multiplayer docker compose up -d   # or a .env file beside the compose file
 ```
 
-Each greyed tile names its own flag. This governs only what a **new** setup may choose: a
+The greyed tile names the flag itself. This governs only what a **new** setup may choose: a
 server already configured for any of them keeps running exactly as it did, because taking a
 feature away from a working server through an environment variable would be a worse surprise
 than the one this prevents. The server refuses a
@@ -317,7 +302,7 @@ role cannot use is not shown to it at all.
 | **Logs** | moderator | The live ring buffer and the history on disk |
 | **Audit trail** | moderator | What administrators did, and when |
 | **Updates** | owner | Whether a newer release exists, and how to take it |
-| **Maintenance** | owner | Close the doors: disconnects everyone and refuses new connections. Use it before changing mods or settings, so nobody is halfway through something |
+| **Maintenance** | owner | Close the doors: disconnects everyone and refuses new connections. Use it before changing mods or settings, so nobody is halfway through something. Multiplayer only — in single player there are no connections to refuse, so the page is not shown |
 | **Backup** | owner | Download the whole data folder as a `tar.gz`. There is deliberately **no restore button**: restoring is stop, replace the folder, start |
 | **Restart** | owner | Restart the server, showing the same loading screen a player sees |
 

@@ -713,15 +713,17 @@ runs once, and half of what follows is about the first run.
 - [ ] Reloading mid-wizard resumes on the same step with the same answers
 - [ ] The step count matches the rail, and does not jump around as you answer
 
-**The experimental answers.** Multiplayer, and "everyone brings their own copy" (the answer
-where each player uploads their own game data here), are greyed out by default. "This server
-hands out the files" and both storage answers are ordinary choices.
+**The experimental answer.** Multiplayer is greyed out by default; there is no delivery
+question at all any more (the server always supplies the game files).
 
-- [ ] Both are **visible** and greyed, not missing; each says which flag turns it on
-- [ ] Clicking one does nothing (they are real `disabled` buttons)
+- [ ] Multiplayer is **visible** and greyed, not missing, and names its flag
+- [ ] Clicking it does nothing (a real `disabled` button)
+- [ ] There is no "how do players get the files" step between Content and Access
 - [ ] S3 storage is **not** greyed: it is only where blobs are kept
-- [ ] Restart with `OMW_EXPERIMENTAL=multiplayer` and only multiplayer becomes selectable
-- [ ] `OMW_EXPERIMENTAL=all` unlocks both
+- [ ] Restart with `OMW_EXPERIMENTAL=multiplayer` and the tile becomes selectable
+- [ ] **Maintenance** is absent from the sidebar on a single-player server (it only refuses
+      multiplayer connections, which solo does not have), and the Restart page does not
+      suggest it there
 - [ ] Pick multiplayer, turn the flag back off, reload mid-wizard: the answer is dropped and
       the step asks again, rather than carrying to a save that refuses it
 - [ ] A server already set up for multiplayer keeps working with the flag off. This is the one
@@ -764,10 +766,11 @@ Choose **Tamriel Rebuilt** on the content step; a step for it appears after Data
 - [ ] An archive the hash table does not know says so and installs anyway, printing its hash
 - [ ] Skipping the step entirely gets a warning on the Review screen, not a silent "all set"
 
-**Expect a long silent wait on install.** A `.7z` has no random access, so the whole archive
-unpacks before the chosen parts move: 196 s measured for the standard Tamriel Data, longer for
-the HD one. The panel should say "Installing" the entire time. **Report if:** it looks finished,
-errors, or the page appears to die.
+**The install shows a real progress bar** — extraction percent, then "placing files". Tamriel
+Data takes on the order of five minutes under Docker Desktop (measured: extraction to local
+disk plus a 16-wide copy onto the bind mount; the old single-pass approach took an hour).
+**Report if:** the bar stalls for minutes, it errors, or the page appears to die. Back and
+"Skip for now" must be disabled while it runs.
 
 ### The mod list
 
