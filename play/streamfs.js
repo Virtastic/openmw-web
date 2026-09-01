@@ -94,9 +94,28 @@
             if (!f) { f = await handles.get(m.id).getFile(); files.set(m.id, f); }
             buf = new Uint8Array(await f.slice(m.start, m.end).arrayBuffer());
           } else {
-            const r = await fetch(m.url, { headers: { Range: 'bytes=' + m.start + '-' + (m.end - 1) } });
-            if (!r.ok && r.status !== 206) throw new Error('HTTP ' + r.status);
-            buf = new Uint8Array(await r.arrayBuffer());
+            // Persistent chunk cache. The in-memory LRU dies with the page, so without this
+            // every boot re-downloaded every byte the engine touched (~300MB measured). Keyed
+            // by m.pkey — the ORIGINAL mount URL plus file size, so a renewed presigned URL
+            // still hits, and a re-uploaded file of a new size misses. pkey is null for URLs
+            // that should not persist (cross-origin or query-carrying, i.e. presigned S3).
+            const ckey = m.pkey ? 'https://sfs.chunk/' + encodeURIComponent(m.pkey) + '/' + m.start : null;
+            if (ckey) {
+              try {
+                const hit = await (await caches.open('mwdata-chunks-v1')).match(ckey);
+                if (hit) buf = new Uint8Array(await hit.arrayBuffer());
+              } catch (e) { /* Cache API unavailable: fall through to the network */ }
+            }
+            if (!buf) {
+              const r = await fetch(m.url, { headers: { Range: 'bytes=' + m.start + '-' + (m.end - 1) } });
+              if (!r.ok && r.status !== 206) throw new Error('HTTP ' + r.status);
+              buf = new Uint8Array(await r.arrayBuffer());
+              if (ckey) {
+                // Not awaited: the copy into the shared buffer below reads buf, the put keeps
+                // its own reference, and nothing mutates buf afterwards.
+                caches.open('mwdata-chunks-v1').then((c) => c.put(ckey, new Response(buf))).catch(() => {});
+              }
+            }
           }
           data.set(buf.subarray(0, Math.min(buf.length, data.length)), 0);
           ctrl[1] = buf.length;         // bytes delivered
@@ -212,7 +231,12 @@
     // Mount `url` (absolute-ized against the page) at FS path `path` with known byte size.
     mount(path, url, size) {
       const abs = new URL(url, location.href).href;
-      const src = { url: abs };
+      const u = new URL(abs);
+      // Persist chunks only for plain same-origin files (server-hosted mwdata). A URL with a
+      // query is presigned and expiring — its bytes are cached by the locker's own layer, and
+      // keying on a signature would never hit twice.
+      const pkey = u.origin === location.origin && !u.search ? u.pathname + '@' + size : null;
+      const src = { url: abs, pkey };
       // Registered so the URL can be refreshed later (presigned locker URLs expire): the cache
       // key stays `abs` (stable across renewals — the bytes are the same file), only src.url
       // changes, so a re-signed URL is used for future Range fetches without dropping the cache.

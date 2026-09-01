@@ -140,3 +140,26 @@ test('a renamed archive is still emitted, under its new name', clientOpts, () =>
   assert.match(fn[0], /mounted\[f\.p\.toLowerCase\(\)\] = keep;/,
     'the lookup key must be what the server declared, not what we renamed it to');
 });
+
+// --- game data must not be re-downloaded every boot --------------------------------------------
+//
+// StreamFS chunks lived only in an in-memory LRU, so every session re-fetched every byte the
+// engine touched (~300MB on a Balmora boot). Chunks now persist in the Cache API, keyed by the
+// ORIGINAL mount URL and file size — stable across presigned-URL renewals, invalidated when a
+// file is replaced with one of a different size.
+
+const sfsPath = join(process.cwd(), '..', 'play', 'streamfs.js');
+const sfs = existsSync(sfsPath) ? readFileSync(sfsPath, 'utf8') : '';
+const sfsOpts = sfs === '' ? { skip: 'play/streamfs.js is not part of the server image' } : {};
+
+test('fetched chunks persist in the Cache API', sfsOpts, () => {
+  assert.ok(sfs.includes("caches.open('mwdata-chunks-v1')"), 'no persistent chunk cache');
+  assert.ok(sfs.includes('.match(ckey)'), 'chunks are written but never read back');
+});
+
+test('the persistent key survives presigned-URL renewal and rejects expiring URLs', sfsOpts, () => {
+  // Keyed by pathname+size, not the full URL: a locker URL is re-signed hourly and would never
+  // hit twice, so query-carrying and cross-origin URLs must opt out entirely.
+  assert.ok(sfs.includes("u.origin === location.origin && !u.search"), 'presigned URLs must not persist');
+  assert.ok(sfs.includes("u.pathname + '@' + size"), 'the key must be pathname plus size');
+});
