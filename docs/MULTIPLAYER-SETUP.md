@@ -42,7 +42,8 @@ optional: with no S3 configured the server stores lockers and savegames on its o
 2. **APIs & Services → OAuth consent screen** → External → fill the app name + your email
    → Save. You do **not** need to submit for verification for personal/testing use; add
    your own Google account under **Test users**.
-   - Scopes: leave default. We request only `openid profile` — **never** an email scope.
+   - Scopes: leave default. We request `openid profile email`; accounts are keyed on the
+     provider's stable `sub`, never the email, and only provider-verified addresses are used.
 3. **APIs & Services → Credentials → Create Credentials → OAuth client ID**:
    - Application type: **Web application**
    - Authorized redirect URI (exactly, no trailing slash):
