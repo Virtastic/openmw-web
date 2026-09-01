@@ -151,7 +151,7 @@ export function findDataFolders(entries: Listed[]): Candidate[] {
 
 /** A folder name for a mod: lowercase, hyphenated, safe as a single path segment. */
 export function slugify(name: string): string {
-  const s = name.toLowerCase().replace(/\.zip$/i, '').replace(/[^a-z0-9]+/g, '-')
+  const s = name.toLowerCase().replace(/\.(zip|7z|rar)$/i, '').replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '').slice(0, 64);
   // "mods" would nest inside itself, and an empty slug would resolve to the mods root and let a
   // delete take every mod with it. The rest are Windows device names: the server runs on Linux,

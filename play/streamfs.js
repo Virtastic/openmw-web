@@ -235,7 +235,10 @@
       // Persist chunks only for plain same-origin files (server-hosted mwdata). A URL with a
       // query is presigned and expiring — its bytes are cached by the locker's own layer, and
       // keying on a signature would never hit twice.
-      const pkey = u.origin === location.origin && !u.search ? u.pathname + '@' + size : null;
+      // CHUNK is part of the key: chunks are cached at fetch granularity, and a ?chunk= retune
+      // would otherwise hit a cached chunk shorter than the read loop expects — a short read
+      // the engine treats as EOF mid-file.
+      const pkey = u.origin === location.origin && !u.search ? u.pathname + '@' + size + '@' + CHUNK : null;
       const src = { url: abs, pkey };
       // Registered so the URL can be refreshed later (presigned locker URLs expire): the cache
       // key stays `abs` (stable across renewals — the bytes are the same file), only src.url

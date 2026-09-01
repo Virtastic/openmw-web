@@ -201,8 +201,11 @@ ${plain ? `	# No certificates and no HTTP->HTTPS redirect. Without this Caddy wo
   //
   // PUBLIC: the domain gets a real certificate, and localhost keeps a self-signed one, so a
   // mistyped domain cannot take the dashboard down with it.
+  // The port travels from a form field through TOML and back; a 0, a NaN, or a fraction
+  // must not reach the listen directive, where it takes the whole proxy down on reload.
+  const p = Number.isFinite(port) && port >= 1 && port <= 65535 ? Math.trunc(port) : 80;
   const blocks = internal
-    ? [site(`:${Math.trunc(port)}`,
+    ? [site(`:${p}`,
       '\t# Plain HTTP on purpose: a LAN, a forwarded port, or your own reverse proxy in front.\n'
       + '\t# Whatever sits in front of this is where TLS belongs.')]
     : domain === ''

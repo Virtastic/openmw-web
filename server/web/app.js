@@ -2494,7 +2494,7 @@ function wireMods(m) {
           </label>`).join(''))}
         <label class="fld d-block mb-2"><span class="small text-secondary">Name it</span>
           <input class="form-control" id="modName" maxlength="120"
-            value="${staged.archive.replace(/\.zip$/i, '')}"></label>
+            value="${staged.archive.replace(/\.(zip|7z)$/i, '')}"></label>
         <button class="btn btn-primary btn-sm" id="modGo">Install</button>
         <button class="btn btn-outline-secondary btn-sm ms-2" id="modCancel">Discard</button>
       </div></div>`;

@@ -161,5 +161,5 @@ test('the persistent key survives presigned-URL renewal and rejects expiring URL
   // Keyed by pathname+size, not the full URL: a locker URL is re-signed hourly and would never
   // hit twice, so query-carrying and cross-origin URLs must opt out entirely.
   assert.ok(sfs.includes("u.origin === location.origin && !u.search"), 'presigned URLs must not persist');
-  assert.ok(sfs.includes("u.pathname + '@' + size"), 'the key must be pathname plus size');
+  assert.ok(sfs.includes("u.pathname + '@' + size + '@' + CHUNK"), 'the key must be pathname, size, and chunk granularity');
 });
