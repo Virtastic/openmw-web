@@ -2385,7 +2385,32 @@ function wireMods(m) {
   const stage = $('#modStage');
   const drop = $('#modZip');
 
-  const send = async (file) => {
+  /**
+   * A step the operator can watch.
+   *
+   * Installing a mod is three waits with nothing between them: the bytes go up, the server
+   * opens the archive, and the chosen folders are unpacked. With one "Reading…" line covering
+   * all of it, a 400MB mod looked frozen for minutes and the honest reaction was to click
+   * again. Each phase now says which one it is, and the only one whose length is knowable in
+   * advance — the upload — gets a real bar rather than a spinner.
+   */
+  const phase = (title, detail, pct) => {
+    stage.innerHTML = html`
+      <div class="card card-secondary card-outline mb-3"><div class="card-body py-3">
+        <div class="d-flex align-items-center gap-2">
+          ${raw(pct === undefined
+            ? '<span class="spinner-border spinner-border-sm"></span>' : '')}
+          <strong>${title}</strong>
+          <span class="ms-auto text-secondary small">${detail || ''}</span>
+        </div>
+        ${raw(pct === undefined ? '' : html`
+          <div class="progress mt-2" style="height:.5rem">
+            <div class="progress-bar" style="width:${String(Math.round(pct))}%"></div>
+          </div>`)}
+      </div></div>`;
+  };
+
+  const send = (file) => {
     if (!file) return;
     if (!/\.(zip|7z)$/i.test(file.name)) {
       // Named before the upload rather than after: there is no point sending 400 MB to be told.
@@ -2396,28 +2421,52 @@ function wireMods(m) {
     }
     if (uploadRunning) { toast('An upload is already running.', 'err'); return; }
     uploadRunning = true;
-    stage.innerHTML = html`<div class="alert alert-secondary">Reading
-      <strong>${file.name}</strong> (${raw(sizeOf(file.size))})…</div>`;
-    try {
-      // Raw bytes with the name in the query, exactly as the Data Files upload does: a
-      // multipart parser for a several-hundred-megabyte archive would be a dependency and a
-      // memory problem. duplex:'half' is required to stream a File body.
-      const r = await fetch(`/admin/api/mods/install?name=${encodeURIComponent(file.name)}`, {
-        method: 'POST',
-        headers: { authorization: `Bearer ${token.get()}`, 'content-type': 'application/octet-stream' },
-        body: file,
-        duplex: 'half',
-      });
-      const body = await r.json();
-      if (!r.ok) { stage.innerHTML = html`<div class="alert alert-danger">${body.error}</div>`; return; }
-      renderChooser(body);
-    } catch (e) {
-      stage.innerHTML = html`<div class="alert alert-danger">The upload did not finish: ${e.message}</div>`;
-    } finally {
-      uploadRunning = false;
-    }
-  };
 
+    // XMLHttpRequest, not fetch. fetch cannot report UPLOAD progress at all — there is no
+    // event for it — so the one phase whose duration is both long and knowable would be the
+    // one with no bar. Everything else here is fetch; this is the exception that earns itself.
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `/admin/api/mods/install?name=${encodeURIComponent(file.name)}`);
+    xhr.setRequestHeader('authorization', `Bearer ${token.get()}`);
+    xhr.setRequestHeader('content-type', 'application/octet-stream');
+
+    xhr.upload.onprogress = (e) => {
+      if (!e.lengthComputable) { phase('Uploading', file.name); return; }
+      phase('Uploading', `${sizeOf(e.loaded)} of ${sizeOf(e.total)}`, (e.loaded / e.total) * 100);
+    };
+    // The bytes have landed and the server is now reading the central directory and looking
+    // for data folders. On a big .7z that is a real pause, and it is not the upload.
+    xhr.upload.onload = () => phase('Opening the archive', file.name);
+
+    xhr.onload = () => {
+      uploadRunning = false;
+      let body;
+      try { body = JSON.parse(xhr.responseText); } catch { body = {}; }
+      if (xhr.status === 401 || xhr.status === 403) {
+        stage.innerHTML = html`<div class="alert alert-danger">Your session ended during the
+          upload. Sign in again and retry.</div>`;
+        return;
+      }
+      if (xhr.status !== 200) {
+        stage.innerHTML = html`<div class="alert alert-danger">${body.error
+          || `The upload failed (HTTP ${xhr.status}).`}</div>`;
+        return;
+      }
+      renderChooser(body);
+    };
+    xhr.onerror = () => {
+      uploadRunning = false;
+      stage.innerHTML = html`<div class="alert alert-danger">The upload did not finish. The
+        connection dropped, or the server restarted while it was going.</div>`;
+    };
+    xhr.onabort = () => {
+      uploadRunning = false;
+      stage.innerHTML = '';
+    };
+
+    phase('Uploading', sizeOf(file.size), 0);
+    xhr.send(file);
+  };
   /** What the archive turned out to contain, and which parts to install. */
   const renderChooser = (staged) => {
     const many = staged.candidates.length > 1;
@@ -2471,7 +2520,13 @@ function wireMods(m) {
           name: staged.candidates.length > 1 && c.path ? `${name} — ${c.path}` : name,
         }));
       if (!choices.length) { toast('Tick at least one folder to install.', 'err'); return; }
-      $('#modGo').disabled = true;
+      // The panel is REPLACED rather than the button merely disabled. Extraction is the longest
+      // step of the three and it reported nothing at all: a disabled button next to an
+      // unchanged form reads as a page that has died, and the reasonable response to that is to
+      // reload, which abandons a staged upload that was working.
+      const files = choices.reduce((n, ch) =>
+        n + (staged.candidates.find((c) => c.path === ch.path)?.files ?? 0), 0);
+      phase('Installing', `unpacking ${files} file${files === 1 ? '' : 's'}`);
       try {
         await api('/mods/install/commit', { method: 'POST', body: { token: staged.token, choices } });
         toast('Installed. Restart to load it.');
@@ -2512,7 +2567,12 @@ function wireMods(m) {
 
   let dragged = null;
   list.querySelectorAll('.vt-mod[draggable=true]').forEach((el) => {
-    el.ondragstart = () => { dragged = el; el.classList.add('vt-dragging'); };
+    el.ondragstart = (e) => {
+      // The details modal is nested inside the card; a drag that starts there is a text
+      // selection, not a reorder.
+      if (e.target.closest('.modal')) { e.preventDefault(); return; }
+      dragged = el; el.classList.add('vt-dragging');
+    };
     el.ondragend = () => { dragged?.classList.remove('vt-dragging'); dragged = null; };
     el.ondragover = (e) => {
       e.preventDefault();
@@ -2592,12 +2652,90 @@ function modsCard(m, editable) {
   const loses = group(m.conflicts, 'loser');
   const needs = group(m.missingMasters, 'mod');
 
+  // Stored names are routinely the raw Nexus download filename ("Cool Mod-45384-1-18-0-
+  // 1751572864.7z — 00 Core"). The row shows a readable name; the exact original, and every
+  // explanation, lives in the details modal so the list itself stays scannable.
+  const pretty = (name) => {
+    const parts = String(name).split(' — ');
+    parts[0] = (parts[0].replace(/\.(zip|7z|rar)$/i, '').replace(/(-\d+)+$/, '').trim()) || parts[0];
+    return parts.filter(Boolean).join(' — ');
+  };
+
   const card = (mod, i) => {
+    const missing = needs.get(mod.slug) || [];
+    const win = wins.get(mod.slug) || [];
+    const lose = loses.get(mod.slug) || [];
+    const winCount = win.reduce((n, c) => n + c.files, 0);
+    const loseCount = lose.reduce((n, c) => n + c.files, 0);
     const bits = [
       mod.plugins.length ? `${mod.plugins.length} plugin${mod.plugins.length > 1 ? 's' : ''}` : '',
       mod.archives.length ? `${mod.archives.length} archive${mod.archives.length > 1 ? 's' : ''}` : '',
       `${mod.files} files`, sizeOf(mod.bytes),
     ].filter(Boolean);
+
+    // Compact badges on the row; the modal carries the sentence that explains each one.
+    const badges = [
+      mod.present === false ? '<span class="badge text-bg-danger">folder missing</span>' : '',
+      missing.length ? '<span class="badge text-bg-danger">missing master</span>' : '',
+      winCount ? `<span class="badge text-bg-warning">replaces ${winCount}</span>` : '',
+      loseCount ? `<span class="badge text-bg-secondary">${loseCount} overridden</span>` : '',
+    ].filter(Boolean).join(' ');
+
+    const dlRow = (k, v) => (v ? html`<dt class="col-sm-3">${k}</dt><dd class="col-sm-9 mb-1">${v}</dd>` : '');
+    const orderNotes = [
+      ...win.map((c) => html`<div class="small mb-1"><span class="badge text-bg-warning me-1">replaces ${c.files}</span>
+        ${raw(c.files === 1 ? 'file' : 'files')} also in <strong>${pretty(byName.get(c.loser) || c.loser)}</strong> —
+        this mod is further down the list, so its copy is the one the game uses.</div>`),
+      ...lose.map((c) => html`<div class="small mb-1 text-secondary">${c.files}
+        ${raw(c.files === 1 ? 'file is' : 'files are')} overridden by
+        <strong>${pretty(byName.get(c.winner) || c.winner)}</strong>, which is further down the list.</div>`),
+      ...(bsaClash.has(mod.slug) ? [html`<div class="small mb-1"><span class="vt-mono">${bsaClash.get(mod.slug)}</span>
+        also ships with another mod. Both are loaded; this one's copy is kept under its own name.</div>`] : []),
+    ];
+
+    const modal = html`
+      <div class="modal fade" id="modd-${mod.slug}" tabindex="-1" aria-labelledby="modd-${mod.slug}-t" aria-hidden="true">
+        <div class="modal-dialog modal-lg modal-dialog-scrollable"><div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title" id="modd-${mod.slug}-t">${pretty(mod.name)}</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <div class="modal-body">
+            ${raw(mod.present === false ? html`<div class="alert alert-warning py-2 small">
+              This mod's folder is gone from the game data directory, so it will not load. Remove
+              it from the list, or put the folder back.</div>` : '')}
+            ${raw(missing.map((n) => html`<div class="alert alert-danger py-2 small">
+              <strong>${n.plugin}</strong> needs <span class="vt-mono">${n.master}</span>, which is
+              not loaded. Morrowind refuses to start when a plugin's master is missing, so either
+              switch that master back on or switch this mod off.</div>`).join(''))}
+            <dl class="row small mb-2">
+              ${raw(dlRow('Installed from', mod.archive || ''))}
+              ${raw(dlRow('Folder in archive', mod.source || ''))}
+              ${raw(dlRow('Full name', mod.name))}
+              ${raw(dlRow('Folder on server', `mods/${mod.slug}`))}
+              ${raw(dlRow('Contents', bits.join(' · ')))}
+              ${raw(dlRow('Installed', (mod.installedAt || '').slice(0, 10)))}
+            </dl>
+            ${raw(orderNotes.length ? html`
+              <h6 class="mt-3 mb-1">Overlapping files</h6>
+              <p class="small text-secondary mb-2">Overlaps are normal — patches work by shipping
+                new versions of another mod's files. Whichever mod is further down the list
+                provides the copy the game uses; drag the list to change that.</p>
+              ${raw(orderNotes.join(''))}` : '')}
+            ${raw(mod.plugins.length || mod.archives.length ? html`
+              <h6 class="mt-3 mb-1">Plugins</h6>
+              <p class="small text-secondary mb-2">Ticked plugins are added to the game's load
+                order. Untick one to keep this mod's assets but skip that plugin.</p>
+              ${raw(mod.plugins.map((p) => html`
+                <label class="me-3"><input type="checkbox" class="form-check-input me-1" data-plug="${p.file}"
+                  ${raw(p.enabled ? 'checked' : '')} ${raw(editable ? '' : 'disabled')}>
+                  <span class="vt-mono">${p.file}</span></label>`).join(''))}
+              ${raw(mod.archives.length ? html`<div class="small text-secondary mt-2">Asset archives:
+                <span class="vt-mono">${mod.archives.join(', ')}</span></div>` : '')}` : '')}
+          </div>
+        </div></div>
+      </div>`;
+
     return html`
     <div class="card card-secondary card-outline mb-2 vt-mod" draggable="${raw(editable ? 'true' : 'false')}"
       data-slug="${mod.slug}" data-i="${i}">
@@ -2610,41 +2748,17 @@ function modsCard(m, editable) {
               aria-label="Load ${mod.name}">
           </div>
           <div class="flex-grow-1">
-            <strong>${mod.name}</strong>
-            <span class="vt-mono small text-secondary ms-2">${mod.slug}</span>
+            <strong>${pretty(mod.name)}</strong>
+            <div class="small text-secondary">${bits.join(' · ')} ${raw(badges ? ' ' + badges : '')}</div>
           </div>
+          <button class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal"
+            data-bs-target="#modd-${mod.slug}" aria-label="Details for ${mod.name}">Details</button>
           ${raw(editable ? html`
             <button class="btn btn-sm btn-outline-secondary" data-modmove="up" aria-label="Move ${mod.name} earlier">↑</button>
             <button class="btn btn-sm btn-outline-secondary" data-modmove="down" aria-label="Move ${mod.name} later">↓</button>
             <button class="btn btn-sm btn-outline-secondary" data-moddel aria-label="Remove ${mod.name}">Remove</button>` : '')}
         </div>
-        <div class="small text-secondary mt-1">${bits.join(' · ')}</div>
-        ${raw(mod.present === false ? html`<div class="alert alert-warning py-1 px-2 small mt-2 mb-0">
-          Its folder is gone from the game data directory, so this will not load.</div>` : '')}
-        ${raw(bsaClash.has(mod.slug) ? html`<div class="small mt-1">
-          <span class="badge text-bg-secondary">${bsaClash.get(mod.slug)}</span>
-          also ships with another mod. Both are loaded; this one's copy is kept separate.</div>` : '')}
-        ${raw((needs.get(mod.slug) || []).map((n) => html`
-          <div class="alert alert-danger py-1 px-2 small mt-2 mb-0">
-            <strong>${n.plugin}</strong> needs <span class="vt-mono">${n.master}</span>, which is
-            not loaded. Morrowind refuses to start when a plugin's master is missing, so either
-            switch that back on or switch this mod off.</div>`).join(''))}
-        ${raw((wins.get(mod.slug) || []).map((c) => html`
-          <div class="small mt-1"><span class="badge text-bg-warning">replaces ${c.files}</span>
-            ${raw(c.files === 1 ? 'file' : 'files')} also in <strong>${byName.get(c.loser) || c.loser}</strong>,
-            because this mod is further down the list.</div>`).join(''))}
-        ${raw((loses.get(mod.slug) || []).map((c) => html`
-          <div class="small mt-1 text-secondary">${c.files}
-            ${raw(c.files === 1 ? 'file is' : 'files are')} overridden by
-            <strong>${byName.get(c.winner) || c.winner}</strong> below.</div>`).join(''))}
-        ${raw(mod.plugins.length ? html`<details class="mt-2">
-          <summary class="small text-secondary">What's inside</summary>
-          <div class="small mt-1">${raw(mod.plugins.map((p) => html`
-            <label class="me-3"><input type="checkbox" class="form-check-input me-1" data-plug="${p.file}"
-              ${raw(p.enabled ? 'checked' : '')} ${raw(editable ? '' : 'disabled')}>
-              <span class="vt-mono">${p.file}</span></label>`).join(''))}
-            ${raw(mod.archives.length ? html`<div class="text-secondary mt-1 vt-mono">${mod.archives.join(', ')}</div>` : '')}
-          </div></details>` : '')}
+        ${raw(modal)}
       </div>
     </div>`;
   };

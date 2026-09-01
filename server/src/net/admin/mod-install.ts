@@ -13,7 +13,7 @@
 // which, with the contents of each spelled out.
 
 import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { copyFile, rm } from 'node:fs/promises';
+import { copyFile, rename, rm } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import { dirname, join, resolve, sep } from 'node:path';
 import type { IncomingMessage } from 'node:http';
@@ -235,10 +235,21 @@ async function commitInstallLocked(
   // A .7z has no cheap random access -- pulling one file at a time would re-walk a solid block
   // for each -- so it is unpacked once, whole, into a scratch directory and the chosen subtree
   // is taken from there. A zip streams entry by entry and needs no scratch space at all.
+  // The scratch lives INSIDE the mods folder (dot-prefixed, so no slug can collide with it):
+  // that puts it on the same volume as the destination, and moving a file into place is then a
+  // rename, not a second full write. Across a Windows bind mount the difference is minutes.
   let scratch = '';
   if (kind === '7z') {
-    scratch = join(dataDir, STAGING, `${token}-x`);
+    scratch = join(gameDataDir, MODS_SUBDIR, `.stage-${token}`);
     try {
+      mkdirSync(join(gameDataDir, MODS_SUBDIR), { recursive: true }); // first install: no mods dir yet
+      // A crash mid-install would orphan an earlier scratch where the staging sweep cannot see
+      // it, so any leftover is removed here, on the next install.
+      for (const n of readdirSync(join(gameDataDir, MODS_SUBDIR), { withFileTypes: true })) {
+        if (n.isDirectory() && n.name.startsWith('.stage-')) {
+          await rm(join(gameDataDir, MODS_SUBDIR, n.name), { recursive: true, force: true });
+        }
+      }
       mkdirSync(scratch, { recursive: true });
       await extractSevenZip(zipPath, scratch);
     } catch (e) {
@@ -294,7 +305,12 @@ async function commitInstallLocked(
         }
         mkdirSync(dirname(dest), { recursive: true });
         if (kind === 'zip') await extractEntry(zipPath, e, dest);
-        else await copyFile(join(scratch, e.path), dest);
+        else {
+          // Same volume, so this is a metadata operation. EXDEV (someone remounted mods
+          // elsewhere) falls back to the old copy.
+          try { await rename(join(scratch, e.path), dest); }
+          catch { await copyFile(join(scratch, e.path), dest); }
+        }
         files.push(rel.split(sep).join('/'));
         bytes += e.size;
         const name = rel.slice(rel.lastIndexOf('/') + 1);

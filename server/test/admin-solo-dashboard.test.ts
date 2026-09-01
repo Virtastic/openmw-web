@@ -337,12 +337,14 @@ test('removing a mod is type-to-confirm, like every other delete here', () => {
   assert.match(wire[0], /typeToConfirm: slug/);
 });
 
-test('the zip streams rather than being buffered into a form', () => {
+test('the zip is sent raw rather than being buffered into a form', () => {
   // A multipart parser for a several-hundred-megabyte archive is a dependency and a memory
-  // problem; the Data Files upload already settled this.
+  // problem; the Data Files upload already settled this. The transport moved from fetch to
+  // XHR for upload progress, but the body is still the File itself, not a FormData.
   const wire = /function wireMods\(m\) \{[\s\S]*?\n\}/.exec(app)!;
-  assert.match(wire[0], /duplex: 'half'/);
+  assert.match(wire[0], /xhr\.send\(file\);/);
   assert.match(wire[0], /application\/octet-stream/);
+  assert.doesNotMatch(wire[0], /FormData/);
 });
 
 test('filenames out of an uploaded zip are escaped, not injected', () => {
@@ -439,4 +441,91 @@ test('every page in the sidebar has a route and a role', () => {
   const needs = /const NEEDS = \{[\s\S]*?\n\};/.exec(app)![0];
   assert.deepEqual(navs.filter((h) => !routes.has(h)), [], 'nav entries with no route');
   assert.deepEqual(navs.filter((h) => !needs.includes(`'${h}'`)), [], 'nav entries with no role');
+});
+
+// --- installing a mod has to look like it is happening -------------------------------------------
+
+test('the upload reports progress, which fetch cannot do', () => {
+  // Installing is three waits with nothing between them: the bytes go up, the server opens the
+  // archive, the chosen folders unpack. One "Reading…" line covered all of it, so a 400MB mod
+  // looked frozen for minutes and the honest reaction was to click again.
+  const wire = /function wireMods\(m\) \{[\s\S]*?\n\}/.exec(app)!;
+  assert.match(wire[0], /new XMLHttpRequest\(\)/,
+    'fetch has no upload-progress event, so the one knowable wait would have no bar');
+  assert.match(wire[0], /xhr\.upload\.onprogress/);
+  assert.match(wire[0], /phase\('Uploading'/);
+});
+
+test('each wait says which one it is', () => {
+  const wire = /function wireMods\(m\) \{[\s\S]*?\n\}/.exec(app)!;
+  for (const p of ["phase('Uploading'", "phase('Opening the archive'", "phase('Installing'"]) {
+    assert.ok(wire[0].includes(p), `missing phase: ${p}`);
+  }
+});
+
+test('a dropped connection or an expired session says so, rather than hanging', () => {
+  // An upload long enough to need a progress bar is long enough to outlive a session or a
+  // server restart, and XHR reports those as an error event rather than a rejected promise.
+  const wire = /function wireMods\(m\) \{[\s\S]*?\n\}/.exec(app)!;
+  assert.match(wire[0], /xhr\.onerror = \(\) => \{/);
+  assert.match(wire[0], /Your session ended during the/);
+  const onerror = /xhr\.onerror = \(\) => \{[\s\S]*?\};/.exec(wire[0])!;
+  assert.match(onerror[0], /uploadRunning = false;/,
+    'the run flag must be cleared on failure or the next upload is refused forever');
+});
+
+test('the install step replaces the form instead of just disabling a button', () => {
+  // A disabled button beside an unchanged form reads as a page that has died, and the
+  // reasonable response to that is to reload — which abandons a staged upload that was fine.
+  const wire = /function wireMods\(m\) \{[\s\S]*?\n\}/.exec(app)!;
+  assert.match(wire[0], /phase\('Installing', `unpacking \$\{files\}/);
+  assert.doesNotMatch(wire[0], /\$\('#modGo'\)\.disabled = true;/);
+});
+
+// --- the mod list is rows, not a wall of text ------------------------------------------------
+//
+// Conflict sentences, the raw Nexus filename, the slug, and the plugin list all rendered
+// inline, so three mods filled a screen. The row now carries a readable name, the counts, and
+// compact badges; everything that explains itself in sentences moved to a per-mod modal behind
+// a Details button.
+
+test('every mod row has a Details button opening its modal', () => {
+  const card = /const card = \(mod, i\) => \{[\s\S]*?\n  \};/.exec(app)!;
+  assert.match(card[0], /data-bs-toggle="modal"/);
+  assert.match(card[0], /data-bs-target="#modd-\$\{mod\.slug\}"/);
+  assert.match(card[0], /class="modal fade" id="modd-\$\{mod\.slug\}"/);
+});
+
+test('the row shows a readable name, not the raw Nexus filename', () => {
+  // "Cool Mod-45384-1-18-0-1751572864.7z" is a download artifact, not a name. The tail of
+  // digits and the extension are stripped for display; the stored name is untouched and the
+  // modal still shows it in full.
+  const card = /const pretty = \(name\) => \{[\s\S]*?\n  \};/.exec(app)!;
+  // Plain includes: the target IS a regex literal, and matching a regex with a regex is how
+  // this suite has burnt itself before.
+  assert.ok(card[0].includes(String.raw`replace(/\.(zip|7z|rar)$/i, '')`), 'extension strip missing');
+  assert.ok(card[0].includes(String.raw`replace(/(-\d+)+$/, '')`), 'digit-tail strip missing');
+});
+
+test('conflicts are badges on the row and sentences only in the modal', () => {
+  const card = /const card = \(mod, i\) => \{[\s\S]*?\n  \};/.exec(app)!;
+  assert.match(card[0], /badge text-bg-warning">replaces \$\{winCount\}/);
+  assert.match(card[0], /badge text-bg-danger">missing master/);
+  // The explanation lives under the modal's own heading, not loose in the row.
+  assert.match(card[0], /Overlapping files/);
+});
+
+test('plugin toggles moved into the modal but stay inside the card element', () => {
+  // Save reads [data-plug] via the card element, and Bootstrap shows a modal WITHOUT moving
+  // its node — so nesting it in .vt-mod is what keeps the save wiring working. A modal
+  // appended to <body> would silently save every plugin as untouched.
+  const card = /const card = \(mod, i\) => \{[\s\S]*?\n  \};/.exec(app)!;
+  assert.match(card[0], /data-plug="\$\{p\.file\}"/);
+  assert.ok(card[0].indexOf('${raw(modal)}') > card[0].indexOf('data-plug'),
+    'the modal must render inside the .vt-mod card');
+});
+
+test('a drag that starts inside the open modal does not reorder the list', () => {
+  const wire = /function wireMods\(m\) \{[\s\S]*?\n\}/.exec(app)!;
+  assert.match(wire[0], /e\.target\.closest\('\.modal'\)/);
 });
