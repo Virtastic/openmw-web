@@ -1,5 +1,10 @@
 # Bringing multiplayer up on the OVH box
 
+> **This is the runbook for the hosted openmw-web.com deployment**, kept for the operators of
+> that box. If you are self-hosting, none of this applies to you: `./setup.sh` and the admin
+> dashboard's wizard do the equivalent work in the browser — see
+> [`../SELF_HOSTING.md`](../SELF_HOSTING.md#quick-start-recommended).
+
 `morrowind.virtastic.app` has run single player since 1.0.x. Multiplayer has never been
 provisioned there, so the first `ovhcloud` push needs the box prepared first. Verified on
 2026-08-10:

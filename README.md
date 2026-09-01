@@ -211,10 +211,11 @@ state (position, inventory, stats, journal, faction standing) lives in the serve
 per-character document, written behind a debounce and flushed on cell change, level-up
 and logout.
 
-**Sign-in is SSO only** — Google, Discord or Microsoft. There is no password to phish,
-reuse or leak, because there is no password. Only `openid profile` is requested; the
-email scope never is. Your public handle is a username you choose, never the provider's
-name claim.
+**On the hosted service, sign-in is SSO only** — Google, Discord or Microsoft. There is no
+password to phish, reuse or leak, because there is no password. Only `openid profile` is
+requested; the email scope never is. Your public handle is a username you choose, never the
+provider's name claim. (A server you run yourself chooses its own sign-in in the setup
+wizard: SSO, username and password, or both.)
 
 **You bring your own game data.** A player uploads their own Morrowind files once to a
 private storage locker and streams them back on any device. Each account holds its own
@@ -223,12 +224,13 @@ attestation and a per-file content check, and nothing is ever shared between pla
 This is deliberate and the reasoning is written down in [`docs/LEGAL.md`](docs/LEGAL.md).
 
 **Also there:** friends and presence, parties with loot rolls, whisper, mute and block,
-in-game reporting with chat context for moderators, an admin surface, and server-side
-savegames. Running your own server needs an OAuth app, your own copy of the game data
-for the server-side simulation, and a spare half hour: the step-by-step is in
-[`SELF_HOSTING.md`](SELF_HOSTING.md#multiplayer-server), with the OAuth and storage
-details in [`docs/MULTIPLAYER-SETUP.md`](docs/MULTIPLAYER-SETUP.md). Storage is
-optional — with no S3 bucket configured, lockers and saves go to a folder on the server.
+in-game reporting with chat context for moderators, the admin dashboard, and server-side
+savegames. Running your own server is `./setup.sh` and the browser wizard from *Host your
+own server* above (multiplayer itself is behind `OMW_EXPERIMENTAL=multiplayer`); the server
+does need its own copy of the game data, which the wizard's upload step takes. An OAuth app
+is only needed if you want SSO sign-in, and S3 only if you want storage off the box — both
+optional, both collected by the wizard, with the provider-side steps in
+[`docs/MULTIPLAYER-SETUP.md`](docs/MULTIPLAYER-SETUP.md).
 
 For running the server on your own machine while developing, see
 [Multiplayer locally](#multiplayer-locally).
@@ -467,6 +469,9 @@ specifically to Chrome's ANGLE behavior. Mobile and touch are out of scope (ther
 no on-screen controls). Use a recent desktop Chrome or Chromium.
 
 ### Hosting on a real server
+
+(The Docker stack under *Host your own server* writes all of this configuration for you —
+this section is for serving the static build with your own web server instead.)
 
 For production, serve `play/` over HTTPS (cross-origin isolation is only granted on
 secure origins, though `http://localhost` also counts) and set these headers on every
