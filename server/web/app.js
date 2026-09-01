@@ -906,17 +906,6 @@ function stepHosting() {
           else on this machine already uses it, or you want to forward a different one. If you
           change it, publish the same port for the <code>caddy</code> service in your
           <code>docker-compose.yml</code>.</div>
-      </div>
-      <div class="vt-field-danger">
-        <strong>Read this if players are not on this machine.</strong> Browsers only let the game
-        use the shared memory it needs on a <em>secure</em> address. That means
-        <code>http://localhost</code> is fine, and <code>https://</code> anything is fine, but
-        <code>http://</code> to an IP or a machine name is not: the game will refuse to start
-        with "browser not supported".
-        <p class="mb-0 mt-2">So this mode is right when you play on this machine, or when a
-        reverse proxy, tunnel or load balancer in front of it provides HTTPS. If people will
-        connect straight to this box over your network, choose <strong>Public</strong> and give
-        it a domain instead.</p>
       </div>` : '')}
     ${raw(answers.hosting === 'public' ? html`
       <div class="mt-3 mb-2">
