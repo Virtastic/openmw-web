@@ -1519,14 +1519,16 @@ function stepReview() {
       clearWizard();
       toast('Settings saved. Restarting the server…');
       await api('/restart', { method: 'POST' });
-      // THE SAVE MAY HAVE MOVED THE FRONT DOOR. Choosing internal hosting rewrites the proxy
-      // to plain HTTP on the chosen port, and Caddy applies that within seconds — so the
-      // https origin this page is running on is about to stop answering, and polling it
-      // would sit on the restart screen forever. Hand the operator to the new address; the
-      // #restarting fragment makes the fresh page show this same waiting sheet.
-      if (answers.hosting === 'internal') {
+      // THE SAVE MAY HAVE MOVED THE FRONT DOOR. The hosting answer rewrites the proxy, and
+      // Caddy applies it within seconds — internal serves plain HTTP on the chosen port,
+      // public serves HTTPS — so the origin this page is running on can stop answering, and
+      // polling it would sit on the restart screen forever. Hand the operator to the new
+      // address; the #restarting fragment makes the fresh page show this same waiting sheet.
+      {
         const port = Number(answers.httpPort) || 80;
-        const dest = `http://${location.hostname}${port === 80 ? '' : `:${port}`}`;
+        const dest = answers.hosting === 'internal'
+          ? `http://${location.hostname}${port === 80 ? '' : `:${port}`}`
+          : `https://${answers.domain || location.hostname}`;
         if (dest !== location.origin) {
           location.href = `${dest}/admin#restarting`;
           return;

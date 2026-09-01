@@ -26,6 +26,17 @@ test('the localhost-only config is cross-origin isolated', () => {
   for (const h of ISOLATION) assert.ok(out.includes(h), `missing: ${h}`);
 });
 
+test('a server nobody configured serves plain HTTP, not a certificate warning', () => {
+  // First contact used to be a self-signed certificate and a browser interstitial, for
+  // nothing: the dashboard needs no TLS, localhost is a secure context for the engine
+  // anyway, and an unconfigured server refuses players. The wizard's hosting answer is
+  // what sets the real posture.
+  const out = renderCaddyfile({ domain: '' });
+  assert.match(out, /^:80 \{$/m, 'the fresh default must listen on plain :80');
+  assert.doesNotMatch(out, /tls internal/, 'no self-signed certificate before anyone chose one');
+  assert.doesNotMatch(out, /^localhost \{$/m, 'no https-only site block on a fresh server');
+});
+
 test('BOTH site blocks are isolated when a domain is set', () => {
   // The domain block is the one real players arrive on, and the localhost block is how the
   // operator tests it. Isolating only one produces the worst version of this bug: it works

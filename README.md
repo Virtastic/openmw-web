@@ -45,9 +45,9 @@ cd openmw-web
 1. Grab the latest `openmw-web-*.zip` from
    [Releases](https://github.com/Virtastic/openmw-web/releases) and unzip it into `play/`
    (the game engine is too big for git — the script reminds you).
-2. Your browser opens **https://localhost/admin**. Accept the certificate warning, create
-   your admin account, answer the wizard.
-3. Drag your Morrowind `Data Files` folder in when it asks. Play at **https://localhost**.
+2. Your browser opens **http://localhost/admin**. Create your admin account, answer the
+   wizard.
+3. Drag your Morrowind `Data Files` folder in when it asks. Play at **http://localhost**.
 
 That's it. Everything below is detail.
 
@@ -83,7 +83,7 @@ engine was made to run in a browser tab.
 ## Playing
 
 On your own server ([quick start](#quick-start-your-own-server) above), open
-**https://localhost** in desktop Chrome — or just play the hosted site at
+**http://localhost** in desktop Chrome — or just play the hosted site at
 [morrowind.virtastic.app](https://morrowind.virtastic.app). (Developing without Docker,
 serve `play/` yourself — see [Running](#running).) With the launcher enabled there are
 four ways in:

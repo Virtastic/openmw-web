@@ -14,9 +14,9 @@ cd openmw-web
 1. Unzip the latest `openmw-web-*.zip` from
    [Releases](https://github.com/Virtastic/openmw-web/releases) into `play/` (the engine
    is too big for git; the script reminds you if it is missing).
-2. Your browser opens **https://localhost/admin**: accept the certificate warning, create
-   the admin account, answer the wizard, drag your `Data Files` folder in when asked.
-3. Play at **https://localhost**.
+2. Your browser opens **http://localhost/admin**: create the admin account, answer the
+   wizard, drag your `Data Files` folder in when asked.
+3. Play at **http://localhost**.
 
 Everything below is the long version: the dashboard page by page, mods, Tamriel Rebuilt,
 multiplayer, HTTPS and domains, and a no-Docker path.
@@ -291,11 +291,12 @@ restart. Without a domain it serves a certificate it signed itself: still encryp
 browser warns on the first visit. That warning is expected, and the dashboard says so rather
 than leaving you guessing.
 
-**If you choose *Internal* hosting, the address changes.** That answer turns HTTPS off — the
-proxy serves plain HTTP on the port you picked — so when the wizard saves, the dashboard moves
-from `https://localhost/admin` to `http://localhost/admin` (with `:port` if you chose one other
-than 80). The page hands you over itself; the thing to know is that the old `https://` address
-is *supposed* to stop answering, and bookmarks want updating.
+**The hosting answer can move the address.** A fresh server is plain HTTP on port 80, and
+stays that way if you choose *Internal* with the default port. Choose *Public* and the proxy
+switches to HTTPS (a real certificate with a domain, a self-signed one without); choose
+*Internal* with another port and it moves there. Either way the page hands you to the new
+address itself when the wizard saves — the old one stopping is supposed to happen, and
+bookmarks want updating.
 
 ### The dashboard, page by page
 

@@ -59,12 +59,17 @@ test('the step rail has a label for every step', () => {
 // seconds — so the https origin the wizard is running on stops answering. Polling it for the
 // restart, which is what every other save does, would sit on the loading sheet forever.
 
-test('finishing the wizard on internal hosting hands over to the new origin', () => {
-  assert.ok(app.includes("if (answers.hosting === 'internal') {"),
+test('finishing the wizard hands over to the origin the hosting answer creates', () => {
+  // Both directions: internal moves the proxy to plain HTTP on the chosen port, public moves
+  // it to HTTPS. Either way the origin the wizard is running on can stop answering, so the
+  // destination is computed from the answer rather than assumed.
+  assert.ok(app.includes("const dest = answers.hosting === 'internal'"),
     'the review save must consider that its own origin is about to die');
   assert.ok(app.includes('location.href = `${dest}/admin#restarting`;'),
     'the operator must be sent to the address that will answer');
-  // Only when the origin actually changes: saving internal from http://localhost:80 stays put.
+  assert.ok(app.includes('`https://${answers.domain || location.hostname}`'),
+    'public hosting must aim at the domain when one was given');
+  // Only when the origin actually changes: saving internal from http://localhost stays put.
   assert.ok(app.includes('if (dest !== location.origin) {'));
 });
 

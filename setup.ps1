@@ -209,7 +209,7 @@ for ($i = 0; $i -lt 90; $i++) {
     Write-Fail "Server did not stay up. The log above says why."
   }
   try {
-    $resp = Invoke-WebRequest -Uri 'https://localhost/admin' -UseBasicParsing -TimeoutSec 3 -ErrorAction Stop
+    $resp = Invoke-WebRequest -Uri 'http://localhost/admin' -UseBasicParsing -TimeoutSec 3 -ErrorAction Stop
     if ($resp.StatusCode -eq 200) {
       $ready = $true
       $h = docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' openmw-web 2>$null
@@ -226,7 +226,7 @@ if (-not $ready) {
   Write-Warn "The dashboard did not come up. Recent log:"
   Invoke-Compose logs --tail 20 openmw-web
   Write-Host ""
-  Write-Host "The containers are running, so this may just be slow. Try https://localhost/admin"
+  Write-Host "The containers are running, so this may just be slow. Try http://localhost/admin"
   Write-Host "in a moment, or run:  $($DC -join ' ') logs -f openmw-web"
   exit 1
 }
@@ -238,7 +238,7 @@ if (Test-Path '.env') {
   if ($line) { $domain = $line.Matches[0].Groups[1].Value.Trim() }
 }
 if ($domain -eq 'localhost') { $domain = '' }
-$url = if ($domain) { "https://$domain/admin" } else { 'https://localhost/admin' }
+$url = if ($domain) { "https://$domain/admin" } else { 'http://localhost/admin' }
 
 Write-Step "Ready"
 Write-Host ""

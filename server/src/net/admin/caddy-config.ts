@@ -204,12 +204,18 @@ ${plain ? `	# No certificates and no HTTP->HTTPS redirect. Without this Caddy wo
   // The port travels from a form field through TOML and back; a 0, a NaN, or a fraction
   // must not reach the listen directive, where it takes the whole proxy down on reload.
   const p = Number.isFinite(port) && port >= 1 && port <= 65535 ? Math.trunc(port) : 80;
+  // NO DOMAIN AND NOT INTERNAL IS A SERVER NOBODY HAS CONFIGURED YET, and first contact must
+  // not be a certificate warning. Plain HTTP on 80: the dashboard needs no TLS, localhost is a
+  // secure context for the engine anyway, and an unconfigured server refuses players — so the
+  // self-signed certificate this used to serve bought nothing and cost the very first thing an
+  // operator ever saw. The wizard's hosting answer then sets the real posture.
   const blocks = internal
     ? [site(`:${p}`,
       '\t# Plain HTTP on purpose: a LAN, a forwarded port, or your own reverse proxy in front.\n'
       + '\t# Whatever sits in front of this is where TLS belongs.')]
     : domain === ''
-      ? [site('localhost', '\ttls internal')]
+      ? [site(':80', '\t# Plain HTTP: nobody has answered the hosting question yet, and a\n'
+        + '\t# certificate warning is the wrong first thing to show an operator.')]
       : [site(domain, '\t# Let\'s Encrypt, automatically. No directive means a public certificate.'),
          site('localhost', '\ttls internal')];
 

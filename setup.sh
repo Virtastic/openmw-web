@@ -203,7 +203,7 @@ while [ "$i" -lt 90 ]; do
   fi
   # -k because a self-signed certificate is the default here; this is a loopback request to
   # a server we just started, not a trust decision.
-  if curl -skf -o /dev/null --max-time 3 "https://localhost/admin" 2>/dev/null; then
+  if curl -sf -o /dev/null --max-time 3 "http://localhost/admin" 2>/dev/null; then
     READY=yes
     STATUS=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' \
       openmw-web 2>/dev/null || echo none)
@@ -220,7 +220,7 @@ if [ "$READY" != yes ]; then
   warn "The dashboard did not come up. Recent log:"
   $DC logs --tail 20 openmw-web
   say ""
-  say "The containers are running, so this may just be slow. Try https://localhost/admin"
+  say "The containers are running, so this may just be slow. Try http://localhost/admin"
   say "in a moment, or run:  $DC logs -f openmw-web"
   exit 1
 fi
@@ -228,7 +228,7 @@ fi
 # ---------------------------------------------------------------------------------------
 # The domain lives in the server's own config now (the wizard writes it), so the local
 # address is always the right one to open: it works whether or not a domain is set.
-URL="https://localhost/admin"
+URL="http://localhost/admin"
 DOMAIN=$(sed -n 's/^[[:space:]]*domain[[:space:]]*=[[:space:]]*"\(..*\)"/\1/p' data/config.dashboard.toml 2>/dev/null | head -1 || true)
 
 step "Ready"
@@ -238,12 +238,6 @@ say ""
 if [ "$CONFIGURED" != yes ]; then
   say "  The server is up but has no Morrowind files yet, so players cannot join. That is"
   say "  expected on a first run — the dashboard walks you through adding them."
-  say ""
-fi
-if [ -z "$DOMAIN" ]; then
-  say "  Your browser will warn that the connection is not private. That is expected —"
-  say "  the certificate is one this server signed itself, because no domain is configured."
-  say "  Click Advanced, then Proceed. Add a domain in the wizard to remove the warning."
   say ""
 fi
 say "  The first thing it asks for is an administrator account. After that a short wizard"
