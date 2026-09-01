@@ -383,10 +383,13 @@ function cleanDomain(raw) {
 function wizardShell(inner, { back = true, next = 'Continue', onNext = null, disabled = false, need = '' } = {}) {
   const steps = wizardSteps();
   const at = Math.min(step, steps.length - 1);
+  // Only the CURRENT step is named; the rest are bars. Eleven uppercase labels in a row read
+  // as a wall, and the only one anybody needs is the one they are on — the bars still show
+  // where that is in the journey and how much is left.
   const bar = steps.map((s, i) => html`
     <div class="vt-step ${raw(i < at ? 'done' : i === at ? 'now' : '')}">
       <span class="vt-step-bar"></span>
-      <span class="vt-step-label">${STEP_LABEL[s] || s}</span>
+      ${raw(i === at ? html`<span class="vt-step-label">${STEP_LABEL[s] || s}</span>` : '')}
     </div>`).join('');
 
   view().innerHTML = html`
