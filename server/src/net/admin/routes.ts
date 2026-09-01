@@ -64,7 +64,9 @@ import { checkDomain, normaliseDomain, VERIFY_PATH, VERIFY_NONCE } from './setup
 import { readDashboardTree } from './settings-store';
 import { writeCaddyfile, launcherEnabled } from './caddy-config';
 import { modsView, saveMods, uploadContent, gameDataWritable, MAX_UPLOAD_BYTES } from './api-mods';
-import { beginInstall, commitInstall, saveModOrder, uninstallMod, type Choice } from './mod-install';
+import {
+  beginInstall, commitInstall, getInstallProgress, saveModOrder, uninstallMod, type Choice,
+} from './mod-install';
 import { EXPERIMENTAL_ENV, experimental } from '../../core/experimental';
 import { listSaves, saveDownload, saveUploadUrl, saveUploaded, type SavesDeps } from './api-saves';
 import type { LogEntry } from '../../log';
@@ -809,6 +811,16 @@ export function adminRoutes(deps: AdminDeps) {
       if (!staged.ok) { json(res, staged.status, { error: staged.error }); return true; }
       log('info', 'admin.mod_staged', { by: ctx.accountKey, archive: staged.value.archive });
       json(res, 200, staged.value);
+      return true;
+    }
+    // Polled by the page while a commit is running, so a minutes-long extraction shows a
+    // bar instead of a spinner. Budget-exempt like the upload routes: one poll a second for
+    // the length of a Tamriel Data install adds up, and the route is owner-only and reads
+    // one map entry.
+    if (method === 'GET' && path === '/admin/api/mods/install/progress') {
+      if (!await gate(req, res, auth, 'owner', true)) return true;
+      const token = url.searchParams.get('token') ?? '';
+      json(res, 200, /^[0-9a-f]{32}$/.test(token) ? (getInstallProgress(token) ?? { pct: null }) : { pct: null });
       return true;
     }
     if (method === 'POST' && path === '/admin/api/mods/install/commit') {

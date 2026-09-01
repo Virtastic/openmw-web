@@ -150,6 +150,28 @@ test('the optional parts of the download are the operator to choose', () => {
   assert.ok(fn[0].includes("if (!picked.length) { toast('Tick at least one part to install.', 'err'); return; }"));
 });
 
+test('a running install reports progress, and both installers show the bar', () => {
+  // The commit is one request that can take minutes on a big .7z, and a spinner that long
+  // reads as frozen. The server counts 7z's own extraction percent (-bsp1) and the placing
+  // loop per staged token; the page polls it into the phase card's existing bar.
+  const sevenzip = readFileSync(join(process.cwd(), 'src', 'core', 'sevenzip.ts'), 'utf8');
+  assert.ok(sevenzip.includes("'-bsp1'"), 'extraction must emit percent, not run silent');
+  const install = readFileSync(join(process.cwd(), 'src', 'net', 'admin', 'mod-install.ts'), 'utf8');
+  assert.ok(install.includes('const installProgress = new Map'), 'no progress record');
+  // Deleted on every exit, or the map grows one dead entry per install forever.
+  assert.equal(install.split('installProgress.delete(token);').length - 1, 3,
+    'the failure path, the write-failure path and the success path must each clean up');
+  const routes = readFileSync(join(process.cwd(), 'src', 'net', 'admin', 'routes.ts'), 'utf8');
+  assert.ok(routes.includes("path === '/admin/api/mods/install/progress'"), 'no endpoint to poll');
+  assert.ok(routes.includes("await gate(req, res, auth, 'owner', true)"),
+    'polls for minutes must be budget-exempt like the uploads they accompany');
+  // BOTH installers: the wizard step and the mods page each start the poll and stop it in a
+  // finally, so an error cannot leave an interval repainting a dead panel.
+  assert.ok(app.includes('function pollInstall(stage, token)'));
+  assert.equal(app.split('pollInstall(stage, staged.token)').length - 1, 2);
+  assert.equal(app.split('stopPoll();').length - 1, 2);
+});
+
 test('Back and Skip are held while an upload or install is in flight', () => {
   // Tamriel Data is minutes of spinner, and "Skip for now" sat there looking like the way
   // out. The install would finish server-side either way; the operator who clicked Skip has

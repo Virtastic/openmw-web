@@ -60,6 +60,18 @@ function serialise<T>(fn: () => Promise<T>): Promise<T> {
 const fail = (status: number, error: string): InstallResult<never> => ({ ok: false, status, error });
 
 /**
+ * Live progress of a running install, keyed by the staged token, for the dashboard to poll.
+ *
+ * Extraction of Tamriel Data is minutes of work between one request and one response, and a
+ * spinner that long reads as frozen. In memory and unbounded only in theory: commits are
+ * serialised, so at most one entry is being written at a time, and each is deleted when its
+ * install returns.
+ */
+const installProgress = new Map<string, { pct: number; note: string }>();
+export const getInstallProgress = (token: string): { pct: number; note: string } | null =>
+  installProgress.get(token) ?? null;
+
+/**
  * Stream a request body to a file, with a byte cap.
  *
  * Lifted out of uploadContent rather than written again: that loop carries two fixes that were
@@ -263,6 +275,12 @@ async function commitInstallLocked(
   // The scratch lives INSIDE the mods folder (dot-prefixed, so no slug can collide with it):
   // that puts it on the same volume as the destination, and moving a file into place is then a
   // rename, not a second full write. Across a Windows bind mount the difference is minutes.
+  // A 7z spends most of the wait inside the whole-archive extraction, so that phase owns
+  // 0-70 and placing the files owns the rest; a zip decompresses per entry in the placing
+  // loop, which is then the whole bar.
+  const placeBase = kind === '7z' ? 70 : 0;
+  installProgress.set(token, { pct: 0, note: 'unpacking the archive' });
+
   let scratch = '';
   if (kind === '7z') {
     scratch = join(gameDataDir, MODS_SUBDIR, `.stage-${token}`);
@@ -276,7 +294,11 @@ async function commitInstallLocked(
         }
       }
       mkdirSync(scratch, { recursive: true });
-      await extractSevenZip(zipPath, scratch);
+      await extractSevenZip(zipPath, scratch, (pct) => {
+        installProgress.set(token, {
+          pct: Math.round((pct * placeBase) / 100), note: 'unpacking the archive',
+        });
+      });
     } catch (e) {
       await rm(scratch, { recursive: true, force: true });
       return fail(400, e instanceof ZipError ? e.message : 'That archive could not be unpacked.');
@@ -295,6 +317,7 @@ async function commitInstallLocked(
   const doc = readModDoc(dataDir);
   const taken = new Set(doc.mods.map((m) => m.slug));
   const installed: InstalledMod[] = [];
+  let placed = 0;
 
   for (const choice of choices) {
     // The slug becomes a directory name and a URL segment, so it is regenerated here rather
@@ -340,6 +363,15 @@ async function commitInstallLocked(
           catch { await copyFile(join(scratch, e.path), dest); }
         }
         files.push(rel.split(sep).join('/'));
+        placed++;
+        // Every 100 files, not every file: the map write is cheap but not free, and at
+        // Tamriel Data's 54,000 files once per file is 54,000 times nobody can see.
+        if (placed % 100 === 0) {
+          installProgress.set(token, {
+            pct: Math.min(99, placeBase + Math.round(((100 - placeBase) * placed) / entries.length)),
+            note: 'placing files',
+          });
+        }
         bytes += e.size;
         const name = rel.slice(rel.lastIndexOf('/') + 1);
         if (/\.(esp|esm|omwaddon|omwgame|omwscripts)$/i.test(name)) {
@@ -362,6 +394,7 @@ async function commitInstallLocked(
         await rm(join(dataDir, MOD_META, `${done.slug}.json`), { force: true });
       }
       if (scratch) await rm(scratch, { recursive: true, force: true });
+      installProgress.delete(token);
       log('warn', 'mods.install_failed', { slug, error: String(e) });
       return fail(400, e instanceof ZipError ? e.message
         : `Could not install ${choice.name || slug}. The game data folder may be full.`);
@@ -400,6 +433,7 @@ async function commitInstallLocked(
   const wrote = writeModDoc(dataDir, next);
   if (!wrote.ok) {
     for (const m of installed) await rm(join(gameDataDir, MODS_SUBDIR, m.slug), { recursive: true, force: true });
+    installProgress.delete(token);
     return fail(500, wrote.error);
   }
   // Both halves of the staging pair. Leaving the note behind describes an archive that has
@@ -407,6 +441,7 @@ async function commitInstallLocked(
   await rm(zipPath, { force: true });
   await rm(join(dataDir, STAGING, `${token}.json`), { force: true });
   if (scratch) await rm(scratch, { recursive: true, force: true });
+  installProgress.delete(token);
   log('info', 'mods.installed', { slugs: installed.map((m) => m.slug) });
   return { ok: true, value: installed };
 }

@@ -1355,18 +1355,21 @@ function wireTamriel() {
         name: picked.length > 1 && c.path ? `${label}${NAME_SEP}${c.path}` : label,
       }));
       const files = picked.reduce((n, c) => n + c.files, 0);
-      installPhase(stage, 'Installing', `unpacking ${files} file${files === 1 ? '' : 's'}`);
+      installPhase(stage, 'Installing', `unpacking ${files} file${files === 1 ? '' : 's'}`, 0);
       // Leaving the step mid-extraction looks like abandoning it, and Tamriel Data is minutes
-      // of spinner — long enough that "Skip for now" reads as the way out. The install itself
-      // would finish server-side either way, but the operator who clicked Skip has just been
+      // long — enough that "Skip for now" reads as the way out. The install itself would
+      // finish server-side either way, but the operator who clicked Skip has just been
       // taught, wrongly, that it did not happen.
       trNav(false);
+      const stopPoll = pollInstall(stage, staged.token);
       try {
         await api('/mods/install/commit', { method: 'POST', body: { token: staged.token, choices } });
         renderWizard();   // back to this step, which now reports it installed
       } catch (e) {
         trNav(true);
         stage.innerHTML = html`<div class="alert alert-danger">${e.message}</div>`;
+      } finally {
+        stopPoll();
       }
     };
   };
@@ -2678,6 +2681,25 @@ function installPhase(el, title, detail, pct) {
 }
 
 /**
+ * Poll a running install's progress and repaint the phase card with a real bar.
+ *
+ * The commit request is one call that can take minutes on a big .7z, and a spinner that long
+ * reads as frozen. The server counts extraction percent and placed files per staged token;
+ * this asks once a second and hands the answer to installPhase, whose bar already existed
+ * for the upload. Returns a stop function for the caller's finally.
+ */
+function pollInstall(stage, token) {
+  const tick = async () => {
+    try {
+      const p = await api(`/mods/install/progress?token=${encodeURIComponent(token)}`);
+      if (p && typeof p.pct === 'number') installPhase(stage, 'Installing', p.note || '', p.pct);
+    } catch { /* between phases, or done: keep the last frame rather than flickering */ }
+  };
+  const id = setInterval(tick, 1000);
+  return () => clearInterval(id);
+}
+
+/**
  * Send one archive to the staging endpoint; resolve with what the server found inside it.
  *
  * Shared by the mods page and the wizard's Tamriel Rebuilt step, which are the same three
@@ -2824,13 +2846,16 @@ function wireMods(m) {
       // reload, which abandons a staged upload that was working.
       const files = choices.reduce((n, ch) =>
         n + (staged.candidates.find((c) => c.path === ch.path)?.files ?? 0), 0);
-      installPhase(stage, 'Installing', `unpacking ${files} file${files === 1 ? '' : 's'}`);
+      installPhase(stage, 'Installing', `unpacking ${files} file${files === 1 ? '' : 's'}`, 0);
+      const stopPoll = pollInstall(stage, staged.token);
       try {
         await api('/mods/install/commit', { method: 'POST', body: { token: staged.token, choices } });
         toast('Installed. Restart to load it.');
         route();
       } catch (e) {
         stage.innerHTML = html`<div class="alert alert-danger">${e.message}</div>`;
+      } finally {
+        stopPoll();
       }
     };
   };

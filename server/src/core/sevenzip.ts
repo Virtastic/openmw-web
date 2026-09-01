@@ -43,7 +43,7 @@ export function sniffArchive(path: string): 'zip' | '7z' | 'rar' | 'unknown' {
  * full has to fail, not shrink. Tamriel Data's listing is around 11MB, so the cap is nowhere
  * near it in practice; it is the answer when it is not that has to be right.
  */
-function run(args: string[], timeoutMs: number):
+function run(args: string[], timeoutMs: number, onOut?: (chunk: string) => void):
 Promise<{ code: number; out: string; err: string; truncated: boolean }> {
   return new Promise((resolve) => {
     const p = spawn('7z', args, { stdio: ['ignore', 'pipe', 'pipe'] });
@@ -53,7 +53,9 @@ Promise<{ code: number; out: string; err: string; truncated: boolean }> {
     let truncated = false;
     const kill = setTimeout(() => p.kill('SIGKILL'), timeoutMs);
     p.stdout.on('data', (d: Buffer) => {
-      if (out.length < CAP) out += d.toString();
+      const text = d.toString();
+      if (onOut) onOut(text);
+      if (out.length < CAP) out += text;
       else truncated = true;
     });
     p.stderr.on('data', (d: Buffer) => { if (err.length < 64 * 1024) err += d.toString(); });
@@ -116,10 +118,23 @@ export async function listSevenZip(path: string, maxEntries = 100_000): Promise<
  * at a time would re-walk a solid-compressed block for every one of them. The caller lists
  * first (which refuses unsafe names), then moves only the subtree the operator chose.
  */
-export async function extractSevenZip(path: string, dest: string): Promise<void> {
-  // -y answer yes, -bd no progress indicator, -o output dir, -- end of options so an archive
-  // whose name begins with a dash cannot become one.
-  const r = await run(['x', '-y', '-bd', `-o${dest}`, '--', path], 30 * 60_000);
+export async function extractSevenZip(
+  path: string,
+  dest: string,
+  onPercent?: (pct: number) => void,
+): Promise<void> {
+  // -y answer yes, -o output dir, -- end of options so an archive whose name begins with a
+  // dash cannot become one. -bsp1 sends 7z's own percentage to stdout: extraction of a big
+  // solid archive is minutes long, and a caller with an operator watching needs something
+  // truer than a spinner. The percent lines are tiny next to the 128MB output cap.
+  let last = -1;
+  const r = await run(['x', '-y', '-bsp1', `-o${dest}`, '--', path], 30 * 60_000, (chunk) => {
+    if (!onPercent) return;
+    const m = chunk.match(/(\d{1,3})%/g);
+    if (!m) return;
+    const pct = Math.min(100, Number(m[m.length - 1]!.slice(0, -1)));
+    if (pct > last) { last = pct; onPercent(pct); }
+  });
   if (r.code !== 0) {
     throw new ZipError(`that .7z archive could not be unpacked${r.err ? `: ${r.err.trim().slice(0, 200)}` : ''}`);
   }
