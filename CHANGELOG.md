@@ -2,7 +2,12 @@
 
 Notable changes to OpenMW-Web. Dates are release dates, newest first.
 
-## Unreleased
+## 1.2.0
+
+The dashboard release. 1.1.0 put a multiplayer service around the engine; 1.2.0 makes the
+whole server something a person runs from a browser: setup is a wizard, mods are installed
+and ordered on a page, Tamriel Rebuilt has a path of its own, and the unfinished parts say
+so instead of waiting to be discovered.
 
 **Setting a server up no longer involves a terminal.** `./setup.sh` starts the stack and opens
 a browser, and everything after that is a wizard: the administrator account, single player or

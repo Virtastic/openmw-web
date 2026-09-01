@@ -245,13 +245,14 @@ the same thing, before or after running the script — the server starts either 
 what it needs.
 
 **The game engine is a separate download when you start from a `git clone`.** The repository
-carries the game page (`play/`) but not the compiled engine — `openmw.js`, `openmw.wasm` and
-`openmw.data` are build outputs, about half a gigabyte, and are gitignored. Without them the
-dashboard works and the game page does not. Download `openmw-web-<version>.zip` from
+carries the game page (`play/`) but not the compiled engine, which is a build output of
+about half a gigabyte and is gitignored. Without it the dashboard works and the game page
+does not. Download `openmw-web-<version>.zip` from
 [Releases](https://github.com/Virtastic/openmw-web/releases) and unzip its contents into
-`play/` — it is the same layout, so let it merge. No restart needed; the folder is served
-live. (`setup.sh` warns you when the engine is missing.) Building it yourself instead is the
-*Building* section of the README.
+`play/`, letting it merge with what is there — the zip carries the page plus the engine in
+a versioned `e/` folder. No restart needed; the folder is served live. (`setup.sh` warns
+you when the engine is missing.) Building it yourself instead is the *Building* section of
+the README.
 
 Useful afterwards:
 

@@ -145,8 +145,12 @@ if (-not (Get-ChildItem 'gamedata' -ErrorAction SilentlyContinue)) {
 # clone serves a page with no engine behind it: the dashboard works, the game does not, and
 # the failure is a boot screen that never finishes - nothing anywhere says why. Say it here,
 # where it can still be fixed before anyone is confused.
-if (-not (Test-Path 'play\openmw.wasm')) {
-  Write-Warn "The game engine is not in .\play (openmw.wasm is missing)."
+# Two layouts count as "the engine is here": openmw.wasm at the root (a developer's own
+# build) and e\<hash>\openmw.wasm (a release zip, whose engine is content-hashed so it can
+# be cached forever). Checking only the root would warn at somebody who had just done the
+# right thing with the release.
+if (-not (Test-Path 'play\openmw.wasm') -and -not (Test-Path 'play\e\*\openmw.wasm')) {
+  Write-Warn "The game engine is not in .\play (no openmw.wasm found)."
   Write-Host "   The admin dashboard will work, but nobody can PLAY until it is there."
   Write-Host "   Download openmw-web-<version>.zip from:"
   Write-Host "     https://github.com/Virtastic/openmw-web/releases"

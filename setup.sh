@@ -147,8 +147,12 @@ fi
 # clone serves a page with no engine behind it: the dashboard works, the game does not, and
 # the failure is a boot screen that never finishes — nothing anywhere says why. Say it here,
 # where it can still be fixed before anyone is confused.
-if [ ! -f play/openmw.wasm ]; then
-  warn "The game engine is not in ./play (openmw.wasm is missing)."
+# Two layouts count as "the engine is here": openmw.wasm at the root (a developer's own
+# build) and e/<hash>/openmw.wasm (a release zip, whose engine is content-hashed so it can
+# be cached forever). Checking only the root would warn at somebody who had just done the
+# right thing with the release.
+if [ ! -f play/openmw.wasm ] && ! ls play/e/*/openmw.wasm >/dev/null 2>&1; then
+  warn "The game engine is not in ./play (no openmw.wasm found)."
   say "   The admin dashboard will work, but nobody can PLAY until it is there."
   say "   Download openmw-web-<version>.zip from:"
   say "     https://github.com/Virtastic/openmw-web/releases"
