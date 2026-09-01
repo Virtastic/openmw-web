@@ -121,7 +121,12 @@ jobs:
           # git archive packs tracked files only — game data, deps caches, and local
           # blobs are gitignored and can never leak through this path.
           git archive --format=tar.gz --prefix="openmw-web-$TAG/" -o "dist/openmw-web-src-$TAG.tar.gz" "$TAG"
-          tar tzf "dist/openmw-web-src-$TAG.tar.gz" | grep -qiE 'mwdata|\.esm$|\.bsa$' && { echo "FATAL: suspicious file in source tarball" >&2; exit 1; } || true
+          # A mwdata DIRECTORY component, not the substring: the server grew source files named
+          # for the /mwdata routes they implement (mwdata-routes.ts, mwdata-serve.test.ts), and
+          # the substring match killed the v1.2.0 release over its own tracked code. Game data
+          # only ever lives IN a mwdata/ folder, and the extension checks still catch a stray
+          # plugin or archive anywhere at all.
+          tar tzf "dist/openmw-web-src-$TAG.tar.gz" | grep -qiE '(^|/)mwdata/|\.esm$|\.bsa$' && { echo "FATAL: suspicious file in source tarball" >&2; exit 1; } || true
 
       - name: Checksums
         run: cd dist && shasum -a 256 openmw-web-*.zip openmw-web-*.tar.gz > SHA256SUMS
