@@ -73,6 +73,22 @@ export const getInstallProgress = (token: string): { pct: number; note: string }
   installProgress.get(token) ?? null;
 
 /**
+ * The same progress stream, for jobs that are not mod installs (the engine updater).
+ *
+ * `end()` deletes after a grace period rather than immediately: a mod install's completion
+ * travels back on the commit request, but a detached job's only voice IS this map, so the
+ * poller must get one look at the terminal frame before it vanishes.
+ */
+export function trackProgress(token: string): {
+  set: (pct: number, note: string) => void; end: () => void;
+} {
+  return {
+    set: (pct, note) => { installProgress.set(token, { pct, note }); },
+    end: () => { setTimeout(() => installProgress.delete(token), 60_000).unref(); },
+  };
+}
+
+/**
  * Stream a request body to a file, with a byte cap.
  *
  * Lifted out of uploadContent rather than written again: that loop carries two fixes that were
@@ -85,7 +101,12 @@ export const getInstallProgress = (token: string): { pct: number; note: string }
  * that has just been written — on a bind mount, minutes of it, for a value we had in hand.
  */
 export async function streamToFile(
-  req: IncomingMessage,
+  // Structurally: anything Readable. The upload routes pass an IncomingMessage; the engine
+  // updater passes a fetch body via Readable.from. The loop below uses exactly these four.
+  req: {
+    on(event: string, cb: (...args: any[]) => void): unknown;
+    pause(): unknown; resume(): unknown; destroy(): unknown;
+  },
   target: string,
   cap: number,
 ): Promise<{ ok: true; bytes: number; sha256: string } | { ok: false; over: boolean; error: string }> {

@@ -67,6 +67,7 @@ import { modsView, saveMods, uploadContent, gameDataWritable, MAX_UPLOAD_BYTES }
 import {
   beginInstall, commitInstall, getInstallProgress, saveModOrder, uninstallMod, type Choice,
 } from './mod-install';
+import { engineStatus, startEngineUpdate } from './update-engine';
 import { EXPERIMENTAL_ENV, experimental } from '../../core/experimental';
 import { listSaves, saveDownload, saveUploadUrl, saveUploaded, type SavesDeps } from './api-saves';
 import type { LogEntry } from '../../log';
@@ -101,6 +102,8 @@ export interface AdminDeps {
   gameDataDir: string;
   /** Shown in the dashboard footer. */
   version: string;
+  /** The served game client dir, when this deployment mounts it. Enables engine updates. */
+  clientDir?: string;
   maintenance: { get(): { on: boolean; message: string }; set(on: boolean, message: string): void };
   restart(reason: string): void;
   exportData(res: ServerResponse): Promise<void>;
@@ -688,6 +691,10 @@ export function adminRoutes(deps: AdminDeps) {
           current: deps.version,
           latest,
           behind: latest !== '' && latest !== deps.version,
+          // The game client is its own component with its own currency: it updates in
+          // place from the release zip, no restart, when the deployment mounts it.
+          engine: deps.clientDir ? engineStatus(deps.clientDir)
+            : { writable: false, tag: null, present: false },
           url: rel.html_url ?? '',
         });
       } catch {
@@ -823,6 +830,24 @@ export function adminRoutes(deps: AdminDeps) {
       if (!await gate(req, res, auth, 'owner', true)) return true;
       const token = url.searchParams.get('token') ?? '';
       json(res, 200, /^[0-9a-f]{32}$/.test(token) ? (getInstallProgress(token) ?? { pct: null }) : { pct: null });
+      return true;
+    }
+    // Kick off a game-client update. Fire-and-forget on purpose: the download is hundreds
+    // of megabytes, and holding one idle HTTP request open through the proxy for its whole
+    // duration is strictly worse than handing back a token for the existing progress route.
+    if (method === 'POST' && path === '/admin/api/update/engine') {
+      const ctx = await gate(req, res, auth, 'owner');
+      if (!ctx) return true;
+      if (!deps.clientDir || !engineStatus(deps.clientDir).writable) {
+        json(res, 200, { ok: false, unavailable: true,
+          error: 'This deployment does not expose the game client folder to the server. '
+            + 'With the bundled Docker setup, update the checkout once by hand '
+            + '(git pull, then docker compose up -d --build); on bare Linux also make '
+            + './play writable for the container: chown -R 1000:1000 ./play' });
+        return true;
+      }
+      log('warn', 'admin.update.engine', { by: ctx.accountKey });
+      json(res, 200, { ok: true, token: startEngineUpdate({ clientDir: deps.clientDir, dataDir: deps.dataDir }) });
       return true;
     }
     if (method === 'POST' && path === '/admin/api/mods/install/commit') {

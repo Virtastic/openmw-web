@@ -104,6 +104,9 @@ export interface StartOptions {
    * to start. A server built with false has no sim peer, so its cells have no holder.
    */
   requireGameData?: boolean;
+  /** Where the served game client lives, for the engine update button. Tests inject a tmp
+   *  dir; the docker layout is auto-detected at /client. */
+  clientDir?: string;
   dataDir: string;
   port: number;
   host?: string;
@@ -944,6 +947,9 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     recentLogs: (limit, filter) => recentLogs(limit, filter),
     metricsSnapshot: () => summariseMetrics(),
 
+    // The game client bundle, when this deployment mounts it (docker-compose mounts
+    // ./play at /client). Absent on other layouts, and the update routes say so honestly.
+    clientDir: opts.clientDir ?? (existsSync('/client') ? '/client' : undefined),
     maintenance: {
       get: () => ({ on: maintenance.on, message: maintenance.message }),
       set: (on, message) => {

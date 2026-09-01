@@ -70,6 +70,9 @@ services:
       # rather copy files in yourself — the dashboard detects it and says so instead of
       # failing with a permissions error.
       - ./gamedata:/data/gamedata
+      # The served game client, writable, so the dashboard's update button can install a
+      # release into it. Caddy serves this same folder to players, read-only.
+      - ./play:/client
     environment:
       - NODE_ENV=production
       # Object storage keys, ONLY as a fallback. The setup wizard asks for these in the
