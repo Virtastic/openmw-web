@@ -3,6 +3,7 @@
 // Composition root: wires config, stores, gates, plugins, HTTP and WS into a running
 // server. main.ts is the CLI face; tests call startServer() directly.
 
+import pkg from '../package.json';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { WebSocket } from 'ws';
@@ -79,7 +80,10 @@ import { WorldBrowser } from './core/worldbrowser';
 import { parseExterior, isChargenCell } from './core/movement';
 import { detectGameData, findPeerBinary, gameDataDir, buildPeerCfg, buildPeerSettings, type GameData } from './core/gamedata';
 
-export const VERSION = '1.1.0';
+// From package.json, not a literal: the hardcoded copy sat at 1.1.0 while v1.2.0 shipped,
+// so a freshly updated server kept reporting itself out of date. One source of truth, and
+// the release workflow refuses a tag that does not match it.
+export const VERSION: string = (pkg as { version: string }).version;
 
 // Compose extra HTTP route handlers into one: try each in order, first to claim wins.
 // createHttpServer/createAuthRoutes take a single `also` hook, and we have two (admin +

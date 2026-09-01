@@ -45,6 +45,16 @@ jobs:
           git rev-parse -q --verify "refs/tags/$TAG" >/dev/null || { echo "FATAL: tag $TAG not found" >&2; exit 1; }
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
+      # The dashboard's update button compares the release tag to the server's own version
+      # (server/package.json). A tag cut without bumping it would ship a release that
+      # reports itself out of date forever — refuse it here, before anything builds.
+      - name: Version guard
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          PKG="v$(node -p "require('./server/package.json').version")"
+          [ "$TAG" = "$PKG" ] || { echo "FATAL: tag $TAG != server/package.json $PKG — bump the version first" >&2; exit 1; }
+
       # Same staging as deploy-ovh.yml: the demo data is gitignored; the runner's
       # ~/morrowind-src is the canonical source of truth for it.
       - name: Stage demo data into build context
