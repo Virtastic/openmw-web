@@ -200,9 +200,18 @@ export async function beginInstall(
   const candidates = findDataFolders(entries.map((e) => ({ path: e.path, size: e.size, isDir: e.isDir })));
   if (candidates.length === 0) {
     await rm(path, { force: true });
-    return fail(400, 'No Morrowind data was found in that archive. A mod folder holds plugins '
+    // Logged, and the message NAMES THE FILE: the first operator to hit this had uploaded the
+    // Morrowind Code Patch (the file beside the Optimization Patch in their downloads), and an
+    // anonymous refusal left them thinking the right archive was broken. Nothing in the log
+    // said which file arrived either.
+    log('info', 'mods.no_data_found', { archive: archiveName, entries: entries.length });
+    const mcp = /code\s*patch/i.test(archiveName)
+      ? ' (The Morrowind Code Patch patches the original engine\'s exe and does not apply to '
+        + 'OpenMW; you may have meant the Morrowind Optimization Patch.)'
+      : '';
+    return fail(400, `No Morrowind data was found in ${archiveName}. A mod folder holds plugins `
       + '(.esp, .esm, .omwaddon, .omwscripts) or asset folders such as Meshes, Textures or Sound. '
-      + 'If the download contains a further archive inside it, unpack that one first.');
+      + `If the download contains a further archive inside it, unpack that one first.${mcp}`);
   }
 
   const release = identifyRelease(got.sha256);

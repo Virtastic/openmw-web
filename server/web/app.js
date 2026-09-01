@@ -1595,8 +1595,8 @@ function waitForRestart() {
     const secs = Math.round((Date.now() - startedAt) / 1000);
     const d = $('#ldStatus');
     if (d) {
-      d.textContent = secs < 20 ? 'Applying your settings'
-        : secs < 60 ? 'Still starting up'
+      d.textContent = secs < 30 ? 'Applying your settings'
+        : secs < 120 ? 'Still starting up (a first start checks every game file, which takes a minute or two)'
         : 'Taking longer than usual';
     }
     const detail = $('#ldDetail');
