@@ -9,27 +9,26 @@ ROOT="${ROOT:-$(cd "$(dirname "$0")" && pwd)}"
 EM_LIBEXEC="${EM_LIBEXEC:-/opt/homebrew/Cellar/emscripten/6.0.1/libexec}"
 SR="$EM_LIBEXEC/cache/sysroot"
 
-# --- WASM64 (MEMORY64) -----------------------------------------------------------------------
-# OMW_WASM64=1 configures against the wasm64 dependency stack in deps/wasm64 (built by
-# wasm-build/build-deps.sh with the same variable). OFF by default, so the shipping wasm32
-# configuration is byte-for-byte what it was.
+# --- WASM64 (MEMORY64) IS THE ONLY TARGET ------------------------------------------------------
+# A 32-bit build tops out at the 4 GiB it can address, and a Tamriel Rebuilt load order does not
+# fit in it; the client (play/index.html) gates on MEMORY64 and hands raw i64 exports around, so
+# a wasm32 engine under it is a mismatch, not an option. OMW_WASM64 survives only as a guard: =0
+# refuses loudly instead of silently producing the pointer size nothing ships any more.
 #
 # -m64 rather than -sMEMORY64=1: emscripten 6.0.1 warns the -s spelling is deprecated, and -m64
 # is a compiler flag, so it reaches CMake try_compile probes -- which matters a great deal here,
 # because a probe compiled for the wrong pointer size fails in ways that read like a missing
 # dependency rather than a wrong flag.
-if [ "${OMW_WASM64:-0}" = "1" ]; then
-  WASM_ARCH=wasm64; ARCH_FLAG=-m64; DW=$ROOT/deps/wasm64
-else
-  WASM_ARCH=wasm32; ARCH_FLAG=;     DW=$ROOT/deps/wasm
+if [ "${OMW_WASM64:-1}" != "1" ]; then
+  echo "FATAL: wasm32 is no longer a target. The engine is wasm64 (MEMORY64) only." >&2
+  exit 1
 fi
+WASM_ARCH=wasm64; ARCH_FLAG=-m64; DW=$ROOT/deps/wasm64
 WARCH=$SR/lib/$WASM_ARCH-emscripten
-# SEPARATE BUILD TREE PER POINTER MODEL. Sharing build-wasm/ between the two would let ninja
-# consider wasm32 objects up to date for a wasm64 configure -- the same stale-object fault the
-# root Dockerfile:35 refuses a cache mount over, except here wasm-ld catches it at the final
-# link after a full compile. wasm32 deliberately KEEPS build-wasm/ so existing trees stay
-# valid; only wasm64 gets a new one. OMW_BUILD_DIR overrides for one-off experiments.
-BUILD_DIR="${OMW_BUILD_DIR:-$([ "$WASM_ARCH" = wasm64 ] && echo build-wasm64 || echo build-wasm)}"
+# build-wasm64, never a shared tree: a dir half-populated with objects of another pointer size
+# is the stale-object fault the root Dockerfile refuses a cache mount over. OMW_BUILD_DIR
+# overrides for one-off experiments.
+BUILD_DIR="${OMW_BUILD_DIR:-build-wasm64}"
 W32=$WARCH   # legacy name, kept so the -D lines below read unchanged
 
 # GL archive name varies with the build variant: under -pthread the port materialises as

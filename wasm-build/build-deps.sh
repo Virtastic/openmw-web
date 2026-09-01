@@ -36,7 +36,7 @@ JOBS="${JOBS:-$( (nproc 2>/dev/null) || sysctl -n hw.ncpu 2>/dev/null || echo 4)
 # --- WASM64 (MEMORY64) -----------------------------------------------------------------------
 # OFF by default: the wasm32 stack in deps/wasm and everything that reads it stay exactly as they
 # were, so this is reversible by unsetting one variable rather than by rebuilding.
-# OMW_WASM64=1 builds the WHOLE stack into deps/wasm64 instead.
+# The stack builds into deps/wasm64; wasm32 is no longer a target (OMW_WASM64=0 refuses).
 #
 # -m64, NOT -sMEMORY64=1: emscripten 6.0.1 accepts both but warns the -s spelling is deprecated
 # ("prefer the standard -m64 or --target=wasm64 flags"). -m64 is a clang-style flag, so unlike a
@@ -52,11 +52,11 @@ JOBS="${JOBS:-$( (nproc 2>/dev/null) || sysctl -n hw.ncpu 2>/dev/null || echo 4)
 # BOTH --extra-cflags and --extra-ldflags (see build_ffmpeg). ffmpeg prints
 # "WARNING: unknown architecture wasm64" and falls back to generic C -- that warning is
 # expected and is not the reason for any failure.
-if [ "${OMW_WASM64:-0}" = "1" ]; then
-  WASM_ARCH="wasm64"; ARCH_FLAG="-m64"; DW="$ROOT/deps/wasm64"; BUILD_DIR="build-wasm64"
-else
-  WASM_ARCH="wasm32"; ARCH_FLAG="";     DW="$ROOT/deps/wasm";   BUILD_DIR="build-wasm"
+if [ "${OMW_WASM64:-1}" != "1" ]; then
+  echo "FATAL: wasm32 is no longer a target. The engine is wasm64 (MEMORY64) only." >&2
+  exit 1
 fi
+WASM_ARCH="wasm64"; ARCH_FLAG="-m64"; DW="$ROOT/deps/wasm64"; BUILD_DIR="build-wasm64"
 # GL archive name. emcc encodes the build variant into the filename, and under -pthread the
 # port materialises as libGL-mt-getprocaddr.a rather than libGL-getprocaddr.a. The wasm32 stack
 # never noticed: the prebaked builder image ships EVERY variant, so the non-mt name it asks for
@@ -261,7 +261,7 @@ build_openal_stub() {
 
 # --- OSG (the hardest; already scripted). Requires the patch applied to deps/src/osg first:
 #     cd deps/src/osg && git apply "$ROOT/wasm-build/patches/osg-emscripten.patch"
-build_osg() { log "osg (-> build-osg.sh)"; ROOT="$ROOT" EM_LIBEXEC="$EM_LIBEXEC" OMW_WASM64="${OMW_WASM64:-0}" bash "$ROOT/wasm-build/build-osg.sh"; }
+build_osg() { log "osg (-> build-osg.sh)"; ROOT="$ROOT" EM_LIBEXEC="$EM_LIBEXEC" bash "$ROOT/wasm-build/build-osg.sh"; }
 
 # --- Emscripten-provided sysroot libs: multithreaded ICU (libicu_*-mt.a) + libGL-getprocaddr.a.
 #     These are emscripten ports/embuilder outputs referenced by explicit sysroot path in

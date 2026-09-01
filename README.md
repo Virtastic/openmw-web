@@ -313,16 +313,15 @@ cp build-wasm/openmw.js build-wasm/openmw.wasm build-wasm/openmw.data play/
 
 ### wasm64 (MEMORY64)
 
-The engine can be built for **wasm64**, which lifts the heap ceiling above the 4 GiB a 32-bit
-wasm module can address. That is what a Tamriel Rebuilt load order needs: the wasm32 build
-already links `-sMAXIMUM_MEMORY=4294967296`, i.e. the entire 32-bit address space, so there is
-no headroom left to give it.
-
-Set `OMW_WASM64=1` for **every** step — the dependency stack, the configure and the link must
-all agree:
+The engine is built for **wasm64**, and only wasm64: it lifts the heap ceiling above the
+4 GiB a 32-bit wasm module can address, which is what a Tamriel Rebuilt load order needs
+(the old wasm32 build already linked `-sMAXIMUM_MEMORY=4294967296` — the entire 32-bit
+address space, no headroom left). The client gates on MEMORY64 to match. There is no flag to
+set any more; `OMW_WASM64=0` refuses with an error rather than quietly producing a pointer
+size nothing ships.
 
 ```bash
-export ROOT=$PWD OMW_WASM64=1
+export ROOT=$PWD
 
 ./wasm-build/build-deps.sh            # -> deps/wasm64  (see Dependency stack below)
 ./configure-openmw.sh

@@ -3,15 +3,15 @@
 # SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
 # Canonical OpenMW->WASM link step.
 #
-# CMake/ninja can compile everything (`ninja -C build-wasm components openmw-lib` +
-# `ninja -C build-wasm apps/openmw/CMakeFiles/openmw.dir/main.cpp.o`), but the final link
+# CMake/ninja can compile everything (`ninja -C build-wasm64 components openmw-lib` +
+# `ninja -C build-wasm64 apps/openmw/CMakeFiles/openmw.dir/main.cpp.o`), but the final link
 # needs runtime flags (preload FS, pthread pool, WebGL2, IDBFS...) that break CMake's
 # configure-time checks, so it is done out-of-band by this script.
 #
 # Usage:
 #   ROOT=/path/to/CS-Web ./wasm-build/link-openmw.sh
-# Produces build-wasm/openmw.{js,wasm,data}; deploy with:
-#   cp build-wasm/openmw.js build-wasm/openmw.wasm build-wasm/openmw.data play/
+# Produces build-wasm64/openmw.{js,wasm,data}; deploy with:
+#   cp build-wasm64/openmw.js build-wasm64/openmw.wasm build-wasm64/openmw.data play/
 #
 # GOTCHAS (learned the hard way):
 # - main.cpp.o is passed directly on the link line and is NOT rebuilt by
@@ -37,23 +37,22 @@ fi
 
 EMSDK_BIN="${EMSDK_BIN:-/opt/homebrew/Cellar/emscripten/6.0.1/libexec}"
 
-# --- WASM64 (MEMORY64) -----------------------------------------------------------------------
-# OMW_WASM64=1 links the wasm64 engine against deps/wasm64. OFF by default. Must match whatever
-# configure-openmw.sh was run with: EVERY archive on the link line below has to agree on the
-# pointer model, and wasm-ld refuses the link outright if one does not
-# ("wasm32 object file cannot be linked in wasm64 mode"). That is the GOOD failure mode -- unlike
-# a stale archive, which links cleanly and ships a broken engine (see the ninja note further down).
-if [ "${OMW_WASM64:-0}" = "1" ]; then
-  WASM_ARCH=wasm64; ARCH_FLAG=-m64; LIB="$ROOT/deps/wasm64/lib"
-else
-  WASM_ARCH=wasm32; ARCH_FLAG=;     LIB="$ROOT/deps/wasm/lib"
+# --- WASM64 (MEMORY64) IS THE ONLY TARGET ------------------------------------------------------
+# See configure-openmw.sh: wasm32 cannot hold a Tamriel Rebuilt load order and the client is
+# built for MEMORY64, so the 32-bit link is gone rather than optional. EVERY archive on the link
+# line below has to agree on the pointer model, and wasm-ld refuses the link outright if one
+# does not ("wasm32 object file cannot be linked in wasm64 mode") -- the GOOD failure mode,
+# unlike a stale archive, which links cleanly and ships a broken engine (see the ninja note
+# further down).
+if [ "${OMW_WASM64:-1}" != "1" ]; then
+  echo "FATAL: wasm32 is no longer a target. The engine is wasm64 (MEMORY64) only." >&2
+  exit 1
 fi
+WASM_ARCH=wasm64; ARCH_FLAG=-m64; LIB="$ROOT/deps/wasm64/lib"
 SYSROOT="$EMSDK_BIN/cache/sysroot/lib/$WASM_ARCH-emscripten"
-# Must match configure-openmw.sh, which configures into build-<arch> for the same reason: the
-# two models cannot share a tree without ninja handing stale objects to the link.
-# wasm32 deliberately KEEPS build-wasm/: renaming it would orphan every existing build tree
-# (and the build-wasm.good/ convention) for a full rebuild that buys nothing.
-BUILD_DIR="${OMW_BUILD_DIR:-$([ "$WASM_ARCH" = wasm64 ] && echo build-wasm64 || echo build-wasm)}"
+# Must match configure-openmw.sh, which configures into build-wasm64 for the same reason: a
+# tree cannot hold two pointer models without ninja handing stale objects to the link.
+BUILD_DIR="${OMW_BUILD_DIR:-build-wasm64}"
 
 # Heap ceiling. wasm32 cannot exceed 4 GiB -- that is the address space, not a policy. wasm64
 # can, and lifting it is the entire point of the conversion.
@@ -95,7 +94,7 @@ LIBGL_A="$SYSROOT/libGL-getprocaddr.a"
 if [ -f "$LIB/libavcodec.a" ] && ! grep -q ff_mp3_decoder "$LIB/libavcodec.a" 2>/dev/null; then
   echo "!! $LIB/libavcodec.a has no mp3 decoder -- THE GAME WILL BE SILENT." >&2
   echo "   Staged deps predate build-deps.sh's --enable-decoder line. Rebuild just ffmpeg:" >&2
-  echo "     OMW_WASM64=${OMW_WASM64:-0} bash wasm-build/build-deps.sh ffmpeg" >&2
+  echo "     bash wasm-build/build-deps.sh ffmpeg" >&2
   echo "   Verify with: grep -c ff_mp3_decoder $LIB/libavcodec.a" >&2
   echo "   Continuing -- a silent build is still a build, but you have been told." >&2
 fi
@@ -140,7 +139,7 @@ cp "$ROOT/openmw/files/data/mp.omwscripts" "$ROOT/fsroot/resources/vfs/mp.omwscr
 # package it reads. Copied from the emsdk cache rather than committed: it is ~28 MB of upstream
 # build output, and it belongs in the same category as the rest of deps/.
 # Three places it can come from, in order. The emsdk cache is only populated where the ICU
-# port has actually been built, and the prebaked builder image (openmw-builder:1) does NOT
+# port has actually been built, and the prebaked builder image (openmw-builder64:1) does NOT
 # carry it -- the data is staged into the source tree instead, which is the convention
 # ci/jenkins/build-engine.sh asserts on and sync-to-builder.sh restages from
 # ~/build-artifacts. Looking only in the cache made this script fail every build on the

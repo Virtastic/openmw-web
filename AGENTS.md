@@ -394,23 +394,23 @@ The toolchain image `openmw-builder:1` (4.4GB) is prebuilt on the build server f
 
 ### wasm64 (MEMORY64)
 
-`OMW_WASM64=1` builds the engine for wasm64, which is what lifts the heap past the 4 GiB the
-wasm32 build already maxes out (`link-openmw.sh` links `-sMAXIMUM_MEMORY=4294967296`) — and
-therefore what a Tamriel Rebuilt load order needs. The variable is read by
-`wasm-build/build-deps.sh`, `wasm-build/build-osg.sh`, `configure-openmw.sh`,
-`wasm-build/link-openmw.sh` and `ci/jenkins/build-engine.sh`; unset, every one of them behaves
-exactly as before.
+**wasm64 is the ONLY target.** It lifts the heap past the 4 GiB the old wasm32 build maxed
+out (`link-openmw.sh` links `-sMAXIMUM_MEMORY=4294967296`), which is what a Tamriel Rebuilt
+load order needs, and the client gates on MEMORY64 to match. `OMW_WASM64` survives only as a
+guard in `wasm-build/build-deps.sh`, `wasm-build/build-osg.sh`, `configure-openmw.sh`,
+`wasm-build/link-openmw.sh` and `ci/jenkins/build-engine.sh`: setting it to `0` refuses with
+an error, because the first v1.2.0 release cut silently built wasm32 under a wasm64 client
+and the choice existing was the whole bug.
 
-It selects a parallel set of everything, because the two pointer models cannot share anything
-compiled:
+The fixed set everything now uses (the models could never share anything compiled):
 
-| | wasm32 (default) | wasm64 |
-|---|---|---|
-| deps prefix | `deps/wasm` | `deps/wasm64` |
-| build tree | `build-wasm32/` | `build-wasm64/` |
-| sysroot | `lib/wasm32-emscripten` | `lib/wasm64-emscripten` |
-| builder image | `openmw-builder:1` (`Dockerfile.builder`) | `openmw-builder64:1` (`Dockerfile.builder64`) |
-| flag | — | `-m64` |
+| | wasm64 (only) |
+|---|---|
+| deps prefix | `deps/wasm64` |
+| build tree | `build-wasm64/` |
+| sysroot | `lib/wasm64-emscripten` |
+| builder image | `openmw-builder64:1` (`Dockerfile.builder64`) |
+| flag | `-m64` |
 
 Things that will bite, in the order they bit:
 

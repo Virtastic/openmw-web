@@ -9,15 +9,12 @@
 # =============================================================================================
 
 # ---- builder ---------------------------------------------------------------------------------
-# BUILDER_IMAGE selects the pointer model, because that is ALL that differs between the two
-# builds from this file's point of view:
-#   openmw-builder:1    -> wasm32 (default, unchanged)
-#   openmw-builder64:1  -> wasm64/MEMORY64 (Dockerfile.builder64)
-# The wasm64 image sets ENV OMW_WASM64=1 itself, and configure-openmw.sh / link-openmw.sh read
-# that to pick deps/wasm64, the wasm64 sysroot and -m64. So there is deliberately no second
-# build recipe here to drift out of sync with this one.
-ARG BUILDER_IMAGE=openmw-builder:1
-FROM ${BUILDER_IMAGE} AS builder
+# openmw-builder64:1 (Dockerfile.builder64), and no ARG to choose anything else: wasm64/MEMORY64
+# is the only target. A wasm32 engine cannot hold a Tamriel Rebuilt load order, and the client
+# is built for MEMORY64, so offering the choice only offered a way to build the wrong thing —
+# which is exactly what the v1.2.0 release did the first time it was cut. The builder image
+# sets ENV OMW_WASM64=1; the build scripts refuse =0 outright.
+FROM openmw-builder64:1 AS builder
 # ROOT + EM_LIBEXEC drive configure-openmw.sh; EMSDK_BIN drives link-openmw.sh (emcc/em++ + sysroot).
 ENV ROOT=/build EM_LIBEXEC=/emsdk/upstream/emscripten EMSDK_BIN=/emsdk/upstream/emscripten
 WORKDIR /build
@@ -57,9 +54,7 @@ RUN \
     # instead — the build context must carry the rsynced gamedata.
     { test -n "$(ls -A fsroot/gamedata 2>/dev/null)" || { echo 'FATAL: fsroot/gamedata is missing/empty — the ?nomw demo would bake empty. Ensure it is rsynced into the build context.' >&2; exit 1; }; } \
  && bash configure-openmw.sh \
- `# build-wasm32 or build-wasm64, chosen by OMW_WASM64 in configure-openmw.sh. Resolved here` \
- `# rather than hardcoded so the two models cannot share a tree and swap stale objects.` \
- && BUILD_DIR="$([ "${OMW_WASM64:-0}" = 1 ] && echo build-wasm64 || echo build-wasm)" \
+ && BUILD_DIR=build-wasm64 \
  && ninja -C "$BUILD_DIR" -j "${BUILD_JOBS:-8}" components openmw-lib \
  && bash wasm-build/link-openmw.sh \
  && mkdir -p play \

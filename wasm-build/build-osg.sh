@@ -49,15 +49,13 @@ ROOT="${ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 # emscripten lives under a different prefix — finds libGL. Falls back to the local Homebrew path.
 EM_LIBEXEC="${EM_LIBEXEC:-/opt/homebrew/Cellar/emscripten/6.0.1/libexec}"
 
-# WASM64 (MEMORY64), set by build-deps.sh. Off by default, and the two models get SEPARATE build
-# trees: OSG is the largest dep here and a build-wasm/ dir half-populated with objects of the
-# other pointer size is the exact shape of the stale-object fault the root Dockerfile:26-40
-# refuses a cache mount over. See wasm-build/build-deps.sh for why -m64 rather than -sMEMORY64=1.
-if [ "${OMW_WASM64:-0}" = "1" ]; then
-  WASM_ARCH="wasm64"; ARCH_FLAG="-m64"; DW="$ROOT/deps/wasm64"; BUILD_DIR="build-wasm64"
-else
-  WASM_ARCH="wasm32"; ARCH_FLAG="";     DW="$ROOT/deps/wasm";   BUILD_DIR="build-wasm"
+# WASM64 (MEMORY64) is the only target; see wasm-build/build-deps.sh for why -m64 rather than
+# -sMEMORY64=1, and configure-openmw.sh for why wasm32 is gone rather than optional.
+if [ "${OMW_WASM64:-1}" != "1" ]; then
+  echo "FATAL: wasm32 is no longer a target. The engine is wasm64 (MEMORY64) only." >&2
+  exit 1
 fi
+WASM_ARCH="wasm64"; ARCH_FLAG="-m64"; DW="$ROOT/deps/wasm64"; BUILD_DIR="build-wasm64"
 SYSROOT_LIBGL="$EM_LIBEXEC/cache/sysroot/lib/$WASM_ARCH-emscripten/libGL-getprocaddr.a"
 SRC="$ROOT/deps/src/osg"
 BUILD="$SRC/$BUILD_DIR"
