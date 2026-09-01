@@ -328,9 +328,10 @@ test('the wizard configures HTTPS itself instead of naming a file to edit', asyn
   // Written at boot, before anyone has answered anything, so a restored backup or a deleted
   // file comes back with a working proxy rather than needing the wizard re-run.
   const atBoot = readFileSync(caddyfile, 'utf8');
-  // Plain HTTP before anyone has answered: first contact must not be a certificate warning.
+  // Plain HTTP front door before anyone has answered — first contact must not be a
+  // certificate warning — with https://localhost still answering for browsers that insist.
   assert.match(atBoot, /^:80 \{/m, 'no answers yet: plain HTTP on 80');
-  assert.doesNotMatch(atBoot, /tls internal/, 'no self-signed certificate before anyone chose one');
+  assert.match(atBoot, /tls internal/, 'https keeps answering, self-signed');
 
   // Answering the hosting question applies it.
   assert.equal((await fetch(`${base}/admin/api/setup`, {

@@ -32,9 +32,11 @@ test('a server nobody configured serves plain HTTP, not a certificate warning', 
   // anyway, and an unconfigured server refuses players. The wizard's hosting answer is
   // what sets the real posture.
   const out = renderCaddyfile({ domain: '' });
-  assert.match(out, /^:80 \{$/m, 'the fresh default must listen on plain :80');
-  assert.doesNotMatch(out, /tls internal/, 'no self-signed certificate before anyone chose one');
-  assert.doesNotMatch(out, /^localhost \{$/m, 'no https-only site block on a fresh server');
+  assert.match(out, /^:80 \{$/m, 'the fresh default must answer on plain :80');
+  // And https://localhost still answers, self-signed: a browser that remembers or auto-tries
+  // https would otherwise show "site can't be reached", which reads as the server being down.
+  assert.match(out, /^localhost \{$/m, 'https must keep answering for browsers that insist');
+  assert.match(out, /tls internal/);
 });
 
 test('BOTH site blocks are isolated when a domain is set', () => {
