@@ -134,14 +134,18 @@ const NAV = [
     // with a message of the day, read a chat log for, report, or hand an item. The page is
     // inert rather than merely unhelpful, so it is removed rather than trimmed.
     { hash: '#console', label: 'Players & commands', icon: 'bi-people', role: 'moderator', solo: false },
-    { hash: '#mods', label: 'Game & mods', icon: 'bi-collection', role: 'viewer' },
+    { hash: '#mods', label: 'Mod manager', icon: 'bi-box-seam', role: 'viewer' },
+    { hash: '#gamefiles', label: 'Game files', icon: 'bi-controller', role: 'viewer' },
   ] },
   // The setup wizard is first-run only and is deliberately NOT listed here. It is a sequence
   // of eleven questions whose answers reshape the deployment, and re-entering it on a running
   // server meant walking back through every one of them to change any one of them. Redeploy
   // to run it again.
   { group: 'Configuration', items: [
-    { hash: '#settings', label: 'Settings', icon: 'bi-sliders', role: 'viewer' },
+    { hash: '#set-core', label: 'Core', icon: 'bi-sliders', role: 'viewer' },
+    { hash: '#set-access', label: 'Access', icon: 'bi-key', role: 'viewer' },
+    { hash: '#set-storage', label: 'Storage', icon: 'bi-hdd-stack', role: 'viewer' },
+    { hash: '#set-operations', label: 'Operations', icon: 'bi-gear-wide-connected', role: 'viewer' },
   ] },
   { group: 'People', items: [
     { hash: '#accounts', label: 'Accounts', icon: 'bi-person-lines-fill', role: 'moderator' },
@@ -152,8 +156,13 @@ const NAV = [
     { hash: '#logs', label: 'Logs', icon: 'bi-journal-text', role: 'moderator' },
     { hash: '#audit', label: 'Audit trail', icon: 'bi-clipboard-check', role: 'moderator' },
   ] },
+  // Four separate things that share only "not configuration". One page called them all
+  // "Maintenance & restart", which named one of the four in the sidebar and hid the rest.
   { group: 'Danger zone', items: [
-    { hash: '#maintenance', label: 'Maintenance & restart', icon: 'bi-power', role: 'owner' },
+    { hash: '#updates', label: 'Updates', icon: 'bi-cloud-download', role: 'owner' },
+    { hash: '#maintenance', label: 'Maintenance', icon: 'bi-cone-striped', role: 'owner' },
+    { hash: '#backup', label: 'Backup', icon: 'bi-archive', role: 'owner' },
+    { hash: '#restart', label: 'Restart', icon: 'bi-arrow-repeat', role: 'owner' },
   ] },
 ];
 
@@ -1980,8 +1989,22 @@ async function pageConsole() {
 // settings
 // ---------------------------------------------------------------------------------------
 let settingsCache = null;
-async function pageSettings() {
-  setTitle('Settings', 'Every option this server has. Changes apply after a restart.');
+/**
+ * One settings GROUP per page, reached from the sidebar.
+ *
+ * A single Settings page held every group as a collapsed accordion, so the sidebar said
+ * "Settings" and the actual structure — Core, Access, Storage, Operations — only appeared after
+ * clicking into it and then again after opening a row. The groups already existed and were
+ * already meaningful; they just were not navigable. Now they are entries in their own right,
+ * and the group is chosen by the hash rather than by an accordion.
+ *
+ * `only` is the group's name. Omitted, every group renders, which keeps a bookmarked #settings
+ * working rather than 404ing somebody's saved link.
+ */
+async function pageSettings(only) {
+  setTitle(only ?? 'Settings',
+    only ? `${only} settings. Changes apply after a restart.`
+      : 'Every option this server has. Changes apply after a restart.');
   settingsCache = await api('/settings');
   const byName = new Map(settingsCache.sections.map((s) => [s.name, s]));
   const grouped = new Set(settingsCache.groups.flatMap((g) => g.sections));
@@ -2002,8 +2025,17 @@ async function pageSettings() {
     .map((g) => ({ ...g, sections: keep(g.sections) }))
     // A group whose every section is multiplayer-only ("Platform (advanced)") goes with them,
     // rather than sitting there as a heading that opens onto nothing.
-    .filter((g) => g.sections.length);
+    .filter((g) => g.sections.length)
+    // Matched case-insensitively on the group's own name, so the nav entry and the grouping
+    // stay one fact rather than two that can drift.
+    .filter((g) => only === undefined || g.group.toLowerCase() === only.toLowerCase());
   const readOnly = !can('owner');
+
+  if (only !== undefined && groups.length === 0) {
+    view().innerHTML = html`<div class="alert alert-secondary">Nothing in this section applies
+      to how this server is set up.</div>`;
+    return;
+  }
 
   view().innerHTML = html`
     ${raw(readOnly ? html`<div class="alert alert-secondary">You can view these settings but
@@ -2017,9 +2049,11 @@ async function pageSettings() {
           && g.sections.includes(s.name.split('.')[0]));
         return html`
         <div class="accordion-item">
-          <h2 class="accordion-header"><button class="accordion-button collapsed" type="button"
+          <h2 class="accordion-header"><button
+            class="accordion-button ${raw(only === undefined ? 'collapsed' : '')}" type="button"
             data-bs-toggle="collapse" data-bs-target="#g${gi}">${g.group}</button></h2>
-          <div id="g${gi}" class="accordion-collapse collapse" data-bs-parent="#setAcc">
+          <div id="g${gi}" class="accordion-collapse collapse ${raw(only === undefined ? '' : 'show')}"
+            data-bs-parent="#setAcc">
             <div class="accordion-body">
               ${raw(g.note ? html`<div class="vt-section-note mb-3">${g.note}</div>` : '')}
               ${raw([...sections, ...nested].map(renderSection).join(''))}
@@ -2166,9 +2200,39 @@ function restartPrompt() {
  */
 const isBase = (e) => e.file.toLowerCase() === 'morrowind.esm';
 
+/**
+ * THE MOD MANAGER, and nothing else.
+ *
+ * This page used to carry Morrowind itself as well: a game-data uploader, a load-order table of
+ * the base game and its expansions, and the mods underneath. Three cards about two unrelated
+ * jobs. Which EDITION this server runs is a setup question — base game, expansions, or Tamriel
+ * Rebuilt — answered in the wizard and changed in Settings; installing and ordering mods is a
+ * thing an operator does over and over. Those belong on different pages, and the base game now
+ * has its own (pageGameFiles below).
+ */
 async function pageMods() {
-  setTitle('The game and its mods', 'Morrowind itself, and anything added on top of it.');
+  setTitle('Mod manager', 'Install mods, choose what they overwrite, and switch them off.');
   localStorage.setItem('omwmp_mods_seen', '1');
+  const m = await api('/mods');
+  const editable = can('owner');
+
+  view().innerHTML = html`
+    ${raw(!m.exists ? html`<div class="alert alert-warning">
+      Morrowind is not installed on this server yet, so there is nothing for a mod to sit on
+      top of. Add it under <a href="#gamefiles">Game files</a> first.</div>` : '')}
+    ${raw(modsCard(m, editable))}`;
+  if (editable) wireMods(m);
+}
+
+/**
+ * The base game: what is installed, and which of its parts load.
+ *
+ * Separate from the mod manager because it answers a different question. The edition was chosen
+ * during setup and rarely changes; this is where the files behind that choice are added, and
+ * where an expansion can be switched off without reinstalling anything.
+ */
+async function pageGameFiles() {
+  setTitle('Game files', 'Morrowind itself: what is installed, and what loads.');
   const m = await api('/mods');
   const editable = can('owner');
   // Is Morrowind actually here? With nothing installed the page's job is to get the game in;
@@ -2217,10 +2281,8 @@ async function pageMods() {
     ${raw(editable && hasGame ? html`<div class="card-body pt-2">
       <details><summary class="small text-secondary">Add or replace game files</summary>
         <div class="mt-2">${raw(uploadPanel(m, false, true))}</div></details></div>` : '')}
-    </div>
-    ${raw(modsCard(m, editable))}`;
+    </div>`;
 
-  if (editable) wireMods(m);
   if (!editable) return;
 
   // Reload the page after an upload so the new files appear in the load order immediately -
@@ -3190,59 +3252,35 @@ async function pageMetrics() {
 // ---------------------------------------------------------------------------------------
 // maintenance & restart
 // ---------------------------------------------------------------------------------------
+/**
+ * FOUR JOBS, FOUR PAGES.
+ *
+ * These lived on one "Maintenance & restart" page, which put a button that disconnects everyone
+ * next to a button that downloads a file. They share a heading only because none of them is
+ * configuration, and that is not enough to make them one screen — it meant the sidebar named
+ * one of the four and hid the other three behind it.
+ *
+ * The wiring is per page rather than one block at the end: a handler for a control the current
+ * page did not render is a null dereference waiting for the next person to split something.
+ */
 async function pageMaintenance() {
-  setTitle('Maintenance & restart', 'Take the server down gently, or bring it back.');
+  setTitle('Maintenance mode', 'Close the doors before changing anything.');
   const m = state.maintenance || { on: false, message: '' };
   view().innerHTML = html`
-    <div class="row">
-    <div class="col-12 col-xl-6"><div class="card card-warning card-outline mb-3">
+    <div class="row"><div class="col-12 col-xl-7">
+    <div class="card card-warning card-outline">
       <div class="card-header"><h3 class="card-title">
         <i class="bi bi-cone-striped me-2"></i>Maintenance mode
         ${raw(m.on ? ' <span class="badge text-bg-warning ms-2">on</span>' : '')}</h3></div>
       <div class="card-body">
       <p class="small text-secondary">Disconnects everyone and refuses new connections with a
-        message. Use it before changing mods or settings so nobody is halfway through
+        message. Use it before changing mods or settings, so nobody is halfway through
         something when the server restarts.</p>
-      <div class="mb-3"><label class="form-label">Message shown to players</label>
-        <input class="form-control" id="mMsg" value="${m.message || ''}"
-          placeholder="Back in ten minutes, updating mods"></div>
-      <button class="btn ${raw(m.on ? 'btn-success' : 'btn-warning')}" id="mToggle">
+      <label class="form-label" for="mMsg">Message shown to players</label>
+      <input class="form-control mb-3" id="mMsg" value="${m.message || ''}"
+        placeholder="Back in ten minutes, updating mods">
+      <button class="btn ${raw(m.on ? 'btn-outline-secondary' : 'btn-warning')}" id="mToggle">
         ${raw(m.on ? 'Turn maintenance mode off' : 'Turn maintenance mode on')}</button>
-    </div></div></div>
-
-    <div class="col-12 col-xl-6"><div class="card card-warning card-outline mb-3">
-      <div class="card-header"><h3 class="card-title">
-        <i class="bi bi-arrow-repeat me-2"></i>Restart</h3></div>
-      <div class="card-body">
-      <p class="small text-secondary">Applies saved settings and mod changes. Players are
-        disconnected and can reconnect once it is back, usually within a few seconds.</p>
-      <button class="btn btn-warning" id="mRestart">Restart the server</button>
-    </div></div></div>
-
-    <div class="col-12 col-xl-6"><div class="card card-secondary card-outline mb-3">
-      <div class="card-header"><h3 class="card-title">
-        <i class="bi bi-archive me-2"></i>Download a backup</h3></div>
-      <div class="card-body">
-      <p class="small text-secondary">Everything in the data folder: accounts, characters,
-        world state, settings and logs.</p>
-      <div class="vt-field-danger mb-3"><strong>Careful:</strong> the archive contains password
-        hashes and any credentials you have configured. Treat it like a password, store it
-        somewhere private, and do not post it when asking for help.</div>
-      <a class="btn btn-outline-secondary" href="/admin/api/export" id="mExport">
-        <i class="bi bi-download me-1"></i>Download backup</a>
-    </div></div></div>
-    </div>
-
-    <div class="row"><div class="col-12 col-xl-6">
-    <div class="card card-secondary card-outline">
-      <div class="card-header"><h3 class="card-title">
-        <i class="bi bi-cloud-download me-2"></i>Updates</h3></div>
-      <div class="card-body">
-      <p class="small text-secondary">You are running
-        <span class="vt-mono">v${state.version || '?'}</span>. Checking asks GitHub for the
-        newest release; nothing happens automatically.</p>
-      <button class="btn btn-outline-secondary" id="mUpdates">Check for updates</button>
-      <div id="mUpdatesOut" class="mt-2 small"></div>
     </div></div></div></div>`;
 
   $('#mToggle').onclick = async () => {
@@ -3259,6 +3297,25 @@ async function pageMaintenance() {
     await refreshState();
     route();
   };
+}
+
+async function pageRestart() {
+  setTitle('Restart', 'Apply saved changes.');
+  view().innerHTML = html`
+    <div class="row"><div class="col-12 col-xl-7">
+    <div class="card card-warning card-outline">
+      <div class="card-header"><h3 class="card-title">
+        <i class="bi bi-arrow-repeat me-2"></i>Restart the server</h3></div>
+      <div class="card-body">
+      <p class="small text-secondary">The server reads its settings, its load order and its mod
+        list at startup, so anything saved since the last start takes effect here. Players are
+        disconnected and can reconnect once it is back, usually within a few seconds.</p>
+      ${raw(state.maintenance?.on ? '' : html`<div class="vt-section-note mb-3">
+        Nobody has been warned. If people are playing, turn on
+        <a href="#maintenance">maintenance mode</a> first.</div>`)}
+      <button class="btn btn-warning" id="mRestart">Restart the server</button>
+    </div></div></div></div>`;
+
   $('#mRestart').onclick = async () => {
     const ok = await confirmAction({
       title: 'Restart the server?',
@@ -3269,6 +3326,61 @@ async function pageMaintenance() {
     await api('/restart', { method: 'POST' });
     waitForRestart();
   };
+}
+
+async function pageBackup() {
+  setTitle('Backup', 'Take a copy of everything before you change it.');
+  view().innerHTML = html`
+    <div class="row"><div class="col-12 col-xl-7">
+    <div class="card card-secondary card-outline">
+      <div class="card-header"><h3 class="card-title">
+        <i class="bi bi-archive me-2"></i>Download a backup</h3></div>
+      <div class="card-body">
+      <p class="small text-secondary">Everything in the data folder: accounts, characters, world
+        state, savegames, your settings, the mod list and the logs. Not the game files
+        themselves, which are large and which you already have a copy of.</p>
+      <div class="vt-field-danger mb-3"><strong>Careful:</strong> the archive contains password
+        hashes and any credentials you have configured. Treat it like a password, store it
+        somewhere private, and do not post it when asking for help.</div>
+      <button class="btn btn-outline-secondary" id="mExport">
+        <i class="bi bi-download me-1"></i>Download backup</button>
+      <p class="small text-secondary mt-3 mb-0">To restore one: stop the server, replace the
+        <code>data</code> folder with the contents of the archive, start it again. There is
+        deliberately no restore button — overwriting a live server's accounts and world from a
+        browser is not something to put one click away.</p>
+    </div></div></div></div>`;
+
+  // The export streams with an auth header, which a plain link cannot send.
+  $('#mExport').onclick = async (e) => {
+    e.preventDefault();
+    toast('Preparing the archive…');
+    const res = await fetch('/admin/api/export', { headers: { authorization: `Bearer ${token.get()}` } });
+    if (!res.ok) { toast('Export failed.', 'danger'); return; }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `openmw-web-backup-${new Date().toISOString().slice(0, 10)}.tar.gz`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+}
+
+async function pageUpdates() {
+  setTitle('Updates', 'Whether a newer release is out, and how to take it.');
+  view().innerHTML = html`
+    <div class="row"><div class="col-12 col-xl-7">
+    <div class="card card-secondary card-outline">
+      <div class="card-header"><h3 class="card-title">
+        <i class="bi bi-cloud-download me-2"></i>Updates</h3></div>
+      <div class="card-body">
+      <p class="small text-secondary">You are running
+        <span class="vt-mono">v${state.version || '?'}</span>. Checking asks GitHub for the
+        newest release; nothing is downloaded and nothing happens automatically.</p>
+      <button class="btn btn-outline-secondary" id="mUpdates">Check for updates</button>
+      <div id="mUpdatesOut" class="mt-2 small"></div>
+    </div></div></div></div>`;
+
   $('#mUpdates').onclick = async () => {
     const out = $('#mUpdatesOut');
     out.innerHTML = html`<span class="spinner-border spinner-border-sm me-1"></span> Asking GitHub…`;
@@ -3290,20 +3402,6 @@ async function pageMaintenance() {
           <i class="bi bi-check-circle me-1"></i>You are on the newest release.</div>`;
       }
     } catch (e) { out.textContent = e.message; }
-  };
-  // The export streams with an auth header, which a plain link cannot send.
-  $('#mExport').onclick = async (e) => {
-    e.preventDefault();
-    toast('Preparing the archive…');
-    const res = await fetch('/admin/api/export', { headers: { authorization: `Bearer ${token.get()}` } });
-    if (!res.ok) { toast('Export failed.', 'danger'); return; }
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `openmw-web-backup-${new Date().toISOString().slice(0, 10)}.tar.gz`;
-    a.click();
-    URL.revokeObjectURL(url);
   };
 }
 
@@ -3430,8 +3528,13 @@ async function pageHelp() {
 const ROUTES = {
   '#overview': pageOverview,
   '#console': pageConsole,
-  '#settings': pageSettings,
+  '#settings': () => pageSettings(),
+  '#set-core': () => pageSettings('Core'),
+  '#set-access': () => pageSettings('Access'),
+  '#set-storage': () => pageSettings('Storage'),
+  '#set-operations': () => pageSettings('Operations'),
   '#mods': pageMods,
+  '#gamefiles': pageGameFiles,
   '#accounts': pageAccounts,
   '#sessions': pageSessions,
   '#security': pageSecurity,
@@ -3439,13 +3542,20 @@ const ROUTES = {
   '#audit': () => pageLogs('admin.', 'Audit trail', 'Every administrative action, and who took it.'),
   '#metrics': pageMetrics,
   '#maintenance': pageMaintenance,
+  '#restart': pageRestart,
+  '#backup': pageBackup,
+  '#updates': pageUpdates,
   '#help': pageHelp,
 };
 
 const NEEDS = {
-  '#console': 'moderator', '#settings': 'viewer', '#mods': 'viewer', '#accounts': 'moderator',
+  '#console': 'moderator', '#settings': 'viewer', '#mods': 'viewer',
+  '#set-core': 'viewer', '#set-access': 'viewer', '#set-storage': 'viewer',
+  '#set-operations': 'viewer',
+  '#gamefiles': 'viewer', '#accounts': 'moderator',
   '#sessions': 'owner', '#security': 'viewer', '#logs': 'moderator', '#audit': 'moderator',
-  '#metrics': 'moderator', '#maintenance': 'owner', '#help': 'viewer', '#overview': 'viewer',
+  '#metrics': 'moderator', '#maintenance': 'owner', '#restart': 'owner', '#backup': 'owner',
+  '#updates': 'owner', '#help': 'viewer', '#overview': 'viewer',
 };
 
 async function route() {

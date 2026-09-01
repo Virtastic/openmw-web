@@ -388,3 +388,55 @@ test('every name in the solo keep-list is a real field', () => {
   const known = new Set(all.fields.map((f) => f.key));
   assert.deepEqual(SOLO_KEEP_FIELDS.limits!.filter((k) => !known.has(k)), []);
 });
+
+// --- the pages the sidebar actually offers ------------------------------------------------------
+
+test('the mod manager manages mods, and nothing else', () => {
+  // It used to carry Morrowind too: a game-data uploader, a load order of the base game and its
+  // expansions, and the mods underneath. Which EDITION this server runs is a setup question
+  // answered in the wizard; installing and ordering mods is a thing done over and over.
+  const page = /async function pageMods\(\) \{[\s\S]*?\n\}/.exec(app);
+  assert.ok(page, 'pageMods not found');
+  assert.match(page[0], /modsCard\(m, editable\)/);
+  assert.doesNotMatch(page[0], /uploadPanel\(/, 'the game-data uploader belongs to Game files');
+  assert.doesNotMatch(page[0], /modBody/, 'the base-game load order belongs to Game files');
+  // And the base game still has somewhere to live.
+  assert.match(app, /async function pageGameFiles\(\)/);
+  assert.match(app, /hash: '#gamefiles'/);
+});
+
+test('each settings group is its own sidebar entry', () => {
+  // The groups already existed and were already meaningful; they were just not navigable, so
+  // the structure only appeared after clicking into Settings and then opening a row.
+  for (const [hash, group] of [['#set-core', 'Core'], ['#set-access', 'Access'],
+    ['#set-storage', 'Storage'], ['#set-operations', 'Operations']]) {
+    assert.match(app, new RegExp(`hash: '${hash}', label: '${group}'`), `${group} is not in the nav`);
+    // A plain substring rather than a built regex: escaping parens through a template
+    // literal is exactly the kind of thing that fails the test instead of the code.
+    assert.ok(app.includes(`'${hash}': () => pageSettings('${group}')`),
+      `${hash} does not route to the ${group} group`);
+  }
+  // The old all-groups page still answers, so a bookmarked #settings does not 404.
+  assert.ok(app.includes("'#settings': () => pageSettings()"));
+});
+
+test('the danger zone is four pages, not one', () => {
+  // They share only "not configuration", which is not enough to make them one screen — and as
+  // one screen the sidebar named one of the four and hid the other three behind it.
+  for (const [hash, fn] of [['#updates', 'pageUpdates'], ['#maintenance', 'pageMaintenance'],
+    ['#backup', 'pageBackup'], ['#restart', 'pageRestart']]) {
+    assert.match(app, new RegExp(`hash: '${hash}'`), `${hash} is not in the nav`);
+    assert.match(app, new RegExp(`'${hash}': ${fn}`), `${hash} has no route`);
+    assert.match(app, new RegExp(`async function ${fn}\(\)`), `${fn} does not exist`);
+  }
+});
+
+test('every page in the sidebar has a route and a role', () => {
+  // A nav entry with no route renders the overview instead, silently; one with no role entry is
+  // reachable by anyone who can see the page at all.
+  const navs = [...app.matchAll(/\{ hash: '(#[a-z-]+)'/g)].map((m) => m[1]!);
+  const routes = new Set([...app.matchAll(/^ {2}'(#[a-z-]+)': /gm)].map((m) => m[1]!));
+  const needs = /const NEEDS = \{[\s\S]*?\n\};/.exec(app)![0];
+  assert.deepEqual(navs.filter((h) => !routes.has(h)), [], 'nav entries with no route');
+  assert.deepEqual(navs.filter((h) => !needs.includes(`'${h}'`)), [], 'nav entries with no role');
+});
