@@ -511,3 +511,11 @@ S3 settings; they only exist in the OVH console and on the test server.
 - Node **22** for the server (`node:22-alpine`), npm (not pnpm/yarn), `npm ci`.
 - The server test suite is the deploy gate: `tsc --noEmit && node --test`. If it fails,
   nothing is deployed.
+- **A fresh setup cannot choose multiplayer without `OMW_EXPERIMENTAL=multiplayer`.** The
+  wizard greys the tile and `/admin/api/setup` refuses the answer, so a bring-up script that
+  posts `deploymentMode: "multiplayer"` gets a 400 with the reason. Add `,playerUploads` for
+  the delivery answer where players upload their own copy. Existing servers are unaffected:
+  the gate is on new setups only, and `config.toml` edited by hand is not gated at all.
+- Tests that answer the wizard with a gated option set the variable themselves
+  (`server/test/admin-redesign.test.ts` does); `server/test/experimental.test.ts` owns the
+  off-by-default behaviour.

@@ -54,10 +54,13 @@ uploads their own copy of the game to this server. The wizard shows both greyed 
 `OMW_EXPERIMENTAL=multiplayer,playerUploads` (or `all`) turns them on. Single player, with the
 game files you supply, needs nothing set.
 
-Afterwards the dashboard is where the server is run. It installs **mods** from a `.zip`
-or `.7z`, shows what each one overwrites, and lets you set the load order by dragging;
-it has a setup path for **Tamriel Rebuilt**, which is a separate download in two
-archives; and it can export and re-import a player's **savegames** without shell access.
+Afterwards the dashboard is where the server is run: seventeen pages behind three roles,
+covering settings, accounts, logs, an audit trail, backups, maintenance and restarts. It
+installs **mods** from a `.zip` or `.7z`, shows what each one overwrites, and lets you set the
+load order by dragging; it has a setup path for **Tamriel Rebuilt**, which is a separate
+download in two archives; and it can export and re-import a player's **savegames** without
+shell access. [`SELF_HOSTING.md`](SELF_HOSTING.md#the-dashboard-page-by-page) walks the pages
+one at a time.
 See [`SELF_HOSTING.md`](SELF_HOSTING.md) for details, and re-run `./setup.sh --update`
 whenever the dashboard tells you a new release is out.
 

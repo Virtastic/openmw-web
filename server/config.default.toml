@@ -410,12 +410,26 @@ contentProfile = ""
 # "public" or "internal". Informational: HTTPS itself is configured in .env, outside the
 # server, because the proxy that terminates it is a different container.
 hosting = ""
-# "single" or "multiplayer". The wizard's pivot answer — the dashboard reads it back to hide
+# "single" or "multiplayer". The wizard's pivot answer: the dashboard reads it back to hide
 # multiplayer-only pages and settings from a single-player deployment.
+#
+# EXPERIMENTAL. The wizard shows "multiplayer" greyed out unless OMW_EXPERIMENTAL contains
+# "multiplayer", and /admin/api/setup refuses it. That gates only a NEW setup; a server already
+# running multiplayer keeps running whatever the variable says, including this file being
+# edited by hand.
 deploymentMode = ""
-# "verify" (players bring their own files) or "serve" (this server provides them).
+# "verify" or "serve", and the names undersell the difference.
+#
+# "serve" publishes the Data Files the operator uploaded, and players receive them on joining:
+# a static route over one library.
+#
+# "verify" means each player uploads their OWN copy to their own locker here and the game
+# streams from it, so it brings an upload flow, a library per account, a hash check against the
+# vanilla manifest, and storage that grows with every player. That is why it is EXPERIMENTAL:
+# the wizard greys it out unless OMW_EXPERIMENTAL contains "playerUploads". Same as above, this
+# gates a new setup only.
 deliveryModel = ""
-# "local" or "s3" — where uploaded files live.
+# "local" or "s3": where uploaded files live.
 storage = ""
 # Which sign-in methods the wizard enabled, e.g. ["password", "discord"].
 loginMethods = []

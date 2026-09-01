@@ -260,6 +260,42 @@ restart. Without a domain it serves a
 certificate it signed itself: still encrypted, but your browser warns on the first visit.
 That warning is expected, and the dashboard says so rather than leaving you guessing.
 
+### The dashboard, page by page
+
+Everything after the wizard is the running server. The sidebar groups it, and each page needs a
+role: **viewer** reads, **moderator** acts on players, **owner** changes the server. A page a
+role cannot use is not shown to it at all.
+
+| Page | Role | What it is for |
+| --- | --- | --- |
+| **Overview** | viewer | Uptime, who is connected, memory, the health the container reports |
+| **Players & commands** | moderator | The roster, chat log, reports, and the command console. Multiplayer only: in single player the engine runs in the browser and never connects, so every control on the page would act on nobody |
+| **Mod manager** | viewer reads, owner changes | Install, order, switch off and remove mods. See below |
+| **Game files** | viewer reads, owner changes | The base game's own plugins, and the upload panel with the checklist for the edition you chose |
+| **Core / Access / Storage / Operations** | viewer reads, owner changes | Every setting, grouped, each with the same plain-language help the wizard used. Operations holds the multiplayer-only knobs and hides them on a single-player server |
+| **Accounts** | moderator; owner for roles, deletion and savegames | Who exists, their role, their saves, and the erasure path |
+| **Admin sessions** | owner | Every signed-in dashboard session, revocable one at a time |
+| **My security** | viewer | Your own password and two-factor. Everyone reaches this one, for their own account only |
+| **Logs** | moderator | The live ring buffer and the history on disk |
+| **Audit trail** | moderator | What administrators did, and when |
+| **Updates** | owner | Whether a newer release exists, and how to take it |
+| **Maintenance** | owner | Close the doors: disconnects everyone and refuses new connections. Use it before changing mods or settings, so nobody is halfway through something |
+| **Backup** | owner | Download the whole data folder as a `tar.gz`. There is deliberately **no restore button**: restoring is stop, replace the folder, start |
+| **Restart** | owner | Restart the server, showing the same loading screen a player sees |
+
+The setup wizard is first-run only and deliberately absent from that list. It is a sequence of
+questions whose answers reshape the deployment, and re-entering it on a running server would
+mean walking back through all of them to change one. Change individual answers under
+Configuration instead.
+
+Two things worth knowing before you rely on them:
+
+- **A backup holds everything, secrets included.** Account password hashes and your S3 keys are
+  in that file. Treat it like a password.
+- **`[admin] dashboardToken` is a standing moderator credential** that bypasses accounts and
+  two-factor entirely. It cannot change settings or add accounts, but it can act on players.
+  Prefer a real account with a role; the setting exists because it predates roles.
+
 **Locked out?** If you lose the only administrator password:
 
 ```bash
@@ -267,7 +303,6 @@ docker compose run --rm openmw-web node dist/server.mjs --data /data --admin-res
 ```
 
 That clears the password and any two-factor on that account and prints a temporary one.
-
 ### Mods
 
 The dashboard's **Game data and mods** page installs mods from an archive, so nothing has to

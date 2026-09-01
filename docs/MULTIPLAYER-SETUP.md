@@ -1,5 +1,16 @@
 # Multiplayer setup: SSO + storage locker
 
+> **Multiplayer is experimental and off by default.** The wizard shows it greyed out until the
+> server is started with it enabled:
+>
+> ```bash
+> OMW_EXPERIMENTAL=multiplayer docker compose up -d
+> ```
+>
+> Add `,playerUploads` if you also want the delivery answer where each player uploads their own
+> copy of the game here. Everything in this guide assumes you have done that; see
+> [`../SELF_HOSTING.md`](../SELF_HOSTING.md#quick-start-recommended) for the full note.
+
 > **Running the Docker stack?** Then most of this is already done for you. The setup wizard
 > asks which sign-in methods you want and takes the OAuth client ID and secret, and the S3
 > endpoint, bucket and keys, in the browser, and writes the configuration itself. What it
