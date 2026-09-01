@@ -65,6 +65,23 @@ async function refreshState() {
     state = { firstRun: false, authed: false, role: null, name: null, maintenance: { on: false } };
   }
   paintChrome();
+  maybeCheckUpdates();
+}
+
+// Whether a newer release exists, for the nav badge and the Overview banner. Checked once
+// per browser session, owners only: checking is automatic, applying never is, and asking
+// GitHub on every page load would be noise for everyone involved.
+let updatesBehind = false;
+function maybeCheckUpdates() {
+  if (!state.authed || state.role !== 'owner' || state.setupCompleted !== true) return;
+  if (sessionStorage.getItem('vtUpdChecked')) return;
+  sessionStorage.setItem('vtUpdChecked', '1');
+  api('/updates').then((r) => {
+    if (!r?.ok) return;
+    const engineBehind = r.engine?.writable && r.engine.tag !== `v${r.latest}`;
+    updatesBehind = !!r.behind || !!engineBehind;
+    if (updatesBehind) paintChrome();
+  }).catch(() => { /* offline is fine; the Updates page can always check by hand */ });
 }
 
 // ---------------------------------------------------------------------------------------
@@ -196,7 +213,9 @@ function paintChrome() {
       return html`<li class="nav-header">${g.group}</li>` + items.map((i) => html`
         <li class="nav-item">
           <a href="${i.hash}" class="nav-link ${raw(i.hash === current ? 'active' : '')}">
-            <i class="nav-icon bi ${i.icon}"></i><p>${i.label}</p>
+            <i class="nav-icon bi ${i.icon}"></i><p>${i.label}${raw(
+              i.hash === '#updates' && updatesBehind
+                ? ' <span class="badge text-bg-warning ms-1">1</span>' : '')}</p>
           </a>
         </li>`).join('');
     }).join('');
@@ -212,13 +231,18 @@ function paintChrome() {
   $('#topWorld').textContent = state.serverName || '';
 
   const banner = $('#banner');
-  banner.innerHTML = state.configFallback
+  banner.innerHTML = (state.configFallback
     ? html`<div class="callout callout-warning">
         <h5><i class="bi bi-arrow-counterclockwise me-1"></i> Configuration was rolled back</h5>
         The settings last saved here failed to load, so the server started from an earlier
         version (<code>${state.configFallback}</code>) instead. Nothing was lost, review
         <a href="#settings">Settings</a> and save again.
-      </div>` : '';
+      </div>` : '')
+    // Overview only: worth one line where the operator lands, not a nag on every page.
+    + (updatesBehind && (location.hash || '#overview') === '#overview'
+      ? html`<div class="callout callout-info py-2">
+          A newer release is out. Nothing updates by itself: see <a href="#updates">Updates</a>.
+        </div>` : '');
 }
 
 function setTitle(title, lead = '') {
@@ -3838,42 +3862,204 @@ async function pageBackup() {
 }
 
 async function pageUpdates() {
-  setTitle('Updates', 'Whether a newer release is out, and how to take it.');
+  setTitle('Updates', 'Checking is automatic. Applying is always your click.');
   view().innerHTML = html`
     <div class="row"><div class="col-12 col-xl-7">
-    <div class="card card-secondary card-outline">
-      <div class="card-header"><h3 class="card-title">
-        <i class="bi bi-cloud-download me-2"></i>Updates</h3></div>
-      <div class="card-body">
-      <p class="small text-secondary">You are running
-        <span class="vt-mono">v${state.version || '?'}</span>. Checking asks GitHub for the
-        newest release; nothing is downloaded and nothing happens automatically.</p>
-      <button class="btn btn-outline-secondary" id="mUpdates">Check for updates</button>
-      <div id="mUpdatesOut" class="mt-2 small"></div>
-    </div></div></div></div>`;
+      <div class="card card-secondary card-outline mb-3">
+        <div class="card-header"><h3 class="card-title">
+          <i class="bi bi-hdd-rack me-2"></i>Server</h3></div>
+        <div class="card-body" id="updSrv">
+          <span class="spinner-border spinner-border-sm me-1"></span>
+          Asking GitHub for the newest release…
+        </div>
+      </div>
+      <div class="card card-secondary card-outline mb-3">
+        <div class="card-header"><h3 class="card-title">
+          <i class="bi bi-controller me-2"></i>Game client</h3></div>
+        <div class="card-body" id="updEng">
+          <span class="spinner-border spinner-border-sm me-1"></span>
+        </div>
+      </div>
+      <p class="small text-secondary mb-0">An update never touches your data: accounts,
+        saves, settings, game files and mods all live in the data folder, which updates do
+        not write to. The cautious can still take a <a href="#backup">backup</a> first.</p>
+    </div></div>`;
 
-  $('#mUpdates').onclick = async () => {
-    const out = $('#mUpdatesOut');
-    out.innerHTML = html`<span class="spinner-border spinner-border-sm me-1"></span> Asking GitHub…`;
-    try {
-      const r = await api('/updates');
-      if (!r.ok) {
-        out.innerHTML = html`<div class="text-secondary">Could not check: ${r.reason}</div>`;
-      } else if (r.behind) {
-        out.innerHTML = html`<div class="vt-section-note">
-          <strong>v${r.latest} is out</strong> (you run v${r.current}).
-          To update, run the setup script again on the machine hosting this:
-          <pre class="vt-mono small mb-1 mt-2">./setup.sh --update</pre>
-          (or <span class="vt-mono">setup.ps1 -Update</span> on Windows). It pulls the new
-          version and restarts; your data and settings stay.
-          ${raw(r.url ? html`<div class="mt-1"><a href="${r.url}" target="_blank" rel="noreferrer noopener">What changed</a></div>` : '')}
-        </div>`;
-      } else {
-        out.innerHTML = html`<div class="text-success">
-          <i class="bi bi-check-circle me-1"></i>You are on the newest release.</div>`;
+  let r;
+  try { r = await api('/updates'); } catch (e) { $('#updSrv').textContent = e.message; $('#updEng').textContent = ''; return; }
+  if (!r.ok) {
+    const msg = html`<div class="text-secondary">Could not check: ${r.reason}</div>`;
+    $('#updSrv').innerHTML = msg;
+    $('#updEng').innerHTML = msg;
+    return;
+  }
+  const latestTag = `v${r.latest}`;
+  const changed = r.url
+    ? html`<a href="${r.url}" target="_blank" rel="noreferrer noopener">What changed in ${latestTag}</a>` : '';
+
+  // ---- the server card ------------------------------------------------------------------
+  const srv = $('#updSrv');
+  if (!r.behind) {
+    srv.innerHTML = html`<div class="text-success">
+      <i class="bi bi-check-circle me-1"></i>You are on v${r.current}, the newest release.</div>`;
+  } else {
+    let st = null;
+    try { st = await api('/update/status'); } catch { /* rendered as agent-not-running below */ }
+    if (!st?.agent?.alive) {
+      // No updater container: the honest fallback is the command line, with the exact
+      // commands rather than a shrug. Deployments from before the updater existed land
+      // here until their one-time migration.
+      srv.innerHTML = html`
+        <p><strong>${latestTag} is out</strong> (you run v${r.current}). ${raw(changed)}</p>
+        <p class="small mb-1">The updater container is not running, so the button cannot do
+          it for you. On the machine hosting this, run:</p>
+        <pre class="vt-mono small mb-1">./setup.sh --update</pre>
+        <p class="small text-secondary mb-0">(Windows: <span class="vt-mono">.\\setup.ps1 -Update</span>.
+          If you installed before updates existed, one <span class="vt-mono">git pull</span>
+          followed by <span class="vt-mono">docker compose up -d --build</span> adds the
+          updater; the button works from then on.)</p>`;
+    } else {
+      srv.innerHTML = html`
+        <p><strong>${latestTag} is out</strong> (you run v${r.current}). ${raw(changed)}</p>
+        <button class="btn btn-primary" id="updSrvGo">Update to ${latestTag}</button>`;
+      $('#updSrvGo').onclick = async () => {
+        const yes = await confirmAction({
+          title: `Update the server to ${latestTag}?`,
+          body: 'The server rebuilds itself and restarts, which signs everyone out for a '
+            + 'minute or two. Your data is untouched: accounts, saves, settings, game files '
+            + 'and mods all stay exactly as they are. If you want a safety copy anyway, '
+            + 'take a <a href="#backup">backup</a> first.',
+          danger: 'Update',
+        });
+        if (!yes) return;
+        try {
+          const res = await api('/update/server', { method: 'POST' });
+          if (!res.ok && !res.busy) { toast(res.error || 'Could not request the update.', 'danger'); return; }
+        } catch (e) {
+          // 409 means an update is already requested: watching it is the right response.
+          if (e.status !== 409) { toast(e.message, 'danger'); return; }
+        }
+        watchServerUpdate(srv);
+      };
+      // A request already pending (another tab, another owner): watch it instead of
+      // offering a button that would answer 409.
+      if (st.requested) watchServerUpdate(srv);
+    }
+  }
+
+  // Follow the updater's status file until it restarts us or fails. The status file
+  // survives from PREVIOUS runs, so frames older than this watch (minus generous clock
+  // slack) are ignored rather than replayed.
+  function watchServerUpdate(el) {
+    const since = Date.now() - 120000;
+    const started = Date.now();
+    installPhase(el, 'Update requested', 'waiting for the updater to pick it up (up to 30 seconds)');
+    const timer = setInterval(async () => {
+      let st;
+      try { st = await api('/update/status'); } catch { return; }
+      const cur = st.status && Date.parse(st.status.updatedAt || 0) > since ? st.status : null;
+      if (!cur) {
+        if (Date.now() - started > 90000 && !st.requested) {
+          clearInterval(timer);
+          installFail(el, 'The updater never picked the request up. Check its log: '
+            + 'docker logs openmw-web-updater');
+        }
+        return;
       }
-    } catch (e) { out.textContent = e.message; }
-  };
+      if (cur.phase === 'failed') {
+        clearInterval(timer);
+        installFail(el, cur.error || 'The update failed; the server was left as it was.');
+        return;
+      }
+      if (cur.phase === 'restarting' || cur.phase === 'done') {
+        clearInterval(timer);
+        waitForRestart();
+        return;
+      }
+      if (Date.parse(cur.updatedAt || 0) < Date.now() - 600000) {
+        clearInterval(timer);
+        installFail(el, 'The updater seems stuck (no progress for ten minutes). Check its '
+          + 'log: docker logs openmw-web-updater. The server is still running.');
+        return;
+      }
+      const mins = Math.round((Date.now() - started) / 60000);
+      const label = cur.phase === 'building'
+        ? `Building ${cur.tag || ''} (a few minutes${mins ? `; ${mins} so far` : ''})`
+        : `Fetching ${cur.tag || 'the release'}`;
+      installPhase(el, 'Updating the server', label);
+    }, 2000);
+  }
+
+  function installFail(el, message) {
+    el.innerHTML = html`<div class="text-danger">
+      <i class="bi bi-x-circle me-1"></i>${message}</div>`;
+  }
+
+  // ---- the game client card -------------------------------------------------------------
+  const eng = $('#updEng');
+  const e = r.engine || { writable: false, tag: null, present: false };
+  if (!e.writable) {
+    eng.innerHTML = html`
+      <p class="small mb-1">This deployment does not give the dashboard write access to the
+        game client folder, so updating it stays a manual step: unzip the release into
+        <span class="vt-mono">./play</span>.</p>
+      <p class="small text-secondary mb-0">The bundled Docker setup gains the access with a
+        one-time <span class="vt-mono">git pull</span> and
+        <span class="vt-mono">docker compose up -d --build</span>; on bare Linux also run
+        <span class="vt-mono">chown -R 1000:1000 ./play</span>.</p>`;
+  } else if (e.tag === latestTag) {
+    eng.innerHTML = html`<div class="text-success">
+      <i class="bi bi-check-circle me-1"></i>Players get ${latestTag}, the newest release.</div>`;
+  } else {
+    eng.innerHTML = html`
+      <p>${raw(e.tag
+        ? html`Players currently get <span class="vt-mono">${e.tag}</span>; <strong>${latestTag}</strong> is out.`
+        : html`${raw(e.present
+          ? 'The installed client version is not recorded (it was unzipped by hand), so it may or may not be current.'
+          : 'No game client is installed yet, so nobody can play.')} The newest release is <strong>${latestTag}</strong>.`)}
+      </p>
+      <button class="btn btn-primary" id="updEngGo">
+        ${e.present ? `Update the game client to ${latestTag}` : `Install the game client (${latestTag})`}</button>`;
+    $('#updEngGo').onclick = async () => {
+      const yes = await confirmAction({
+        title: `Update the game client to ${latestTag}?`,
+        body: 'The server downloads the release (about 350 MB), verifies it against the '
+          + 'release checksums, and swaps it in. No restart, nobody is signed out, and a '
+          + 'page someone already has open keeps working: players simply get the new '
+          + 'version on their next load. Saves, settings and mods are untouched.',
+        danger: 'Update',
+      });
+      if (!yes) return;
+      let res;
+      try { res = await api('/update/engine', { method: 'POST' }); } catch (err) { toast(err.message, 'danger'); return; }
+      if (!res.ok) { installFail(eng, res.error || 'Could not start the update.'); return; }
+      watchEngineUpdate(eng, res.token);
+    };
+  }
+
+  // The engine update reports through the same progress stream as mod installs; done/error
+  // arrive as note prefixes, which is the shared terminal-frame contract with the server.
+  function watchEngineUpdate(el, tk) {
+    installPhase(el, 'Updating the game client', 'starting');
+    const timer = setInterval(async () => {
+      let p;
+      try { p = await api(`/mods/install/progress?token=${encodeURIComponent(tk)}`); } catch { return; }
+      if (!p || typeof p.pct !== 'number') return;
+      const note = String(p.note || '');
+      if (note.startsWith('done:')) {
+        clearInterval(timer);
+        el.innerHTML = html`<div class="text-success">
+          <i class="bi bi-check-circle me-1"></i>The game client is now
+          <span class="vt-mono">${note.slice(5)}</span>. Players get it on their next page
+          load; nobody was interrupted.</div>`;
+      } else if (note.startsWith('error:')) {
+        clearInterval(timer);
+        installFail(el, `${note.slice(6)} The client players see was left as it was.`);
+      } else {
+        installPhase(el, 'Updating the game client', note, p.pct);
+      }
+    }, 1000);
+  }
 }
 
 // ---------------------------------------------------------------------------------------

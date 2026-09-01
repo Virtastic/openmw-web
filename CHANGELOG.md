@@ -4,6 +4,18 @@ Notable changes to OpenMW-Web. Dates are release dates, newest first.
 
 ## Unreleased
 
+**Updating is a button now.** The Updates page shows what you run and what is newest, for
+both halves: the server and the game client. Clicking Update on the client makes the server
+download the release, verify it against the release checksums, and swap it in with no
+restart - players simply get the new version on their next page load. Clicking Update on the
+server hands the job to a new updater container in the compose stack, which checks out the
+newest release tag, rebuilds, and restarts, streaming its phases to the page. Nothing is
+automatic: checking is, applying never. Updates do not touch the data folder, so accounts,
+saves, settings, game files and mods stay put. Existing deployments gain all this with a
+one-time `git pull` and `docker compose up -d --build`; `setup.sh --update`, which used to
+run a `docker compose pull` that could never update anything, now does the same tag-pinned
+checkout the updater does.
+
 **Installing a big mod is minutes, not an hour, and it shows a real progress bar.** Tamriel
 Data is 54,000 files, and 7z writing them through Docker Desktop's file sharing was measured
 at 60+ minutes — extraction now happens on the container's own disk (about three minutes) and

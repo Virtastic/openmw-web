@@ -61,7 +61,7 @@ the server. Pages a role cannot use are not shown to it.
 | **Admin sessions** | owner | Signed-in dashboard sessions, revocable |
 | **My security** | viewer | Your own password and two-factor |
 | **Logs / Audit trail** | moderator | What the server did; what administrators did |
-| **Updates** | owner | Whether a newer release exists |
+| **Updates** | owner | See what is newer, click to update (below) |
 | **Maintenance** | owner | Close the doors before big changes. Multiplayer only |
 | **Backup** | owner | Download the data folder as `tar.gz`. Restoring is stop, replace, start |
 | **Restart** | owner | Restart the server |
@@ -117,6 +117,26 @@ rather than turning into a continent of error markers.
 
 Tamriel Rebuilt is why the engine is 64-bit (wasm64): players need a browser with MEMORY64
 support and the RAM to match.
+
+### Updates
+
+The Updates page checks GitHub automatically and shows two things: the **server** you run
+and the **game client** players load. Each has its own Update button - checking is
+automatic, applying is always your click. Updates never touch the data folder, so accounts,
+saves, settings, game files and mods all stay; the cautious can take a backup first.
+
+- **Game client:** the server downloads the release, verifies it against the release
+  checksums, and swaps it in live. No restart, nobody is interrupted; players get the new
+  version on their next page load.
+- **Server:** a small updater container (part of the Docker stack, no setup) checks out the
+  newest release tag, rebuilds, and restarts the server. The page follows along and
+  reconnects; the restart signs everyone out for a minute or two.
+
+Installed before updates existed? One `git pull` followed by
+`docker compose up -d --build` on the host adds the updater and the button works from then
+on. Running without Docker on Linux, also `chown -R 1000:1000 ./play` so the server may
+write the client folder. `./setup.sh --update` remains the manual fallback and does the
+same thing.
 
 ### Savegames
 

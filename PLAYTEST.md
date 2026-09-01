@@ -804,6 +804,21 @@ Install two mods that overlap (the Morrowind Optimization Patch and Weapon Sheat
 - [ ] With Tamriel Rebuilt installed, travel to the mainland and look at it. Error markers
       everywhere means the assets half is missing or unticked
 
+### Click-to-update (Updates page, owner)
+
+- [ ] The Updates page checks by itself and shows both cards: Server and Game client
+- [ ] Behind on the client: Update downloads with a moving bar (download percent and MB),
+      then unpack, then "players get it on their next page load"; the game loads right away
+- [ ] Clicking it again straight after answers "already on <tag>"
+- [ ] Behind on the server: Update confirms (the dialog says data/saves/mods are untouched),
+      then streams fetching/building phases, then hands over to the restart screen and the
+      dashboard comes back on the new version (you are signed out; that is the restart)
+- [ ] With the updater container stopped, the server card shows the manual commands instead
+      of a button that cannot work
+- [ ] Kill the server container mid-client-update: the served client still works (old
+      index.html untouched); retrying succeeds
+- [ ] A newer release out: the nav shows a badge on Updates and Overview says so in one line
+
 ## Known open (already triaged — not bugs to re-report)
 - Some textures skip mipmaps (`glGenerateMipmap` warning) → slight distant shimmer — OSG fix pending
 - No MSAA → jagged edges vs desktop — enhancement, deferred
