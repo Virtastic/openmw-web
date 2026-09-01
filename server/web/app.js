@@ -319,6 +319,12 @@ const wizardSteps = () => {
   // total that moves under you is unsettling on the one screen where you most want to know
   // how much is left. A world you play alone still has a name, and it is shown on its own
   // sign-in page, so asking is not a wasted step.
+  //
+  // THE ONE EXCEPTION is Tamriel Rebuilt, and it is an exception because it is not a
+  // question: it is a second upload. TR is a separate download from the base game and no
+  // amount of dragging Data Files produces it, so the operator who picked that profile is
+  // asked for its archive on its own screen, after the game itself is in. Everyone else
+  // never sees the step and still counts eleven.
   return [
     'owner',
     'mode',
@@ -330,6 +336,7 @@ const wizardSteps = () => {
     'registration',
     'storage',
     'files',
+    ...(answers.contentProfile === 'tamriel-rebuilt' ? ['tr'] : []),
     'review',
   ];
 };
@@ -338,7 +345,7 @@ const wizardSteps = () => {
 const STEP_LABEL = {
   owner: 'Account', mode: 'Type', login: 'Sign-in', registration: 'Sign-ups',
   content: 'Content', delivery: 'Files', hosting: 'Access',
-  name: 'Name', storage: 'Storage', files: 'Data', review: 'Review',
+  name: 'Name', storage: 'Storage', files: 'Data', tr: 'Tamriel', review: 'Review',
 };
 
 /** The address players actually reach this server on, which is what a provider must be
@@ -497,6 +504,7 @@ function renderWizard() {
   if (name === 'name') return stepName();
   if (name === 'storage') return stepStorage();
   if (name === 'files') return stepFiles();
+  if (name === 'tr') return stepTamriel();
   return stepReview();
 }
 
@@ -1152,6 +1160,154 @@ async function stepFiles() {
   wireUpload(() => renderWizard());
 }
 
+/** A mod is Tamriel Rebuilt if it brought TR's own files, whatever the operator named it. */
+const isTamrielRebuilt = (mod) => (mod.plugins || []).some((pl) => /^TR_/i.test(pl.file))
+  || (mod.archives || []).some((a) => /^TR_/i.test(a));
+
+/**
+ * Tamriel Rebuilt, which is a SECOND upload and not a second question.
+ *
+ * The wizard used to let an operator pick the Tamriel Rebuilt profile and then walked them
+ * through the base-game upload only — the profile checks nothing of TR's by name, so the Data
+ * Files screen went green, the review said everything was ready, and the server started with
+ * no TR on it at all. This step is where the archive actually arrives.
+ *
+ * The archive is IDENTIFIED BY HASH, not by its filename: TR's releases are named
+ * inconsistently, and a filename is renamed by every browser, chat client and mod manager it
+ * passes through. An unrecognised hash still installs — see core/tr-releases.ts — because a
+ * table of known releases goes stale the day TR ships a new one, and a wizard that refused
+ * the newest version would be worse than one that cannot put a number on it.
+ */
+async function stepTamriel() {
+  let mods = null;
+  let modsError = '';
+  try { mods = await api('/mods'); } catch (e) {
+    if (e.message === 'signed out') return;
+    modsError = e.message;
+  }
+  const found = (mods?.mods || []).filter(isTamrielRebuilt);
+  tamrielMissing = found.length === 0;
+
+  wizardShell(html`
+    <h5>Add Tamriel Rebuilt</h5>
+    <p class="text-secondary small">Tamriel Rebuilt is a separate download from the game, so it
+      is not in the folder you just uploaded. Drop its archive here <strong>exactly as you
+      downloaded it</strong> — do not unpack it first. The file itself is what tells us which
+      release this is.</p>
+    ${raw(found.length ? html`
+      <div class="alert alert-success d-flex align-items-start gap-2">
+        <i class="bi bi-check-circle-fill fs-4"></i>
+        <div>
+          <strong>Installed.</strong>
+          ${raw(found.map((mod) => html`<div class="small mt-1">
+            <span class="vt-mono">${mod.name}</span>
+            ${raw(mod.release
+              ? html` &middot; <span class="text-success">${mod.release}</span>`
+              : ' &middot; version not recognised, which is fine, it is installed either way')}
+          </div>`).join(''))}
+          <div class="small mt-2">The load order is on the Game data page whenever you want it.</div>
+        </div>
+      </div>
+      <details class="mb-2"><summary class="small text-secondary">Add another archive</summary>
+        <div class="mt-2">${raw(trDropZone())}</div></details>`
+      : trDropZone())}
+    ${raw(modsError ? html`<div class="alert alert-danger mb-0">
+      <strong>Could not read the mod list.</strong> ${modsError} Reload this page; if you were
+      signed out, sign in again and Setup resumes here.</div>` : '')}`,
+  { next: found.length ? 'Continue' : 'Skip for now' });
+  wireTamriel();
+}
+
+function trDropZone() {
+  return html`
+    <div id="trDrop" class="vt-drop mb-3">
+      <div class="text-secondary">Drop the Tamriel Rebuilt <strong>.zip</strong> or
+        <strong>.7z</strong> here</div>
+      <label class="btn btn-sm btn-outline-secondary mt-2 mb-0">Choose the archive<input
+        type="file" id="trPick" accept=".zip,.7z" hidden></label>
+    </div>
+    <div id="trStage"></div>`;
+}
+
+function wireTamriel() {
+  const drop = $('#trDrop');
+  const stage = $('#trStage');
+  if (!drop || !stage) return;
+
+  /** What the hash turned out to be, and what is about to be installed. */
+  const renderStaged = (staged) => {
+    stage.innerHTML = html`
+      <div class="card card-secondary card-outline mb-3"><div class="card-body">
+        <h5 class="mb-2">${staged.archive}</h5>
+        ${raw(staged.release ? html`
+          <div class="alert alert-success py-2 small mb-2">
+            <i class="bi bi-check-circle-fill me-1"></i>Recognised as
+            <strong>${staged.release}</strong>.</div>` : html`
+          <div class="alert alert-secondary py-2 small mb-2">
+            <strong>This release is not in our list yet</strong>, which is normal for a version
+            newer, or older, than the ones recorded. It installs exactly the same; we just
+            cannot print a version number beside it. The hash below is what identifies it.</div>`)}
+        ${raw(staged.tamrielRebuilt ? '' : html`
+          <div class="alert alert-warning py-2 small mb-2">
+            <strong>This does not look like Tamriel Rebuilt.</strong> Nothing inside it is named
+            <span class="vt-mono">TR_…</span>. Check you dropped the right download. Installing
+            it anyway is allowed, it just will not be the landmass.</div>`)}
+        <dl class="row small mb-2">
+          <dt class="col-sm-3">Size</dt><dd class="col-sm-9 mb-1">${sizeOf(staged.bytes)}</dd>
+          <dt class="col-sm-3">Contents</dt>
+          <dd class="col-sm-9 mb-1">${staged.entries} files in
+            ${staged.candidates.length} data folder${raw(staged.candidates.length === 1 ? '' : 's')}</dd>
+          <dt class="col-sm-3">SHA-256</dt>
+          <dd class="col-sm-9 mb-1"><span class="vt-mono" style="word-break:break-all"
+            >${staged.sha256}</span></dd>
+        </dl>
+        <button class="btn btn-primary btn-sm" id="trGo">Install</button>
+        <button class="btn btn-outline-secondary btn-sm ms-2" id="trCancel">Discard</button>
+      </div></div>`;
+
+    $('#trCancel').onclick = () => { stage.innerHTML = ''; };
+    $('#trGo').onclick = async () => {
+      // EVERY data folder in the archive, where the mods page asks which. A TR download is one
+      // mod that ships its assets and its plugins in separate folders, and half of it is a
+      // plugin whose master did not arrive — which aborts the engine at startup rather than
+      // loading without it.
+      const label = staged.release || 'Tamriel Rebuilt';
+      const choices = staged.candidates.map((c) => ({
+        path: c.path,
+        slug: c.suggestedSlug,
+        name: staged.candidates.length > 1 && c.path ? `${label} — ${c.path}` : label,
+      }));
+      const files = staged.candidates.reduce((n, c) => n + c.files, 0);
+      installPhase(stage, 'Installing', `unpacking ${files} file${files === 1 ? '' : 's'}`);
+      try {
+        await api('/mods/install/commit', { method: 'POST', body: { token: staged.token, choices } });
+        renderWizard();   // back to this step, which now reports it installed
+      } catch (e) {
+        stage.innerHTML = html`<div class="alert alert-danger">${e.message}</div>`;
+      }
+    };
+  };
+
+  const send = async (file) => {
+    if (!file) return;
+    if (uploadRunning) { toast('An upload is already running.', 'err'); return; }
+    try {
+      renderStaged(await uploadArchive(file, stage));
+    } catch (e) {
+      stage.innerHTML = html`<div class="alert alert-danger">${e.message}</div>`;
+    }
+  };
+
+  $('#trPick').onchange = (e) => send(e.target.files[0]);
+  drop.ondragover = (e) => { e.preventDefault(); drop.classList.add('over'); };
+  drop.ondragleave = () => drop.classList.remove('over');
+  drop.ondrop = (e) => {
+    e.preventDefault();
+    drop.classList.remove('over');
+    send(e.dataTransfer.files[0]);
+  };
+}
+
 /** Review the choices back in the words they were offered in, not the stored values. */
 const LOGIN_LABEL = {
   password: 'Username and password',
@@ -1192,6 +1348,10 @@ function joinAddress() {
 
 /** True when the profile's files are not all present, so the world cannot run yet. */
 let gameDataIncomplete = false;
+/** True when the Tamriel Rebuilt profile was chosen and its archive was never uploaded. The
+ *  file checklist cannot see this: no TR file is checked by name, so the game-data step goes
+ *  green on a plain Morrowind folder and the review would otherwise call it ready. */
+let tamrielMissing = false;
 
 function stepReview() {
   const line = (k, v) => html`<dt class="col-sm-5 fw-normal text-secondary">${k}</dt>
@@ -1205,6 +1365,13 @@ function stepReview() {
         the dashboard works, but nobody can join until the server has a complete copy of
         Morrowind. Go <a href="#" id="backToFiles">back one step</a> to add it, or do it later
         from <strong>Game data &amp; mods</strong>, which shows the same checklist.
+      </div>` : '')}
+    ${raw(tamrielMissing && answers.contentProfile === 'tamriel-rebuilt' ? html`
+      <div class="callout callout-warning mb-3">
+        <strong>Tamriel Rebuilt is not installed.</strong> This server is set up for it, but its
+        archive was never uploaded, so it will run as plain Morrowind. Go
+        <a href="#" id="backToTr">back a step</a> to add it, or do it later from
+        <strong>Game data &amp; mods</strong>.
       </div>` : '')}
     ${raw(ssoNeedingKeys().length ? html`
       <div class="callout callout-warning mb-3">
@@ -1270,8 +1437,17 @@ function stepReview() {
       waitForRestart();
     } catch (e) { toast(e.message, 'danger'); }
   } });
+  // BY NAME, not step-1. The Tamriel Rebuilt step sits between Data and Review when that
+  // profile is chosen, so "back one step" from here landed on the wrong screen.
+  const goTo = (name) => (e) => {
+    e.preventDefault();
+    const at = wizardSteps().indexOf(name);
+    if (at !== -1) { step = at; renderWizard(); }
+  };
   const back = $('#backToFiles');
-  if (back) back.onclick = (e) => { e.preventDefault(); step--; renderWizard(); };
+  if (back) back.onclick = goTo('files');
+  const backTr = $('#backToTr');
+  if (backTr) backTr.onclick = goTo('tr');
   const cj = $('#copyJoin');
   if (cj) cj.onclick = async () => {
     try {
@@ -2366,6 +2542,98 @@ function drawQr(el, text) {
   }
 }
 
+/**
+ * A step the operator can watch.
+ *
+ * Installing a mod is three waits with nothing between them: the bytes go up, the server
+ * opens the archive, and the chosen folders are unpacked. With one "Reading…" line covering
+ * all of it, a 400MB mod looked frozen for minutes and the honest reaction was to click
+ * again. Each phase says which one it is, and the only one whose length is knowable in
+ * advance — the upload — gets a real bar rather than a spinner.
+ */
+function installPhase(el, title, detail, pct) {
+  el.innerHTML = html`
+    <div class="card card-secondary card-outline mb-3"><div class="card-body py-3">
+      <div class="d-flex align-items-center gap-2">
+        ${raw(pct === undefined
+          ? '<span class="spinner-border spinner-border-sm"></span>' : '')}
+        <strong>${title}</strong>
+        <span class="ms-auto text-secondary small">${detail || ''}</span>
+      </div>
+      ${raw(pct === undefined ? '' : html`
+        <div class="progress mt-2" style="height:.5rem">
+          <div class="progress-bar" style="width:${String(Math.round(pct))}%"></div>
+        </div>`)}
+    </div></div>`;
+}
+
+/**
+ * Send one archive to the staging endpoint; resolve with what the server found inside it.
+ *
+ * Shared by the mods page and the wizard's Tamriel Rebuilt step, which are the same three
+ * waits with different questions on the far side of them. One transport means one place the
+ * session-expiry case is handled, and one set of sentences for a dropped connection.
+ *
+ * XMLHttpRequest, not fetch. fetch cannot report UPLOAD progress at all — there is no event
+ * for it — so the one phase whose duration is both long and knowable would be the one with no
+ * bar. Everything else here is fetch; this is the exception that earns itself.
+ */
+function uploadArchive(file, stage) {
+  return new Promise((done, fail) => {
+    if (!/\.(zip|7z)$/i.test(file.name)) {
+      // Named before the upload rather than after: there is no point sending 400 MB to be told.
+      // The server sniffs the real format anyway, so this is only to save a wasted transfer.
+      fail(new Error('Mods install from a .zip or a .7z. If this is a .rar, open it and save '
+        + 'it as one of those.'));
+      return;
+    }
+    uploadRunning = true;
+
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `/admin/api/mods/install?name=${encodeURIComponent(file.name)}`);
+    xhr.setRequestHeader('authorization', `Bearer ${token.get()}`);
+    xhr.setRequestHeader('content-type', 'application/octet-stream');
+
+    xhr.upload.onprogress = (e) => {
+      if (!e.lengthComputable) { installPhase(stage, 'Uploading', file.name); return; }
+      installPhase(stage, 'Uploading', `${sizeOf(e.loaded)} of ${sizeOf(e.total)}`,
+        (e.loaded / e.total) * 100);
+    };
+    // The bytes have landed and the server is now reading the central directory, looking for
+    // data folders and hashing what arrived. On a big .7z that is a real pause, and it is not
+    // the upload.
+    xhr.upload.onload = () => installPhase(stage, 'Opening the archive', file.name);
+
+    xhr.onload = () => {
+      uploadRunning = false;
+      let body;
+      try { body = JSON.parse(xhr.responseText); } catch { body = {}; }
+      if (xhr.status === 401 || xhr.status === 403) {
+        fail(new Error('Your session ended during the upload. Sign in again and retry.'));
+        return;
+      }
+      if (xhr.status !== 200) {
+        fail(new Error(body.error || `The upload failed (HTTP ${xhr.status}).`));
+        return;
+      }
+      done(body);
+    };
+    xhr.onerror = () => {
+      uploadRunning = false;
+      fail(new Error('The upload did not finish. The connection dropped, or the server '
+        + 'restarted while it was going.'));
+    };
+    xhr.onabort = () => {
+      uploadRunning = false;
+      // Nothing went wrong and nothing was staged: leave the panel as the operator left it.
+      stage.innerHTML = '';
+    };
+
+    installPhase(stage, 'Uploading', sizeOf(file.size), 0);
+    xhr.send(file);
+  });
+}
+
 /** Add-files panel, shared by the mods page and the wizard's game-data step. */
 /**
  * The mods card's behaviour: upload a zip, choose what is in it, order the results.
@@ -2378,87 +2646,14 @@ function wireMods(m) {
   const stage = $('#modStage');
   const drop = $('#modZip');
 
-  /**
-   * A step the operator can watch.
-   *
-   * Installing a mod is three waits with nothing between them: the bytes go up, the server
-   * opens the archive, and the chosen folders are unpacked. With one "Reading…" line covering
-   * all of it, a 400MB mod looked frozen for minutes and the honest reaction was to click
-   * again. Each phase now says which one it is, and the only one whose length is knowable in
-   * advance — the upload — gets a real bar rather than a spinner.
-   */
-  const phase = (title, detail, pct) => {
-    stage.innerHTML = html`
-      <div class="card card-secondary card-outline mb-3"><div class="card-body py-3">
-        <div class="d-flex align-items-center gap-2">
-          ${raw(pct === undefined
-            ? '<span class="spinner-border spinner-border-sm"></span>' : '')}
-          <strong>${title}</strong>
-          <span class="ms-auto text-secondary small">${detail || ''}</span>
-        </div>
-        ${raw(pct === undefined ? '' : html`
-          <div class="progress mt-2" style="height:.5rem">
-            <div class="progress-bar" style="width:${String(Math.round(pct))}%"></div>
-          </div>`)}
-      </div></div>`;
-  };
-
-  const send = (file) => {
+  const send = async (file) => {
     if (!file) return;
-    if (!/\.(zip|7z)$/i.test(file.name)) {
-      // Named before the upload rather than after: there is no point sending 400 MB to be told.
-      // The server sniffs the real format anyway, so this is only to save a wasted transfer.
-      toast('Mods install from a .zip or a .7z. If this is a .rar, open it and save it as one '
-        + 'of those.', 'err');
-      return;
-    }
     if (uploadRunning) { toast('An upload is already running.', 'err'); return; }
-    uploadRunning = true;
-
-    // XMLHttpRequest, not fetch. fetch cannot report UPLOAD progress at all — there is no
-    // event for it — so the one phase whose duration is both long and knowable would be the
-    // one with no bar. Everything else here is fetch; this is the exception that earns itself.
-    const xhr = new XMLHttpRequest();
-    xhr.open('POST', `/admin/api/mods/install?name=${encodeURIComponent(file.name)}`);
-    xhr.setRequestHeader('authorization', `Bearer ${token.get()}`);
-    xhr.setRequestHeader('content-type', 'application/octet-stream');
-
-    xhr.upload.onprogress = (e) => {
-      if (!e.lengthComputable) { phase('Uploading', file.name); return; }
-      phase('Uploading', `${sizeOf(e.loaded)} of ${sizeOf(e.total)}`, (e.loaded / e.total) * 100);
-    };
-    // The bytes have landed and the server is now reading the central directory and looking
-    // for data folders. On a big .7z that is a real pause, and it is not the upload.
-    xhr.upload.onload = () => phase('Opening the archive', file.name);
-
-    xhr.onload = () => {
-      uploadRunning = false;
-      let body;
-      try { body = JSON.parse(xhr.responseText); } catch { body = {}; }
-      if (xhr.status === 401 || xhr.status === 403) {
-        stage.innerHTML = html`<div class="alert alert-danger">Your session ended during the
-          upload. Sign in again and retry.</div>`;
-        return;
-      }
-      if (xhr.status !== 200) {
-        stage.innerHTML = html`<div class="alert alert-danger">${body.error
-          || `The upload failed (HTTP ${xhr.status}).`}</div>`;
-        return;
-      }
-      renderChooser(body);
-    };
-    xhr.onerror = () => {
-      uploadRunning = false;
-      stage.innerHTML = html`<div class="alert alert-danger">The upload did not finish. The
-        connection dropped, or the server restarted while it was going.</div>`;
-    };
-    xhr.onabort = () => {
-      uploadRunning = false;
-      stage.innerHTML = '';
-    };
-
-    phase('Uploading', sizeOf(file.size), 0);
-    xhr.send(file);
+    try {
+      renderChooser(await uploadArchive(file, stage));
+    } catch (e) {
+      stage.innerHTML = html`<div class="alert alert-danger">${e.message}</div>`;
+    }
   };
   /** What the archive turned out to contain, and which parts to install. */
   const renderChooser = (staged) => {
@@ -2519,7 +2714,7 @@ function wireMods(m) {
       // reload, which abandons a staged upload that was working.
       const files = choices.reduce((n, ch) =>
         n + (staged.candidates.find((c) => c.path === ch.path)?.files ?? 0), 0);
-      phase('Installing', `unpacking ${files} file${files === 1 ? '' : 's'}`);
+      installPhase(stage, 'Installing', `unpacking ${files} file${files === 1 ? '' : 's'}`);
       try {
         await api('/mods/install/commit', { method: 'POST', body: { token: staged.token, choices } });
         toast('Installed. Restart to load it.');
@@ -2703,6 +2898,7 @@ function modsCard(m, editable) {
               switch that master back on or switch this mod off.</div>`).join(''))}
             <dl class="row small mb-2">
               ${raw(dlRow('Installed from', mod.archive || ''))}
+              ${raw(dlRow('Release', mod.release || ''))}
               ${raw(dlRow('Folder in archive', mod.source || ''))}
               ${raw(dlRow('Full name', mod.name))}
               ${raw(dlRow('Folder on server', `mods/${mod.slug}`))}

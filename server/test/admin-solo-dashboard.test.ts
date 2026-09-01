@@ -316,20 +316,24 @@ test('the upload asks before installing anything', () => {
   // The whole point: an archive with a core folder and optional extras must not install both.
   const wire = /function wireMods\(m\) \{[\s\S]*?\n\}/.exec(app);
   assert.ok(wire, 'no wireMods');
-  assert.match(wire[0], /mods\/install\?name=/);
+  assert.match(app, /mods\/install\?name=/);
   assert.match(wire[0], /renderChooser/);
   assert.match(wire[0], /mods\/install\/commit/);
-  // And commit must be reachable only from the chooser, never straight from the upload.
-  assert.ok(wire[0].indexOf('renderChooser(body)') < wire[0].indexOf("api('/mods/install/commit'"));
+  // And commit must be reachable only from the chooser, never straight from the upload. The
+  // staged answer now arrives as a resolved promise rather than a callback, which is the same
+  // ordering said differently: nothing may call commit with what uploadArchive returned until
+  // the chooser has rendered it and the operator has ticked something.
+  assert.ok(wire[0].indexOf('renderChooser(await uploadArchive(file, stage))')
+    < wire[0].indexOf("api('/mods/install/commit'"));
 });
 
 test('an unsupported archive is refused in the browser, before the bytes are sent', () => {
   // Telling somebody their .rar is unsupported after a 400 MB upload is the wrong moment. The
   // server sniffs the real format regardless; this only saves a wasted transfer.
-  const wire = /function wireMods\(m\) \{[\s\S]*?\n\}/.exec(app)!;
-  assert.match(wire[0], /\(zip\|7z\)\$\/i\.test\(file\.name\)/,
+  const u = /function uploadArchive\(file, stage\) \{[\s\S]*?\n\}/.exec(app)!;
+  assert.match(u[0], /\(zip\|7z\)\$\/i\.test\(file\.name\)/,
     'both formats Nexus actually serves must be accepted');
-  assert.ok(wire[0].indexOf('(zip|7z)$/i.test(file.name)') < wire[0].indexOf('mods/install?name='));
+  assert.ok(u[0].indexOf('(zip|7z)$/i.test(file.name)') < u[0].indexOf('mods/install?name='));
 });
 
 test('removing a mod is type-to-confirm, like every other delete here', () => {
@@ -341,10 +345,10 @@ test('the zip is sent raw rather than being buffered into a form', () => {
   // A multipart parser for a several-hundred-megabyte archive is a dependency and a memory
   // problem; the Data Files upload already settled this. The transport moved from fetch to
   // XHR for upload progress, but the body is still the File itself, not a FormData.
-  const wire = /function wireMods\(m\) \{[\s\S]*?\n\}/.exec(app)!;
-  assert.match(wire[0], /xhr\.send\(file\);/);
-  assert.match(wire[0], /application\/octet-stream/);
-  assert.doesNotMatch(wire[0], /FormData/);
+  const u = /function uploadArchive\(file, stage\) \{[\s\S]*?\n\}/.exec(app)!;
+  assert.match(u[0], /xhr\.send\(file\);/);
+  assert.match(u[0], /application\/octet-stream/);
+  assert.doesNotMatch(u[0], /FormData/);
 });
 
 test('filenames out of an uploaded zip are escaped, not injected', () => {
@@ -444,41 +448,58 @@ test('every page in the sidebar has a route and a role', () => {
 });
 
 // --- installing a mod has to look like it is happening -------------------------------------------
+//
+// The transport lives in uploadArchive, shared with the wizard's Tamriel Rebuilt step: the two
+// screens are the same three waits with a different question on the far side of them, and one
+// copy means one place the session-expiry and dropped-connection cases are handled.
+
+const uploader = () => /function uploadArchive\(file, stage\) \{[\s\S]*?\n\}/.exec(app)!;
 
 test('the upload reports progress, which fetch cannot do', () => {
   // Installing is three waits with nothing between them: the bytes go up, the server opens the
   // archive, the chosen folders unpack. One "Reading…" line covered all of it, so a 400MB mod
   // looked frozen for minutes and the honest reaction was to click again.
-  const wire = /function wireMods\(m\) \{[\s\S]*?\n\}/.exec(app)!;
-  assert.match(wire[0], /new XMLHttpRequest\(\)/,
+  assert.match(uploader()[0], /new XMLHttpRequest\(\)/,
     'fetch has no upload-progress event, so the one knowable wait would have no bar');
-  assert.match(wire[0], /xhr\.upload\.onprogress/);
-  assert.match(wire[0], /phase\('Uploading'/);
+  assert.match(uploader()[0], /xhr\.upload\.onprogress/);
+  assert.match(uploader()[0], /installPhase\(stage, 'Uploading'/);
 });
 
 test('each wait says which one it is', () => {
-  const wire = /function wireMods\(m\) \{[\s\S]*?\n\}/.exec(app)!;
-  for (const p of ["phase('Uploading'", "phase('Opening the archive'", "phase('Installing'"]) {
-    assert.ok(wire[0].includes(p), `missing phase: ${p}`);
+  // The first two belong to the transport; the third is the extraction, which only the caller
+  // knows it has asked for.
+  for (const p of ["installPhase(stage, 'Uploading'", "installPhase(stage, 'Opening the archive'"]) {
+    assert.ok(uploader()[0].includes(p), `missing phase: ${p}`);
   }
+  const wire = /function wireMods\(m\) \{[\s\S]*?\n\}/.exec(app)!;
+  assert.ok(wire[0].includes("installPhase(stage, 'Installing'"), 'missing phase: Installing');
 });
 
 test('a dropped connection or an expired session says so, rather than hanging', () => {
   // An upload long enough to need a progress bar is long enough to outlive a session or a
   // server restart, and XHR reports those as an error event rather than a rejected promise.
-  const wire = /function wireMods\(m\) \{[\s\S]*?\n\}/.exec(app)!;
-  assert.match(wire[0], /xhr\.onerror = \(\) => \{/);
-  assert.match(wire[0], /Your session ended during the/);
-  const onerror = /xhr\.onerror = \(\) => \{[\s\S]*?\};/.exec(wire[0])!;
+  assert.match(uploader()[0], /xhr\.onerror = \(\) => \{/);
+  assert.match(uploader()[0], /Your session ended during the/);
+  const onerror = /xhr\.onerror = \(\) => \{[\s\S]*?\};/.exec(uploader()[0])!;
   assert.match(onerror[0], /uploadRunning = false;/,
     'the run flag must be cleared on failure or the next upload is refused forever');
+});
+
+test('every way out of the upload clears the run flag', () => {
+  // One flag guards the whole page, so a path that returns without clearing it refuses every
+  // later upload until a reload. Now that the transport is shared, that would take the wizard
+  // down with the mods page.
+  const u = uploader()[0];
+  assert.equal(u.split('uploadRunning = true;').length - 1, 1);
+  assert.equal(u.split('uploadRunning = false;').length - 1, 3,
+    'onload, onerror and onabort must each clear it');
 });
 
 test('the install step replaces the form instead of just disabling a button', () => {
   // A disabled button beside an unchanged form reads as a page that has died, and the
   // reasonable response to that is to reload — which abandons a staged upload that was fine.
   const wire = /function wireMods\(m\) \{[\s\S]*?\n\}/.exec(app)!;
-  assert.match(wire[0], /phase\('Installing', `unpacking \$\{files\}/);
+  assert.match(wire[0], /installPhase\(stage, 'Installing', `unpacking \$\{files\}/);
   assert.doesNotMatch(wire[0], /\$\('#modGo'\)\.disabled = true;/);
 });
 

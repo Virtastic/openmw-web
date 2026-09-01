@@ -68,11 +68,20 @@ export const CONTENT_PROFILES: Record<string, {
   },
   'tamriel-rebuilt': {
     label: 'Tamriel Rebuilt',
-    requires: ['Morrowind.esm', 'Morrowind.bsa', 'Tribunal.esm', 'Bloodmoon.esm'],
+    // THE SAME LIST AS `expansions`, because TR is built on the Game of the Year edition and
+    // needs every part of it. This used to omit Tribunal.bsa and Bloodmoon.bsa, which made the
+    // most demanding profile the one with the weakest check: an .esm without its archive loads
+    // and then draws every object in it as an error marker, which looks like it worked.
+    requires: [
+      'Morrowind.esm', 'Morrowind.bsa',
+      'Tribunal.esm', 'Tribunal.bsa',
+      'Bloodmoon.esm', 'Bloodmoon.bsa',
+    ],
     media: ['Sound', 'Music', 'Video', 'Fonts', 'Splash'],
-    note: 'Game of the Year edition plus the Tamriel Rebuilt landmass. Its own files '
-      + '(TR_Mainland.esm, TR_Data.bsa and friends) go in alongside; release names vary, so '
-      + 'they are not checked for by name, enable them in the load order once uploaded.',
+    note: 'Game of the Year edition plus the Tamriel Rebuilt landmass. TR is a separate '
+      + 'download and is not part of the Data Files folder: the setup wizard asks for its '
+      + 'archive on its own step, and identifies the release by the hash of the file rather '
+      + 'than by its name, which varies from release to release.',
   },
 };
 

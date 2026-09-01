@@ -14,7 +14,7 @@
 
 import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { copyFile, rename, rm } from 'node:fs/promises';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { dirname, join, resolve, sep } from 'node:path';
 import type { IncomingMessage } from 'node:http';
 
@@ -23,6 +23,7 @@ import { findDataFolders, slugify, type Candidate } from '../../core/mod-archive
 import { extractEntry, listEntries, ZipError, type ZipEntry } from '../../core/zip';
 import { extractSevenZip, listSevenZip, sniffArchive } from '../../core/sevenzip';
 import { readMasters } from '../../core/esm';
+import { identifyRelease, looksLikeTamrielRebuilt } from '../../core/tr-releases';
 import { MOD_META as MODS_META_DIR } from '../../core/mod-conflicts';
 import {
   MODS_SUBDIR, readModDoc, writeModDoc, type InstalledMod, type ModDoc, type ModPlugin,
@@ -65,14 +66,19 @@ const fail = (status: number, error: string): InstallResult<never> => ({ ok: fal
  * each found the hard way — the `over` flag, because chunks already buffered keep arriving after
  * destroy(), and a temp name unique PER REQUEST, because in a container the pid is always 1 and
  * two uploads of one file shared a path.
+ *
+ * The sha256 is taken from the chunks ON THE WAY PAST, not by reading the file back: these
+ * archives run to gigabytes, and hashing afterwards would mean a second full pass over a file
+ * that has just been written — on a bind mount, minutes of it, for a value we had in hand.
  */
 export async function streamToFile(
   req: IncomingMessage,
   target: string,
   cap: number,
-): Promise<{ ok: true; bytes: number } | { ok: false; over: boolean; error: string }> {
+): Promise<{ ok: true; bytes: number; sha256: string } | { ok: false; over: boolean; error: string }> {
   mkdirSync(dirname(target), { recursive: true });
   const out = createWriteStream(target);
+  const digest = createHash('sha256');
   let written = 0;
   let over = false;
   try {
@@ -80,6 +86,7 @@ export async function streamToFile(
       req.on('data', (chunk: Buffer) => {
         if (over) return;
         written += chunk.length;
+        digest.update(chunk);
         if (written > cap) {
           over = true;
           out.destroy();
@@ -93,7 +100,7 @@ export async function streamToFile(
       req.on('end', () => out.end(done));
       out.on('error', err);
     });
-    return { ok: true, bytes: written };
+    return { ok: true, bytes: written, sha256: digest.digest('hex') };
   } catch (e) {
     await rm(target, { force: true });
     return { ok: false, over, error: String(e) };
@@ -138,6 +145,13 @@ export interface Staged {
   archive: string;
   bytes: number;
   entries: number;
+  /** sha256 of the uploaded archive, exactly as it arrived. Shown to the operator so an
+   *  unrecognised release can be added to the table by copying it out of the page. */
+  sha256: string;
+  /** The release that hash is known to be, or null. Never a reason to refuse an install. */
+  release: string | null;
+  /** Whether the archive looks like Tamriel Rebuilt, for the wizard step that asks for it. */
+  tamrielRebuilt: boolean;
   candidates: (Candidate & { suggestedSlug: string })[];
 }
 
@@ -178,14 +192,22 @@ export async function beginInstall(
       + 'If the download contains a further archive inside it, unpack that one first.');
   }
 
+  const release = identifyRelease(got.sha256);
+
   // The archive name is the operator's own label for this thing, and the commit arrives as a
   // separate request that has never seen it. Park it beside the zip rather than trusting the
-  // browser to hand it back.
-  try { writeFileSync(join(dataDir, STAGING, `${token}.json`), JSON.stringify({ archive: archiveName })); }
-  catch { /* the name is a nicety; losing it must not fail the install */ }
+  // browser to hand it back — and the identity with it, so the installed mod can record which
+  // release it came from rather than throwing that away the moment the page moves on.
+  try {
+    writeFileSync(join(dataDir, STAGING, `${token}.json`),
+      JSON.stringify({ archive: archiveName, sha256: got.sha256, release }));
+  } catch { /* the name is a nicety; losing it must not fail the install */ }
 
   const base = archiveName.replace(/\.zip$/i, '');
-  log('info', 'mods.staged', { archive: archiveName, bytes: got.bytes, candidates: candidates.length });
+  log('info', 'mods.staged', {
+    archive: archiveName, bytes: got.bytes, candidates: candidates.length,
+    sha256: got.sha256, release: release ?? 'unrecognised',
+  });
   return {
     ok: true,
     value: {
@@ -193,6 +215,9 @@ export async function beginInstall(
       archive: archiveName,
       bytes: got.bytes,
       entries: entries.length,
+      sha256: got.sha256,
+      release,
+      tamrielRebuilt: looksLikeTamrielRebuilt(entries.map((e) => e.path)),
       candidates: candidates.map((c) => ({
         ...c,
         // The archive name is what the operator recognises; the folder name inside it is
@@ -259,9 +284,12 @@ async function commitInstallLocked(
   }
 
   let archiveName = '';
+  let release = '';
   try {
-    archiveName = String((JSON.parse(
-      readFileSync(join(dataDir, STAGING, `${token}.json`), 'utf8')) as { archive?: unknown }).archive ?? '');
+    const note = JSON.parse(readFileSync(join(dataDir, STAGING, `${token}.json`), 'utf8')) as
+      { archive?: unknown; release?: unknown };
+    archiveName = String(note.archive ?? '');
+    release = typeof note.release === 'string' ? note.release : '';
   } catch { /* pre-existing staging, or the note was swept: the name is not load-bearing */ }
 
   const doc = readModDoc(dataDir);
@@ -353,6 +381,7 @@ async function commitInstallLocked(
       slug,
       name: (choice.name || slug).slice(0, 120),
       archive: archiveName,
+      ...(release ? { release } : {}),
       source: choice.path,
       installedAt: new Date().toISOString(),
       enabled: true,

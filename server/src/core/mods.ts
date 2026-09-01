@@ -30,6 +30,9 @@ export interface InstalledMod {
   name: string;
   /** The uploaded archive's filename, so an operator can tell two versions apart. */
   archive: string;
+  /** The release the archive's hash was recognised as, when it was one core/tr-releases.ts
+   *  knows. Absent for everything else, which is most mods and every unlisted version. */
+  release?: string;
   /** Which folder inside that archive was installed. '' = the archive root. */
   source: string;
   installedAt: string;
@@ -100,6 +103,7 @@ export function readModDoc(dataDir: string): ModDoc {
         slug: str(m.slug),
         name: str(m.name) || str(m.slug),
         archive: str(m.archive),
+        ...(str(m.release) ? { release: str(m.release) } : {}),
         source: str(m.source),
         installedAt: str(m.installedAt),
         enabled: bool(m.enabled, true),
