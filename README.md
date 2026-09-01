@@ -26,15 +26,15 @@ cross-compiled with Emscripten so the whole engine runs client-side in a desktop
 browser. There are no plugins and no streaming service. The engine runs locally and
 reads game data from your machine.
 
-**New in 1.1.0: multiplayer.** Morrowind is a single-player game, so this is a real
-addition rather than a port — a server that owns the shared world, and a client that
-asks it what happened. Play solo, invite a party, or step into a public world with
-strangers in it. See [Multiplayer](#multiplayer) below, and
-[`docs/MULTIPLAYER-SETUP.md`](docs/MULTIPLAYER-SETUP.md) to run your own.
+**New in 1.2.0: the admin dashboard.** Your own server is now set up and run entirely
+from a browser: a wizard for setup, a mod manager with drag-to-order, Tamriel Rebuilt
+support, savegame export, backups, logs and accounts. Multiplayer (added in 1.1.0)
+is there too, behind an experimental flag.
 
-## Host your own server
+## Quick start: your own server
 
-One command, then a browser does the rest. No config files, no terminal steps after this:
+You need [Docker](https://docs.docker.com/get-started/get-docker/) and your own copy of
+Morrowind. Then:
 
 ```bash
 git clone https://github.com/Virtastic/openmw-web.git
@@ -42,15 +42,18 @@ cd openmw-web
 ./setup.sh        # Windows: .\setup.ps1
 ```
 
-The script checks Docker is installed (and points you at the installer if not), starts
-the stack, and opens `https://localhost/admin` in your browser, where a setup wizard
-walks you through everything — your game files included, which you drag into the browser
-when it asks. One thing a `git clone` does not contain is the compiled engine (it is ~500 MB
-of build output): grab `openmw-web-<tag>.zip` from
-[Releases](https://github.com/Virtastic/openmw-web/releases) and unzip it into `play/`, or
-the game page will have nothing to boot. The script reminds you if it is missing.
+1. Grab the latest `openmw-web-*.zip` from
+   [Releases](https://github.com/Virtastic/openmw-web/releases) and unzip it into `play/`
+   (the game engine is too big for git — the script reminds you).
+2. Your browser opens **https://localhost/admin**. Accept the certificate warning, create
+   your admin account, answer the wizard.
+3. Drag your Morrowind `Data Files` folder in when it asks. Play at **https://localhost**.
 
-The wizard itself covers your admin account, single player or multiplayer, how players
+That's it. Everything below is detail.
+
+### More on running your own server
+
+The wizard covers your admin account, single player or multiplayer, how players
 sign in, your game files, and where the server lives on the network (a public domain with
 a certificate fetched for you, or plain HTTP on a port you pick). Every setting has
 plain-language help next to it.
@@ -66,9 +69,7 @@ installs **mods** from a `.zip` or `.7z`, shows what each one overwrites, and le
 load order by dragging; it has a setup path for **Tamriel Rebuilt**, which is a separate
 download in two archives; and it can export and re-import a player's **savegames** without
 shell access. [`SELF_HOSTING.md`](SELF_HOSTING.md#the-dashboard-page-by-page) walks the pages
-one at a time.
-See [`SELF_HOSTING.md`](SELF_HOSTING.md) for details, and re-run `./setup.sh --update`
-whenever the dashboard tells you a new release is out.
+one at a time; re-run `./setup.sh --update` whenever the dashboard says a new release is out.
 
 The `openmw/` tree tracks upstream
 [`OpenMW/openmw`](https://github.com/OpenMW/openmw) at commit
@@ -81,8 +82,11 @@ engine was made to run in a browser tab.
 
 ## Playing
 
-Serve `play/` (see [Running](#running)) and open it in desktop Chrome. With the
-launcher enabled there are four ways in:
+On your own server ([quick start](#quick-start-your-own-server) above), open
+**https://localhost** in desktop Chrome — or just play the hosted site at
+[morrowind.virtastic.app](https://morrowind.virtastic.app). (Developing without Docker,
+serve `play/` yourself — see [Running](#running).) With the launcher enabled there are
+four ways in:
 
 - **The example world.** A small, freely-distributable demo that ships with OpenMW.
   No copy of Morrowind required.
@@ -133,16 +137,16 @@ legally-obtained copy to play the full game.
 
 ### Enabling the launcher
 
-The launcher sits behind a flag so the bare game page stays the default. Enable it
-for the dev server by copying the example env file:
+The data-chooser launcher sits behind a flag: without it, `/` boots straight into
+sign-in and the game, which is what a configured server wants.
+
+On the Docker stack, set `OMW_ENABLE_LAUNCHER=1` in the environment (a `.env` file next
+to `docker-compose.yml` works) and restart. On the python dev server it is
+`OPENMW_LAUNCHER=1`, most easily via:
 
 ```bash
 cp play/.env.example play/.env      # sets OPENMW_LAUNCHER=1
 ```
-
-With `OPENMW_LAUNCHER` set, the site root (`/`) serves the data chooser. Without it,
-`/` boots straight into the game. On a production host, set the `OPENMW_LAUNCHER`
-environment variable (or replicate the routing) however you prefer.
 
 ### Troubleshooting
 
@@ -262,16 +266,18 @@ rebuilt locally.
   bullet3, OSG, MyGUI, SDL2, and the rest).
 - `build-wasm/` and all `*.wasm` / `*.data` build outputs.
 
-## Self-hosting (grab and go)
+## Releases: what the zips are
 
-You don't need to build anything to run your own instance. Every
-[release](https://github.com/Virtastic/openmw-web/releases) ships two archives:
+The recommended way to run your own server is the Docker
+[quick start](#quick-start-your-own-server) at the top. The
+[releases](https://github.com/Virtastic/openmw-web/releases) exist to feed it — and to
+offer a no-Docker path. Every release ships two archives:
 
-- **`openmw-web-<tag>.zip`** holds the prebuilt engine (`openmw.js/.wasm/.data` plus
-  brotli variants), the web front-end, and a ready-to-run dev server. Unzip it and
-  double-click `Start openmw-web` — it checks for Python, starts the server, and
-  opens your browser. (`python3 server.py` still works.) See
-  [`SELF_HOSTING.md`](SELF_HOSTING.md) for production servers.
+- **`openmw-web-<tag>.zip`** holds the prebuilt engine, the web front-end, and a
+  ready-to-run static server. For the Docker stack, this is where the engine comes
+  from: unzip it into `play/`. On its own, unzip it anywhere and double-click
+  `Start openmw-web` — a Python dev server with no dashboard, no accounts and no mods,
+  but playable in a minute.
 - Own Morrowind and want it served *with* the site, so players have nothing to pick
   and nothing to upload? Copy your `Data Files` into a `mwdata/` folder next to
   `server.py` and run it with `OPENMW_LAUNCHER=0`. It loads whatever is actually

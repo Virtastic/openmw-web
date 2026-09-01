@@ -89,6 +89,9 @@ services:
       # what a NEW setup may choose; a server already configured for any of them keeps working
       # whatever this says.
       - OMW_EXPERIMENTAL=${OMW_EXPERIMENTAL:-}
+      # The data-chooser launcher at /. Off by default: a configured server boots straight
+      # into sign-in and the game. OMW_ENABLE_LAUNCHER=1 puts the chooser back.
+      - OMW_ENABLE_LAUNCHER=${OMW_ENABLE_LAUNCHER:-}
     expose:
       - "8080"
     # Ports are published by Caddy, not here, so the server is only reachable over HTTPS.

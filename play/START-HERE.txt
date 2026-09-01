@@ -12,6 +12,10 @@ you play — closing it stops the game.
 
 To stop: close the terminal window, or press Ctrl+C in it.
 
+This is the quick, single-player way in. For a real server — accounts, a mod
+manager, an admin dashboard, optional multiplayer — see SELF_HOSTING.md in
+this folder (you need Docker; it is one command plus a browser wizard).
+
 
 YOU NEED
 --------

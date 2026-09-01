@@ -1,5 +1,28 @@
 # Self-hosting openmw-web
 
+## Quick start
+
+The whole server, set up from a browser. You need
+[Docker](https://docs.docker.com/get-started/get-docker/) and your own copy of Morrowind:
+
+```bash
+git clone https://github.com/Virtastic/openmw-web.git
+cd openmw-web
+./setup.sh        # Windows: .\setup.ps1
+```
+
+1. Unzip the latest `openmw-web-*.zip` from
+   [Releases](https://github.com/Virtastic/openmw-web/releases) into `play/` (the engine
+   is too big for git; the script reminds you if it is missing).
+2. Your browser opens **https://localhost/admin**: accept the certificate warning, create
+   the admin account, answer the wizard, drag your `Data Files` folder in when asked.
+3. Play at **https://localhost**.
+
+Everything below is the long version: the dashboard page by page, mods, Tamriel Rebuilt,
+multiplayer, HTTPS and domains, and a no-Docker path.
+
+## Static hosting without the dashboard
+
 Grab `openmw-web-<tag>.zip` from
 [Releases](https://github.com/Virtastic/openmw-web/releases) — it contains the
 prebuilt engine and everything below. No compiler needed.
@@ -436,7 +459,7 @@ password = "<long random string>"   # the SIM PEER's credential — never typed 
                                     # Empty = the server refuses to boot.
 
 [auth]
-requireSso = true                   # forces password login off. Set it on anything public.
+requireSso = true                   # SSO-only sign-in. Leave unset to also allow passwords.
 returnUrl  = "https://example.com/launcher.html"
 
 [auth.google]                       # and/or [auth.discord] / [auth.microsoft]
