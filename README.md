@@ -49,6 +49,10 @@ players sign in, which game files you have, and where the server lives on the ne
 (a public domain with a certificate fetched for you, or plain HTTP on a port you pick).
 Every setting has plain-language help next to it.
 
+Multiplayer is **experimental and off by default**: the wizard shows it greyed out, along
+with serving the game files from the server and keeping player files in S3, and
+`OMW_EXPERIMENTAL=multiplayer` (or `all`) turns them on. Single player needs nothing set.
+
 Afterwards the dashboard is where the server is run. It installs **mods** from a `.zip`
 or `.7z`, shows what each one overwrites, and lets you set the load order by dragging;
 it has a setup path for **Tamriel Rebuilt**, which is a separate download in two

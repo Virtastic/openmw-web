@@ -65,6 +65,7 @@ import { readDashboardTree } from './settings-store';
 import { writeCaddyfile, launcherEnabled } from './caddy-config';
 import { modsView, saveMods, uploadContent, gameDataWritable, MAX_UPLOAD_BYTES } from './api-mods';
 import { beginInstall, commitInstall, saveModOrder, uninstallMod, type Choice } from './mod-install';
+import { EXPERIMENTAL_ENV, experimental } from '../../core/experimental';
 import { listSaves, saveDownload, saveUploadUrl, saveUploaded, type SavesDeps } from './api-saves';
 import type { LogEntry } from '../../log';
 
@@ -305,6 +306,12 @@ export function adminRoutes(deps: AdminDeps) {
         role: ctx?.role ?? null,
         name: ctx?.accountName ?? null,
         maintenance: deps.maintenance.get(),
+        // Which wizard answers are unlocked. Sent to everyone rather than to owners only: the
+        // page reads this before anyone has signed in, and the names of half-finished features
+        // are not a secret. The variable that sets them is on the machine, which is the part
+        // that is not.
+        experimental: experimental(),
+        experimentalEnv: EXPERIMENTAL_ENV,
         // Server-side truth for the "add two-factor" nudge. It used to be a localStorage
         // flag, so the reminder reappeared on every other browser and never cleared on the
         // one that mattered.
@@ -693,6 +700,25 @@ export function adminRoutes(deps: AdminDeps) {
       if (!ctx) return true;
       const body = await readJson<WizardAnswers>(req, res);
       if (body === undefined) return true;
+      // THE GREYED TILE IS NOT THE GATE. The wizard restores its answers from the browser, so
+      // a run begun while a feature was enabled can be finished after it was turned off, and
+      // this endpoint is reachable without the page at all. Refused here, where it is a fact
+      // about the server rather than about the markup.
+      const on = experimental();
+      const gated: [boolean, string][] = [
+        [body.deploymentMode === 'multiplayer' && !on.multiplayer, 'Multiplayer'],
+        [body.deliveryModel === 'serve' && !on.serveFiles, 'Serving the game files from here'],
+        [body.storage === 's3' && !on.s3, 'S3 storage'],
+      ];
+      const blocked = gated.filter(([hit]) => hit).map(([, name]) => name);
+      if (blocked.length > 0) {
+        json(res, 400, {
+          error: `${blocked.join(' and ')} ${blocked.length === 1 ? 'is' : 'are'} experimental `
+            + `and not enabled on this server. Set ${EXPERIMENTAL_ENV} to turn `
+            + `${blocked.length === 1 ? 'it' : 'them'} on, restart, and answer again.`,
+        });
+        return true;
+      }
       const result = applyWizard(deps.dataDir, body, deps.sharedDir);
       if (!result.ok) { json(res, 400, { error: result.error }); return true; }
       // Apply the hosting answer to the proxy immediately. Caddy watches this file, so the

@@ -713,6 +713,18 @@ runs once, and half of what follows is about the first run.
 - [ ] Reloading mid-wizard resumes on the same step with the same answers
 - [ ] The step count matches the rail, and does not jump around as you answer
 
+**The experimental answers.** Multiplayer, "this server hands out the files" and S3 storage
+are greyed out by default.
+
+- [ ] All three are **visible** and greyed, not missing; each says which flag turns it on
+- [ ] Clicking one does nothing (they are real `disabled` buttons)
+- [ ] Restart with `OMW_EXPERIMENTAL=multiplayer` and only multiplayer becomes selectable
+- [ ] `OMW_EXPERIMENTAL=all` unlocks all three
+- [ ] Pick multiplayer, turn the flag back off, reload mid-wizard: the answer is dropped and
+      the step asks again, rather than carrying to a save that refuses it
+- [ ] A server already set up for multiplayer keeps working with the flag off. This is the one
+      that must not regress: the gate is for new setups only
+
 **Hosting.** Answer *Internal* and give a port: check the Caddyfile it writes uses that port and
 the proxy reloads. Then check a nonsense port (0, blank, letters) is refused rather than
 written; a bad listen directive takes the whole proxy down, dashboard included, and there would

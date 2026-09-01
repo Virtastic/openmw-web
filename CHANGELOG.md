@@ -14,6 +14,17 @@ afterwards from Settings. A server set up from outside its own network is additi
 for a setup key, printed at startup and saved to the data folder, so the first stranger to find
 `/admin` cannot claim it; from your own machine or LAN you are never asked.
 
+**The unfinished answers are shown, greyed out, and off until you ask for them.** Multiplayer,
+handing the game files out from this server, and keeping players' files in S3 are each real and
+each rough, and each was previously offered in the wizard beside answers that have been
+exercised for months. They are now disabled by default and marked experimental, with
+`OMW_EXPERIMENTAL=multiplayer,s3` (or `all`) turning on whichever you want. They are shown
+rather than hidden on purpose: an operator who came here for multiplayer and finds no mention
+of it concludes they have the wrong software, where a greyed tile naming the variable answers
+the question they actually have. Only a **new** setup is affected; a server already configured
+for any of them keeps running, and the server refuses a gated answer even when it is submitted
+without the page.
+
 **A server can be reached over plain HTTP on a port you choose.** The hosting question used to
 assume the internet. Answering "internal or behind your own proxy" now takes a port number and
 configures the bundled proxy for plain HTTP, which is what a home network, a LAN party, a

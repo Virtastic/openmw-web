@@ -413,12 +413,38 @@ function wizardShell(inner, { back = true, next = 'Continue', onNext = null, dis
  * genuinely a decision (how big is this, do you own the files) deliberately do not, because
  * a fake recommendation is worse than none.
  */
-function choice(name, value, title, blurb, tag = '', tone = 'success') {
+/**
+ * One answer tile. `lock` is the sentence explaining why it cannot be chosen; empty means it
+ * can.
+ *
+ * A locked tile is SHOWN, not hidden. Hiding an unfinished feature makes the wizard read as
+ * though it does not exist, and an operator who came here for multiplayer would conclude they
+ * had downloaded the wrong thing. Greyed out, with the variable that turns it on written
+ * underneath, answers the question they actually have.
+ */
+function choice(name, value, title, blurb, tag = '', tone = 'success', lock = '') {
   const sel = answers[name] === value ? 'sel' : '';
-  return html`<button class="vt-choice ${raw(sel)}" data-choice="${name}" data-value="${value}">
+  return html`<button class="vt-choice ${raw(sel)} ${raw(lock ? 'vt-locked' : '')}"
+    data-choice="${name}" data-value="${value}" ${raw(lock ? 'disabled aria-disabled="true"' : '')}>
     <strong>${title}${raw(tag
-      ? html` <span class="badge text-bg-${raw(tone)} ms-1">${tag}</span>` : '')}</strong>
-    <small>${blurb}</small></button>`;
+      ? html` <span class="badge text-bg-${raw(tone)} ms-1">${tag}</span>` : '')}${raw(lock
+      ? ' <span class="badge text-bg-secondary ms-1">Experimental</span>' : '')}</strong>
+    <small>${blurb}</small>
+    ${raw(lock ? html`<small class="vt-lock-note">${lock}</small>` : '')}</button>`;
+}
+
+/**
+ * Why this answer is unavailable, or '' when it is available.
+ *
+ * The server decides, and says which variable to set; the page only renders the answer. A
+ * state that never loaded is treated as locked, because guessing "available" would offer an
+ * answer the save is then going to refuse.
+ */
+function expLock(flag, what) {
+  if (state.experimental?.[flag]) return '';
+  const env = state.experimentalEnv || 'OMW_EXPERIMENTAL';
+  return `${what} is experimental and not enabled on this server. Set ${env}=${flag} in the `
+    + 'server\'s environment and restart to choose it.';
 }
 
 function wireChoices(onPick) {
@@ -481,7 +507,24 @@ window.addEventListener('popstate', (e) => {
   renderWizard();
 });
 
+/** Answers the server will refuse, and the flag that would allow each. */
+const GATED_ANSWERS = [
+  ['deploymentMode', 'multiplayer', 'multiplayer'],
+  ['deliveryModel', 'serve', 'serveFiles'],
+  ['storage', 's3', 's3'],
+];
+
 function renderWizard() {
+  // AN ANSWER THE SERVER WILL REFUSE IS NOT AN ANSWER. The wizard restores from the browser,
+  // so a run begun while a feature was enabled can be resumed after it was turned off, and the
+  // operator would carry a selected tile all the way to a save that rejects it. Dropped back
+  // to unanswered here, which puts them on the same step with Continue disabled and the reason
+  // written on the tile.
+  for (const [key, value, flag] of GATED_ANSWERS) {
+    if (answers[key] === value && !state.experimental?.[flag]) {
+      answers[key] = key === 'storage' ? 'local' : null;
+    }
+  }
   // Persist here rather than at each mutation site: every path that changes an answer or the
   // step ends up calling this, so one line covers all of them. The first version saved only
   // from the choice-tile handler, which meant every typed answer, server name, domain, S3
@@ -635,7 +678,7 @@ function stepMode() {
       'Built for other people from the start. Morrowind is a single-player game, so playing it '
       + 'together is a real addition rather than a port: expect rough edges, and do not run a '
       + 'campaign you would be upset to lose. You get one extra question, the name players see '
-      + 'when they join.', 'Experimental', 'warning'))}`,
+      + 'when they join.', '', 'warning', expLock('multiplayer', 'Multiplayer')))}`,
   { disabled: !answers.deploymentMode, need: 'Choose one to carry on.' });
   wireChoices();
 }
@@ -825,7 +868,8 @@ function stepDelivery() {
       'You upload your Data Files here once and everyone receives them on joining. Easier for '
       + 'the people joining, and it means you are distributing the game, so only pick this if '
       + 'everyone involved owns a copy already (a group of friends who each bought it, for '
-      + 'instance).'))}
+      + 'instance).', '', 'success',
+      expLock('serveFiles', 'Handing the game files out from this server')))}
     ${raw(answers.deploymentMode === 'multiplayer' ? html`
       <div class="vt-section-note mt-3">
         Separately from this answer, <strong>a multiplayer server needs its own copy</strong>,
@@ -996,7 +1040,8 @@ function stepStorage() {
     ${raw(choice('storage', 's3', 'S3 storage',
       'An S3-compatible account you already have: Amazon S3, Cloudflare R2, Backblaze B2, '
       + 'MinIO or similar. Worth it if this machine has a small disk, or you expect a lot of '
-      + 'people. Needs four values from that provider, below.'))}
+      + 'people. Needs four values from that provider, below.', '', 'success',
+      expLock('s3', 'Keeping players\' files in S3')))}
     ${raw(answers.storage === 's3' ? html`
       <div class="vt-section-note mt-3 mb-3">
         <strong>Where these come from.</strong> Sign in to your storage provider and create a

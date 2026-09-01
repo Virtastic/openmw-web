@@ -188,7 +188,25 @@ own game files or you supply them, how the server is reached, where uploads are 
 the game files themselves. Every answer is written to configuration you can review and change
 afterwards.
 
-Two of those are worth knowing before you answer them:
+Three of the answers are **greyed out**, marked experimental, and cannot be chosen until you
+say so. Multiplayer, handing the game files out from this server, and keeping players' files in
+S3 are each real and each unfinished, and the wizard shows them rather than hiding them so you
+can see what exists and decide. Set `OMW_EXPERIMENTAL` and restart:
+
+```bash
+OMW_EXPERIMENTAL=multiplayer docker compose up -d          # or a .env file beside the compose file
+OMW_EXPERIMENTAL=multiplayer,s3 docker compose up -d       # comma separated
+OMW_EXPERIMENTAL=all docker compose up -d                  # every one of them
+```
+
+The names are `multiplayer`, `serveFiles` and `s3`, and each greyed tile names its own. This
+governs only what a **new** setup may choose: a server already configured for any of them keeps
+running exactly as it did, because taking a feature away from a working server through an
+environment variable would be a worse surprise than the one this prevents. The server refuses a
+gated answer even if it is submitted directly, so the greying is a courtesy rather than the
+lock.
+
+Two other answers are worth knowing before you give them:
 
 - **How the server is reached** has two shapes. *Public* wants a domain pointed at this
   machine and ports 80 and 443 forwarded to it, and fetches a real certificate for you.

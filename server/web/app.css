@@ -417,6 +417,13 @@ body.vt-bare #pageTitle {
   cursor: pointer; transition: border-color .16s, background .16s, transform .16s;
 }
 .vt-choice:hover { border-color: rgba(211, 168, 78, .55); transform: translateY(-1px); }
+/* An experiment nobody has enabled: readable, obviously not pickable, and it says why.
+   Opacity alone would take the explanation down with it, so the note keeps its own colour. */
+.vt-choice.vt-locked { opacity: .55; cursor: not-allowed; }
+.vt-choice.vt-locked:hover { border-color: var(--vt-line); transform: none; }
+.vt-choice .vt-lock-note {
+  display: block; margin-top: .5rem; color: var(--vt-gold); opacity: .95;
+}
 .vt-choice.sel {
   border-color: var(--vt-gold); background: rgba(211, 168, 78, .1);
   box-shadow: inset 2px 0 0 var(--vt-gold);
