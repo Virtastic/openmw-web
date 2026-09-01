@@ -9,7 +9,7 @@
   fix it from. The icon font is vendored for the same reason.
 
   Structure follows AdminLTE's own layout, app-wrapper > app-header / app-sidebar /
-  app-main, a content header carrying title and breadcrumb, cards with real headers, and
+  app-main, a content header carrying the page title, cards with real headers, and
   small-box widgets on the overview, rather than plain Bootstrap markup wearing AdminLTE's
   stylesheet, which is what this was before and why it looked nothing like the thing it is
   built on.
@@ -89,12 +89,9 @@
     <div class="app-content-header">
       <div class="container-fluid">
         <div class="row align-items-center">
-          <div class="col-sm-7">
+          <div class="col-sm-12">
             <h3 class="mb-0" id="pageTitle">Loading…</h3>
             <p class="text-secondary small mb-0" id="pageLead"></p>
-          </div>
-          <div class="col-sm-5">
-            <ol class="breadcrumb float-sm-end mb-0" id="crumbs"></ol>
           </div>
         </div>
       </div>

@@ -220,13 +220,6 @@ function paintChrome() {
 function setTitle(title, lead = '') {
   $('#pageTitle').textContent = title;
   $('#pageLead').textContent = lead;
-  // The breadcrumb everyone expects an admin panel to have. Two levels is all the depth
-  // this app has, so it is Home / page, not a synthetic hierarchy.
-  const home = location.hash && location.hash !== '#overview';
-  $('#crumbs').innerHTML = home
-    ? html`<li class="breadcrumb-item"><a href="#overview">Home</a></li>
-       <li class="breadcrumb-item active">${title}</li>`
-    : html`<li class="breadcrumb-item active">Home</li>`;
 }
 
 const go = (hash) => { if (location.hash === hash) route(); else location.hash = hash; };
@@ -2718,9 +2711,6 @@ function modsCard(m, editable) {
             </dl>
             ${raw(orderNotes.length ? html`
               <h6 class="mt-3 mb-1">Overlapping files</h6>
-              <p class="small text-secondary mb-2">Overlaps are normal — patches work by shipping
-                new versions of another mod's files. Whichever mod is further down the list
-                provides the copy the game uses; drag the list to change that.</p>
               ${raw(orderNotes.join(''))}` : '')}
             ${raw(mod.plugins.length || mod.archives.length ? html`
               <h6 class="mt-3 mb-1">Plugins</h6>

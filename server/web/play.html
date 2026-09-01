@@ -51,11 +51,11 @@
     transition: background .12s, border-color .12s;
   }
   .btn:hover { background: rgba(211,168,78,.10); border-color: var(--gold); color: var(--gold-hi); }
-  .btn.primary { background: linear-gradient(180deg, var(--gold), var(--bronze));
+  .btn.primary { background: var(--gold);
     color: #1a1207; border-color: var(--gold-hi); }
-  .btn.primary:hover { background: linear-gradient(180deg, var(--gold-hi), var(--gold)); color: #1a1207; }
+  .btn.primary:hover { background: var(--gold-hi); color: #1a1207; }
   .btn.disabled { opacity: .5; cursor: default; }
-  .btn.disabled:hover { background: linear-gradient(180deg, var(--gold), var(--bronze)); }
+  .btn.disabled:hover { background: var(--gold); }
 .fld { display: block; text-align: left; margin-bottom: .7rem; }
   .fld span { display: block; font-size: .78rem; letter-spacing: .1em; text-transform: uppercase;
     color: var(--muted); margin-bottom: .3rem; }

@@ -169,11 +169,11 @@ body.vt-bare #pageTitle {
 .btn-sm { padding: 8px 13px; font-size: 11.5px; }
 .btn-lg { padding: 14px 26px; font-size: 13px; }
 .btn-primary {
-  background: linear-gradient(180deg, var(--vt-gold), var(--vt-bronze));
+  background: var(--vt-gold);
   color: #1a1207; border-color: var(--vt-gold-hi);
 }
 .btn-primary:hover, .btn-primary:focus {
-  background: linear-gradient(180deg, var(--vt-gold-hi), var(--vt-gold));
+  background: var(--vt-gold-hi);
   color: #1a1207; border-color: var(--vt-gold-hi);
 }
 .btn-outline-secondary, .btn-secondary {
@@ -313,7 +313,7 @@ body.vt-bare #pageTitle {
 .dropdown-header { color: var(--vt-bronze-hi); text-transform: uppercase;
   font-size: .68rem; letter-spacing: .1em; }
 .progress { background: rgba(0, 0, 0, .35); }
-.progress-bar { background: linear-gradient(180deg, var(--vt-gold), var(--vt-bronze)); }
+.progress-bar { background: var(--vt-gold); }
 .progress-bar.bg-success { background: var(--vt-ok); }
 .progress-bar.bg-danger { background: var(--vt-err); }
 .progress-bar.bg-warning { background: var(--vt-ember); }
