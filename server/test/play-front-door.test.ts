@@ -14,7 +14,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const play = readFileSync(join(process.cwd(), 'web', 'play.js'), 'utf8');
@@ -56,15 +56,23 @@ test('an unreadable state defaults to single player, the mode that needs no worl
 // every /locker/* route — erase included — stayed in the address bar, in history, and in
 // whatever profile sync copies history to.
 
-const index = readFileSync(join(process.cwd(), '..', 'play', 'index.html'), 'utf8');
+// The player app lives outside the server package and is NOT copied into the server image, so
+// in the container test gate there is nothing to read. Skipping is the honest answer there:
+// these assert facts about the client, and the client is not part of that build. They still run
+// in a checkout, which is where the file is edited.
+const indexPath = join(process.cwd(), '..', 'play', 'index.html');
+const index = existsSync(indexPath) ? readFileSync(indexPath, 'utf8') : '';
+const clientOpts = index === ''
+  ? { skip: 'play/index.html is not part of the server image' }
+  : {};
 
-test('the cloud-locker boot erases its own fragment', () => {
+test('the cloud-locker boot erases its own fragment', clientOpts, () => {
   const scrub = /if \(\/\[#&\]cloud=1\\b\/\.test\(location\.hash \|\| ''\)\) \{[\s\S]*?\n       \}/.exec(index);
   assert.ok(scrub, 'no cloud-fragment scrub; the locker token stays in the URL');
   assert.match(scrub[0], /history\.replaceState\(null, '', location\.pathname \+ location\.search\)/);
 });
 
-test('and does not keep the live token in the fragment it stashes', () => {
+test('and does not keep the live token in the fragment it stashes', clientOpts, () => {
   const scrub = /if \(\/\[#&\]cloud=1\\b\/\.test\(location\.hash \|\| ''\)\) \{[\s\S]*?\n       \}/.exec(index)!;
   // __omwBootFrag outlives the scrub, so copying mplocker into it would move the credential
   // rather than remove it.
@@ -72,7 +80,7 @@ test('and does not keep the live token in the fragment it stashes', () => {
   assert.match(scrub[0], /filter\(/);
 });
 
-test('the multiplayer scrub is still in place', () => {
+test('the multiplayer scrub is still in place', clientOpts, () => {
   // Both doors, not one: fixing the cloud path by disturbing the MP path would be a trade.
   assert.match(index, /window\.__omwBootFrag = String\(location\.hash \|\| ''\)\.replace\(\/\^#\/, ''\);/);
 });
@@ -84,14 +92,14 @@ test('the multiplayer scrub is still in place', () => {
 // one reaches the player as a black screen with no message. So every name the client emits has
 // to be a name it watched itself mount.
 
-test('mods come from the server list, not from guessing at file names', () => {
+test('mods come from the server list, not from guessing at file names', clientOpts, () => {
   // buildLoadOrder only ever sees the TOP level of /mwdata, so a mod in its own folder would
   // mount and contribute nothing at all. The server knows which plugin belongs to which mod.
   assert.match(index, /async function mountServerMods\(\)/);
   assert.match(index, /fetch\('mwdata-mods\.json'\)/);
 });
 
-test('a mod whose plugin did not arrive is dropped whole, not half-loaded', () => {
+test('a mod whose plugin did not arrive is dropped whole, not half-loaded', clientOpts, () => {
   const fn = /async function mountServerMods\(\)\{[\s\S]*?\n       \}/.exec(index);
   assert.ok(fn, 'mountServerMods not found');
   assert.match(fn[0], /did not arrive/);
@@ -99,14 +107,14 @@ test('a mod whose plugin did not arrive is dropped whole, not half-loaded', () =
   assert.ok(fn[0].indexOf('continue;') < fn[0].indexOf('out.dirs.push(root)'));
 });
 
-test('no mods, or an unreadable list, is an ordinary answer', () => {
+test('no mods, or an unreadable list, is an ordinary answer', clientOpts, () => {
   // 404 means this server has no mods. It must never be a reason to refuse the game.
   const fn = /async function mountServerMods\(\)\{[\s\S]*?\n       \}/.exec(index)!;
   assert.match(fn[0], /if \(!r\.ok\) return out;/);
   assert.match(fn[0], /catch \(e\) \{ return out; \}/);
 });
 
-test('two mods shipping one archive name are renamed apart on mount', () => {
+test('two mods shipping one archive name are renamed apart on mount', clientOpts, () => {
   // Collections::getPath resolves a bare archive name with rbegin, so the last data= dir wins
   // and one of them would silently vanish. We own the filesystem path, and only openmw.cfg
   // refers to a BSA by name, so renaming on the way in costs nothing and removes the ambiguity.
@@ -115,7 +123,7 @@ test('two mods shipping one archive name are renamed apart on mount', () => {
   assert.match(fn[0], /mod\.slug \+ '-' \+ base/);
 });
 
-test('mod data= lines come after the asset pack so a mod wins', () => {
+test('mod data= lines come after the asset pack so a mod wins', clientOpts, () => {
   // The pack is a general-purpose optimisation; a mod the operator installed on purpose
   // should beat it. It used to be last among archives outright.
   const i = index.indexOf("if (window.__assetPack) cfg.push('data=/mods'");
@@ -123,7 +131,7 @@ test('mod data= lines come after the asset pack so a mod wins', () => {
   assert.ok(i > 0 && j > i, 'mod dirs must be emitted after the asset pack');
 });
 
-test('a renamed archive is still emitted, under its new name', () => {
+test('a renamed archive is still emitted, under its new name', clientOpts, () => {
   // The rename existed to stop two mods' identically-named .bsa files collapsing into one.
   // `mounted` was keyed by the name we KEPT while archives were looked up by the name the
   // server declared, so the renamed one missed and was dropped — the exact outcome the rename

@@ -16,7 +16,10 @@ COPY web ./web
 RUN npm run build
 
 # Test gate: `docker build --target test` fails the deploy if typecheck or tests fail.
+# p7zip here too, not only in the runtime image: the .7z tests skip themselves when the binary
+# is absent, so without it this gate would report green on a format it never exercised.
 FROM build AS test
+RUN apk add --no-cache p7zip
 RUN npm test
 
 # Production node_modules: only runtime deps (esbuild bundles everything except the
@@ -31,7 +34,9 @@ WORKDIR /app
 ENV NODE_ENV=production
 # tar is used by the dashboard's backup export. busybox tar is present in alpine already,
 # but the GNU one handles a data dir changing under it more gracefully.
-RUN apk add --no-cache tar
+# tar: the backup export streams through it. p7zip: mod archives from Nexus are as often .7z
+# as .zip, and refusing half of what people download is not a mod manager. 1.7MB.
+RUN apk add --no-cache tar p7zip
 COPY --from=prod-deps /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY config.default.toml ./

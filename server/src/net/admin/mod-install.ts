@@ -13,7 +13,7 @@
 // which, with the contents of each spelled out.
 
 import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { rm } from 'node:fs/promises';
+import { copyFile, rm } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import { dirname, join, resolve, sep } from 'node:path';
 import type { IncomingMessage } from 'node:http';
@@ -21,6 +21,7 @@ import type { IncomingMessage } from 'node:http';
 import { log } from '../../log';
 import { findDataFolders, slugify, type Candidate } from '../../core/mod-archive';
 import { extractEntry, listEntries, ZipError, type ZipEntry } from '../../core/zip';
+import { extractSevenZip, listSevenZip, sniffArchive } from '../../core/sevenzip';
 import { readMasters } from '../../core/esm';
 import { MOD_META as MODS_META_DIR } from '../../core/mod-conflicts';
 import {
@@ -112,6 +113,26 @@ async function sweepStaging(dataDir: string): Promise<void> {
   }
 }
 
+/**
+ * List an archive of either kind.
+ *
+ * Sniffed by its first bytes, not its extension: people rename .7z to .zip believing that
+ * converts it, and a .zip that is really a .7z would otherwise fail with a message about the
+ * central directory that means nothing to anyone.
+ */
+async function listArchive(path: string): Promise<{ kind: 'zip' | '7z'; entries: ZipEntry[] }> {
+  const kind = sniffArchive(path);
+  if (kind === 'zip') return { kind, entries: listEntries(path) };
+  if (kind === '7z') return { kind, entries: await listSevenZip(path) };
+  if (kind === 'rar') {
+    // p7zip in this image is built without the non-free RAR codec, so this is a real limit
+    // rather than an oversight. Say what to do about it.
+    throw new ZipError('RAR archives are not supported. Open it and save it as a .zip or .7z, '
+      + 'which is what most mods are published as anyway.');
+  }
+  throw new ZipError('that does not look like a mod archive. Expected a .zip or a .7z.');
+}
+
 export interface Staged {
   token: string;
   archive: string;
@@ -140,7 +161,7 @@ export async function beginInstall(
 
   let entries: ZipEntry[];
   try {
-    entries = listEntries(path);
+    ({ entries } = await listArchive(path));
   } catch (e) {
     await rm(path, { force: true });
     // ZipError messages are written for the operator and name the fix; anything else is a bug.
@@ -206,8 +227,24 @@ async function commitInstallLocked(
   if (choices.length === 0) return fail(400, 'Nothing was selected to install.');
 
   let entries: ZipEntry[];
-  try { entries = listEntries(zipPath); } catch (e) {
+  let kind: 'zip' | '7z';
+  try { ({ entries, kind } = await listArchive(zipPath)); } catch (e) {
     return fail(400, e instanceof ZipError ? e.message : 'That archive could not be read.');
+  }
+
+  // A .7z has no cheap random access -- pulling one file at a time would re-walk a solid block
+  // for each -- so it is unpacked once, whole, into a scratch directory and the chosen subtree
+  // is taken from there. A zip streams entry by entry and needs no scratch space at all.
+  let scratch = '';
+  if (kind === '7z') {
+    scratch = join(dataDir, STAGING, `${token}-x`);
+    try {
+      mkdirSync(scratch, { recursive: true });
+      await extractSevenZip(zipPath, scratch);
+    } catch (e) {
+      await rm(scratch, { recursive: true, force: true });
+      return fail(400, e instanceof ZipError ? e.message : 'That archive could not be unpacked.');
+    }
   }
 
   let archiveName = '';
@@ -256,7 +293,8 @@ async function commitInstallLocked(
           throw new ZipError(`refused: ${e.path} escapes the mod folder`);
         }
         mkdirSync(dirname(dest), { recursive: true });
-        await extractEntry(zipPath, e, dest);
+        if (kind === 'zip') await extractEntry(zipPath, e, dest);
+        else await copyFile(join(scratch, e.path), dest);
         files.push(rel.split(sep).join('/'));
         bytes += e.size;
         const name = rel.slice(rel.lastIndexOf('/') + 1);
@@ -279,6 +317,7 @@ async function commitInstallLocked(
         await rm(join(gameDataDir, MODS_SUBDIR, done.slug), { recursive: true, force: true });
         await rm(join(dataDir, MOD_META, `${done.slug}.json`), { force: true });
       }
+      if (scratch) await rm(scratch, { recursive: true, force: true });
       log('warn', 'mods.install_failed', { slug, error: String(e) });
       return fail(400, e instanceof ZipError ? e.message
         : `Could not install ${choice.name || slug}. The game data folder may be full.`);
@@ -322,6 +361,7 @@ async function commitInstallLocked(
   // already been installed, and the sweep would not touch it for six hours.
   await rm(zipPath, { force: true });
   await rm(join(dataDir, STAGING, `${token}.json`), { force: true });
+  if (scratch) await rm(scratch, { recursive: true, force: true });
   log('info', 'mods.installed', { slugs: installed.map((m) => m.slug) });
   return { ok: true, value: installed };
 }

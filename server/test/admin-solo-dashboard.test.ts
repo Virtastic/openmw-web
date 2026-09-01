@@ -323,11 +323,13 @@ test('the upload asks before installing anything', () => {
   assert.ok(wire[0].indexOf('renderChooser(body)') < wire[0].indexOf("api('/mods/install/commit'"));
 });
 
-test('a non-zip is refused in the browser, before the bytes are sent', () => {
-  // Telling somebody their .rar is unsupported after a 400 MB upload is the wrong moment.
+test('an unsupported archive is refused in the browser, before the bytes are sent', () => {
+  // Telling somebody their .rar is unsupported after a 400 MB upload is the wrong moment. The
+  // server sniffs the real format regardless; this only saves a wasted transfer.
   const wire = /function wireMods\(m\) \{[\s\S]*?\n\}/.exec(app)!;
-  assert.match(wire[0], /\.zip\$\/i\.test\(file\.name\)/);
-  assert.ok(wire[0].indexOf('.zip$/i.test(file.name)') < wire[0].indexOf('mods/install?name='));
+  assert.match(wire[0], /\(zip\|7z\)\$\/i\.test\(file\.name\)/,
+    'both formats Nexus actually serves must be accepted');
+  assert.ok(wire[0].indexOf('(zip|7z)$/i.test(file.name)') < wire[0].indexOf('mods/install?name='));
 });
 
 test('removing a mod is type-to-confirm, like every other delete here', () => {

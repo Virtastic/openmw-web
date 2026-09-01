@@ -294,7 +294,7 @@ test('a zip goes in, the operator is asked, and only the chosen folder is instal
   assert.ok(!existsSync(join(gameData, 'mods', 'better-bodies')));
 });
 
-test('a non-zip body is refused with advice, not a stack trace', async (t) => {
+test('a RAR body is refused with advice, not a stack trace', async (t) => {
   const dataDir = tmpDataDir();
   mkdirSync(join(dataDir, 'gamedata'), { recursive: true });
   const server = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1' });
@@ -312,7 +312,9 @@ test('a non-zip body is refused with advice, not a stack trace', async (t) => {
     body: Buffer.from('Rar!\x1a\x07\x00' + 'x'.repeat(400)),
   });
   assert.equal(r.status, 400);
-  assert.match((await r.json() as { error: string }).error, /\.rar or \.7z/);
+  // p7zip in this image is built without the non-free RAR codec, so this is a real limit and
+  // the message has to name the way out rather than the internals.
+  assert.match((await r.json() as { error: string }).error, /RAR archives are not supported/);
 });
 
 test('a failure part-way leaves NO folders from that request behind', async () => {

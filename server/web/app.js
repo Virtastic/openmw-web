@@ -2325,10 +2325,11 @@ function wireMods(m) {
 
   const send = async (file) => {
     if (!file) return;
-    if (!/\.zip$/i.test(file.name)) {
+    if (!/\.(zip|7z)$/i.test(file.name)) {
       // Named before the upload rather than after: there is no point sending 400 MB to be told.
-      toast('Only .zip archives can be installed. If this is a .7z or .rar, open it and save it '
-        + 'as a .zip first.', 'err');
+      // The server sniffs the real format anyway, so this is only to save a wasted transfer.
+      toast('Mods install from a .zip or a .7z. If this is a .rar, open it and save it as one '
+        + 'of those.', 'err');
       return;
     }
     if (uploadRunning) { toast('An upload is already running.', 'err'); return; }
@@ -2596,9 +2597,10 @@ function modsCard(m, editable) {
       <div class="card-body">
         ${raw(editable ? html`
           <div id="modZip" class="vt-drop mb-3">
-            <div class="text-secondary">Drop a mod <strong>.zip</strong> here</div>
-            <label class="btn btn-sm btn-outline-secondary mt-2 mb-0">Choose a zip<input
-              type="file" id="modZipPick" accept=".zip" hidden></label>
+            <div class="text-secondary">Drop a mod <strong>.zip</strong> or
+              <strong>.7z</strong> here</div>
+            <label class="btn btn-sm btn-outline-secondary mt-2 mb-0">Choose an archive<input
+              type="file" id="modZipPick" accept=".zip,.7z" hidden></label>
           </div>
           <div id="modStage"></div>` : '')}
         ${raw(mods.length ? html`
