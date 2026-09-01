@@ -75,6 +75,10 @@ re-running it.
 
 ### Mods
 
+<p align="center">
+  <img src="docs/dashboard-mods.jpg" alt="The mod manager with seven installed mods in load order, each with a toggle, drag handle, and replaces/overridden badges" width="850">
+</p>
+
 The Mod manager installs mods from an archive - drop a `.zip` or `.7z` on the page. The
 server reads what is inside and shows the data folders it found; you tick the ones you want,
 because Nexus downloads routinely bundle a core install with optional extras. (RAR is not

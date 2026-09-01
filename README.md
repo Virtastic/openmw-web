@@ -29,6 +29,10 @@ your own legally-owned copy.
 wizard, a mod manager with drag-to-order, Tamriel Rebuilt support, savegame export, backups,
 logs and accounts. Multiplayer (added in 1.1.0) is there too, behind an experimental flag.
 
+<p align="center">
+  <img src="docs/dashboard-mods.jpg" alt="The admin dashboard's mod manager: the Morrowind Optimization Patch installed as six orderable parts alongside Weapon Sheathing, each with a toggle, drag handle, and badges showing which files it replaces or has overridden" width="850">
+</p>
+
 ## Quick start: your own server
 
 You need [Docker](https://docs.docker.com/get-started/get-docker/) and your own copy of
