@@ -133,6 +133,22 @@ S3_SECRET_ACCESS_KEY=
   Write-Host "Created .env with default settings."
 }
 
+# The updater container runs docker compose from INSIDE a container, where relative bind
+# sources resolve against the wrong filesystem - so the compose file uses REPO_DIR and this
+# pins it to the checkout's absolute path. Forward slashes: Docker Desktop accepts them and
+# backslashes get eaten as escapes on the way through compose.
+$repoDir = $PSScriptRoot.Replace('\', '/')
+$envPath = Join-Path $PSScriptRoot '.env'
+$envLines = @(Get-Content $envPath)
+if ($envLines -match '^REPO_DIR=') {
+  $envLines = $envLines | ForEach-Object { if ($_ -match '^REPO_DIR=') { "REPO_DIR=$repoDir" } else { $_ } }
+} else {
+  $envLines += ''
+  $envLines += '# The absolute path of this checkout, for the updater container. Managed by setup.ps1.'
+  $envLines += "REPO_DIR=$repoDir"
+}
+[System.IO.File]::WriteAllText($envPath, (($envLines -join "`n") + "`n"), (New-Object System.Text.UTF8Encoding $false))
+
 if (-not (Get-ChildItem 'gamedata' -ErrorAction SilentlyContinue)) {
   Write-Warn ".\gamedata is empty."
   Write-Host "   The setup wizard has an upload step: drag your Data Files folder into the browser"
@@ -161,8 +177,17 @@ if (-not (Test-Path 'play\openmw.wasm') -and -not (Test-Path 'play\e\*\openmw.wa
 # ---------------------------------------------------------------------------------------
 if ($Update) {
   Write-Step "Updating"
-  Invoke-Compose pull
-  Invoke-Compose build --pull
+  # Same flow as the dashboard's Update button: deployments run published releases, so
+  # fetch the tags and check out the newest one. (compose pull would be a no-op lie here -
+  # the images are built locally, there is no registry to pull from.)
+  git fetch --tags --force origin
+  if ($LASTEXITCODE -ne 0) { Write-Fail "Could not fetch from GitHub. Are you offline?" }
+  $tag = (git tag --sort=-v:refname | Select-Object -First 1)
+  if (-not $tag) { Write-Fail "No release tags found." }
+  Write-Host "Newest release: $tag"
+  git -c advice.detachedHead=false checkout "refs/tags/$tag"
+  if ($LASTEXITCODE -ne 0) { Write-Fail "Could not check out $tag (local changes in the way?)" }
+  Invoke-Compose build
 } else {
   Write-Step "Building"
   Invoke-Compose build

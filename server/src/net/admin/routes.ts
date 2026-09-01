@@ -67,7 +67,8 @@ import { modsView, saveMods, uploadContent, gameDataWritable, MAX_UPLOAD_BYTES }
 import {
   beginInstall, commitInstall, getInstallProgress, saveModOrder, uninstallMod, type Choice,
 } from './mod-install';
-import { engineStatus, startEngineUpdate } from './update-engine';
+import { engineStatus, resolveLatestRelease, startEngineUpdate } from './update-engine';
+import { requestServerUpdate, updateStatus } from './update-server';
 import { EXPERIMENTAL_ENV, experimental } from '../../core/experimental';
 import { listSaves, saveDownload, saveUploadUrl, saveUploaded, type SavesDeps } from './api-saves';
 import type { LogEntry } from '../../log';
@@ -830,6 +831,29 @@ export function adminRoutes(deps: AdminDeps) {
       if (!await gate(req, res, auth, 'owner', true)) return true;
       const token = url.searchParams.get('token') ?? '';
       json(res, 200, /^[0-9a-f]{32}$/.test(token) ? (getInstallProgress(token) ?? { pct: null }) : { pct: null });
+      return true;
+    }
+    // Ask the updater container to update the server itself. The answer is immediate:
+    // the actual work happens in that container, and the dashboard follows it through the
+    // status route below. The tag in the flag file is audit-trail only - the updater
+    // computes what to check out from git and executes nothing we write here.
+    if (method === 'POST' && path === '/admin/api/update/server') {
+      const ctx = await gate(req, res, auth, 'owner');
+      if (!ctx) return true;
+      const rel = await resolveLatestRelease();
+      if (!rel.ok) { json(res, 200, { ok: false, error: rel.error }); return true; }
+      const r = requestServerUpdate(deps.dataDir, rel.tag, ctx.accountKey);
+      if (!r.ok && r.busy) { json(res, 409, r); return true; }
+      if (r.ok) log('warn', 'admin.update.server', { by: ctx.accountKey, tag: rel.tag });
+      json(res, 200, r);
+      return true;
+    }
+    // Budget-exempt like the install progress route: the dashboard polls this every couple
+    // of seconds through a whole build, and rate-limiting an owner out of watching their
+    // own update would be self-sabotage.
+    if (method === 'GET' && path === '/admin/api/update/status') {
+      if (!await gate(req, res, auth, 'owner', true)) return true;
+      json(res, 200, updateStatus(deps.dataDir));
       return true;
     }
     // Kick off a game-client update. Fire-and-forget on purpose: the download is hundreds

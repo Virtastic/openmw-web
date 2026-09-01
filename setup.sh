@@ -135,6 +135,21 @@ ENVEOF
   say "Created .env with default settings."
 fi
 
+# The updater container runs docker compose from INSIDE a container, where relative bind
+# sources resolve against the wrong filesystem - so the compose file uses ${REPO_DIR} and
+# this pins it to the checkout's absolute path on the host. Refreshed every run: the value
+# goes stale when the folder is moved.
+REPO_DIR_NOW=$(pwd)
+if grep -q '^REPO_DIR=' .env 2>/dev/null; then
+  # POSIX sed -i differs between BSD and GNU; a temp file is the portable spelling.
+  sed "s|^REPO_DIR=.*|REPO_DIR=$REPO_DIR_NOW|" .env > .env.tmp && mv .env.tmp .env
+else
+  printf '
+# The absolute path of this checkout, for the updater container. Managed by setup.sh.
+REPO_DIR=%s
+' "$REPO_DIR_NOW" >> .env
+fi
+
 if [ -z "$(ls -A gamedata 2>/dev/null)" ]; then
   warn "./gamedata is empty."
   say "   The setup wizard has an upload step: drag your Data Files folder into the browser"
@@ -163,8 +178,15 @@ fi
 # ---------------------------------------------------------------------------------------
 if [ "$MODE" = update ]; then
   step "Updating"
-  $DC pull || warn "Could not pull newer images; rebuilding from source instead."
-  $DC build --pull
+  # Same flow as the dashboard's Update button: deployments run published releases, so
+  # fetch the tags and check out the newest one. (`docker compose pull` would be a no-op
+  # lie here - the images are built locally, there is no registry to pull from.)
+  git fetch --tags --force origin || die "Could not fetch from GitHub. Are you offline?"
+  TAG=$(git tag --sort=-v:refname | head -n 1)
+  [ -n "$TAG" ] || die "No release tags found."
+  say "Newest release: $TAG"
+  git -c advice.detachedHead=false checkout "refs/tags/$TAG" || die "Could not check out $TAG (local changes in the way?)"
+  $DC build
 else
   step "Building"
   $DC build

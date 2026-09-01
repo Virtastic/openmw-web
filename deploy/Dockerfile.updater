@@ -1,0 +1,16 @@
+# Copyright (C) 2025-2026 Virtastic - https://virtastic.app
+# SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
+#
+# The update agent's image: the docker CLI (with the compose plugin) plus git, and the
+# loop in updater.sh. See that file for what it does and why it is safe to run this way.
+FROM docker:27-cli
+
+RUN apk add --no-cache git \
+  # The checkout is owned by whoever cloned it on the host; git refuses to touch a repo
+  # owned by someone else unless told the directory is expected.
+  && git config --global safe.directory /repo
+
+COPY updater.sh /usr/local/bin/updater.sh
+
+WORKDIR /repo
+CMD ["sh", "/usr/local/bin/updater.sh"]
