@@ -293,7 +293,7 @@ export function createHttpServer(
   notReady?: () => string[],
 ): Server {
   const metricsOn = metricsOpts.enabled && metricsOpts.token !== '';
-  return createServer((req, res) => {
+  const server = createServer((req, res) => {
     // A base is required to parse a request-target; the host is never used.
     let url: URL;
     try {
@@ -435,4 +435,23 @@ export function createHttpServer(
     res.writeHead(404, { 'content-type': 'text/plain' });
     res.end('not found');
   });
+
+  // NODE CAPS A REQUEST AT FIVE MINUTES BY DEFAULT, AND THIS SERVER RECEIVES MODS.
+  //
+  // requestTimeout is measured from the first byte to the last byte of the request, so it is a
+  // cap on how long a client may spend UPLOADING. Five minutes is generous for an API call and
+  // far too little for the files this dashboard exists to accept: Tamriel Data ships at 2.7GB,
+  // and 2.7GB over a 20 Mbit/s home uplink is nearer twenty minutes. The upload would be cut
+  // off at exactly five, every time, and reach the operator as "the connection dropped" — a
+  // failure that looks like their network and is actually this line.
+  //
+  // headersTimeout is deliberately LEFT at its default. That is the one that stops a client
+  // dribbling headers forever, and it costs a real upload nothing: the headers of an 8GB POST
+  // are the same few hundred bytes as any other. So the slow-client guard stays where it can
+  // do its job, and the cap that only ever punished big legitimate bodies goes.
+  //
+  // The body is still bounded by MAX_UPLOAD_BYTES, which is the limit that actually matters
+  // here: a hostile client cannot send more than the cap however long it takes.
+  server.requestTimeout = 6 * 60 * 60 * 1000;
+  return server;
 }

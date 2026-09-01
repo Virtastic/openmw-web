@@ -33,17 +33,32 @@ export function sniffArchive(path: string): 'zip' | '7z' | 'rar' | 'unknown' {
   }
 }
 
-/** Run 7z, capturing stdout. Never inherits a shell: arguments are passed as an array. */
-function run(args: string[], timeoutMs: number): Promise<{ code: number; out: string; err: string }> {
+/**
+ * Run 7z, capturing stdout. Never inherits a shell: arguments are passed as an array.
+ *
+ * `truncated` is not a nicety. The output cap used to drop the overflow on the floor, and a
+ * TRUNCATED LISTING IS INDISTINGUISHABLE FROM A SHORTER ARCHIVE: every entry past the cap
+ * would simply not exist as far as the installer was concerned, so the mod would install
+ * looking complete and be missing whatever came last. A listing that could not be read in
+ * full has to fail, not shrink. Tamriel Data's listing is around 11MB, so the cap is nowhere
+ * near it in practice; it is the answer when it is not that has to be right.
+ */
+function run(args: string[], timeoutMs: number):
+Promise<{ code: number; out: string; err: string; truncated: boolean }> {
   return new Promise((resolve) => {
     const p = spawn('7z', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const CAP = 128 * 1024 * 1024;
     let out = '';
     let err = '';
+    let truncated = false;
     const kill = setTimeout(() => p.kill('SIGKILL'), timeoutMs);
-    p.stdout.on('data', (d: Buffer) => { if (out.length < 32 * 1024 * 1024) out += d.toString(); });
+    p.stdout.on('data', (d: Buffer) => {
+      if (out.length < CAP) out += d.toString();
+      else truncated = true;
+    });
     p.stderr.on('data', (d: Buffer) => { if (err.length < 64 * 1024) err += d.toString(); });
-    p.on('error', () => { clearTimeout(kill); resolve({ code: -1, out, err: 'p7zip is not available' }); });
-    p.on('close', (code) => { clearTimeout(kill); resolve({ code: code ?? -1, out, err }); });
+    p.on('error', () => { clearTimeout(kill); resolve({ code: -1, out, err: 'p7zip is not available', truncated }); });
+    p.on('close', (code) => { clearTimeout(kill); resolve({ code: code ?? -1, out, err, truncated }); });
   });
 }
 
@@ -55,11 +70,15 @@ function run(args: string[], timeoutMs: number): Promise<{ code: number; out: st
  * file. Offsets and CRCs are not exposed here because nothing extracts a single entry: the
  * whole archive is unpacked in one call below.
  */
-export async function listSevenZip(path: string, maxEntries = 20_000): Promise<ZipEntry[]> {
+export async function listSevenZip(path: string, maxEntries = 100_000): Promise<ZipEntry[]> {
   const r = await run(['l', '-slt', '-y', '--', path], 5 * 60_000);
   if (r.code !== 0) {
     if (/not available/.test(r.err)) throw new ZipError('this server cannot open .7z archives');
     throw new ZipError('that .7z archive could not be read. It may be corrupt, or password-protected.');
+  }
+  if (r.truncated) {
+    throw new ZipError('that archive\'s listing was too large to read in full, so it was '
+      + 'refused rather than installed with files missing.');
   }
   if (/Encrypted = \+/.test(r.out)) throw new ZipError('this archive is password-protected');
 
@@ -81,6 +100,7 @@ export async function listSevenZip(path: string, maxEntries = 20_000): Promise<Z
     if (out.length >= maxEntries) {
       throw new ZipError(`this archive holds more than the ${maxEntries} file limit`);
     }
+
     // offset/crc32 are meaningless for this format here; extraction is whole-archive.
     out.push({ path: norm, size: Number.isFinite(size) ? size : 0, compressedSize: 0,
       method: 0, offset: 0, isDir, crc32: 0 });

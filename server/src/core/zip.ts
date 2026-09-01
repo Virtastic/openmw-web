@@ -43,7 +43,12 @@ export interface ZipLimits {
 }
 
 export const DEFAULT_LIMITS: ZipLimits = {
-  maxEntries: 20_000,
+  // 20,000 was a guess, and the guess was wrong by more than a factor of two for the largest
+  // mod anyone actually installs: Tamriel Data 26.08 is 54,369 files, and the landmass it
+  // ships assets for is refused without it. The cap is here to bound how much a hostile
+  // archive can make us allocate — an entry list is a small object plus a path, so 100,000 is
+  // on the order of 25MB and still bounded.
+  maxEntries: 100_000,
   // A single BSA can legitimately be hundreds of MB; Morrowind.bsa alone is ~300.
   maxEntryBytes: 4 * 1024 * 1024 * 1024,
   maxTotalBytes: 8 * 1024 * 1024 * 1024,

@@ -22,6 +22,31 @@ import { tmpDataDir } from './helpers';
 
 const HASH = 'a'.repeat(64);
 
+test('the recorded releases are real hashes of real archives', () => {
+  // A table of made-up hashes is worse than an empty one: it never matches, and if it ever did
+  // it would put the wrong version number on somebody's install. Every key here was taken from
+  // an actual download with sha256sum.
+  for (const [hash, label] of Object.entries(TR_RELEASES)) {
+    assert.match(hash, /^[0-9a-f]{64}$/, `${label} has a key that is not a sha256`);
+    assert.equal(hash, hash.toLowerCase());
+  }
+  // The three we have, hashed from the downloads themselves.
+  assert.equal(
+    identifyRelease('0613f33fabcc9285d821f52524ab4c2d2bece37dcdc1eb110ada772dd0ca73ef'),
+    'Tamriel Rebuilt 26.08.23',
+  );
+  assert.equal(
+    identifyRelease('009530c0383759b842298e827bf1ffd88e29b68668bbefe794bc376713e821cf'),
+    'Tamriel Data 26.08',
+  );
+  assert.equal(
+    identifyRelease('da5b37375434c265c47f484c4f005cf7e279bcaa1cccc39bf56c92d5bf8f5cda'),
+    'Tamriel Data 26.08 (HD)',
+  );
+  // Two editions of one release are two files and must never collapse to one key.
+  assert.equal(new Set(Object.keys(TR_RELEASES)).size, Object.keys(TR_RELEASES).length);
+});
+
 test('a release nobody recorded is unnamed, not rejected', () => {
   // null is the answer the wizard renders as "not in our list yet, installing anyway". An
   // exception, or a false, would have to be handled at the call site as a failure.
@@ -41,10 +66,15 @@ test('a recorded hash gives its version back, however it is cased', () => {
   }
 });
 
-test('TR is recognised by its own files, at any depth in the archive', () => {
-  assert.ok(looksLikeTamrielRebuilt(['TR_Data.bsa']));
+test('both halves of the download are recognised, which is not one naming scheme', () => {
+  // The landmass ships TR_-prefixed plugins.
   assert.ok(looksLikeTamrielRebuilt(['00 Core/TR_Mainland.esm', 'readme.txt']));
-  assert.ok(looksLikeTamrielRebuilt(['Tamriel_Data/TR_Factions.esp']));
+  assert.ok(looksLikeTamrielRebuilt(['01 Faction Integration/Data Files/TR_Factions.esp']));
+  // Tamriel Data does not: its plugin is Tamriel_Data.esm and its assets are LOOSE, so no TR_
+  // prefix appears anywhere in the archive. Checked against the real 26.08 download, where the
+  // first version of this told the operator their correct upload looked wrong.
+  assert.ok(looksLikeTamrielRebuilt(['00 Data Files/Tamriel_Data.esm',
+    '00 Data Files/meshes/tr/x/tr_flora.nif']));
 });
 
 test('and is not claimed by an archive that merely mentions it', () => {
@@ -101,6 +131,34 @@ test('an unrecognised release still gets an Install button', () => {
   const marker = fn[0].indexOf("id=\"trGo\"");
   const unknown = fn[0].indexOf('not in our list yet');
   assert.ok(unknown < marker, 'the button must come after, and outside, the warning');
+});
+
+test('the optional parts of the download are the operator to choose', () => {
+  // THE REAL ARCHIVE SETTLED THIS. TR 26.08.23 ships three data folders: "00 Core" (the
+  // landmass), "01 Faction Integration" and "02 Firemoth Remover" — and the last one removes a
+  // vanilla quest island on purpose. The first version of this step installed every folder it
+  // found, which would have applied that silently.
+  const fn = /function wireTamriel\(\)[\s\S]*?\n\}/.exec(app)!;
+  assert.ok(fn[0].includes('data-trcand="${i}"'), 'no per-part checkbox');
+  // Ticked by default: the first part, and a single-part archive whole.
+  assert.ok(fn[0].includes("staged.candidates.length === 1 || i === 0 ? 'checked' : ''"));
+  // And the install must read the ticks rather than the whole list.
+  assert.ok(fn[0].includes('.filter((c, i) => stage.querySelector(`[data-trcand="${i}"]`).checked)'));
+  assert.ok(fn[0].includes("if (!picked.length) { toast('Tick at least one part to install.', 'err'); return; }"));
+});
+
+test('the missing assets half is caught by the master list, not by a name', () => {
+  // TR_Mainland.esm declares Morrowind, Tribunal, Bloodmoon AND Tamriel_Data.esm as its
+  // masters — read off the real file. So "the assets were never uploaded" is already an exact,
+  // engine-defined fact, and the same line covers a missing expansion or an unticked part with
+  // no extra code. A filename heuristic was the first attempt and it was both narrower and
+  // wrong: it looked for TR_Data.bsa, which Tamriel Data does not ship.
+  const step = /async function stepTamriel\(\)[\s\S]*?\n\}/.exec(app)!;
+  assert.ok(step[0].includes('const lacking = mods?.missingMasters || [];'));
+  assert.ok(step[0].includes('needs ${n.master}, which is not installed.'));
+  assert.doesNotMatch(app, /isTamrielData/, 'the name heuristic must be gone, not shadowed');
+  // And the drop zone it points at must be open, not folded behind a summary.
+  assert.ok(step[0].includes("<details class=\"mb-2\" ${raw(lacking.length ? 'open' : '')}>"));
 });
 
 test('the review says so when the profile was chosen and TR never arrived', () => {

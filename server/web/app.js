@@ -1164,6 +1164,8 @@ async function stepFiles() {
 const isTamrielRebuilt = (mod) => (mod.plugins || []).some((pl) => /^TR_/i.test(pl.file))
   || (mod.archives || []).some((a) => /^TR_/i.test(a));
 
+
+
 /**
  * Tamriel Rebuilt, which is a SECOND upload and not a second question.
  *
@@ -1186,14 +1188,21 @@ async function stepTamriel() {
     modsError = e.message;
   }
   const found = (mods?.mods || []).filter(isTamrielRebuilt);
+  // THE PLUGIN'S OWN HEADER, not a guess at file names. TR_Mainland.esm declares
+  // Tamriel_Data.esm among its masters, so "the assets half was never uploaded" is already an
+  // exact, engine-defined fact rather than something to pattern-match for — and the same line
+  // covers a missing expansion, or a part of the download left unticked, with no extra code.
+  const lacking = mods?.missingMasters || [];
   tamrielMissing = found.length === 0;
 
   wizardShell(html`
     <h5>Add Tamriel Rebuilt</h5>
     <p class="text-secondary small">Tamriel Rebuilt is a separate download from the game, so it
-      is not in the folder you just uploaded. Drop its archive here <strong>exactly as you
-      downloaded it</strong> — do not unpack it first. The file itself is what tells us which
-      release this is.</p>
+      is not in the folder you just uploaded. It comes in <strong>two</strong> archives:
+      <em>Tamriel Rebuilt</em>, the landmass, and <em>Tamriel Data</em>, its meshes and
+      textures. Both are needed. Drop them here one at a time,
+      <strong>exactly as you downloaded them</strong> — do not unpack them first. The file
+      itself is what tells us which release it is.</p>
     ${raw(found.length ? html`
       <div class="alert alert-success d-flex align-items-start gap-2">
         <i class="bi bi-check-circle-fill fs-4"></i>
@@ -1208,7 +1217,16 @@ async function stepTamriel() {
           <div class="small mt-2">The load order is on the Game data page whenever you want it.</div>
         </div>
       </div>
-      <details class="mb-2"><summary class="small text-secondary">Add another archive</summary>
+      ${raw(lacking.map((n) => html`
+        <div class="alert alert-warning py-2 small">
+          <strong>${n.plugin} needs ${n.master}, which is not installed.</strong>
+          ${raw(/^Tamriel_Data/i.test(n.master)
+            ? 'That is the other half of the download: the meshes and textures every one of '
+              + 'these plugins draws from. Add its archive below.'
+            : 'Morrowind refuses to start when a plugin\'s master is missing, so this has to '
+              + 'be added, or the plugin that wants it switched off.')}</div>`).join(''))}
+      <details class="mb-2" ${raw(lacking.length ? 'open' : '')}><summary
+        class="small text-secondary">Add another archive</summary>
         <div class="mt-2">${raw(trDropZone())}</div></details>`
       : trDropZone())}
     ${raw(modsError ? html`<div class="alert alert-danger mb-0">
@@ -1261,23 +1279,48 @@ function wireTamriel() {
           <dd class="col-sm-9 mb-1"><span class="vt-mono" style="word-break:break-all"
             >${staged.sha256}</span></dd>
         </dl>
+        ${raw(staged.candidates.length > 1 ? html`
+          <p class="small text-secondary mb-2">This download holds
+            ${staged.candidates.length} parts. The first is the mod itself; the rest are
+            optional extras that ship alongside it, and they are yours to choose — one of
+            Tamriel Rebuilt's removes content from the vanilla game on purpose.</p>` : '')}
+        ${raw(staged.candidates.map((c, i) => html`
+          <label class="d-block border rounded p-2 mb-2">
+            <input class="form-check-input me-2" type="checkbox" data-trcand="${i}"
+              ${raw(staged.candidates.length === 1 || i === 0 ? 'checked' : '')}>
+            <strong class="vt-mono">${c.path || '(the archive itself)'}</strong>
+            <div class="small text-secondary ms-4">
+              ${raw([
+                c.plugins.length ? html`${c.plugins.length === 1 ? 'plugin' : 'plugins'}:
+                  <span class="vt-mono">${c.plugins.join(', ')}</span>` : '',
+                c.archives.length ? html`archives:
+                  <span class="vt-mono">${c.archives.join(', ')}</span>` : '',
+                c.assetDirs.length ? html`${c.assetDirs.join(', ')}` : '',
+                html`${c.files} files &middot; ${sizeOf(c.bytes)}`,
+              ].filter(Boolean).join('<br>'))}
+            </div>
+          </label>`).join(''))}
         <button class="btn btn-primary btn-sm" id="trGo">Install</button>
         <button class="btn btn-outline-secondary btn-sm ms-2" id="trCancel">Discard</button>
       </div></div>`;
 
     $('#trCancel').onclick = () => { stage.innerHTML = ''; };
     $('#trGo').onclick = async () => {
-      // EVERY data folder in the archive, where the mods page asks which. A TR download is one
-      // mod that ships its assets and its plugins in separate folders, and half of it is a
-      // plugin whose master did not arrive — which aborts the engine at startup rather than
-      // loading without it.
+      // TICKED ONLY. The first version of this step installed every data folder in the archive
+      // on the grounds that a TR download is one mod — which the real download disproves: TR
+      // 26.08.23 ships "01 Faction Integration" and "02 Firemoth Remover" beside the landmass,
+      // and the second one deletes a vanilla quest island. Silently installing that is not a
+      // convenience.
       const label = staged.release || 'Tamriel Rebuilt';
-      const choices = staged.candidates.map((c) => ({
+      const picked = staged.candidates
+        .filter((c, i) => stage.querySelector(`[data-trcand="${i}"]`).checked);
+      if (!picked.length) { toast('Tick at least one part to install.', 'err'); return; }
+      const choices = picked.map((c) => ({
         path: c.path,
         slug: c.suggestedSlug,
-        name: staged.candidates.length > 1 && c.path ? `${label}${NAME_SEP}${c.path}` : label,
+        name: picked.length > 1 && c.path ? `${label}${NAME_SEP}${c.path}` : label,
       }));
-      const files = staged.candidates.reduce((n, c) => n + c.files, 0);
+      const files = picked.reduce((n, c) => n + c.files, 0);
       installPhase(stage, 'Installing', `unpacking ${files} file${files === 1 ? '' : 's'}`);
       try {
         await api('/mods/install/commit', { method: 'POST', body: { token: staged.token, choices } });

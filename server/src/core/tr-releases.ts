@@ -17,9 +17,20 @@
 // also prints the hash of whatever was just uploaded, which is the easier way to get it — and
 // add the line here. Lowercase hex, keyed by hash because that is what the lookup has.
 
-/** sha256 of the archive as published -> the version to show. */
+/**
+ * sha256 of the archive as published -> the version to show.
+ *
+ * BOTH HALVES LIVE HERE. A working install is two downloads — the landmass and the assets it
+ * draws from — published separately, versioned separately, and hashed separately.
+ */
 export const TR_RELEASES: Record<string, string> = {
-  // '…64 lowercase hex chars…': 'Tamriel Rebuilt 24.10',
+  // The landmass. 68,039,458 bytes; holds 00 Core (TR_Mainland.esm), 01 Faction Integration
+  // and 02 Firemoth Remover.
+  '0613f33fabcc9285d821f52524ab4c2d2bece37dcdc1eb110ada772dd0ca73ef': 'Tamriel Rebuilt 26.08.23',
+  // The assets, in two editions of the same release. 54,369 files apiece; the HD one expands
+  // to 6.9GB against the standard one's 2.7GB, which is the whole difference between them.
+  '009530c0383759b842298e827bf1ffd88e29b68668bbefe794bc376713e821cf': 'Tamriel Data 26.08',
+  'da5b37375434c265c47f484c4f005cf7e279bcaa1cccc39bf56c92d5bf8f5cda': 'Tamriel Data 26.08 (HD)',
 };
 
 /** The release this archive is, or null for one this table has never been told about. */
@@ -28,13 +39,18 @@ export function identifyRelease(sha256: string): string | null {
 }
 
 /**
- * Does this archive plausibly contain Tamriel Rebuilt at all?
+ * Does this archive plausibly belong to a Tamriel Rebuilt install at all?
  *
  * A weak check on purpose, and separate from the hash: it exists to catch the operator who
- * dropped the wrong download onto the TR step, not to police versions. Every TR release ships
- * its plugins and archives under the TR_ prefix, and has since the mod was called that.
+ * dropped the wrong download onto the TR step, not to police versions.
+ *
+ * BOTH NAMING SCHEMES, because the two halves do not share one. The landmass ships TR_-prefixed
+ * plugins; Tamriel Data ships Tamriel_Data.esm and its assets LOOSE rather than in a .bsa, so a
+ * TR_ prefix appears nowhere in it. Checked against the real 26.08 downloads: the first version
+ * of this told an operator uploading the correct Tamriel Data archive that it did not look like
+ * Tamriel Rebuilt.
  */
-const TR_FILE = /(^|\/)TR_[^/]*\.(esm|esp|omwaddon|bsa)$/i;
+const TR_FILE = /(^|\/)(TR_[^/]*|Tamriel_Data)\.(esm|esp|omwaddon|bsa)$/i;
 export function looksLikeTamrielRebuilt(paths: string[]): boolean {
   return paths.some((p) => TR_FILE.test(p));
 }
