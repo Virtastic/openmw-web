@@ -517,36 +517,129 @@ test('every mod row has a Details button opening its modal', () => {
   assert.match(card[0], /class="modal fade" id="modd-\$\{mod\.slug\}"/);
 });
 
+const prettyFn = () => /const pretty = \(name\) => \{[\s\S]*?\n\};/.exec(app)![0];
+
 test('the row shows a readable name, not the raw Nexus filename', () => {
   // "Cool Mod-45384-1-18-0-1751572864.7z" is a download artifact, not a name. The tail of
   // digits and the extension are stripped for display; the stored name is untouched and the
   // modal still shows it in full.
-  const card = /const pretty = \(name\) => \{[\s\S]*?\n  \};/.exec(app)!;
+  const fn = prettyFn();
   // Plain includes: the target IS a regex literal, and matching a regex with a regex is how
   // this suite has burnt itself before.
-  assert.ok(card[0].includes(String.raw`replace(/\.(zip|7z|rar)$/i, '')`), 'extension strip missing');
-  assert.ok(card[0].includes(String.raw`replace(/(-\d+)+$/, '')`), 'digit-tail strip missing');
+  assert.ok(fn.includes(String.raw`replace(/\.(zip|7z|rar)$/i, '')`), 'extension strip missing');
+  assert.ok(fn.includes(String.raw`replace(/(-\d+)+$/, '')`), 'digit-tail strip missing');
 });
 
 test('a name and the folder it came from are joined by a colon, old or new', () => {
   // The separator used to be an em dash, which reads as a pause in a sentence rather than a
   // label. Names already in modlist.json keep theirs — rewriting saved names over punctuation
   // is not worth doing — so the display has to render both and write one.
-  const pretty = /const pretty = \(name\) => \{[\s\S]*?\n  \};/.exec(app)!;
-  assert.ok(pretty[0].includes(String.raw`split(/ — |: /)`),
+  const fn = prettyFn();
+  assert.ok(fn.includes(String.raw`split(/ — |: /)`),
     'both separators must be split, or a mod installed before the change loses its strip');
-  assert.ok(pretty[0].includes('join(NAME_SEP)'));
+  assert.ok(fn.includes('join(NAME_SEP)'));
   assert.ok(app.includes("const NAME_SEP = ': ';"));
   // And nothing writes the old one any more.
   assert.doesNotMatch(app, /` — \$\{c\.path\}`/);
 });
 
+const paintFn = () => /function paintConflicts\(list, m\) \{[\s\S]*?\n\}/.exec(app)![0];
+
 test('conflicts are badges on the row and sentences only in the modal', () => {
-  const card = /const card = \(mod, i\) => \{[\s\S]*?\n  \};/.exec(app)!;
-  assert.match(card[0], /badge text-bg-warning">replaces \$\{winCount\}/);
-  assert.match(card[0], /badge text-bg-danger">missing master/);
+  const paint = paintFn();
+  assert.match(paint, /badge text-bg-warning">replaces \$\{winCount\}/);
+  assert.match(paint, /badge text-bg-secondary">\$\{loseCount\} overridden/);
   // The explanation lives under the modal's own heading, not loose in the row.
-  assert.match(card[0], /Overlapping files/);
+  assert.match(paint, /Overlapping files/);
+  // The order-independent one stays baked into the card, where it belongs.
+  const card = /const card = \(mod, i\) => \{[\s\S]*?\n  \};/.exec(app)!;
+  assert.match(card[0], /badge text-bg-danger">missing master/);
+});
+
+test('who overrides whom is decided by the order on screen, not the one the server sent', () => {
+  // THE REPORTED BUG. The badges and the overlap sentences are the answer to "whose copy of
+  // this file does the game use", which IS the list order — so dragging a mod left every one
+  // of them describing an arrangement that no longer existed, until a save reloaded the page.
+  // Reordering is the one action taken because of what they say, so stale is worse here than
+  // anywhere else on the page.
+  const paint = paintFn();
+  // Direction comes from the row positions, not from the server's winner/loser fields.
+  assert.match(paint, /const rank = new Map\(rows\.map\(\(el, i\) => \[el\.dataset\.slug, i\]\)\)/);
+  assert.ok(paint.includes('const [winner, loser] = x > y ? [c.winner, c.loser] : [c.loser, c.winner];'),
+    'the pair must be re-decided, not taken as given');
+  // A mod switched off contests nothing.
+  assert.ok(paint.includes('if (!on.has(c.winner) || !on.has(c.loser)) continue;'));
+});
+
+// RUN, not read. The two tests above pin the shape of paintConflicts; this one executes the
+// source that actually ships against a stub of the few DOM calls it makes, drags a mod, and
+// checks the badges turned around. Nothing else in this suite can catch a direction that is
+// backwards, and backwards is the failure mode a reader is least likely to spot.
+
+/** The minimum of a card element: a slug, a switch, and two containers it writes into. */
+function fakeRow(slug: string, checked = true) {
+  const store: Record<string, string> = {};
+  return {
+    dataset: { slug },
+    querySelector: (sel: string) => (sel === '[data-modon]' ? { checked } : {
+      set innerHTML(v: string) { store[sel] = v; },
+      get innerHTML() { return store[sel] ?? ''; },
+    }),
+    html: (sel: string) => store[sel] ?? '',
+  };
+}
+
+function runPaint(rows: ReturnType<typeof fakeRow>[], m: unknown) {
+  const src = paintFn();
+  const tag = (strings: TemplateStringsArray, ...vals: unknown[]) =>
+    strings.reduce((a, s2, i) => a + s2 + (i < vals.length ? String(vals[i]) : ''), '');
+  const make = new Function('html', 'raw', 'pretty', `${src}; return paintConflicts;`) as
+    (h: unknown, r: unknown, p: unknown) => (list: unknown, m: unknown) => void;
+  make(tag, (v: unknown) => v, (n: unknown) => n)({ querySelectorAll: () => rows }, m);
+}
+
+test('dragging a mod turns the badges around, there and then', () => {
+  const a = fakeRow('a');
+  const b = fakeRow('b');
+  // The server saw a before b, so b won. That is the only thing it can tell us.
+  const m = { mods: [{ slug: 'a', name: 'Alpha' }, { slug: 'b', name: 'Beta' }],
+    conflicts: [{ winner: 'b', loser: 'a', files: 5, sample: [] }] };
+
+  runPaint([a, b], m);
+  assert.match(b.html('[data-badges]'), /replaces 5/);
+  assert.match(a.html('[data-badges]'), /5 overridden/);
+  assert.match(a.html('[data-ordernotes]'), /overridden by\s+<strong>Beta<\/strong>/);
+
+  // Now drag a below b, which is what the page does to its own DOM before repainting.
+  runPaint([b, a], m);
+  assert.match(a.html('[data-badges]'), /replaces 5/, 'the mod now last must win');
+  assert.match(b.html('[data-badges]'), /5 overridden/);
+  assert.doesNotMatch(a.html('[data-badges]'), /overridden/);
+  assert.match(a.html('[data-ordernotes]'), /also in <strong>Beta<\/strong>/);
+});
+
+test('a mod switched off stops contesting anything', () => {
+  const a = fakeRow('a');
+  const b = fakeRow('b', false);
+  const m = { mods: [{ slug: 'a', name: 'Alpha' }, { slug: 'b', name: 'Beta' }],
+    conflicts: [{ winner: 'b', loser: 'a', files: 5, sample: [] }] };
+  runPaint([a, b], m);
+  // Not "a wins": b provides no files at all, so there is no contest to report.
+  assert.equal(a.html('[data-badges]'), '');
+  assert.equal(b.html('[data-badges]'), '');
+  assert.equal(a.html('[data-ordernotes]'), '');
+});
+
+test('every way the order can change repaints it', () => {
+  // Three: the arrow buttons, a drag, and a switch. Missing one leaves the page lying in
+  // exactly the way this was meant to fix.
+  const wire = /function wireMods\(m\) \{[\s\S]*?\n\}/.exec(app)!;
+  assert.equal(wire[0].split('paintConflicts(list, m)').length - 1, 4,
+    'first paint, arrows, drag and switch');
+  // Under the cursor, not one gesture later: repainting on drop would show the answer after
+  // the decision it informs has been made.
+  const over = /el\.ondragover = \(e\) => \{[\s\S]*?\n    \};/.exec(wire[0])!;
+  assert.match(over[0], /paintConflicts\(list, m\);/);
 });
 
 test('plugin toggles moved into the modal but stay inside the card element', () => {

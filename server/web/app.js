@@ -2739,6 +2739,15 @@ function wireMods(m) {
   const list = $('#modList');
   if (!list) return;
 
+  // The first paint. The server's order and the page's agree at this point, so this only puts
+  // the same answer on screen — but through the one code path that will keep it true.
+  paintConflicts(list, m);
+  // Switching a mod off takes its files out of the contest, which changes who wins the ones it
+  // was providing.
+  list.querySelectorAll('[data-modon]').forEach((cb) => {
+    cb.onchange = () => paintConflicts(list, m);
+  });
+
   // Same two affordances as the load-order table: buttons for touch and keyboard, drag for a
   // mouse. HTML5 drag events never fire on touch, so drag alone is not an option.
   list.querySelectorAll('[data-modmove]').forEach((btn) => {
@@ -2749,6 +2758,7 @@ function wireMods(m) {
       if (to < 0 || to >= all.length) return;
       if (btn.dataset.modmove === 'up') list.insertBefore(cardEl, all[to]);
       else list.insertBefore(all[to], cardEl);
+      paintConflicts(list, m);
       btn.focus();
     };
   });
@@ -2767,6 +2777,9 @@ function wireMods(m) {
       if (!dragged || dragged === el) return;
       const r = el.getBoundingClientRect();
       list.insertBefore(dragged, e.clientY > r.top + r.height / 2 ? el.nextSibling : el);
+      // Repainted here rather than on drop: the badges are what the operator is dragging BY,
+      // so they have to be right under the cursor, not one gesture later.
+      paintConflicts(list, m);
     };
   });
 
@@ -2811,6 +2824,85 @@ function wireMods(m) {
 /** Joins a mod's name to the folder inside the archive it came from. */
 const NAME_SEP = ': ';
 
+// Stored names are routinely the raw Nexus download filename ("Cool Mod-45384-1-18-0-
+// 1751572864.7z: 00 Core"). The row shows a readable name; the exact original, and every
+// explanation, lives in the details modal so the list itself stays scannable.
+//
+// BOTH SEPARATORS ARE SPLIT, one is written. Mods installed before the separator became a
+// colon still have an em dash in the name stored in modlist.json, and rewriting somebody's
+// saved names to change a punctuation mark is not worth doing; rendering them the new way
+// costs one alternation and leaves the file alone.
+const pretty = (name) => {
+  const parts = String(name).split(/ — |: /);
+  parts[0] = (parts[0].replace(/\.(zip|7z|rar)$/i, '').replace(/(-\d+)+$/, '').trim()) || parts[0];
+  return parts.filter(Boolean).join(NAME_SEP);
+};
+
+/**
+ * Who overrides whom, painted from the ORDER ON SCREEN rather than the order the server last
+ * saw.
+ *
+ * The badges and the modal's overlap sentences are the answer to "which copy of this file does
+ * the game actually use", and that answer is the list order — so the moment a mod is dragged,
+ * every one of them describes an arrangement that no longer exists. They stayed stale until
+ * Save reloaded the page, which is precisely when they stop being useful: reordering is the
+ * one action taken BECAUSE of what they say.
+ *
+ * Only the direction needs recomputing. Which two mods share files, and how many, does not
+ * depend on order at all, so the pairs the server sent stay valid and no round trip is needed
+ * to turn one around.
+ *
+ * The one thing this cannot do is invent a pair. A mod switched off contributes no files, so
+ * the server sends no conflicts for it; switching it back on here shows no badges until the
+ * save that makes the server look again. Saying nothing is the right failure: the alternative
+ * is a count that was computed against a different set of mods.
+ */
+function paintConflicts(list, m) {
+  const rows = [...list.querySelectorAll('.vt-mod')];
+  const rank = new Map(rows.map((el, i) => [el.dataset.slug, i]));
+  const on = new Set(rows.filter((el) => el.querySelector('[data-modon]')?.checked)
+    .map((el) => el.dataset.slug));
+  const byName = new Map((m.mods || []).map((x) => [x.slug, x.name]));
+  const bsaClash = new Map((m.bsaCollisions || []).flatMap((c) => c.owners.map((o) => [o, c.name])));
+  const label = (slug) => pretty(byName.get(slug) || slug);
+
+  const per = new Map(rows.map((el) => [el.dataset.slug, { wins: [], loses: [] }]));
+  for (const c of m.conflicts || []) {
+    // The pair, not the verdict: the server's winner and loser are just the two names.
+    if (!on.has(c.winner) || !on.has(c.loser)) continue;
+    const x = rank.get(c.winner);
+    const y = rank.get(c.loser);
+    if (x === undefined || y === undefined) continue;
+    const [winner, loser] = x > y ? [c.winner, c.loser] : [c.loser, c.winner];
+    per.get(winner).wins.push({ other: loser, files: c.files });
+    per.get(loser).loses.push({ other: winner, files: c.files });
+  }
+
+  for (const el of rows) {
+    const { wins, loses } = per.get(el.dataset.slug);
+    const winCount = wins.reduce((n, c) => n + c.files, 0);
+    const loseCount = loses.reduce((n, c) => n + c.files, 0);
+    el.querySelector('[data-badges]').innerHTML = [
+      winCount ? html`<span class="badge text-bg-warning">replaces ${winCount}</span>` : '',
+      loseCount ? html`<span class="badge text-bg-secondary">${loseCount} overridden</span>` : '',
+    ].filter(Boolean).map((b) => ` ${b}`).join('');
+
+    const notes = [
+      ...wins.map((c) => html`<div class="small mb-1"><span class="badge text-bg-warning me-1">replaces ${c.files}</span>
+        ${raw(c.files === 1 ? 'file' : 'files')} also in <strong>${label(c.other)}</strong>.
+        This mod is further down the list, so its copy is the one the game uses.</div>`),
+      ...loses.map((c) => html`<div class="small mb-1 text-secondary">${c.files}
+        ${raw(c.files === 1 ? 'file is' : 'files are')} overridden by
+        <strong>${label(c.other)}</strong>, which is further down the list.</div>`),
+      ...(bsaClash.has(el.dataset.slug) ? [html`<div class="small mb-1"><span class="vt-mono">${bsaClash.get(el.dataset.slug)}</span>
+        also ships with another mod. Both are loaded; this one's copy is kept under its own name.</div>`] : []),
+    ];
+    el.querySelector('[data-ordernotes]').innerHTML = notes.length
+      ? html`<h6 class="mt-3 mb-1">Overlapping files</h6>` + notes.join('')
+      : '';
+  }
+}
+
 const sizeOf = (n) => (n >= 1073741824 ? `${(n / 1073741824).toFixed(1)} GB`
   : n >= 1048576 ? `${Math.round(n / 1048576)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
 
@@ -2839,55 +2931,25 @@ function modsCard(m, editable) {
     }
     return out;
   };
-  const wins = group(m.conflicts, 'winner');
-  const loses = group(m.conflicts, 'loser');
   const needs = group(m.missingMasters, 'mod');
-
-  // Stored names are routinely the raw Nexus download filename ("Cool Mod-45384-1-18-0-
-  // 1751572864.7z: 00 Core"). The row shows a readable name; the exact original, and every
-  // explanation, lives in the details modal so the list itself stays scannable.
-  //
-  // BOTH SEPARATORS ARE SPLIT, one is written. Mods installed before the separator became a
-  // colon still have an em dash in the name stored in modlist.json, and rewriting somebody's
-  // saved names to change a punctuation mark is not worth doing; rendering them the new way
-  // costs one alternation and leaves the file alone.
-  const pretty = (name) => {
-    const parts = String(name).split(/ — |: /);
-    parts[0] = (parts[0].replace(/\.(zip|7z|rar)$/i, '').replace(/(-\d+)+$/, '').trim()) || parts[0];
-    return parts.filter(Boolean).join(NAME_SEP);
-  };
 
   const card = (mod, i) => {
     const missing = needs.get(mod.slug) || [];
-    const win = wins.get(mod.slug) || [];
-    const lose = loses.get(mod.slug) || [];
-    const winCount = win.reduce((n, c) => n + c.files, 0);
-    const loseCount = lose.reduce((n, c) => n + c.files, 0);
     const bits = [
       mod.plugins.length ? `${mod.plugins.length} plugin${mod.plugins.length > 1 ? 's' : ''}` : '',
       mod.archives.length ? `${mod.archives.length} archive${mod.archives.length > 1 ? 's' : ''}` : '',
       `${mod.files} files`, sizeOf(mod.bytes),
     ].filter(Boolean);
 
-    // Compact badges on the row; the modal carries the sentence that explains each one.
+    // Compact badges on the row. These two are facts about the mod itself; the ones that
+    // depend on where it sits in the list are written by paintConflicts, which reruns on
+    // every reorder.
     const badges = [
       mod.present === false ? '<span class="badge text-bg-danger">folder missing</span>' : '',
       missing.length ? '<span class="badge text-bg-danger">missing master</span>' : '',
-      winCount ? `<span class="badge text-bg-warning">replaces ${winCount}</span>` : '',
-      loseCount ? `<span class="badge text-bg-secondary">${loseCount} overridden</span>` : '',
     ].filter(Boolean).join(' ');
 
     const dlRow = (k, v) => (v ? html`<dt class="col-sm-3">${k}</dt><dd class="col-sm-9 mb-1">${v}</dd>` : '');
-    const orderNotes = [
-      ...win.map((c) => html`<div class="small mb-1"><span class="badge text-bg-warning me-1">replaces ${c.files}</span>
-        ${raw(c.files === 1 ? 'file' : 'files')} also in <strong>${pretty(byName.get(c.loser) || c.loser)}</strong> —
-        this mod is further down the list, so its copy is the one the game uses.</div>`),
-      ...lose.map((c) => html`<div class="small mb-1 text-secondary">${c.files}
-        ${raw(c.files === 1 ? 'file is' : 'files are')} overridden by
-        <strong>${pretty(byName.get(c.winner) || c.winner)}</strong>, which is further down the list.</div>`),
-      ...(bsaClash.has(mod.slug) ? [html`<div class="small mb-1"><span class="vt-mono">${bsaClash.get(mod.slug)}</span>
-        also ships with another mod. Both are loaded; this one's copy is kept under its own name.</div>`] : []),
-    ];
 
     const modal = html`
       <div class="modal fade" id="modd-${mod.slug}" tabindex="-1" aria-labelledby="modd-${mod.slug}-t" aria-hidden="true">
@@ -2913,9 +2975,7 @@ function modsCard(m, editable) {
               ${raw(dlRow('Contents', bits.join(' · ')))}
               ${raw(dlRow('Installed', (mod.installedAt || '').slice(0, 10)))}
             </dl>
-            ${raw(orderNotes.length ? html`
-              <h6 class="mt-3 mb-1">Overlapping files</h6>
-              ${raw(orderNotes.join(''))}` : '')}
+            <div data-ordernotes></div>
             ${raw(mod.plugins.length || mod.archives.length ? html`
               <h6 class="mt-3 mb-1">Plugins</h6>
               <p class="small text-secondary mb-2">Ticked plugins are added to the game's load
@@ -2943,7 +3003,7 @@ function modsCard(m, editable) {
           </div>
           <div class="flex-grow-1">
             <strong>${pretty(mod.name)}</strong>
-            <div class="small text-secondary">${bits.join(' · ')} ${raw(badges ? ' ' + badges : '')}</div>
+            <div class="small text-secondary">${bits.join(' · ')}${raw(badges ? ` ${badges}` : '')}<span data-badges></span></div>
           </div>
           <button class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal"
             data-bs-target="#modd-${mod.slug}" aria-label="Details for ${mod.name}">Details</button>
