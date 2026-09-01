@@ -124,7 +124,9 @@ body.vt-bare #pageTitle {
 
 .app-sidebar { background: var(--vt-panel) !important; border-right: 1px solid var(--vt-line); }
 .sidebar-brand { background: var(--vt-panel-2); border-bottom: 1px solid var(--vt-line); }
-.brand-image { width: 28px; height: 28px; margin-right: .5rem; }
+/* The mark is wide (an infinity knot), so it gets width and keeps its own aspect; 28px and
+   the AdminLTE opacity-75 dim made it read as a smudge. Full strength, sized to the bar. */
+.brand-image { width: 40px; height: auto; margin-right: .5rem; }
 /* AdminLTE sets .brand-link colour on the anchor, which wins over a bare .brand-text rule
    by specificity. Scoped here so the gold actually lands rather than only appearing to. */
 .sidebar-brand .brand-link .brand-text {
