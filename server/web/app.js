@@ -1315,13 +1315,13 @@ function wireTamriel() {
         </dl>
         ${raw(staged.candidates.length > 1 ? html`
           <p class="small text-secondary mb-2">This download holds
-            ${staged.candidates.length} parts. The first is the mod itself; the rest are
-            optional extras that ship alongside it, and they are yours to choose: one of
-            Tamriel Rebuilt's removes content from the vanilla game on purpose.</p>` : '')}
+            ${staged.candidates.length} parts, all ticked to install. The one exception is
+            anything that <em>removes</em> vanilla content (Tamriel Rebuilt ships one of
+            those), which stays unticked unless you choose it.</p>` : '')}
         ${raw(staged.candidates.map((c, i) => html`
           <label class="d-block border rounded p-2 mb-2">
             <input class="form-check-input me-2" type="checkbox" data-trcand="${i}"
-              ${raw(staged.candidates.length === 1 || i === 0 ? 'checked' : '')}>
+              ${raw(/remover/i.test(c.path) ? '' : 'checked')}>
             <strong class="vt-mono">${c.path || '(the archive itself)'}</strong>
             <div class="small text-secondary ms-4">
               ${raw([
@@ -1356,23 +1356,41 @@ function wireTamriel() {
       }));
       const files = picked.reduce((n, c) => n + c.files, 0);
       installPhase(stage, 'Installing', `unpacking ${files} file${files === 1 ? '' : 's'}`);
+      // Leaving the step mid-extraction looks like abandoning it, and Tamriel Data is minutes
+      // of spinner — long enough that "Skip for now" reads as the way out. The install itself
+      // would finish server-side either way, but the operator who clicked Skip has just been
+      // taught, wrongly, that it did not happen.
+      trNav(false);
       try {
         await api('/mods/install/commit', { method: 'POST', body: { token: staged.token, choices } });
         renderWizard();   // back to this step, which now reports it installed
       } catch (e) {
+        trNav(true);
         stage.innerHTML = html`<div class="alert alert-danger">${e.message}</div>`;
       }
     };
   };
 
+  /** Back and Skip/Continue, held while an upload or install is in flight. */
+  const trNav = (on) => {
+    for (const sel of ['#wzNext', '#wzBack']) {
+      const b = $(sel);
+      if (b) b.disabled = !on;
+    }
+  };
+
   const send = async (file) => {
     if (!file) return;
     if (uploadRunning) { toast('An upload is already running.', 'err'); return; }
+    trNav(false);
     try {
       renderStaged(await uploadArchive(file, stage));
     } catch (e) {
       stage.innerHTML = html`<div class="alert alert-danger">${e.message}</div>`;
     }
+    // The chooser (or the error) is interactive again either way; only the in-flight
+    // stretches hold the nav.
+    trNav(true);
   };
 
   $('#trPick').onchange = (e) => send(e.target.files[0]);

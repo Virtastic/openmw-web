@@ -140,11 +140,24 @@ test('the optional parts of the download are the operator to choose', () => {
   // found, which would have applied that silently.
   const fn = /function wireTamriel\(\)[\s\S]*?\n\}/.exec(app)!;
   assert.ok(fn[0].includes('data-trcand="${i}"'), 'no per-part checkbox');
-  // Ticked by default: the first part, and a single-part archive whole.
-  assert.ok(fn[0].includes("staged.candidates.length === 1 || i === 0 ? 'checked' : ''"));
+  // EVERYTHING ticked by default — Tamriel Data's second part is just normal maps, and an
+  // unticked box there read as a warning — except a part named as a REMOVER, because the
+  // landmass ships "02 Firemoth Remover" and auto-installing a mod that deletes a vanilla
+  // quest island is the one default worse than confusion.
+  assert.ok(fn[0].includes("/remover/i.test(c.path) ? '' : 'checked'"));
   // And the install must read the ticks rather than the whole list.
   assert.ok(fn[0].includes('.filter((c, i) => stage.querySelector(`[data-trcand="${i}"]`).checked)'));
   assert.ok(fn[0].includes("if (!picked.length) { toast('Tick at least one part to install.', 'err'); return; }"));
+});
+
+test('Back and Skip are held while an upload or install is in flight', () => {
+  // Tamriel Data is minutes of spinner, and "Skip for now" sat there looking like the way
+  // out. The install would finish server-side either way; the operator who clicked Skip has
+  // just been taught, wrongly, that it did not.
+  const fn = /function wireTamriel\(\)[\s\S]*?\n\}/.exec(app)!;
+  assert.ok(fn[0].includes('const trNav = (on) =>'), 'no nav hold');
+  assert.ok(fn[0].split('trNav(false);').length - 1 === 2, 'both the upload and the install must hold it');
+  assert.ok(fn[0].includes("['#wzNext', '#wzBack']"), 'both buttons, not just Skip');
 });
 
 test('the missing assets half is caught by the master list, not by a name', () => {
