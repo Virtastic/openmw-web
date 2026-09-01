@@ -53,9 +53,10 @@ function buildZip(files: { name: string; data: string }[]): Buffer {
 const HASH_A = 'aaaaaaaaaaaa';
 const HASH_B = 'bbbbbbbbbbbb';
 
-/** The smallest thing installEngineZip accepts as a client bundle. */
+/** The smallest thing installEngineZip accepts as a client bundle. Like the real one, the
+ *  index references its engine dir - that reference is what the keep-set reads. */
 const bundle = (hash: string, marker: string): { name: string; data: string }[] => [
-  { name: 'index.html', data: `<html>${marker}</html>` },
+  { name: 'index.html', data: `<html><script src="e/${hash}/openmw.js"></script>${marker}</html>` },
   { name: `e/${hash}/openmw.wasm`, data: `wasm-${marker}` },
   { name: `e/${hash}/openmw.js`, data: `js-${marker}` },
   { name: 'server.py', data: marker },
@@ -95,7 +96,7 @@ test('a good zip installs, index.html included, and records the tag', async () =
   const zip = writeZip(tmp(), bundle(HASH_A, 'new'));
   const r = await installEngineZip(zip, clientDir, 'v9.9.9', () => {});
   assert.deepEqual(r, { ok: true });
-  assert.equal(readFileSync(join(clientDir, 'index.html'), 'utf8'), '<html>new</html>');
+  assert.ok(readFileSync(join(clientDir, 'index.html'), 'utf8').endsWith('new</html>'));
   assert.equal(readFileSync(join(clientDir, 'e', HASH_A, 'openmw.wasm'), 'utf8'), 'wasm-new');
   assert.equal(readFileSync(join(clientDir, 'server.py'), 'utf8'), 'new');
   assert.equal(engineStatus(clientDir).tag, 'v9.9.9');
@@ -111,11 +112,24 @@ test('updating keeps the engine a live page is using, prunes older orphans', asy
 
   const r = await installEngineZip(writeZip(tmp(), bundle(HASH_B, 'new')), clientDir, 'v2.0.0', () => {});
   assert.deepEqual(r, { ok: true });
-  // A page opened before the update still loads engine A; the pre-update orphan does not.
+  // A page opened before the update still loads engine A (the outgoing index referenced
+  // it); the orphan no index ever pointed at is pruned.
   const engines = readdirSync(join(clientDir, 'e')).sort();
-  assert.deepEqual(engines, [HASH_A, HASH_B, 'cccccccccccc']);
-  assert.equal(readFileSync(join(clientDir, 'index.html'), 'utf8'), '<html>new</html>');
+  assert.deepEqual(engines, [HASH_A, HASH_B]);
+  assert.ok(readFileSync(join(clientDir, 'index.html'), 'utf8').endsWith('new</html>'));
   assert.equal(engineStatus(clientDir).tag, 'v2.0.0');
+});
+
+test('an extra engine dir shipped by the new release is installed and kept', async () => {
+  // A release may carry an e/ dir without openmw.wasm (a variant, a shared asset dir).
+  // The wasm-bearing dirs gate the install; the others must still survive the prune.
+  const clientDir = tmp();
+  await installEngineZip(writeZip(tmp(), bundle(HASH_A, 'old')), clientDir, 'v1.0.0', () => {});
+  const files = bundle(HASH_B, 'new');
+  files.push({ name: 'e/dddddddddddd/shaders.bin', data: 'variant' });
+  const r = await installEngineZip(writeZip(tmp(), files), clientDir, 'v2.0.0', () => {});
+  assert.deepEqual(r, { ok: true });
+  assert.deepEqual(readdirSync(join(clientDir, 'e')).sort(), [HASH_A, HASH_B, 'dddddddddddd']);
 });
 
 test('a zip that is not a client bundle changes nothing at all', async () => {

@@ -136,11 +136,18 @@ export async function installEngineZip(
       return { ok: false, error: 'that release did not look like a client bundle; nothing was changed' };
     }
 
-    // Keep-set BEFORE the swap: whatever engine dirs exist now survive this update, so the
-    // page a player already has open keeps working. Dirs orphaned by EARLIER updates go.
+    // Keep-set: every engine dir the NEW bundle ships (all of e/*, not just the wasm-bearing
+    // ones the sanity gate counted), plus whatever the OUTGOING index.html references - that
+    // is the engine a page someone already has open is still lazy-loading from. Everything
+    // else in live e/ is an orphan from an older update and gets pruned after the swap.
+    // (Seeding from readdir(liveE) instead would keep everything on disk forever: the set
+    // difference against itself is empty, and no engine would ever be deleted.)
     const liveE = join(clientDir, 'e');
-    const keep = new Set(existsSync(liveE) ? readdirSync(liveE) : []);
-    for (const h of hashes) keep.add(h);
+    const keep = new Set(readdirSync(eDir));
+    try {
+      const oldIndex = readFileSync(join(clientDir, 'index.html'), 'utf8');
+      for (const m of oldIndex.matchAll(/\be\/([0-9a-f]{12})\//g)) keep.add(m[1]!);
+    } catch { /* fresh install: nothing is being served, nothing extra to keep */ }
 
     // The swap: per-file renames (same volume, atomic-over-existing), index.html dead last.
     progress(92, 'installing');
@@ -159,9 +166,21 @@ export async function installEngineZip(
       try {
         renameSync(m.from, m.to);
       } catch {
-        // A host-side process holding the file (Windows bind mounts): clear and retry once.
-        await rm(m.to, { force: true });
-        renameSync(m.from, m.to);
+        // A host-side process holding the target (Windows bind mounts). Never delete the
+        // live file before its replacement is in place - on Windows a delete of an open
+        // file "succeeds" as a pending delete while a rename TO that name keeps failing,
+        // which for index.html would take the site down. Move the held file ASIDE instead
+        // (allowed while open), so a failure at any point leaves it restorable.
+        const aside = `${m.to}.stale`;
+        let movedAside = false;
+        try { renameSync(m.to, aside); movedAside = true; } catch { await rm(m.to, { force: true }); }
+        try {
+          renameSync(m.from, m.to);
+        } catch (e2) {
+          if (movedAside) { try { renameSync(aside, m.to); } catch { /* leave .stale */ } }
+          throw e2;
+        }
+        if (movedAside) await rm(aside, { force: true });
       }
     }
 
@@ -200,9 +219,14 @@ async function updateEngine(
 
   let sums = '';
   try {
-    const r = await fetch(rel.sumsUrl, { headers: { 'user-agent': 'openmw-web-dashboard' } });
-    if (!r.ok) return { ok: false, error: `checksums download failed (${r.status})` };
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 30_000);
+    const r = await fetch(rel.sumsUrl, {
+      headers: { 'user-agent': 'openmw-web-dashboard' }, signal: ctl.signal,
+    });
+    if (!r.ok) { clearTimeout(timer); return { ok: false, error: `checksums download failed (${r.status})` }; }
     sums = await r.text();
+    clearTimeout(timer);
   } catch { return { ok: false, error: 'checksums download failed' }; }
   const want = shaFor(sums, `openmw-web-${rel.tag}.zip`);
   if (!want) return { ok: false, error: 'the release checksums do not list its own bundle' };
@@ -210,14 +234,24 @@ async function updateEngine(
   // Into the existing mod staging dir, whose TTL sweep already cleans up crashed downloads.
   const zipPath = join(deps.dataDir, 'mod-staging', `engine-${randomBytes(8).toString('hex')}.zip`);
   try {
-    const r = await fetch(rel.zipUrl, { headers: { 'user-agent': 'openmw-web-dashboard' } });
+    const ctl = new AbortController();
+    const r = await fetch(rel.zipUrl, {
+      headers: { 'user-agent': 'openmw-web-dashboard' }, signal: ctl.signal,
+    });
     if (!r.ok || !r.body) return { ok: false, error: `download failed (${r.status})` };
     const total = Number(r.headers.get('content-length')) || 0;
     // streamToFile reports nothing mid-stream; watching the file grow costs nothing and
-    // keeps the shared helper untouched.
+    // keeps the shared helper untouched. The same watcher is the stall watchdog: a slow
+    // link is fine (no total deadline - 350MB takes what it takes), but a connection that
+    // stops delivering bytes for two minutes gets aborted, because a hung download would
+    // otherwise pin the single-flight lock until the server restarts.
+    let lastBytes = -1;
+    let lastGrowth = Date.now();
     const watcher = setInterval(() => {
       try {
         const b = statSync(zipPath).size;
+        if (b !== lastBytes) { lastBytes = b; lastGrowth = Date.now(); }
+        else if (Date.now() - lastGrowth > 120_000) { ctl.abort(); return; }
         progress(total ? Math.min(59, 2 + Math.round((57 * b) / total)) : 20,
           `downloading ${rel.tag} (${Math.round(b / 1048576)} MB)`);
       } catch { /* not created yet */ }

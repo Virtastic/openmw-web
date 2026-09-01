@@ -70,17 +70,25 @@ async function refreshState() {
 
 // Whether a newer release exists, for the nav badge and the Overview banner. Checked once
 // per browser session, owners only: checking is automatic, applying never is, and asking
-// GitHub on every page load would be noise for everyone involved.
-let updatesBehind = false;
+// GitHub on every page load would be noise for everyone involved. The RESULT is cached in
+// sessionStorage beside the once-per-session flag, or a reload would clear the badge while
+// the flag still suppressed the re-check.
+let updatesBehind = (() => { try { return sessionStorage.getItem('vtUpdBehind') === '1'; } catch { return false; } })();
+function setUpdatesBehind(v) {
+  updatesBehind = v;
+  try { sessionStorage.setItem('vtUpdBehind', v ? '1' : '0'); } catch { /* private mode */ }
+  paintChrome();
+}
 function maybeCheckUpdates() {
   if (!state.authed || state.role !== 'owner' || state.setupCompleted !== true) return;
-  if (sessionStorage.getItem('vtUpdChecked')) return;
-  sessionStorage.setItem('vtUpdChecked', '1');
+  try {
+    if (sessionStorage.getItem('vtUpdChecked')) return;
+    sessionStorage.setItem('vtUpdChecked', '1');
+  } catch { return; }
   api('/updates').then((r) => {
     if (!r?.ok) return;
     const engineBehind = r.engine?.writable && r.engine.tag !== `v${r.latest}`;
-    updatesBehind = !!r.behind || !!engineBehind;
-    if (updatesBehind) paintChrome();
+    setUpdatesBehind(!!r.behind || !!engineBehind);
   }).catch(() => { /* offline is fine; the Updates page can always check by hand */ });
 }
 
@@ -3923,41 +3931,51 @@ async function pageUpdates() {
         <p><strong>${latestTag} is out</strong> (you run v${r.current}). ${raw(changed)}</p>
         <button class="btn btn-primary" id="updSrvGo">Update to ${latestTag}</button>`;
       $('#updSrvGo').onclick = async () => {
+        const btn = $('#updSrvGo');
+        btn.disabled = true; // a double-click must not stack two confirms on one modal
         const yes = await confirmAction({
           title: `Update the server to ${latestTag}?`,
+          // No links in this body: navigating under an open modal strands it. The Backup
+          // page is linked right below the cards instead.
           body: 'The server rebuilds itself and restarts, which signs everyone out for a '
             + 'minute or two. Your data is untouched: accounts, saves, settings, game files '
-            + 'and mods all stay exactly as they are. If you want a safety copy anyway, '
-            + 'take a <a href="#backup">backup</a> first.',
+            + 'and mods all stay exactly as they are. If you want a safety copy anyway, do '
+            + 'that from the Backup page first.',
           danger: 'Update',
         });
-        if (!yes) return;
+        if (!yes) { btn.disabled = false; return; }
         try {
           const res = await api('/update/server', { method: 'POST' });
-          if (!res.ok && !res.busy) { toast(res.error || 'Could not request the update.', 'danger'); return; }
+          if (!res.ok) { toast(res.error || 'Could not request the update.', 'danger'); btn.disabled = false; return; }
         } catch (e) {
           // 409 means an update is already requested: watching it is the right response.
-          if (e.status !== 409) { toast(e.message, 'danger'); return; }
+          if (e.status !== 409) { toast(e.message, 'danger'); btn.disabled = false; return; }
         }
-        watchServerUpdate(srv);
+        watchServerUpdate(srv, st?.status?.startedAt ?? null);
       };
       // A request already pending (another tab, another owner): watch it instead of
       // offering a button that would answer 409.
-      if (st.requested) watchServerUpdate(srv);
+      if (st.requested) watchServerUpdate(srv, st.status?.startedAt ?? null);
     }
   }
 
   // Follow the updater's status file until it restarts us or fails. The status file
-  // survives from PREVIOUS runs, so frames older than this watch (minus generous clock
-  // slack) are ignored rather than replayed.
-  function watchServerUpdate(el) {
-    const since = Date.now() - 120000;
+  // survives from PREVIOUS runs, so a run is identified by its startedAt: only frames whose
+  // startedAt differs from the baseline captured before the request count. That also keeps
+  // browser and server clocks out of ever being compared - a skewed browser clock must not
+  // replay an old failure or declare a working updater missing.
+  function watchServerUpdate(el, baseline) {
     const started = Date.now();
+    let lastUpdated = null;
+    let stalePolls = 0;
     installPhase(el, 'Update requested', 'waiting for the updater to pick it up (up to 30 seconds)');
     const timer = setInterval(async () => {
+      // The operator left the page: this watch has nowhere to paint and must not keep
+      // polling (or seize the view with waitForRestart) from the shadows.
+      if (!el.isConnected) { clearInterval(timer); return; }
       let st;
       try { st = await api('/update/status'); } catch { return; }
-      const cur = st.status && Date.parse(st.status.updatedAt || 0) > since ? st.status : null;
+      const cur = st.status && st.status.startedAt !== baseline ? st.status : null;
       if (!cur) {
         if (Date.now() - started > 90000 && !st.requested) {
           clearInterval(timer);
@@ -3976,12 +3994,16 @@ async function pageUpdates() {
         waitForRestart();
         return;
       }
-      if (Date.parse(cur.updatedAt || 0) < Date.now() - 600000) {
-        clearInterval(timer);
-        installFail(el, 'The updater seems stuck (no progress for ten minutes). Check its '
-          + 'log: docker logs openmw-web-updater. The server is still running.');
-        return;
-      }
+      // Stuck = the updater's own updatedAt stopped changing (it refreshes every 20s while
+      // a step runs), measured in polls rather than wall-clock arithmetic.
+      if (cur.updatedAt === lastUpdated) {
+        if (++stalePolls > 300) {
+          clearInterval(timer);
+          installFail(el, 'The updater seems stuck (no progress for ten minutes). Check its '
+            + 'log: docker logs openmw-web-updater. The server is still running.');
+          return;
+        }
+      } else { lastUpdated = cur.updatedAt; stalePolls = 0; }
       const mins = Math.round((Date.now() - started) / 60000);
       const label = cur.phase === 'building'
         ? `Building ${cur.tag || ''} (a few minutes${mins ? `; ${mins} so far` : ''})`
@@ -4021,6 +4043,8 @@ async function pageUpdates() {
       <button class="btn btn-primary" id="updEngGo">
         ${e.present ? `Update the game client to ${latestTag}` : `Install the game client (${latestTag})`}</button>`;
     $('#updEngGo').onclick = async () => {
+      const btn = $('#updEngGo');
+      btn.disabled = true; // a double-click must not stack two confirms on one modal
       const yes = await confirmAction({
         title: `Update the game client to ${latestTag}?`,
         body: 'The server downloads the release (about 350 MB), verifies it against the '
@@ -4029,9 +4053,9 @@ async function pageUpdates() {
           + 'version on their next load. Saves, settings and mods are untouched.',
         danger: 'Update',
       });
-      if (!yes) return;
+      if (!yes) { btn.disabled = false; return; }
       let res;
-      try { res = await api('/update/engine', { method: 'POST' }); } catch (err) { toast(err.message, 'danger'); return; }
+      try { res = await api('/update/engine', { method: 'POST' }); } catch (err) { toast(err.message, 'danger'); btn.disabled = false; return; }
       if (!res.ok) { installFail(eng, res.error || 'Could not start the update.'); return; }
       watchEngineUpdate(eng, res.token);
     };
@@ -4042,12 +4066,17 @@ async function pageUpdates() {
   function watchEngineUpdate(el, tk) {
     installPhase(el, 'Updating the game client', 'starting');
     const timer = setInterval(async () => {
+      // Same shadow-poll rule as the server watch: gone from the page, stop polling.
+      if (!el.isConnected) { clearInterval(timer); return; }
       let p;
       try { p = await api(`/mods/install/progress?token=${encodeURIComponent(tk)}`); } catch { return; }
       if (!p || typeof p.pct !== 'number') return;
       const note = String(p.note || '');
       if (note.startsWith('done:')) {
         clearInterval(timer);
+        // The half this card tracks is now current; the badge only stays if the SERVER
+        // half is still behind.
+        if (!r.behind) setUpdatesBehind(false);
         el.innerHTML = html`<div class="text-success">
           <i class="bi bi-check-circle me-1"></i>The game client is now
           <span class="vt-mono">${note.slice(5)}</span>. Players get it on their next page

@@ -68,7 +68,11 @@ Write-Host "Docker is ready ($($DC -join ' '))."
 
 function Invoke-Compose {
   param([Parameter(ValueFromRemainingArguments = $true)]$Args)
-  & $DC[0] @($DC[1..($DC.Count - 1)] + $Args)
+  # A one-element $DC (standalone docker-compose) must not slice: in PS 5.1, $DC[1..0] is a
+  # DESCENDING range that yields element 0 again, turning every call into
+  # "docker-compose docker-compose ...".
+  if ($DC.Count -gt 1) { & $DC[0] @($DC[1..($DC.Count - 1)] + $Args) }
+  else { & $DC[0] @Args }
 }
 
 # ---------------------------------------------------------------------------------------
@@ -258,7 +262,7 @@ if (-not $ready) {
 
 # ---------------------------------------------------------------------------------------
 $domain = ''
-if (Test-Path '.env') {
+if (Test-Path 'data/config.dashboard.toml') {
   $line = Select-String -Path 'data/config.dashboard.toml' -Pattern '^\s*domain\s*=\s*"(.*)"' -ErrorAction SilentlyContinue
   if ($line) { $domain = $line.Matches[0].Groups[1].Value.Trim() }
 }

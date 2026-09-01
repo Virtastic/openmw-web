@@ -28,8 +28,11 @@ LOCK="$DATA/update-lock"
 
 now_iso() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
-# One line, JSON-safe: backslashes and quotes escaped, newlines flattened.
-esc() { printf '%s' "$1" | tr -d '\r' | tr '\n' ' ' | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+# One line, JSON-safe: every control character flattened to a space (JSON forbids them raw,
+# and build output is full of tabs and ANSI escapes - one of those in an error field would
+# make the whole status file unparseable, hiding the very failure it reports), then
+# backslashes and quotes escaped.
+esc() { printf '%s' "$1" | tr '[:cntrl:]' ' ' | sed 's/\\/\\\\/g; s/"/\\"/g'; }
 
 # All status files are written temp+mv so the server never reads a half-written JSON.
 write_json() {
@@ -42,21 +45,35 @@ heartbeat() { # $1 = true|false, $2 = reason when not ready
 
 START_AT=''
 TAG=''
+PHASE=''
 status() { # $1 = phase, $2 = error (optional)
+  PHASE="$1"
   write_json "$STATUS" "{\"phase\":\"$1\",\"tag\":\"$(esc "$TAG")\",\"startedAt\":\"$START_AT\",\"updatedAt\":\"$(now_iso)\",\"error\":\"$(esc "${2:-}")\"}"
 }
 
 # Run a step, streaming its output to our log; on failure, mark the status failed with the
 # tail of that output so the dashboard can show WHY without anyone needing a shell.
+#
+# The step runs in the background so this loop can keep the heartbeat and the status file
+# FRESH while it works: a compose build can run well past ten minutes (the simpeer engine
+# compile is ~13), and a status whose updatedAt froze at the phase transition reads as a
+# dead updater and a stuck build to the dashboard, both wrongly.
 OUT=/tmp/updater-step.out
-run_step() { # $1 = phase for the failure message, then the command
-  phase="$1"; shift
-  if "$@" > "$OUT" 2>&1; then
+run_step() { # $1 = label for the failure message, then the command
+  label="$1"; shift
+  "$@" > "$OUT" 2>&1 &
+  step_pid=$!
+  while kill -0 "$step_pid" 2>/dev/null; do
+    heartbeat true
+    status "$PHASE"
+    sleep 20
+  done
+  if wait "$step_pid"; then
     cat "$OUT"
     return 0
   fi
   cat "$OUT"
-  status failed "$phase failed: $(tail -c 1500 "$OUT")"
+  status failed "$label failed: $(tail -c 1500 "$OUT")"
   return 1
 }
 
@@ -97,7 +114,7 @@ do_update() {
   status done
 }
 
-cd "$REPO" || { heartbeat false "cannot enter /repo"; sleep 30; exec "$0"; }
+cd "$REPO" || { heartbeat false "cannot enter /repo"; sleep 30; exec sh "$0"; }
 
 while :; do
   # Heartbeat first, every loop, unconditionally: the dashboard's "is the updater alive"

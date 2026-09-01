@@ -141,8 +141,11 @@ fi
 # goes stale when the folder is moved.
 REPO_DIR_NOW=$(pwd)
 if grep -q '^REPO_DIR=' .env 2>/dev/null; then
-  # POSIX sed -i differs between BSD and GNU; a temp file is the portable spelling.
-  sed "s|^REPO_DIR=.*|REPO_DIR=$REPO_DIR_NOW|" .env > .env.tmp && mv .env.tmp .env
+  # Drop-and-append rather than sed: a path is data, and sed would reinterpret | and &
+  # inside it as replacement syntax.
+  grep -v '^REPO_DIR=' .env > .env.tmp || true
+  printf 'REPO_DIR=%s\n' "$REPO_DIR_NOW" >> .env.tmp
+  mv .env.tmp .env
 else
   printf '
 # The absolute path of this checkout, for the updater container. Managed by setup.sh.
