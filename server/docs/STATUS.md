@@ -2,6 +2,38 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web -->
 # openmw-web multiplayer — state of play
 
+## 2026-09-02 — the mp912026 overhaul: one peer, input authority, Solo/Party (proto 2)
+
+Branch `multiplayer912026`, local commits only. Server authoritative for movement via a
+single sim peer per world holding EVERY occupied cell (position anchors, not cell centres —
+the loaded-but-frozen ring is fixed at `nearestSimDistanceSqr`). Players send raw input
+(0x0102, ~30 Hz); the peer's input-driven AVATARS (`avatar.lua`) produce the authoritative
+poses (0x0105), fanned out on the ordinary move channel with the owner reconciling against
+0x0103 via capped `mp.correctSelf` + hard snap. The peer also reports avatar BARS
+(`AvatarStatsBatch` → owner `MP_SelfStats`). Every peer answer only rules a player actively
+driving the input tier — per-player degraded mode, no switchover signal, old clients and
+bots keep client authority. World model collapsed to Solo/Party (friends are the only door,
+cap 32, no public world, no party concept); Save/Load removed in every MP session; proto 2
++ `omw-mp.2` refuse old clients with `BAD_PROTO`.
+
+**Verified in play** (wasm-build/mp-harness.mjs under Dockerfile.harness-peer, full branch
+on both sides): s01 login, s40 NPC sim (one peer, cell owner is neither client), s51 NPC
+combat (dies once for everyone), s59 spell-forward (both players see the kill). s42 passed
+under the input gate; on the wasm64 client the measurement needs a quieter box. Server
+suite 993/1001 (2 known env failures), Lua suite 60/60.
+
+**Hard-won, do not relearn:** the headless peer SIGSEGVs by infinite recursion in
+`MyGUI::LogManager::getInstance()` if ANY MyGUI singleton is touched (NullWindowManager
+never initialises MyGUI) — every reachable caller is guarded (LuaUi elements, input modal
+check, message-box formatting). `avatar.lua` must be registered in `mp.omwscripts`. An
+identical appearance relay must NOT rebuild a puppet — on the peer that tore avatars down
+every ~8 s. The avatar deliberately never swings (use bit unmapped): melee stays on the
+attacker-detects relay applied once on the peer, or every swing lands twice.
+
+**Deferred with intent:** attacker-side melee/cast migration (needs the discrete-intent
+tier), inventory request→result (needs a vetoing engine hook; `OnItemTransferred` is
+notify-only), progression reporting peer→server, E1 measurement, E4 deep trim.
+
 Branch `multiplayer`, committed locally, **never pushed**. Written to be read cold.
 
 ## What exists
