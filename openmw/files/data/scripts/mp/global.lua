@@ -300,6 +300,11 @@ local function parseExteriorKey(key)
 end
 
 local function visibleFrom(ownKey, key)
+    -- ON THE SIM PEER EVERY PLAYER IS "VISIBLE": one avatar per connected player, wherever
+    -- they stand — the anchors keep every occupied cell loaded, and gating avatars on the
+    -- peer's own parked cell would leave players outside it unembodied (Phase 3). Clients
+    -- keep the neighbourhood rule: a puppet two cells away renders nothing.
+    if mp.isSystem and mp.isSystem() then return key ~= nil end
     if not ownKey or not key then return false end
     if ownKey == key then return true end
     local ax, ay = parseExteriorKey(ownKey)
@@ -548,7 +553,15 @@ end
 
 local function spawnPuppet(id, pose)
     if puppets[id] then return end
-    local cellArg = destCellArg()
+    -- On the peer the body goes to the PLAYER'S cell (remoteCell relay); destCellArg is the
+    -- LOCAL player's cell, which on a one-peer-many-anchors world is just where the peer
+    -- happens to be parked.
+    local cellArg
+    if mp.isSystem and mp.isSystem() and remoteCell[id] then
+        cellArg = inviteCellArg(remoteCell[id])
+    else
+        cellArg = destCellArg()
+    end
     if not cellArg then return end
     -- %d, not tostring(): ids arrive through the JSON decoder as Lua floats, so tostring(2.0)
     -- is "2.0" and the fallback name rendered in the crosshair tooltip as "player 2.0".
@@ -1413,7 +1426,11 @@ local eventHandlers = {
         if visibleFrom(ownCellKeyCache, data.cellKey) then
             local p = puppets[data.id]
             if p and p.obj:isValid() then
-                tryTeleport(p.obj, destCellArg(), util.vector3(data.x, data.y, data.z))
+                -- The destination is the MOVER'S cell on the peer (it holds every occupied
+                -- cell); on a client it is our own cell, as before — the two agree whenever
+                -- the mover is genuinely visible.
+                local dest = (mp.isSystem and mp.isSystem()) and inviteCellArg(data.cellKey) or destCellArg()
+                tryTeleport(p.obj, dest, util.vector3(data.x, data.y, data.z))
             else
                 spawnPuppet(data.id, data)
             end
