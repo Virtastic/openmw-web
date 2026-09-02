@@ -1362,8 +1362,13 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     for (const k of simPeers.keys()) if (k !== WORLD_KEY) simPeers.markIdle(k);
     simPeers.sweep();
 
+    // The supervisor's own spawn is preferred, but ANY connected system peer serves: one
+    // world has one peer, and a peer the supervisor did not spawn (the harness pre-starts
+    // its own so the boots overlap; an operator may too) authenticated with the same peer
+    // password. Input forwarding already resolves the peer this way (connection.ts).
     const peerPlayer = roster.inWorld().find(
-      (p) => p.system === true && simPeers.keyOfAccount(p.name) === WORLD_KEY);
+      (p) => p.system === true && simPeers.keyOfAccount(p.name) === WORLD_KEY)
+      ?? roster.inWorld().find((p) => p.system === true);
     if (!peerPlayer) {
       // The peer being down is now a GENUINE anomaly, not a capacity warning: there is no
       // maxPeers arithmetic to blame, just a process that is starting, crashed, or backing
