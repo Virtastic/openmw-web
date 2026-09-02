@@ -55,14 +55,18 @@ export default async function run(ctx) {
   // not arrive (diffed), so do not wait on the marker yet.
   await ctx.sleep(3_000);
 
-  // Up 600 units. The avatar follows the announcement and falls on the peer.
-  await a.eval(`Module.__omwMPCmd=${JSON.stringify('tpz:600')}`);
-  ctx.log('teleported up 600 units; waiting for the peer-reported bars to drop');
+  // Up 3000 units -- 600 was under Morrowind's safe-fall height at any acrobatics, so the
+  // avatar landed unharmed and the wait read like a wiring failure. The avatar follows the
+  // announcement and falls on the peer.
+  await a.eval(`Module.__omwMPCmd=${JSON.stringify('tpz:3000')}`);
+  ctx.log('teleported up 3000 units; waiting for the peer-reported bars to drop');
 
   await a.waitFor(
     `(function(){var s=(window.__omwMP||{}).selfStats; if(!s) return false;`
     + ` var m=/^(\\d+)\\/(\\d+)$/.exec(s); return !!m && Number(m[1]) < Number(m[2]); })()`,
     STEP_TIMEOUT, 'MP_SelfStats with current < base (peer-simulated fall damage)');
+  // On timeout the mirrors say which half failed (never arrived vs never dropped).
   const marker = await a.eval('(window.__omwMP||{}).selfStats');
+  ctx.log('  selfDivergence=' + String(await a.eval('(window.__omwMP||{}).selfDivergence')));
   ctx.log(`ok: peer-reported bars reached the owner (selfStats=${marker})`);
 }
