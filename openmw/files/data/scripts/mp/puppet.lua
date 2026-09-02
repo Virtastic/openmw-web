@@ -166,6 +166,7 @@ local function onHitIntercept(attack)
         weaponId = weapon and weapon.recordId or nil,
         ammoId = attack.ammo,
         hitPos = attack.hitPos and { x = attack.hitPos.x, y = attack.hitPos.y, z = attack.hitPos.z } or nil,
+        mpTest = attack.mpTest == true, -- Phase 4C: test-hook hits always ride the relay
     })
     return false -- cancel local damage; the owner applies it
 end

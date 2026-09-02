@@ -40,6 +40,7 @@ local function stop()
     self.controls.sideMovement = 0
     self.controls.yawChange = 0
     self.controls.jump = false
+    self.controls.use = 0
 end
 
 return {
@@ -62,11 +63,11 @@ return {
             local jump = bit(input.flags, 2)
             self.controls.jump = jump and not prevJump
             prevJump = jump
-            -- ponytail: the avatar NEVER swings (use bit deliberately not mapped). Melee
-            -- rides the attacker-detects relay, applied ONCE on this peer as the victim's
-            -- owner (the s51-verified path); mapping use here would land every real swing
-            -- twice -- once natively, once via the relay. Full attacker-side migration
-            -- (peer-computed hit detection) comes with the cast/attack intent tier.
+            -- Phase 4C: THE AVATAR SWINGS. The owner's use bit drives the attack control, and
+            -- this engine computes the hit natively against the actors it simulates. Safe
+            -- now because combat.lua no longer forwards a real swing while the peer holds
+            -- the cell -- so a blow lands exactly once, here.
+            self.controls.use = bit(input.flags, 3) and 1 or 0
         end,
     },
     eventHandlers = {

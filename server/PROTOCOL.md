@@ -411,9 +411,18 @@ are ignored while peer bar reports are fresh (Phase 4A one-writer rule). An inpu
 victim keeps the classic victim-client delivery. Raw pre-mitigation damage travels; armor,
 difficulty, resistances and sounds are applied exactly once, on the victim's owner, by the
 engine's own untouched Lua combat pipeline (`files/data-mw/scripts/omw/combat/local.lua`).
-The peer's avatars deliberately never SWING (the input `use` bit is unmapped): attacker-side
-hit detection stays on the client until the discrete-intent tier lands, or every real swing
-would land twice.
+**Phase 4C — melee is COMPUTED on the peer.** The owner's `use` bit rides the input tier
+(0x0102 flags bit 3); the peer routes it to the avatar (`avatar.lua` maps it onto
+`controls.use`), the peer's engine swings, and the hit is resolved natively against the actors
+it holds — armor, difficulty, hit chance and all, with no client assertion in the loop. While
+a peer simulates the target's cell, a client's REAL swing is cancel-only (puppet.lua still
+returns false to stop local ghost damage; combat.lua no longer forwards it), so a blow lands
+exactly once. The `CombatHit` relay survives for exactly two callers: **degraded mode** (no
+holder for the cell: forward as before — victim-applies for players, held/dropped for actors)
+and the **test hooks** (`hitn`/`hitp` mark the synthetic Hit `mpTest`, which always forwards,
+keeping s51/s58 as regression guards on the relay itself). Magic still forwards
+(`CombatSpellHit`) — the avatar does not cast. The authoritative pose stream's flags bit 3
+reports "avatar attacking" back to the owner and to observers.
 
 | name | dir | body |
 |---|---|---|

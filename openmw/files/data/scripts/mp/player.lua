@@ -236,6 +236,8 @@ local inputSeq = 0
 local lastInputSend = 0
 local INPUT_EVERY = 1 / 30
 
+local forceUseUntil = 0 -- harness: attack:<ms> holds the use bit without a real keypress
+
 local function inputTick(now)
     if now - lastInputSend < INPUT_EVERY then return end
     lastInputSend = now
@@ -245,7 +247,7 @@ local function inputTick(now)
     if c.run then flags = flags + 1 end
     if c.sneak then flags = flags + 2 end
     if c.jump then flags = flags + 4 end
-    if c.use and c.use ~= 0 then flags = flags + 8 end
+    if (c.use and c.use ~= 0) or now < forceUseUntil then flags = flags + 8 end
     if mp.sendInput then
         mp.sendInput({
             seq = inputSeq,
@@ -274,6 +276,7 @@ local function onSelfState(e)
     local dx, dy, dz = e.x - pos.x, e.y - pos.y, e.z - pos.z
     local dist = math.sqrt(dx * dx + dy * dy + dz * dz)
     mp.testSet('selfDivergence', string.format('%.1f', dist))
+    mp.testSet('selfFlags', tostring(e.flags or 0)) -- bit 3 = the avatar is attacking (s67)
     if dist < 1 then return end
     if dist > SNAP_DIST then
         local now = core.getRealTime()
@@ -757,6 +760,9 @@ local function pollHarness()
         -- hop reconciliation's hard snap uses, so it exercises the true self-teleport path:
         -- the jump detector announces it, the avatar follows, and (for a positive dz) the
         -- avatar FALLS on the peer -- which is what s60-avatar-bars measures.
+        -- Harness: hold the attack (use) bit for <ms> so the peer's avatar swings (s67).
+        local atkMs = cmd:match('^attack:(%d+)$')
+        if atkMs then forceUseUntil = core.getRealTime() + tonumber(atkMs) / 1000 end
         local tdz = cmd:match('^tpz:(-?[%d.]+)$')
         if tdz then
             local pos = self.position

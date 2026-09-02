@@ -164,12 +164,15 @@ do
   local env = stubs.install({})
   local combat = dofile('./openmw/files/data/scripts/mp/combat.lua')
   local cell, epoch = '0,0', nil
+  local peerSimulates = false -- Phase 4C toggle: does a peer hold the victim's cell?
   combat.init({
     playerFn = function() return { id = 'me' } end,
     ownIdFn = function() return 1 end,
+    ownCellKeyFn = function() return cell end,
     puppetObjOf = function() return nil end,
     epochOf = function() return epoch end,
     isHolderOf = function() return false end,
+    hasHolder = function() return peerSimulates end,
     cellKeyOfObj = function() return cell end,
     isPvpEnabled = function() return true end,
   })
@@ -207,6 +210,25 @@ do
   combat.onPuppetHit({ victim = victim, damage = {}, successful = false })
   check('a MISS is forwarded as well as a hit', #env.calls.events > before)
   check('and is not silently promoted to a hit', lastHit().successful == false)
+
+  -- Phase 4C: when a peer SIMULATES the cell, a REAL swing is cancel-only (the avatar's own
+  -- swing computes it on the peer); a TEST-hook swing (mpTest) still rides the relay so the
+  -- relay machinery keeps its regression guards.
+  peerSimulates = true
+  local before4c = #env.calls.events
+  combat.onPuppetHit({ victim = victim, damage = { health = 5 }, strength = 1,
+    sourceType = 'Melee', successful = true })
+  check('a real swing is NOT forwarded while the peer simulates the cell',
+    #env.calls.events == before4c)
+  combat.onPuppetHit({ victim = victim, damage = { health = 5 }, strength = 1,
+    sourceType = 'Melee', successful = true, mpTest = true })
+  check('a test-hook swing still rides the relay while the peer simulates',
+    #env.calls.events == before4c + 1 and lastHit() ~= nil)
+  peerSimulates = false
+  combat.onPuppetHit({ victim = victim, damage = { health = 5 }, strength = 1,
+    sourceType = 'Melee', successful = true })
+  check('with nobody simulating (degraded), a real swing is forwarded as before',
+    #env.calls.events == before4c + 2)
 
   -- Genuinely unaddressable: no cell, nothing the server could route on.
   cell = nil

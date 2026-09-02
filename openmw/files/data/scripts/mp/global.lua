@@ -436,6 +436,7 @@ end
 -- that avatar — stamped onto the authoritative pose stream so the owner's client knows how
 -- much of its input the pose already contains (reconciliation hangs off it).
 local lastInputSeq = {}
+local avatarUsing = {} -- id -> the use bit of the newest routed input (mirrors "attacking")
 local avatarStreamAt = 0
 local AVATAR_STREAM_EVERY = 0.05 -- 20 Hz, matching the peer's own frame pacing
 
@@ -541,7 +542,10 @@ local function avatarStreamTick(now)
                     x = pos.x, y = pos.y, z = pos.z,
                     yaw = p.obj.rotation:getYaw(),
                     pitch = 0,
-                    flags = 0,
+                    -- bit 3: the avatar is attacking (its owner's use bit reached it). Rides
+                    -- the pose flags so the owner's state batch -- and every observer's move
+                    -- batch -- carries it; player.lua mirrors it as selfFlags for s67.
+                    flags = avatarUsing[id] and 8 or 0,
                     animVel = animVel,
                 }
             end)
@@ -646,6 +650,7 @@ local function despawnPuppet(id)
     puppets[id] = nil
     avatarStatsLast[id] = nil
     avatarStatsSentAt[id] = nil
+    avatarUsing[id] = nil
     -- Guarded, and deliberately AFTER the bookkeeping above: remove() throws when the
     -- object is already gone or otherwise not removable ("Can't remove 0 of 0 items"), and
     -- an engine handler that throws ABORTS — which took the rest of MP_PlayerLeaveWorld
@@ -1002,6 +1007,7 @@ local function start()
         end,
         epochOf = actors.epochOf,
         isHolderOf = actors.isHolderOf,
+        hasHolder = actors.hasHolder,
         cellKeyOfObj = actors.cellKeyOfObj,
         -- PvP is a server rule (SessionWelcome.flags.pvp); default OFF until told otherwise.
         isPvpEnabled = function() return net.flags and net.flags.pvp == true end,
@@ -1208,6 +1214,7 @@ local eventHandlers = {
         local p = puppets[data.id]
         if not p or not p.obj or not p.obj:isValid() then return end
         if data.seq then lastInputSeq[data.id] = data.seq end
+        avatarUsing[data.id] = math.floor((data.flags or 0) / 8) % 2 == 1
         p.obj:sendEvent('mpAvatarInput', data)
     end,
 
@@ -1719,6 +1726,11 @@ local eventHandlers = {
             successful = true,
             sourceType = 'Melee',
             attacker = playerScript(),
+            -- Phase 4C: a TEST hit is still forwarded over the relay even when the peer
+            -- simulates (real swings are not -- the avatar's own swing computes those on the
+            -- peer). Keeps s51/s58 as regression guards for the relay machinery, which stays
+            -- live for degraded mode and for magic.
+            mpTest = true,
         })
     end,
 

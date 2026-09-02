@@ -547,6 +547,13 @@ function actors.isHolderOf(cellKey)
     return cellKey ~= nil and held[cellKey] ~= nil
 end
 
+-- Phase 4C: does ANYONE simulate this cell right now (the peer, in the one-peer model)?
+-- Distinct from isHolderOf ("do I"). combat.lua asks this to decide whether a real melee
+-- hit is forwarded (nobody simulating: degraded relay) or left to the avatar's own swing.
+function actors.hasHolder(cellKey)
+    return cellKey ~= nil and (held[cellKey] ~= nil or holderOfCell[cellKey] ~= nil)
+end
+
 function actors.cellKeyOfObj(obj)
     return cellKeyOf(obj.cell)
 end

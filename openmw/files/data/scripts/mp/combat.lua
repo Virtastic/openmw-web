@@ -31,6 +31,19 @@ local lastHitTaken = nil -- diagnostic mirror for the scenarios
 -- puppet object itself (a GameObject serializes as its RefNum through the event, so we get a
 -- resolvable object back here).
 function combat.onPuppetHit(data)
+    -- Phase 4C: WHEN THE PEER SIMULATES, THE AVATAR'S OWN SWING COMPUTES MELEE. The owner's
+    -- use bit rides the input tier; the peer's engine swings the avatar and resolves the hit
+    -- against the actors it holds -- armor, difficulty, hit chance and all, with no client
+    -- assertion in the loop. So a REAL swing here is cancel-only: puppet.lua already
+    -- returned false to stop the local ghost damage, and forwarding it as well would land
+    -- the blow twice. The relay survives for two callers: degraded mode (nobody simulating
+    -- the cell: forward as before, victim-applies for players, held/dropped for actors) and
+    -- the test hooks (mpTest), which keep s51/s58 policing the relay machinery itself.
+    if not data.mpTest and deps.hasHolder then
+        local cellKey = data.victim and data.victim:isValid() and deps.cellKeyOfObj(data.victim) or nil
+        if not cellKey and deps.ownCellKeyFn then cellKey = deps.ownCellKeyFn() end
+        if deps.hasHolder(cellKey) then return end
+    end
     local target
     if data.playerId then
         -- Player victim. PvP off: cancel silently — the server drops these anyway, but
