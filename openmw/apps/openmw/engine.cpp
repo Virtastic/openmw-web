@@ -463,6 +463,12 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                 if (c->getStats())
                     c->getStats()->collectStats("rendering", true);
             stats->collectStats("engine", true); // ScopedProfile buckets (prefix + "_time_taken")
+            // E1: the per-manager resource cache report (cachestats.cpp: SceneManager,
+            // NifFileManager, BulletShapeManager, KeyframeManager, ImageManager ...) sits
+            // behind collectStats("resource"), which only the in-game stats overlay ever
+            // arms -- so a headless peer wrote a stats file with no resource lines at all.
+            // Arm it here too: the whole block is already gated on OPENMW_OSG_STATS_FILE.
+            stats->collectStats("resource", true);
             double cull = 0.0, draw = 0.0, v = 0.0;
             for (osg::Camera* c : cams)
             {
