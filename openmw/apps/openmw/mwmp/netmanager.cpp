@@ -163,7 +163,7 @@ namespace MWMP
         // PROTOCOL.md names the subprotocol "omw-mp/1", but '/' is not a valid RFC 6455
         // subprotocol token and browsers refuse to construct the WebSocket. The server
         // accepts "omw-mp.1" as the canonical wire form (SUBPROTOCOL in server/src).
-        if (!mSocket.open(url, "omw-mp.1"))
+        if (!mSocket.open(url, "omw-mp.2"))
             return false;
         mState = State::Connecting;
         mSeq = 0;

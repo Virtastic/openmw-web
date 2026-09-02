@@ -2,7 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { join as pathJoin } from 'node:path';
 // Copyright (C) 2025-2026 Virtastic - https://virtastic.app
 // SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
-// Test-side omw-mp/1 client: JSON session tier + binary event tier over a real ws socket.
+// Test-side omw-mp/2 client: JSON session tier + binary event tier over a real ws socket.
 
 import { WebSocket } from 'ws';
 import { mkdtempSync } from 'node:fs';
@@ -100,7 +100,7 @@ export class TestClient {
    *  capacity measurement, a scenario) has to be able to say so. */
   static connect(
     port: number,
-    subprotocol: string | null = 'omw-mp.1',
+    subprotocol: string | null = 'omw-mp.2',
     path = '/ws',
   ): Promise<TestClient> {
     return new Promise((resolve, reject) => {
@@ -165,7 +165,7 @@ export class TestClient {
     // false to model a protocol-only participant (a load bot that will never send an
     // ActorMoveBatch) — see bots/soak.ts --attach.
     this.sendJson({
-      t: 'SessionHello', proto: 1, engineHash, lserVersion: 0, manifest,
+      t: 'SessionHello', proto: 2, engineHash, lserVersion: 0, manifest,
       simulatesActors: this.simulatesActors,
       ...(this.system ? { system: true } : {}),
     });

@@ -8,12 +8,12 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import { log } from '../log';
 import { metrics } from '../metrics';
 
-// PROTOCOL.md says "omw-mp/1", but "/" is not an RFC 6455 token character: the browser
+// PROTOCOL.md says "omw-mp/2", but "/" is not an RFC 6455 token character: the browser
 // WebSocket constructor (and Node's undici/ws clients) throw SyntaxError before any I/O.
-// The shippable token is "omw-mp.1"; the raw header form "omw-mp/1" is still accepted
+// The shippable token is "omw-mp.2"; the raw header form "omw-mp/2" is still accepted
 // for non-WHATWG clients. Flagged for a PROTOCOL.md amendment.
-export const SUBPROTOCOL = 'omw-mp.1';
-export const SUBPROTOCOL_LEGACY = 'omw-mp/1';
+export const SUBPROTOCOL = 'omw-mp.2';
+export const SUBPROTOCOL_LEGACY = 'omw-mp/2';
 // Keepalive deadline, unchanged in effect: a socket that has not ponged for this long is
 // dead. Expressed as a deadline rather than a missed-pong count because the probe interval
 // below is now independent of it.

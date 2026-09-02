@@ -1,4 +1,4 @@
-# omw-mp.1 wire protocol
+# omw-mp.2 wire protocol
 
 Authoritative contract between the browser client (C++ `mwmp/` transport + `scripts/mp/` Lua)
 and the `openmw-mp` server. This file is the source of truth; both sides cite it in code
@@ -7,9 +7,9 @@ them. Current: **M8** (M0-M7 shipped).
 
 ## Transport (M0)
 
-- WebSocket, path `/ws`, subprotocol `omw-mp.1` (server rejects other subprotocols).
+- WebSocket, path `/ws`, subprotocol `omw-mp.2` (server rejects other subprotocols).
   The dot is deliberate: `/` is not a legal RFC 6455 subprotocol token character — WHATWG
-  WebSocket clients throw on it before any I/O. The protocol NAME in prose stays "omw-mp/1".
+  WebSocket clients throw on it before any I/O. The protocol NAME in prose stays "omw-mp/2".
 - **Text frames** carry the JSON control tier: one JSON object per frame, discriminated by
   `"t"` — used **only** for the `Session*` family (debuggable in DevTools).
 - **Binary frames** carry everything else: little-endian 6-byte header

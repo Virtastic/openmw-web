@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Protocol-level health check: connect, complete the omw-mp.1 hello, expect SessionHelloOk.
+// Protocol-level health check: connect, complete the omw-mp.2 hello, expect SessionHelloOk.
 // Zero dependencies (Node >= 22 global WebSocket + fetch) so it runs anywhere — including
 // inside the production image or a bare runner. Used by deploy-mp.yml as a health gate.
 //
@@ -59,17 +59,17 @@ if (/^https?:\/\//.test(target)) {
 
 let ws;
 try {
-  ws = new WebSocket(wsUrl, ['omw-mp.1']);
+  ws = new WebSocket(wsUrl, ['omw-mp.2']);
 } catch (e) {
   fail(`bad url: ${e.message}`);
 }
 
 ws.addEventListener('open', () => {
-  if (ws.protocol !== 'omw-mp.1') fail(`server accepted wrong subprotocol '${ws.protocol}'`);
+  if (ws.protocol !== 'omw-mp.2') fail(`server accepted wrong subprotocol '${ws.protocol}'`);
   // Empty manifest: with content policy "names" and an empty server this becomes the session's
   // canonical manifest; the bot disconnects immediately after, resetting it. Harmless. On a
   // tier-2 world it is refused BAD_CONTENT instead — see --allow-refusal above.
-  ws.send(JSON.stringify({ t: 'SessionHello', proto: 1, engineHash: '', lserVersion: 0, manifest: [] }));
+  ws.send(JSON.stringify({ t: 'SessionHello', proto: 2, engineHash: '', lserVersion: 0, manifest: [] }));
 });
 
 ws.addEventListener('message', (ev) => {

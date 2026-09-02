@@ -989,7 +989,12 @@ export class Connection implements Peer {
     // is ever eligible to hold authority for one.
     this.simulatesActors = msg.simulatesActors === true;
     this.isSystem = msg.system === true;
-    if (msg.proto !== 1) {
+    // proto 2 (the mp912026 overhaul): the input tier (0x0102/0x0103/0x0105) replaced
+    // client movement authority, the party/voice event family is gone, and Solo/Party is
+    // the whole world model. A proto-1 client would half-work and then desync confusingly;
+    // BAD_PROTO with the version number is the honest refusal (the engine-hash pin would
+    // also catch it, but with a "wrong engine build" message that misleads).
+    if (msg.proto !== 2) {
       this.disconnect('BAD_PROTO', `unsupported protocol version ${msg.proto}`);
       return;
     }

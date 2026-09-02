@@ -71,7 +71,7 @@ test('refuse mode does not lock the sim peer out of its own world', async (t) =>
 
   const peer = await TestClient.connect(server.port);
   peer.sendJson({
-    t: 'SessionHello', proto: 1, engineHash: '', lserVersion: 0, manifest: [],
+    t: 'SessionHello', proto: 2, engineHash: '', lserVersion: 0, manifest: [],
     system: true, simulatesActors: true,
   });
   const hello = await peer.waitJson('SessionHelloOk');
@@ -89,9 +89,26 @@ test('...but an ordinary client with no hash still is', async (t) => {
   t.after(() => server.close());
 
   const c = await TestClient.connect(server.port);
-  c.sendJson({ t: 'SessionHello', proto: 1, engineHash: '', lserVersion: 0, manifest: [] });
+  c.sendJson({ t: 'SessionHello', proto: 2, engineHash: '', lserVersion: 0, manifest: [] });
   const bye = await c.waitJson('SessionDisconnect');
   assert.equal((bye as { code?: string }).code, 'BAD_ENGINE');
+  c.close();
+});
+
+// The proto cutover: a proto-1 client (any pre-overhaul build) is refused with BAD_PROTO
+// naming the version -- NOT with a confusing engine-mismatch message. The engine pin would
+// also catch it, which is exactly why this check must run first and say the true thing.
+test('a proto-1 client is refused with BAD_PROTO naming the version', async (t) => {
+  const server = await startServer({
+    requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
+  });
+  t.after(() => server.close());
+  const c = await TestClient.connect(server.port);
+  c.sendJson({ t: 'SessionHello', proto: 1, engineHash: '', lserVersion: 0, manifest: [] });
+  const bye = await c.waitJson('SessionDisconnect');
+  assert.equal((bye as { code?: string }).code, 'BAD_PROTO');
+  assert.match(String((bye as { detail?: string }).detail ?? ''), /1/,
+    'the refusal must name the offered version');
   c.close();
 });
 

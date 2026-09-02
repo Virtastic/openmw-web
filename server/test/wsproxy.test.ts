@@ -41,7 +41,7 @@ test('a world is reachable through the gateway port, and a missing one fails fas
   const ws = new WebSocket(`ws://127.0.0.1:${dir.port}/w/w1`, [SUBPROTOCOL]);
   const hello = await new Promise<string>((resolve, reject) => {
     ws.on('open', () => ws.send(JSON.stringify({
-      t: 'SessionHello', proto: 1, engineHash: 'abcdef123456', lserVersion: 0,
+      t: 'SessionHello', proto: 2, engineHash: 'abcdef123456', lserVersion: 0,
       manifest: MANIFEST, simulatesActors: false })));
     ws.on('message', (d) => resolve(String(d)));
     ws.on('close', (c, r) => reject(new Error(`closed ${c} ${String(r)}`)));
