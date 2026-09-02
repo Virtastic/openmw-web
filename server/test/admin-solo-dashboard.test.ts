@@ -85,7 +85,7 @@ test('system readings are real numbers, and rates need two samples', async () =>
 // --- the page ------------------------------------------------------------------------------
 
 test('the single-player dashboard drops the multiplayer furniture', () => {
-  const solo = /if \(solo\) \{[\s\S]*?\n    return;\n  \}/.exec(app);
+  const solo = /if \(solo\) \{[\s\S]*?\r?\n    return;\r?\n  \}/.exec(app); // \r?: CRLF checkouts
   assert.ok(solo, 'no single-player branch on the overview');
   assert.doesNotMatch(solo[0], /setupChecklist\(\)/, 'the getting-started widget must be gone');
   assert.doesNotMatch(solo[0], /'World'/, 'the world card names an id nobody chose');

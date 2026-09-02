@@ -113,7 +113,7 @@ const app = readFileSync(join(process.cwd(), 'web', 'app.js'), 'utf8');
 test('the Tamriel step is asked only of the profile that needs it, and after the game data', () => {
   assert.ok(app.includes("...(answers.contentProfile === 'tamriel-rebuilt' ? ['tr'] : [])"),
     'the TR step must be conditional on the profile');
-  const steps = /return \[\n\s+'owner',[\s\S]*?\];/.exec(app);
+  const steps = /return \[\r?\n\s+'owner',[\s\S]*?\];/.exec(app); // \r?: CRLF checkouts
   assert.ok(steps, 'wizard step list not found');
   // Order is the point: TR is a second upload, and asking for it before the base game is in
   // would put the expansion before the thing it expands.
