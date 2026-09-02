@@ -116,16 +116,22 @@ export default async function run(ctx) {
     // stays down, so the old id could never have exercised the round trip it asserts. Real
     // private worlds are named this way (priv-<username>-<8hex>); the owner is read from disk
     // rather than parsed out of the id.
+    // priv-revivetest is the world the client is ALREADY IN -- startGatewayAndClient created
+    // it as bot-a's own world and booted straight into it (ownId === OWN_ID). It has to be,
+    // because a scenario about REVIVING this exact world cannot reap one the player is not the
+    // owner of. So the create below is idempotent (the gateway returns ok for the world that
+    // exists), and the list correctly holds ONE world, not two -- asserting >1 could never
+    // pass. What matters is that the world is THERE and named as expected.
     await a.eval("Module.__omwMPCmd='worldcreate:priv-revivetest:private'");
-    // Read the SERVER'S ANSWER first (same lesson as s47): waiting only on worldCount turns
-    // every refusal into a blind timeout that says nothing about which one happened.
     await a.waitFor('((window.__omwMP||{}).worldCreate||"") !== ""', STEP,
       'the server answered the create request at all');
     const createdAns = JSON.parse(await a.eval('(window.__omwMP||{}).worldCreate'));
     ctx.log(`  create answered: ok=${createdAns.ok} error="${createdAns.error ?? ''}"`);
     assert.equal(createdAns.ok, true,
       `creating the session was refused: ${createdAns.error || 'no reason given'}`);
-    await a.waitFor("Number((window.__omwMP||{}).worldCount||0) > 1", STEP, 'session created');
+    await a.waitFor(
+      `JSON.parse((window.__omwMP||{}).worlds||"[]").some(w => w.id === 'priv-revivetest')`,
+      STEP, 'the private world is listed');
 
     // `up`, not a port: the gateway publishes no world ports, so the old `ownPort = w.port`
     // captured undefined and then failed its own `> 0` check the instant the world came up.

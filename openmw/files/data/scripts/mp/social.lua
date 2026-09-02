@@ -693,6 +693,11 @@ return {
             worldsError = tostring(data.error or '')
             myWorldPort = data.myPort
             mp.testSet('worldCount', string.format('%d', #worlds))
+            -- The list itself, so a scenario can assert a SPECIFIC world is present rather
+            -- than only counting (s57 reaps and revives one world by id).
+            local ids = {}
+            for _, w in ipairs(worlds) do ids[#ids + 1] = { id = w.id, up = w.up } end
+            mp.testSet('worlds', json.encode(ids))
             mp.testSet('worldsError', worldsError)
             render()
         end,
