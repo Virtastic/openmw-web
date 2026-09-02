@@ -52,7 +52,9 @@ jobs:
         env:
           TAG: ${{ steps.tag.outputs.tag }}
         run: |
-          PKG="v$(node -p "require('./server/package.json').version")"
+          # python3, not node: the self-hosted runner has no node on PATH, and the zip step
+          # below already relies on python3.
+          PKG="v$(python3 -c "import json; print(json.load(open('server/package.json'))['version'])")"
           [ "$TAG" = "$PKG" ] || { echo "FATAL: tag $TAG != server/package.json $PKG — bump the version first" >&2; exit 1; }
 
       # Same staging as deploy-ovh.yml: the demo data is gitignored; the runner's

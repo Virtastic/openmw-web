@@ -23,7 +23,9 @@ test('VERSION is package.json, not a copy of it', async () => {
 test('the release workflow refuses a tag that does not match the version', () => {
   const wf = readFileSync(join(process.cwd(), '..', '.github', 'workflows', 'release.yml'), 'utf8');
   assert.match(wf, /Version guard/);
-  assert.ok(wf.includes(`require('./server/package.json').version`));
+  // The guard must not need node: the self-hosted release runner does not have it.
+  assert.ok(wf.includes(`json.load(open('server/package.json'))['version']`));
+  assert.ok(!wf.includes('node -p'), 'the runner has no node; the guard must stay python3');
   // The guard must run BEFORE anything is built or published.
   assert.ok(wf.indexOf('Version guard') < wf.indexOf('Build engine image'),
     'guarding after the build wastes an hour before failing');
