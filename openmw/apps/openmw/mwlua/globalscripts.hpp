@@ -53,8 +53,7 @@ namespace MWLua
             callEngineHandlers(mOnGlobalVariableChangedHandlers, std::string(name), value);
         }
         // MP (E5): a containerstore transaction — an item stack entered or left a store.
-        void onItemTransferred(
-            const sol::optional<GObject>& container, const std::string& recordId, int count, bool added)
+        void onItemTransferred(const GObject& container, const std::string& recordId, int count, bool added)
         {
             callEngineHandlers(mOnItemTransferredHandlers, container, recordId, count, added);
         }
