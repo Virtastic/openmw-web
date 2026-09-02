@@ -183,12 +183,12 @@ namespace MWScript
                     std::string_view itemName = itemPtr.getClass().getName(itemPtr);
                     if (count == 1)
                     {
-                        msgBox = headlessNoGui() ? std::string() : MyGUI::LanguageManager::getInstance().replaceTags("#{sNotifyMessage60}");
+                        msgBox = headlessNoGui() ? std::string() : std::string(MyGUI::LanguageManager::getInstance().replaceTags("#{sNotifyMessage60}"));
                         msgBox = ::Misc::StringUtils::format(msgBox, itemName);
                     }
                     else
                     {
-                        msgBox = headlessNoGui() ? std::string() : MyGUI::LanguageManager::getInstance().replaceTags("#{sNotifyMessage61}");
+                        msgBox = headlessNoGui() ? std::string() : std::string(MyGUI::LanguageManager::getInstance().replaceTags("#{sNotifyMessage61}"));
                         msgBox = ::Misc::StringUtils::format(msgBox, count, itemName);
                     }
                     MWBase::Environment::get().getWindowManager()->messageBox(msgBox, MWGui::ShowInDialogueMode_Only);
@@ -304,12 +304,12 @@ namespace MWScript
 
                     if (numRemoved > 1)
                     {
-                        msgBox = headlessNoGui() ? std::string() : MyGUI::LanguageManager::getInstance().replaceTags("#{sNotifyMessage63}");
+                        msgBox = headlessNoGui() ? std::string() : std::string(MyGUI::LanguageManager::getInstance().replaceTags("#{sNotifyMessage63}"));
                         msgBox = ::Misc::StringUtils::format(msgBox, numRemoved, itemName);
                     }
                     else
                     {
-                        msgBox = headlessNoGui() ? std::string() : MyGUI::LanguageManager::getInstance().replaceTags("#{sNotifyMessage62}");
+                        msgBox = headlessNoGui() ? std::string() : std::string(MyGUI::LanguageManager::getInstance().replaceTags("#{sNotifyMessage62}"));
                         msgBox = ::Misc::StringUtils::format(msgBox, itemName);
                     }
                     MWBase::Environment::get().getWindowManager()->messageBox(msgBox, MWGui::ShowInDialogueMode_Only);
