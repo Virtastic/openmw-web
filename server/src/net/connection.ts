@@ -19,6 +19,7 @@ import type { Moderation } from '../core/moderation';
 import { TokenBucket, IpRateLimiter } from './ratelimit';
 import { socketRttMs } from './ws';
 import { MSG_EVENT, MSG_PLAYER_MOVE, MSG_PLAYER_MOVE_BATCH, MSG_ACTOR_MOVE_BATCH, ProtoError, unpackEnvelope, unpackEvent, packEvent, packEnvelope, nextBroadcastSeq } from '../proto/envelope';
+import { MSG_PLAYER_INPUT, MSG_AVATAR_MOVE_BATCH, INPUT_PAYLOAD_BYTES, packInputForward, unpackAvatarMoveBatch } from '../proto/input';
 import { unpackMove } from '../proto/movement';
 import { MAX_ABS_COORD , isChargenCell, parseExterior, cellsVisible } from '../core/movement';
 import { handleStateEvent, syncStateOnJoin, type StateCtx } from '../core/playerstate';
@@ -574,7 +575,8 @@ export class Connection implements Peer {
 
   private onBinary(data: Buffer): void {
     const envelope = unpackEnvelope(data);
-    if (envelope.type !== MSG_EVENT && envelope.type !== MSG_PLAYER_MOVE && envelope.type !== MSG_ACTOR_MOVE_BATCH) {
+    if (envelope.type !== MSG_EVENT && envelope.type !== MSG_PLAYER_MOVE && envelope.type !== MSG_ACTOR_MOVE_BATCH
+      && envelope.type !== MSG_PLAYER_INPUT && envelope.type !== MSG_AVATAR_MOVE_BATCH) {
       log('debug', 'conn.reserved_type_dropped', { ip: this.ip, type: envelope.type });
       metrics.protocolErrors.inc({ kind: 'reserved_type' });
       return;
@@ -590,6 +592,14 @@ export class Connection implements Peer {
     }
     if (envelope.type === MSG_ACTOR_MOVE_BATCH) {
       this.ctx.world.handleActorMoveBatch(this.player, envelope.payload);
+      return;
+    }
+    if (envelope.type === MSG_PLAYER_INPUT) {
+      this.handlePlayerInput(envelope.seq, envelope.payload);
+      return;
+    }
+    if (envelope.type === MSG_AVATAR_MOVE_BATCH) {
+      this.handleAvatarMoveBatch(envelope.payload);
       return;
     }
     this.lastClientSeq = envelope.seq;
@@ -690,6 +700,70 @@ export class Connection implements Peer {
       value,
       this.ctx.moderation,
     );
+  }
+
+  // Phase 3, 0x0102 PlayerInput: the player's raw intent, forwarded to the world peer.
+  //
+  // AUTHENTICATED BY CONNECTION IDENTITY — this connection owns exactly one avatar, so an
+  // input frame can only ever steer its own. That is a different question from
+  // ActorMoveBatch's holder/epoch validation ("may you author this CELL's actors"); do not
+  // conflate them. No peer holding the world = the frame is dropped and the client-authored
+  // 0x0100 path stays authoritative — that is the DEGRADED MODE, stated as policy: freezing
+  // every player to preserve authority during a peer crash would trade a severe outage for
+  // a security gain that is worthless while there is no simulator to cheat against.
+  private handlePlayerInput(seq: number, payload: Buffer): void {
+    const player = this.player!;
+    if (this.isSystem) {
+      metrics.playerInputDropped.inc({ reason: 'from_peer' });
+      return; // the peer produces poses, never inputs
+    }
+    if (payload.length !== INPUT_PAYLOAD_BYTES) {
+      metrics.playerInputDropped.inc({ reason: 'bad_size' });
+      return;
+    }
+    if (player.inputSeq !== undefined && seq <= player.inputSeq) return; // stale/replayed
+    player.inputSeq = seq;
+    const peer = this.ctx.roster.inWorld().find((p) => p.system === true);
+    if (!peer) {
+      metrics.playerInputDropped.inc({ reason: 'no_peer' });
+      return; // degraded mode; see above
+    }
+    metrics.playerInputForwarded.inc();
+    peer.peer.sendBinaryFrame(MSG_PLAYER_INPUT,
+      packEnvelope(MSG_PLAYER_INPUT, nextBroadcastSeq(), packInputForward(player.id, payload)));
+  }
+
+  // Phase 3, 0x0105 AvatarMoveBatch: the authoritative result, from the WORLD PEER ONLY.
+  // A client sending this is forging other players' movement — refused and counted, the
+  // negative control mirroring omwmp_actor_batch_rejected_total{reason="not_holder"}.
+  private handleAvatarMoveBatch(payload: Buffer): void {
+    const sender = this.player!;
+    if (sender.system !== true) {
+      metrics.avatarBatchRejected.inc({ reason: 'not_peer' });
+      log('warn', 'conn.avatar_batch_forged', { from: sender.name, account: sender.accountKey });
+      return;
+    }
+    let entries;
+    try {
+      entries = unpackAvatarMoveBatch(payload);
+    } catch {
+      metrics.avatarBatchRejected.inc({ reason: 'malformed' });
+      return;
+    }
+    const now = Date.now();
+    for (const e of entries) {
+      const p = this.ctx.roster.get(e.id);
+      if (!p || p.system === true || !p.inWorld) continue;
+      // The peer's answer IS the canonical pose: it feeds the same broadcaster that fans
+      // remote poses out to everyone (0x0101), so other players render the authoritative
+      // result with no second channel. The owner additionally gets a PlayerStateBatch with
+      // lastInputSeq to reconcile against (MoveBroadcaster tick).
+      p.pose = e.pose;
+      p.poseVersion++;
+      p.lastPoseAt = now;
+      p.peerPoseAt = now;
+      p.lastInputSeq = e.lastInputSeq;
+    }
   }
 
   // 0x0100 PlayerMove: stale-seq drop, bounds sanity, store latest pose.

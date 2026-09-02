@@ -300,6 +300,12 @@ export const metrics = {
 
   actorBatchRejected: reg(
     new Counter('omwmp_actor_batch_rejected_total', 'Inbound ActorMoveBatch frames dropped.', ['reason'])),
+  avatarBatchRejected: reg(
+    new Counter('omwmp_avatar_batch_rejected_total', 'Inbound AvatarMoveBatch frames dropped (only the world peer may author avatar poses).', ['reason'])),
+  playerInputForwarded: reg(
+    new Counter('omwmp_player_input_forwarded_total', 'PlayerInput frames forwarded to the world peer.', [])),
+  playerInputDropped: reg(
+    new Counter('omwmp_player_input_dropped_total', 'PlayerInput frames dropped.', ['reason'])),
   // kind: move | actor. Outbound lossy frames dropped because the socket's send queue was
   // over [limits] maxBufferedBytes; a rising rate means a client is not keeping up.
   backpressureDropped: reg(

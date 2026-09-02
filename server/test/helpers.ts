@@ -12,6 +12,8 @@ import { packEvent, packEnvelope, unpackEnvelope, unpackEvent, MSG_EVENT, MSG_PL
 import { lserEncode, lserDecode, jsToL, lToJs, type JsLike } from '../src/proto/lser';
 import type { ManifestEntry } from '../src/proto/session';
 import { packMove, packActorMoveBatch, unpackMoveBatch, unpackActorMoveBatch, type PlayerPose, type BatchEntry, type ActorEntry, type ActorMoveBatch } from '../src/proto/movement';
+import { MSG_PLAYER_INPUT, MSG_PLAYER_STATE_BATCH, MSG_AVATAR_MOVE_BATCH, packInput, unpackInput,
+  packAvatarMoveBatch, unpackPlayerStateBatch, type PlayerInput, type AvatarMoveEntry } from '../src/proto/input';
 
 // Generous: argon2id logins are deliberately CPU-heavy, and several test files run
 // concurrently, so a busy machine can take seconds to answer a register/login. Real
@@ -31,7 +33,9 @@ type JsonMsg = { t: string; [key: string]: unknown };
 type EventMsg = { name: string; seq: number; value: unknown };
 type BatchMsg = { seq: number; entries: BatchEntry[] };
 type ActorBatchMsg = { seq: number; batch: ActorMoveBatch };
-type Inbox = { json: JsonMsg[]; events: EventMsg[]; batches: BatchMsg[]; actorBatches: ActorBatchMsg[] };
+type Inbox = { json: JsonMsg[]; events: EventMsg[]; batches: BatchMsg[]; actorBatches: ActorBatchMsg[];
+  stateBatches: { seq: number; entries: AvatarMoveEntry[] }[];
+  inputForwards: { seq: number; id: number; input: PlayerInput }[] };
 
 export class TestClient {
   // Overridden before hello() by callers that model a non-simulating participant.
@@ -45,7 +49,7 @@ export class TestClient {
   // does — `system` is client-declared, so this is the only thing that makes it believable.
   serverPassword = '';
 
-  readonly inbox: Inbox = { json: [], events: [], batches: [], actorBatches: [] };
+  readonly inbox: Inbox = { json: [], events: [], batches: [], actorBatches: [], stateBatches: [], inputForwards: [] };
   readonly closed: Promise<{ code: number; reason: string }>;
   isClosed = false;
   private seq = 0;
@@ -62,6 +66,12 @@ export class TestClient {
           this.inbox.batches.push({ seq: env.seq, entries: unpackMoveBatch(env.payload) });
         } else if (env.type === MSG_ACTOR_MOVE_BATCH) {
           this.inbox.actorBatches.push({ seq: env.seq, batch: unpackActorMoveBatch(env.payload) });
+        } else if (env.type === MSG_PLAYER_STATE_BATCH) {
+          this.inbox.stateBatches.push({ seq: env.seq, entries: unpackPlayerStateBatch(env.payload) });
+        } else if (env.type === MSG_PLAYER_INPUT) {
+          // Only a peer stand-in ever receives these: [u16 id][12-byte input].
+          this.inbox.inputForwards.push({ seq: env.seq, id: env.payload.readUInt16LE(0),
+            input: unpackInput(env.payload.subarray(2)) });
         }
       } else {
         this.inbox.json.push(JSON.parse(data.toString('utf8')) as JsonMsg);
@@ -126,6 +136,16 @@ export class TestClient {
 
   sendActorMoveBatch(epoch: number, entries: ActorEntry[]): void {
     this.ws.send(packEnvelope(MSG_ACTOR_MOVE_BATCH, ++this.seq, packActorMoveBatch(epoch, entries)));
+  }
+
+  // Phase 3 input tier.
+  sendInput(input: Partial<PlayerInput>, seq?: number): void {
+    const full: PlayerInput = { seq: seq ?? this.seq + 1, move: 0, side: 0, yaw: 0, pitch: 128, flags: 0, ...input };
+    this.ws.send(packEnvelope(MSG_PLAYER_INPUT, seq ?? ++this.seq, packInput(full)));
+  }
+
+  sendAvatarMoveBatch(entries: AvatarMoveEntry[], seq?: number): void {
+    this.ws.send(packEnvelope(MSG_AVATAR_MOVE_BATCH, seq ?? ++this.seq, packAvatarMoveBatch(entries)));
   }
 
   waitActorBatch(pred: (b: ActorBatchMsg) => boolean = () => true, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<ActorBatchMsg> {

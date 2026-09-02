@@ -55,6 +55,14 @@ export interface Player {
   inChargen?: boolean;
   pose?: PlayerPose;
   moveSeq: number; // last accepted PlayerMove envelope seq (stale-drop)
+  // Phase 3 input authority. inputSeq: last accepted PlayerInput ENVELOPE seq (stale-drop,
+  // same rule as moveSeq). lastInputSeq: the newest input the PEER reports having consumed
+  // for this avatar — echoed to the client in PlayerStateBatch, which is the number its
+  // reconciliation hangs off. peerPoseAt: wall-clock of the last peer-authored pose; while
+  // fresh, this player's canonical pose is the PEER's answer, not the client's claim.
+  inputSeq?: number;
+  lastInputSeq?: number;
+  peerPoseAt?: number;
   poseVersion: number;
   // Phase 3.6: wall-clock of the last accepted pose, for the plausible-speed envelope.
   lastPoseAt?: number;

@@ -15,6 +15,12 @@ import type { Player, Roster } from './players';
 import type { Config } from '../config';
 import { MSG_PLAYER_MOVE_BATCH, packEnvelope, nextBroadcastSeq } from '../proto/envelope';
 import { packMoveBatch, type BatchEntry } from '../proto/movement';
+import { MSG_PLAYER_STATE_BATCH, packPlayerStateBatch } from '../proto/input';
+
+// Phase 3: how long a peer-authored pose stays authoritative without a refresh. Comfortably
+// past two peer frames (the peer streams at ~20 Hz), and short enough that a dead peer's
+// last word does not pin players for perceptible time.
+const PEER_POSE_FRESH_MS = 300;
 
 export const BATCH_INTERVAL_MS = 66;
 export const MAX_ABS_COORD = 512000;
@@ -237,6 +243,23 @@ export class MoveBroadcaster {
   }
 
   tick(): void {
+    // Phase 3: each player whose pose is PEER-AUTHORED right now gets their OWN entry back
+    // as a PlayerStateBatch — pose + the last input seq the peer consumed — which is the
+    // number client-side reconciliation hangs off. Remote players need no second channel:
+    // the peer's poses already feed the ordinary 0x0101 fan-out below. Staleness gate: a
+    // peer that died mid-session stops stamping poses, the batches stop, and the client's
+    // own 0x0100 path is authoritative again (the degraded mode) with no extra signalling.
+    const nowMs = Date.now();
+    for (const p of this.roster.inWorld()) {
+      if (p.system === true || p.bot === true) continue;
+      if (p.peerPoseAt === undefined || nowMs - p.peerPoseAt > PEER_POSE_FRESH_MS) continue;
+      if (!p.pose || p.lastInputSeq === undefined) continue;
+      p.peer.sendBinaryFrame(MSG_PLAYER_STATE_BATCH, packEnvelope(MSG_PLAYER_STATE_BATCH,
+        nextBroadcastSeq(), packPlayerStateBatch([
+          { id: p.id, lastInputSeq: p.lastInputSeq, pose: p.pose },
+        ])));
+    }
+
     const inWorld = this.roster.inWorld();
     const tickNo = ++this.tickNo;
     // One seq for the whole tick: each recipient gets at most one batch from it, so every
