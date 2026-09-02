@@ -92,9 +92,8 @@ export default async function run(ctx) {
     '--shared', ctx.serverDataDir,
     '--base-port', String(basePort),
     '--max-worlds', '4',
-    // Same as _gateway.mjs: [worlds] publicEnabled defaults to false, so a gateway that is not
-    // told to run a public world will not have one, and this scenario asserts one is up.
-    '--public-world', 'vvardenfell',
+    // No public world: the flag died with the mode (Solo/Party model). Every world here is
+    // created through the directory by an authed account, exactly like production.
     // Worlds this gateway spawns must boot WITHOUT real game data, a peer binary or a
     // server password — a harness has none of those. server.mjs refuses on all three, so
     // every spawned world died and the scenario saw only an empty world list.
@@ -112,39 +111,8 @@ export default async function run(ctx) {
     assert.ok(await waitHttp(`http://127.0.0.1:${gwPort}/healthz`, 30_000), 'the gateway must come up');
     ctx.log(`gateway up on ${gwPort}`);
 
-    // THE SPLICE ITSELF, tested without a browser. /w/<id> on the gateway is how a real client
-    // reaches a world -- Caddy fronts it in production -- and it is what every world SWITCH
-    // resolves to, so if it does not work nothing downstream can. Node rather than the engine
-    // so a failure here is unambiguously the gateway and not the client.
-    // WAIT FOR THE WORLD TO BE UP FIRST. healthz only says the GATEWAY answers; the public
-    // world it supervises is spawned after and reported up only once its status poll
-    // succeeds. Dialling before then is a 502 by design ("a world that is down must fail the
-    // handshake, not hang"), so testing the splice against it measures the race, not the
-    // splice.
-    const upBy0 = Date.now() + 60_000;
-    let publicUp = false;
-    while (Date.now() < upBy0) {
-      try {
-        const l = await (await fetch(`http://127.0.0.1:${gwPort}/worlds`)).json();
-        if ((l.worlds ?? []).find((w) => w.id === 'vvardenfell')?.up) { publicUp = true; break; }
-      } catch { /* not answering yet */ }
-      await ctx.sleep(1000);
-    }
-    assert.ok(publicUp, 'the gateway must bring its public world up');
-
-    const spliced = await new Promise((resolve) => {
-      const ws = new WebSocket(`ws://127.0.0.1:${gwPort}/w/vvardenfell`);
-      const done = (v) => { try { ws.close(); } catch { /* already gone */ } resolve(v); };
-      ws.addEventListener('open', () => done('open'), { once: true });
-      ws.addEventListener('error', () => done('error'), { once: true });
-      ws.addEventListener('close', (e) => done(`closed ${e.code}`), { once: true });
-      setTimeout(() => done('timeout'), 10_000);
-    });
-    ctx.log(`  gateway splice /w/vvardenfell: ${spliced}`);
-    assert.equal(spliced, 'open',
-      `the gateway must splice /w/<id> through to a world, got "${spliced}" — a world SWITCH `
-      + 'resolves to exactly this path, so nothing downstream can work without it');
-
+    // THE SPLICE (/w/<id>) is tested below against the world this scenario CREATES --
+    // there is no world at boot any more, which is itself the correct post-Phase-W state.
 
     // The scenario's world must point at this gateway, or its Worlds tab correctly reports
     // "standalone" and there is nothing to test.
@@ -189,6 +157,21 @@ export default async function run(ctx) {
     assert.ok(soloUp, "the player's own world must come up");
     ctx.log(`  own world ${soloId} is up`);
 
+    // THE SPLICE ITSELF, tested without a browser. /w/<id> on the gateway is how a real
+    // client reaches a world -- Caddy fronts it in production -- and it is what every world
+    // SWITCH resolves to, so if it does not work nothing downstream can.
+    const spliced = await new Promise((resolve) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${gwPort}/w/${soloId}`);
+      const done = (v) => { try { ws.close(); } catch { /* already gone */ } resolve(v); };
+      ws.addEventListener('open', () => done('open'), { once: true });
+      ws.addEventListener('error', () => done('error'), { once: true });
+      ws.addEventListener('close', (e) => done(`closed ${e.code}`), { once: true });
+      setTimeout(() => done('timeout'), 10_000);
+    });
+    ctx.log(`  gateway splice /w/${soloId}: ${spliced}`);
+    assert.equal(spliced, 'open',
+      `the gateway must splice /w/<id> through to a world, got "${spliced}"`);
+
     const a = await ctx.launchClient('bot-a', '', {
       mpUrl: `ws://127.0.0.1:${gwPort}/w/${soloId}`,
     });
@@ -201,7 +184,7 @@ export default async function run(ctx) {
     const count = Number(await a.eval("(window.__omwMP||{}).worldCount"));
     const err = String(await a.eval("(window.__omwMP||{}).worldsError"));
     assert.equal(err, '', `the directory must be reachable, got error "${err}"`);
-    assert.ok(count >= 1, `the public world must be listed, saw ${count}`);
+    assert.ok(count >= 1, `the player's own world must be listed, saw ${count}`);
     ctx.log(`  worlds listed: ${count}`);
     ctx.log(`  worlds tab: ${await a.screenshot(join(SHOTS, '1-worlds-list.png'))}`);
 
