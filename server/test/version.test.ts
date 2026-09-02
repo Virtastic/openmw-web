@@ -9,7 +9,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 test('VERSION is package.json, not a copy of it', async () => {
@@ -20,8 +20,15 @@ test('VERSION is package.json, not a copy of it', async () => {
   assert.match(pkg.version, /^\d+\.\d+\.\d+$/);
 });
 
-test('the release workflow refuses a tag that does not match the version', () => {
-  const wf = readFileSync(join(process.cwd(), '..', '.github', 'workflows', 'release.yml'), 'utf8');
+test('the release workflow refuses a tag that does not match the version', (t) => {
+  const path = join(process.cwd(), '..', '.github', 'workflows', 'release.yml');
+  if (!existsSync(path)) {
+    // The Docker test stage carries server/ only; the workflow lives at the repo root.
+    // Absent file = environment, not a regression — the laptop/CI checkout still runs it.
+    t.skip('release.yml not in this build context');
+    return;
+  }
+  const wf = readFileSync(path, 'utf8');
   assert.match(wf, /Version guard/);
   // The guard must not need node: the self-hosted release runner does not have it.
   assert.ok(wf.includes(`json.load(open('server/package.json'))['version']`));

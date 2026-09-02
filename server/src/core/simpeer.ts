@@ -239,6 +239,10 @@ export class SimPeerSupervisor {
       // draw thread parked forever in ThreadSafeQueue::takeFront() drawing nothing. OSG reads
       // this env var itself (ViewerBase.cpp), so no patch is needed.
       OSG_THREADING: 'SingleThreaded',
+      // E3: the headless loop runs a FIXED dt of 1/framerate-limit (engine.cpp), and the
+      // peer's settings.cfg paces it at 20 fps — so pin physics to the same 20 Hz and every
+      // sim tick is exactly one physics step, with no adaptive-degradation remainder.
+      OPENMW_PHYSICS_FPS: '20',
       OPENMW_MP_SYSTEM: '1', // keeps it out of the player list / count / maxPlayers
       OPENMW_MP_URL: this.deps.wsUrl(),
       OPENMW_MP_NAME: peerAccountName(key),

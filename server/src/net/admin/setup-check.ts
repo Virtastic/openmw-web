@@ -100,8 +100,13 @@ export function normaliseDomain(raw: string): string {
 
 export async function checkDomain(domain: string): Promise<DomainCheck> {
   const addresses: string[] = [];
-  for (const lookup of [resolve4(domain), resolve6(domain)]) {
-    try { addresses.push(...await lookup); } catch { /* no records of that family is normal */ }
+  // allSettled, NOT a loop over eagerly-created promises: while the A lookup was being
+  // awaited, an AAAA rejection had no handler attached yet, and Node fires
+  // unhandledRejection for a promise that rejects before its await — which main.ts turns
+  // into process.exit(1). One bad domain typed into the wizard took the server down.
+  for (const lookup of await Promise.allSettled([resolve4(domain), resolve6(domain)])) {
+    if (lookup.status === 'fulfilled') addresses.push(...lookup.value);
+    // rejected: no records of that family is normal
   }
   if (addresses.length === 0) {
     return {
