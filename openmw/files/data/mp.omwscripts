@@ -16,5 +16,8 @@ MENU: scripts/mp/menu.lua
 NPC: scripts/mp/companion.lua
 CREATURE: scripts/mp/companion.lua
 CUSTOM: scripts/mp/puppet.lua
+# Phase 3: the input-driven body on the SIM PEER only (global.lua attaches it when
+# mp.isSystem()); everywhere else the same body gets puppet.lua instead.
+CUSTOM: scripts/mp/avatar.lua
 # Test-only: attached on demand by actors.killActorByRecord (see testkill.lua).
 CUSTOM: scripts/mp/testkill.lua
