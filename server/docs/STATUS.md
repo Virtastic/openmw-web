@@ -59,7 +59,27 @@ convergence (they pass on quieter hardware).
   config trims already bought ~130 MB. The per-manager cache report needed
   `collectStats("resource")` armed (only the in-game overlay ever did); armed now beside the
   stats file so the E4 attribution can be read.
-Remaining: E4 deep render trim, sized by that attribution.
+- **E1 attribution (idle native peer, one anchored cell = 3×3 grid, no players, RSS
+  364,016 kB ≈ 355 MB):**
+
+  | cache | count | | cache | count |
+  | --- | ---: | --- | --- | ---: |
+  | Node (SceneManager) | 455 | | Terrain Chunk | 144 |
+  | Shape (Bullet) | 346 | | Land | 9 |
+  | Shape Instance | 354 | | Keyframe | 10 |
+  | Image | **0** | | Nif | **0** |
+  | BSShader Material | 0 | | StringRefId | 57,257 |
+
+  Engine profile per frame: script 1.9 ms, everything else ≈0 — the idle peer is CPU-cheap.
+- **E4 decision: NO-GO, on the numbers.** Sky, Water and PostProcessor attribute to nothing
+  the report can see: with no GL context their textures and framebuffers are never resident
+  (`Image 0`), and what *is* cached — nodes, Bullet shapes, lands, terrain chunks — is the
+  load-bearing physics/navmesh/hit-raycast set the plan forbids stripping. The trim would
+  cost 57 upstream deref guards across ~30 methods (measured) for a payoff of a few MB in
+  355; the plan's "~40 lines, trim five and stop" estimate assumed a share that is not
+  there. The floor is the ESM store + navmesh + Bullet + Lua, which E4 never touched; the
+  only lever left is the out-of-scope fork()-after-loadData spike.
+Remaining engine trivia: E6 (headless land loading of VNML/VCLR/VTEX).
 
 ## 2026-09-02 — the mp912026 overhaul: one peer, input authority, Solo/Party (proto 2)
 
