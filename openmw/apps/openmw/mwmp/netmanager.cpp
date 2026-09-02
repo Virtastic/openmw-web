@@ -109,7 +109,11 @@ namespace MWMP
         constexpr uint16_t sTypePlayerMove = 0x0100;
         constexpr uint16_t sTypePlayerMoveBatch = 0x0101;
         constexpr uint16_t sTypeActorMoveBatch = 0x0200;
+        constexpr uint16_t sTypePlayerInput = 0x0102; // Phase 3: C->S intent; S->peer with u16 id prefix
+        constexpr uint16_t sTypePlayerStateBatch = 0x0103; // Phase 3: S->C authoritative self pose
+        constexpr uint16_t sTypeAvatarMoveBatch = 0x0105; // Phase 3: peer->S authoritative avatar poses
         constexpr size_t sMovePayload = 20; // f32 x,y,z + u16 yaw + u8 pitch,flags,animVel,counter
+        constexpr size_t sInputPayload = 12; // u32 seq + i8 move,side + u16 yaw + u8 pitch,flags + u16 rsvd
 
         // Append the shared 20-byte pose payload (PlayerMove/ActorMoveBatch identical layout).
         void appendPose(std::string& frame, float x, float y, float z, float yaw, float pitch,
@@ -243,6 +247,58 @@ namespace MWMP
         appendLE<uint16_t>(frame, sTypePlayerMove);
         appendLE<uint32_t>(frame, ++mSeq);
         appendPose(frame, x, y, z, yaw, pitch, flags, animVel);
+        mOutbound.push_back({ false, std::move(frame) });
+        return true;
+    }
+
+    bool NetManager::sendInput(uint32_t seq, float move, float side, float yaw, float pitch, uint8_t flags)
+    {
+        if (!mSocket.isConnected())
+            return false;
+        double yawNorm = std::fmod(static_cast<double>(yaw), 2.0 * sPi);
+        if (yawNorm < 0)
+            yawNorm += 2.0 * sPi;
+        const uint16_t yawQ = static_cast<uint16_t>(std::lround(yawNorm / (2.0 * sPi) * 65536.0) & 0xffff);
+        const double pitchC = std::clamp(static_cast<double>(pitch), -sPi / 2.0, sPi / 2.0);
+        const uint8_t pitchQ = static_cast<uint8_t>(std::lround((pitchC + sPi / 2.0) / sPi * 255.0));
+        const auto axisQ = [](float v) {
+            return static_cast<int8_t>(std::clamp(std::lround(v * 127.f), -127L, 127L));
+        };
+        std::string frame;
+        frame.reserve(6 + sInputPayload);
+        appendLE<uint16_t>(frame, sTypePlayerInput);
+        appendLE<uint32_t>(frame, ++mSeq);
+        appendLE<uint32_t>(frame, seq);
+        frame.push_back(static_cast<char>(axisQ(move)));
+        frame.push_back(static_cast<char>(axisQ(side)));
+        appendLE<uint16_t>(frame, yawQ);
+        frame.push_back(static_cast<char>(pitchQ));
+        frame.push_back(static_cast<char>(flags));
+        frame.push_back('\0'); // reserved
+        frame.push_back('\0');
+        mOutbound.push_back({ false, std::move(frame) });
+        return true;
+    }
+
+    bool NetManager::sendAvatarMoveBatch(const std::vector<AvatarMoveEntry>& entries)
+    {
+        // 0x0105: [u8 count] + count x (u16 id + u32 lastInputSeq + 20-byte pose).
+        if (!mSocket.isConnected() || entries.empty())
+            return false;
+        std::string frame;
+        frame.reserve(6 + 1 + entries.size() * (6 + sMovePayload));
+        appendLE<uint16_t>(frame, sTypeAvatarMoveBatch);
+        appendLE<uint32_t>(frame, ++mSeq);
+        frame.push_back(static_cast<char>(std::min<size_t>(entries.size(), 255)));
+        size_t n = 0;
+        for (const AvatarMoveEntry& e : entries)
+        {
+            if (n++ >= 255)
+                break;
+            appendLE<uint16_t>(frame, e.mId);
+            appendLE<uint32_t>(frame, e.mLastInputSeq);
+            appendPose(frame, e.mX, e.mY, e.mZ, e.mYaw, e.mPitch, e.mFlags, e.mAnimVel);
+        }
         mOutbound.push_back({ false, std::move(frame) });
         return true;
     }
@@ -430,6 +486,78 @@ namespace MWMP
                 }
                 body.push_back(0x4); // TABLE_END (outer)
                 events.addGlobalEvent({ "MP_ActorMoveBatch", std::move(body) });
+                continue;
+            }
+            if (type == sTypePlayerStateBatch)
+            {
+                // 0x0103: [u8 count] + count x (u16 id + u32 lastInputSeq + 20-byte pose).
+                // The client's own authoritative pose; reconciliation hangs off lastInputSeq.
+                // Stale-drop shares the movement-family cursor like every lossy type.
+                const uint32_t seq = readLE<uint32_t>(p + 2);
+                if (seq <= mLastMoveSeqIn)
+                    continue;
+                mLastMoveSeqIn = seq;
+                if (msg.mData.size() < 7)
+                {
+                    ++mStats.mMalformed;
+                    continue;
+                }
+                const size_t count = p[6];
+                constexpr size_t entrySize = 6 + sMovePayload;
+                if (msg.mData.size() != 7 + count * entrySize)
+                {
+                    ++mStats.mMalformed;
+                    continue;
+                }
+                std::string body;
+                body.reserve(2 + count * 110);
+                body.push_back('\0'); // FORMAT_VERSION
+                body.push_back(0x3); // TABLE_START (outer array)
+                for (size_t i = 0; i < count; ++i)
+                {
+                    const uint8_t* e = p + 7 + i * entrySize;
+                    const uint8_t* pose = e + 6;
+                    lserNumber(body, static_cast<double>(i + 1));
+                    body.push_back(0x3); // TABLE_START (entry)
+                    lserKV(body, "id", readLE<uint16_t>(e));
+                    lserKV(body, "lastInputSeq", readLE<uint32_t>(e + 2));
+                    lserKV(body, "x", readF32(pose));
+                    lserKV(body, "y", readF32(pose + 4));
+                    lserKV(body, "z", readF32(pose + 8));
+                    lserKV(body, "yaw", readLE<uint16_t>(pose + 12) * (2.0 * sPi / 65536.0));
+                    lserKV(body, "pitch", pose[14] / 255.0 * sPi - sPi / 2.0);
+                    lserKV(body, "flags", pose[15]);
+                    lserKV(body, "animVel", pose[16] / 127.5);
+                    body.push_back(0x4); // TABLE_END (entry)
+                }
+                body.push_back(0x4); // TABLE_END (outer)
+                events.addGlobalEvent({ "MP_PlayerStateBatch", std::move(body) });
+                continue;
+            }
+            if (type == sTypePlayerInput)
+            {
+                // 0x0102 arriving here means we are the PEER: [u16 id][12-byte input].
+                // A normal client never receives this type (the server routes it only to
+                // the world peer), so no gate is needed beyond the size check.
+                if (msg.mData.size() != 6 + 2 + sInputPayload)
+                {
+                    ++mStats.mMalformed;
+                    continue;
+                }
+                const uint8_t* e = p + 6;
+                std::string body;
+                body.reserve(96);
+                body.push_back('\0'); // FORMAT_VERSION
+                body.push_back(0x3); // TABLE_START
+                lserKV(body, "id", readLE<uint16_t>(e));
+                lserKV(body, "seq", readLE<uint32_t>(e + 2));
+                lserKV(body, "move", static_cast<int8_t>(e[6]) / 127.0);
+                lserKV(body, "side", static_cast<int8_t>(e[7]) / 127.0);
+                lserKV(body, "yaw", readLE<uint16_t>(e + 8) * (2.0 * sPi / 65536.0));
+                lserKV(body, "pitch", e[10] / 255.0 * sPi - sPi / 2.0);
+                lserKV(body, "flags", e[11]);
+                body.push_back(0x4); // TABLE_END
+                events.addGlobalEvent({ "MP_PlayerInput", std::move(body) });
                 continue;
             }
             if (type != sTypeEvent)

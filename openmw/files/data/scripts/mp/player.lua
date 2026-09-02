@@ -228,6 +228,71 @@ local function sendPose(now)
     lastSentYaw = yaw
 end
 
+-- Phase 3: the input tier. ~30 Hz of raw intent (self.controls + facing) to the server,
+-- which forwards it to the peer; the peer's avatar produces the authoritative pose. The
+-- local engine KEEPS simulating — input latency stays zero — and MP_SelfState below
+-- reconciles the difference. Sequence numbers are what tie the two together.
+local inputSeq = 0
+local lastInputSend = 0
+local INPUT_EVERY = 1 / 30
+
+local function inputTick(now)
+    if now - lastInputSend < INPUT_EVERY then return end
+    lastInputSend = now
+    inputSeq = inputSeq + 1
+    local c = self.controls
+    local flags = 0
+    if c.run then flags = flags + 1 end
+    if c.sneak then flags = flags + 2 end
+    if c.jump then flags = flags + 4 end
+    if c.use and c.use ~= 0 then flags = flags + 8 end
+    if mp.sendInput then
+        mp.sendInput({
+            seq = inputSeq,
+            move = c.movement or 0,
+            side = c.sideMovement or 0,
+            yaw = self.rotation:getYaw(),
+            pitch = self.rotation:getPitch(),
+            flags = flags,
+        })
+    end
+end
+
+-- Phase 3 reconciliation: predict + smooth blend, NEVER interp.lua's delayed buffer — the
+-- local player must not inherit RENDER_DELAY (75 ms of input lag on the one thing built to
+-- keep it at zero). The NEWEST authoritative sample is compared against where we stand:
+--   small divergence  -> a capped mp.correctSelf offset, resolved by the next physics step
+--   past the hard threshold -> one snap through the global teleport path (cooldown below)
+local SNAP_DIST = 256
+local CORRECT_GAIN = 0.25 -- fraction of the divergence per state batch (~15 Hz)
+local lastSnapAt = 0
+local SNAP_COOLDOWN_S = 2.0
+
+local function onSelfState(e)
+    if not e or not e.x then return end
+    local pos = self.position
+    local dx, dy, dz = e.x - pos.x, e.y - pos.y, e.z - pos.z
+    local dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+    mp.testSet('selfDivergence', string.format('%.1f', dist))
+    if dist < 1 then return end
+    if dist > SNAP_DIST then
+        local now = core.getRealTime()
+        if now - lastSnapAt >= SNAP_COOLDOWN_S then
+            lastSnapAt = now
+            -- The hard snap rides the same global teleport machinery invites use; a
+            -- flapping link cannot strobe the player thanks to the cooldown.
+            core.sendGlobalEvent('mpSelfSnap', { x = e.x, y = e.y, z = e.z })
+        end
+        return
+    end
+    if mp.correctSelf then
+        -- The engine caps the per-call offset (it is load-bearing: an uncapped correction
+        -- pushes through geometry before physics gets a say); the gain keeps the approach
+        -- smooth over several batches instead of a visible yank.
+        mp.correctSelf(dx * CORRECT_GAIN, dy * CORRECT_GAIN, dz * CORRECT_GAIN)
+    end
+end
+
 local function movementTick()
     if mp.status().state ~= 'Joined' then
         lastCellKey = nil -- rejoin resends PlayerCellChange (required to become visible)
@@ -235,6 +300,7 @@ local function movementTick()
         return
     end
     local now = core.getRealTime()
+    inputTick(now) -- Phase 3: raw intent to the peer, beside the pose stream
     identity.tick(now) -- M2: appearance/equipment/stats/inventory diff broadcasts
     identity.equipRetryTick(now)
 
@@ -726,6 +792,8 @@ return {
         end,
     },
     eventHandlers = {
+        -- Phase 3: our authoritative pose from the peer (own entry of PlayerStateBatch).
+        MP_SelfState = onSelfState,
         MP_UiChatMessage = pushMessage,
         -- M2 rejoin restore: global.lua forwards SessionWelcome.playerRecord here (after
         -- granting the inventory and teleporting us to record.position).

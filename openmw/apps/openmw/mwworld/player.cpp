@@ -56,7 +56,6 @@ namespace MWWorld
 
         , mTeleported(false)
         , mCurrentCrimeId(-1)
-        , mPaidCrimeId(-1)
     {
         ESM::Position playerPos = mPlayer.mData.getPosition();
         playerPos.pos[0] = playerPos.pos[1] = playerPos.pos[2] = 0;

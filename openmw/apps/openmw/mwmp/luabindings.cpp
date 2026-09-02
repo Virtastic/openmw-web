@@ -114,6 +114,40 @@ namespace MWMP
             return NetManager::instance().sendEvent(name, LuaUtil::serialize(data, serializer));
         };
         api["sendJson"] = [](std::string_view json) { return NetManager::instance().sendJson(std::string(json)); };
+        // Phase 3 input tier: mp.sendInput{seq=,move=,side=,yaw=,pitch=,flags=} -> 0x0102.
+        // The player's raw intent; the peer steers the avatar from it (avatar.lua).
+        api["sendInput"] = [](const sol::table& t) {
+            return NetManager::instance().sendInput(t.get_or("seq", 0u), t.get_or("move", 0.f),
+                t.get_or("side", 0.f), t.get_or("yaw", 0.f), t.get_or("pitch", 0.f),
+                static_cast<uint8_t>(t.get_or("flags", 0)));
+        };
+
+        // Phase 3, peer only: mp.sendAvatarMoveBatch(array of {id=,lastInputSeq=,x=,y=,z=,
+        // yaw=,pitch=,flags=,animVel=}) -> 0x0105. The authoritative result of simulating
+        // the avatars; the server fans it out (0x0101 to everyone, 0x0103 to each owner).
+        api["sendAvatarMoveBatch"] = [](const sol::table& entries) {
+            std::vector<NetManager::AvatarMoveEntry> out;
+            out.reserve(entries.size());
+            for (std::size_t i = 1; i <= entries.size(); ++i)
+            {
+                const sol::optional<sol::table> e = entries[i];
+                if (!e)
+                    continue;
+                NetManager::AvatarMoveEntry entry;
+                entry.mId = static_cast<uint16_t>((*e).get_or("id", 0));
+                entry.mLastInputSeq = (*e).get_or("lastInputSeq", 0u);
+                entry.mX = (*e).get_or("x", 0.f);
+                entry.mY = (*e).get_or("y", 0.f);
+                entry.mZ = (*e).get_or("z", 0.f);
+                entry.mYaw = (*e).get_or("yaw", 0.f);
+                entry.mPitch = (*e).get_or("pitch", 0.f);
+                entry.mFlags = static_cast<uint8_t>((*e).get_or("flags", 0));
+                entry.mAnimVel = (*e).get_or("animVel", 0.f);
+                out.push_back(entry);
+            }
+            return NetManager::instance().sendAvatarMoveBatch(out);
+        };
+
         // Movement tier (M1): mp.sendMove{x=,y=,z=,yaw=,pitch=,flags=,animVel=} -> 0x0100.
         api["sendMove"] = [](const sol::table& t) {
             return NetManager::instance().sendMove(t.get_or("x", 0.f), t.get_or("y", 0.f), t.get_or("z", 0.f),

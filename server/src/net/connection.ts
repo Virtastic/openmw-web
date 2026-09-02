@@ -770,6 +770,15 @@ export class Connection implements Peer {
   private handleMove(seq: number, payload: Buffer): void {
     const player = this.player!;
     if (seq <= player.moveSeq) return; // stale or replayed frame
+    // Phase 3: while the PEER's pose stream is fresh, the peer's answer is the canonical
+    // pose and the client's claim must not interleave with it — two writers at different
+    // rates is visible jitter for every observer. The frame is still consumed (seq
+    // bookkeeping), so the moment the peer goes quiet (>300 ms) the very next client frame
+    // is authoritative again: the degraded mode needs no switchover signal.
+    if (player.peerPoseAt !== undefined && Date.now() - player.peerPoseAt <= 300) {
+      player.moveSeq = seq;
+      return;
+    }
     const pose = unpackMove(payload);
     if (
       !Number.isFinite(pose.x) || !Number.isFinite(pose.y) || !Number.isFinite(pose.z) ||

@@ -129,6 +129,7 @@ set(BUILTIN_DATA_FILES
     mp.omwscripts
     scripts/mp/actors.lua
     scripts/mp/admin.lua
+    scripts/mp/avatar.lua
     scripts/mp/adminui.lua
     scripts/mp/combat.lua
     scripts/mp/global.lua

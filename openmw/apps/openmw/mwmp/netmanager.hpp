@@ -67,6 +67,21 @@ namespace MWMP
         // Movement tier (M1): quantizes+packs one 0x0100 PlayerMove (20-byte payload).
         // yaw/pitch in radians, animVel in 0..2 (x base walk speed). Runs at ~15 Hz.
         bool sendMove(float x, float y, float z, float yaw, float pitch, uint8_t flags, float animVel);
+        // Phase 3 input tier (0x0102, C->S, ~30 Hz): the player's raw intent, mapping 1:1
+        // onto ActorControls. `seq` is echoed back in PlayerStateBatch as the consumed
+        // input, which is what client reconciliation hangs off.
+        bool sendInput(uint32_t seq, float move, float side, float yaw, float pitch, uint8_t flags);
+        // Phase 3, peer only (0x0105): the authoritative result — one pose per avatar the
+        // peer simulated this frame, stamped with the last input seq consumed.
+        struct AvatarMoveEntry
+        {
+            uint16_t mId;
+            uint32_t mLastInputSeq;
+            float mX, mY, mZ, mYaw, mPitch;
+            uint8_t mFlags;
+            float mAnimVel;
+        };
+        bool sendAvatarMoveBatch(const std::vector<AvatarMoveEntry>& entries);
 
         // Actor authority tier (M4): one 0x0200 ActorMoveBatch for the cell's actors.
         struct ActorMoveEntry

@@ -427,6 +427,13 @@ local function pushStatsToPuppet(id)
     end
 end
 
+-- Phase 3: the input->avatar routing table. lastInputSeq[id] is the newest input routed to
+-- that avatar — stamped onto the authoritative pose stream so the owner's client knows how
+-- much of its input the pose already contains (reconciliation hangs off it).
+local lastInputSeq = {}
+local avatarStreamAt = 0
+local AVATAR_STREAM_EVERY = 0.05 -- 20 Hz, matching the peer's own frame pacing
+
 -- Phase 2b: full character docs for PEER-side avatars, keyed by connection id. A cosmetic
 -- puppet only needs a look; the peer's copy must FIGHT and TRADE correctly, so the server
 -- sends the whole PlayerDoc (AvatarState) and it is applied to the body here. Client
@@ -509,6 +516,36 @@ local function applyAvatarDoc(id)
     mp.testSet('avatarApplied', tostring(id))
 end
 
+-- Phase 3 (peer only): stream the authoritative avatar poses back. mp.sendAvatarMoveBatch
+-- -> 0x0105 -> the server fans out 0x0101 to everyone and 0x0103 (with lastInputSeq) to
+-- each owner. Sent fresh every pass — a stale pose is a rubber-band on the wrong side.
+local function avatarStreamTick(now)
+    if not (mp.isSystem and mp.isSystem()) then return end
+    if now - avatarStreamAt < AVATAR_STREAM_EVERY then return end
+    avatarStreamAt = now
+    local entries = {}
+    for id, p in pairs(puppets) do
+        if p.obj and p.obj:isValid() then
+            local ok = pcall(function()
+                local pos = p.obj.position
+                local walkSpeed = types.Actor.getWalkSpeed(p.obj)
+                local animVel = walkSpeed > 0 and (types.Actor.getCurrentSpeed(p.obj) / walkSpeed) or 0
+                entries[#entries + 1] = {
+                    id = id,
+                    lastInputSeq = lastInputSeq[id] or 0,
+                    x = pos.x, y = pos.y, z = pos.z,
+                    yaw = p.obj.rotation:getYaw(),
+                    pitch = 0,
+                    flags = 0,
+                    animVel = animVel,
+                }
+            end)
+            if not ok then entries[#entries] = nil end
+        end
+    end
+    if #entries > 0 and mp.sendAvatarMoveBatch then mp.sendAvatarMoveBatch(entries) end
+end
+
 local function spawnPuppet(id, pose)
     if puppets[id] then return end
     local cellArg = destCellArg()
@@ -520,7 +557,14 @@ local function spawnPuppet(id, pose)
     if not recordId then return end
     local obj = world.createObject(recordId)
     obj:teleport(cellArg, util.vector3(pose.x, pose.y, pose.z))
-    obj:addScript('scripts/mp/puppet.lua', { playerId = id })
+    -- Phase 3: on the SIM PEER the body is an AVATAR — driven by the owner's raw input
+    -- (avatar.lua), producing the authoritative pose. Everywhere else it stays a puppet
+    -- steered toward reported poses. Attaching both would have them fight over controls.
+    if mp.isSystem and mp.isSystem() then
+        obj:addScript('scripts/mp/avatar.lua', { playerId = id })
+    else
+        obj:addScript('scripts/mp/puppet.lua', { playerId = id })
+    end
     puppets[id] = { obj = obj, name = name }
     applyAvatarDoc(id) -- Phase 2b: a doc that arrived before the body existed lands now
     print('[mp] puppet spawned for ' .. name .. ' (#' .. tostring(id) .. ')')
@@ -1065,6 +1109,30 @@ local eventHandlers = {
     MP_InviteReceived = function(data) toPlayer('MP_InviteReceived', data) end,
     MP_PresenceUpdate = function(data) toPlayer('MP_PresenceUpdate', data) end,
     MP_SocialResult = function(data) toPlayer('MP_SocialResult', data) end,
+
+    -- Phase 3: the authoritative self pose stream (S->C). Forward OUR OWN entry to the
+    -- player script, which reconciles against it via mp.correctSelf. Remote entries do not
+    -- ride this type (they come through MP_MoveBatch as always).
+    MP_PlayerStateBatch = function(batch)
+        local myId = net.playerId
+        if not myId then return end
+        for _, e in ipairs(batch or {}) do
+            if e.id == myId then
+                toPlayer('MP_SelfState', e)
+                return
+            end
+        end
+    end,
+
+    -- Phase 3: a player's input frame, routed to the avatar that embodies them. Only the
+    -- peer ever receives this type (the server routes it nowhere else).
+    MP_PlayerInput = function(data)
+        if not data or not data.id then return end
+        local p = puppets[data.id]
+        if not p or not p.obj or not p.obj:isValid() then return end
+        if data.seq then lastInputSeq[data.id] = data.seq end
+        p.obj:sendEvent('mpAvatarInput', data)
+    end,
 
     -- Phase 2b: the peer's copy of a character (see applyAvatarDoc). Sent only to system
     -- peers by the server; the guard is belt-and-braces against a confused relay.
@@ -1827,6 +1895,24 @@ local eventHandlers = {
         end
     end,
 
+    -- Phase 3: same asynchronous-detach contract as puppets — avatar.lua has already
+    -- re-enabled AI by the time this hop runs.
+    -- Phase 3: the reconciliation hard snap. Local-player teleport must run in the
+    -- global context; player.lua rate-limits with its own cooldown.
+    mpSelfSnap = function(data)
+        local player = playerScript()
+        if not player or not data or not data.x then return end
+        pcall(function()
+            player:teleport(player.cell, util.vector3(data.x, data.y, data.z))
+        end)
+    end,
+
+    mpAvatarDetached = function(data)
+        if data.obj and data.obj:isValid() then
+            data.obj:removeScript('scripts/mp/avatar.lua')
+        end
+    end,
+
     mpRemoveTestKill = function(data)
         if data.obj and data.obj:isValid() then
             data.obj:removeScript('scripts/mp/testkill.lua')
@@ -2065,6 +2151,7 @@ return {
                 quests.tick(now)
                 worldmp.tick(now)
                 mirrorDoor(now)
+                avatarStreamTick(now) -- Phase 3: peer streams authoritative avatar poses
             end
         end,
     },
