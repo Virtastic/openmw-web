@@ -128,6 +128,13 @@ function handleStatsDynamic(ctx: StateCtx, player: Player, body: LTable): boolea
   const mp = parseDynamicStat(body.get('mp'));
   const ft = parseDynamicStat(body.get('ft'));
   if (!hp || !mp || !ft) return false;
+  // Phase 4A: while the PEER is reporting this player's avatar bars, the client's own
+  // assertion is ignored -- one writer, same shape as the movement freshness gate. The
+  // client's claim resumes ruling the moment peer reports stop (peer down, input tier
+  // inactive for this player), so degraded mode needs no switchover signal here either.
+  if (player.peerStatsAt !== undefined && Date.now() - player.peerStatsAt <= PEER_STATS_FRESH_MS) {
+    return true; // consumed, not applied
+  }
   // DEATH IS A FLUSH POINT. Everything else here rides the sweep, but hp reaching 0 must hit
   // the disk immediately: the client sends the death edge instantly, and a player who dies
   // and closes the tab in the same second would otherwise rejoin alive — a progress bug and
@@ -333,6 +340,45 @@ function handleItemAcquired(ctx: StateCtx, player: Player, body: LTable): boolea
   if (!led.has(id) && led.size >= MAX_INVENTORY) return false;
   led.set(id, Math.min(MAX_COUNT, (led.get(id) ?? 0) + n));
   return true;
+}
+
+// Phase 4A: the peer's avatar bar reports. System-only; each entry lands exactly like a
+// client PlayerStatsDynamic (doc + relay + death flush) and additionally hands the OWNER
+// their own bars as MP_SelfStats -- the client renders what the peer simulated.
+const PEER_STATS_FRESH_MS = 1_000;
+
+export function handleAvatarStatsBatch(ctx: StateCtx, sender: Player, value: LValue | undefined): void {
+  if (sender.system !== true) return; // forgery: only the world peer reports avatars
+  const body = tbl(value);
+  const entries = body ? tbl(body.get('entries')) : undefined;
+  if (!entries) return;
+  const now = Date.now();
+  for (const [, ev] of entries) {
+    const e = tbl(ev);
+    if (!e) continue;
+    const id = finite(e.get('id'));
+    const hp = parseDynamicStat(e.get('hp'));
+    const mp = parseDynamicStat(e.get('mp'));
+    const ft = parseDynamicStat(e.get('ft'));
+    if (id === undefined || !hp || !mp || !ft) continue;
+    const p = ctx.roster.get(id);
+    if (!p || p.system === true || !p.inWorld) continue;
+    // Same rule as avatar poses: the peer's answer only rules a player who is actively
+    // driving the input tier. An input-less client keeps asserting its own bars.
+    if (p.lastInputAt === undefined || now - p.lastInputAt > PEER_STATS_FRESH_MS) continue;
+    p.peerStatsAt = now;
+    const died = hp.c <= 0;
+    ctx.store.update(p.charId, (doc) => {
+      doc.stats = { ...doc.stats, dynamic: { hp, mp, ft } };
+    }, died ? 'now' : 'sweep');
+    const msg = { id: p.id, hp, mp, ft };
+    for (const other of ctx.roster.inWorld()) {
+      if (other.id !== p.id && cellsVisible(other.cellKey, p.cellKey)) {
+        other.peer.sendEvent('PlayerStatsDynamic', msg);
+      }
+    }
+    p.peer.sendEvent('MP_SelfStats', { hp, mp, ft });
+  }
 }
 
 // ------------------------------------------------------------------- router

@@ -22,7 +22,7 @@ import { MSG_EVENT, MSG_PLAYER_MOVE, MSG_PLAYER_MOVE_BATCH, MSG_ACTOR_MOVE_BATCH
 import { MSG_PLAYER_INPUT, MSG_AVATAR_MOVE_BATCH, INPUT_PAYLOAD_BYTES, packInputForward, unpackAvatarMoveBatch } from '../proto/input';
 import { unpackMove } from '../proto/movement';
 import { MAX_ABS_COORD , isChargenCell, parseExterior, cellsVisible } from '../core/movement';
-import { handleStateEvent, syncStateOnJoin, type StateCtx } from '../core/playerstate';
+import { handleAvatarStatsBatch, handleStateEvent, syncStateOnJoin, type StateCtx } from '../core/playerstate';
 import type { WorldState } from '../core/worldstate';
 import type { Combat } from '../core/combat';
 import type { Quests } from '../core/quests';
@@ -642,6 +642,11 @@ export class Connection implements Peer {
     if (this.ctx.quests.handleEvent(this.player, name, value)) return; // M6 family
     if (this.ctx.combat.handleEvent(this.player, name, value)) return; // M5 family
     if (this.ctx.world.handleEvent(this.player, name, value)) return; // M3/M4 family
+    if (name === 'AvatarStatsBatch') {
+      // Phase 4A: the peer's avatar bar reports (system-only; forgeries dropped inside).
+      handleAvatarStatsBatch(this.ctx.stateCtx, this.player, value);
+      return;
+    }
     if (handleStateEvent(this.ctx.stateCtx, this.player, name, value)) return; // M2 family
     if (name === 'ChargenComplete') {
       // The client's engine reports CharGenState == -1 (race/class/sign done). Until this

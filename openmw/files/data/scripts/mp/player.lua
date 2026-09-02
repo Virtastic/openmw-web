@@ -797,6 +797,19 @@ return {
     eventHandlers = {
         -- Phase 3: our authoritative pose from the peer (own entry of PlayerStateBatch).
         MP_SelfState = onSelfState,
+        -- Phase 4A: our authoritative bars, as the peer simulated them (NPC swings, falls,
+        -- spells all land on the avatar). Current values only -- base stats still travel
+        -- through the progression path. identity.lua's own dynamic broadcast keeps running
+        -- as the degraded-mode fallback; the server ignores it while these are fresh.
+        MP_SelfStats = function(data)
+            if not data or not data.hp then return end
+            pcall(function()
+                local d = types.Actor.stats.dynamic
+                d.health(self).current = data.hp.c
+                d.magicka(self).current = data.mp.c
+                d.fatigue(self).current = data.ft.c
+            end)
+        end,
         MP_UiChatMessage = pushMessage,
         -- M2 rejoin restore: global.lua forwards SessionWelcome.playerRecord here (after
         -- granting the inventory and teleporting us to record.position).

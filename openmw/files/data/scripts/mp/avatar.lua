@@ -62,6 +62,11 @@ return {
             local jump = bit(input.flags, 2)
             self.controls.jump = jump and not prevJump
             prevJump = jump
+            -- ponytail: the avatar NEVER swings (use bit deliberately not mapped). Melee
+            -- rides the attacker-detects relay, applied ONCE on this peer as the victim's
+            -- owner (the s51-verified path); mapping use here would land every real swing
+            -- twice -- once natively, once via the relay. Full attacker-side migration
+            -- (peer-computed hit detection) comes with the cast/attack intent tier.
         end,
     },
     eventHandlers = {

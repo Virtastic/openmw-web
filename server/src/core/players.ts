@@ -65,6 +65,9 @@ export interface Player {
   // Wall-clock of the newest PlayerInput frame from this connection; the peer's avatar pose
   // only overrides the client-authored one while this is fresh (per-player degraded mode).
   lastInputAt?: number;
+  // Wall-clock of the peer's newest avatar-bars report for this player; while fresh the
+  // client's own PlayerStatsDynamic assertion is ignored (Phase 4A one-writer rule).
+  peerStatsAt?: number;
   avatarPoseLogged?: boolean; // simpeer.avatar_first_pose emitted for this session
   peerPoseAt?: number;
   poseVersion: number;

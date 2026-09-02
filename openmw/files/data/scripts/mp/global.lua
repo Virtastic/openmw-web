@@ -551,6 +551,42 @@ local function avatarStreamTick(now)
     if #entries > 0 and mp.sendAvatarMoveBatch then mp.sendAvatarMoveBatch(entries) end
 end
 
+-- Phase 4A: the peer reports each avatar's dynamic stats back to the server, which owns the
+-- character doc and forwards the owner their own bars (MP_SelfStats). This replaces the
+-- client asserting its own hp/mp/ft while the input tier is driving: damage the avatar takes
+-- on the peer (NPC swings, falls, spells) is what everyone -- including the owner -- sees.
+local avatarStatsAt = 0
+local AVATAR_STATS_EVERY = 0.25
+local avatarStatsLast = {} -- id -> serialized last report (diff suppression)
+
+local function avatarStatsTick(now)
+    if not (mp.isSystem and mp.isSystem()) then return end
+    if now - avatarStatsAt < AVATAR_STATS_EVERY then return end
+    avatarStatsAt = now
+    local entries = {}
+    for id, p in pairs(puppets) do
+        if p.obj and p.obj:isValid() then
+            local ok, entry = pcall(function()
+                local d = types.Actor.stats.dynamic
+                local hp, m, ft = d.health(p.obj), d.magicka(p.obj), d.fatigue(p.obj)
+                return { id = id,
+                    hp = { c = hp.current, b = hp.base },
+                    mp = { c = m.current, b = m.base },
+                    ft = { c = ft.current, b = ft.base } }
+            end)
+            if ok and entry then
+                local key = string.format('%d:%.1f/%.1f %.1f/%.1f %.1f/%.1f', entry.id,
+                    entry.hp.c, entry.hp.b, entry.mp.c, entry.mp.b, entry.ft.c, entry.ft.b)
+                if avatarStatsLast[id] ~= key then
+                    avatarStatsLast[id] = key
+                    entries[#entries + 1] = entry
+                end
+            end
+        end
+    end
+    if #entries > 0 then mp.sendEvent('AvatarStatsBatch', { entries = entries }) end
+end
+
 local function spawnPuppet(id, pose)
     if puppets[id] then return end
     -- On the peer the body goes to the PLAYER'S cell (remoteCell relay); destCellArg is the
@@ -593,6 +629,7 @@ local function despawnPuppet(id)
     local p = puppets[id]
     if not p then return end
     puppets[id] = nil
+    avatarStatsLast[id] = nil
     -- Guarded, and deliberately AFTER the bookkeeping above: remove() throws when the
     -- object is already gone or otherwise not removable ("Can't remove 0 of 0 items"), and
     -- an engine handler that throws ABORTS — which took the rest of MP_PlayerLeaveWorld
@@ -2190,6 +2227,7 @@ return {
                 worldmp.tick(now)
                 mirrorDoor(now)
                 avatarStreamTick(now) -- Phase 3: peer streams authoritative avatar poses
+                avatarStatsTick(now) -- Phase 4A: peer reports avatar bars to the server
             end
         end,
     },
