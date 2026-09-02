@@ -748,6 +748,15 @@ local function pollHarness()
             local dlgId = cmd:match('^dlg:(.+)$')
             if dlgId then core.sendGlobalEvent('mpTestDialogue', { id = dlgId }) end
         end
+        -- Harness: teleport self vertically (tpz:<dz>). Rides the same mpSelfSnap global
+        -- hop reconciliation's hard snap uses, so it exercises the true self-teleport path:
+        -- the jump detector announces it, the avatar follows, and (for a positive dz) the
+        -- avatar FALLS on the peer -- which is what s60-avatar-bars measures.
+        local tdz = cmd:match('^tpz:(-?[%d.]+)$')
+        if tdz then
+            local pos = self.position
+            core.sendGlobalEvent('mpSelfSnap', { x = pos.x, y = pos.y, z = pos.z + tonumber(tdz) })
+        end
         local dx, dy, ms = cmd:match('^walk:(-?[%d.]+),(-?[%d.]+),(%d+)$')
         if dx then
             walkCmd = {
@@ -813,6 +822,9 @@ return {
         -- as the degraded-mode fallback; the server ignores it while these are fresh.
         MP_SelfStats = function(data)
             if not data or not data.hp then return end
+            -- Scenario mirror: proves the PEER-authoritative bars actually flowed (a local
+            -- fall would drop hp too; only this marker distinguishes the sources).
+            mp.testSet('selfStats', string.format('%.0f/%.0f', data.hp.c, data.hp.b))
             pcall(function()
                 local d = types.Actor.stats.dynamic
                 d.health(self).current = data.hp.c
