@@ -207,6 +207,21 @@ local function diffGlobals()
     if #globalQueue > 0 then mp.testSet('globalBacklog', tostring(#globalQueue)) end
 end
 
+-- E5 (MP): the engine now REPORTS MWScript global writes (_onGlobalVariableChanged in
+-- global.lua -> here), so a quest advanced by mwscript on the sim peer reaches the network
+-- the same frame instead of on the next 1 s diff poll. The poll stays as the safety net —
+-- it also covers anything the hook's exclusions skip — and the queue/echo machinery is
+-- shared, so a pushed change cannot double-send.
+function quests.onGlobalWritten(name, value)
+    if TIME_GLOBALS[string.lower(name)] then return end
+    if globals[name] == value then return end -- echo of our own apply, or no real change
+    globals[name] = value
+    if globalsSeeded and not globalQueued[name] then
+        globalQueued[name] = true
+        globalQueue[#globalQueue + 1] = name
+    end
+end
+
 -- ================================================================== factions / crime
 
 local function factionFingerprint(rank, reputation, expelled)

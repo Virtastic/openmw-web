@@ -2137,6 +2137,12 @@ return {
                 if not ok then print('[mp] onItemActive hook error: ' .. tostring(err)) end
             end
         end,
+        -- E5 (MP): an MWScript global was written (worldimp setGlobalInt/Float). Feeds the
+        -- same queue the 1 s diff poll uses, so the peer's quest advances go out the frame
+        -- they happen.
+        _onGlobalVariableChanged = function(name, value)
+            quests.onGlobalWritten(name, value)
+        end,
         onUpdate = function()
             net.tick()
             flushNotices()
