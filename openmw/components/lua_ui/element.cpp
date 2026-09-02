@@ -1,5 +1,7 @@
 #include "element.hpp"
 
+#include <cstdlib>
+
 #include <MyGUI_Gui.h>
 
 #include "components/settings/values.hpp"
@@ -278,11 +280,27 @@ namespace LuaUi
         return LayoutKeys::allKeys;
     }
 
+    // HEADLESS: MyGUI is never initialised (NullWindowManager), and every MyGUI singleton
+    // dies by infinite recursion in LogManager::getInstance() if touched -- measured as a
+    // 12k-frame stack overflow the first time a Lua script called ui.create on the sim peer.
+    // Elements still walk their New -> Created -> Destroyed states so script logic holds;
+    // they just never own a widget, which every consumer already null-guards (adapter.cpp).
+    static bool headlessUi()
+    {
+        static const bool headless = std::getenv("OPENMW_HEADLESS") != nullptr;
+        return headless;
+    }
+
     void Element::create(uint64_t depth)
     {
         if (mState == New)
         {
             assert(!mRoot);
+            if (headlessUi())
+            {
+                mState = Created;
+                return;
+            }
             mRoot = createWidget(layout(), true, depth);
             mLayer = setLayer(mRoot, layout());
             updateRootCoord(mRoot);
@@ -295,6 +313,11 @@ namespace LuaUi
     {
         if (mState == Update)
         {
+            if (headlessUi())
+            {
+                mState = Created;
+                return;
+            }
             assert(mRoot);
             if (mRoot->widget()->getTypeName() != widgetType(layout()))
             {
@@ -351,6 +374,8 @@ namespace LuaUi
 
     void Element::checkWarnings()
     {
+        if (mRoot == nullptr)
+            return;
         if (mNoWarnUnused)
             // Currently unused warnings are our only warnings so we can just early out here.
             return;

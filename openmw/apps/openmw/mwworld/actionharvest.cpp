@@ -15,6 +15,7 @@
 
 #include "class.hpp"
 #include "containerstore.hpp"
+#include <cstdlib>
 
 namespace MWWorld
 {
@@ -69,6 +70,11 @@ namespace MWWorld
                 // The two GMST entries below expand to strings informing the player of what, and how many of it has
                 // been added to their inventory
                 std::string msgBox;
+                // HEADLESS: LanguageManager is a MyGUI singleton that does not exist on the sim
+                // peer; the message box is a no-op there anyway (NullWindowManager).
+                static const bool headless = std::getenv("OPENMW_HEADLESS") != nullptr;
+                if (headless)
+                    break;
                 if (itemCount == 1)
                 {
                     msgBox = MyGUI::LanguageManager::getInstance().replaceTags("\n#{sNotifyMessage60}");

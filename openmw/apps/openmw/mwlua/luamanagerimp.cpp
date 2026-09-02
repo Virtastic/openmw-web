@@ -47,6 +47,7 @@
 #include "playerscripts.hpp"
 #include "types/types.hpp"
 #include "userdataserializer.hpp"
+#include <cstdlib>
 
 namespace MWLua
 {
@@ -723,8 +724,12 @@ namespace MWLua
 
     void LuaManager::inputEvent(const InputEvent& event)
     {
-        if (!MyGUI::InputManager::getInstance().isModalAny()
-            && !MWBase::Environment::get().getWindowManager()->isConsoleMode())
+        // HEADLESS: MyGUI singletons were never created (NullWindowManager) and touching one
+        // recurses to death in LogManager::getInstance(). No modal can exist without a GUI.
+        static const bool headless = std::getenv("OPENMW_HEADLESS") != nullptr;
+        if (headless
+            || (!MyGUI::InputManager::getInstance().isModalAny()
+                && !MWBase::Environment::get().getWindowManager()->isConsoleMode()))
         {
             mInputEvents.push_back(event);
         }
