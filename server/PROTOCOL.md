@@ -27,6 +27,39 @@ them. Current: **M8** (M0-M7 shipped).
 | `0x0100` | PlayerMove (C→S) | M1 |
 | `0x0101` | PlayerMoveBatch (S→C) | M1 |
 | `0x0200` | ActorMoveBatch | M4 (reserved) |
+| `0x0102` | PlayerInput (C→S; S→peer with u16 id prefix) | Phase 3 |
+| `0x0103` | PlayerStateBatch (S→C) | Phase 3 |
+| `0x0105` | AvatarMoveBatch (peer→S) | Phase 3 |
+
+### Phase 3 input tier (`0x0102` / `0x0105` / `0x0103`)
+
+The server (via the sim peer) is authoritative over the player's own movement. The three
+types sit BESIDE the M1 movement tier, which remains the DEGRADED MODE: with no peer
+holding the world, `0x0102` frames are dropped (counted) and the client-authored `0x0100`
+path is authoritative again — a peer crash never freezes every player, and no switchover
+signal exists or is needed (the peer-pose freshness window, 300 ms, is the whole switch).
+
+- **`0x0102` PlayerInput (C→S, ~30 Hz).** 12-byte payload: `0` u32 seq (client-monotonic,
+  echoed back as `lastInputSeq`) · `4` i8 move axis (−127..127 ≡ −1..1) · `5` i8 side axis ·
+  `6` u16 yaw · `8` u8 pitch (same quantization as PlayerMove) · `9` u8 flags (bit0 run,
+  bit1 sneak, bit2 jump-edge, bit3 use/attack) · `10` u16 reserved 0. Authenticated by
+  CONNECTION IDENTITY — this connection owns exactly one avatar — which is deliberately a
+  different check from ActorMoveBatch's holder/epoch ("may you author this cell's
+  actors"); do not conflate them. Forwarded to the world peer as the same 12 bytes
+  prefixed with the owning player's u16 id; a client never receives this type.
+- **`0x0105` AvatarMoveBatch (peer→S, ~20 Hz).** `[u8 count]` + count × (`u16 id` +
+  `u32 lastInputSeq` + 20-byte pose). The authoritative result of simulating the avatars.
+  Only the world peer may send it: a client's frame is dropped and counted
+  (`omwmp_avatar_batch_rejected_total{reason="not_peer"}`), the negative control mirroring
+  `actor_batch_rejected{not_holder}`. Accepted poses become each player's canonical pose
+  and feed the ordinary `0x0101` fan-out, so every other client renders the authoritative
+  result with no second channel; while the stream is fresh a client's own `0x0100` claim
+  is consumed but not applied.
+- **`0x0103` PlayerStateBatch (S→C).** Same entry layout as `0x0105`. Each player receives
+  their OWN entry on the broadcast tick — pose + `lastInputSeq` — which is the anchor for
+  client-side reconciliation (predict + smooth blend via capped physics offsets; hard snap
+  past the threshold). The local player never renders from the delayed interpolation
+  buffer: `RENDER_DELAY` is for remote puppets only.
 
 ### `0x0100` PlayerMove (M1, C→S)
 
