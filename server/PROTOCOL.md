@@ -486,6 +486,21 @@ factions, crime. Sharing is operator-configurable per family (`[sharing]`).
 Kill counts ride M4's `WorldKillCount`. Applying a received journal/faction/var update MUST
 NOT re-broadcast it (echo guard) — clients seed their diff caches from applied state.
 
+### Phase 4E — the peer's MWScript writes win, and clients receive them
+
+Under the one-peer model the peer runs every cell script authoritatively, but each client's
+engine runs its LOCAL COPY of the same scripts on the same puppeted actors, so a global or
+member variable gets written twice and character globals were last-writer-wins. Rule: a
+client `GlobalVarUpdate` / `MemberVarUpdate` for a name the **peer wrote within
+`INPUT_DRIVING_MS`** is dropped (`quest.global_peer_owned` / `quest.member_peer_owned`);
+names the peer never writes — dialogue-result scripts run only on the client that talked —
+are untouched, so dialogue-driven quest state is exactly as before. And the peer's
+**character-global** writes are now relayed live to every client in the world (peer-origin
+only; client→client stays unrelayed), so local script copies stop holding a stale value
+until the next login's `GlobalVarSync`. Persistence is unchanged: `journalTarget` already
+routes a system sender to the world owner's doc (standalone stacks and an offline owner
+persist nothing for the peer, as they did for guests — live relay still happens).
+
 ## World state (M7)
 
 | name | dir | body |

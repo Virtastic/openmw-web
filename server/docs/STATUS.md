@@ -37,10 +37,22 @@ reasons: s63 (deleted public mode), s66 (4A/4B unit-proven; browser tier blocked
 player-target hit injection). Box-limited on this laptop: s30/s40/s42/s43 multi-client
 convergence (they pass on quieter hardware).
 
-**Still deferred (plan Phase 4 remainder):** attacker-side hit COMPUTATION on the peer (needs
-the discrete-intent tier; the avatar deliberately never swings today), inventory
-request→result (needs the containerstore engine hook, E5), quest receiving. All gated on
-engine seams the plan already sequences ahead of them.
+**Phase 4C/4D/4E landed the same day (nothing deferred):**
+- **4C melee on the peer.** The owner's `use` bit rides the input tier; `avatar.lua` maps it
+  onto `controls.use` and the peer's engine resolves the hit natively. A client's REAL swing
+  is cancel-only while a peer holds the target's cell (`combat.lua` asks `actors.hasHolder`);
+  the relay survives for degraded mode and for the test hooks (`mpTest`-marked synthetic
+  Hits always forward, keeping s51/s58 as regression guards). Pose flags bit 3 = "avatar
+  attacking"; s67 proves the wiring with `attack:<ms>`.
+- **4D inventory both ways.** Every accepted `PlayerInventory` forwards a refreshed
+  `AvatarState` to the peer (`applyAvatarDoc` now sheds surplus too); the peer reports
+  wear/charge/soul as `AvatarItemStatesBatch`, one-writer-gated into `doc.itemStates`, and
+  the owner applies `MP_SelfItemStates`. Counts stay client/M3-owned. No engine hook needed.
+- **4E quests.** A client write to a global/member var the peer wrote within
+  `INPUT_DRIVING_MS` is dropped (local script copies cannot clobber the peer); the peer's
+  character-global writes are relayed live to everyone in-world.
+Remaining plan items are genuinely engine-side (E4 deep trim, E1 measurement on a deployed
+peer) rather than authority work.
 
 ## 2026-09-02 — the mp912026 overhaul: one peer, input authority, Solo/Party (proto 2)
 

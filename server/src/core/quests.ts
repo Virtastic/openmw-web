@@ -12,6 +12,7 @@
 import { lToJs, type LTable, type LValue, type JsLike } from '../proto/lser';
 import { parseObjRef, type ObjRef } from '../proto/ref';
 import type { Player, Roster } from './players';
+import { INPUT_DRIVING_MS } from './players';
 import { cellsVisible } from './movement';
 import type { CellStore } from '../persist/cellstore';
 import type { PlayerStore } from '../persist/playerstore';
@@ -264,6 +265,16 @@ export class Quests {
 
   // ---------------------------------------------------------------- globals
 
+  // Phase 4E: WHO OWNS AN MWSCRIPT WRITE. Under the one-peer model the peer runs every cell
+  // script authoritatively -- but each client's engine runs its LOCAL COPY of the same
+  // scripts on the same (puppeted) actors, so the same global or member variable gets
+  // written twice, and character globals were last-writer-wins. The peer's write wins: a
+  // client write to a name the peer wrote within INPUT_DRIVING_MS is dropped. Names the
+  // peer never writes (dialogue-result scripts run only on the client that talked) are
+  // untouched, so dialogue-driven quest state stays exactly as it was.
+  private peerGlobalAt = new Map<string, number>();
+  private peerMemberAt = new Map<string, number>();
+
   private globalVar(player: Player, body: LTable): void {
     const name = str(body.get('name'));
     const value = finite(body.get('value'));
@@ -288,6 +299,16 @@ export class Quests {
     // the character (a rejoin or world hop restores the player's own quest state) and
     // relay to nobody: relaying is what makes two party members at different stages
     // overwrite each other forever.
+    const nowMs = Date.now();
+    if (player.system === true) {
+      this.peerGlobalAt.set(lower, nowMs);
+    } else {
+      const at = this.peerGlobalAt.get(lower);
+      if (at !== undefined && nowMs - at <= INPUT_DRIVING_MS) {
+        log('debug', 'quest.global_peer_owned', { name, from: player.name });
+        return;
+      }
+    }
     if (!this.isWorldGlobal(lower)) {
       // The SAME target as the journal, and for the same reason. Morrowind gates most quests
       // on globals rather than the journal index (see above), so shadowing these to the guest
@@ -296,6 +317,13 @@ export class Quests {
       // a quest ungiveable or unfinishable in their own campaign. A guest's campaign is
       // frozen in BOTH halves of the quest system or in neither.
       const target = this.ctx.journalTarget(player);
+      // Phase 4E: the peer's write is the campaign's authoritative state, so every client
+      // in the world receives it LIVE (their local script copies would otherwise hold a
+      // stale value until the next login's GlobalVarSync). Peer-origin only: client-to-
+      // client stays unrelayed, which is what keeps one player's dialogue from moving
+      // another's engine. Relayed even where nothing persists (standalone stack, owner
+      // offline) -- live sync and campaign persistence are different jobs.
+      if (player.system === true) this.relayAll(player.id, 'GlobalVarUpdate', { name, value });
       if (target === undefined) return; // unowned instance: persists nothing
       this.ctx.players.update(target, (doc) => {
         (doc.globals ??= {})[name] = value;
@@ -346,6 +374,17 @@ export class Quests {
     if (!ref || ref.kind !== 'ref' || !name || value === undefined || !cellKey) {
       this.drop(player, 'MemberVarUpdate', 'invalid shape or no cell');
       return;
+    }
+    const memberKey = `${cellKey}|${ref.key}|${name}`;
+    const nowMs = Date.now();
+    if (player.system === true) {
+      this.peerMemberAt.set(memberKey, nowMs);
+    } else {
+      const at = this.peerMemberAt.get(memberKey);
+      if (at !== undefined && nowMs - at <= INPUT_DRIVING_MS) {
+        log('debug', 'quest.member_peer_owned', { name, ref: ref.key, from: player.name });
+        return;
+      }
     }
     void this.storeMemberVar(cellKey, ref, name, value);
     this.relayCell(cellKey, player.id, 'MemberVarUpdate', { ...(lToJs(body) as Record<string, JsLike>) });
