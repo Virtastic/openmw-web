@@ -5,7 +5,7 @@
 #include <components/detournavigator/agentbounds.hpp>
 #include <components/lua/luastate.hpp>
 #include <components/misc/finitevalues.hpp>
-#include <components/settings/values.hpp>
+
 
 #include "apps/openmw/mwbase/environment.hpp"
 #include "apps/openmw/mwbase/mechanicsmanager.hpp"
@@ -397,11 +397,10 @@ namespace MWLua
             if (target.getCell()->getCell()->getWorldSpace() != player.getCell()->getCell()->getWorldSpace())
                 return false;
 
-            const int actorsProcessingRange = Settings::game().mActorsProcessingRange;
-            const osg::Vec3f playerPos = player.getRefData().getPosition().asVec3();
-
-            const float dist = (playerPos - target.getRefData().getPosition().asVec3()).length2();
-            return dist <= (actorsProcessingRange * actorsProcessingRange);
+            // Nearest anchor + held interiors (actorutil), not just the player: on a sim peer
+            // this answer would otherwise LIE to any Lua that asks — an actor the engine is
+            // actively simulating in an anchored cell would read as out of range.
+            return MWMechanics::inSimProcessingRange(target);
         };
 
         actor["isDead"] = [](const Object& o) {

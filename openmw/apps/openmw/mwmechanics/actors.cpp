@@ -1248,21 +1248,11 @@ namespace MWMechanics
         const bool heldInterior
             = MWBase::Environment::get().getWorld()->isAnchoredInterior(ptr.getCell());
 
-        // NEAREST ANCHOR, not just the player. On a normal client there are no anchors and this
-        // is exactly the vanilla check. On a headless sim peer the server supplies one anchor
-        // per populated region, and an actor stops processing only when it is far from ALL of
-        // them — which is what lets ONE peer simulate several parts of the world instead of
-        // needing a whole ~450 MB engine process per region.
+        // NEAREST ANCHOR, not just the player — one shared reduction (actorutil), because the
+        // pasted-per-site version is exactly how the animation gate got missed and froze NPCs
+        // under a healthy holder.
         const osg::Vec3f actorPos = ptr.getRefData().getPosition().asVec3();
-        float dist = (player.getRefData().getPosition().asVec3() - actorPos).length();
-        for (const osg::Vec3f& anchor : MWBase::Environment::get().getWorld()->getSimAnchorPositions())
-        {
-            // Anchors are cell centres at z=0; compare in the horizontal plane so an actor up a
-            // tower or down a cave is not judged out of range by height alone.
-            const float dx = anchor.x() - actorPos.x();
-            const float dy = anchor.y() - actorPos.y();
-            dist = std::min(dist, std::sqrt(dx * dx + dy * dy));
-        }
+        const float dist = std::sqrt(nearestSimDistanceSqr(actorPos));
         const int actorsProcessingRange = Settings::game().mActorsProcessingRange;
         if (!heldInterior && dist > actorsProcessingRange)
         {
@@ -1555,7 +1545,6 @@ namespace MWMechanics
             const bool showTorches = world->useTorches();
 
             const MWWorld::Ptr player = getPlayer();
-            const osg::Vec3f playerPos = player.getRefData().getPosition().asVec3();
 
             /// \todo move update logic to Actor class where appropriate
 
@@ -1571,8 +1560,6 @@ namespace MWMechanics
                 if (!playerHitAttemptActor.isInCell())
                     player.getClass().getCreatureStats(player).setHitAttemptActor({});
             }
-            const int actorsProcessingRange = Settings::game().mActorsProcessingRange;
-
             // AI and magic effects update
             for (Actor& actor : mActors)
             {
@@ -1583,33 +1570,14 @@ namespace MWMechanics
                 MWBase::LuaManager::ActorControls* luaControls
                     = MWBase::Environment::get().getLuaManager()->getActorControls(actor.getPtr());
 
-                // NEAREST ANCHOR, not just the player — the same rule adjustVisibility() above
-                // already applies, and for the same reason.
+                // NEAREST ANCHOR, not just the player — one shared reduction (actorutil).
                 //
                 // This gate decides whether an actor gets AI AT ALL. On a normal client there
-                // are no anchors and it is exactly the vanilla check. On a headless sim peer the
-                // "player" is its own parked avatar, so measuring only from that meant every NPC
-                // near a REAL player — anywhere the peer was not standing — got no AI: it never
-                // aggroed, never attacked, and anything caught mid-animation froze in it. The
-                // default range is 7168 and an exterior cell is 8192, so one cell away was
-                // already enough. Reported from live play as "some NPCs never attack or aggro"
-                // and an assassin "stuck in an attack animation".
-                //
-                // The anchors were already there and already used for VISIBILITY a few hundred
-                // lines up; only this half was still measuring from the avatar.
-                const osg::Vec3f thisActorPos = actor.getPtr().getRefData().getPosition().asVec3();
-                float nearestDistSqr = (playerPos - thisActorPos).length2();
-                for (const osg::Vec3f& anchor : MWBase::Environment::get().getWorld()->getSimAnchorPositions())
-                {
-                    // Horizontal plane: anchors are cell centres at z=0, so an actor up a tower
-                    // or down a cave must not read as out of range on height alone.
-                    const float dx = anchor.x() - thisActorPos.x();
-                    const float dy = anchor.y() - thisActorPos.y();
-                    nearestDistSqr = std::min(nearestDistSqr, dx * dx + dy * dy);
-                }
-                const float distSqr = nearestDistSqr;
-                // AI processing is only done within given distance to the player (or an anchor).
-                const bool inProcessingRange = distSqr <= actorsProcessingRange * actorsProcessingRange;
+                // are no anchors and it is exactly the vanilla check. On a headless sim peer
+                // the "player" is its own parked avatar, so measuring only from that meant
+                // every NPC near a REAL player got no AI. A held interior always processes:
+                // distance across a door is meaningless, and the server asked for that room.
+                const bool inProcessingRange = inSimProcessingRange(actor.getPtr());
 
                 // If dead or no longer in combat, no longer store any actors who attempted to hit us. Also remove for
                 // the player.
@@ -1724,7 +1692,6 @@ namespace MWMechanics
             {
                 if (actor.isInvalid())
                     continue;
-                const float dist = (playerPos - actor.getPtr().getRefData().getPosition().asVec3()).length();
                 const bool isPlayer = actor.getPtr() == player;
                 CreatureStats& stats = actor.getPtr().getClass().getCreatureStats(actor.getPtr());
                 // Actors with active AI should be able to move.
@@ -1734,7 +1701,14 @@ namespace MWMechanics
                     MWMechanics::AiSequence& seq = stats.getAiSequence();
                     alwaysActive = !seq.isEmpty() && seq.getActivePackage().alwaysActive();
                 }
-                const bool inRange = isPlayer || dist <= actorsProcessingRange || alwaysActive;
+                // NEAREST ANCHOR, not just the player. THIS was the missed half of the
+                // 2026-08-25 fix: the AI gate above went anchor-aware while this one kept
+                // measuring from the player only, so an actor in an anchored cell DECIDED to
+                // attack and then `ctrl.update()` never ran — setNodeMask(0),
+                // setActorActive(false), continue. AI that plans and a character controller
+                // that never moves anyone is exactly the "frozen NPCs under a healthy holder"
+                // the one-peer-per-cell fan-out was deployed to paper over.
+                const bool inRange = isPlayer || alwaysActive || inSimProcessingRange(actor.getPtr());
                 const int activeFlag = isPlayer ? 2 : 1; // Can be changed back to '2' to keep updating bounding boxes
                                                          // off screen (more accurate, but slower)
                 const int active = inRange ? activeFlag : 0;
@@ -1944,8 +1918,6 @@ namespace MWMechanics
             duration /= timeScale;
 
         const MWWorld::Ptr player = MWBase::Environment::get().getWorld()->getPlayerPtr();
-        const osg::Vec3f playerPos = player.getRefData().getPosition().asVec3();
-        const int actorsProcessingRange = Settings::game().mActorsProcessingRange;
 
         for (const Actor& actor : mActors)
         {
@@ -1960,9 +1932,9 @@ namespace MWMechanics
             if (!sleep || actor.getPtr() == player)
                 restoreDynamicStats(actor.getPtr(), hours, sleep);
 
-            if ((!actor.getPtr().getRefData().getBaseNode())
-                || (playerPos - actor.getPtr().getRefData().getPosition().asVec3()).length2()
-                    > actorsProcessingRange * actorsProcessingRange)
+            // Nearest anchor + held interiors, not just the player (actorutil): a rest on
+            // the sim peer must tick every actor it simulates, not just its own cell.
+            if ((!actor.getPtr().getRefData().getBaseNode()) || !inSimProcessingRange(actor.getPtr()))
                 continue;
 
             // Get rid of effects pending removal so they are not applied when resting
