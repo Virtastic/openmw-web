@@ -64,7 +64,12 @@ export default async function run(ctx) {
   await a.waitFor(
     `(function(){var s=(window.__omwMP||{}).selfStats; if(!s) return false;`
     + ` var m=/^(\\d+)\\/(\\d+)$/.exec(s); return !!m && Number(m[1]) < Number(m[2]); })()`,
-    STEP_TIMEOUT, 'MP_SelfStats with current < base (peer-simulated fall damage)');
+    STEP_TIMEOUT, 'MP_SelfStats with current < base (peer-simulated fall damage)')
+    .catch(async (e) => {
+      ctx.log('  DIAG selfStats=' + String(await a.eval('(window.__omwMP||{}).selfStats'))
+        + ' selfDivergence=' + String(await a.eval('(window.__omwMP||{}).selfDivergence')));
+      throw e;
+    });
   // On timeout the mirrors say which half failed (never arrived vs never dropped).
   const marker = await a.eval('(window.__omwMP||{}).selfStats');
   ctx.log('  selfDivergence=' + String(await a.eval('(window.__omwMP||{}).selfDivergence')));
