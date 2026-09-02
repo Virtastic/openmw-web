@@ -450,8 +450,13 @@ local function pollHarness()
         -- what the ENGINE says about console state, so the assertion is on real state and
         -- not on how a screenshot looks.
         if cmd == 'console:request' then
-            mp.requestConsole()
-            mp.testSet('consoleOpen', tostring(mp.isConsoleOpen()))
+            -- pcall BOTH halves: s49 read 'undefined' because requestConsole threw and the
+            -- handler died before the mirror was written -- which reads exactly like a dead
+            -- command channel. Whatever fails, the mirror now says something diagnosable.
+            local ok, err = pcall(mp.requestConsole)
+            if not ok then print('[mp] console request failed: ' .. tostring(err)) end
+            local okOpen, open = pcall(mp.isConsoleOpen)
+            mp.testSet('consoleOpen', okOpen and tostring(open) or ('error:' .. tostring(open)))
         end
 
         local joinId = cmd:match('^worldjoin:([%w_-]+)$')

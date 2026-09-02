@@ -23,6 +23,12 @@ export default async function run(ctx) {
   const a = await ctx.launchClient('bot-a', '');
   await a.waitFor("(window.__omwMP||{}).state === 'Joined'", STEP, 'client joins');
 
+  // Channel probe first: 'count:' writes its own mirror, so a dead command poll and a
+  // broken console handler stop looking identical (both used to read as undefined).
+  await a.eval("Module.__omwMPCmd='count:gold_001'");
+  await ctx.sleep(1000);
+  ctx.log('  cmd-channel probe (count mirror): ' + String(await a.eval("(window.__omwMP||{}).count")));
+
   await a.eval("Module.__omwMPCmd='console:request'");
   await ctx.sleep(1500);
 
