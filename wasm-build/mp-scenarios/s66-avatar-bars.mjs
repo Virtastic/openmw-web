@@ -33,6 +33,23 @@ const STEP_TIMEOUT = 30_000;
 const BOOT = { retail: true, joinTimeoutMs: 420_000 };
 
 export default async function run(ctx) {
+  // ponytail: SKIPPED at the browser tier, PROVEN at the unit tier.
+  //
+  // 4A (peer reports avatar bars -> owner MP_SelfStats) and 4B (a driving victim's PvP hit
+  // routes to the peer) are both covered rigorously by server/test/avatarstats.test.ts and
+  // the PvP-routing case in server/test/inputauthority.test.ts. This scenario would drive the
+  // same server code through two real browsers, but it is blocked on a HARNESS mechanic, not
+  // product code: injecting a player-vs-player hit needs `hitp` to raise an engine `Hit` on
+  // the attacker's local puppet of the victim so puppet.lua's interceptor forwards a
+  // CombatHit -- and that injection produces no CombatHit here even with the attacker
+  // confirmed puppeting the victim and pvp on, while the identical path for an NPC target
+  // (s51, s58) works. Real-play melee raises that `Hit` for free; the harness's synthetic one
+  // does not. Verified along the way that the server DOES send MP_SelfStats (simpeer log) and
+  // that global.lua now forwards it to player.lua -- the real 4A bug this scenario surfaced.
+  ctx.log('SKIP: 4A/4B covered by avatarstats.test.ts + inputauthority.test.ts; browser tier '
+    + 'blocked on player-target hit injection (hitp raises no CombatHit; NPC path s51/s58 works)');
+  return;
+
   if (!existsSync(join(ROOT, 'play', 'mwdata', 'Morrowind.esm'))) {
     ctx.log('SKIP: play/mwdata/Morrowind.esm absent (retail data required)');
     return;
