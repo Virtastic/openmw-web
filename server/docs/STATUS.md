@@ -79,7 +79,11 @@ convergence (they pass on quieter hardware).
   355; the plan's "~40 lines, trim five and stop" estimate assumed a share that is not
   there. The floor is the ESM store + navmesh + Bullet + Lua, which E4 never touched; the
   only lever left is the out-of-scope fork()-after-loadData spike.
-Remaining engine trivia: E6 (headless land loading of VNML/VCLR/VTEX).
+- **E6 was already in the tree** (`terrainstorage.cpp`: headless loads `DATA_VHGT` only — the
+  physics heightfield and navmesh need heights; VNML/VCLR/VTEX draw for nobody), and the
+  navmesh cache size rides `buildPeerSettings`. **Phase E is closed:** E1 measured, E2/E3/E5/E6/E7
+  landed, E4 decided against on its own measurement. Every plan phase (W, 0, 1, 2, 2b, 3, 4, 5)
+  is landed and verified; what remains is the push, which is the owner's call.
 
 ## 2026-09-02 — the mp912026 overhaul: one peer, input authority, Solo/Party (proto 2)
 
