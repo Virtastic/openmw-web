@@ -403,10 +403,17 @@ authoritative from the holder; non-holders converge via the 5 s snapshot + stats
 ## Combat & magic (M5)
 
 Authority model (TES3MP-equivalent): **the attacker's client detects the hit; the victim's
-client applies the damage.** For NPCs/creatures the victim's "client" is that cell's
-authority holder (M4). Raw pre-mitigation damage travels; armor, difficulty, resistances
-and sounds are applied exactly once, on the victim, by the engine's own untouched Lua
-combat pipeline (`files/data-mw/scripts/omw/combat/local.lua`).
+OWNER applies the damage.** For NPCs/creatures the owner is that cell's authority holder
+(M4) — under the one-peer model, always the sim peer. For a PLAYER victim who is driving
+the input tier, the owner is ALSO the peer (Phase 4B): the hit is applied to their avatar
+and the damage travels back as `AvatarStatsBatch`, because the victim's own stat assertions
+are ignored while peer bar reports are fresh (Phase 4A one-writer rule). An input-less
+victim keeps the classic victim-client delivery. Raw pre-mitigation damage travels; armor,
+difficulty, resistances and sounds are applied exactly once, on the victim's owner, by the
+engine's own untouched Lua combat pipeline (`files/data-mw/scripts/omw/combat/local.lua`).
+The peer's avatars deliberately never SWING (the input `use` bit is unmapped): attacker-side
+hit detection stays on the client until the discrete-intent tier lands, or every real swing
+would land twice.
 
 | name | dir | body |
 |---|---|---|
