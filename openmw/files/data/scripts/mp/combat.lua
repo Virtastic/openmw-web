@@ -143,6 +143,15 @@ end
 local function resolveVictim(data)
     local target = data.target or {}
     if target.playerId then
+        -- Phase 4B: on the SIM PEER a player victim is their AVATAR body -- the server
+        -- routes PvP hits here whenever the victim is driving the input tier, because the
+        -- victim's own stat assertions are ignored while the peer's bar reports are fresh
+        -- (4A one-writer rule): damage applied on the victim's client would silently vanish.
+        -- Applied to the avatar it lands once, and travels back as AvatarStatsBatch.
+        if mp.isSystem and mp.isSystem() then
+            local obj = deps.puppetObjOf(target.playerId)
+            return (obj and obj:isValid()) and obj or nil
+        end
         return target.playerId == deps.ownIdFn() and deps.playerFn() or nil
     end
     local obj = target.ref

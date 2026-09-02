@@ -236,6 +236,14 @@ export class Combat {
         return null;
       }
       if (!this.ctx.allowPlayerHit(attacker, victim.id, name)) return null; // pvp plugin veto
+      // Phase 4B: while the victim is DRIVING the input tier, their own stat assertions are
+      // ignored (4A one-writer rule) -- so damage applied on their client would vanish. The
+      // world peer applies the hit to the victim's AVATAR instead, and the damage travels
+      // back through the peer's bar reports. An input-less victim keeps the old delivery.
+      if (victim.lastInputAt !== undefined && Date.now() - victim.lastInputAt <= 1_000) {
+        const worldPeer = this.ctx.roster.inWorld().find((p) => p.system === true);
+        if (worldPeer) return worldPeer;
+      }
       return victim;
     }
     // Actor target: the owner is whoever currently simulates the cell. Unlike the Actor*

@@ -151,3 +151,55 @@ test('with no peer, input is dropped and the client-authored path stays live (de
     (bt) => bt.entries.some((e) => e.id === a.playerId && Math.round(e.pose.x) === 321), 8000);
   assert.ok(seen, 'degraded mode must keep everyone moving');
 });
+
+// Phase 4B: a PvP hit on a DRIVING victim is delivered to the world peer (which applies it
+// to the victim's avatar), not to the victim's client -- whose own stat assertions the 4A
+// one-writer rule is ignoring, so damage applied there would silently vanish. An input-less
+// victim keeps the old victim-applies delivery.
+test('a PvP hit on a driving victim routes to the peer; an idle victim keeps it', async (t) => {
+  const server = await startServer({
+    requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
+    configOverride: {
+      server: { password: PEER_PASS }, limits: { maxConnsPerIp: 16 },
+      rules: { pvp: true },
+    },
+  });
+  t.after(() => server.close());
+  const peer = await TestClient.simPeer(server.port, PEER_PASS);
+  t.after(() => peer.close());
+  const atk = await TestClient.connect(server.port);
+  t.after(() => atk.close());
+  await atk.joinAsNew('Attacker');
+  await atk.waitEvent('PlayerList');
+  atk.sendCellChange('0,0', 0, 0, 0);
+  const vic = await TestClient.connect(server.port);
+  t.after(() => vic.close());
+  const wv = await vic.joinAsNew('Victim');
+  const vicId = wv['playerId'] as number;
+  await vic.waitEvent('PlayerList');
+  vic.sendCellChange('0,0', 0, 0, 0);
+
+  const hit = {
+    target: { playerId: vicId },
+    damage: { health: 10 }, strength: 0.8, sourceType: 'melee', successful: true,
+  };
+
+  // Idle victim: old delivery.
+  atk.sendEvent('CombatHit', hit);
+  await vic.waitEvent('CombatHit');
+
+  // Driving victim: the peer gets it, the victim does not.
+  let seq = 0;
+  vic.sendInput({ move: 1 }, ++seq);
+  const timer = setInterval(() => vic.sendInput({ move: 1 }, ++seq), 100);
+  t.after(() => clearInterval(timer));
+  await new Promise((r) => setTimeout(r, 150));
+  const beforeVic = vic.inbox.events.filter((e) => e.name === 'CombatHit').length;
+  atk.sendEvent('CombatHit', hit);
+  const toPeer = await peer.waitEvent('CombatHit',
+    (v) => (v as { target?: { playerId?: number } })?.target?.playerId === vicId);
+  assert.ok(toPeer, 'the peer must receive the driving victim hit');
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(vic.inbox.events.filter((e) => e.name === 'CombatHit').length, beforeVic,
+    'the victim client must NOT also receive it -- one applier');
+});
