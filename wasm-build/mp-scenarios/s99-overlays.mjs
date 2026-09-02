@@ -188,7 +188,7 @@ export default async function run(ctx) {
   // A notice must NOT be persisted: it reports an event, so the next one has to show too.
   assert.equal(await a.eval(`document.getElementById('omw-tour-dots').innerHTML`), '',
     'a notice must not render tour dots');
-  assert.match(await a.eval(`document.getElementById('omw-tour-body').textContent`), /Ada has gone Solo/,
+  assert.match(await a.eval(`document.getElementById('omw-tour-body').textContent`), /Ada.+closed their world/,
     'the notice must name who closed the world');
   const noticeHit = await a.click('#omw-tour-next');
   await a.waitFor(`!document.getElementById('omw-tour').classList.contains('show')`, 3000,
