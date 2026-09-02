@@ -2,7 +2,9 @@
 
 Notable changes to OpenMW-Web. Dates are release dates, newest first.
 
-## Unreleased
+## 1.3.0
+
+The update release: a server that keeps itself current from a click.
 
 **Updating is a button now.** The Updates page shows what you run and what is newest, for
 both halves: the server and the game client. Clicking Update on the client makes the server
