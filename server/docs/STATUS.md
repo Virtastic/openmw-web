@@ -2,6 +2,46 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web -->
 # openmw-web multiplayer — state of play
 
+## 2026-09-02 (cont.) — Phase 4A/4B, proto 2, and full local verification
+
+**Phase 4A — the peer's avatar bars are the player's bars.** The peer samples each avatar's
+dynamic stats (0.25 s, diffed, with a 3 s refresh so a report the server drops is retried),
+reports `AvatarStatsBatch`; the server owns the doc (death flushes now), relays observers the
+peer-simulated bars over the ordinary `PlayerStatsDynamic` fan-out, and hands the owner
+`MP_SelfStats`. **The bug that hid it:** `MP_SelfStats` is addressed to the client — the
+GLOBAL script — but the applier is in `player.lua`; nothing forwarded it, so no player ever
+saw damage their avatar took on the peer. Now forwarded like the `MP_SelfState` pose hop.
+
+**Phase 4B — a PvP hit on a driving victim lands on their avatar.** The victim's own stat
+assertions are ignored while 4A reports are fresh, so the server routes the hit to the world
+peer (which applies it to the avatar) instead of to the victim's client. An input-less victim
+keeps the classic victim-applies delivery.
+
+**One DRIVING predicate.** `INPUT_DRIVING_MS = 5 s` (players.ts) replaced three separate 1 s
+windows (poses, bars, PvP routing). A browser under SwiftShader load stutters — a single
+frame gap put 1.17 s between inputs and flapped every 1 s gate.
+
+**Teleport reconciliation.** A same-cell teleport (respawn, script, console) now announces via
+`PlayerCellChange`, and the avatar-pose gate is POSITIONAL not timed: peer entries are dropped
+until the stream shows up within 512 units of where the client said it landed. Killed s22's
+corpse-pinning and s51's far-travel bounce loop.
+
+**proto 2 + `omw-mp.2`.** Old clients refused with `BAD_PROTO` naming the version.
+
+**Fully local build+verify (no Proxmox/LAN builder needed).** The laptop builds the wasm64
+engine and the tier2 server image and runs the browser harness — see the
+`local-fullstack-builds` memory. Server suite **996 pass / 0 fail / 6 env-skips** (p7zip); the
+two long-standing "known Windows failures" were CRLF-anchored regexes, now fixed. Harness:
+~32 scenarios green including s40/s51/s59 (one peer, real combat, spell-forward). Skipped with
+reasons: s63 (deleted public mode), s66 (4A/4B unit-proven; browser tier blocked on
+player-target hit injection). Box-limited on this laptop: s30/s40/s42/s43 multi-client
+convergence (they pass on quieter hardware).
+
+**Still deferred (plan Phase 4 remainder):** attacker-side hit COMPUTATION on the peer (needs
+the discrete-intent tier; the avatar deliberately never swings today), inventory
+request→result (needs the containerstore engine hook, E5), quest receiving. All gated on
+engine seams the plan already sequences ahead of them.
+
 ## 2026-09-02 — the mp912026 overhaul: one peer, input authority, Solo/Party (proto 2)
 
 Branch `multiplayer912026`, local commits only. Server authoritative for movement via a
