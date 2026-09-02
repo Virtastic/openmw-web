@@ -61,10 +61,20 @@ export default async function run(ctx) {
   // The attacker needs the victim's session id to aim hitp.
   await victim.waitFor("Number((window.__omwMP||{}).playerId||0) > 0", STEP_TIMEOUT, 'victim knows its id');
   const victimId = Number(await victim.eval('(window.__omwMP||{}).playerId'));
-  ctx.log(`victim id=${victimId}; attacker starts hitting`);
+
+  // PRECONDITIONS the earlier draft skipped, and why it never produced a CombatHit:
+  //  - pvp must be ON, or the client cancels the hit locally and sends nothing.
+  //  - the attacker must be PUPPETING the victim: hitp sends a local Hit to the victim's
+  //    puppet on the attacker, and puppet.lua's onHit interceptor is what forwards it. No
+  //    puppet, no interceptor, no CombatHit.
+  await attacker.waitFor('(window.__omwMP||{}).pvp === "true"', STEP_TIMEOUT, 'attacker sees pvp enabled');
+  await attacker.waitFor(
+    `Object.keys(JSON.parse((window.__omwMP||{}).puppets||"{}")).includes(String(${victimId}))`,
+    STEP_TIMEOUT, 'attacker is puppeting the victim (hitp needs a puppet to intercept)');
+  ctx.log(`victim id=${victimId}; attacker puppets it and pvp is on; hitting`);
 
   // Repeat until the peer-reported bars drop: one hit can race the input-tier warmup.
-  const hitUntil = Date.now() + STEP_TIMEOUT;
+  const hitUntil = Date.now() + 45_000;
   let dropped = false;
   while (Date.now() < hitUntil && !dropped) {
     await attacker.eval(`Module.__omwMPCmd=${JSON.stringify(`hitp:${victimId}:15`)}`);

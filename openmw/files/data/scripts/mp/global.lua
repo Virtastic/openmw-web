@@ -1192,6 +1192,15 @@ local eventHandlers = {
         end
     end,
 
+    -- Phase 4A: our authoritative BARS, as the peer simulated them. The server addresses this
+    -- to the client (this GLOBAL script); the applier is in player.lua, so forward it -- the
+    -- exact same hop MP_SelfState makes above. Without this the event arrived here and stopped:
+    -- the owner never saw damage their avatar took on the peer (measured: s66 selfStats stayed
+    -- undefined while the peer reported and the server relayed correctly).
+    MP_SelfStats = function(data)
+        toPlayer('MP_SelfStats', data)
+    end,
+
     -- Phase 3: a player's input frame, routed to the avatar that embodies them. Only the
     -- peer ever receives this type (the server routes it nowhere else).
     MP_PlayerInput = function(data)
