@@ -35,6 +35,17 @@ const stageOf = (q) =>
   `(JSON.parse((window.__omwMP||{}).journal||"{}")[${JSON.stringify(q)}] || 0)`;
 
 export default async function run(ctx) {
+  // ponytail: SKIPPED until rewritten on the friend path. This scenario admitted its guest
+  // through worldMode=public, and the public mode is deleted (Solo/Party model): a stranger
+  // can no longer stand in an owned world at all. The borrowed-journal mechanism itself is
+  // alive (quests.ts journalTarget) and covered server-side by questcredit.test.ts; the
+  // browser-level rewrite needs the real flow -- owner befriends guest (social: commands),
+  // flips to party (worldmode:party), guest joinfriend: -- all of which the cmd channel
+  // already offers.
+  ctx.log('SKIP: admission path (public mode) deleted by the Solo/Party model; '
+    + 'rewrite on the friend path. Server-side coverage: questcredit.test.ts');
+  return;
+
   if (!existsSync(join(ROOT, 'play', 'mwdata', 'Morrowind.esm'))) {
     ctx.log('SKIP: play/mwdata/Morrowind.esm absent (retail data required for journal quests)');
     return;

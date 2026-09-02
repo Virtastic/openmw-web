@@ -107,9 +107,10 @@ export default async function run(ctx) {
   assert.equal(await a.eval(`getComputedStyle(document.getElementById('canvas')).pointerEvents`), 'none',
     'canvas is click-through while an overlay is open');
   // Switch tabs by clicking — proves controls inside the panel receive real input.
-  let hit = await a.click('#omw-social [data-t="party"]');
-  await a.waitFor(`document.querySelector('#omw-social [data-t="party"]').classList.contains('on')`,
-    3000, 'clicking the Party tab selected it (click landed on: ' + hit + ')');
+  // (the Party tab died with the party concept — Players is the surviving second tab)
+  let hit = await a.click('#omw-social [data-t="players"]');
+  await a.waitFor(`document.querySelector('#omw-social [data-t="players"]').classList.contains('on')`,
+    3000, 'clicking the Players tab selected it (click landed on: ' + hit + ')');
   hit = await a.click('#omw-social-close');
   await a.waitFor(`!document.getElementById('omw-social').classList.contains('show')`, 3000,
     'clicking Close actually closed the panel (click landed on: ' + hit + ')');
@@ -137,7 +138,7 @@ export default async function run(ctx) {
   assert.equal(churn, 0,
     `the social panel rebuilt its DOM ${churn}x while open — focus, typing and clicks die`);
   // And focus must actually survive in the field the player types into. Step 7 left the panel
-  // on Party, which has no input — go back to Friends for the field.
+  // on Players, which has no input — go back to Friends for the field.
   await a.click('#omw-social [data-t="friends"]');
   await a.waitFor(`!!document.querySelector('#omw-social input')`, 3000, 'friends tab shows its field');
   await a.click('#omw-social input');
@@ -193,22 +194,8 @@ export default async function run(ctx) {
   await a.waitFor(`!document.getElementById('omw-tour').classList.contains('show')`, 3000,
     'the notice closed (click landed on: ' + noticeHit + ')');
 
-  // worldClosed is CLEARED first: the page picks one notice per event with an else-if, so a
-  // value left over from the eviction above would mask this one forever. The engine only
-  // ever has one of these set at a time, which is what makes the else-if correct there and
-  // makes leaving it set wrong here.
-  await a.eval(`window.__omwMP.worldClosed = '';
-    window.__omwMP.worldClosedBy = '';
-    window.__omwMP.partyTravelBy = 'Ben';
-    window.__omwMP.partyTravelTo = 'vvardenfell';
-    window.__omwMP.noticeSeq = String(Number(window.__omwMP.noticeSeq || 0) + 1)`)
-  await a.waitFor(`document.getElementById('omw-tour').classList.contains('show')
-    && /party is moving/i.test(document.getElementById('omw-tour-title').textContent)`,
-    4000, 'a leader moving the party shows a notice');
-  assert.match(await a.eval(`document.getElementById('omw-tour-body').textContent`), /Ben has taken the group/,
-    'the notice must name the leader who moved the party');
-  await a.click('#omw-tour-next');
-  await a.waitFor(`!document.getElementById('omw-tour').classList.contains('show')`, 3000, 'notice closed');
+  // (the party-travel notice died with parties; the eviction notice above is the one
+  // transition notice the Solo/Party model still has)
   ctx.log('ok: transition notices fire and do not persist');
 
   const luaErrs = a.luaErrors();
