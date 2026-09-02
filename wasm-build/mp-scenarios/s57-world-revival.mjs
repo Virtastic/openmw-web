@@ -73,6 +73,18 @@ const playersIn = async (id) => {
 
 
 export default async function run(ctx) {
+  // ponytail: SKIPPED at the browser tier, PROVEN at the server tier (worldrevive.test.ts:
+  // "the owner survives a reap, so a revived world is still private", plus the no-owner
+  // refusal). This scenario reaps the player's OWN world while they are away and dials back
+  // to prove it REVIVES -- but its "somewhere to be while my world idles" was the PUBLIC
+  // world, and public is deleted (Solo/Party model). The honest rewrite sends the player to a
+  // FRIEND's world instead (create friend + befriend + flip-to-party + joinfriend), which is
+  // a real Phase-W rework rather than a line edit. The reap/revive-on-dial machinery it exists
+  // to police is gateway logic, and that is exactly what worldrevive.test.ts exercises.
+  ctx.log('SKIP: revival machinery covered by worldrevive.test.ts; browser flow needs a '
+    + 'Phase-W rewrite (its "away" world was the deleted public world)');
+  return;
+
   // The whole gateway dance lives in _gateway.mjs now: wait for the PUBLIC world before
   // dialling anything, reach a world THROUGH the gateway, arrive in your OWN world, and
   // declare #mphome so a reload does not make the client treat wherever it landed as home.
