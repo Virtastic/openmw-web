@@ -296,6 +296,21 @@ on: cell change, level-up, equipment change (10 s debounce), logout, SIGTERM. Ap
 relays are the puppet-record source of truth — clients rebuild a puppet's NPC record when
 an appearance arrives for an already-spawned puppet.
 
+### Phase 4A — the peer reports avatar bars
+
+| name | dir | body |
+|---|---|---|
+| `AvatarStatsBatch` | PEER→S (0.25 s, diffed per avatar) | `{entries={{id=int, hp={c=,b=}, mp={c=,b=}, ft={c=,b=}}, …}}` — dropped and ignored from any non-system sender |
+| `MP_SelfStats` | S→C (owner only, per accepted entry) | `{hp={c=,b=}, mp={c=,b=}, ft={c=,b=}}` — the owner applies CURRENT values to self |
+
+One-writer rule, same shape as the movement gate: while an accepted peer report for a
+player is fresh (≤1 s), that player's own `PlayerStatsDynamic` is consumed and ignored.
+A peer entry is only accepted for a player actively driving the input tier (fresh
+`PlayerInput` ≤1 s) — an input-less client (old build, protocol bot, mid-outage browser)
+keeps asserting its own bars, per-player degraded mode with no switchover signal. Observer
+relay rides the ordinary `PlayerStatsDynamic` fan-out, so other clients need no new type.
+Death in a peer report flushes the doc immediately, exactly like the client edge.
+
 ## Event-tier additions (M3) — world objects & containers
 
 Object addressing is a tagged union in every body: `{ref=<RefNum userdata>}` for
