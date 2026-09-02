@@ -118,8 +118,8 @@ account data); `GET /metrics` Prometheus, gated on `[metrics] token`, 404 while 
 `SIGUSR1` flushes state; `SIGTERM`/`SIGINT` disconnect cleanly and flush.
 
 **Development bots.** `[dev] bots = N` (or `OMW_DEV_BOTS`, capped 16) spawns bots that hold
-real accounts and handles for testing menus and party flows alone. The server says loudly at
-boot when they run. Never on a public server.
+real accounts and handles for testing menus and social flows alone. The server says loudly at
+boot when they run. Never on a server strangers can reach.
 
 **Privacy.** Everything the server stores about players, and how to erase it, is in
 [`../server/PRIVACY.md`](../server/PRIVACY.md) - including `--delete-account <name>`. Read it
@@ -160,5 +160,5 @@ container OOM-killed while every per-world cap reads as satisfied. Keep
 
 **Rolling restart: `kill -HUP` the gateway.** Worlds restart one at a time, emptiest first,
 each drained and verified back before the next - a world-code deploy is not an outage.
-`--idle-reap-ms` (default 120000) controls how long a non-public world may sit empty before
+`--idle-reap-ms` (default 120000) controls how long a world may sit empty before
 it is stopped; its data survives and it revives when its owner returns.

@@ -35,7 +35,6 @@ function harness(over: Partial<WorldSettings> = {}) {
     idleReapMs: 60_000,
     startTimeoutMs: 60_000,
     restartBackoffMs: 15_000,
-    publicWorlds: ['vvardenfell'],
     sharedDir: mkdtempSync(join(tmpdir(), 'omw-shared-')),
     ...over,
   };
@@ -95,9 +94,8 @@ test('worlds: the cap is enforced and refusal is explicit, not a crash', () => {
   assert.equal(spawned.length, 2);
 });
 
-test('worlds: a JOINED-then-abandoned private world is reaped; a never-joined one survives the startup grace; public never', async () => {
+test('worlds: a JOINED-then-abandoned private world is reaped; a never-joined one survives the startup grace', async () => {
   const { sup, advance, counts } = harness();
-  sup.startPublic();          // vvardenfell, public
   const s1 = sup.ensure('sess1', 'private')!;
   // Someone joins (connectedCount>0) then leaves — the idle reaper applies after they go.
   counts.set(s1.port, 1); await sup.poll();                 // everConnected
@@ -109,7 +107,6 @@ test('worlds: a JOINED-then-abandoned private world is reaped; a never-joined on
   sup.ensure('sess2', 'private');
   advance(61_000); await sup.poll(); await tick();
   assert.ok(sup.get('sess2'), 'a never-joined world survives the startup grace (client may still be loading toward it)');
-  assert.ok(sup.get('vvardenfell'), 'a public world must stay up when empty — that is the point of public');
 });
 
 test('worlds: a populated private world is never reaped', async () => {
@@ -147,7 +144,7 @@ test('worlds: a world that stops answering /status is reported down, not silentl
     settings: {
       worldsDir: mkdtempSync(join(tmpdir(), 'omw-worlds-')), serverEntry: '/f', nodeBin: '/n', gatewayPort: 8080,
       basePort: 41000, maxWorlds: 2, idleReapMs: 60_000, startTimeoutMs: 1000,
-      restartBackoffMs: 1000, publicWorlds: [],
+      restartBackoffMs: 1000,
       sharedDir: mkdtempSync(join(tmpdir(), 'omw-shared-')),
     },
     spawner: () => new FakeChild() as unknown as ChildProcess,
@@ -239,7 +236,7 @@ test('shared: one account works across worlds; per-world state stays separate', 
 
 test('rolling restart: worlds come back one at a time, emptiest first', async () => {
   const { sup, spawned, counts } = harness({ maxWorlds: 5, startTimeoutMs: 5_000 });
-  sup.startPublic();                 // vvardenfell
+  sup.ensure('third', 'private');
   sup.ensure('busy', 'private');
   sup.ensure('quiet', 'private');
   await sup.poll();
@@ -273,7 +270,7 @@ test('rolling restart: a world that will not come back HALTS the rollout', async
   const sup = new WorldSupervisor({
     settings: {
       worldsDir, serverEntry: '/f', nodeBin: '/n', gatewayPort: 8080, basePort: 43000, maxWorlds: 5,
-      idleReapMs: 60_000, startTimeoutMs: 1_000, restartBackoffMs: 100, publicWorlds: [],
+      idleReapMs: 60_000, startTimeoutMs: 1_000, restartBackoffMs: 100,
       sharedDir: mkdtempSync(join(tmpdir(), 'omw-shared-')),
     },
     now: () => clock,
@@ -311,7 +308,7 @@ test('rolling restart: a world that will not come back HALTS the rollout', async
 test('capacity: the memory budget binds when it is tighter than the count cap', () => {
   // 2048 usable after the 256 MB reserve, at 780 MB per world -> 2 worlds, not 10.
   const { sup } = harness({
-    maxWorlds: 10, memBudgetMb: 2304, worldCostMb: 780, gatewayReserveMb: 256, publicWorlds: [],
+    maxWorlds: 10, memBudgetMb: 2304, worldCostMb: 780, gatewayReserveMb: 256,
   });
   const cap = sup.capacity();
   assert.equal(cap.cap, 2);
@@ -325,7 +322,7 @@ test('capacity: the memory budget binds when it is tighter than the count cap', 
 
 test('capacity: the count cap still binds when it is the tighter of the two', () => {
   const { sup } = harness({
-    maxWorlds: 1, memBudgetMb: 100_000, worldCostMb: 780, gatewayReserveMb: 256, publicWorlds: [],
+    maxWorlds: 1, memBudgetMb: 100_000, worldCostMb: 780, gatewayReserveMb: 256,
   });
   assert.deepEqual(
     { cap: sup.capacity().cap, reason: sup.capacity().reason },
@@ -340,7 +337,7 @@ test('capacity: the count cap still binds when it is the tighter of the two', ()
 // failing. Deleting the memBudgetMb check in ensure() makes the first test fail and this one
 // keep passing, which is the discrimination that matters.
 test('capacity: with no budget configured only the count cap applies', () => {
-  const { sup } = harness({ maxWorlds: 10, publicWorlds: [] });
+  const { sup } = harness({ maxWorlds: 10 });
   assert.equal(sup.capacity().reason, 'count');
   assert.ok(sup.ensure('a', 'private', 'ann'));
   assert.ok(sup.ensure('b', 'private', 'bob'));
@@ -353,7 +350,7 @@ test('capacity: with no budget configured only the count cap applies', () => {
 // whole governor exists to make legible.
 test('capacity: a budget below one world still admits one, and says so', () => {
   const { sup } = harness({
-    maxWorlds: 10, memBudgetMb: 300, worldCostMb: 780, gatewayReserveMb: 256, publicWorlds: [],
+    maxWorlds: 10, memBudgetMb: 300, worldCostMb: 780, gatewayReserveMb: 256,
   });
   assert.equal(sup.capacity().cap, 1);
   assert.ok(sup.ensure('a', 'private', 'ann'));
@@ -372,7 +369,7 @@ test('capacity: a budget below one world still admits one, and says so', () => {
 test('capacity: a world running several peers is priced for all of them', async () => {
   const { sup, spawned, peers } = harness({
     maxWorlds: 10, memBudgetMb: 4096, worldCostMb: 640, peerCostMb: 487,
-    gatewayReserveMb: 256, publicWorlds: [],
+    gatewayReserveMb: 256,
   });
   // 3840 usable after the reserve. At the old fixed price of 640 a world, that is 6.
   assert.equal(sup.capacity().cap, 6);
@@ -403,7 +400,7 @@ test('capacity: a world running several peers is priced for all of them', async 
 test('capacity: peerCostMb 0 prices every world at worldCostMb however many peers it runs', async () => {
   const { sup, spawned, peers } = harness({
     maxWorlds: 10, memBudgetMb: 4096, worldCostMb: 640, peerCostMb: 0,
-    gatewayReserveMb: 256, publicWorlds: [],
+    gatewayReserveMb: 256,
   });
   assert.equal(sup.capacity().cap, 6);
 
@@ -426,7 +423,7 @@ test('capacity: peerCostMb 0 prices every world at worldCostMb however many peer
 test('observability: peers and committed RAM track what the worlds actually report', async () => {
   const { sup, spawned, peers } = harness({
     maxWorlds: 10, memBudgetMb: 4096, worldCostMb: 640, peerCostMb: 487,
-    gatewayReserveMb: 256, publicWorlds: [],
+    gatewayReserveMb: 256,
   });
   assert.deepEqual({ peers: sup.peersRunning, mb: sup.committed }, { peers: 0, mb: 0 },
     'an empty gateway has committed nothing');
@@ -449,7 +446,7 @@ test('observability: peers and committed RAM track what the worlds actually repo
 test('capacity: a world with no status yet still costs its budget', () => {
   const { sup } = harness({
     maxWorlds: 10, memBudgetMb: 2304, worldCostMb: 640, peerCostMb: 487,
-    gatewayReserveMb: 256, publicWorlds: [],
+    gatewayReserveMb: 256,
   });
   assert.equal(sup.capacity().cap, 3); // 2048 usable / 640
   assert.ok(sup.ensure('a', 'private', 'ann'));

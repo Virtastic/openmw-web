@@ -15,7 +15,6 @@ function api(opts: {
   zone?: 'all' | 'wilderness' | 'none';
   safeCells?: string[];
   cell?: string;
-  partied?: boolean;
 }): PluginApi {
   return {
     config: {
@@ -26,7 +25,6 @@ function api(opts: {
       },
     } as unknown as Config,
     log: () => {},
-    arePartied: () => opts.partied ?? false,
     cellOfPlayer: () => opts.cell,
   } as unknown as PluginApi;
 }
@@ -53,11 +51,6 @@ test('wilderness zone fails CLOSED when the cell is unknown', () => {
     'an unknown location must never be a free hit');
 });
 
-test('party members never hit each other, in any zone', () => {
-  assert.equal(hit(api({ zone: 'all', cell: '12,4', partied: true })), false);
-  assert.equal(hit(api({ zone: 'wilderness', cell: '12,4', partied: true })), false,
-    'friendly fire inside a group is a bug, not a rule');
-});
 
 test('zone "all" keeps the pre-Phase-3 behaviour', () => {
   assert.equal(hit(api({ zone: 'all', cell: 'Some Interior' })), true);

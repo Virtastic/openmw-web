@@ -84,27 +84,12 @@ safeCells = []
 # Chat scope for plain say. Default "world": four friends spread across Vvardenfell must
 # be able to talk, and that is what a self-hosted server almost always is. A CROWDED
 # public deployment sets "proximity", where shouting across the province is exactly what
-# makes the chat box unreadable. "!" always sends global, "@" always sends to your party.
+# makes the chat box unreadable. "!" always sends global, "@" always sends to your world.
 sayScope = "world"
 # Resting advances the shared clock for EVERYONE, so who may do it is a world rule.
-# "anyone" (default, and right for a co-op session), "party" (only a leader decides for
-# the group), "off" (a public world: one stranger must not fast-forward a hundred people
-# into the night).
+# "anyone" (default, and right for a co-op session), "owner" (only the world's owner
+# decides — guests must not fast-forward the host's game), "off" (time flows continuously).
 timeSkip = "anyone"
-# Phase 4: scale hostile NPCs to the party members standing WITH you (sub-linear, because
-# a group's real advantage is action economy rather than raw numbers). A solo player is never
-# affected: the rule keys on co-present members beyond the first.
-#
-# OFF BY DEFAULT, which is a deliberate reversal. The scaling model itself is sound — Valheim
-# under-scales and co-op goes trivial, V Rising over-scales and its top complaint is that
-# bosses are harsher with friends than solo — but Morrowind is not balanced for either, and
-# what people actually come to co-op for is to play it TOGETHER, not to have it silently made
-# harder because a friend walked in. A group that wants the challenge turns it on; a group
-# that gets it without asking has no idea why the mudcrab took four hits.
-#
-# The party loot rules (gold split on, roll-on-rare off) are unaffected and stay on — the
-# leader toggles those separately.
-partyScaling = false
 # Difficulty is surfaced in SessionWelcome.flags and applied CLIENT-side, in the victim's
 # own combat pipeline (the server never computes damage). Morrowind scale: -100..100.
 difficulty = 0
@@ -295,17 +280,6 @@ timeoutSec = 60
 # return to their content-file state and clients are told to reload). Empty = no resets.
 cells = []
 intervalSec = 259200              # 3 days; only applies to the cells listed above
-# SHARED LOBBY ONLY (ignored in private, party and standalone worlds). Seconds between wiping
-# the cells the lobby has accumulated deltas for — i.e. everything strangers have dropped and
-# left. `cells` above cannot cover this: it needs an explicit list, and nobody can enumerate the
-# cells of a game the server has no data for.
-#
-# Safe only because the lobby persists nothing: an item on its ground could never have become
-# anyone's property. Never enable an equivalent in a world where loot can leave. Cells with
-# players standing in them are skipped, and a reset re-sends the restored cell to whoever is
-# there rather than kicking them. 0 disables.
-litterSweepSec = 3600
-
 # DEV/TEST ONLY. Fake players that auto-accept friend requests and party invites, so the
 # social flows can be exercised (and recorded) without a second human. They take real roster
 # slots and write real friend/party rows, so a server strangers can reach must leave this at
@@ -599,17 +573,6 @@ restartBackoffMs = 15000          # after a crash, wait before respawning (no ho
 # than sharing it. A count cap cannot see that, which is why there is a memory budget: the
 # gateway takes the LOWER of the two ceilings and logs which one bound it (gateway.capacity).
 [worlds]
-# Offer the shared PUBLIC world at all? OFF by default, deliberately.
-#
-# Public is the most experimental surface in multiplayer: strangers rather than friends, lobby
-# containment holding inventory back from real characters, zoned PvP, and server-side movement
-# correction that ACTS rather than merely counting. Every one of those is fine in a party of
-# friends and unproven against people you did not invite.
-#
-# With this off the gateway starts no public world and the directory lists none, so the client's
-# Worlds tab has nothing to show and the "Public" button disappears on its own -- there is no
-# second switch to remember. Turn it on when you want the shared world open.
-publicEnabled = false
 # 0 = derive the count ceiling from [server] maxPlayers (one solo world per seated player).
 maxWorlds = 0
 # Total RAM the gateway may spend on worlds and their peers. 0 DISABLES the memory governor

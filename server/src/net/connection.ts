@@ -79,8 +79,6 @@ export interface ServerCtx {
   onPeerJoined?(): void;
   /** Send this player their chat scrollback. Absent = no history configured. */
   replayChat?(player: Player): void;
-  /** Send a rejoining party member to where their party actually is. */
-  routeJoinerToParty?(player: Player): void;
   // Tier 2 (the server has its own valid game data). Only then may a sim peer's manifest be
   // pinned as the world's canonical content list.
   gameDataOk?: boolean;
@@ -112,35 +110,30 @@ export interface ServerCtx {
   sessions: SessionIndex;
   attio: AttioHook; // onboarding CRM capture; inert when no API key is configured
   // World access control (F3): may this account be in THIS world at all? Private = owner
-  // only, party = owner/members/admins. Checked at auth, after the account is resolved.
+  // only, party = owner + friends of the owner + admins. Checked at auth, after the account
+  // is resolved.
   mayJoinWorld(accountKey: string, rank: number): boolean;
-  // Owner-only in-place flip of THIS world between 'private' (solo) and 'party' (joinable by
-  // the owner's party). Public worlds are not flippable. Used by the where-am-I switcher.
+  // Owner-only in-place flip of THIS world between 'private' (solo) and 'party' (joinable
+  // by the owner's friends). Used by the where-am-I switcher.
   setWorldMode(accountKey: string, rank: number, mode: string): 'ok' | 'not_owner' | 'bad_mode' | 'not_flippable';
-  /** A player left the world. Acts only if they were its OWNER: a guest world with no host is
-   *  nobody's world, so the party is disbanded and everyone is sent home. */
+  /** A player left the world. Acts only if they were its OWNER: a guest world with no host
+   *  closes after a grace window (server.ts onPlayerLeftWorld). */
   onPlayerLeftWorld?(accountKey: string): void;
   /** Is this character in the wrong PRIVATE world? Private world ids end with the last 8 of
    *  their character's id, so the owner arriving with any other character is a routing error
    *  to refuse at the door — not something to diagnose downstream, again. */
   wrongWorldForCharacter?(accountKey: string, charId: string): boolean;
-  // Spawn a fresh party guest at the leader's position (null when it should not apply).
+  // Spawn a fresh guest at the owner's position (null when it should not apply).
   guestSpawn(accountKey: string): { cellKey: string; x: number; y: number; z: number } | null;
   // What this world IS, right now. Sent at join so the client never has to infer it.
   worldId: string;
   worldMode(): string;
-  // F3 chargen gate: true only for a GATEWAY-managed party/public world (where a separate
+  // F3 chargen gate: true only for a GATEWAY-managed party world (where a separate
   // private world exists for character creation). A standalone/single-world server is false —
   // there is no other world to create the character in, so it must admit fresh characters.
   chargenGate: boolean;
   // Called when the last player leaves, so a world can forget a runtime mode flip.
   onWorldEmpty?(): void;
-  // True in the PUBLIC world: character docs are read-only there (see markEphemeral below).
-  lobbyWorld: boolean;
-  // Phase 4: tell a client how many party members are standing with it, so the cell's
-  // authority holder can scale the fight. Recomputed on join and on every cell change —
-  // the number that matters is who is HERE, not who is in the party.
-  sendPartyScaling?(player: Player): void;
   // Phase 4: one-shot scripted spawns this character is owed on entering a cell.
   questSpawnsOnEntry?(player: Player, cellKey: string): { recordId: string; questId: string }[];
   questRepair?: {
@@ -335,8 +328,7 @@ export class Connection implements Peer {
       // session's next write — a cell change, flushed 'now' — replaced the whole row with a
       // single position field: inventory, stats, journal, appearance, all gone. An ordinary
       // reconnect was enough. Roster.remove guards the same way for the same reason.
-      // Owner leaving closes the world to its guests (server.ts). Nothing watched for this,
-      // so a host closing their tab left the party in a world that would never come back.
+      // Owner leaving starts the grace-then-close window (server.ts onPlayerLeftWorld).
       this.ctx.onPlayerLeftWorld?.(this.player.accountKey);
       const heldByAnother = this.ctx.roster.activeForAccount(this.player.accountKey);
       if (heldByAnother === undefined || heldByAnother.charId !== charId) {
@@ -678,13 +670,10 @@ export class Connection implements Peer {
       return;
     }
     if (name === 'SetWorldMode') {
-      // The where-am-I switcher's Solo/Party flip for the OWNER of this world. Members change
-      // worlds by dialling elsewhere (JoinFriend / PartyTravel), not by flipping this one.
+      // The where-am-I switcher's Solo/Party flip for the OWNER of this world. Guests change
+      // worlds by dialling elsewhere (JoinFriend), not by flipping this one.
       const mode = value instanceof Map && typeof value.get('mode') === 'string' ? (value.get('mode') as string) : '';
       const r = this.ctx.setWorldMode(this.player.accountKey, this.player.rank, mode);
-      // Closing your world to Solo ends any party you lead — leaving members "in a party"
-      // whose world just stopped accepting them is the one state the switcher must not create.
-      if (r === 'ok' && mode === 'private') this.ctx.social.partyDisband(this.player.accountKey);
       this.player.peer.sendEvent('SocialResult', { op: 'SetWorldMode', ok: r === 'ok', detail: r === 'ok' ? mode : r });
       return;
     }
@@ -750,23 +739,9 @@ export class Connection implements Peer {
           player: player.name, account: player.accountKey,
           speed: Math.round(speed), dt: Math.round(dt * 1000), run,
         });
-        // IN THE SHARED LOBBY, COUNTING IS NOT ENOUGH. Everywhere else this stays a signal:
-        // a private or party world is the player's own game (or their friends'), and someone
-        // cheating there harms nobody, while a false positive would be pure harm.
-        //
-        // The lobby is strangers, so the frame is REFUSED: the pose is not accepted, so to
-        // everyone else the offender stops where they last legitimately were. No teleport is
-        // sent and no new message exists — a correction that can misfire is worse than one
-        // that cannot.
-        //
-        // Gated on a RUN of windows, so enforcement needs sustained impossibility rather than
-        // one bad measurement. The anchor is deliberately NOT advanced on a refused frame:
-        // the next window is measured from the last position we believed, so a client that
-        // teleports away stays refused until it comes back to somewhere reachable.
-        if (this.ctx.lobbyWorld && run >= 3) {
-          metrics.movesRefused.inc();
-          return; // pose, lastPoseAt and moveSeq all stand: this frame never happened
-        }
+        // A signal, not an action: every world is somebody's own game (or their friends'),
+        // so this only counts. Phase 3 retires the whole envelope — with the peer simulating
+        // the avatar, an implausible pose cannot be asserted in the first place.
       } else {
         player.implausibleRun = 0;
       }
@@ -830,15 +805,10 @@ export class Connection implements Peer {
           player: player.name, account: player.accountKey,
           from: oldCell, to: cellKey, inLastMinute: jumps.length, cap,
         });
-        // Same split as the movement envelope: the lobby is strangers and acts, everywhere else
-        // is somebody's own game and only counts. Refusing means occupancy is not updated, so
-        // the hopper simply is not where they claim to be as far as anyone else can tell.
-        if (this.ctx.lobbyWorld) return;
+        // Same as the movement envelope: a signal, never an action.
       }
     }
 
-    // Co-presence changed, so the scaling did too.
-    queueMicrotask(() => this.ctx.sendPartyScaling?.(player));
     // ...and this character may be owed a one-shot encounter that fired for somebody else
     // before they ever got here.
     queueMicrotask(() => {
@@ -1406,21 +1376,7 @@ export class Connection implements Peer {
     this.player.system = this.isSystem;
     // A sim peer owns no character: keep it out of players/ entirely rather than writing a
     // doc that would be restored onto the next freshly spawned peer.
-    // Nothing done in the gateway's PUBLIC world writes back to the character — but that is
-    // enforced in PlayerStore's lobby mode (persist/playerstore.ts), not here. This comment
-    // used to sit above the ephemeral call as though it were describing it, and it justified
-    // the safety with "its cells reset by construction". They do not: [cellReset] cells is
-    // empty by default, so nothing reset, the read-only firewall below had already been
-    // removed, and inventory persisted straight out of the lobby onto real characters.
     if (this.isSystem) this.ctx.players.markEphemeral(this.player.charId);
-    // THE SHARED WORLD IS HANDLED IN THE STORE, NOT HERE. An earlier attempt withheld writes
-    // at this level and was reverted because "a withheld write is a withheld LOSS": an item
-    // dropped there stayed on that world's ground while the doc still claimed the player
-    // carried it, so going home granted it back. That reasoning was right about the mechanism
-    // and wrong about the consequence — it is only a duplicate if one copy can ESCAPE the
-    // lobby, and once the lobby persists NOTHING, neither can. Quest progress and standing
-    // were already routed to nobody there via journalTarget (server.ts); lobby mode closes
-    // the other half.
     // A character still IN character creation is not saved. Morrowind's opening is a scripted
     // sequence — the census office, the paperwork, the race/class/birthsign prompts — and a doc
     // captured partway through restores a half-built character into a script that has already
@@ -1483,7 +1439,7 @@ export class Connection implements Peer {
     this.state = 'IN_WORLD';
     metrics.joinLatency.observe({}, (Date.now() - this.openedAt) / 1000);
     this.ctx.roster.joinWorld(this.player);
-    // Spawn-near-leader: a fresh (non-resume) party guest lands next to the world's owner.
+    // Spawn-near-owner: a fresh (non-resume) guest lands next to the world's owner.
     // Reuses the invite-teleport client path (global.lua MP_InviteAccepted -> teleport).
     if (!this.resumed) {
       const near = this.ctx.guestSpawn(this.player.accountKey);
@@ -1495,11 +1451,9 @@ export class Connection implements Peer {
     // so the client renders them through the path it already has — history is not a different
     // kind of message, it is the same messages, earlier.
     this.ctx.replayChat?.(this.player);
-    this.ctx.routeJoinerToParty?.(this.player);
     syncStateOnJoin(this.ctx.stateCtx, this.player); // M2 late-joiner appearance/equipment sync
     this.ctx.quests.sendJournalSync(this.player); // M6 full journal state at join
     this.ctx.quests.sendGlobalSync(this.player); // Phase 4 character-shadowed quest globals
-    this.ctx.sendPartyScaling?.(this.player); // Phase 4 difficulty scaling for this cell
     this.ctx.m7.onJoinWorld(this.player); // M7 clock + weather + RecordsSync at join
     this.ctx.social.onJoin(this.player); // Phase C FriendList + presence to friends
     // M8 resume completeness: a rejoin-in-place gets everything a fresh join gets

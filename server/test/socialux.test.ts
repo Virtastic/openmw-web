@@ -62,7 +62,6 @@ test('availability: Offline hides a player from friends and refuses invites; Onl
     'an Offline friend reads as offline even though still connected');
   assert.equal(w.social.availability('bob'), 'offline');
   assert.equal(w.social.invite(alice, 'bob'), 'not_online', 'invites to an Offline player are refused');
-  assert.equal(w.social.partyInvite(alice, 'bob'), 'not_online', 'party invites too');
 
   // Back Online.
   assert.equal(w.social.setAvailability(bob, 'online'), 'ok');

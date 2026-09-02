@@ -1,12 +1,11 @@
 -- Copyright (C) 2025-2026 Virtastic - https://virtastic.app
 -- SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
--- Phase 4: party difficulty scaling and the threat table, both run by the cell's AUTHORITY
--- HOLDER (the client simulating that cell's actors).
+-- Phase 4: the threat table, run by the cell's AUTHORITY HOLDER (the client simulating
+-- that cell's actors).
 --
 -- WHY HERE AND NOT ON THE SERVER. The server never simulates: it elects a client to run
 -- the cell's AI and relays the result. So the only place that can decide who an NPC swings
--- at, or how much health it has, is the holder — the server's job is to tell it the RULE
--- (how many party members are co-present), which it does in the scaling payload.
+-- at is the holder.
 --
 -- VANILLA HAS NO THREAT TABLE. An aggroed NPC picks a target — mostly proximity or last
 -- attacker — and tunnels. In a group that produces the two failures everyone recognises:
@@ -133,41 +132,6 @@ end
 
 function threat.reset()
     tables = {}
-end
-
--- ------------------------------------------------------------------- scaling
-
-local scaling = nil -- { hp, damage, extraSpawns, members } from the server, or nil
-
-function threat.setScaling(s)
-    scaling = s
-end
-
-function threat.scaling()
-    return scaling
-end
-
--- Applied ONCE when an actor first enters combat, never re-evaluated mid-fight: a member
--- arriving should not visibly inflate a health bar (that reads as a bug), and one dying
--- should not deflate it (that would reward sacrificing the weakest member).
-local scaled = {} -- refKey -> true
-
-function threat.applyScaling(obj, refKey, isNamed)
-    if not scaling or scaled[refKey] then return false end
-    scaled[refKey] = true
-    -- Named/scripted encounters get HP and damage only. Adding actors to a scripted fight
-    -- is the V Rising mistake, and it would collide with quest spawn replay besides.
-    local ok = pcall(function()
-        local health = types.Actor.stats.dynamic.health(obj)
-        health.base = health.base * scaling.hp
-        health.current = health.current * scaling.hp
-    end)
-    if isNamed then return ok end
-    return ok
-end
-
-function threat.clearScaled(refKey)
-    scaled[refKey] = nil
 end
 
 return threat

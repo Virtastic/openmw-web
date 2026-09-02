@@ -1,8 +1,8 @@
 // Copyright (C) 2025-2026 Virtastic - https://virtastic.app
 // SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
 // End-to-end sweep of the social features against a RUNNING server with lobby-bots present.
-// One client does what a player does and asserts the server answered: chat (public + whisper),
-// friend request, party invite, party chat, world mode flip, presence, and a shared journal
+// One client does what a player does and asserts the server answered: chat (global + whisper),
+// friend request, world chat, world mode flip, presence, and a shared journal
 // entry. Exits nonzero on the first failure.
 //
 //   npx tsx bots/sweep.ts --port 9000 --ticket <t> --bot Ashka
@@ -68,28 +68,16 @@ const friendList = await c.waitEvent('FriendList', (v) =>
 assert.ok(friendList, `${bot} never appeared in FriendList — accept did not land`);
 ok(`friends: ${bot} accepted and is on the list`);
 
-// --- party ----------------------------------------------------------------------------
-c.sendEvent('PartyInvite', { acct: botAcct });
-const piResult = await c.waitEvent('SocialResult', (v) =>
-  (v as { op?: string }).op === 'PartyInvite', 8000);
-const piv = piResult.value as { ok?: boolean; detail?: string };
-assert.ok(piv.ok === true || piv.detail === 'already_in_party', `party invite refused: ${piv.detail}`);
-ok(`party: invite ${piv.ok ? 'sent' : 'already in party'}`);
-
-const party = await c.waitEvent('PartyUpdate', (v) =>
-  JSON.stringify(v).toLowerCase().includes(botAcct), 12000).catch(() => null);
-assert.ok(party, `${bot} never joined the party`);
-ok(`party: ${bot} joined`);
-
-// Party chat must reach the party, not the world.
-c.sendEvent('ChatSend', { text: 'sweep: party ping', channel: 'party' });
-const partyMsg = await c.waitEvent('ChatMessage', (v) =>
-  String((v as { text?: string }).text ?? '').includes('party ping'), 8000).catch(() => null);
-assert.ok(partyMsg, 'party chat produced nothing');
-ok('party: party-channel chat works');
+// --- world chat -------------------------------------------------------------------------
+// The '@' tier is world chat now: everyone in this world hears it, no membership needed.
+c.sendEvent('ChatSend', { text: 'sweep: world ping', channel: 'party' });
+const worldMsg = await c.waitEvent('ChatMessage', (v) =>
+  String((v as { text?: string }).text ?? '').includes('world ping'), 8000).catch(() => null);
+assert.ok(worldMsg, 'world-channel chat produced nothing');
+ok('world chat: world-channel chat works');
 
 // --- presence / status ------------------------------------------------------------------
-c.sendEvent('PresenceMode', { mode: 'party' });
+c.sendEvent('PresenceMode', { mode: 'friends' });
 const pres = await c.waitEvent('SocialResult', (v) =>
   (v as { op?: string }).op === 'PresenceMode', 8000);
 assert.equal((pres.value as { ok?: boolean }).ok, true,
@@ -104,7 +92,7 @@ c.sendEvent('SetAvailability', { state: 'online' });
 ok('status: availability toggled');
 
 // --- world change -----------------------------------------------------------------------
-// The public world is not flippable by design; the refusal must be explicit, not silence.
+// Only the world's owner may flip it; the refusal must be explicit, not silence.
 c.sendEvent('SetWorldMode', { mode: 'party' });
 const flip = await c.waitEvent('SocialResult', (v) =>
   (v as { op?: string }).op === 'SetWorldMode', 8000);

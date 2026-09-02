@@ -31,10 +31,10 @@ verified against our own code, not hypotheticals.
 | **No metrics.** `/healthz` + a `/status` snapshot only. No error rates, disconnect-reason counters, per-family drop counts, latency histograms. | `server/src/net/http.ts` | Adopt an Agones-style baseline: session counts by state, join-latency histogram, retry counters, time-in-state. |
 | **No SLO alerting.** | — | Multiwindow multi-burn-rate: page at 2%/1h and 5%/6h, ticket at 10%/3d, on connect-success, tick latency, desync rate. |
 | **Client reconnect has no backoff/jitter.** | `scripts/mp/net.lua` reconnects on a fixed path | **Blocking for public launch.** Jitter + truncated exponential backoff. |
-| **Crash window ≤45 s** of world state on hard kill (SIGTERM flushes correctly). | `persist/*` write-behind | Accept + document, or shorten for public worlds. |
+| **Crash window ≤45 s** of world state on hard kill (SIGTERM flushes correctly). | `persist/*` write-behind | Accept + document, or shorten for busy worlds. |
 | **Redeploy disconnects everyone**; resume tickets are in-memory. | `core/resume.ts` | Fine for one server; unacceptable for 10 persistent worlds → needs drain + ticket persistence. |
 | **Restore never rehearsed.** Backups are documented but untested. | `server/README.md` | Do a real restore drill — Google treats recovery-from-data-loss as a *separate* exercise from recovery-from-failures. |
-| **Moderation is thin.** kick/ban/ipban exist and are audited; no report flow, no chat-log review. | `core/admin.ts` | Needed before public worlds. |
+| **Moderation is thin.** kick/ban/ipban exist and are audited; no report flow, no chat-log review. | `core/admin.ts` | Needed before open registration. |
 
 **Cloudflare:** stay on the ordinary orange-cloud proxy. WSS on 443 already gets origin
 masking, WS upgrade support, and L7 DDoS protection. **Do not plan on Spectrum** — custom

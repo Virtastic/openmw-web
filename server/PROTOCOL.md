@@ -126,24 +126,18 @@ Payload: `[u8 nameLen][name: nameLen bytes, ASCII][body: LSER blob]`.
 
 Flow: `CONNECTED → (Hello ≤10 s) → HELLO_OK → (auth) → AUTHED → (Ready) → IN_WORLD`.
 
-### World modes and the shared lobby
+### World modes
 
-A world is `private` (one character's solo world), `party` (that world opened to its owner's
-party), or `public`. The gateway's public world is a **social lobby**, and the rules differ
-there in ways a client should not have to infer:
+A world is `private` (one character's solo world) or `party` (that world opened to the
+owner's **friends**, up to 32 players). There is no public world and no party membership
+list: being in someone's world is the relationship, and the friends list is the only door.
+Every world has an owner.
 
-- **Nothing persists.** Character documents are read-only: inventory, stats, skills and
-  position are all discarded on leaving. You arrive with your gear and leave with exactly what
-  you had, in both directions — a loss in the lobby is as local as a gain. Quest progress and
-  standing were already routed to nobody there.
-- **Movement is enforced, not merely measured.** Sustained implausible speed has its
-  `PlayerMove` frames refused rather than counted, so the offender simply stops moving as far
-  as peers are concerned. Speed is measured over a **200 ms window**, not between consecutive
+- **Movement is measured, never enforced.** Sustained implausible speed is counted as an
+  anomaly for moderation. Speed is measured over a **200 ms window**, not between consecutive
   frames: frame spacing is ARRIVAL spacing, and a stalled connection delivers a burst of
   ordinary little movements milliseconds apart, which per-frame reads as an enormous speed for
-  a player who did nothing wrong. Three consecutive windows past the envelope are required. A
-  refused frame does NOT advance the speed baseline, so a client that teleports away stays
-  refused until it returns somewhere reachable — coming back is forgiven, staying away is not.
+  a player who did nothing wrong.
 
   **`PlayerCellChange` is bounded separately, and only bounded.** A cell change is a legitimate
   teleport — a door, a silt strider, Recall, Divine Intervention — so the envelope resets its
@@ -152,8 +146,7 @@ there in ways a client should not have to infer:
   not need to: **walking is always into an ADJACENT exterior cell, and a door goes through an
   interior.** An exterior-to-exterior jump across the grid is a spell, a silt strider, or a lie,
   and those are rare in play — so `[limits] farTravelPerMin` (default 6) bounds the RATE rather
-  than refusing the act. Over the limit the change is counted everywhere and refused in the
-  lobby, so a hopper's occupancy simply stops being updated.
+  than refusing the act. Over the limit the change is counted as an anomaly.
 
   This makes map-hopping useless without touching a real player: walking any distance and using
   doors any number of times are both unaffected, by construction. It is still **not** a teleport
@@ -522,8 +515,7 @@ returned by a previous `FriendList`:
 - `FriendRequest{name}` · `FriendAccept{acct}` · `FriendRemove{acct}`
 - `BlockAdd{name}` · `BlockRemove{acct}`
 - `InviteSend{acct}` · `InviteAccept{acct}` — travel-to invite
-- `PartyInvite{acct}` · `PartyAccept{acct}` · `PartyLeave{}`
-- `PresenceMode{mode}` — one of `public` `friends` `party` `private`
+- `PresenceMode{mode}` — one of `public` `friends` `private`
 
 Server → client:
 
@@ -532,9 +524,6 @@ Server → client:
   incremental form)
 - `PresenceUpdate{acct, online, playerId?}`
 - `FriendRequestReceived{fromAcct, fromName}` · `InviteReceived{fromAcct, fromName}`
-- `PartyInviteReceived{fromAcct, fromName}`
-- `PartyUpdate{leader, members:[{acct, name, online, playerId?, cellKey?}]}` — full snapshot;
-  an empty `members` means "you are not in a party"
 - `InviteAccepted{cellKey, x, y, z}` — the host's live position, resolved server-side.
   The client travels to THIS rather than to a coordinate it chose: the server is the only
   party that knows where the host actually is.
@@ -560,12 +549,7 @@ loud:
   path that could disclose a location or deliver an invite goes through one check, so a new
   surface cannot accidentally leak what a player asked to hide. `private` hides you from
   **friends too** and refuses invites outright — a mode that only hid you from strangers
-  would be indistinguishable from the default. It is the one social field that persists;
-  party membership does not.
-- **Parties are session state and are never persisted.** Restoring one after a restart
-  produces a group whose members are all offline and whose leader may never return — a
-  group you cannot leave. A player is in at most one party; the leader leaving hands over
-  rather than dissolving it, and a party that falls to one member is disbanded.
+  would be indistinguishable from the default. It is the one social field that persists.
 
 Storage is `node:sqlite` in the existing data dir. This is only correct because the world
 is single-process; if the map is ever region-sharded across processes, the social data has

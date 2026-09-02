@@ -41,7 +41,7 @@ export interface Config {
     // deployment should have to opt into it rather than discover it is live. When off the
     // gateway starts no public world and the directory does not list one, so the client's
     // Worlds tab has nothing to show and the Public button disappears on its own.
-    publicEnabled: boolean;
+
     memBudgetMb: number; // total RAM for worlds + peers (0 = no memory governor)
     worldCostMb: number; // measured: one world's node process + its FIRST sim peer
     peerCostMb: number; // measured: each ADDITIONAL peer in a world (one per occupied cell)
@@ -142,13 +142,10 @@ export interface Config {
     // sets 'proximity'. '!' prefixes global and '@' party regardless of this.
     sayScope: 'world' | 'proximity';
     // Phase 2.5: who may rest/wait, since it advances the shared clock for everyone.
-    // 'anyone' (M7 behaviour), 'party' (leader only, or a solo player in their own
-    // world), 'off' (public worlds: time flows continuously).
-    timeSkip: 'anyone' | 'party' | 'off';
-    // Phase 4: scale hostile NPCs to the number of party members STANDING WITH YOU, and
-    // enable the party loot rules. Default on for party campaigns; a solo player is never
+    // 'anyone' (M7 behaviour), 'owner' (only the world's owner; 'party' is the legacy
+    // spelling of the same thing), 'off' (time flows continuously).
+    timeSkip: 'anyone' | 'owner' | 'party' | 'off';
     // affected because the rule keys on co-present members beyond the first.
-    partyScaling: boolean;
     difficulty: number;
   };
   engine: {
@@ -162,8 +159,6 @@ export interface Config {
   cellReset: {
     cells: string[];
     intervalSec: number;
-    /** Shared-lobby only: seconds between wiping cells that have accumulated deltas. */
-    litterSweepSec: number;
   };
   // M8 ops.
   // dashboardToken: bearer for the web admin dashboard (/admin). Empty = the whole
@@ -481,7 +476,6 @@ function validate(t: Tree): Config {
       // All optional: a config.toml written before the governor existed must keep booting,
       // and a single world server never reads this table at all.
       maxWorlds: optNum(t, 'worlds', 'maxWorlds', 0),
-      publicEnabled: optBool(t, 'worlds', 'publicEnabled', false),
       memBudgetMb: optNum(t, 'worlds', 'memBudgetMb', 0),
       worldCostMb: optNum(t, 'worlds', 'worldCostMb', 640),
       peerCostMb: optNum(t, 'worlds', 'peerCostMb', 487),
@@ -549,8 +543,7 @@ function validate(t: Tree): Config {
       pvpZone: reqEnum(t, 'rules', 'pvpZone', ['all', 'wilderness', 'none'] as const),
       safeCells: reqStrArray(t, 'rules', 'safeCells'),
       sayScope: reqEnum(t, 'rules', 'sayScope', ['world', 'proximity'] as const),
-      timeSkip: reqEnum(t, 'rules', 'timeSkip', ['anyone', 'party', 'off'] as const),
-      partyScaling: reqBool(t, 'rules', 'partyScaling'),
+      timeSkip: reqEnum(t, 'rules', 'timeSkip', ['anyone', 'owner', 'party', 'off'] as const),
       difficulty: reqSignedNum(t, 'rules', 'difficulty'),
     },
     engine: {
@@ -576,7 +569,6 @@ function validate(t: Tree): Config {
     cellReset: {
       cells: reqStrArray(t, 'cellReset', 'cells'),
       intervalSec: reqNum(t, 'cellReset', 'intervalSec'),
-      litterSweepSec: optNum(t, 'cellReset', 'litterSweepSec', 3600),
     },
     dev: {
       // Env wins so a one-off `OMW_DEV_BOTS=3` run needs no config edit and leaves no file

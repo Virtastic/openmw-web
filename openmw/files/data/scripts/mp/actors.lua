@@ -116,11 +116,6 @@ local function broadcastCell(cellKey, epoch, cell, now)
         tracked.obj = obj
         tracked.seen = now
 
-        -- Party scaling applies once, when the actor first enters combat: a member
-        -- arriving must not visibly inflate a health bar mid-fight.
-        if threat.scaling() and types.Actor.isInCombat and pcall(function() return types.Actor.isInCombat(obj) end) then
-            threat.applyScaling(obj, key, false)
-        end
         -- Sticky aggro: retarget only when a challenger clears the margin, which is what
         -- stops the enemy strobing between two players and hitting neither.
         local want = threat.targetOf(key)

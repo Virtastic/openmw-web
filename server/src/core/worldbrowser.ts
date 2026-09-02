@@ -86,7 +86,7 @@ export class WorldBrowser {
   // who owns what. Reuses the existing /worlds?account= filter rather than adding a
   // who-is-where endpoint — occupancy is not exposed, only "this account has a world".
   // Safe to answer because the DESTINATION still authorizes: mayJoinWorld admits the owner's
-  // party and refuses everyone else, so knowing the address buys a stranger nothing. Callers
+  // owner's friends and refuses everyone else, so knowing the address buys a stranger nothing. Callers
   // must have already established a relationship (joinFriend checks areFriends first).
   async ownerWorld(accountKey: string): Promise<WorldEntry | undefined> {
     if (!this.enabled) return undefined;

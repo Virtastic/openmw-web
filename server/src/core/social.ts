@@ -40,24 +40,15 @@ export interface FriendView {
 }
 
 // Who may see where you are, and who may invite you.
-//   public  — anyone in the world (the lobby list shows your cell)
+//   public  — anyone in the world
 //   friends — friends only (the default; matches what Phase C shipped)
-//   party   — only your current party
 //   private — nobody; you appear online with no location, and invites are refused
 // This is a PRIVACY control, so the server enforces it on every path that could disclose a
 // location or deliver an invite. A client-side filter would be decorative.
-export const PRESENCE_MODES = ['public', 'friends', 'party', 'private'] as const;
+// ('party' was a mode once; the party concept is gone and the migration maps it to 'friends'.)
+export const PRESENCE_MODES = ['public', 'friends', 'private'] as const;
 export type PresenceMode = (typeof PRESENCE_MODES)[number];
 export const DEFAULT_PRESENCE: PresenceMode = 'friends';
-
-export interface PartyView {
-  leader: AccountKey;
-  goldSplit?: boolean;
-  rollOnRare?: boolean;
-  /** Party difficulty scaling. Leader-toggled; [rules] partyScaling is only the default. */
-  scaling?: boolean;
-  members: { acct: AccountKey; name: string; online: boolean; playerId?: number; cellKey?: string }[];
-}
 
 export type SocialFailure =
   | 'no_such_player'
@@ -67,11 +58,7 @@ export type SocialFailure =
   | 'too_many_requests'
   | 'no_request'
   | 'not_online'
-  | 'private'
-  | 'not_in_party'
-  | 'not_leader'
-  | 'party_full'
-  | 'already_in_party';
+  | 'private';
 
 /** How long a presence row stays believable without a refresh. Comfortably longer than the
  *  heartbeat, so a hiccup does not blink everyone offline, and short enough that a world which
@@ -83,9 +70,6 @@ export interface SocialDeps {
   roster: Roster;
   /** This world's id, so shared presence can name where a player actually is. */
   worldId?: string;
-  /** [rules] partyScaling — the DEFAULT for a party that has never touched the toggle. Not the
-   *  answer itself: the leader's choice, once made, outranks it. */
-  defaultPartyScaling?: boolean;
   // Display name for an account that may be offline. Returns undefined for an unknown one.
   displayName(acct: AccountKey): string | undefined;
   // Resolve a typed-in display name to an account key (case-insensitive).
@@ -101,25 +85,7 @@ export interface SocialDeps {
     reason: string;
     voice: boolean;
   }): Promise<unknown>;
-  // Phase 4: a vote in an open loot roll (the roll itself lives in PartyRules).
-  lootVote?(player: Player, rollId: string, choice: 'need' | 'pass'): boolean;
 }
-
-interface Party {
-  key: string; // stable, opaque, platform-wide (persisted; survives world hops + handover)
-  leader: AccountKey;
-  // Where the group currently is, recorded by partyTravel. Without it a late joiner had
-  // nothing to dial: joinFriend assumed every party lives in its own `party-<key>` world,
-  // which is wrong the moment a leader takes the group to public (or never leaves their own
-  // world at all). In-memory on purpose — it describes a live location, and after a restart
-  // there is no group standing anywhere to point at.
-  at?: { id: string; mode: string; host: string; port: number; wsPath?: string };
-  members: Set<AccountKey>;
-}
-
-// A party untouched for this long dissolves on next load — the guard that lets membership
-// persist (required for cross-world travel) without restarts resurrecting dead groups.
-export const PARTY_STALE_MS = 24 * 60 * 60 * 1000;
 
 export class Social {
   private readonly d: SocialDeps;
@@ -133,15 +99,8 @@ export class Social {
   // the SAME world process — so "invite your friend" worked exactly when you did not need
   // it. A TTL plus the expiry sweep is what stops a restart resurrecting dead invitations,
   // which is what the memory-only design was really buying.
-  // Parties PERSIST (socialstore) because travel moves members between world processes —
-  // the party has to exist wherever its members land, so the store is the truth and this
-  // map is a per-process cache hydrated on join. Staleness (PARTY_STALE_MS) is what keeps
-  // a restart from resurrecting groups whose members are gone for good.
-  private readonly parties = new Map<string, Party>();
-  private readonly partyOf = new Map<AccountKey, string>();
   /** Cached for a second: a friend list of N would otherwise scan the table N times. */
   private presenceCache: { at: number; rows: PresenceRow[] } | undefined;
-  private readonly maxParty = 8;
 
   constructor(deps: SocialDeps, tuning: SocialTuning = socialTuning) {
     this.d = deps;
@@ -224,93 +183,17 @@ export class Social {
     return this.presentRows();
   }
 
-  /** Re-send the friend and party panels to everyone here.
+  /** Re-send the friend panel to everyone here.
    *
-   *  Those views are pushed when the RELATIONSHIP changes — someone accepts, leaves, is
-   *  removed — which is correct for membership and useless for presence: a member walking into
-   *  another world changes nothing about the party, so the panel kept whatever it last said.
-   *  It said "Offline" about someone the player could see standing in front of them. Presence
-   *  now moves on its own heartbeat, so the views have to follow it. */
-  /** DISCONNECT RULES. Party membership is deliberately durable — it must survive a member
-   *  hopping between world processes, which is the entire point of party travel — but nothing
-   *  distinguished a hop from quitting, so a party outlived everyone in it and a player who
-   *  reconnected was mysteriously still in one.
-   *
-   *  A grace separates the two: leaving one world to join another looks identical to
-   *  disconnecting for the few seconds in between. Past the grace it is a departure.
-   *    - the LEADER gone  -> the party disbands, and members are told
-   *    - a MEMBER gone    -> that member is removed
-   *
-   *  Idempotent, because every world process runs this over the same shared store: a party
-   *  already dissolved has no members to sweep, and a member already removed is not in one. */
-  sweepDisconnected(graceMs: number): void {
-    const gone = this.d.store.goneLongerThan(this.d.now(), graceMs);
-    for (const acct of gone) {
-      const row = this.d.store.partyOfAccount(acct);
-      if (!row) continue;
-      const key = row.key;
-      this.loadParty(acct);
-      const party = this.parties.get(key);
-      if (!party || !party.members.has(acct)) continue;
-      if (party.leader === acct) {
-        const members = [...party.members];
-        for (const m of members) {
-          this.partyOf.delete(m);
-          this.d.store.partyRemoveMember(m);
-          // Told, or the party simply evaporates and nobody knows why. Guests are returned to
-          // their own world by the world-close path; this is the membership half.
-          if (m !== acct) {
-            this.onlinePlayer(m)?.peer.sendEvent('SocialNotice',
-              { kind: 'party_disbanded', why: 'leader_left',
-                by: this.d.displayName(acct) ?? acct } as never);
-          }
-        }
-        this.parties.delete(key);
-        this.d.store.partyDissolve(key);
-        log('info', 'party.disbanded_leader_gone', { leader: acct, members: members.length });
-      } else {
-        this.partyLeave(acct);
-        log('info', 'party.member_dropped', { account: acct });
-      }
-    }
-  }
-
-  /** A player who joins while in a party belongs WITH the party, not alone in their own
-   *  world. Membership is durable across a disconnect (deliberately — see sweepDisconnected),
-   *  so reconnecting used to drop you into your solo world while the panel insisted you were
-   *  in a party: two true statements that cannot both be right.
-   *
-   *  Shared presence knows which world the leader is actually in, so the client can be told to
-   *  follow. Returns true when a hand-off was sent. */
-  routeJoinerToParty(player: Player, worldIdHere: string): boolean {
-    const key = this.partyOf.get(player.accountKey) ?? this.d.store.partyOfAccount(player.accountKey)?.key;
-    if (key === undefined) return false;
-    this.loadParty(player.accountKey);
-    const party = this.parties.get(key);
-    if (!party || party.leader === player.accountKey) return false; // the leader IS the destination
-    const where = this.presenceOf(party.leader);
-    // Leader offline: sweepDisconnected will dissolve this shortly. Sending someone to chase a
-    // world nobody is in would be worse than leaving them where they are.
-    if (!where.online || !where.world || where.world === worldIdHere) return false;
-    player.peer.sendEvent('PartyTravel', {
-      worldId: where.world,
-      wsPath: `/w/${where.world}`,
-      leaderName: this.d.displayName(party.leader) ?? party.leader,
-    } as never);
-    log('info', 'party.rejoin_routed', {
-      account: player.accountKey, to: where.world, leader: party.leader,
-    });
-    return true;
-  }
-
+   *  The view is pushed when the RELATIONSHIP changes — someone accepts, leaves, is removed —
+   *  which is correct for membership and useless for presence: the panel said "Offline" about
+   *  someone the player could see standing in front of them. Presence moves on its own
+   *  heartbeat, so the view has to follow it. */
   refreshPresenceViews(): void {
     this.presenceCache = undefined; // the whole point is to pick up what changed elsewhere
     for (const p of this.d.roster.inWorld()) {
       if (p.system || p.bot) continue; // nothing is listening on those peers
       this.sendFriendList(p);
-      if (this.partyOf.has(p.accountKey) || this.d.store.partyOfAccount(p.accountKey)) {
-        this.sendParty(p.accountKey);
-      }
     }
   }
 
@@ -321,7 +204,7 @@ export class Social {
     for (const f of this.d.store.friendsOf(acct)) {
       const p = this.onlinePlayer(f.account);
       // cellKey is gated by the SUBJECT's presence mode, not merely by friendship: a player
-      // who set themselves to party-only or private stays hidden from friends too, which is
+      // who set themselves to private stays hidden from friends too, which is
       // the entire point of choosing it.
       // Availability is a hard gate over connectedness: an Offline player is CONNECTED (they
       // are off in their own solo world) but must read as offline to friends — hidden, and
@@ -365,74 +248,8 @@ export class Social {
     }
   }
 
-  // Hydrate this process's party cache from the store: the member may have formed the
-  // party in another world. Stale parties dissolve here rather than coming back as
-  // zombies.
-  // allowSolo: a party of ONE is normally stale rubbish and gets dissolved on join. It is
-  // legitimate and transient in exactly one case — a leader who has sent an invite nobody has
-  // accepted yet. Hydrating that party (to accept the invite from another world) must not
-  // destroy the very thing it came to load.
-  private loadParty(acct: AccountKey, allowSolo = false): void {
-    // NO EARLY RETURN ON A CACHE HIT. This used to begin `if (this.partyOf.has(acct)) return`,
-    // and the two maps were only ever ADDED to for remote changes — deletions happened only
-    // for actions taken in THIS process. So every membership change made in another world was
-    // invisible here permanently: a member who left in world B stayed listed in world A, and
-    // refreshPresenceViews re-asserted them to everyone every 10 seconds; a leader handover in
-    // B never arrived, so two processes each believed a different account led and both passed
-    // isPartyLeader; and partyMembersOf — which is the AUTHORIZATION check for VoiceSignal —
-    // kept returning someone who had left, so they stayed reachable by voice.
-    //
-    // The store is the truth and it is one indexed row plus one member query, so reconcile
-    // against it every time instead of trusting a cache with no invalidation.
-    // A party of ONE is normally stale rubbish, but it is legitimate and transient while an
-    // invite is outstanding — partyInvite creates the party then writes the invite. This
-    // process created it, so its presence in the cache is the evidence: dissolving on a
-    // reconcile would destroy the party the invitee is about to accept into.
-    const known = this.partyOf.has(acct);
-    const row = this.d.store.partyOfAccount(acct);
-    if (!row) {
-      // Gone in the store means gone here, including the party object if we were its last
-      // local trace.
-      const stale = this.partyOf.get(acct);
-      if (stale !== undefined) {
-        this.partyOf.delete(acct);
-        const p = this.parties.get(stale);
-        p?.members.delete(acct);
-        if (p && p.members.size === 0) this.parties.delete(stale);
-      }
-      return;
-    }
-    const members = this.d.store.partyMembers(row.key);
-    if (members.length <= 1 && !allowSolo && !known) {
-      this.d.store.partyDissolve(row.key);
-      this.partyOf.delete(acct);
-      this.parties.delete(row.key);
-      return;
-    }
-    this.d.store.partySweepStale(this.d.now() - PARTY_STALE_MS);
-    if (!this.d.store.partyOfAccount(acct)) return; // it was stale and just dissolved
-    let party = this.parties.get(row.key);
-    if (!party) {
-      party = { key: row.key, leader: row.leader, members: new Set(members) };
-      this.parties.set(row.key, party);
-    }
-    // Mutated in place, not replaced: callers hold the object across a loadParty.
-    party.leader = row.leader; // a handover made in another world lands here
-    const live = new Set(members);
-    for (const m of [...party.members]) {
-      if (live.has(m)) continue;
-      party.members.delete(m);
-      if (this.partyOf.get(m) === row.key) this.partyOf.delete(m);
-    }
-    for (const m of members) {
-      party.members.add(m);
-      this.partyOf.set(m, row.key);
-    }
-  }
-
   onJoin(player: Player): void {
     const acct = player.accountKey;
-    this.loadParty(acct);
     // Cancel a pending offline announcement: this is a reconnect inside the grace window,
     // so as far as friends are concerned they never left.
     const t = this.offlineTimers.get(acct);
@@ -440,12 +257,10 @@ export class Social {
       clearTimeout(t);
       this.offlineTimers.delete(acct);
       this.sendFriendList(player);
-      this.sendParty(acct);
       this.drainInvites(player);
       return; // no PresenceUpdate at all — they were never shown offline
     }
     this.sendFriendList(player);
-    this.sendParty(acct);
     // Anything sent to them while they were in another world (or offline) arrives now.
     this.drainInvites(player);
     this.notifyFriends(acct, true);
@@ -462,21 +277,12 @@ export class Social {
     if (this.stopped) return;
     // Invites deliberately SURVIVE a disconnect now: they live in the shared store so they
     // can reach another world, and binning them on logout would defeat that.
-    // Party membership survives a brief drop, exactly like presence: being dropped from
-    // your group because your connection blipped is worse than a stale row for a few
-    // seconds. It is cleared when the offline announcement finally fires.
     const existing = this.offlineTimers.get(acct);
     if (existing) clearTimeout(existing);
     const timer = setTimeout(() => {
       this.offlineTimers.delete(acct);
       // Re-check: the account may have come back on a different connection.
       if (this.onlinePlayer(acct)) return;
-      // Membership PERSISTS through going offline — the member may be mid-hop to another
-      // world (party travel), and being ejected because a reconnect took 20 seconds is
-      // exactly the Skyrim-Together complaint this design removes. They leave a party via
-      // PartyLeave, a kick, or the staleness sweep — never by a dropped socket.
-      const pk = this.partyOf.get(acct);
-      if (pk !== undefined) this.broadcastParty(pk);
       this.notifyFriends(acct, false);
     }, this.tuning.presenceGraceMs);
     timer.unref?.();
@@ -581,11 +387,10 @@ export class Social {
 
   // Push an invite to the target if they are in THIS world. If they are not, the row in the
   // store is the delivery: whichever world they next join drains it in onJoin.
-  private deliverInvite(to: AccountKey, from: AccountKey, fromName: string, kind: string): void {
+  private deliverInvite(to: AccountKey, from: AccountKey, fromName: string): void {
     const p = this.onlinePlayer(to);
     if (!p) return;
-    p.peer.sendEvent(kind === 'party' ? 'PartyInviteReceived' : 'InviteReceived',
-      { fromAcct: from, fromName });
+    p.peer.sendEvent('InviteReceived', { fromAcct: from, fromName });
   }
 
   // Everything addressed to this player while they were elsewhere (or offline).
@@ -593,7 +398,7 @@ export class Social {
     for (const inv of this.d.store.invitesFor(player.accountKey, this.d.now())) {
       if (this.d.store.blockedEitherWay(player.accountKey, inv.from)) continue;
       this.deliverInvite(player.accountKey, inv.from,
-        this.d.displayName(inv.from) ?? inv.from, inv.kind);
+        this.d.displayName(inv.from) ?? inv.from);
     }
   }
 
@@ -618,7 +423,7 @@ export class Social {
     // could only reach someone already standing next to you. One row per sender, so
     // re-inviting refreshes rather than stacking.
     this.d.store.addInvite(from, targetAcct, 'world', now, this.tuning.inviteTtlMs);
-    this.deliverInvite(targetAcct, from, player.name, 'world');
+    this.deliverInvite(targetAcct, from, player.name);
     return 'ok';
   }
 
@@ -635,7 +440,6 @@ export class Social {
     // Everyone who can see this player re-reads them: going private must take effect now,
     // not whenever their next friend list happens to be rebuilt.
     this.sendFriendList(player);
-    this.sendParty(player.accountKey);
     for (const f of this.d.store.friendsOf(player.accountKey)) {
       const p = this.onlinePlayer(f.account);
       if (p) this.sendFriendList(p);
@@ -678,17 +482,8 @@ export class Social {
     switch (this.presenceMode(subject)) {
       case 'public': return true;
       case 'friends': return this.d.store.areFriends(viewer, subject);
-      case 'party': return this.samePartyAs(viewer, subject);
       case 'private': return false;
     }
-  }
-
-  // ------------------------------------------------------------------- party
-
-  private samePartyAs(a: AccountKey, b: AccountKey): boolean {
-    this.loadParty(a); this.loadParty(b);
-    const pa = this.partyOf.get(a);
-    return pa !== undefined && pa === this.partyOf.get(b);
   }
 
   // ---------------------------------------------------------------------- mutes
@@ -716,310 +511,6 @@ export class Social {
 
   isMuted(listener: AccountKey, speaker: AccountKey): boolean {
     return this.d.store.isMuted(listener, speaker);
-  }
-
-  // Phase 4 party rules the LEADER toggles for the group. Defaults chosen so a party that
-  // never opens the panel still behaves the way friends expect: gold splits (first-grab on
-  // gold is the one thing that reliably breeds resentment), rolling does not interrupt.
-  partySettings(acct: AccountKey): { goldSplit: boolean; rollOnRare: boolean; scaling: boolean } {
-    this.loadParty(acct);
-    const key = this.partyOf.get(acct);
-    if (key === undefined) return { goldSplit: false, rollOnRare: false, scaling: false };
-    return {
-      goldSplit: (this.d.store.partySetting(key, 'goldSplit') ?? 'true') === 'true',
-      rollOnRare: (this.d.store.partySetting(key, 'rollOnRare') ?? 'false') === 'true',
-      // Difficulty scaling is OPT-IN and the LEADER is who opts in. [rules] partyScaling supplies
-      // the default (shipped off): people come to co-op to play Morrowind together, not to have
-      // it quietly made harder because a friend walked in. But a group that wants the challenge
-      // has to be able to ASK — and for a while it could not, because the config default was
-      // flipped off while this map still only knew about loot, leaving scaling operator-only.
-      scaling: (this.d.store.partySetting(key, 'scaling')
-        ?? (this.d.defaultPartyScaling ? 'true' : 'false')) === 'true',
-    };
-  }
-
-  setPartySetting(player: Player, name: string, value: boolean): SocialFailure | 'ok' {
-    this.loadParty(player.accountKey);
-    const key = this.partyOf.get(player.accountKey);
-    const party = key !== undefined ? this.parties.get(key) : undefined;
-    if (!party) return 'not_in_party';
-    if (party.leader !== player.accountKey) return 'not_leader';
-    if (name !== 'goldSplit' && name !== 'rollOnRare' && name !== 'scaling') return 'no_such_player';
-    this.d.store.setPartySetting(key!, name, value ? 'true' : 'false');
-    for (const m of party.members) this.sendParty(m);
-    return 'ok';
-  }
-
-  isPartyLeader(acct: AccountKey): boolean {
-    this.loadParty(acct);
-    const key = this.partyOf.get(acct);
-    const party = key !== undefined ? this.parties.get(key) : undefined;
-    return party?.leader === acct;
-  }
-
-  // Phase 4: party membership for quest credit / loot rules. Hydrates from the store so a
-  // member who formed the party in another world still counts here. Empty when solo.
-  /** The party's id, for scoping things that belong to it (chat scrollback). */
-  partyIdOf(acct: AccountKey): string | undefined {
-    this.loadParty(acct);
-    return this.partyOf.get(acct);
-  }
-
-  partyMembersOf(acct: AccountKey): AccountKey[] {
-    this.loadParty(acct);
-    const key = this.partyOf.get(acct);
-    const party = key !== undefined ? this.parties.get(key) : undefined;
-    return party ? [...party.members] : [];
-  }
-
-  partyView(acct: AccountKey): PartyView | null {
-    this.loadParty(acct);
-    const id = this.partyOf.get(acct);
-    if (id === undefined) return null;
-    const party = this.parties.get(id);
-    if (!party) return null;
-    const settings = this.partySettings(acct);
-    return {
-      leader: party.leader,
-      // Members see the rules in force even though only the leader may change them:
-      // "why did my gold split" should be answerable by looking at the panel.
-      goldSplit: settings.goldSplit,
-      rollOnRare: settings.rollOnRare,
-      scaling: settings.scaling,
-      members: [...party.members].map((m) => {
-        const p = this.onlinePlayer(m);
-        // SERVER-WIDE, like the friend list. This asked the LOCAL roster, so a party member in
-        // another world showed as OFFLINE — which is not merely wrong, it is impossible: you
-        // cannot be in a party without being online, and the panel said so while the player
-        // could literally see them standing there.
-        const where = this.presenceOf(m);
-        return {
-          acct: m,
-          name: this.d.displayName(m) ?? m,
-          online: where.online,
-          // A party member's location is shown to the party regardless of mode 'party',
-          // but 'private' still hides it — opting out has to mean something even here.
-          ...(p ? { playerId: p.id } : {}),
-          ...(where.cellKey && this.presenceMode(m) !== 'private' ? { cellKey: where.cellKey } : {}),
-        };
-      }),
-    };
-  }
-
-  private sendParty(acct: AccountKey): void {
-    const p = this.onlinePlayer(acct);
-    if (!p) return;
-    const view = this.partyView(acct);
-    p.peer.sendEvent('PartyUpdate', view === null
-      ? { leader: '', members: [] as unknown as never }
-      : {
-        leader: view.leader,
-        goldSplit: view.goldSplit === true,
-        rollOnRare: view.rollOnRare === true,
-        members: view.members as unknown as never,
-      });
-  }
-
-  private broadcastParty(key: string): void {
-    const party = this.parties.get(key);
-    if (!party) return;
-    for (const m of party.members) this.sendParty(m);
-  }
-
-  // Inviting when you have no party creates one with you as leader. Requiring an explicit
-  // "create party" step first is a pure ceremony tax: nobody wants a party of one.
-  partyInvite(player: Player, targetAcct: AccountKey): SocialFailure | 'ok' {
-    const from = player.accountKey;
-    if (targetAcct === from) return 'self';
-    if (this.d.store.blockedEitherWay(from, targetAcct)) return 'blocked';
-    if (this.presenceMode(targetAcct) === 'private') return 'private';
-    // Same as invite(): reachable means AVAILABLE, not co-present. Deliberately NOT gated on a
-    // live presence row — those are written on a 10s heartbeat, so gating here would refuse an
-    // invite to someone who joined eight seconds ago. An invite to a player who is genuinely
-    // offline is harmless now that the party is created on ACCEPT: it sits in the mailbox,
-    // drains on their next join if it is still inside the TTL, and leaves nothing behind if
-    // not.
-    if (!this.isAvailable(targetAcct)) return 'not_online';
-    // Ask the STORE, not the local map: partyOf is hydrated on join, so it knows nothing
-    // about a player who is partied over in another world — and would happily double-invite
-    // them into a second group.
-    if (this.d.store.partyOfAccount(targetAcct) !== undefined) return 'already_in_party';
-
-    // THE PARTY IS CREATED ON ACCEPT, NOT ON INVITE. Creating it here put the inviter into a
-    // real, persisted party of ONE the moment they clicked invite — and the check above reads
-    // the store, so from everyone else's side they were now 'already_in_party' and could not
-    // be invited by anybody. If the invitee never accepted (they were offline, or just did
-    // not), the invite expired in two minutes and the phantom party outlived it: "I invited
-    // Bob, he never got it, and now nobody can invite me."
-    this.loadParty(from, true);
-    const key = this.partyOf.get(from);
-    const party = key !== undefined ? this.parties.get(key) : undefined;
-    if (party) {
-      if (party.leader !== from) return 'not_leader';
-      if (party.members.size >= this.maxParty) return 'party_full';
-    }
-
-    const now = this.d.now();
-    this.d.store.addInvite(from, targetAcct, 'party', now, this.tuning.inviteTtlMs);
-    this.deliverInvite(targetAcct, from, player.name, 'party');
-    if (party) this.sendParty(from);
-    return 'ok';
-  }
-
-  /** A party key: stable, opaque and platform-wide — persisted, so it survives world hops and
-   *  leader handover. */
-  private newPartyKey(): string {
-    return `p${this.d.now().toString(36)}${Math.floor(Math.random() * 36 ** 4).toString(36)}`;
-  }
-
-  partyAccept(player: Player, fromAcct: AccountKey): SocialFailure | 'ok' {
-    const me = player.accountKey;
-    const now = this.d.now();
-    if (!this.d.store.hasInvite(fromAcct, me, now)) return 'no_request';
-    if (this.d.store.blockedEitherWay(me, fromAcct)) return 'blocked';
-    if (this.partyOf.has(me)) return 'already_in_party';
-    // Hydrate the INVITER's party from the shared store. partyOf/parties are per-process
-    // caches filled on join, so accepting an invite that arrived from another world found
-    // nothing here and answered 'not_in_party' — the party exists, just not in this process.
-    this.loadParty(fromAcct, true);
-    let key = this.partyOf.get(fromAcct);
-    let party = key !== undefined ? this.parties.get(key) : undefined;
-    if (!party) {
-      // First acceptance makes the party. The inviter had none because partyInvite no longer
-      // creates one — see the note there.
-      key = this.newPartyKey();
-      party = { key, leader: fromAcct, members: new Set([fromAcct]) };
-      this.parties.set(key, party);
-      this.partyOf.set(fromAcct, key);
-      this.d.store.partyCreate(key, fromAcct, now);
-    }
-    // The cap is enforced by the STORE, in the same call as the insert: this local check is
-    // per-process, so two accepts landing in two different worlds both saw room.
-    if (!this.d.store.partyAddMember(party.key, me, now, this.maxParty)) {
-      this.d.store.removeInvite(fromAcct, me); // spent either way; see the note below
-      return 'party_full';
-    }
-    party.members.add(me);
-    this.partyOf.set(me, party.key);
-    this.d.store.removeInvite(fromAcct, me);
-    this.broadcastParty(party.key);
-    return 'ok';
-  }
-
-  // Put a player who just joined a party where that party actually is. Three cases, in the
-  // order they are cheapest to satisfy:
-  //   leader co-present here -> no dial at all, just stand next to them (the invite-teleport
-  //     path the client already handles; guestSpawn does the same for arrivals).
-  //   party has travelled   -> send them to the recorded world.
-  //   neither               -> stay put. The leader is in a world we cannot name, and dialling
-  //     a guess (an empty `party-<key>`) is worse than not moving: it strands the joiner
-  //     somewhere nobody is.
-  private routeToParty(player: Player): void {
-    const key = this.partyOf.get(player.accountKey);
-    const party = key !== undefined ? this.parties.get(key) : undefined;
-    // SAY SO WHEN THERE IS NOWHERE TO GO. Both of the early exits below used to be bare
-    // returns, so a player who accepted an invite and could not be routed received NOTHING --
-    // no move, no message, no error. Reported from real play as "I joined their party and
-    // nothing happened", which is exactly what it looks like from the inside.
-    //
-    // It is reachable whenever the leader is online but not yet placed in a cell (still
-    // loading, at character creation, or a bot account that never occupies one) AND the party
-    // has no recorded world. The membership change is real and correct; only the travel is
-    // impossible, and that distinction is the thing to tell the player.
-    if (!party) {
-      player.peer.sendEvent('PartyRouteUnavailable', { reason: 'no_party', leaderName: '' });
-      return;
-    }
-    const leader = this.onlinePlayer(party.leader);
-    if (leader && leader.cellKey && leader.pose) {
-      player.peer.sendEvent('InviteAccepted',
-        { cellKey: leader.cellKey, x: leader.pose.x, y: leader.pose.y, z: leader.pose.z });
-      return;
-    }
-    if (!party.at) {
-      player.peer.sendEvent('PartyRouteUnavailable', {
-        reason: leader ? 'leader_not_placed' : 'leader_offline',
-        leaderName: this.d.displayName(party.leader) ?? '',
-      });
-      return;
-    }
-    player.peer.sendEvent('PartyTravel', {
-      target: party.at.mode === 'public' ? 'public' : 'party',
-      worldId: party.at.id, mode: party.at.mode, host: party.at.host, port: party.at.port,
-      // The leader's public handle. displayName resolves to the USERNAME (see server.ts),
-      // which is what every other social surface shows; empty when they have not set one.
-      leaderName: this.d.displayName(party.leader) ?? '',
-    });
-  }
-
-  /** Leader removes a member. Reuses partyLeave so leader succession, dissolution below two
-   *  members, and the store writes all stay in ONE place — a second copy of that logic is how
-   *  a party ends up half-dissolved. */
-  partyKick(byAcct: AccountKey, target: AccountKey): 'ok' | 'not_leader' | 'no_party' | 'not_member' | 'self' {
-    if (byAcct === target) return 'self'; // leaving is PartyLeave; this is for removing someone else
-    this.loadParty(byAcct);
-    const key = this.partyOf.get(byAcct);
-    if (key === undefined) return 'no_party';
-    const party = this.parties.get(key);
-    if (!party) return 'no_party';
-    if (party.leader !== byAcct) return 'not_leader';
-    if (!party.members.has(target)) return 'not_member';
-    this.partyLeave(target);
-    // Tell them, or being removed is indistinguishable from the party vanishing.
-    this.onlinePlayer(target)?.peer.sendEvent('SocialNotice',
-      { kind: 'party_kicked', by: this.d.displayName(byAcct) ?? byAcct } as never);
-    return 'ok';
-  }
-
-  partyLeave(acct: AccountKey): void {
-    const key = this.partyOf.get(acct);
-    if (key === undefined) return;
-    const party = this.parties.get(key);
-    this.partyOf.delete(acct);
-    this.d.store.partyRemoveMember(acct);
-    if (!party) return;
-    party.members.delete(acct);
-    // The leader leaving hands over rather than dissolving the group: everyone else being
-    // silently ejected because one person left is worse than an arbitrary successor.
-    if (party.leader === acct) {
-      const next = [...party.members][0];
-      if (next) {
-        party.leader = next;
-        this.d.store.partySetLeader(key, next, this.d.now());
-      }
-    }
-    if (party.members.size <= 1) {
-      for (const m of party.members) {
-        this.partyOf.delete(m);
-        this.d.store.partyRemoveMember(m);
-        this.sendParty(m);
-      }
-      this.parties.delete(key);
-      this.d.store.partyDissolve(key);
-    } else {
-      this.broadcastParty(key);
-    }
-    this.sendParty(acct); // the leaver gets an empty party
-  }
-
-  // Going Solo is a statement that this world is yours alone, so it ends the group rather
-  // than handing it over the way partyLeave does: the members were in the leader's world by
-  // the leader's invitation, and silently promoting one of them leaves a party nobody chose
-  // sitting in a world that just closed to them. Each member goes back to their own world
-  // (their client dials home on the empty PartyUpdate). No-op unless `acct` leads a party.
-  partyDisband(acct: AccountKey): boolean {
-    const key = this.partyOf.get(acct);
-    const party = key !== undefined ? this.parties.get(key) : undefined;
-    if (!party || key === undefined || party.leader !== acct) return false;
-    for (const m of party.members) {
-      this.partyOf.delete(m);
-      this.d.store.partyRemoveMember(m);
-      this.sendParty(m);
-    }
-    this.parties.delete(key);
-    this.d.store.partyDissolve(key);
-    log('info', 'social.party_disband', { party: key, leader: acct });
-    return true;
   }
 
   // ------------------------------------------------------------------ dispatch
@@ -1161,55 +652,6 @@ export class Social {
         void this.joinFriend(player, str('acct'));
         return true;
       }
-      case 'PartyInvite': {
-        const inviteTarget = this.targetAcct(body);
-        if (inviteTarget === undefined) { this.reply(player, 'PartyInvite', false, 'no_such_player'); return true; }
-        const r = this.partyInvite(player, inviteTarget);
-        this.reply(player, 'PartyInvite', r === 'ok', r);
-        return true;
-      }
-      case 'PartyAccept': {
-        const r = this.partyAccept(player, str('acct'));
-        this.reply(player, 'PartyAccept', r === 'ok', r);
-        // Accepting used to only change membership: you were "in a party" that could be in
-        // another world entirely, with nothing telling your client to go there. Route on the
-        // way in, the same as travel does.
-        if (r === 'ok') this.routeToParty(player);
-        return true;
-      }
-      // Phase 2.5 party voice: WebRTC signaling relayed between PARTY MEMBERS ONLY.
-      // The server never sees audio — it forwards offer/answer/ICE so two browsers can
-      // open a direct peer connection, which is why a mesh needs no media server. Being
-      // party-scoped is the access control: an SDP offer to a stranger is how a voice
-      // system becomes a way to force a connection on someone.
-      case 'VoiceSignal': {
-        const to = str('acct');
-        const members = this.partyMembersOf(player.accountKey);
-        if (!members.includes(to) || to === player.accountKey) {
-          this.reply(player, 'VoiceSignal', false, 'not_in_party');
-          return true;
-        }
-        if (this.d.store.isMuted(to, player.accountKey)) {
-          // A muted speaker is not told they are muted (that invites retaliation); the
-          // signal is simply not delivered, so no connection is ever offered.
-          this.reply(player, 'VoiceSignal', true, 'ok');
-          return true;
-        }
-        const target = this.onlinePlayer(to);
-        if (!target) {
-          this.reply(player, 'VoiceSignal', false, 'not_online');
-          return true;
-        }
-        const payload = body?.get('payload');
-        target.peer.sendEvent('VoiceSignal', {
-          fromAcct: player.accountKey,
-          fromName: player.name,
-          kind: str('kind'), // offer | answer | ice
-          payload: typeof payload === 'string' ? payload : '',
-        });
-        this.reply(player, 'VoiceSignal', true, 'ok');
-        return true;
-      }
       // Phase 3.8: report from the player context menu. Same store and the same bounded
       // reason as the /report command — this is the surface, not a second system. Being an
       // event rather than a typed command is what makes it one click from the social hub,
@@ -1244,16 +686,6 @@ export class Social {
         this.reply(player, 'ReportPlayer', true, 'ok');
         return true;
       }
-      case 'LootRollVote': {
-        const r = this.d.lootVote?.(player, str('id'), str('choice') === 'need' ? 'need' : 'pass');
-        this.reply(player, 'LootRollVote', r !== false, r === false ? 'no_roll' : 'ok');
-        return true;
-      }
-      case 'PartySetting': {
-        const r = this.setPartySetting(player, str('name'), str('value') === 'true');
-        this.reply(player, 'PartySetting', r === 'ok', r);
-        return true;
-      }
       case 'MuteAdd': {
         const muteTarget = this.targetAcct(body);
         if (muteTarget === undefined) { this.reply(player, 'MuteAdd', false, 'no_such_player'); return true; }
@@ -1265,32 +697,6 @@ export class Social {
         this.unmute(player, str('acct'));
         this.reply(player, 'MuteRemove', true, 'ok');
         return true;
-      // The leader may remove a member. Leaving was the only way out, so a leader stuck with
-      // someone had to disband the whole party to be rid of them.
-      case 'PartyKick': {
-        // The account key comes straight from the party view the client is looking at, and is
-        // authorised by MEMBERSHIP, not by presence: targetAcct only accepts someone in THIS
-        // world, and a party member is very often in another one — which is the entire reason
-        // the party is shared state. partyKick refuses anything that is not a member.
-        const target = str('acct');
-        if (target === '') { this.reply(player, 'PartyKick', false, 'no_such_player'); return true; }
-        const r = this.partyKick(player.accountKey, target);
-        this.reply(player, 'PartyKick', r === 'ok', r);
-        return true;
-      }
-      case 'PartyLeave':
-        this.partyLeave(player.accountKey);
-        this.reply(player, 'PartyLeave', true, 'ok');
-        return true;
-      // Party travel (plan 2.5.1): the leader moves the whole group between the party's
-      // campaign world and public. Async like WorldList/WorldCreate — the gateway is
-      // consulted off the session's hot path, and every member co-present in THIS world
-      // gets a PartyTravel event telling their client where to dial. Members elsewhere
-      // hydrate the party from the store when they arrive wherever they are going.
-      case 'PartyTravel': {
-        void this.partyTravel(player, str('target'));
-        return true;
-      }
       case 'InviteAccept': {
         const r = this.acceptInvite(player, str('acct'));
         if (r.ok) {
@@ -1309,69 +715,10 @@ export class Social {
     player.peer.sendEvent('SocialResult', { op, ok, detail });
   }
 
-  // Leader-only. target 'party' = the group's own campaign world (created on first travel,
-  // owned by the CURRENT leader — the world persists under whoever led when it was first
-  // made, which is the plan's "persisted under the owner's account"); target 'public' =
-  // the platform's public world. The server only TELLS clients where to go — each member's
-  // client dials the new world itself and re-auths there (same character, per plan).
-  async partyTravel(player: Player, target: string): Promise<void> {
-    const from = player.accountKey;
-    const key = this.partyOf.get(from);
-    const party = key !== undefined ? this.parties.get(key) : undefined;
-    if (!party) {
-      this.reply(player, 'PartyTravel', false, 'not_in_party');
-      return;
-    }
-    if (party.leader !== from) {
-      this.reply(player, 'PartyTravel', false, 'not_leader');
-      return;
-    }
-    if (!this.worlds || !this.worlds.enabled) {
-      this.reply(player, 'PartyTravel', false, 'no_gateway');
-      return;
-    }
-
-    // PUBLIC is the only destination a party travels to. There used to be a dedicated
-    // `party-<key>` world as well, which was a blank process containing nobody's progress —
-    // it contradicted the rule that a leader flipping to Party keeps their OWN world (and
-    // stays the quest authority) instead of being moved somewhere empty. A party is together
-    // either in the leader's world flipped to 'party' or in the shared world; there is no
-    // third place, so there is no third world to create.
-    if (target !== 'public') {
-      this.reply(player, 'PartyTravel', false, 'bad_target');
-      return;
-    }
-    const r = await this.worlds.list(player);
-    const dest = r.worlds.find((w) => w.mode === 'public' && w.up);
-    if (!dest) {
-      this.reply(player, 'PartyTravel', false, r.error ?? 'no_public_world');
-      return;
-    }
-
-    this.d.store.partyTouch(party.key, this.d.now());
-    party.at = { id: dest.id, mode: dest.mode, host: dest.host, port: dest.port, wsPath: dest.wsPath };
-    // Fan out to every member co-present in THIS world (the offline/elsewhere ones keep
-    // their membership and can follow via the party panel when they see where it went).
-    for (const m of party.members) {
-      const p = this.onlinePlayer(m);
-      p?.peer.sendEvent('PartyTravel', {
-        target,
-        worldId: dest.id,
-        mode: dest.mode,
-        host: dest.host,
-        ...(dest.wsPath ? { wsPath: dest.wsPath } : {}),
-        port: dest.port,
-        leaderName: player.name,
-      });
-    }
-    log('info', 'social.party_travel', { party: party.key, target, worldId: dest.id, leader: from });
-  }
-
-  // "Join a friend": go where they are. The single shared public world makes this
-  // deterministic without the gateway tracking per-player location:
-  //   - Offline (peeled into their solo world) -> refused; a solo session is unjoinable.
-  //   - In a party -> auto-join that party (friends + space) and travel to its world.
-  //   - Otherwise (Online, no party) -> they're out in the one PUBLIC world; go there.
+  // "Join a friend": go to THEIR world. This is the one and only door into someone else's
+  // game — there is no public world and no party to route through. The friend's own world
+  // decides whether to admit the caller (mayJoinWorld: Solo refuses, Party admits friends up
+  // to the cap), which is the correct place for that call, not here.
   // Friendship is required both ways — you cannot chase a stranger across worlds.
   async joinFriend(player: Player, targetAcct: AccountKey): Promise<void> {
     const me = player.accountKey;
@@ -1382,47 +729,11 @@ export class Social {
     if (!this.isAvailable(targetAcct)) return fail('not_online');
     if (!this.worlds || !this.worlds.enabled) return fail('no_gateway');
     const friendName = this.d.displayName(targetAcct) ?? targetAcct;
-
-    const theirParty = this.partyOf.get(targetAcct);
-    if (theirParty !== undefined) {
-      const party = this.parties.get(theirParty);
-      if (!party) return fail('not_in_party');
-      if (this.partyOf.get(me) !== theirParty) {
-        if (this.partyOf.has(me)) return fail('already_in_party');
-        if (party.members.size >= this.maxParty) return fail('party_full');
-        party.members.add(me);
-        this.partyOf.set(me, party.key);
-        this.d.store.partyAddMember(party.key, me, this.d.now());
-        this.broadcastParty(party.key);
-      }
-      // Where the group ACTUALLY is, else the leader's OWN world — which is where a party
-      // that never travelled is sitting. Never `party-<key>`: creating one dialled you into
-      // an empty world whenever the party was somewhere else.
-      const dest = party.at ?? await this.worlds.ownerWorld(party.leader);
-      if (!dest) return fail('not_travelled');
-      player.peer.sendEvent('JoinFriend', {
-        ok: true, worldId: dest.id, mode: dest.mode, host: dest.host, port: dest.port, friendName,
-        ...(dest.wsPath ? { wsPath: dest.wsPath } : {}),
-      });
-      return;
-    }
-    // No party. If they are sitting in their OWN world, that is where they are — go there.
-    // Their world decides whether to admit us (mayJoinWorld: Solo refuses, Party admits the
-    // owner's party), which is the correct place for that call, not here.
     const own = await this.worlds.ownerWorld(targetAcct);
-    if (own) {
-      player.peer.sendEvent('JoinFriend', {
-        ok: true, worldId: own.id, mode: own.mode, host: own.host, port: own.port, friendName,
-        ...(own.wsPath ? { wsPath: own.wsPath } : {}),
-      });
-      return;
-    }
-    // Otherwise they are out in the shared world.
-    const r = await this.worlds.list(player);
-    const pub = r.worlds.find((w) => w.mode === 'public' && w.up);
-    if (!pub) return fail(r.error ?? 'no_public_world');
+    if (!own) return fail('not_online');
     player.peer.sendEvent('JoinFriend', {
-      ok: true, worldId: pub.id, mode: pub.mode, host: pub.host, port: pub.port, friendName,
+      ok: true, worldId: own.id, mode: own.mode, host: own.host, port: own.port, friendName,
+      ...(own.wsPath ? { wsPath: own.wsPath } : {}),
     });
   }
 

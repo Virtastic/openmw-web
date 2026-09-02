@@ -5,8 +5,8 @@ server** (`dist/server.mjs`) validates and relays play, enforces the session rul
 [PROTOCOL.md](PROTOCOL.md), persists accounts and world state, and supervises a **sim
 peer** — a headless OpenMW that holds cell authority and is the only thing simulating
 NPCs (mandatory since 1.1.0; the server refuses to boot without a peer binary and usable
-game data). The **gateway** (`dist/gateway.mjs`) fronts many world processes: one public
-world plus private/party worlds booted on demand, all reachable through a single port.
+game data). The **gateway** (`dist/gateway.mjs`) fronts many world processes:
+private/party worlds booted on demand, all reachable through a single port.
 It ships **no game data** — operators supply their own (see
 [`../SELF_HOSTING.md`](../SELF_HOSTING.md)).
 

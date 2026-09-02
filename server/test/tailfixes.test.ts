@@ -26,27 +26,8 @@ test('a flood of addresses does not reset the bucket of an active attacker', () 
   }
 });
 
-// A dissolved party's scrollback can never be read again — the scope is gone — but chat_history
-// has no foreign key, so ON DELETE CASCADE did not reach it and the rows stayed forever, up to
-// CHAT_HISTORY_KEEP per party ever formed.
-test('dissolving a party reclaims its chat scrollback', () => {
-  const s = new SocialStore(':memory:');
-  s.partyCreate('pk', 'alice', 1);
-  for (let i = 0; i < 5; i++) {
-    s.appendChat({ ts: i, channel: 'party', scope: 'pk', acct: 'alice', name: 'Alice', text: `m${i}` }, 200);
-  }
-  // A server-wide line, which must NOT be collected with the party.
-  s.appendChat({ ts: 9, channel: 'global', scope: '', acct: 'alice', name: 'Alice', text: 'hi' }, 200);
-  assert.equal(s.recentChat('pk', 200).length, 5);
-
-  s.partyDissolve('pk');
-  assert.equal(s.recentChat('pk', 200).length, 0, 'the party scrollback outlived the party');
-  assert.equal(s.recentChat('', 200).length, 1, 'the server-wide channel was collected too');
-  s.close();
-});
-
 // Nothing ever deleted a presence row, so goneLongerThan matched every account that had ever
-// played, forever, and the caller ran a party lookup per row every ten seconds in every world.
+// played, forever.
 test('presence rows for the long gone are pruned', () => {
   const s = new SocialStore(':memory:');
   const now = Date.now();

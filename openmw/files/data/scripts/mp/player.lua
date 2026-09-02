@@ -330,16 +330,14 @@ local function pollHarness()
             -- wire — so it used to send a GUESS (the lowercased handle) for these, which stops
             -- being a real key the moment someone's handle differs from their login name. The
             -- server resolves names against its roster and the shared account index.
-            -- PartyKick is the exception: its argument is a party member's key, which the
-            -- party view legitimately carries.
             local byName = (sop == 'FriendRequest' or sop == 'BlockAdd' or sop == 'FriendAccept'
-                or sop == 'PartyInvite' or sop == 'MuteAdd' or sop == 'ReportPlayer')
+                or sop == 'MuteAdd' or sop == 'ReportPlayer')
             -- The arg does NOT always belong in name/acct. PresenceMode reads `mode` and
             -- SetAvailability reads `state` on the server, so routing their argument into
             -- `acct` meant the server saw an empty value and refused with no_such_player --
             -- silently, because SocialResult is not surfaced. The privacy control had
             -- therefore never worked. Route by what each op actually reads.
-            local FIELD = { PresenceMode = 'mode', SetAvailability = 'state', PartyTravel = 'target' }
+            local FIELD = { PresenceMode = 'mode', SetAvailability = 'state' }
             local field = FIELD[sop]
             local body = { op = sop }
             if field then body[field] = sarg
@@ -385,28 +383,12 @@ local function pollHarness()
             core.sendGlobalEvent('mpSocial', { op = 'WorldCreate', id = wcId, mode = wcMode })
         end
 
-        -- Character slots + party travel test hooks: the same uplinks the Characters tab
-        -- and the Party tab's travel buttons use.
+        -- Character slot test hooks: the same uplinks the Characters tab uses.
         local ccName = cmd:match('^charcreate:(.+)$')
         if ccName then core.sendGlobalEvent('mpCharCreate', { name = ccName }) end
         local csId = cmd:match('^charswitch:(%w+)$')
         if csId then core.sendGlobalEvent('mpCharSwitch', { id = csId }) end
         if cmd == 'chars' then core.sendGlobalEvent('mpChars', {}) end
-        -- Party voice: the JS mesh emits 'voice:<acct>:<kind>:<payload>' through the same
-        -- command channel the harness uses. Payload is SDP/ICE JSON and may contain
-        -- colons, so it is captured greedily as the remainder.
-        local vAcct, vKind, vPayload = cmd:match('^voice:([^:]+):([^:]+):(.*)$')
-        if vAcct then
-            core.sendGlobalEvent('mpSocial', {
-                op = 'VoiceSignal', acct = vAcct, kind = vKind, payload = vPayload,
-            })
-        end
-        local voiceOp = cmd:match('^voicectl:(%a+)$')
-        if voiceOp then core.sendGlobalEvent('mpVoice', { op = voiceOp }) end
-
-        local ptTarget = cmd:match('^partytravel:(%a+)$')
-        if ptTarget then core.sendGlobalEvent('mpSocial', { op = 'PartyTravel', target = ptTarget }) end
-
         local text = cmd:match('^chat:(.*)$')
         if text and text ~= '' then
             core.sendGlobalEvent('mpChatSend', { text = text })
@@ -419,7 +401,7 @@ local function pollHarness()
         if cxCh and cxText ~= '' then
             core.sendGlobalEvent('mpChatSend', { text = cxText, channel = cxCh, to = cxTo })
         end
-        -- Where-am-I switcher (solo/party/public/online/offline).
+        -- Where-am-I switcher (solo/party/online/offline).
         -- A freshly minted login ticket, handed down by the page before a world switch. Not a
         -- secret the client did not already hold: it is minted from the same SSO session.
         local tkt = cmd:match('^mpticket:(.+)$')
@@ -702,7 +684,7 @@ end
 
 -- Multiplayer never pauses the LOCAL world when a menu is open. Pausing only your own client
 -- would freeze your view while the server-authoritative sim and every other player keep
--- moving — and we want one uniform feel across private/party/public, so the pause menu, the
+-- moving — and we want one uniform feel in every world, so the pause menu, the
 -- Social hub, inventory, dialogue, the map, etc. all leave the world running. This flips the
 -- default in scripts/omw/ui.lua (every mode pauses) off for all modes. The modePause table it
 -- writes is per-session and not persisted, so we re-apply on every init and load. Only the MP
@@ -722,11 +704,6 @@ return {
         onQuestUpdate = function(questId, stage)
             core.sendGlobalEvent('mpQuestUpdate', { questId = questId, stage = stage })
         end,
-        onKeyRelease = function(key)
-            -- Push-to-talk release. Paired with onKeyPress below; PTT is the default so a
-            -- player is never transmitting because they forgot a toggle.
-            if key.symbol == 'v' then core.sendGlobalEvent('mpVoice', { op = 'talk', on = false }) end
-        end,
         onKeyPress = function(key)
             -- INPUT DIAGNOSTIC. "Player cannot attack" / "escape must be pressed twice" were
             -- reported from live play, and s64-real-input shows keys reaching the PAGE and no
@@ -738,8 +715,6 @@ return {
             mp.testSet('uiMode', tostring(I.UI.getMode() or 'none'))
             if key.symbol == 't' and not I.UI.getMode() then
                 toggleChat()
-            elseif key.symbol == 'v' and not I.UI.getMode() then
-                core.sendGlobalEvent('mpVoice', { op = 'talk', on = true })
             end
         end,
         onFrame = function() -- runs while paused too — the harness must not stall in menus

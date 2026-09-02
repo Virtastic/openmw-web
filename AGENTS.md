@@ -237,11 +237,10 @@ So check the CAUSE before calling it an outage:
 
 ```bash
 curl -s https://morrowind.dev.virtastic.app/worlds          # [] = no world is running
-# on the test host: docker logs openmw-mp-test | grep gateway.start   # publicEnabled true/false
 ```
 
-Expect 101 only when a public world is actually up — i.e. `publicEnabled = true`, or the gateway
-was started with `--public-world vvardenfell`.
+There is no public world: no world runs until a player creates their own, so an empty list at
+boot is healthy, not broken.
 
 ### Simulation authority: one peer, every occupied cell
 

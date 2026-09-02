@@ -15,8 +15,36 @@
 // expressed by a file this process owns.
 
 import { DatabaseSync } from 'node:sqlite';
-import { openDb } from '../persist/sqlite';
+import { openDb, type Migration } from '../persist/sqlite';
 import { join } from 'node:path';
+
+// Phase W (multiplayer912026): the party concept is deleted — every player owns a world and
+// guests simply join it. Live servers carry party rows, so this is a MIGRATION, not a schema
+// edit: it runs once, recorded in schema_migrations, in its own transaction.
+//
+// Existence-guarded because openDb runs migrations BEFORE migrate() creates the base tables,
+// so on a fresh database these tables do not exist yet and there is nothing to rewrite.
+const SOCIAL_MIGRATIONS: Migration[] = [
+  {
+    name: 'w1-solo-party',
+    up: (db: DatabaseSync) => {
+      const has = (t: string): boolean => db
+        .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?")
+        .get(t) !== undefined;
+      // Party chat scrollback: the scope was the party id, and the party — the only thing
+      // that could ever read it back — is gone. Server-wide scope ('') survives; from now on
+      // non-empty scopes are WORLD ids.
+      if (has('chat_history')) db.exec("DELETE FROM chat_history WHERE scope <> ''");
+      // Invites collapse to one kind: a party invite has nothing left to accept into.
+      if (has('invite')) db.exec("DELETE FROM invite WHERE kind = 'party'");
+      // The 'party' presence-privacy mode is gone; 'friends' is the nearest survivor.
+      if (has('presence_pref')) db.exec("UPDATE presence_pref SET mode = 'friends' WHERE mode = 'party'");
+      db.exec('DROP TABLE IF EXISTS party_setting');
+      db.exec('DROP TABLE IF EXISTS party_member');
+      db.exec('DROP TABLE IF EXISTS party');
+    },
+  },
+];
 
 // Keys are ACCOUNT keys, never player ids: player ids are per-session, so an id-keyed
 // friendship would expire on every reconnect.
@@ -72,7 +100,7 @@ export class SocialStore {
       // The header comment above still says node:sqlite is safe because a world is
       // single-process. That stopped being true when the gateway started spawning one process
       // per world; this line is the correction.
-      this.db = openDb(join(dataDir, filename));
+      this.db = openDb(join(dataDir, filename), SOCIAL_MIGRATIONS);
     }
     this.migrate();
   }
@@ -103,14 +131,14 @@ export class SocialStore {
         PRIMARY KEY (fromAcct, toAcct)
       );
       CREATE INDEX IF NOT EXISTS friend_request_to ON friend_request(toAcct);
-      -- Party/world invites, persisted for the SAME reason friend requests are: worlds are
+      -- World invites, persisted for the SAME reason friend requests are: worlds are
       -- separate processes, so an in-memory invite could only ever reach someone already in
       -- the sender's world. That made "invite your friend" work exactly when you did not
       -- need it. One row per (from, to): re-inviting refreshes rather than stacking.
       CREATE TABLE IF NOT EXISTS invite (
         fromAcct TEXT NOT NULL,
         toAcct   TEXT NOT NULL,
-        kind     TEXT NOT NULL, -- 'party' | 'world'
+        kind     TEXT NOT NULL, -- always 'world'; the column predates the party removal
         sent     INTEGER NOT NULL,
         expires  INTEGER NOT NULL,
         PRIMARY KEY (fromAcct, toAcct)
@@ -137,7 +165,7 @@ export class SocialStore {
         id       INTEGER PRIMARY KEY AUTOINCREMENT,
         ts       INTEGER NOT NULL,
         channel  TEXT NOT NULL,
-        scope    TEXT NOT NULL,   -- '' for server-wide; a party id for party lines
+        scope    TEXT NOT NULL,   -- '' for server-wide; a world id for world-scoped lines
         acct     TEXT NOT NULL,
         name     TEXT NOT NULL,
         text     TEXT NOT NULL
@@ -167,28 +195,6 @@ export class SocialStore {
       CREATE TABLE IF NOT EXISTS availability_pref (
         account TEXT PRIMARY KEY,
         state   TEXT NOT NULL
-      );
-      -- Party travel: membership PERSISTS (it must survive members hopping between world
-      -- processes — the party is a platform-level group, not one world's session state).
-      -- The restart-zombie concern that kept parties in memory is handled by updated_at +
-      -- partySweepStale: a party nobody has touched for a day dissolves on next load.
-      CREATE TABLE IF NOT EXISTS party (
-        key        TEXT PRIMARY KEY,
-        leader     TEXT NOT NULL,
-        updated_at INTEGER NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS party_member (
-        account TEXT PRIMARY KEY,
-        party   TEXT NOT NULL REFERENCES party(key) ON DELETE CASCADE
-      );
-      CREATE INDEX IF NOT EXISTS party_member_party ON party_member(party);
-      -- Leader-toggled party rules. Persisted with the party so a group's settings survive
-      -- the leader hopping worlds (or handing over).
-      CREATE TABLE IF NOT EXISTS party_setting (
-        party TEXT NOT NULL REFERENCES party(key) ON DELETE CASCADE,
-        name  TEXT NOT NULL,
-        value TEXT NOT NULL,
-        PRIMARY KEY (party, name)
       );
       -- Mutes PERSIST: "I muted this person" must survive a relog, or the control is a
       -- suggestion. muter = '@server' is a moderator mute (applies to everyone), which is
@@ -507,86 +513,6 @@ export class SocialStore {
   mutesOf(muter: AccountKey): AccountKey[] {
     return (this.db.prepare('SELECT muted FROM mute WHERE muter = ? ORDER BY since').all(muter) as
       { muted: string }[]).map((r) => r.muted);
-  }
-
-  // -------------------------------------------------------------------- party
-
-  partyCreate(key: string, leader: AccountKey, now: number): void {
-    this.write('INSERT OR REPLACE INTO party (key, leader, updated_at) VALUES (?, ?, ?)').run(key, leader, now);
-    this.write('INSERT OR REPLACE INTO party_member (account, party) VALUES (?, ?)').run(leader, key);
-  }
-
-  partyOfAccount(account: AccountKey): { key: string; leader: AccountKey } | undefined {
-    const row = this.db
-      .prepare('SELECT p.key AS key, p.leader AS leader FROM party_member m JOIN party p ON p.key = m.party WHERE m.account = ?')
-      .get(account) as { key: string; leader: string } | undefined;
-    return row;
-  }
-
-  partyMembers(key: string): AccountKey[] {
-    return (this.db.prepare('SELECT account FROM party_member WHERE party = ? ORDER BY account').all(key) as
-      { account: string }[]).map((r) => r.account);
-  }
-
-  /** Add a member, refusing if the party is already at `cap`. Returns false when it is full.
-   *
-   *  THE CAP IS CHECKED HERE, not by the caller. social.ts checked its own in-memory copy of
-   *  the member set, which is per-process: two invitees accepting in two different world
-   *  processes against a 7-member party both read 7 and both inserted, and the party ended up
-   *  over the limit with party-scaled loot and quest credit fanning out across it. This read
-   *  and the insert are one synchronous call against the same connection, so nothing can slip
-   *  between them. */
-  partyAddMember(key: string, account: AccountKey, now: number, cap = Infinity): boolean {
-    const already = this.db.prepare('SELECT 1 FROM party_member WHERE account = ? AND party = ?')
-      .get(account, key) !== undefined;
-    if (!already) {
-      const n = (this.db.prepare('SELECT COUNT(*) AS n FROM party_member WHERE party = ?')
-        .get(key) as { n: number }).n;
-      if (n >= cap) return false;
-    }
-    this.write('INSERT OR REPLACE INTO party_member (account, party) VALUES (?, ?)').run(account, key);
-    this.partyTouch(key, now);
-    return true;
-  }
-
-  partyRemoveMember(account: AccountKey): void {
-    this.write('DELETE FROM party_member WHERE account = ?').run(account);
-  }
-
-  partySetLeader(key: string, leader: AccountKey, now: number): void {
-    this.write('UPDATE party SET leader = ?, updated_at = ? WHERE key = ?').run(leader, now, key);
-  }
-
-  partyDissolve(key: string): void {
-    // party_member rows go via ON DELETE CASCADE.
-    this.write('DELETE FROM party WHERE key = ?').run(key);
-    // chat_history does NOT cascade — it has no foreign key, because it is scoped by a string
-    // that is sometimes a party id and sometimes '' for the server-wide channel. So the
-    // party's scrollback (up to CHAT_HISTORY_KEEP rows) outlived the party forever, once per
-    // party ever formed. Nobody can ever read it again: the scope is gone.
-    this.write('DELETE FROM chat_history WHERE scope = ?').run(key);
-  }
-
-  partySetting(key: string, name: string): string | undefined {
-    const row = this.db.prepare('SELECT value FROM party_setting WHERE party = ? AND name = ?').get(key, name) as
-      { value: string } | undefined;
-    return row?.value;
-  }
-
-  setPartySetting(key: string, name: string, value: string): void {
-    this.write('INSERT OR REPLACE INTO party_setting (party, name, value) VALUES (?, ?, ?)').run(key, name, value);
-  }
-
-  partyTouch(key: string, now: number): void {
-    this.write('UPDATE party SET updated_at = ? WHERE key = ?').run(now, key);
-  }
-
-  // Dissolve parties nobody has touched in ages — the guard against a restart resurrecting
-  // groups whose members are gone for good. Returns how many were dissolved.
-  partySweepStale(cutoff: number): number {
-    const stale = (this.db.prepare('SELECT key FROM party WHERE updated_at <= ?').all(cutoff) as { key: string }[]);
-    for (const r of stale) this.partyDissolve(r.key);
-    return stale.length;
   }
 
   sweepExpired(now: number): number {

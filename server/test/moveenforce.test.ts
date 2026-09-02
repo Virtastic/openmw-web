@@ -1,14 +1,12 @@
 // Copyright (C) 2025-2026 Virtastic - https://virtastic.app
 // SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
-// The movement envelope, made to ACT in the shared lobby.
-//
-// The client authors its own position, so this cannot prove honesty — it bounds how far a
-// modified client gets before the server stops believing it. Everywhere but the lobby that
-// stays a counted signal: a private world is the player's own game, and a false positive there
-// would rubber-band someone whose connection merely stalled. In the lobby the frame is refused.
+// The movement envelope: a counted SIGNAL, never a gate. Every world is somebody's own game,
+// and a false positive would rubber-band someone whose connection merely stalled. Phase 3
+// retires the whole envelope — with the peer simulating the avatar, an implausible pose
+// cannot be asserted in the first place.
 //
 // Asserted through a PEER's move batches rather than server internals: what matters is what
-// other players see, which is also the only thing a cheat is trying to change.
+// other players see.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { startServer } from '../src/server';
@@ -50,21 +48,18 @@ async function makeCharacter(dataDir: string, name: string): Promise<void> {
 
 /**
  * Warp back and forth `n` times and report how many of those warps a WATCHING peer was actually
- * told about. `lobby` selects the gateway shared world (OMW_WORLD_ID + public) or an ordinary one.
+ * told about.
  */
 async function warpsSeenByPeer(
-  t: { after: (fn: () => unknown) => void }, lobby: boolean, n: number,
+  t: { after: (fn: () => unknown) => void }, n: number,
 ): Promise<number> {
   const dataDir = tmpDataDir();
   await makeCharacter(dataDir, 'Warper');
   await makeCharacter(dataDir, 'Watcher');
 
-  const had = process.env.OMW_WORLD_ID;
-  if (lobby) process.env.OMW_WORLD_ID = 'vvardenfell';
-  else delete process.env.OMW_WORLD_ID;
   const server = await startServer({
     requireGameData: false, dataDir, port: 0, host: '127.0.0.1',
-    worldMode: lobby ? 'public' : 'private',
+    worldMode: 'private',
     // ISOLATE THE ONE MECHANISM. A warp far enough to be implausible is also far enough to be
     // culled (interestRadius) AND to be dropped to the far LOD tier, either of which would stop
     // the relay by itself and let this pass — or fail — for entirely the wrong reason. Culling
@@ -78,11 +73,7 @@ async function warpsSeenByPeer(
       },
     },
   });
-  t.after(() => {
-    if (had === undefined) delete process.env.OMW_WORLD_ID;
-    else process.env.OMW_WORLD_ID = had;
-    return server.close();
-  });
+  t.after(() => server.close());
 
   const login = async (name: string) => {
     const c = await TestClient.connect(server.port);
@@ -119,21 +110,10 @@ async function warpsSeenByPeer(
   return Math.round(furthest / WARP);
 }
 
-test('lobby: a sustained warp stops being relayed to other players', async (t) => {
-  const hops = await warpsSeenByPeer(t, true, 8);
-  // The first two hops are still taken — the run has to establish itself before enforcement
-  // starts — and every one after is refused, so the warper never gets further than that.
-  assert.ok(hops > 0, 'the watcher was receiving poses at all');
-  assert.ok(hops <= 3, `the warp kept being relayed: peers followed it to hop ${hops} of 8`);
-});
-
-// NEGATIVE CONTROL. The IDENTICAL sequence outside the lobby is relayed in full, so the test
-// above is enforcement rather than the frames being lost to a rate limit, the bounds check or a
-// stale seq. Removing the ctx.lobbyWorld gate makes this one fail.
-test('a private world still only COUNTS an implausible move', async (t) => {
-  const hops = await warpsSeenByPeer(t, false, 8);
+test('an implausible move is only COUNTED — every frame is still relayed', async (t) => {
+  const hops = await warpsSeenByPeer(t, 8);
   assert.equal(hops, 8,
-    `outside the lobby this is a signal, not a gate (peers followed only to hop ${hops})`);
+    `this is a signal, not a gate (peers followed only to hop ${hops})`);
 });
 
 
@@ -145,20 +125,14 @@ test('a private world still only COUNTS an implausible move', async (t) => {
 // enormous apparent speed for someone who did nothing but have bad wifi. While the envelope
 // only COUNTED, that was noise in a log. Now that the lobby refuses on it, judging per-frame
 // would rubber-band the wrong person, on the connection least able to recover from it.
-test('lobby: a burst delivered after a stall is not mistaken for a warp', async (t) => {
+test('a burst delivered after a stall is not mistaken for a warp', async (t) => {
   const dataDir = tmpDataDir();
   await makeCharacter(dataDir, 'Stally');
   await makeCharacter(dataDir, 'Watcher2');
-  const had = process.env.OMW_WORLD_ID;
-  process.env.OMW_WORLD_ID = 'vvardenfell';
   const server = await startServer({
-    requireGameData: false, dataDir, port: 0, host: '127.0.0.1', worldMode: 'public',
+    requireGameData: false, dataDir, port: 0, host: '127.0.0.1', worldMode: 'private',
   });
-  t.after(() => {
-    if (had === undefined) delete process.env.OMW_WORLD_ID;
-    else process.env.OMW_WORLD_ID = had;
-    return server.close();
-  });
+  t.after(() => server.close());
 
   const login = async (name: string) => {
     const c = await TestClient.connect(server.port);
@@ -188,9 +162,9 @@ test('lobby: a burst delivered after a stall is not mistaken for a warp', async 
   for (const b of watcher.inbox.batches) {
     for (const e of b.entries) if (e.id !== mine && e.pose.x > furthest) furthest = e.pose.x;
   }
-  // Judged per-frame this is ~130 units over ~0 ms — astronomically fast, three windows over,
-  // and the player would be frozen near the origin. Judged over a window it is 1560 units in
-  // ~0.5 s, comfortably inside the envelope, which is the truth.
+  // Judged per-frame this is ~130 units over ~0 ms — astronomically fast. Judged over a
+  // window it is 1560 units in ~0.5 s, comfortably inside the envelope, which is the truth
+  // — so no anomaly is counted against a player whose connection merely stalled.
   assert.ok(Math.abs(furthest - FRAMES * STEP) < 1,
     `a stalled player was rubber-banded: peers last saw x=${furthest}, not ${FRAMES * STEP}`);
   stally.close();
@@ -202,25 +176,18 @@ test('lobby: a burst delivered after a stall is not mistaken for a warp', async 
 //
 // The old per-frame check got this for free: it compared against player.pose, which the cell
 // change handler refreshes. The windowed check keeps its own baseline, so it has to be told —
-// and without that, arriving anywhere by door reads as two cells covered instantly. Three
-// doors in a row and the lobby would freeze a player for travelling normally.
-test('lobby: travelling between cells is never mistaken for a warp', async (t) => {
+// and without that, arriving anywhere by door reads as two cells covered instantly.
+test('travelling between cells is never mistaken for a warp', async (t) => {
   const dataDir = tmpDataDir();
   await makeCharacter(dataDir, 'Traveller');
   await makeCharacter(dataDir, 'Watcher3');
-  const had = process.env.OMW_WORLD_ID;
-  process.env.OMW_WORLD_ID = 'vvardenfell';
   const server = await startServer({
-    requireGameData: false, dataDir, port: 0, host: '127.0.0.1', worldMode: 'public',
+    requireGameData: false, dataDir, port: 0, host: '127.0.0.1', worldMode: 'private',
     configOverride: {
       limits: { interestRadius: 0, lodNearRadius: 1_000_000_000, lodMidRadius: 1_000_000_000 },
     },
   });
-  t.after(() => {
-    if (had === undefined) delete process.env.OMW_WORLD_ID;
-    else process.env.OMW_WORLD_ID = had;
-    return server.close();
-  });
+  t.after(() => server.close());
 
   const login = async (name: string) => {
     const c = await TestClient.connect(server.port);
@@ -242,8 +209,8 @@ test('lobby: travelling between cells is never mistaken for a warp', async (t) =
   // ordinary WALKING that follows a teleport.
   //
   // Three door-and-walk cycles. Without the reset each walk is measured from the anchor left
-  // behind in the previous cell, so all three read as implausible, the run reaches three, and
-  // the THIRD walk is refused. Both cells stay adjacent to the watcher's: cellsVisible() spans
+  // behind in the previous cell, so all three read as implausible and are wrongly counted as
+  // anomalies. Both cells stay adjacent to the watcher's: cellsVisible() spans
   // only ±1 of the grid, and a traveller who simply walked out of view would look identical to
   // one who had been frozen.
   const HOP = 60_000;

@@ -104,30 +104,9 @@ identity.tick(3.0)
 check('reset re-seeds rather than reporting the restored inventory',
   #acquiredEvents(env.calls) == 1, '#got=' .. #acquiredEvents(env.calls))
 
--- ============================================================ social.lua: party rule toggles
--- MP_PartyUpdate rebuilt the client's party table from leader+members alone, dropping every
--- setting the server sent. goldSplit/rollOnRare were therefore ALWAYS nil: each button rendered
--- its default label whatever the party had chosen, and since the click handler derives the new
--- value from that same nil it could only ever send 'false'. One-way toggles with lying labels.
---
--- Asserted on the DATA rather than by driving MyGUI: the bug was the handler discarding fields,
--- so that is what to pin.
-print('social.lua -- MP_PartyUpdate carries the party rules')
-do
-  local f = io.open('./openmw/files/data/scripts/mp/social.lua')
-  local src = f:read('*a'); f:close()
-  local handler = src:match('MP_PartyUpdate = function%(data%)(.-)mirror%(%)')
-  check('the handler was found', handler ~= nil)
-  for _, field in ipairs({ 'goldSplit', 'rollOnRare', 'scaling' }) do
-    local carried = handler ~= nil and handler:find(field .. '%s*=%s*data%.' .. field) ~= nil
-    check('MP_PartyUpdate carries ' .. field, carried,
-      'dropped -> that button shows a default label and can only ever send false')
-  end
-end
-
 -- ==================================================== social.lua: refusal text for the player
--- SocialResult carries a WIRE CODE. It was rendered straight into the UI, so a refused invite
--- said "PartyInvite: already_in_party" and an accepted one said "PartyInvite: ok".
+-- SocialResult carries a WIRE CODE. It was rendered straight into the UI, so a refused op
+-- said things like "InviteSend: blocked" and a successful one said "InviteSend: ok".
 --
 -- These tables are pure Lua with no engine dependency, so unlike the rest of social.lua they can
 -- be lifted out and actually EXECUTED rather than pattern-matched.
@@ -145,21 +124,13 @@ do
   if type(socialText) == 'function' then
     -- No raw wire code reaches the player for any documented failure.
     for _, code in ipairs({ 'no_such_player', 'blocked', 'already_friends', 'self',
-                            'too_many_requests', 'no_request', 'not_online', 'private',
-                            'not_in_party', 'not_leader', 'party_full', 'already_in_party' }) do
-      local t = socialText('PartyAccept', false, code)
+                            'too_many_requests', 'no_request', 'not_online', 'private' }) do
+      local t = socialText('InviteAccept', false, code)
       check('"' .. code .. '" reads as a sentence', not t:find(code, 1, true), t)
     end
-    -- The one code that means a different PERSON depending on which way the action pointed.
-    check('already_in_party on an INVITE is about them',
-      socialText('PartyInvite', false, 'already_in_party') == 'They are already in a party.',
-      socialText('PartyInvite', false, 'already_in_party'))
-    check('already_in_party on an ACCEPT is about you',
-      socialText('PartyAccept', false, 'already_in_party') == 'You are already in a party.',
-      socialText('PartyAccept', false, 'already_in_party'))
-    -- Success is a sentence too. The old one was "PartyInvite: ok".
-    check('a sent invite says so', socialText('PartyInvite', true, 'ok') == 'Invitation sent.',
-      socialText('PartyInvite', true, 'ok'))
+    -- Success is a sentence too. The old one was "InviteSend: ok".
+    check('a sent invite says so', socialText('InviteSend', true, 'ok') == 'Invitation sent.',
+      socialText('InviteSend', true, 'ok'))
     -- A friend request that crosses one already waiting completes on the spot.
     check('a crossed friend request says you are friends',
       socialText('FriendRequest', true, 'accepted') == 'You are now friends.',
@@ -175,9 +146,6 @@ do
   local handler = src:match('MP_SocialResult = function%(data%)(.-)mp%.testSet')
   check('MP_SocialResult calls socialText', handler ~= nil and handler:find('socialText(', 1, true) ~= nil,
     'the handler is still building its own message')
-  check('VoiceSignal is not narrated at the player',
-    handler ~= nil and handler:find('SOCIAL_SILENT', 1, true) ~= nil,
-    'a dropped WebRTC offer would pop a message over the game')
 end
 
 -- ===================================================== combat.lua: a swing must not vanish
@@ -257,17 +225,16 @@ do
   local g = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
   local s = io.open('./openmw/files/data/scripts/mp/social.lua'):read('*a')
   -- WorldTimeRefused: m7.ts refuses a Rest under [rules] timeSkip and says so on purpose --
-  -- "a Rest that silently does nothing gets pressed again and then reported as a bug". The
-  -- public world ships timeSkip = "off", so this is on the path of every visitor.
+  -- "a Rest that silently does nothing gets pressed again and then reported as a bug".
   check('global.lua forwards MP_WorldTimeRefused',
     g:find('MP_WorldTimeRefused', 1, true) ~= nil,
     'a refused Rest is silent again')
   check('social.lua tells the player why time did not pass',
     s:find('MP_WorldTimeRefused = function', 1, true) ~= nil)
-  -- SocialNotice: kicked from a party, or the leader left and it disbanded.
+  -- SocialNotice: server-side notices worth surfacing.
   check('global.lua forwards MP_SocialNotice',
     g:find('MP_SocialNotice', 1, true) ~= nil,
-    'a party can evaporate with nobody told why')
+    'a notice can evaporate with nobody told why')
   check('social.lua tells the player about it',
     s:find('MP_SocialNotice = function', 1, true) ~= nil)
 end
@@ -275,9 +242,7 @@ end
 -- ================================== container refusals are explained, and stay explained
 -- A refused container op UNDOES the optimistic local take, so the item disappears out of the
 -- player's inventory a moment after they picked it up. Silence there reads as the game eating
--- your loot. `rolling` is the sharpest case: with party loot rolls on, grabbing a rare item is
--- REFUSED and a roll starts instead, so the most interesting thing the feature does looked
--- exactly like a bug.
+-- your loot.
 --
 -- The reason list is read out of the SERVER source rather than hardcoded here, so adding a
 -- refusal reason server-side and forgetting the client fails this test instead of shipping.

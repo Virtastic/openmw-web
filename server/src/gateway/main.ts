@@ -31,7 +31,6 @@ const { values } = parseArgs({
     // comes back when its owner returns) is a real player journey with no way to exercise it
     // in scenario time while this was pinned at two minutes.
     'idle-reap-ms': { type: 'string' },
-    'public-world': { type: 'string', multiple: true },
     'server-entry': { type: 'string' },
     shared: { type: 'string' },
   },
@@ -110,13 +109,6 @@ const worlds = new WorldSupervisor({
     idleReapMs: positiveInt(values['idle-reap-ms'], 120_000, 'idle-reap-ms'),
     startTimeoutMs: 120_000,
     restartBackoffMs: 15_000,
-    // NO PUBLIC WORLD UNLESS THE DEPLOYMENT ASKS FOR ONE. [worlds] publicEnabled defaults to
-    // false: the shared world is the most experimental surface here -- strangers, lobby
-    // containment, zoned PvP, server-side movement correction -- and it should be opted into
-    // rather than discovered running. An explicit --public-world on the command line still
-    // wins, so a harness or an operator who means it is not blocked.
-    publicWorlds: values['public-world']
-      ?? (config.worlds.publicEnabled ? ['vvardenfell'] : []),
     sharedDir,
   },
 });
@@ -126,7 +118,6 @@ const worlds = new WorldSupervisor({
 const orphans = reapOrphanWorlds(worldsDir);
 if (orphans > 0) log('warn', 'gateway.orphans_reaped', { count: orphans });
 
-worlds.startPublic();
 worlds.startPolling();
 // The shared SSO + locker front door, on the same public port as the directory.
 const frontDoor = await buildFrontDoor(sharedDir, (owner, charId) => {
@@ -202,13 +193,9 @@ metrics.worldsCapacity.addCollector(() => {
 
 log('info', 'gateway.start', {
   port: directory.port, worldsDir, sharedDir, serverEntry,
-  // WHETHER ANY WORLD RUNS AT BOOT, stated rather than inferred. With [worlds] publicEnabled
-  // off there is no always-on world, so nothing spawns a sim peer until a player creates their
-  // own -- and a deploy check that reads silence as "the peer is broken" would fail every
-  // deploy of a correctly configured server. It did exactly that once; this is the fact it
-  // needs to tell the two apart.
-  publicEnabled: config.worlds.publicEnabled,
-  publicWorlds: (values['public-world'] ?? (config.worlds.publicEnabled ? ['vvardenfell'] : [])).length,
+  // NO WORLD RUNS AT BOOT: there is no public world, so nothing spawns a sim peer until a
+  // player creates their own — a deploy check must not read that silence as "the peer is
+  // broken".
 });
 
 let shuttingDown = false;

@@ -18,7 +18,7 @@ export interface CommandContext {
   // Phase 2.5: mute lookup for chat delivery (see chat.ts broadcastChat). Optional so a
   // partial context in a test still constructs.
   isMuted?(listenerAcct: string, speakerAcct: string): boolean;
-  // Phase 2.5 party chat tier: the accountKeys of this player's party (empty when solo).
+  // World chat tier ('@'): the accountKeys of everyone in this player's world.
   partyOf?(accountKey: string): string[];
   // Phase 2.5: is plain 'say' proximity-scoped in THIS world? True for public worlds.
   sayProximity?: boolean;

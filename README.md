@@ -88,15 +88,15 @@ More help: [Discord](https://discord.gg/PzFfDkbSue).
 
 **Experimental.** Playable, but young - expect rough edges.
 
-Three ways to play, switched from inside the game: **Solo** (your own world), **Party**
-(your group in one world), and **Public** (a shared lobby with strangers - nothing there is
-permanent; you leave with exactly what you brought). Visiting a friend's world advances
-*their* campaign; you keep the skills you used and what you carry out.
+Two ways to play, switched from inside the game: **Solo** (your own world, yours alone)
+and **Party** (your world, open to your friends — up to 32 of them). There is no public
+world and no separate party concept: you are always the host of your own world, and joining
+a friend means joining *their* world through your friends list. Visiting advances *their*
+campaign; you keep the skills you used and what you carry out.
 
 The server owns the world: NPCs, combat resolution and loot are simulated server-side by a
 headless copy of the engine, so a modified client cannot author what an NPC did. Friends,
-parties with loot rolls, whisper/mute/block, in-game reporting and server-side saves are all
-there.
+whisper/mute/block, in-game reporting and server-side saves are all there.
 
 On the hosted service, sign-in is SSO only (Google / Discord / Microsoft - no passwords to
 leak; accounts are keyed on the provider's stable ID, never your email). A server you run

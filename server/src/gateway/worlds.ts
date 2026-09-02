@@ -32,7 +32,7 @@ const PID_FILE = '.pid';
 // so it only ever trims history nobody is going to consult.
 const MAX_TRACKED_WORLDS = 4096;
 
-export type WorldMode = 'public' | 'private' | 'party';
+export type WorldMode = 'private' | 'party';
 
 export interface WorldSettings {
   worldsDir: string; // per-world data dirs live under here
@@ -71,7 +71,6 @@ export interface WorldSettings {
   idleReapMs: number; // a non-public world with no players this long is stopped
   startTimeoutMs: number;
   restartBackoffMs: number;
-  publicWorlds: string[]; // always-on world ids, started at boot and never reaped
   // One identity across every world: accounts, SSO identities, friends/party/presence and
   // bans live here, NOT in each world's data dir. Without it a player could not log into
   // their own private session with the account they made in the public world, friends would
@@ -222,12 +221,6 @@ export class WorldSupervisor {
     return this.list().find((w) => w.id === id);
   }
 
-  // Start the always-on worlds. Public worlds are never reaped: an empty public world must
-  // still be joinable, which is the whole point of it being public.
-  startPublic(): void {
-    for (const id of this.deps.settings.publicWorlds) this.ensure(id, 'public');
-  }
-
   // Idempotent. Returns the world (existing or new), or null if it could not be started —
   // callers must handle null rather than assume a world exists.
   ensure(id: string, mode: WorldMode, ownerAccount?: string): WorldInfo | null {
@@ -253,9 +246,8 @@ export class WorldSupervisor {
     return this.start(id, mode, ownerAccount);
   }
 
-  /** The owner recorded on disk when the world was created, or undefined for a public world
-   *  (and for a private world whose marker is missing — callers MUST treat that as "cannot
-   *  authorise", never as "no owner needed"). */
+  /** The owner recorded on disk when the world was created, or undefined when the marker is
+   *  missing — callers MUST treat that as "cannot authorise", never as "no owner needed". */
   ownerOnDisk(id: string): string | undefined {
     try {
       const v = readFileSync(join(this.deps.settings.worldsDir, id, OWNER_FILE), 'utf8').trim();
@@ -399,29 +391,14 @@ export class WorldSupervisor {
         // world that predates the field, which runs at least the one peer worldCostMb already
         // includes -- reading it as 0 would price such a world as free to the memory governor.
         w.lastStatus = { ...st, peerCount: st.peerCount ?? 1 };
-        // Public worlds are never idle-reaped; see startPublic. This is guarded HERE (never
-        // start the idle clock) and again in sweep() (never act on it). That redundancy is
-        // DELIBERATE and verified: removing either guard alone keeps the property, removing
-        // both breaks it. Do not delete one as dead code — a public world quietly vanishing
-        // is players failing to join the world the lobby is advertising.
-        if (w.mode !== 'public') {
-          // Idle = nobody CONNECTED (loading / at chargen counts), not merely nobody in a cell.
-          if (st.connectedCount > 0) { w.idleSince = undefined; w.everConnected = true; }
-          else if (w.idleSince === undefined) w.idleSince = this.now();
-        }
+        // Idle = nobody CONNECTED (loading / at chargen counts), not merely nobody in a cell.
+        if (st.connectedCount > 0) { w.idleSince = undefined; w.everConnected = true; }
+        else if (w.idleSince === undefined) w.idleSince = this.now();
       } else {
         w.lastStatus = undefined; // down: reported as up:false, not omitted
       }
     }));
     this.sweep();
-    // RESURRECT A DEAD PUBLIC WORLD. startPublic() runs once at boot and the exit handler only
-    // records the crash, so a public world that died stayed dead until the whole gateway was
-    // restarted — the exact "quietly vanishing" failure the guard above is written to prevent,
-    // just reached by a different route. ensure() is idempotent and honours the restart
-    // backoff, so a world that keeps dying backs off instead of spinning.
-    for (const id of this.deps.settings.publicWorlds) {
-      if (!this.worlds.has(id)) this.ensure(id, 'public');
-    }
   }
 
   // A fresh world nobody has reached yet gets this long before the reaper touches it. A first-play
@@ -435,7 +412,6 @@ export class WorldSupervisor {
     const now = this.now();
     const idleCutoff = now - this.deps.settings.idleReapMs;
     for (const w of [...this.worlds.values()]) {
-      if (w.mode === 'public') continue; // second half of the deliberate guard; see poll()
       if (!w.everConnected) {
         // Never joined: keep it until the startup grace elapses, then reap a truly-stale spawn.
         if (now - w.startedAt > WorldSupervisor.STARTUP_GRACE_MS) {

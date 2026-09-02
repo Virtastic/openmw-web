@@ -106,7 +106,6 @@ export const HELP: Record<string, FieldHelp> = {
   'gui.timeoutSec': { text: 'How long a server-sent dialog waits for an answer before giving up on it.' },
   'cellReset.cells': { text: 'Cells wiped on a schedule, containers restocked, doors and objects reset. Empty means nothing is ever reset.' },
   'cellReset.intervalSec': { text: 'How often the cells listed above are reset. Default is three days.' },
-  'cellReset.litterSweepSec': { text: 'Shared-lobby housekeeping: how often cells full of strangers\' leftover changes get swept. Players standing in a cell are skipped. 0 disables it.' },
 
   // --- limits ---------------------------------------------------------------------------
   'limits.maxConnsPerIp': { text: 'Simultaneous connections allowed from one address. Raise it if several people play from one household and get refused.' },
@@ -198,7 +197,6 @@ export const HELP: Record<string, FieldHelp> = {
     danger: 'Changing this breaks the trust between the gateway and every world it runs until they all agree again.',
   },
   'worlds.maxWorlds': { text: 'Gateway mode only: hard ceiling on simultaneously running worlds.' },
-  'worlds.publicEnabled': { text: 'Gateway mode only: offer the shared public world. Off by default, it is the most experimental surface here and a deployment should opt in.' },
   'worlds.memBudgetMb': { text: 'Gateway mode only: total memory the supervisor may commit to worlds and their sim peers. 0 disables the memory governor.' },
 };
 

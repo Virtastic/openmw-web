@@ -8,7 +8,8 @@
 // to: WALKING is always into an ADJACENT exterior cell, and a door goes through an interior, so
 // an exterior-to-exterior jump across the grid is a spell, a silt strider, or a lie.
 //
-// Those are rare in play, so the rate is bounded rather than the act refused.
+// Those are rare in play, so the rate is bounded and only COUNTED — an over-limit hop is an
+// anomaly for moderation, never a refusal.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { startServer } from '../src/server';
@@ -41,37 +42,6 @@ async function hop(server: { port: number; api: { cellOfPlayer?: (id: number) =>
   await new Promise((r) => setTimeout(r, 200));
 }
 
-test('lobby: hopping the grid faster than any spell allows stops being believed', async (t) => {
-  const dataDir = tmpDataDir();
-  await makeCharacter(dataDir, 'Hopper');
-  const had = process.env.OMW_WORLD_ID;
-  process.env.OMW_WORLD_ID = 'vvardenfell';
-  const server = await startServer({
-    requireGameData: false, dataDir, port: 0, host: '127.0.0.1', worldMode: 'public',
-    configOverride: { limits: { farTravelPerMin: 3 } },
-  });
-  t.after(() => {
-    if (had === undefined) delete process.env.OMW_WORLD_ID;
-    else process.env.OMW_WORLD_ID = had;
-    return server.close();
-  });
-
-  const c = await TestClient.connect(server.port);
-  c.hello();
-  await c.waitJson('SessionHelloOk');
-  c.login('Hopper', 'hunter22');
-  await c.waitJson('SessionWelcome');
-  c.sendJson({ t: 'SessionReady' });
-  await c.waitEvent('PlayerList');
-  await hop(server, c, 10);
-
-  const id = server.api.players().find((p) => p.name === 'Hopper')?.id;
-  assert.ok(id !== undefined, 'the player is in world');
-  const cell = server.api.cellOfPlayer?.(id);
-  // Cap is 3, so the 4th hop onward is refused and the server stops following them.
-  assert.notEqual(cell, '180,180', `the server followed every hop to ${cell}`);
-  c.close();
-});
 
 // NEGATIVE CONTROL. Outside the lobby the identical sequence is followed all the way: a private
 // world is the player's own game, and this stays a counted signal there.
@@ -97,17 +67,11 @@ test('a private world follows every hop, and only counts them', async (t) => {
 test('walking across many adjacent cells is never limited', async (t) => {
   const dataDir = tmpDataDir();
   await makeCharacter(dataDir, 'Walker');
-  const had = process.env.OMW_WORLD_ID;
-  process.env.OMW_WORLD_ID = 'vvardenfell';
   const server = await startServer({
-    requireGameData: false, dataDir, port: 0, host: '127.0.0.1', worldMode: 'public',
+    requireGameData: false, dataDir, port: 0, host: '127.0.0.1', worldMode: 'private',
     configOverride: { limits: { farTravelPerMin: 3 } },
   });
-  t.after(() => {
-    if (had === undefined) delete process.env.OMW_WORLD_ID;
-    else process.env.OMW_WORLD_ID = had;
-    return server.close();
-  });
+  t.after(() => server.close());
   const c = await TestClient.connect(server.port);
   c.hello();
   await c.waitJson('SessionHelloOk');
@@ -132,17 +96,11 @@ test('walking across many adjacent cells is never limited', async (t) => {
 test('going in and out of doors is never limited', async (t) => {
   const dataDir = tmpDataDir();
   await makeCharacter(dataDir, 'Doorman');
-  const had = process.env.OMW_WORLD_ID;
-  process.env.OMW_WORLD_ID = 'vvardenfell';
   const server = await startServer({
-    requireGameData: false, dataDir, port: 0, host: '127.0.0.1', worldMode: 'public',
+    requireGameData: false, dataDir, port: 0, host: '127.0.0.1', worldMode: 'private',
     configOverride: { limits: { farTravelPerMin: 3 } },
   });
-  t.after(() => {
-    if (had === undefined) delete process.env.OMW_WORLD_ID;
-    else process.env.OMW_WORLD_ID = had;
-    return server.close();
-  });
+  t.after(() => server.close());
   const c = await TestClient.connect(server.port);
   c.hello();
   await c.waitJson('SessionHelloOk');

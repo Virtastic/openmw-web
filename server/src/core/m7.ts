@@ -38,9 +38,6 @@ export const M7_EVENTS = new Set([
 
 export interface M7Ctx {
   roster: Roster;
-  /** Seconds between lobby litter sweeps; 0/absent = off. Only the gateway's shared world sets
-   *  it, and only because that world persists nothing — see sweepLitter. */
-  litterSweepSec?: number;
   cells: CellStore;
   records: RecordStore;
   guiTimeoutMs: number;
@@ -243,41 +240,6 @@ export class WorldM7 {
         await this.resetCellNow(entry.cellKey);
       }
     }
-    await this.sweepLitter(now);
-  }
-
-  // ------------------------------------------------------- lobby litter
-  //
-  // THE SHARED LOBBY IS THE ONE WORLD NOBODY TIDIES. Everything dropped there stays on the
-  // ground forever: its cell docs only ever grow, and after a few months of strangers passing
-  // through, Balmora is ankle-deep in other people's rubbish and every arrival pays to
-  // download it.
-  //
-  // Scheduled resets cannot cover this — [cellReset] takes an explicit cell LIST, and nobody
-  // can enumerate the cells of a game the server has no data for. So the lobby resets what it
-  // can actually name: the cells it has stored deltas for, which is exactly the set that has
-  // accumulated anything.
-  //
-  // This is only safe because the lobby persists nothing (PlayerStore lobby mode). Wiping a
-  // cell in a world where loot COULD leave would be destroying real property; here the item on
-  // the ground could never have become anyone's anyway. Resetting is also transparent rather
-  // than a kick — resetCellNow re-sends the restored truth to whoever is standing there, which
-  // is the TES3MP #698 failure this already avoids.
-  private lastLitterMs = Date.now();
-
-  private async sweepLitter(now: number): Promise<void> {
-    const everySec = this.ctx.litterSweepSec ?? 0;
-    if (everySec <= 0) return; // off, and off is the default outside the lobby
-    if (now - this.lastLitterMs < everySec * 1000) return;
-    this.lastLitterMs = now;
-    // Never the cells anyone is standing in. A reset is transparent, but doing it under a
-    // player's feet is still a jolt they did not ask for, and a busy cell is the one most
-    // likely to be re-littered a minute later anyway.
-    const occupied = new Set(this.ctx.roster.inWorld().map((p) => p.cellKey).filter(Boolean));
-    const stale = this.ctx.cells.cellsWithDeltas().filter((c) => !occupied.has(c));
-    if (stale.length === 0) return;
-    log('info', 'world.litter_sweep', { cells: stale.length, skippedOccupied: occupied.size });
-    for (const cellKey of stale) await this.resetCellNow(cellKey);
   }
 
   // ------------------------------------------------------------ map share

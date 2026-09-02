@@ -23,13 +23,12 @@ async function harness(maxWorlds = 5, maxPerOwner = 2) {
       worldsDir: wdir, gatewayPort: 8080,
       serverEntry: '/fake/server.mjs', nodeBin: '/fake/node',
       basePort: 42000, maxWorlds, idleReapMs: 60_000, startTimeoutMs: 1000,
-      restartBackoffMs: 1000, publicWorlds: ['vvardenfell'],
+      restartBackoffMs: 1000,
       sharedDir: mkdtempSync(join(tmpdir(), 'omw-shared-')),
     },
     spawner: () => new FakeChild() as unknown as ChildProcess,
     fetchStatus: async (port) => ({ playerCount: 0, connectedCount: 0, maxPlayers: 32, name: `w${port}` }),
   });
-  worlds.startPublic();
   await worlds.poll();
   const dir = await startDirectory({
     worlds, host: '127.0.0.1', port: 0, maxPerOwner, worldsDir: wdir,
@@ -45,18 +44,25 @@ async function harness(maxWorlds = 5, maxPerOwner = 2) {
   return { worlds, dir, base, cleanup: async () => { await dir.close(); worlds.stopAll(); } };
 }
 
-test('directory: public worlds are listed to everyone, with the dialable host', async () => {
+test('directory: a stranger sees NO worlds — the friends list is the only door', async () => {
   const h = await harness();
   try {
-    const r = await (await fetch(`${h.base}/worlds`)).json() as
+    // Somebody's world exists...
+    await fetch(`${h.base}/worlds`, {
+      method: 'POST', headers: { authorization: 'Bearer alice' },
+      body: JSON.stringify({ id: 'alices-game', mode: 'party', account: 'alice' }),
+    });
+    // ...and an anonymous caller is shown nothing at all. There is no public world and the
+    // listing is visibility for OWNERS only; discovery goes through JoinFriend.
+    const r = await (await fetch(`${h.base}/worlds`)).json() as { worlds: { id: string }[] };
+    assert.equal(r.worlds.length, 0, 'an anonymous caller must see an empty directory');
+    // The owner sees their own, addressed by PATH on their own origin, never an address.
+    const own = await (await fetch(`${h.base}/worlds?account=alice`)).json() as
       { worlds: (Record<string, unknown> & { id: string; wsPath: string })[] };
-    assert.equal(r.worlds.length, 1);
-    assert.equal(r.worlds[0]!.id, 'vvardenfell');
-    // The client is told a PATH on its own origin, never an address: an address here was a
-    // configured guess that defaulted to 127.0.0.1 — a remote player's own machine.
-    assert.equal(r.worlds[0]!.wsPath, '/w/vvardenfell');
-    assert.ok(!('host' in r.worlds[0]!), 'must not advertise a host');
-    assert.ok(!('port' in r.worlds[0]!), 'must not leak the world\'s internal port');
+    assert.equal(own.worlds.length, 1);
+    assert.equal(own.worlds[0]!.wsPath, '/w/alices-game');
+    assert.ok(!('host' in own.worlds[0]!), 'must not advertise a host');
+    assert.ok(!('port' in own.worlds[0]!), "must not leak the world's internal port");
   } finally { await h.cleanup(); }
 });
 
@@ -87,7 +93,7 @@ test('directory: creating the same session twice re-joins rather than forking a 
     const a = await (await fetch(`${h.base}/worlds`, as_alice)).json() as { wsPath: string };
     const b = await (await fetch(`${h.base}/worlds`, as_alice)).json() as { wsPath: string };
     assert.equal(a.wsPath, b.wsPath, 'a reconnect must land in the SAME world, not a fresh one');
-    assert.equal(h.worlds.running, 2, 'public + the one party world');
+    assert.equal(h.worlds.running, 1, 'exactly the one party world');
   } finally { await h.cleanup(); }
 });
 
@@ -97,10 +103,10 @@ test('directory: a client cannot conjure a public world', async () => {
     const r = await fetch(`${h.base}/worlds`, {
       method: 'POST', headers: { authorization: 'Bearer mallory' }, body: JSON.stringify({ id: 'fake-official', mode: 'public', account: 'mallory' }),
     });
-    assert.equal(r.status, 400, 'public worlds are operator config, not client-creatable');
-    const list = await (await fetch(`${h.base}/worlds`)).json() as { worlds: { id: string }[] };
+    assert.equal(r.status, 400, 'the public mode is deleted; only private and party exist');
+    const list = await (await fetch(`${h.base}/worlds?account=mallory`)).json() as { worlds: { id: string }[] };
     assert.ok(!list.worlds.some((w) => w.id === 'fake-official'),
-      'and nothing may appear in the public lobby as a result');
+      'and no such world may appear as a result');
   } finally { await h.cleanup(); }
 });
 
@@ -126,7 +132,7 @@ test('directory: one account cannot exhaust the platform', async () => {
 });
 
 test('directory: when the platform is full, the refusal is explicit', async () => {
-  const h = await harness(2, 10); // 1 public + room for exactly 1 more
+  const h = await harness(1, 10); // room for exactly one world
   try {
     const ok = await fetch(`${h.base}/worlds`, {
       method: 'POST', headers: { authorization: 'Bearer a' }, body: JSON.stringify({ id: 'first', mode: 'private', account: 'a' }),
@@ -346,10 +352,10 @@ test('at the ceiling the platform REFUSES a new world, with a reason the UI can 
   // covered in worlds.test.ts, but nothing exercised what happens when a real request arrives
   // at the ceiling. A cap that is computed and never enforced is not a cap.
   //
-  // maxWorlds 3 = the always-on public world plus two sessions, and a per-owner cap high enough
+  // maxWorlds 2 = two sessions (there is no always-on world), and a per-owner cap high enough
   // that the PLATFORM limit is what binds rather than the owner limit -- otherwise this would
   // be re-testing the per-owner rule with extra steps.
-  const h = await harness(3, 10);
+  const h = await harness(2, 10);
   try {
     const mk = async (id: string, who: string) => (await fetch(`${h.base}/worlds`, {
       method: 'POST',
@@ -360,7 +366,7 @@ test('at the ceiling the platform REFUSES a new world, with a reason the UI can 
     assert.equal(await mk('one', 'alice'), 200, 'first session fits');
     assert.equal(await mk('two', 'bob'), 200, 'second session fits');
 
-    // Third session would be the fourth world. It must be refused, and refused as 503 rather
+    // The third session would be the third world. It must be refused, and refused as 503 rather
     // than a 500 or a hang: WorldBrowser maps exactly that status to 'platform_full', which is
     // what turns into "The server has no room for another world right now" in the client. A
     // refusal nobody can read is a bug report about the game being broken.

@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
 // Companions to test the social features against: they sit in the world, answer chat, and
 // accept whatever you send them. soak.ts already covers load (movement, combat, containers);
-// this covers the things that need a WILLING SECOND PLAYER — friend requests, party invites,
-// travel. Kept dumb on purpose: every bot auto-accepts, so anything you send resolves.
+// this covers the things that need a WILLING SECOND PLAYER — friend requests, invites,
+// world joins. Kept dumb on purpose: every bot auto-accepts, so anything you send resolves.
 //
 //   npx tsx bots/lobby-bots.ts --port 9000 --data /tmp/omw-local-data [--names Ashka,Drels]
 //
@@ -128,10 +128,6 @@ async function bot(name: string): Promise<void> {
         console.log(`[${name}] friend request from ${from} -> accepting`);
         c.sendEvent('FriendAccept', { acct: from });
         break;
-      case 'PartyInviteReceived':
-        console.log(`[${name}] party invite from ${from} -> accepting`);
-        c.sendEvent('PartyAccept', { acct: from });
-        break;
       case 'InviteReceived':
         console.log(`[${name}] world invite from ${from} -> accepting`);
         c.sendEvent('InviteAccept', { acct: from });
@@ -143,7 +139,7 @@ async function bot(name: string): Promise<void> {
         // channel and drowns the message you are actually testing.
         if (!text || roster.some((r) => r.toLowerCase() === who.toLowerCase())) break;
         console.log(`[${name}] <- ${who}: ${text}`);
-        // Reply on the channel it arrived on, so party chat stays in the party.
+        // Reply on the channel it arrived on, so world chat stays in the world.
         const channel = String(v['channel'] ?? 'global');
         setTimeout(() => c.sendEvent('ChatSend', {
           text: REPLIES[Math.floor(Math.random() * REPLIES.length)]!,

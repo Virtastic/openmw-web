@@ -15,10 +15,6 @@ export const pvp: Plugin = {
     };
     if (!api.config.rules.pvp) return block('disabled');
 
-    // Party members are exempt everywhere, before any zoning question: friendly fire in a
-    // group that is fighting its way through a dungeon together is not a rule, it is a bug.
-    if (api.arePartied?.(attacker.id, victimId)) return block('same party');
-
     const zone = api.config.rules.pvpZone;
     if (zone === 'none') return block('zone none');
     if (zone === 'wilderness') {

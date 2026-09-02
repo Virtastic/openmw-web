@@ -1,7 +1,8 @@
 // Copyright (C) 2025-2026 Virtastic - https://virtastic.app
 // SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
-// DEV/TEST BOTS: a friend request and a party invite must be ACCEPTED, through the same
-// social path a human uses — and the feature must stay off unless asked for.
+// DEV/TEST BOTS: a friend request must be ACCEPTED, through the same social path a human
+// uses — and the feature must stay off unless asked for. Bots gather in a world that booted
+// in party mode (there is no public world).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { startServer } from '../src/server';
@@ -24,13 +25,14 @@ const BOTS = {
 async function boot(t: { after(fn: () => unknown): void }, override: unknown) {
   const server = await startServer({
     requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
+    worldMode: 'party', // bots live in the gathering place: a world that booted in party mode
     configOverride: override as never,
   });
   t.after(() => server.close());
   return server;
 }
 
-test('a bot accepts a friend request, then a party invite', async (t) => {
+test('a bot accepts a friend request', async (t) => {
   const server = await boot(t, BOTS);
 
   const a = await TestClient.connect(server.port);
@@ -46,12 +48,6 @@ test('a bot accepts a friend request, then a party invite', async (t) => {
   const friends = await a.waitEvent('FriendList',
     (v) => ((v as { friends?: { acct: string }[] }).friends ?? []).some((f) => f.acct === 'bot1'));
   assert.ok(friends, 'the bot never became a friend');
-
-  // PARTY. Same shape: invite by name, the bot answers PartyAccept and appears as a member.
-  a.sendEvent('PartyInvite', { name: 'Bot1' });
-  const party = await a.waitEvent('PartyUpdate',
-    (v) => ((v as { members?: { acct: string }[] }).members ?? []).some((m) => m.acct === 'bot1'));
-  assert.ok(party, 'the bot never joined the party');
 });
 
 test('bots are OFF unless asked for', async (t) => {
@@ -70,7 +66,7 @@ test('bots are OFF unless asked for', async (t) => {
 test('every bot has a real account and public handle, and a restart reuses it', async (t) => {
   const dataDir = tmpDataDir();
   const opts = {
-    requireGameData: false, dataDir, port: 0, host: '127.0.0.1',
+    requireGameData: false, dataDir, port: 0, host: '127.0.0.1', worldMode: 'party',
     configOverride: BOTS as never,
   };
 
@@ -101,7 +97,7 @@ test('every bot has a real account and public handle, and a restart reuses it', 
 test('each bot has a completed character standing in the starter village', async (t) => {
   const dataDir = tmpDataDir();
   const server = await startServer({
-    requireGameData: false, dataDir, port: 0, host: '127.0.0.1',
+    requireGameData: false, dataDir, port: 0, host: '127.0.0.1', worldMode: 'party',
     configOverride: BOTS as never,
   });
   await server.close(); // write-behind stores: read what they actually hold
@@ -128,7 +124,7 @@ test('each bot has a completed character standing in the starter village', async
 test('without configured content ids a bot is social-only, never half-dressed', async (t) => {
   const dataDir = tmpDataDir();
   const server = await startServer({
-    requireGameData: false, dataDir, port: 0, host: '127.0.0.1',
+    requireGameData: false, dataDir, port: 0, host: '127.0.0.1', worldMode: 'party',
     configOverride: { dev: { bots: 1, botPrefix: 'Bot', botNames: ['Bot1'] }, login: { allowHarnessAuth: true } } as never,
   });
   await server.close();
@@ -149,7 +145,7 @@ test('without configured content ids a bot is social-only, never half-dressed', 
 // occupants for the purposes of capacity and lifecycle.
 test('bots do not hold a world open or consume player slots', async (t) => {
   const server = await startServer({
-    requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
+    requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1', worldMode: 'party',
     configOverride: { ...BOTS, server: { maxPlayers: 4 } } as never,
   });
   t.after(() => server.close());
@@ -170,9 +166,9 @@ test('bots do not hold a world open or consume player slots', async (t) => {
 // PRESSURE: the flows a video (or a bored tester) will actually hit — repeatedly, out of
 // order, and from more than one person. A bot that only works once, or that answers a request
 // it should refuse, is worse than no bot: it would "prove" a broken feature works.
-test('bots survive repeat invites, several humans, and refusals', async (t) => {
+test('bots survive repeat requests, several humans, and refusals', async (t) => {
   const server = await startServer({
-    requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
+    requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1', worldMode: 'party',
     configOverride: { dev: { bots: 4, botPrefix: 'Bot', botNames: ['Bot1', 'Bot2', 'Bot3', 'Bot4'] },
       login: { allowHarnessAuth: true } } as never,
   });
@@ -197,13 +193,13 @@ test('bots survive repeat invites, several humans, and refusals', async (t) => {
   a.sendEvent('FriendRequest', { name: 'Bot1' });
   a.sendEvent('FriendRequest', { name: 'Bot1' });
 
-  // 3. Several bots into one party, and the party keeps every one of them.
-  for (const n of ['Bot1', 'Bot2', 'Bot3']) a.sendEvent('PartyInvite', { name: n });
-  const full = await a.waitEvent('PartyUpdate', (v) => {
-    const m = (v as { members?: { acct: string }[] }).members ?? [];
-    return ['bot1', 'bot2', 'bot3'].every((x) => m.some((y) => y.acct === x));
+  // 3. Several bots befriended by one human, and every one of them lands.
+  for (const n of ['Bot2', 'Bot3']) a.sendEvent('FriendRequest', { name: n });
+  const full = await a.waitEvent('FriendList', (v) => {
+    const f = (v as { friends?: { acct: string }[] }).friends ?? [];
+    return ['bot1', 'bot2', 'bot3'].every((x) => f.some((y) => y.acct === x));
   }, 15000);
-  assert.ok(full, 'the party lost bots along the way');
+  assert.ok(full, 'a friend request to a bot was lost along the way');
 
   // 4. A BLOCKED bot must not be befriendable — the accept runs through the same guards a
   //    human hits, so blocking has to win.
@@ -222,7 +218,7 @@ test('bots survive repeat invites, several humans, and refusals', async (t) => {
 test('bots take real usernames, and a bad one falls back instead of breaking', async (t) => {
   const dataDir = tmpDataDir();
   const server = await startServer({
-    requireGameData: false, dataDir, port: 0, host: '127.0.0.1',
+    requireGameData: false, dataDir, port: 0, host: '127.0.0.1', worldMode: 'party',
     configOverride: {
       dev: { bots: 3, botPrefix: 'Bot', botNames: ['Kestrel', 'no', 'Talvyn'] },
       login: { allowHarnessAuth: true },
@@ -240,17 +236,10 @@ test('bots take real usernames, and a bad one falls back instead of breaking', a
   assert.equal(acct?.username, 'Kestrel', 'the handle must reach the account');
 });
 
-// A BOT IS A PLAYER, AND A PLAYER IS IN ONE WORLD AT A TIME.
-//
-// Every world is its own process reading the same shared config, so starting bots in each one
-// put a copy of every bot in every world simultaneously — that is scenery, not a player. The
-// behaviour asked for is: they hang out in PUBLIC, you befriend and party them there, and when
-// you switch worlds they come WITH you and stop being in the one you left.
-//
-// Presence is derived, and each world derives it alone: party membership lives in the shared
-// store, so a bot belongs wherever a member of its party actually is, and an unpartied bot
-// belongs in public. Two world processes over one data dir is exactly the real topology.
-test('an unpartied bot is only in public; a partied one follows the player', async (t) => {
+// A BOT LIVES IN THE GATHERING PLACE — a world that booted in party mode — and nowhere
+// else. Every world process reads the same shared config, so without the mode gate a copy of
+// every bot appeared in every world: scenery, not a player.
+test('a bot is only in the gathering place, never in a private world', async (t) => {
   const dataDir = tmpDataDir();
   const cfg = (mode: string) => ({
     requireGameData: false, dataDir, port: 0, host: '127.0.0.1', worldMode: mode,
@@ -260,41 +249,17 @@ test('an unpartied bot is only in public; a partied one follows the player', asy
     } as never,
   });
 
-  const pub = await startServer(cfg('public'));
-  t.after(() => pub.close());
+  const hub = await startServer(cfg('party'));
+  t.after(() => hub.close());
   const priv = await startServer(cfg('private'));
   t.after(() => priv.close());
 
   const inWorld = (s: { api: { players(): { name: string }[] } }): string[] =>
     s.api.players().map((p) => p.name);
 
-  // Unpartied: public only. The private world must NOT be showing a second copy.
-  assert.ok(inWorld(pub).includes('Kestrel'), 'the bot should hang out in public');
+  assert.ok(inWorld(hub).includes('Kestrel'), 'the bot should hang out in the party world');
   assert.ok(!inWorld(priv).includes('Kestrel'),
     'the bot is in a world nobody invited it to — that is scenery, not a player');
-
-  // Party with it from PUBLIC, the way a player would.
-  const a = await TestClient.connect(pub.port);
-  t.after(() => a.close());
-  await a.joinAsNew('Ann', 'hunter22');
-  a.sendEvent('PartyInvite', { name: 'Kestrel' });
-  await a.waitEvent('PartyUpdate',
-    (v) => ((v as { members?: { acct: string }[] }).members ?? []).some((m) => m.acct === 'kestrel'));
-
-  // Now the SWITCH, modelled the way it really happens: the client dials the new world and
-  // the old socket goes away. Leaving both connected would put one player in two worlds at
-  // once, which no real switch can do — and the public world would be right to keep the bot,
-  // because a party member genuinely would still be standing there.
-  const b = await TestClient.connect(priv.port);
-  t.after(() => b.close());
-  await b.joinExisting('Ann', 'hunter22');
-  a.close();
-
-  // The bot follows: present where the player is, gone from the world they left.
-  const followed = await waitFor(() => inWorld(priv).includes('Kestrel'), 12000);
-  assert.ok(followed, 'the bot did not follow its party into the private world');
-  const left = await waitFor(() => !inWorld(pub).includes('Kestrel'), 12000);
-  assert.ok(left, 'the bot is still standing in public while partied elsewhere — two copies');
 });
 
 async function waitFor(cond: () => boolean, ms: number): Promise<boolean> {
@@ -315,19 +280,19 @@ test('players in another world are visible and online from here', async (t) => {
   const dataDir = tmpDataDir();
   const cfg = (mode: string) => ({
     requireGameData: false, dataDir, port: 0, host: '127.0.0.1', worldMode: mode,
-    worldId: mode === 'public' ? 'vvardenfell' : 'priv-someone',
+    worldId: mode === 'party' ? 'hub' : 'priv-someone',
     configOverride: {
       dev: { bots: 1, botPrefix: 'Bot', botNames: ['Kestrel'] },
       login: { allowHarnessAuth: true },
     } as never,
   });
 
-  const pub = await startServer(cfg('public'));
+  const pub = await startServer(cfg('party'));
   t.after(() => pub.close());
   const priv = await startServer(cfg('private'));
   t.after(() => priv.close());
 
-  // Ann is in the PRIVATE world; Kestrel the bot is in PUBLIC.
+  // Ann is in the PRIVATE world; Kestrel the bot is in the party hub.
   const ann = await TestClient.connect(priv.port);
   t.after(() => ann.close());
   await ann.joinAsNew('Ann', 'hunter22');
@@ -341,72 +306,17 @@ test('players in another world are visible and online from here', async (t) => {
     'a player in another world never reached this one — nobody to see or invite from solo');
 });
 
-// A PARTY MEMBER IS ONLINE BY DEFINITION — you cannot be in a party without being connected.
-// partyView asked the LOCAL roster, so a member in another world read as "Offline" while the
-// player could see them standing there. Same bug as the friend list, one function over.
-// And the leader can now REMOVE someone: leaving was the only way out, so a leader stuck with
-// a member had to disband the whole party to be rid of them.
-test('a party member in another world reads online, and the leader can remove them', async (t) => {
-  const dataDir = tmpDataDir();
-  const cfg = (mode: string) => ({
-    requireGameData: false, dataDir, port: 0, host: '127.0.0.1', worldMode: mode,
-    worldId: mode === 'public' ? 'vvardenfell' : 'priv-someone',
-    configOverride: {
-      dev: { bots: 1, botPrefix: 'Bot', botNames: ['Kestrel'] },
-      login: { allowHarnessAuth: true },
-    } as never,
-  });
-  const pub = await startServer(cfg('public'));
-  t.after(() => pub.close());
-  const priv = await startServer(cfg('private'));
-  t.after(() => priv.close());
-
-  // Party with the bot in PUBLIC, then move to the private world and look at the panel.
-  const a = await TestClient.connect(pub.port);
-  t.after(() => a.close());
-  await a.joinAsNew('Ann', 'hunter22');
-  a.sendEvent('PartyInvite', { name: 'Kestrel' });
-  await a.waitEvent('PartyUpdate',
-    (v) => ((v as { members?: { acct: string }[] }).members ?? []).some((m) => m.acct === 'kestrel'));
-
-  const b = await TestClient.connect(priv.port);
-  t.after(() => b.close());
-  await b.joinExisting('Ann', 'hunter22');
-  a.close();
-
-  const view = await b.waitEvent('PartyUpdate', (v) => {
-    const m = ((v as { members?: { acct: string; online?: boolean }[] }).members ?? [])
-      .find((x) => x.acct === 'kestrel');
-    return m !== undefined && m.online === true;
-  }, 20000).catch(() => null);
-  assert.ok(view, 'a party member in another world reads as offline — impossible, and visible');
-
-  // The leader removes them.
-  b.sendEvent('PartyKick', { acct: 'kestrel' });
-  const gone = await b.waitEvent('PartyUpdate',
-    (v) => !((v as { members?: { acct: string }[] }).members ?? []).some((m) => m.acct === 'kestrel'),
-    15000).catch(() => null);
-  assert.ok(gone, 'the leader could not remove a party member');
-});
-
 // ---------------------------------------------------------------- gathering place
 //
-// An unpartied bot used to hang out in the public world "and nowhere else". That breaks the
-// moment [worlds] publicEnabled is off -- which is now the DEFAULT, because public is the most
-// experimental surface here. With no public world, isPublic is false in every world, so an
-// unpartied bot would exist nowhere at all: unfriendable and uninvitable, which are precisely
-// the two flows bots exist to exercise.
-//
-// With public disabled the PARTY world takes the role. Each world process decides for itself
-// from shared config, the same way party-following already works, with no cross-process talk.
-test('with public disabled, unpartied bots gather in a party world instead', async (t) => {
+// /status is what the launcher reads; the bots must be visible there too, and ONLY in the
+// gathering place.
+test('bots appear on /status in the gathering place only', async (t) => {
   const dataDir = tmpDataDir();
   const cfg = (mode: string) => ({
     requireGameData: false, dataDir, port: 0, host: '127.0.0.1', worldMode: mode,
     configOverride: {
       dev: { bots: 1, botPrefix: 'Bot', botNames: ['Kestrel'] },
       login: { allowHarnessAuth: true },
-      worlds: { publicEnabled: false },
     } as never,
   });
 
@@ -423,9 +333,9 @@ test('with public disabled, unpartied bots gather in a party world instead', asy
 
   await new Promise((r) => setTimeout(r, 3000)); // reconcile ticks every 2s
   assert.ok((await namesIn(party)).includes('Kestrel'),
-    'with no public world, the party world is where an unpartied bot belongs');
+    'the party world is where a bot belongs');
   // NEGATIVE CONTROL: it must not appear in EVERY world, or a bot stops being a player and
-  // becomes scenery -- the exact failure the presence rule was written to avoid.
+  // becomes scenery.
   assert.ok(!(await namesIn(priv)).includes('Kestrel'),
     'a private world is not a gathering place');
 });

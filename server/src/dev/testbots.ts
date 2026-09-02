@@ -47,12 +47,8 @@ export interface TestBotDeps {
   looks?: string[];
   /** Character docs live here; a bot needs one to have a character at all. */
   players: PlayerStore;
-  /** Is THIS world the gathering place -- where an unpartied bot hangs out?
-   *
-   *  The public world when there is one. When [worlds] publicEnabled is off there is no
-   *  public world at all, so a PARTY world takes the role: otherwise this would be false
-   *  everywhere and unpartied bots would exist nowhere, which makes them unfriendable and
-   *  uninvitable -- the two flows they exist to exercise. Set in server.ts. */
+  /** Is THIS world the gathering place -- where the bots live? A world that booted in
+   *  party mode. Set in server.ts. */
   isPublic: boolean;
 }
 
@@ -157,15 +153,14 @@ export async function startTestBots(deps: TestBotDeps): Promise<RunningTestBots>
         if (typeof from !== 'string') return;
         const self = here.get(accountKey);
         if (!self) return;
-        const op = evt === 'FriendRequestReceived' ? 'FriendAccept'
-          : evt === 'PartyInviteReceived' ? 'PartyAccept' : undefined;
+        const op = evt === 'FriendRequestReceived' ? 'FriendAccept' : undefined;
         if (!op) return;
         replyLater(() => {
           const live = here.get(accountKey);
           if (!live) return;
-          // EXACTLY what a client sends: both accepts take the other side's account key, and
-          // going through handleEvent means every guard a human hits — blocked, party full,
-          // no such request — applies to a bot too.
+          // EXACTLY what a client sends: the accept takes the other side's account key, and
+          // going through handleEvent means every guard a human hits — blocked, no such
+          // request — applies to a bot too.
           social.handleEvent(live, op, new Map<string, JsLike>([['acct', from]]) as never);
           log('info', 'devbot.accepted', { bot: name, op, from });
         });
@@ -242,13 +237,10 @@ export async function startTestBots(deps: TestBotDeps): Promise<RunningTestBots>
   };
 
   const reconcile = (): void => {
-    // Humans only: a bot must never be the reason another bot thinks the party is here.
-    const humansHere = roster.humansInWorld().filter((p) => !p.bot).map((p) => p.accountKey);
     for (const b of ids) {
-      const members = social.partyMembersOf(b.accountKey);
-      const belongsHere = members.length > 0
-        ? members.some((m) => humansHere.includes(m)) // follow the party
-        : deps.isPublic;                              // unpartied: hang out at the gathering place
+      // Bots simply live at the gathering place (a world that booted in party mode); with
+      // the party concept gone there is nothing to follow.
+      const belongsHere = deps.isPublic;
       const present = here.has(b.accountKey);
       if (belongsHere && !present) arrive(b);
       else if (!belongsHere && present) depart(b);

@@ -7,7 +7,7 @@
 // whole platform's movement traffic through one Node event loop, which is exactly the
 // bottleneck process-per-world exists to avoid.
 //
-//   GET  /worlds            list joinable worlds (public always; private/party by owner)
+//   GET  /worlds            list joinable worlds (yours only: private/party by owner)
 //   POST /worlds            create-or-join a private/party world, returns where to dial
 //   GET  /worlds/:id        one world
 //   GET  /healthz
@@ -218,7 +218,7 @@ export async function startDirectory(deps: DirectoryDeps): Promise<RunningDirect
       // protects it.
       const account = url.searchParams.get('account') ?? undefined;
       const list = deps.worlds.list().filter((w) =>
-        w.mode === 'public' || (account !== undefined && w.ownerAccount === account));
+        account !== undefined && w.ownerAccount === account);
       json(res, 200, { worlds: list.map(pub) });
       return;
     }

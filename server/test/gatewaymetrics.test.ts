@@ -60,7 +60,7 @@ test('the gateway scrape carries every world, with valid metadata', async (t) =>
     settings: {
       worldsDir: wdir, gatewayPort: 8080, serverEntry: '/fake/s.mjs', nodeBin: '/fake/node',
       basePort: 41000, maxWorlds: 4, idleReapMs: 60_000, startTimeoutMs: 1000,
-      restartBackoffMs: 1000, publicWorlds: [],
+      restartBackoffMs: 1000,
       sharedDir: mkdtempSync(join(tmpdir(), 'omw-gwm-shared-')),
     },
     spawner: () => new FakeChild() as unknown as ChildProcess,
@@ -69,8 +69,8 @@ test('the gateway scrape carries every world, with valid metadata', async (t) =>
   });
   // Two worlds whose allocated ports are the fakes'. allocPort hands out basePort upward, so
   // point the supervisor's view at the real listeners by starting them and rewriting the ports.
-  worlds.ensure('alpha', 'public');
-  worlds.ensure('beta', 'public');
+  worlds.ensure('alpha', 'party', 'owner-a');
+  worlds.ensure('beta', 'party', 'owner-b');
   const live = worlds as unknown as { worlds: Map<string, { port: number; lastStatus?: unknown }> };
   live.worlds.get('alpha')!.port = w1.port;
   live.worlds.get('beta')!.port = w2.port;
@@ -108,14 +108,14 @@ test('a world that does not answer is skipped, not fatal', async (t) => {
     settings: {
       worldsDir: wdir, gatewayPort: 8080, serverEntry: '/fake/s.mjs', nodeBin: '/fake/node',
       basePort: 42000, maxWorlds: 4, idleReapMs: 60_000, startTimeoutMs: 1000,
-      restartBackoffMs: 1000, publicWorlds: [],
+      restartBackoffMs: 1000,
       sharedDir: mkdtempSync(join(tmpdir(), 'omw-gwm2-shared-')),
     },
     spawner: () => new FakeChild() as unknown as ChildProcess,
     fetchStatus: async (port) => ({ playerCount: 0, connectedCount: 0, maxPlayers: 32, name: `w${port}` }),
   });
-  worlds.ensure('good', 'public');
-  worlds.ensure('dead', 'public');
+  worlds.ensure('good', 'party', 'owner-g');
+  worlds.ensure('dead', 'party', 'owner-d');
   const live = worlds as unknown as { worlds: Map<string, { port: number }> };
   live.worlds.get('good')!.port = good.port;
   live.worlds.get('dead')!.port = 1; // nothing listens here

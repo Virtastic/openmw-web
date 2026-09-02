@@ -1,6 +1,6 @@
 // Copyright (C) 2025-2026 Virtastic - https://virtastic.app
 // SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
-// Phase 2.5 chat tiers: '!' global, '@' party (members only, wherever they stand), plain
+// Phase 2.5 chat tiers: '!' global, '@' world chat (everyone in this world), plain
 // say world-wide by default and proximity-scoped where a deployment asks for it.
 
 import test from 'node:test';
@@ -55,21 +55,12 @@ test('proximity say still reaches a neighbour in the same cell', async (t) => {
   b.close();
 });
 
-test('party chat reaches members only, and refuses when you have no party', async (t) => {
+test("the '@' tier is world chat: everyone in this world hears it, no membership needed", async (t) => {
   const { a, b } = await two(t);
-  // Not in a party yet: a helpful refusal, not silence.
-  // (the join MOTD is also a 'server' line, so match on the text we are asserting about)
-  a.sendEvent('ChatSend', { text: '@anyone there?' });
-  await a.waitEvent('ChatMessage', (v) => /not in a party/i.test(String((v as { text?: string }).text ?? '')));
-
-  a.sendEvent('PartyInvite', { acct: 'bob' });
-  await b.waitEvent('PartyInviteReceived');
-  b.sendEvent('PartyAccept', { acct: 'alice' });
-  await b.waitEvent('PartyUpdate');
-
   a.sendEvent('ChatSend', { text: '@regroup at the tower' });
   const heard = await b.waitEvent('ChatMessage', (v) => (v as { text?: string }).text === 'regroup at the tower');
-  assert.equal((heard.value as { channel: string }).channel, 'party', 'delivered on the party channel');
+  // The wire channel name predates the party removal; the semantics are per-world.
+  assert.equal((heard.value as { channel: string }).channel, 'party', 'delivered on the world channel');
   a.close();
   b.close();
 });

@@ -15,8 +15,8 @@ export const MAX_CHAT_CHARS = 1024;
 export type ChatMessageBody = {
   // Phase 2.5 chat tiers:
   //   say     proximity — everyone whose interest bubble you are in (the default)
-  //   party   your group, wherever they are (realm-independent: it must survive a member
-  //           hopping worlds mid-conversation, which is the whole point of party travel)
+  //   party   WORLD chat ('@' tier): everyone in your world. The wire name predates the
+  //           party removal; the semantics are per-world.
   //   global  the whole world, rate-limited
   //   server  announcements; never muted, never proximity-filtered
   //   whisper one recipient
@@ -75,8 +75,8 @@ export function recordChat(mod: Moderation | undefined, player: Player, channel:
 
 // Whisper: a directed line to exactly one recipient (chosen from the friend dropdown, so
 // `to` is their account key). Delivered only if the recipient is co-resident in this world
-// process — cross-world whisper waits on the same platform relay party chat needs
-// (chat.ts party note). The recipient's mute of the sender silently drops their copy, but
+// process — cross-world whisper waits on a platform relay that does not exist yet.
+// The recipient's mute of the sender silently drops their copy, but
 // the sender always gets their own echo so the UI never looks broken.
 function deliverWhisper(
   ctx: CommandContext,
@@ -160,22 +160,21 @@ export function handleChatSend(
   recordChat(mod, player, channel, line);
   const msg: ChatMessageBody = { channel, from: player.name, fromId: player.id, text: line };
   if (channel === 'party') {
+    // WORLD chat: the people in your world are your group (ctx.partyOf returns exactly
+    // them — see server.ts commandCtx). No membership list, no cross-world relay needed.
     const members = ctx.partyOf?.(player.accountKey) ?? [];
     if (members.length === 0) {
-      serverWhisper(player, 'You are not in a party.');
+      serverWhisper(player, 'Nobody is here to hear you.');
       return;
     }
-    // Realm-independent BY CONSTRUCTION only within this world process; a member in
-    // another world receives it when the platform-level relay lands (their party
-    // membership is already shared state). Here: everyone co-resident and in the party.
     for (const p of ctx.roster.inWorld()) {
       if (!members.includes(p.accountKey)) continue;
       if (p.accountKey !== player.accountKey && ctx.isMuted?.(p.accountKey, player.accountKey)) continue;
       p.peer.sendEvent('ChatMessage', msg);
     }
   } else if (channel === 'say' && ctx.sayProximity === true) {
-    // PROXIMITY say — public worlds only. Shouting across the province is what makes a
-    // crowded public chat box unreadable. In a private or party world the opposite is
+    // PROXIMITY say — opt-in per deployment. Shouting across the province is what makes a
+    // crowded chat box unreadable. In a private or party world the opposite is
     // true: four friends spread across Vvardenfell must be able to talk, so 'say' stays
     // world-wide there and this scope follows the world's nature rather than a global
     // preference (see [rules].sayScope).

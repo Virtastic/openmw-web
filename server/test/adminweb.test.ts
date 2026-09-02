@@ -38,7 +38,7 @@ test('dashboard: page is public, api needs the bearer, unknown action refused', 
   assert.equal(ok.status, 200);
   const body = await ok.json() as { players: unknown[]; world: { mode: string } };
   assert.ok(Array.isArray(body.players));
-  assert.equal(body.world.mode, 'public');
+  assert.equal(body.world.mode, 'private');
 
   const bad = await fetch(`${base}/admin/api/action`, {
     method: 'POST',

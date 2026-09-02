@@ -34,7 +34,7 @@ async function harness(over: { idleReapMs?: number } = {}) {
       worldsDir: wdir, gatewayPort: 8080,
       serverEntry: '/fake/server.mjs', nodeBin: '/fake/node',
       basePort: 43000, maxWorlds: 8, idleReapMs: over.idleReapMs ?? 60_000, startTimeoutMs: 1000,
-      restartBackoffMs: 1000, publicWorlds: [],
+      restartBackoffMs: 1000,
       sharedDir: mkdtempSync(join(tmpdir(), 'omw-shared-')),
     },
     spawner: () => new FakeChild() as unknown as ChildProcess,

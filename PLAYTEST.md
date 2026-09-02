@@ -127,10 +127,10 @@ a person can say whether it LOOKS right next to the real menus.
 - [ ] With 20+ players online, does the Players tab stay usable, or does it need scrolling
       and/or a filter? (No scroll container exists yet — this is the check that decides
       whether one is needed.)
-- [ ] Party: invite, accept, see members and their locations, leave. The leader leaving
-      should hand over, not disband.
+- [ ] Party mode: open your world to friends, have one join via the friends list, flip back
+      to Solo and confirm they are returned home after the notice.
 - [ ] Privacy: set `private`, and confirm a FRIEND can no longer see your location and
-      cannot invite you. Set `party`, and confirm only party members can.
+      cannot invite you.
 
 ### Multiplayer windows (F = friends, G = admin)
 `s46-ui-flow` already drives these flows headlessly and writes a screenshot at each step, so
@@ -177,56 +177,18 @@ Everything here is server-verified and (for the client scripts) logic-tested, bu
 has been through a browser**. These are the specific things to try, and what a failure looks
 like, so the session is spent on the parts nothing automated could answer.
 
-### The lobby keeps nothing (the headline change)
-
-1. In your own world, note what you are carrying.
-2. Switch to **Public**. You should arrive with exactly that.
-3. Loot something there, drop something you brought, kill something.
-4. Switch back to **Solo**.
-
-**Expected:** you leave with exactly what you walked in with — the looted thing does not follow
-you, and the dropped thing is still yours. **Report if:** anything crossed either way. This is
-proven at the server; what needs a human is whether it *reads* as intended rather than as the
-game losing your loot. If it feels like a bug when it happens to you, say so — that is the
-finding, and the fix is probably a message, not a rule.
-
-### A restart should be a pause, not an ejection
-
-With someone in-world, `docker kill --signal=HUP` the gateway (or redeploy).
-
-**Expected:** "The server is restarting — putting you back in…", then play resumes roughly
 where you left off. **Report if:** you get the fatal modal, or have to reload, or come back
 somewhere unexpected. Until today this ejected everyone permanently.
 
-### Party difficulty scaling now defaults OFF
+### Dying
 
-Fight the same enemies solo and then as a group of three, with scaling off, then have the leader
-turn it on and repeat.
+Die on purpose, somewhere far from Seyda Neen — deep in a Daedric ruin or up a Telvanni
+tower.
 
-**Expected, and this is the actual question:** does co-op feel too easy with it off? The default
-was flipped on the reasoning that people come to co-op to play *together*, not to have the game
-quietly made harder — but that is a judgement, and this session is the only thing that can
-check it. Say which of the two you would rather have shipped.
-
-### Dying, and the party settings panel
-
-Die on purpose, somewhere far from Seyda Neen — deep in a Daedric ruin or up a Telvanni tower —
-while at least one party member is alive somewhere else entirely. Then do it again with nobody
-else in the party.
-
-**Expected:** with a living party member, you come back beside them. Alone, you come back where
-you fell. What must NOT happen is the old behaviour: every death dumped you at one fixed spot
-outside Seyda Neen regardless of where you were, which for anyone playing past the first hour
-ended the session. The rest of the party should also see a line saying you went down — losing a
-friend silently is the thing being fixed.
-
-While you are grouped, have the leader toggle each of the three party buttons (gold split,
-rare-item rolls, enemy scaling) and watch **another player's** screen.
-
-**Expected:** the other player's buttons change to match, immediately. The bug being fixed was
-that they did not — the update carried no settings, so every client kept showing whatever it
-assumed when it joined, and pressing a button looked like it did nothing. Also loot a rare item
-as a group: the roll result should be announced to the party, not resolved silently.
+**Expected:** with no configured respawn point you come back where you fell. What must NOT
+happen is the old behaviour: every death dumped you at one fixed spot outside Seyda Neen
+regardless of where you were. Everyone in the world should also see a line saying you went
+down — losing a friend silently is the thing being fixed.
 
 ### Attacks land (the one that was reported from a live server)
 
@@ -267,7 +229,7 @@ quest progress feels like a bug rather than a rule you were told about.
 
 ### The switcher and the loading screen
 
-Solo → Party → Public → Solo, a few times, including once after leaving your own world idle long
+Solo → Party → Solo, a few times, including once after leaving your own world idle long
 enough to be reaped (two minutes).
 
 **Expected:** one continuous loading screen per switch. **Report if:** it clears and comes back,
@@ -497,21 +459,19 @@ re-triaged on that basis alone -- a deploy and a re-test is the only thing that 
    the instant-harvest path has no seam the way an opened container does.
 
    **The local half is now NARROWED, though not closed.** Nothing on the multiplayer path takes
-   an item OUT of a player's inventory except two things: the container-op undo (which runs only
-   when a take was sent and REFUSED), and lobby containment in the public world. The inventory
+   an item OUT of a player's inventory except the container-op undo (which runs only
+   when a take was sent and REFUSED). The inventory
    restore cannot be responsible — `global.lua` grants only the shortfall and "deliberately does
    NOT remove a surplus", precisely so a player holding more than the debounced doc records is
    never confiscated from.
 
-   That leaves three candidates, in order of likelihood:
+   That leaves two candidates, in order of likelihood:
    1. **Not multiplayer at all** — the engine's own harvest, which would reproduce in
       singleplayer. Check that FIRST; it is the cheapest to rule in or out.
    2. **A refused take** — but per the paragraph above no take is normally sent for a plant, so
       this would mean the watch DID see a change. The refusal wording added this cycle makes it
       self-diagnosing: you would see "Somebody else took that first" or similar. Silence means
       this is not it.
-   3. **The public lobby**, where inventory is contained by design. Worth knowing which world the
-      session was in.
 10. **Weather appears randomised on each load. FIXED.**
     Weather was never meant to reroll: `core/weather.ts` folds a region's last state when it goes
     dormant and hands it back to the next claimant "so weather CONTINUES across a dormancy
