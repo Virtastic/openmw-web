@@ -37,6 +37,14 @@ namespace MWMechanics
      *  a range check would cull exactly the NPCs the server asked to simulate. */
     bool inSimProcessingRange(const MWWorld::Ptr& actor);
 
+    /** MP (Phase 2): the werewolf stat swap, actor-generic. These used to live on
+     *  MWWorld::Player (saveStats/setWerewolfStats/restoreStats), so only the singleton
+     *  player could ever transform correctly; the snapshot now lives in the actor's own
+     *  NpcStats. */
+    void saveWerewolfStats(const MWWorld::Ptr& actor);
+    void applyWerewolfStats(const MWWorld::Ptr& actor);
+    void restoreWerewolfStats(const MWWorld::Ptr& actor);
+
     /** E5 (MP): apply a level-up to `actor` with the chosen attribute picks (typically 3).
      *  This is the APPLY half only — selection UI is the caller's problem — extracted from
      *  LevelupDialog::onOkButtonClicked so a headless peer can level a character at all:

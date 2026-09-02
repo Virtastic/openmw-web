@@ -1929,14 +1929,15 @@ namespace MWMechanics
 
             if (werewolf)
             {
-                player->saveStats();
-                player->setWerewolfStats();
+                // Actor-generic (MP Phase 2): the swap works on any NPC's own NpcStats.
+                saveWerewolfStats(actor);
+                applyWerewolfStats(actor);
                 windowManager->forceHide(MWGui::GW_Inventory);
                 windowManager->forceHide(MWGui::GW_Magic);
             }
             else
             {
-                player->restoreStats();
+                restoreWerewolfStats(actor);
                 windowManager->unsetForceHide(MWGui::GW_Inventory);
                 windowManager->unsetForceHide(MWGui::GW_Magic);
             }

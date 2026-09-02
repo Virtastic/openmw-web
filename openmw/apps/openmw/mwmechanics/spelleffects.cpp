@@ -1,5 +1,7 @@
 #include "spelleffects.hpp"
 
+#include <cstdlib>
+
 #ifdef __EMSCRIPTEN__
 #include "../mwmp/puppets.hpp"
 #endif
@@ -67,6 +69,12 @@ namespace
         stat.setModifier(static_cast<int>(stat.getModifier() + magnitude));
         creatureStats.setAiSetting(setting, stat);
         return ESM::ActiveEffect::Flag_Applied;
+    }
+
+    bool isHeadless()
+    {
+        static const bool headless = std::getenv("OPENMW_HEADLESS") != nullptr;
+        return headless;
     }
 
     void adjustDynamicStat(const MWWorld::Ptr& target, int index, float magnitude, bool allowDecreaseBelowZero = false,
@@ -500,27 +508,28 @@ namespace MWMechanics
             }
             else if (effect.mEffectId == ESM::MagicEffect::Mark)
             {
-                if (target != getPlayer())
+                // MP (Phase 2): on a HEADLESS peer any NPC may carry a mark — the slot moved
+                // off the Player singleton, so a peer-driven avatar's Mark works like the
+                // real player's. Everywhere else the vanilla player-only rule holds
+                // byte-for-byte (a scripted Mark on an NPC stays Flag_Invalid in SP).
+                if (target != getPlayer() && !(isHeadless() && target.getClass().isNpc()))
                     return ESM::ActiveEffect::Flag_Invalid;
                 else if (world->isTeleportingEnabled())
-                    world->getPlayer().markPosition(target.getCell(), target.getRefData().getPosition());
+                    target.getClass().getNpcStats(target).setMarkedPosition(
+                        target.getCell()->getCell()->getId(), target.getRefData().getPosition());
                 else if (caster == getPlayer())
                     MWBase::Environment::get().getWindowManager()->messageBox("#{sTeleportDisabled}");
             }
             else if (effect.mEffectId == ESM::MagicEffect::Recall)
             {
-                if (target != getPlayer())
+                if (target != getPlayer() && !(isHeadless() && target.getClass().isNpc()))
                     return ESM::ActiveEffect::Flag_Invalid;
                 else if (world->isTeleportingEnabled())
                 {
-                    MWWorld::CellStore* markedCell = nullptr;
-                    ESM::Position markedPosition;
-
-                    world->getPlayer().getMarkedPosition(markedCell, markedPosition);
-                    if (markedCell)
+                    const MWMechanics::NpcStats& stats = target.getClass().getNpcStats(target);
+                    if (!stats.getMarkedCell().empty())
                     {
-                        ESM::RefId dest = markedCell->getCell()->getId();
-                        MWWorld::ActionTeleport action(dest, markedPosition, false);
+                        MWWorld::ActionTeleport action(stats.getMarkedCell(), stats.getMarkedPosition(), false);
                         action.execute(target);
                         if (!caster.isEmpty())
                         {

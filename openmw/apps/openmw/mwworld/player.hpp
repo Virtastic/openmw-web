@@ -38,32 +38,24 @@ namespace MWWorld
 
         osg::Vec3f mLastKnownExteriorPosition;
 
-        ESM::Position mMarkedPosition;
-        // If no position was marked, this is nullptr
-        CellStore* mMarkedCell;
-
         bool mTeleported;
 
+        // MP (Phase 2): the WORLD's crime counter — the id handed to witnesses. This stays
+        // here (one per world process) while everything per-CHARACTER (paid crime id, the
+        // Mark/Recall slot, the werewolf snapshot, the jumping flag) moved to NpcStats so a
+        // peer-driven avatar carries it like the real player. The Player methods below are
+        // forwarding wrappers over the player's own NpcStats, so call sites and the
+        // ESM::Player savegame record are unchanged.
         int mCurrentCrimeId; // the id assigned witnesses
-        int mPaidCrimeId; // the last id paid off (0 bounty)
 
         typedef std::map<ESM::RefId, ESM::RefId> PreviousItems; // previous equipped items, needed for bound spells
         PreviousItems mPreviousItems;
 
-        // Saved stats prior to becoming a werewolf
-        std::array<float, ESM::Skill::Length> mSaveSkills;
-        std::array<float, ESM::Attribute::Length> mSaveAttributes;
-
-        bool mJumping;
-
     public:
         Player(const ESM::NPC* player);
 
-        void saveStats();
-        void restoreStats();
-        void setWerewolfStats();
-
-        // For mark/recall magic effects
+        // For mark/recall magic effects. Forwarders over the player's NpcStats (which
+        // stores the cell by id); kept so the map window and save path stay untouched.
         void markPosition(CellStore* markedCell, const ESM::Position& markedPosition);
         void getMarkedPosition(CellStore*& markedCell, ESM::Position& markedPosition) const;
 

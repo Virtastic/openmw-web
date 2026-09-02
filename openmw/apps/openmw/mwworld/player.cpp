@@ -25,6 +25,7 @@
 #include "../mwbase/world.hpp"
 
 #include "../mwmechanics/movement.hpp"
+#include "../mwmechanics/actorutil.hpp"
 #include "../mwmechanics/npcstats.hpp"
 #include "../mwmechanics/spellutil.hpp"
 
@@ -52,78 +53,14 @@ namespace MWWorld
         : mPlayer(makePlayerCellRef(), player)
         , mCellStore(nullptr)
         , mLastKnownExteriorPosition(0, 0, 0)
-        , mMarkedPosition(ESM::Position())
-        , mMarkedCell(nullptr)
+
         , mTeleported(false)
         , mCurrentCrimeId(-1)
         , mPaidCrimeId(-1)
-        , mJumping(false)
     {
         ESM::Position playerPos = mPlayer.mData.getPosition();
         playerPos.pos[0] = playerPos.pos[1] = playerPos.pos[2] = 0;
         mPlayer.mData.setPosition(playerPos);
-    }
-
-    void Player::saveStats()
-    {
-        MWMechanics::NpcStats& stats = getPlayer().getClass().getNpcStats(getPlayer());
-
-        for (size_t i = 0; i < mSaveSkills.size(); ++i)
-            mSaveSkills[i] = stats.getSkill(ESM::Skill::indexToRefId(static_cast<int>(i))).getModified();
-        for (size_t i = 0; i < mSaveAttributes.size(); ++i)
-            mSaveAttributes[i] = stats.getAttribute(ESM::Attribute::indexToRefId(static_cast<int>(i))).getModified();
-    }
-
-    void Player::restoreStats()
-    {
-        const auto& store = MWBase::Environment::get().getESMStore();
-        const MWWorld::Store<ESM::GameSetting>& gmst = store->get<ESM::GameSetting>();
-        MWMechanics::CreatureStats& creatureStats = getPlayer().getClass().getCreatureStats(getPlayer());
-        MWMechanics::NpcStats& npcStats = getPlayer().getClass().getNpcStats(getPlayer());
-        MWMechanics::DynamicStat<float> health = creatureStats.getDynamic(0);
-        creatureStats.setHealth(health.getBase() / gmst.find("fWereWolfHealth")->mValue.getFloat());
-        for (size_t i = 0; i < mSaveSkills.size(); ++i)
-        {
-            auto& skill = npcStats.getSkill(ESM::Skill::indexToRefId(static_cast<int>(i)));
-            skill.restore(skill.getDamage());
-            skill.setModifier(mSaveSkills[i] - skill.getBase());
-        }
-        for (size_t i = 0; i < mSaveAttributes.size(); ++i)
-        {
-            auto id = ESM::Attribute::indexToRefId(static_cast<int>(i));
-            auto attribute = npcStats.getAttribute(id);
-            attribute.restore(attribute.getDamage());
-            attribute.setModifier(mSaveAttributes[i] - attribute.getBase());
-            npcStats.setAttribute(id, attribute);
-        }
-    }
-
-    void Player::setWerewolfStats()
-    {
-        const auto& store = MWBase::Environment::get().getESMStore();
-        const MWWorld::Store<ESM::GameSetting>& gmst = store->get<ESM::GameSetting>();
-        MWMechanics::CreatureStats& creatureStats = getPlayer().getClass().getCreatureStats(getPlayer());
-        MWMechanics::NpcStats& npcStats = getPlayer().getClass().getNpcStats(getPlayer());
-        MWMechanics::DynamicStat<float> health = creatureStats.getDynamic(0);
-        creatureStats.setHealth(health.getBase() * gmst.find("fWereWolfHealth")->mValue.getFloat());
-        for (const auto& attribute : store->get<ESM::Attribute>())
-        {
-            MWMechanics::AttributeValue value = npcStats.getAttribute(attribute.mId);
-            value.setBase(value.getBase(), true);
-            value.setModifier(attribute.mWerewolfValue - value.getBase());
-            npcStats.setAttribute(attribute.mId, value);
-        }
-
-        for (const auto& skill : store->get<ESM::Skill>())
-        {
-            // Acrobatics is set separately for some reason.
-            if (skill.mId == ESM::Skill::Acrobatics)
-                continue;
-
-            MWMechanics::SkillValue& value = npcStats.getSkill(skill.mId);
-            value.setBase(value.getBase(), true);
-            value.setModifier(skill.mWerewolfValue - value.getBase());
-        }
     }
 
     void Player::set(const ESM::NPC* player)
@@ -219,12 +156,14 @@ namespace MWWorld
 
     void Player::setJumping(bool jumping)
     {
-        mJumping = jumping;
+        getPlayer().getClass().getNpcStats(getPlayer()).setJumping(jumping);
     }
 
     bool Player::getJumping() const
     {
-        return mJumping;
+        // Class::getNpcStats takes a Ptr; these reads mutate nothing.
+        const MWWorld::Ptr player = const_cast<Player*>(this)->getPlayer();
+        return player.getClass().getNpcStats(player).getJumping();
     }
 
     bool Player::isInCombat()
@@ -239,15 +178,23 @@ namespace MWWorld
 
     void Player::markPosition(CellStore* markedCell, const ESM::Position& markedPosition)
     {
-        mMarkedCell = markedCell;
-        mMarkedPosition = markedPosition;
+        MWMechanics::NpcStats& stats = getPlayer().getClass().getNpcStats(getPlayer());
+        if (markedCell != nullptr)
+            stats.setMarkedPosition(markedCell->getCell()->getId(), markedPosition);
+        else
+            stats.clearMarkedPosition();
     }
 
     void Player::getMarkedPosition(CellStore*& markedCell, ESM::Position& markedPosition) const
     {
-        markedCell = mMarkedCell;
-        if (mMarkedCell)
-            markedPosition = mMarkedPosition;
+        const MWWorld::Ptr player = const_cast<Player*>(this)->getPlayer();
+        const MWMechanics::NpcStats& stats = player.getClass().getNpcStats(player);
+        markedCell = nullptr;
+        if (stats.getMarkedCell().empty())
+            return;
+        markedCell = MWBase::Environment::get().getWorldModel()->findCell(stats.getMarkedCell());
+        if (markedCell != nullptr)
+            markedPosition = stats.getMarkedPosition();
     }
 
     void Player::clear()
@@ -259,23 +206,13 @@ namespace MWWorld
         mPlayer = LiveCellRef<ESM::NPC>(cellRef, mPlayer.mBase);
         mCellStore = nullptr;
         mSign = ESM::RefId();
-        mMarkedCell = nullptr;
         mTeleported = false;
-        mJumping = false;
         mCurrentCrimeId = -1;
-        mPaidCrimeId = -1;
         mPreviousItems.clear();
         mLastKnownExteriorPosition = osg::Vec3f(0, 0, 0);
-
-        mSaveSkills.fill(0.f);
-        mSaveAttributes.fill(0.f);
-
-        mMarkedPosition.pos[0] = 0;
-        mMarkedPosition.pos[1] = 0;
-        mMarkedPosition.pos[2] = 0;
-        mMarkedPosition.rot[0] = 0;
-        mMarkedPosition.rot[1] = 0;
-        mMarkedPosition.rot[2] = 0;
+        // The per-character state that used to be reset here (mark, werewolf snapshot,
+        // jumping, paid crime id) lives in NpcStats now, and the LiveCellRef rebuild above
+        // already gave the player a fresh one.
     }
 
     void Player::write(ESM::ESMWriter& writer, Loading::Listener& progress) const
@@ -285,8 +222,11 @@ namespace MWWorld
         mPlayer.save(player.mObject);
         player.mCellId = mCellStore->getCell()->getId();
 
+        const MWWorld::Ptr playerPtr = const_cast<Player*>(this)->getPlayer();
+        const MWMechanics::NpcStats& stats = playerPtr.getClass().getNpcStats(playerPtr);
+
         player.mCurrentCrimeId = mCurrentCrimeId;
-        player.mPaidCrimeId = mPaidCrimeId;
+        player.mPaidCrimeId = stats.getPaidCrimeId();
 
         player.mBirthsign = mSign;
 
@@ -294,19 +234,21 @@ namespace MWWorld
         player.mLastKnownExteriorPosition[1] = mLastKnownExteriorPosition.y();
         player.mLastKnownExteriorPosition[2] = mLastKnownExteriorPosition.z();
 
-        if (mMarkedCell)
+        if (!stats.getMarkedCell().empty())
         {
             player.mHasMark = true;
-            player.mMarkedPosition = mMarkedPosition;
-            player.mMarkedCell = mMarkedCell->getCell()->getId();
+            player.mMarkedPosition = stats.getMarkedPosition();
+            player.mMarkedCell = stats.getMarkedCell();
         }
         else
             player.mHasMark = false;
 
-        for (size_t i = 0; i < mSaveAttributes.size(); ++i)
-            player.mSaveAttributes[i] = mSaveAttributes[i];
-        for (size_t i = 0; i < mSaveSkills.size(); ++i)
-            player.mSaveSkills[i] = mSaveSkills[i];
+        const auto& saveAttributes = const_cast<MWMechanics::NpcStats&>(stats).werewolfSaveAttributes();
+        const auto& saveSkills = const_cast<MWMechanics::NpcStats&>(stats).werewolfSaveSkills();
+        for (size_t i = 0; i < saveAttributes.size(); ++i)
+            player.mSaveAttributes[i] = saveAttributes[i];
+        for (size_t i = 0; i < saveSkills.size(); ++i)
+            player.mSaveSkills[i] = saveSkills[i];
 
         player.mPreviousItems = mPreviousItems;
 
@@ -351,16 +293,19 @@ namespace MWWorld
                 reader.mActorIdConverter->mMappings.emplace(
                     player.mObject.mCreatureStats.mActorId, mPlayer.mRef.getRefNum());
 
-            for (size_t i = 0; i < mSaveAttributes.size(); ++i)
-                mSaveAttributes[i] = player.mSaveAttributes[i];
-            for (size_t i = 0; i < mSaveSkills.size(); ++i)
-                mSaveSkills[i] = player.mSaveSkills[i];
+            MWMechanics::NpcStats& stats = getPlayer().getClass().getNpcStats(getPlayer());
+            auto& saveAttributes = stats.werewolfSaveAttributes();
+            auto& saveSkills = stats.werewolfSaveSkills();
+            for (size_t i = 0; i < saveAttributes.size(); ++i)
+                saveAttributes[i] = player.mSaveAttributes[i];
+            for (size_t i = 0; i < saveSkills.size(); ++i)
+                saveSkills[i] = player.mSaveSkills[i];
 
             if (player.mObject.mNpcStats.mIsWerewolf)
             {
                 if (reader.getFormatVersion() <= ESM::MaxOldSkillsAndAttributesFormatVersion)
                 {
-                    setWerewolfStats();
+                    MWMechanics::applyWerewolfStats(getPlayer());
                     if (player.mSetWerewolfAcrobatics)
                         MWBase::Environment::get().getMechanicsManager()->applyWerewolfAcrobatics(getPlayer());
                 }
@@ -382,7 +327,7 @@ namespace MWWorld
             }
 
             mCurrentCrimeId = player.mCurrentCrimeId;
-            mPaidCrimeId = player.mPaidCrimeId;
+            stats.setPaidCrimeId(player.mPaidCrimeId);
 
             mSign = player.mBirthsign;
 
@@ -398,12 +343,11 @@ namespace MWWorld
 
             if (player.mHasMark)
             {
-                mMarkedPosition = player.mMarkedPosition;
-                mMarkedCell = &MWBase::Environment::get().getWorldModel()->getCell(player.mMarkedCell);
+                stats.setMarkedPosition(player.mMarkedCell, player.mMarkedPosition);
             }
             else
             {
-                mMarkedCell = nullptr;
+                stats.clearMarkedPosition();
             }
 
             mTeleported = false;
@@ -423,12 +367,13 @@ namespace MWWorld
 
     void Player::recordCrimeId()
     {
-        mPaidCrimeId = mCurrentCrimeId;
+        getPlayer().getClass().getNpcStats(getPlayer()).setPaidCrimeId(mCurrentCrimeId);
     }
 
     int Player::getCrimeId() const
     {
-        return mPaidCrimeId;
+        const MWWorld::Ptr player = const_cast<Player*>(this)->getPlayer();
+        return player.getClass().getNpcStats(player).getPaidCrimeId();
     }
 
     void Player::setPreviousItem(const ESM::RefId& boundItemId, const ESM::RefId& previousItemId)

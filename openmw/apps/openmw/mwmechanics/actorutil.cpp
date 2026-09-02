@@ -6,6 +6,7 @@
 #include "../mwbase/world.hpp"
 
 #include "../mwworld/class.hpp"
+#include "../mwworld/esmstore.hpp"
 #include "../mwworld/player.hpp"
 
 #include <components/settings/values.hpp>
@@ -14,7 +15,9 @@
 #include "../mwmechanics/npcstats.hpp"
 #include "../mwmechanics/magiceffects.hpp"
 
+#include <components/esm3/loadgmst.hpp>
 #include <components/esm3/loadmgef.hpp>
+#include <components/esm3/loadskil.hpp>
 
 namespace MWMechanics
 {
@@ -83,5 +86,68 @@ namespace MWMechanics
             stats.setAttribute(attributeId, attribute);
         }
         stats.levelUp();
+    }
+
+    void saveWerewolfStats(const MWWorld::Ptr& actor)
+    {
+        MWMechanics::NpcStats& stats = actor.getClass().getNpcStats(actor);
+        auto& skills = stats.werewolfSaveSkills();
+        auto& attributes = stats.werewolfSaveAttributes();
+        for (size_t i = 0; i < skills.size(); ++i)
+            skills[i] = stats.getSkill(ESM::Skill::indexToRefId(static_cast<int>(i))).getModified();
+        for (size_t i = 0; i < attributes.size(); ++i)
+            attributes[i] = stats.getAttribute(ESM::Attribute::indexToRefId(static_cast<int>(i))).getModified();
+    }
+
+    void applyWerewolfStats(const MWWorld::Ptr& actor)
+    {
+        const auto& store = MWBase::Environment::get().getESMStore();
+        const MWWorld::Store<ESM::GameSetting>& gmst = store->get<ESM::GameSetting>();
+        MWMechanics::CreatureStats& creatureStats = actor.getClass().getCreatureStats(actor);
+        MWMechanics::NpcStats& npcStats = actor.getClass().getNpcStats(actor);
+        MWMechanics::DynamicStat<float> health = creatureStats.getDynamic(0);
+        creatureStats.setHealth(health.getBase() * gmst.find("fWereWolfHealth")->mValue.getFloat());
+        for (const auto& attribute : store->get<ESM::Attribute>())
+        {
+            MWMechanics::AttributeValue value = npcStats.getAttribute(attribute.mId);
+            value.setBase(value.getBase(), true);
+            value.setModifier(attribute.mWerewolfValue - value.getBase());
+            npcStats.setAttribute(attribute.mId, value);
+        }
+        for (const auto& skill : store->get<ESM::Skill>())
+        {
+            // Acrobatics is set separately for some reason.
+            if (skill.mId == ESM::Skill::Acrobatics)
+                continue;
+            MWMechanics::SkillValue& value = npcStats.getSkill(skill.mId);
+            value.setBase(value.getBase(), true);
+            value.setModifier(skill.mWerewolfValue - value.getBase());
+        }
+    }
+
+    void restoreWerewolfStats(const MWWorld::Ptr& actor)
+    {
+        const auto& store = MWBase::Environment::get().getESMStore();
+        const MWWorld::Store<ESM::GameSetting>& gmst = store->get<ESM::GameSetting>();
+        MWMechanics::CreatureStats& creatureStats = actor.getClass().getCreatureStats(actor);
+        MWMechanics::NpcStats& npcStats = actor.getClass().getNpcStats(actor);
+        const auto& skills = npcStats.werewolfSaveSkills();
+        const auto& attributes = npcStats.werewolfSaveAttributes();
+        MWMechanics::DynamicStat<float> health = creatureStats.getDynamic(0);
+        creatureStats.setHealth(health.getBase() / gmst.find("fWereWolfHealth")->mValue.getFloat());
+        for (size_t i = 0; i < skills.size(); ++i)
+        {
+            auto& skill = npcStats.getSkill(ESM::Skill::indexToRefId(static_cast<int>(i)));
+            skill.restore(skill.getDamage());
+            skill.setModifier(skills[i] - skill.getBase());
+        }
+        for (size_t i = 0; i < attributes.size(); ++i)
+        {
+            auto id = ESM::Attribute::indexToRefId(static_cast<int>(i));
+            auto attribute = npcStats.getAttribute(id);
+            attribute.restore(attribute.getDamage());
+            attribute.setModifier(attributes[i] - attribute.getBase());
+            npcStats.setAttribute(id, attribute);
+        }
     }
 }

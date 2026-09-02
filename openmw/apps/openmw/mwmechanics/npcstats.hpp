@@ -2,6 +2,9 @@
 #define GAME_MWMECHANICS_NPCSTATS_H
 
 #include "creaturestats.hpp"
+#include <array>
+#include <components/esm/attr.hpp>
+#include <components/esm/defs.hpp>
 #include <components/esm/refid.hpp>
 #include <components/esm3/loadclas.hpp>
 #include <components/esm3/loadskil.hpp>
@@ -43,6 +46,13 @@ namespace MWMechanics
         std::vector<int> mSpecIncreases; // number of skill increases for each specialization (accumulates throughout
                                          // the entire game)
         std::set<ESM::RefId> mUsedIds;
+        // MP (Phase 2): see the public accessors above.
+        std::array<float, ESM::Skill::Length> mWerewolfSaveSkills{};
+        std::array<float, ESM::Attribute::Length> mWerewolfSaveAttributes{};
+        ESM::RefId mMarkedCell;
+        ESM::Position mMarkedPosition{};
+        bool mJumping = false;
+        int mPaidCrimeId = -1;
         // ---------------------------------------------------------------------------
 
         /// Countdown to getting damage while underwater
@@ -122,6 +132,33 @@ namespace MWMechanics
         bool isWerewolf() const;
 
         void setWerewolf(bool set);
+
+        // MP (Phase 2): per-actor state that used to live on MWWorld::Player, moved here so a
+        // peer-driven avatar carries it like the real player does. None of it is serialized
+        // in ESM::NpcStats — the player's copy still rides the ESM::Player record
+        // (mwworld/player.cpp write/readRecord), and avatars never save.
+
+        /// Modified skill/attribute values snapshotted before a werewolf transformation.
+        std::array<float, ESM::Skill::Length>& werewolfSaveSkills() { return mWerewolfSaveSkills; }
+        std::array<float, ESM::Attribute::Length>& werewolfSaveAttributes() { return mWerewolfSaveAttributes; }
+
+        /// Mark/Recall. An empty cell id means no mark is set.
+        void setMarkedPosition(const ESM::RefId& cellId, const ESM::Position& position)
+        {
+            mMarkedCell = cellId;
+            mMarkedPosition = position;
+        }
+        void clearMarkedPosition() { mMarkedCell = ESM::RefId(); }
+        const ESM::RefId& getMarkedCell() const { return mMarkedCell; }
+        const ESM::Position& getMarkedPosition() const { return mMarkedPosition; }
+
+        /// GetPCJumping-style flag; transient.
+        void setJumping(bool jumping) { mJumping = jumping; }
+        bool getJumping() const { return mJumping; }
+
+        /// The last crime id this character has paid off (0-bounty record).
+        void setPaidCrimeId(int id) { mPaidCrimeId = id; }
+        int getPaidCrimeId() const { return mPaidCrimeId; }
 
         int getWerewolfKills() const;
 
