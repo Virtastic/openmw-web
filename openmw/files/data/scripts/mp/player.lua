@@ -279,6 +279,9 @@ local function onSelfState(e)
         local now = core.getRealTime()
         if now - lastSnapAt >= SNAP_COOLDOWN_S then
             lastSnapAt = now
+            print(string.format('[mp] SELF SNAP %.0f units -> (%.0f,%.0f,%.0f) seq=%s',
+                dist, e.x, e.y, e.z, tostring(e.lastInputSeq)))
+            mp.testSet('selfSnap', string.format('%.0f,%.0f,%.0f d=%.0f', e.x, e.y, e.z, dist))
             -- The hard snap rides the same global teleport machinery invites use; a
             -- flapping link cannot strobe the player thanks to the cooldown.
             core.sendGlobalEvent('mpSelfSnap', { x = e.x, y = e.y, z = e.z })

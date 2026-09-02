@@ -574,6 +574,8 @@ local function spawnPuppet(id, pose)
     -- (avatar.lua), producing the authoritative pose. Everywhere else it stays a puppet
     -- steered toward reported poses. Attaching both would have them fight over controls.
     if mp.isSystem and mp.isSystem() then
+        print(string.format('[mp] avatar spawned for #%d at (%.0f,%.0f,%.0f) cell=%s',
+            id, pose.x or 0, pose.y or 0, pose.z or 0, tostring(remoteCell[id])))
         obj:addScript('scripts/mp/avatar.lua', { playerId = id })
     else
         obj:addScript('scripts/mp/puppet.lua', { playerId = id })
@@ -1443,8 +1445,21 @@ local eventHandlers = {
     MP_PlayerAppearance = function(data)
         if not data.id or data.id == net.playerId then return end
         remoteIdentity[data.id] = remoteIdentity[data.id] or {}
+        -- ONLY a CHANGED look rebuilds the body. rebuildPuppet is destroy-and-respawn, and an
+        -- identical relay (a rejoin resync, the server catching a client up) used to churn the
+        -- puppet -- on the sim peer that meant the input-driven AVATAR was torn down every few
+        -- seconds, resetting its input state and physics mid-simulation.
+        local prev = remoteIdentity[data.id].appearance
+        local same = prev ~= nil
+        if same then
+            for _, k in ipairs({ 'race', 'head', 'hair', 'isMale', 'class', 'isWerewolf', 'birthsign', 'name' }) do
+                if prev[k] ~= data[k] then same = false break end
+            end
+        end
         remoteIdentity[data.id].appearance = data
-        rebuildPuppet(data.id) -- no-op when not spawned; spawn applies the stored look
+        if not same then
+            rebuildPuppet(data.id) -- no-op when not spawned; spawn applies the stored look
+        end
     end,
 
     MP_PlayerEquipment = function(data)
