@@ -68,7 +68,7 @@ export async function grantLockerSession(client, gwPort, account) {
 }
 
 /**
- * Start a gateway, wait for its public world, and put a client in its OWN world through it.
+ * Start a gateway and put a client in its OWN world through it (worlds are created on demand).
  * Returns { client, gwPort, ownId, account, stop }.
  */
 export async function startGatewayAndClient(ctx, opts = {}) {
@@ -84,13 +84,10 @@ export async function startGatewayAndClient(ctx, opts = {}) {
     '--shared', ctx.serverDataDir,
     '--base-port', String(gwPort + 200),
     '--max-worlds', String(maxWorlds),
-    // ASK FOR THE PUBLIC WORLD. The server defaults [worlds] publicEnabled to FALSE
-    // (config.ts:442) and gateway/main.ts:113 states it outright -- no public world unless the
+    // No public world: the flag AND the mode died with the Solo/Party model. Worlds exist
+    // only when an authed account creates one, which is what this helper does below --
     // deployment asks. This helper never asked, then asserted 60s later that one came up, so
-    // s47/s53/s57 failed on "the gateway must bring its public world up" with the gateway
-    // correctly reporting publicEnabled:false, publicWorlds:0. Harness/server drift, not a
-    // product fault: the assertion was written when public-by-default was the behaviour.
-    '--public-world', 'vvardenfell',
+    // exactly the production flow.
     ...(idleReapMs ? ['--idle-reap-ms', String(idleReapMs)] : []),
     // Spawned worlds must boot WITHOUT real game data, a peer binary or a server password --
     // a harness has none of those, and server.mjs refuses on all three.
@@ -107,23 +104,10 @@ export async function startGatewayAndClient(ctx, opts = {}) {
   try {
     assert.ok(await waitHttp(`http://127.0.0.1:${gwPort}/healthz`, 30_000), 'the gateway must come up');
 
-    // The PUBLIC world has to be up before anything is dialled. healthz only says the gateway
-    // answers; dialling a world still booting gets the 502 a down world is supposed to give,
-    // and that race reads as "the gateway upgrade path is broken" when it is not.
-    const upBy = Date.now() + 60_000;
-    let publicUp = false;
-    while (Date.now() < upBy) {
-      try {
-        const l = await (await fetch(`http://127.0.0.1:${gwPort}/worlds`)).json();
-        if ((l.worlds ?? []).find((w) => w.mode === 'public')?.up) { publicUp = true; break; }
-      } catch { /* not answering yet */ }
-      await ctx.sleep(1000);
-    }
-    assert.ok(publicUp, 'the gateway must bring its public world up');
-
-    // The player's OWN world. A brand-new account is refused by public with "finish creating
-    // your character in your private world first", so booting into public could never work.
-    // Named priv-* because that is the only prefix the gateway will revive on dial.
+    // The player's OWN world -- the only kind there is now. Dialling a world still booting
+    // gets the 502 a down world is supposed to give, so the helper waits for `up` below
+    // before handing anyone a client. Named priv-* because that is the only prefix the
+    // gateway will revive on dial.
     const account = `${name}-${ctx.runId}`;
     const token = await harnessSession(gwPort, account);
     const mk = await fetch(`http://127.0.0.1:${gwPort}/worlds`, {
