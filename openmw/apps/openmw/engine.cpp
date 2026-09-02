@@ -463,12 +463,6 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
                 if (c->getStats())
                     c->getStats()->collectStats("rendering", true);
             stats->collectStats("engine", true); // ScopedProfile buckets (prefix + "_time_taken")
-            // E1: the per-manager resource cache report (cachestats.cpp: SceneManager,
-            // NifFileManager, BulletShapeManager, KeyframeManager, ImageManager ...) sits
-            // behind collectStats("resource"), which only the in-game stats overlay ever
-            // arms -- so a headless peer wrote a stats file with no resource lines at all.
-            // Arm it here too: the whole block is already gated on OPENMW_OSG_STATS_FILE.
-            stats->collectStats("resource", true);
             double cull = 0.0, draw = 0.0, v = 0.0;
             for (osg::Camera* c : cams)
             {
@@ -1487,6 +1481,16 @@ void OMW::Engine::go()
         stats.open(path, std::ios_base::out);
         if (stats.is_open())
             Log(Debug::Info) << "OSG stats will be written to: " << path;
+            // E1: the per-manager resource cache report (cachestats.cpp: Node/SceneManager,
+            // Nif, BulletShape, Keyframe, Image ...) is written only while
+            // collectStats("resource") is armed, which nothing but the in-game stats
+            // overlay ever does -- a headless peer with a stats file got 47k Viewer/Camera
+            // frame lines and not one resource attribute. Asking for the file IS asking for
+            // the report: arm it here, for every build, the moment the file opens. (A first
+            // attempt armed it inside the ?perfstats QA block -- wasm-only and off by
+            // default -- which the native peer never executes.)
+            mViewer->getViewerStats()->collectStats("resource", true);
+            mViewer->getViewerStats()->collectStats("engine", true);
         else
             Log(Debug::Warning) << "Failed to open file to write OSG stats \"" << path
                                 << "\": " << std::generic_category().message(errno);
