@@ -747,6 +747,14 @@ namespace MWLua
                 bool ignoreResistances = options.get_or("ignoreResistances", false);
                 sol::table effects = options.get<sol::table>("effects");
                 bool quiet = options.get_or("quiet", false);
+                // E7 (MP): seconds already ELAPSED since the spell was cast, so a restored
+                // buff RESUMES instead of refreshing. activeSpells:add() always set
+                // mTimeLeft = mDuration, which made any restore a relog-to-refresh exploit —
+                // recorded as WON'T FIX until an authoritative peer needed avatars to keep
+                // their buffs across a handover. Clamped both ways: it can only shorten what
+                // remains, never extend it, so the exploit direction is closed by
+                // construction. Omitted (every existing caller) = exactly the old behaviour.
+                const float elapsed = std::max(0.f, options.get_or("elapsed", 0.f));
                 if (effects.empty())
                     throw std::runtime_error("Error:  Parameter 'effects': cannot be an empty list/table");
                 const MWWorld::ESMStore& esmStore = *MWBase::Environment::get().getESMStore();
@@ -787,7 +795,9 @@ namespace MWLua
                     bool hasDuration = !(mgef->mData.mFlags & ESM::MagicEffect::NoDuration);
                     effect.mDuration = hasDuration ? static_cast<float>(enam.mData.mDuration) : 1.f;
 
-                    effect.mTimeLeft = effect.mDuration;
+                    effect.mTimeLeft = hasDuration && elapsed > 0.f
+                        ? std::max(0.f, effect.mDuration - elapsed)
+                        : effect.mDuration;
                     params.getEffects().emplace_back(effect);
 
                     affectsHealth = affectsHealth || mgef->mData.mFlags & ESM::MagicEffect::Harmful

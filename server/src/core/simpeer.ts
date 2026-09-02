@@ -30,6 +30,8 @@ export interface SimPeerSettings {
   idleReapMs: number;
   startTimeoutMs: number;
   restartBackoffMs: number;
+  /** E1 measurement: OPENMW_OSG_STATS_FILE for the peer; empty/absent = off. */
+  osgStatsFile?: string;
 }
 
 // Injected so tests can drive the supervisor without launching a real engine.
@@ -241,6 +243,12 @@ export class SimPeerSupervisor {
       OPENMW_MP_URL: this.deps.wsUrl(),
       OPENMW_MP_NAME: peerAccountName(key),
       OPENMW_MP_PASS: this.deps.password,
+      // E1 MEASUREMENT: OpenMW's own resource-cache stats writer (engine.cpp reads this env
+      // var; cachestats.cpp emits per-manager counts — SceneManager, NifFileManager,
+      // BulletShapeManager, KeyframeManager, ImageManager). One flag turns every "how much
+      // does the peer cache" estimate into a number, with zero engine change. Off by default:
+      // the file grows for the peer's whole life.
+      ...(s.osgStatsFile ? { OPENMW_OSG_STATS_FILE: s.osgStatsFile } : {}),
     };
     let child: ChildProcess;
     try {

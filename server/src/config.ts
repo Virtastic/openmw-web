@@ -59,6 +59,9 @@ export interface Config {
      *  border does not flap the peer's grid. Dropping an anchor is cheap — the engine unloads
      *  cells no anchor covers — so this is purely hysteresis. */
     anchorIdleSec: number;
+    /** E1 measurement: path for OPENMW_OSG_STATS_FILE on the peer (resource-cache counts).
+     *  Empty = off. Set it for a measurement run, read the file, turn it back off. */
+    osgStatsFile: string;
     idleReapMs: number; // reap a peer whose world has had no humans this long
     startTimeoutMs: number;
     restartBackoffMs: number;
@@ -495,6 +498,7 @@ function validate(t: Tree): Config {
       startCell: reqStr(t, 'simPeer', 'startCell'),
       maxPeers: reqNum(t, 'simPeer', 'maxPeers'),
       anchorIdleSec: optNum(t, 'simPeer', 'anchorIdleSec', 60),
+      osgStatsFile: optStr(t, 'simPeer', 'osgStatsFile', ''),
       idleReapMs: reqNum(t, 'simPeer', 'idleReapMs'),
       startTimeoutMs: reqNum(t, 'simPeer', 'startTimeoutMs'),
       restartBackoffMs: reqNum(t, 'simPeer', 'restartBackoffMs'),
