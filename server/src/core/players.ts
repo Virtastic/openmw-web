@@ -62,6 +62,9 @@ export interface Player {
   // fresh, this player's canonical pose is the PEER's answer, not the client's claim.
   inputSeq?: number;
   lastInputSeq?: number;
+  // Wall-clock of the newest PlayerInput frame from this connection; the peer's avatar pose
+  // only overrides the client-authored one while this is fresh (per-player degraded mode).
+  lastInputAt?: number;
   peerPoseAt?: number;
   poseVersion: number;
   // Phase 3.6: wall-clock of the last accepted pose, for the plausible-speed envelope.

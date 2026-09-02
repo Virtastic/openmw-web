@@ -54,6 +54,13 @@ test('PlayerInput is forwarded to the world peer, stamped with the owning id', a
 
 test('the peer\'s AvatarMoveBatch is the pose everyone sees, and the owner reconciles', async (t) => {
   const { server, peer, a } = await world(t);
+  // The peer's pose only RULES a player who is actually driving the input tier: without
+  // fresh PlayerInput the entry is ignored (per-player degraded mode -- an input-less
+  // avatar coasts to a stop and must not freeze the player for everyone). Keep it fresh.
+  let inputSeq = 0;
+  a.sendInput({ move: 1 }, ++inputSeq);
+  const inputTimer = setInterval(() => a.sendInput({ move: 1 }, ++inputSeq), 100);
+  t.after(() => clearInterval(inputTimer));
   // A second player to observe the fan-out.
   const b = await TestClient.connect(server.port);
   t.after(() => b.close());
@@ -87,6 +94,13 @@ test('the peer\'s AvatarMoveBatch is the pose everyone sees, and the owner recon
 
 test('a CLIENT sending AvatarMoveBatch is refused and counted; the real peer still lands', async (t) => {
   const { peer, a } = await world(t);
+  // The peer's pose only RULES a player who is actually driving the input tier: without
+  // fresh PlayerInput the entry is ignored (per-player degraded mode -- an input-less
+  // avatar coasts to a stop and must not freeze the player for everyone). Keep it fresh.
+  let inputSeq = 0;
+  a.sendInput({ move: 1 }, ++inputSeq);
+  const inputTimer = setInterval(() => a.sendInput({ move: 1 }, ++inputSeq), 100);
+  t.after(() => clearInterval(inputTimer));
   const before = (metrics.avatarBatchRejected.get({ reason: 'not_peer' }) ?? 0);
 
   // The forgery: a client claims to author avatar poses.

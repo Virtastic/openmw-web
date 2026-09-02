@@ -723,6 +723,7 @@ export class Connection implements Peer {
     }
     if (player.inputSeq !== undefined && seq <= player.inputSeq) return; // stale/replayed
     player.inputSeq = seq;
+    player.lastInputAt = Date.now();
     const peer = this.ctx.roster.inWorld().find((p) => p.system === true);
     if (!peer) {
       metrics.playerInputDropped.inc({ reason: 'no_peer' });
@@ -732,6 +733,11 @@ export class Connection implements Peer {
     peer.peer.sendBinaryFrame(MSG_PLAYER_INPUT,
       packEnvelope(MSG_PLAYER_INPUT, nextBroadcastSeq(), packInputForward(player.id, payload)));
   }
+
+  // How recently a client must have sent PlayerInput for the peer's pose to rule it.
+  // Comfortably above the 33ms send cadence, small enough that an input outage hands
+  // movement back to the client within a breath.
+  private static readonly INPUT_ACTIVE_MS = 1_000;
 
   // Phase 3, 0x0105 AvatarMoveBatch: the authoritative result, from the WORLD PEER ONLY.
   // A client sending this is forging other players' movement — refused and counted, the
@@ -754,6 +760,14 @@ export class Connection implements Peer {
     for (const e of entries) {
       const p = this.ctx.roster.get(e.id);
       if (!p || p.system === true || !p.inWorld) continue;
+      // ONLY a player actually driving the input tier is ruled by the peer's pose. A client
+      // that sends no PlayerInput (an old client, a protocol bot, a browser mid-outage) has
+      // an avatar with no input, which coasts to a stop -- accepting its pose here would
+      // freeze that player in place for every observer while their real 0x0100 moves are
+      // gated off as "peer-fresh". Measured by s42: soak bots pinned at spawn, divergence
+      // 286 units and never reconverging. Stale input => that entry is ignored and the
+      // client-authored path stays canonical for that player, per-player degraded mode.
+      if (p.lastInputAt === undefined || now - p.lastInputAt > Connection.INPUT_ACTIVE_MS) continue;
       // The peer's answer IS the canonical pose: it feeds the same broadcaster that fans
       // remote poses out to everyone (0x0101), so other players render the authoritative
       // result with no second channel. The owner additionally gets a PlayerStateBatch with
