@@ -296,6 +296,8 @@ local function onSelfState(e)
     end
 end
 
+local lastOwnPos = nil -- teleport (single-frame jump) detector; see PlayerCellChange below
+
 local function movementTick()
     if mp.status().state ~= 'Joined' then
         lastCellKey = nil -- rejoin resends PlayerCellChange (required to become visible)
@@ -308,11 +310,19 @@ local function movementTick()
     identity.equipRetryTick(now)
 
     -- PlayerCellChange: immediately once Joined (before it we are invisible and receive no
-    -- batches), then on every cell change.
+    -- batches), then on every cell change -- AND on any single-frame position jump. A jump
+    -- is a teleport (respawn in the same cell, a scripted move, console): the peer's avatar
+    -- follows this event and the server opens the reconciliation grace window on it, so a
+    -- teleport that stays inside the cell must announce too or the avatar keeps streaming
+    -- the old spot and reconciliation drags the player straight back (s22: the respawned
+    -- player could never walk away from their own corpse). 512 units/frame is far beyond
+    -- any legitimate movement speed.
     local key = cellKey()
-    if key and key ~= lastCellKey then
+    local pos = self.position
+    local jumped = lastOwnPos ~= nil and (pos - lastOwnPos):length2() > 512 * 512
+    lastOwnPos = pos
+    if key and (key ~= lastCellKey or jumped) then
         lastCellKey = key
-        local pos = self.position
         mp.sendEvent('PlayerCellChange', { cellKey = key, x = pos.x, y = pos.y, z = pos.z })
     end
 
