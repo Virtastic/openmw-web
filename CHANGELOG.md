@@ -2,9 +2,12 @@
 
 Notable changes to OpenMW-Web. Dates are release dates, newest first.
 
-## 1.3.0
+## 1.2.0
 
-The update release: a server that keeps itself current from a click.
+The dashboard release. 1.1.0 put a multiplayer service around the engine; 1.2.0 makes the
+whole server something a person runs from a browser: setup is a wizard, mods are installed
+and ordered on a page, Tamriel Rebuilt has a path of its own, and the unfinished parts say
+so instead of waiting to be discovered.
 
 **Updating is a button now.** The Updates page shows what you run and what is newest, for
 both halves: the server and the game client. Clicking Update on the client makes the server
@@ -49,13 +52,6 @@ internal-hosting lecture about shared memory moved out of the wizard into the do
 
 **The logo is the actual Virtastic mark everywhere**, favicons included, and og.png was
 regenerated from the brand asset.
-
-## 1.2.0
-
-The dashboard release. 1.1.0 put a multiplayer service around the engine; 1.2.0 makes the
-whole server something a person runs from a browser: setup is a wizard, mods are installed
-and ordered on a page, Tamriel Rebuilt has a path of its own, and the unfinished parts say
-so instead of waiting to be discovered.
 
 **Setting a server up no longer involves a terminal.** `./setup.sh` starts the stack and opens
 a browser, and everything after that is a wizard: the administrator account, single player or
