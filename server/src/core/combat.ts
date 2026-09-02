@@ -13,6 +13,7 @@
 import { lToJs, type LTable, type LValue, type JsLike } from '../proto/lser';
 import { parseObjRef, type ObjRef } from '../proto/ref';
 import type { Player, Roster } from './players';
+import { INPUT_DRIVING_MS } from './players';
 import { cellsVisible, MAX_ABS_COORD } from './movement';
 import { TokenBucket } from '../net/ratelimit';
 import { metrics } from '../metrics';
@@ -240,7 +241,7 @@ export class Combat {
       // ignored (4A one-writer rule) -- so damage applied on their client would vanish. The
       // world peer applies the hit to the victim's AVATAR instead, and the damage travels
       // back through the peer's bar reports. An input-less victim keeps the old delivery.
-      if (victim.lastInputAt !== undefined && Date.now() - victim.lastInputAt <= 1_000) {
+      if (victim.lastInputAt !== undefined && Date.now() - victim.lastInputAt <= INPUT_DRIVING_MS) {
         const worldPeer = this.ctx.roster.inWorld().find((p) => p.system === true);
         if (worldPeer) return worldPeer;
       }

@@ -1,16 +1,19 @@
 // Copyright (C) 2025-2026 Virtastic - https://virtastic.app
 // SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
-// s60 (Phase 4A): THE PEER'S AVATAR BARS ARE THE PLAYER'S BARS.
+// s66 (Phase 4A+4B): DAMAGE TO A DRIVING PLAYER LANDS ON THEIR AVATAR, AND THE PEER'S BARS
+// ARE WHAT THE OWNER SEES.
 //
-// The player teleports 600 units straight up (tpz: rides the same mpSelfSnap hop the
-// reconciliation hard snap uses). The self-teleport announces itself as a PlayerCellChange,
-// the peer teleports the AVATAR to match, and the avatar then FALLS on the peer and takes
-// fall damage there. The peer reports the damaged bars (AvatarStatsBatch); the server hands
-// the owner MP_SelfStats; player.lua mirrors it into the `selfStats` marker.
+// The attacker hits the victim (hitp -> CombatHit {playerId}). Because the victim is driving
+// the input tier, the server routes the hit to the SIM PEER (4B), which applies it to the
+// victim's avatar; the damaged bars travel back as AvatarStatsBatch and the owner receives
+// MP_SelfStats (4A), mirrored into `selfStats`. hp alone proves nothing (the old
+// victim-applies path would drop it too) -- the selfStats marker only exists on the peer
+// path, and that is the assertion.
 //
-// The marker is the point: a local fall would drop the local hp too, so hp alone proves
-// nothing. Only MP_SelfStats sets `selfStats` — its presence with a reduced current value is
-// the proof that peer-simulated damage travelled peer → server → owner.
+// (The first draft teleported one player 3000 units up to farm fall damage. The engine
+// ground-clamps a teleported ACTOR, so the avatar never fell -- and the reconciliation snap
+// that pulled the falling client back to its grounded avatar was the authority loop working
+// exactly as designed.)
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -22,6 +25,8 @@ export const bootTimeoutMs = 420_000;
 export const serverRules = `
 [content]
 enforce = "off"
+[rules]
+pvp = true
 `;
 
 const STEP_TIMEOUT = 30_000;
@@ -38,40 +43,40 @@ export default async function run(ctx) {
       + 'Run under wasm-build/Dockerfile.harness-peer.');
     return;
   }
-  const a = await ctx.launchClient('faller', '', BOOT);
+  const [victim, attacker] = await Promise.all([
+    ctx.launchClient('victim', '', BOOT),
+    ctx.launchClient('attacker', '', BOOT),
+  ]);
 
-  // The peer must hold the cell (its avatar embodies the player there).
   const deadline = Date.now() + 300_000;
   let owner = 'none';
   while (Date.now() < deadline) {
-    owner = await a.eval('(window.__omwMP||{}).authorityHolder');
+    owner = await victim.eval('(window.__omwMP||{}).authorityHolder');
     if (owner && owner !== 'none') break;
     await ctx.sleep(500);
   }
   assert.notEqual(owner, 'none', 'the simulating peer never took the cell');
   ctx.log(`cell owner=${owner}`);
 
-  // Let the input tier and the peer's stats stream settle: full-health reports may or may
-  // not arrive (diffed), so do not wait on the marker yet.
-  await ctx.sleep(3_000);
+  // The attacker needs the victim's session id to aim hitp.
+  await victim.waitFor("Number((window.__omwMP||{}).playerId||0) > 0", STEP_TIMEOUT, 'victim knows its id');
+  const victimId = Number(await victim.eval('(window.__omwMP||{}).playerId'));
+  ctx.log(`victim id=${victimId}; attacker starts hitting`);
 
-  // Up 3000 units -- 600 was under Morrowind's safe-fall height at any acrobatics, so the
-  // avatar landed unharmed and the wait read like a wiring failure. The avatar follows the
-  // announcement and falls on the peer.
-  await a.eval(`Module.__omwMPCmd=${JSON.stringify('tpz:3000')}`);
-  ctx.log('teleported up 3000 units; waiting for the peer-reported bars to drop');
-
-  await a.waitFor(
-    `(function(){var s=(window.__omwMP||{}).selfStats; if(!s) return false;`
-    + ` var m=/^(\\d+)\\/(\\d+)$/.exec(s); return !!m && Number(m[1]) < Number(m[2]); })()`,
-    STEP_TIMEOUT, 'MP_SelfStats with current < base (peer-simulated fall damage)')
-    .catch(async (e) => {
-      ctx.log('  DIAG selfStats=' + String(await a.eval('(window.__omwMP||{}).selfStats'))
-        + ' selfDivergence=' + String(await a.eval('(window.__omwMP||{}).selfDivergence')));
-      throw e;
-    });
-  // On timeout the mirrors say which half failed (never arrived vs never dropped).
-  const marker = await a.eval('(window.__omwMP||{}).selfStats');
-  ctx.log('  selfDivergence=' + String(await a.eval('(window.__omwMP||{}).selfDivergence')));
-  ctx.log(`ok: peer-reported bars reached the owner (selfStats=${marker})`);
+  // Repeat until the peer-reported bars drop: one hit can race the input-tier warmup.
+  const hitUntil = Date.now() + STEP_TIMEOUT;
+  let dropped = false;
+  while (Date.now() < hitUntil && !dropped) {
+    await attacker.eval(`Module.__omwMPCmd=${JSON.stringify(`hitp:${victimId}:15`)}`);
+    await ctx.sleep(1500);
+    const s = String(await victim.eval('(window.__omwMP||{}).selfStats') ?? '');
+    const m = /^(\d+)\/(\d+)$/.exec(s);
+    if (m && Number(m[1]) < Number(m[2])) dropped = true;
+  }
+  const marker = await victim.eval('(window.__omwMP||{}).selfStats');
+  ctx.log(`selfStats=${marker}`);
+  assert.ok(dropped,
+    'the peer-reported bars never dropped: either the PvP hit was not routed to the peer '
+    + '(4B) or the avatar bar report never reached the owner (4A). selfStats=' + String(marker));
+  ctx.log('ok: PvP damage landed on the avatar and the peer-reported bars reached the owner');
 }

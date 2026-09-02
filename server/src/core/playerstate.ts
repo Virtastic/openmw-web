@@ -7,6 +7,7 @@
 
 import type { LValue, LTable, JsLike } from '../proto/lser';
 import type { Player, Roster } from './players';
+import { INPUT_DRIVING_MS } from './players';
 import type { PlayerStore, PlayerAppearanceDoc, PlayerDoc, DynamicStatDoc } from '../persist/playerstore';
 import { cellsVisible } from './movement';
 import { log } from '../log';
@@ -345,7 +346,7 @@ function handleItemAcquired(ctx: StateCtx, player: Player, body: LTable): boolea
 // Phase 4A: the peer's avatar bar reports. System-only; each entry lands exactly like a
 // client PlayerStatsDynamic (doc + relay + death flush) and additionally hands the OWNER
 // their own bars as MP_SelfStats -- the client renders what the peer simulated.
-const PEER_STATS_FRESH_MS = 1_000;
+const PEER_STATS_FRESH_MS = INPUT_DRIVING_MS; // one predicate everywhere (players.ts)
 
 export function handleAvatarStatsBatch(ctx: StateCtx, sender: Player, value: LValue | undefined): void {
   if (sender.system !== true) return; // forgery: only the world peer reports avatars
@@ -365,7 +366,17 @@ export function handleAvatarStatsBatch(ctx: StateCtx, sender: Player, value: LVa
     if (!p || p.system === true || !p.inWorld) continue;
     // Same rule as avatar poses: the peer's answer only rules a player who is actively
     // driving the input tier. An input-less client keeps asserting its own bars.
-    if (p.lastInputAt === undefined || now - p.lastInputAt > PEER_STATS_FRESH_MS) continue;
+    if (p.lastInputAt === undefined || now - p.lastInputAt > PEER_STATS_FRESH_MS) {
+      if (p.statsDropLogged !== true) {
+        p.statsDropLogged = true;
+        log('info', 'simpeer.avatar_stats_gated', {
+          id: p.id, name: p.name,
+          lastInputAgoMs: p.lastInputAt === undefined ? -1 : now - p.lastInputAt,
+          note: 'peer bar report ignored: player not driving the input tier' });
+      }
+      continue;
+    }
+    p.statsDropLogged = false;
     p.peerStatsAt = now;
     const died = hp.c <= 0;
     ctx.store.update(p.charId, (doc) => {

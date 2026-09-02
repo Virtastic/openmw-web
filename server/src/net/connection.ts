@@ -11,6 +11,7 @@ import { validEmail, validAccountName, DEFAULT_CHARACTER_NAME, type AccountStore
 import type { AttioHook } from '../integrations/attio';
 import type { ContentGate, EngineGate } from '../core/manifest';
 import type { Player, Peer, Roster } from '../core/players';
+import { INPUT_DRIVING_MS } from '../core/players';
 import type { CommandRegistry, CommandContext } from '../core/commands';
 import type { HookBus } from '../plugins/loader';
 import { handleChatSend } from '../core/chat';
@@ -739,10 +740,7 @@ export class Connection implements Peer {
       packEnvelope(MSG_PLAYER_INPUT, nextBroadcastSeq(), packInputForward(player.id, payload)));
   }
 
-  // How recently a client must have sent PlayerInput for the peer's pose to rule it.
-  // Comfortably above the 33ms send cadence, small enough that an input outage hands
-  // movement back to the client within a breath.
-  private static readonly INPUT_ACTIVE_MS = 1_000;
+  private static readonly INPUT_ACTIVE_MS = INPUT_DRIVING_MS; // players.ts owns the reasoning
 
   // Phase 3, 0x0105 AvatarMoveBatch: the authoritative result, from the WORLD PEER ONLY.
   // A client sending this is forging other players' movement — refused and counted, the

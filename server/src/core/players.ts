@@ -19,6 +19,13 @@ export interface Peer {
   disconnect(code: DisconnectCode, detail: string): void;
 }
 
+// How recently a client must have sent PlayerInput to count as DRIVING the input tier --
+// the predicate behind every "the peer's answer rules this player" gate (poses, bars, PvP
+// routing). 5s, not the send cadence: a browser under load stutters (measured: a SwiftShader
+// frame gap put 1.17s between inputs and flapped every gate at 1s), and the only cost of a
+// longer window is how long a vanished client's last authority lingers.
+export const INPUT_DRIVING_MS = 5_000;
+
 export interface Player {
   id: number;
   name: string; // display casing
@@ -76,7 +83,8 @@ export interface Player {
   // their corpse). Cleared the moment the peer streams a pose NEAR this target -- a fixed
   // timer raced the peer's actual catch-up and lost on slow boxes.
   teleportPose?: { x: number; y: number; z: number; at: number };
-  avatarPoseLogged?: boolean; // simpeer.avatar_first_pose emitted for this session
+  avatarPoseLogged?: boolean;
+  statsDropLogged?: boolean; // one simpeer.avatar_stats_gated log per streak // simpeer.avatar_first_pose emitted for this session
   peerPoseAt?: number;
   poseVersion: number;
   // Phase 3.6: wall-clock of the last accepted pose, for the plausible-speed envelope.

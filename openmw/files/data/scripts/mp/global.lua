@@ -558,6 +558,9 @@ end
 local avatarStatsAt = 0
 local AVATAR_STATS_EVERY = 0.25
 local avatarStatsLast = {} -- id -> serialized last report (diff suppression)
+local avatarStatsSentAt = {} -- id -> last SEND time: dropped is not the same as unchanged
+local avatarStatsAnnounced = false
+local AVATAR_STATS_REFRESH_S = 3.0
 
 local function avatarStatsTick(now)
     if not (mp.isSystem and mp.isSystem()) then return end
@@ -577,14 +580,26 @@ local function avatarStatsTick(now)
             if ok and entry then
                 local key = string.format('%d:%.1f/%.1f %.1f/%.1f %.1f/%.1f', entry.id,
                     entry.hp.c, entry.hp.b, entry.mp.c, entry.mp.b, entry.ft.c, entry.ft.b)
-                if avatarStatsLast[id] ~= key then
+                -- Diff for cadence, REFRESH for correctness: the server may drop a report
+                -- (the owner's input tier not warmed up yet, a teleport race), and a dropped
+                -- report the diff never retries is a player whose bars freeze forever.
+                if avatarStatsLast[id] ~= key
+                    or now - (avatarStatsSentAt[id] or 0) >= AVATAR_STATS_REFRESH_S then
                     avatarStatsLast[id] = key
+                    avatarStatsSentAt[id] = now
                     entries[#entries + 1] = entry
                 end
             end
         end
     end
-    if #entries > 0 then mp.sendEvent('AvatarStatsBatch', { entries = entries }) end
+    if #entries > 0 then
+        if not avatarStatsAnnounced then
+            avatarStatsAnnounced = true
+            print(string.format('[mp] avatar stats reporting began (%d entr%s)', #entries,
+                #entries == 1 and 'y' or 'ies'))
+        end
+        mp.sendEvent('AvatarStatsBatch', { entries = entries })
+    end
 end
 
 local function spawnPuppet(id, pose)
@@ -630,6 +645,7 @@ local function despawnPuppet(id)
     if not p then return end
     puppets[id] = nil
     avatarStatsLast[id] = nil
+    avatarStatsSentAt[id] = nil
     -- Guarded, and deliberately AFTER the bookkeeping above: remove() throws when the
     -- object is already gone or otherwise not removable ("Can't remove 0 of 0 items"), and
     -- an engine handler that throws ABORTS — which took the rest of MP_PlayerLeaveWorld
@@ -1469,7 +1485,11 @@ local eventHandlers = {
                 -- cell); on a client it is our own cell, as before — the two agree whenever
                 -- the mover is genuinely visible.
                 local dest = (mp.isSystem and mp.isSystem()) and inviteCellArg(data.cellKey) or destCellArg()
-                tryTeleport(p.obj, dest, util.vector3(data.x, data.y, data.z))
+                local moved = tryTeleport(p.obj, dest, util.vector3(data.x, data.y, data.z))
+                if mp.isSystem and mp.isSystem() then
+                    print(string.format('[mp] avatar #%d follow-teleport to (%.0f,%.0f,%.0f) ok=%s',
+                        data.id, data.x, data.y, data.z, tostring(moved)))
+                end
             else
                 spawnPuppet(data.id, data)
             end
