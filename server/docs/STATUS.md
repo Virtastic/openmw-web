@@ -79,8 +79,8 @@ suite 993/1001 (2 known env failures), Lua suite 60/60.
 never initialises MyGUI) — every reachable caller is guarded (LuaUi elements, input modal
 check, message-box formatting). `avatar.lua` must be registered in `mp.omwscripts`. An
 identical appearance relay must NOT rebuild a puppet — on the peer that tore avatars down
-every ~8 s. The avatar deliberately never swings (use bit unmapped): melee stays on the
-attacker-detects relay applied once on the peer, or every swing lands twice.
+every ~8 s. The avatar could not be allowed to swing until the client stopped forwarding real melee
+(4C did both sides at once) -- with only one side changed, every swing landed twice.
 
 **Deferred with intent:** attacker-side melee/cast migration (needs the discrete-intent
 tier), inventory request→result (needs a vetoing engine hook; `OnItemTransferred` is
