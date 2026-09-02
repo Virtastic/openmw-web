@@ -1480,6 +1480,7 @@ void OMW::Engine::go()
     {
         stats.open(path, std::ios_base::out);
         if (stats.is_open())
+        {
             Log(Debug::Info) << "OSG stats will be written to: " << path;
             // E1: the per-manager resource cache report (cachestats.cpp: Node/SceneManager,
             // Nif, BulletShape, Keyframe, Image ...) is written only while
@@ -1491,6 +1492,7 @@ void OMW::Engine::go()
             // default -- which the native peer never executes.)
             mViewer->getViewerStats()->collectStats("resource", true);
             mViewer->getViewerStats()->collectStats("engine", true);
+        }
         else
             Log(Debug::Warning) << "Failed to open file to write OSG stats \"" << path
                                 << "\": " << std::generic_category().message(errno);
