@@ -327,6 +327,21 @@ namespace MWLua
             mEngineEvents.addToQueue(EngineEvents::OnTeleported{ getId(ptr) });
     }
 
+    void LuaManager::itemTransferred(const MWWorld::Ptr& container, const ESM::RefId& itemId, int count, bool added)
+    {
+        if (mPlayer.isEmpty())
+            return; // world still loading; initial fills are not transactions
+        mEngineEvents.addToQueue(
+            EngineEvents::OnItemTransferred{ getId(container), itemId.serializeText(), count, added });
+    }
+
+    void LuaManager::globalVariableChanged(std::string_view name, float value)
+    {
+        if (mPlayer.isEmpty())
+            return; // The game is not started yet (including the initial load's own writes).
+        mGlobalScripts.onGlobalVariableChanged(name, value);
+    }
+
     void LuaManager::questUpdated(const ESM::RefId& questId, int stage)
     {
         if (mPlayer.isEmpty())

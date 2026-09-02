@@ -1,7 +1,11 @@
 #ifndef OPENMW_MWMECHANICS_ACTORUTIL_H
 #define OPENMW_MWMECHANICS_ACTORUTIL_H
 
+#include <vector>
+
 #include <osg/Vec3f>
+
+#include <components/esm/attr.hpp>
 
 namespace MWWorld
 {
@@ -32,6 +36,12 @@ namespace MWMechanics
      *  distance across a door is meaningless (the room may be a mile away in world units), so
      *  a range check would cull exactly the NPCs the server asked to simulate. */
     bool inSimProcessingRange(const MWWorld::Ptr& actor);
+
+    /** E5 (MP): apply a level-up to `actor` with the chosen attribute picks (typically 3).
+     *  This is the APPLY half only — selection UI is the caller's problem — extracted from
+     *  LevelupDialog::onOkButtonClicked so a headless peer can level a character at all:
+     *  before this, the only code that could spend a level lived inside a MyGUI dialog. */
+    void applyLevelup(const MWWorld::Ptr& actor, const std::vector<ESM::Attribute::AttributeID>& attributes);
 }
 
 #endif

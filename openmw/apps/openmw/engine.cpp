@@ -1604,11 +1604,26 @@ void OMW::Engine::go()
     // in main() so the pump can keep ticking it.
     return;
 #else
+    // E3 (MP): FIXED simulation timestep, HEADLESS ONLY. The wall-clock dt makes physics
+    // adaptively non-deterministic under load by design (calculateStepConfig abandons the
+    // fixed step on overrun), so AI and movement resolution silently degrade when the host
+    // is busy — the "some NPCs behave differently under load" class of bug, which on an
+    // authoritative peer becomes everyone's bug at once. The peer is paced by its own
+    // framerate limit (settings.cfg, 20 fps), so a fixed dt of 1/limit keeps game time
+    // honest while making each tick simulate the same amount.
+    //
+    // MUST stay headless-only: a fixed dt in single-player makes game time run slow on a
+    // struggling machine — the 200 ms hitch clamp exists precisely to prevent that. This
+    // buys CONSISTENCY, not replay determinism (Misc::Rng stays process-global).
+    static const bool headlessFixedDt = std::getenv("OPENMW_HEADLESS") != nullptr;
+    const double fixedDt = 1.0 / std::max(1.0f, Settings::video().mFramerateLimit.get());
     while (!mViewer->done() && !mStateManager->hasQuitRequest())
     {
-        const double dt = std::chrono::duration_cast<std::chrono::duration<double>>(
-                              std::min(frameRateLimiter.getLastFrameDuration(), maxSimulationInterval))
-                              .count()
+        const double dt = (headlessFixedDt
+                              ? fixedDt
+                              : std::chrono::duration_cast<std::chrono::duration<double>>(
+                                    std::min(frameRateLimiter.getLastFrameDuration(), maxSimulationInterval))
+                                    .count())
             * timeManager.getSimulationTimeScale();
 
         mViewer->advance(timeManager.getRenderingSimulationTime());

@@ -11,6 +11,7 @@
 #include <components/settings/values.hpp>
 
 #include "../mwmechanics/creaturestats.hpp"
+#include "../mwmechanics/npcstats.hpp"
 #include "../mwmechanics/magiceffects.hpp"
 
 #include <components/esm3/loadmgef.hpp>
@@ -68,5 +69,19 @@ namespace MWMechanics
             return true;
         const float range = static_cast<float>(Settings::game().mActorsProcessingRange);
         return nearestSimDistanceSqr(actor.getRefData().getPosition().asVec3()) <= range * range;
+    }
+
+    void applyLevelup(const MWWorld::Ptr& actor, const std::vector<ESM::Attribute::AttributeID>& attributes)
+    {
+        MWMechanics::NpcStats& stats = actor.getClass().getNpcStats(actor);
+        for (const ESM::Attribute::AttributeID attributeId : attributes)
+        {
+            MWMechanics::AttributeValue attribute = stats.getAttribute(attributeId);
+            attribute.setBase(attribute.getBase() + stats.getLevelupAttributeMultiplier(attributeId));
+            if (attribute.getBase() >= 100)
+                attribute.setBase(100);
+            stats.setAttribute(attributeId, attribute);
+        }
+        stats.levelUp();
     }
 }

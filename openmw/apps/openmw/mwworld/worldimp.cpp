@@ -586,12 +586,21 @@ namespace MWWorld
     {
         mTimeManager->updateGlobalInt(name, value);
         mGlobalVariables[name].setInteger(value);
+        // MP (E5): these writes were silent — quest state advanced by MWScript was invisible
+        // to Lua, so an authoritative peer could not broadcast it. The time globals churn
+        // every frame and are already synced by their own channel; skip them.
+        const std::string_view n = name.getValue();
+        if (n != Globals::sGameHour.getValue() && n != Globals::sTimeScale.getValue())
+            MWBase::Environment::get().getLuaManager()->globalVariableChanged(n, static_cast<float>(value));
     }
 
     void World::setGlobalFloat(GlobalVariableName name, float value)
     {
         mTimeManager->updateGlobalFloat(name, value);
         mGlobalVariables[name].setFloat(value);
+        const std::string_view n = name.getValue();
+        if (n != Globals::sGameHour.getValue() && n != Globals::sTimeScale.getValue())
+            MWBase::Environment::get().getLuaManager()->globalVariableChanged(n, value);
     }
 
     int World::getGlobalInt(GlobalVariableName name) const
@@ -2734,6 +2743,13 @@ namespace MWWorld
     std::vector<osg::Vec3f> World::getSimAnchorPositions() const
     {
         return mWorldScene->getSimAnchorPositions();
+    }
+
+    void World::adjustActorPosition(const MWWorld::Ptr& actor, const osg::Vec3f& offset)
+    {
+        MWPhysics::Actor* physicActor = mPhysics->getActor(actor);
+        if (physicActor != nullptr)
+            physicActor->adjustPosition(offset);
     }
 
     void World::setSimAnchors(

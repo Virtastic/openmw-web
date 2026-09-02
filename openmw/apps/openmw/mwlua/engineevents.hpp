@@ -84,8 +84,17 @@ namespace MWLua
             ESM::RefNum mActor;
             int mDays;
         };
+        // MP (E5): a containerstore transaction. The record id rides as a string because the
+        // item stack may already be gone (count hit zero) by the time the queue drains.
+        struct OnItemTransferred
+        {
+            ESM::RefNum mContainer;
+            std::string mRecordId;
+            int mCount;
+            bool mAdded;
+        };
         using Event = std::variant<OnActive, OnInactive, OnConsume, OnActivate, OnUseItem, OnNewExterior, OnTeleported,
-            OnAnimationTextKey, OnAnimationEnded, OnSkillUse, OnSkillLevelUp, OnJailTimeServed>;
+            OnAnimationTextKey, OnAnimationEnded, OnSkillUse, OnSkillLevelUp, OnJailTimeServed, OnItemTransferred>;
 
         void clear() { mQueue.clear(); }
         void addToQueue(Event e) { mQueue.push_back(std::move(e)); }

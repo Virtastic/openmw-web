@@ -583,6 +583,12 @@ namespace MWBase
         /// processing regardless of how far the local player is.
         virtual bool isAnchoredInterior(const MWWorld::CellStore* cell) const = 0;
 
+        /// MP (E5): accumulate a physics position offset on an actor, applied by the NEXT
+        /// physics step — which resolves collision, unlike moveObject/adjustPosition, and
+        /// fires no objectTeleported. The smooth-correction primitive for reconciliation;
+        /// see MWPhysics::Actor::adjustPosition. No-op for a ptr with no physics actor.
+        virtual void adjustActorPosition(const MWWorld::Ptr& actor, const osg::Vec3f& offset) = 0;
+
         /// MP: set those anchors. Server-driven; see MWWorld::Scene::setSimAnchors.
         /// Exteriors anchor by WORLD POSITION (a player's live pose, so coverage follows
         /// players exactly instead of snapping to cell centres); interiors by cell id — an

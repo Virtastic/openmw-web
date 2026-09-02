@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <map>
 #include <string>
+#include <string_view>
 #include <variant>
 
 #include <SDL_events.h>
@@ -95,6 +96,17 @@ namespace MWBase
             const MWWorld::Ptr& actor, const ESM::DialInfo& info, const ESM::Dialogue& record)
             = 0;
         virtual void questUpdated(const ESM::RefId& questId, int stage) = 0;
+        /// MP (E5): an item stack entered (`added`) or left an actor's/container's store —
+        /// the containerstore boundary, which had ZERO Lua hooks (itemConsumed/useItem cover
+        /// different things). Server-authoritative inventory needs a transaction signal here.
+        /// `container` may be empty (a store with no owner yet); `count` is the amount that
+        /// actually moved.
+        virtual void itemTransferred(const MWWorld::Ptr& container, const ESM::RefId& itemId, int count, bool added)
+            = 0;
+        /// MP (E5): an MWScript global variable was WRITTEN (setGlobalInt/Float). Quest state
+        /// advanced by mwscript was otherwise invisible to Lua — questUpdated covers journal
+        /// entries only — so an authoritative peer could not broadcast it.
+        virtual void globalVariableChanged(std::string_view name, float value) = 0;
         // `arg` is either forwarded from MWGui::pushGuiMode or empty
         virtual void uiModeChanged(const MWWorld::Ptr& arg) = 0;
         virtual void viewportResized(int width, int height) = 0;

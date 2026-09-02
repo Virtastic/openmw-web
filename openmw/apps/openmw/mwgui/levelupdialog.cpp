@@ -241,24 +241,16 @@ namespace MWGui
     void LevelupDialog::onOkButtonClicked(MyGUI::Widget* /*sender*/)
     {
         MWWorld::Ptr player = MWMechanics::getPlayer();
-        MWMechanics::NpcStats& pcStats = player.getClass().getNpcStats(player);
 
         if (mSpentAttributes.size() < mCoinCount)
             MWBase::Environment::get().getWindowManager()->messageBox("#{sNotifyMessage36}");
         else
         {
-            // increase attributes
-            for (unsigned int i = 0; i < mCoinCount; ++i)
-            {
-                MWMechanics::AttributeValue attribute = pcStats.getAttribute(mSpentAttributes[i]);
-                attribute.setBase(attribute.getBase() + pcStats.getLevelupAttributeMultiplier(mSpentAttributes[i]));
-
-                if (attribute.getBase() >= 100)
-                    attribute.setBase(100);
-                pcStats.setAttribute(mSpentAttributes[i], attribute);
-            }
-
-            pcStats.levelUp();
+            // The APPLY is shared with headless MP (E5): before the extraction, the only code
+            // able to spend a level lived inside this dialog.
+            MWMechanics::applyLevelup(player,
+                std::vector<ESM::Attribute::AttributeID>(
+                    mSpentAttributes.begin(), mSpentAttributes.begin() + mCoinCount));
 
             MWBase::Environment::get().getWindowManager()->removeGuiMode(GM_Levelup);
         }

@@ -1,6 +1,9 @@
 #ifndef MWLUA_GLOBALSCRIPTS_H
 #define MWLUA_GLOBALSCRIPTS_H
 
+#include <string>
+#include <string_view>
+
 #include <components/lua/luastate.hpp>
 #include <components/lua/scriptscontainer.hpp>
 
@@ -24,6 +27,8 @@ namespace MWLua
                 &mOnActivateHandlers,
                 &mOnUseItemHandlers,
                 &mOnNewExteriorHandlers,
+                &mOnGlobalVariableChangedHandlers,
+                &mOnItemTransferredHandlers,
             });
         }
 
@@ -41,6 +46,18 @@ namespace MWLua
             callEngineHandlers(mOnUseItemHandlers, obj, actor, force);
         }
         void onNewExterior(const GCell& cell) { callEngineHandlers(mOnNewExteriorHandlers, cell); }
+        // MP (E5): an MWScript global was written. Name is lowercased by the engine's own
+        // storage; value is the numeric value as written.
+        void onGlobalVariableChanged(std::string_view name, float value)
+        {
+            callEngineHandlers(mOnGlobalVariableChangedHandlers, std::string(name), value);
+        }
+        // MP (E5): a containerstore transaction — an item stack entered or left a store.
+        void onItemTransferred(
+            const sol::optional<GObject>& container, const std::string& recordId, int count, bool added)
+        {
+            callEngineHandlers(mOnItemTransferredHandlers, container, recordId, count, added);
+        }
 
     private:
         EngineHandlerList mObjectActiveHandlers{ "onObjectActive" };
@@ -51,6 +68,8 @@ namespace MWLua
         EngineHandlerList mOnActivateHandlers{ "onActivate" };
         EngineHandlerList mOnUseItemHandlers{ "_onUseItem" };
         EngineHandlerList mOnNewExteriorHandlers{ "onNewExterior" };
+        EngineHandlerList mOnGlobalVariableChangedHandlers{ "_onGlobalVariableChanged" };
+        EngineHandlerList mOnItemTransferredHandlers{ "_onItemTransferred" };
     };
 
 }

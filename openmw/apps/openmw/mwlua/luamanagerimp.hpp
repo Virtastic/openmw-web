@@ -108,6 +108,8 @@ namespace MWLua
         }
         void objectTeleported(const MWWorld::Ptr& ptr) override;
         void questUpdated(const ESM::RefId& questId, int stage) override;
+        void globalVariableChanged(std::string_view name, float value) override;
+        void itemTransferred(const MWWorld::Ptr& container, const ESM::RefId& itemId, int count, bool added) override;
         void uiModeChanged(const MWWorld::Ptr& arg) override;
         void viewportResized(int width, int height) override;
         void actorDied(const MWWorld::Ptr& actor) override;

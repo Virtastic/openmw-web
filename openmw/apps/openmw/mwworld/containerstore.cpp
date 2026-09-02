@@ -465,6 +465,10 @@ MWWorld::ContainerStoreIterator MWWorld::ContainerStore::add(
     // we should not fire event for InventoryStore yet - it has some custom logic
     if (mListener && typeid(*this) == typeid(ContainerStore))
         mListener->itemAdded(item, count);
+    // MP (E5): the transaction signal. Fired from the BASE add so InventoryStore's override
+    // is covered too; initial cell fills go through addInitialItemImp -> addImp and are
+    // deliberately silent (loading a cell is not a transaction).
+    MWBase::Environment::get().getLuaManager()->itemTransferred(contPtr, item.getCellRef().getRefId(), count, true);
     MWBase::Environment::get().getWindowManager()->inventoryUpdated(contPtr);
 
     return it;
@@ -700,6 +704,10 @@ int MWWorld::ContainerStore::remove(const Ptr& item, int count, bool equipReplac
     // we should not fire event for InventoryStore yet - it has some custom logic
     if (mListener && typeid(*this) == typeid(ContainerStore))
         mListener->itemRemoved(item, count - toRemove);
+    // MP (E5): the transaction signal, with the amount that actually moved.
+    if (count - toRemove > 0)
+        MWBase::Environment::get().getLuaManager()->itemTransferred(
+            getPtr(), item.getCellRef().getRefId(), count - toRemove, false);
     MWBase::Environment::get().getWindowManager()->inventoryUpdated(getPtr());
 
     // number of removed items

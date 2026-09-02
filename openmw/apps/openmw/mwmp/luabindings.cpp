@@ -370,6 +370,31 @@ namespace MWMP
             return base64Encode(LuaUtil::serialize(data, serializer));
         };
 
+        // E5/PHASE 3: mp.correctSelf(dx, dy, dz) — the smooth reconciliation primitive for
+        // the LOCAL player. It accumulates a physics offset that the NEXT physics step
+        // applies and collision-resolves (MWPhysics::Actor::adjustPosition); it never
+        // teleports, never resets physics state, and never fires objectTeleported.
+        //
+        // THE CAP IS LOAD-BEARING, not a nicety: the offset itself does not respect
+        // collision — the following step does — so an uncapped correction can push the
+        // player through geometry before physics gets a say. Anything larger than the cap
+        // is the hard-threshold snap's job (teleport, with puppet.lua's cooldowns).
+        api["correctSelf"] = [luaManager = context.mLuaManager](float dx, float dy, float dz) {
+            constexpr float maxCorrectPerCall = 48.f; // world units; ~15-30 Hz callers
+            osg::Vec3f off(dx, dy, dz);
+            const float len = off.length();
+            if (!(len > 0.f)) // also rejects NaN payloads from the network
+                return;
+            if (len > maxCorrectPerCall)
+                off *= maxCorrectPerCall / len;
+            luaManager->addAction(
+                [off] {
+                    MWBase::World* world = MWBase::Environment::get().getWorld();
+                    world->adjustActorPosition(world->getPlayerPtr(), off);
+                },
+                "MPCorrectSelf");
+        };
+
         // SIM ANCHORS. The server tells this process which regions to keep simulated: one
         // anchor per player, as {x, y, z} WORLD POSITIONS (the player's live pose). Only the
         // sim peer is ever sent them — a normal client passes nothing and behaves exactly as
