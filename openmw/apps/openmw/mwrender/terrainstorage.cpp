@@ -1,5 +1,7 @@
 #include "terrainstorage.hpp"
 
+#include <cstdlib>
+
 #include <components/esm3/loadland.hpp>
 #include <components/esm4/loadltex.hpp>
 #include <components/esm4/loadtxst.hpp>
@@ -18,8 +20,12 @@ namespace MWRender
         bool autoUseSpecularMaps)
         : ESMTerrain::Storage(resourceSystem->getVFS(), normalMapPattern, normalHeightMapPattern, autoUseNormalMaps,
             specularMapPattern, autoUseSpecularMaps)
-        , mLandManager(new LandManager(
-              ESM::Land::DATA_VCLR | ESM::Land::DATA_VHGT | ESM::Land::DATA_VNML | ESM::Land::DATA_VTEX))
+        // E6 (MP): a headless peer needs terrain HEIGHTS (the physics heightfield and the
+        // navmesh read them) but never draws, so the colour/normal/texture layers are
+        // several MB of per-cell data loaded for nobody. Single-player keeps all four.
+        , mLandManager(new LandManager(std::getenv("OPENMW_HEADLESS") != nullptr
+                  ? ESM::Land::DATA_VHGT
+                  : ESM::Land::DATA_VCLR | ESM::Land::DATA_VHGT | ESM::Land::DATA_VNML | ESM::Land::DATA_VTEX))
         , mResourceSystem(resourceSystem)
     {
         mResourceSystem->addResourceManager(mLandManager.get());

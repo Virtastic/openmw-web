@@ -73,6 +73,11 @@ namespace MWState
     class StateManager;
 }
 
+namespace MWBase
+{
+    class WindowManager;
+}
+
 namespace MWGui
 {
     class WindowManager;
@@ -133,7 +138,12 @@ namespace OMW
         std::unique_ptr<MWWorld::World> mWorld;
         std::unique_ptr<MWSound::SoundManager> mSoundManager;
         std::unique_ptr<MWScript::ScriptManager> mScriptManager;
-        std::unique_ptr<MWGui::WindowManager> mWindowManager;
+        // E2 (MP): interface-typed, because a headless peer runs NullWindowManager (no
+        // MyGUI at all). mGuiWindowManager is the concrete view for the handful of
+        // GUI-build-only calls (update, initUI, setStore, video playback); it is null when
+        // headless and every use is guarded.
+        std::unique_ptr<MWBase::WindowManager> mWindowManager;
+        MWGui::WindowManager* mGuiWindowManager = nullptr;
         std::unique_ptr<MWMechanics::MechanicsManager> mMechanicsManager;
         std::unique_ptr<MWDialogue::DialogueManager> mDialogueManager;
         std::unique_ptr<MWDialogue::Journal> mJournal;

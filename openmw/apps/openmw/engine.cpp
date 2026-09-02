@@ -71,6 +71,7 @@
 
 #include "mwinput/inputmanagerimp.hpp"
 
+#include "mwgui/nullwindowmanager.hpp"
 #include "mwgui/windowmanagerimp.hpp"
 
 #include "mwlua/luamanagerimp.hpp"
@@ -241,9 +242,9 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
     // While a video is up, replace the game frame with the minimal video frame the native
     // loop would run — input + video decode + GUI render. Game simulation stays paused,
     // matching native playVideo semantics.
-    if (mWindowManager->isPlayingVideo())
+    if (mGuiWindowManager != nullptr && mGuiWindowManager->isPlayingVideo())
     {
-        mWindowManager->updateVideoPlayback(frametime);
+        mGuiWindowManager->updateVideoPlayback(frametime);
         // No background audio StreamThread on the web — refill the movie-audio stream
         // inline (the normal SoundManager::update path doesn't run during videos).
         mSoundManager->pumpAudioStreams();
@@ -370,9 +371,10 @@ bool OMW::Engine::frame(unsigned frameNumber, float frametime)
         }
 
         // update GUI
+        if (mGuiWindowManager != nullptr)
         {
             ScopedProfile<UserStatsType::Gui> profile(frameStart, frameNumber, *timer, *stats);
-            mWindowManager->update(frametime);
+            mGuiWindowManager->update(frametime);
         }
     }
     catch (const std::exception& e)
@@ -574,6 +576,7 @@ OMW::Engine::~Engine()
     mMechanicsManager = nullptr;
     mDialogueManager = nullptr;
     mJournal = nullptr;
+    mGuiWindowManager = nullptr; // the concrete view dies with the owner below
     mWindowManager = nullptr;
     mScriptManager = nullptr;
     mWorld = nullptr;
@@ -1020,9 +1023,22 @@ void OMW::Engine::prepareEngine()
     mStereoManager->disableStereoForNode(guiRoot);
     rootNode->addChild(guiRoot);
 
-    mWindowManager = std::make_unique<MWGui::WindowManager>(mWindow, mViewer, guiRoot, mResourceSystem.get(),
-        mWorkQueue.get(), mCfgMgr.getLogPath(), mScriptConsoleMode, mTranslationDataStorage, mEncoding, mExportFonts,
-        Version::getOpenmwVersionDescription(), mCfgMgr);
+    // E2 (MP): a headless sim peer takes the null implementation — no MyGUI init, no
+    // font/skin/layout loading, no initUI(). Single-player risk: none; the real
+    // WindowManager is constructed exactly as before on every non-headless run.
+    if (std::getenv("OPENMW_HEADLESS") != nullptr)
+    {
+        mWindowManager = std::make_unique<MWGui::NullWindowManager>();
+        mGuiWindowManager = nullptr;
+    }
+    else
+    {
+        auto guiWindowManager = std::make_unique<MWGui::WindowManager>(mWindow, mViewer, guiRoot,
+            mResourceSystem.get(), mWorkQueue.get(), mCfgMgr.getLogPath(), mScriptConsoleMode,
+            mTranslationDataStorage, mEncoding, mExportFonts, Version::getOpenmwVersionDescription(), mCfgMgr);
+        mGuiWindowManager = guiWindowManager.get();
+        mWindowManager = std::move(guiWindowManager);
+    }
     mEnvironment.setWindowManager(*mWindowManager);
 
     mInputManager = std::make_unique<MWInput::InputManager>(mWindow, mViewer, mScreenCaptureHandler, keybinderUser,
@@ -1051,7 +1067,8 @@ void OMW::Engine::prepareEngine()
         return nullptr;
     });
 
-    mWindowManager->setStore(mWorld->getStore());
+    if (mGuiWindowManager != nullptr)
+        mGuiWindowManager->setStore(mWorld->getStore());
 
     // Load translation data
     mTranslationDataStorage.setEncoder(mEncoder.get());
@@ -1113,7 +1130,8 @@ void OMW::Engine::prepareEngine()
     mEnvironment.setWorldScene(mWorld->getWorldScene());
     mWorld->setupPlayer();
     mWorld->setRandomSeed(mRandomSeed);
-    mWindowManager->initUI();
+    if (mGuiWindowManager != nullptr)
+        mGuiWindowManager->initUI();
     mLuaManager->initPostLoad();
 
     // scripts

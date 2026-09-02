@@ -253,6 +253,21 @@ export function buildPeerSettings(): string {
     // 1 is the floor the setting accepts, not a disable, but it takes the cost to ~nothing.
     '[Map]',
     'global map cell size = 1',
+    // E4/E6 trims, all config-only so the engine keeps zero extra headless branches:
+    // - object paging batches static geometry for DRAW distance; the peer draws nothing,
+    //   and every merged batch is CPU+RAM spent on a view nobody has
+    // - groundcover is purely visual and never collides
+    // - post-processing manages render targets for a swapchain that is never presented
+    // - the navmesh tile cache default is sized for a player sweeping the map; the peer's
+    //   anchors move rarely, so a quarter of the default keeps the working set hot
+    '[Terrain]',
+    'object paging = false',
+    '[Groundcover]',
+    'enabled = false',
+    '[Post Processing]',
+    'enabled = false',
+    '[Navigator]',
+    'max nav mesh tiles cache size = 268435456',
     '',
   ].join('\n');
 }
