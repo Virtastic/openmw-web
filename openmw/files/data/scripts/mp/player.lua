@@ -831,6 +831,31 @@ return {
         -- spells all land on the avatar). Current values only -- base stats still travel
         -- through the progression path. identity.lua's own dynamic broadcast keeps running
         -- as the degraded-mode fallback; the server ignores it while these are fresh.
+        -- Phase 4D: apply peer-reported item states positionally per record id -- the
+        -- exact idiom applyAvatarDoc / restoreTick use, on self. Counts are untouched.
+        MP_SelfItemStates = function(data)
+            if not data or type(data.itemStates) ~= 'table' then return end
+            pcall(function()
+                local inventory = types.Actor.inventory(self)
+                for recId, bucket in pairs(data.itemStates) do
+                    local localId = worldmp and worldmp.toLocal and worldmp.toLocal(recId) or recId
+                    local idx = 0
+                    for _, item in ipairs(inventory:getAll()) do
+                        if item.recordId == localId then
+                            idx = idx + 1
+                            local st = bucket[idx]
+                            if st then
+                                local d = item.itemData
+                                if st.condition ~= nil then pcall(function() d.condition = st.condition end) end
+                                if st.charge ~= nil then pcall(function() d.enchantmentCharge = st.charge end) end
+                                if st.soul ~= nil then pcall(function() d.soul = st.soul end) end
+                            end
+                        end
+                    end
+                end
+            end)
+            mp.testSet('selfItemStates', tostring(next(data.itemStates) ~= nil))
+        end,
         MP_SelfStats = function(data)
             if not data or not data.hp then return end
             -- Scenario mirror: proves the PEER-authoritative bars actually flowed (a local

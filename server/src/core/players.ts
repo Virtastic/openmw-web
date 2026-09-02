@@ -75,6 +75,9 @@ export interface Player {
   // Wall-clock of the peer's newest avatar-bars report for this player; while fresh the
   // client's own PlayerStatsDynamic assertion is ignored (Phase 4A one-writer rule).
   peerStatsAt?: number;
+  // Wall-clock of the peer's newest avatar item-state (wear/charge/soul) report; while fresh
+  // the client's own itemStates (inside PlayerInventory) are ignored -- counts still land.
+  peerItemStatesAt?: number;
   // Where this player's last cell change / teleport claimed they landed. While set, the
   // peer's avatar poses are ignored for them: the avatar teleports on the RELAY of the cell
   // change, so its stream still says the old place for a while -- and one stale sample is a

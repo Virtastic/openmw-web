@@ -487,7 +487,22 @@ local function applyAvatarDoc(id)
             local wantId = worldmp.toLocal(entry.id)
             local want = entry.n or 1
             local okc, have = pcall(function() return inventory:countOf(wantId) end)
-            local short = want - ((okc and have) or 0)
+            have = (okc and have) or 0
+            local short = want - have
+            -- Phase 4D: a REFRESH must also shed SURPLUS (the owner dropped, sold or used
+            -- it), or the avatar accumulates everything it was ever handed. Removing from
+            -- the tail of that record's stack is the positional mirror of the state buckets.
+            if short < 0 then
+                local extra = -short
+                for _, item in ipairs(inventory:getAll()) do
+                    if extra <= 0 then break end
+                    if item.recordId == wantId then
+                        local n = math.min(extra, item.count or 1)
+                        pcall(function() item:remove(n) end)
+                        extra = extra - n
+                    end
+                end
+            end
             if short > 0 then
                 local okCreate, item = pcall(function() return world.createObject(wantId, short) end)
                 if okCreate then
@@ -606,6 +621,60 @@ local function avatarStatsTick(now)
     end
 end
 
+-- Phase 4D: the peer reports each avatar's item STATES (wear / enchantment charge / soul).
+-- It swings the weapon now (4C), so the peer is where wear happens; the owner's client only
+-- learns of it through this. Same doc shape the server persists (record id -> positional
+-- bucket), diffed, with the same refresh-for-correctness rule as the bars.
+local avatarItemStatesAt = 0
+local AVATAR_ITEMSTATES_EVERY = 2.0
+local avatarItemStatesLast = {} -- id -> serialized last report
+local avatarItemStatesSentAt = {}
+local AVATAR_ITEMSTATES_REFRESH_S = 10.0
+
+local function snapAvatarItemStates(obj)
+    local states = {}
+    local inv = types.Actor.inventory(obj)
+    for _, item in ipairs(inv:getAll()) do
+        local d = item.itemData
+        local one = {}
+        local okC, cond = pcall(function() return d.condition end)
+        if okC and cond ~= nil then one.condition = cond end
+        local okE, charge = pcall(function() return d.enchantmentCharge end)
+        if okE and charge ~= nil and charge >= 0 then one.charge = charge end
+        local okS, soul = pcall(function() return d.soul end)
+        if okS and soul ~= nil and soul ~= '' then one.soul = soul end
+        if next(one) ~= nil then
+            local rid = worldmp.toNet and worldmp.toNet(item.recordId) or item.recordId
+            states[rid] = states[rid] or {}
+            local bucket = states[rid]
+            bucket[#bucket + 1] = one
+        end
+    end
+    return states
+end
+
+local function avatarItemStatesTick(now)
+    if not (mp.isSystem and mp.isSystem()) then return end
+    if now - avatarItemStatesAt < AVATAR_ITEMSTATES_EVERY then return end
+    avatarItemStatesAt = now
+    local entries = {}
+    for id, p in pairs(puppets) do
+        if p.obj and p.obj:isValid() then
+            local ok, states = pcall(snapAvatarItemStates, p.obj)
+            if ok and states then
+                local key = json.encode(states)
+                if avatarItemStatesLast[id] ~= key
+                    or now - (avatarItemStatesSentAt[id] or 0) >= AVATAR_ITEMSTATES_REFRESH_S then
+                    avatarItemStatesLast[id] = key
+                    avatarItemStatesSentAt[id] = now
+                    entries[#entries + 1] = { id = id, itemStates = states }
+                end
+            end
+        end
+    end
+    if #entries > 0 then mp.sendEvent('AvatarItemStatesBatch', { entries = entries }) end
+end
+
 local function spawnPuppet(id, pose)
     if puppets[id] then return end
     -- On the peer the body goes to the PLAYER'S cell (remoteCell relay); destCellArg is the
@@ -651,6 +720,8 @@ local function despawnPuppet(id)
     avatarStatsLast[id] = nil
     avatarStatsSentAt[id] = nil
     avatarUsing[id] = nil
+    avatarItemStatesLast[id] = nil
+    avatarItemStatesSentAt[id] = nil
     -- Guarded, and deliberately AFTER the bookkeeping above: remove() throws when the
     -- object is already gone or otherwise not removable ("Can't remove 0 of 0 items"), and
     -- an engine handler that throws ABORTS — which took the rest of MP_PlayerLeaveWorld
@@ -1205,6 +1276,12 @@ local eventHandlers = {
     -- undefined while the peer reported and the server relayed correctly).
     MP_SelfStats = function(data)
         toPlayer('MP_SelfStats', data)
+    end,
+
+    -- Phase 4D: our item states as the peer simulated them (weapon wear from 4C swings,
+    -- charge spent, souls captured). Same hop; applier in player.lua.
+    MP_SelfItemStates = function(data)
+        toPlayer('MP_SelfItemStates', data)
     end,
 
     -- Phase 3: a player's input frame, routed to the avatar that embodies them. Only the
@@ -2269,6 +2346,7 @@ return {
                 mirrorDoor(now)
                 avatarStreamTick(now) -- Phase 3: peer streams authoritative avatar poses
                 avatarStatsTick(now) -- Phase 4A: peer reports avatar bars to the server
+                avatarItemStatesTick(now) -- Phase 4D: peer reports avatar wear/charge/soul
             end
         end,
     },

@@ -311,6 +311,24 @@ keeps asserting its own bars, per-player degraded mode with no switchover signal
 relay rides the ordinary `PlayerStatsDynamic` fan-out, so other clients need no new type.
 Death in a peer report flushes the doc immediately, exactly like the client edge.
 
+### Phase 4D — inventory keeps the avatar current, both ways
+
+| name | dir | body |
+|---|---|---|
+| `AvatarState` (refresh) | S→PEER after every accepted `PlayerInventory` | the same full-doc body the join sends; the peer's `applyAvatarDoc` reconciles shortfall, **surplus** and item states without duplicating what the body already holds |
+| `AvatarItemStatesBatch` | PEER→S (2 s, diffed, 10 s refresh) | `{entries={{id=int, itemStates={[recordId]={{condition=,charge=,soul=}, …}, …}}, …}}` — the doc's own positional shape; dropped from any non-system sender |
+| `MP_SelfItemStates` | S→C (owner only, per accepted entry) | `{itemStates={…}}` — applied positionally per record id to the owner's own items |
+
+Why: the peer swings the weapon now (4C), so the peer is where wear, charge spend and soul
+capture happen — and the avatar must be *holding* what the owner holds (a weapon picked up
+mid-session) for that swing to compute the right damage. **Counts stay client/M3-owned**
+(world transfers are already arbitrated by `ContainerOpRequest`/`Result` with drop
+conservation); only item **state** moves under the one-writer rule: while a peer report is
+fresh (≤`INPUT_DRIVING_MS`), the client's own `itemStates` inside `PlayerInventory` are
+ignored, its counts still land. An input-less player keeps their own states. No engine hook:
+the plan's containerstore veto is not needed for this — `OnItemTransferred` (notify) plus
+the two reconciliations above cover it.
+
 ## Event-tier additions (M3) — world objects & containers
 
 Object addressing is a tagged union in every body: `{ref=<RefNum userdata>}` for

@@ -316,8 +316,21 @@ function handleInventory(ctx: StateCtx, player: Player, body: LTable): boolean {
   }
   ctx.store.update(player.charId, (doc) => {
     doc.inventory = out;
-    if (Object.keys(states).length > 0) doc.itemStates = states;
-    else delete doc.itemStates;
+    // Phase 4D one-writer rule for item STATE: while the peer reports the avatar's wear /
+    // charge / soul (it swings the weapon now -- 4C -- so it is where wear happens), the
+    // client's own states are ignored; COUNTS above still land, those stay client/M3-owned.
+    const peerStatesFresh = player.peerItemStatesAt !== undefined
+      && Date.now() - player.peerItemStatesAt <= INPUT_DRIVING_MS;
+    if (!peerStatesFresh) {
+      if (Object.keys(states).length > 0) doc.itemStates = states;
+      else delete doc.itemStates;
+    }
+    // Phase 4D owner->avatar sync: the peer's copy must track what the player carries --
+    // a weapon picked up mid-session has to be IN the avatar's hands for 4C to compute the
+    // right damage. Same AvatarState the join sends; applyAvatarDoc reconciles shortfall,
+    // surplus and states without duplicating what the body already holds.
+    const worldPeer = ctx.roster.inWorld().find((q) => q.system === true);
+    if (worldPeer) worldPeer.peer.sendEvent('AvatarState', avatarStateBody(player.id, doc));
   });
   // The snapshot now accounts for everything credited since the last one, so the credit is
   // spent. Clearing here (rather than expiring on a timer) is what keeps the ledger from
@@ -389,6 +402,63 @@ export function handleAvatarStatsBatch(ctx: StateCtx, sender: Player, value: LVa
       }
     }
     p.peer.sendEvent('MP_SelfStats', { hp, mp, ft });
+  }
+}
+
+// Phase 4D: the peer's avatar item-state reports (wear, enchantment charge, soul) -- the
+// peer swings the weapon (4C), so the peer is where wear happens. Same shape the doc keeps
+// (record id -> positional bucket), same one-writer gate as bars, same owner forward.
+// ponytail: the parse duplicates handleInventory's inline itemStates parse rather than
+// refactoring it blind; fold both into one helper when that block is next touched.
+function parseItemStatesL(raw: LTable | undefined): Record<string, { condition?: number; charge?: number; soul?: string }[]> {
+  const states: Record<string, { condition?: number; charge?: number; soul?: string }[]> = {};
+  if (!raw) return states;
+  for (const [k, v] of raw) {
+    const id = typeof k === 'string' ? recordId(k) : undefined;
+    const list = tbl(v);
+    if (!id || !list) continue;
+    const bucket: { condition?: number; charge?: number; soul?: string }[] = [];
+    for (const [, e] of list) {
+      const t = tbl(e);
+      if (!t) continue;
+      const cond = finite(t.get('condition'));
+      const charge = finite(t.get('charge'));
+      const soul = recordId(t.get('soul'));
+      const one: { condition?: number; charge?: number; soul?: string } = {};
+      if (cond !== undefined && cond >= 0) one.condition = cond;
+      if (charge !== undefined && charge >= 0) one.charge = charge;
+      if (soul) one.soul = soul;
+      if (Object.keys(one).length > 0) bucket.push(one);
+    }
+    if (bucket.length > 0) states[id] = bucket;
+  }
+  return states;
+}
+
+export function handleAvatarItemStatesBatch(ctx: StateCtx, sender: Player, value: LValue | undefined): void {
+  if (sender.system !== true) return; // only the world peer reports avatars
+  const body = tbl(value);
+  const entries = body ? tbl(body.get('entries')) : undefined;
+  if (!entries) return;
+  const now = Date.now();
+  for (const [, ev] of entries) {
+    const e = tbl(ev);
+    if (!e) continue;
+    const id = finite(e.get('id'));
+    if (id === undefined) continue;
+    const p = ctx.roster.get(id);
+    if (!p || p.system === true || !p.inWorld) continue;
+    if (p.lastInputAt === undefined || now - p.lastInputAt > INPUT_DRIVING_MS) continue; // not driving
+    const states = parseItemStatesL(tbl(e.get('itemStates')));
+    if (Object.keys(states).length > MAX_INVENTORY) continue;
+    p.peerItemStatesAt = now;
+    ctx.store.update(p.charId, (doc) => {
+      if (Object.keys(states).length > 0) doc.itemStates = states;
+      else delete doc.itemStates;
+    }, 'sweep');
+    const wire: Record<string, JsLike[]> = {};
+    for (const [rid, bucket] of Object.entries(states)) wire[rid] = bucket as JsLike[];
+    p.peer.sendEvent('MP_SelfItemStates', { itemStates: wire });
   }
 }
 
