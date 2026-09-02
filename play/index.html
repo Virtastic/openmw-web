@@ -1878,6 +1878,7 @@
        // like a supported path. /saves keeps serving the local game.
        var __saveScope = 'solo';
        var __savesEnabled = !window.__omwMPEnabled; // MP: no client saves to mirror
+       window.__omwSavesEnabled = __savesEnabled; // test mirror (s68): the locker save path is closed in MP
        function srvApi(path, opts){
          opts = opts || {};
          opts.headers = Object.assign({ authorization: 'Bearer ' + (window.__omwLockerToken||'') },

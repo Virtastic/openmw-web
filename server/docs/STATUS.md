@@ -51,8 +51,15 @@ convergence (they pass on quieter hardware).
 - **4E quests.** A client write to a global/member var the peer wrote within
   `INPUT_DRIVING_MS` is dropped (local script copies cannot clobber the peer); the peer's
   character-global writes are relayed live to everyone in-world.
-Remaining plan items are genuinely engine-side (E4 deep trim, E1 measurement on a deployed
-peer) rather than authority work.
+- **Phase 5 verified in play (s68).** F5 while joined reaches the engine (the `lastKey`
+  mirror moves) and produces no `.omwsave`; the page reports `__omwSavesEnabled=false`, so
+  the locker save path is closed for every MP session, Solo included.
+- **E1 measured.** Idle native peer, one anchored cell, no players: RSS plateau **363,584 kB
+  (~355 MB)** on this build, against the 487 MB the older build measured -- E2/E3 and the
+  config trims already bought ~130 MB. The per-manager cache report needed
+  `collectStats("resource")` armed (only the in-game overlay ever did); armed now beside the
+  stats file so the E4 attribution can be read.
+Remaining: E4 deep render trim, sized by that attribution.
 
 ## 2026-09-02 — the mp912026 overhaul: one peer, input authority, Solo/Party (proto 2)
 
