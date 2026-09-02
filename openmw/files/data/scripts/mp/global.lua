@@ -427,6 +427,88 @@ local function pushStatsToPuppet(id)
     end
 end
 
+-- Phase 2b: full character docs for PEER-side avatars, keyed by connection id. A cosmetic
+-- puppet only needs a look; the peer's copy must FIGHT and TRADE correctly, so the server
+-- sends the whole PlayerDoc (AvatarState) and it is applied to the body here. Client
+-- processes never receive AvatarState and never enter this path.
+local avatarDocs = {}
+
+local function applyAvatarDoc(id)
+    local doc = avatarDocs[id]
+    local p = puppets and puppets[id]
+    if not doc or not p or not p.obj or not p.obj:isValid() then return end
+    local obj = p.obj
+    -- Stats first: a fight against a default-statted mannequin is the bug this fixes.
+    pcall(function()
+        local stats = doc.stats or {}
+        if stats.level then types.Actor.stats.level(obj).current = stats.level end
+        for name, v in pairs(stats.attributes or {}) do
+            local a = types.Actor.stats.attributes[name]
+            if a then a(obj).base = v end
+        end
+        for name, v in pairs(stats.skills or {}) do
+            local s = types.NPC.stats.skills[name]
+            if s then s(obj).base = v end
+        end
+        local dyn = stats.dynamic
+        if dyn then
+            local map = { hp = 'health', mp = 'magicka', ft = 'fatigue' }
+            for k, statName in pairs(map) do
+                local d = dyn[k]
+                if d then
+                    local stat = types.Actor.stats.dynamic[statName](obj)
+                    if d.b then stat.base = d.b end
+                    if d.c then stat.current = d.c end
+                end
+            end
+        end
+    end)
+    for _, sid in ipairs(doc.spells or {}) do
+        pcall(function() types.Actor.spells(obj):add(sid) end)
+    end
+    -- Inventory: reconcile the SHORTFALL, same idiom as the rejoin restore (restoreTick) —
+    -- re-applying a doc must never duplicate what the body already holds.
+    pcall(function()
+        local inventory = types.Actor.inventory(obj)
+        for _, entry in ipairs(doc.inventory or {}) do
+            local wantId = worldmp.toLocal(entry.id)
+            local want = entry.n or 1
+            local okc, have = pcall(function() return inventory:countOf(wantId) end)
+            local short = want - ((okc and have) or 0)
+            if short > 0 then
+                local okCreate, item = pcall(function() return world.createObject(wantId, short) end)
+                if okCreate then
+                    item:moveInto(inventory)
+                else
+                    -- THE PLACEHOLDER BAN (Phase 2b). A cosmetic puppet may substitute a
+                    -- stand-in; an authoritative avatar must not — a placeholder weapon
+                    -- computes the wrong damage. Loud, and the item is simply absent.
+                    print('[mp] AVATAR ITEM UNRESOLVABLE for #' .. tostring(id) .. ': ' .. tostring(entry.id))
+                    mp.testSet('avatarUnresolvable', tostring(entry.id))
+                end
+            end
+        end
+        -- Per-item state, best-effort, after the grant (see restoreTick for the reasoning).
+        for recId, bucket in pairs(doc.itemStates or {}) do
+            local localId = worldmp.toLocal(recId)
+            local idx = 0
+            for _, item in ipairs(inventory:getAll()) do
+                if item.recordId == localId then
+                    idx = idx + 1
+                    local st = bucket[idx]
+                    if st then
+                        local d = item.itemData
+                        if st.condition ~= nil then pcall(function() d.condition = st.condition end) end
+                        if st.charge ~= nil then pcall(function() d.enchantmentCharge = st.charge end) end
+                        if st.soul ~= nil then pcall(function() d.soul = st.soul end) end
+                    end
+                end
+            end
+        end
+    end)
+    mp.testSet('avatarApplied', tostring(id))
+end
+
 local function spawnPuppet(id, pose)
     if puppets[id] then return end
     local cellArg = destCellArg()
@@ -440,6 +522,7 @@ local function spawnPuppet(id, pose)
     obj:teleport(cellArg, util.vector3(pose.x, pose.y, pose.z))
     obj:addScript('scripts/mp/puppet.lua', { playerId = id })
     puppets[id] = { obj = obj, name = name }
+    applyAvatarDoc(id) -- Phase 2b: a doc that arrived before the body existed lands now
     print('[mp] puppet spawned for ' .. name .. ' (#' .. tostring(id) .. ')')
     -- Identity that arrived before the spawn applies now, so the first visible frame
     -- already has the right look/equipment/health.
@@ -982,6 +1065,15 @@ local eventHandlers = {
     MP_InviteReceived = function(data) toPlayer('MP_InviteReceived', data) end,
     MP_PresenceUpdate = function(data) toPlayer('MP_PresenceUpdate', data) end,
     MP_SocialResult = function(data) toPlayer('MP_SocialResult', data) end,
+
+    -- Phase 2b: the peer's copy of a character (see applyAvatarDoc). Sent only to system
+    -- peers by the server; the guard is belt-and-braces against a confused relay.
+    MP_AvatarState = function(data)
+        if not (mp.isSystem and mp.isSystem()) then return end
+        if not data or not data.id then return end
+        avatarDocs[data.id] = data
+        applyAvatarDoc(data.id)
+    end,
 
     -- The owner of the world we are standing in went Solo, so it is no longer open to us.
     -- Dial our OWN world, which this client already knows; the server drops anyone still

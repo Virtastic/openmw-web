@@ -13,6 +13,7 @@
 #include <components/sceneutil/positionattitudetransform.hpp>
 
 #include "../mwbase/environment.hpp"
+#include "../mwbase/luamanager.hpp"
 #include "../mwbase/windowmanager.hpp"
 #include "../mwbase/world.hpp"
 

@@ -7,7 +7,7 @@
 
 import type { LValue, LTable, JsLike } from '../proto/lser';
 import type { Player, Roster } from './players';
-import type { PlayerStore, PlayerAppearanceDoc, DynamicStatDoc } from '../persist/playerstore';
+import type { PlayerStore, PlayerAppearanceDoc, PlayerDoc, DynamicStatDoc } from '../persist/playerstore';
 import { cellsVisible } from './movement';
 import { log } from '../log';
 import { metrics } from '../metrics';
@@ -375,6 +375,10 @@ export function syncStateOnJoin(ctx: StateCtx, joiner: Player): void {
     const doc = ctx.store.getCached(other.charId);
     if (doc?.appearance) joiner.peer.sendEvent('PlayerAppearance', { id: other.id, ...doc.appearance });
     if (doc?.equipment) joiner.peer.sendEvent('PlayerEquipment', { id: other.id, slots: equipmentToL(doc.equipment) });
+    // Phase 2b: a JOINING PEER gets the whole character of everyone already here.
+    if (joiner.system === true && !other.system && doc) {
+      joiner.peer.sendEvent('AvatarState', avatarStateBody(other.id, doc));
+    }
   }
   const own = ctx.store.getCached(joiner.charId);
   if (!own) return;
@@ -382,5 +386,28 @@ export function syncStateOnJoin(ctx: StateCtx, joiner: Player): void {
     if (other.id === joiner.id) continue;
     if (own.appearance) other.peer.sendEvent('PlayerAppearance', { id: joiner.id, ...own.appearance });
     if (own.equipment) other.peer.sendEvent('PlayerEquipment', { id: joiner.id, slots: equipmentToL(own.equipment) });
+    // Phase 2b: every PEER gets the whole character of a joining player.
+    if (other.system === true && joiner.system !== true) {
+      other.peer.sendEvent('AvatarState', avatarStateBody(joiner.id, own));
+    }
   }
+}
+
+// Phase 2b: the peer's copy of a character. A cosmetic puppet needs appearance and
+// equipment; an AUTHORITATIVE avatar needs the whole PlayerDoc — attributes, skills,
+// level, spells, inventory WITH per-item state (condition/charge/soul), factions, bounty —
+// or the peer computes fights and trades against a default-statted mannequin. The doc
+// shape (persist/playerstore.ts) is already exactly the right payload; this only sends it.
+// Incremental freshness rides the existing Player* identity relays, which peers receive
+// like any client; this is the join-time snapshot that must precede the avatar acting.
+export function avatarStateBody(id: number, doc: PlayerDoc): JsLike {
+  return {
+    id,
+    ...(doc.stats ? { stats: doc.stats } : {}),
+    ...(doc.spells ? { spells: doc.spells } : {}),
+    ...(doc.inventory ? { inventory: doc.inventory } : {}),
+    ...(doc.itemStates ? { itemStates: doc.itemStates } : {}),
+    ...(doc.factions ? { factions: doc.factions } : {}),
+    ...(doc.bounty !== undefined ? { bounty: doc.bounty } : {}),
+  } as unknown as JsLike;
 }
