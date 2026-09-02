@@ -68,6 +68,12 @@ export interface Player {
   // Wall-clock of the peer's newest avatar-bars report for this player; while fresh the
   // client's own PlayerStatsDynamic assertion is ignored (Phase 4A one-writer rule).
   peerStatsAt?: number;
+  // Wall-clock of this player's last cell change. For a grace window after it, the peer's
+  // avatar poses are ignored: the avatar teleports on the RELAY of the cell change, so for
+  // a moment its stream still says the old place -- and one stale sample is a >256-unit
+  // divergence that hard-snaps the player straight back where they teleported from.
+  // Measured as a 12-far-travels-a-minute bounce loop in s51 on a slow box.
+  teleportAt?: number;
   avatarPoseLogged?: boolean; // simpeer.avatar_first_pose emitted for this session
   peerPoseAt?: number;
   poseVersion: number;

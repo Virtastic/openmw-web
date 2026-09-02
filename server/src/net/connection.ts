@@ -773,6 +773,11 @@ export class Connection implements Peer {
       // 286 units and never reconverging. Stale input => that entry is ignored and the
       // client-authored path stays canonical for that player, per-player degraded mode.
       if (p.lastInputAt === undefined || now - p.lastInputAt > Connection.INPUT_ACTIVE_MS) continue;
+      // Teleport grace: the avatar follows a cell change via the relay, so briefly after
+      // one, the peer's stream still reports the OLD position -- and applying it would
+      // snap the player right back (the s51 bounce loop). Drop those entries; the client
+      // rules its own pose until the avatar's stream catches up.
+      if (p.teleportAt !== undefined && now - p.teleportAt < 1_500) continue;
       // The peer's answer IS the canonical pose: it feeds the same broadcaster that fans
       // remote poses out to everyone (0x0101), so other players render the authoritative
       // result with no second channel. The owner additionally gets a PlayerStateBatch with
@@ -927,6 +932,7 @@ export class Connection implements Peer {
         player.peer.sendEvent('QuestSpawn', { recordId: spawn.recordId, questId: spawn.questId, cellKey });
       }
     });
+    player.teleportAt = Date.now(); // opens the avatar-pose grace window (see players.ts)
     player.cellKey = cellKey;
     const prev = player.pose;
     player.pose = {

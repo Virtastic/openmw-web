@@ -68,21 +68,17 @@ test('the peer\'s AvatarMoveBatch is the pose everyone sees, and the owner recon
   await b.waitEvent('PlayerList');
   b.sendCellChange('0,0', 0, 0, 0);
 
-  peer.sendAvatarMoveBatch([
+  // STREAM from the start, like the real peer (20 Hz): a lone early frame would land in
+  // the teleport-grace window that follows the join cell change and be dropped by design.
+  const streamTimer = setInterval(() => peer.sendAvatarMoveBatch([
     { id: a.playerId, lastInputSeq: 77, pose: { x: 512, y: 640, z: 10, yaw: 0, pitch: 128, flags: 0, animVel: 0, counter: 0 } },
-  ]);
+  ]), 60);
+  t.after(() => clearInterval(streamTimer));
 
   // The watcher renders the authoritative pose through the ORDINARY move batch channel.
   const seen = await b.waitBatch(
     (bt) => bt.entries.some((e) => e.id === a.playerId && Math.round(e.pose.x) === 512), 8000);
   assert.ok(seen, 'the peer-authored pose never reached other players');
-
-  // The owner gets their own entry back with the consumed input seq — the reconciliation
-  // anchor. The peer keeps streaming, so keep the pose fresh through the broadcast tick.
-  const streamTimer = setInterval(() => peer.sendAvatarMoveBatch([
-    { id: a.playerId, lastInputSeq: 77, pose: { x: 512, y: 640, z: 10, yaw: 0, pitch: 128, flags: 0, animVel: 0, counter: 0 } },
-  ]), 60);
-  t.after(() => clearInterval(streamTimer));
   const state = await poll(() => {
     const i = a.inbox.stateBatches.findIndex((sb) => sb.entries.some((e) => e.id === a.playerId));
     return i === -1 ? undefined : a.inbox.stateBatches.splice(i, 1)[0];
