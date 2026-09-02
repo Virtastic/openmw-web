@@ -772,8 +772,8 @@ export class Connection implements Peer {
       // remote poses out to everyone (0x0101), so other players render the authoritative
       // result with no second channel. The owner additionally gets a PlayerStateBatch with
       // lastInputSeq to reconcile against (MoveBroadcaster tick).
-      // TEMP Phase 3 diagnostics: the first avatar pose per player, so a client snapped to
-      // a bogus position can be traced to what the peer actually streamed.
+      // The first avatar pose per player, once per session: when a client reports being
+      // snapped somewhere wrong, this is the record of what the peer actually streamed.
       if (p.avatarPoseLogged !== true) {
         p.avatarPoseLogged = true;
         log('info', 'simpeer.avatar_first_pose', {

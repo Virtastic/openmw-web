@@ -65,7 +65,7 @@ export interface Player {
   // Wall-clock of the newest PlayerInput frame from this connection; the peer's avatar pose
   // only overrides the client-authored one while this is fresh (per-player degraded mode).
   lastInputAt?: number;
-  avatarPoseLogged?: boolean; // TEMP Phase 3 diagnostics
+  avatarPoseLogged?: boolean; // simpeer.avatar_first_pose emitted for this session
   peerPoseAt?: number;
   poseVersion: number;
   // Phase 3.6: wall-clock of the last accepted pose, for the plausible-speed envelope.
