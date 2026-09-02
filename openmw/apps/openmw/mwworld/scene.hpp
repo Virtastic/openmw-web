@@ -129,6 +129,17 @@ namespace MWWorld
         // marginal cost of an anchor is that region's cells (meshes, collision, navmesh) rather
         // than a whole second engine, because the ESM store and every subsystem are shared.
         // Empty of anchors — every normal client — this is exactly vanilla behaviour.
+        //
+        // TWO REPRESENTATIONS, ONE SOURCE. The server sends WORLD POSITIONS (each player's
+        // live pose). mSimAnchorPositions keeps them raw for the mechanics range checks —
+        // 7168 units around each player, exactly what a single-player client gets. The grid
+        // coordinates derived from them drive cell LOADING (mSimAnchors), and only a change
+        // in the DERIVED set re-runs the grid: positions move every tick, and rebuilding the
+        // grid every resend for no reason is the one expensive mistake this split prevents.
+        // The old cell-centre form covered the anchored cell but reached only ~3072 units
+        // into any neighbour (centre-to-corner is 5793 against a 7168 range), leaving a ring
+        // of loaded-but-frozen cells — the same bug class the anchors exist to fix.
+        std::vector<osg::Vec3f> mSimAnchorPositions;
         std::vector<osg::Vec2i> mSimAnchors;
 
         // Interiors held for the server, by cell name. An interior has NO grid coordinate, so
@@ -161,11 +172,12 @@ namespace MWWorld
             const DetourNavigator::UpdateGuard* navigatorUpdateGuard);
 
     public:
-        /// Extra cell-grid centres to keep active, in addition to the player's own grid.
-        /// Server-driven (the sim peer's world server sends the list); empty for a real client.
-        /// `interiors` are held by name — an interior has no grid coordinate to anchor on.
+        /// Extra simulation anchors to keep active, in addition to the player's own grid.
+        /// Server-driven (the sim peer's world server sends the list); empty for a real
+        /// client. Exteriors are WORLD POSITIONS (players' live poses); `interiors` are held
+        /// by name — an interior has no grid coordinate to anchor on.
         void setSimAnchors(
-            const std::vector<osg::Vec2i>& anchors, const std::vector<ESM::RefId>& interiors = {});
+            const std::vector<osg::Vec3f>& anchors, const std::vector<ESM::RefId>& interiors = {});
 
         /// True when `cell` is an interior this process is holding for the server. Actors there
         /// must keep processing however far the local player is, because "distance" is

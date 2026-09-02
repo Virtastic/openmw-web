@@ -2737,7 +2737,7 @@ namespace MWWorld
     }
 
     void World::setSimAnchors(
-        const std::vector<osg::Vec2i>& anchors, const std::vector<ESM::RefId>& interiors)
+        const std::vector<osg::Vec3f>& anchors, const std::vector<ESM::RefId>& interiors)
     {
         mWorldScene->setSimAnchors(anchors, interiors);
     }

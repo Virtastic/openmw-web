@@ -371,9 +371,14 @@ namespace MWMP
         };
 
         // SIM ANCHORS. The server tells this process which regions to keep simulated: one
-        // anchor per populated area, as {x, y} exterior cell coordinates. Only the sim peer is
-        // ever sent them — a normal client passes nothing and behaves exactly as before, with
-        // the player as the sole anchor.
+        // anchor per player, as {x, y, z} WORLD POSITIONS (the player's live pose). Only the
+        // sim peer is ever sent them — a normal client passes nothing and behaves exactly as
+        // before, with the player as the sole anchor.
+        //
+        // Positions, not grid coordinates: a cell-centre anchor covered its own cell but
+        // reached only ~3072 units into any neighbour against the 7168 processing range, so
+        // a player near a cell edge sat beside loaded-but-frozen actors. Anchoring on the
+        // player's actual position makes coverage identical to single-player.
         //
         // This is what lets ONE headless engine simulate several parts of the world. Without
         // it a peer can only ever hold the region its own avatar stands in, so covering players
@@ -383,17 +388,18 @@ namespace MWMP
         // only ever simulate the one room its own avatar stood in, which left every indoor
         // player unsimulated (Morrowind's opening is entirely indoors).
         api["setSimAnchors"] = [](const sol::table& anchors, const sol::optional<sol::table>& interiors) {
-            std::vector<osg::Vec2i> out;
+            std::vector<osg::Vec3f> out;
             out.reserve(anchors.size());
             for (std::size_t i = 1; i <= anchors.size(); ++i)
             {
                 const sol::optional<sol::table> a = anchors[i];
                 if (!a)
                     continue;
-                const sol::optional<int> x = (*a)["x"];
-                const sol::optional<int> y = (*a)["y"];
+                const sol::optional<float> x = (*a)["x"];
+                const sol::optional<float> y = (*a)["y"];
+                const sol::optional<float> z = (*a)["z"];
                 if (x && y)
-                    out.emplace_back(*x, *y);
+                    out.emplace_back(*x, *y, z.value_or(0.f));
             }
             std::vector<ESM::RefId> rooms;
             if (interiors)

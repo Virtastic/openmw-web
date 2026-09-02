@@ -258,8 +258,16 @@ Anchors come in two kinds, and the difference is not cosmetic:
 
 | | How it is held | Peer must stand there? |
 |---|---|---|
-| **Exterior** | grid coordinate (`osg::Vec2i`), 3x3 block per anchor | no |
+| **Exterior** | WORLD POSITION (`osg::Vec3f`, a player's live pose); the 3x3 grid is derived from it | no |
 | **Interior** | cell NAME | no (since the interior-anchoring change) |
+
+Positions, not cell centres: a centre anchor covered its own cell but reached only ~3072
+units into a neighbour against the 7168 actor-processing range, so a player near a cell edge
+sat beside loaded-but-frozen actors. Anchoring on the player's actual position makes
+coverage identical to single-player. The engine's range gates all use ONE reduction
+(`mwmechanics/actorutil` `nearestSimDistanceSqr`) — the animation gate missing from the
+2026-08-25 fix is what pushed the server into the one-process-per-cell fan-out, since
+reverted.
 
 Interiors used to be impossible to anchor: `Scene::setSimAnchors` took only grid coordinates,
 and an interior has none. A peer could therefore simulate exactly one room — the one its own

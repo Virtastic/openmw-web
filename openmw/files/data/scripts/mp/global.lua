@@ -992,9 +992,12 @@ local eventHandlers = {
     -- exactly as it always has (the player is the only anchor).
     MP_SimAnchors = function(data)
         if not mp.setSimAnchors then return end
+        -- WORLD POSITIONS, not grid coordinates: each anchor is a player's live pose, so the
+        -- engine's processing range follows players exactly (a cell-centre anchor reached
+        -- only ~3072 units into a neighbour against the 7168 range).
         local out = {}
         for _, a in ipairs((data and data.anchors) or {}) do
-            if a.x and a.y then out[#out + 1] = { x = math.floor(a.x), y = math.floor(a.y) } end
+            if a.x and a.y then out[#out + 1] = { x = a.x, y = a.y, z = a.z or 0 } end
         end
         -- Interiors come as NAMES: they have no grid coordinate, so they cannot ride in the
         -- anchor list. Held exactly like an exterior anchor — the peer keeps the room loaded
@@ -1005,12 +1008,10 @@ local eventHandlers = {
         end
         mp.setSimAnchors(out, rooms)
 
-        -- AND GO STAND THERE. Loading a cell is not simulating it. OpenMW hard-clamps
-        -- [Game] actors processing range to 7168 units while an exterior cell is 8192 wide, so
-        -- this engine only ticks actors near its OWN position no matter how much it has loaded.
-        -- Anchors alone therefore produced a peer that held every occupied cell and simulated
-        -- none of them except the one it booted in: the server logged authority.silent_peer, and
-        -- players two cells away watched monsters stand still and melee pass through them.
+        -- AND GO STAND SOMEWHERE SENSIBLE. With the anchor gates finished (actorutil
+        -- nearestSimDistanceSqr) every anchor simulates, so the peer's own position no
+        -- longer decides WHAT ticks -- but a cold boot still lands at [simPeer].startCell,
+        -- and standing in a real occupied cell keeps the avatar out of the void.
         --
         -- data.place is the position the server already computes to SPAWN the peer -- a real
         -- player's, so it is valid ground rather than a computed cell centre that might be

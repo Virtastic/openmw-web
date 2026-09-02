@@ -1024,8 +1024,8 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     allowsRegistration: config.login.allowRegistration && config.login.inviteCode === '',
     playerCount: roster.humansInWorld().length,
     connectedCount: roster.humanCount, // F3: keeps a world alive while a player is loading / at chargen
-    // Live, not configured: the supervisor's own count of running engines. The gateway budgets
-    // memory on this because one world is no longer one peer -- it is one per occupied cell.
+    // Live, not configured: the supervisor's own count of running engines. One peer carries
+    // the whole world now, so this is normally 0 or 1; the gateway's governor still reads it.
     peerCount: simPeers.running,
     pvp: config.rules.pvp,
     players: roster.humansInWorld().map((p) => ({
@@ -1244,28 +1244,32 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   });
   ctx.simPeers = simPeers;
   ctx.gameDataOk = gameData.ok;
-  // ONE PEER, MANY ANCHORS. A peer can only simulate around a point — vanilla keeps one grid
-  // of active cells centred on the player and unloads the rest — so covering players spread
-  // across the world used to mean one ~450 MB engine process per occupied cell. At 200 players
-  // in 40 places that is 40 processes and ~18 GB, which is not a tuning problem, it is a wall.
+  // ONE PEER, EVERY OCCUPIED CELL. A peer used to be one ~450 MB engine process per occupied
+  // cell (3dd85a68), deployed because anchored cells LOADED but never TICKED: the engine's
+  // animation/movement gate still measured range from the peer's own avatar. That gate is
+  // fixed at the source now (mwmechanics/actorutil nearestSimDistanceSqr — every range check
+  // measures from the nearest anchor), and STATUS.md measured the consolidation as free:
+  // 8 anchored cells cost no more than 1, because the ESM store and every subsystem are
+  // shared. So the fan-out was paying N processes for something one process already does —
+  // and it broke the gateway's memory governor besides (a world's cost stopped being a
+  // constant, MP-BACKLOG P3).
   //
-  // The engine now takes a LIST of anchors (mwmp setSimAnchors -> Scene::setSimAnchors): every
-  // anchor keeps its own grid of cells loaded, and an actor stops processing only when it is
-  // far from ALL of them. The marginal cost of a region becomes that region's cells — meshes,
-  // collision, navmesh — instead of a whole second engine, because the ESM store and every
-  // subsystem are shared. Same 40 regions land in one process at ~1-3 GB.
+  // Anchors are WORLD POSITIONS — each player's live pose — not grid coordinates. A
+  // cell-centre anchor covered its own cell but reached only ~3072 units into a neighbour
+  // against the 7168 processing range, leaving a ring of loaded-but-frozen cells around
+  // every anchor. Positions make coverage follow players exactly, like single-player.
   //
-  // ponytail: one anchor per occupied CELL, deduped. Not clustered any smarter than that,
-  // because anchors are cheap now — the expensive thing was processes, and there is one.
-  // Empty regions cost nothing: the engine already unloads cells no anchor covers.
+  // The supervisor keeps its multi-key machinery: it costs nothing and is the spill valve if
+  // the scale ramp ever shows frame time going superlinear in anchored cells.
   const WORLD_KEY = 'world';
-  let lastUncovered = ''; // throttle for simpeer.cells_unsimulated: one line per change
-  const peerAnchorSig = new Map<string, string>(); // peer key -> last SimAnchors payload sent
-  const claimedBy = new Map<string, Set<string>>(); // peer key -> cells it holds
-  let lastAnchors = '';
-  // Cells the peer currently holds because they are anchored, so the set can be diffed rather
-  // than re-entered every tick (re-entering bumps the epoch and forces a full re-sync).
+  // Anchors held past occupancy (idle-decay): cellKey -> last known position + expiry.
+  // Walking a cell border must not flap the peer's grid; dropping an anchor is cheap.
+  const heldAnchors = new Map<string, { x: number; y: number; z: number; until: number }>();
+  // Cells the peer currently holds, so authority is DIFFED rather than re-entered every tick
+  // (re-entering bumps the epoch and forces a full re-sync).
   const claimed = new Set<string>();
+  let lastAnchorCells = ''; // log throttle: one simpeer.anchors line per change
+  let warnedUnsimulated = ''; // throttle for simpeer.cells_unsimulated
   // Is the world actually being SIMULATED? Read live from the roster rather than kept as
   // state: a peer can arrive, die and be respawned, and the roster is the only thing that is
   // right at every moment. It also stays correct for an operator running their own peer
@@ -1283,33 +1287,16 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     // START THE PEER WHEN A HUMAN CONNECTS, NOT WHEN ONE REACHES A CELL. humanCount counts
     // authed players who are still loading or in character creation; the peer takes 2-4s to
     // become ready (simpeer.ready startupMs), so waiting for a cell meant the player was
-    // handed control BEFORE anything held authority over where they stood. They would walk,
-    // the peer would arrive, take the cell and assert its own view of their position — the
-    // rubber-banding on first join — and every actor there would be puppeted mid-stride.
-    // Booting it against the loading client spends that startup on time the player is
-    // already waiting through.
+    // handed control BEFORE anything held authority over where they stood. Booting it against
+    // the loading client spends that startup on time the player is already waiting through.
     if (roster.humanCount === 0) {
+      heldAnchors.clear();
+      claimed.clear();
       simPeers.markIdle(WORLD_KEY);
       simPeers.sweep();
       return;
     }
-    if (humans.length === 0) {
-      // Someone is here but nobody has landed in a cell yet: get the process up, and leave
-      // the anchor set alone — there is nothing legitimate to anchor to yet, and claiming
-      // cells for a player still in chargen is precisely what must not happen.
-      simPeers.ensure(WORLD_KEY, undefined);
-      return;
-    }
 
-    // EVERY occupied cell is covered, interior or exterior, by ONE peer. Exteriors anchor by
-    // grid coordinate; interiors anchor by NAME, because an interior has no coordinate. Both
-    // are held without the peer standing in them, so 200 players spread across the map are all
-    // simulated from a single process.
-    //
-    // This is what makes authority the peer's, always. Before interiors could be anchored, a
-    // player indoors was in a cell nothing simulated — the peer could only cover the one room
-    // it stood in — so an indoor quest simply never advanced. Chargen is entirely indoors,
-    // which is why it stalled at the census office every time.
     // CHARGEN CELLS ARE NEVER SIMULATED BY THE PEER, and this is not an optimisation.
     //
     // The peer boots with --start and no --new-game, so its own chargenstate is -1 (creation
@@ -1322,125 +1309,102 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     // nobody advances the sequence and character creation stalls forever.
     //
     // Unheld is the CORRECT state here: with no holder the client never attaches puppets and
-    // keeps running its own local AI, which is exactly what the opening needs. This mirrors
-    // the sanctuary objects.lua already applies to world state in the same cells.
-    // Same rule as WorldState.authorityEnter, applied when building the anchor list so the
-    // peer does not even LOAD a cell it must not simulate: named chargen rooms, plus any cell
-    // holding a player who has not finished creation (the walk between those rooms is
-    // ordinary exterior and cannot be recognised by name).
+    // keeps running its own local AI, which is exactly what the opening needs. Named chargen
+    // rooms are filtered, plus any cell holding a player who has not finished creation (the
+    // walk between those rooms is ordinary exterior and cannot be recognised by name).
     const inChargenCells = new Set(humans.filter((p) => p.inChargen === true).map((p) => p.cellKey!));
-    const cells = [...new Set(humans.map((p) => p.cellKey!))].sort()
-      .filter((c) => !isChargenCell(c) && !inChargenCells.has(c));
-    const anchors: { x: number; y: number }[] = [];
-    const interiors: string[] = [];
-    for (const cell of cells) {
-      const e = parseExterior(cell);
-      if (e) anchors.push({ x: e.x, y: e.y });
-      else interiors.push(cell);
-    }
-
-    // WHERE THE PEER STANDS MATTERS. This comment used to say it did not -- that anchoring a
-    // cell was enough -- and that was wrong in the expensive direction. Anchoring makes the
-    // engine LOAD a cell; it does not make it tick the actors in it. OpenMW hard-clamps
-    // [Game] actors processing range to 7168 units against an 8192-wide cell (see
-    // core/movement.ts), so a peer only simulates near its own feet. Standing in the wrong
-    // place produced cells with a healthy holder and no actor frames at all: monsters that
-    // never attacked and melee that never landed, for every player except whoever happened to
-    // share the peer's cell. Prefer an exterior so a cold start lands somewhere sensible.
-    //
-    // NEVER a cell the sanctuary protects. This picked from the unfiltered human list, so a
-    // lone player creating their character got the peer spawned ON TOP of them — the log read
-    // `simpeer.spawned cell="imperial prison ship"`. It cannot claim that cell (authorityEnter
-    // refuses), but standing there is still wrong: it loads and ticks the chargen actors in
-    // its own world, and it is one accident away from holding them. `cells` is already the
-    // sanctuary-filtered set; fall back to nowhere rather than to a protected cell, and the
-    // peer boots at [simPeer].startCell instead.
-    // ONE PEER PER OCCUPIED CELL. Anchoring makes an engine LOAD a cell; only standing in it
-    // makes the engine TICK its actors, because OpenMW clamps actors processing range to 7168
-    // units against an 8192-wide cell (core/movement.ts). A single peer therefore simulates
-    // exactly one cell no matter how many it anchors -- which on a multiplayer server means
-    // every player outside the peer's own cell watches frozen NPCs and swings through them.
-    //
-    // The supervisor was always built for this (`ensure()` takes a key AND a place to stand,
-    // `keys()` exists so callers can idle the clusters nobody occupies); it was only ever
-    // called with one global key. Now the key IS the cell.
-    const placeByCell = new Map<string, { cellKey: string; x: number; y: number; z: number }>();
+    const now = Date.now();
+    const idleMs = Math.max(0, config.simPeer.anchorIdleSec) * 1000;
+    // FRESH POSITIONS EVERY PASS. 32 players x 3 floats every 5 s is nothing, and a stale
+    // anchor position is the one thing that reintroduces frozen NPCs.
     for (const p of humans) {
-      const ck = p.cellKey;
-      if (!ck || !cells.includes(ck) || placeByCell.has(ck)) continue;
-      // A real player's position, so the peer lands on ground that exists rather than a
-      // computed cell centre that could be inside terrain.
-      placeByCell.set(ck, { cellKey: ck, x: p.pose?.x ?? 0, y: p.pose?.y ?? 0, z: p.pose?.z ?? 0 });
+      const ck = p.cellKey!;
+      if (isChargenCell(ck) || inChargenCells.has(ck)) continue;
+      const prev = heldAnchors.get(ck);
+      heldAnchors.set(ck, {
+        x: p.pose?.x ?? prev?.x ?? 0,
+        y: p.pose?.y ?? prev?.y ?? 0,
+        z: p.pose?.z ?? prev?.z ?? 0,
+        until: now + idleMs,
+      });
+    }
+    for (const [ck, a] of [...heldAnchors]) if (a.until <= now) heldAnchors.delete(ck);
+
+    // EVERY held cell is covered, interior or exterior, by ONE peer. Exteriors anchor by
+    // position; interiors anchor by NAME, because an interior has no coordinate. Both are
+    // held without the peer standing in them, so players spread across the map are all
+    // simulated from a single process. Before interiors could be anchored, an indoor quest
+    // simply never advanced — chargen is entirely indoors, which is why it stalled at the
+    // census office every time.
+    const cells = [...heldAnchors.keys()].sort();
+    const anchors: { x: number; y: number; z: number }[] = [];
+    const interiors: string[] = [];
+    for (const ck of cells) {
+      const a = heldAnchors.get(ck)!;
+      if (parseExterior(ck)) anchors.push({ x: a.x, y: a.y, z: a.z });
+      else interiors.push(ck);
     }
 
-    // Nearest-first so that when there are more occupied cells than [simPeer].maxPeers, the cap
-    // falls on the same cells each pass instead of flapping between them every 5s.
-    for (const ck of [...placeByCell.keys()].sort()) simPeers.ensure(ck, placeByCell.get(ck)!);
+    // Where the peer's own avatar stands: a real player's position, so a cold boot lands on
+    // ground that exists rather than a computed point inside terrain. Vestigial for
+    // simulation now that every anchor ticks — [simPeer].startCell covers the cold boot with
+    // nobody placed yet.
+    const stand = humans.find((p) => p.cellKey !== undefined && heldAnchors.has(p.cellKey)
+      && parseExterior(p.cellKey) !== undefined)
+      ?? humans.find((p) => p.cellKey !== undefined && heldAnchors.has(p.cellKey));
+    const place = stand
+      ? { cellKey: stand.cellKey!, x: stand.pose?.x ?? 0, y: stand.pose?.y ?? 0, z: stand.pose?.z ?? 0 }
+      : undefined;
 
-    // Cells nobody occupies any more: idle rather than kill, so a player stepping back in does
-    // not pay a cold start (retail data takes tens of seconds to load).
-    for (const k of simPeers.keys()) if (!placeByCell.has(k)) simPeers.markIdle(k);
+    simPeers.ensure(WORLD_KEY, place);
+    // Retire any per-cell peers left over from the fan-out era (or an operator's stale
+    // supervisor state): one process carries the world now.
+    for (const k of simPeers.keys()) if (k !== WORLD_KEY) simPeers.markIdle(k);
     simPeers.sweep();
 
-    // Each peer is told about ITS OWN cell only, and holds only that. Handing a peer anchors it
-    // cannot simulate is what produced healthy-looking holders over frozen regions.
-    const seenKeys = new Set<string>();
-    for (const peerPlayer of roster.inWorld().filter((p) => p.system === true)) {
-      const key = simPeers.keyOfAccount(peerPlayer.name);
-      if (key === undefined) continue; // a peer we did not start; leave it alone
-      seenKeys.add(key);
-      const place = placeByCell.get(key);
-      if (!place) continue; // its cell emptied; the idle sweep above will retire it
-      const e = parseExterior(key);
-      const mine = { anchors: e ? [{ x: e.x, y: e.y }] : [], interiors: e ? [] : [key] };
-      const sig = JSON.stringify([key, mine, place]);
-      if (peerAnchorSig.get(key) !== sig) {
-        peerAnchorSig.set(key, sig);
-        peerPlayer.peer.sendEvent('SimAnchors', { ...mine, place });
+    const peerPlayer = roster.inWorld().find(
+      (p) => p.system === true && simPeers.keyOfAccount(p.name) === WORLD_KEY);
+    if (!peerPlayer) {
+      // The peer being down is now a GENUINE anomaly, not a capacity warning: there is no
+      // maxPeers arithmetic to blame, just a process that is starting, crashed, or backing
+      // off. Say so once per change; authority re-enters cleanly when it returns.
+      claimed.clear();
+      const line = cells.join(',');
+      if (cells.length > 0 && warnedUnsimulated !== line) {
+        warnedUnsimulated = line;
+        log('warn', 'simpeer.cells_unsimulated', {
+          unsimulated: line,
+          note: 'the world peer is not up (starting, crashed, or in restart backoff)',
+        });
       }
-      // AUTHORITY FOLLOWS THE PEER THAT CAN ACTUALLY SIMULATE. Claiming a cell a peer does not
-      // stand in is the opposite error: a healthy holder over a region nothing ticks, which
-      // cannot be detected from outside.
-      const held = claimedBy.get(key) ?? new Set<string>();
-      for (const gone of [...held].filter((c) => c !== key)) {
-        world.authorityLeave(peerPlayer.id, gone, true);
-        held.delete(gone);
-      }
-      if (!held.has(key)) {
-        world.authorityEnter(peerPlayer, key);
-        held.add(key);
-      }
-      claimedBy.set(key, held);
+      return;
+    }
+    warnedUnsimulated = '';
+
+    // Sent EVERY pass, deliberately: positions move, and the engine gates its own grid
+    // rebuild on the derived cell set (Scene::setSimAnchors), so a resend is cheap there.
+    peerPlayer.peer.sendEvent('SimAnchors', { anchors, interiors, ...(place ? { place } : {}) });
+
+    // AUTHORITY FOR EVERY ANCHORED CELL, on the one peer. The old revoke loop ("authority
+    // follows the peer that can actually simulate") is gone because after the engine fix it
+    // can simulate all of them. Diffed so epochs are stable.
+    for (const gone of [...claimed].filter((c) => !heldAnchors.has(c))) {
+      world.authorityLeave(peerPlayer.id, gone, true);
+      claimed.delete(gone);
+    }
+    for (const ck of cells) {
+      if (claimed.has(ck)) continue;
+      world.authorityEnter(peerPlayer, ck);
+      claimed.add(ck);
     }
 
-    // Forget bookkeeping for peers that are gone, so these maps cannot grow without bound.
-    for (const k of [...peerAnchorSig.keys()]) if (!seenKeys.has(k)) peerAnchorSig.delete(k);
-    for (const k of [...claimedBy.keys()]) if (!seenKeys.has(k)) claimedBy.delete(k);
-
-    // Coverage shortfall is a real condition, not an anomaly to infer from silence: more
-    // occupied cells than the cap allows means somebody IS watching frozen NPCs right now.
-    const uncovered = [...placeByCell.keys()].filter((c) => !seenKeys.has(c));
-    if (uncovered.length > 0 && uncovered.join(',') !== lastUncovered) {
-      lastUncovered = uncovered.join(',');
-      log('warn', 'simpeer.cells_unsimulated', {
-        unsimulated: uncovered.join(','), peers: seenKeys.size, cap: config.simPeer.maxPeers,
-        note: 'raise [simPeer].maxPeers, at roughly 450MB per peer',
-      });
-    } else if (uncovered.length === 0 && lastUncovered !== '') {
-      lastUncovered = '';
-    }
-
-    // worldId, and WHY each occupied cell was dropped: one container runs several worlds and
-    // every one logs this, so without it a public world's anchors read exactly like a private
-    // world's. `simulating` is now per-peer, which is the thing that actually determines
-    // whether the NPCs in a cell move.
-    const anchorLine = [...seenKeys].sort().join(',');
-    if (anchorLine !== lastAnchors) {
-      lastAnchors = anchorLine;
+    const anchorLine = cells.join(',');
+    if (anchorLine !== lastAnchorCells) {
+      lastAnchorCells = anchorLine;
       log('info', 'simpeer.anchors', {
         world: worldId, exteriors: anchors.length, interiors: interiors.length,
         occupied: humans.map((p) => `${p.name}@${p.cellKey}${p.inChargen === true ? ' [chargen]' : ''}`),
-        anchored: cells, simulating: anchorLine,
+        simulating: anchorLine,
       });
     }
   };

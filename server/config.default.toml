@@ -562,6 +562,9 @@ startCell = "Seyda Neen"
 # Setting a finite number here is a deliberate risk, and the server logs simpeer.at_cap as an
 # ERROR when it bites, because somebody is playing an unsimulated cell at that moment.
 maxPeers = 0
+# Hold a cell's anchor this many seconds after the last player leaves it, so walking a cell
+# border does not flap the peer's grid. Dropping an anchor is cheap; this is pure hysteresis.
+anchorIdleSec = 60
 idleReapMs = 120000               # reap a peer whose world has had no humans this long
 startTimeoutMs = 120000           # retail data load is slow; generous, and failure is non-fatal
 restartBackoffMs = 15000          # after a crash, wait before respawning (no hot crash loop)

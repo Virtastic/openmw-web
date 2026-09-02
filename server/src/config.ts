@@ -44,7 +44,7 @@ export interface Config {
 
     memBudgetMb: number; // total RAM for worlds + peers (0 = no memory governor)
     worldCostMb: number; // measured: one world's node process + its FIRST sim peer
-    peerCostMb: number; // measured: each ADDITIONAL peer in a world (one per occupied cell)
+    peerCostMb: number; // measured: each ADDITIONAL peer in a world (spill valve only now)
     gatewayReserveMb: number; // held back for the gateway process itself
   };
   simPeer: {
@@ -54,7 +54,11 @@ export interface Config {
     configDir: string; // --config (its own isolated openmw.cfg + settings.cfg)
     userDataDir: string; // --user-data
     startCell: string;
-    maxPeers: number; // hard cap; the reaper exists so this is rarely reached
+    maxPeers: number; // spill valve only: ONE peer covers every cell (see server.ts simPeerPass)
+    /** Hold a cell's anchor this long after the last player leaves it, so walking a cell
+     *  border does not flap the peer's grid. Dropping an anchor is cheap — the engine unloads
+     *  cells no anchor covers — so this is purely hysteresis. */
+    anchorIdleSec: number;
     idleReapMs: number; // reap a peer whose world has had no humans this long
     startTimeoutMs: number;
     restartBackoffMs: number;
@@ -490,6 +494,7 @@ function validate(t: Tree): Config {
       userDataDir: reqStr(t, 'simPeer', 'userDataDir'),
       startCell: reqStr(t, 'simPeer', 'startCell'),
       maxPeers: reqNum(t, 'simPeer', 'maxPeers'),
+      anchorIdleSec: optNum(t, 'simPeer', 'anchorIdleSec', 60),
       idleReapMs: reqNum(t, 'simPeer', 'idleReapMs'),
       startTimeoutMs: reqNum(t, 'simPeer', 'startTimeoutMs'),
       restartBackoffMs: reqNum(t, 'simPeer', 'restartBackoffMs'),

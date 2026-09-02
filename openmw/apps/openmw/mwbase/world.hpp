@@ -583,10 +583,11 @@ namespace MWBase
         /// processing regardless of how far the local player is.
         virtual bool isAnchoredInterior(const MWWorld::CellStore* cell) const = 0;
 
-        /// MP: set those centres. Server-driven; see MWWorld::Scene::setSimAnchors.
-        /// Exteriors anchor by grid coordinate, interiors by cell id — an interior has no
-        /// coordinate, so the two lists cannot be merged.
-        virtual void setSimAnchors(const std::vector<osg::Vec2i>& anchors,
+        /// MP: set those anchors. Server-driven; see MWWorld::Scene::setSimAnchors.
+        /// Exteriors anchor by WORLD POSITION (a player's live pose, so coverage follows
+        /// players exactly instead of snapping to cell centres); interiors by cell id — an
+        /// interior has no coordinate, so the two lists cannot be merged.
+        virtual void setSimAnchors(const std::vector<osg::Vec3f>& anchors,
             const std::vector<ESM::RefId>& interiors) = 0;
 
         /// Preload VFX associated with this effect list

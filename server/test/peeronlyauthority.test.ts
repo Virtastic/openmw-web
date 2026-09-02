@@ -47,7 +47,10 @@ test('a player never holds a cell, and the sim peer does', async (t) => {
   assert.equal((info.value as { holderId: number }).holderId, peer.playerId);
 });
 
-test('a peer holds only its own cell; a neighbour is left unheld, not silently unsimulated', async (t) => {
+// An OPERATOR-RUN peer (one the supervisor did not start) is driven only by where it stands:
+// the anchor fan-out in simPeerPass addresses only peers it spawned. Its claims stay scoped
+// to its own cell, and the neighbour is visibly unheld rather than silently unsimulated.
+test('an unmanaged peer holds only its own cell; a neighbour is left unheld, not silently unsimulated', async (t) => {
   const dataDir = tmpDataDir();
   const PEER_PASS = 'peer-secret-1';
   const server = await startServer({

@@ -192,7 +192,7 @@ namespace MWWorld
         Scene& getWorldScene() { return *mWorldScene; }
 
         std::vector<osg::Vec3f> getSimAnchorPositions() const override;
-        void setSimAnchors(const std::vector<osg::Vec2i>& anchors,
+        void setSimAnchors(const std::vector<osg::Vec3f>& anchors,
             const std::vector<ESM::RefId>& interiors) override;
         bool isAnchoredInterior(const MWWorld::CellStore* cell) const override;
 

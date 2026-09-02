@@ -80,10 +80,10 @@ test('sim peer: ensure is idempotent — humans arriving repeatedly do not fork 
 
 // MULTI-PEER COVERAGE. This is a multiplayer server: players are routinely in different cells,
 // and a peer only ticks actors within 7168 units of where it stands against an 8192-wide cell.
-// One peer therefore simulates exactly one cell, and everyone else watches frozen NPCs and
-// swings that never land. The supervisor was always keyed for one peer per cell; the server
-// tick only ever asked for one.
-test('sim peer: one peer per occupied cell, each standing in its own', () => {
+// SPILL-VALVE MACHINERY. The live server runs ONE peer covering every occupied cell
+// (server.ts simPeerPass); the supervisor's multi-key support is kept as the spill valve if
+// the scale ramp ever demands more than one process. This pins that the machinery works.
+test('sim peer: several keyed engines can run at once (spill valve)', () => {
   const { sup, spawned } = harness();
   // Cold starts are SERIALISED (one retail data load at a time), so the second cell starts on
   // the next pass rather than alongside the first. Both still get an engine, which is the
@@ -124,7 +124,7 @@ test('sim peer: an interior gets a legal name too, and still maps back', () => {
 // be simulated at all, so refusing one hands that player frozen NPCs and melee that never
 // lands while every health check still reads green. maxPeers = 0 means unlimited and is the
 // shipped default; capacity is meant to run out at world CREATION, which refuses visibly.
-test('sim peer: maxPeers 0 means unlimited — every occupied cell gets an engine', () => {
+test('sim peer: maxPeers 0 means unlimited (spill valve sizing)', () => {
   const { sup, spawned } = harness({ maxPeers: 0 });
   const cells = ['-2,-9', '-1,-9', '0,-9', '1,-9', '2,-9', 'Balmora, Council Club'];
   // Cold starts are serialised -- one retail data load at a time -- so this drives the queue the

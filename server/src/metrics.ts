@@ -259,7 +259,7 @@ export const metrics = {
   // while both read as one world. Peers are what spend the RAM, and committed_mb is what the
   // governor is actually comparing against the budget -- graph that against the budget and the
   // box filling up is visible BEFORE a player is refused, which is the whole point.
-  gatewayPeersRunning: reg(new Gauge('omwmp_gateway_peers_running', 'Sim peers across every supervised world (one per occupied cell).')),
+  gatewayPeersRunning: reg(new Gauge('omwmp_gateway_peers_running', 'Sim peers across every supervised world (normally one per world).')),
   gatewayCommittedMb: reg(new Gauge('omwmp_gateway_committed_mb', 'RAM the supervised worlds and their peers have committed, as the governor prices it.')),
   worldRefused: reg(
     new Counter('omwmp_world_refused_total', 'World starts declined.', ['reason'])),

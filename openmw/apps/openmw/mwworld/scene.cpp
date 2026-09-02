@@ -621,13 +621,33 @@ namespace MWWorld
     // ------------------------------------------------ MP simulation anchors
 
     void Scene::setSimAnchors(
-        const std::vector<osg::Vec2i>& anchors, const std::vector<ESM::RefId>& interiors)
+        const std::vector<osg::Vec3f>& anchors, const std::vector<ESM::RefId>& interiors)
     {
-        const bool exteriorsChanged = mSimAnchors != anchors;
+        // Positions update UNCONDITIONALLY — they are only read by the mechanics range
+        // checks, and a stale anchor position is the one thing that reintroduces frozen NPCs.
+        mSimAnchorPositions = anchors;
+
+        // Grid work is gated on the DERIVED cell-coordinate set: positions change every
+        // resend (players move), and rebuilding the cell grid every 5 s for no reason is
+        // exactly what the old raw-value early-return was protecting against.
+        const ESM::RefId worldspace
+            = mCurrentCell ? mCurrentCell->getCell()->getWorldSpace() : ESM::Cell::sDefaultWorldspaceId;
+        std::vector<osg::Vec2i> derived;
+        derived.reserve(anchors.size());
+        for (const osg::Vec3f& a : anchors)
+        {
+            const ESM::ExteriorCellLocation loc
+                = ESM::positionToExteriorCellLocation(a.x(), a.y(), worldspace);
+            const osg::Vec2i coord(loc.mX, loc.mY);
+            if (std::find(derived.begin(), derived.end(), coord) == derived.end())
+                derived.push_back(coord);
+        }
+
+        const bool exteriorsChanged = mSimAnchors != derived;
         const bool interiorsChanged = mSimAnchorInteriors != interiors;
         if (!exteriorsChanged && !interiorsChanged)
             return;
-        mSimAnchors = anchors;
+        mSimAnchors = std::move(derived);
 
         if (interiorsChanged)
         {
@@ -702,15 +722,10 @@ namespace MWWorld
 
     std::vector<osg::Vec3f> Scene::getSimAnchorPositions() const
     {
-        std::vector<osg::Vec3f> out;
-        out.reserve(mSimAnchors.size());
-        for (const osg::Vec2i& a : mSimAnchors)
-        {
-            // Cell centre: the anchor is a grid coordinate, and mechanics wants world units.
-            out.emplace_back((a.x() + 0.5f) * Constants::CellSizeInUnits,
-                (a.y() + 0.5f) * Constants::CellSizeInUnits, 0.f);
-        }
-        return out;
+        // The REAL positions, not cell centres: the range checks follow players exactly —
+        // 7168 units around each of them, identical to what a single-player client gets —
+        // with a vanilla 3x3 grid loaded around each (mSimAnchors, derived above).
+        return mSimAnchorPositions;
     }
 
     void Scene::changeCellGrid(const osg::Vec3f& pos, ESM::ExteriorCellLocation playerCellIndex, bool changeEvent)

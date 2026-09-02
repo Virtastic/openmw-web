@@ -116,13 +116,12 @@ export class SimPeerSupervisor {
     return this.permanentlyDisabled;
   }
 
-  // Called when a human is present in `key`'s world. Idempotent: it either starts the peer,
+  // Called when a human is present in the world. Idempotent: it either starts the peer,
   // or clears an existing peer's idle deadline so the reaper leaves it alone.
-  // `anchor` is the exterior cell this peer must simulate around. One peer covers a 3x3
-  // block (see loadedCells), so a world with players spread further apart needs one peer per
-  // cluster — which is why ensure() takes a key AND a place to stand, rather than one global
-  // peer parked wherever [simPeer].startCell happened to point.
-  /** Which cell a connected system player covers, by its account name. */
+  // `anchor` is where the peer's own avatar boots (a real player's position beats
+  // [simPeer].startCell). ONE peer now covers every occupied cell via the anchor list
+  // (server.ts simPeerPass); the multi-key machinery here is kept as the spill valve.
+  /** Which key a connected system player serves, by its account name. */
   keyOfAccount(name: string): string | undefined {
     return this.byAccount.get(name);
   }
