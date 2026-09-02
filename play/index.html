@@ -1871,12 +1871,13 @@
        }
        window.__lockerHttpBase = lockerHttpBase;
        var __srvSaves = false, __srvMirrored = {}, __srvMirroring = false, __srvAgain = false;
-       // WHICH GAME THESE SAVES BELONG TO. Multiplayer and the cloud-locker mode share an
-       // account and a library on purpose, but they are different games: a multiplayer
-       // character is server-owned state and a solo save is a whole-world snapshot. Listing
-       // one in the other's load screen is confusing at best, and a way to overwrite the wrong
-       // thing at worst. The server keys saves by this and the two never meet.
-       var __saveScope = window.__omwMPEnabled ? 'mp' : 'solo';
+       // WHICH GAME THESE SAVES BELONG TO: only the non-MP local game has client saves at
+       // all now (Phase 5 removed Save/Load from every MP session — the server keeps the
+       // one save). The old 'mp' scope is unreachable, and the save mirror below never runs
+       // in an MP session, so this constant is the scope rather than a branch that looks
+       // like a supported path. /saves keeps serving the local game.
+       var __saveScope = 'solo';
+       var __savesEnabled = !window.__omwMPEnabled; // MP: no client saves to mirror
        function srvApi(path, opts){
          opts = opts || {};
          opts.headers = Object.assign({ authorization: 'Bearer ' + (window.__omwLockerToken||'') },
@@ -1886,6 +1887,7 @@
        // mirror IN: server -> MEMFS. Server wins on a slot this browser has never seen or has an
        // older copy of, which is what makes a second machine (or a cleared browser) work.
        async function setupServerSaves(){
+         if (!__savesEnabled) return; // MP: the server owns the save; nothing to mirror
          var list;
          try {
            var r = await srvApi('/saves?scope=' + __saveScope);

@@ -2,6 +2,8 @@
 // See WASM_ADAPTATIONS.md at the repository root for details of the changes.
 #include "statemanagerimp.hpp"
 
+#include "../mwmp/netmanager.hpp"
+
 #include <filesystem>
 
 #ifdef __EMSCRIPTEN__
@@ -222,6 +224,19 @@ void MWState::StateManager::resumeGame()
 
 void MWState::StateManager::saveGame(std::string_view description, const Slot* slot)
 {
+    // MP (Phase 5): THE SERVER KEEPS THE SAVE. A client-side savegame of a server-owned
+    // world is a fork the server will never honour — loading it would rewind quests,
+    // inventory and position that live authoritatively in the world's PlayerDoc. One guard
+    // at this chokepoint covers the menu, quicksave, autosave, the wait dialog and the
+    // console. Solo is an MP session too (a private world on the server); only the non-MP
+    // local game keeps saves.
+    if (MWMP::NetManager::instance().state() == MWMP::NetManager::State::Joined)
+    {
+        MWBase::Environment::get().getWindowManager()->messageBox(
+            "Saving is disabled in multiplayer. Your character is saved on the server, continuously.");
+        return;
+    }
+
     MWBase::Environment::get().getLuaManager()->applyDelayedActions();
 
     MWState::Character* character = getCurrentCharacter();
@@ -481,6 +496,14 @@ struct SaveVersionTooNewError : SaveFormatVersionError
 
 void MWState::StateManager::loadGame(const Character* character, const std::filesystem::path& filepath)
 {
+    // MP (Phase 5): same rule as saveGame above — the one save is the server's.
+    if (MWMP::NetManager::instance().state() == MWMP::NetManager::State::Joined)
+    {
+        MWBase::Environment::get().getWindowManager()->messageBox(
+            "Loading is disabled in multiplayer. Your character is saved on the server, continuously.");
+        return;
+    }
+
     try
     {
         cleanup();

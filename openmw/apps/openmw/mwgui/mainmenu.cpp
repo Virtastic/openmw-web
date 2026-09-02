@@ -2,6 +2,8 @@
 // See WASM_ADAPTATIONS.md at the repository root for details of the changes.
 #include "mainmenu.hpp"
 
+#include "../mwmp/netmanager.hpp"
+
 #include <MyGUI_Gui.h>
 #include <MyGUI_InputManager.h>
 #include <MyGUI_RenderManager.h>
@@ -337,18 +339,26 @@ namespace MWGui
 
         std::vector<std::string> buttons;
 
+        // MP (Phase 5): in a joined session there is no client save, no client load and no
+        // local New Game — the server keeps the one save, continuously. The buttons are
+        // OMITTED rather than left to dead-end on the StateManager's refusal. The list is
+        // rebuilt on every updateMenu, so the non-MP local game keeps all three.
+        const bool mpJoined = MWMP::NetManager::instance().state() == MWMP::NetManager::State::Joined;
+
         if (state == MWBase::StateManager::State_Running)
             buttons.emplace_back("return");
 
-        buttons.emplace_back("newgame");
+        if (!mpJoined)
+            buttons.emplace_back("newgame");
 
-        if (state == MWBase::StateManager::State_Running
+        if (!mpJoined && state == MWBase::StateManager::State_Running
             && MWBase::Environment::get().getWorld()->getGlobalInt(MWWorld::Globals::sCharGenState) == -1
             && MWBase::Environment::get().getWindowManager()->isSavingAllowed())
             buttons.emplace_back("savegame");
 
-        if (MWBase::Environment::get().getStateManager()->characterBegin()
-            != MWBase::Environment::get().getStateManager()->characterEnd())
+        if (!mpJoined
+            && MWBase::Environment::get().getStateManager()->characterBegin()
+                != MWBase::Environment::get().getStateManager()->characterEnd())
             buttons.emplace_back("loadgame");
 
         buttons.emplace_back("options");
