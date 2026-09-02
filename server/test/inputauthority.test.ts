@@ -36,7 +36,10 @@ async function world(t: { after(fn: () => unknown): void }) {
   const welcomeA = await a.joinAsNew('Runner');
   a.playerId = welcomeA['playerId'] as number;
   await a.waitEvent('PlayerList');
-  a.sendCellChange('0,0', 0, 0, 0);
+  // The claimed landing spot matches where the tests stream avatar poses (x=512, y=640):
+  // a cell change arms the positional teleport gate, and peer poses far from the claim are
+  // dropped by design until the avatar arrives.
+  a.sendCellChange('0,0', 512, 640, 10);
   return { server, peer, a };
 }
 
@@ -109,10 +112,10 @@ test('a CLIENT sending AvatarMoveBatch is refused and counted; the real peer sti
 
   // The real peer's frame still lands after the forgery.
   peer.sendAvatarMoveBatch([
-    { id: a.playerId, lastInputSeq: 5, pose: { x: 256, y: 0, z: 0, yaw: 0, pitch: 128, flags: 0, animVel: 0, counter: 0 } },
+    { id: a.playerId, lastInputSeq: 5, pose: { x: 256, y: 640, z: 0, yaw: 0, pitch: 128, flags: 0, animVel: 0, counter: 0 } },
   ]);
   const streamTimer = setInterval(() => peer.sendAvatarMoveBatch([
-    { id: a.playerId, lastInputSeq: 5, pose: { x: 256, y: 0, z: 0, yaw: 0, pitch: 128, flags: 0, animVel: 0, counter: 0 } },
+    { id: a.playerId, lastInputSeq: 5, pose: { x: 256, y: 640, z: 0, yaw: 0, pitch: 128, flags: 0, animVel: 0, counter: 0 } },
   ]), 60);
   t.after(() => clearInterval(streamTimer));
   const state = await poll(() => {

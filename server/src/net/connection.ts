@@ -773,11 +773,25 @@ export class Connection implements Peer {
       // 286 units and never reconverging. Stale input => that entry is ignored and the
       // client-authored path stays canonical for that player, per-player degraded mode.
       if (p.lastInputAt === undefined || now - p.lastInputAt > Connection.INPUT_ACTIVE_MS) continue;
-      // Teleport grace: the avatar follows a cell change via the relay, so briefly after
-      // one, the peer's stream still reports the OLD position -- and applying it would
-      // snap the player right back (the s51 bounce loop). Drop those entries; the client
-      // rules its own pose until the avatar's stream catches up.
-      if (p.teleportAt !== undefined && now - p.teleportAt < 1_500) continue;
+      // Teleport grace: the avatar follows a cell change via the relay, so after one the
+      // peer's stream keeps reporting the OLD position for a while -- and applying it
+      // would snap the player right back (the s51 bounce loop, s22's corpse-pinning). The
+      // gate is POSITIONAL, not timed: entries are dropped until the avatar's stream shows
+      // up within 512 units of where the client said it landed. A timer raced the peer's
+      // real catch-up and lost under load; if the avatar never arrives, the client simply
+      // keeps its own authority -- which is the correct degraded state anyway.
+      if (p.teleportPose !== undefined) {
+        const dx = e.pose.x - p.teleportPose.x, dy = e.pose.y - p.teleportPose.y;
+        if (dx * dx + dy * dy > 512 * 512) {
+          if (now - p.teleportPose.at > 30_000) {
+            log('warn', 'simpeer.avatar_never_arrived', {
+              id: p.id, name: p.name, note: 'avatar did not reach the teleport target; client keeps pose authority' });
+            p.teleportPose = { ...p.teleportPose, at: now }; // re-arm the warn, keep gating
+          }
+          continue;
+        }
+        p.teleportPose = undefined;
+      }
       // The peer's answer IS the canonical pose: it feeds the same broadcaster that fans
       // remote poses out to everyone (0x0101), so other players render the authoritative
       // result with no second channel. The owner additionally gets a PlayerStateBatch with
@@ -932,7 +946,7 @@ export class Connection implements Peer {
         player.peer.sendEvent('QuestSpawn', { recordId: spawn.recordId, questId: spawn.questId, cellKey });
       }
     });
-    player.teleportAt = Date.now(); // opens the avatar-pose grace window (see players.ts)
+    player.teleportPose = { x, y, z, at: Date.now() }; // peer poses ignored until the avatar arrives (players.ts)
     player.cellKey = cellKey;
     const prev = player.pose;
     player.pose = {
