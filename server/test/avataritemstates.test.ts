@@ -58,7 +58,7 @@ test('the peer\'s item-state report lands in the doc and reaches the owner', asy
   peer.sendEvent('AvatarItemStatesBatch', {
     entries: [{ id: a.playerId, itemStates: { iron_longsword: [{ condition: 37 }] } }],
   });
-  const got = await a.waitEvent('MP_SelfItemStates',
+  const got = await a.waitEvent('SelfItemStates',
     (v) => Boolean((v as { itemStates?: Record<string, { condition?: number }[]> })?.itemStates?.iron_longsword));
   const states = (got.value as { itemStates: Record<string, { condition?: number }[]> }).itemStates;
   assert.equal(states.iron_longsword?.[0]?.condition, 37, 'the worn condition must reach the owner');
@@ -73,7 +73,7 @@ test('while peer states are fresh the client\'s own itemStates are ignored -- co
     entries: [{ id: a.playerId, itemStates: { iron_longsword: [{ condition: 37 }] } }],
   }), 200);
   t.after(() => clearInterval(reporter));
-  await a.waitEvent('MP_SelfItemStates');
+  await a.waitEvent('SelfItemStates');
 
   // The client claims a fully repaired sword AND a new stack of gold.
   peer.inbox.events.length = 0;
@@ -101,7 +101,7 @@ test('an idle (non-driving) player\'s states are not overwritten by the peer', a
     entries: [{ id: a.playerId, itemStates: { iron_longsword: [{ condition: 1 }] } }],
   });
   const got = await Promise.race([
-    a.waitEvent('MP_SelfItemStates').then(() => true),
+    a.waitEvent('SelfItemStates').then(() => true),
     new Promise<false>((r) => setTimeout(() => r(false), 800)),
   ]);
   assert.equal(got, false, 'a player the input tier is not serving keeps their own states');
@@ -118,7 +118,7 @@ test('a CLIENT sending AvatarItemStatesBatch is ignored', async (t) => {
     entries: [{ id: a.playerId, itemStates: { iron_longsword: [{ condition: 0 }] } }],
   });
   const got = await Promise.race([
-    a.waitEvent('MP_SelfItemStates').then(() => true),
+    a.waitEvent('SelfItemStates').then(() => true),
     new Promise<false>((r) => setTimeout(() => r(false), 800)),
   ]);
   assert.equal(got, false, 'only the world peer may author avatar item states');

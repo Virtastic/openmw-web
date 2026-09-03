@@ -52,7 +52,7 @@ test('a driving player gets MP_SelfStats from the peer report, and observers see
   }), 100);
   t.after(() => clearInterval(reporter));
 
-  const self = await a.waitEvent('MP_SelfStats',
+  const self = await a.waitEvent('SelfStats',
     (v) => (v as { hp?: { c?: number } })?.hp?.c === 42);
   assert.ok(self, 'the owner must receive their own bars');
   const seen = await b.waitEvent('PlayerStatsDynamic',
@@ -77,7 +77,7 @@ test("while peer reports are fresh the client's own assertion is ignored", async
     entries: [{ id: a.playerId, ...bars(42) }],
   }), 100);
   t.after(() => clearInterval(reporter));
-  await a.waitEvent('MP_SelfStats'); // the peer's stream is established
+  await a.waitEvent('SelfStats'); // the peer's stream is established
 
   // The forged full-health claim while the avatar says 42.
   a.sendEvent('PlayerStatsDynamic', bars(100));
@@ -125,7 +125,7 @@ test('a CLIENT sending AvatarStatsBatch is ignored', async (t) => {
 
   b.sendEvent('AvatarStatsBatch', { entries: [{ id: a.playerId, ...bars(0) }] });
   const got = await Promise.race([
-    a.waitEvent('MP_SelfStats').then(() => true),
+    a.waitEvent('SelfStats').then(() => true),
     new Promise<false>((r) => setTimeout(() => r(false), 800)),
   ]);
   assert.equal(got, false, 'only the world peer may author avatar bars');
@@ -147,7 +147,7 @@ test('a client heal reaches the peer, and sustained fake healing is refused', as
     entries: [{ id: a.playerId, ...bars(20) }],
   }), 150);
   t.after(() => clearInterval(reporter));
-  await a.waitEvent('MP_SelfStats', (v) => (v as { hp?: { c?: number } })?.hp?.c === 20);
+  await a.waitEvent('SelfStats', (v) => (v as { hp?: { c?: number } })?.hp?.c === 20);
 
   // A potion-sized restoration is accepted and forwarded to the avatar.
   peer.inbox.events.length = 0;

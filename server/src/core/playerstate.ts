@@ -456,7 +456,10 @@ export function handleAvatarStatsBatch(ctx: StateCtx, sender: Player, value: LVa
         other.peer.sendEvent('PlayerStatsDynamic', msg);
       }
     }
-    p.peer.sendEvent('MP_SelfStats', { hp, mp, ft });
+    // BARE NAME: the engine prefixes MP_ on arrival (mwmp/netmanager.cpp), so sending
+    // 'MP_SelfStats' made the client look for a handler named MP_MP_SelfStats and the bars
+    // never reached a real player. The unit tests read raw wire names, so they passed.
+    p.peer.sendEvent('SelfStats', { hp, mp, ft });
   }
 }
 
@@ -513,7 +516,7 @@ export function handleAvatarItemStatesBatch(ctx: StateCtx, sender: Player, value
     }, 'sweep');
     const wire: Record<string, JsLike[]> = {};
     for (const [rid, bucket] of Object.entries(states)) wire[rid] = bucket as JsLike[];
-    p.peer.sendEvent('MP_SelfItemStates', { itemStates: wire });
+    p.peer.sendEvent('SelfItemStates', { itemStates: wire }); // bare name; the engine adds MP_
   }
 }
 
