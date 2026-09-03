@@ -11,7 +11,7 @@ import { validEmail, validAccountName, DEFAULT_CHARACTER_NAME, type AccountStore
 import type { AttioHook } from '../integrations/attio';
 import type { ContentGate, EngineGate } from '../core/manifest';
 import type { Player, Peer, Roster } from '../core/players';
-import { INPUT_DRIVING_MS } from '../core/players';
+import { INPUT_DRIVING_MS, PEER_POSE_FRESH_MS } from '../core/players';
 import type { CommandRegistry, CommandContext } from '../core/commands';
 import type { HookBus } from '../plugins/loader';
 import { handleChatSend } from '../core/chat';
@@ -66,6 +66,7 @@ type AuthOp = 'register' | 'login' | 'resume' | 'ticket';
 // Everything a connection needs from the composed server; kept as an interface so
 // connection.ts has no import cycle with server.ts.
 export interface ServerCtx {
+  worldPeer(): Player | undefined; // THE world peer (server.ts): the single simulator
   config: Config;
   accounts: AccountStore;
   roster: Roster;
@@ -353,7 +354,7 @@ export class Connection implements Peer {
       // never see a flicker.
       this.ctx.social.onLeave(this.player);
       this.ctx.roster.remove(this.player);
-      if (this.ctx.roster.inWorld().length === 0) this.ctx.onWorldEmpty?.();
+      if (this.ctx.roster.humansInWorld().length === 0) this.ctx.onWorldEmpty?.(); // the peer is not a player
       // M6: drop every conversation this player held (same teardown as authority).
       this.ctx.quests.releaseDialogueLocks(this.player.id);
       // M7: relinquish weather authority and settle any dialog we owed this player an
@@ -422,9 +423,11 @@ export class Connection implements Peer {
       if (err instanceof SessionParseError || err instanceof ProtoError) {
         this.disconnect('BAD_PROTO', err.message);
       } else {
-        log('error', 'conn.internal_error', { ip: this.ip, error: String(err) });
+        log('error', 'conn.internal_error', { ip: this.ip, error: String(err), system: this.isSystem });
         metrics.protocolErrors.inc({ kind: 'internal_error' });
-        this.disconnect('BAD_PROTO', 'internal error');
+        // Never drop the world's SIMULATOR over one bad frame: disconnecting the peer freezes
+        // every cell it holds until the supervisor restarts it. Log, count, continue.
+        if (!this.isSystem) this.disconnect('BAD_PROTO', 'internal error');
       }
     }
   }
@@ -735,7 +738,7 @@ export class Connection implements Peer {
     if (player.inputSeq !== undefined && seq <= player.inputSeq) return; // stale/replayed
     player.inputSeq = seq;
     player.lastInputAt = Date.now();
-    const peer = this.ctx.roster.inWorld().find((p) => p.system === true);
+    const peer = this.ctx.worldPeer();
     if (!peer) {
       metrics.playerInputDropped.inc({ reason: 'no_peer' });
       return; // degraded mode; see above
@@ -745,7 +748,7 @@ export class Connection implements Peer {
       packEnvelope(MSG_PLAYER_INPUT, nextBroadcastSeq(), packInputForward(player.id, payload)));
   }
 
-  private static readonly INPUT_ACTIVE_MS = INPUT_DRIVING_MS; // players.ts owns the reasoning
+  private static readonly INPUT_ACTIVE_MS = PEER_POSE_FRESH_MS; // poses: the SHORT window (players.ts); bars/items keep INPUT_DRIVING_MS
 
   // Phase 3, 0x0105 AvatarMoveBatch: the authoritative result, from the WORLD PEER ONLY.
   // A client sending this is forging other players' movement — refused and counted, the
@@ -755,6 +758,12 @@ export class Connection implements Peer {
     if (sender.system !== true) {
       metrics.avatarBatchRejected.inc({ reason: 'not_peer' });
       log('warn', 'conn.avatar_batch_forged', { from: sender.name, account: sender.accountKey });
+      return;
+    }
+    if (sender !== this.ctx.worldPeer()) {
+      // A second system peer (an operator's, a leftover) must not author poses beside the
+      // world peer -- last-writer-wins per frame is visible jitter. Counted, not fatal.
+      metrics.avatarBatchRejected.inc({ reason: 'not_world_peer' });
       return;
     }
     let entries;
@@ -784,8 +793,9 @@ export class Connection implements Peer {
       // real catch-up and lost under load; if the avatar never arrives, the client simply
       // keeps its own authority -- which is the correct degraded state anyway.
       if (p.teleportPose !== undefined) {
-        const dx = e.pose.x - p.teleportPose.x, dy = e.pose.y - p.teleportPose.y;
-        if (dx * dx + dy * dy > 512 * 512) {
+        const dx = e.pose.x - p.teleportPose.x, dy = e.pose.y - p.teleportPose.y, dz = e.pose.z - p.teleportPose.z;
+        const arrived = dx * dx + dy * dy + dz * dz <= 512 * 512 && e.lastInputSeq > p.teleportPose.seq;
+        if (!arrived) {
           if (now - p.teleportPose.at > 30_000) {
             log('warn', 'simpeer.avatar_never_arrived', {
               id: p.id, name: p.name, note: 'avatar did not reach the teleport target; client keeps pose authority' });
@@ -829,7 +839,7 @@ export class Connection implements Peer {
     // rates is visible jitter for every observer. The frame is still consumed (seq
     // bookkeeping), so the moment the peer goes quiet (>300 ms) the very next client frame
     // is authoritative again: the degraded mode needs no switchover signal.
-    if (player.peerPoseAt !== undefined && Date.now() - player.peerPoseAt <= 300) {
+    if (player.peerPoseAt !== undefined && Date.now() - player.peerPoseAt <= PEER_POSE_FRESH_MS) {
       player.moveSeq = seq;
       return;
     }
@@ -954,7 +964,7 @@ export class Connection implements Peer {
         player.peer.sendEvent('QuestSpawn', { recordId: spawn.recordId, questId: spawn.questId, cellKey });
       }
     });
-    player.teleportPose = { x, y, z, at: Date.now() }; // peer poses ignored until the avatar arrives (players.ts)
+    player.teleportPose = { x, y, z, at: Date.now(), seq: player.inputSeq ?? 0 }; // peer poses ignored until the avatar arrives (players.ts)
     player.cellKey = cellKey;
     const prev = player.pose;
     player.pose = {

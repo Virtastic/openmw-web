@@ -101,6 +101,7 @@ export interface QuestCtx {
   ownerCharId(): string | undefined;
   // Operator additions to the world-shared global set (total conversions).
   worldGlobals?: string[];
+  worldPeer?(): Player | undefined;
 }
 
 function tbl(v: LValue | undefined): LTable | undefined {
@@ -316,6 +317,18 @@ export class Quests {
       // went home with globals saying "done" and a journal saying stage 10, which can leave
       // a quest ungiveable or unfinishable in their own campaign. A guest's campaign is
       // frozen in BOTH halves of the quest system or in neither.
+      // STANDALONE PERSISTENCE. journalTarget(peer) is the owner's campaign in an owned
+      // world -- correct. On a STANDALONE stack (no owner) it resolves to the peer's own
+      // ephemeral doc, so every quest global the peer's scripts advanced was relayed live
+      // and then lost on relog. Every human in the world got the relay, so every human's
+      // doc is the campaign: persist to all of them and return.
+      if (player.system === true && this.ctx.ownerCharId() === undefined) {
+        for (const h of this.ctx.roster.humansInWorld()) {
+          this.ctx.players.update(h.charId, (doc) => { (doc.globals ??= {})[name] = value; });
+        }
+        this.relayAll(player.id, 'GlobalVarUpdate', { name, value });
+        return;
+      }
       const target = this.ctx.journalTarget(player);
       // Phase 4E: the peer's write is the campaign's authoritative state, so every client
       // in the world receives it LIVE (their local script copies would otherwise hold a

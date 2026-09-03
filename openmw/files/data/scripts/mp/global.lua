@@ -410,11 +410,20 @@ local function pushEquipmentToPuppet(id)
             if okc then
                 item:moveInto(inventory)
             else
-                grantId = placeholderItemId() -- unknown record here: visible stand-in
-                if grantId then
-                    local okp, cnt = pcall(function() return inventory:countOf(grantId) end)
-                    if not okp or cnt == 0 then
-                        world.createObject(grantId):moveInto(inventory)
+                if mp.isSystem and mp.isSystem() then
+                    -- THE PLACEHOLDER BAN, equipment half (Phase 2b): an authoritative avatar
+                    -- must never wield a stand-in -- a placeholder weapon computes the wrong
+                    -- damage. Fail loud, leave the slot empty.
+                    print('[mp] AVATAR EQUIP UNRESOLVABLE for #' .. tostring(id) .. ': ' .. tostring(recordId))
+                    mp.testSet('avatarUnresolvable', tostring(recordId))
+                    grantId = nil
+                else
+                    grantId = placeholderItemId() -- client puppet: a visible stand-in is fine
+                    if grantId then
+                        local okp, cnt = pcall(function() return inventory:countOf(grantId) end)
+                        if not okp or cnt == 0 then
+                            world.createObject(grantId):moveInto(inventory)
+                        end
                     end
                 end
             end
@@ -1281,7 +1290,52 @@ local eventHandlers = {
     -- Phase 4D: our item states as the peer simulated them (weapon wear from 4C swings,
     -- charge spent, souls captured). Same hop; applier in player.lua.
     MP_SelfItemStates = function(data)
+        -- Map record ids to LOCAL here: worldmp lives only in the global script, so
+        -- player.lua's applier saw raw netIds and never matched a dynamic (enchanted/soul)
+        -- record -- exactly the items that carry charge/soul. Content records worked by
+        -- accident (identity mapping).
+        if data and type(data.itemStates) == 'table' then
+            local mapped = {}
+            for rid, bucket in pairs(data.itemStates) do
+                mapped[worldmp.toLocal(rid)] = bucket
+            end
+            data = { itemStates = mapped }
+        end
         toPlayer('MP_SelfItemStates', data)
+    end,
+
+    -- Phase 4A/2: the peer replaced this player's avatar body after a respawn; resurrect the
+    -- avatar and put it at the respawn point so its next bar report is ALIVE (else it keeps
+    -- reporting hp 0 and the server re-kills the player -- a death loop).
+    MP_AvatarResurrect = function(data)
+        if not (mp.isSystem and mp.isSystem()) or not data or not data.id then return end
+        local p = puppets[data.id]
+        if not p or not p.obj or not p.obj:isValid() then return end
+        pcall(function() types.Actor.resurrect(p.obj) end)
+        pcall(function()
+            local d = types.Actor.stats.dynamic
+            for _, s in ipairs({ d.health(p.obj), d.magicka(p.obj), d.fatigue(p.obj) }) do
+                s.current = s.base
+            end
+        end)
+        if data.x and remoteCell[data.id] then
+            tryTeleport(p.obj, inviteCellArg(remoteCell[data.id]), util.vector3(data.x, data.y, data.z))
+        end
+    end,
+
+    -- Phase 4A: a client restoration (potion/rest/heal) raised a bar; mirror it onto the
+    -- avatar so the peer's next report does not overwrite the heal with the un-restored body.
+    MP_AvatarRestore = function(data)
+        if not (mp.isSystem and mp.isSystem()) or not data or not data.id then return end
+        local p = puppets[data.id]
+        if not p or not p.obj or not p.obj:isValid() then return end
+        pcall(function()
+            local d = types.Actor.stats.dynamic
+            local map = { hp = 'health', mp = 'magicka', ft = 'fatigue' }
+            for k, statName in pairs(map) do
+                if data[k] and data[k].c then d[statName](p.obj).current = data[k].c end
+            end
+        end)
     end,
 
     -- Phase 3: a player's input frame, routed to the avatar that embodies them. Only the

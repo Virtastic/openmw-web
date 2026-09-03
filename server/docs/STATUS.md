@@ -70,6 +70,11 @@ convergence (they pass on quieter hardware).
   config trims already bought ~130 MB. The per-manager cache report needed
   `collectStats("resource")` armed (only the in-game overlay ever did); armed now beside the
   stats file so the E4 attribution can be read.
+- **Phase 1c navmesh warm reuse — CONFIRMED** (the plan's "verify rather than assume" step):
+  cold boot added 138 collision shapes, `navmesh.db` = 438,272 B; a warm boot against the same
+  `userDataDir` added **0** shapes and the db was **byte-identical** (md5 unchanged), 9 cells
+  both runs. So one peer per world restores navmesh caching that the fan-out (concurrent
+  access to one db) had disabled -- `[simPeer] navmeshTemplate` is more valuable now, not less.
 - **E1 attribution (idle native peer, one anchored cell = 3×3 grid, no players, RSS
   364,016 kB ≈ 355 MB):**
 

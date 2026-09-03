@@ -31,7 +31,7 @@ function harness(attackerCell: string, victimCell: string) {
   const victim = fakePlayer(2, victimCell);
   const roster = { get: (id: number) => (id === 2 ? victim : undefined) } as unknown as Roster;
   const combat = new Combat({
-    roster, maxHitDamage: 1000,
+    roster, maxHitDamage: 1000, worldPeer: () => undefined,
     holderOf: () => 2, epochOf: () => 1,
     allowPlayerHit: () => true,
   });

@@ -41,6 +41,11 @@ local function stop()
     self.controls.yawChange = 0
     self.controls.jump = false
     self.controls.use = 0
+    -- Drop the modifiers too, or a coasting avatar keeps its sneak posture (and stealth)
+    -- after the owner's input stops, and a stale jump edge swallows the first jump on resume.
+    self.controls.run = false
+    self.controls.sneak = false
+    prevJump = false
 end
 
 return {

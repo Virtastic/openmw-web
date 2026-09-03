@@ -35,6 +35,7 @@ export type CombatTarget =
   | { kind: 'actor'; ref: ObjRef; cellKey: string; epoch?: number };
 
 export interface CombatCtx {
+  worldPeer(): Player | undefined;
   roster: Roster;
   maxHitDamage: number;
   // Current authority holder / epoch for a cell (M4); undefined when dormant.
@@ -242,7 +243,7 @@ export class Combat {
       // world peer applies the hit to the victim's AVATAR instead, and the damage travels
       // back through the peer's bar reports. An input-less victim keeps the old delivery.
       if (victim.lastInputAt !== undefined && Date.now() - victim.lastInputAt <= INPUT_DRIVING_MS) {
-        const worldPeer = this.ctx.roster.inWorld().find((p) => p.system === true);
+        const worldPeer = this.ctx.worldPeer();
         if (worldPeer) return worldPeer;
       }
       return victim;

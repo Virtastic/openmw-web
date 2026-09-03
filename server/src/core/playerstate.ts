@@ -29,6 +29,7 @@ const MAX_STAT_KEY = 32;
 export const MAX_EQUIPMENT_SLOT = 20;
 
 export interface StateCtx {
+  worldPeer(): Player | undefined; // THE world peer (server.ts): the one simulator answers rule
   roster: Roster;
   store: PlayerStore;
   onPlayerDeath(player: Player): void;
@@ -134,7 +135,26 @@ function handleStatsDynamic(ctx: StateCtx, player: Player, body: LTable): boolea
   // client's claim resumes ruling the moment peer reports stop (peer down, input tier
   // inactive for this player), so degraded mode needs no switchover signal here either.
   if (player.peerStatsAt !== undefined && Date.now() - player.peerStatsAt <= PEER_STATS_FRESH_MS) {
-    return true; // consumed, not applied
+    // CLIENT MAY HEAL, PEER MAY HURT. Potions, resting and self-cast healing all happen on
+    // the client's engine (the avatar drinks nothing until the intent tier lands), so a
+    // client assertion that RAISES a bar is a restoration and must reach the avatar -- or
+    // every potion did nothing, overwritten by the un-restored avatar three seconds later.
+    // A LOWER value is ignored: damage is peer-authored. Raises are capped at base. This is
+    // the pre-input-tier trust boundary for healing, no wider; the intent tier narrows it.
+    const cur = ctx.store.getCached(player.charId)?.stats?.dynamic;
+    const raise = (k: 'hp' | 'mp' | 'ft', v: DynamicStatDoc) => {
+      const have = cur?.[k]; const want = Math.min(v.c, v.b);
+      return have === undefined ? undefined : (want > have.c + 0.5 ? { c: want, b: have.b } : undefined);
+    };
+    const r = { hp: raise('hp', hp), mp: raise('mp', mp), ft: raise('ft', ft) };
+    if (!r.hp && !r.mp && !r.ft) return true; // nothing restored: consumed, not applied
+    ctx.store.update(player.charId, (doc) => {
+      const d = doc.stats?.dynamic; if (!d) return;
+      if (r.hp) d.hp = r.hp; if (r.mp) d.mp = r.mp; if (r.ft) d.ft = r.ft;
+    }, 'sweep');
+    const worldPeer = ctx.worldPeer();
+    if (worldPeer) worldPeer.peer.sendEvent('AvatarRestore', { id: player.id, ...(r.hp ? { hp: r.hp } : {}), ...(r.mp ? { mp: r.mp } : {}), ...(r.ft ? { ft: r.ft } : {}) });
+    return true;
   }
   // DEATH IS A FLUSH POINT. Everything else here rides the sweep, but hp reaching 0 must hit
   // the disk immediately: the client sends the death edge instantly, and a player who dies
@@ -329,7 +349,7 @@ function handleInventory(ctx: StateCtx, player: Player, body: LTable): boolean {
     // a weapon picked up mid-session has to be IN the avatar's hands for 4C to compute the
     // right damage. Same AvatarState the join sends; applyAvatarDoc reconciles shortfall,
     // surplus and states without duplicating what the body already holds.
-    const worldPeer = ctx.roster.inWorld().find((q) => q.system === true);
+    const worldPeer = ctx.worldPeer();
     if (worldPeer) worldPeer.peer.sendEvent('AvatarState', avatarStateBody(player.id, doc));
   });
   // The snapshot now accounts for everything credited since the last one, so the credit is
@@ -360,9 +380,10 @@ function handleItemAcquired(ctx: StateCtx, player: Player, body: LTable): boolea
 // client PlayerStatsDynamic (doc + relay + death flush) and additionally hands the OWNER
 // their own bars as MP_SelfStats -- the client renders what the peer simulated.
 const PEER_STATS_FRESH_MS = INPUT_DRIVING_MS; // one predicate everywhere (players.ts)
+const RESURRECT_GRACE_MS = 6_000;
 
 export function handleAvatarStatsBatch(ctx: StateCtx, sender: Player, value: LValue | undefined): void {
-  if (sender.system !== true) return; // forgery: only the world peer reports avatars
+  if (sender.system !== true || sender !== ctx.worldPeer()) return; // forgery / second peer: only THE world peer reports avatars
   const body = tbl(value);
   const entries = body ? tbl(body.get('entries')) : undefined;
   if (!entries) return;
@@ -379,6 +400,10 @@ export function handleAvatarStatsBatch(ctx: StateCtx, sender: Player, value: LVa
     if (!p || p.system === true || !p.inWorld) continue;
     // Same rule as avatar poses: the peer's answer only rules a player who is actively
     // driving the input tier. An input-less client keeps asserting its own bars.
+    // RESURRECT WINDOW. The avatar body is replaced on the peer after a respawn; until its
+    // fresh bars arrive, a dead-avatar report (hp 0) would re-kill the player who just
+    // came back -- measured as a death loop every 3 s. Ignore hp<=0 reports briefly.
+    if (hp.c <= 0 && p.resurrectedAt !== undefined && now - p.resurrectedAt <= RESURRECT_GRACE_MS) continue;
     if (p.lastInputAt === undefined || now - p.lastInputAt > PEER_STATS_FRESH_MS) {
       if (p.statsDropLogged !== true) {
         p.statsDropLogged = true;
@@ -436,7 +461,7 @@ function parseItemStatesL(raw: LTable | undefined): Record<string, { condition?:
 }
 
 export function handleAvatarItemStatesBatch(ctx: StateCtx, sender: Player, value: LValue | undefined): void {
-  if (sender.system !== true) return; // only the world peer reports avatars
+  if (sender.system !== true || sender !== ctx.worldPeer()) return; // only THE world peer reports avatars
   const body = tbl(value);
   const entries = body ? tbl(body.get('entries')) : undefined;
   if (!entries) return;

@@ -39,11 +39,15 @@ function combat.onPuppetHit(data)
     -- the blow twice. The relay survives for two callers: degraded mode (nobody simulating
     -- the cell: forward as before, victim-applies for players, held/dropped for actors) and
     -- the test hooks (mpTest), which keep s51/s58 policing the relay machinery itself.
-    if not data.mpTest and deps.hasHolder then
-        local cellKey = data.victim and data.victim:isValid() and deps.cellKeyOfObj(data.victim) or nil
-        if not cellKey and deps.ownCellKeyFn then cellKey = deps.ownCellKeyFn() end
-        if deps.hasHolder(cellKey) then return end
-    end
+    -- Phase 4C, closed form: the peer's avatar swings and resolves EVERY melee (PvE and PvP)
+    -- natively against the actors it holds, so a real client swing is always cancel-only --
+    -- puppet.lua already returned false to stop local ghost damage; forwarding it too lands
+    -- the blow twice. This also closes the window the old hasHolder check missed: before
+    -- ActorAuthorityInfo arrived hasHolder was false and the swing forwarded AND the avatar
+    -- hit = double damage. Only the TEST hooks (mpTest) still ride the relay, keeping
+    -- s51/s58 as its regression guard; magic (onPuppetSpellHit) is unaffected -- the avatar
+    -- does not cast. Degraded mode (no peer) means no melee until the peer returns, by design.
+    if not data.mpTest then return end
     local target
     if data.playerId then
         -- Player victim. PvP off: cancel silently — the server drops these anyway, but

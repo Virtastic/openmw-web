@@ -38,7 +38,7 @@ function makeAuthority(
   const rec: Recorder = { grants: [], infos: [], revokes: [], overrides: new Map() };
   const senders: AuthoritySenders = {
     grant: (playerId, cellKey, epoch, snapshot) => rec.grants.push({ playerId, cellKey, epoch, snapshot }),
-    info: (playerId, cellKey, holderId) => rec.infos.push({ playerId, cellKey, holderId }),
+    info: (playerId, cellKey, holderId) => rec.infos.push({ playerId, cellKey, holderId: holderId as number }),
     revoke: (playerId, cellKey, epoch) => rec.revokes.push({ playerId, cellKey, epoch }),
     loadOverrides: async (cellKey) => rec.overrides.get(cellKey) ?? { actors: [] },
     foldOverrides: async (cellKey, snapshot) => void rec.overrides.set(cellKey, snapshot),

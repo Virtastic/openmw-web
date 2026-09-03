@@ -330,6 +330,19 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     sendEvent: (target, name, body) => {
       if (target === 'all') for (const p of roster.inWorld()) p.peer.sendEvent(name, body);
       else roster.get(target)?.peer.sendEvent(name, body);
+      // A RESURRECT IS ALSO THE PEER'S BUSINESS. The respawn plugin addresses the player; the
+      // peer's avatar body for that player is still DEAD, and its next bar report (hp 0)
+      // re-killed the respawned player every 3 s -- a death loop. Replace the avatar at the
+      // respawn point, open the resurrect window, and let the client's restored bars rule
+      // until the fresh body's report arrives.
+      if (name === 'PlayerResurrect' && typeof target === 'number') {
+        const victim = roster.get(target);
+        if (victim) {
+          victim.resurrectedAt = Date.now();
+          victim.peerStatsAt = undefined;
+          worldPeerImpl()?.peer.sendEvent('AvatarResurrect', { id: target, ...(body as object) });
+        }
+      }
     },
     gui: {
       messageBox: (playerId, text, buttons) => m7.gui.messageBox(playerId, text, buttons),
@@ -465,7 +478,14 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     }
   };
 
+  // THE world peer, one resolver for every caller (input, avatar batches, bar/item reports,
+  // AvatarState, PvP, anchors/authority). Assigned once simPeers exists (below); until then
+  // it answers undefined. The supervisor's own spawn wins; else the LOWEST-id system peer --
+  // stable across roster order, so two system peers cannot each be "the" peer to different
+  // sites (that split brain sent input to one and authority to the other).
+  let worldPeerImpl: () => Player | undefined = () => undefined;
   const stateCtx: StateCtx = {
+    worldPeer: () => worldPeerImpl(),
     roster,
     store: playerStore,
     // Chargen named the character: put that name on the slot, replacing the placeholder the
@@ -489,6 +509,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
 
   const combat = new Combat({
     roster,
+    worldPeer: () => worldPeerImpl(),
     maxHitDamage: config.limits.maxHitDamage,
     holderOf: (cellKey) => world.holderOf(cellKey),
     epochOf: (cellKey) => world.epochOf(cellKey),
@@ -512,6 +533,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       (worldOwner !== '' ? roster.activeForAccount(worldOwner)?.charId : player.charId),
     ownerCharId: () => (worldOwner === '' ? undefined : roster.activeForAccount(worldOwner)?.charId),
     worldGlobals: config.sharing.worldGlobals,
+    worldPeer: () => worldPeerImpl(),
   });
 
   // Phase C. The store is opened here so its lifetime matches the server's; social.stop()
@@ -651,6 +673,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // Approved cosmetic mods (meshes/textures) may differ between players; record-bearing
 
   const ctx: ServerCtx = {
+    worldPeer: () => worldPeerImpl(),
     config,
     accounts,
     roster,
@@ -688,7 +711,9 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       if (accountKey === worldOwner) return true;
       if (worldMode !== 'party') return false;
       if (!socialStore.areFriends(worldOwner, accountKey)) return false;
-      return roster.humansInWorld().filter((p) => !p.bot).length < MAX_WORLD_PLAYERS;
+      // humanCount, not humansInWorld(): authed players still loading count too, or ten
+      // friends dialling in the same second all pass a cap none has crossed yet.
+      return roster.humanCount < MAX_WORLD_PLAYERS;
     },
     // A world that empties reverts to how it booted. Without this, flipping your world to
     // party once left it party FOREVER: the gateway reuses a running world as-is, so the next
@@ -1262,6 +1287,11 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // The supervisor keeps its multi-key machinery: it costs nothing and is the spill valve if
   // the scale ramp ever shows frame time going superlinear in anchored cells.
   const WORLD_KEY = 'world';
+  worldPeerImpl = (): Player | undefined => {
+    const sys = roster.inWorld().filter((pp) => pp.system === true);
+    return sys.find((pp) => simPeers.keyOfAccount(pp.name) === WORLD_KEY)
+      ?? sys.sort((a, b) => a.id - b.id)[0];
+  };
   // Anchors held past occupancy (idle-decay): cellKey -> last known position + expiry.
   // Walking a cell border must not flap the peer's grid; dropping an anchor is cheap.
   const heldAnchors = new Map<string, { x: number; y: number; z: number; until: number }>();
@@ -1366,9 +1396,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     // world has one peer, and a peer the supervisor did not spawn (the harness pre-starts
     // its own so the boots overlap; an operator may too) authenticated with the same peer
     // password. Input forwarding already resolves the peer this way (connection.ts).
-    const peerPlayer = roster.inWorld().find(
-      (p) => p.system === true && simPeers.keyOfAccount(p.name) === WORLD_KEY)
-      ?? roster.inWorld().find((p) => p.system === true);
+    const peerPlayer = worldPeerImpl();
     if (!peerPlayer) {
       // The peer being down is now a GENUINE anomaly, not a capacity warning: there is no
       // maxPeers arithmetic to blame, just a process that is starting, crashed, or backing
@@ -1398,7 +1426,11 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       claimed.delete(gone);
     }
     for (const ck of cells) {
-      if (claimed.has(ck)) continue;
+      // Re-assert even a CLAIMED cell whose holder is no longer the peer: the peer's own
+      // avatar cell change (handleCellChange) releases the cell it walked out of, and the
+      // claimed-diff alone would never re-enter it -- leaving an anchored cell dormant until
+      // idle-decay. authorityEnter is idempotent when the peer already holds it.
+      if (claimed.has(ck) && world.holderOf(ck) === peerPlayer.id) continue;
       world.authorityEnter(peerPlayer, ck);
       claimed.add(ck);
     }

@@ -20,7 +20,7 @@ import { MSG_PLAYER_STATE_BATCH, packPlayerStateBatch } from '../proto/input';
 // Phase 3: how long a peer-authored pose stays authoritative without a refresh. Comfortably
 // past two peer frames (the peer streams at ~20 Hz), and short enough that a dead peer's
 // last word does not pin players for perceptible time.
-const PEER_POSE_FRESH_MS = 300;
+import { PEER_POSE_FRESH_MS } from './players';
 
 export const BATCH_INTERVAL_MS = 66;
 export const MAX_ABS_COORD = 512000;

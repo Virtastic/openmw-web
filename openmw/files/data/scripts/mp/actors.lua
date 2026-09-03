@@ -343,6 +343,16 @@ end
 
 actors.handlers.MP_ActorAuthorityInfo = function(data)
     if data.cellKey then
+        -- HOLDER LOST (peer gone): the server sends this with no holderId. Clear the mirror
+        -- and DETACH this cell's actor puppets so their AI re-enables and the client
+        -- simulates them locally (degraded mode). Detach is correct here -- this is loss,
+        -- not a handoff to another holder -- and local AI is the only fallback with no peer.
+        if data.holderId == nil then
+            holderOfCell[data.cellKey] = nil
+            infoEpoch[data.cellKey] = nil
+            detachActorPuppetsInCell(data.cellKey)
+            return
+        end
         holderOfCell[data.cellKey] = data.holderId
         -- M5 needs the LIVE epoch to address actor targets, and a non-holder only ever sees
         -- Info. Read it defensively: older servers omit it (combat on non-held cells is then

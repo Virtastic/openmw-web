@@ -25,6 +25,14 @@ export interface Peer {
 // frame gap put 1.17s between inputs and flapped every gate at 1s), and the only cost of a
 // longer window is how long a vanished client's last authority lingers.
 export const INPUT_DRIVING_MS = 5_000;
+// How long the peer's newest pose keeps the CLIENT's 0x0100 frames gated (handleMove) and
+// keeps the owner's 0x0103 self-state flowing (movement tick). 2 s, not the old 300 ms:
+// with a 300 ms gate a peer hitch longer than that (GC, load) let the client's frame in,
+// then the peer's, then the client's -- alternating writers, exactly the jitter the gate
+// exists to prevent. 2 s rides through a hitch and still hands movement back to the
+// client within two seconds of a peer death. One constant, exported, so it is not a
+// literal in two files.
+export const PEER_POSE_FRESH_MS = 2_000;
 
 export interface Player {
   id: number;
@@ -78,6 +86,10 @@ export interface Player {
   // Wall-clock of the peer's newest avatar item-state (wear/charge/soul) report; while fresh
   // the client's own itemStates (inside PlayerInventory) are ignored -- counts still land.
   peerItemStatesAt?: number;
+  // Wall-clock of the last resurrect sent to this player. For a short window the peer's
+  // dead-avatar bar reports (hp 0) are ignored so the respawned player is not re-killed
+  // while the avatar body is being replaced on the peer.
+  resurrectedAt?: number;
   // Where this player's last cell change / teleport claimed they landed. While set, the
   // peer's avatar poses are ignored for them: the avatar teleports on the RELAY of the cell
   // change, so its stream still says the old place for a while -- and one stale sample is a
@@ -85,7 +97,11 @@ export interface Player {
   // from (s51: a 12-far-travels-a-minute bounce loop; s22: a respawned player pinned to
   // their corpse). Cleared the moment the peer streams a pose NEAR this target -- a fixed
   // timer raced the peer's actual catch-up and lost on slow boxes.
-  teleportPose?: { x: number; y: number; z: number; at: number };
+  // `seq`: the owner's input seq at the teleport. A stale peer entry can be near the target
+  // by coincidence (interior->interior doors: both near the origin), so distance alone is
+  // not proof the avatar arrived -- the entry must also have consumed input newer than the
+  // teleport. Distance is 3-D for the same reason.
+  teleportPose?: { x: number; y: number; z: number; at: number; seq: number };
   avatarPoseLogged?: boolean;
   statsDropLogged?: boolean; // one simpeer.avatar_stats_gated log per streak // simpeer.avatar_first_pose emitted for this session
   peerPoseAt?: number;

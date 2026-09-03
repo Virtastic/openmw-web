@@ -199,7 +199,11 @@ export class WorldState {
       revoke: (playerId, cellKey, epoch) =>
         this.roster.get(playerId)?.peer.sendEvent('ActorAuthorityRevoke', { cellKey, epoch }),
       info: (playerId, cellKey, holderId, epoch) =>
-        this.roster.get(playerId)?.peer.sendEvent('ActorAuthorityInfo', { cellKey, holderId, epoch }),
+        // holderId undefined = HOLDER LOST (peer gone): the client clears its holder mirror
+        // and detaches its actor puppets so local AI resumes (degraded mode). Sent as an
+        // absent key so a pre-4F client that never expected it simply sees nil.
+        this.roster.get(playerId)?.peer.sendEvent('ActorAuthorityInfo',
+          holderId === undefined ? { cellKey, epoch } : { cellKey, holderId, epoch }),
       loadOverrides: async (cellKey) => {
         const doc = await this.cells.get(cellKey);
         return (doc.actorOverrides as ActorSnapshot | undefined) ?? { actors: [] };
@@ -359,7 +363,13 @@ export class WorldState {
   // Mirrors authorityEnter: a peer releases its whole footprint, not just the anchor cell,
   // or cells it has walked out of would keep it listed as their holder forever.
   authorityLeaveAll(playerId: number, cellKey: string, connected: boolean, system: boolean): void {
-    const cells = system ? loadedCells(cellKey) : [cellKey];
+    // A PEER'S FOOTPRINT IS EVERY CELL IT HOLDS, not the 3x3 around where its avatar stands:
+    // anchors granted it cells all over the map. Releasing only loadedCells(cellKey) on a
+    // crash left every other anchored cell owned by a dead id forever -- a restarted peer
+    // could never re-take them (onEnter only informs when a foreign holder exists), so after
+    // any peer restart the world was unsimulated except where the peer happened to stand.
+    const held = system ? this.authority.cellsHeldBy(playerId) : [];
+    const cells = new Set<string>(system ? [...loadedCells(cellKey), ...held] : [cellKey]);
     for (const c of cells) this.authorityLeave(playerId, c, connected);
   }
 

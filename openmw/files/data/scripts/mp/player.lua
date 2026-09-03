@@ -838,7 +838,7 @@ return {
             pcall(function()
                 local inventory = types.Actor.inventory(self)
                 for recId, bucket in pairs(data.itemStates) do
-                    local localId = worldmp and worldmp.toLocal and worldmp.toLocal(recId) or recId
+                    local localId = recId -- already mapped to LOCAL by global.lua's forwarder
                     local idx = 0
                     for _, item in ipairs(inventory:getAll()) do
                         if item.recordId == localId then

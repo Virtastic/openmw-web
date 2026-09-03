@@ -164,7 +164,6 @@ do
   local env = stubs.install({})
   local combat = dofile('./openmw/files/data/scripts/mp/combat.lua')
   local cell, epoch = '0,0', nil
-  local peerSimulates = false -- Phase 4C toggle: does a peer hold the victim's cell?
   combat.init({
     playerFn = function() return { id = 'me' } end,
     ownIdFn = function() return 1 end,
@@ -172,7 +171,6 @@ do
     puppetObjOf = function() return nil end,
     epochOf = function() return epoch end,
     isHolderOf = function() return false end,
-    hasHolder = function() return peerSimulates end,
     cellKeyOfObj = function() return cell end,
     isPvpEnabled = function() return true end,
   })
@@ -184,56 +182,47 @@ do
     return nil
   end
 
-  -- The case that was silently dropped: a non-holder with no epoch yet.
+  -- Phase 4C closed form: a REAL client swing is NEVER forwarded -- the peer's avatar
+  -- resolves every melee natively. Only a TEST-hook swing (mpTest) rides the relay, which
+  -- is what keeps s51/s58 as its regression guard. This also closes the mid-handoff double
+  -- damage: there is no window where a real swing both forwards AND the avatar hits.
   epoch = nil
+  local n0 = #env.calls.events
   combat.onPuppetHit({ victim = victim, damage = { health = 7 }, successful = true })
+  check('a real swing is NOT forwarded (the peer avatar computes melee)',
+    #env.calls.events == n0, 'a real client swing must be cancel-only in the one-peer model')
+
+  -- The test hook still travels, and carries the cell so the server can route it. With no
+  -- epoch yet it omits it rather than inventing one (the server proves presence by proximity).
+  combat.onPuppetHit({ victim = victim, damage = { health = 7 }, successful = true, mpTest = true })
   local sent = lastHit()
-  check('a hit with no epoch is still sent', sent ~= nil,
-    'the swing was swallowed -- no damage, no miss, nothing')
+  check('a test-hook swing (mpTest) is forwarded', sent ~= nil,
+    'the relay must still carry mpTest hits for s51/s58')
   if sent then
     check('it carries the cell so the server can route it', sent.target.cellKey == cell)
     check('and omits the epoch rather than inventing one', sent.target.epoch == nil,
       'quoting an epoch we never received is the one thing the server rejects')
   end
 
-  -- When we DO have one it must travel: that is what stops a mid-handoff hit landing on the
-  -- wrong simulator.
+  -- A known epoch travels on the test hook: that is what stops a mid-handoff hit landing on
+  -- the wrong simulator.
   epoch = 42
-  combat.onPuppetHit({ victim = victim, damage = { health = 7 }, successful = true })
+  combat.onPuppetHit({ victim = victim, damage = { health = 7 }, successful = true, mpTest = true })
   local sent2 = lastHit()
   check('a known epoch is quoted', sent2 ~= nil and sent2.target.epoch == 42,
     tostring(sent2 and sent2.target.epoch))
 
-  -- A miss is a real outcome and must reach the victim too, or it plays on nobody.
+  -- A test-hook MISS is a real outcome and must reach the victim too, or it plays on nobody.
   epoch = nil
   local before = #env.calls.events
-  combat.onPuppetHit({ victim = victim, damage = {}, successful = false })
-  check('a MISS is forwarded as well as a hit', #env.calls.events > before)
+  combat.onPuppetHit({ victim = victim, damage = {}, successful = false, mpTest = true })
+  check('a test-hook MISS is forwarded as well as a hit', #env.calls.events > before)
   check('and is not silently promoted to a hit', lastHit().successful == false)
 
-  -- Phase 4C: when a peer SIMULATES the cell, a REAL swing is cancel-only (the avatar's own
-  -- swing computes it on the peer); a TEST-hook swing (mpTest) still rides the relay so the
-  -- relay machinery keeps its regression guards.
-  peerSimulates = true
-  local before4c = #env.calls.events
-  combat.onPuppetHit({ victim = victim, damage = { health = 5 }, strength = 1,
-    sourceType = 'Melee', successful = true })
-  check('a real swing is NOT forwarded while the peer simulates the cell',
-    #env.calls.events == before4c)
-  combat.onPuppetHit({ victim = victim, damage = { health = 5 }, strength = 1,
-    sourceType = 'Melee', successful = true, mpTest = true })
-  check('a test-hook swing still rides the relay while the peer simulates',
-    #env.calls.events == before4c + 1 and lastHit() ~= nil)
-  peerSimulates = false
-  combat.onPuppetHit({ victim = victim, damage = { health = 5 }, strength = 1,
-    sourceType = 'Melee', successful = true })
-  check('with nobody simulating (degraded), a real swing is forwarded as before',
-    #env.calls.events == before4c + 2)
-
-  -- Genuinely unaddressable: no cell, nothing the server could route on.
+  -- Genuinely unaddressable even for a test hook: no cell, nothing the server could route on.
   cell = nil
   local n = #env.calls.events
-  combat.onPuppetHit({ victim = victim, damage = { health = 7 }, successful = true })
+  combat.onPuppetHit({ victim = victim, damage = { health = 7 }, successful = true, mpTest = true })
   check('a victim with no cell is still not sent', #env.calls.events == n)
 end
 

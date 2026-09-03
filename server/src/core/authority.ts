@@ -30,7 +30,7 @@ export interface AuthoritySenders {
   // To a non-holder: on entry, and again whenever the epoch changes (handoff), so every
   // client in a cell always knows the live epoch — non-holders need it to address actors
   // (M5 combat) and to recognise stale traffic.
-  info(playerId: number, cellKey: string, holderId: number, epoch: number): void;
+  info(playerId: number, cellKey: string, holderId: number | undefined, epoch: number): void;
   // Dormant cell state: persisted in the cell doc, handed to the next claimant.
   loadOverrides(cellKey: string): Promise<ActorSnapshot>;
   foldOverrides(cellKey: string, snapshot: ActorSnapshot): Promise<void>;
@@ -136,6 +136,13 @@ export class Authority {
   stop(): void {
     if (this.reviewTimer) clearTimeout(this.reviewTimer);
     this.reviewTimer = undefined;
+  }
+
+  // Every cell this player currently holds (a sim peer holds many via anchors).
+  cellsHeldBy(playerId: number): string[] {
+    const out: string[] = [];
+    for (const [key, c] of this.cells) if (c.holderId === playerId) out.push(key);
+    return out;
   }
 
   holderOf(cellKey: string): number | undefined {
