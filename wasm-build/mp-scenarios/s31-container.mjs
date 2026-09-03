@@ -38,21 +38,21 @@ export default async function run(ctx) {
 
   // A opens (registers canonical contents = empty), puts the item in.
   await a.eval(`Module.__omwMPCmd='chest:open'`);
-  await ctx.sleep(500);
-  // DID THE OPEN REGISTER AT ALL? This needs no engine change and splits the two remaining
-  // causes. objects.onActivate arms the container watch only if a contents snapshot could be
-  // read AND ContainerOpen could be addressed; on success the server answers with canonical
-  // state, so `containerData` gains a key for this chest and the mirror publishes it -- EMPTY,
-  // but present.
-  //
-  //   key present after open -> the open registered and the watch is armed; the PUT DIFF is
-  //                             what fails
-  //   key absent            -> ContainerOpen never landed, so nothing was ever watching, and
-  //                             the put was always going to be invisible
-  const openedKey = await a.eval(
-    `Object.prototype.hasOwnProperty.call(JSON.parse((window.__omwMP||{}).containerItems||"{}"), "n:${netId}")`);
-  ctx.log(`  after open, the chest is ${openedKey ? 'REGISTERED' : 'ABSENT'} in containerItems`
-    + ' (absent = ContainerOpen never landed, so no watch was ever armed)');
+  // WAIT FOR THE OPEN TO LAND BEFORE ISSUING THE NEXT COMMAND. Two reasons, and the second is
+  // the one that actually bit:
+  //   1. the ContainerOpen round trip (open -> server -> canonical state -> mirror) does not
+  //      fit inside a fixed 500 ms on a loaded box; and
+  //   2. `Module.__omwMPCmd` is a SINGLE SLOT that player.lua drains. Writing `chest:put:`
+  //      while `chest:open` is still sitting there unconsumed DESTROYS the open.
+  // That is what this scenario kept hitting, intermittently and in both suite and solo runs:
+  // the chest read ABSENT (no watch was ever armed) while the item itself moved perfectly --
+  // A held 0 afterwards -- because only the SECOND of the two commands ever ran. It looked
+  // like a broken container mirror and it was a clobbered command.
+  await a.waitFor(
+    `Object.prototype.hasOwnProperty.call(JSON.parse((window.__omwMP||{}).containerItems||"{}"), "n:${netId}")`,
+    STEP_TIMEOUT,
+    'the chest to REGISTER in containerItems after open (still absent = ContainerOpen never '
+    + 'landed, so nothing was ever watching and the put was always going to be invisible)');
   await a.eval(`Module.__omwMPCmd='chest:put:${itemId}'`);
   const chestHas = (n) =>
     `(JSON.parse((window.__omwMP||{}).containerItems||"{}")["n:${netId}"]||{})[${JSON.stringify(itemId)}] === ${n}`

@@ -30,7 +30,15 @@ export default async function run(ctx) {
   ctx.log('  cmd-channel probe (count mirror): ' + String(await a.eval("(window.__omwMP||{}).count")));
 
   await a.eval("Module.__omwMPCmd='console:request'");
-  await ctx.sleep(1500);
+  // WAIT FOR THE GATE TO REPORT, do not sleep a guess. The handler always writes this mirror
+  // (both halves are pcall'd), so `undefined` means it has not run YET -- and a fixed 1500 ms
+  // lands right on the boundary of when it does on a slow box. That produced a FAILING SECURITY
+  // ASSERTION whose message read "the console must NOT open", when the console was in fact
+  // shut: measured directly, the mirror says false, it just says it a moment later than the
+  // sleep allowed. A security test that cries wolf on a slow machine gets muted, so this waits
+  // for an actual answer and then judges it.
+  await a.waitFor('(window.__omwMP||{}).consoleOpen !== undefined', STEP,
+    'the console gate to report its state (mirror still unwritten)');
 
   const open = String(await a.eval("(window.__omwMP||{}).consoleOpen"));
   ctx.log(`  console open after request (MP enabled): ${open}`);
