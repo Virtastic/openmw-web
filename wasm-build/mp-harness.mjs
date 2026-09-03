@@ -489,34 +489,10 @@ async function launchClient(name, mpPort, extraParams = '', opts = {}) {
       writeFileSync(path, Buffer.from(shot.data, 'base64'));
       return path;
     };
-    const rawEval = async (expr) => {
+    handle.eval = async (expr) => {
       const r = await bsend('Runtime.evaluate', { expression: expr, returnByValue: true }, sessionId);
       if (r.exceptionDetails) throw new Error(`eval(${expr}): ` + (r.exceptionDetails.exception?.description || r.exceptionDetails.text));
       return r.result.value;
-    };
-    // THE COMMAND SLOT HOLDS ONE COMMAND, AND A SCENARIO MUST NOT LAND ON TOP OF THE PAGE'S.
-    // `Module.__omwMPCmd` is a single slot that player.lua drains and nulls. The PAGE respects
-    // that -- its pump (index.html) only writes when the slot is empty -- but a scenario
-    // assigning the property directly overwrites whatever has not been consumed yet.
-    //
-    // s22 died on exactly this, deterministically and for a long time: it set `walk:` on top of
-    // the page's pending `pause:off`, so the unpause was destroyed, the world stayed PAUSED, and
-    // the walk it then waited 120 s for could never happen. The client log went silent at the
-    // join line and it read as a broken movement path. The same scenario passed when a
-    // diagnostic added one extra round trip before the walk -- i.e. the race was decided by how
-    // fast the box was, and 43 scenario files write this slot.
-    //
-    // Waiting here covers all of them, including ones not written yet.
-    const CMD_WRITE = /Module\s*\.\s*__omwMPCmd\s*=[^=]/;
-    handle.eval = async (expr) => {
-      if (CMD_WRITE.test(expr)) {
-        const until = Date.now() + 15_000;
-        while (Date.now() < until) {
-          if (!(await rawEval('!!(window.Module && Module.__omwMPCmd)'))) break;
-          await new Promise((r) => setTimeout(r, 50));
-        }
-      }
-      return rawEval(expr);
     };
     // A WALK THAT ACTUALLY HAPPENED. `walk:` is a ONE-SHOT command with a deadline: player.lua
     // drops it on the floor if the player cannot move yet (chargen is still running on a fresh
