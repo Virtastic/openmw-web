@@ -314,7 +314,12 @@ function startSimPeer(port, password, cellKey, gameDataDir, watch) {
   return {
     proc,
     stop: () => {
-      try { proc.kill('SIGTERM'); } catch {}
+      // SIGKILL, not SIGTERM: the headless engine does not exit on TERM (measured 2026-09-02:
+      // a peer sent TERM, then INT, kept running until its container was killed). With TERM
+      // every scenario left its peer alive after finishing and a sweep accumulated them --
+      // the "host load 20" that self-skips s40/s42. A scenario that wants the peer GONE
+      // (s69 peer outage) needs it gone.
+      try { proc.kill('SIGKILL'); } catch {}
       try { rmSync(cfgDir, { recursive: true, force: true }); } catch {}
       try { rmSync(userDir, { recursive: true, force: true }); } catch {}
     },

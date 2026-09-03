@@ -812,6 +812,11 @@ export class Connection implements Peer {
       p.lastPoseAt = now;
       p.peerPoseAt = now;
       p.lastInputSeq = e.lastInputSeq;
+      // The plausibility envelope (handleMove) measures client moves against moveAnchor,
+      // which only accepted CLIENT moves refreshed -- so the first client move after a peer
+      // outage was judged against wherever the client last authored, possibly long ago and
+      // far away. The canonical pose is the honest baseline.
+      p.moveAnchor = { x: e.pose.x, y: e.pose.y, z: e.pose.z, at: now };
     }
   }
 

@@ -51,6 +51,17 @@ convergence (they pass on quieter hardware).
 - **4E quests.** A client write to a global/member var the peer wrote within
   `INPUT_DRIVING_MS` is dropped (local script copies cannot clobber the peer); the peer's
   character-global writes are relayed live to everyone in-world.
+- **Progression stays client-asserted -- a decision, not a gap.** Weapon-skill progress is
+  awarded on the ATTACKER's side in `Npc::hit()` (`skillUsageSucceeded`, npc.cpp:673) before
+  the victim's Lua `Hit` event fires, so the 4C cancel-only swing loses nothing: the client
+  is the correct asserter for skills/attributes/level, the peer for combat outcomes. The
+  plan's identity.lua "reversal" is therefore not done on purpose; the avatar's own copy
+  drifts and is overwritten by the AvatarState refresh on every inventory snapshot.
+- **Peer outage policy verified in play (s69):** peer SIGKILLed mid-session, the other
+  player's movement stays visible (client path resumes), cell authority releases, a fresh
+  peer re-takes the cell and movement stays visible after. Found on the way: the harness's
+  `stop()` sent SIGTERM, which the headless engine ignores -- every scenario left its peer
+  running, and a sweep accumulated them (the "host load 20" that self-skipped s40/s42).
 - **Phase 5 verified in play (s68).** F5 while joined reaches the engine (the `lastKey`
   mirror moves) and produces no `.omwsave`; the page reports `__omwSavesEnabled=false`, so
   the locker save path is closed for every MP session, Solo included.
