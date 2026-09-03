@@ -578,6 +578,27 @@ export function syncStateOnJoin(ctx: StateCtx, joiner: Player): void {
   }
 }
 
+// A PEER THAT REPLACES A DEAD ONE HAS TO BE HANDED THE CHARACTERS AGAIN.
+//
+// syncStateOnJoin pushes AvatarState to a peer when that PEER JOINS -- which is strictly
+// before it holds any cell, so it files the docs and spawns nothing. That is correct for the
+// ordinary case (players arrive after the peer and are pushed individually as they join), and
+// silently wrong for a RESTART: the replacement peer joins into a world that is already full
+// of players, becomes the world peer, takes the cells -- and has an avatar for nobody.
+//
+// Everyone it is now responsible for is then FROZEN, because the two halves disagree in the
+// worst possible way: the client's own 0x0100 path re-gates the instant the peer's poses look
+// fresh again, while the peer is not simulating them at all. s69 step 4 caught it -- degraded
+// mode kept everyone moving with NO peer, and the walker could not move once a peer came back.
+export function pushAvatarsToPeer(ctx: StateCtx, peer: Player): void {
+  if (peer.system !== true) return;
+  for (const other of ctx.roster.inWorld()) {
+    if (other.system === true) continue;
+    const doc = ctx.store.getCached(other.charId);
+    if (doc) peer.peer.sendEvent('AvatarState', avatarStateBody(other.id, doc));
+  }
+}
+
 // Phase 2b: the peer's copy of a character. A cosmetic puppet needs appearance and
 // equipment; an AUTHORITATIVE avatar needs the whole PlayerDoc — attributes, skills,
 // level, spells, inventory WITH per-item state (condition/charge/soul), factions, bounty —

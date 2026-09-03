@@ -206,3 +206,54 @@ test('a PvP hit on a driving victim routes to the peer; an idle victim keeps it'
   assert.equal(vic.inbox.events.filter((e) => e.name === 'CombatHit').length, beforeVic,
     'the victim client must NOT also receive it -- one applier');
 });
+
+// THE PEER DIES AND THE WORLD MUST NOT FREEZE FOR THE PEOPLE WATCHING.
+//
+// The degraded-mode claim is per-player and needs no switchover signal: once the peer's poses
+// go stale (PEER_POSE_FRESH_MS) the client's own 0x0100 is authoritative again. Every existing
+// test here covers that with the peer ALIVE; none covered the transition, and s69 caught the
+// hole in play -- the walker moved 102 units locally while the watcher's puppet of them sat
+// frozen at the last peer-authored pose for 33 seconds.
+//
+// An observer is the whole point: a player who can move but whom nobody can SEE move is not
+// meaningfully unfrozen.
+test('when the peer stops, a client-authored move still reaches the OTHER players', async (t) => {
+  const { server, peer, a } = await world(t);
+  // Drive the input tier so `a` is genuinely under peer authority to begin with.
+  let inputSeq = 0;
+  a.sendInput({ move: 1 }, ++inputSeq);
+  const inputTimer = setInterval(() => a.sendInput({ move: 1 }, ++inputSeq), 100);
+  t.after(() => clearInterval(inputTimer));
+
+  const b = await TestClient.connect(server.port);
+  t.after(() => b.close());
+  await b.joinAsNew('Watcher');
+  await b.waitEvent('PlayerList');
+  b.sendCellChange('0,0', 512, 640, 10);
+
+  // The peer is alive and authoring: stream until the watcher sees the peer-authored pose.
+  const streamTimer = setInterval(() => peer.sendAvatarMoveBatch([
+    { id: a.playerId, lastInputSeq: inputSeq,
+      pose: { x: 512, y: 640, z: 10, yaw: 0, pitch: 128, flags: 0, animVel: 0, counter: 0 } },
+  ]), 60);
+  await poll(() => b.inbox.batches.find((bt) =>
+    bt.entries.some((e) => e.id === a.playerId && Math.abs(e.pose.y - 640) < 2)),
+    8000, 'the watcher to see the peer-authored pose');
+
+  // THE PEER DIES.
+  clearInterval(streamTimer);
+  await new Promise((r) => setTimeout(r, 2600)); // > PEER_POSE_FRESH_MS
+
+  // `a` keeps walking, authoring its own pose as the client does in degraded mode.
+  b.inbox.batches.length = 0;
+  let moveSeq = 1000;
+  const walkTimer = setInterval(
+    () => a.sendMove({ x: 512, y: 900, z: 10, yaw: 0, pitch: 128 }, ++moveSeq), 100);
+  t.after(() => clearInterval(walkTimer));
+
+  const seen = await poll(() => b.inbox.batches.find((bt) =>
+    bt.entries.some((e) => e.id === a.playerId && Math.abs(e.pose.y - 900) < 2)),
+    8000, 'the watcher to see the CLIENT-authored pose after the peer died');
+  clearInterval(walkTimer);
+  assert.ok(seen, 'with no peer, a moving player must still be visible to everyone else');
+});

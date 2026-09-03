@@ -1640,7 +1640,10 @@ export class Connection implements Peer {
       const { cellKey, pose } = this.player;
       for (const p of this.ctx.roster.inWorld()) {
         if (this.player.system === true && p.id !== this.player.id) continue;
-        p.peer.sendEvent('PlayerCellChange', { id: this.player.id, cellKey, x: pose?.x ?? 0, y: pose?.y ?? 0, z: pose?.z ?? 0 });
+        // Same rule as the join sync below: a fabricated (0,0,0) is a teleport order on the
+        // peer, so a resume with no stored pose must not send one.
+        if (!pose) continue;
+        p.peer.sendEvent('PlayerCellChange', { id: this.player.id, cellKey, x: pose.x, y: pose.y, z: pose.z });
       }
       this.ctx.world.sendCellState(this.player, cellKey);
       this.ctx.world.authorityEnter(this.player, cellKey);
@@ -1654,8 +1657,18 @@ export class Connection implements Peer {
       // Same rule as the live fan-out: never hand a joiner the SIM PEER's position, or their
       // very first act in the world is to spawn a puppet of the server's simulator.
       if (p.id === this.player.id || !p.cellKey || p.system === true) continue;
+      // NEVER FABRICATE A POSITION. This used to fall back to (0,0,0) for a player the server
+      // had no pose for, and on the SIM PEER a PlayerCellChange is not advice -- it TELEPORTS
+      // that player's avatar to the coordinates given. A peer joining to replace a dead one
+      // was therefore handed the origin for everyone and moved their bodies there:
+      // "[mp] avatar #2 follow-teleport to (0,0,0)". The avatar then streams authoritative
+      // poses from the middle of the world, so the owner is dragged off too.
+      //
+      // A player whose pose is genuinely unknown is announced on their next move instead,
+      // which is what happened before this sync existed at all.
+      if (!p.pose) continue;
       this.player.peer.sendEvent('PlayerCellChange',
-        { id: p.id, cellKey: p.cellKey, x: p.pose?.x ?? 0, y: p.pose?.y ?? 0, z: p.pose?.z ?? 0 });
+        { id: p.id, cellKey: p.cellKey, x: p.pose.x, y: p.pose.y, z: p.pose.z });
     }
     // The peer is in the world: authenticated, content-checked, joined. THIS is ready.
     if (this.isSystem) {

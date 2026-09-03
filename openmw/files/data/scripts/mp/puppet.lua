@@ -221,12 +221,30 @@ local function onUpdate(dt)
     end
     local now = core.getRealTime()
     equipTick(now)
+    -- IDLE MEANS "NOTHING NEW TO CHASE", NOT "STOP WHERE YOU STAND".
+    --
+    -- The server only relays a pose when it CHANGES, so a player who stops walking stops
+    -- generating updates. The puppet is always behind by RENDER_DELAY plus whatever of the
+    -- approach it has not walked off yet -- so parking it the moment the stream goes quiet
+    -- abandons it wherever it happened to be, permanently, until that player moves again.
+    --
+    -- Measured (s69, with the peer killed so the stream is purely the walker's own): the
+    -- walker moved 102 units, the puppet received the final pose correctly, walked 17 of
+    -- those units, and stopped 85 short. It reads as "the world froze" and it is really
+    -- "the puppet gave up mid-stride". The same shortfall happens in ordinary play at the
+    -- end of every walk; a live peer just hides it by streaming continuously.
+    --
+    -- So: an idle stream still lets the puppet FINISH closing on the newest pose it has,
+    -- and parks it once it arrives. Walking off into nowhere is not a risk -- the target is
+    -- fixed once the stream stops -- and a puppet wedged on geometry is still rescued by the
+    -- stuck detector below.
     local newest = interp:newestTime()
-    if not newest or now - newest > IDLE_TIMEOUT then
+    if not newest then
         zeroControls()
         stuckSince = nil
         return
     end
+    local idle = now - newest > IDLE_TIMEOUT
     local target = interp:target(now)
     if not target then
         zeroControls()
@@ -264,6 +282,14 @@ local function onUpdate(dt)
         -- armed across a tier change makes a promoted puppet fire a bogus snap immediately.
         stuckSince = nil
         lastProgressPos = nil
+        return
+    end
+
+    -- Arrived, and nothing new is coming: park. (Still approaching on an idle stream falls
+    -- through to the steering below -- see the IDLE note above.)
+    if idle and dist2d <= STEER_STOP then
+        zeroControls()
+        stuckSince = nil
         return
     end
 
@@ -342,6 +368,11 @@ return {
             -- fallback must be full fidelity, never a silent degrade.
             tier = e.tier or TIER_NEAR
             interp:push(e)
+            -- The LAST pose this puppet was handed, and the tier it came at. With global.lua's
+            -- moveRx this pins a movement fault to ONE hop -- never routed, routed but not
+            -- pushed, or pushed and not steered -- which is exactly the distinction that took
+            -- an engine rebuild to make the first time.
+            mp.testSet('puppetRx', string.format('%.0f@t%d', e.y or 0, tier))
         end,
         -- M2: full slot->recordId snapshot (items already granted by global.lua).
         MP_Equip = function(data)

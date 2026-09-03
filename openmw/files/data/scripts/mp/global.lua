@@ -281,6 +281,7 @@ local PUPPET_TEMPLATE_ID = 'villager_00' -- demo NPC record (race "Imperial"), n
 
 local puppets = {} -- id -> {obj=GameObject, name=string}
 local remoteCell = {} -- id -> last cellKey (from PlayerCellChange relays)
+local moveRx = 0 -- DIAGNOSTIC: total MoveBatch pose entries routed to puppets
 local lastPose = {} -- id -> last known {x=, y=, z=}
 local remoteIdentity = {} -- id -> {appearance=, equipment=, dynamic=} (M2; kept across spawns)
 local puppetRecordIds = {} -- identity fingerprint -> generated NPC record id (immutable)
@@ -1688,6 +1689,12 @@ local eventHandlers = {
         -- it, a "tiered" run that silently classified every avatar as near would report a
         -- free performance win that is actually just the old behaviour.
         mp.testSet('puppetTiers', json.encode(tierSeen))
+        -- How many pose entries this client has ROUTED to puppets. Kept because the
+        -- `puppets` mirror reads the puppet OBJECT's position, so on its own it cannot tell
+        -- "the batch never arrived" from "it arrived and the puppet did not act on it" --
+        -- the two have completely different causes and looked identical for a long time.
+        moveRx = moveRx + count
+        mp.testSet('moveRx', tostring(moveRx))
         -- Cleared in place: `tierSeen = {}` allocated a fresh table 15x/second, and this
         -- module already goes out of its way to avoid per-tick garbage.
         tierSeen.near, tierSeen.mid, tierSeen.far = nil, nil, nil
@@ -1698,6 +1705,14 @@ local eventHandlers = {
     MP_PlayerCellChange = function(data)
         if not data.id or data.id == net.playerId then return end
         remoteCell[data.id] = data.cellKey
+        -- A CELL CHANGE WITHOUT A POSITION IS NOT A TELEPORT ORDER. On the peer the branch
+        -- below MOVES that player's avatar to these coordinates, so a relay carrying no pose
+        -- (or a fabricated one) would drop the body at the world origin and stream
+        -- authoritative poses from there -- dragging the owner along with it. The cell is
+        -- still worth recording: it is what lets the avatar spawn at all.
+        if type(data.x) ~= 'number' or type(data.y) ~= 'number' or type(data.z) ~= 'number' then
+            return
+        end
         lastPose[data.id] = { x = data.x, y = data.y, z = data.z }
         if visibleFrom(ownCellKeyCache, data.cellKey) then
             local p = puppets[data.id]

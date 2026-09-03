@@ -24,6 +24,7 @@ import { PlayerStore } from './persist/playerstore';
 import { CellStore } from './persist/cellstore';
 import { RecordStore } from './persist/recordstore';
 import { BanStore } from './persist/banstore';
+import { pushAvatarsToPeer } from './core/playerstate';
 import type { StateCtx } from './core/playerstate';
 import { WorldState } from './core/worldstate';
 import { Combat } from './core/combat';
@@ -1302,6 +1303,10 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       log('warn', 'simpeer.world_peer_changed', { from: loser, to: chosen.id,
         note: 'releasing the previous peer cells so the new one can take them' });
       world.authorityReleaseEverything(loser, undefined, false);
+      // ...and hand the newcomer the characters it is now responsible for. Releasing the
+      // loser's cells only frees them; without this the new peer takes them holding an
+      // avatar for nobody, and every player in them freezes (see pushAvatarsToPeer).
+      pushAvatarsToPeer(stateCtx, chosen);
     }
     if (chosen) lastWorldPeerId = chosen.id;
     return chosen;
