@@ -2,6 +2,20 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web -->
 # openmw-web multiplayer — state of play
 
+## 2026-09-03 — all three tiers green, locally
+
+Server **1008/1014** (0 fail, 6 p7zip env-skips), Lua **61/0**, browser harness **9/9**
+(s01 s22 s51 s58 s59 s67 s68 s69 s77) against an engine built from this branch on the laptop.
+
+Four bugs closed since the last entry, three of which only the browser tier could see:
+- the `MP_` prefix (below) — bars and item states reached nobody;
+- `mp.resurrect` resumed the world from inside a `DelayedAction`, so the settings and console
+  menu scripts threw on **every** respawn and stayed disabled for the session;
+- s22 threw its own one-shot `walk:` away before the client could act on it, then waited 120 s
+  for the movement it had discarded;
+- and a harness guard I added on a wrong theory, which cost every command write a round trip
+  and tipped s58 over its budget. Removed.
+
 ## 2026-09-02 (cont.) — Phase 4A/4B, proto 2, and full local verification
 
 **Phase 4A — the peer's avatar bars are the player's bars.** The peer samples each avatar's
