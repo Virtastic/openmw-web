@@ -543,6 +543,39 @@ local function applyAvatarDoc(id)
             end
         end
     end)
+    -- SHED THE TEMPLATE'S KIT. The body is built from an NPC record (villager_00 or the
+    -- first humanoid in the content chain), and that record brings its own inventory and
+    -- spells. The doc reconciliation above only touches records the DOC lists, so the
+    -- template's sword and spells survived -- an avatar fighting with gear its player never
+    -- owned, and casting spells they never learned. Anything not in the doc goes.
+    -- ONLY when the doc actually carries the field. `nil` means "not synced yet", and
+    -- shedding against an absent list would strip the avatar bare; an EMPTY list is a real
+    -- statement ("this player carries nothing") and does shed.
+    if doc.inventory ~= nil then
+        pcall(function()
+            local want = {}
+            for _, entry in ipairs(doc.inventory) do want[worldmp.toLocal(entry.id)] = true end
+            local inventory = types.Actor.inventory(obj)
+            for _, item in ipairs(inventory:getAll()) do
+                if not want[item.recordId] then pcall(function() item:remove(item.count or 1) end) end
+            end
+        end)
+    end
+    if doc.spells ~= nil then
+    pcall(function()
+        local keep = {}
+        for _, sid in ipairs(doc.spells) do keep[sid] = true end
+        local spells = types.Actor.spells(obj)
+        local drop = {}
+        for _, sp in pairs(spells) do
+            local sid = type(sp) == 'table' and sp.id or sp
+            -- Racial/birthsign abilities ride the doc's spell list (identity.lua snapshots
+            -- them as spells), so anything absent is the template's.
+            if sid and not keep[sid] then drop[#drop + 1] = sid end
+        end
+        for _, sid in ipairs(drop) do pcall(function() spells:remove(sid) end) end
+    end)
+    end
     mp.testSet('avatarApplied', tostring(id))
 end
 
@@ -684,8 +717,35 @@ local function avatarItemStatesTick(now)
     if #entries > 0 then mp.sendEvent('AvatarItemStatesBatch', { entries = entries }) end
 end
 
+-- Phase 4C safety: the peer resolves avatar-vs-avatar melee natively, so the server's
+-- allowPlayerHit veto never sees it. Tell every avatar whether pvp is on and which bodies
+-- are avatars, so avatar.lua can veto player-on-player damage while it is off. PvE is
+-- untouched -- an NPC is not in the set.
+local pushAvatarPolicyQueued = false
+local function pushAvatarPolicy()
+    if not (mp.isSystem and mp.isSystem()) then return end
+    local ids = {}
+    for _, p in pairs(puppets) do
+        if p.obj and p.obj:isValid() then
+            local ok, oid = pcall(function() return p.obj.id end)
+            if ok and oid then ids[oid] = true end
+        end
+    end
+    local pvp = (net.flags and net.flags.pvp) == true
+    for _, p in pairs(puppets) do
+        if p.obj and p.obj:isValid() then
+            pcall(function() p.obj:sendEvent('mpAvatarPolicy', { pvp = pvp, avatarObjIds = ids }) end)
+        end
+    end
+end
+
 local function spawnPuppet(id, pose)
     if puppets[id] then return end
+    -- ON THE PEER, NO CELL MEANS NO SPAWN. Falling back to destCellArg() puts the avatar in
+    -- the PEER's own cell at the player's coordinates -- interior coords in an exterior, say
+    -- -- and its pose stream then hard-snaps the owner into the void. The PlayerCellChange
+    -- relay always arrives; waiting for it costs a frame, guessing costs the session.
+    if mp.isSystem and mp.isSystem() and not remoteCell[id] then return end
     -- On the peer the body goes to the PLAYER'S cell (remoteCell relay); destCellArg is the
     -- LOCAL player's cell, which on a one-peer-many-anchors world is just where the peer
     -- happens to be parked.
@@ -714,6 +774,7 @@ local function spawnPuppet(id, pose)
         obj:addScript('scripts/mp/puppet.lua', { playerId = id })
     end
     puppets[id] = { obj = obj, name = name }
+    pushAvatarPolicy()
     applyAvatarDoc(id) -- Phase 2b: a doc that arrived before the body existed lands now
     print('[mp] puppet spawned for ' .. name .. ' (#' .. tostring(id) .. ')')
     -- Identity that arrived before the spawn applies now, so the first visible frame
@@ -727,6 +788,7 @@ local function despawnPuppet(id)
     if not p then return end
     puppets[id] = nil
     avatarStatsLast[id] = nil
+    pushAvatarPolicyQueued = true
     avatarStatsSentAt[id] = nil
     avatarUsing[id] = nil
     avatarItemStatesLast[id] = nil
@@ -2399,6 +2461,7 @@ return {
                 worldmp.tick(now)
                 mirrorDoor(now)
                 avatarStreamTick(now) -- Phase 3: peer streams authoritative avatar poses
+                if pushAvatarPolicyQueued then pushAvatarPolicyQueued = false; pushAvatarPolicy() end
                 avatarStatsTick(now) -- Phase 4A: peer reports avatar bars to the server
                 avatarItemStatesTick(now) -- Phase 4D: peer reports avatar wear/charge/soul
             end

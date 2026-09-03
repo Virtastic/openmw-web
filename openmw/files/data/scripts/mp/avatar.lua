@@ -18,12 +18,36 @@
 local self = require('openmw.self')
 local types = require('openmw.types')
 local core = require('openmw.core')
+local I = require('openmw.interfaces')
+
+-- PvP POLICY, pushed by global.lua (mpAvatarPolicy) on spawn and whenever it changes.
+-- The peer resolves avatar-vs-avatar melee NATIVELY, so with pvp off the server's
+-- allowPlayerHit veto never runs -- a pvp-off world would still let players kill each other
+-- on the peer. avatarObjIds is the set of bodies that ARE avatars, so an NPC's blow (PvE)
+-- is untouched: only player-on-player damage is vetoed.
+local pvpEnabled = false
+local avatarObjIds = {}
 
 local input = nil -- latest {seq, move, side, yaw, pitch, flags}
 local inputAt = 0
 local INPUT_HOLD_S = 0.35 -- coast to a stop when the stream stops
 
 local prevJump = false
+local hitHandlerRegistered = false
+
+-- Veto player-on-player damage while pvp is off: the peer resolves avatar-vs-avatar melee
+-- natively, so the server's allowPlayerHit veto never sees it. An NPC's blow is untouched --
+-- only bodies in avatarObjIds (other players' avatars) are vetoed.
+local function registerHitVeto()
+    if hitHandlerRegistered or not I.Combat then return end
+    hitHandlerRegistered = true
+    I.Combat.addOnHitHandler(function(attack)
+        if pvpEnabled then return end
+        local a = attack.attacker
+        local ok, aid = pcall(function() return a and a.id end)
+        if ok and aid and avatarObjIds[aid] then return false end
+    end)
+end
 
 local function bit(flags, n)
     return math.floor((flags or 0) / (2 ^ n)) % 2 == 1
@@ -52,8 +76,13 @@ return {
     engineHandlers = {
         onActive = function()
             self:enableAI(false)
+            registerHitVeto()
         end,
         onUpdate = function()
+            -- I.Combat comes from the builtin combat script on this body; if it was not up
+            -- at onActive, register on a later tick rather than losing the veto (puppet.lua
+            -- learned the same lesson).
+            if not hitHandlerRegistered then registerHitVeto() end
             local now = core.getRealTime()
             if not input or now - inputAt > INPUT_HOLD_S then
                 stop()
@@ -76,6 +105,10 @@ return {
         end,
     },
     eventHandlers = {
+        mpAvatarPolicy = function(data)
+            if data.pvp ~= nil then pvpEnabled = data.pvp == true end
+            if type(data.avatarObjIds) == 'table' then avatarObjIds = data.avatarObjIds end
+        end,
         mpAvatarInput = function(data)
             -- Stale-drop on the input's own seq: UDP-like reordering cannot happen on one
             -- socket, but the server may resend and the hold logic wants monotonicity.

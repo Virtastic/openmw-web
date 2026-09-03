@@ -239,6 +239,9 @@ local INPUT_EVERY = 1 / 30
 local forceUseUntil = 0 -- harness: attack:<ms> holds the use bit without a real keypress
 
 local function inputTick(now)
+    -- The PEER's own dummy player has no avatar and the server drops its input
+    -- (playerInputDropped{from_peer}); 30 Hz of frames for the bin.
+    if mp.isSystem and mp.isSystem() then return end
     if now - lastInputSend < INPUT_EVERY then return end
     lastInputSend = now
     inputSeq = inputSeq + 1
