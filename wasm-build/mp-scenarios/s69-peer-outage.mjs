@@ -75,7 +75,10 @@ export default async function run(ctx) {
   // Baseline: with the peer up, B walks and A sees the (peer-authored) movement.
   let p0 = await puppetPosOf(ctx, a, bId);
   assert.ok(p0, 'the watcher never rendered the walker (no puppet mirror entry)');
-  await b.eval("Module.__omwMPCmd='walk:0,1,2500'");
+  // b.walk, not a raw command: `walk:` is one-shot with a deadline and player.lua drops it if
+  // the client cannot act on it yet, so the scenario would wait 30s for movement it had already
+  // thrown away. Same fault that made s22 look like a broken movement path.
+  await b.walk(0, 1, 2500);
   await a.waitFor(`(function(){var m=JSON.parse((window.__omwMP||{}).puppets||"{}");var p=m[String(${bId})];`
     + `return !!p && Math.hypot(p.x-(${p0.x}),p.y-(${p0.y}))>40;})()`, STEP,
     'watcher sees the walker move with the peer UP');
@@ -89,7 +92,9 @@ export default async function run(ctx) {
   // --- 2. B keeps walking; A must still see it (client-authored path resumed). -----------
   p0 = await puppetPosOf(ctx, a, bId);
   assert.ok(p0, 'the watcher lost the walker entirely (no puppet mirror entry)');
-  await b.eval("Module.__omwMPCmd='walk:0,1,3000'");
+  // Degraded mode still moves the walker locally, so waiting on B's OWN pose proves the command
+  // took before we start asking what A can see.
+  await b.walk(0, 1, 3000);
   await a.waitFor(`(function(){var m=JSON.parse((window.__omwMP||{}).puppets||"{}");var p=m[String(${bId})];`
     + `return !!p && Math.hypot(p.x-(${p0.x}),p.y-(${p0.y}))>40;})()`, STEP,
     'watcher sees the walker move with the peer DOWN (degraded mode must keep everyone moving)');
@@ -111,7 +116,7 @@ export default async function run(ctx) {
   await ctx.sleep(4_000); // avatars re-spawn, streams resume
   p0 = await puppetPosOf(ctx, a, bId);
   assert.ok(p0, 'the watcher lost the walker entirely (no puppet mirror entry)');
-  await b.eval("Module.__omwMPCmd='walk:0,1,3000'");
+  await b.walk(0, 1, 3000);
   await a.waitFor(`(function(){var m=JSON.parse((window.__omwMP||{}).puppets||"{}");var p=m[String(${bId})];`
     + `return !!p && Math.hypot(p.x-(${p0.x}),p.y-(${p0.y}))>40;})()`, STEP,
     'watcher sees the walker move after the peer RETURNED (re-convergence, no freeze)');
