@@ -10,29 +10,16 @@ import assert from 'node:assert/strict';
 const RESPAWN = { x: 216831, y: 204909, z: 513 }; // must match mp-harness config.toml [rules]
 const RESPAWN_EPS = 128;
 const RESPAWN_TIMEOUT = 15_000;
-const WALK_TIMEOUT = 120_000; // see the waitFor below: this polls a 2Hz mirror under load
 
 const dist = (p, q) => Math.hypot(p.x - q.x, p.y - q.y, p.z - q.z);
 
 export default async function run(ctx) {
   const a = await ctx.launchClient('bot-a');
 
-  // Move away so the respawn teleport is observable.
-  await a.eval(`Module.__omwMPCmd='walk:0,1,2500'`);
-  // WAIT FOR THE WALK, do not assume it fits in a fixed sleep. This was sleep(3500) and it made
-  // the scenario fail on a build where walking works: the pose the test reads is a 2Hz mirror
-  // (POSE_MIRROR_INTERVAL in scripts/mp/player.lua), so under software GL on a loaded box the
-  // reading can still be the starting point when the timer expires. Same fault as s45's invite
-  // teleport, which looked like a broken feature and was a deadline.
-  await a.waitFor(
-    `(() => { try { const p = JSON.parse((window.__omwMP||{}).pose);
-       return Math.hypot(p.x-${RESPAWN.x}, p.y-${RESPAWN.y}, p.z-${RESPAWN.z}) > 250;
-     } catch (e) { return false; } })()`,
-    // 120s, not 30s: the walk itself runs 2500ms, but this waits on the 2Hz pose MIRROR, and
-    // under full-suite load on software GL that round trip is far slower than when the scenario
-    // runs alone. 30s passed standalone (39.9s total) and timed out in the suite -- the fix was
-    // right, the deadline was still guessed.
-    WALK_TIMEOUT, 'A walked away from the respawn point');
+  // Move away so the respawn teleport is observable. ctx-level walk: the command is one-shot and
+  // a fresh client cannot always act on it yet, so this issues it until the player actually moves
+  // (see handle.walk). Waiting on the pose alone is what made this scenario hang for 120s.
+  await a.walk(0, 1, 2500, 300); // 300 > the 250 the assertion below needs
   const before = JSON.parse(await a.eval('(window.__omwMP||{}).pose||"null"'));
   assert.ok(before && dist(before, RESPAWN) > 250, 'A must be away from the respawn point');
 

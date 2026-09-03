@@ -518,6 +518,42 @@ async function launchClient(name, mpPort, extraParams = '', opts = {}) {
       }
       return rawEval(expr);
     };
+    // A WALK THAT ACTUALLY HAPPENED. `walk:` is a ONE-SHOT command with a deadline: player.lua
+    // drops it on the floor if the player cannot move yet (chargen is still running on a fresh
+    // client, and an overlay can hold Interface mode), the command then expires unused, and the
+    // scenario sits waiting for movement it already threw away.
+    //
+    // s22 spent 120 s doing exactly that. It passed standalone and failed in the suite purely on
+    // boot timing, which is why it read as a broken movement path rather than a race. Do not
+    // replace this with a sleep before the walk: the first attempt at a fix waited on the page's
+    // `__omwUiHold`, which never drops at all, so it was a 15 s sleep wearing a gate's clothes --
+    // it made s22 pass and cost every other scenario 15 s per client for nothing.
+    //
+    // Issuing the command until it takes needs no guess about how long the box needs.
+    handle.walk = async (dx, dy, ms = 2500, minDist = 40, tries = 6) => {
+      const read = async () => JSON.parse(await handle.eval('(window.__omwMP||{}).pose||"null"'));
+      const from = await read();
+      if (!from) throw new Error('no pose mirror before walk — the client is not reporting');
+      for (let i = 0; i < tries; i++) {
+        const issued = Date.now();
+        await handle.eval(`Module.__omwMPCmd='walk:${dx},${dy},${ms}'`);
+        const until = issued + ms + 5_000;
+        while (Date.now() < until) {
+          const p = await read();
+          // Judge the attempt once the walk has had its full duration: a command consumed late
+          // covers only part of the ground, and returning on the first sign of movement handed
+          // back a pose barely off the start while the caller wanted 250 units. Distance is
+          // measured from the ORIGINAL position, so successive attempts accumulate.
+          if (p && Date.now() >= issued + ms + 750) {
+            if (Math.hypot(p.x - from.x, p.y - from.y) > minDist) return p;
+            break; // this attempt fell short — walk again rather than report a false stall
+          }
+          await new Promise((r) => setTimeout(r, 250));
+        }
+      }
+      throw new Error(`walk:${dx},${dy} never moved the player ${minDist} units`
+        + ` (${tries} attempts) — movement is blocked, or the pose mirror is dead`);
+    };
     // A REAL key press via CDP (trusted browser input, identical to a physical key): the only
     // honest way to test key-driven UI (T chat / O social) — synthetic KeyboardEvents are
     // untrusted and some paths ignore them. `def` e.g. { key:'t', code:'KeyT', keyCode:84 }.
