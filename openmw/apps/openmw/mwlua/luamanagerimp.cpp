@@ -420,16 +420,38 @@ namespace MWLua
         }
     }
 
+    // A delayed action is allowed to change the game state: MP's `mp.resurrect` resumes a world
+    // that ended the moment the player died. The menu scripts' `onStateChanged` handlers create
+    // delayed actions of their own, which addAction() forbids while the queue is being applied --
+    // so notifying them from inside the pass made two vanilla handlers (settings, console) throw
+    // on every respawn, silently disabling their subsystems. Defer the notification instead: the
+    // state really has changed, the menu just hears about it once the pass is over.
+    void LuaManager::notifyMenuStateChanged()
+    {
+        if (mApplyingDelayedActions)
+            mPendingMenuStateChanged = true;
+        else
+            mMenuScripts.stateChanged();
+    }
+
     void LuaManager::applyDelayedActions()
     {
-        BoolScopeGuard applyingGuard(mApplyingDelayedActions);
-        for (DelayedAction& action : mActionQueue)
-            action.apply();
-        mActionQueue.clear();
+        {
+            BoolScopeGuard applyingGuard(mApplyingDelayedActions);
+            for (DelayedAction& action : mActionQueue)
+                action.apply();
+            mActionQueue.clear();
 
-        if (mTeleportPlayerAction)
-            mTeleportPlayerAction->apply();
-        mTeleportPlayerAction.reset();
+            if (mTeleportPlayerAction)
+                mTeleportPlayerAction->apply();
+            mTeleportPlayerAction.reset();
+        }
+        // Outside the guard: these handlers may legitimately queue actions for the next pass.
+        if (mPendingMenuStateChanged)
+        {
+            mPendingMenuStateChanged = false;
+            mMenuScripts.stateChanged();
+        }
     }
 
     void LuaManager::clear()
@@ -498,20 +520,20 @@ namespace MWLua
         if (!mGlobalScriptsStarted)
             mGlobalScripts.addAutoStartedScripts();
         mGlobalScriptsStarted = true;
-        mMenuScripts.stateChanged();
+        notifyMenuStateChanged();
     }
 
     void LuaManager::gameEnded()
     {
         // TODO: disable scripts and global storage when the game is actually unloaded
         // mGlobalStorage.setActive(false);
-        mMenuScripts.stateChanged();
+        notifyMenuStateChanged();
     }
 
     void LuaManager::noGame()
     {
         clear();
-        mMenuScripts.stateChanged();
+        notifyMenuStateChanged();
     }
 
     void LuaManager::uiModeChanged(const MWWorld::Ptr& arg)

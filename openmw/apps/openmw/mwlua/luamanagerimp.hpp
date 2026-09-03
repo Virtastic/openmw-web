@@ -77,6 +77,7 @@ namespace MWLua
         void gameLoaded() override;
         void gameEnded() override;
         void noGame() override;
+        void notifyMenuStateChanged();
         void objectAddedToScene(const MWWorld::Ptr& ptr) override;
         void objectRemovedFromScene(const MWWorld::Ptr& ptr) override;
         void inputEvent(const InputEvent& event) override;
@@ -197,6 +198,10 @@ namespace MWLua
         bool mGlobalScriptsStarted = false;
         bool mProcessingInputEvents = false;
         bool mApplyingDelayedActions = false;
+        // MP: a delayed action can change the game state (mp.resurrect resumes a world that
+        // ended when the player died), and menu onStateChanged handlers create delayed actions of
+        // their own -- forbidden mid-pass. The notification waits for the pass to finish.
+        bool mPendingMenuStateChanged = false;
         bool mNewGameStarted = false;
         bool mReloadAllScriptsRequested = false;
         bool mRunningSynchronizedUpdates = false;

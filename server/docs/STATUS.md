@@ -12,6 +12,13 @@ peer-simulated bars over the ordinary `PlayerStatsDynamic` fan-out, and hands th
 GLOBAL script — but the applier is in `player.lua`; nothing forwarded it, so no player ever
 saw damage their avatar took on the peer. Now forwarded like the `MP_SelfState` pose hop.
 
+**And the second bug that hid it, found later by s77.** The forward above was necessary but not
+sufficient: the server was *sending* `'MP_SelfStats'` on the wire, and the engine adds the `MP_`
+prefix itself (`mwmp/netmanager.cpp` dispatches `addGlobalEvent({"MP_" + name})`). The client
+was therefore looking for `MP_MP_SelfStats`, and the bars — and `SelfItemStates` with them —
+reached nobody at all. The server now sends BARE names; `test/eventnames.test.ts` forbids the
+prefix in `src/` outright, because nothing else on this side of the wire can see the mistake.
+
 **Phase 4B — a PvP hit on a driving victim lands on their avatar.** The victim's own stat
 assertions are ignored while 4A reports are fresh, so the server routes the hit to the world
 peer (which applies it to the avatar) instead of to the victim's client. An input-less victim
