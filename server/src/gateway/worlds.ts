@@ -226,6 +226,12 @@ export class WorldSupervisor {
   ensure(id: string, mode: WorldMode, ownerAccount?: string): WorldInfo | null {
     const existing = this.worlds.get(id);
     if (existing) {
+      // A world that has been SIGTERMed is not a world you can join: it stays in the map
+      // until `exit` (up to the full stop grace), `lastStatus` is up to a poll stale, so the
+      // directory would splice a player's socket into a process that is draining and dies
+      // underneath them. Refuse now -- the entry disappears on exit and the caller's retry
+      // gets a fresh one. (Cancelling the reap instead would race the delivered signal.)
+      if (existing.stopping) return null;
       existing.idleSince = undefined;
       return this.get(id)!;
     }

@@ -143,11 +143,30 @@ function handleStatsDynamic(ctx: StateCtx, player: Player, body: LTable): boolea
     // the pre-input-tier trust boundary for healing, no wider; the intent tier narrows it.
     const cur = ctx.store.getCached(player.charId)?.stats?.dynamic;
     const raise = (k: 'hp' | 'mp' | 'ft', v: DynamicStatDoc) => {
-      const have = cur?.[k]; const want = Math.min(v.c, v.b);
+      // `have.b`, NEVER `v.b`: `v` is the client's own untrusted body, so capping against
+      // its claimed base let a modified client assert `{c: 99999, b: 99999}` and be stored at
+      // ten times its real maximum -- then forwarded to the avatar as a restore.
+      const have = cur?.[k]; const want = have === undefined ? 0 : Math.min(v.c, have.b);
       return have === undefined ? undefined : (want > have.c + 0.5 ? { c: want, b: have.b } : undefined);
     };
     const r = { hp: raise('hp', hp), mp: raise('mp', mp), ft: raise('ft', ft) };
     if (!r.hp && !r.mp && !r.ft) return true; // nothing restored: consumed, not applied
+    // Budget the HEALTH restoration (the one that decides whether you die).
+    const gained = r.hp ? r.hp.c - (cur?.hp?.c ?? r.hp.c) : 0;
+    if (gained > 0) {
+      const nowMs = Date.now();
+      if (player.restoreWindowAt === undefined || nowMs - player.restoreWindowAt > RESTORE_WINDOW_MS) {
+        player.restoreWindowAt = nowMs;
+        player.restoreInWindow = 0;
+      }
+      const budget = (cur?.hp?.b ?? 100) * RESTORE_BUDGET_MULT;
+      if ((player.restoreInWindow ?? 0) + gained > budget) {
+        noteGain(ctx, player, 'restore_budget', {
+          gained: Math.round(gained), inWindow: Math.round(player.restoreInWindow ?? 0), budget });
+        return true; // consumed, not applied: the peer's bars stand
+      }
+      player.restoreInWindow = (player.restoreInWindow ?? 0) + gained;
+    }
     ctx.store.update(player.charId, (doc) => {
       const d = doc.stats?.dynamic; if (!d) return;
       if (r.hp) d.hp = r.hp; if (r.mp) d.mp = r.mp; if (r.ft) d.ft = r.ft;
@@ -381,6 +400,14 @@ function handleItemAcquired(ctx: StateCtx, player: Player, body: LTable): boolea
 // their own bars as MP_SelfStats -- the client renders what the peer simulated.
 const PEER_STATS_FRESH_MS = INPUT_DRIVING_MS; // one predicate everywhere (players.ts)
 const RESURRECT_GRACE_MS = 6_000;
+// Restoration budget: how much a client may heal ITSELF per window while the peer owns its
+// bars. Generous for real play -- a Restore Health potion is ~20-100, resting is a full bar --
+// and useless as a cheat, which needs sustained restoration at the incoming damage rate.
+// Over budget is ignored AND counted as an anomaly, the same "signal, never an action" shape
+// the movement envelope uses. The real fix is the discrete-intent tier: the avatar drinks the
+// potion on the peer and this whole path goes away.
+const RESTORE_WINDOW_MS = 10_000;
+const RESTORE_BUDGET_MULT = 2; // x the player's max health per window
 
 export function handleAvatarStatsBatch(ctx: StateCtx, sender: Player, value: LValue | undefined): void {
   if (sender.system !== true || sender !== ctx.worldPeer()) return; // forgery / second peer: only THE world peer reports avatars

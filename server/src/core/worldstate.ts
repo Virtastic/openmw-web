@@ -362,14 +362,23 @@ export class WorldState {
   // be gone by the time the queued turn runs.
   // Mirrors authorityEnter: a peer releases its whole footprint, not just the anchor cell,
   // or cells it has walked out of would keep it listed as their holder forever.
+  // WALKING OUT of a cell: the 3x3 the avatar was loading, nothing more. A peer that merely
+  // moved its avatar must NOT drop the anchors it holds elsewhere -- doing so made every peer
+  // cell change release the whole footprint and simPeerPass re-grant it, bumping every cell's
+  // epoch and forcing every client to re-sync that cell's actors.
   authorityLeaveAll(playerId: number, cellKey: string, connected: boolean, system: boolean): void {
-    // A PEER'S FOOTPRINT IS EVERY CELL IT HOLDS, not the 3x3 around where its avatar stands:
-    // anchors granted it cells all over the map. Releasing only loadedCells(cellKey) on a
-    // crash left every other anchored cell owned by a dead id forever -- a restarted peer
-    // could never re-take them (onEnter only informs when a foreign holder exists), so after
-    // any peer restart the world was unsimulated except where the peer happened to stand.
-    const held = system ? this.authority.cellsHeldBy(playerId) : [];
-    const cells = new Set<string>(system ? [...loadedCells(cellKey), ...held] : [cellKey]);
+    const cells = system ? loadedCells(cellKey) : [cellKey];
+    for (const c of cells) this.authorityLeave(playerId, c, connected);
+  }
+
+  // DISCONNECT: release every cell this player holds. A peer holds cells all over the map via
+  // anchors; releasing only the 3x3 around its avatar left the rest owned by a dead id
+  // forever, and a restarted peer could never re-take them (onEnter only INFORMS when a
+  // foreign holder exists), so after any peer crash the world was unsimulated except where
+  // the peer happened to be standing.
+  authorityReleaseEverything(playerId: number, cellKey: string | undefined, connected: boolean): void {
+    const cells = new Set<string>(this.authority.cellsHeldBy(playerId));
+    if (cellKey) for (const c of loadedCells(cellKey)) cells.add(c);
     for (const c of cells) this.authorityLeave(playerId, c, connected);
   }
 

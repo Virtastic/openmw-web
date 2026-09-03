@@ -420,7 +420,13 @@ test('erasure removes everything about an account', async (t) => {
   await server.close();
 
   const report = await deleteAccount(dataDir, 'Forgettable');
-  assert.deepEqual(report, { account: true, player: true, bans: true, identities: 0, chatLines: 0, reports: 0, locker: false, saves: 0 });
+  assert.deepEqual(
+    { ...report, chatLines: 0, socialRows: 0 },
+    { account: true, player: true, bans: true, identities: 0, chatLines: 0, reports: 0,
+      locker: false, saves: 0, socialRows: 0 });
+  // socialRows is normalised above rather than pinned: whether a session leaves a presence
+  // row behind depends on its shutdown path. That the social graph IS erased is proven with
+  // seeded data in erasure-completeness.test.ts, which sweeps every database in the dir.
   // (the account row check above is the real assertion; there is no accounts directory)
   {
     // Player docs are rows; the directory does not exist any more.
@@ -431,5 +437,6 @@ test('erasure removes everything about an account', async (t) => {
   }
   // Idempotent: erasing again reports nothing left to erase rather than throwing.
   assert.deepEqual(await deleteAccount(dataDir, 'Forgettable'),
-    { account: false, player: false, bans: false, identities: 0, chatLines: 0, reports: 0, locker: false, saves: 0 });
+    { account: false, player: false, bans: false, identities: 0, chatLines: 0, reports: 0,
+      locker: false, saves: 0, socialRows: 0 });
 });

@@ -132,8 +132,9 @@ export interface EraseReport {
   locker: boolean; // file list + attestation (and the bytes, when stored on this disk)
   saves: number; // savegames removed
   identities: number; // Phase B: linked SSO identities removed
-  chatLines: number; // A4: lines removed from logs/chat-*.jsonl
+  chatLines: number; // A4: lines removed from logs/chat-*.jsonl AND social chat history
   reports: number; // A4: report docs removed (filed BY or ABOUT the account)
+  socialRows: number; // friends, blocks, requests, invites, mutes, presence and prefs
 }
 
 // A character document is the bulk of what this server knows about a person (inventory,
@@ -150,12 +151,41 @@ function erasePlayerDocs(dataDir: string, key: string): boolean {
 }
 
 
+// THE SOCIAL GRAPH IS PERSONAL DATA TOO, and erase.ts did not open social.sqlite at all --
+// so an "erased" account left behind its friends and blocks, the requests and invites it sent
+// or received, its mutes, its presence row (display NAME, last cell, world) and its own chat
+// lines. The chat lines are the sharpest miss: eraseModerationDb is careful to delete the
+// other copy of exactly the same text. Keyed by accountKey in every table below.
+function eraseSocialDb(dataDir: string, key: string): { rows: number; chatLines: number } {
+  return withDb(join(dataDir, 'social.sqlite'), { rows: 0, chatLines: 0 }, (db) => {
+    const del = (sql: string, ...args: string[]): number => {
+      try {
+        return Number(db.prepare(sql).run(...args).changes);
+      } catch {
+        return 0; // a table this build never created is not an erasure failure
+      }
+    };
+    const chatLines = del('DELETE FROM chat_history WHERE acct = ?', key);
+    const rows =
+      del('DELETE FROM friend WHERE a = ? OR b = ?', key, key)
+      + del('DELETE FROM block WHERE blocker = ? OR blocked = ?', key, key)
+      + del('DELETE FROM friend_request WHERE fromAcct = ? OR toAcct = ?', key, key)
+      + del('DELETE FROM invite WHERE fromAcct = ? OR toAcct = ?', key, key)
+      + del('DELETE FROM mute WHERE muter = ? OR muted = ?', key, key)
+      + del('DELETE FROM presence WHERE account = ?', key)
+      + del('DELETE FROM presence_pref WHERE account = ?', key)
+      + del('DELETE FROM availability_pref WHERE account = ?', key);
+    return { rows, chatLines };
+  });
+}
+
 export async function deleteAccount(dataDir: string, name: string): Promise<EraseReport> {
   const key = name.toLowerCase();
   const dbErased = eraseModerationDb(dataDir, key);
   // Order matters: character docs are found VIA the account file, so erase them first.
   const player = erasePlayerDocs(dataDir, key);
   const lockerErased = eraseLockerAndSaves(dataDir, key);
+  const social = eraseSocialDb(dataDir, key);
   const report: EraseReport = {
     account: eraseAccountDb(dataDir, key),
     player,
@@ -163,8 +193,10 @@ export async function deleteAccount(dataDir: string, name: string): Promise<Eras
     locker: lockerErased.locker,
     saves: lockerErased.saves,
     identities: eraseIdentitiesDb(dataDir, key),
-    chatLines: dbErased.chatLines,
+    // BOTH copies of the person's chat: moderation.db and social.sqlite's history.
+    chatLines: dbErased.chatLines + social.chatLines,
     reports: dbErased.reports,
+    socialRows: social.rows,
   };
   // An account ban keeps the name (and an ip ban an address); erasure lifts it. That is the
   // honest trade and it is documented: a ban cannot outlive the data it names.

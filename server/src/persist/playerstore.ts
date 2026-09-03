@@ -237,8 +237,12 @@ export class PlayerStore {
    *  one players.db. */
   async releaseCached(key: string): Promise<void> {
     if (this.dirty.has(key)) await this.flushKey(key);
-    this.cache.delete(key);
-    this.dirty.delete(key);
+    // NOT `dirty.delete(key)`: an update() that landed DURING the await above set the flag
+    // again, and clearing it here would discard that write entirely (the doc is evicted from
+    // cache on the next line, so there is no second chance). flushKey already clears the flag
+    // for what it actually wrote; anything still marked dirty is newer than the flush and
+    // must survive to the sweep.
+    if (!this.dirty.has(key)) this.cache.delete(key);
     this.creating.delete(key);
     // The sim-peer flag is per-connection state too. clearEphemeral existed for this and was
     // never called anywhere, so a key stayed ephemeral for the life of the process.

@@ -217,7 +217,17 @@ export class SocialStore {
     ] as const) {
       const has = (this.db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[])
         .some((c) => c.name === column);
-      if (!has) this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${decl}`);
+      // CHECK-THEN-ACT ACROSS PROCESSES. The gateway starts several worlds at once and they
+      // share social.sqlite: on the deploy that introduces a column both see it missing, both
+      // ALTER, and the loser throws `duplicate column name` out of the constructor -- the
+      // world process dies at boot and backs off. Losing the race is success here.
+      if (!has) {
+        try {
+          this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${decl}`);
+        } catch (err) {
+          if (!String(err).includes('duplicate column')) throw err;
+        }
+      }
     }
   }
 

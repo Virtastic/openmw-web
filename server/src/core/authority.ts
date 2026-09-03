@@ -284,6 +284,13 @@ export class Authority {
       await this.send.foldOverrides(cellKey, c.lastSnapshot ?? EMPTY_SNAPSHOT);
       c.holderId = null;
       metrics.cellAuthority.inc({ kind: 'dormant' });
+      // TELL THE OCCUPANTS THE CELL IS UNHELD. Without this a client keeps its holder mirror
+      // pointing at a peer that is gone: its actor puppets stay attached with AI disabled
+      // (frozen, unhittable NPCs) and -- since a real melee swing is cancel-only whenever a
+      // holder is believed to exist -- combat does nothing at all until the client
+      // reconnects. `holderId: undefined` is the loss signal; the client clears the mirror
+      // and detaches, so local AI resumes. This is the degraded mode the design promises.
+      for (const other of c.order) this.send.info(other, cellKey, undefined, c.epoch);
     }
   }
 

@@ -323,7 +323,11 @@ export class Quests {
       // and then lost on relog. Every human in the world got the relay, so every human's
       // doc is the campaign: persist to all of them and return.
       if (player.system === true && this.ctx.ownerCharId() === undefined) {
-        for (const h of this.ctx.roster.humansInWorld()) {
+        // Humans only -- a bot's doc is not a campaign. (The journal half still routes
+        // through journalTarget and is lost on an owner-less stack; globals and journal
+        // should freeze together, so this is the honest half-fix until standalone gets a
+        // campaign doc of its own. Recorded in the audit doc.)
+        for (const h of this.ctx.roster.humansInWorld().filter((q) => !q.bot)) {
           this.ctx.players.update(h.charId, (doc) => { (doc.globals ??= {})[name] = value; });
         }
         this.relayAll(player.id, 'GlobalVarUpdate', { name, value });

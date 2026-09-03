@@ -8,7 +8,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { AccountStore } from '../src/core/accounts';
 import { PlayerStore } from '../src/persist/playerstore';
@@ -18,6 +18,7 @@ import { ChatLog, ReportStore } from '../src/core/moderation';
 import { deleteAccount } from '../src/persist/erase';
 import { Locker } from '../src/data/locker';
 import { SaveStore } from '../src/data/save-routes';
+import { SocialStore } from '../src/core/socialstore';
 import { tmpDataDir } from './helpers';
 
 test('deleting an account leaves no trace in any database', async (t) => {
@@ -69,17 +70,35 @@ test('deleting an account leaves no trace in any database', async (t) => {
   new SaveStore(dir).put('victim', 'mp', { name: 'Hero - Save 1.omwsave', size: 4, mtime: 1 });
   new SaveStore(dir).put('victim', 'solo', { name: 'Hero - Save 1.omwsave', size: 4, mtime: 1 });
 
+  // THE SOCIAL GRAPH IS PERSONAL DATA. Friends, blocks, mutes, the requests and invites you
+  // sent, your presence row (display name, last cell) and your own chat lines all name you.
+  const social = new SocialStore(dir);
+  const nowMs = Date.now();
+  social.addFriend('victim', 'other', nowMs);
+  social.addBlock('victim', 'someone', nowMs);
+  social.setPresence('victim', 'w', 'Victim', '1,1', false, nowMs);
+  social.appendChat(
+    { ts: nowMs, channel: 'say', scope: 'w', acct: 'victim', name: 'Victim', text: 'private' }, 50);
+  social.close();
+
   const report = await deleteAccount(dir, 'Victim');
   assert.deepEqual(report, {
-    account: true, player: true, bans: true, identities: 1, chatLines: 1, reports: 1,
+    account: true, player: true, bans: true, identities: 1,
+    // BOTH copies of the person's chat: the moderation log and the social history.
+    chatLines: 2, reports: 1,
     locker: true, saves: 2,   // one per scope: erasure must not leave a mode behind
+    socialRows: 3,            // friend + block + presence (the chat line is counted above)
   });
 
   // Sweep every table in every database for the account key or its character id. Anything
   // that survives is a leak, whichever store it belongs to.
   const needles = ['victim', char.id];
   const leaks: string[] = [];
-  for (const file of ['accounts.db', 'players.db', 'bans.db', 'identities.db', 'moderation.db', 'locker.db', 'saves.db']) {
+  // EVERY database in the directory, discovered rather than listed. The hand-maintained list
+  // this replaced omitted social.sqlite, so an erasure that left behind friends, blocks,
+  // presence and the person's own chat lines passed this "completeness" test for as long as
+  // the social layer existed. A store added tomorrow is swept without anyone remembering to.
+  for (const file of readdirSync(dir).filter((f) => /\.(db|sqlite)$/.test(f))) {
     const path = join(dir, file);
     if (!existsSync(path)) continue;
     const db = new DatabaseSync(path);

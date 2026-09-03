@@ -90,6 +90,12 @@ export interface Player {
   // dead-avatar bar reports (hp 0) are ignored so the respawned player is not re-killed
   // while the avatar body is being replaced on the peer.
   resurrectedAt?: number;
+  // Sliding-window budget for CLIENT-asserted restoration while the peer owns this player's
+  // bars (potions, rest, self-heal -- all still client-side until the intent tier). Without a
+  // bound, "a raise is a restoration" is an immortality exploit: a modified client claims full
+  // health every tick and never dies. See playerstate.ts handleStatsDynamic.
+  restoreWindowAt?: number;
+  restoreInWindow?: number;
   // Where this player's last cell change / teleport claimed they landed. While set, the
   // peer's avatar poses are ignored for them: the avatar teleports on the RELAY of the cell
   // change, so its stream still says the old place for a while -- and one stale sample is a

@@ -64,12 +64,36 @@ export class BanStore {
     }
   }
 
+  // READ THROUGH TO THE DB, not the boot-time snapshot. bans.db is SHARED by every world
+  // process the gateway spawns plus the front door, so an in-memory map is only ever correct
+  // for bans that existed when THIS process started: ban someone from world A and they walk
+  // straight back into world B, or their own already-running solo world, because B's copy
+  // predates the ban. (The map was written when a deployment was one process.) A prepared
+  // statement against a WAL database is cheap enough for the accept path, and `load()` stays
+  // as the warm cache for the list/report views.
+  // Prepared lazily: a property initializer would run before the constructor assigns `db`.
+  private lookupStmt: ReturnType<DatabaseSync['prepare']> | undefined;
+
+  private read(scope: 'account' | 'ip', key: string): BanEntry | undefined {
+    try {
+      this.lookupStmt ??= this.db.prepare(
+        'SELECT by, at, reason FROM bans WHERE scope = ? AND key = ?');
+      const row = this.lookupStmt.get(scope, key) as
+        { by: string; at: string; reason: string } | undefined;
+      if (row) return { by: row.by, at: row.at, reason: row.reason };
+    } catch {
+      // A read failure must not open the door: fall back to the snapshot below.
+    }
+    const target = scope === 'ip' ? this.doc.ips : this.doc.accounts;
+    return target[key];
+  }
+
   isAccountBanned(name: string): BanEntry | undefined {
-    return this.doc.accounts[name.toLowerCase()];
+    return this.read('account', name.toLowerCase());
   }
 
   isIpBanned(ip: string): BanEntry | undefined {
-    return this.doc.ips[ip];
+    return this.read('ip', ip);
   }
 
   banAccount(name: string, by: string, reason: string): void {

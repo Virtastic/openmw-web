@@ -227,7 +227,11 @@ export class CellStore {
   // Monotonic u32, restart-safe; never reused.
   allocNetId(): number {
     const id = this.nextNetId++;
-    if (this.nextNetId > this.netIdCeiling) {
+    // `>=`, not `>`: ids BELOW the ceiling are the ones reserved on disk. At `nextNetId ===
+    // ceiling` the id just handed out is the ceiling itself, so a crash before the next
+    // writeGlobal lands would restart at the same value and issue it twice -- two live
+    // objects sharing a netId the protocol assumes is unique forever.
+    if (this.nextNetId >= this.netIdCeiling) {
       this.netIdCeiling = this.nextNetId + NET_ID_BLOCK;
       this.writeGlobal();
     }

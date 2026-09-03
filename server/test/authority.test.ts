@@ -215,3 +215,47 @@ test('authority fuzz: invariants hold across random enter/leave/disconnect', asy
   }
   for (const cell of CELLS) assert.equal(auth.holderOf(cell), undefined);
 });
+
+// A PEER HOLDS CELLS ALL OVER THE MAP (anchors), not just around its own avatar. Its crash
+// must release every one of them: releasing only the neighbourhood left the rest owned by a
+// dead id forever, and a replacement peer could never take them -- onEnter only INFORMS when
+// a foreign holder exists, so the world stayed unsimulated everywhere the old peer was not
+// standing. cellsHeldBy is what the disconnect path iterates.
+const PEER2 = 3; // the replacement peer after a crash
+test('authority: cellsHeldBy names every cell the peer holds, and each can be released', async () => {
+  const { auth } = makeAuthority({ canSimulate: (id) => id === PEER || id === PEER2 });
+  for (const c of ['a', 'b', 'far']) await auth.onEnter(PEER, c);
+  const held = auth.cellsHeldBy(PEER).sort();
+  assert.deepEqual(held, ['a', 'b', 'far'], 'every anchored cell must be listed');
+  assert.deepEqual(auth.cellsHeldBy(2), [], 'a player holds nothing');
+
+  // The disconnect path releases each in turn; afterwards nothing is held...
+  for (const c of held) await auth.onLeave(PEER, c, false);
+  assert.deepEqual(auth.cellsHeldBy(PEER), [], 'a crashed peer must hold nothing');
+  for (const c of held) assert.equal(auth.holderOf(c), undefined, `${c} still has a holder`);
+
+  // ...and a REPLACEMENT peer can take them all, which is the point.
+  for (const c of held) await auth.onEnter(PEER2, c);
+  assert.deepEqual(auth.cellsHeldBy(PEER2).sort(), ['a', 'b', 'far'],
+    'the replacement peer must be granted the cells the dead one held');
+});
+
+// LOSING THE HOLDER MUST BE ANNOUNCED. A client that is never told keeps its holder mirror
+// pointing at a peer that is gone: its actor puppets stay attached with AI disabled (frozen,
+// unhittable NPCs), and because a real melee swing is cancel-only whenever a holder is
+// believed to exist, combat does nothing AT ALL until the client reconnects. The interface
+// carried `holderId: undefined` for this and no call site ever passed it -- the client-side
+// detach was unreachable code.
+test('authority: when the cell goes dormant the occupants are told it is unheld', async () => {
+  const { auth, rec } = makeAuthority();
+  await auth.onEnter(PEER, 'a');   // the peer takes it
+  await auth.onEnter(2, 'a');      // a player is standing there
+  rec.infos.length = 0;
+
+  await auth.onLeave(PEER, 'a', false); // the peer crashes
+  assert.equal(auth.holderOf('a'), undefined, 'the cell must be dormant');
+
+  const loss = rec.infos.filter((i) => i.cellKey === 'a' && i.holderId === undefined);
+  assert.equal(loss.length, 1, 'the remaining occupant must be told the cell lost its holder');
+  assert.equal(loss[0]!.playerId, 2, 'told to the player, not to the departed peer');
+});

@@ -158,7 +158,8 @@ export class Connection implements Peer {
   private account?: Account;
   private authedVia?: string; // which auth rung succeeded; recorded in the CRM upsert
   private outSeq = 0;
-  private lastClientSeq = 0; // informational for the event tier
+  private lastClientSeq = 0;
+  private internalErrors = 0; // informational for the event tier
   private helloTimer?: NodeJS.Timeout;
   private contentHeld = false;
   // Declared at Hello; carried onto the Player so cell-authority election can require it.
@@ -336,7 +337,10 @@ export class Connection implements Peer {
       // but NOT when this session was superseded by the same account reconnecting (the
       // owner is already back; guests were told "the host has disconnected" on every
       // reconnect), and not for a session that never reached the world at all.
-      if (this.player.inWorld && heldByAnother === undefined) {
+      // IDENTITY, not existence: roster.remove() runs further down, so `heldByAnother` is
+      // still THIS session unless somebody else has taken the account.
+      const superseded = heldByAnother !== undefined && heldByAnother !== this.player;
+      if (this.player.inWorld && !superseded) {
         this.ctx.onPlayerLeftWorld?.(this.player.accountKey);
       }
       if (heldByAnother === undefined || heldByAnother.charId !== charId) {
@@ -359,18 +363,17 @@ export class Connection implements Peer {
       // never see a flicker.
       this.ctx.social.onLeave(this.player);
       this.ctx.roster.remove(this.player);
-      if (this.ctx.roster.humansInWorld().length === 0) this.ctx.onWorldEmpty?.(); // the peer is not a player
+      if (this.ctx.roster.humanCount === 0) this.ctx.onWorldEmpty?.(); // neither the peer nor bots count
       // M6: drop every conversation this player held (same teardown as authority).
       this.ctx.quests.releaseDialogueLocks(this.player.id);
       // M7: relinquish weather authority and settle any dialog we owed this player an
       // answer for (a pending GUI promise must never outlive the socket).
       this.ctx.m7.onDisconnect(this.player.id);
       // M4: relinquish authority (no Revoke — socket is gone) before the cell may flush.
-      if (this.player.cellKey) {
-        this.ctx.world.authorityLeaveAll(this.player.id, this.player.cellKey, false,
-          this.player.system === true);
-        this.ctx.world.onCellVacated(this.player.cellKey);
-      }
+      // NOT gated on cellKey: a peer holds cells via ANCHORS, so one that never sent a cell
+      // change of its own still has a footprint to release.
+      this.ctx.world.authorityReleaseEverything(this.player.id, this.player.cellKey, false);
+      if (this.player.cellKey) this.ctx.world.onCellVacated(this.player.cellKey);
       this.ctx.hooks.playerDisconnect({ id: this.player.id, name: this.player.name, rank: this.player.rank });
       this.ctx.accounts.touchLastSeen(this.player.accountKey);
     }
@@ -432,7 +435,13 @@ export class Connection implements Peer {
         metrics.protocolErrors.inc({ kind: 'internal_error' });
         // Never drop the world's SIMULATOR over one bad frame: disconnecting the peer freezes
         // every cell it holds until the supervisor restarts it. Log, count, continue.
-        if (!this.isSystem) this.disconnect('BAD_PROTO', 'internal error');
+        // POST-AUTH check: `isSystem` is only the client's Hello claim, so keying the
+        // exemption off it let any connection say `system: true` and become immune. A
+        // genuinely stuck peer is no use either, so a run of errors still drops it -- the
+        // supervisor restart is the better outcome than a peer throwing on every frame.
+        const authedPeer = this.player?.system === true;
+        this.internalErrors = (this.internalErrors ?? 0) + 1;
+        if (!authedPeer || this.internalErrors > 20) this.disconnect('BAD_PROTO', 'internal error');
       }
     }
   }

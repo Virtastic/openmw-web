@@ -555,6 +555,15 @@ local function applyAvatarDoc(id)
         pcall(function()
             local want = {}
             for _, entry in ipairs(doc.inventory) do want[worldmp.toLocal(entry.id)] = true end
+            -- KEEP WHAT IS EQUIPPED. pushEquipmentToPuppet fabricates an item whenever the
+            -- equipped record is not already in the inventory (a slot the doc's item list
+            -- does not mention), so shedding on the doc alone stripped the avatar's weapon
+            -- the next time any inventory snapshot arrived -- and the equipment relay is
+            -- diff-driven, so nothing re-pushed it. An unarmed avatar computes every melee.
+            local eq = remoteIdentity[id] and remoteIdentity[id].equipment
+            for _, recordId in pairs((eq and eq.slots) or {}) do
+                want[worldmp.toLocal(recordId)] = true
+            end
             local inventory = types.Actor.inventory(obj)
             for _, item in ipairs(inventory:getAll()) do
                 if not want[item.recordId] then pcall(function() item:remove(item.count or 1) end) end
@@ -1371,18 +1380,19 @@ local eventHandlers = {
     -- reporting hp 0 and the server re-kills the player -- a death loop).
     MP_AvatarResurrect = function(data)
         if not (mp.isSystem and mp.isSystem()) or not data or not data.id then return end
-        local p = puppets[data.id]
-        if not p or not p.obj or not p.obj:isValid() then return end
-        pcall(function() types.Actor.resurrect(p.obj) end)
-        pcall(function()
-            local d = types.Actor.stats.dynamic
-            for _, s in ipairs({ d.health(p.obj), d.magicka(p.obj), d.fatigue(p.obj) }) do
-                s.current = s.base
-            end
-        end)
-        if data.x and remoteCell[data.id] then
-            tryTeleport(p.obj, inviteCellArg(remoteCell[data.id]), util.vector3(data.x, data.y, data.z))
-        end
+        -- THERE IS NO PER-ACTOR RESURRECT IN THE LUA API. mp.resurrect() revives the local
+        -- PLAYER only (luabindings.cpp says so outright), and setting current = base on a
+        -- dead actor leaves a corpse that merely REPORTS healthy bars: no AI, no controls,
+        -- no melee, forever. Replace the body instead -- the same destroy-and-respawn
+        -- rebuildPuppet already uses for an appearance change. The doc is re-applied by
+        -- spawnPuppet, so the new avatar comes back with the character's real stats.
+        if data.cellKey then remoteCell[data.id] = data.cellKey end
+        local pose = (data.x and { x = data.x, y = data.y, z = data.z })
+            or lastPose[data.id]
+        if not pose then return end
+        lastPose[data.id] = pose
+        despawnPuppet(data.id)
+        spawnPuppet(data.id, pose)
     end,
 
     -- Phase 4A: a client restoration (potion/rest/heal) raised a bar; mirror it onto the
