@@ -331,9 +331,14 @@ export class Connection implements Peer {
       // session's next write — a cell change, flushed 'now' — replaced the whole row with a
       // single position field: inventory, stats, journal, appearance, all gone. An ordinary
       // reconnect was enough. Roster.remove guards the same way for the same reason.
-      // Owner leaving starts the grace-then-close window (server.ts onPlayerLeftWorld).
-      this.ctx.onPlayerLeftWorld?.(this.player.accountKey);
       const heldByAnother = this.ctx.roster.activeForAccount(this.player.accountKey);
+      // Owner leaving starts the grace-then-close window (server.ts onPlayerLeftWorld) --
+      // but NOT when this session was superseded by the same account reconnecting (the
+      // owner is already back; guests were told "the host has disconnected" on every
+      // reconnect), and not for a session that never reached the world at all.
+      if (this.player.inWorld && heldByAnother === undefined) {
+        this.ctx.onPlayerLeftWorld?.(this.player.accountKey);
+      }
       if (heldByAnother === undefined || heldByAnother.charId !== charId) {
         this.ctx.track?.(this.ctx.players.releaseCached(charId));
       }

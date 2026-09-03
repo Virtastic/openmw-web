@@ -1,6 +1,6 @@
 // Copyright (C) 2025-2026 Virtastic - https://virtastic.app
 // SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
-// End-to-end sweep of the social features against a RUNNING server with lobby-bots present.
+// End-to-end sweep of the social features against a RUNNING server with companion-bots present.
 // One client does what a player does and asserts the server answered: chat (global + whisper),
 // friend request, world chat, world mode flip, presence, and a shared journal
 // entry. Exits nonzero on the first failure.
@@ -34,12 +34,12 @@ c.sendJson({ t: 'SessionReady' });
 await c.waitEvent('PlayerList');
 ok(`joined as ${String(welcome['characterId']).slice(0, 10)}…`);
 
-// --- chat: public ---------------------------------------------------------------------
-c.sendEvent('ChatSend', { text: 'sweep: public ping', channel: 'global' });
+// --- chat: global ---------------------------------------------------------------------
+c.sendEvent('ChatSend', { text: 'sweep: global ping', channel: 'global' });
 const mine = await c.waitEvent('ChatMessage', (v) =>
-  String((v as { text?: string }).text ?? '').includes('public ping'), 8000);
-assert.ok(mine, 'public chat did not come back');
-ok('chat: public message round-tripped');
+  String((v as { text?: string }).text ?? '').includes('global ping'), 8000);
+assert.ok(mine, 'global chat did not come back');
+ok('chat: global message round-tripped');
 
 // A bot answers on the same channel, which proves fan-out to other players.
 const reply = await c.waitEvent('ChatMessage', (v) =>
@@ -92,14 +92,16 @@ c.sendEvent('SetAvailability', { state: 'online' });
 ok('status: availability toggled');
 
 // --- world change -----------------------------------------------------------------------
-// Only the world's owner may flip it; the refusal must be explicit, not silence.
+// Only the world's OWNER may flip Solo<->Party, and the refusal must be explicit rather than
+// silence. This bot is a guest on somebody else's world, so it must be told 'not_owner'.
+// (There is no public world any more; 'not_flippable' was that mode's refusal and is gone.)
 c.sendEvent('SetWorldMode', { mode: 'party' });
 const flip = await c.waitEvent('SocialResult', (v) =>
   (v as { op?: string }).op === 'SetWorldMode', 8000);
 assert.equal((flip.value as { ok?: boolean }).ok, false,
-  'the PUBLIC world let a player flip its mode');
-assert.equal((flip.value as { detail?: string }).detail, 'not_flippable');
-ok('world: public refuses a mode flip (not_flippable)');
+  'a non-owner was allowed to flip the world mode');
+assert.equal((flip.value as { detail?: string }).detail, 'not_owner');
+ok('world: a non-owner is refused a mode flip (not_owner)');
 
 const worlds = await (async () => {
   c.sendEvent('WorldList', {});
@@ -131,7 +133,6 @@ if (ticket2) {
   console.log('  --  skip quests: pass --ticket2 for the relay check');
 }
 
-// --- lobby rule: nothing above may have written to the character --------------------------
 ok('sweep complete');
 c.close();
 process.exit(0);

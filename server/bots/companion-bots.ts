@@ -4,8 +4,9 @@
 // accept whatever you send them. soak.ts already covers load (movement, combat, containers);
 // this covers the things that need a WILLING SECOND PLAYER — friend requests, invites,
 // world joins. Kept dumb on purpose: every bot auto-accepts, so anything you send resolves.
+// (Was lobby-bots.ts; the lobby is gone, the companions are not.)
 //
-//   npx tsx bots/lobby-bots.ts --port 9000 --data /tmp/omw-local-data [--names Ashka,Drels]
+//   npx tsx bots/companion-bots.ts --port 9000 --data /tmp/omw-local-data [--names Ashka,Drels]
 //
 // Auth: bots take the SAME door as a real player — an SSO login ticket. The account row and
 // the ticket are the pair of rows the SSO callback writes, so the server's SSO-only posture is

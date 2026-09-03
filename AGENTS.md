@@ -225,13 +225,12 @@ curl -i -N --http1.1 -H 'Connection: Upgrade' -H 'Upgrade: websocket' \
 
 HTTP/2 cannot carry a WebSocket upgrade — without `--http1.1` you get a misleading 404/502.
 
-**A 502 here is usually CORRECT, not a fault.** `[worlds] publicEnabled` is OFF by default and
-deliberately so (config.default.toml), and the gateway starts no world until a player creates
-their own — so `vvardenfell` does not exist on a default deployment and dialling it 502s. Verified
-on dev 2026-08-30: `/worlds` returns `{"worlds":[]}` and the gateway's own boot line reads
-`{"event":"gateway.start","publicEnabled":false,"publicWorlds":0}` while both containers are
-healthy. deploy-test.sh already encodes this ("NO WORLD AT BOOT IS A VALID STATE NOW... Reading it
-as broken failed a deploy of a perfectly good server").
+**A 502 here is usually CORRECT, not a fault.** There is no public world any more (the
+Solo/Party model deleted the mode): the gateway starts NO world until a player creates their
+own, so a name like `vvardenfell` does not exist on a fresh deployment and dialling it 502s.
+`/worlds` returning `{"worlds":[]}` on a healthy stack is the expected state, not a symptom.
+deploy-test.sh encodes the same rule ("no world runs at boot (all worlds are player-created)"),
+and reading it as broken has already failed a deploy of a perfectly good server.
 
 So check the CAUSE before calling it an outage:
 

@@ -68,12 +68,12 @@ export interface WorldSettings {
   // is unaffected and no existing deployment silently changes behaviour.
   peerCostMb?: number;
   gatewayReserveMb?: number; // held back for the gateway process itself
-  idleReapMs: number; // a non-public world with no players this long is stopped
+  idleReapMs: number; // a world with no players this long is stopped
   startTimeoutMs: number;
   restartBackoffMs: number;
   // One identity across every world: accounts, SSO identities, friends/party/presence and
   // bans live here, NOT in each world's data dir. Without it a player could not log into
-  // their own private session with the account they made in the public world, friends would
+  // their own private session with the account they made on this stack, friends would
   // not span worlds, and a ban would apply only where it was issued.
   sharedDir: string;
 }
@@ -291,7 +291,7 @@ export class WorldSupervisor {
     // THE OWNER OUTLIVES THE PROCESS. A private world is idle-reaped after two minutes and
     // revived when its owner dials back in, so "reaped, on disk, revivable" is the normal
     // resting state of a solo world — and a revival that could not name the owner started it
-    // with OMW_WORLD_OWNER='', which mayJoinWorld reads as "public, admit anyone". Writing the
+    // with OMW_WORLD_OWNER='', which mayJoinWorld now fails CLOSED for a gateway world. Writing the
     // owner beside the world's data is what lets a revival be as authorised as a creation.
     if (ownerAccount) {
       try {
@@ -572,7 +572,7 @@ async function defaultFetchStatus(port: number): Promise<{ playerCount: number; 
 // gateway that dies (or is SIGKILLed) leaves every world process running and holding its port.
 // The replacement gateway starts with an empty usedPorts, hands out a port an orphan still
 // owns, and that world dies EADDRINUSE -> backoff -> retry, forever: the gateway looks healthy
-// and nothing is joinable. Run this before startPublic().
+// and nothing is joinable. Run this before serving any world.
 //
 // Kill by the recorded pid, and ONLY if that pid is still a live process. A pid file outlives
 // its process and pids are reused, so this is a best-effort reap: SIGTERM is a request, and a

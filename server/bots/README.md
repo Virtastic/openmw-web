@@ -1,11 +1,11 @@
 # Test companions
 
-`soak.ts` proves the server survives load. `lobby-bots.ts` gives you players to
+`soak.ts` proves the server survives load. `companion-bots.ts` gives you players to
 *interact with*: they accept friend requests, party invites and world invites,
 and answer chat.
 
 ```bash
-npx tsx bots/lobby-bots.ts --port 9000 --data /path/to/shared-dir --names Ashka,Drels,Vera
+npx tsx bots/companion-bots.ts --port 9000 --data /path/to/shared-dir --names Ashka,Drels,Vera
 ```
 
 `--data` is the server's SHARED dir. The bots write the same two rows the SSO
@@ -21,7 +21,7 @@ once, then pass the tickets in:
 ```bash
 docker exec omw-mp node -e '...mint accounts + tickets...' > /tmp/tickets.txt
 docker restart omw-mp          # drops the cached account rows
-npx tsx bots/lobby-bots.ts --port 9000 --names Ashka,Drels,Vera --tickets "$(cat /tmp/tickets.txt)"
+npx tsx bots/companion-bots.ts --port 9000 --names Ashka,Drels,Vera --tickets "$(cat /tmp/tickets.txt)"
 ```
 
 Bots need a COMPLETED character with an appearance: the shared world refuses

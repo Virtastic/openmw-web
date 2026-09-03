@@ -160,9 +160,9 @@ namespace MWMP
             [this] { onClose(0, "websocket error"); },
             [this](uint16_t code, std::string reason, bool) { onClose(code, std::move(reason)); },
         });
-        // PROTOCOL.md names the subprotocol "omw-mp/1", but '/' is not a valid RFC 6455
+        // PROTOCOL.md names the subprotocol "omw-mp/2", but '/' is not a valid RFC 6455
         // subprotocol token and browsers refuse to construct the WebSocket. The server
-        // accepts "omw-mp.1" as the canonical wire form (SUBPROTOCOL in server/src).
+        // accepts "omw-mp.2" as the canonical wire form (SUBPROTOCOL in server/src).
         if (!mSocket.open(url, "omw-mp.2"))
             return false;
         mState = State::Connecting;
