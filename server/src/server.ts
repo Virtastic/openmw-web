@@ -1672,10 +1672,15 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       if (ownerGraceTimer) clearTimeout(ownerGraceTimer);
       simPeers.stopAll(); // never leave an engine running after the server it fed is gone
       moveBroadcaster.stop();
-      social.stop(); // pending presence timers would keep the process alive
       await m7.stop();
       hooks.serverStop();
       for (const conn of [...connections]) conn.disconnect('SHUTDOWN', 'server shutting down');
+      // AFTER the disconnect loop, not before: every cleanup calls social.onLeave, which arms
+      // a fresh presence grace timer -- exactly the timers stop() had just cleared. Those
+      // timers then fire against a store shutdown has closed, the write is dropped, and every
+      // player is left with offline_since NULL: friends see them "online" in a world that no
+      // longer exists, until the 5-minute staleness rule catches up.
+      social.stop(); // pending presence timers would keep the process alive
       wss.close();
       // AFTER the disconnect loop, never before it: dropping a connection writes the player's
       // presence back through Social, so closing this first made shutdown race its own
@@ -1697,7 +1702,19 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       // tracked write could still be running when the stores closed under it — losing the
       // write and throwing from a detached promise. ChargenComplete is the one that hurts:
       // its flag is what the shared world's "character created" gate reads.
-      while (inFlight.size) await Promise.allSettled([...inFlight]);
+      //
+      // BOUNDED. track() accepts anything, including a promise that reaches the network, and
+      // an unbounded drain hands the gateway's stop-grace timer a hang: SIGKILL then loses
+      // everything this drain exists to protect -- the opposite of its purpose. Flush what we
+      // have and say what was still outstanding.
+      const drained = await Promise.race([
+        (async () => { while (inFlight.size) await Promise.allSettled([...inFlight]); return true; })(),
+        new Promise<false>((r) => setTimeout(() => r(false), 10_000).unref?.()),
+      ]);
+      if (!drained) {
+        log('warn', 'server.drain_timeout', { stillInFlight: inFlight.size,
+          note: 'flushing anyway; a tracked write did not settle within 10s' });
+      }
       await accounts.flush();
       await playerStore.flushAll();
       await bans.flush();

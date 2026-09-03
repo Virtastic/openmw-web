@@ -431,6 +431,9 @@ export function handleAvatarStatsBatch(ctx: StateCtx, sender: Player, value: LVa
     // fresh bars arrive, a dead-avatar report (hp 0) would re-kill the player who just
     // came back -- measured as a death loop every 3 s. Ignore hp<=0 reports briefly.
     if (hp.c <= 0 && p.resurrectedAt !== undefined && now - p.resurrectedAt <= RESURRECT_GRACE_MS) continue;
+    // The window CLOSES on the first living report: the fresh avatar body is up, so a later
+    // death is a real one and must not be swallowed by a window that never expired.
+    if (hp.c > 0) p.resurrectedAt = undefined;
     if (p.lastInputAt === undefined || now - p.lastInputAt > PEER_STATS_FRESH_MS) {
       if (p.statsDropLogged !== true) {
         p.statsDropLogged = true;
