@@ -731,6 +731,8 @@ end
 -- are avatars, so avatar.lua can veto player-on-player damage while it is off. PvE is
 -- untouched -- an NPC is not in the set.
 local pushAvatarPolicyQueued = false
+local pushAvatarPolicyAt = 0
+local AVATAR_POLICY_EVERY = 5.0 -- re-push cadence; a dropped event must not disable the veto
 local function pushAvatarPolicy()
     if not (mp.isSystem and mp.isSystem()) then return end
     local ids = {}
@@ -2471,7 +2473,14 @@ return {
                 worldmp.tick(now)
                 mirrorDoor(now)
                 avatarStreamTick(now) -- Phase 3: peer streams authoritative avatar poses
-                if pushAvatarPolicyQueued then pushAvatarPolicyQueued = false; pushAvatarPolicy() end
+                -- Re-pushed on a cadence, not only on change: the veto FAILS OPEN (an empty
+                -- avatar set vetoes nothing), so a single dropped event would silently permit
+                -- player-vs-player damage on a pvp-off world until the next spawn.
+                if pushAvatarPolicyQueued or now - pushAvatarPolicyAt >= AVATAR_POLICY_EVERY then
+                    pushAvatarPolicyQueued = false
+                    pushAvatarPolicyAt = now
+                    pushAvatarPolicy()
+                end
                 avatarStatsTick(now) -- Phase 4A: peer reports avatar bars to the server
                 avatarItemStatesTick(now) -- Phase 4D: peer reports avatar wear/charge/soul
             end

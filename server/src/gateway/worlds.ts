@@ -467,14 +467,32 @@ export class WorldSupervisor {
   // the other's world. Exact id, or nothing happens.
   // ponytail: the real cure is the SERVER owning the world-id scheme; this mirrors it until
   // then, and the mirror is one line to update if the scheme moves.
-  discardForCharacter(owner: { accountKey: string; username?: string }, charId: string): string[] {
+  // ASYNC because the process has to be GONE before its directory is removed and before the
+  // character row is erased for the last time. SIGTERM only starts a drain that runs for up
+  // to the stop grace, and that drain ends in flushAll() -> INSERT OR REPLACE INTO players:
+  // erasing the row first and rm -rf'ing underneath a live process resurrected the character
+  // as an orphan row (inventory, journal, position) that no account points at, and wrote the
+  // flush into a directory that had just been unlinked.
+  async discardForCharacter(owner: { accountKey: string; username?: string }, charId: string): Promise<string[]> {
     if (!owner.username) return []; // no username, no derivable id — leave it to the reaper
     const slug = owner.username.toLowerCase().replace(/[^a-z0-9]+/g, '-')
       .replace(/^-+|-+$/g, '').slice(0, 40);
     if (slug === '') return [];
     const id = `priv-${slug}-${charId.slice(-8)}`;
     const gone: string[] = [];
-    if (this.worlds.has(id)) { this.stop(id); gone.push(id); }
+    const running = this.worlds.get(id);
+    if (running) {
+      this.stop(id);
+      gone.push(id);
+      // Bounded: stop() already escalates to SIGKILL on its own timer, so this resolves.
+      await new Promise<void>((resolve) => {
+        if (running.child.exitCode !== null || running.child.signalCode !== null) return resolve();
+        const done = (): void => { clearTimeout(t); resolve(); };
+        const t = setTimeout(done, WorldSupervisor.STOP_GRACE_MS + 5_000);
+        t.unref?.();
+        running.child.once('exit', done);
+      });
+    }
     // Remove the data dir whether or not a process was running: a world nobody rejoined after
     // a restart has a directory but no entry here, so stopping alone would leave it forever.
     const dir = join(this.deps.settings.worldsDir, id);
@@ -584,8 +602,9 @@ async function defaultFetchStatus(port: number): Promise<{ playerCount: number; 
 // its process and pids are reused, so this is a best-effort reap: SIGTERM is a request, and a
 // pid that now belongs to something else is not ours to kill — which is why nothing escalates
 // to SIGKILL here.
-export function reapOrphanWorlds(worldsDir: string): number {
+export async function reapOrphanWorlds(worldsDir: string): Promise<number> {
   let reaped = 0;
+  const signalled: number[] = [];
   let ids: string[];
   try {
     ids = readdirSync(worldsDir);
@@ -610,11 +629,30 @@ export function reapOrphanWorlds(worldsDir: string): number {
     try {
       process.kill(pid, 'SIGTERM');
       reaped++;
+      signalled.push(pid);
       log('warn', 'world.orphan_reaped', { id, pid });
     } catch (err) {
       log('warn', 'world.orphan_reap_failed', { id, pid, error: String(err) });
     }
     rmSync(pidPath, { force: true });
+  }
+  // WAIT FOR THEM TO ACTUALLY GO. SIGTERM only starts a drain; the port stays bound until the
+  // process exits, and this function exists precisely so allocPort does not hand out a port an
+  // orphan still owns. Without the wait the new world binds, dies EADDRINUSE, backs off and
+  // retries -- the failure this reap was written to prevent. Bounded: a wedged orphan poisons
+  // its port either way, and the log says which pid to look at.
+  const deadline = Date.now() + 10_000;
+  while (signalled.length > 0 && Date.now() < deadline) {
+    const alive = signalled.filter((pid) => {
+      try { process.kill(pid, 0); return true; } catch { return false; }
+    });
+    if (alive.length === 0) break;
+    if (Date.now() + 250 >= deadline) {
+      log('warn', 'world.orphans_still_alive', { pids: alive,
+        note: 'their ports may still be bound; a world spawned on one will fail EADDRINUSE' });
+      break;
+    }
+    await new Promise((r) => setTimeout(r, 250));
   }
   return reaped;
 }

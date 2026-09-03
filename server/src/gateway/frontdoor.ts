@@ -121,7 +121,7 @@ export function characterRoutes(
   players: PlayerStore,
   // Deleting a character must also retire its solo world: the world id is derived from the
   // character, so once the character is gone nothing can ever reach that world again.
-  onCharacterDeleted?: (owner: { accountKey: string; username?: string }, charId: string) => void,
+  onCharacterDeleted?: (owner: { accountKey: string; username?: string }, charId: string) => void | Promise<void>,
 ): HttpRoute {
   return async (req, res, url) => {
     if (url.pathname !== '/auth/characters') return false;
@@ -144,8 +144,14 @@ export function characterRoutes(
       if (!accounts.deleteCharacter(account, id)) { sendJson(res, 200, { ok: false, error: 'No such character.' }); return true; }
       await accounts.flush();
       await players.erase(id);
-      onCharacterDeleted?.(
+      // AWAIT: the world owning this character has to be GONE before we can be sure the row
+      // stays erased -- its shutdown drain ends in a players flush that would otherwise write
+      // the character back as an orphan row nothing points at.
+      await onCharacterDeleted?.(
         { accountKey: account.name.toLowerCase(), ...(account.username ? { username: account.username } : {}) }, id);
+      // Erase again now the writer is gone. Idempotent, and the only way the deletion is
+      // actually final: the first erase raced a live process holding the doc dirty.
+      await players.erase(id);
       log('info', 'frontdoor.character_deleted', { account: account.name, character: id });
       sendJson(res, 200, { ok: true });
       return true;

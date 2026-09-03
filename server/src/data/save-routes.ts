@@ -169,6 +169,30 @@ function saveName(v: unknown): string | undefined {
   return typeof v === 'string' && SAVE_NAME.test(v) ? v : undefined;
 }
 
+// OUTSTANDING AUTHORISATIONS COUNT AGAINST THE QUOTA. The row (and therefore the accounted
+// bytes) is only written by /saves/uploaded, and nothing forces a client to call it: presign,
+// PUT, never confirm, repeat -- the bytes are in the bucket and `used()` never moves. An
+// authorisation therefore reserves its size until it is confirmed or expires.
+const RESERVE_TTL_MS = 5 * 60_000;
+const reservations = new Map<string, { bytes: number; at: number }[]>();
+function pruneReservations(account: string): { bytes: number; at: number }[] {
+  const now = Date.now();
+  const live = (reservations.get(account) ?? []).filter((r) => now - r.at < RESERVE_TTL_MS);
+  if (live.length > 0) reservations.set(account, live); else reservations.delete(account);
+  return live;
+}
+function reservedBytes(account: string): number {
+  return pruneReservations(account).reduce((n, r) => n + r.bytes, 0);
+}
+function reserve(account: string, bytes: number): void {
+  reservations.set(account, [...pruneReservations(account), { bytes, at: Date.now() }]);
+}
+function release(account: string, bytes: number): void {
+  const live = pruneReservations(account);
+  const i = live.findIndex((r) => r.bytes === bytes);
+  if (i >= 0) { live.splice(i, 1); reservations.set(account, live); }
+}
+
 export function saveRoutes(deps: SaveRouteDeps): HttpRoute {
   const store = new SaveStore(deps.dataDir);
   // Per-account prefix, same rule as the locker: never a shared or content-addressed key.
@@ -197,6 +221,8 @@ export function saveRoutes(deps: SaveRouteDeps): HttpRoute {
       }
 
       if (req.method === 'POST' && url.pathname === '/saves/authorize-upload') {
+        // (see `reserved` above: an authorisation counts against the quota until it is either
+        // confirmed or expires, so presigning without confirming cannot be repeated for free)
         const body = await readBody(req);
         const name = saveName(body.name);
         const size = typeof body.size === 'number' && Number.isFinite(body.size) && body.size >= 0
@@ -205,10 +231,11 @@ export function saveRoutes(deps: SaveRouteDeps): HttpRoute {
         const scope = scopeOf(body.scope);
         // Replacing a slot frees its old bytes, so charge only the difference.
         const prior = store.list(accountKey, scope).find((f) => f.name === name)?.size ?? 0;
-        if (store.used(accountKey) - prior + size > deps.maxBytesPerAccount) {
+        if (store.used(accountKey) - prior + size + reservedBytes(accountKey) > deps.maxBytesPerAccount) {
           json(res, 200, { ok: false, reason: 'quota' });
           return true;
         }
+        reserve(accountKey, size);
         json(res, 200, { ok: true, url: await deps.storage.presignPut(keyOf(accountKey, scope, name), size) });
         return true;
       }
@@ -226,7 +253,14 @@ export function saveRoutes(deps: SaveRouteDeps): HttpRoute {
         // uploads for exactly this reason (locker.ts).
         const scope = scopeOf(body.scope);
         const real = await deps.storage?.objectSize?.(keyOf(accountKey, scope, name));
+        if (real === undefined) {
+          // The backend cannot measure it, so the accounted size is the client's word -- the
+          // one thing the comment above says not to trust. Recorded rather than silent.
+          log('warn', 'saves.size_unverified', { account: accountKey, name,
+            note: 'storage has no objectSize; quota accounted from the client-reported size' });
+        }
         store.put(accountKey, scope, { name, size: real ?? size, mtime });
+        release(accountKey, size); // the reservation became a real row
         return json(res, 200, { ok: true }), true;
       }
 

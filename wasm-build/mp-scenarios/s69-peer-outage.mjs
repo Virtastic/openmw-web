@@ -38,11 +38,18 @@ async function waitOwner(ctx, c, want) {
   return owner;
 }
 
-// B's position as A renders it (the puppets mirror), for movement assertions.
-async function puppetPosOf(a, bId) {
-  const m = JSON.parse(await a.eval('(window.__omwMP||{}).puppets||"{}"'));
-  const p = m[String(bId)];
-  return p ? { x: p.x, y: p.y } : null;
+// B's position as A renders it (the puppets mirror), for movement assertions. Waits: the
+// mirror refreshes on a 0.5 s tick, so a read straight after a spawn/despawn can be empty --
+// and a null here used to crash the scenario instead of failing it usefully.
+async function puppetPosOf(ctx, a, bId, timeoutMs = 15_000) {
+  const until = Date.now() + timeoutMs;
+  for (;;) {
+    const m = JSON.parse(await a.eval('(window.__omwMP||{}).puppets||"{}"'));
+    const p = m[String(bId)];
+    if (p && typeof p.x === 'number') return { x: p.x, y: p.y };
+    if (Date.now() > until) return null;
+    await ctx.sleep(500);
+  }
 }
 const moved = (p, q, min) => p && q && Math.hypot(p.x - q.x, p.y - q.y) > min;
 
@@ -66,7 +73,8 @@ export default async function run(ctx) {
   ctx.log(`peer=${owner1} holds the cell; walker id=${bId}`);
 
   // Baseline: with the peer up, B walks and A sees the (peer-authored) movement.
-  let p0 = await puppetPosOf(a, bId);
+  let p0 = await puppetPosOf(ctx, a, bId);
+  assert.ok(p0, 'the watcher never rendered the walker (no puppet mirror entry)');
   await b.eval("Module.__omwMPCmd='walk:0,1,2500'");
   await a.waitFor(`(function(){var m=JSON.parse((window.__omwMP||{}).puppets||"{}");var p=m[String(${bId})];`
     + `return !!p && Math.hypot(p.x-(${p0.x}),p.y-(${p0.y}))>40;})()`, STEP,
@@ -79,7 +87,8 @@ export default async function run(ctx) {
   await ctx.sleep(3_000); // let the pose/stat streams go stale (gates are 300ms / 5s)
 
   // --- 2. B keeps walking; A must still see it (client-authored path resumed). -----------
-  p0 = await puppetPosOf(a, bId);
+  p0 = await puppetPosOf(ctx, a, bId);
+  assert.ok(p0, 'the watcher lost the walker entirely (no puppet mirror entry)');
   await b.eval("Module.__omwMPCmd='walk:0,1,3000'");
   await a.waitFor(`(function(){var m=JSON.parse((window.__omwMP||{}).puppets||"{}");var p=m[String(${bId})];`
     + `return !!p && Math.hypot(p.x-(${p0.x}),p.y-(${p0.y}))>40;})()`, STEP,
@@ -100,7 +109,8 @@ export default async function run(ctx) {
   assert.notEqual(owner2, 'none', 'the restarted peer never re-took the cell');
   ctx.log(`peer restarted: owner=${owner2}`);
   await ctx.sleep(4_000); // avatars re-spawn, streams resume
-  p0 = await puppetPosOf(a, bId);
+  p0 = await puppetPosOf(ctx, a, bId);
+  assert.ok(p0, 'the watcher lost the walker entirely (no puppet mirror entry)');
   await b.eval("Module.__omwMPCmd='walk:0,1,3000'");
   await a.waitFor(`(function(){var m=JSON.parse((window.__omwMP||{}).puppets||"{}");var p=m[String(${bId})];`
     + `return !!p && Math.hypot(p.x-(${p0.x}),p.y-(${p0.y}))>40;})()`, STEP,

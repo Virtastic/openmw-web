@@ -1287,10 +1287,24 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // The supervisor keeps its multi-key machinery: it costs nothing and is the spill valve if
   // the scale ramp ever shows frame time going superlinear in anchored cells.
   const WORLD_KEY = 'world';
+  let lastWorldPeerId: number | undefined;
   worldPeerImpl = (): Player | undefined => {
     const sys = roster.inWorld().filter((pp) => pp.system === true);
-    return sys.find((pp) => simPeers.keyOfAccount(pp.name) === WORLD_KEY)
+    const chosen = sys.find((pp) => simPeers.keyOfAccount(pp.name) === WORLD_KEY)
       ?? sys.sort((a, b) => a.id - b.id)[0];
+    // A FLIP ORPHANS THE LOSER'S CELLS. When the supervisor's own peer joins beside one an
+    // operator or the harness started, the answer changes instantly -- input, poses and bar
+    // reports move to the new peer while every cell is still HELD by the old one, whose
+    // batches are now rejected. Nothing released those cells until it disconnected, so the
+    // world was unsimulated in exactly the cells that had a holder. Release on the change.
+    if (chosen && lastWorldPeerId !== undefined && chosen.id !== lastWorldPeerId) {
+      const loser = lastWorldPeerId;
+      log('warn', 'simpeer.world_peer_changed', { from: loser, to: chosen.id,
+        note: 'releasing the previous peer cells so the new one can take them' });
+      world.authorityReleaseEverything(loser, undefined, false);
+    }
+    if (chosen) lastWorldPeerId = chosen.id;
+    return chosen;
   };
   // Anchors held past occupancy (idle-decay): cellKey -> last known position + expiry.
   // Walking a cell border must not flap the peer's grid; dropping an anchor is cheap.

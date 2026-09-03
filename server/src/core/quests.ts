@@ -194,6 +194,20 @@ export class Quests {
     // The doc write happens AFTER arbitration, never before: writing first let a stale
     // client put 20 into the owner's save while the instance log correctly kept 40, and the
     // two then disagreed permanently.
+    // STANDALONE: the same rule the globals half uses. journalTarget(peer) on an owner-less
+    // stack resolves to the peer's own ephemeral doc, so a peer-advanced journal entry was
+    // relayed live and then lost -- leaving globals saying "done" and the journal saying
+    // stage 10, the exact split the comment above forbids. Persist to every human instead.
+    if (player.system === true && this.ctx.ownerCharId() === undefined) {
+      for (const h of this.ctx.roster.humansInWorld().filter((q) => !q.bot)) {
+        this.ctx.players.update(h.charId, (doc) => {
+          const log = (doc.journal ??= {});
+          if ((log[questId] ?? -1) < idx) log[questId] = idx;
+        });
+      }
+      this.relayAll(player.id, 'JournalEntry', { questId, index: idx });
+      return;
+    }
     const ownerChar = this.ctx.journalTarget(player);
     // Phase 3.7: journal advances flush AT THE WRITE, not on the 45 s sweep. A verified
     // TES3MP failure is a disconnect mid-quest permanently corrupting progression

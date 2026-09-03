@@ -211,12 +211,12 @@ test('deleting a character discards exactly that character\'s world', async () =
       });
       assert.equal(r.status, 200);
     }
-    const gone = h.worlds.discardForCharacter(owner, charId);
+    const gone = await h.worlds.discardForCharacter(owner, charId);
     assert.deepEqual(gone, [mine], 'must discard the exact world, never one that merely shares a suffix');
     assert.ok(h.worlds.list().some((w) => w.id === theirs), 'another account\'s world survived');
 
     // No username -> the id cannot be derived, so nothing is deleted rather than guessed.
-    assert.deepEqual(h.worlds.discardForCharacter({ accountKey: 'player' }, charId), []);
+    assert.deepEqual(await h.worlds.discardForCharacter({ accountKey: 'player' }, charId), []);
   } finally { await h.cleanup(); }
 });
 

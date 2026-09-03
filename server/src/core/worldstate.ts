@@ -368,7 +368,14 @@ export class WorldState {
   // epoch and forcing every client to re-sync that cell's actors.
   authorityLeaveAll(playerId: number, cellKey: string, connected: boolean, system: boolean): void {
     const cells = system ? loadedCells(cellKey) : [cellKey];
-    for (const c of cells) this.authorityLeave(playerId, c, connected);
+    for (const c of cells) {
+      // OCCUPIED CELLS SURVIVE THE PEER WALKING AWAY. For a system player this is the 3x3 it
+      // was loading, and any of those cells may still hold players -- their anchor keeps the
+      // peer simulating them, so dropping authority here only produced a dormancy window that
+      // clients now see (puppets detach, swings stop landing) before simPeerPass re-grants.
+      if (system && this.roster.inWorld().some((p) => p.cellKey === c)) continue;
+      this.authorityLeave(playerId, c, connected);
+    }
   }
 
   // DISCONNECT: release every cell this player holds. A peer holds cells all over the map via

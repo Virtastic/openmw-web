@@ -115,7 +115,7 @@ const worlds = new WorldSupervisor({
 
 // Before anything binds a port: kill the world processes a previous gateway left behind. They
 // still hold their ports, and allocPort cannot see them.
-const orphans = reapOrphanWorlds(worldsDir);
+const orphans = await reapOrphanWorlds(worldsDir);
 if (orphans > 0) log('warn', 'gateway.orphans_reaped', { count: orphans });
 
 worlds.startPolling();
@@ -124,7 +124,7 @@ const frontDoor = await buildFrontDoor(sharedDir, (owner, charId) => {
   // A deleted character's solo world can never be reached again — retire it rather than
   // leaving a directory (and, until it is reaped, a process) behind for every character
   // anyone ever deletes.
-  worlds.discardForCharacter(owner, charId);
+  return worlds.discardForCharacter(owner, charId).then(() => undefined);
 }, port);
 const directory = await startDirectory({
   worlds, host: '0.0.0.0', port, worldsDir,

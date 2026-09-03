@@ -1025,6 +1025,14 @@ export class Connection implements Peer {
     // M3: entering a cell always yields its delta doc; the vacated cell may flush.
     this.ctx.world.sendCellState(player, cellKey);
     // M4: hand off / claim authority. Leave the old cell before claiming the new one.
+    //
+    // A PEER RELEASES ONLY WHAT IS EMPTY. Its footprint is the ANCHOR set (simPeerPass owns
+    // the grants and the idle-decay) while its avatar merely stands where `place` puts it, so
+    // releasing the whole 3x3 it walked out of made OCCUPIED cells dormant until the next 5 s
+    // pass re-granted them -- and now that clients are told when a cell loses its holder they
+    // detach their actor puppets in that window, so a swing lands locally and forwards
+    // nowhere ("my attacks do nothing", s51). A cell nobody is left standing in still folds
+    // its snapshot and goes dormant, which is what makes the fold/carry path work.
     if (oldCell && oldCell !== cellKey) {
       this.ctx.world.authorityLeaveAll(player.id, oldCell, true, player.system === true);
       this.ctx.world.onCellVacated(oldCell);
