@@ -422,9 +422,23 @@ async function launchClient(name, mpPort, extraParams = '', opts = {}) {
     // undeclared identifiers silently killed chat, and how a cross-block call killed the
     // world switch, both shipping green because nothing in CI ever loaded the page.
     jsErrors: () => logs.filter((l) => l.startsWith('EXC:')),
+    // SIGKILL AND THEN ACTUALLY WAIT. This used to return the instant the signal was sent, so
+    // the next scenario started booting while several retail Chromes (~1.5 GB each) were still
+    // tearing down. Host load was measured at 17-20 DURING the suite, and s10, s31 and s69 all
+    // failed there while passing solo -- convergence and timing assertions losing to a machine
+    // still busy with the previous scenario's corpses. A second or two per client here removes
+    // a whole class of phantom failure, and phantom failures are worse than slow ones: they
+    // train you to re-run rather than to look.
     close: () => {
+      const dead = chrome.exitCode !== null || chrome.signalCode !== null;
+      const exited = dead ? Promise.resolve() : new Promise((res) => {
+        chrome.once('exit', res);
+        setTimeout(res, 10_000).unref?.(); // never hang the suite on a wedged process
+      });
       try { chrome.kill('SIGKILL'); } catch {}
-      try { rmSync(profile, { recursive: true, force: true }); } catch {}
+      return exited.then(() => {
+        try { rmSync(profile, { recursive: true, force: true }); } catch {}
+      });
     },
   };
   try {
@@ -801,7 +815,7 @@ for (const file of files) {
         + ' a throwing handler disables its whole subsystem even when the run passes:');
       for (const l of luaErrs.slice(0, 5)) console.error('  ' + l.trim());
     }
-    for (const c of clients) c.close();
+    await Promise.all(clients.map((c) => c.close()));
     server?.stop();
   }
   const secs = ((Date.now() - t0) / 1000).toFixed(1);
