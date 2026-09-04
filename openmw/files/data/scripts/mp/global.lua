@@ -461,6 +461,10 @@ local function applyAvatarDoc(id)
     local p = puppets and puppets[id]
     if not doc or not p or not p.obj or not p.obj:isValid() then return end
     local obj = p.obj
+    -- The bounty rides the doc, and the avatar is who the world should hold responsible for it.
+    -- Seeded here as well as on live CrimeUpdate, so a player who arrives ALREADY wanted is
+    -- pursued on sight instead of only after their next offence.
+    if mp.setAvatarBounty then pcall(function() mp.setAvatarBounty(obj, doc.bounty or 0) end) end
     -- Stats first: a fight against a default-statted mannequin is the bug this fixes.
     pcall(function()
         local stats = doc.stats or {}
@@ -1180,6 +1184,13 @@ local function start()
                 if p.obj:isValid() and p.obj.id == obj.id then return true end
             end
             return false
+        end,
+        -- The body that embodies a given player HERE. On the sim peer that is their avatar,
+        -- which is what a bounty has to be attached to for the world to react to them.
+        avatarObjFn = function(id)
+            local p = puppets[id]
+            if p and p.obj and p.obj:isValid() then return p.obj end
+            return nil
         end,
     })
     -- M7 world state (see scripts/mp/world.lua): clock, region/weather authority, custom

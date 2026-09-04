@@ -1,4 +1,8 @@
+#include <set>
+
 #include "actors.hpp"
+
+#include "../mwmp/puppets.hpp"
 
 #include <algorithm>
 #include <array>
@@ -1164,27 +1168,67 @@ namespace MWMechanics
         {
             const MWWorld::ESMStore& esmStore = world->getStore();
             static const int cutoff = esmStore.get<ESM::GameSetting>().find("iCrimeThreshold")->mValue.getInteger();
-            // Force dialogue on sight if bounty is greater than the cutoff
-            // In vanilla morrowind, the greeting dialogue is scripted to either arrest the player (< 5000 bounty) or
-            // attack (>= 5000 bounty)
-            if (playerStats.getBounty() >= cutoff
+            static const int iCrimeThresholdMultiplier
+                = esmStore.get<ESM::GameSetting>().find("iCrimeThresholdMultiplier")->mValue.getInteger();
+
+            // WHO THIS GUARD MIGHT PURSUE. Vanilla has exactly one candidate -- the player --
+            // and on the SIM PEER that is its own idle dummy, so a guard evaluated a bounty
+            // belonging to nobody and no real player was ever pursued for anything.
+            //
+            // The avatars are the bodies real players drive (MWMP registry, see puppets.hpp).
+            // In singleplayer that registry is empty, so this loop runs exactly once with the
+            // player and behaves as it always did.
+            const auto pursue = [&](const MWWorld::Ptr& criminal, int bounty) -> bool {
+                // Force dialogue on sight if bounty is greater than the cutoff
+                // In vanilla morrowind, the greeting dialogue is scripted to either arrest the player (< 5000 bounty)
+                // or attack (>= 5000 bounty)
+                if (bounty < cutoff)
+                    return false;
                 // TODO: do not run these two every frame. keep an Aware state for each actor and update it every 0.2 s
                 // or so?
-                && world->getLOS(ptr, player) && mechanicsManager->awarenessCheck(player, ptr))
-            {
-                static const int iCrimeThresholdMultiplier
-                    = esmStore.get<ESM::GameSetting>().find("iCrimeThresholdMultiplier")->mValue.getInteger();
-                if (playerStats.getBounty() >= cutoff * iCrimeThresholdMultiplier)
+                if (!world->getLOS(ptr, criminal) || !mechanicsManager->awarenessCheck(criminal, ptr))
+                    return false;
+                if (bounty >= cutoff * iCrimeThresholdMultiplier)
                 {
-                    ESM::RefNum playerNum = player.getCellRef().getRefNum();
-                    mechanicsManager->startCombat(ptr, player, &cachedAllies.getActorsSidingWith(player));
-                    // Stops the guard from quitting combat if player is unreachable
-                    creatureStats.setHitAttemptActor(playerNum);
+                    ESM::RefNum criminalNum = criminal.getCellRef().getRefNum();
+                    mechanicsManager->startCombat(ptr, criminal, &cachedAllies.getActorsSidingWith(criminal));
+                    // Stops the guard from quitting combat if the criminal is unreachable
+                    creatureStats.setHitAttemptActor(criminalNum);
                 }
                 else
-                    creatureStats.getAiSequence().stack(AiPursue(player), ptr);
+                    creatureStats.getAiSequence().stack(AiPursue(criminal), ptr);
                 creatureStats.setAlarmed(true);
                 npcStats.setCrimeId(world->getPlayer().getNewCrimeId());
+                return true;
+            };
+
+            // The local player first, so singleplayer order is untouched. A guard pursues ONE
+            // target, so the first match wins.
+            if (!pursue(player, playerStats.getBounty()))
+            {
+                for (const Actor& other : mActors)
+                {
+                    if (other.isInvalid())
+                        continue;
+                    const MWWorld::Ptr& body = other.getPtr();
+                    const ESM::RefNum ref = body.getCellRef().getRefNum();
+                    if (!MWMP::isAvatar(ref) || body.getClass().getCreatureStats(body).isDead())
+                        continue;
+                    if (pursue(body, MWMP::avatarBounty(ref)))
+                    {
+                        // ONCE PER AVATAR, not once per frame. The outer guard (isInPursuit /
+                        // isInCombat) is supposed to stop re-entry, and for a wanted AVATAR it
+                        // evidently does not latch the same way it does for the player -- this
+                        // printed 13,444 times in a two-minute scenario. The behaviour is right
+                        // and re-stacking is what vanilla does anyway; the LOG is what needed
+                        // bounding, and a line per frame per guard would drown a real server.
+                        static std::set<uint32_t> sAnnounced;
+                        if (sAnnounced.insert(ref.mIndex).second)
+                            Log(Debug::Info) << "[mp] guard pursuing wanted avatar " << ref.mIndex
+                                             << " bounty=" << MWMP::avatarBounty(ref);
+                        break;
+                    }
+                }
             }
         }
 

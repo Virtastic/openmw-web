@@ -641,7 +641,13 @@ function actors.tick(now)
             local rec = obj.recordId
             if not probe[rec] then
                 local p = obj.position
-                probe[rec] = { x = p.x, y = p.y, z = p.z, dead = types.Actor.isDead(obj) }
+                -- `guard` so a scenario can find the actor that is supposed to REACT to a
+                -- bounty. Class is not otherwise visible from the harness, and "walks toward
+                -- you when you are wanted" is only meaningful about a guard.
+                local isGuard = false
+                pcall(function() isGuard = types.NPC.record(obj).class == 'guard' end)
+                probe[rec] = { x = p.x, y = p.y, z = p.z, dead = types.Actor.isDead(obj),
+                    guard = isGuard }
             end
         end
         mp.testSet('actorProbe', json.encode(probe))

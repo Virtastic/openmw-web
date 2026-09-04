@@ -197,6 +197,23 @@ namespace MWMP
             setPuppet(obj.as<MWLua::Object>().id(), on);
         };
         api["clearPuppets"] = []() { clearPuppets(); };
+        // AVATAR REGISTRY (see puppets.hpp). The mirror image of the puppet one: on the SIM
+        // PEER these are the bodies real players drive, and engine code that reacts to "the
+        // player" needs to find them, because getPlayer() there is the peer's own idle dummy.
+        api["setAvatar"] = [](const sol::object& obj, bool on) {
+            if (!obj.is<MWLua::Object>())
+                return;
+            setAvatar(obj.as<MWLua::Object>().id(), on);
+        };
+        // The owning player's bounty, mirrored onto their avatar so a guard has something real
+        // to react to. Bounty is player-only in the engine's own API, which is why it lives in
+        // the MP registry rather than on the avatar's NpcStats.
+        api["setAvatarBounty"] = [](const sol::object& obj, int bounty) {
+            if (!obj.is<MWLua::Object>())
+                return;
+            setAvatarBounty(obj.as<MWLua::Object>().id(), bounty);
+        };
+        api["clearAvatars"] = []() { clearAvatars(); };
         // Drain the harmful magic effects the engine declined to apply to THIS actor, so its
         // puppet script can forward them to whoever owns it. Per-object on purpose: the puppet
         // local script already has the object and already forwards melee the same way

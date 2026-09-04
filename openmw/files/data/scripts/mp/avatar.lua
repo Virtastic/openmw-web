@@ -19,6 +19,7 @@ local self = require('openmw.self')
 local types = require('openmw.types')
 local core = require('openmw.core')
 local I = require('openmw.interfaces')
+local mp = require('openmw.mp')
 
 -- PvP POLICY, pushed by global.lua (mpAvatarPolicy) on spawn and whenever it changes.
 -- The peer resolves avatar-vs-avatar melee NATIVELY, so with pvp off the server's
@@ -77,6 +78,12 @@ return {
         onActive = function()
             self:enableAI(false)
             registerHitVeto()
+            -- TELL THE ENGINE THIS BODY IS A PLAYER. Engine code that reacts to "the player"
+            -- calls getPlayer(), which on the sim peer is its own idle dummy -- so nothing in
+            -- the world reacted to a real person. Crime pursuit was the visible case: rob a
+            -- shop in front of a guard and be ignored, because the guard checked a bounty
+            -- belonging to nobody. See mwmp/puppets.hpp.
+            if mp.setAvatar then mp.setAvatar(self.object, true) end
         end,
         onUpdate = function()
             -- I.Combat comes from the builtin combat script on this body; if it was not up
@@ -122,6 +129,7 @@ return {
         mpAvatarDetach = function()
             stop()
             self:enableAI(true)
+            if mp.setAvatar then mp.setAvatar(self.object, false) end
             core.sendGlobalEvent('mpAvatarDetached', { obj = self.object })
         end,
     },

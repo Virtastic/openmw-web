@@ -36,6 +36,34 @@ namespace MWMP
     /** Forget every puppet — session loss, world switch. */
     void clearPuppets();
 
+    // AVATARS: THE OTHER HALF OF THE SAME IDEA.
+    //
+    // On the SIM PEER a player's body is an AVATAR -- an NPC object driven by that player's
+    // input. Engine code that reacts to "the player" finds `getPlayer()`, which on the peer is
+    // its own idle dummy standing wherever it was parked, so nothing in the world ever reacts
+    // to a real person. Crime pursuit was the visible case: a player could rob a shop in front
+    // of a guard and be ignored, because the guard checked a bounty belonging to nobody.
+    //
+    // The bounty is kept HERE rather than on the avatar's NpcStats because bounty is a
+    // player-only concept in the engine (`types.Player.setCrimeLevel` is global-context and
+    // player-only in Lua, and NpcStats::setBounty is not exposed for arbitrary actors). This
+    // registry is the MP-shaped place for an MP-shaped fact.
+
+    /** Mark/unmark an actor as a player's avatar. Called from `mp.setAvatar` in Lua. */
+    void setAvatar(ESM::RefNum ref, bool on);
+
+    /** True when this actor is a player's avatar on the sim peer. */
+    bool isAvatar(ESM::RefNum ref);
+
+    /** That avatar's crime bounty, 0 when unknown. Safe to call every frame. */
+    int avatarBounty(ESM::RefNum ref);
+
+    /** Record an avatar's bounty, mirrored from the owning player's CrimeUpdate. */
+    void setAvatarBounty(ESM::RefNum ref, int bounty);
+
+    /** Forget every avatar — session loss, world switch. */
+    void clearAvatars();
+
     /** One harmful magic effect that was NOT applied locally, waiting to be forwarded. */
     struct MagicHit
     {

@@ -753,6 +753,15 @@ local function pollHarness()
         if gvarName then
             core.sendGlobalEvent('mpTestGlobal', { name = gvarName, value = tonumber(gvarValue) })
         end
+        -- snapto:<x>,<y>,<z> — put the player somewhere specific in the CURRENT cell. Some
+        -- behaviour can only be tested at conversational distance: a guard's pursuit needs the
+        -- engine's own line-of-sight and awareness checks to pass, and those fail at the range
+        -- two NPCs happen to spawn apart, so the test has to close the gap itself.
+        local snX, snY, snZ = cmd:match('^snapto:(-?[%d.]+),(-?[%d.]+),(-?[%d.]+)$')
+        if snX then
+            core.sendGlobalEvent('mpSelfSnap',
+                { x = tonumber(snX), y = tonumber(snY), z = tonumber(snZ) })
+        end
         local bountyN = cmd:match('^bounty:(%d+)$')
         if bountyN then core.sendGlobalEvent('mpTestBounty', { n = tonumber(bountyN) }) end
         local facId, facRank = cmd:match('^faction:([^:]+):(%d+)$')

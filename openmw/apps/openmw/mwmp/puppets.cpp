@@ -1,5 +1,8 @@
 #include "puppets.hpp"
 
+#include <components/debug/debuglog.hpp>
+
+#include <unordered_map>
 #include <unordered_set>
 
 namespace
@@ -23,6 +26,14 @@ namespace
     {
         static std::unordered_set<ESM::RefNum, RefNumHash, RefNumEq> sPuppets;
         return sPuppets;
+    }
+
+    // refnum -> bounty. Presence in the map IS the "this is an avatar" flag, so a body with no
+    // bounty yet is still known to be a player's, which is what the pursuit check needs.
+    std::unordered_map<ESM::RefNum, int, RefNumHash, RefNumEq>& avatars()
+    {
+        static std::unordered_map<ESM::RefNum, int, RefNumHash, RefNumEq> sAvatars;
+        return sAvatars;
     }
 
     std::vector<MWMP::MagicHit>& pending()
@@ -56,6 +67,46 @@ namespace MWMP
     {
         puppets().clear();
         pending().clear();
+    }
+
+    void setAvatar(ESM::RefNum ref, bool on)
+    {
+        if (on)
+            avatars().emplace(ref, 0);
+        else
+            avatars().erase(ref);
+        Log(Debug::Info) << "[mp] avatar registry " << ref.mIndex << (on ? " +" : " -")
+                         << " (now " << avatars().size() << ")";
+    }
+
+    bool isAvatar(ESM::RefNum ref)
+    {
+        return avatars().find(ref) != avatars().end();
+    }
+
+    int avatarBounty(ESM::RefNum ref)
+    {
+        const auto it = avatars().find(ref);
+        return it == avatars().end() ? 0 : it->second;
+    }
+
+    void setAvatarBounty(ESM::RefNum ref, int bounty)
+    {
+        // Only for a KNOWN avatar: a bounty arriving for a body that has not been marked yet
+        // (or has just been detached) must not resurrect it as a pursuit target.
+        const auto it = avatars().find(ref);
+        if (it == avatars().end() || it->second == bounty)
+            return;
+        it->second = bounty;
+        // Logged because it is the far end of a long chain -- the owner's crime level, their
+        // client's CrimeUpdate, the server relay, and this registry -- and when a guard fails to
+        // react it is the one place that says whether the bounty ever arrived at all.
+        Log(Debug::Info) << "[mp] avatar bounty " << ref.mIndex << " = " << bounty;
+    }
+
+    void clearAvatars()
+    {
+        avatars().clear();
     }
 
     void recordMagicHit(const MagicHit& hit)

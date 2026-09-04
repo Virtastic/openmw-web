@@ -623,9 +623,24 @@ handlers.MP_TopicsLearned = function(data)
 end
 
 handlers.MP_CrimeUpdate = function(data)
-    local player = playerObj()
     local level = asInt(data.bounty)
-    if not player or level == nil then return end
+    if level == nil then return end
+    -- ON THE SIM PEER, A BOUNTY BELONGS TO AN AVATAR, NOT TO US.
+    --
+    -- The peer has a player object like any client, but it is an idle dummy nobody drives, so
+    -- setting the crime level on it made the bounty real for a body no guard would ever have a
+    -- reason to arrest. The people who can actually commit crimes here are the avatars, and the
+    -- engine's own bounty field is player-only -- hence the MP registry (mwmp/puppets.hpp),
+    -- which is what the generalised crime pursuit reads.
+    if mp.isSystem and mp.isSystem() then
+        local obj = (data.byId ~= nil and deps.avatarObjFn) and deps.avatarObjFn(data.byId) or nil
+        print(string.format('[mp] peer CrimeUpdate byId=%s level=%d avatar=%s',
+            tostring(data.byId), level, obj and 'yes' or 'NO'))
+        if obj and mp.setAvatarBounty then mp.setAvatarBounty(obj, level) end
+        return
+    end
+    local player = playerObj()
+    if not player then return end
     if data.byId ~= nil and data.byId == deps.ownIdFn() then return end -- own echo
     bounty = level -- echo guard
     types.Player.setCrimeLevel(player, level) -- global-only setter; we ARE global
