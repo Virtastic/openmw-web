@@ -1681,7 +1681,18 @@ local eventHandlers = {
                     e.tier = tier
                     local tn = TIER_NAME[tier] or 'near'
                     tierSeen[tn] = (tierSeen[tn] or 0) + 1
-                    p.obj:sendEvent('MP_Pose', e)
+                    -- A STALE HANDLE IS NOT AN INVALID ONE. When a puppet is removed the
+                    -- engine can reuse its object slot for something else entirely -- observed
+                    -- as `no script scripts/mp/puppet.lua on object@0x93 (Ingredient,
+                    -- "ingred_scales_01")`, i.e. this pose was being posted to a dropped item.
+                    -- isValid() is TRUE for the recycled object, so it cannot catch this.
+                    --
+                    -- The throw took the whole MoveBatch handler down mid-batch, so every
+                    -- player after this one in the same batch stopped being routed poses at
+                    -- all. Drop the stale entry instead: the next batch respawns the puppet.
+                    if not pcall(function() p.obj:sendEvent('MP_Pose', e) end) then
+                        puppets[e.id] = nil
+                    end
                 end
             end
         end
