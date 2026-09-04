@@ -76,9 +76,14 @@ export default async function run(ctx) {
   const swingDeadline = Date.now() + 90_000;
   let died = false;
   while (Date.now() < swingDeadline && !died) {
-    await a.eval(`Module.__omwMPCmd=${JSON.stringify('hitn:' + victim + ':40')}`);
+    // c.cmd, not a raw slot write: the slot holds ONE command and drains about once per frame,
+    // so swinging on a 600 ms timer overwrote most of these before the engine saw them. The NPC
+    // then never died and this scenario reported the "my attacks do nothing" bug it exists to
+    // catch -- from the harness, not the product. It passed solo and failed in-suite for exactly
+    // that reason.
+    await a.cmd('hitn:' + victim + ':40');
     await ctx.sleep(600);
-    await b.eval(`Module.__omwMPCmd=${JSON.stringify('hitn:' + victim + ':40')}`);
+    await b.cmd('hitn:' + victim + ':40');
     await ctx.sleep(600);
     died = (await a.eval(deadExpr)) === true || (await b.eval(deadExpr)) === true;
   }

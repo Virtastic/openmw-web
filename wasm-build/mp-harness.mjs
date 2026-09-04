@@ -508,6 +508,27 @@ async function launchClient(name, mpPort, extraParams = '', opts = {}) {
       if (r.exceptionDetails) throw new Error(`eval(${expr}): ` + (r.exceptionDetails.exception?.description || r.exceptionDetails.text));
       return r.result.value;
     };
+    // A COMMAND THAT WILL NOT BE CLOBBERED. `Module.__omwMPCmd` is a SINGLE SLOT drained at
+    // roughly one command per frame (pollHarness runs in onFrame), and a client under load runs
+    // at a fraction of 1 fps -- so a scenario that writes the slot on a timer silently destroys
+    // whatever has not been consumed yet.
+    //
+    // s51 is the case that proves it: it swings every 600 ms for 90 s, and in-suite most of
+    // those hits were overwritten before the engine ever saw them, so the NPC never died and it
+    // reported the "my attacks do nothing" failure -- a REAL bug's exact signature, produced by
+    // the test harness. It passed solo, where the client drains fast enough.
+    //
+    // Opt-in, not automatic: waiting on every eval taxed hot loops for a hazard most scenarios
+    // do not have (it cost s58 its budget). Use this wherever a command MUST land.
+    handle.cmd = async (text, timeoutMs = 20_000) => {
+      const until = Date.now() + timeoutMs;
+      while (Date.now() < until) {
+        if (!(await handle.eval('!!(window.Module && Module.__omwMPCmd)'))) break;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      return handle.eval(`Module.__omwMPCmd=${JSON.stringify(text)}`);
+    };
+
     // A WALK THAT ACTUALLY HAPPENED. `walk:` is a ONE-SHOT command with a deadline: player.lua
     // drops it on the floor if the player cannot move yet (chargen is still running on a fresh
     // client, and an overlay can hold Interface mode), the command then expires unused, and the
