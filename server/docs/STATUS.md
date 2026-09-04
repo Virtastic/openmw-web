@@ -2,6 +2,26 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web -->
 # openmw-web multiplayer — state of play
 
+## 2026-09-03 (cont.) — two bugs the peer-outage scenario was hiding
+
+s69 failed at a different step on nearly every run. That read as flakiness and was not: each fix
+uncovered the next fault behind it, and both of the real ones bite in ORDINARY play, with a live
+peer masking them.
+
+- **Puppets stopped short of where players actually were.** Poses are relayed only when they
+  CHANGE, so a player who stops walking stops sending; `puppet.lua` then parked the puppet one
+  second later, mid-approach. The walker moved 102 units, the puppet received the correct final
+  pose, walked 17, and stopped 85 short — until that player moved again. Every walk ended this
+  way; the peer's continuous stream is the only reason nobody saw it.
+- **A returning peer teleported every body to (0,0,0).** The late-joiner sync fabricated a pose
+  of `?? 0`, and on the peer a `PlayerCellChange` TELEPORTS the avatar — which then streams
+  authoritative poses from the origin and drags its owner there. The server no longer invents
+  coordinates; the client no longer treats a positionless relay as a teleport.
+
+Also: a peer replacing a dead one is now handed the characters it is responsible for
+(`pushAvatarsToPeer`), and `inputauthority.test.ts` covers the peer-stops transition that every
+test in that file had skipped.
+
 ## 2026-09-03 — all three tiers green, locally
 
 Server **1008/1014** (0 fail, 6 p7zip env-skips), Lua **61/0**, browser harness **9/9**
