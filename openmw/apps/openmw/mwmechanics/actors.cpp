@@ -1,3 +1,4 @@
+#include <limits>
 #include <set>
 
 #include "actors.hpp"
@@ -1952,6 +1953,27 @@ namespace MWMechanics
                 = actor.getPtr().getClass().getCreatureStats(actor.getPtr()).getActiveSpells();
             spells.purge(actor.getPtr(), creature);
         }
+    }
+
+    int Actors::nearestAvatarLevel(const osg::Vec3f& pos) const
+    {
+        int level = 0;
+        float bestDist2 = std::numeric_limits<float>::max();
+        for (const Actor& actor : mActors)
+        {
+            if (actor.isInvalid())
+                continue;
+            const MWWorld::Ptr& body = actor.getPtr();
+            if (!MWMP::isAvatar(body.getCellRef().getRefNum()))
+                continue;
+            const float d2 = (body.getRefData().getPosition().asVec3() - pos).length2();
+            if (d2 < bestDist2)
+            {
+                bestDist2 = d2;
+                level = body.getClass().getCreatureStats(body).getLevel();
+            }
+        }
+        return level;
     }
 
     void Actors::rest(double hours, bool sleep) const

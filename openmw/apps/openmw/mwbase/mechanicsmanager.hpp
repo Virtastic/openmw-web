@@ -4,6 +4,8 @@
 #include <cstdint>
 #include <map>
 #include <set>
+#include <osg/Vec3f>
+
 #include <string>
 #include <string_view>
 #include <vector>
@@ -87,6 +89,11 @@ namespace MWBase
         virtual void restoreDynamicStats(const MWWorld::Ptr& actor, double hours, bool sleep) = 0;
 
         virtual void rest(double hours, bool sleep) = 0;
+
+        /** MP: level of the player-driven AVATAR nearest `pos`, 0 if this process simulates
+            none. Levelled lists need "the player here", and the sim peer's own getPlayer()
+            is an idle dummy. */
+        virtual int nearestAvatarLevel(const osg::Vec3f& pos) const = 0;
         ///< If the player is sleeping or waiting, this should be called every hour.
         /// @param sleep is the player sleeping or waiting?
 

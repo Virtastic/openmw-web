@@ -81,6 +81,8 @@ namespace MWMechanics
         void restoreDynamicStats(const MWWorld::Ptr& actor, double hours, bool sleep) override;
 
         void rest(double hours, bool sleep) override;
+
+        int nearestAvatarLevel(const osg::Vec3f& pos) const override;
         ///< If the player is sleeping or waiting, this should be called every hour.
         /// @param sleep is the player sleeping or waiting?
 

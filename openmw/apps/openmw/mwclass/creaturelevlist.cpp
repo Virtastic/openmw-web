@@ -15,6 +15,7 @@
 #include "../mwmechanics/creaturestats.hpp"
 
 #include "../mwbase/environment.hpp"
+#include "../mwbase/mechanicsmanager.hpp"
 #include "../mwbase/world.hpp"
 
 namespace MWClass
@@ -110,8 +111,17 @@ namespace MWClass
 
         const MWWorld::ESMStore& store = *MWBase::Environment::get().getESMStore();
         auto& prng = MWBase::Environment::get().getWorld()->getPrng();
+        // WHAT LEVEL IS "THE PLAYER" HERE? On the sim peer getLevelledItem's own fallback is
+        // getPlayer(), an idle dummy at level 1, so every levelled creature in the world spawned
+        // at the bottom tier no matter who was actually standing there. Ask for the nearest
+        // AVATAR instead and fall through to vanilla when there is none (singleplayer, or a cell
+        // this process holds with nobody in it).
+        const int avatarLevel
+            = MWBase::Environment::get().getMechanicsManager()->nearestAvatarLevel(
+                ptr.getRefData().getPosition().asVec3());
         const ESM::RefId& id = MWMechanics::getLevelledItem(
-            store.get<ESM::CreatureLevList>().find(ptr.getCellRef().getRefId()), true, prng);
+            store.get<ESM::CreatureLevList>().find(ptr.getCellRef().getRefId()), true, prng,
+            avatarLevel > 0 ? std::optional<int>(avatarLevel) : std::nullopt);
 
         if (!id.empty())
         {
