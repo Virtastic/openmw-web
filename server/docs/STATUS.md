@@ -2,6 +2,22 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web -->
 # openmw-web multiplayer — state of play
 
+## 2026-09-04 — the browser suite is green
+
+**51 passed / 1 failed / 4 skipped**, and the one failure is this laptop, not the code: s71 needs
+a THIRD retail client (~1.5 GB each) and its boot timed out at 900 s after the suite had been
+running for an hour. It passes solo in 132.8 s. The four skips are s43 (cannot populate 64
+avatars here; its measurement table is recorded) plus s57/s63/s66, which are deliberate.
+
+s69 — the peer-outage scenario that drove most of this work — passes in a full run for the first
+time. Four more real bugs came out of it after the two above: a puppet giving up mid-stride, a
+returning peer teleporting bodies to the origin, `MP_Stats` throwing on a despawning puppet, and
+a recycled object handle killing the MoveBatch handler mid-batch (one stale handle froze every
+player listed after it).
+
+**Known ceiling on this box:** three retail clients plus a server do not reliably fit in 15.5 GB
+once the suite has been running. Scenario-level runs are unaffected.
+
 ## 2026-09-03 (cont.) — two bugs the peer-outage scenario was hiding
 
 s69 failed at a different step on nearly every run. That read as flakiness and was not: each fix
