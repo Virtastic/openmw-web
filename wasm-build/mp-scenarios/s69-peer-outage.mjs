@@ -116,9 +116,16 @@ export default async function run(ctx) {
   await ctx.sleep(4_000); // avatars re-spawn, streams resume
   p0 = await puppetPosOf(ctx, a, bId);
   assert.ok(p0, 'the watcher lost the walker entirely (no puppet mirror entry)');
-  await b.walk(0, 1, 3000);
+  await b.walk(0, 1, 3000, 40, 10);
+  // THE SLOWEST TRANSITION IN THE SUITE, so it gets the longest deadline. Coming back from an
+  // outage is four things in sequence -- the peer boots, re-claims the cell, re-spawns an
+  // avatar for every player, and that avatar starts answering the owner's input -- and until
+  // the last of those the avatar streams a pose that is fresh but not yet input-driven, which
+  // gates the client's own path while showing no movement. Solo that whole chain fits inside
+  // 30s; under full-suite load it does not, and the scenario reported a freeze that had already
+  // resolved by the time anyone looked.
   await a.waitFor(`(function(){var m=JSON.parse((window.__omwMP||{}).puppets||"{}");var p=m[String(${bId})];`
-    + `return !!p && Math.hypot(p.x-(${p0.x}),p.y-(${p0.y}))>40;})()`, STEP,
+    + `return !!p && Math.hypot(p.x-(${p0.x}),p.y-(${p0.y}))>40;})()`, 90_000,
     'watcher sees the walker move after the peer RETURNED (re-convergence, no freeze)');
   ctx.log('ok: re-converged after the peer returned');
 
