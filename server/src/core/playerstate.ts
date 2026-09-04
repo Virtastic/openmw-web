@@ -544,7 +544,23 @@ export function handleStateEvent(ctx: StateCtx, player: Player, name: string, va
   const handler = HANDLERS[name];
   if (!handler) return false;
   const body = tbl(value);
-  if (!body || !handler(ctx, player, body)) log('warn', 'state.invalid_body', { from: player.name, name });
+  const ok = body ? handler(ctx, player, body) : false;
+  if (!ok) log('warn', 'state.invalid_body', { from: player.name, name });
+  // PROGRESSION HAS TO REACH THE PEER, or the peer fights with a character who never improved.
+  //
+  // These three handlers wrote the doc and stopped there. The peer holds its own copy of each
+  // character (AvatarState) and computes combat from it, and in Morrowind weapon damage depends
+  // directly on the relevant SKILL and on Strength -- so a player who trained, or levelled, kept
+  // hitting with their old numbers on the peer for the rest of the session. It self-corrected
+  // only if some unrelated inventory change happened to re-push the doc (the 4D sync below).
+  //
+  // The client sends these on a DIFF, so this is bounded by how often a character actually
+  // changes, not by tick rate.
+  if (ok && (name === 'PlayerAttributes' || name === 'PlayerSkills' || name === 'PlayerLevel')) {
+    const worldPeer = ctx.worldPeer();
+    const doc = ctx.store.getCached(player.charId);
+    if (worldPeer && doc) worldPeer.peer.sendEvent('AvatarState', avatarStateBody(player.id, doc));
+  }
   return true;
 }
 
