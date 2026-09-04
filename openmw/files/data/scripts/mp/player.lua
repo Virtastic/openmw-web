@@ -327,7 +327,18 @@ local function movementTick()
     local pos = self.position
     local jumped = lastOwnPos ~= nil and (pos - lastOwnPos):length2() > 512 * 512
     lastOwnPos = pos
-    if key and (key ~= lastCellKey or jumped) then
+    -- NEVER ANNOUNCE THE ORIGIN. The engine reports (0,0,0) for a frame or two before the
+    -- player is actually placed in the world, and the join-time cell change is sent the
+    -- instant we are Joined -- so a player who then STANDS STILL leaves the server holding
+    -- (0,0,0) as their position forever, because only movement updates it.
+    --
+    -- That is not cosmetic: the server hands a late-joining SIM PEER each player's stored
+    -- position, and on the peer a PlayerCellChange TELEPORTS that player's avatar. A watcher
+    -- who never moved was therefore teleported to the middle of the world when a peer
+    -- restarted, and the avatar streams authoritative poses from there. Waiting a frame for
+    -- a real position costs nothing; the cell change is re-sent on the next tick.
+    local atOrigin = pos.x == 0 and pos.y == 0 and pos.z == 0
+    if key and not atOrigin and (key ~= lastCellKey or jumped) then
         lastCellKey = key
         mp.sendEvent('PlayerCellChange', { cellKey = key, x = pos.x, y = pos.y, z = pos.z })
     end

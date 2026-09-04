@@ -386,8 +386,13 @@ return {
         -- M2/M4: mirror the remote actor's dynamic stats (health bar, death pose).
         MP_Stats = function(data)
             local d = types.Actor.stats.dynamic
+            -- `stat` is nil when this object is no longer a live actor -- a puppet caught
+            -- mid-despawn still receives events already in flight. Indexing it threw, and a
+            -- throwing handler takes its WHOLE subsystem down: this puppet's health bar and
+            -- death pose stop updating for the rest of the session, long after the despawn
+            -- that caused it. Seen during a peer outage, where puppets churn.
             local function apply(stat, v)
-                if v then
+                if stat and v then
                     stat.base = v.b
                     stat.current = v.c
                 end
