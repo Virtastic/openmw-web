@@ -52,7 +52,14 @@ export default async function run(ctx) {
   ctx.log('ok: chat panel open + input focused');
 
   // 2. The cursor handshake command must be consumed by pollHarness (slot drains).
-  await a.waitFor(`!window.Module.__omwMPCmd`, 4000, 'uimode:on consumed (outbox drained)');
+  // 20s, not 4s. The slot drains at roughly ONE COMMAND PER FRAME (pollHarness runs in
+  // onFrame and testPollCommand reads-and-clears), and a freshly booted client under software
+  // rasterisation runs at a fraction of 1 fps -- while the page's pump refills the slot from
+  // its outbox every 40 ms. Measured here: a queued `uimode:off` held the slot for 4.5 s, the
+  // `uimode:on` behind it for another 1.5 s, and the outbox was empty by 6 s. The 4 s budget
+  // was a deadline guessed against a faster machine, and it failed as "the handshake was never
+  // consumed" when the handshake was merely third in line.
+  await a.waitFor(`!window.Module.__omwMPCmd`, 20_000, 'uimode:on consumed (outbox drained)');
   ctx.log('ok: uimode handshake consumed');
 
   // 3. Escape closes and hands input back.
