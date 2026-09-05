@@ -14,12 +14,12 @@ export default async function run(ctx) {
   // Port 9 (discard) — nothing listens there; the WS fails without ever opening.
   const a = await ctx.launchClient('bot-down', '', {
     mpUrl: 'ws://127.0.0.1:9/ws',
-    waitExpr: '(window.__omwMP||{}).state === "Failed"',
-    waitWhat: '__omwMP.state === Failed (server down)',
+    waitExpr: 'window.omw.state.state === "Failed"',
+    waitWhat: 'omw.state.state === Failed (server down)',
     joinTimeoutMs: 90_000, // the backoff ladder runs before it gives up
   });
 
-  const lastError = await a.eval('(window.__omwMP||{}).lastError || ""');
+  const lastError = await a.eval('window.omw.state.lastError || ""');
   ctx.log('lastError:', JSON.stringify(lastError));
   assert.match(lastError, /UNREACHABLE/, 'unreachable server must surface UNREACHABLE');
 

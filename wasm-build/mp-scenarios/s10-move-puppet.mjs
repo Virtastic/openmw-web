@@ -4,7 +4,7 @@
 // the other (server force-includes poses on visibility). Then A walks forward via the harness
 // 'walk' injection; B's puppet-of-A must track and converge on A's real pose.
 //
-// Mirrors used (2 Hz each): __omwMP.pose = own {x,y,z} (player.lua), __omwMP.puppets =
+// Mirrors used (2 Hz each): omw.state.pose = own {x,y,z} (player.lua), omw.state.puppets =
 // {"<id>":{x,y,z}} of the puppet OBJECT positions (global.lua).
 import assert from 'node:assert/strict';
 import os from 'node:os';
@@ -22,24 +22,24 @@ export default async function run(ctx) {
     ctx.launchClient('bot-b'),
   ]);
 
-  const idA = await a.eval('(window.__omwMP||{}).playerId');
-  const idB = await b.eval('(window.__omwMP||{}).playerId');
+  const idA = await a.eval('window.omw.state.playerId');
+  const idB = await b.eval('window.omw.state.playerId');
   assert.ok(idA && idB, 'both clients must have playerIds');
 
   // Same cell -> mutual visibility -> each spawns a puppet of the other.
-  const puppetExpr = (id) => `!!(JSON.parse((window.__omwMP||{}).puppets||"{}")[${JSON.stringify(id)}])`;
+  const puppetExpr = (id) => `!!(JSON.parse(window.omw.state.puppets||"{}")[${JSON.stringify(id)}])`;
   await a.waitFor(puppetExpr(idB), PUPPET_SPAWN_TIMEOUT, `puppet of ${b.name} on A`);
   await b.waitFor(puppetExpr(idA), PUPPET_SPAWN_TIMEOUT, `puppet of ${a.name} on B`);
   ctx.log('ok: both puppets spawned');
 
-  const poseOf = async (c) => JSON.parse(await c.eval('(window.__omwMP||{}).pose||"null"'));
-  const puppetOf = async (c, id) => JSON.parse(await c.eval('(window.__omwMP||{}).puppets||"{}"'))[id] || null;
+  const poseOf = async (c) => JSON.parse(await c.eval('window.omw.state.pose||"null"'));
+  const puppetOf = async (c, id) => JSON.parse(await c.eval('window.omw.state.puppets||"{}"'))[id] || null;
 
   const startPose = await poseOf(a);
   assert.ok(startPose, 'A must mirror its own pose');
 
   // Drive A forward (walk injection overrides the omw input controls for the duration).
-  await a.eval(`Module.__omwMPCmd='walk:0,1,${WALK_MS}'`);
+  await a.eval(`window.omw.send('walk:0,1,${WALK_MS}')`);
   await ctx.sleep(WALK_MS + 500);
   const endPose = await poseOf(a);
   const walked = dist(startPose, endPose);

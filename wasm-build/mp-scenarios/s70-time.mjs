@@ -24,15 +24,15 @@ const SERVER_YEAR = 427;
 const SERVER_MONTH = 7;
 const SERVER_DAY = 16;
 
-const timeOf = async (c) => JSON.parse(await c.eval('(window.__omwMP||{}).gameTime||"{}"'));
-const num = async (c, key) => Number(await c.eval(`(window.__omwMP||{}).${key}||"0"`));
+const timeOf = async (c) => JSON.parse(await c.eval('window.omw.state.gameTime||"{}"'));
+const num = async (c, key) => Number(await c.eval(`window.omw.state.${key}||"0"`));
 
 export default async function run(ctx) {
   const [a, b] = await Promise.all([ctx.launchClient('bot-a'), ctx.launchClient('bot-b')]);
 
   // The clock arrives at join (§M7: WorldTime is sent at join, on change and every 60 s).
-  await a.waitFor('Number((window.__omwMP||{}).timeApplied||"0") > 0', STEP_TIMEOUT, 'A applied WorldTime');
-  await b.waitFor('Number((window.__omwMP||{}).timeApplied||"0") > 0', STEP_TIMEOUT, 'B applied WorldTime');
+  await a.waitFor('Number(window.omw.state.timeApplied||"0") > 0', STEP_TIMEOUT, 'A applied WorldTime');
+  await b.waitFor('Number(window.omw.state.timeApplied||"0") > 0', STEP_TIMEOUT, 'B applied WorldTime');
   // Both slew from their own local start date to the server's, so give them time to
   // converge before comparing (a snap would be instant — that is asserted below).
   let t0a = null;
@@ -50,7 +50,7 @@ export default async function run(ctx) {
   // The mechanism: the write actually reaches the engine (a dropped global write is
   // silent — see world.lua TIME_FIELDS), and the calendar we ended up on is the SERVER's.
   for (const [c, name] of [[a, 'A'], [b, 'B']]) {
-    assert.equal(await c.eval('(window.__omwMP||{}).clockWritable'), 'true',
+    assert.equal(await c.eval('window.omw.state.clockWritable'), 'true',
       `${name}: world-clock writes are being dropped by the engine`);
   }
   for (const [t, name] of [[t0a, 'A'], [t0b, 'B']]) {
@@ -61,12 +61,12 @@ export default async function run(ctx) {
   ctx.log(`ok: both clients adopted the server calendar ${SERVER_YEAR}-${SERVER_MONTH}-${SERVER_DAY}`);
 
   const beforeB = t0b.abs;
-  assert.equal(await b.eval('(window.__omwMP||{}).timeRequests'), '0', 'B has not asked for time');
+  assert.equal(await b.eval('window.omw.state.timeRequests'), '0', 'B has not asked for time');
 
   // A rests. The client does not "know" it rested — it sees the engine's clock jump and
   // turns that into the request, which is the only mechanism a real rest offers.
-  await a.eval(`Module.__omwMPCmd='rest:${REST_HOURS}'`);
-  await a.waitFor('Number((window.__omwMP||{}).timeRequests||"0") === 1', STEP_TIMEOUT,
+  await a.eval(`window.omw.send('rest:${REST_HOURS}')`);
+  await a.waitFor('Number(window.omw.state.timeRequests||"0") === 1', STEP_TIMEOUT,
     "A's rest was detected and sent as a WorldTimeRequest");
   ctx.log('ok: local jump detected -> WorldTimeRequest');
 

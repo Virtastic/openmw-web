@@ -18,10 +18,10 @@ const STEP_TIMEOUT = 20_000;
 const BOOT = { retail: true, joinTimeoutMs: 420_000 };
 
 const lockOf = async (c) => {
-  const raw = await c.eval('(window.__omwMP||{}).dialogueLock');
+  const raw = await c.eval('window.omw.state.dialogueLock');
   return raw ? JSON.parse(raw) : null;
 };
-const npcsOf = async (c) => JSON.parse(await c.eval('(window.__omwMP||{}).cellNpcs||"[]"'));
+const npcsOf = async (c) => JSON.parse(await c.eval('window.omw.state.cellNpcs||"[]"'));
 
 export default async function run(ctx) {
   if (!existsSync(join(ROOT, 'play', 'mwdata', 'Morrowind.esm'))) {
@@ -34,8 +34,8 @@ export default async function run(ctx) {
 
   // Pick an NPC both clients have in their own cell (the mirror is sorted, so the choice
   // is deterministic on both sides).
-  await a.waitFor('JSON.parse((window.__omwMP||{}).cellNpcs||"[]").length > 0', STEP_TIMEOUT, 'A sees cell NPCs');
-  await b.waitFor('JSON.parse((window.__omwMP||{}).cellNpcs||"[]").length > 0', STEP_TIMEOUT, 'B sees cell NPCs');
+  await a.waitFor('JSON.parse(window.omw.state.cellNpcs||"[]").length > 0', STEP_TIMEOUT, 'A sees cell NPCs');
+  await b.waitFor('JSON.parse(window.omw.state.cellNpcs||"[]").length > 0', STEP_TIMEOUT, 'B sees cell NPCs');
   const [na, nb] = await Promise.all([npcsOf(a), npcsOf(b)]);
   const shared = na.filter((r) => nb.includes(r));
   ctx.log(`A sees ${na.length} NPC records, B ${nb.length}, shared ${shared.length}`);
@@ -44,14 +44,14 @@ export default async function run(ctx) {
   ctx.log(`locking "${npc}"`);
 
   // A acquires.
-  await a.eval(`Module.__omwMPCmd='dlg:${npc}'`);
-  await a.waitFor('JSON.parse((window.__omwMP||{}).dialogueLock||"{}").granted === true',
+  await a.eval(`window.omw.send('dlg:${npc}')`);
+  await a.waitFor('JSON.parse(window.omw.state.dialogueLock||"{}").granted === true',
     STEP_TIMEOUT, 'A granted the dialogue lock');
   ctx.log('ok: A holds the lock');
 
   // B is denied, and learns WHO holds it.
-  await b.eval(`Module.__omwMPCmd='dlg:${npc}'`);
-  await b.waitFor('((window.__omwMP||{}).dialogueLock||"") !== ""', STEP_TIMEOUT, 'B got a lock result');
+  await b.eval(`window.omw.send('dlg:${npc}')`);
+  await b.waitFor('(window.omw.state.dialogueLock||"") !== ""', STEP_TIMEOUT, 'B got a lock result');
   const denied = await lockOf(b);
   ctx.log(`B result: ${JSON.stringify(denied)}`);
   assert.equal(denied.granted, false, 'B must be denied while A holds the lock');
@@ -64,8 +64,8 @@ export default async function run(ctx) {
   // A leaves -> the server releases every lock A held.
   a.close();
   await ctx.sleep(4000);
-  await b.eval(`Module.__omwMPCmd='dlg:${npc}'`);
-  await b.waitFor('JSON.parse((window.__omwMP||{}).dialogueLock||"{}").granted === true',
+  await b.eval(`window.omw.send('dlg:${npc}')`);
+  await b.waitFor('JSON.parse(window.omw.state.dialogueLock||"{}").granted === true',
     STEP_TIMEOUT, 'B acquires the lock after A disconnects');
   ctx.log('ok: lock released on disconnect and re-acquired by B');
 }

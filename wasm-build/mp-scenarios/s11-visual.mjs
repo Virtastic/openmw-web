@@ -9,26 +9,26 @@ export default async function run(ctx) {
     ctx.launchClient('cam-a'),
     ctx.launchClient('cam-b'),
   ]);
-  const idB = await b.eval('(window.__omwMP||{}).playerId');
+  const idB = await b.eval('window.omw.state.playerId');
   await a.waitFor(
-    `!!(JSON.parse((window.__omwMP||{}).puppets||"{}")[${JSON.stringify(idB)}])`,
+    `!!(JSON.parse(window.omw.state.puppets||"{}")[${JSON.stringify(idB)}])`,
     15_000, 'puppet of B on A');
   // Back A up ~1s so the spawn point (where B's puppet stands) sits in front of the camera
   // at readable distance.
-  await a.eval(`Module.__omwMPCmd='walk:0,-1,900'`);
+  await a.eval(`window.omw.send('walk:0,-1,900')`);
   await ctx.sleep(2500);
   const poses = async () => {
-    const pose = JSON.parse(await a.eval('(window.__omwMP||{}).pose||"null"'));
-    const pup = JSON.parse(await a.eval('(window.__omwMP||{}).puppets||"{}"'))[idB];
+    const pose = JSON.parse(await a.eval('window.omw.state.pose||"null"'));
+    const pup = JSON.parse(await a.eval('window.omw.state.puppets||"{}"'))[idB];
     ctx.log('A pose', JSON.stringify(pose), '| puppet-of-B', JSON.stringify(pup));
   };
   await poses();
   // Offset B a step to the side so A's own body doesn't eclipse the puppet dead-center.
-  await b.eval(`Module.__omwMPCmd='walk:1,0,500'`);
+  await b.eval(`window.omw.send('walk:1,0,500')`);
   await ctx.sleep(1500);
   // Third person on A so A's own avatar shares the frame with B's puppet standing at spawn
   // (?start deep-links leave the player in first person, where the own body is invisible).
-  await a.eval(`Module.__omwMPCmd='cam:3p'`);
+  await a.eval(`window.omw.send('cam:3p')`);
   await ctx.sleep(700);
   const path = await a.screenshot('/tmp/omw-mp-two-avatars.png');
   ctx.log('screenshot with both avatars:', path);

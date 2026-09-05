@@ -81,7 +81,7 @@ export interface SocialDeps {
   // A4/3.8: file a report into the moderation queue (the same store /report writes).
   report?(doc: {
     reporter: { id: number; account: string; name: string };
-    target: { id: number | null; account: string; name: string; cellKey: string | null };
+    target: { id: number | null; account: string | null; name: string; cellKey: string | null };
     reason: string;
     voice: boolean;
   }): Promise<unknown>;
@@ -228,8 +228,17 @@ export class Social {
     return out;
   }
 
+  // Friends, and the two lists a player can only ever ADD to from the panel: who they have
+  // blocked and who they have muted. Without them there was no way back -- the typed
+  // commands never offered one either -- so a mis-click was permanent.
   private sendFriendList(player: Player): void {
-    player.peer.sendEvent('FriendList', { friends: this.friendList(player.accountKey) as unknown as never });
+    const acct = player.accountKey;
+    const named = (a: AccountKey): { acct: string; name: string } => ({ acct: a, name: this.d.displayName(a) ?? a });
+    player.peer.sendEvent('FriendList', {
+      friends: this.friendList(acct) as unknown as never,
+      blocked: this.d.store.blockedBy(acct).map(named) as unknown as never,
+      muted: this.d.store.mutesOf(acct).map(named) as unknown as never,
+    });
   }
 
   // Tell this account's friends about a presence change. Blocks are honoured here too: a
@@ -566,11 +575,13 @@ export class Social {
       case 'BlockAdd': {
         const r = this.block(player, str('name'));
         this.reply(player, 'BlockAdd', r === 'ok', r);
+        this.sendFriendList(player);
         return true;
       }
       case 'BlockRemove':
         this.unblock(player, str('acct'));
         this.reply(player, 'BlockRemove', true, 'ok');
+        this.sendFriendList(player);
         return true;
       case 'InviteSend': {
         const r = this.invite(player, str('acct'));
@@ -657,9 +668,14 @@ export class Social {
       // event rather than a typed command is what makes it one click from the social hub,
       // which is the difference between a report flow that gets used and one that does not.
       case 'ReportPlayer': {
-        const targetAcct = this.targetAcct(body);
+        // THE ONLY WAY TO REPORT, now that the typed /report is gone -- so it must accept
+        // what /report accepted: a name that is no longer online. The griefer who logs off
+        // the moment they are done is the ordinary case, not the edge. An online player
+        // resolves to an account; an offline name is recorded as typed, with no account.
+        const typed = str('name').trim().slice(0, 64);
+        const targetAcct = this.targetAcct(body) ?? (typed !== '' ? this.d.resolveName(typed) : undefined);
         const reason = str('reason').slice(0, 500);
-        if (targetAcct === undefined) { this.reply(player, 'ReportPlayer', false, 'no_such_player'); return true; }
+        if (targetAcct === undefined && typed === '') { this.reply(player, 'ReportPlayer', false, 'no_such_player'); return true; }
         if (targetAcct === player.accountKey) {
           this.reply(player, 'ReportPlayer', false, 'self');
           return true;
@@ -668,13 +684,13 @@ export class Social {
           this.reply(player, 'ReportPlayer', false, 'no_reason');
           return true;
         }
-        const target = this.onlinePlayer(targetAcct);
+        const target = targetAcct ? this.onlinePlayer(targetAcct) : undefined;
         void this.d.report?.({
           reporter: { id: player.id, account: player.accountKey, name: player.name },
           target: {
             id: target?.id ?? null,
-            account: targetAcct,
-            name: this.d.displayName(targetAcct) ?? targetAcct,
+            account: targetAcct ?? null,
+            name: (targetAcct && this.d.displayName(targetAcct)) ?? typed,
             cellKey: target?.cellKey ?? null,
           },
           reason,
@@ -691,11 +707,13 @@ export class Social {
         if (muteTarget === undefined) { this.reply(player, 'MuteAdd', false, 'no_such_player'); return true; }
         const r = this.mute(player, muteTarget);
         this.reply(player, 'MuteAdd', r === 'ok', r);
+        this.sendFriendList(player);
         return true;
       }
       case 'MuteRemove':
         this.unmute(player, str('acct'));
         this.reply(player, 'MuteRemove', true, 'ok');
+        this.sendFriendList(player);
         return true;
       case 'InviteAccept': {
         const r = this.acceptInvite(player, str('acct'));

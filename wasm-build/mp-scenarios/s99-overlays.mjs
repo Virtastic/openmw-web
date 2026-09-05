@@ -1,10 +1,10 @@
 // Copyright (C) 2025-2026 Virtastic - https://virtastic.app
 // SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
 // s99: HTML overlay diagnosis + regression. The chat/social UI lives in index.html's DOM and
-// talks to the engine over the __omwMPCmd / __omwMP bridge; the MyGUI windows are gone. This
+// talks to the engine over the window.omw bridge; the MyGUI windows are gone. This
 // exercises the REAL key path end-to-end with trusted CDP key events:
-//   T -> player.lua toggleChat -> testSet('openChat') -> JS poll opens the panel + focuses input
-//   O -> A_Social action -> social.lua toggle -> testSet('openSocial') -> panel shows
+//   T -> player.lua toggleChat -> mp.set('openChat') -> JS poll opens the panel + focuses input
+//   O -> A_Social action -> social.lua toggle -> mp.set('openSocial') -> panel shows
 //   chatx command -> server ChatSend -> ChatMessage -> chatLog mirror (feed data path)
 import assert from 'node:assert/strict';
 
@@ -51,15 +51,15 @@ export default async function run(ctx) {
     'chat input took keyboard focus');
   ctx.log('ok: chat panel open + input focused');
 
-  // 2. The cursor handshake command must be consumed by pollHarness (slot drains).
-  // 20s, not 4s. The slot drains at roughly ONE COMMAND PER FRAME (pollHarness runs in
-  // onFrame and testPollCommand reads-and-clears), and a freshly booted client under software
+  // 2. The cursor handshake command must be consumed by pollCommands (queue drains).
+  // 20s, not 4s. The queue drains once per FRAME (pollCommands runs in onFrame), and a
+  // freshly booted client under software
   // rasterisation runs at a fraction of 1 fps -- while the page's pump refills the slot from
   // its outbox every 40 ms. Measured here: a queued `uimode:off` held the slot for 4.5 s, the
   // `uimode:on` behind it for another 1.5 s, and the outbox was empty by 6 s. The 4 s budget
   // was a deadline guessed against a faster machine, and it failed as "the handshake was never
   // consumed" when the handshake was merely third in line.
-  await a.waitFor(`!window.Module.__omwMPCmd`, 20_000, 'uimode:on consumed (outbox drained)');
+  await a.waitFor(`window.omw.queue.length === 0`, 20_000, 'uimode:on consumed (queue drained)');
   ctx.log('ok: uimode handshake consumed');
 
   // 3. Escape closes and hands input back.
@@ -81,8 +81,8 @@ export default async function run(ctx) {
 
   // 5. Chat data path: a chatx command must round-trip via the server into the chatLog mirror.
   const nonce = 'n' + Math.random().toString(36).slice(2, 10);
-  await a.eval(`window.Module.__omwMPCmd = ${JSON.stringify('chatx:say::diag ' + nonce)}`);
-  await a.waitFor(`((window.__omwMP||{}).chatLog||'').includes(${JSON.stringify(nonce)})`, 5000,
+  await a.eval(`window.omw.send(${JSON.stringify('chatx:say::diag ' + nonce)})`);
+  await a.waitFor(`(window.omw.state.chatLog||'').includes(${JSON.stringify(nonce)})`, 5000,
     'chatx message round-tripped into chatLog');
   ctx.log('ok: chatx -> server -> chatLog round-trip');
 
@@ -175,7 +175,7 @@ export default async function run(ctx) {
   await a.key({ key: 'Enter', code: 'Enter', keyCode: 13, text: '\r' });
   await a.waitFor(`document.getElementById('omw-tx').value === ''`, 3000,
     'Enter cleared the input (the send handler ran)');
-  await a.waitFor(`((window.__omwMP||{}).chatLog||'').includes(${JSON.stringify(msg)})`, 5000,
+  await a.waitFor(`(window.omw.state.chatLog||'').includes(${JSON.stringify(msg)})`, 5000,
     'Enter actually delivered the message through the server');
   ctx.log('ok: Enter sends the typed message');
   await a.key(ESC);
@@ -186,9 +186,9 @@ export default async function run(ctx) {
   // EVENT rather than a state, so the page fires only when the sequence moves -- otherwise
   // every unrelated mirror update would replay the last eviction. global.lua bumps it
   // alongside the fields, so setting the fields without it is not what the engine does.
-  await a.eval(`window.__omwMP.worldClosedBy = 'Ada';
-    window.__omwMP.worldClosed = 'owner_went_solo';
-    window.__omwMP.noticeSeq = String(Number(window.__omwMP.noticeSeq || 0) + 1)`)
+  await a.eval(`window.omw.state.worldClosedBy = 'Ada';
+    window.omw.state.worldClosed = 'owner_went_solo';
+    window.omw.state.noticeSeq = String(Number(window.omw.state.noticeSeq || 0) + 1)`)
   await a.waitFor(`document.getElementById('omw-tour').classList.contains('show')
     && /Returning to your own world/.test(document.getElementById('omw-tour-title').textContent)`,
     4000, 'being evicted from a world shows a notice');

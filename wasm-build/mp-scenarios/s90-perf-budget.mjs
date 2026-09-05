@@ -69,7 +69,7 @@ export default async function run(ctx) {
   const glSamples = [];
   const phaseSamples = [];
   for (const [cmd, settle] of ROUTE) {
-    await c.eval(`Module.__omwMPCmd=${JSON.stringify(cmd)}`);
+    await c.eval(`window.omw.send(${JSON.stringify(cmd)})`);
     await ctx.sleep(settle);
     const gl = JSON.parse(await c.eval('JSON.stringify(window.__glPerFrame||null)'));
     const ph = JSON.parse(await c.eval('JSON.stringify(window.__omwPhase||null)'));

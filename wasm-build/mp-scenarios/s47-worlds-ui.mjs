@@ -178,11 +178,11 @@ export default async function run(ctx) {
     await grantLockerSession(a, GW_PORT, `bot-a-${ctx.runId}`);
 
     // --- 1. The tab fetches the directory the first time it is opened ------------------
-    await a.eval("Module.__omwMPCmd='socialtab:worlds'");
-    await a.waitFor("(window.__omwMP||{}).worldCount !== undefined", STEP,
+    await a.eval("window.omw.send('socialtab:worlds')");
+    await a.waitFor("window.omw.state.worldCount !== undefined", STEP,
       'the client received a world list from the gateway');
-    const count = Number(await a.eval("(window.__omwMP||{}).worldCount"));
-    const err = String(await a.eval("(window.__omwMP||{}).worldsError"));
+    const count = Number(await a.eval("window.omw.state.worldCount"));
+    const err = String(await a.eval("window.omw.state.worldsError"));
     assert.equal(err, '', `the directory must be reachable, got error "${err}"`);
     assert.ok(count >= 1, `the player's own world must be listed, saw ${count}`);
     ctx.log(`  worlds listed: ${count}`);
@@ -192,19 +192,19 @@ export default async function run(ctx) {
     const before = count;
     // The harness cannot type into the name field, so the create is driven by a test hook
     // that goes through the same uplink a button press would.
-    await a.eval("Module.__omwMPCmd='worldcreate:my-session:private'");
+    await a.eval("window.omw.send('worldcreate:my-session:private')");
     // Read the SERVER'S ANSWER before waiting on the list. social.lua mirrors it to
     // `worldCreate`, and waiting only on worldCount turned every refusal -- platform_full,
     // too_many_sessions, unreachable -- into the same blind 30s timeout that says nothing
     // about which one happened.
-    await a.waitFor('((window.__omwMP||{}).worldCreate||"") !== ""', STEP,
+    await a.waitFor('(window.omw.state.worldCreate||"") !== ""', STEP,
       'the server answered the create request at all');
-    const created = JSON.parse(await a.eval('(window.__omwMP||{}).worldCreate'));
+    const created = JSON.parse(await a.eval('window.omw.state.worldCreate'));
     ctx.log(`  create answered: ok=${created.ok} error="${created.error ?? ''}"`);
     assert.equal(created.ok, true, `creating a session was refused: ${created.error || 'no reason given'}`);
-    await a.waitFor(`Number((window.__omwMP||{}).worldCount||0) > ${before}`, STEP,
+    await a.waitFor(`Number(window.omw.state.worldCount||0) > ${before}`, STEP,
       'the new session appears in the list');
-    ctx.log(`  after create: ${await a.eval("(window.__omwMP||{}).worldCount")} worlds`);
+    ctx.log(`  after create: ${await a.eval("window.omw.state.worldCount")} worlds`);
     ctx.log(`  worlds tab (session created): ${await a.screenshot(join(SHOTS, '2-worlds-created.png'))}`);
 
     // The gateway must agree — the UI must not be showing a world that does not exist.
@@ -237,11 +237,11 @@ export default async function run(ctx) {
     }
     assert.ok(up, 'the created session must come up, or there is nothing to join');
     // Refresh the client's list so it sees the world as joinable.
-    await a.eval("Module.__omwMPCmd='socialtab:players'");
-    await a.eval("Module.__omwMPCmd='socialtab:worlds'");
+    await a.eval("window.omw.send('socialtab:players')");
+    await a.eval("window.omw.send('socialtab:worlds')");
     await ctx.sleep(1500);
 
-    await a.eval("Module.__omwMPCmd='worldjoin:my-session'");
+    await a.eval("window.omw.send('worldjoin:my-session')");
     // WHAT THE CLIENT DECIDED. The join is a chain -- MP_SocialJoinById -> joinWorld ->
     // mpJoinWorld -> net.switchTo -> the page's rebootIntoWorld -- and every link can fail
     // quietly. These four mirrors say which link stopped: joinError means the world was never
@@ -250,7 +250,7 @@ export default async function run(ctx) {
     // a reconnect would now go.
     await ctx.sleep(2000);
     for (const k of ['joinError', 'publicStage', 'switchTo', 'dialTarget']) {
-      ctx.log(`  ${k}: "${String(await a.eval(`(window.__omwMP||{}).${k}||''`))}"`);
+      ctx.log(`  ${k}: "${String(await a.eval(`window.omw.state.${k}||''`))}"`);
     }
     // The definitive check is on the DESTINATION world: it must report a player that was
     // not there before. Asserting only on client state would pass if the client merely

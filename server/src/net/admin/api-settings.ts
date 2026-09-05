@@ -18,7 +18,7 @@ export const SECTION_GROUPS: { group: string; sections: string[]; note?: string 
   // [engine] beside [content]: both are checks run against a client as it joins. It was in
   // no group at all, so it landed in a synthesised "Other" with no sidebar entry.
   { group: 'Core', sections: ['setup', 'server', 'login', 'content', 'engine'] },
-  { group: 'Gameplay', sections: ['rules', 'economy', 'sharing', 'time', 'cellReset', 'gui'] },
+  { group: 'Gameplay', sections: ['rules', 'economy', 'sharing', 'time', 'cellReset'] },
   { group: 'Access', sections: ['admin', 'auth', 'moderation', 'authority'] },
   { group: 'Storage', sections: ['locker'] },
   { group: 'Operations', sections: ['limits', 'metrics', 'notifications', 'integrations', 'dev'] },
@@ -40,7 +40,7 @@ export const SECTION_GROUPS: { group: string; sections: string[]; note?: string 
  * files. It simulates no world and there is no second person, so every setting below is read
  * by something that never runs here.
  *
- *   rules, economy, time, gui, cellReset   the server's own world simulation, which does not exist
+ *   rules, economy, time, cellReset        the server's own world simulation, which does not exist
  *   sharing, moderation                    two or more people, one of whom needs moderating
  *   authority                              handing cell ownership between peers; there is one peer
  *   content, engine                        checks run against a client as it JOINS; nobody joins
@@ -54,7 +54,7 @@ export const SECTION_GROUPS: { group: string; sections: string[]; note?: string 
  * multiplayer later brings them all back exactly as they were.
  */
 export const MULTIPLAYER_ONLY = [
-  'rules', 'economy', 'time', 'gui', 'cellReset',
+  'rules', 'economy', 'time', 'cellReset',
   'sharing', 'moderation', 'authority',
   'content', 'engine',
   'simPeer', 'gateway', 'worlds',
@@ -192,7 +192,6 @@ const SECTION_LABEL: Record<string, string> = {
   economy: 'Loot and ownership',
   sharing: 'Shared progress',
   time: 'In-game time',
-  gui: 'Dialogs',
   cellReset: 'Area resets',
   limits: 'Rate limits and anti-cheat',
   moderation: 'Chat logs and reports',

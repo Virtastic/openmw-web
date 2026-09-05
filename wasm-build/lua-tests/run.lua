@@ -143,7 +143,7 @@ do
   end
   -- The tables existing proves nothing if the handler still formats its own string. Pin the
   -- WIRING as well as the text, or this whole section can pass over dead code.
-  local handler = src:match('MP_SocialResult = function%(data%)(.-)mp%.testSet')
+  local handler = src:match('MP_SocialResult = function%(data%)(.-)mp%.set')
   check('MP_SocialResult calls socialText', handler ~= nil and handler:find('socialText(', 1, true) ~= nil,
     'the handler is still building its own message')
 end

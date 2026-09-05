@@ -47,11 +47,11 @@ export default async function run(ctx) {
     ctx.launchClient('far-b'),
   ]);
 
-  const idA = await a.eval('(window.__omwMP||{}).playerId');
-  const idB = await b.eval('(window.__omwMP||{}).playerId');
+  const idA = await a.eval('window.omw.state.playerId');
+  const idB = await b.eval('window.omw.state.playerId');
   assert.ok(idA && idB, 'both clients must have playerIds');
 
-  const puppetExpr = (id) => `!!(JSON.parse((window.__omwMP||{}).puppets||"{}")[${JSON.stringify(id)}])`;
+  const puppetExpr = (id) => `!!(JSON.parse(window.omw.state.puppets||"{}")[${JSON.stringify(id)}])`;
   await a.waitFor(puppetExpr(idB), PUPPET_SPAWN_TIMEOUT, `puppet of ${b.name} on A`);
   await b.waitFor(puppetExpr(idA), PUPPET_SPAWN_TIMEOUT, `puppet of ${a.name} on B`);
 
@@ -61,8 +61,8 @@ export default async function run(ctx) {
   // lodNearRadius = 0 that is `d2 <= 0`, i.e. genuinely NEAR. Asserting the far tier here
   // would be asserting against coincident players and would fail on correct behaviour.
 
-  const poseOf = async (c) => JSON.parse(await c.eval('(window.__omwMP||{}).pose||"null"'));
-  const puppetOf = async (c, id) => JSON.parse(await c.eval('(window.__omwMP||{}).puppets||"{}"'))[id] || null;
+  const poseOf = async (c) => JSON.parse(await c.eval('window.omw.state.pose||"null"'));
+  const puppetOf = async (c, id) => JSON.parse(await c.eval('window.omw.state.puppets||"{}"'))[id] || null;
 
   const startPose = await poseOf(a);
   assert.ok(startPose, 'A must mirror its own pose');
@@ -84,7 +84,7 @@ export default async function run(ctx) {
   let walked = 0;
   const walkBy = Date.now() + 180_000;
   while (Date.now() < walkBy) {
-    await a.eval(`Module.__omwMPCmd='walk:0,1,${WALK_MS}'`);
+    await a.eval(`window.omw.send('walk:0,1,${WALK_MS}')`);
     await ctx.sleep(WALK_MS + 500);
     walked = dist(startPose, await poseOf(a));
     ctx.log(`  A has walked ${walked.toFixed(1)} of ${NEEDED} units`);
@@ -96,9 +96,9 @@ export default async function run(ctx) {
 
   // Now that they are apart, everyone must actually BE degraded — otherwise this scenario
   // passes by exercising the near path twice and the far tier ships unverified.
-  await b.waitFor('JSON.parse((window.__omwMP||{}).puppetTiers||"{}").far > 0',
+  await b.waitFor('JSON.parse(window.omw.state.puppetTiers||"{}").far > 0',
     PUPPET_SPAWN_TIMEOUT, 'B classified its avatars as FAR tier');
-  const tiers = JSON.parse(await b.eval('(window.__omwMP||{}).puppetTiers||"{}"'));
+  const tiers = JSON.parse(await b.eval('window.omw.state.puppetTiers||"{}"'));
   assert.ok(!tiers.near, `expected nobody in the near tier, got ${JSON.stringify(tiers)}`);
   ctx.log(`tiers on B: ${JSON.stringify(tiers)}`);
 

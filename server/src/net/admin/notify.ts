@@ -16,7 +16,7 @@
 import { connect as tlsConnect, type TLSSocket } from 'node:tls';
 import { createConnection, type Socket } from 'node:net';
 import { randomBytes, timingSafeEqual, createHash } from 'node:crypto';
-import { log } from '../../log';
+import { log, onLog } from '../../log';
 
 export interface MailConfig {
   host: string;
@@ -254,4 +254,18 @@ export function notifyEvent(cfg: NotifyConfig, event: string, fields: Record<str
     void sendMail(cfg, cfg.to, `OpenMW-Web: ${event}`, summary)
       .catch((err: unknown) => log('warn', 'notify.mail_failed', { event, error: String(err) }));
   }
+}
+
+/**
+ * Operational alerts ride the log stream the server already writes, filtered by the
+ * operator's [notifications].events list. One subscriber for both programs — a game and the
+ * multiplayer server — so a world.* or gateway.* event can alert the same way a ban does.
+ * Nothing is sent unless they configured it. Returns the unsubscribe.
+ */
+export function notifyFromLog(cfg: () => NotifyConfig): () => void {
+  return onLog((entry) => {
+    const { ts: _ts, level: _level, event, ...fields } = entry;
+    if (event.startsWith('notify.')) return; // never report on the reporter
+    notifyEvent(cfg(), event, fields);
+  });
 }

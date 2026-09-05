@@ -12,14 +12,14 @@ export const serverRules = '[login]\nrequireProfile = true';
 export default async function run(ctx) {
   // The client cannot reach Joined until the handle is set, so wait on the HOLD state.
   const a = await ctx.launchClient('bot-prof', '', {
-    waitExpr: '(window.__omwMP||{}).state === "ProfileNeeded"',
-    waitWhat: '__omwMP.state === ProfileNeeded',
+    waitExpr: 'window.omw.state.state === "ProfileNeeded"',
+    waitWhat: 'omw.state.state === ProfileNeeded',
   });
   ctx.log('ok: server held the session at ProfileNeeded');
 
   await a.waitFor(`!!document.getElementById('omw-uname')`, 8000,
     'the handle picker appeared (without it the gate is a dead end)');
-  assert.equal(await a.eval(`(window.__omwMP||{}).profileRequired`), 'true',
+  assert.equal(await a.eval(`window.omw.state.profileRequired`), 'true',
     'profileRequired must be mirrored for the picker to trigger on');
   ctx.log('ok: picker shown');
 
@@ -42,7 +42,7 @@ export default async function run(ctx) {
   await a.eval(`document.getElementById('omw-uname-in').value = ${JSON.stringify(handle)}`);
   await a.click('#omw-uname-go');
   await a.waitFor(`!document.getElementById('omw-uname')`, 10000, 'the picker closed on success');
-  await a.waitFor(`(window.__omwMP||{}).state === "Joined"`, 15000,
+  await a.waitFor(`window.omw.state.state === "Joined"`, 15000,
     'setting a handle completed the join');
   ctx.log(`ok: handle "${handle}" accepted and the player entered the world`);
 

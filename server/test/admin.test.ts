@@ -22,12 +22,14 @@ async function boot(t: { after(fn: () => unknown): void }, override?: DeepPartia
   };
   const server = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1', configOverride });
   t.after(() => server.close());
+  current = server;
   return { server, dataDir };
 }
 
 async function join(server: RunningServer, name: string) {
   const c = await TestClient.connect(server.port);
   const w = await c.joinAsNew(name);
+  actorOf.set(c, name.toLowerCase());
   await c.waitEvent('PlayerList');
   // The motd plugin greets every joiner on the server channel; drain it so it cannot be
   // mistaken for a command reply later.
@@ -35,16 +37,17 @@ async function join(server: RunningServer, name: string) {
   return { c, playerId: w.playerId, welcome: w.welcome };
 }
 
-// Runs a slash command and returns the server's whispered answer. `want` picks the line
-// out of the server channel: /motd also BROADCASTS on that channel, so "first server
-// message wins" would race the reply against the broadcast.
-async function slash(c: TestClient, line: string, want: RegExp = /.*/): Promise<string> {
-  c.sendEvent('ChatSend', { text: line });
-  const msg = await c.waitEvent('ChatMessage', (v) => {
-    const m = v as { channel: string; text: string };
-    return m.channel === 'server' && want.test(m.text);
-  });
-  return (msg.value as { text: string }).text;
+// Runs an operator command the way the dashboard does -- straight through the one gate,
+// Admin.exec -- and returns its answer. There is no typed path any more: a "/list" in chat
+// is a chat line. `want` is kept so call sites read as before; the whole reply comes back.
+const actorOf = new WeakMap<TestClient, string>();
+let current: RunningServer;
+async function slash(c: TestClient, line: string, _want: RegExp = /.*/): Promise<string> {
+  const key = actorOf.get(c);
+  const actor = key ? current.roster.activeForAccount(key) : undefined;
+  if (!actor) throw new Error('slash(): the client is not a joined player');
+  const [cmd = '', ...args] = line.replace(/^\//, '').trim().split(/\s+/);
+  return current.admin.exec(actor, cmd.toLowerCase(), args);
 }
 
 async function status(server: RunningServer): Promise<Record<string, unknown>> {
@@ -107,21 +110,6 @@ test('rank gating', async (t) => {
     assert.match(await slash(owner, '/ban Nobody', /No account named/), /No account named/);
   });
 
-  await t.test('the AdminCommand event path shares the gate and always answers', async () => {
-    player.sendEvent('AdminCommand', { cmd: 'list', args: [] });
-    assert.match(((await player.waitEvent('AdminResult')).value as { text: string }).text, /Owner/);
-    player.sendEvent('AdminCommand', { cmd: 'setrank', args: ['Victim', '3'] }); // rank 2 actor
-    assert.match(((await player.waitEvent('AdminResult')).value as { text: string }).text, /requires rank 3/);
-    for (const body of [{ cmd: 'list' }, { cmd: 42, args: [] }, { cmd: 'give', args: [{ nested: 1 }] }, {}]) {
-      player.sendEvent('AdminCommand', body);
-      const text = ((await player.waitEvent('AdminResult')).value as { text: string }).text;
-      assert.ok(text.length > 0, 'a malformed AdminCommand still gets an answer');
-    }
-    // Malformed admin traffic must not have cost the session.
-    assert.equal(player.isClosed, false);
-    assert.match(await slash(player, '/list', /Player/), /Player/);
-  });
-
   await t.test('/console is owner-only, delivered, and disable-able', async () => {
     assert.match(await slash(owner, '/console Victim print("hi there")', /Sent to Victim/), /Sent to Victim/);
     assert.deepEqual((await victim.waitEvent('ConsoleCommand')).value, { script: 'print("hi there")' });
@@ -175,6 +163,7 @@ test('bans', async (t) => {
       configOverride: { time: { scale: 0 }, limits: { maxConnsPerIp: 64, loginPerMinPerIp: 240 } },
     });
     t.after(() => restarted.close());
+    current = restarted; // the gate the helper reaches is the restarted server's
     const c = await TestClient.connect(restarted.port);
     c.hello();
     await c.waitJson('SessionHelloOk');
@@ -206,7 +195,7 @@ test('ip bans are refused at accept', async (t) => {
   // Every test client shares 127.0.0.1, so banning the target's address also kicks the
   // admin who issued it — the real-world footgun, and the honest assertion: an IP ban
   // takes effect on every session from that address, including the actor's own.
-  owner.sendEvent('ChatSend', { text: '/ipban Target proxy abuse' });
+  void slash(owner, '/ipban Target proxy abuse'); // kicks the actor too; the answer may never land
   await target.waitDisconnect('BANNED');
   await owner.waitDisconnect('BANNED');
   await target.closed;

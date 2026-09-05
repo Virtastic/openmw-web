@@ -29,7 +29,7 @@ enforce = "off"
 const STEP = 30_000;
 const BOOT = { retail: true, joinTimeoutMs: 420_000 };
 const hp = async (c) => {
-  const s = String(await c.eval('(window.__omwMP||{}).selfStats') ?? '');
+  const s = String(await c.eval('window.omw.state.selfStats') ?? '');
   const m = /^(\d+)\/(\d+)$/.exec(s);
   return m ? { cur: Number(m[1]), base: Number(m[2]) } : null;
 };
@@ -45,28 +45,28 @@ export default async function run(ctx) {
   const by = Date.now() + 300_000;
   let owner = 'none';
   while (Date.now() < by) {
-    owner = String(await a.eval('(window.__omwMP||{}).authorityHolder'));
+    owner = String(await a.eval('window.omw.state.authorityHolder'));
     if (owner && owner !== 'none') break;
     await ctx.sleep(500);
   }
   assert.notEqual(owner, 'none', 'the simulating peer never took the cell');
 
   // The peer must be streaming this player's bars before we can kill them through it.
-  await a.waitFor("(window.__omwMP||{}).selfStats !== undefined", STEP,
+  await a.waitFor("window.omw.state.selfStats !== undefined", STEP,
     'the peer reports this player’s bars (MP_SelfStats)');
   const before = await hp(a);
   ctx.log(`cell owner=${owner}; bars ${before?.cur}/${before?.base}`);
 
   // Kill the player. sethp drives the CLIENT's own health to 0, which is the ordinary death
   // edge: the client reports it and the respawn plugin answers.
-  await a.eval("Module.__omwMPCmd='sethp:0'");
+  await a.eval("window.omw.send('sethp:0')");
   ctx.log('killed; waiting for the respawn to bring the bars back');
 
   // THE ASSERTION. After the respawn the peer's report must show a LIVING avatar. Before the
   // fix this stayed at 0 forever (the corpse kept reporting 0) or oscillated as the death
   // loop re-killed the player every few seconds.
   await a.waitFor(
-    `(function(){var s=(window.__omwMP||{}).selfStats; if(!s) return false;`
+    `(function(){var s=window.omw.state.selfStats; if(!s) return false;`
     + ` var m=/^(\\d+)\\/(\\d+)$/.exec(s); return !!m && Number(m[1]) > 0; })()`,
     STEP, 'the peer reports a LIVING avatar after the respawn (a corpse reports 0 forever)');
   const after = await hp(a);

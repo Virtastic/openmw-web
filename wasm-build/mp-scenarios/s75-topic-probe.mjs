@@ -34,17 +34,17 @@ export default async function run(ctx) {
   const c = await ctx.launchClient('topicprobe', '', BOOT);
 
   const read = async () => {
-    await c.eval("if (window.__omwMP) window.__omwMP.topics = null; 'cleared';");
-    await c.eval("Module.__omwMPCmd='topics'");
-    await c.waitFor("typeof (window.__omwMP||{}).topics === 'string'", 20_000, 'client listed its topics');
-    return String(await c.eval("(window.__omwMP||{}).topics||''")).split(',').filter(Boolean);
+    await c.eval("if (window.omw.state) window.omw.state.topics = null; 'cleared';");
+    await c.eval("window.omw.send('topics')");
+    await c.waitFor("typeof window.omw.state.topics === 'string'", 20_000, 'client listed its topics');
+    return String(await c.eval("window.omw.state.topics||''")).split(',').filter(Boolean);
   };
 
   const before = await read();
   ctx.log(`  before: ${before.length} topics visible to the sync`);
 
   for (const t of KNOWN_REAL) {
-    await c.eval(`Module.__omwMPCmd='topic:${t}'`);
+    await c.eval(`window.omw.send('topic:${t}')`);
     await ctx.sleep(400);
   }
   await ctx.sleep(2000);

@@ -102,7 +102,7 @@ local function dropOut(what, why, detail)
     local now = core.getRealTime()
     if dropOutAt[key] and now - dropOutAt[key] < DROP_OUT_EVERY then return end
     dropOutAt[key] = now
-    pcall(function() mp.testSet('lastDropOut', key) end)
+    pcall(function() mp.set('lastDropOut', key) end)
     print(string.format('[mp] OUTBOUND DROPPED: %s why=%s%s', what, why,
         detail and (' ' .. tostring(detail)) or ''))
 end
@@ -1034,7 +1034,7 @@ function objects.tick(now)
         for netId, obj in pairs(netToObj) do
             if obj:isValid() then netObjs[tostring(netId)] = obj.recordId end
         end
-        mp.testSet('netObjects', json.encode(netObjs))
+        mp.set('netObjects', json.encode(netObjs))
         -- Display names of the net objects: a PLACEHOLDER stand-in still "exists", so the
         -- scenarios have to compare the resolved record, not the count (§M7 records).
         local netNames = {}
@@ -1043,12 +1043,12 @@ function objects.tick(now)
                 netNames[tostring(netId)] = worldmp.recordNameOf(obj.recordId) or ''
             end
         end
-        mp.testSet('netObjectNames', json.encode(netNames))
+        mp.set('netObjectNames', json.encode(netNames))
         local conts = {}
         for key, c in pairs(containerData) do
             conts[key] = c.items
         end
-        mp.testSet('containerItems', json.encode(conts))
+        mp.set('containerItems', json.encode(conts))
     end
 end
 

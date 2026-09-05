@@ -4,7 +4,7 @@
 //
 // WHY THIS EXISTS. "Player cannot attack — combat completely non-functional" was reported from a
 // live session while the entire combat suite was green. Both can be true: every combat scenario
-// drives `Module.__omwMPCmd='hitn:...'`, which posts the engine's `Hit` event DIRECTLY. A real
+// drives `window.omw.send('hitn:...')`, which posts the engine's `Hit` event DIRECTLY. A real
 // attack is a keypress to ready a weapon and a held mouse button to swing, and nothing in this
 // harness could produce either against the game canvas until now. A fault in the INPUT layer
 // rather than the combat layer would therefore leave every test passing and the game unplayable.
@@ -43,7 +43,7 @@ export default async function run(ctx) {
     return;
   }
   const c = await ctx.launchClient('hands', '', BOOT);
-  await c.waitFor("(window.__omwMP||{}).stance !== undefined", STEP_TIMEOUT,
+  await c.waitFor("window.omw.state.stance !== undefined", STEP_TIMEOUT,
     'the stance mirror to appear');
 
   // FOCUS THE GAME FIRST, the way a player does. A headless client has never clicked into the
@@ -118,8 +118,8 @@ export default async function run(ctx) {
   // that does nothing, and assert the UI mode is clear before drawing any conclusion.
   await c.key({ key: 'k', code: 'KeyK', keyCode: 75 });
   await ctx.sleep(1200);
-  const lastKey = await c.eval('(window.__omwMP||{}).lastKey');
-  const uiMode = await c.eval('(window.__omwMP||{}).uiMode');
+  const lastKey = await c.eval('window.omw.state.lastKey');
+  const uiMode = await c.eval('window.omw.state.uiMode');
   ctx.log(`engine onKeyPress saw: ${lastKey}; I.UI.getMode()=${uiMode}`);
 
   // DOES *ANY* BOUND ACTION WORK? Movement is bound too (A_MoveForward), so pressing W is the
@@ -127,7 +127,7 @@ export default async function run(ctx) {
   // not weapon-specific. Note the harness's own `walk:` command BYPASSES bindings
   // (I.Controls.overrideMovementControls), which is exactly why movement has always worked in
   // scenarios while a real keypress might not.
-  const posBefore = await c.eval('JSON.stringify((window.__omwMP||{}).pose || null)');
+  const posBefore = await c.eval('JSON.stringify(window.omw.state.pose || null)');
   await c.key({ key: 'w', code: 'KeyW', keyCode: 87 });
   await ctx.sleep(400);
   // Hold it rather than tap: one keydown/keyup pair may be too brief to move anything.
@@ -136,7 +136,7 @@ export default async function run(ctx) {
     await ctx.sleep(250);
   }
   await ctx.sleep(1200);
-  const posAfter = await c.eval('JSON.stringify((window.__omwMP||{}).pose || null)');
+  const posAfter = await c.eval('JSON.stringify(window.omw.state.pose || null)');
   ctx.log(`W (bound A_MoveForward): pose ${posBefore} -> ${posAfter}`);
 
   // PRINTABLE vs NON-PRINTABLE. keyboardmanager.cpp swallows a key before it reaches the
@@ -145,10 +145,10 @@ export default async function run(ctx) {
   // started it — every letter is consumed and no bound action fires, while raw key events still
   // reach scripts. Escape is NOT printable, so it is the discriminator: if a bound action works
   // on Escape but not on letters, that gate is the cause.
-  const modeBeforeEsc = await c.eval('(window.__omwMP||{}).uiMode');
+  const modeBeforeEsc = await c.eval('window.omw.state.uiMode');
   await c.key({ key: 'Escape', code: 'Escape', keyCode: 27, text: '' });
   await ctx.sleep(1500);
-  const modeAfterEsc = await c.eval('(window.__omwMP||{}).uiMode');
+  const modeAfterEsc = await c.eval('window.omw.state.uiMode');
   ctx.log(`Escape (non-printable): uiMode ${modeBeforeEsc} -> ${modeAfterEsc}`);
 
   // BASELINE: does a real key reach the ENGINE at all in this environment?
@@ -158,31 +158,31 @@ export default async function run(ctx) {
   // gives the baseline that s99-overlays would have given, without needing `content/`. Without
   // this the whole scenario is ambiguous: a stance that does not change proves nothing if no key
   // ever reaches the engine.
-  const socialBefore = await c.eval('(window.__omwMP||{}).openSocial');
+  const socialBefore = await c.eval('window.omw.state.openSocial');
   await c.key({ key: 'o', code: 'KeyO', keyCode: 79 });
   await ctx.sleep(2000);
-  const socialAfter = await c.eval('(window.__omwMP||{}).openSocial');
+  const socialAfter = await c.eval('window.omw.state.openSocial');
   const engineTakesKeys = socialAfter !== socialBefore;
   ctx.log(`engine input action A_Social: ${socialBefore} -> ${socialAfter} `
     + `(${engineTakesKeys ? 'KEYS REACH THE ENGINE' : 'no key reached the engine'})`);
 
   // NOTHING BELOW MEANS ANYTHING WITH A MENU OPEN. A GUI window swallows keys by design, so a
   // probe that runs with one up measures the menu, not the engine.
-  const modeNow = await c.eval('(window.__omwMP||{}).uiMode');
+  const modeNow = await c.eval('window.omw.state.uiMode');
   if (modeNow && modeNow !== 'none' && modeNow !== 'undefined') {
     await c.key({ key: 'Escape', code: 'Escape', keyCode: 27, text: '' });
     await ctx.sleep(1000);
   }
-  ctx.log(`UI mode before the weapon probe: ${await c.eval('(window.__omwMP||{}).uiMode')}`);
+  ctx.log(`UI mode before the weapon probe: ${await c.eval('window.omw.state.uiMode')}`);
 
-  const before = await c.eval('(window.__omwMP||{}).stance');
+  const before = await c.eval('window.omw.state.stance');
   ctx.log(`stance before any input: ${before}`);
 
   // READY A WEAPON with a real keypress. 'f' is the stock OpenMW binding for toggle-weapon.
   // A trusted CDP key event is identical to a physical one as far as the page is concerned.
   await c.key({ key: 'f', code: 'KeyF', keyCode: 70 });
   await ctx.sleep(2000);
-  let after = await c.eval('(window.__omwMP||{}).stance');
+  let after = await c.eval('window.omw.state.stance');
   // WHAT THIS PROVES, and what it does not.
   //
   // Bound actions DEMONSTRABLY work: W moved the player (pose changed above), 'j' opens the
@@ -219,11 +219,11 @@ export default async function run(ctx) {
   const jsErrors = c.jsErrors();
   assert.equal(jsErrors.length, 0,
     `a real mouse hold threw on the page: ${jsErrors.slice(0, 3).join(' | ')}`);
-  const stanceAfterSwing = await c.eval('(window.__omwMP||{}).stance');
+  const stanceAfterSwing = await c.eval('window.omw.state.stance');
   assert.ok(stanceAfterSwing, 'the client stopped reporting stance after a mouse hold');
   ctx.log(`ok: real keyboard and mouse input both reach the engine (stance ${stanceAfterSwing})`);
 
   // And the session survived it — a client that drops on input is its own bug.
-  assert.equal(await c.eval('(window.__omwMP||{}).state'), 'Joined',
+  assert.equal(await c.eval('window.omw.state.state'), 'Joined',
     'the client left the world during real input');
 }

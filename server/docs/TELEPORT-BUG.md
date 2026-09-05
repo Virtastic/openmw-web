@@ -20,7 +20,7 @@ before = (216831, 204909, 513)
 after  = (216831, 205429, 513)     <- 520 units, exactly the intended destination
 ```
 
-The test reads `window.__omwMP.pose`, which is a **2 Hz mirror** published by
+The test reads `window.omw.state.pose`, which is a **2 Hz mirror** published by
 `POSE_MIRROR_INTERVAL` in `scripts/mp/player.lua`. Sampling it instead of reading it once shows
 the move arriving and then holding:
 
@@ -63,11 +63,11 @@ teleport" to "why doesn't the test see it".
 ## If you are debugging this layer, five traps that cost real time
 
 - **`print()` from Lua is invisible.** The harness only dumps engine logs for some failure kinds;
-  an assertion failure shows none. Use `mp.testSet(key, value)` and read `window.__omwMP`.
-- **`mp.testSet` takes (string, string) only.** A number throws, and a throwing handler dies
+  an assertion failure shows none. Use `mp.set(key, value)` and read `window.omw.state`.
+- **`mp.set` takes (string, string) only.** A number throws, and a throwing handler dies
   silently part-way through.
 - **Never put a probe inside a `pcall` you also depend on.** An unguarded `player.position` threw
-  and killed the handler before `testSet('invitedTo')` — a 900s timeout. The guarded version then
+  and killed the handler before `set('invitedTo')` — a 900s timeout. The guarded version then
   swallowed its own error and made the handler look like it never ran.
 - **`openmw.data` must be redeployed for Lua changes.** Copying only `openmw.js`/`.wasm` leaves the
   old scripts baked in while everything looks updated. Verify with
@@ -96,11 +96,11 @@ link in that chain reads correct:
   - the mirror publishes every 0.5s from `objects.tick`, and the scenario waits 30s
 
 Reading has been exhausted; the next step is to instrument `MP_ContainerUpdate` (does it fire on
-A, and what key does it compute?) using `mp.testSet` — NOT `print`, for the reason above.
+A, and what key does it compute?) using `mp.set` — NOT `print`, for the reason above.
 
 ## The general lesson for this suite
 
-`__omwMP.pose` is a 2 Hz mirror, not live state. Any assertion about movement must poll it until
+`omw.state.pose` is a 2 Hz mirror, not live state. Any assertion about movement must poll it until
 the expected condition holds, with a generous timeout. A `sleep()` long enough on a developer GPU
 is not long enough under `angle-swiftshader` in a container, and the resulting failure is
 indistinguishable from a real product bug — which is how two working features got reported as

@@ -31,7 +31,7 @@ async function waitOwner(ctx, c, want) {
   const by = Date.now() + 300_000;
   let owner = 'none';
   while (Date.now() < by) {
-    owner = String(await c.eval('(window.__omwMP||{}).authorityHolder'));
+    owner = String(await c.eval('window.omw.state.authorityHolder'));
     if (want === 'some' ? (owner && owner !== 'none') : owner === want) return owner;
     await ctx.sleep(500);
   }
@@ -44,7 +44,7 @@ async function waitOwner(ctx, c, want) {
 async function puppetPosOf(ctx, a, bId, timeoutMs = 15_000) {
   const until = Date.now() + timeoutMs;
   for (;;) {
-    const m = JSON.parse(await a.eval('(window.__omwMP||{}).puppets||"{}"'));
+    const m = JSON.parse(await a.eval('window.omw.state.puppets||"{}"'));
     const p = m[String(bId)];
     if (p && typeof p.x === 'number') return { x: p.x, y: p.y };
     if (Date.now() > until) return null;
@@ -66,9 +66,9 @@ export default async function run(ctx) {
   ]);
   const owner1 = await waitOwner(ctx, a, 'some');
   assert.notEqual(owner1, 'none', 'the peer never took the cell');
-  await b.waitFor("Number((window.__omwMP||{}).playerId||0) > 0", STEP, 'walker knows its id');
-  const bId = Number(await b.eval('(window.__omwMP||{}).playerId'));
-  await a.waitFor(`Object.keys(JSON.parse((window.__omwMP||{}).puppets||"{}")).includes(String(${bId}))`,
+  await b.waitFor("Number(window.omw.state.playerId||0) > 0", STEP, 'walker knows its id');
+  const bId = Number(await b.eval('window.omw.state.playerId'));
+  await a.waitFor(`Object.keys(JSON.parse(window.omw.state.puppets||"{}")).includes(String(${bId}))`,
     STEP, 'watcher puppets the walker');
   ctx.log(`peer=${owner1} holds the cell; walker id=${bId}`);
 
@@ -79,7 +79,7 @@ export default async function run(ctx) {
   // the client cannot act on it yet, so the scenario would wait 30s for movement it had already
   // thrown away. Same fault that made s22 look like a broken movement path.
   await b.walk(0, 1, 2500);
-  await a.waitFor(`(function(){var m=JSON.parse((window.__omwMP||{}).puppets||"{}");var p=m[String(${bId})];`
+  await a.waitFor(`(function(){var m=JSON.parse(window.omw.state.puppets||"{}");var p=m[String(${bId})];`
     + `return !!p && Math.hypot(p.x-(${p0.x}),p.y-(${p0.y}))>40;})()`, STEP,
     'watcher sees the walker move with the peer UP');
   ctx.log('ok: movement visible with the peer up');
@@ -95,7 +95,7 @@ export default async function run(ctx) {
   // Degraded mode still moves the walker locally, so waiting on B's OWN pose proves the command
   // took before we start asking what A can see.
   await b.walk(0, 1, 3000);
-  await a.waitFor(`(function(){var m=JSON.parse((window.__omwMP||{}).puppets||"{}");var p=m[String(${bId})];`
+  await a.waitFor(`(function(){var m=JSON.parse(window.omw.state.puppets||"{}");var p=m[String(${bId})];`
     + `return !!p && Math.hypot(p.x-(${p0.x}),p.y-(${p0.y}))>40;})()`, STEP,
     'watcher sees the walker move with the peer DOWN (degraded mode must keep everyone moving)');
   ctx.log('ok: degraded mode -- movement still visible with no peer');
@@ -124,7 +124,7 @@ export default async function run(ctx) {
   // gates the client's own path while showing no movement. Solo that whole chain fits inside
   // 30s; under full-suite load it does not, and the scenario reported a freeze that had already
   // resolved by the time anyone looked.
-  await a.waitFor(`(function(){var m=JSON.parse((window.__omwMP||{}).puppets||"{}");var p=m[String(${bId})];`
+  await a.waitFor(`(function(){var m=JSON.parse(window.omw.state.puppets||"{}");var p=m[String(${bId})];`
     + `return !!p && Math.hypot(p.x-(${p0.x}),p.y-(${p0.y}))>40;})()`, 90_000,
     'watcher sees the walker move after the peer RETURNED (re-convergence, no freeze)');
   ctx.log('ok: re-converged after the peer returned');

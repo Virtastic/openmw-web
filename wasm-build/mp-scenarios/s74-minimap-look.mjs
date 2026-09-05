@@ -40,7 +40,7 @@ export default async function run(ctx) {
   // Two shots, deliberately: if the panel is identical before and after a walk, fog is not
   // lifting or the map is not drawing; if it changes, both are working and the reported bug is
   // something else or is gone.
-  await a.eval("Module.__omwMPCmd='walk:0,1,20000'");
+  await a.eval("window.omw.send('walk:0,1,20000')");
   await ctx.sleep(22000);
 
   const after = await a.screenshot(join(ROOT, 'minimap-after-walk.png'));
@@ -53,7 +53,7 @@ export default async function run(ctx) {
   //     exonerated.
   // The texture pointer is already proven identical at setup and at draw, so this is the next
   // link in the chain and the only one still unmeasured.
-  await a.eval("Module.__omwMPCmd='ui:Map'");
+  await a.eval("window.omw.send('ui:Map')");
   await ctx.sleep(3000);
   const win = await a.screenshot(join(ROOT, 'minimap-window.png'));
   ctx.log(`  map WINDOW: ${win}`);

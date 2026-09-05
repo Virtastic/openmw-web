@@ -16,7 +16,7 @@ import { adminRoutes as adminDashboardRoutes } from './net/admin/routes';
 import { exportDataDir, summariseMetrics } from './net/admin/ops';
 import { writeCaddyfile, launcherEnabled } from './net/admin/caddy-config';
 import { orderedContent } from './net/admin/api-mods';
-import { notifyEvent, type MailConfig } from './net/admin/notify';
+import { notifyFromLog, type MailConfig } from './net/admin/notify';
 import { SetupToken } from './net/admin/setup-token';
 import { passwordReset } from './net/admin/reset';
 import { deleteAccount } from './persist/erase';
@@ -34,13 +34,7 @@ import { SocialStore } from './core/socialstore';
 import { WorldM7 } from './core/m7';
 import { Roster, type Player } from './core/players';
 import { ContentGate, EngineGate } from './core/manifest';
-import {
-  CommandRegistry,
-  registerCoreCommands,
-  registerAdminCommands,
-  registerReportCommand,
-  type CommandContext,
-} from './core/commands';
+import type { ChatContext } from './core/chat';
 import { Moderation } from './core/moderation';
 import { Admin, ADMIN_COMMANDS } from './core/admin';
 import { ResumeStore } from './core/resume';
@@ -72,7 +66,7 @@ import { lockerRoutes } from './data/locker-routes';
 import { LockerSessionStore, AdminSessionStore } from './auth/identities';
 import { IpConnTracker, IpRateLimiter } from './net/ratelimit';
 import { disconnectMsg } from './proto/session';
-import { log, recentLogs, onLog } from './log';
+import { log, logHistory } from './log';
 import { startTestBots } from './dev/testbots';
 import { metrics } from './metrics';
 import { SimPeerSupervisor } from './core/simpeer';
@@ -135,10 +129,14 @@ export interface RunningServer {
   port: number;
   config: Config;
   // The same surface plugins get. Exposed so an embedder (and the test suite) can drive
-  // world actions and server-pushed GUI without loading a plugin.
+  // world actions without loading a plugin.
   api: PluginApi;
   /** Account store, so tests can seed players without going through the wire protocol. */
   accounts: AccountStore;
+  /** The operator command gate and the roster it acts on. The dashboard is the only door in
+   *  production; the test suite goes through the gate directly, as the dashboard does. */
+  admin: Admin;
+  roster: Roster;
   /** What the content scan decided at boot, including the operator's saved load order. */
   gameData: GameData;
   flush(): Promise<void>;
@@ -285,16 +283,11 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       config.server.motd = text; // plugins and Welcome read config.server.motd
     },
     allow: (actor, cmd) => hooks.adminCommand({ id: actor.id, name: actor.name, rank: actor.rank }, cmd),
-    // Closed over lazily, like `hooks` above: the command registry is built further down,
-    // and this is only ever called once a client is connected. Sharing it means the admin
-    // window's menu and the chat /help can never disagree about what a rank permits.
-    helpLines: (rank) => commands.helpLines(rank),
   });
   const m7 = new WorldM7({
     roster,
     cells: cellStore,
     records: recordStore,
-    guiTimeoutMs: Math.round(config.gui.timeoutSec * 1000),
     isMapShared: () => hooks.shareFamily('map'),
     // Owner-only time skip: the one surviving group rule. Your world, your clock — a guest
     // must not fast-forward the host's game. A standalone stack has no owner, so the owner
@@ -344,11 +337,6 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
         }
       }
     },
-    gui: {
-      messageBox: (playerId, text, buttons) => m7.gui.messageBox(playerId, text, buttons),
-      inputDialog: (playerId, label) => m7.gui.inputDialog(playerId, label),
-      listBox: (playerId, label, items) => m7.gui.listBox(playerId, label, items),
-    },
     world: {
       time: () => ({ ...cellStore.worldM7().time }),
       advanceTime: (hours) => m7.clock.advance(hours),
@@ -365,15 +353,10 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
         if (online) online.rank = 3;
         return true;
       },
-      pendingGuiCount: () => m7.gui.pendingCount(),
     },
   };
   hooks = new HookBus(config.plugins, api);
 
-  const commands = new CommandRegistry();
-  registerCoreCommands(commands);
-  registerReportCommand(commands, moderation);
-  registerAdminCommands(commands, admin);
   // How much scrollback a newcomer is handed. Enough to see what the room is talking about,
   // short enough that a join is not a wall of text.
   // Long enough to cover a host crash or page reload (engine boot is tens of seconds on a
@@ -384,7 +367,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   const MAX_WORLD_PLAYERS = 32;
   const CHAT_HISTORY_KEEP = 200;
   const CHAT_HISTORY_REPLAY = 60;
-  const commandCtx: CommandContext = {
+  const chatCtx: ChatContext = {
     roster,
     // Mutes are enforced at DELIVERY (chat.ts), not in the client: a mute a modified
     // client can ignore is not a mute.
@@ -409,7 +392,6 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
         acct: player.accountKey, name: player.name, text,
       }, CHAT_HISTORY_KEEP);
     },
-    onCommand: (player, name, args) => hooks.command({ id: player.id, name: player.name, rank: player.rank }, name, args),
   };
 
   // Conservation on drop: judge against what the character last declared it holds. Undefined
@@ -576,16 +558,12 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   if (!accounts.hasDashboardOwner()) setupToken.arm();
   // Operational alerts ride the log stream the server already writes, filtered by the
   // operator's [notifications].events list. Nothing is sent unless they configured it.
-  const unhookNotifier = onLog((entry) => {
-    const { ts, level, event, ...fields } = entry;
-    if (event.startsWith('notify.')) return; // never report on the reporter
-    notifyEvent({
-      ...mailCfg(),
-      to: config.notifications.to,
-      webhookUrl: config.notifications.webhookUrl,
-      events: config.notifications.events,
-    }, event, fields);
-  });
+  const unhookNotifier = notifyFromLog(() => ({
+    ...mailCfg(),
+    to: config.notifications.to,
+    webhookUrl: config.notifications.webhookUrl,
+    events: config.notifications.events,
+  }));
 
   // Logged AFTER the notifier is wired up, deliberately: a dashboard-written config that
   // failed to load means the settings an operator saved are silently not in effect, which
@@ -679,8 +657,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     content: contentGate,
     engine: new EngineGate(config.engine.enforce, config.engine.pin),
     loginLimiter: new IpRateLimiter(config.limits.loginPerMinPerIp),
-    commands,
-    commandCtx,
+    chatCtx,
     hooks,
     players: playerStore,
     stateCtx,
@@ -876,7 +853,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       ...(name === 'tp' || name === 'tpto' ? { inGameOnly: true } : {}),
     })),
 
-    recentLogs: (limit, filter) => recentLogs(limit, filter),
+    recentLogs: (limit, filter) => logHistory(limit, filter),
     metricsSnapshot: () => summariseMetrics(),
 
     // The game client bundle, when this deployment mounts it (docker-compose mounts
@@ -1632,6 +1609,8 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     config,
     api,
     accounts,
+    admin,
+    roster,
     gameData,
     flush: async () => {
       // Drain background writes first: they WRITE, so they must finish before the flush that

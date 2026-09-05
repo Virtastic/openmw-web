@@ -12,9 +12,8 @@ import type { AttioHook } from '../integrations/attio';
 import type { ContentGate, EngineGate } from '../core/manifest';
 import type { Player, Peer, Roster } from '../core/players';
 import { INPUT_DRIVING_MS, PEER_POSE_FRESH_MS } from '../core/players';
-import type { CommandRegistry, CommandContext } from '../core/commands';
 import type { HookBus } from '../plugins/loader';
-import { handleChatSend } from '../core/chat';
+import { handleChatSend, type ChatContext } from '../core/chat';
 import type { Social } from '../core/social';
 import type { Moderation } from '../core/moderation';
 import { TokenBucket, IpRateLimiter } from './ratelimit';
@@ -86,8 +85,7 @@ export interface ServerCtx {
   // pinned as the world's canonical content list.
   gameDataOk?: boolean;
   loginLimiter: IpRateLimiter;
-  commands: CommandRegistry;
-  commandCtx: CommandContext;
+  chatCtx: ChatContext;
   hooks: HookBus;
   players: PlayerStore;
   stateCtx: StateCtx;
@@ -635,26 +633,9 @@ export class Connection implements Peer {
       this.handleCellChange(value);
       return;
     }
-    if (name === 'AdminCommand') {
-      // M8: same gate as the slash path; the answer is always an AdminResult, including
-      // refusals, so a client never has to guess whether a command silently failed.
-      const body = value instanceof Map ? value : undefined;
-      const player = this.player;
-      // .catch IS LOAD-BEARING. admin.exec wraps command bodies, but ctx.allow and refusal()
-      // sit outside that try/catch — and an unhandled rejection here reaches main.ts's
-      // unhandledRejection handler, which exits the process and takes every player in this
-      // world with it. A failed admin command must cost the command, not the world.
-      void this.ctx.admin
-        .execEvent(player, body?.get('cmd'), body?.get('args'))
-        .then((text) => player.peer.sendEvent('AdminResult', { text }))
-        .catch((err: unknown) => {
-          log('warn', 'admin.command_failed', { player: player.name, error: String(err) });
-          try {
-            player.peer.sendEvent('AdminResult', { text: 'That command failed. Nothing was changed.' });
-          } catch { /* the socket went away mid-command; nothing to tell */ }
-        });
-      return;
-    }
+    // No AdminCommand event any more. Operator commands enter through ONE door, the
+    // dashboard's POST /admin/api/command (server.ts runCommand -> Admin.exec); a client
+    // cannot ask for them. The in-game admin window that sent this is gone with it.
     if (this.ctx.m7.handleEvent(this.player, name, value)) return; // M7 family
     if (this.ctx.social.handleEvent(this.player, name, value)) return; // Phase C family
     if (this.ctx.quests.handleEvent(this.player, name, value)) return; // M6 family
@@ -721,8 +702,7 @@ export class Connection implements Peer {
       return;
     }
     handleChatSend(
-      this.ctx.commandCtx,
-      this.ctx.commands,
+      this.ctx.chatCtx,
       { onChat: (p, t) => this.ctx.hooks.chat({ id: p.id, name: p.name, rank: p.rank }, t) },
       this.player,
       value,

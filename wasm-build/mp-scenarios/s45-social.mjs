@@ -16,7 +16,7 @@ const STEP = 20_000;
 // long enough that a scenario would sit waiting for an offline announcement.
 export const serverRules = '';
 
-const evalJson = async (c, expr, dflt = '[]') => JSON.parse(await c.eval(`(window.__omwMP||{}).${expr}||'${dflt}'`));
+const evalJson = async (c, expr, dflt = '[]') => JSON.parse(await c.eval(`window.omw.state.${expr}||'${dflt}'`));
 
 export default async function run(ctx) {
   const [a, b] = await Promise.all([
@@ -28,17 +28,17 @@ export default async function run(ctx) {
 
   // A friend list arrives at join even when empty — the client renders from it, so a
   // missing one means an empty window forever rather than a visible error.
-  await a.waitFor("(window.__omwMP||{}).friends !== undefined", STEP, 'A received an initial FriendList');
+  await a.waitFor("window.omw.state.friends !== undefined", STEP, 'A received an initial FriendList');
   assert.deepEqual(await evalJson(a, 'friends'), [], 'a fresh account starts with no friends');
 
   // 1. A requests B. The request must surface on B.
-  await a.eval(`Module.__omwMPCmd='social:FriendRequest:${nameB}'`);
+  await a.eval(`window.omw.send('social:FriendRequest:${nameB}')`);
   // The server replies to every social op, so a refusal is never silent. Surface it before
   // waiting on B: "B never saw the request" and "the server refused it" look identical from
   // a timeout, and they need different fixes.
   await ctx.sleep(2000);
-  ctx.log(`  A socialResult: ${await a.eval("(window.__omwMP||{}).socialResult||'none'")}`);
-  await b.waitFor(`JSON.parse((window.__omwMP||{}).friendRequests||'[]').length > 0`,
+  ctx.log(`  A socialResult: ${await a.eval("window.omw.state.socialResult||'none'")}`);
+  await b.waitFor(`JSON.parse(window.omw.state.friendRequests||'[]').length > 0`,
     STEP, `B received A's friend request`);
   const reqs = await evalJson(b, 'friendRequests');
   assert.equal(reqs[0].name, nameA, `request should name the sender, got ${JSON.stringify(reqs)}`);
@@ -46,9 +46,9 @@ export default async function run(ctx) {
 
   // 2. B accepts. BOTH sides must end up with a friend — a one-sided list is the classic
   //    failure of a two-row friendship model and would show up right here.
-  await b.eval(`Module.__omwMPCmd='social:FriendAccept:${reqs[0].acct}'`);
-  await a.waitFor(`JSON.parse((window.__omwMP||{}).friends||'[]').length === 1`, STEP, 'A sees the friendship');
-  await b.waitFor(`JSON.parse((window.__omwMP||{}).friends||'[]').length === 1`, STEP, 'B sees the friendship');
+  await b.eval(`window.omw.send('social:FriendAccept:${reqs[0].acct}')`);
+  await a.waitFor(`JSON.parse(window.omw.state.friends||'[]').length === 1`, STEP, 'A sees the friendship');
+  await b.waitFor(`JSON.parse(window.omw.state.friends||'[]').length === 1`, STEP, 'B sees the friendship');
   const friendOfA = (await evalJson(a, 'friends'))[0];
   assert.equal(friendOfA.name, nameB);
   assert.equal(friendOfA.online, true, 'a friend who is connected must read as online');
@@ -62,10 +62,10 @@ export default async function run(ctx) {
   // B walks away FIRST. Both clients spawn on the same point, so inviting from where they
   // already stand makes the teleport a no-op — the check would pass identically whether the
   // teleport worked or silently threw inside the global script's pcall.
-  await b.eval("Module.__omwMPCmd='walk:0,1,6000'");
+  await b.eval("window.omw.send('walk:0,1,6000')");
   await ctx.sleep(6500);
-  const posBefore = JSON.parse(await a.eval("(window.__omwMP||{}).pose||'null'"));
-  const hostPos = JSON.parse(await b.eval("(window.__omwMP||{}).pose||'null'"));
+  const posBefore = JSON.parse(await a.eval("window.omw.state.pose||'null'"));
+  const hostPos = JSON.parse(await b.eval("window.omw.state.pose||'null'"));
   const apart = Math.hypot(posBefore.x - hostPos.x, posBefore.y - hostPos.y, posBefore.z - hostPos.z);
   ctx.log(`B walked ${apart.toFixed(1)} units away before inviting`);
   assert.ok(apart > 200, `B must be somewhere else for the invite to prove anything (${apart.toFixed(1)} units)`);
@@ -73,10 +73,10 @@ export default async function run(ctx) {
   // Read the account key from B's own friend list so it comes from the server rather than
   // being guessed from the display name.
   const friendOfB = (await evalJson(b, 'friends'))[0];
-  await b.eval(`Module.__omwMPCmd='social:InviteSend:${friendOfB.acct}'`);
-  await a.waitFor(`JSON.parse((window.__omwMP||{}).invites||'[]').length > 0`, STEP, 'A received the invite');
-  await a.eval(`Module.__omwMPCmd='social:InviteAccept:${friendOfA.acct}'`);
-  await a.waitFor("(window.__omwMP||{}).invitedTo !== undefined", STEP, 'A acted on the invite');
+  await b.eval(`window.omw.send('social:InviteSend:${friendOfB.acct}')`);
+  await a.waitFor(`JSON.parse(window.omw.state.invites||'[]').length > 0`, STEP, 'A received the invite');
+  await a.eval(`window.omw.send('social:InviteAccept:${friendOfA.acct}')`);
+  await a.waitFor("window.omw.state.invitedTo !== undefined", STEP, 'A acted on the invite');
   // WAIT FOR THE TELEPORT, do not assume a duration. This was `sleep(1500)` and it made the
   // scenario fail on a build where the feature works: the engine applies the teleport (verified
   // by instrumenting LuaManager::applyDelayedActions -- before=(...,204909,...)
@@ -85,11 +85,11 @@ export default async function run(ctx) {
   // whole round trip runs well past 1500ms. Sampling the pose showed it flip to the new position
   // and stay there -- the move was real, the deadline was not.
   await a.waitFor(
-    `(() => { try { const p = JSON.parse((window.__omwMP||{}).pose);
+    `(() => { try { const p = JSON.parse(window.omw.state.pose);
        return Math.hypot(p.x-${posBefore.x}, p.y-${posBefore.y}, p.z-${posBefore.z}) > 100;
      } catch (e) { return false; } })()`,
     STEP, 'A travelled to the host after accepting');
-  const posAfter = JSON.parse(await a.eval("(window.__omwMP||{}).pose||'null'"));
+  const posAfter = JSON.parse(await a.eval("window.omw.state.pose||'null'"));
   const moved = Math.hypot(posAfter.x - posBefore.x, posAfter.y - posBefore.y, posAfter.z - posBefore.z);
   const gap = Math.hypot(posAfter.x - hostPos.x, posAfter.y - hostPos.y, posAfter.z - hostPos.z);
   ctx.log(`invite: A moved ${moved.toFixed(1)} units, now ${gap.toFixed(1)} from the host`);
@@ -100,8 +100,8 @@ export default async function run(ctx) {
 
   // 4. Unfriend clears BOTH sides. An unfriend that only updates the initiator leaves the
   //    other player believing they still have a friend they can no longer interact with.
-  await a.eval(`Module.__omwMPCmd='social:FriendRemove:${friendOfA.acct}'`);
-  await a.waitFor(`JSON.parse((window.__omwMP||{}).friends||'[]').length === 0`, STEP, 'A list cleared');
-  await b.waitFor(`JSON.parse((window.__omwMP||{}).friends||'[]').length === 0`, STEP, 'B list cleared too');
+  await a.eval(`window.omw.send('social:FriendRemove:${friendOfA.acct}')`);
+  await a.waitFor(`JSON.parse(window.omw.state.friends||'[]').length === 0`, STEP, 'A list cleared');
+  await b.waitFor(`JSON.parse(window.omw.state.friends||'[]').length === 0`, STEP, 'B list cleared too');
   ctx.log('ok: unfriend cleared both sides');
 }

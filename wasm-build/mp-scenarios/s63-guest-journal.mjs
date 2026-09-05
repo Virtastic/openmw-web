@@ -32,7 +32,7 @@ export const serverEnv = (runId) => ({
 });
 
 const stageOf = (q) =>
-  `(JSON.parse((window.__omwMP||{}).journal||"{}")[${JSON.stringify(q)}] || 0)`;
+  `(JSON.parse(window.omw.state.journal||"{}")[${JSON.stringify(q)}] || 0)`;
 
 export default async function run(ctx) {
   // ponytail: SKIPPED until rewritten on the friend path. This scenario admitted its guest
@@ -52,7 +52,7 @@ export default async function run(ctx) {
   }
   // The OWNER first: this world is their campaign.
   const owner = await ctx.launchClient('bot-owner', '', BOOT);
-  await owner.eval(`Module.__omwMPCmd='quest:${OWNER_QUEST}:${OWNER_STAGE}'`);
+  await owner.eval(`window.omw.send('quest:${OWNER_QUEST}:${OWNER_STAGE}')`);
   await owner.waitFor(`${stageOf(OWNER_QUEST)} === ${OWNER_STAGE}`, STEP,
     'the owner advanced their own campaign');
   ctx.log(`ok: owner at ${OWNER_QUEST}=${OWNER_STAGE}`);
@@ -64,14 +64,14 @@ export default async function run(ctx) {
   ctx.log('ok: guest sees the owner\'s quest state');
 
   // The guest's own journal must be SET ASIDE, and the owner's must not be.
-  await guest.waitFor(`(window.__omwMP||{}).journalStashed === "true"`, STEP,
+  await guest.waitFor(`window.omw.state.journalStashed === "true"`, STEP,
     'the guest stashed their own campaign for the visit');
-  assert.equal(await owner.eval(`(window.__omwMP||{}).journalStashed`), 'false',
+  assert.equal(await owner.eval(`window.omw.state.journalStashed`), 'false',
     'the owner must never stash — this is their own world');
   ctx.log('ok: guest stashed, owner did not');
 
   // A quest the guest advances here belongs to the OWNER's campaign, not theirs.
-  await guest.eval(`Module.__omwMPCmd='quest:${GUEST_QUEST}:${GUEST_STAGE}'`);
+  await guest.eval(`window.omw.send('quest:${GUEST_QUEST}:${GUEST_STAGE}')`);
   await owner.waitFor(`${stageOf(GUEST_QUEST)} === ${GUEST_STAGE}`, STEP,
     "the guest's deed advanced the owner's campaign");
   ctx.log('ok: guest deeds land in the owner\'s log');

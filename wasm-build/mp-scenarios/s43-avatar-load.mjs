@@ -77,13 +77,13 @@ export const serverRules =
   + `lodNearHz = 15\nlodMidHz = 15\nlodFarHz = 15\n`;
 
 async function cellKeyOf(c) {
-  const census = JSON.parse(await c.eval('(window.__omwMP||{}).actorCensus||"[]"'));
+  const census = JSON.parse(await c.eval('window.omw.state.actorCensus||"[]"'));
   const me = census.find((e) => e.startsWith('player@'));
   if (!me) throw new Error(`[${c.name}] actorCensus has no player entry`);
   return me.slice('player@'.length);
 }
 
-const puppetCount = async (c) => Object.keys(JSON.parse(await c.eval('(window.__omwMP||{}).puppets||"{}"'))).length;
+const puppetCount = async (c) => Object.keys(JSON.parse(await c.eval('window.omw.state.puppets||"{}"'))).length;
 
 // Median of repeated samples, not a mean: a single GC pause or compositor hitch skews a
 // mean badly at this sample count, and the question here is what a frame typically costs.
@@ -112,7 +112,7 @@ export default async function run(ctx) {
   }
 
   const c = await ctx.launchClient('lodmeter', '', BOOT);
-  await c.waitFor('Number((window.__omwMP||{}).actorCount||0) > 0', STEP_TIMEOUT, 'client sees cell actors');
+  await c.waitFor('Number(window.omw.state.actorCount||0) > 0', STEP_TIMEOUT, 'client sees cell actors');
   const cellKey = await cellKeyOf(c);
   ctx.log(`measuring in cell ${cellKey}; ramp ${STEPS.join(' -> ')} avatars; `
     + `renderLod=${RENDER_LOD} lodRadius=${LOD_RADIUS}`);
@@ -190,7 +190,7 @@ export default async function run(ctx) {
         let last = -1;
         while (Date.now() < deadline) {
           const n = Number(await c.eval(
-            "(function(){var m=window.__omwMP||{};var me=String(m.selfId||'');"
+            "(function(){var m=window.omw.state||{};var me=String(m.selfId||'');"
             + "var ps=JSON.parse(m.players||'[]');"
             + "return ps.filter(function(p){return String(p.id)!==me;}).length;})()"));
           if (n > best) {
@@ -238,12 +238,12 @@ export default async function run(ctx) {
       // Roster vs puppets separates "the client was never told" from "the client was told
       // and did not spawn" — two completely different bugs that look identical from the
       // puppet count alone.
-      ctx.log(`  roster=${await c.eval('(window.__omwMP||{}).players||"?"')} puppets=${pups}`);
+      ctx.log(`  roster=${await c.eval('window.omw.state.players||"?"')} puppets=${pups}`);
       // Prove the arm is actually the arm. "tiered" with radius 0 must put every avatar in
       // the far tier (key "2"); if the client silently kept them near, the frame numbers
       // below would be the control's numbers wearing the treatment's label — the single
       // easiest way to manufacture a fake performance win.
-      const tiers = JSON.parse(await c.eval('(window.__omwMP||{}).puppetTiers||"{}"'));
+      const tiers = JSON.parse(await c.eval('window.omw.state.puppetTiers||"{}"'));
       ctx.log(`  puppetTiers=${JSON.stringify(tiers)}`);
       // Both arms assert POSITIVELY that the expected tier is populated. An arm that only
       // checked "no unexpected tiers" passes against an empty mirror, which is exactly how
@@ -272,7 +272,7 @@ export default async function run(ctx) {
       assert.ok(pups >= target * 0.75,
         `client only spawned ${pups} puppets for ${target} remote players — it is not rendering the crowd, `
         + 'so the frame numbers above describe an empty scene');
-      assert.equal(await c.eval('(window.__omwMP||{}).state'), 'Joined',
+      assert.equal(await c.eval('window.omw.state.state'), 'Joined',
         `client fell out of Joined at ${target} avatars`);
     }
   } finally {

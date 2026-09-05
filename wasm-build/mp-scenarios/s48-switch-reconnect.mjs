@@ -154,10 +154,10 @@ export default async function run(ctx) {
     const acct = a.name.toLowerCase();
 
     // Create and enter a private session.
-    await a.eval("Module.__omwMPCmd='socialtab:worlds'");
-    await a.waitFor("(window.__omwMP||{}).worldCount !== undefined", STEP, 'world list arrives');
-    await a.eval("Module.__omwMPCmd='worldcreate:switchtest:private'");
-    await a.waitFor("Number((window.__omwMP||{}).worldCount||0) > 1", STEP, 'session created');
+    await a.eval("window.omw.send('socialtab:worlds')");
+    await a.waitFor("window.omw.state.worldCount !== undefined", STEP, 'world list arrives');
+    await a.eval("window.omw.send('worldcreate:switchtest:private')");
+    await a.waitFor("Number(window.omw.state.worldCount||0) > 1", STEP, 'session created');
 
     const listUrl = `http://127.0.0.1:${GW_PORT}/worlds?account=${encodeURIComponent(acct)}`;
     let sessionUp = false;
@@ -179,10 +179,10 @@ export default async function run(ctx) {
     assert.ok(sessionUp, `the session world must come up — ${lastSeen}`);
 
     // Refresh so the UI offers a join, then switch.
-    await a.eval("Module.__omwMPCmd='socialtab:players'");
-    await a.eval("Module.__omwMPCmd='socialtab:worlds'");
+    await a.eval("window.omw.send('socialtab:players')");
+    await a.eval("window.omw.send('socialtab:worlds')");
     await ctx.sleep(1500);
-    await a.eval("Module.__omwMPCmd='worldjoin:switchtest'");
+    await a.eval("window.omw.send('worldjoin:switchtest')");
 
     const joinBy = Date.now() + 60_000;
     let joined = false;
@@ -202,7 +202,7 @@ export default async function run(ctx) {
     // to leave, and useless as a drop simulation. Everything downstream of targetUrl()
     // (scheduleReconnect, the auth ladder, the backoff) is shared, already-covered code;
     // the only thing a world switch changes is this value.
-    const dial = String(await a.eval("(window.__omwMP||{}).dialTarget || ''"));
+    const dial = String(await a.eval("window.omw.state.dialTarget || ''"));
     ctx.log(`  dial target after switching: ${dial}`);
     // Identified by the world's PATH, not its port. The gateway hands clients `/w/<id>` on its
     // own origin precisely so a world's internal port is never published -- an address here was

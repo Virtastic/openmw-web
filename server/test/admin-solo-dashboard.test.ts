@@ -111,7 +111,7 @@ test('a game keeps its own dashboard, and the multiplayer server gets a third', 
 test('the sections a lone player cannot use are named', () => {
   // Each of these is read by the server's own world simulation, by a join handshake, or by
   // there being somebody else. None of the three happens in single player.
-  for (const s of ['rules', 'economy', 'time', 'gui', 'cellReset', 'sharing', 'moderation',
+  for (const s of ['rules', 'economy', 'time', 'cellReset', 'sharing', 'moderation',
     'authority', 'content', 'engine', 'simPeer', 'gateway', 'worlds']) {
     assert.ok(MULTIPLAYER_ONLY.includes(s), `${s} should be hidden in single player`);
   }

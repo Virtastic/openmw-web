@@ -84,8 +84,4 @@ export class HookBus {
   adminCommand(actor: PluginPlayer, cmd: string): boolean {
     return this.run('onAdminCommand', (p) => p.onAdminCommand?.(this.api, actor, cmd)) !== false;
   }
-  // true = handled by a plugin.
-  command(player: PluginPlayer, name: string, args: string): boolean {
-    return this.run('onCommand', (p) => p.onCommand?.(this.api, player, name, args)) === true;
-  }
 }

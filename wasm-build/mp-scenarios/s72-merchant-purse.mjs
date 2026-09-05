@@ -20,7 +20,7 @@ const BOOT = { retail: true, joinTimeoutMs: 420_000 };
 const STEP_TIMEOUT = 20_000;
 
 const goldOf = async (c) => {
-  const raw = await c.eval('(window.__omwMP||{}).barterGold||""');
+  const raw = await c.eval('window.omw.state.barterGold||""');
   return raw === '' || raw === 'no-npc' ? null : Number(raw);
 };
 
@@ -35,8 +35,8 @@ export default async function run(ctx) {
   ]);
 
   // A opens first: his reading becomes canonical for everyone.
-  await a.eval(`Module.__omwMPCmd='barter:open'`);
-  await a.waitFor('((window.__omwMP||{}).barterGold||"") !== ""', STEP_TIMEOUT,
+  await a.eval(`window.omw.send('barter:open')`);
+  await a.waitFor('(window.omw.state.barterGold||"") !== ""', STEP_TIMEOUT,
     'A opened a barter window on some merchant');
   const aGold = await goldOf(a);
   assert.notEqual(aGold, null,
@@ -44,8 +44,8 @@ export default async function run(ctx) {
   ctx.log(`A sees the merchant holding ${aGold}`);
 
   // B opens the same trader. Before the purse was shared his client kept its own full roll.
-  await b.eval(`Module.__omwMPCmd='barter:open'`);
-  await b.waitFor('((window.__omwMP||{}).barterGold||"") !== ""', STEP_TIMEOUT,
+  await b.eval(`window.omw.send('barter:open')`);
+  await b.waitFor('(window.omw.state.barterGold||"") !== ""', STEP_TIMEOUT,
     'B opened a barter window');
   const bGold = await goldOf(b);
   ctx.log(`B sees the merchant holding ${bGold}`);
@@ -57,7 +57,7 @@ export default async function run(ctx) {
   ctx.log('ok: one purse, shared — the trader is not two traders');
 
   await Promise.all([
-    a.eval(`Module.__omwMPCmd='barter:close'`),
-    b.eval(`Module.__omwMPCmd='barter:close'`),
+    a.eval(`window.omw.send('barter:close')`),
+    b.eval(`window.omw.send('barter:close')`),
   ]);
 }

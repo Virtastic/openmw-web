@@ -52,8 +52,13 @@ export interface AdminCtx {
   setMotd(text: string): void;
   // Plugin veto: false = this actor may not run this command (default allow).
   allow(actor: Player, cmd: string): boolean;
-  // Rank-filtered command list, shared with the chat /help so both paths agree.
-  helpLines(rank: number): string[];
+}
+
+/** The commands a rank may run, one line each. The dashboard's catalog is the same table. */
+export function adminHelpLines(rank: number): string[] {
+  return Object.entries(ADMIN_COMMANDS)
+    .filter(([, spec]) => rank >= spec.minRank)
+    .map(([, spec]) => `${spec.usage} — ${spec.help}`);
 }
 
 interface AdminCommandSpec {
@@ -75,16 +80,14 @@ function arg(args: string[], i: number): string | undefined {
 }
 
 export const ADMIN_COMMANDS: Record<string, AdminCommandSpec> = {
-  // E3: the capability query. The admin WINDOW builds its menu from this rather than
-  // hardcoding rows, so the menu is exactly what this actor's rank permits and cannot drift
-  // from the gate that enforces it. It is the same rank-filtered list the chat /help
-  // returns; a second, separately-maintained list would be a second place to be wrong.
+  // The capability query, rank-filtered from this same table so it cannot drift from the
+  // gate that enforces it.
   help: {
     minRank: 0,
     usage: '/help',
     help: 'list the commands your rank permits',
-    run(ctx, actor) {
-      return ctx.helpLines(actor.rank).join('\n');
+    run(_ctx, actor) {
+      return adminHelpLines(actor.rank).join('\n');
     },
   },
   list: {
@@ -376,13 +379,12 @@ export class Admin {
   }
 
   helpLines(rank: number): string[] {
-    return Object.entries(ADMIN_COMMANDS)
-      .filter(([, spec]) => rank >= spec.minRank)
-      .map(([, spec]) => `${spec.usage} — ${spec.help}`);
+    return adminHelpLines(rank);
   }
 
-  // Single gate for both the chat and the event path. Never throws: a failure comes back
-  // as text the caller shows the actor.
+  // THE ONE GATE. Operator commands enter only through the dashboard (server.ts runCommand,
+  // behind POST /admin/api/command); there is no typed or in-game route. Never throws: a
+  // failure comes back as text the caller shows the actor.
   async exec(actor: Player, cmd: string, args: string[]): Promise<string> {
     const spec = ADMIN_COMMANDS[cmd];
     if (!spec) return `Unknown command /${cmd}.`;
@@ -402,21 +404,4 @@ export class Admin {
     }
   }
 
-  // AdminCommand {cmd, args} event body -> AdminResult {text}. Validated here because the
-  // event tier is attacker-controlled: bad shapes are answered, never thrown.
-  async execEvent(actor: Player, cmd: unknown, rawArgs: unknown): Promise<string> {
-    if (typeof cmd !== 'string' || cmd.length === 0 || cmd.length > 32) return 'Malformed AdminCommand.';
-    const args: string[] = [];
-    if (rawArgs instanceof Map) {
-      if (rawArgs.size > 32) return 'Too many arguments.';
-      for (const [, v] of rawArgs) {
-        if (typeof v === 'string') args.push(v.slice(0, MAX_SCRIPT));
-        else if (typeof v === 'number' && Number.isFinite(v)) args.push(String(v));
-        else return 'Arguments must be strings or numbers.';
-      }
-    } else if (rawArgs !== undefined) {
-      return 'Malformed AdminCommand.';
-    }
-    return this.exec(actor, cmd.toLowerCase(), args);
-  }
 }

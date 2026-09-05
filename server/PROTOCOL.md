@@ -514,23 +514,23 @@ persist nothing for the peer, as they did for guests — live relay still happen
 | `RecordsSync` | S→C at join, and to peers on every `RecordCreate` | `{records={{recordNetId, kind, data}, …}}` — replay all custom records so cross-client ids resolve (fixes the M3 dynamic-record placeholder problem for player-made items). At join it is the COMPLETE set; after a creation it carries just the one new record, so peers can resolve the id before the item is used, not only at their next join |
 | `WorldCellReset` | S→C (all players) | `{cellKey=string}` — cell doc wiped on the operator's schedule (`[cellReset]`, persisted across restarts); clients drop local deltas and reload |
 | `WorldMapExplored` | C→S; relayed when `[sharing] map` | `{cellKeys={string,…}}` — relayed as `{cellKeys, byId}`, sender excluded |
-| `GuiMessageBox` / `GuiInputDialog` / `GuiListBox` | S→C | `{guiId=number, text=string, buttons={…}\|label=string\|items={…}}` → `GuiReply {guiId, data}` (C→S) — server-pushed UI for plugins. `guiId` is server-issued and monotonic; a reply for another player's `guiId` is dropped. A dialog is settled by the reply, by `[gui] timeoutSec`, or by the player disconnecting — never left pending |
 
 ## Ops (M8)
 
 **Ranks** live on the account (`accounts/<name>.json`, seeded from `[admin] owners`):
 `0` player, `1` moderator, `2` admin, `3` owner.
 
-Moderation (A4) rides the same two entry points and the same single `Admin.exec` gate:
-`/report <player> <reason>` is rank 0 (it writes `reports/<ts>-<reporter>.json` with the
-target's current cell and the last `[moderation] contextLines` chat lines), while
-`/reports [n]` and `/chatlog <player> [minutes]` are rank 1. Chat is persisted to
-`logs/chat-YYYY-MM-DD.jsonl` — see PRIVACY.md.
+**Operator commands have ONE entry point: the admin dashboard** (`POST /admin/api/command`,
+server.ts `runCommand` → `Admin.exec`). There is no typed `/slash` path and no
+`AdminCommand` event: a chat line beginning with `/` is chat like any other, and a client
+has no way to ask the server for an operator command. Players **report** from the social
+panel (`ReportPlayer`, Phase C below), which writes `reports/<ts>-<reporter>.json` with the
+target's current cell and the last `[moderation] contextLines` chat lines; `reports` and
+`chatlog` are rank-1 dashboard commands. Chat is persisted to `logs/chat-YYYY-MM-DD.jsonl`
+— see PRIVACY.md.
 
 | name | dir | body |
 |---|---|---|
-| `AdminCommand` | C→S, rank-gated | `{cmd=string, args={string\|number,…}}` — same commands as the chat slash path, same gate |
-| `AdminResult` | S→C | `{text=string}` — ALWAYS answered, refusals included (`"/ban requires rank 2 …"`), may be multi-line |
 | `ConsoleCommand` | S→C, owner-gated | `{script=string}` executed client-side. Remote code execution on the player's own machine: rank 3 only, removable with `[admin] allowConsole=false`, and every use is logged with actor, target and full payload |
 | `AdminTeleport` | S→C | `{cellKey=string, x=, y=, z=}` — the `/tp` and `/tpto` effect; the client moves the player and then reports the move normally (`PlayerCellChange`) |
 | `AdminGive` | S→C | `{recordId=string, count=number}` — the `/give` effect; the client adds the item and reports inventory as usual |
@@ -613,12 +613,18 @@ returned by a previous `FriendList`:
 - `BlockAdd{name}` · `BlockRemove{acct}`
 - `InviteSend{acct}` · `InviteAccept{acct}` — travel-to invite
 - `PresenceMode{mode}` — one of `public` `friends` `private`
+- `MuteAdd{name}` · `MuteRemove{acct}`
+- `ReportPlayer{name, reason, voice?}` — files a moderation report with the target's current
+  cell and the last `[moderation] contextLines` chat lines. An OFFLINE name is accepted and
+  recorded as typed (the griefer who logs off the moment they are done is the ordinary case).
+  This is the only way to report; there is no typed command.
 
 Server → client:
 
-- `FriendList{friends:[{acct, name, online, playerId?, cellKey?}]}` — full snapshot, sent on
-  join and after any mutation (the client rebuilds its window from it; there is no
-  incremental form)
+- `FriendList{friends:[{acct, name, online, playerId?, cellKey?}], blocked:[{acct, name}],
+  muted:[{acct, name}]}` — full snapshot, sent on join and after any mutation (the client
+  rebuilds its panel from it; there is no incremental form). `blocked` and `muted` are the
+  player's own lists, so the panel can offer the way back
 - `PresenceUpdate{acct, online, playerId?}`
 - `FriendRequestReceived{fromAcct, fromName}` · `InviteReceived{fromAcct, fromName}`
 - `InviteAccepted{cellKey, x, y, z}` — the host's live position, resolved server-side.
@@ -656,6 +662,10 @@ to move out to a shared service first.
 
 - Join URL: `index.html?...&mp=<ws(s)-url>&name=<display-name>`; boot JS sets
   `ENV.OPENMW_MP_URL` / `OPENMW_MP_NAME` and appends `content=mp.omwscripts`.
-- Test/automation surface (for `wasm-build/mp-harness.mjs`): `window.__omwMP` mirrors
-  `{state, playerId, lastChat, players}` and accepts `window.__omwMP.sendChat(text)`;
+- The page bridge (the HTML overlays and `wasm-build/mp-harness.mjs` both use it):
+  `window.omw.state` is what Lua mirrors with `mp.set(key, value)` (`state`, `playerId`,
+  `players`, `chatLog`, `friends`, …); `window.omw.send(text)` queues a command string
+  for Lua, which drains the whole queue each frame (`mp.pollCommands`) and acks each entry
+  (`mp.emit('ack', {id, ok, detail})`), so the returned promise resolves once the command
+  has actually run; `window.omw.on(name, fn)` hears any event Lua emits;
   `&mpauto=1&mpuser=<account>` auto-registers/logs in with a fixed harness password.

@@ -24,7 +24,7 @@ const GLOBAL_VALUE = 7;
 const FACTION = 'fighters guild';
 const BOUNTY = 250;
 
-const jsonOf = async (c, key) => JSON.parse(await c.eval(`(window.__omwMP||{}).${key}||"{}"`));
+const jsonOf = async (c, key) => JSON.parse(await c.eval(`window.omw.state.${key}||"{}"`));
 const globalKey = (obj, name) =>
   Object.keys(obj).find((k) => k.toLowerCase() === name.toLowerCase());
 
@@ -37,8 +37,8 @@ export default async function run(ctx) {
     ctx.launchClient('bot-a', '', BOOT),
     ctx.launchClient('bot-b', '', BOOT),
   ]);
-  await a.waitFor('((window.__omwMP||{}).globalVars||"") !== ""', STEP_TIMEOUT, 'A globals mirror live');
-  await b.waitFor('((window.__omwMP||{}).globalVars||"") !== ""', STEP_TIMEOUT, 'B globals mirror live');
+  await a.waitFor('(window.omw.state.globalVars||"") !== ""', STEP_TIMEOUT, 'A globals mirror live');
+  await b.waitFor('(window.omw.state.globalVars||"") !== ""', STEP_TIMEOUT, 'B globals mirror live');
 
   // --- MWScript globals ---------------------------------------------------------------
   // The time globals are M7's; they must never appear in the M6 diff set.
@@ -53,9 +53,9 @@ export default async function run(ctx) {
   // reason is in quests.ts: relaying progress globals makes two party members at different
   // stages overwrite each other through the 1s diff sync, forever — and can skip a quest.
   // So the contract this pins is the OPPOSITE of "B receives it".
-  await a.eval(`Module.__omwMPCmd='gvar:${GLOBAL}:${GLOBAL_VALUE}'`);
+  await a.eval(`window.omw.send('gvar:${GLOBAL}:${GLOBAL_VALUE}')`);
   const seesGlobal = (c) =>
-    `Object.entries(JSON.parse((window.__omwMP||{}).globalVars||"{}")).some(([k,v])=>k.toLowerCase()===${JSON.stringify(GLOBAL.toLowerCase())}&&v===${GLOBAL_VALUE})`;
+    `Object.entries(JSON.parse(window.omw.state.globalVars||"{}")).some(([k,v])=>k.toLowerCase()===${JSON.stringify(GLOBAL.toLowerCase())}&&v===${GLOBAL_VALUE})`;
   await a.waitFor(seesGlobal(a), STEP_TIMEOUT, `A wrote ${GLOBAL}=${GLOBAL_VALUE}`);
   // Give the diff sync several rounds to (wrongly) deliver it before declaring it contained.
   await ctx.sleep(6000);
@@ -64,15 +64,15 @@ export default async function run(ctx) {
   ctx.log(`ok: ${GLOBAL}=${GLOBAL_VALUE} shadowed to A's character, not relayed`);
 
   // --- crime -------------------------------------------------------------------------
-  await a.eval(`Module.__omwMPCmd='bounty:${BOUNTY}'`);
-  await a.waitFor(`(window.__omwMP||{}).bounty === "${BOUNTY}"`, STEP_TIMEOUT, 'A bounty set');
-  await b.waitFor(`(window.__omwMP||{}).bounty === "${BOUNTY}"`, STEP_TIMEOUT,
+  await a.eval(`window.omw.send('bounty:${BOUNTY}')`);
+  await a.waitFor(`window.omw.state.bounty === "${BOUNTY}"`, STEP_TIMEOUT, 'A bounty set');
+  await b.waitFor(`window.omw.state.bounty === "${BOUNTY}"`, STEP_TIMEOUT,
     'B bounty matches (CrimeUpdate + setCrimeLevel)');
   ctx.log(`ok: CrimeUpdate bounty=${BOUNTY} applied on B via the global-only setCrimeLevel`);
 
   // --- factions ----------------------------------------------------------------------
-  await a.eval(`Module.__omwMPCmd='faction:${FACTION}:1'`);
-  const inFaction = `Object.keys(JSON.parse((window.__omwMP||{}).factions||"{}")).some((k)=>k.toLowerCase()===${JSON.stringify(FACTION)})`;
+  await a.eval(`window.omw.send('faction:${FACTION}:1')`);
+  const inFaction = `Object.keys(JSON.parse(window.omw.state.factions||"{}")).some((k)=>k.toLowerCase()===${JSON.stringify(FACTION)})`;
   await a.waitFor(inFaction, STEP_TIMEOUT, 'A joined the faction');
   await b.waitFor(inFaction, STEP_TIMEOUT, 'B received FactionUpdate and applied it');
   const fb = await jsonOf(b, 'factions');
@@ -80,9 +80,9 @@ export default async function run(ctx) {
 
   // --- per-object MWScript locals ------------------------------------------------------
   // Pick a scripted content object both clients have in their own cell.
-  await a.waitFor('Object.keys(JSON.parse((window.__omwMP||{}).cellScripted||"{}")).length > 0',
+  await a.waitFor('Object.keys(JSON.parse(window.omw.state.cellScripted||"{}")).length > 0',
     STEP_TIMEOUT, 'A found scripted cell objects');
-  await b.waitFor('Object.keys(JSON.parse((window.__omwMP||{}).cellScripted||"{}")).length > 0',
+  await b.waitFor('Object.keys(JSON.parse(window.omw.state.cellScripted||"{}")).length > 0',
     STEP_TIMEOUT, 'B found scripted cell objects');
   const [sa, sb] = await Promise.all([jsonOf(a, 'cellScripted'), jsonOf(b, 'cellScripted')]);
   const rec = Object.keys(sa).sort().find((r) => sb[r] && sb[r] === sa[r]);
@@ -91,10 +91,10 @@ export default async function run(ctx) {
   } else {
     const varName = sa[rec];
     ctx.log(`member var: "${rec}".${varName}`);
-    await a.eval(`Module.__omwMPCmd='mvar:${rec}:${varName}:3'`);
+    await a.eval(`window.omw.send('mvar:${rec}:${varName}:3')`);
     const key = `${rec}.${varName}`;
     await b.waitFor(
-      `JSON.parse((window.__omwMP||{}).memberVars||"{}")[${JSON.stringify(key)}] === 3`,
+      `JSON.parse(window.omw.state.memberVars||"{}")[${JSON.stringify(key)}] === 3`,
       STEP_TIMEOUT, `B applied MemberVarUpdate ${key}=3`);
     ctx.log(`ok: MemberVarUpdate ${key}=3 relayed cell-scoped and applied`);
   }
@@ -114,6 +114,6 @@ export default async function run(ctx) {
   // one that leaks immediately, just harder to see.
   assert.notEqual(gb2[kb], GLOBAL_VALUE,
     `B took A's ${GLOBAL}=${GLOBAL_VALUE} — a character-shadowed global escaped to another player`);
-  assert.equal(await a.eval('(window.__omwMP||{}).bounty'), String(BOUNTY), 'A bounty drifted');
+  assert.equal(await a.eval('window.omw.state.bounty'), String(BOUNTY), 'A bounty drifted');
   ctx.log('ok: echo guards held across globals/crime/factions');
 }

@@ -13,8 +13,8 @@ export default async function run(ctx) {
     ctx.launchClient('bot-a'),
     ctx.launchClient('bot-b'),
   ]);
-  const idA = await a.eval('(window.__omwMP||{}).playerId');
-  const puppetOnB = `JSON.parse((window.__omwMP||{}).puppets||"{}")[${JSON.stringify(idA)}]`;
+  const idA = await a.eval('window.omw.state.playerId');
+  const puppetOnB = `JSON.parse(window.omw.state.puppets||"{}")[${JSON.stringify(idA)}]`;
   await b.waitFor(`!!${puppetOnB}`, SPAWN_TIMEOUT, 'puppet of A on B');
 
   // Appearance: the puppet's rebuilt record must be NAMED after A (PlayerAppearance relay).
@@ -25,8 +25,8 @@ export default async function run(ctx) {
   // Equipment: A equips a helmet (the demo ships no item records, so 'equiptest' creates a
   // dynamic one — B therefore equips its local placeholder in the same SLOT, which is the
   // sync being asserted; with shared retail content the exact record id carries over).
-  await a.eval(`Module.__omwMPCmd='equiptest'`);
-  await a.waitFor('((window.__omwMP||{}).equippedIds||"") !== ""',
+  await a.eval(`window.omw.send('equiptest')`);
+  await a.waitFor('(window.omw.state.equippedIds||"") !== ""',
     EQUIP_TIMEOUT, 'A equips the test helmet');
   const t0 = Date.now();
   await b.waitFor(`((${puppetOnB}||{}).eq||[]).length > 0`,
@@ -35,7 +35,7 @@ export default async function run(ctx) {
 
   // Dynamic stats: A drops to 40 hp; nothing to read back on B beyond no-crash (stats land
   // on the puppet's health bar), but A's own mirror must reflect it (0.25s diff).
-  await a.eval(`Module.__omwMPCmd='sethp:40'`);
-  await a.waitFor('(window.__omwMP||{}).hp === "40"', 5000, 'A hp mirror = 40');
+  await a.eval(`window.omw.send('sethp:40')`);
+  await a.waitFor('window.omw.state.hp === "40"', 5000, 'A hp mirror = 40');
   ctx.log('ok: dynamic stats mirror updates');
 }

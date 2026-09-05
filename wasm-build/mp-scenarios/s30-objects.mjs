@@ -10,25 +10,25 @@ import assert from 'node:assert/strict';
 
 const STEP_TIMEOUT = 15_000;
 
-const netCount = '(Object.keys(JSON.parse((window.__omwMP||{}).netObjects||"{}")).length)';
+const netCount = '(Object.keys(JSON.parse(window.omw.state.netObjects||"{}")).length)';
 
 export default async function run(ctx) {
   let a = await ctx.launchClient('bot-a');
   const b = await ctx.launchClient('bot-b');
 
   // A: materialize an item and drop it via the native inventory->world path.
-  await a.eval(`Module.__omwMPCmd='equiptest'`);
-  await a.waitFor('((window.__omwMP||{}).equippedIds||"") !== ""', 12_000, 'A holds the test item');
+  await a.eval(`window.omw.send('equiptest')`);
+  await a.waitFor('(window.omw.state.equippedIds||"") !== ""', 12_000, 'A holds the test item');
   // Unequip is not needed: drop moves it out of the inventory regardless.
   const dropId = '$'; // dynamic ids start with $ — read the exact id from A's mirror
-  const equipped = await a.eval('(window.__omwMP||{}).equippedIds');
+  const equipped = await a.eval('window.omw.state.equippedIds');
   const itemId = equipped.split(',')[0];
   assert.ok(itemId, 'test item id');
-  await a.eval(`Module.__omwMPCmd='drop:${itemId}'`);
+  await a.eval(`window.omw.send('drop:${itemId}')`);
 
   await a.waitFor(`${netCount} === 1`, STEP_TIMEOUT, 'A tracks its own drop as net object');
   await b.waitFor(`${netCount} === 1`, STEP_TIMEOUT, 'B sees the placed object');
-  const netIdB = await b.eval('Object.keys(JSON.parse(window.__omwMP.netObjects))[0]');
+  const netIdB = await b.eval('Object.keys(JSON.parse(window.omw.state.netObjects))[0]');
   ctx.log(`ok: drop shared (netId ${netIdB})`);
 
   // A rejoins: cell replay must resurrect the drop on A.
@@ -39,7 +39,7 @@ export default async function run(ctx) {
   ctx.log('ok: drop survives observer rejoin');
 
   // B picks it up through the real activation pipeline.
-  await b.eval(`Module.__omwMPCmd='takenet:${netIdB}'`);
+  await b.eval(`window.omw.send('takenet:${netIdB}')`);
   await b.waitFor(`${netCount} === 0`, STEP_TIMEOUT, 'B\'s pickup clears its net map');
   await a.waitFor(`${netCount} === 0`, STEP_TIMEOUT, 'pickup relayed: gone for A');
   ctx.log('ok: pickup shared');

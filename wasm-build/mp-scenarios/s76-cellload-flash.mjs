@@ -31,7 +31,7 @@ export default async function run(ctx) {
   }
   const c = await ctx.launchClient('cellload', '', BOOT);
 
-  const seq = async () => Number(await c.eval("Number((window.__omwMP||{}).cellLoad||0)"));
+  const seq = async () => Number(await c.eval("Number(window.omw.state.cellLoad||0)"));
 
   const before = await seq();
   ctx.log(`  cellLoad starts at ${before}`);
@@ -43,7 +43,7 @@ export default async function run(ctx) {
   // it broke the eval outright ("Unexpected identifier 's'"). Morrowind cell and record ids
   // are full of apostrophes, so build the string rather than quoting by eye.
   const DOOR = "seyda neen, arrille's tradehouse";
-  await c.eval("Module.__omwMPCmd=" + JSON.stringify("dlg:" + DOOR));
+  await c.eval("window.omw.send(" + JSON.stringify("dlg:" + DOOR) + ")");
   await ctx.sleep(1500);
 
   // Watch across the WHOLE load and well past it. The echo arrives after arrival, which is

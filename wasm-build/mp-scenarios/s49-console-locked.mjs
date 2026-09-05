@@ -21,15 +21,15 @@ const STEP = 30_000;
 export default async function run(ctx) {
   const SHOTS = mkdtempSync(join(tmpdir(), 'omw-s49-'));
   const a = await ctx.launchClient('bot-a', '');
-  await a.waitFor("(window.__omwMP||{}).state === 'Joined'", STEP, 'client joins');
+  await a.waitFor("window.omw.state.state === 'Joined'", STEP, 'client joins');
 
   // Channel probe first: 'count:' writes its own mirror, so a dead command poll and a
   // broken console handler stop looking identical (both used to read as undefined).
-  await a.eval("Module.__omwMPCmd='count:gold_001'");
+  await a.eval("window.omw.send('count:gold_001')");
   await ctx.sleep(1000);
-  ctx.log('  cmd-channel probe (count mirror): ' + String(await a.eval("(window.__omwMP||{}).count")));
+  ctx.log('  cmd-channel probe (count mirror): ' + String(await a.eval("window.omw.state.count")));
 
-  await a.eval("Module.__omwMPCmd='console:request'");
+  await a.eval("window.omw.send('console:request')");
   // WAIT FOR THE GATE TO REPORT, do not sleep a guess. The handler always writes this mirror
   // (both halves are pcall'd), so `undefined` means it has not run YET -- and a fixed 1500 ms
   // lands right on the boundary of when it does on a slow box. That produced a FAILING SECURITY
@@ -37,10 +37,10 @@ export default async function run(ctx) {
   // shut: measured directly, the mirror says false, it just says it a moment later than the
   // sleep allowed. A security test that cries wolf on a slow machine gets muted, so this waits
   // for an actual answer and then judges it.
-  await a.waitFor('(window.__omwMP||{}).consoleOpen !== undefined', STEP,
+  await a.waitFor('window.omw.state.consoleOpen !== undefined', STEP,
     'the console gate to report its state (mirror still unwritten)');
 
-  const open = String(await a.eval("(window.__omwMP||{}).consoleOpen"));
+  const open = String(await a.eval("window.omw.state.consoleOpen"));
   ctx.log(`  console open after request (MP enabled): ${open}`);
   assert.equal(open, 'false',
     'the console must NOT open in multiplayer — it is a complete cheat suite '

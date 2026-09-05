@@ -601,27 +601,7 @@ handlers.MP_WorldMapExplored = function(data)
             end
         end
     end
-    mp.testSet('mapExploredIn', string.format('%.0f', applied))
-end
-
-handlers.MP_GuiMessageBox = function(data)
-    deps.toPlayerFn('MP_Gui', { kind = 'messagebox', guiId = data.guiId,
-        text = data.text, buttons = data.buttons })
-end
-
-handlers.MP_GuiInputDialog = function(data)
-    deps.toPlayerFn('MP_Gui', { kind = 'input', guiId = data.guiId, label = data.label })
-end
-
-handlers.MP_GuiListBox = function(data)
-    deps.toPlayerFn('MP_Gui', { kind = 'list', guiId = data.guiId,
-        label = data.label, items = data.items })
-end
-
--- player.lua answered a dialog (mpGuiReply -> here -> the server).
-function worldmp.sendGuiReply(guiId, replyData)
-    if type(guiId) ~= 'number' then return end
-    mp.sendEvent('GuiReply', { guiId = guiId, data = replyData or {} })
+    mp.set('mapExploredIn', string.format('%.0f', applied))
 end
 
 worldmp.handlers = handlers
@@ -665,21 +645,21 @@ end
 local function mirror()
     local localT = readLocalTime()
     if localT then
-        mp.testSet('gameTime', json.encode({
+        mp.set('gameTime', json.encode({
             gameHour = math.floor((localT.gameHour or 0) * 100 + 0.5) / 100,
             day = localT.day, month = localT.month, year = localT.year,
             abs = math.floor(absHours(localT) * 100 + 0.5) / 100,
         }))
     end
-    mp.testSet('timeScale', timeScale and string.format('%.2f', timeScale) or '')
-    mp.testSet('clockWritable', clockWritable == nil and '' or tostring(clockWritable))
-    mp.testSet('timeApplied', string.format('%.0f', timeApplied))
-    mp.testSet('timeRequests', string.format('%.0f', timeRequests))
-    mp.testSet('region', ownRegion or '')
+    mp.set('timeScale', timeScale and string.format('%.2f', timeScale) or '')
+    mp.set('clockWritable', clockWritable == nil and '' or tostring(clockWritable))
+    mp.set('timeApplied', string.format('%.0f', timeApplied))
+    mp.set('timeRequests', string.format('%.0f', timeRequests))
+    mp.set('region', ownRegion or '')
     local holder = ownRegion and regionHolder[ownRegion] or nil
-    mp.testSet('weatherHolder', holder and string.format('%.0f', holder) or 'none')
-    mp.testSet('isWeatherHolder', tostring(isHolderOf(ownRegion)))
-    mp.testSet('weatherApplied', weatherApplied and json.encode(weatherApplied) or '')
+    mp.set('weatherHolder', holder and string.format('%.0f', holder) or 'none')
+    mp.set('isWeatherHolder', tostring(isHolderOf(ownRegion)))
+    mp.set('weatherApplied', weatherApplied and json.encode(weatherApplied) or '')
     local recs = {}
     local described = {}
     for netId, localId in pairs(netToLocal) do
@@ -687,11 +667,11 @@ local function mirror()
         local info = worldmp.describeRecord(localId)
         if info then described[netId] = info end
     end
-    mp.testSet('netRecords', json.encode(recs))
+    mp.set('netRecords', json.encode(recs))
     -- What each shared record actually IS on this client (name/effect/enchantment), so a
     -- scenario can prove the REAL record resolved rather than a same-shaped placeholder.
-    mp.testSet('netRecordInfo', json.encode(described))
-    mp.testSet('recordsSynced', string.format('%.0f', recordsSynced))
+    mp.set('netRecordInfo', json.encode(described))
+    mp.set('recordsSynced', string.format('%.0f', recordsSynced))
 end
 
 local function tickRecordDeps(now)
@@ -786,7 +766,7 @@ function worldmp.testCreateRecord(name, noRegister)
             world.createObject(rec.id):moveInto(types.Actor.inventory(player))
         end
     end
-    mp.testSet('lastRecordLocalId', rec.id)
+    mp.set('lastRecordLocalId', rec.id)
     return rec.id
 end
 
@@ -816,7 +796,7 @@ function worldmp.testCreateSpell(name)
         return nil
     end
     worldmp.registerRecord(rec.id)
-    mp.testSet('lastSpellLocalId', rec.id)
+    mp.set('lastSpellLocalId', rec.id)
     return rec.id
 end
 
@@ -870,7 +850,7 @@ function worldmp.testCreateEnchanted(name)
     if player then
         world.createObject(armor.id):moveInto(types.Actor.inventory(player))
     end
-    mp.testSet('lastEnchantLocalId', armor.id)
+    mp.set('lastEnchantLocalId', armor.id)
     return armor.id
 end
 

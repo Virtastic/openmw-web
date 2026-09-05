@@ -21,7 +21,7 @@ const SAVES_DIR = '/userdata/data-home/openmw/saves';
 
 export default async function run(ctx) {
   const a = await ctx.launchClient('saver', '');
-  await a.waitFor("(window.__omwMP||{}).state === 'Joined'", STEP, 'joined');
+  await a.waitFor("window.omw.state.state === 'Joined'", STEP, 'joined');
 
   // Baseline: whatever is in the saves dir before we try (normally nothing).
   const list = async () => JSON.parse(await a.eval(
@@ -33,12 +33,12 @@ export default async function run(ctx) {
   // Focus the game (as a player does) and press quicksave.
   await a.click('#canvas');
   await ctx.sleep(300);
-  const keyBefore = String(await a.eval('(window.__omwMP||{}).lastKey'));
+  const keyBefore = String(await a.eval('window.omw.state.lastKey'));
   await a.key(F5);
   // (a) the engine received the key at all.
-  await a.waitFor(`String((window.__omwMP||{}).lastKey) !== ${JSON.stringify(keyBefore)}`, STEP,
+  await a.waitFor(`String(window.omw.state.lastKey) !== ${JSON.stringify(keyBefore)}`, STEP,
     'the engine received the F5 keypress (lastKey mirror moved)');
-  ctx.log(`  engine saw key: lastKey=${await a.eval('(window.__omwMP||{}).lastKey')}`);
+  ctx.log(`  engine saw key: lastKey=${await a.eval('window.omw.state.lastKey')}`);
 
   // (b) give a would-be quicksave ample time to hit the FS, then assert nothing did.
   await ctx.sleep(4_000);

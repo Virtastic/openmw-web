@@ -107,8 +107,8 @@ curl -s localhost:8080/worlds
 
 ## Operating a multiplayer server
 
-Ranks per account: **0** player, **1** moderator (`/kick /tp /tpto`), **2** admin
-(`/ban /unban /give /motd`), **3** owner (`/setrank /console`). List your account in
+Ranks per account: **0** player, **1** moderator (kick, tp, tpto on the dashboard console), **2** admin
+(ban, unban, give, motd), **3** owner (setrank, console). List your account in
 `[admin] owners` and restart - promoted on boot, no hand-editing. Every action is logged as
 `admin.action`. `/console` executes a script on a player's own client: owner-only, fully
 logged, and `[admin] allowConsole = false` removes it entirely.

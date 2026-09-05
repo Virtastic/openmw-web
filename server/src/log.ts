@@ -84,6 +84,21 @@ export function readLogFile(limit = 500): LogEntry[] {
   }
 }
 
+/**
+ * The dashboard's log view: the live ring, and when that is shorter than asked for, the
+ * on-disk history behind it. The ring alone forgot everything on restart, which is exactly
+ * when an operator reads the log — a game that crashed three times and backed off, a roll
+ * that halted — and readLogFile existed without a single caller.
+ */
+export function logHistory(limit = 200, filter = ''): LogEntry[] {
+  const live = recentLogs(limit, filter);
+  if (live.length >= limit) return live;
+  const seen = new Set(live.map((e) => e.ts + e.event));
+  const older = readLogFile(limit * 4)
+    .filter((e) => (filter === '' || e.event.startsWith(filter)) && !seen.has(e.ts + e.event));
+  return [...older, ...live].slice(-limit);
+}
+
 function rotateIfBig(): void {
   if (!logPath) return;
   try {

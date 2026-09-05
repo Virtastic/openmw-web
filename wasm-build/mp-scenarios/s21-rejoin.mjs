@@ -16,27 +16,27 @@ export default async function run(ctx) {
   // Give the session distinctive state: hp 21, moved off the spawn point. (Equipment
   // restore is not asserted here: the demo's only items are per-client dynamic records,
   // whose ids cannot survive a relog by construction — s20 covers the equipment pipeline.)
-  await a.eval(`Module.__omwMPCmd='walk:0,1,2000'`);
+  await a.eval(`window.omw.send('walk:0,1,2000')`);
   await ctx.sleep(3000);
-  await a.eval(`Module.__omwMPCmd='sethp:21'`);
-  await a.waitFor('(window.__omwMP||{}).hp === "21"', 5000, 'A hp mirror = 21');
+  await a.eval(`window.omw.send('sethp:21')`);
+  await a.waitFor('window.omw.state.hp === "21"', 5000, 'A hp mirror = 21');
   await ctx.sleep(1500); // let the movement/equipment/stats diffs reach the server
-  const pose = JSON.parse(await a.eval('(window.__omwMP||{}).pose||"null"'));
+  const pose = JSON.parse(await a.eval('window.omw.state.pose||"null"'));
   assert.ok(pose, 'A pose mirror');
 
   a.close(); // abrupt disconnect -> server flushes the doc on logout
   await ctx.sleep(2500);
 
   const a2 = await ctx.launchClient('bot-a'); // same run-suffixed name = same account
-  await a2.waitFor('(window.__omwMP||{}).restored === "1"', RESTORE_TIMEOUT, 'rejoin restore applied');
+  await a2.waitFor('window.omw.state.restored === "1"', RESTORE_TIMEOUT, 'rejoin restore applied');
 
   // hp restored (dynamic snapshot round-trip through the server doc).
-  await a2.waitFor('(window.__omwMP||{}).hp === "21"', 8000, 'restored hp = 21');
+  await a2.waitFor('window.omw.state.hp === "21"', 8000, 'restored hp = 21');
   // position restored to the flushed spot.
   const deadline = Date.now() + 10_000;
   let err = Infinity;
   while (Date.now() < deadline) {
-    const p2 = JSON.parse(await a2.eval('(window.__omwMP||{}).pose||"null"'));
+    const p2 = JSON.parse(await a2.eval('window.omw.state.pose||"null"'));
     if (p2) {
       err = dist(pose, p2);
       if (err < POS_EPS) break;

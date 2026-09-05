@@ -260,7 +260,7 @@ combat, quests, world state, ops), plus:
 | **A** hardening | auto-reconnect with jitter, `/metrics`, restore drill, moderation tooling |
 | **B** SSO | OAuth2 + PKCE via a Backend-For-Frontend; accounts keyed on `(iss, sub)`, never email |
 | **C** social | friends, presence modes, invites, party — server, client hub, end-to-end scenario |
-| **E3** admin | in-game window whose menu is generated from the server's own rank-filtered `/help` |
+| **E3** admin | REMOVED with the typed `/slash` path: the web dashboard console (`POST /admin/api/command` → `Admin.exec`) is the one entry point |
 | **G1** scaling | broadcaster spatial index — cost linear in population, not quadratic |
 | **G2** scaling | avatar render LOD — client cost bounded by a cap, not by population |
 | **M4** correctness | cell authority now requires a client that can actually SIMULATE (`simulatesActors`), plus a liveness guard that revokes a holder producing nothing |

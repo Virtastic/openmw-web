@@ -162,7 +162,7 @@ export interface Config {
   };
   // M7 world state.
   time: { scale: number };
-  gui: { timeoutSec: number };
+
   cellReset: {
     cells: string[];
     intervalSec: number;
@@ -574,7 +574,7 @@ function validate(t: Tree): Config {
       pin: (process.env.OMW_ENGINE_PIN ?? '').trim() || optStr(t, 'engine', 'pin', ''),
     },
     time: { scale: reqNum(t, 'time', 'scale') },
-    gui: { timeoutSec: reqNum(t, 'gui', 'timeoutSec') },
+
     cellReset: {
       cells: reqStrArray(t, 'cellReset', 'cells'),
       intervalSec: reqNum(t, 'cellReset', 'intervalSec'),

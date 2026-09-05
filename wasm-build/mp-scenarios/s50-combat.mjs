@@ -13,25 +13,25 @@ export const serverRules = 'pvp = true';
 const STEP_TIMEOUT = 15_000;
 const RAW_DAMAGE = 20;
 
-const hpOf = async (c) => Number(await c.eval('(window.__omwMP||{}).hp||"0"'));
+const hpOf = async (c) => Number(await c.eval('window.omw.state.hp||"0"'));
 
 export default async function run(ctx) {
   const [a, b] = await Promise.all([ctx.launchClient('bot-a'), ctx.launchClient('bot-b')]);
-  const idB = await b.eval('(window.__omwMP||{}).playerId');
+  const idB = await b.eval('window.omw.state.playerId');
 
   // A must have a puppet of B to hit (that puppet carries the interception handler).
-  await a.waitFor(`!!JSON.parse((window.__omwMP||{}).puppets||"{}")[${JSON.stringify(idB)}]`,
+  await a.waitFor(`!!JSON.parse(window.omw.state.puppets||"{}")[${JSON.stringify(idB)}]`,
     STEP_TIMEOUT, 'puppet of B on A');
-  await b.waitFor('Number((window.__omwMP||{}).hp||"0") > 0', STEP_TIMEOUT, 'B hp mirror live');
+  await b.waitFor('Number(window.omw.state.hp||"0") > 0', STEP_TIMEOUT, 'B hp mirror live');
 
-  await b.waitFor('(window.__omwMP||{}).pvp === "true"', STEP_TIMEOUT, 'B sees pvp enabled');
+  await b.waitFor('window.omw.state.pvp === "true"', STEP_TIMEOUT, 'B sees pvp enabled');
   const hpBefore = await hpOf(b);
   const hpAOnBefore = await hpOf(a);
 
-  await a.eval(`Module.__omwMPCmd='hitp:${idB}:${RAW_DAMAGE}'`);
+  await a.eval(`window.omw.send('hitp:${idB}:${RAW_DAMAGE}')`);
 
   // Damage must land on B, mitigated by B's own armor/difficulty — and exactly once.
-  await b.waitFor(`Number((window.__omwMP||{}).hp||"0") < ${hpBefore}`, STEP_TIMEOUT, 'B takes damage');
+  await b.waitFor(`Number(window.omw.state.hp||"0") < ${hpBefore}`, STEP_TIMEOUT, 'B takes damage');
   const hpAfter = await hpOf(b);
   const applied = hpBefore - hpAfter;
   ctx.log(`B hp ${hpBefore} -> ${hpAfter} (applied ${applied}, raw was ${RAW_DAMAGE})`);
@@ -40,7 +40,7 @@ export default async function run(ctx) {
     `applied ${applied} exceeds the raw ${RAW_DAMAGE} — damage was applied more than once`);
   // The victim's mirror records what the NETWORK delivered (raw, pre-mitigation): proof the
   // wire carried raw damage and the reduction happened locally on the victim.
-  await b.waitFor(`(window.__omwMP||{}).lastHitTaken === ${JSON.stringify(String(RAW_DAMAGE))}`,
+  await b.waitFor(`window.omw.state.lastHitTaken === ${JSON.stringify(String(RAW_DAMAGE))}`,
     STEP_TIMEOUT, 'B recorded the inbound raw damage');
   ctx.log('ok: raw damage travelled, mitigation applied once on the victim');
 

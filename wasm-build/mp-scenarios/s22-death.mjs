@@ -20,17 +20,17 @@ export default async function run(ctx) {
   // a fresh client cannot always act on it yet, so this issues it until the player actually moves
   // (see handle.walk). Waiting on the pose alone is what made this scenario hang for 120s.
   await a.walk(0, 1, 2500, 300); // 300 > the 250 the assertion below needs
-  const before = JSON.parse(await a.eval('(window.__omwMP||{}).pose||"null"'));
+  const before = JSON.parse(await a.eval('window.omw.state.pose||"null"'));
   assert.ok(before && dist(before, RESPAWN) > 250, 'A must be away from the respawn point');
 
   // Die. Death edge -> PlayerDeath -> server respawn plugin -> PlayerResurrect.
-  await a.eval(`Module.__omwMPCmd='sethp:0'`);
+  await a.eval(`window.omw.send('sethp:0')`);
 
   const deadline = Date.now() + RESPAWN_TIMEOUT;
   let pose = null;
   let err = Infinity;
   while (Date.now() < deadline) {
-    pose = JSON.parse(await a.eval('(window.__omwMP||{}).pose||"null"'));
+    pose = JSON.parse(await a.eval('window.omw.state.pose||"null"'));
     if (pose) {
       err = dist(pose, RESPAWN);
       if (err < RESPAWN_EPS) break;
@@ -41,8 +41,8 @@ export default async function run(ctx) {
   assert.ok(err < RESPAWN_EPS, `not respawned at the configured point: ${err.toFixed(1)} units off`);
 
   // Revived with restored hp (restoreHp=true in the plugin), session still Joined.
-  await a.waitFor('Number((window.__omwMP||{}).hp||"0") > 0', 8000, 'hp restored after respawn');
-  const state = await a.eval('(window.__omwMP||{}).state');
+  await a.waitFor('Number(window.omw.state.hp||"0") > 0', 8000, 'hp restored after respawn');
+  const state = await a.eval('window.omw.state.state');
   assert.equal(state, 'Joined', 'session must survive death/respawn');
   ctx.log('ok: death -> respawn teleport + revive + refill');
 }

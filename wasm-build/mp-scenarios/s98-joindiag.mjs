@@ -5,24 +5,24 @@
 export const bootTimeoutMs = 420_000;
 
 export default async function run(ctx) {
-  // Wait only for the engine to be up (__omwMP exists), NOT for Joined — the whole point
+  // Wait only for the engine to be up (it has reported a session state), NOT for Joined — the whole point
   // is to observe how far the session actually gets.
   // retail:true — must match s40/s41's boot, since the failure is retail-specific (the demo
   // path joins fine in ~37s).
   const c = await ctx.launchClient('diag', '', {
     retail: true,
-    waitExpr: 'typeof window.__omwMP === "object" && !!(window.__omwMP||{}).state',
-    waitWhat: '__omwMP present',
+    waitExpr: 'window.omw.state.state !== "boot"',
+    waitWhat: 'the engine reported a session state',
     joinTimeoutMs: 420_000,
   });
   const deadline = Date.now() + 180_000;
   let last = null;
   while (Date.now() < deadline) {
     const [state, err, serverName, playerId] = await Promise.all([
-      c.eval('(window.__omwMP||{}).state'),
-      c.eval('(window.__omwMP||{}).lastError'),
-      c.eval('(window.__omwMP||{}).serverName'),
-      c.eval('(window.__omwMP||{}).playerId'),
+      c.eval('window.omw.state.state'),
+      c.eval('window.omw.state.lastError'),
+      c.eval('window.omw.state.serverName'),
+      c.eval('window.omw.state.playerId'),
     ]);
     const line = `state=${state} err=${err} server=${serverName} id=${playerId}`;
     if (line !== last) { ctx.log(line); last = line; }

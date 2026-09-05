@@ -29,7 +29,9 @@ function M.install(opts)
     _calls = calls,
     sendEvent = function(name, body) calls.events[#calls.events + 1] = { name = name, body = body } end,
     sendJson = function(obj) calls.json[#calls.json + 1] = obj end,
-    testSet = function(k, v) calls.testSet[k] = v end,
+    set = function(k, v) calls.testSet[k] = v end, -- the page mirror (window.omw.state)
+    emit = function() end,
+    pollCommands = function() return nil end,
     -- Engine primitive (mwmp/luabindings.cpp): purge every active effect on the player.
     -- Recorded in the same sequence log as the spellbook so ORDER can be asserted.
     clearActiveSpells = function() calls.seq[#calls.seq + 1] = 'clearActive' end,

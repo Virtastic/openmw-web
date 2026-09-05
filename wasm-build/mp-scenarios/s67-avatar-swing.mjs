@@ -45,7 +45,7 @@ export default async function run(ctx) {
   const deadline = Date.now() + 300_000;
   let owner = 'none';
   while (Date.now() < deadline) {
-    owner = await a.eval('(window.__omwMP||{}).authorityHolder');
+    owner = await a.eval('window.omw.state.authorityHolder');
     if (owner && owner !== 'none') break;
     await ctx.sleep(500);
   }
@@ -53,20 +53,20 @@ export default async function run(ctx) {
   ctx.log(`cell owner=${owner}`);
 
   // The state stream must be flowing before the attack, or a missing flag is ambiguous.
-  await a.waitFor('(window.__omwMP||{}).selfFlags !== undefined', STEP_TIMEOUT,
+  await a.waitFor('window.omw.state.selfFlags !== undefined', STEP_TIMEOUT,
     'the authoritative self state stream reaches the owner (selfFlags mirror)');
-  const idle = Number(await a.eval('(window.__omwMP||{}).selfFlags'));
+  const idle = Number(await a.eval('window.omw.state.selfFlags'));
   assert.equal(idle & 8, 0, `the avatar must not be attacking before the input says so (flags=${idle})`);
 
   // Hold the attack for 4 s: at 30 Hz input and a 20 Hz peer, the flag has to appear.
-  await a.eval("Module.__omwMPCmd='attack:4000'");
+  await a.eval("window.omw.send('attack:4000')");
   ctx.log('holding attack; waiting for the avatar’s attacking flag to come back');
-  await a.waitFor('(Number((window.__omwMP||{}).selfFlags||0) & 8) === 8', STEP_TIMEOUT,
+  await a.waitFor('(Number(window.omw.state.selfFlags||0) & 8) === 8', STEP_TIMEOUT,
     'the peer avatar reports attacking (input use bit -> avatar -> state stream)');
   ctx.log('ok: the attack reached the avatar and came back on the authoritative stream');
 
   // And it RELEASES: a held bit that never clears would be a permanently swinging avatar.
-  await a.waitFor('(Number((window.__omwMP||{}).selfFlags||0) & 8) === 0', STEP_TIMEOUT,
+  await a.waitFor('(Number(window.omw.state.selfFlags||0) & 8) === 0', STEP_TIMEOUT,
     'the attacking flag clears once the input stops holding it');
   ctx.log('ok: the attack released');
 }

@@ -13,13 +13,13 @@
 import assert from 'node:assert/strict';
 
 const STEP = 30_000;
-const netCount = 'Object.keys(JSON.parse((window.__omwMP||{}).netObjects||"{}")).length';
+const netCount = 'Object.keys(JSON.parse(window.omw.state.netObjects||"{}")).length';
 
 async function countOf(c, id) {
-  await c.eval("if (window.__omwMP) window.__omwMP.count = null; 'cleared';");
+  await c.eval("if (window.omw.state) window.omw.state.count = null; 'cleared';");
   await c.cmd(`count:${id}`);
-  await c.waitFor("typeof (window.__omwMP||{}).count === 'string'", 10_000, `${c.name} reported its count`);
-  return Number(await c.eval('(window.__omwMP||{}).count'));
+  await c.waitFor("typeof window.omw.state.count === 'string'", 10_000, `${c.name} reported its count`);
+  return Number(await c.eval('window.omw.state.count'));
 }
 
 export default async function run(ctx) {
@@ -41,13 +41,13 @@ export default async function run(ctx) {
 
   // A materialises an item and drops it into the world; both see it as a net object.
   await a.cmd('equiptest');
-  await a.waitFor('((window.__omwMP||{}).equippedIds||"") !== ""', 12_000, 'A holds the test item');
-  const itemId = (await a.eval('(window.__omwMP||{}).equippedIds')).split(',')[0];
+  await a.waitFor('(window.omw.state.equippedIds||"") !== ""', 12_000, 'A holds the test item');
+  const itemId = (await a.eval('window.omw.state.equippedIds')).split(',')[0];
   assert.ok(itemId, 'test item id');
   await a.cmd(`drop:${itemId}`);
   await a.waitFor(`${netCount} === 1`, STEP, 'A tracks its drop');
   await b.waitFor(`${netCount} === 1`, STEP, 'B sees the drop');
-  const netId = await b.eval('Object.keys(JSON.parse(window.__omwMP.netObjects))[0]');
+  const netId = await b.eval('Object.keys(JSON.parse(window.omw.state.netObjects))[0]');
   ctx.log(`item ${itemId} is net object ${netId}; both hold 0 of it`);
   assert.equal(await countOf(a, itemId), 0, 'A dropped it, so A holds none');
   assert.equal(await countOf(b, itemId), 0);

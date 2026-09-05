@@ -16,7 +16,7 @@ export default async function run(ctx) {
   const a = await ctx.launchClient('bot-redial');
 
   ctx.serverKill();
-  await a.waitFor('(window.__omwMP||{}).reconnecting === "true"', 15000, 'entered the reconnect cycle');
+  await a.waitFor('window.omw.state.reconnecting === "true"', 15000, 'entered the reconnect cycle');
 
   // Sample the scheduler while it backs off. Nothing is listening on the port any more, so
   // every attempt fails and we get a clean series of scheduled delays.
@@ -24,10 +24,10 @@ export default async function run(ctx) {
   let lastAttempt = 0;
   const deadline = Date.now() + 60_000;
   while (Date.now() < deadline && delays.length < 4) {
-    const attempt = Number(await a.eval('(window.__omwMP||{}).reconnectAttempt || 0'));
+    const attempt = Number(await a.eval('window.omw.state.reconnectAttempt || 0'));
     if (attempt > lastAttempt) {
       lastAttempt = attempt;
-      delays.push(Number(await a.eval('(window.__omwMP||{}).nextRetrySeconds || 0')));
+      delays.push(Number(await a.eval('window.omw.state.nextRetrySeconds || 0')));
     }
     await ctx.sleep(500);
   }
@@ -49,7 +49,7 @@ export default async function run(ctx) {
 
   // And the player is told to wait rather than to reload — reloading would cost them the
   // in-place rejoin the parked resume ticket buys.
-  const line = String(await a.eval('(window.__omwMP||{}).lastChatLine || ""')).toLowerCase();
+  const line = String(await a.eval('window.omw.state.lastChatLine || ""')).toLowerCase();
   assert.ok(line.includes('reconnect'), `expected a reconnecting notice, got "${line}"`);
   ctx.log('ok: self-redial with growing, jittered delays and a wait-not-reload notice');
 }

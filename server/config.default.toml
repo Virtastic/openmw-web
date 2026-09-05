@@ -270,11 +270,6 @@ lodNearMaxAvatars = 12
 # this value is operator truth and is re-applied on every boot.
 scale = 30
 
-[gui]
-# M7: how long a server-pushed GuiMessageBox/GuiInputDialog/GuiListBox waits for a reply
-# before the plugin's promise settles as unanswered. A disconnect settles it immediately.
-timeoutSec = 60
-
 [cellReset]
 # M7: cells wiped on a schedule by the `cell-reset` plugin (loot/containers/doors/objects
 # return to their content-file state and clients are told to reload). Empty = no resets.

@@ -15,7 +15,7 @@ const ROOT = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 const STEP_TIMEOUT = 25_000;
 const BOOT = { retail: true, joinTimeoutMs: 420_000 };
 
-const probeOf = async (c) => JSON.parse(await c.eval('(window.__omwMP||{}).actorProbe||"{}"'));
+const probeOf = async (c) => JSON.parse(await c.eval('window.omw.state.actorProbe||"{}"'));
 
 export default async function run(ctx) {
   // A SIMULATING peer holds the cell. Both browsers are therefore NON-holders, which is the
@@ -38,7 +38,7 @@ export default async function run(ctx) {
   ]);
   const clients = [a, b];
   for (const c of [a, b]) {
-    await c.waitFor('Number((window.__omwMP||{}).actorCount||0) > 0', STEP_TIMEOUT, `${c.name} sees actors`);
+    await c.waitFor('Number(window.omw.state.actorCount||0) > 0', STEP_TIMEOUT, `${c.name} sees actors`);
   }
 
   // AUTHORITY IS THE PEER'S. This scenario used to elect one of the two CLIENTS as holder and
@@ -48,17 +48,17 @@ export default async function run(ctx) {
   let ownerSeen = 'none';
   const authDeadline = Date.now() + Number(process.env.S51_PEER_TIMEOUT ?? 300_000);
   while (Date.now() < authDeadline) {
-    ownerSeen = await a.eval('(window.__omwMP||{}).authorityHolder');
+    ownerSeen = await a.eval('window.omw.state.authorityHolder');
     if (ownerSeen && ownerSeen !== 'none') break;
     await ctx.sleep(500);
   }
   assert.notEqual(ownerSeen, 'none', 'the simulating peer never took the cell');
-  assert.equal(await a.eval('(window.__omwMP||{}).isHolder'), 'false', 'client A must not hold');
-  assert.equal(await b.eval('(window.__omwMP||{}).isHolder'), 'false', 'client B must not hold');
+  assert.equal(await a.eval('window.omw.state.isHolder'), 'false', 'client A must not hold');
+  assert.equal(await b.eval('window.omw.state.isHolder'), 'false', 'client B must not hold');
   ctx.log(`cell owner=${ownerSeen}; neither client holds it`);
 
   for (const c of clients) {
-    await c.waitFor('Number((window.__omwMP||{}).puppetedActors||0) > 0', STEP_TIMEOUT,
+    await c.waitFor('Number(window.omw.state.puppetedActors||0) > 0', STEP_TIMEOUT,
       `${c.name} puppeted the cell actors`);
   }
 
@@ -72,7 +72,7 @@ export default async function run(ctx) {
   // forwarded, routed by the server to the peer, and applied there. Nothing a browser does
   // to this NPC counts unless that whole chain works — which is precisely the path that was
   // reported broken as "hits are not registering".
-  const deadExpr = `((JSON.parse((window.__omwMP||{}).actorProbe||"{}")[${JSON.stringify(victim)}]||{}).dead === true)`;
+  const deadExpr = `((JSON.parse(window.omw.state.actorProbe||"{}")[${JSON.stringify(victim)}]||{}).dead === true)`;
   const swingDeadline = Date.now() + 90_000;
   let died = false;
   while (Date.now() < swingDeadline && !died) {
@@ -98,7 +98,7 @@ export default async function run(ctx) {
 
   // Exactly ONE kill counted on both clients (server dedups by (ref, deathNo)) — two players
   // hitting the same NPC must not score it twice.
-  const tally = `(window.__omwMP||{}).killCountOf === ${JSON.stringify(victim + '=1')}`;
+  const tally = `window.omw.state.killCountOf === ${JSON.stringify(victim + '=1')}`;
   await a.waitFor(tally, STEP_TIMEOUT, 'kill tally = 1 on client A');
   await b.waitFor(tally, STEP_TIMEOUT, 'kill tally = 1 on client B');
   ctx.log('ok: NPC died once for both players, shared kill count = 1');

@@ -23,7 +23,6 @@ export const SECTION_HELP: Record<string, string> = {
   economy: 'Loot and item-ownership rules, mostly relevant to public worlds where strangers meet.',
   sharing: 'Which parts of world progress are shared between players versus kept per-character.',
   time: 'How fast the in-game clock runs.',
-  gui: 'Server-driven dialog behaviour.',
   cellReset: 'Scheduled wipes of cell contents, so looted areas eventually restock.',
   limits: 'Anti-cheat and anti-flood budgets. Mostly safe to leave alone.',
   moderation: 'Chat logging, the report inbox, and how long both are kept.',
@@ -101,9 +100,8 @@ export const HELP: Record<string, FieldHelp> = {
   'sharing.regressAllowlist': { text: 'Quest ids allowed to move BACKWARDS. Most quests only ever advance, so a lower stage arriving is normally a bug and is ignored; list the exceptions here.' },
   'sharing.worldGlobals': { text: 'Quest globals that belong to the world rather than to each character. Everything not listed here is kept per-character.' },
 
-  // --- time / gui / cellReset -----------------------------------------------------------
+  // --- time / cellReset -----------------------------------------------------------
   'time.scale': { text: 'Game seconds per real second. 30 is Morrowind\'s own default; 0 freezes the clock so time only moves when someone rests.' },
-  'gui.timeoutSec': { text: 'How long a server-sent dialog waits for an answer before giving up on it.' },
   'cellReset.cells': { text: 'Cells wiped on a schedule, containers restocked, doors and objects reset. Empty means nothing is ever reset.' },
   'cellReset.intervalSec': { text: 'How often the cells listed above are reset. Default is three days.' },
 

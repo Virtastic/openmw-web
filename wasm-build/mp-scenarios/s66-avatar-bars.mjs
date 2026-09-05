@@ -68,7 +68,7 @@ export default async function run(ctx) {
   const deadline = Date.now() + 300_000;
   let owner = 'none';
   while (Date.now() < deadline) {
-    owner = await victim.eval('(window.__omwMP||{}).authorityHolder');
+    owner = await victim.eval('window.omw.state.authorityHolder');
     if (owner && owner !== 'none') break;
     await ctx.sleep(500);
   }
@@ -76,17 +76,17 @@ export default async function run(ctx) {
   ctx.log(`cell owner=${owner}`);
 
   // The attacker needs the victim's session id to aim hitp.
-  await victim.waitFor("Number((window.__omwMP||{}).playerId||0) > 0", STEP_TIMEOUT, 'victim knows its id');
-  const victimId = Number(await victim.eval('(window.__omwMP||{}).playerId'));
+  await victim.waitFor("Number(window.omw.state.playerId||0) > 0", STEP_TIMEOUT, 'victim knows its id');
+  const victimId = Number(await victim.eval('window.omw.state.playerId'));
 
   // PRECONDITIONS the earlier draft skipped, and why it never produced a CombatHit:
   //  - pvp must be ON, or the client cancels the hit locally and sends nothing.
   //  - the attacker must be PUPPETING the victim: hitp sends a local Hit to the victim's
   //    puppet on the attacker, and puppet.lua's onHit interceptor is what forwards it. No
   //    puppet, no interceptor, no CombatHit.
-  await attacker.waitFor('(window.__omwMP||{}).pvp === "true"', STEP_TIMEOUT, 'attacker sees pvp enabled');
+  await attacker.waitFor('window.omw.state.pvp === "true"', STEP_TIMEOUT, 'attacker sees pvp enabled');
   await attacker.waitFor(
-    `Object.keys(JSON.parse((window.__omwMP||{}).puppets||"{}")).includes(String(${victimId}))`,
+    `Object.keys(JSON.parse(window.omw.state.puppets||"{}")).includes(String(${victimId}))`,
     STEP_TIMEOUT, 'attacker is puppeting the victim (hitp needs a puppet to intercept)');
   ctx.log(`victim id=${victimId}; attacker puppets it and pvp is on; hitting`);
 
@@ -94,13 +94,13 @@ export default async function run(ctx) {
   const hitUntil = Date.now() + 45_000;
   let dropped = false;
   while (Date.now() < hitUntil && !dropped) {
-    await attacker.eval(`Module.__omwMPCmd=${JSON.stringify(`hitp:${victimId}:15`)}`);
+    await attacker.cmd(`hitp:${victimId}:15`);
     await ctx.sleep(1500);
-    const s = String(await victim.eval('(window.__omwMP||{}).selfStats') ?? '');
+    const s = String(await victim.eval('window.omw.state.selfStats') ?? '');
     const m = /^(\d+)\/(\d+)$/.exec(s);
     if (m && Number(m[1]) < Number(m[2])) dropped = true;
   }
-  const marker = await victim.eval('(window.__omwMP||{}).selfStats');
+  const marker = await victim.eval('window.omw.state.selfStats');
   ctx.log(`selfStats=${marker}`);
   assert.ok(dropped,
     'the peer-reported bars never dropped: either the PvP hit was not routed to the peer '

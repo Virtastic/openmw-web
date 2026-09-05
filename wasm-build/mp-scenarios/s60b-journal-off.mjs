@@ -21,7 +21,7 @@ const STAGE = 10;
 export const serverRules = '[sharing]\njournal = false';
 
 const hasStage = (id, stage) =>
-  `Object.entries(JSON.parse((window.__omwMP||{}).journalEngine||"{}")).some(([k,v])=>k.toLowerCase()===${JSON.stringify(id)}&&v===${stage})`;
+  `Object.entries(JSON.parse(window.omw.state.journalEngine||"{}")).some(([k,v])=>k.toLowerCase()===${JSON.stringify(id)}&&v===${stage})`;
 
 export default async function run(ctx) {
   if (!existsSync(join(ROOT, 'play', 'mwdata', 'Morrowind.esm'))) {
@@ -32,17 +32,17 @@ export default async function run(ctx) {
     ctx.launchClient('bot-a', '', BOOT),
     ctx.launchClient('bot-b', '', BOOT),
   ]);
-  await a.waitFor('(window.__omwMP||{}).journalSynced === "true"', STEP_TIMEOUT, 'A consumed JournalSync');
-  await b.waitFor('(window.__omwMP||{}).journalSynced === "true"', STEP_TIMEOUT, 'B consumed JournalSync');
+  await a.waitFor('window.omw.state.journalSynced === "true"', STEP_TIMEOUT, 'A consumed JournalSync');
+  await b.waitFor('window.omw.state.journalSynced === "true"', STEP_TIMEOUT, 'B consumed JournalSync');
 
-  await a.eval(`Module.__omwMPCmd='quest:${QUEST}:${STAGE}'`);
+  await a.eval(`window.omw.send('quest:${QUEST}:${STAGE}')`);
   await a.waitFor(hasStage(QUEST, STAGE), STEP_TIMEOUT, `A's engine journal reached stage ${STAGE}`);
   // The client still SENDS: sharing is a server-side policy, not a client mute.
-  assert.equal(await a.eval('(window.__omwMP||{}).journalSent'), '1',
+  assert.equal(await a.eval('window.omw.state.journalSent'), '1',
     'A must still originate the JournalEntry (sharing is arbitrated server-side)');
 
   await ctx.sleep(SETTLE_MS);
-  const jb = JSON.parse(await b.eval('(window.__omwMP||{}).journalEngine||"{}"'));
+  const jb = JSON.parse(await b.eval('window.omw.state.journalEngine||"{}"'));
   const got = Object.entries(jb).find(([k]) => k.toLowerCase() === QUEST);
   ctx.log(`sharing off: B's entry for ${QUEST} = ${got ? got[1] : '(absent)'}`);
   assert.equal(got, undefined, 'journal sharing disabled: B must not receive the entry');

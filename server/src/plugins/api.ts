@@ -8,16 +8,6 @@ import type { LogLevel } from '../log';
 import type { ChatMessageBody } from '../core/chat';
 import type { JsLike } from '../proto/lser';
 import type { ShareFamily } from '../core/quests';
-import type { GuiResult } from '../core/gui';
-
-// M7 server-pushed GUI. Each call resolves when the player answers, times out
-// ([gui] timeoutSec), or disconnects — it NEVER stays pending, so a plugin awaiting a
-// reply from someone who rage-quit resumes instead of leaking.
-export interface PluginGui {
-  messageBox(playerId: number, text: string, buttons?: string[]): Promise<GuiResult>;
-  inputDialog(playerId: number, label: string): Promise<GuiResult>;
-  listBox(playerId: number, label: string, items: string[]): Promise<GuiResult>;
-}
 
 // M7 world actions: the operator-facing clock and cell-reset controls.
 export interface PluginWorld {
@@ -30,9 +20,6 @@ export interface PluginWorld {
   resetCell(cellKey: string): Promise<void>;
   // M8: promote an existing account to owner (rank 3). Resolves false if unknown.
   promoteOwner(account: string): Promise<boolean>;
-  // Dialogs still awaiting a reply. Settles to 0 once every prompt is answered, timed
-  // out or orphaned by a disconnect — an operator-visible leak check.
-  pendingGuiCount(): number;
 }
 
 export interface PluginPlayer {
@@ -49,7 +36,6 @@ export interface PluginApi {
   chat(target: 'all' | number, msg: ChatMessageBody): void;
   // Raw event-tier send (M2; e.g. PlayerResurrect from the respawn plugin).
   sendEvent(target: 'all' | number, name: string, body: JsLike): void;
-  gui: PluginGui; // M7
   world: PluginWorld; // M7
   // Phase 3 rule helpers. Optional so an embedder can supply a partial api in tests
   // without every plugin needing to care.
@@ -80,8 +66,6 @@ export interface Plugin {
   onPlayerHit?(api: PluginApi, attacker: PluginPlayer, victimId: number, name: string): boolean | void;
   // Pre-broadcast; return false to veto the chat line.
   onChat?(api: PluginApi, player: PluginPlayer, text: string): boolean | void;
-  // Return true to mark the command handled (skips the core registry).
-  onCommand?(api: PluginApi, player: PluginPlayer, name: string, args: string): boolean | void;
   // M8: per-command veto applied AFTER the rank gate (the `admin` builtin uses it for
   // [admin] allowConsole). Return false to refuse; anything else allows.
   onAdminCommand?(api: PluginApi, actor: PluginPlayer, cmd: string): boolean | void;

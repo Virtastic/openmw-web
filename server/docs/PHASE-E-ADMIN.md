@@ -44,17 +44,14 @@ Until private sessions exist there is exactly one scope, so the change is small 
 large later. It is listed here so the decision is made deliberately rather than discovered
 when someone hosts a game and finds they can ban people from the public world.
 
-## E3: the window
+## E3: the window (removed)
 
-`scripts/mp/adminui.lua`, same recipe as the social window (`ui.create` + modal `Interface`
-mode, `guiRow` as the clickable primitive, destroy+create to update). It issues the existing
-slash commands rather than inventing a parallel API — the server-side gate, the audit trail
-and the refusal messages are already right, and a second path to the same actions is a
-second place for the rank check to be wrong.
-
-Rows are filtered by the viewer's rank so the menu shows only what they can actually do —
-but the **server gate remains the authority**. A hidden button is a UI convenience, not a
-permission; the client must never be the thing deciding.
+The in-game admin window (`scripts/mp/adminui.lua`) and the typed `/slash` path were
+removed once the web dashboard existed: two routes to the same actions were two places for
+the rank check to be wrong, and one of them lived on the player's machine. Operator commands
+now enter only through the dashboard's console (`POST /admin/api/command` → `Admin.exec`),
+which the multiplayer server proxies to whichever game an operator has open. The server
+gate is, as before, the only authority.
 
 ## Verification
 

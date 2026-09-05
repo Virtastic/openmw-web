@@ -35,7 +35,7 @@ const STEP = 30_000;
 // Being walked past is not being arrested. Damage cannot be produced by a patrol route.
 const BOUNTY = 6_000;
 
-const probeOf = async (c) => JSON.parse(await c.eval('(window.__omwMP||{}).actorProbe||"{}"'));
+const probeOf = async (c) => JSON.parse(await c.eval('window.omw.state.actorProbe||"{}"'));
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
 
 export default async function run(ctx) {
@@ -53,13 +53,13 @@ export default async function run(ctx) {
   peer.proc.stderr?.on('data', (b) => { peerLog += String(b); });
 
   const a = await ctx.launchClient('crook', '', BOOT);
-  await a.waitFor('Number((window.__omwMP||{}).actorCount||0) > 0', STEP, 'client sees cell actors');
-  await a.waitFor('Number((window.__omwMP||{}).puppetedActors||0) > 0', STEP,
+  await a.waitFor('Number(window.omw.state.actorCount||0) > 0', STEP, 'client sees cell actors');
+  await a.waitFor('Number(window.omw.state.puppetedActors||0) > 0', STEP,
     'the peer holds the cell (its actors are puppeted here)');
 
   // The player's own position comes from the pose mirror: actorProbe is built from cellActors,
   // which deliberately EXCLUDES the player (and MP puppets) so the two never double-drive.
-  const poseOf = async () => JSON.parse(await a.eval('(window.__omwMP||{}).pose||"null"'));
+  const poseOf = async () => JSON.parse(await a.eval('window.omw.state.pose||"null"'));
   const probe = await probeOf(a);
   const me = await poseOf();
   assert.ok(me, 'the client is not reporting its own pose');
@@ -96,7 +96,7 @@ export default async function run(ctx) {
   // Everything downstream of it -- line of sight, the awareness check, whether the patrol brings
   // a guard past you at all -- is vanilla behaviour this change never touched, and trying to
   // assert on THAT is what made two earlier versions of this scenario lie (see below).
-  const hp = async () => Number(await a.eval('(window.__omwMP||{}).hp||"0"'));
+  const hp = async () => Number(await a.eval('window.omw.state.hp||"0"'));
   const hp0 = await hp();
   assert.ok(hp0 > 0, `no health reported (${hp0}) — the 4A bar path must work for this to mean anything`);
   assert.ok(!/avatar bounty \d+ = [1-9]/.test(peerLog),

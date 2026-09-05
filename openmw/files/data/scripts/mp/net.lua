@@ -64,7 +64,7 @@ function net.currentTarget() return targetUrl() end
 -- goes through targetUrl(), so this one value determines where a dropped player comes back
 -- to; if it were still the boot URL after a switch, a hiccup would silently return them to
 -- the public world mid-session.
-local function mirrorTarget() mp.testSet('dialTarget', targetUrl()) end
+local function mirrorTarget() mp.set('dialTarget', targetUrl()) end
 
 -- While set (real time), connection failures keep retrying instead of turning terminal:
 -- covers the window where a freshly created world is still booting. Cleared on Joined.
@@ -111,7 +111,7 @@ local function setState(s)
     if net.state == s then return end
     net.state = s
     mp._setState(s)
-    mp.testSet('state', s)
+    mp.set('state', s)
     net.onStateChanged(s)
 end
 
@@ -148,16 +148,16 @@ end
 -- ladder retries are bounded (one attempt each) and deliberately immediate.
 local function scheduleReconnect()
     reconnecting = true
-    mp.testSet('reconnecting', 'true')
+    mp.set('reconnecting', 'true')
     reconnectAttempt = reconnectAttempt + 1
     reconnectTotal = reconnectTotal + 1
-    mp.testSet('reconnectTotal', string.format('%d', reconnectTotal))
+    mp.set('reconnectTotal', string.format('%d', reconnectTotal))
     local ceiling = math.min(RECONNECT_CAP_SECONDS, RECONNECT_BASE_SECONDS * 2 ^ (reconnectAttempt - 1))
     local delay = math.random() * ceiling -- full jitter across [0, ceiling)
     reconnectAt = core.getRealTime() + delay
     net.nextRetrySeconds = delay
-    mp.testSet('reconnectAttempt', string.format('%d', reconnectAttempt))
-    mp.testSet('nextRetrySeconds', string.format('%.2f', delay))
+    mp.set('reconnectAttempt', string.format('%d', reconnectAttempt))
+    mp.set('nextRetrySeconds', string.format('%.2f', delay))
     setState('Reconnecting')
     print(string.format('[mp] connection lost — reconnecting in %.1fs (attempt %d)', delay, reconnectAttempt))
     -- TELL THE PLAYER, once. This only ever printed to a console nobody has open, so a dropped
@@ -198,7 +198,7 @@ local function askPageForFreshTicket(why)
     rescueDeadline = core.getRealTime() + 10
     print('[mp] auth dead-end (' .. why .. ') — asking the page for a fresh ticket')
     -- The stamp makes every ask observably distinct; the target spares the page a guess.
-    mp.testSet('needFreshTicket', string.format('%d|%s|%s', nowMs(), targetUrl(), why))
+    mp.set('needFreshTicket', string.format('%d|%s|%s', nowMs(), targetUrl(), why))
     setState('Reconnecting') -- honest UI label; the page reboot normally lands within ~1s
     return true
 end
@@ -274,11 +274,11 @@ end
 -- Reconnects are untouched — those go through dialNow and are a socket event, not a world
 -- change.
 function net.switchTo(url)
-    mp.testSet('publicStage', 'switchTo:' .. tostring(url))
+    mp.set('publicStage', 'switchTo:' .. tostring(url))
     if type(url) ~= 'string' or url == '' then return false end
     -- The page owns navigation; Lua cannot reload itself. It mints a fresh login ticket and
     -- rebuilds the boot fragment for `url`.
-    mp.testSet('switchTo', url)
+    mp.set('switchTo', url)
     return true
 end
 
@@ -413,14 +413,14 @@ function net.onClose()
             return
         end
         net.lastErrorDetail = net.lastErrorDetail or 'sign in again'
-        mp.testSet('lastError', tostring(net.lastError) .. ' ' .. tostring(net.lastErrorDetail))
+        mp.set('lastError', tostring(net.lastError) .. ' ' .. tostring(net.lastErrorDetail))
         setState('Failed')
         return
     end
     if not everJoined and reconnectAttempt >= UNREACHABLE_ATTEMPTS then
         net.lastError = net.lastError or 'UNREACHABLE'
         net.lastErrorDetail = net.lastErrorDetail or 'could not reach the server'
-        mp.testSet('lastError', tostring(net.lastError) .. ' ' .. tostring(net.lastErrorDetail))
+        mp.set('lastError', tostring(net.lastError) .. ' ' .. tostring(net.lastErrorDetail))
         setState('Failed')
         return
     end
@@ -461,7 +461,7 @@ function net.onClose()
             -- a real player must see a failure, not silence.
             net.lastError = net.lastError or 'UNREACHABLE'
             net.lastErrorDetail = net.lastErrorDetail or 'could not reach the server'
-            mp.testSet('lastError', tostring(net.lastError) .. ' ' .. tostring(net.lastErrorDetail))
+            mp.set('lastError', tostring(net.lastError) .. ' ' .. tostring(net.lastErrorDetail))
             setState('Failed')
         end
     end
@@ -471,7 +471,7 @@ local dispatch = {}
 
 dispatch.SessionHelloOk = function(msg)
     net.serverName = msg.serverName
-    mp.testSet('serverName', tostring(msg.serverName or ''))
+    mp.set('serverName', tostring(msg.serverName or ''))
     -- §M8: SessionResume is sent in HELLO_OK — AFTER SessionHello — so engine and content
     -- policy are enforced for a resume exactly as for a login.
     local auth
@@ -528,7 +528,7 @@ dispatch.SessionHelloOk = function(msg)
         auth.characterId = charForAuth
     end
     send(auth)
-    mp.testSet('authMode', authMode)
+    mp.set('authMode', authMode)
     setState('Authing')
 end
 
@@ -540,15 +540,15 @@ dispatch.SessionWelcome = function(msg)
         mp.setResumeToken(msg.sessionToken)
     end
     net.authPath = authMode
-    mp.testSet('authPath', authMode)
+    mp.set('authPath', authMode)
     net.motd = msg.motd
     -- M2: non-null playerRecord = stored snapshot to restore (json.null when fresh).
     net.playerRecord = (type(msg.playerRecord) == 'table' and msg.playerRecord ~= json.null)
         and msg.playerRecord or nil
     -- M5: server rules the client must honour locally (PvP gating, difficulty display).
     net.flags = (type(msg.flags) == 'table' and msg.flags ~= json.null) and msg.flags or {}
-    mp.testSet('pvp', tostring(net.flags.pvp == true))
-    mp.testSet('playerId', tostring(msg.playerId))
+    mp.set('pvp', tostring(net.flags.pvp == true))
+    mp.set('playerId', tostring(msg.playerId))
     -- Character slots + onboarding profile: the account's slot list, which one this
     -- session plays, and whether the server demands a completed profile before Ready.
     switchDeadline = nil -- arrived: a later drop is a normal reconnect, not a boot wait
@@ -561,14 +561,14 @@ dispatch.SessionWelcome = function(msg)
     net.profile = (type(msg.profile) == 'table' and msg.profile ~= json.null) and msg.profile or {}
     desiredCharId = nil -- confirmed (or refused before we got here); default is right now
     if net.onCharacters then net.onCharacters() end
-    mp.testSet('characterId', net.characterId)
-    mp.testSet('characterCount', tostring(#net.characters))
-    mp.testSet('characters', json.encode(net.characters))
-    mp.testSet('profileRequired', tostring(net.profile.required == true))
+    mp.set('characterId', net.characterId)
+    mp.set('characterCount', tostring(#net.characters))
+    mp.set('characters', json.encode(net.characters))
+    mp.set('profileRequired', tostring(net.profile.required == true))
     -- SSO already captured the email; the picker only has to ask for a handle, and it needs
     -- the address to send back with it (ProfileSetup takes both).
-    mp.testSet('profileEmail', tostring(net.profile.email or ''))
-    mp.testSet('profileUsername', tostring(net.profile.username or ''))
+    mp.set('profileEmail', tostring(net.profile.email or ''))
+    mp.set('profileUsername', tostring(net.profile.username or ''))
     -- Back in the world: forget the backoff so the NEXT outage starts from 1s again rather
     -- than inheriting a 30s ceiling from an earlier bad patch.
     -- Announce the RECOVERY only if there was an outage to recover from; a first join is not
@@ -577,8 +577,8 @@ dispatch.SessionWelcome = function(msg)
     reconnectAttempt = 0
     reconnectAt = nil
     reconnecting = false
-    mp.testSet('reconnectAttempt', '0')
-    mp.testSet('reconnecting', 'false')
+    mp.set('reconnectAttempt', '0')
+    mp.set('reconnecting', 'false')
     if net.profile.required == true then
         -- The server will refuse Ready until email + username are set. Hold here; the
         -- profile UI submits ProfileSetup and the ok reply below sends Ready for us.
@@ -596,10 +596,10 @@ end
 local profileSeq = 0
 dispatch.ProfileResult = function(msg)
     net.profileResult = msg
-    mp.testSet('profileOk', tostring(msg.ok == true))
-    mp.testSet('profileError', tostring(msg.error or ''))
+    mp.set('profileOk', tostring(msg.ok == true))
+    mp.set('profileError', tostring(msg.error or ''))
     profileSeq = profileSeq + 1
-    mp.testSet('profileSeq', tostring(profileSeq))
+    mp.set('profileSeq', tostring(profileSeq))
     if net.onProfileResult then net.onProfileResult(msg) end
     if msg.ok == true and net.state == 'ProfileNeeded' then
         net.profile.required = false
@@ -612,16 +612,16 @@ end
 dispatch.CharacterResult = function(msg)
     if type(msg.characters) == 'table' and msg.characters ~= json.null then
         net.characters = msg.characters
-        mp.testSet('characterCount', tostring(#net.characters))
-        mp.testSet('characters', json.encode(net.characters))
+        mp.set('characterCount', tostring(#net.characters))
+        mp.set('characters', json.encode(net.characters))
     end
-    mp.testSet('charCreateOk', tostring(msg.ok == true))
+    mp.set('charCreateOk', tostring(msg.ok == true))
     if net.onCharacters then net.onCharacters(msg) end
 end
 
 dispatch.SessionPong = function(msg)
     net.rttMs = nowMs() - msg.clientTime
-    mp.testSet('rttMs', tostring(net.rttMs))
+    mp.set('rttMs', tostring(net.rttMs))
 end
 
 -- Disconnect codes that describe the SERVER's situation rather than a verdict on this client.
@@ -639,14 +639,14 @@ dispatch.SessionDisconnect = function(msg)
     net.lastError = msg.code
     net.lastErrorDetail = msg.detail
     print('[mp] server disconnect: ' .. tostring(msg.code) .. ' (' .. tostring(msg.detail) .. ')')
-    mp.testSet('lastError', tostring(msg.code) .. ' ' .. tostring(msg.detail or ''))
+    mp.set('lastError', tostring(msg.code) .. ' ' .. tostring(msg.detail or ''))
     -- A RESTART IS NOT A FAILURE. SHUTDOWN used to land here and set Failed, so every deploy —
     -- and every rolling restart, the very thing meant to avoid an outage — threw all its players
     -- into the fatal modal. Leaving the state alone lets onClose fall through to the ordinary
     -- reconnect ladder, which backs off, redials, and rejoins in place if its resume token
     -- survived (or through a fresh ticket if the world forgot it, which a restart guarantees).
     if TRANSIENT_DISCONNECT[msg.code] then
-        mp.testSet('serverRestarting', '1')
+        mp.set('serverRestarting', '1')
         return
     end
     if msg.code ~= 'AUTH_FAILED' then
@@ -681,7 +681,7 @@ function net.tick()
         if net.state ~= 'Joined' then
             net.lastError = 'AUTH_FAILED'
             net.lastErrorDetail = 'sign in again'
-            mp.testSet('lastError', 'AUTH_FAILED sign in again')
+            mp.set('lastError', 'AUTH_FAILED sign in again')
             setState('Failed')
             return
         end

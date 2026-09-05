@@ -7,7 +7,6 @@ PLAYER: scripts/mp/player.lua
 # cannot break each other, and so the file stays reviewable.
 PLAYER: scripts/mp/social.lua
 # Phase E3 admin window (G). Menu is built from the server's own /help reply.
-PLAYER: scripts/mp/adminui.lua
 MENU: scripts/mp/menu.lua
 # COMPANIONS. On the ACTOR, not in the holder's diff loop, because a global script cannot read
 # AI package state for a foreign actor -- an engine limitation, and the reason ActorAI sat as

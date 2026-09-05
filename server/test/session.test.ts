@@ -57,13 +57,11 @@ test('session flow end to end', async (t) => {
       assert.deepEqual(bChat.value, expect);
       assert.ok(bChat.seq >= 1); // server binary seq is monotonic from 1
 
+      // NO SLASH COMMANDS: a line starting with "/" is chat like any other, delivered to
+      // everyone in the world. Operators act from the dashboard, never from a typed line.
       b.sendEvent('ChatSend', { text: '/list' });
-      // M8 rewrote /list: one line per player, "#<id> <name> [<rank>] <cell>". b's own
-      // motd is still queued on the server channel, so match the roster lines themselves.
-      const aliceLine = await b.waitEvent('ChatMessage', (v) => (v as { text?: string }).text?.includes('Alice') === true);
-      assert.match((aliceLine.value as { text: string }).text, /^#\d+ Alice \[player\] /);
-      const bobLine = await b.waitEvent('ChatMessage', (v) => (v as { text?: string }).text?.includes('Bob') === true);
-      assert.match((bobLine.value as { text: string }).text, /^#\d+ Bob \[player\] /);
+      const asChat = await a.waitEvent('ChatMessage', (v) => (v as { text?: string }).text === '/list');
+      assert.equal((asChat.value as { channel: string }).channel, 'say', 'broadcast like any text');
       b.close();
       await b.closed;
       const leave = await a.waitEvent('PlayerLeaveWorld');

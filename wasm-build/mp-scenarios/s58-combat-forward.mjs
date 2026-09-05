@@ -59,7 +59,7 @@ const PUPPET_TIMEOUT = 90_000;
 // The client mirror has no cellKey of its own, but actorCensus tags every active actor with
 // one ("player@-2,-9"), and the local player is always in its own cell. (Same trick as s42.)
 async function cellKeyOf(c) {
-  const census = JSON.parse(await c.eval('(window.__omwMP||{}).actorCensus||"[]"'));
+  const census = JSON.parse(await c.eval('window.omw.state.actorCensus||"[]"'));
   const me = census.find((e) => e.startsWith('player@'));
   if (!me) throw new Error(`actorCensus has no player entry: ${JSON.stringify(census)}`);
   return me.slice('player@'.length);
@@ -83,10 +83,10 @@ export default async function run(ctx) {
   const { peer, epoch } = await holdCell(ctx.serverPort, ctx.serverPassword, cellKey);
   ctx.log(`peer holds ${cellKey} at epoch ${epoch}`);
 
-  await c.waitFor('Number((window.__omwMP||{}).puppetedActors||0) > 0',
+  await c.waitFor('Number(window.omw.state.puppetedActors||0) > 0',
     PUPPET_TIMEOUT, 'the client to puppet the cell NPCs (needs a holder)');
 
-  const probe = JSON.parse(await c.eval('(window.__omwMP||{}).actorProbe||"{}"'));
+  const probe = JSON.parse(await c.eval('window.omw.state.actorProbe||"{}"'));
   const record = Object.keys(probe).find((r) => r !== 'player');
   assert.ok(record, `no NPC to hit in ${cellKey}: ${JSON.stringify(Object.keys(probe))}`);
   ctx.log(`swinging at ${record}`);
@@ -107,7 +107,7 @@ export default async function run(ctx) {
   void (async () => {
     while (Date.now() < swingUntil && !stopArmed
            && peer.inbox.events.filter((e) => e.name === 'CombatHit').length === 0) {
-      await c.eval(`Module.__omwMPCmd='hitn:${record}:7'`);
+      await c.eval(`window.omw.send('hitn:${record}:7')`);
       await ctx.sleep(1500);
     }
   })();
@@ -167,7 +167,7 @@ export default async function run(ctx) {
   void (async () => {
     while (Date.now() < fatUntil
            && peer.inbox.events.filter((e) => e.name === 'CombatHit').length === 0) {
-      await c.eval(`Module.__omwMPCmd='hitnfat:${record}:5'`);
+      await c.eval(`window.omw.send('hitnfat:${record}:5')`);
       await ctx.sleep(1500);
     }
   })();

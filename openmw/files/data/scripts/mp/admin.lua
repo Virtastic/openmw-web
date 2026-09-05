@@ -1,8 +1,7 @@
 -- M8 ops client (GLOBAL context; wired from scripts/mp/global.lua).
--- See server/PROTOCOL.md §M8. Everything here is server->client: the effects of the admin
--- commands another player (or the console) issued. The outbound half is one line —
--- `AdminCommand {cmd, args}` — because the server runs the same registry for the chat
--- slash path and the event path.
+-- See server/PROTOCOL.md §M8. Everything here is server->client: the effects of the
+-- commands an operator issued from the dashboard. There is no outbound half: a client cannot
+-- ask for an operator command, so there is nothing here for it to send.
 --
 -- ConsoleCommand is remote code execution on this machine BY DESIGN (rank 3 only,
 -- operator-disableable, audited server-side). We run it, and we say so in the log: a
@@ -17,29 +16,11 @@ local admin = {}
 -- injected by global.lua: {playerFn, noticeFn, teleportFn, toLocalRecordFn}
 local deps = nil
 
-local lastResult = nil
 local lastConsole = nil
 local lastGive = nil
 local lastTeleport = nil
 
 local handlers = {}
-
--- Always answered, refusals included (§M8): surface it to the player verbatim, one line
--- per line so a multi-line /help is readable.
-handlers.MP_AdminResult = function(data)
-    local text = tostring(data.text or '')
-    lastResult = text
-    mp.testSet('adminResult', text)
-    -- E3: offer the reply to the admin WINDOW first. If the window asked for it, it
-    -- displays it and we do NOT also pop every line as a screen message — opening the menu
-    -- otherwise buries the player under its own /list output, which is what it looked like
-    -- the first time this was screenshotted.
-    local consumed = deps.menuFn and deps.menuFn(text)
-    if consumed then return end
-    for line in (text .. '\n'):gmatch('([^\n]*)\n') do
-        if line ~= '' then deps.noticeFn(line) end
-    end
-end
 
 -- /tp, /tpto: move, then let the normal M1 reporting path tell everyone where we are
 -- (player.lua's cell watcher sends PlayerCellChange; the pose sampler follows).
@@ -47,7 +28,7 @@ handlers.MP_AdminTeleport = function(data)
     if type(data.cellKey) ~= 'string' then return end
     lastTeleport = data.cellKey
     deps.teleportFn({ cellKey = data.cellKey, x = data.x, y = data.y, z = data.z })
-    mp.testSet('adminTeleport', data.cellKey)
+    mp.set('adminTeleport', data.cellKey)
 end
 
 -- /give: add the item and let the M2 inventory diff report it.
@@ -66,14 +47,14 @@ handlers.MP_AdminGive = function(data)
     end
     item:moveInto(types.Actor.inventory(player))
     lastGive = recordId .. 'x' .. count
-    mp.testSet('adminGive', lastGive)
+    mp.set('adminGive', lastGive)
     deps.noticeFn('An admin gave you ' .. count .. 'x ' .. recordId)
 end
 
 handlers.MP_ConsoleCommand = function(data)
     if type(data.script) ~= 'string' or data.script == '' then return end
     lastConsole = data.script
-    mp.testSet('adminConsole', data.script)
+    mp.set('adminConsole', data.script)
     print('[mp] admin console command: ' .. data.script)
     deps.noticeFn('An admin ran a console command on your client')
     -- mp.runConsole is the engine's own console executor (mwmp/luabindings.cpp); there is
@@ -88,13 +69,7 @@ end
 
 admin.handlers = handlers
 
-function admin.send(cmd, args)
-    if type(cmd) ~= 'string' or cmd == '' then return end
-    mp.sendEvent('AdminCommand', { cmd = cmd, args = args or {} })
-end
-
 function admin.reset()
-    lastResult = nil
     lastConsole = nil
     lastGive = nil
     lastTeleport = nil

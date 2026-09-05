@@ -36,8 +36,8 @@ const dismiss = async (client, ctx) => {
 };
 
 /** Publish a destination the way net.switchTo does. */
-const publish = (client) => client.eval(`(function(){ window.__omwMP = window.__omwMP || {};
-  window.__omwMP.switchTo = ${JSON.stringify(DEST)}; })()`);
+const publish = (client) => client.eval(`(function(){ window.omw.state = window.omw.state || {};
+  window.omw.state.switchTo = ${JSON.stringify(DEST)}; })()`);
 
 /** Wait for the failure notice, which is the observable proof that a switch was ATTEMPTED.
  *  Deliberately not the mirror: the mirror only clears on the fixed code, so using it here
@@ -58,7 +58,7 @@ export default async function run(ctx) {
   // every assertion below would pass for the wrong reason.
   assert.equal(String(await a.eval('!!window.__omwMPEnabled')), 'true',
     'the client is not in multiplayer mode, so the world-switch watcher never started');
-  await a.waitFor('!!(window.__omwMP)', STEP, 'the Lua mirror appears');
+  await a.waitFor('!!(window.omw.state)', STEP, 'the Lua mirror appears');
 
   // Confirm the precondition rather than assuming it: if a locker token existed, this would
   // take the ticket branch instead and the scenario would be testing something else.
@@ -74,7 +74,7 @@ export default async function run(ctx) {
   // The mirror must be cleared by the failure. net.switchTo publishes a destination and
   // nothing ever unpublishes it, so a latch cleared over a mirror that still holds the
   // destination re-fires the same doomed switch every 250 ms.
-  const left = String(await a.eval("(window.__omwMP||{}).switchTo || ''"));
+  const left = String(await a.eval("window.omw.state.switchTo || ''"));
   assert.equal(left, '',
     'the failed destination is still sitting in the mirror; whatever clears the dedupe latch '
     + 'will now re-fire this switch several times a second');

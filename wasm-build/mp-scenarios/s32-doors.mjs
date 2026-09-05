@@ -14,24 +14,24 @@ export default async function run(ctx) {
     ctx.launchClient('bot-b'),
   ]);
   // Both spawn at the same point, so "nearest door" resolves to the SAME content ref.
-  await a.waitFor('(window.__omwMP||{}).doorOpen === "false"', STEP_TIMEOUT, 'door mirror live on A');
-  await b.waitFor('(window.__omwMP||{}).doorOpen === "false"', STEP_TIMEOUT, 'door mirror live on B');
+  await a.waitFor('window.omw.state.doorOpen === "false"', STEP_TIMEOUT, 'door mirror live on A');
+  await b.waitFor('window.omw.state.doorOpen === "false"', STEP_TIMEOUT, 'door mirror live on B');
 
   // Open.
-  await a.eval(`Module.__omwMPCmd='door:toggle'`);
-  await a.waitFor('(window.__omwMP||{}).doorOpen === "true"', STEP_TIMEOUT, 'door opens locally on A');
+  await a.eval(`window.omw.send('door:toggle')`);
+  await a.waitFor('window.omw.state.doorOpen === "true"', STEP_TIMEOUT, 'door opens locally on A');
   const t0 = Date.now();
-  await b.waitFor('(window.__omwMP||{}).doorOpen === "true"', STEP_TIMEOUT, 'door opens on B (relay)');
+  await b.waitFor('window.omw.state.doorOpen === "true"', STEP_TIMEOUT, 'door opens on B (relay)');
   ctx.log(`ok: door open relayed in ~${Date.now() - t0}ms`);
 
   // Lock (a locked door in MW auto-closes; lock state is the assert here).
-  await a.eval(`Module.__omwMPCmd='door:lock:50'`);
-  await a.waitFor('(window.__omwMP||{}).doorLocked === "true"', STEP_TIMEOUT, 'door locked on A');
-  await b.waitFor('(window.__omwMP||{}).doorLocked === "true"', STEP_TIMEOUT, 'lock relayed to B');
+  await a.eval(`window.omw.send('door:lock:50')`);
+  await a.waitFor('window.omw.state.doorLocked === "true"', STEP_TIMEOUT, 'door locked on A');
+  await b.waitFor('window.omw.state.doorLocked === "true"', STEP_TIMEOUT, 'lock relayed to B');
 
   // Unlock.
-  await b.eval(`Module.__omwMPCmd='door:unlock'`);
-  await b.waitFor('(window.__omwMP||{}).doorLocked === "false"', STEP_TIMEOUT, 'door unlocked on B');
-  await a.waitFor('(window.__omwMP||{}).doorLocked === "false"', STEP_TIMEOUT, 'unlock relayed to A');
+  await b.eval(`window.omw.send('door:unlock')`);
+  await b.waitFor('window.omw.state.doorLocked === "false"', STEP_TIMEOUT, 'door unlocked on B');
+  await a.waitFor('window.omw.state.doorLocked === "false"', STEP_TIMEOUT, 'unlock relayed to A');
   ctx.log('ok: lock/unlock relayed both directions');
 }

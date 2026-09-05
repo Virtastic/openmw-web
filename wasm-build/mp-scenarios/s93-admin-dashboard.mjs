@@ -67,7 +67,7 @@ export default async function run(ctx) {
     } catch (err) {
       throw new Error(`${err.message}\n--- page showed ---\n${await shown().catch((e) => String(e))}`);
     }
-    const botName = (await bot.eval(`(window.__omwMP||{}).name || ''`)) || '';
+    const botName = (await bot.eval(`window.omw.state.name || ''`)) || '';
     await page.waitFor(`document.body.innerText.includes(${JSON.stringify(ownId)})`, 15_000,
       `the game ${ownId} is listed`);
     const text = await page.eval('document.body.innerText');
@@ -90,7 +90,7 @@ export default async function run(ctx) {
     await page.eval(`document.querySelector('[data-act="kick"]').click(); 'kicked'`);
     await page.waitFor(`!document.querySelector('[data-act="kick"]')`, 20_000,
       'the kicked player left the roster');
-    await bot.waitFor(`(window.__omwMP||{}).state !== "Joined"`, 20_000,
+    await bot.waitFor(`window.omw.state.state !== "Joined"`, 20_000,
       'the bot was actually disconnected');
     ctx.log('ok: kicked through the proxy, and the row went');
 

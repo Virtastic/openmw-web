@@ -20,10 +20,10 @@ local identity = require('scripts.mp.identity')
 local HISTORY_MAX = 8
 
 -- Chat is presented by the HTML overlay (index.html), not MyGUI. This script is the BRIDGE:
--- it keeps a rolling log of recent messages mirrored to JS (window.__omwMP.chatLog + a bumped
+-- it keeps a rolling log of recent messages mirrored to JS (window.omw.state.chatLog + a bumped
 -- chatSeq the overlay polls) and, on the T key, raises an openChat signal the overlay polls.
 -- Outgoing lines come back from the overlay as 'chatx:<channel>:<to>:<text>' commands, parsed
--- in pollHarness. Raw fields are mirrored (channel/from/to/text) so the HTML formats/colours.
+-- in dispatch. Raw fields are mirrored (channel/from/to/text) so the HTML formats/colours.
 local CHAT_LOG_MAX = 50
 local chatHistory = {}
 local chatSeq = 0
@@ -38,10 +38,10 @@ local function pushMessage(data)
     }
     if #chatHistory > CHAT_LOG_MAX then table.remove(chatHistory, 1) end
     chatSeq = chatSeq + 1
-    mp.testSet('chatLog', json.encode(chatHistory))
+    mp.set('chatLog', json.encode(chatHistory))
     -- testSet is (string, string) ONLY — a number here THROWS, and a throwing handler
     -- disables its whole subsystem (this exact line killed chat + T until s99 caught it).
-    mp.testSet('chatSeq', tostring(chatSeq))
+    mp.set('chatSeq', tostring(chatSeq))
     -- lastChatLine keeps its long-standing contract: the FORMATTED line as shown, carrying
     -- the sender's attribution (s03-chat asserts on it). The HTML overlay renders from
     -- chatLog's structured fields instead; this mirror is for the harness and legacy checks.
@@ -54,105 +54,13 @@ local function pushMessage(data)
     else
         line = tostring(data.from or '?') .. ': ' .. tostring(data.text or '')
     end
-    mp.testSet('lastChatLine', line)
+    mp.set('lastChatLine', line)
 end
 
 -- T raises a signal; the HTML overlay owns the input, focus and cursor. No MyGUI window.
 local function toggleChat()
     chatOpenSeq = chatOpenSeq + 1
-    mp.testSet('openChat', tostring(chatOpenSeq)) -- testSet takes strings only
-end
-
--- --- M7: server-pushed GUI (PROTOCOL.md §M7 GuiMessageBox/GuiInputDialog/GuiListBox) ----
--- openmw.ui is PLAYER context, so the global hub routes the body here and the answer goes
--- back out through it. Every dialog is answered exactly once: the server settles a guiId on
--- reply, timeout or disconnect, and a second reply for the same id is dropped there.
-local guiElement = nil
-local guiCurrent = nil -- {guiId=, kind=, items=}
-local guiDraft = ''
-
-local function destroyGui()
-    if guiElement then
-        guiElement:destroy()
-        guiElement = nil
-    end
-    guiCurrent = nil
-    guiDraft = ''
-    I.UI.removeMode('Interface')
-    mp.testSet('gui', '')
-end
-
-local function guiAnswer(data)
-    if not guiCurrent then return end
-    core.sendGlobalEvent('mpGuiReply', { guiId = guiCurrent.guiId, data = data })
-    mp.testSet('guiAnswered', json.encode({ guiId = guiCurrent.guiId, data = data }))
-    destroyGui()
-end
-
-local function guiRow(text, onClick)
-    local row = {
-        template = I.MWUI.templates.textNormal,
-        props = { text = text },
-    }
-    if onClick then
-        row.events = { mouseClick = async:callback(onClick) }
-    end
-    return row
-end
-
-local function showGui(data)
-    destroyGui()
-    guiCurrent = { guiId = data.guiId, kind = data.kind, items = data.items }
-    local rows = {}
-    if data.kind == 'messagebox' then
-        rows[#rows + 1] = guiRow(tostring(data.text or ''))
-        local buttons = data.buttons or {}
-        if #buttons == 0 then buttons = { 'OK' } end
-        for i, label in ipairs(buttons) do
-            rows[#rows + 1] = guiRow('[ ' .. tostring(label) .. ' ]', function()
-                guiAnswer({ button = i - 1, label = tostring(label) }) -- 0-based: plugin convention
-            end)
-        end
-    elseif data.kind == 'input' then
-        rows[#rows + 1] = guiRow(tostring(data.label or ''))
-        rows[#rows + 1] = {
-            template = I.MWUI.templates.textEditLine,
-            props = { text = '', size = util.vector2(400, 0) },
-            events = {
-                textChanged = async:callback(function(text) guiDraft = text end),
-                keyPress = async:callback(function(e)
-                    if e.code == input.KEY.Enter then guiAnswer({ text = guiDraft }) end
-                end),
-            },
-        }
-    elseif data.kind == 'list' then
-        rows[#rows + 1] = guiRow(tostring(data.label or ''))
-        for i, item in ipairs(data.items or {}) do
-            rows[#rows + 1] = guiRow(i .. '. ' .. tostring(item), function()
-                guiAnswer({ index = i - 1, item = tostring(item) })
-            end)
-        end
-    else
-        return
-    end
-    I.UI.setMode('Interface', { windows = {} })
-    guiElement = ui.create {
-        layer = 'Windows',
-        template = I.MWUI.templates.boxSolid,
-        props = { position = util.vector2(200, 200) },
-        content = ui.content {
-            {
-                type = ui.TYPE.Flex,
-                props = { horizontal = false, autoSize = true },
-                content = ui.content(rows),
-            },
-        },
-    }
-    mp.testSet('gui', json.encode({
-        guiId = data.guiId, kind = data.kind,
-        text = data.text or data.label or '',
-        items = data.items or data.buttons or {},
-    }))
+    mp.set('openChat', tostring(chatOpenSeq)) -- testSet takes strings only
 end
 
 -- --- M1: own-pose sampler -> PlayerMove (0x0100) + PlayerCellChange ---------------------
@@ -203,7 +111,7 @@ local function poseFlags()
     -- test stayed green, because the harness drives a synthetic Hit event and had no way to
     -- press a mouse button. Mirroring the stance lets a scenario prove that REAL input reaches
     -- the engine at all: readying a weapon must change this.
-    mp.testSet('stance', stance == types.Actor.STANCE.Weapon and 'weapon'
+    mp.set('stance', stance == types.Actor.STANCE.Weapon and 'weapon'
         or (stance == types.Actor.STANCE.Spell and 'spell' or 'nothing'))
     return flags
 end
@@ -278,8 +186,8 @@ local function onSelfState(e)
     local pos = self.position
     local dx, dy, dz = e.x - pos.x, e.y - pos.y, e.z - pos.z
     local dist = math.sqrt(dx * dx + dy * dy + dz * dz)
-    mp.testSet('selfDivergence', string.format('%.1f', dist))
-    mp.testSet('selfFlags', tostring(e.flags or 0)) -- bit 3 = the avatar is attacking (s67)
+    mp.set('selfDivergence', string.format('%.1f', dist))
+    mp.set('selfFlags', tostring(e.flags or 0)) -- bit 3 = the avatar is attacking (s67)
     if dist < 1 then return end
     if dist > SNAP_DIST then
         local now = core.getRealTime()
@@ -287,7 +195,7 @@ local function onSelfState(e)
             lastSnapAt = now
             print(string.format('[mp] SELF SNAP %.0f units -> (%.0f,%.0f,%.0f) seq=%s',
                 dist, e.x, e.y, e.z, tostring(e.lastInputSeq)))
-            mp.testSet('selfSnap', string.format('%.0f,%.0f,%.0f d=%.0f', e.x, e.y, e.z, dist))
+            mp.set('selfSnap', string.format('%.0f,%.0f,%.0f d=%.0f', e.x, e.y, e.z, dist))
             -- The hard snap rides the same global teleport machinery invites use; a
             -- flapping link cannot strobe the player thanks to the cooldown.
             core.sendGlobalEvent('mpSelfSnap', { x = e.x, y = e.y, z = e.z })
@@ -364,7 +272,7 @@ local function movementTick()
     if now - lastPoseMirror >= POSE_MIRROR_INTERVAL then
         lastPoseMirror = now
         local p = self.position
-        mp.testSet('pose', json.encode({ x = p.x, y = p.y, z = p.z }))
+        mp.set('pose', json.encode({ x = p.x, y = p.y, z = p.z }))
     end
 end
 
@@ -394,7 +302,7 @@ local function barterMirrorTick()
     if now < nextBarterMirror then return end
     nextBarterMirror = now + 0.25
     local okg, g = pcall(function() return types.Actor.getBarterGold(barterTarget) end)
-    if okg and type(g) == 'number' then mp.testSet('barterGold', tostring(math.floor(g))) end
+    if okg and type(g) == 'number' then mp.set('barterGold', tostring(math.floor(g))) end
 end
 
 local function testEquipTick()
@@ -413,8 +321,9 @@ local function testEquipTick()
     end
 end
 
-local function pollHarness()
-    local cmd = mp.testPollCommand()
+-- One command from the page. Everything the overlays and the harness can ask for is a
+-- string matched here; the caller acks each one back to the page (see pollCommands).
+local function dispatch(cmd)
     if type(cmd) == 'string' then
         -- Phase C: 'social:<Op>:<arg>'. The arg is a display NAME for FriendRequest and
         -- BlockAdd (what a player types) and an ACCOUNT KEY for everything else, matching
@@ -439,6 +348,12 @@ local function pollHarness()
             if field then body[field] = sarg
             elseif byName then body.name = sarg
             else body.acct = sarg end
+            -- ReportPlayer carries a reason after the name: 'social:ReportPlayer:<name>:<why>'.
+            -- The name cannot contain ':' (validUsername), the reason may.
+            if sop == 'ReportPlayer' then
+                local n, why = sarg:match('^([^:]*):(.*)$')
+                if n then body.name = n; body.reason = why end
+            end
             core.sendGlobalEvent('mpSocial', body)
         end
 
@@ -473,7 +388,7 @@ local function pollHarness()
             local ok, err = pcall(mp.requestConsole)
             if not ok then print('[mp] console request failed: ' .. tostring(err)) end
             local okOpen, open = pcall(mp.isConsoleOpen)
-            mp.testSet('consoleOpen', okOpen and tostring(open) or ('error:' .. tostring(open)))
+            mp.set('consoleOpen', okOpen and tostring(open) or ('error:' .. tostring(open)))
         end
 
         local joinId = cmd:match('^worldjoin:([%w_-]+)$')
@@ -560,7 +475,7 @@ local function pollHarness()
                 barterTarget = best
                 pcall(function() I.UI.addMode('Barter', { target = best }) end)
             else
-                mp.testSet('barterGold', 'no-npc') -- say so rather than time out silently
+                mp.set('barterGold', 'no-npc') -- say so rather than time out silently
             end
         end
         if cmd == 'barter:close' then
@@ -601,7 +516,7 @@ local function pollHarness()
                 for id in pairs(types.Player.journal(self).topics) do names[#names + 1] = id end
             end)
             table.sort(names)
-            mp.testSet('topics', table.concat(names, ','))
+            mp.set('topics', table.concat(names, ','))
         end
 
         local ui_mode = cmd:match('^uimode:(%a+)$')
@@ -709,7 +624,7 @@ local function pollHarness()
             local ok, n = pcall(function()
                 return types.Actor.inventory(self):countOf(countId)
             end)
-            mp.testSet('count', tostring(ok and n or -1))
+            mp.set('count', tostring(ok and n or -1))
         end
         -- M7/M8 hooks (all resolved in the GLOBAL script).
         local restHours = cmd:match('^rest:([%d.]+)$')
@@ -726,24 +641,6 @@ local function pollHarness()
         if enchName then core.sendGlobalEvent('mpTestEnchanted', { name = enchName }) end
         local weatherIdx = cmd:match('^weather:(%d+)$')
         if weatherIdx then core.sendGlobalEvent('mpTestWeather', { index = tonumber(weatherIdx) }) end
-        local adminCmd = cmd:match('^admin:(.+)$')
-        if adminCmd then
-            local parts = {}
-            for word in adminCmd:gmatch('%S+') do parts[#parts + 1] = word end
-            local name = table.remove(parts, 1)
-            core.sendGlobalEvent('mpTestAdmin', { cmd = name, args = parts })
-        end
-        local guiPick = cmd:match('^guireply:(%d+)$')
-        if guiPick and guiCurrent then
-            local n = tonumber(guiPick)
-            if guiCurrent.kind == 'input' then
-                guiAnswer({ text = 'reply' .. tostring(n) })
-            elseif guiCurrent.kind == 'list' then
-                guiAnswer({ index = n, item = tostring((guiCurrent.items or {})[n + 1] or '') })
-            else
-                guiAnswer({ button = n })
-            end
-        end
         -- M6 quest-layer hooks (all resolved in the GLOBAL script).
         local questId, questStage = cmd:match('^quest:(.+):(%d+)$')
         if questId then
@@ -804,6 +701,22 @@ local function pollHarness()
     end
 end
 
+-- THE PAGE'S COMMANDS, EVERY FRAME, EVERY ONE ACKED. The page queues {id, text}; the engine
+-- hands the whole queue over at once, so a burst never overwrites itself, and each command
+-- is run under pcall and answered with an 'ack' event carrying its id -- a throwing handler
+-- reports itself instead of silently killing every command after it in the same frame.
+local function pollCommands()
+    local raw = mp.pollCommands()
+    if type(raw) ~= 'string' or raw == '' then return end
+    local okDecode, list = pcall(json.decode, raw)
+    if not okDecode or type(list) ~= 'table' then return end
+    for _, c in ipairs(list) do
+        local okRun, err = pcall(dispatch, c.text)
+        if not okRun then print('[mp] command failed: ' .. tostring(c.text) .. ': ' .. tostring(err)) end
+        mp.emit('ack', json.encode({ id = c.id, ok = okRun, detail = okRun and '' or tostring(err) }))
+    end
+end
+
 -- Multiplayer never pauses the LOCAL world when a menu is open. Pausing only your own client
 -- would freeze your view while the server-authoritative sim and every other player keep
 -- moving — and we want one uniform feel in every world, so the pause menu, the
@@ -833,14 +746,14 @@ return {
             -- deliver key events to scripts at all? If it does, input arrives and something
             -- downstream (control switches, GUI mode) is swallowing it; if it does not, the
             -- break is between the browser and SDL.
-            mp.testSet('lastKey', tostring(key.symbol or key.code or '?'))
-            mp.testSet('uiMode', tostring(I.UI.getMode() or 'none'))
+            mp.set('lastKey', tostring(key.symbol or key.code or '?'))
+            mp.set('uiMode', tostring(I.UI.getMode() or 'none'))
             if key.symbol == 't' and not I.UI.getMode() then
                 toggleChat()
             end
         end,
         onFrame = function() -- runs while paused too — the harness must not stall in menus
-            pollHarness()
+            pollCommands()
             walkTick()
             testEquipTick()
             barterMirrorTick()
@@ -877,13 +790,13 @@ return {
                     end
                 end
             end)
-            mp.testSet('selfItemStates', tostring(next(data.itemStates) ~= nil))
+            mp.set('selfItemStates', tostring(next(data.itemStates) ~= nil))
         end,
         MP_SelfStats = function(data)
             if not data or not data.hp then return end
             -- Scenario mirror: proves the PEER-authoritative bars actually flowed (a local
             -- fall would drop hp too; only this marker distinguishes the sources).
-            mp.testSet('selfStats', string.format('%.0f/%.0f', data.hp.c, data.hp.b))
+            mp.set('selfStats', string.format('%.0f/%.0f', data.hp.c, data.hp.b))
             pcall(function()
                 local d = types.Actor.stats.dynamic
                 d.health(self).current = data.hp.c
@@ -908,11 +821,6 @@ return {
             pendingTestEquip = { id = data.id, slot = 0, until_ = core.getRealTime() + 5 }
         end,
         -- M2 respawn: global.lua already teleported us; revive + optionally top up stats.
-        -- M7: a server/plugin dialog. One at a time — a new push replaces the old element,
-        -- and the server settles the abandoned guiId by timeout.
-        MP_Gui = function(data)
-            showGui(data)
-        end,
         MP_DoResurrect = function(data)
             mp.resurrect()
             if data and data.restoreHp then

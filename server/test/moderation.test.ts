@@ -25,35 +25,38 @@ async function boot(t: { after(fn: () => unknown): void }, override?: DeepPartia
   };
   const server = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1', configOverride });
   t.after(() => server.close());
+  current = server;
   return { server, dataDir };
 }
 
 async function join(server: RunningServer, name: string) {
   const c = await TestClient.connect(server.port);
   const w = await c.joinAsNew(name);
+  actorOf.set(c, name.toLowerCase());
   await c.waitEvent('PlayerList');
   await c.waitEvent('ChatMessage', (v) => (v as { channel: string }).channel === 'server'); // motd
   return { c, playerId: w.playerId };
 }
 
-async function slash(c: TestClient, line: string, want: RegExp = /.*/): Promise<string> {
-  c.sendEvent('ChatSend', { text: line });
-  const msg = await c.waitEvent('ChatMessage', (v) => {
-    const m = v as { channel: string; text: string };
-    return m.channel === 'server' && want.test(m.text);
-  });
-  return (msg.value as { text: string }).text;
+// Runs an operator command the way the dashboard does -- straight through the one gate,
+// Admin.exec -- and returns its answer. There is no typed path any more: a "/list" in chat
+// is a chat line. `want` is kept so call sites read as before; the whole reply comes back.
+const actorOf = new WeakMap<TestClient, string>();
+let current: RunningServer;
+async function slash(c: TestClient, line: string, _want: RegExp = /.*/): Promise<string> {
+  const key = actorOf.get(c);
+  const actor = key ? current.roster.activeForAccount(key) : undefined;
+  if (!actor) throw new Error('slash(): the client is not a joined player');
+  const [cmd = '', ...args] = line.replace(/^\//, '').trim().split(/\s+/);
+  return current.admin.exec(actor, cmd.toLowerCase(), args);
 }
 
-// Admin answers are whispered line-by-line: collect exactly `n` of them, in order.
-async function slashLines(c: TestClient, line: string, n: number): Promise<string[]> {
-  c.sendEvent('ChatSend', { text: line });
-  const out: string[] = [];
-  while (out.length < n) {
-    const m = await c.waitEvent('ChatMessage', (v) => (v as { channel: string }).channel === 'server');
-    out.push((m.value as { text: string }).text);
-  }
-  return out;
+// A player reports from the social panel: the ReportPlayer event, answered by SocialResult.
+// Returns the server's detail code ('ok', 'no_reason', 'no_such_player', ...).
+async function fileReport(c: TestClient, name: string, reason: string): Promise<string> {
+  c.sendEvent('ReportPlayer', { name, reason });
+  const r = await c.waitEvent('SocialResult', (v) => (v as { op?: string }).op === 'ReportPlayer');
+  return String((r.value as { detail: string }).detail);
 }
 
 async function say(c: TestClient, text: string): Promise<void> {
@@ -99,7 +102,7 @@ test('chat lines land in the daily file with the documented shape', async (t) =>
   const { server, dataDir } = await boot(t);
   const { c, playerId } = await join(server, 'Talker');
   await say(c, 'hello world');
-  await slash(c, '/list', /Talker/);
+  await say(c, '/list');
   await server.flush(); // drains the chat log's append queue
 
   const lines = readChatLog(dataDir);
@@ -112,10 +115,11 @@ test('chat lines land in the daily file with the documented shape', async (t) =>
   assert.equal(said!.playerId, playerId);
   assert.ok(!Number.isNaN(Date.parse(said!.ts)), 'ts is a parseable timestamp');
 
-  // Slash commands are recorded too (channel 'command') but never broadcast.
+  // There are no slash commands: a line starting with "/" is chat, logged and broadcast
+  // like any other line.
   const cmd = lines.find((l) => l.text === '/list');
   assert.ok(cmd, '/list is in the log');
-  assert.equal(cmd!.channel, 'command');
+  assert.equal(cmd!.channel, 'say');
 
   // Everything recorded is in the one table; there are no per-day files to rotate.
   assert.equal(countChatLines(dataDir), lines.length);
@@ -196,7 +200,7 @@ test('/report writes a well-formed report with context', async (t) => {
   await say(griefer, 'give me your gold or else');
   await say(reporter, 'no');
 
-  assert.match(await slash(reporter, '/report Griefer extortion in chat', /Report filed/), /Report filed against Griefer/);
+  assert.equal(await fileReport(reporter, 'Griefer', 'extortion in chat'), 'ok');
   await server.flush();
 
   const filed = listReports(dataDir);
@@ -216,14 +220,14 @@ test('/report writes a well-formed report with context', async (t) => {
   assert.ok(doc.context.some((l) => l.text === 'no'), 'the reply is attached');
 
   await t.test('bad usage is refused without writing a file', async () => {
-    assert.match(await slash(reporter, '/report', /usage: \/report/), /usage: \/report/);
-    assert.match(await slash(reporter, '/report Griefer', /usage: \/report/), /usage: \/report/);
+    assert.equal(await fileReport(reporter, '', ''), 'no_such_player');
+    assert.equal(await fileReport(reporter, 'Griefer', ''), 'no_reason');
     await server.flush();
     assert.equal(listReports(dataDir).length, 1);
   });
 
   await t.test('an offline target is still reportable', async () => {
-    assert.match(await slash(reporter, '/report Ghost logged off after griefing', /Report filed/), /Report filed/);
+    assert.equal(await fileReport(reporter, 'Ghost', 'logged off after griefing'), 'ok');
     await server.flush();
     const ghost = listReports(dataDir).map((r) => r.doc).find((d) => d.target.name === 'Ghost');
     assert.ok(ghost, 'a report naming an offline player is written');
@@ -244,23 +248,19 @@ test('/reports and /chatlog are rank-gated and work at rank 1', async (t) => {
   const { c: loud } = await join(server, 'Loud');
   await say(loud, 'first offensive thing');
   await say(loud, 'second offensive thing');
-  await slash(mod, '/report Loud being loud', /Report filed/);
+  assert.equal(await fileReport(mod, 'Loud', 'being loud'), 'ok');
 
-  await t.test('rank 0 is refused at both entry points, with the same wording', async () => {
+  await t.test('rank 0 is refused at the gate', async () => {
     assert.match(await slash(mod, '/reports', /requires rank 1/), /requires rank 1/);
     assert.match(await slash(mod, '/chatlog Loud', /requires rank 1/), /requires rank 1/);
-    mod.sendEvent('AdminCommand', { cmd: 'reports', args: [] });
-    assert.match(((await mod.waitEvent('AdminResult')).value as { text: string }).text, /requires rank 1/);
-    mod.sendEvent('AdminCommand', { cmd: 'chatlog', args: ['Loud'] });
-    assert.match(((await mod.waitEvent('AdminResult')).value as { text: string }).text, /requires rank 1/);
   });
 
   await t.test('rank 1 may list reports and read chat', async () => {
     assert.match(await slash(owner, '/setrank Mod 1', /moderator/), /moderator/);
     const listed = await slash(mod, '/reports', /Mod -> Loud/);
     assert.match(listed, /being loud/);
-    // A multi-line admin answer is whispered one ChatMessage per line, so collect them.
-    const chat = await slashLines(mod, '/chatlog Loud 60', 2);
+    // The gate answers the whole reply at once, one line per chat line.
+    const chat = (await slash(mod, '/chatlog Loud 60')).split('\n');
     assert.match(chat[0]!, /\[say\] Loud: first offensive thing/);
     assert.match(chat[1]!, /\[say\] Loud: second offensive thing/);
     // Only the named player's lines come back.
@@ -296,8 +296,8 @@ test('erasure removes chat lines and reports naming the account', async (t) => {
   const { c: b } = await join(server, 'Bystander');
   await say(a, 'something erasable said');
   await say(b, 'something the bystander said');
-  await slash(b, '/report Erasable please remove them', /Report filed/);
-  await slash(a, '/report Bystander a counter-report', /Report filed/);
+  assert.equal(await fileReport(b, 'Erasable', 'please remove them'), 'ok');
+  assert.equal(await fileReport(a, 'Bystander', 'a counter-report'), 'ok');
   a.close(); b.close();
   await a.closed; await b.closed;
   await server.flush();

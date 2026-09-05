@@ -18,9 +18,10 @@ import { buildFrontDoor } from './frontdoor';
 import { gatewayAdminRoutes, platformMaintenance } from './admin';
 import { AdminSessionStore } from '../auth/identities';
 import { VERSION } from '../version';
+import { notifyFromLog } from '../net/admin/notify';
 import { loadConfig } from '../config';
 import { HARNESS_PASSWORD } from '../auth/harness';
-import { log } from '../log';
+import { log, enableFileLog } from '../log';
 import { metrics } from '../metrics';
 
 const { values } = parseArgs({
@@ -56,10 +57,29 @@ const worldsDir = resolve(values.worlds ?? './worlds');
 // Defaults to a sibling of the world dirs, so the common case needs no flag and shared
 // state never lands INSIDE a world dir (where reaping that world could take it away).
 const sharedDir = resolve(values.shared ?? join(worldsDir, '..', 'shared'));
+// LIFECYCLE HISTORY ON DISK, like a game's. world.* and gateway.* events -- a game crashing
+// three times and backing off, a roll halting -- were held only in this process's ring
+// buffer and lost on restart, which is precisely when an operator wants to read them. Same
+// sink, same rotation, same dashboard Logs page.
+enableFileLog(sharedDir);
 // One config drives the gateway and every world it spawns; read it once, here, so the
 // capacity numbers below are derived from it rather than from parallel defaults.
 const config = loadConfig(sharedDir, undefined, sharedDir);
 const port = Number(values.port ?? 8080);
+// ALERTS FROM THIS PROCESS TOO. The notifier was wired only inside a game, so the events
+// that matter most to whoever runs the platform -- world.at_cap, world.crashloop,
+// gateway.rolling_restart_halted, gateway.crash -- could never reach an inbox or a webhook.
+// Same [notifications] config, same events list, same code.
+const unhookNotifier = notifyFromLog(() => ({
+  host: config.notifications.smtpHost,
+  port: config.notifications.smtpPort,
+  user: config.notifications.smtpUser,
+  pass: config.notifications.smtpPass,
+  from: config.notifications.from,
+  to: config.notifications.to,
+  webhookUrl: config.notifications.webhookUrl,
+  events: config.notifications.events,
+}));
 // Default to the sibling server bundle, so a normal `dist/` layout needs no flag.
 const serverEntry = resolve(values['server-entry']
   ?? join(dirname(fileURLToPath(import.meta.url)), 'server.mjs'));
@@ -268,6 +288,7 @@ async function shutdown(signal: string, code = 0): Promise<void> {
   // Directory first: stop accepting new joins before tearing worlds down, so nobody is
   // handed a port that is about to disappear.
   await directory.close();
+  unhookNotifier();
   await frontDoor.close(); // drain the CRM queue; a redeploy is when signups cluster
   worlds.stopAll();
   // The world processes flush their stores on SIGTERM; give them a moment to do it before

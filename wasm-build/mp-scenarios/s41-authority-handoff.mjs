@@ -43,10 +43,10 @@ const BOOT = { retail: true, joinTimeoutMs: 420_000 };
 // so this is generous rather than a guess at scheduling.
 const NO_GRANT_SETTLE_MS = 8_000;
 
-const mirror = (c, key) => c.eval(`(window.__omwMP||{}).${key}`);
+const mirror = (c, key) => c.eval(`window.omw.state.${key}`);
 
 async function cellKeyOf(c) {
-  const census = JSON.parse(await c.eval('(window.__omwMP||{}).actorCensus||"[]"'));
+  const census = JSON.parse(await c.eval('window.omw.state.actorCensus||"[]"'));
   const me = census.find((e) => e.startsWith('player@'));
   if (!me) throw new Error(`actorCensus has no player entry: ${JSON.stringify(census)}`);
   return me.slice('player@'.length);
@@ -93,7 +93,7 @@ export default async function run(ctx) {
   //    lets it puppet the NPCs rather than simulate them.
   const { peer, epoch } = await holdCell(ctx.serverPort, ctx.serverPassword, cellKey);
   ctx.log(`peer holds ${cellKey} at epoch ${epoch}`);
-  await a.waitFor(`(window.__omwMP||{}).authorityHolder !== 'none'`, 30_000,
+  await a.waitFor(`window.omw.state.authorityHolder !== 'none'`, 30_000,
     'the browser to learn the cell has a holder');
   const holder = await mirror(a, 'authorityHolder');
   assert.notEqual(holder, 'none', 'the browser never learned about the peer');

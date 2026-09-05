@@ -546,8 +546,10 @@ test('a banned account is refused through the SSO path', async (t) => {
   // re-checked against the RESOLVED account, not against a client-supplied name.
   const stale = await ssoLogin(h, { sub: 'ban-me' });
   assert.ok(stale.ticket, stale.location);
-  owner.sendEvent('ChatSend', { text: '/ban Troublemaker cheating' });
-  await owner.waitEvent('ChatMessage', (v) => /banned/i.test((v as { text: string }).text));
+  // Through the one gate the dashboard uses; there is no typed command path.
+  const ownerPlayer = h.server.roster.activeForAccount('owner');
+  assert.ok(ownerPlayer, 'the owner is a joined player');
+  assert.match(await h.server.admin.exec(ownerPlayer, 'ban', ['Troublemaker', 'cheating']), /banned/i);
 
   await t.test('an already-minted ticket is refused with BANNED at redemption', async () => {
     await refuseTicket(h, stale.ticket!, 'BANNED');

@@ -19,7 +19,6 @@ local I = require('openmw.interfaces')
 
 
 local json = require('scripts.mp.json')
-local U = require('scripts.mp.ui')
 
 -- `isOpen` is deliberately separate from `element`. Using the element slot itself as the
 -- open flag (element = true) made destroy() call `element:destroy()` on a BOOLEAN, which
@@ -31,6 +30,8 @@ local tab = 'players' -- players | friends | worlds | chars
 
 local roster = {} -- everyone in the world: {id, name}
 local friends = {} -- {acct, name, online, playerId, cellKey}
+local blocked = {} -- {acct, name}: who I have blocked, so the panel can offer unblock
+local muted = {} -- {acct, name}: who I have muted, so the panel can offer unmute
 local requests = {} -- acct -> name (incoming friend requests)
 local invites = {} -- acct -> {name=} (world invites: come stand next to me)
 local presence = 'friends'
@@ -134,438 +135,45 @@ local function send(op, body)
     core.sendGlobalEvent('mpSocial', body)
 end
 
-local function destroy()
-    if element then
-        element:destroy()
-        element = nil
-    end
-end
-
-local function isFriend(acct)
-    for _, f in ipairs(friends) do
-        if f.acct == acct then return true end
-    end
-    return false
-end
-
-local render -- forward declaration: the row builders below re-render on click
-
--- One person, with only the actions that make sense for them. An [add friend] button beside
--- somebody who is already a friend is exactly what makes a UI feel unfinished, so each
--- action is gated on current state rather than always drawn.
-local function personRow(name, opts)
-    opts = opts or {}
-    local label = name
-    if opts.where then label = label .. '  (' .. opts.where .. ')' end
-    if opts.offline then label = label .. '  (offline)' end
-    if opts.leader then label = label .. '  - leader' end
-    -- Where you stand with this person ("Friend", "Request sent"). Without it, a row with no
-    -- add-friend button is indistinguishable from a broken one.
-    if opts.note then label = label .. '  - ' .. opts.note end
-
-    local items = { U.text(label, { grow = 1 }) }
-    for _, a in ipairs(opts.actions or {}) do
-        items[#items + 1] = U.button(a[1], a[2])
-    end
-    return U.row(items)
-end
-
-local function playersTab()
-    local rows = {}
-    local others = 0
-    local shown = 0
-    for _, p in ipairs(roster) do
-        if p.name ~= myName then
-            others = others + 1
-            if shown < MAX_ROWS then
-                shown = shown + 1
-                -- RELATIONSHIP COMES FROM THE SERVER. The roster carries no account key (it is
-                -- the login identifier, and for an SSO account that is a real name), so the
-                -- client used to GUESS it by lowercasing the display name — which has not
-                -- matched a real key since handles were introduced. Every row therefore looked
-                -- like a stranger: "add friend" was offered to people you were already friends
-                -- with, and to people whose request you had already sent.
-                local acct = string.lower(p.name) -- display-only fallback for local checks
-                local actions = {}
-                local lname = string.lower(p.name)
-                -- Once the server says you are friends, any locally remembered request is spent.
-                -- Without this the row would keep claiming 'Request sent' beside 'Friend'.
-                if p.friend then sentFriendReq[lname] = nil end
-                local pending = p.reqOut == true or sentFriendReq[lname] == true
-                if p.friend then
-                    -- Already friends: no add button, and the note below says 'Friend' so the
-                    -- absence is explained rather than looking like a missing feature.
-                elseif p.reqIn then
-                    -- They asked YOU. Answering is the useful action here, not asking back.
-                    actions[#actions + 1] = { 'accept friend', function() send('FriendAccept', { name = p.name }) end }
-                elseif not pending then
-                    actions[#actions + 1] = { 'add friend', function()
-                        send('FriendRequest', { name = p.name })
-                        -- Flip the row NOW rather than waiting for the roster to come back.
-                        sentFriendReq[lname] = true
-                        render()
-                    end }
-                end
-                -- Mute is separate from block: block ends the relationship, mute just
-                -- means "I do not want to hear this person right now". Persistent, so it
-                -- survives a relog.
-                actions[#actions + 1] = { 'mute', function() send('MuteAdd', { name = p.name }) end }
-                -- One click to report. A flow that requires typing a slash command with
-                -- the right syntax is one nobody uses at the moment they need it.
-                actions[#actions + 1] = { 'report', function()
-                    reportTarget = p.name
-                    reportName = p.name
-                    status = 'Type a reason, then press Enter.'
-                    render()
-                end }
-                actions[#actions + 1] = { 'block', function() send('BlockAdd', { name = p.name }) end }
-                -- The row says WHERE you stand, so a missing button is explained rather than
-                -- looking like something is broken.
-                local note = p.friend and 'Friend'
-                    or (pending and 'Request sent')
-                    or (p.reqIn and 'Wants to be friends')
-                    or nil
-                rows[#rows + 1] = personRow(p.name, { actions = actions, note = note })
-            end
-        end
-    end
-    if reportTarget then
-        rows[#rows + 1] = U.interval
-        rows[#rows + 1] = U.text('Report ' .. tostring(reportName) .. ' - what happened?')
-        rows[#rows + 1] = {
-            template = I.MWUI.templates.textEditLine,
-            props = { size = util.vector2(320, 0), text = reportDraft },
-            events = {
-                textChanged = async:callback(function(text) reportDraft = text end),
-                keyPress = async:callback(function(e)
-                    if e.code == input.KEY.Enter and reportDraft ~= '' then
-                        send('ReportPlayer', { name = reportTarget, reason = reportDraft })
-                        status = 'Report sent to the moderators.'
-                        reportTarget, reportName, reportDraft = nil, nil, ''
-                        render()
-                    end
-                end),
-            },
-        }
-        rows[#rows + 1] = U.row {
-            U.button('cancel', function()
-                reportTarget, reportName, reportDraft = nil, nil, ''
-                render()
-            end),
-        }
-    end
-    if others == 0 then
-        rows[#rows + 1] = U.text('Nobody else is online right now.')
-    elseif others > shown then
-        rows[#rows + 1] = U.text('... and ' .. (others - shown) .. ' more online'
-            .. ' (add them by name from the Friends tab)')
-    end
-    return rows
-end
-
-local function friendsTab()
-    local rows = {}
-    if #friends == 0 then
-        rows[#rows + 1] = U.text('No friends yet - add someone from the Players tab.')
-    end
-    for _, f in ipairs(friends) do
-        local actions = {}
-        if f.online then
-            -- Cross-world "go where they are": dial the world they own.
-            actions[#actions + 1] = { 'join', function()
-                send('JoinFriend', { acct = f.acct })
-                status = 'Joining ' .. tostring(f.name) .. '...'
-                render()
-            end }
-            actions[#actions + 1] = { 'invite', function() send('InviteSend', { acct = f.acct }) end }
-        end
-        actions[#actions + 1] = { 'remove', function() send('FriendRemove', { acct = f.acct }) end }
-        rows[#rows + 1] = personRow(f.name, {
-            where = f.online and f.cellKey or nil,
-            offline = not f.online,
-            actions = actions,
-        })
-    end
-
-    for acct, name in pairs(requests) do
-        rows[#rows + 1] = U.row {
-            U.text(name .. ' wants to be friends', { grow = 1 }),
-            U.button('accept', function() send('FriendAccept', { acct = acct }) end),
-            U.button('block', function() send('BlockAdd', { name = name }) end),
-        }
-    end
-
-    rows[#rows + 1] = U.interval
-    rows[#rows + 1] = U.text('Add by name (click the field, type, press Enter)')
-    rows[#rows + 1] = {
-        template = I.MWUI.templates.textEditLine,
-        props = { size = util.vector2(320, 0) },
-        events = {
-            textChanged = async:callback(function(text) draft = text end),
-            keyPress = async:callback(function(e)
-                if e.code == input.KEY.Enter and draft ~= '' then
-                    send('FriendRequest', { name = draft })
-                    draft = ''
-                    render()
-                end
-            end),
-        },
-    }
-
-    -- Invitations (come stand next to me). Rendered here since the Party tab is gone.
-    for acct, inv in pairs(invites) do
-        rows[#rows + 1] = U.row {
-            U.text(inv.name .. ' invited you to join them', { grow = 1 }),
-            U.button('accept', function()
-                send('InviteAccept', { acct = acct })
-                invites[acct] = nil
-                render()
-            end),
-            U.button('dismiss', function()
-                invites[acct] = nil
-                render()
-            end),
-        }
-    end
-    return rows
-end
-
+-- Switching world is a reconnect, not a reload: mp.connect takes any URL, so the engine
+-- keeps running and only the session moves. Accounts are shared across worlds (F1), so
+-- the same login works wherever we land. THE ADDRESS IS COMPUTED ON THE GLOBAL SIDE, by
+-- worldUrlOf, the one place that knows the rule (prefer the gateway PATH on the current
+-- connection's authority; fall back to host:port only when a world publishes them). Used by
+-- the overlay's join (MP_SocialJoinById), so it lives with the bridge, not the dead window.
 local function joinWorld(w)
-    -- Switching world is a reconnect, not a reload: mp.connect takes any URL, so the engine
-    -- keeps running and only the session moves. Accounts are shared across worlds (F1), so
-    -- the same login works wherever we land.
-    -- THE ADDRESS IS COMPUTED ON THE GLOBAL SIDE, by worldUrlOf, which is the one place that
-    -- knows the rule: prefer the gateway PATH on the current connection's scheme and
-    -- authority, and fall back to host:port only when a world publishes them.
-    --
-    -- This used to demand w.host and w.port here and give up with "That world did not say
-    -- where to connect" when they were absent. The directory deliberately strips both from
-    -- everything it serves, so that was ALWAYS absent in production -- the join button on the
-    -- Worlds tab could never work. It was written off in a comment as dead UI; it is not dead,
-    -- line 525 is the button. Sending the fields instead of a URL keeps the rule in one place,
-    -- which is what that comment said it did not want to duplicate.
     joiningWorld = tostring(w.name)
     status = 'Joining ' .. joiningWorld .. '...'
-    render()
-    -- mpJoinWorld, NOT MP_JoinWorld: this repo's convention is `mp*` for player -> global
-    -- (mpSocial, mpOpenUi) and `MP_*` for global -> player. Sending the wrong one is
-    -- silent — sendGlobalEvent for an unhandled name simply does nothing.
+    -- mpJoinWorld, NOT MP_JoinWorld: mp* is player -> global, MP_* is global -> player.
+    -- Sending the wrong one is silent -- an unhandled sendGlobalEvent simply does nothing.
     core.sendGlobalEvent('mpJoinWorld', {
         name = tostring(w.name), id = tostring(w.id or ''),
         wsPath = w.wsPath, host = w.host, port = w.port,
     })
 end
 
-local function worldsTab()
-    local rows = {}
-
-    if worldsError == 'no_gateway' then
-        rows[#rows + 1] = U.text('This is a standalone world.')
-        rows[#rows + 1] = U.text('There is no world directory to browse - which is perfectly')
-        rows[#rows + 1] = U.text('normal for a single server.')
-        return rows
-    end
-    if worldsError ~= '' then
-        rows[#rows + 1] = U.text('Could not reach the world directory.')
-        rows[#rows + 1] = U.row { U.button('try again', function() send('WorldList', {}) end) }
-        return rows
-    end
-    if worlds == nil then
-        -- Never asked yet. Distinct from "asked and there are none".
-        rows[#rows + 1] = U.text('Loading worlds...')
-        return rows
-    end
-    if #worlds == 0 then
-        rows[#rows + 1] = U.text('No worlds are available right now.')
-    end
-
-    for _, w in ipairs(worlds) do
-        local here = myWorldPort ~= nil and w.port == myWorldPort
-        local full = w.maxPlayers > 0 and w.playerCount >= w.maxPlayers
-        local where = string.format('%d', w.playerCount or 0)
-        if (w.maxPlayers or 0) > 0 then where = where .. '/' .. string.format('%d', w.maxPlayers) end
-        where = where .. ' players, ' .. tostring(w.mode)
-        if not w.up then where = where .. ', starting up' end
-
-        local actions = nil
-        if here then
-            -- The world you are standing in is marked, not offered — a "join" that
-            -- reconnects you to where you already are looks like a bug.
-            where = where .. ' - you are here'
-        elseif not w.up then
-            where = where .. ''
-        elseif full then
-            where = where .. ' - full'
-        else
-            actions = { { 'join', function() joinWorld(w) end } }
-        end
-        rows[#rows + 1] = personRow(tostring(w.name), { where = where, actions = actions })
-    end
-
-    rows[#rows + 1] = U.text('')
-    rows[#rows + 1] = U.text('Host your own session:')
-    rows[#rows + 1] = U.row {
-        U.text('Name: '),
-        {
-            template = I.MWUI.templates.textEditLine,
-            props = { size = util.vector2(180, 22), text = worldDraft },
-            events = {
-                textChanged = async:callback(function(text) worldDraft = text end),
-            },
-        },
-        U.button('private', function()
-            if worldDraft ~= '' then send('WorldCreate', { id = worldDraft, mode = 'private' }) end
-        end),
-        U.button('party', function()
-            if worldDraft ~= '' then send('WorldCreate', { id = worldDraft, mode = 'party' }) end
-        end),
-    }
-    rows[#rows + 1] = U.text('A private session is yours alone; a party session is open to your friends.')
-    return rows
-end
-
-local function charsTab()
-    local rows = {}
-    if characters == nil then
-        rows[#rows + 1] = U.text('Loading characters...')
-        return rows
-    end
-    for _, ch in ipairs(characters) do
-        local here = ch.id == activeCharId
-        rows[#rows + 1] = personRow(tostring(ch.name), {
-            where = here and 'playing now' or nil,
-            actions = (not here) and {
-                { 'play', function()
-                    status = 'Switching to ' .. tostring(ch.name) .. '...'
-                    render()
-                    -- A switch is a reconnect with the selection; the world stays put.
-                    core.sendGlobalEvent('mpCharSwitch', { id = ch.id })
-                end },
-            } or nil,
-        })
-    end
-    rows[#rows + 1] = U.interval
-    rows[#rows + 1] = U.text('New character (name, then create):')
-    rows[#rows + 1] = U.row {
-        {
-            template = I.MWUI.templates.textEditLine,
-            props = { size = util.vector2(220, 22), text = charDraft },
-            events = {
-                textChanged = async:callback(function(text) charDraft = text end),
-            },
-        },
-        U.button('create', function()
-            if charDraft ~= '' then
-                core.sendGlobalEvent('mpCharCreate', { name = charDraft })
-                charDraft = ''
-                status = 'Creating character...'
-                render()
-            end
-        end),
-    }
-    rows[#rows + 1] = U.text('Each character has its own story, journal and solo world.')
-    return rows
-end
-
-local function tabBar()
-    local function tabButton(key, label)
-        -- Filled (selected) vs outlined (inactive), like the Options window's tab strip.
-        return U.tab(label, key == tab, function()
-            tab = key
-            -- Ask the directory the first time the Worlds tab is opened, not on every
-            -- render (render runs on every roster/presence event) and not at login (a
-            -- player who never opens it should cost the gateway nothing).
-            if key == 'worlds' and worlds == nil and worldsError == '' then
-                send('WorldList', {})
-            end
-            if key == 'chars' and characters == nil then
-                core.sendGlobalEvent('mpChars', {})
-            end
-            render()
-        end)
-    end
-    return U.row {
-        tabButton('players', 'Players (' .. math.max(0, #roster - 1) .. ')'),
-        tabButton('friends', 'Friends (' .. #friends .. ')'),
-        tabButton('worlds', worlds and ('Worlds (' .. #worlds .. ')') or 'Worlds'),
-        tabButton('chars', characters and ('Characters (' .. #characters .. ')') or 'Characters'),
-    }
-end
-
--- The where-am-I switcher lives at the TOP of the hub: Availability (Online/Offline) and the
--- two where states (Solo / Party). These drive world moves via the global router (mpWhere),
--- which owns net.switchTo and the in-place Solo<->Party flip.
-local function where(mode) core.sendGlobalEvent('mpWhere', { mode = mode }) end
-
-local function switcherHeader()
-    local avail = U.row {
-        U.text('You are:'),
-        U.tab('Online', availability == 'online', function()
-            availability = 'online'; where('online'); status = 'Going online...'; render()
-        end),
-        U.tab('Offline', availability == 'offline', function()
-            availability = 'offline'; where('offline'); status = 'Going offline (solo, hidden)...'; render()
-        end),
-    }
-    local placeItems = {
-        U.text('Play in:'),
-        U.button('Solo', function() where('solo'); status = 'Switching to your solo world...'; render() end),
-        U.button('Party', function() where('party'); status = 'Opening your world to your friends...'; render() end),
-    }
-    local place = U.row(placeItems)
-    return U.column({
-        U.text('Where', { header = true }),
-        avail,
-        place,
-        U.text('Offline drops you into your solo world; Online returns you to where you were.'),
-    }, { spaced = true })
-end
-
-local function presenceBar()
-    local items = { U.text('Visible to:') }
-    for _, mode in ipairs(PRESENCE_MODES) do
-        items[#items + 1] = U.tab(mode, mode == presence, function()
-            send('PresenceMode', { mode = mode })
-        end)
-    end
-    return U.column({
-        U.text('Privacy', { header = true }),
-        U.row(items),
-        U.text(PRESENCE_HELP[presence] or ''),
-    }, { spaced = true })
-end
-
--- Height floor for the content panel so the window keeps one size across every tab, the way
--- the Options window never resizes when you move between Controls and Video.
-local CONTENT_MIN_H = 300
--- Shared inner width so the tab content and the privacy panel line up to the same edges,
--- inside the 720-wide window frame (leaving room for the frame border + padding).
-local PANEL_W = 690
-
-local function closeHub()
-    isOpen = false
-    destroy()
-    I.UI.removeMode('Interface')
-end
+-- The MyGUI window is gone; the overlay renders. Kept as a no-op so the handlers below
+-- read the same as when they redrew a window.
+local render = function() end
 
 -- The Social hub is now presented by the HTML overlay (index.html), not MyGUI. This script
 -- is the BRIDGE: it maintains social state from server events and MIRRORS it to JS via
--- mirror() (window.__omwMP.friends/party/presenceMode/availability/...); the overlay reads
+-- mirror() (window.omw.state.friends/presenceMode/availability/blocked/muted/...); the overlay reads
 -- that and sends ops back as commands (social:/where:/avail:/joinfriend:/...) parsed in
--- player.lua's pollHarness. render() is a deliberate no-op so the old MyGUI window (and its
+-- player.lua's dispatch. render() is a deliberate no-op so the old MyGUI window (and its
 -- tab builders, kept below but never called) never draws. The O key raises an openSocial
 -- signal the overlay polls; the overlay drives the cursor via uimode: commands.
-render = function() end
-
 local function mirror()
-    mp.testSet('friends', json.encode(friends))
-    mp.testSet('presenceMode', presence)
-    mp.testSet('availability', availability)
+    mp.set('friends', json.encode(friends))
+    mp.set('blocked', json.encode(blocked))
+    mp.set('muted', json.encode(muted))
+    mp.set('presenceMode', presence)
+    mp.set('availability', availability)
     local reqs, invs = {}, {}
     for acct, name in pairs(requests) do reqs[#reqs + 1] = { acct = acct, name = name } end
     for acct, inv in pairs(invites) do invs[#invs + 1] = { acct = acct, name = inv.name } end
-    mp.testSet('friendRequests', json.encode(reqs))
-    mp.testSet('invites', json.encode(invs))
+    mp.set('friendRequests', json.encode(reqs))
+    mp.set('invites', json.encode(invs))
 end
 
 -- Raise the openSocial signal the HTML overlay polls. (isOpen/toggle semantics are gone with
@@ -573,7 +181,7 @@ end
 local socialOpenSeq = 0
 local function toggle()
     socialOpenSeq = socialOpenSeq + 1
-    mp.testSet('openSocial', tostring(socialOpenSeq)) -- testSet takes strings only
+    mp.set('openSocial', tostring(socialOpenSeq)) -- testSet takes strings only
 end
 
 -- The Social hub used to also register a settings PAGE under Options -> Scripts (carrying a
@@ -618,6 +226,8 @@ return {
         end,
         MP_FriendList = function(data)
             friends = data.friends or {}
+            blocked = data.blocked or {}
+            muted = data.muted or {}
             -- Drop any pending request from someone who is now a friend. Clearing it only in
             -- the accept handler left the same person listed as BOTH a friend and a pending
             -- request whenever the accept happened another way — from a second session, or
@@ -656,7 +266,7 @@ return {
                     return
                 end
             end
-            mp.testSet('joinError', 'no such world: ' .. want)
+            mp.set('joinError', 'no such world: ' .. want)
         end,
         -- Test-only: the harness has no way to click a tab button.
         MP_SocialTab = function(data)
@@ -692,13 +302,13 @@ return {
             worlds = data.worlds or {}
             worldsError = tostring(data.error or '')
             myWorldPort = data.myPort
-            mp.testSet('worldCount', string.format('%d', #worlds))
+            mp.set('worldCount', string.format('%d', #worlds))
             -- The list itself, so a scenario can assert a SPECIFIC world is present rather
             -- than only counting (s57 reaps and revives one world by id).
             local ids = {}
             for _, w in ipairs(worlds) do ids[#ids + 1] = { id = w.id, up = w.up } end
-            mp.testSet('worlds', json.encode(ids))
-            mp.testSet('worldsError', worldsError)
+            mp.set('worlds', json.encode(ids))
+            mp.set('worldsError', worldsError)
             render()
         end,
         MP_WorldCreate = function(data)
@@ -718,7 +328,7 @@ return {
                 status = human
                 ui.showMessage(human)
             end
-            mp.testSet('worldCreate', json.encode({ ok = data.ok, error = data.error }))
+            mp.set('worldCreate', json.encode({ ok = data.ok, error = data.error }))
             render()
         end,
         MP_PresenceUpdate = function(data)
@@ -783,7 +393,7 @@ return {
                 status = socialText(data.op, data.ok == true, tostring(data.detail or ''))
                 if data.ok ~= true then ui.showMessage(status) end
             end
-            mp.testSet('socialResult', json.encode({ op = data.op, ok = data.ok, detail = data.detail }))
+            mp.set('socialResult', json.encode({ op = data.op, ok = data.ok, detail = data.detail }))
             mirror()
             render()
         end,

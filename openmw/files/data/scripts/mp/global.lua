@@ -3,7 +3,7 @@
 -- session via scripts/mp/net.lua, maintains the player roster and forwards chat to the
 -- player script. M1: owns remote-player puppet lifecycle (spawn/despawn/teleport) and routes
 -- MP_MoveBatch entries to the per-puppet scripts. Mirrors {state, playerId, players, puppets}
--- into window.__omwMP for the harness.
+-- into window.omw.state for the page and the harness.
 local core = require('openmw.core')
 local mp = require('openmw.mp')
 local types = require('openmw.types')
@@ -60,7 +60,7 @@ local function chargenTick()
         local ok, v = pcall(function() return world.mwscript.getGlobalVariables()['chargenstate'] end)
         if ok and v == -1 then
             chargenDone = true
-            mp.testSet('chargenDone', '1')
+            mp.set('chargenDone', '1')
             -- Tell the PLAYER script too, not just the server. identity.lua holds the persistent
             -- halves of the sync (attributes, skills, level, spellbook, inventory) and keeps them
             -- silent until it knows what this character is -- otherwise it broadcasts the raw
@@ -101,18 +101,18 @@ local announcedConnect = false
 local worldMode = 'solo'
 
 local function mirrorRoster()
-    mp.testSet('players', json.encode(roster))
+    mp.set('players', json.encode(roster))
     -- WHO WE ARE, by id. The UI used to filter itself out of the Players list by comparing
     -- the roster name against the character name it was booted with — and those are two
     -- different strings now that the roster carries USERNAMES, so players saw themselves
     -- with add-friend/party/mute/block buttons. The connection id is the only identity both
     -- sides agree on.
-    mp.testSet('selfId', tostring(net.playerId or ''))
+    mp.set('selfId', tostring(net.playerId or ''))
     -- WHICH WORLD WE ARE ACTUALLY IN. The switcher used to render from a localStorage value
     -- of what the player last CLICKED, which survives reloads and reconnects — so after a
     -- redial to your own world the panel still read "Public" and the whole UI lied about
     -- where you were. The dialled target is the truth; publish it.
-    mp.testSet('whereNow', worldMode == 'party' and 'party' or 'solo')
+    mp.set('whereNow', worldMode == 'party' and 'party' or 'solo')
     -- The social hub lists everyone currently playing, and the roster lives here. Forwarded
     -- rather than duplicated so there is one source of truth for who is online.
     local player = world.players[1]
@@ -259,9 +259,6 @@ local FAIL_TEXT = {
 }
 
 local wasJoined = false
--- Admin replies the WINDOW is waiting for (see menuFn). Chat-issued /slash commands leave
--- this at zero and keep their screen notices.
-local adminUiPending = 0
 
 -- --- M1: remote-player puppets ---------------------------------------------------------
 -- Server rule mirrored client-side: a remote player is visible when in the same cell, or an
@@ -416,7 +413,7 @@ local function pushEquipmentToPuppet(id)
                     -- must never wield a stand-in -- a placeholder weapon computes the wrong
                     -- damage. Fail loud, leave the slot empty.
                     print('[mp] AVATAR EQUIP UNRESOLVABLE for #' .. tostring(id) .. ': ' .. tostring(recordId))
-                    mp.testSet('avatarUnresolvable', tostring(recordId))
+                    mp.set('avatarUnresolvable', tostring(recordId))
                     grantId = nil
                 else
                     grantId = placeholderItemId() -- client puppet: a visible stand-in is fine
@@ -526,7 +523,7 @@ local function applyAvatarDoc(id)
                     -- stand-in; an authoritative avatar must not — a placeholder weapon
                     -- computes the wrong damage. Loud, and the item is simply absent.
                     print('[mp] AVATAR ITEM UNRESOLVABLE for #' .. tostring(id) .. ': ' .. tostring(entry.id))
-                    mp.testSet('avatarUnresolvable', tostring(entry.id))
+                    mp.set('avatarUnresolvable', tostring(entry.id))
                 end
             end
         end
@@ -590,7 +587,7 @@ local function applyAvatarDoc(id)
         for _, sid in ipairs(drop) do pcall(function() spells:remove(sid) end) end
     end)
     end
-    mp.testSet('avatarApplied', tostring(id))
+    mp.set('avatarApplied', tostring(id))
 end
 
 -- Phase 3 (peer only): stream the authoritative avatar poses back. mp.sendAvatarMoveBatch
@@ -865,7 +862,7 @@ local function mirrorPuppets()
                 name = rec and rec.name or p.name, eq = eq }
         end
     end
-    mp.testSet('puppets', json.encode(m))
+    mp.set('puppets', json.encode(m))
 end
 
 -- --- M2: rejoin restore orchestration ----------------------------------------------------
@@ -917,8 +914,8 @@ local function mirrorDoor(now)
     lastDoorMirror = now
     local door = nearestDoor()
     if door then
-        mp.testSet('doorOpen', tostring(not types.Door.isClosed(door)))
-        mp.testSet('doorLocked', tostring(types.Lockable.isLocked(door)))
+        mp.set('doorOpen', tostring(not types.Door.isClosed(door)))
+        mp.set('doorLocked', tostring(types.Lockable.isLocked(door)))
     end
 end
 
@@ -972,7 +969,7 @@ end
 
 local function restoreTick()
     if not pendingRestore then return end
-    mp.testSet('restoreFired', '1')
+    mp.set('restoreFired', '1')
     local player = playerScript()
     if not player then return end
     local record = pendingRestore
@@ -1043,7 +1040,7 @@ local function restoreTick()
     end
     if restored > 0 then print('[mp] restored state on ' .. tostring(restored) .. ' item(s)') end
 
-    mp.testSet('restorePos', record.position and json.encode(record.position) or 'none')
+    mp.set('restorePos', record.position and json.encode(record.position) or 'none')
     if record.position then
         teleportPlayerTo(record.position)
         restoreTarget = {
@@ -1215,15 +1212,6 @@ local function start()
         noticeFn = notice,
         teleportFn = teleportPlayerTo,
         toLocalRecordFn = worldmp.toLocal,
-        -- Claims a reply only when the WINDOW issued the request. Replies are 1:1 and
-        -- ordered per connection, so a simple outstanding count correlates them without a
-        -- request id — and a /slash command typed in chat still notices normally.
-        menuFn = function(text)
-            if adminUiPending <= 0 then return false end
-            adminUiPending = adminUiPending - 1
-            toPlayer('MP_AdminMenuResult', { text = text })
-            return true
-        end,
     })
     net.onStateChanged = function(state)
         print('[mp] session state: ' .. state)
@@ -1258,20 +1246,20 @@ local function start()
         elseif state == 'Failed' then
             local why = FAIL_TEXT[net.lastError] or net.lastError or 'connection failed'
             local detail = net.lastErrorDetail
-            mp.testSet('netfail', why .. (detail and detail ~= '' and (' (' .. detail .. ')') or ''))
+            mp.set('netfail', why .. (detail and detail ~= '' and (' (' .. detail .. ')') or ''))
         end
         -- CONNECTION STATE IS A MODAL, NOT CHAT. A drop repeats every backoff tick, so
         -- narrating it in the chat log buried the actual conversation under a wall of
         -- identical lines while the player stood in a world that was no longer live. The
         -- UI mirrors this and puts one overlay up, held until we rejoin or give up.
-        mp.testSet('netstate', state)
+        mp.set('netstate', state)
         if state ~= 'Joined' then
             -- The NEXT world has its own peer, which has to come up before it holds anything.
             -- Leaving this at '1' from the world we just left meant a switch never waited:
             -- the loading screen saw a stale "ready", cleared, and dropped the player into an
             -- unsimulated world to rubber-band exactly as they did on a first join. The new
             -- world's own SimReady answers this on arrival.
-            mp.testSet('simReady', '0')
+            mp.set('simReady', '0')
             roster = {}
             mirrorRoster()
             despawnAllPuppets()
@@ -1311,7 +1299,7 @@ local eventHandlers = {
     -- is InviteAccepted, which is an ACTION (a teleport) and therefore has to happen in the
     -- global context where teleport is available.
     MP_FriendList = function(data)
-        mp.testSet('friends', json.encode(data.friends or {}))
+        mp.set('friends', json.encode(data.friends or {}))
         toPlayer('MP_FriendList', data)
     end,
     -- F3 world browser. Inbound server events land in the GLOBAL context and reach the
@@ -1497,7 +1485,7 @@ local eventHandlers = {
     -- that window means the peer arrives, takes the cell and corrects them, which is the
     -- rubber-banding. Holding the screen is what makes the correction unobservable.
     MP_SimReady = function(data)
-        mp.testSet('simReady', (data and data.ready) and '1' or '0')
+        mp.set('simReady', (data and data.ready) and '1' or '0')
     end,
 
     MP_WorldMode = function(data)
@@ -1517,13 +1505,13 @@ local eventHandlers = {
     MP_WorldClosed = function(data)
         toPlayer('MP_WorldClosed', data)
         -- Mirrored so the HTML overlay can say WHY the world just changed under the player.
-        mp.testSet('worldClosedBy', tostring(data.by or ''))
-        mp.testSet('worldClosed', tostring(data.reason or 'closed'))
+        mp.set('worldClosedBy', tostring(data.by or ''))
+        mp.set('worldClosed', tostring(data.reason or 'closed'))
         -- A SEQUENCE, not the value. The reason is a constant ('owner_went_solo'), so the UI
         -- deduping on the value alone silently swallowed the second and every later kick in a
         -- session: the player was redialed with nothing on screen explaining why.
         noticeSeq = noticeSeq + 1
-        mp.testSet('noticeSeq', tostring(noticeSeq))
+        mp.set('noticeSeq', tostring(noticeSeq))
         if worldUrls.own and net.currentTarget() ~= worldUrls.own then
             net.switchTo(worldUrls.own)
         end
@@ -1549,7 +1537,7 @@ local eventHandlers = {
             print('[mp] invite teleport failed: ' .. tostring(err))
             notice('Could not travel to them just now.')
         end
-        mp.testSet('invitedTo', tostring(data.cellKey))
+        mp.set('invitedTo', tostring(data.cellKey))
     end,
 
     -- "Join a friend": the server resolved their world and told us where to dial. An
@@ -1559,13 +1547,13 @@ local eventHandlers = {
         if not data or data.ok ~= true then return end
         local url = worldUrlOf(data)
         if not url then return end
-        mp.testSet('joinFriendTo', tostring(data.worldId or ''))
+        mp.set('joinFriendTo', tostring(data.worldId or ''))
         if url == net.currentTarget() then return end
         net.switchTo(url)
     end,
 
     MP_ChatMessage = function(data)
-        mp.testSet('lastChat', json.encode(data))
+        mp.set('lastChat', json.encode(data))
         toPlayer('MP_UiChatMessage', data)
     end,
 
@@ -1710,13 +1698,13 @@ local eventHandlers = {
         -- Mirrored so a capacity run can prove puppets really ARE being degraded. Without
         -- it, a "tiered" run that silently classified every avatar as near would report a
         -- free performance win that is actually just the old behaviour.
-        mp.testSet('puppetTiers', json.encode(tierSeen))
+        mp.set('puppetTiers', json.encode(tierSeen))
         -- How many pose entries this client has ROUTED to puppets. Kept because the
         -- `puppets` mirror reads the puppet OBJECT's position, so on its own it cannot tell
         -- "the batch never arrived" from "it arrived and the puppet did not act on it" --
         -- the two have completely different causes and looked identical for a long time.
         moveRx = moveRx + count
-        mp.testSet('moveRx', tostring(moveRx))
+        mp.set('moveRx', tostring(moveRx))
         -- Cleared in place: `tierSeen = {}` allocated a fresh table 15x/second, and this
         -- module already goes out of its way to avoid per-tick garbage.
         tierSeen.near, tierSeen.mid, tierSeen.far = nil, nil, nil
@@ -1988,7 +1976,7 @@ local eventHandlers = {
         end
         if not victim then
             print('[mp] mpTestCastAt: no victim for ' .. tostring(data.record))
-            mp.testSet('castAt', 'no-victim')
+            mp.set('castAt', 'no-victim')
             return
         end
         -- A SPELL THE OWNER ALSO HAS. Creating a record here would make a DYNAMIC spell that
@@ -2012,7 +2000,7 @@ local eventHandlers = {
             end)
             if not okFind or not testCastSpellId then
                 print('[mp] mpTestCastAt: no harmful spell in this content')
-                mp.testSet('castAt', 'no-harmful-spell')
+                mp.set('castAt', 'no-harmful-spell')
                 return
             end
         end
@@ -2024,9 +2012,9 @@ local eventHandlers = {
         end)
         if not okAdd then
             print('[mp] mpTestCastAt failed: ' .. tostring(err))
-            mp.testSet('castAt', 'add-failed:' .. tostring(err))
+            mp.set('castAt', 'add-failed:' .. tostring(err))
         else
-            mp.testSet('castAt', 'cast:' .. tostring(testCastSpellId))
+            mp.set('castAt', 'cast:' .. tostring(testCastSpellId))
         end
     end,
 
@@ -2119,7 +2107,7 @@ local eventHandlers = {
         net.setCharacter(id)
         -- The reboot reuses the boot fragment, and net state dies with the Lua VM — so the
         -- chosen slot must ride the mirror or the reload boots the OLD character.
-        mp.testSet('switchChar', id)
+        mp.set('switchChar', id)
         net.switchTo(net.currentTarget())
     end,
     mpCharCreate = function(data)
@@ -2307,29 +2295,15 @@ local eventHandlers = {
         end
         mp.sendEvent('PlayerSpellbook', { add = mapped(data.add), remove = mapped(data.remove) })
     end,
-    mpGuiReply = function(data)
-        worldmp.sendGuiReply(data.guiId, data.data)
-    end,
     mpTestRest = function(data) worldmp.testRest(data.hours) end,
     mpTestRecord = function(data) worldmp.testCreateRecord(data.name, data.noRegister) end,
     mpTestSpell = function(data) worldmp.testCreateSpell(data.name) end,
     mpTestEnchanted = function(data) worldmp.testCreateEnchanted(data.name) end,
     mpTestWeather = function(data) worldmp.testWeather(data.index) end,
-    mpTestAdmin = function(data) admin.send(data.cmd, data.args) end,
-    -- E3: the admin window's uplink. Same registry, same rank gate, same audit trail as
-    -- the /slash path — a second route to these actions would be a second place for the
-    -- permission check to be wrong.
-    mpAdminCommand = function(data)
-        if type(data.cmd) == 'string' and data.cmd ~= '' then
-            adminUiPending = adminUiPending + 1
-            admin.send(data.cmd, data.args or {})
-        end
-    end,
-    -- Test-only window openers. The harness cannot drive SDL keys (PLAYTEST.md 9), so
-    -- without these no automated check of the UI is possible at all.
+    -- Test-only opener for the social overlay's signal. The harness cannot drive SDL keys
+    -- (PLAYTEST.md 9), so without this no automated check of the panel is possible at all.
     mpOpenUi = function(data)
-        if data.which == 'admin' then toPlayer('MP_AdminUiOpen', {})
-        elseif data.which == 'social' then toPlayer('MP_SocialUiOpen', {}) end
+        if data.which == 'social' then toPlayer('MP_SocialUiOpen', {}) end
     end,
 
     -- --- M6: quest-layer bridges + test hooks -------------------------------------------
@@ -2395,7 +2369,7 @@ eventHandlers.mpCombatSpellHit = combat.onPuppetSpellHit
 local baseOpResult = eventHandlers.MP_ContainerOpResult
 eventHandlers.MP_ContainerOpResult = function(data)
     if data.opId == lastChestOpId then
-        mp.testSet('chestOp', json.encode({ ok = data.ok == true, reason = data.reason }))
+        mp.set('chestOp', json.encode({ ok = data.ok == true, reason = data.reason }))
     end
     baseOpResult(data)
 end
@@ -2453,7 +2427,7 @@ local function signalCellLoad()
     lastCellLoadAt = now
     lastCellLoadCell = cur
     cellLoadSeq = cellLoadSeq + 1
-    mp.testSet('cellLoad', tostring(cellLoadSeq))
+    mp.set('cellLoad', tostring(cellLoadSeq))
 end
 I.Activation.addHandlerForType(types.Door, function(door, actor)
     if actor ~= world.players[1] then return end

@@ -204,7 +204,7 @@ local function diffGlobals()
             sent = sent + 1
         end
     end
-    if #globalQueue > 0 then mp.testSet('globalBacklog', tostring(#globalQueue)) end
+    if #globalQueue > 0 then mp.set('globalBacklog', tostring(#globalQueue)) end
 end
 
 -- E5 (MP): the engine now REPORTS MWScript global writes (_onGlobalVariableChanged in
@@ -427,7 +427,7 @@ end
 
 local function mirrorLock(state)
     lastLockMirror = state
-    mp.testSet('dialogueLock', json.encode(state))
+    mp.set('dialogueLock', json.encode(state))
 end
 
 local function requestLock(obj)
@@ -704,20 +704,20 @@ end
 local function mirror()
     local j = {}
     for id, idx in pairs(journal) do j[id] = idx end
-    mp.testSet('journal', json.encode(j))
+    mp.set('journal', json.encode(j))
     -- WHAT THIS CLIENT APPLIED BECAUSE SOMEONE ELSE LEARNED IT. The receiving half of topic
     -- sync has no other outward signal at all: addTopic leaves nothing a script can read back,
     -- so "B got the topic" was previously unassertable and the whole feature went unproven.
     -- Published on the ordinary mirror beat rather than at apply time, so a burst of topics
     -- costs one message rather than one each.
-    mp.testSet('topicsApplied', json.encode(appliedTopics))
+    mp.set('topicsApplied', json.encode(appliedTopics))
     -- Whose campaign is on screen. Mirrored so a visit can be OBSERVED end to end rather
     -- than inferred: the stash is engine-side state with no other outward signal.
     local pl = playerObj()
-    mp.testSet('journalStashed',
+    mp.set('journalStashed',
         tostring(pl ~= nil and types.Player.isJournalStashed(pl) == true))
-    mp.testSet('journalSynced', tostring(journalSynced))
-    mp.testSet('journalSent', string.format('%.0f', journalSent))
+    mp.set('journalSynced', tostring(journalSynced))
+    mp.set('journalSent', string.format('%.0f', journalSent))
     -- The ENGINE's own journal (types.Player.quests pairs over MWBase::Journal), not our
     -- cache: scenarios assert the real game state, and the two disagreeing is a bug.
     local engineJournal = {}
@@ -730,15 +730,15 @@ local function mirror()
         end)
         if not okj then engineJournal = {} end
     end
-    mp.testSet('journalEngine', json.encode(engineJournal))
+    mp.set('journalEngine', json.encode(engineJournal))
     local g = {}
     for name, value in pairs(globals) do g[name] = value end
-    mp.testSet('globalVars', json.encode(g))
+    mp.set('globalVars', json.encode(g))
     local f = {}
     for id, fp in pairs(factions) do f[id] = fp end
-    mp.testSet('factions', json.encode(f))
-    mp.testSet('bounty', bounty and string.format('%.0f', bounty) or '')
-    if lastLockMirror == nil then mp.testSet('dialogueLock', '') end
+    mp.set('factions', json.encode(f))
+    mp.set('bounty', bounty and string.format('%.0f', bounty) or '')
+    if lastLockMirror == nil then mp.set('dialogueLock', '') end
     -- NPC records in our own cell, sorted: gives the scenarios a deterministic, shared
     -- target to lock (world.activeActors order differs per client).
     local player = playerObj()
@@ -757,8 +757,8 @@ local function mirror()
             table.sort(names)
         end
     end
-    mp.testSet('cellNpcs', json.encode(names))
-    mp.testSet('memberVars', json.encode(memberApplied))
+    mp.set('cellNpcs', json.encode(names))
+    mp.set('memberVars', json.encode(memberApplied))
     -- Scripted content objects in our cell (recordId -> first local var name), so a
     -- scenario can pick a MemberVarUpdate target that exists on BOTH clients. Walking
     -- every object in an exterior cell is not free: refresh it on a slow timer.
@@ -782,7 +782,7 @@ local function mirror()
         end
         scriptedCache = scripted
     end
-    mp.testSet('cellScripted', json.encode(scripted))
+    mp.set('cellScripted', json.encode(scripted))
 end
 
 function quests.tick(now)

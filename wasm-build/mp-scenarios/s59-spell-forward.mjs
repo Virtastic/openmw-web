@@ -39,7 +39,7 @@ enforce = "off"
 
 const STEP_TIMEOUT = 25_000;
 const BOOT = { retail: true, joinTimeoutMs: 420_000 };
-const probeOf = async (c) => JSON.parse(await c.eval('(window.__omwMP||{}).actorProbe||"{}"'));
+const probeOf = async (c) => JSON.parse(await c.eval('window.omw.state.actorProbe||"{}"'));
 
 export default async function run(ctx) {
   if (!existsSync(join(ROOT, 'play', 'mwdata', 'Morrowind.esm'))) {
@@ -59,13 +59,13 @@ export default async function run(ctx) {
     ctx.launchClient('watcher', '', BOOT),
   ]);
   for (const c of [a, b]) {
-    await c.waitFor('Number((window.__omwMP||{}).actorCount||0) > 0', STEP_TIMEOUT, `${c.name} sees actors`);
+    await c.waitFor('Number(window.omw.state.actorCount||0) > 0', STEP_TIMEOUT, `${c.name} sees actors`);
   }
 
   let owner = 'none';
   const deadline = Date.now() + Number(process.env.S59_PEER_TIMEOUT ?? 300_000);
   while (Date.now() < deadline) {
-    owner = await a.eval('(window.__omwMP||{}).authorityHolder');
+    owner = await a.eval('window.omw.state.authorityHolder');
     if (owner && owner !== 'none') break;
     await ctx.sleep(500);
   }
@@ -73,7 +73,7 @@ export default async function run(ctx) {
   ctx.log(`cell owner=${owner}; the caster does not own the target`);
 
   for (const c of [a, b]) {
-    await c.waitFor('Number((window.__omwMP||{}).puppetedActors||0) > 0', STEP_TIMEOUT,
+    await c.waitFor('Number(window.omw.state.puppetedActors||0) > 0', STEP_TIMEOUT,
       `${c.name} puppeted the cell actors`);
   }
 
@@ -92,14 +92,14 @@ export default async function run(ctx) {
   // the peer that owns it. If that chain is broken the NPC simply never dies, which is exactly
   // what "casting does nothing" looked like in play.
   const anyDead = async (c) => {
-    const p = JSON.parse(await c.eval('(window.__omwMP||{}).actorProbe||"{}"'));
+    const p = JSON.parse(await c.eval('window.omw.state.actorProbe||"{}"'));
     return victims.find((r) => p[r] && p[r].dead === true) ?? null;
   };
   const castDeadline = Date.now() + 120_000;
   let died = null;
   while (Date.now() < castDeadline && !died) {
     for (const v of victims) {
-      await a.eval(`Module.__omwMPCmd=${JSON.stringify('castat:' + v + ':40')}`);
+      await a.eval(`window.omw.send(${JSON.stringify('castat:' + v + ':40')})`);
       await ctx.sleep(350);
     }
     died = (await anyDead(a)) ?? (await anyDead(b));
@@ -109,10 +109,10 @@ export default async function run(ctx) {
     // Where did the chain stop? Each stage mirrors its own outcome, so one run says which.
     for (const c of [a, b]) {
       const [castAt, mark, fwd, sf] = await Promise.all([
-        c.eval('(window.__omwMP||{}).castAt'),
-        c.eval('(window.__omwMP||{}).puppetMark'),
-        c.eval('(window.__omwMP||{}).magicFwd'),
-        c.eval('(window.__omwMP||{}).spellFwd'),
+        c.eval('window.omw.state.castAt'),
+        c.eval('window.omw.state.puppetMark'),
+        c.eval('window.omw.state.magicFwd'),
+        c.eval('window.omw.state.spellFwd'),
       ]);
       ctx.log(`  ${c.name}: castAt=${castAt} puppetMark=${mark} magicFwd=${fwd} spellFwd=${sf}`);
     }
@@ -123,7 +123,7 @@ export default async function run(ctx) {
   ctx.log(`ok: "${victim}" died from spell damage routed through the cell owner`);
 
   // Authored by the peer, so it must reach BOTH players — not just the caster.
-  const deadExpr = `((JSON.parse((window.__omwMP||{}).actorProbe||"{}")[${JSON.stringify(victim)}]||{}).dead === true)`;
+  const deadExpr = `((JSON.parse(window.omw.state.actorProbe||"{}")[${JSON.stringify(victim)}]||{}).dead === true)`;
   await a.waitFor(deadExpr, STEP_TIMEOUT, 'NPC dead on the caster');
   await b.waitFor(deadExpr, STEP_TIMEOUT, 'NPC dead on the watcher');
   ctx.log('ok: both players saw the spell kill');

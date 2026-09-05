@@ -102,7 +102,7 @@ end
 -- rules as onPuppetHit: a player victim needs PvP on, an actor victim is addressed by cell.
 -- The server has always implemented CombatSpellHit; until now no client ever sent one.
 function combat.onPuppetSpellHit(data)
-    local function note(why) pcall(function() mp.testSet('spellFwd', why) end) end
+    local function note(why) pcall(function() mp.set('spellFwd', why) end) end
     local effects = data.effects or {}
     if #effects == 0 then note('no-effects') return end
     local target
@@ -202,7 +202,7 @@ combat.handlers.MP_CombatHit = function(data)
     -- LSER numbers arrive as doubles, so tostring() would render "40.0" — format as an
     -- integer so scenarios can compare against the value they sent.
     lastHitTaken = { health = (info.damage or {}).health or 0, by = data.attackerId }
-    mp.testSet('lastHitTaken', string.format('%.0f', lastHitTaken.health))
+    mp.set('lastHitTaken', string.format('%.0f', lastHitTaken.health))
 end
 
 combat.handlers.MP_CombatSpellHit = function(data)

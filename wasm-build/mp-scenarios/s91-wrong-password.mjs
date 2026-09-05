@@ -14,11 +14,11 @@ export default async function run(ctx) {
   // Same account, wrong password, no auto-login.
   const imp = await ctx.launchClient('bot-w-imp', `&name=${encodeURIComponent(account)}&pass=wrong-password`, {
     noAuto: true,
-    waitExpr: '(window.__omwMP||{}).state === "Failed"',
-    waitWhat: '__omwMP.state === Failed (wrong password)',
+    waitExpr: 'window.omw.state.state === "Failed"',
+    waitWhat: 'omw.state.state === Failed (wrong password)',
   });
 
-  const lastError = await imp.eval('(window.__omwMP||{}).lastError || ""');
+  const lastError = await imp.eval('window.omw.state.lastError || ""');
   ctx.log('lastError:', JSON.stringify(lastError));
   assert.match(lastError, /AUTH_FAILED/, 'wrong password must surface AUTH_FAILED');
 

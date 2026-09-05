@@ -1,4 +1,40 @@
-<!doctype html><html lang="en"><head><!-- Copyright (C) 2025-2026 Virtastic - https://virtastic.app | SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web --><meta charset="utf-8"><title>OpenMW-Web</title><script>/* Lock the tab title: the engine calls SDL_SetWindowTitle (document.title=...) on boot; shadow the property so those writes are ignored and the tab always reads OpenMW-Web. */(function(){var LOCK="OpenMW-Web";try{Object.defineProperty(document,"title",{configurable:true,get:function(){return LOCK},set:function(){}});}catch(e){}try{var t=document.getElementsByTagName("title")[0];if(t)t.textContent=LOCK;}catch(e){}})();</script>
+<!doctype html><html lang="en"><head><!-- Copyright (C) 2025-2026 Virtastic - https://virtastic.app | SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web --><meta charset="utf-8"><title>OpenMW-Web</title><script>
+// THE PAGE<->GAME BRIDGE, defined before any other script so nothing has to guard against it
+// being absent: the overlays, the cell-load watch and the error modal all read it.
+// THE PAGE<->GAME BRIDGE. window.omw.state is what Lua mirrors (mp.set); the page
+// polls it and renders. window.omw.send(text) queues a command for Lua, which
+// drains the whole queue each frame (mp.pollCommands) and acks every entry
+// (mp.emit('ack')) -- the promise resolves {id, ok, detail}. window.omw.on(name,
+// fn) hears any event Lua emits. Defined before the engine loads, so nothing
+// has to guard against it being absent.
+window.omw = (function(){
+  var state = { state: 'boot' };
+  var queue = [];      // {id, text}, taken whole by the engine each frame
+  var pending = {};    // id -> {resolve, timer}
+  var listeners = {};
+  var nextId = 1;
+  function send(text, timeoutMs){
+    var id = nextId++;
+    queue.push({ id: id, text: String(text) });
+    return new Promise(function(resolve){
+      var t = setTimeout(function(){
+        delete pending[id];
+        resolve({ id: id, ok: false, detail: 'timeout' });
+      }, timeoutMs || 20000);
+      pending[id] = { resolve: resolve, timer: t };
+    });
+  }
+  function emit(name, payload){
+    if (name === 'ack' && payload && pending[payload.id]){
+      var p = pending[payload.id]; clearTimeout(p.timer); delete pending[payload.id]; p.resolve(payload);
+    }
+    (listeners[name] || []).forEach(function(fn){ try { fn(payload); } catch (e) {} });
+  }
+  function on(name, fn){ (listeners[name] = listeners[name] || []).push(fn); }
+  return { state: state, queue: queue, send: send, emit: emit, on: on, pending: pending };
+})();
+</script>
+<script>/* Lock the tab title: the engine calls SDL_SetWindowTitle (document.title=...) on boot; shadow the property so those writes are ignored and the tab always reads OpenMW-Web. */(function(){var LOCK="OpenMW-Web";try{Object.defineProperty(document,"title",{configurable:true,get:function(){return LOCK},set:function(){}});}catch(e){}try{var t=document.getElementsByTagName("title")[0];if(t)t.textContent=LOCK;}catch(e){}})();</script>
 <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
 <!-- SEO. This page IS the game (see deploy/Caddyfile: "/index.html means the GAME"), so it is
      a real destination for a player - but never a distinct search result. A crawler cannot run
@@ -1431,13 +1467,12 @@
              if (/^[0-9a-f]{12}$/.test(__ENGINE_VER)) ENV.OPENMW_MP_ENGINEHASH = __ENGINE_VER;
              // &mpvectors=1 (dev): dump LSER golden vectors for the server codec tests.
              if (/[?&]mpvectors=1\b/.test(location.search)) ENV.OPENMW_MP_VECTORS='1';
-             // Test/automation surface: Lua mirrors {state, playerId, lastChat, players} in
-             // here via mp.testSet; sendChat feeds mp.testPollCommand.
-             window.__omwMP = { state:'boot', sendChat:function(t){ Module.__omwMPCmd='chat:'+t; } };
+             // window.omw (the page<->game bridge) is defined in the first <script> of
+             // this page, before anything that reads it can run.
              // Multiplayer is the ONLY way to play here (SSO-only, server-authoritative), so a
              // failed session is a dead end — never leave the player parked in the single-player
              // menu behind a red DOM banner. Show the app's themed error screen and return them
-             // to the launcher to sign in again. Lua mirrors state/lastError via mp.testSet.
+             // to the launcher to sign in again. Lua mirrors state/lastError via mp.set.
              function friendlyMpError(code){
                switch(code){
                  case 'AUTH_FAILED': return 'Your sign-in could not be verified, or it expired during loading. Please sign in again.';
@@ -1477,10 +1512,10 @@
              (function(){
                var handled = false;
                setInterval(function(){
-                 var s = window.__omwMP && window.__omwMP.state;
+                 var s = window.omw.state.state;
                  if (s === 'Failed' && !handled){
                    handled = true;
-                   mpErrorModal('Can’t join multiplayer', friendlyMpError(window.__omwMP.lastError));
+                   mpErrorModal('Can’t join multiplayer', friendlyMpError(window.omw.state.lastError));
                  }
                }, 1000);
              })();
@@ -3576,8 +3611,8 @@
 </script>
 <!-- ============================ MULTIPLAYER HTML OVERLAYS ============================
      Social hub + chat, rendered in the DOM over the game canvas (the in-engine MyGUI windows
-     were removed). Talks to the running engine through the existing bridge: JS->Lua via the
-     single Module.__omwMPCmd slot (queued), Lua->JS via window.__omwMP[key] mirrors. Because
+     were removed). Talks to the running engine through the bridge: JS->Lua via the
+     window.omw.send() queue (every command acked), Lua->JS via window.omw.state mirrors. Because
      this is plain HTML served from play/, its look iterates with NO wasm rebuild. -->
 <style>
 #omw-chat, #omw-social{ --panel:#17130e; --panel-2:#211a12; --line:#3a2e1e; --line-soft:rgba(58,46,30,.45);
@@ -3814,11 +3849,10 @@
 </div></div>
 <script>
 (function(){
-  // ---- JS -> Lua: one queued command slot (bursts must not overwrite each other) ----
-  var outbox = [];
-  function cmd(s){ outbox.push(s); }
-  setInterval(function(){ if (outbox.length && window.Module && !Module.__omwMPCmd) Module.__omwMPCmd = outbox.shift(); }, 40);
-  function mpState(){ return window.__omwMP || {}; }
+  // ---- JS -> Lua: the bridge queue. Fire-and-forget here; send() returns the ack promise
+  // for anyone who needs to know the command actually ran.
+  function cmd(s){ return window.omw.send(s); }
+  function mpState(){ return window.omw.state; }
 
   // Hold the loading screen until the world we just moved to is BOTH joined and actually
   // being simulated. Joined alone is not enough: the destination world's sim peer needs a
@@ -3909,7 +3943,7 @@
     var frag = String(window.__omwBootFrag || location.hash || '').replace(/^#/, '');
     // A character switch rides the mirror: Lua state dies with the reload, so without this
     // the reused fragment's mpchar rebooted the OLD character and the click did nothing.
-    var swChar = String((window.__omwMP || {}).switchChar || '');
+    var swChar = String(window.omw.state.switchChar || '');
     var keep = frag.split('&').filter(function(kv){
       var k = kv.split('=')[0];
       if (swChar && (k === 'mpchar' || k === 'mpcharname')) return false;
@@ -3989,7 +4023,7 @@
   (function watchWorldSwitch(){
     var seen = '';
     setInterval(function(){
-      var want = String((window.__omwMP || {}).switchTo || '');
+      var want = String(window.omw.state.switchTo || '');
       if (!want || want === seen) return;
       seen = want;
       mpLog('[mp] changing world -> ' + want);
@@ -4000,7 +4034,7 @@
       // duplicate, and the next real click republishes and tries again.
       var failed = function(e){
         seen = '';
-        try { if (window.__omwMP) window.__omwMP.switchTo = ''; } catch (e2) {}
+        try { window.omw.state.switchTo = ''; } catch (e2) {}
         mpLog('[mp] world change failed: ' + e, 'err');
       };
       try {
@@ -4023,7 +4057,7 @@
   (function watchTicketRescue(){
     var seen = '';
     setInterval(function(){
-      var want = String((window.__omwMP || {}).needFreshTicket || '');
+      var want = String(window.omw.state.needFreshTicket || '');
       if (!want || want === seen) return;
       seen = want;
       var target = want.split('|')[1] || '';
@@ -4074,10 +4108,10 @@
     // value that has already arrived means waiting out the whole ceiling on a world that was
     // ready before we looked — a 30-second hang in place of the settle it was meant to cover.
     if (!(opts && opts.fresh)) {
-      try { if (window.__omwMP) window.__omwMP.simReady = '0'; } catch (e) {}
+      try { window.omw.state.simReady = '0'; } catch (e) {}
     }
     (function poll(){
-      var st = window.__omwMP || {};
+      var st = window.omw.state;
       var ready = (st.state || '') === 'Joined' && st.simReady === '1';
       if (!ready) {
         readyAt = 0;   // lost it again (a redial, a peer restart): the grace starts over
@@ -4347,7 +4381,7 @@
     // called renderSocial(), and then hit the unchanged-signature early return: the segment
     // stayed on the old choice and the panel looked hung even though the switch had happened.
     var sig = [sTab, lastWhere, String(m.whereNow || ''), sStatusText, m.friends, m.players, m.friendRequests,
-      m.invites, m.availability, m.presenceMode, m.worldMode].join(' ')
+      m.invites, m.availability, m.presenceMode, m.worldMode, m.blocked, m.muted].join(' ')
     if (!force && sig === lastSocialSig) return;
     lastSocialSig = sig;
     var friends = pj(m.friends)||[], players = pj(m.players)||[];
@@ -4480,6 +4514,17 @@
         // Everything that targets a PERSON goes by name for the same reason.
         acts.push(['mute', function(){ cmd('social:MuteAdd:'+p.name); }]);
         acts.push(['block', function(){ cmd('social:BlockAdd:'+p.name); }]);
+        // REPORT, one click from the row. The typed /report is gone; this is the only way,
+        // and it files the same report with the same chat context attached.
+        acts.push(['report', function(){
+          askConfirm('Report ' + p.name + '?', 'Tell the moderators what happened. The last lines of chat go with it.',
+            null, 'Send report', 'What did they do?').then(function(why){
+            var w = why == null ? '' : String(why).trim();
+            if (!w) return;
+            cmd('social:ReportPlayer:' + p.name + ':' + w);
+            setStatus('Report sent to the moderators.');
+          });
+        }]);
         // A row with no add-friend button reads as broken unless it says why.
         var note = p.friend ? 'Friend'
           : p.reqOut ? 'Request sent'
@@ -4507,6 +4552,37 @@
       chatRow.appendChild(btn);
       sec.appendChild(chatRow);
       sec.appendChild(sub);
+
+      // PRIVACY: who can see where you are. The server enforces it on every path that could
+      // disclose a location or deliver an invite; this is just the switch. It used to live
+      // only in a MyGUI window that no longer draws, so the control had no UI at all.
+      sec.appendChild(el('h3',null,'Privacy'));
+      var privRow = el('div','setrow');
+      privRow.appendChild(el('div','setlbl','Visible to'));
+      var privSeg = el('div','seg'); privSeg.setAttribute('data-t','presence');
+      [['public','Everyone'],['friends','Friends'],['private','Nobody']].forEach(function(pm){
+        var b = el('button','btn'+(presence===pm[0]?' on':''), pm[1]);
+        b.setAttribute('data-presence', pm[0]);
+        b.onclick = function(){ cmd('social:PresenceMode:'+pm[0]); };
+        privSeg.appendChild(b);
+      });
+      privRow.appendChild(privSeg);
+      sec.appendChild(privRow);
+      sec.appendChild(el('div','note','Who may see which cell you are in and invite you. Private'
+        + ' hides your location from friends too.'));
+
+      // THE WAY BACK. Block and mute could be done from a row and undone from nowhere.
+      var blocked = pj(m.blocked)||[], muted = pj(m.muted)||[];
+      sec.appendChild(el('h3',null,'Blocked'));
+      if (!blocked.length) sec.appendChild(el('div','empty','Nobody is blocked.'));
+      blocked.forEach(function(b){
+        sec.appendChild(personRow(b.name, null, false, [['unblock', function(){ cmd('social:BlockRemove:'+b.acct); }]]));
+      });
+      sec.appendChild(el('h3',null,'Muted'));
+      if (!muted.length) sec.appendChild(el('div','empty','Nobody is muted.'));
+      muted.forEach(function(u){
+        sec.appendChild(personRow(u.name, null, false, [['unmute', function(){ cmd('social:MuteRemove:'+u.acct); }]]));
+      });
     }
     sBody.appendChild(sec);
   }
@@ -4597,13 +4673,25 @@
   // Solo closes your world on your guests — and
   // a browser confirm() delivered them in the one style the player cannot mistake for the
   // game. Resolves true/false like confirm(), so call sites read the same.
-  function askConfirm(title, body, glyph, okLabel){
+  // `ask` (a placeholder) adds a text field; the promise then resolves with what was typed,
+  // or null. Without it the dialog resolves true/false exactly as before.
+  function askConfirm(title, body, glyph, okLabel, ask){
     return new Promise(function(resolve){
       var bd = document.getElementById('omw-ask');
-      if (!bd) return resolve(window.confirm(String(title) + '\n\n' + String(body).replace(/<[^>]+>/g, '')));
+      if (!bd) return resolve(ask ? window.prompt(String(title)) : window.confirm(String(title) + '\n\n' + String(body).replace(/<[^>]+>/g, '')));
       document.getElementById('omw-ask-glyph').innerHTML = glyph || GLYPH_PARTY;
       document.getElementById('omw-ask-title').textContent = title;
-      document.getElementById('omw-ask-body').innerHTML = body;
+      var bodyEl = document.getElementById('omw-ask-body');
+      bodyEl.innerHTML = body;
+      var field = null;
+      if (ask){
+        field = document.createElement('input');
+        field.type = 'text'; field.maxLength = 200; field.placeholder = ask;
+        field.style.cssText = 'display:block;width:100%;margin-top:12px;padding:9px 10px;background:#0f0c08;'
+          + 'border:1px solid #3a2e1e;border-radius:4px;color:#e9dcc3;font:inherit;';
+        field.onkeydown = function(e){ e.stopPropagation(); if (e.key === 'Enter') done(true); if (e.key === 'Escape') done(false); };
+        bodyEl.appendChild(field);
+      }
       var yes = document.getElementById('omw-ask-yes'), no = document.getElementById('omw-ask-no');
       yes.textContent = okLabel || 'Continue';
       // The overlay owns the mouse while it is up, exactly as the tour does — otherwise the
@@ -4613,7 +4701,8 @@
         bd.classList.remove('show');
         uiHold(false);
         yes.onclick = null; no.onclick = null; document.removeEventListener('keydown', key, true);
-        resolve(v);
+        if (field){ var typed = field.value; field.remove(); resolve(v ? typed : null); }
+        else resolve(v);
       }
       function key(e){
         if (e.key === 'Escape'){ e.preventDefault(); e.stopPropagation(); done(false); }
@@ -4623,7 +4712,7 @@
       no.onclick = function(){ done(false); };
       document.addEventListener('keydown', key, true);
       bd.classList.add('show');
-      no.focus();
+      if (field) field.focus(); else no.focus();
     });
   }
 
@@ -4877,7 +4966,7 @@
         // SERVER told us it was restarting — that is a deploy or a rolling restart, it is
         // expected, it is brief, and saying so is the difference between "something broke" and
         // "hang on a second".
-        if (String((window.__omwMP || {}).serverRestarting || '') === '1') {
+        if (String(window.omw.state.serverRestarting || '') === '1') {
           window.__omwLoading.show('The server is restarting', 'Putting you back in…');
         } else if (everJoinedOnce) window.__omwLoading.show('Connection lost', 'Reconnecting…');
         else window.__omwLoading.show('Starting your world', 'Waking the server, this takes a moment…');
@@ -4894,7 +4983,7 @@
         setStatus('Reconnected.');
         // Back in. Consume the restart flag so an ordinary drop later is not still blamed on a
         // restart that finished minutes ago.
-        try { if (window.__omwMP) window.__omwMP.serverRestarting = ''; } catch (e) {}
+        try { window.omw.state.serverRestarting = ''; } catch (e) {}
       }
     }
     if (socialOpen) renderSocial();
@@ -4929,17 +5018,17 @@
     // Only pause once the session is Joined: before that the engine is not draining the
     // command slot yet, so a pause:on would be silently dropped and — because restoreHold
     // only acts on CHANGE — never retried. Nothing can hit us before we are in the world.
-    restoreHold(waiting && (window.__omwMP || {}).state === 'Joined');
+    restoreHold(waiting && window.omw.state.state === 'Joined');
     return waiting;
   };
   function awaitRestore(){
     if (!isMp) return false;                                  // single player: nothing to wait on
     // Held at ProfileNeeded: the server is waiting on the PLAYER, not on us. Keeping the boot
     // screen up here hides the very picker that unblocks it.
-    if (String((window.__omwMP || {}).profileRequired || '') === 'true') return false;
+    if (String(window.omw.state.profileRequired || '') === 'true') return false;
     if (restoreDeadline === 0) restoreDeadline = Date.now() + 20000;
     if (Date.now() > restoreDeadline) return false;           // never strand the player
-    var mp = window.__omwMP || {};
+    var mp = window.omw.state;
     if ((mp.state || '') !== 'Joined') return true;
     if (joinedAt === 0) joinedAt = Date.now();
     var raw = mp.restorePos;
@@ -4958,7 +5047,7 @@
   (function watchCellLoad(){
     var seen = '', hideAt = 0, saidWaiting = false;
     (function tick(){
-      var st = window.__omwMP || {};
+      var st = window.omw.state;
       var v = st.cellLoad || '';
       if (v && v !== seen) {
         seen = v;

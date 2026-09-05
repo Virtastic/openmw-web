@@ -38,7 +38,7 @@ test('social payloads name a player by username, never by the account login name
   b.sendEvent('FriendAccept', { acct: 'ada lovelace' });
   // Not the empty FriendList sent at join — the one carrying the new friend.
   const list = await b.waitEvent('FriendList',
-    (v) => JSON.stringify(v).length > 30, 8000);
+    (v) => ((v as { friends?: unknown[] }).friends?.length ?? 0) > 0, 8000);
   const wire = JSON.stringify(list.value);
   assert.ok(wire.length > 20, 'empty payload — this assertion would prove nothing');
   assert.ok(wire.includes('ada'), 'the friend row must carry the username, got: ' + wire);

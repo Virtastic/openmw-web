@@ -253,7 +253,7 @@ function identity.tick(now)
         local ids = {}
         for _, id in pairs(eq.slots) do ids[#ids + 1] = id end
         table.sort(ids)
-        mp.testSet('equippedIds', table.concat(ids, ','))
+        mp.set('equippedIds', table.concat(ids, ','))
     end
 
     local dead = Actor.isDead(self)
@@ -268,7 +268,7 @@ function identity.tick(now)
     if now >= nextAt.dynamic then
         nextAt.dynamic = now + INTERVALS.dynamic
         local dyn = snapDynamic()
-        mp.testSet('hp', tostring(dyn.hp.c)) -- mirror unconditionally (diff may be seeded)
+        mp.set('hp', tostring(dyn.hp.c)) -- mirror unconditionally (diff may be seeded)
         local fp = fingerprint(dyn)
         if fp ~= last.dynamic then
             last.dynamic = fp
@@ -350,7 +350,7 @@ end
 -- restore path sets the same flag from applyPhase2. Idempotent.
 function identity.markBaselineReady()
     baselineReady = true
-    mp.testSet('baselineReady', '1')
+    mp.set('baselineReady', '1')
 end
 
 function identity.reset()
@@ -514,7 +514,7 @@ local function applyPhase2(record)
     end
     restoring = false
     baselineReady = true -- the doc IS the character now; the diffs may speak again
-    mp.testSet('baselineReady', '1')
+    mp.set('baselineReady', '1')
     -- SELF-SILENCING DIAGNOSTIC. Everything the restore writes is `.base`; a freshly restored
     -- character should therefore carry no attribute MODIFIER at all. A live report showed a
     -- level-1 Redguard whose Endurance and Personality both held an IDENTICAL offset (+175, then
@@ -553,7 +553,7 @@ local function applyPhase2(record)
         end
     end
     print('[mp] rejoin restore applied')
-    mp.testSet('restored', '1')
+    mp.set('restored', '1')
 end
 
 function identity.equipRetryTick(now)

@@ -43,7 +43,7 @@ export default async function run(ctx) {
   // of topic sync has: addTopic leaves nothing a script can read back, which is why this
   // feature went unproven for so long and why s73 skipped behind a wrong explanation.
   const appliedOn = async (c) =>
-    JSON.parse(await c.eval("(window.__omwMP||{}).topicsApplied||'[]'"));
+    JSON.parse(await c.eval("window.omw.state.topicsApplied||'[]'"));
 
   const beforeB = await appliedOn(b);
   ctx.log(`  B has applied ${beforeB.length} remote topics so far`);
@@ -56,7 +56,7 @@ export default async function run(ctx) {
   // 'learntopic:', not 'topic:'. The latter calls addTopic, which is invisible to the collection
   // quests.lua diffs, so nothing would ever be broadcast. This marks it locally learned for the
   // diff and lets the real path run: diff -> TopicsLearned -> server relay -> B applies.
-  await a.eval(`Module.__omwMPCmd='learntopic:${TOPIC}'`);
+  await a.eval(`window.omw.send('learntopic:${TOPIC}')`);
   ctx.log(`  A learned ${TOPIC}`);
 
   let got = false;

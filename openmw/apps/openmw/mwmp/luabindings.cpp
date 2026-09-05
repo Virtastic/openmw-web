@@ -491,23 +491,53 @@ namespace MWMP
             MWBase::Environment::get().getWorld()->setSimAnchors(out, rooms);
         };
 
-        // Test/automation surface for wasm-build/mp-harness.mjs (PROTOCOL.md client contract).
+        // THE PAGE BRIDGE (PROTOCOL.md client contract). Three calls, all production:
+        //   mp.set(key, value)      Lua -> page: one string in window.omw.state[key]; the page
+        //                           polls and renders from it.
+        //   mp.emit(name, json)     Lua -> page: an event (window.omw.emit), 'ack' among them.
+        //   mp.pollCommands()       page -> Lua: drains window.omw.queue WHOLE and returns it
+        //                           as a JSON array of {id, text}. Every entry is acked.
+        // The old shape was a single Module.__omwMPCmd slot read once per frame, and a page
+        // that queued two commands in one frame silently lost one -- s51's "my attacks do
+        // nothing" was the harness overwriting its own hits. A queue cannot clobber, and an
+        // ack tells the sender the command was actually run, not merely handed over.
 #ifdef __EMSCRIPTEN__
-        api["testSet"] = [](std::string_view key, std::string_view value) {
+        api["set"] = [](std::string_view key, std::string_view value) {
             std::string keyStr(key), valueStr(value);
             EM_ASM(
                 {
                     try
                     {
                         var w = (typeof window !== 'undefined') ? window : self;
-                        w.__omwMP = w.__omwMP || {};
-                        w.__omwMP[UTF8ToString($0)] = UTF8ToString($1);
+                        // No object literal here: EM_ASM is a variadic macro, and a comma
+                        // at brace level splits the JavaScript into macro arguments.
+                        if (!w.omw)
+                            w.omw = {};
+                        if (!w.omw.state)
+                            w.omw.state = {};
+                        w.omw.state[UTF8ToString($0)] = UTF8ToString($1);
                     }
                     catch (e)
                     {
                     }
                 },
                 keyStr.c_str(), valueStr.c_str());
+        };
+        api["emit"] = [](std::string_view name, std::string_view payload) {
+            std::string nameStr(name), payloadStr(payload);
+            EM_ASM(
+                {
+                    try
+                    {
+                        var w = (typeof window !== 'undefined') ? window : self;
+                        if (w.omw && w.omw.emit)
+                            w.omw.emit(UTF8ToString($0), JSON.parse(UTF8ToString($1)));
+                    }
+                    catch (e)
+                    {
+                    }
+                },
+                nameStr.c_str(), payloadStr.c_str());
         };
         // M8 session resume: the ticket has to outlive the PAGE, not just the socket —
         // a browser reload is the canonical "rejoin in place" case. localStorage is the
@@ -549,16 +579,17 @@ namespace MWMP
             std::free(token);
             return out;
         };
-        api["testPollCommand"] = [](sol::this_state state) -> sol::object {
-            // Reads-and-clears Module.__omwMPCmd (set by harness JS via window.__omwMP.sendChat).
+        api["pollCommands"] = [](sol::this_state state) -> sol::object {
+            // Drains window.omw.queue whole: a JSON array of {id, text}, or nil when empty.
             char* cmd = static_cast<char*>(EM_ASM_PTR({
                 try
                 {
-                    var c = Module.__omwMPCmd;
-                    if (!c)
+                    var w = (typeof window !== 'undefined') ? window : self;
+                    var q = w.omw && w.omw.queue;
+                    if (!q || !q.length)
                         return 0;
-                    Module.__omwMPCmd = null;
-                    return stringToNewUTF8(c);
+                    var batch = q.splice(0, q.length);
+                    return stringToNewUTF8(JSON.stringify(batch));
                 }
                 catch (e)
                 {
@@ -572,8 +603,9 @@ namespace MWMP
             return res;
         };
 #else
-        api["testSet"] = [](std::string_view, std::string_view) {};
-        api["testPollCommand"] = []() { return sol::nil; };
+        api["set"] = [](std::string_view, std::string_view) {};
+        api["emit"] = [](std::string_view, std::string_view) {};
+        api["pollCommands"] = []() { return sol::nil; };
         api["setResumeToken"] = [](std::string_view) {};
         api["getResumeToken"] = []() { return std::string(); };
 #endif

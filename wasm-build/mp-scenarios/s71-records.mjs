@@ -16,12 +16,12 @@ const ITEM_NAME = 'MP Shared Cuirass';
 const ENCH_NAME = 'MP Enchanted Helm';
 const SPELL_NAME = 'MP Shared Spell';
 
-const netRecords = async (c) => JSON.parse(await c.eval('(window.__omwMP||{}).netRecords||"{}"'));
-const recordInfo = async (c) => JSON.parse(await c.eval('(window.__omwMP||{}).netRecordInfo||"{}"'));
-const objNames = async (c) => JSON.parse(await c.eval('(window.__omwMP||{}).netObjectNames||"{}"'));
+const netRecords = async (c) => JSON.parse(await c.eval('window.omw.state.netRecords||"{}"'));
+const recordInfo = async (c) => JSON.parse(await c.eval('window.omw.state.netRecordInfo||"{}"'));
+const objNames = async (c) => JSON.parse(await c.eval('window.omw.state.netObjectNames||"{}"'));
 const entryByName = (info, name) => Object.entries(info).find(([, v]) => v.name === name);
 const hasName = (name) =>
-  `Object.values(JSON.parse((window.__omwMP||{}).netRecordInfo||"{}")).some((r)=>r.name===${JSON.stringify(name)})`;
+  `Object.values(JSON.parse(window.omw.state.netRecordInfo||"{}")).some((r)=>r.name===${JSON.stringify(name)})`;
 
 export default async function run(ctx) {
   const a = await ctx.launchClient('bot-a');
@@ -34,14 +34,14 @@ export default async function run(ctx) {
   // "correctly" by pure coincidence and this scenario would pass on a real bug. With the
   // local-only decoy the numbering diverges, so only the netId mapping can line the records
   // up, and every content assertion below is real evidence.
-  await b.eval(`Module.__omwMPCmd='mklocal:B Local Decoy'`);
+  await b.eval(`window.omw.send('mklocal:B Local Decoy')`);
   await ctx.sleep(1500);
   // (an empty Lua table encodes as `[]`, so count the keys rather than string-comparing)
   assert.equal(Object.keys(await netRecords(b)).length, 0,
     'the local-only decoy must NOT have been registered with the server');
 
   // --- a plain custom item -------------------------------------------------------------
-  await a.eval(`Module.__omwMPCmd='mkrec:${ITEM_NAME}'`);
+  await a.eval(`window.omw.send('mkrec:${ITEM_NAME}')`);
   await a.waitFor(hasName(ITEM_NAME), STEP_TIMEOUT, 'A got a RecordCreateAck (server record id)');
   const itemEntryA = entryByName(await recordInfo(a), ITEM_NAME);
   const itemNetId = itemEntryA[0];
@@ -52,7 +52,7 @@ export default async function run(ctx) {
 
   // The single-record RecordsSync push (§M7: peers must resolve the id BEFORE anything
   // referencing it arrives, not only at their next join).
-  await b.waitFor(`JSON.parse((window.__omwMP||{}).netRecords||"{}")[${JSON.stringify(itemNetId)}] !== undefined`,
+  await b.waitFor(`JSON.parse(window.omw.state.netRecords||"{}")[${JSON.stringify(itemNetId)}] !== undefined`,
     STEP_TIMEOUT, 'B received the record via RecordsSync');
   const itemLocalB = (await netRecords(b))[itemNetId];
   ctx.log(`B built local record ${itemLocalB} for ${itemNetId} (A's local id was ${itemLocalA})`);
@@ -62,10 +62,10 @@ export default async function run(ctx) {
   assert.equal(itemB && itemB.name, ITEM_NAME, `B resolved the wrong record (${JSON.stringify(itemB)})`);
 
   // A drops it: the wire carries the SERVER id, so B rebuilds the real item.
-  await a.eval(`Module.__omwMPCmd='drop:${itemLocalA}'`);
-  await a.waitFor('Object.keys(JSON.parse((window.__omwMP||{}).netObjects||"{}")).length === 1',
+  await a.eval(`window.omw.send('drop:${itemLocalA}')`);
+  await a.waitFor('Object.keys(JSON.parse(window.omw.state.netObjects||"{}")).length === 1',
     STEP_TIMEOUT, 'A tracks its drop');
-  await b.waitFor('Object.keys(JSON.parse((window.__omwMP||{}).netObjects||"{}")).length === 1',
+  await b.waitFor('Object.keys(JSON.parse(window.omw.state.netObjects||"{}")).length === 1',
     STEP_TIMEOUT, 'B placed the dropped object');
   const [na, nb] = await Promise.all([objNames(a), objNames(b)]);
   ctx.log(`dropped object name on A="${Object.values(na)[0]}" on B="${Object.values(nb)[0]}"`);
@@ -76,11 +76,11 @@ export default async function run(ctx) {
   // --- a custom SPELL ------------------------------------------------------------------
   // Spells live in core.magic, not openmw.types, which is why a types-only search makes
   // them look absent; world.createRecord takes ESM::Spell directly.
-  await a.eval(`Module.__omwMPCmd='mkspell:${SPELL_NAME}'`);
+  await a.eval(`window.omw.send('mkspell:${SPELL_NAME}')`);
   await a.waitFor(hasName(SPELL_NAME), STEP_TIMEOUT, 'A registered the custom spell');
   const spellEntryA = entryByName(await recordInfo(a), SPELL_NAME);
   const spellNetId = spellEntryA[0];
-  await b.waitFor(`(JSON.parse((window.__omwMP||{}).netRecordInfo||"{}")[${JSON.stringify(spellNetId)}]||{}).name === ${JSON.stringify(SPELL_NAME)}`,
+  await b.waitFor(`(JSON.parse(window.omw.state.netRecordInfo||"{}")[${JSON.stringify(spellNetId)}]||{}).name === ${JSON.stringify(SPELL_NAME)}`,
     STEP_TIMEOUT, 'B rebuilt the custom spell');
   const spellB = (await recordInfo(b))[spellNetId];
   ctx.log(`spell on A=${JSON.stringify(spellEntryA[1])} on B=${JSON.stringify(spellB)}`);
@@ -92,13 +92,13 @@ export default async function run(ctx) {
   // --- an ENCHANTED item traded A -> B ---------------------------------------------------
   // Two chained custom records: the item references an enchantment whose id is ALSO
   // per-client. Both must travel as server ids or B resolves someone else's record.
-  await a.eval(`Module.__omwMPCmd='mkench:${ENCH_NAME}'`);
+  await a.eval(`window.omw.send('mkench:${ENCH_NAME}')`);
   await a.waitFor(hasName(ENCH_NAME), STEP_TIMEOUT, 'A registered the enchanted item');
   const enchEntryA = entryByName(await recordInfo(a), ENCH_NAME);
   const enchNetId = enchEntryA[0];
   assert.ok(enchEntryA[1].enchant, 'the enchanted item must carry an enchantment id on A');
 
-  await b.waitFor(`(JSON.parse((window.__omwMP||{}).netRecordInfo||"{}")[${JSON.stringify(enchNetId)}]||{}).name === ${JSON.stringify(ENCH_NAME)}`,
+  await b.waitFor(`(JSON.parse(window.omw.state.netRecordInfo||"{}")[${JSON.stringify(enchNetId)}]||{}).name === ${JSON.stringify(ENCH_NAME)}`,
     STEP_TIMEOUT, 'B rebuilt the enchanted item');
   const enchB = (await recordInfo(b))[enchNetId];
   ctx.log(`enchanted item on A=${JSON.stringify(enchEntryA[1])} on B=${JSON.stringify(enchB)}`);
@@ -112,16 +112,16 @@ export default async function run(ctx) {
 
   // Trade it through the world: A drops the helm, B must place the REAL one.
   const enchLocalA = (await netRecords(a))[enchNetId];
-  await a.eval(`Module.__omwMPCmd='drop:${enchLocalA}'`);
-  await b.waitFor(`Object.values(JSON.parse((window.__omwMP||{}).netObjectNames||"{}")).indexOf(${JSON.stringify(ENCH_NAME)}) >= 0`,
+  await a.eval(`window.omw.send('drop:${enchLocalA}')`);
+  await b.waitFor(`Object.values(JSON.parse(window.omw.state.netObjectNames||"{}")).indexOf(${JSON.stringify(ENCH_NAME)}) >= 0`,
     STEP_TIMEOUT, 'B placed the dropped enchanted item as the real record');
   ctx.log('ok: enchanted item traded A -> B with its enchantment intact');
 
   // --- a late joiner ---------------------------------------------------------------------
   const c = await ctx.launchClient('bot-c');
-  await c.waitFor('Object.keys(JSON.parse((window.__omwMP||{}).netRecords||"{}")).length >= 4',
+  await c.waitFor('Object.keys(JSON.parse(window.omw.state.netRecords||"{}")).length >= 4',
     STEP_TIMEOUT, 'C received the full RecordsSync at join (item, spell, enchantment, helm)');
-  await c.waitFor(`Object.values(JSON.parse((window.__omwMP||{}).netObjectNames||"{}")).indexOf(${JSON.stringify(ITEM_NAME)}) >= 0`,
+  await c.waitFor(`Object.values(JSON.parse(window.omw.state.netObjectNames||"{}")).indexOf(${JSON.stringify(ITEM_NAME)}) >= 0`,
     STEP_TIMEOUT, 'C rebuilt the dropped custom item from the replayed records');
   const infoC = await recordInfo(c);
   assert.ok(entryByName(infoC, SPELL_NAME), 'C did not receive the custom spell');

@@ -4,8 +4,22 @@
 
 import type { LValue } from '../proto/lser';
 import type { Player, Roster } from './players';
-import type { CommandRegistry, CommandContext } from './commands';
 import type { Moderation } from './moderation';
+
+/** What chat delivery needs to know about the world it runs in. */
+export interface ChatContext {
+  roster: Roster;
+  /** Record a delivered line for SCROLLBACK. Optional so a partial context in a test still
+   *  constructs, and absent simply means no history is kept. */
+  history?(player: Player, channel: string, text: string): void;
+  // Phase 2.5: mute lookup for chat delivery (see broadcastChat). Optional so a partial
+  // context in a test still constructs.
+  isMuted?(listenerAcct: string, speakerAcct: string): boolean;
+  // World chat tier ('@'): the accountKeys of everyone in this player's world.
+  partyOf?(accountKey: string): string[];
+  // Phase 2.5: is plain 'say' proximity-scoped in THIS world? True for public worlds.
+  sayProximity?: boolean;
+}
 import { cellsVisible } from './movement';
 import { log } from '../log';
 
@@ -79,7 +93,7 @@ export function recordChat(mod: Moderation | undefined, player: Player, channel:
 // The recipient's mute of the sender silently drops their copy, but
 // the sender always gets their own echo so the UI never looks broken.
 function deliverWhisper(
-  ctx: CommandContext,
+  ctx: ChatContext,
   player: Player,
   toAcct: string,
   line: string,
@@ -109,8 +123,7 @@ function deliverWhisper(
 }
 
 export function handleChatSend(
-  ctx: CommandContext,
-  commands: CommandRegistry,
+  ctx: ChatContext,
   hooks: ChatHooks,
   player: Player,
   body: LValue | undefined,
@@ -129,16 +142,14 @@ export function handleChatSend(
   const whisperTo = body instanceof Map && typeof body.get('to') === 'string'
     ? (body.get('to') as string) : '';
   const trimmed = text.slice(0, MAX_CHAT_CHARS);
-  if (trimmed.startsWith('/')) {
-    // Record BEFORE dispatch: a command that disconnects the actor still leaves a trace.
-    recordChat(mod, player, 'command', trimmed);
-    commands.dispatch(ctx, player, trimmed);
-    return;
-  }
+  // NO SLASH COMMANDS. A line starting with "/" is chat like any other line -- there is no
+  // typed command path any more. Operators act from the dashboard (one gate, Admin.exec, an
+  // audit line per action); players report, mute, block and set their privacy from the
+  // social panel, which the server hears as SocialAction events. A second, typed route to
+  // the same actions was a second place for the permission check to be wrong.
   if (!hooks.onChat(player, trimmed)) return; // vetoed lines were never delivered, so never logged
   // Channel resolution: an explicit channel from the selector wins; otherwise the !/@ MMO
-  // prefixes. '/p' would collide with the command registry and "/party hi" should be a
-  // message not a usage error, so tiers are parsed here rather than as slash commands.
+  // prefixes, parsed here because they are channel markers, not commands.
   let channel: 'say' | 'party' | 'global' | 'whisper' = 'say';
   let line = trimmed;
   if (explicitChannel === 'say' || explicitChannel === 'party'

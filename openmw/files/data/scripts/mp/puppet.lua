@@ -65,12 +65,12 @@ local SNAP_COOLDOWN = 1.0 -- let a requested teleport land before asking again
 -- global.lua to forward to whoever owns the actor.
 local function markPuppet(on)
     if not mp.setPuppet then
-        if mp.testSet then mp.testSet('puppetMark', 'no-binding') end
+        if mp.set then mp.set('puppetMark', 'no-binding') end
         return
     end
     local ok, err = pcall(function() mp.setPuppet(self.object, on) end)
     if mp.testSet then
-        mp.testSet('puppetMark', ok and (on and 'marked' or 'unmarked') or ('failed:' .. tostring(err)))
+        mp.set('puppetMark', ok and (on and 'marked' or 'unmarked') or ('failed:' .. tostring(err)))
     end
 end
 
@@ -193,11 +193,11 @@ local function forwardMagicHits()
     if not mp.takeMagicHits then return end
     local ok, hits = pcall(function() return mp.takeMagicHits(self.object) end)
     if not ok then
-        if mp.testSet then mp.testSet('magicFwd', 'take-failed:' .. tostring(hits)) end
+        if mp.testSet then mp.set('magicFwd', 'take-failed:' .. tostring(hits)) end
         return
     end
     if not hits or #hits == 0 then return end
-    if mp.testSet then mp.testSet('magicFwd', 'drained:' .. tostring(#hits)) end
+    if mp.testSet then mp.set('magicFwd', 'drained:' .. tostring(#hits)) end
     local effects, spellId = {}, nil
     for _, h in ipairs(hits) do
         effects[#effects + 1] = { id = tostring(h.effectId), magnitude = h.magnitude or 0, duration = 0 }
@@ -372,7 +372,7 @@ return {
             -- moveRx this pins a movement fault to ONE hop -- never routed, routed but not
             -- pushed, or pushed and not steered -- which is exactly the distinction that took
             -- an engine rebuild to make the first time.
-            mp.testSet('puppetRx', string.format('%.0f@t%d', e.y or 0, tier))
+            mp.set('puppetRx', string.format('%.0f@t%d', e.y or 0, tier))
         end,
         -- M2: full slot->recordId snapshot (items already granted by global.lua).
         MP_Equip = function(data)

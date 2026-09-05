@@ -21,7 +21,7 @@ const CONVERGE_EPS = 80; // units; puppet steering + 100ms render delay + 2Hz mi
 const STEP_TIMEOUT = 20_000;
 const BOOT = { retail: true, joinTimeoutMs: 420_000 };
 
-const probeOf = async (c) => JSON.parse(await c.eval('(window.__omwMP||{}).actorProbe||"{}"'));
+const probeOf = async (c) => JSON.parse(await c.eval('window.omw.state.actorProbe||"{}"'));
 const dist = (p, q) => Math.hypot(p.x - q.x, p.y - q.y, p.z - q.z);
 
 export default async function run(ctx) {
@@ -75,8 +75,8 @@ export default async function run(ctx) {
   // reporting isHolder=false is the CORRECT state; what has to be true is that they both know
   // the cell HAS an owner, because that is what makes them puppet its NPCs instead of
   // simulating their own.
-  await a.waitFor('Number((window.__omwMP||{}).actorCount||0) > 0', STEP_TIMEOUT, 'A sees cell actors');
-  await b.waitFor('Number((window.__omwMP||{}).actorCount||0) > 0', STEP_TIMEOUT, 'B sees cell actors');
+  await a.waitFor('Number(window.omw.state.actorCount||0) > 0', STEP_TIMEOUT, 'A sees cell actors');
+  await b.waitFor('Number(window.omw.state.actorCount||0) > 0', STEP_TIMEOUT, 'B sees cell actors');
   let holderA = null;
   let holderB = null;
   let ownerA = 'none';
@@ -88,9 +88,9 @@ export default async function run(ctx) {
   const authDeadline = Date.now() + PEER_AUTHORITY_TIMEOUT;
   while (Date.now() < authDeadline) {
     [holderA, holderB, ownerA] = await Promise.all([
-      a.eval('(window.__omwMP||{}).isHolder'),
-      b.eval('(window.__omwMP||{}).isHolder'),
-      a.eval('(window.__omwMP||{}).authorityHolder'),
+      a.eval('window.omw.state.isHolder'),
+      b.eval('window.omw.state.isHolder'),
+      a.eval('window.omw.state.authorityHolder'),
     ]);
     if (ownerA && ownerA !== 'none') break;
     await ctx.sleep(500);
@@ -109,12 +109,12 @@ export default async function run(ctx) {
   // close for a while by luck, so a convergence check alone reports a green for a completely
   // unsynced world (observed: puppetedActors=0 passing at 46.9 units in one run and failing at
   // 644 in the next, purely on how far the NPCs had wandered).
-  await peer.waitFor('Number((window.__omwMP||{}).puppetedActors||0) >= 3', STEP_TIMEOUT,
+  await peer.waitFor('Number(window.omw.state.puppetedActors||0) >= 3', STEP_TIMEOUT,
     'client B attached puppets to the cell actors');
-  await holder.waitFor('Number((window.__omwMP||{}).puppetedActors||0) >= 3', STEP_TIMEOUT,
+  await holder.waitFor('Number(window.omw.state.puppetedActors||0) >= 3', STEP_TIMEOUT,
     'client A attached puppets to the cell actors');
-  ctx.log(`puppeted A=${await holder.eval('(window.__omwMP||{}).puppetedActors')} `
-    + `B=${await peer.eval('(window.__omwMP||{}).puppetedActors')}`);
+  ctx.log(`puppeted A=${await holder.eval('window.omw.state.puppetedActors')} `
+    + `B=${await peer.eval('window.omw.state.puppetedActors')}`);
 
   // Same NPCs, converged positions. Compare records present on BOTH clients.
   let shared = [];
@@ -141,11 +141,11 @@ export default async function run(ctx) {
   // are completely different bugs and the position delta alone can't tell them apart.
   if (worst >= CONVERGE_EPS) {
     const [pk, bi, ac, ah, ih] = await Promise.all([
-      peer.eval('(window.__omwMP||{}).puppetedActors'),
-      peer.eval('(window.__omwMP||{}).actorBatchesIn'),
-      peer.eval('(window.__omwMP||{}).actorCount'),
-      peer.eval('(window.__omwMP||{}).authorityHolder'),
-      peer.eval('(window.__omwMP||{}).isHolder'),
+      peer.eval('window.omw.state.puppetedActors'),
+      peer.eval('window.omw.state.actorBatchesIn'),
+      peer.eval('window.omw.state.actorCount'),
+      peer.eval('window.omw.state.authorityHolder'),
+      peer.eval('window.omw.state.isHolder'),
     ]);
     ctx.log(`diag(non-holder): puppetedActors=${pk} actorBatchesIn=${bi} actorCount=${ac} authorityHolder=${ah} isHolder=${ih}`);
   }
@@ -179,8 +179,8 @@ export default async function run(ctx) {
   // the peer applies it and broadcasts the death. s58-combat-forward covers the routing half of
   // that; killing outright through the peer is not covered here.
   ctx.log(`attempting a unilateral kill of "${victim}" on client ${a.name}`);
-  await a.eval(`Module.__omwMPCmd=${JSON.stringify('killnpc:' + victim)}`);
-  const deadExpr = `((JSON.parse((window.__omwMP||{}).actorProbe||"{}")[${JSON.stringify(victim)}]||{}).dead === true)`;
+  await a.eval(`window.omw.send(${JSON.stringify('killnpc:' + victim)})`);
+  const deadExpr = `((JSON.parse(window.omw.state.actorProbe||"{}")[${JSON.stringify(victim)}]||{}).dead === true)`;
   await ctx.sleep(8_000); // long enough that a relay, if there were one, would have landed
   const deadOnB = await b.eval(deadExpr);
   assert.notEqual(deadOnB, true,

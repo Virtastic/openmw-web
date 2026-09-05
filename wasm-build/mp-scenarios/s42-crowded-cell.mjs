@@ -107,13 +107,13 @@ async function shedCounters(port) {
   }
 }
 
-const probeOf = async (c) => JSON.parse(await c.eval('(window.__omwMP||{}).actorProbe||"{}"'));
+const probeOf = async (c) => JSON.parse(await c.eval('window.omw.state.actorProbe||"{}"'));
 const dist = (p, q) => Math.hypot(p.x - q.x, p.y - q.y, p.z - q.z);
 
 // The client mirror has no cellKey of its own, but actorCensus tags every active actor with
 // one ("player@-2,-9"), and the local player is always in its own cell.
 async function cellKeyOf(c) {
-  const census = JSON.parse(await c.eval('(window.__omwMP||{}).actorCensus||"[]"'));
+  const census = JSON.parse(await c.eval('window.omw.state.actorCensus||"[]"'));
   const me = census.find((e) => e.startsWith('player@'));
   if (!me) throw new Error(`[${c.name}] actorCensus has no player entry: ${JSON.stringify(census)}`);
   return me.slice('player@'.length);
@@ -157,7 +157,7 @@ export default async function run(ctx) {
   for (let i = 0; i < CLIENTS; i++) clients.push(await ctx.launchClient(`crowd${i}`, '', BOOT));
 
   for (const c of clients) {
-    await c.waitFor('Number((window.__omwMP||{}).actorCount||0) > 0', STEP_TIMEOUT, `${c.name} sees cell actors`);
+    await c.waitFor('Number(window.omw.state.actorCount||0) > 0', STEP_TIMEOUT, `${c.name} sees cell actors`);
   }
   const cellKeys = await Promise.all(clients.map(cellKeyOf));
   ctx.log(`cell keys: ${cellKeys.join(' ')}`);
@@ -176,8 +176,8 @@ export default async function run(ctx) {
   const authDeadline = Date.now() + Number(process.env.S42_PEER_TIMEOUT ?? 300_000);
   while (Date.now() < authDeadline) {
     [flags, owners] = await Promise.all([
-      Promise.all(clients.map((c) => c.eval('(window.__omwMP||{}).isHolder'))),
-      Promise.all(clients.map((c) => c.eval('(window.__omwMP||{}).authorityHolder'))),
+      Promise.all(clients.map((c) => c.eval('window.omw.state.isHolder'))),
+      Promise.all(clients.map((c) => c.eval('window.omw.state.authorityHolder'))),
     ]);
     if (owners.every((o) => o && o !== 'none')) break;
     await ctx.sleep(500);
@@ -199,7 +199,7 @@ export default async function run(ctx) {
   // 2. Non-holders must actually be puppeting. Asserted BEFORE any convergence number is
   //    believed — see the header note about the zero-puppet false green.
   for (const p of peers) {
-    await p.waitFor('Number((window.__omwMP||{}).puppetedActors||0) >= 3', STEP_TIMEOUT,
+    await p.waitFor('Number(window.omw.state.puppetedActors||0) >= 3', STEP_TIMEOUT,
       `${p.name} attached puppets to the cell actors`);
   }
   ctx.log(`cell owned by ${owners[0]}; all ${peers.length} clients puppeting as non-holders`);
@@ -270,7 +270,7 @@ export default async function run(ctx) {
     // Sustained sampling, not a single lucky read: take the WORST agreement seen while the
     // cell is crowded. Also track that the puppet stream keeps flowing (actorBatchesIn must
     // keep rising) — frozen puppets hold their last position and would look "converged".
-    const batches0 = await Promise.all(peers.map((p) => p.eval('Number((window.__omwMP||{}).actorBatchesIn||0)')));
+    const batches0 = await Promise.all(peers.map((p) => p.eval('Number(window.omw.state.actorBatchesIn||0)')));
     let under = { shared: 0, worst: 0, rec: null };
     // Every sample is kept, not just the worst. A lagging puppet OSCILLATES — it falls behind
     // and catches up — whereas a genuinely desynced one never comes back. That difference is
@@ -284,7 +284,7 @@ export default async function run(ctx) {
       if (s.worst > under.worst) under = s;
       await ctx.sleep(2000);
     }
-    const batches1 = await Promise.all(peers.map((p) => p.eval('Number((window.__omwMP||{}).actorBatchesIn||0)')));
+    const batches1 = await Promise.all(peers.map((p) => p.eval('Number(window.omw.state.actorBatchesIn||0)')));
     // Holder-ness must be read NOW, not from setup. Authority is elected on FITNESS
     // (D-cap-2) and re-elected when the current holder degrades — which is exactly what a
     // loaded box provokes. A peer PROMOTED to holder mid-run stops receiving actor batches
@@ -292,7 +292,7 @@ export default async function run(ctx) {
     // correct handoff as a product bug. (Observed: "holder was 1; now authorityHolder=2,2
     // isHolder=false,true" — crowd1 had become the holder and was flagged for not
     // receiving its own stream.)
-    const peerIsHolderNow = await Promise.all(peers.map((p) => p.eval('(window.__omwMP||{}).isHolder')));
+    const peerIsHolderNow = await Promise.all(peers.map((p) => p.eval('window.omw.state.isHolder')));
     const stalled = peers
       .filter((_, i) => batches1[i] <= batches0[i] && peerIsHolderNow[i] !== 'true')
       .map((p) => p.name);
@@ -307,8 +307,8 @@ export default async function run(ctx) {
       // bot is a near-perfect candidate on RTT while being utterly unable to simulate an
       // actor — it has no engine. If a bot has taken the cell, the stream stopping is not a
       // client fault at all: nobody is producing, by design.
-      const holderNow = await Promise.all(clients.map((c) => c.eval('(window.__omwMP||{}).authorityHolder')));
-      const stillHolder = await Promise.all(clients.map((c) => c.eval('(window.__omwMP||{}).isHolder')));
+      const holderNow = await Promise.all(clients.map((c) => c.eval('window.omw.state.authorityHolder')));
+      const stillHolder = await Promise.all(clients.map((c) => c.eval('window.omw.state.isHolder')));
       ctx.log(`STALL on ${stalled.join(', ')}`);
       ctx.log(`  owner was ${owners[0]}; now authorityHolder=${holderNow.join(',')} isHolder=${stillHolder.join(',')}`);
       ctx.log(`  server counters:\n      ${await shedCounters(ctx.serverPort)}`);
@@ -356,7 +356,7 @@ export default async function run(ctx) {
     // not, and a cell that lost its simulator mid-measurement makes every number above
     // unattributable. A busy box is still worth skipping rather than failing: a peer starved of
     // CPU going quiet is the machine, not the code.
-    const ownerNow = await clients[0].eval('(window.__omwMP||{}).authorityHolder');
+    const ownerNow = await clients[0].eval('window.omw.state.authorityHolder');
     if (!ownerNow || ownerNow === 'none') {
       const loadNow = os.loadavg()[0];
       if (loadNow > 12) {

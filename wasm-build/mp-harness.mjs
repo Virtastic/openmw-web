@@ -523,8 +523,14 @@ async function launchClient(name, mpPort, extraParams = '', opts = {}) {
       if (r.exceptionDetails) throw new Error(`eval(${expr}): ` + (r.exceptionDetails.exception?.description || r.exceptionDetails.text));
       return r.result.value;
     };
-    // A COMMAND THAT WILL NOT BE CLOBBERED. `Module.__omwMPCmd` is a SINGLE SLOT drained at
-    // roughly one command per frame (pollHarness runs in onFrame), and a client under load runs
+    // Like eval, for an expression that yields a promise: waits for it and returns the value.
+    handle.evalAsync = async (expr) => {
+      const r = await bsend('Runtime.evaluate', { expression: expr, returnByValue: true, awaitPromise: true }, sessionId);
+      if (r.exceptionDetails) throw new Error(`evalAsync(${expr}): ` + (r.exceptionDetails.exception?.description || r.exceptionDetails.text));
+      return r.result.value;
+    };
+    // HISTORY. The bridge used to be a SINGLE SLOT (`Module.__omwMPCmd`) drained at
+    // roughly one command per frame, and a client under load runs
     // at a fraction of 1 fps -- so a scenario that writes the slot on a timer silently destroys
     // whatever has not been consumed yet.
     //
@@ -535,13 +541,15 @@ async function launchClient(name, mpPort, extraParams = '', opts = {}) {
     //
     // Opt-in, not automatic: waiting on every eval taxed hot loops for a hazard most scenarios
     // do not have (it cost s58 its budget). Use this wherever a command MUST land.
+    // A COMMAND THAT ACTUALLY RAN. window.omw.send queues it (nothing can clobber it) and
+    // resolves when Lua has dispatched it and acked -- so this returns the ack {id, ok,
+    // detail}, and a handler that threw is reported here rather than swallowed.
     handle.cmd = async (text, timeoutMs = 20_000) => {
-      const until = Date.now() + timeoutMs;
-      while (Date.now() < until) {
-        if (!(await handle.eval('!!(window.Module && Module.__omwMPCmd)'))) break;
-        await new Promise((r) => setTimeout(r, 100));
-      }
-      return handle.eval(`Module.__omwMPCmd=${JSON.stringify(text)}`);
+      const ack = await handle.evalAsync(
+        `window.omw.send(${JSON.stringify(text)}, ${timeoutMs}).then(function(r){ return JSON.stringify(r); })`);
+      const r = JSON.parse(ack);
+      if (!r.ok) throw new Error(`[${name}] command ${JSON.stringify(text)} failed: ${r.detail}`);
+      return r;
     };
 
     // A WALK THAT ACTUALLY HAPPENED. `walk:` is a ONE-SHOT command with a deadline: player.lua
@@ -557,12 +565,12 @@ async function launchClient(name, mpPort, extraParams = '', opts = {}) {
     //
     // Issuing the command until it takes needs no guess about how long the box needs.
     handle.walk = async (dx, dy, ms = 2500, minDist = 40, tries = 6) => {
-      const read = async () => JSON.parse(await handle.eval('(window.__omwMP||{}).pose||"null"'));
+      const read = async () => JSON.parse(await handle.eval('window.omw.state.pose||"null"'));
       const from = await read();
       if (!from) throw new Error('no pose mirror before walk — the client is not reporting');
       for (let i = 0; i < tries; i++) {
         const issued = Date.now();
-        await handle.eval(`Module.__omwMPCmd='walk:${dx},${dy},${ms}'`);
+        await handle.cmd(`walk:${dx},${dy},${ms}`);
         const until = issued + ms + 5_000;
         while (Date.now() < until) {
           const p = await read();
@@ -667,8 +675,8 @@ async function launchClient(name, mpPort, extraParams = '', opts = {}) {
     console.log(`[harness] ${name}: booting ${url}`);
     const boot0 = Date.now();
     // Error-path scenarios pass their own terminal condition (e.g. state === "Failed").
-    const waitExpr = opts.waitExpr ?? '(window.__omwMP||{}).state === "Joined"';
-    const waitWhat = opts.waitWhat ?? '__omwMP.state === Joined';
+    const waitExpr = opts.waitExpr ?? 'window.omw.state.state === "Joined"';
+    const waitWhat = opts.waitWhat ?? 'omw.state.state === Joined';
     // Retail boots stream ~hundreds of MB of game data before the world exists.
     await handle.waitFor(waitExpr, opts.joinTimeoutMs ?? JOIN_TIMEOUT_MS, waitWhat);
     console.log(`[harness] ${name}: reached [${waitWhat}] in ${((Date.now() - boot0) / 1000).toFixed(1)}s`);

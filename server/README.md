@@ -62,7 +62,7 @@ Signals: `SIGTERM`/`SIGINT` = graceful shutdown (every session gets
   world/cells/<enc>.json # M3 per-cell delta docs (placed/deleted/moved/locks/doors/containers),
                          # filename = encodeURIComponent(cellKey)
   logs/chat-YYYY-MM-DD.jsonl  # A4 durable chat log, one JSON object per line, rotated daily
-  reports/<ts>-<reporter>.json # A4 /report inbox (reporter, target + cell, reason, context)
+  reports/<ts>-<reporter>.json # report inbox, filed from the social panel (reporter, target + cell, reason, context)
   identities/<sha256>.json    # Phase B SSO: (issuer, subject) -> account, one file per link
 
 ```
@@ -110,16 +110,15 @@ Note `plugins` is a top-level key — in an override file it must appear **befor
 | `[limits] maxMsgBytes` | `262144` | ws `maxPayload` |
 | `[limits] helloTimeoutMs` | `45000` | `SessionHello` deadline (generous: the client can only send it on a Lua tick, which stalls while the engine streams/loads a retail world) |
 | `[limits] loginPerMinPerIp` | `5` | auth attempts per IP per minute |
-| `[moderation] chatLog` | `true` | write chat + slash commands to `logs/chat-YYYY-MM-DD.jsonl` |
+| `[moderation] chatLog` | `true` | write chat to `logs/chat-YYYY-MM-DD.jsonl` |
 | `[moderation] retentionDays` | `14` | days of chat logs and reports kept (pruned at boot and on day rollover) |
-| `[moderation] contextLines` | `20` | recent chat lines attached to each `/report` |
+| `[moderation] contextLines` | `20` | recent chat lines attached to each report |
 
-Moderation commands: `/report <player> <reason>` (any player) files a report with the
-target's current cell and the last `contextLines` chat lines; `/reports [n]` and
-`/chatlog <player> [minutes]` are rank 1 (moderator) and go through the same
-`Admin.exec` gate as every other operator command, so the chat and `AdminCommand` event
-paths cannot diverge. Chat logs and reports are **personal data** — see
-[PRIVACY.md](PRIVACY.md).
+Moderation: players report from the social panel (any player), which files a report with
+the target's current cell and the last `contextLines` chat lines; `reports [n]` and
+`chatlog <player> [minutes]` are rank-1 commands on the dashboard's console, the one
+entry point every operator command has (`Admin.exec`). There are no typed `/slash`
+commands. Chat logs and reports are **personal data** — see [PRIVACY.md](PRIVACY.md).
 
 Content policy in M0 (`names`): the server has no game data, so the **first** player's
 manifest becomes the session's canonical manifest (exact name+size+order); it is dropped
@@ -172,7 +171,7 @@ enforces session rules. A modified client can lie about anything gameplay-relate
 position, stats, inventory, combat outcomes — and the server cannot detect it, because
 it has no game data and no simulation to check against. The design target is
 **password-gated co-op with people you trust**, not anonymous public play. Keep
-`[server] password` set for anything internet-facing, and treat `/kick` + `banned` as
+`[server] password` set for anything internet-facing, and treat kick + banned as
 social tools, not security boundaries.
 
 ## Measured capacity

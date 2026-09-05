@@ -34,7 +34,7 @@ import type { AdminSessionStore } from '../auth/identities';
 import { Moderation } from '../core/moderation';
 import { gameDataDir } from '../core/gamedata';
 import { deleteAccount } from '../persist/erase';
-import { log, recentLogs } from '../log';
+import { log, logHistory } from '../log';
 import { IpRateLimiter } from '../net/ratelimit';
 import { clientIp, CLIENT_IP_HEADER, type HttpRoute } from '../net/http';
 import { adminRoutes, type AdminDeps } from '../net/admin/routes';
@@ -183,7 +183,8 @@ export function gatewayAdminRoutes(deps: GatewayAdminDeps): HttpRoute {
     action: async () => refuse,
     runCommand: async () => refuse,
     commandCatalog: () => [],
-    recentLogs: (limit, filter) => recentLogs(limit, filter),
+    // Ring plus on-disk history: world.* and gateway.* lifecycle events survive a restart.
+    recentLogs: (limit, filter) => logHistory(limit, filter),
     metricsSnapshot: () => summariseMetrics(),
     maintenance: deps.maintenance,
     restart: deps.restart,

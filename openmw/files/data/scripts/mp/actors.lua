@@ -615,9 +615,9 @@ function actors.tick(now)
         local ownCell = deps.ownCellKeyFn()
         -- Ids arrive over LSER as doubles: format as integers so "1" never reads as "1.0".
         local holderId = holderOfCell[ownCell]
-        mp.testSet('authorityHolder', holderId and string.format('%.0f', holderId) or 'none')
-        mp.testSet('isHolder', tostring(held[ownCell] ~= nil))
-        mp.testSet('actorCount', tostring(#cellActors(ownCell)))
+        mp.set('authorityHolder', holderId and string.format('%.0f', holderId) or 'none')
+        mp.set('isHolder', tostring(held[ownCell] ~= nil))
+        mp.set('actorCount', tostring(#cellActors(ownCell)))
         -- Diagnostic: unfiltered active-actor census (distinguishes "filter too strict" from
         -- "content ships no actors"; the clean Example Suite ships none).
         local raw, census = 0, {}
@@ -627,12 +627,12 @@ function actors.tick(now)
                 or (deps.isMpPuppetFn(obj) and 'mppuppet' or 'npc')
             census[#census + 1] = tag .. '@' .. tostring(cellKeyOf(obj.cell))
         end
-        mp.testSet('activeActorsRaw', tostring(raw))
-        mp.testSet('actorCensus', json.encode(census))
+        mp.set('activeActorsRaw', tostring(raw))
+        mp.set('actorCensus', json.encode(census))
         local puppeted = 0
         for _ in pairs(puppetActors) do puppeted = puppeted + 1 end
-        mp.testSet('puppetedActors', tostring(puppeted))
-        mp.testSet('actorBatchesIn', tostring(batchesIn))
+        mp.set('puppetedActors', tostring(puppeted))
+        mp.set('actorBatchesIn', tostring(batchesIn))
         -- Deterministic cross-client actor probe: world.activeActors is in engine-internal
         -- order, which differs per client, so key by recordId and sort. Scenarios compare
         -- the SAME record on both clients.
@@ -650,9 +650,9 @@ function actors.tick(now)
                     guard = isGuard }
             end
         end
-        mp.testSet('actorProbe', json.encode(probe))
+        mp.set('actorProbe', json.encode(probe))
         if watchKillRecord then
-            mp.testSet('killCountOf',
+            mp.set('killCountOf',
                 watchKillRecord .. '=' .. string.format('%.0f', mp.getDeadCount(watchKillRecord)))
         end
     end

@@ -121,8 +121,8 @@ export default async function run(ctx) {
     const acct = a.name.toLowerCase();
 
     // --- own world, entered -------------------------------------------------------------
-    await a.eval("Module.__omwMPCmd='socialtab:worlds'");
-    await a.waitFor("(window.__omwMP||{}).worldCount !== undefined", STEP, 'world list arrives');
+    await a.eval("window.omw.send('socialtab:worlds')");
+    await a.waitFor("window.omw.state.worldCount !== undefined", STEP, 'world list arrives');
     // NAMED priv-*, because that is the only kind of world the gateway will REVIVE ON DIAL --
     // and revival is the whole subject of this scenario. A reaped world outside that prefix
     // stays down, so the old id could never have exercised the round trip it asserts. Real
@@ -134,15 +134,15 @@ export default async function run(ctx) {
     // owner of. So the create below is idempotent (the gateway returns ok for the world that
     // exists), and the list correctly holds ONE world, not two -- asserting >1 could never
     // pass. What matters is that the world is THERE and named as expected.
-    await a.eval("Module.__omwMPCmd='worldcreate:priv-revivetest:private'");
-    await a.waitFor('((window.__omwMP||{}).worldCreate||"") !== ""', STEP,
+    await a.eval("window.omw.send('worldcreate:priv-revivetest:private')");
+    await a.waitFor('(window.omw.state.worldCreate||"") !== ""', STEP,
       'the server answered the create request at all');
-    const createdAns = JSON.parse(await a.eval('(window.__omwMP||{}).worldCreate'));
+    const createdAns = JSON.parse(await a.eval('window.omw.state.worldCreate'));
     ctx.log(`  create answered: ok=${createdAns.ok} error="${createdAns.error ?? ''}"`);
     assert.equal(createdAns.ok, true,
       `creating the session was refused: ${createdAns.error || 'no reason given'}`);
     await a.waitFor(
-      `JSON.parse((window.__omwMP||{}).worlds||"[]").some(w => w.id === 'priv-revivetest')`,
+      `JSON.parse(window.omw.state.worlds||"[]").some(w => w.id === 'priv-revivetest')`,
       STEP, 'the private world is listed');
 
     // `up`, not a port: the gateway publishes no world ports, so the old `ownPort = w.port`
@@ -156,15 +156,15 @@ export default async function run(ctx) {
     }
     assert.ok(ownUp, 'the private world must come up');
 
-    await a.eval("Module.__omwMPCmd='socialtab:players'");
-    await a.eval("Module.__omwMPCmd='socialtab:worlds'");
+    await a.eval("window.omw.send('socialtab:players')");
+    await a.eval("window.omw.send('socialtab:worlds')");
     await ctx.sleep(1500);
     // RE-GRANT BEFORE EVERY SWITCH. A switch RELOADS the page, and the locker session is
     // injected into window rather than carried in the URL, so it does not survive. s47 and s48
     // switch once and never noticed; this scenario switches three times and the second one
     // silently had no session at all.
     await grantLockerSession(a, GW_PORT, `bot-a-${ctx.runId}`);
-    await a.eval("Module.__omwMPCmd='worldjoin:priv-revivetest'");
+    await a.eval("window.omw.send('worldjoin:priv-revivetest')");
 
     let joined = false;
     const joinBy = Date.now() + ARRIVE_MS;
@@ -185,8 +185,8 @@ export default async function run(ctx) {
     // is where the client keeps the public world's address -- died with the Lua state. Without
     // this, Public has no address to dial and does nothing at all. A player necessarily does
     // the same thing, because the Public button lives in the hub that fetches the list.
-    await a.eval("Module.__omwMPCmd='socialtab:worlds'");
-    await a.waitFor("(window.__omwMP||{}).worldCount !== undefined", STEP,
+    await a.eval("window.omw.send('socialtab:worlds')");
+    await a.waitFor("window.omw.state.worldCount !== undefined", STEP,
       'the world list is back after the reload');
     // PRESSED MORE THAN ONCE, ON PURPOSE. `where:public` asks the server for a world list and
     // switches when the answer names an up public world -- publicStage goes `asked` ->
@@ -227,11 +227,11 @@ export default async function run(ctx) {
         // reported switchTo cleared (so rebootIntoWorld DID run) and hasLockerToken=false (so
         // it threw on the very first thing it checks).
         await grantLockerSession(a, GW_PORT, gw.account);
-        await a.eval("Module.__omwMPCmd='socialtab:worlds'");
-        await a.eval("Module.__omwMPCmd='where:public'");
+        await a.eval("window.omw.send('socialtab:worlds')");
+        await a.eval("window.omw.send('where:public')");
       }
       if (await playersIn('vvardenfell') > 0) { inPublic = true; break; }
-      const v = String(await a.eval("(window.__omwMP||{}).publicStage||''").catch(() => ''));
+      const v = String(await a.eval("window.omw.state.publicStage||''").catch(() => ''));
       if (v) lastStage = v;
       await ctx.sleep(1000);
     }
@@ -246,7 +246,7 @@ export default async function run(ctx) {
       // the destination Lua published; cleared means it TRIED and rebootIntoWorld threw. And a
       // missing locker token is the most likely reason it would throw, because a switch
       // reloads the page and the token is injected into window rather than carried in the URL.
-      const sw = await a.eval("String((window.__omwMP||{}).switchTo||'(cleared)')").catch(() => '?');
+      const sw = await a.eval("String(window.omw.state.switchTo||'(cleared)')").catch(() => '?');
       const tok = await a.eval("String(!!window.__omwLockerToken)").catch(() => '?');
       const base = await a.eval("String(typeof window.__lockerHttpBase)").catch(() => '?');
       ctx.log(`  switchTo="${sw}" hasLockerToken=${tok} lockerHttpBase=${base}`);
@@ -281,7 +281,7 @@ ${a.logTail?.(40) ?? '(none)'}`);
     // switch once and never noticed; this scenario switches three times and the second one
     // silently had no session at all.
     await grantLockerSession(a, GW_PORT, `bot-a-${ctx.runId}`);
-    await a.eval("Module.__omwMPCmd='where:solo'");
+    await a.eval("window.omw.send('where:solo')");
 
     let home = false;
     const homeBy = Date.now() + 90_000;
@@ -293,7 +293,7 @@ ${a.logTail?.(40) ?? '(none)'}`);
       await ctx.sleep(1000);
     }
 
-    const lastErr = String(await a.eval("(window.__omwMP||{}).lastError || ''"));
+    const lastErr = String(await a.eval("window.omw.state.lastError || ''"));
     assert.ok(home,
       'the player never got back into their own world after it was reaped. '
       + `lastError=${JSON.stringify(lastErr)} — an AUTH_FAILED here is the dead-end that gated `

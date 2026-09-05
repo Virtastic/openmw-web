@@ -8,26 +8,26 @@ import assert from 'node:assert/strict';
 const STEP_TIMEOUT = 15_000;
 const SETTLE_MS = 4000; // generous: we are proving that NOTHING happens
 
-const hpOf = async (c) => Number(await c.eval('(window.__omwMP||{}).hp||"0"'));
+const hpOf = async (c) => Number(await c.eval('window.omw.state.hp||"0"'));
 
 export default async function run(ctx) {
   const [a, b] = await Promise.all([ctx.launchClient('bot-a'), ctx.launchClient('bot-b')]);
-  const idB = await b.eval('(window.__omwMP||{}).playerId');
+  const idB = await b.eval('window.omw.state.playerId');
 
-  await a.waitFor(`!!JSON.parse((window.__omwMP||{}).puppets||"{}")[${JSON.stringify(idB)}]`,
+  await a.waitFor(`!!JSON.parse(window.omw.state.puppets||"{}")[${JSON.stringify(idB)}]`,
     STEP_TIMEOUT, 'puppet of B on A');
-  await b.waitFor('Number((window.__omwMP||{}).hp||"0") > 0', STEP_TIMEOUT, 'B hp mirror live');
-  await b.waitFor('(window.__omwMP||{}).pvp === "false"', STEP_TIMEOUT, 'B sees pvp disabled');
+  await b.waitFor('Number(window.omw.state.hp||"0") > 0', STEP_TIMEOUT, 'B hp mirror live');
+  await b.waitFor('window.omw.state.pvp === "false"', STEP_TIMEOUT, 'B sees pvp disabled');
 
   const hpBefore = await hpOf(b);
-  await a.eval(`Module.__omwMPCmd='hitp:${idB}:25'`);
+  await a.eval(`window.omw.send('hitp:${idB}:25')`);
   await ctx.sleep(SETTLE_MS);
 
   const hpAfter = await hpOf(b);
   ctx.log(`pvp off: B hp ${hpBefore} -> ${hpAfter}`);
   assert.equal(hpAfter, hpBefore, 'PvP disabled: B must take no damage');
   // And nothing was delivered to B at all (no CombatHit reached its combat applier).
-  assert.equal(await b.eval('(window.__omwMP||{}).lastHitTaken'), undefined,
+  assert.equal(await b.eval('window.omw.state.lastHitTaken'), undefined,
     'no CombatHit should have been delivered to B');
   ctx.log('ok: PvP gate blocked the hit end to end');
 }

@@ -14,7 +14,6 @@ import { lToJs } from '../proto/lser';
 import type { Player, Roster } from './players';
 import { WorldClock } from './worldtime';
 import { WeatherRegions } from './weather';
-import { GuiRouter } from './gui';
 import type { CellStore, CellDoc } from '../persist/cellstore';
 import { RecordStore, RECORD_KINDS, type RecordKind, type CustomRecord } from '../persist/recordstore';
 import { log } from '../log';
@@ -33,14 +32,12 @@ export const M7_EVENTS = new Set([
   'WorldWeather',
   'RecordCreate',
   'WorldMapExplored',
-  'GuiReply',
 ]);
 
 export interface M7Ctx {
   roster: Roster;
   cells: CellStore;
   records: RecordStore;
-  guiTimeoutMs: number;
   // M6 sharing policy, asked per relay (the `sharing` plugin answers from [sharing]).
   isMapShared(): boolean;
   // Phase 3.7: set after construction (WorldState and WorldM7 are mutually referential).
@@ -57,7 +54,6 @@ function str(v: LValue | undefined, max: number): string | undefined {
 export class WorldM7 {
   readonly clock: WorldClock;
   readonly weather: WeatherRegions;
-  readonly gui: GuiRouter;
   private recordQueue: Promise<void> = Promise.resolve();
   private resetTimer?: NodeJS.Timeout;
 
@@ -73,7 +69,6 @@ export class WorldM7 {
       weather: m7.weather,
       save: () => ctx.cells.saveShared(),
     });
-    this.gui = new GuiRouter(ctx.roster, ctx.guiTimeoutMs);
   }
 
   start(): void {
@@ -88,7 +83,6 @@ export class WorldM7 {
     this.clock.stop();
     clearInterval(this.resetTimer);
     this.resetTimer = undefined;
-    this.gui.closeAll();
     await this.drain();
   }
 
@@ -128,7 +122,6 @@ export class WorldM7 {
       case 'WorldWeather': this.weather.handleWeather(player, body); break;
       case 'RecordCreate': this.recordCreate(player, body); break;
       case 'WorldMapExplored': this.mapExplored(player, body); break;
-      case 'GuiReply': this.gui.handleReply(player, body); break;
     }
     return true;
   }
@@ -143,7 +136,6 @@ export class WorldM7 {
 
   onDisconnect(playerId: number): void {
     this.weather.onDisconnect(playerId);
-    this.gui.onDisconnect(playerId);
   }
 
   // ------------------------------------------------------------- records

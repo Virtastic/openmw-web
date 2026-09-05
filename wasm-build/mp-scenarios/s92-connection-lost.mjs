@@ -15,10 +15,10 @@ export default async function run(ctx) {
 
   ctx.serverKill();
 
-  await a.waitFor('(window.__omwMP||{}).reconnecting === "true"', 15000,
+  await a.waitFor('window.omw.state.reconnecting === "true"', 15000,
     'entered the reconnect cycle after server death');
   await a.waitFor(
-    '((window.__omwMP||{}).lastChatLine||"").toLowerCase().includes("connection lost")',
+    '(window.omw.state.lastChatLine||"").toLowerCase().includes("connection lost")',
     5000, 'in-game "connection lost" notice');
 
   const banner = await a.eval('!!document.getElementById("mp-banner")');

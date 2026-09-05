@@ -16,41 +16,41 @@ import assert from 'node:assert/strict';
 const STEP_TIMEOUT = 25_000;
 const BOOT_TIMEOUT = 180_000;
 
-const poseOf = async (c) => JSON.parse(await c.eval('(window.__omwMP||{}).pose||"{}"'));
+const poseOf = async (c) => JSON.parse(await c.eval('window.omw.state.pose||"{}"'));
 const dist = (p, q) => Math.hypot(p.x - q.x, p.y - q.y, p.z - q.z);
 
 export default async function run(ctx) {
   const a = await ctx.launchClient('bot-a');
   const b = await ctx.launchClient('bot-b'); // a witness: the resumed player must come back for peers too
 
-  assert.equal(await a.eval('(window.__omwMP||{}).authPath'), 'register',
+  assert.equal(await a.eval('window.omw.state.authPath'), 'register',
     'first boot should take the normal auth ladder');
-  const idBefore = await a.eval('(window.__omwMP||{}).playerId');
+  const idBefore = await a.eval('window.omw.state.playerId');
 
   // Walk a little so "in place" means something other than the spawn point.
-  await a.eval(`Module.__omwMPCmd='walk:0,1,1500'`);
+  await a.eval(`window.omw.send('walk:0,1,1500')`);
   await ctx.sleep(3000);
   const poseBefore = await poseOf(a);
   ctx.log(`before reload: id=${idBefore} pose=${JSON.stringify(poseBefore)}`);
   assert.ok(Number.isFinite(poseBefore.x), 'pose mirror is live before the reload');
 
   // B must see A's puppet before the drop, so we can tell "came back" from "never left".
-  await b.waitFor(`!!JSON.parse((window.__omwMP||{}).puppets||"{}")[${JSON.stringify(idBefore)}]`,
+  await b.waitFor(`!!JSON.parse(window.omw.state.puppets||"{}")[${JSON.stringify(idBefore)}]`,
     STEP_TIMEOUT, "B sees A's puppet before the reload");
 
   // The reload: same tab, same profile -> the parked ticket in localStorage survives.
   // Defer the navigation so the eval itself returns before the execution context dies.
   await a.eval('setTimeout(function(){ location.reload(); }, 50); 1');
   await ctx.sleep(2000);
-  await a.waitFor('(window.__omwMP||{}).state === "Joined"', BOOT_TIMEOUT, 'A rejoined after the reload');
+  await a.waitFor('window.omw.state.state === "Joined"', BOOT_TIMEOUT, 'A rejoined after the reload');
 
-  const authPath = await a.eval('(window.__omwMP||{}).authPath');
+  const authPath = await a.eval('window.omw.state.authPath');
   ctx.log(`authPath after reload: ${authPath}`);
   assert.equal(authPath, 'resume', 'A did not resume — it re-authed (ticket lost or not sent)');
 
   // Rejoined IN PLACE: the server restored the cell and pose from the ticket, and the
   // client applied the normal playerRecord path (no resume-specific code).
-  await a.waitFor('((window.__omwMP||{}).pose||"") !== ""', STEP_TIMEOUT, 'A pose mirror live again');
+  await a.waitFor('(window.omw.state.pose||"") !== ""', STEP_TIMEOUT, 'A pose mirror live again');
   // Wait for the restore to COMPLETE before measuring. Reaching `Joined` only means the
   // session resumed; the engine has meanwhile placed the player itself (the boot URL's
   // ?start= spawn) and the restore teleport lands a moment later — it is deferred to the
@@ -58,12 +58,12 @@ export default async function run(ctx) {
   // races the restore and reads the SPAWN point, which looked exactly like a resume bug
   // (a verified-correct client still reported ~300 units of "drift"). Assert the mechanism
   // fired, then let the position settle. The tolerance below is unchanged.
-  await a.waitFor('((window.__omwMP||{}).restoreFired||"") === "1"', STEP_TIMEOUT,
+  await a.waitFor('(window.omw.state.restoreFired||"") === "1"', STEP_TIMEOUT,
     'restore path ran (playerRecord with a position arrived)');
   const target = `Math.hypot(
-      (JSON.parse((window.__omwMP||{}).pose||"{}").x||0) - ${poseBefore.x},
-      (JSON.parse((window.__omwMP||{}).pose||"{}").y||0) - ${poseBefore.y},
-      (JSON.parse((window.__omwMP||{}).pose||"{}").z||0) - ${poseBefore.z}) < 40`;
+      (JSON.parse(window.omw.state.pose||"{}").x||0) - ${poseBefore.x},
+      (JSON.parse(window.omw.state.pose||"{}").y||0) - ${poseBefore.y},
+      (JSON.parse(window.omw.state.pose||"{}").z||0) - ${poseBefore.z}) < 40`;
   await a.waitFor(target, STEP_TIMEOUT, 'A settled back where it logged out');
   const poseAfter = await poseOf(a);
   const drift = dist(poseBefore, poseAfter);
@@ -75,14 +75,14 @@ export default async function run(ctx) {
   assert.ok(drift < 40, `resumed player did not land where it left off (${drift.toFixed(1)} units)`);
 
   // Superset claim (§M8): everything a fresh join delivers is delivered again.
-  await a.waitFor('(window.__omwMP||{}).journalSynced === "true"', STEP_TIMEOUT, 'JournalSync re-sent (M6)');
-  await a.waitFor('Number((window.__omwMP||{}).timeApplied||"0") > 0', STEP_TIMEOUT, 'WorldTime re-sent (M7)');
-  await a.waitFor('JSON.parse((window.__omwMP||{}).players||"[]").length >= 1', STEP_TIMEOUT, 'PlayerList re-sent (M0)');
+  await a.waitFor('window.omw.state.journalSynced === "true"', STEP_TIMEOUT, 'JournalSync re-sent (M6)');
+  await a.waitFor('Number(window.omw.state.timeApplied||"0") > 0', STEP_TIMEOUT, 'WorldTime re-sent (M7)');
+  await a.waitFor('JSON.parse(window.omw.state.players||"[]").length >= 1', STEP_TIMEOUT, 'PlayerList re-sent (M0)');
   ctx.log('ok: post-resume stream is a superset of a fresh join (no resume-specific apply path)');
 
   // And the peers get the player back.
-  const idAfter = await a.eval('(window.__omwMP||{}).playerId');
-  await b.waitFor(`!!JSON.parse((window.__omwMP||{}).puppets||"{}")[${JSON.stringify(idAfter)}]`,
+  const idAfter = await a.eval('window.omw.state.playerId');
+  await b.waitFor(`!!JSON.parse(window.omw.state.puppets||"{}")[${JSON.stringify(idAfter)}]`,
     STEP_TIMEOUT, "B re-placed A's puppet after the resume");
   ctx.log(`ok: resumed as playerId ${idAfter} (was ${idBefore}); B re-placed the puppet`);
 }
