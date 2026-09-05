@@ -157,6 +157,18 @@ below). A second published port is a second address to get wrong, and the client
 to use one. `--network omw-test` is therefore mandatory: the default bridge has no DNS, so
 Caddy could not resolve `openmw-mp-test` at all.
 
+### The mode flip — run this after touching the wizard, the entrypoint or either main
+
+```bash
+docker build -t omw-flip:test server && ci/jenkins/verify-mode-flip.sh
+```
+
+Drives a REAL container both ways: wizard answer -> `<data>/.mode` -> SIGTERM -> restart
+policy -> `docker-entrypoint.sh` execs the other program -> its dashboard answers. Three
+mechanisms no unit test sees end to end, and the failure mode is an operator stranded on a
+server that is not the one they chose (or, before both halves landed, on one with no
+dashboard at all). Local only: it makes and destroys its own container and volume on 18099.
+
 ### The contract gate — run this after ANY deploy
 
 ```bash
