@@ -20,6 +20,7 @@ concurrency:
 
 permissions:
   contents: write   # create the release + upload assets
+  actions: write    # dispatch build-openmw-image afterwards (see the last step)
 
 jobs:
   release:
@@ -189,3 +190,12 @@ jobs:
             dist/openmw-web-${{ steps.tag.outputs.tag }}.zip
             dist/openmw-web-src-${{ steps.tag.outputs.tag }}.tar.gz
             dist/SHA256SUMS
+
+      # A release created with GITHUB_TOKEN raises no `release: published` event for other
+      # workflows (GitHub's recursion guard), so build-openmw-image never ran on its own -- v1.2.0
+      # and v1.3.0 both had to be noticed by hand. workflow_dispatch is exempt from that guard.
+      - name: Build + publish the container image from this release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: gh workflow run deploy-openmw.yml -f "release_tag=$TAG"

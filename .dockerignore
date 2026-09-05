@@ -26,3 +26,21 @@ play/*.tar
 *.7z
 *.zip
 .DS_Store
+# wasm-build/ is COPYed into the builder stage BEFORE the 25-min engine compile, and BuildKit keys
+# that layer on the whole directory -- so editing a test-only file here forced a full engine
+# rebuild + brotli on the VPS (35 min, measured 2026-09-04). The build reads only the .sh/.py
+# scripts, include/, patches/, x11_stubs.c and the memory64/f10 gates; none of these.
+wasm-build/mp-harness.mjs
+wasm-build/mp-scenarios
+wasm-build/lua-tests
+wasm-build/mp-vectors.mjs
+wasm-build/qa.mjs
+wasm-build/qa2.mjs
+wasm-build/smoke.mjs
+wasm-build/p3.mjs
+wasm-build/perf-ab.mjs
+wasm-build/selftest.mjs
+wasm-build/memory64-gate-browser.mjs
+wasm-build/memory64-gate-run.mjs
+wasm-build/Dockerfile.harness
+wasm-build/Dockerfile.harness-peer

@@ -160,3 +160,6 @@ data/caddy/Caddyfile
 # /data, same reasons it must never be committed.
 /data.pre-reset*
 /gamedata.pre-reset*
+
+# release-bundle scratch used by infra/Dockerfile builds
+dist/

@@ -39,19 +39,23 @@ The engine binaries are gitignored, so publish them to a GitHub Release after a 
 then let CI build the image:
 
 ```bash
-./wasm-build/link-openmw.sh && ./wasm-build/make_br.sh
-cp build-wasm/openmw.{js,wasm,data} play/
-gh release create build-$(date +%Y%m%d) play/openmw.js play/openmw.wasm play/openmw.data
+git tag -a v1.4.0 -m "openmw-web 1.4.0" && git push origin v1.4.0
 ```
 
-Publishing the release triggers **build-openmw-image**, which fetches those artifacts, builds
-`infra/Dockerfile`, and pushes `ghcr.io/<owner>/openmw-web:latest` (+ a `sha-…` tag). No box
-access or long-lived keys are used — just the repo's `GITHUB_TOKEN`.
+The **release** workflow builds the engine, publishes `openmw-web-<tag>.zip` (the whole served
+web root: `index.html`, `launcher.html`, the content-versioned engine under `e/<hash>/`, the demo
+asset pack) and then dispatches **build-openmw-image**, which unzips that bundle, builds
+`infra/Dockerfile` from it, and pushes `ghcr.io/<owner>/openmw-web:latest` (+ a `sha-…` tag). No
+box access or long-lived keys are used — just the repo's `GITHUB_TOKEN`. (It is dispatched
+explicitly because a release created with `GITHUB_TOKEN` raises no `release` event for other
+workflows; `gh workflow run deploy-openmw.yml -f release_tag=<tag>` rebuilds any release by hand.)
 
 Build it locally to test:
 
 ```bash
-# from repo root, with play/openmw.{js,wasm,data} present
+# from repo root: unpack a release bundle into dist/web first (that is the image's only input)
+gh release download v1.3.0 --dir dist --pattern 'openmw-web-v1.3.0.zip'
+unzip -q dist/openmw-web-v1.3.0.zip -d dist/web
 docker build -f infra/Dockerfile -t openmw-web:test .
 docker run --rm -p 8080:80 openmw-web:test
 # then browse http://localhost:8080  (note: no cross-origin isolation over plain http on a

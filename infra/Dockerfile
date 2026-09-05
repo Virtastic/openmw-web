@@ -12,7 +12,10 @@ RUN rm -f /etc/nginx/conf.d/default.conf
 COPY infra/nginx.conf /etc/nginx/conf.d/openmw.conf
 
 # Front-end (in git) + engine artifacts (fetched into play/ by CI).
-COPY play/launcher.html play/index.html play/streamfs.js /usr/share/nginx/html/
-COPY play/openmw.js play/openmw.wasm play/openmw.data /usr/share/nginx/html/
+# The RELEASE WEB ROOT, as-is. The engine lives under e/<hash>/ (content-versioned by
+# version-engine.sh, with index.html stamped to match) and never at the root, so copying
+# play/openmw.* would build an image that 404s on its own loader. build-openmw-image unzips the
+# release bundle into dist/web; `docker build -f infra/Dockerfile .` locally needs the same.
+COPY dist/web/ /usr/share/nginx/html/
 
 EXPOSE 80

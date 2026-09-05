@@ -41,8 +41,15 @@ jobs:
           TAG="$INPUT_TAG"
           [ -z "$TAG" ] && [ "$EVENT_NAME" = "release" ] && TAG="$RELEASE_TAG"
           [ -z "$TAG" ] && TAG=$(gh release view --json tagName -q .tagName)
-          gh release download "$TAG" --dir play \
-            --pattern 'openmw.js' --pattern 'openmw.wasm' --pattern 'openmw.data'
+          # The release ships the whole served web root as one zip (the engine is content-
+          # versioned under e/<hash>/, never loose at the root), so that is what the image is
+          # built from. Asking for loose openmw.* assets failed every run since versioning landed.
+          rm -rf dist && mkdir -p dist/web
+          gh release download "$TAG" --dir dist --pattern "openmw-web-$TAG.zip"
+          unzip -q "dist/openmw-web-$TAG.zip" -d dist/web
+          test -f dist/web/index.html || { echo "FATAL: bundle has no index.html" >&2; exit 1; }
+          ls dist/web/e/*/openmw.wasm >/dev/null || { echo "FATAL: bundle has no e/<hash>/openmw.wasm" >&2; exit 1; }
+          echo "engine dir: $(ls -d dist/web/e/*/)"
 
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:

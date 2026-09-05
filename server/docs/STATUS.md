@@ -781,6 +781,10 @@ observed in the lobby's own log and absent from the ordinary world's.
 - **Run 12** (58 browser scenarios): s60b and s69 timed out under the load of six leaked peers
   (not their own logic -- both passed in run 11); s71 is the documented 3-client memory ceiling.
   Re-run of the two after the fix is the gate for the release.
+- **Released 1.3.0** (2026-09-05, tag `v1.3.0` = `f1245d91`; dev/main/ovhcloud at the same commit).
+  Rerun: s60b 107 s, s69 202 s, both green on the fixed harness. The 1.3.0 deploy pair passed
+  with the new health checks; the probe world was created at 04:03Z and reaped `never_joined`
+  at 04:18Z; the box reports `version 1.3.0` and 0 errors over the following 5 h.
 
 ## What is left before the gate comes off
 

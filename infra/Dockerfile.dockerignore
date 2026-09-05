@@ -1,0 +1,6 @@
+# Context for infra/Dockerfile only (BuildKit picks <Dockerfile>.dockerignore over the root one).
+# The root .dockerignore excludes infra/ and play/openmw.* to keep the SITE build lean; this image
+# needs exactly two things: its nginx config and the unpacked release bundle.
+*
+!infra/nginx.conf
+!dist/web
