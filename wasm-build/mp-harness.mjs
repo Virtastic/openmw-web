@@ -162,7 +162,13 @@ async function startGameServer(extraRules = '', extraEnv = {}) {
     [dist, '--data', dataDir, '--port', String(port), '--server-password', SERVER_PASSWORD], {
     cwd: join(ROOT, 'server'), stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...process.env, ...extraEnv },
+    // Its own process group, so the sim peers the SERVER spawns can be reaped with it. A
+    // SIGKILLed server leaves them orphaned (the engine ignores TERM), and six of them from
+    // earlier scenarios were still burning CPU an hour later -- the load that timed out
+    // s60b/s69 in run 12 (2026-09-04). kill()/stop() below take the whole group.
+    detached: true,
   });
+  const killGroup = () => { try { process.kill(-proc.pid, 'SIGKILL'); } catch { /* gone */ } };
   const out = [];
   proc.stdout.on('data', (d) => out.push(String(d)));
   proc.stderr.on('data', (d) => out.push(String(d)));
@@ -206,9 +212,14 @@ async function startGameServer(extraRules = '', extraEnv = {}) {
     // buffer nobody printed. Every scenario failure now prints it.
     logTail: (n = 40) => out.join('').split('\n').slice(-n).join('\n'),
     // Abrupt death (no SessionDisconnect, no clean close) — for connection-lost scenarios.
-    kill: () => { try { proc.kill('SIGKILL'); } catch {} },
+    kill: () => killGroup(),
     stop: () => {
+      // TERM the server itself so it drains (stores flushed, peers told to leave), then sweep
+      // the group once it has exited -- or after a bound, so a wedged server cannot hold the
+      // suite. The server's own stopAll() already SIGKILLs its peers; this is the backstop.
       try { proc.kill('SIGTERM'); } catch {}
+      const t = setTimeout(killGroup, 15_000); t.unref?.();
+      proc.once('exit', () => { clearTimeout(t); killGroup(); });
       try { rmSync(dataDir, { recursive: true, force: true }); } catch {}
     },
   };
@@ -709,6 +720,7 @@ for (const file of files) {
   const t0 = Date.now();
   const clients = []; // everything launched by this scenario, closed no matter what
   let torndown = false; // a client that finishes booting AFTER teardown must not leak
+  const ownedChildren = []; // processes a scenario spawned through ctx (sim peers, gateways)
   let bootQueue = Promise.resolve(); // serializes client boots (see launchClient below)
   let server = null;
   let err = null;
@@ -741,6 +753,7 @@ for (const file of files) {
       // and its output is printed whenever the scenario fails. Spawn it with
       // stdio: ['ignore','pipe','pipe'] for this to have anything to read.
       watchChild: (label, proc) => {
+        ownedChildren.push(proc); // reaped in the finally: a scenario that throws never reaches peer.stop()
         const buf = [];
         proc.stdout?.on('data', (d) => buf.push(String(d)));
         proc.stderr?.on('data', (d) => buf.push(String(d)));
@@ -817,6 +830,9 @@ for (const file of files) {
     err = e;
   } finally {
     torndown = true;
+    // SIGKILL, not TERM: the engine ignores TERM (see startSimPeer.stop). Idempotent on a
+    // process the scenario already stopped.
+    for (const p of ownedChildren) { try { p.kill('SIGKILL'); } catch { /* already gone */ } }
     // A scenario that PASSES while a Lua handler was throwing is not a pass — it means the
     // assertions happened to be satisfied by some other path while a subsystem was dead.
     // Reported (not failed) so it cannot be silently normalised, and so a green suite still

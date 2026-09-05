@@ -765,6 +765,23 @@ works in ordinary worlds, and is discarded in the lobby. `world.lobby_rules` (`t
 `pvp=true`, `pvpZone=wilderness`) and `world.lobby_persistence` (`writes=discarded`) were both
 observed in the lobby's own log and absent from the ordinary world's.
 
+## Verified 2026-09-04 -- the first production deploy of the overhaul
+
+- **Site** (`morrowind:ovh`): deployed and verified live -- serving contract 21/21, hardening
+  green, `openmw.{js,wasm,data}` + `streamfs.js` served 200 + brotli + immutable under the
+  content-versioned `/e/<hash>/` path (root-level `/openmw.js` is a correct 404).
+- **Server** (`openmw-mp:ovh`): the Docker test gate and the native peer build passed for the
+  first time since 2026-09-02 (the provenance flake is gone). The protocol health check then
+  failed on a stale contract, not on the server -- see MP-AUDIT pass 6. Fixed: the probe creates
+  a world the way a player does and dials it.
+- **Sim peer lifecycle** (found by run 12, real in production): the engine ignores SIGTERM and
+  the supervisor only ever sent SIGTERM, so reaped/released peers never exited and, as zombies,
+  blocked `ensure()` and ate `maxPeers`. `stop()` now escalates to SIGKILL after 5 s;
+  `stopAll()` SIGKILLs; the harness reaps by process group. Three unit tests.
+- **Run 12** (58 browser scenarios): s60b and s69 timed out under the load of six leaked peers
+  (not their own logic -- both passed in run 11); s71 is the documented 3-client memory ceiling.
+  Re-run of the two after the fix is the gate for the release.
+
 ## What is left before the gate comes off
 
 Multiplayer is still hidden on production (`EXPERIMENTAL = ['card-mp']` in

@@ -49,6 +49,8 @@ interface Peer {
   // When the world went empty of humans. undefined = humans present, so not reapable.
   idleSince?: number;
   stopping: boolean;
+  // The SIGTERM -> SIGKILL escalation, armed by stop(); cleared by the exit handler.
+  killTimer?: NodeJS.Timeout;
 }
 
 export interface SimPeerDeps {
@@ -310,6 +312,7 @@ export class SimPeerSupervisor {
       // Only act if this is still the CURRENT peer for the key: a stop() followed by a
       // restart must not have the old process's exit reap the new one.
       if (this.peers.get(key) !== peer) return;
+      if (peer.killTimer) clearTimeout(peer.killTimer);
       this.peers.delete(key);
       if (peer.stopping) {
         log('info', 'simpeer.stopped', { key });
@@ -381,13 +384,32 @@ export class SimPeerSupervisor {
     // SIGTERM: the peer is a client, so a clean disconnect lets the server release its
     // authority through the ordinary leave path rather than waiting for liveness to notice.
     peer.child.kill('SIGTERM');
+    // THEN SIGKILL. The headless engine does not exit on TERM (measured 2026-09-02 in the
+    // harness, and again 2026-09-04: six ~360 MB peers from finished scenarios still running
+    // an hour later). Without this the exit handler never runs, the entry stays in `peers`
+    // as `stopping`, ensure() sees "existing" and returns, the idle reaper frees nothing, and
+    // every zombie counts against maxPeers until at_cap refuses a peer to a live world.
+    peer.killTimer = setTimeout(() => {
+      if (this.peers.get(key) !== peer) return;
+      log('warn', 'simpeer.kill_escalated', { key, graceMs: SimPeerSupervisor.STOP_GRACE_MS });
+      try { peer.child.kill('SIGKILL'); } catch { /* already gone */ }
+    }, SimPeerSupervisor.STOP_GRACE_MS);
+    peer.killTimer.unref?.();
   }
+  /** How long a peer gets to leave cleanly after SIGTERM before it is killed outright. Public
+   *  so a test can shorten it; WorldSupervisor.STOP_GRACE_MS is the same idea one layer up. */
+  static STOP_GRACE_MS = 5_000;
 
   // Shutdown: stop everything and stop sweeping. Safe to call twice.
   stopAll(): void {
     if (this.sweepTimer) clearInterval(this.sweepTimer);
     this.sweepTimer = undefined;
-    for (const key of [...this.peers.keys()]) this.stop(key);
+    // SIGKILL outright: the server is exiting, so nobody is left to receive a clean leave and
+    // the escalation timer in stop() would never get to fire.
+    for (const peer of [...this.peers.values()]) {
+      peer.stopping = true;
+      try { peer.child.kill('SIGKILL'); } catch { /* already gone */ }
+    }
   }
 }
 

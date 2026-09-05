@@ -130,12 +130,27 @@ jobs:
       # hello all worked, which is exactly what this gate exists to prove.
       # Zero-dep bot (Node's global WebSocket) run inside the freshly built image, so it needs
       # no node on the runner and no extra deps.
+      # The native sim peer is spawned only when a player anchors a cell, so no deploy probe can
+      # start one without a real join. What CAN be proven for free is that the binary shipped in
+      # this image links and runs headless -- the whole class of "missing lib / ABI break /
+      # null-function at boot" that would otherwise surface as simpeer.crashed under the first
+      # player. Measured 2026-09-04: prints "OpenMW version 0.52.0", exits 0, under a second.
+      - name: Health check (peer binary)
+        run: |
+          docker run --rm --entrypoint /usr/local/bin/openmw openmw-mp:ovh --version 2>&1             | tee /dev/stderr | grep -q '^OpenMW version'
+
+      # No world runs at boot ([worlds] publicEnabled is off; players get their own on demand),
+      # so the probe CREATES one the way the game does -- POST /worlds as the platform, using
+      # the gateway's self-minted credential -- which spawns a world process and its sim peer,
+      # then dials it and says hello. A fixed id, so every deploy reuses one small dir; the
+      # never-joined reaper stops the process 15 min later.
       - name: Health check (protocol)
         run: |
           docker run --rm --network nostalgia \
             -v "$PWD/server/bots:/bots:ro" \
+            -v /opt/openmw-mp/data/gateway-token:/gateway-token:ro \
             openmw-mp:ovh node /bots/healthcheck.mjs http://openmw-mp:8080 \
-              --allow-refusal=BAD_CONTENT
+              --server-token-file=/gateway-token --allow-refusal=BAD_CONTENT
 
       # Gate 3 - the edge path a PLAYER actually takes. The game page and the gateway are one
       # origin (AGENTS.md, "One origin"): index.html refuses to hand its session ticket to a
@@ -170,8 +185,8 @@ jobs:
           code=$(E -o /dev/null -w '%{http_code}' --http1.1 --max-time 8 \
             -H "Connection: Upgrade" -H "Upgrade: websocket" \
             -H "Sec-WebSocket-Version: 13" -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" \
-            -H "Sec-WebSocket-Protocol: omw-mp.1" \
-            https://morrowind.virtastic.app/w/vvardenfell || true)
+            -H "Sec-WebSocket-Protocol: omw-mp.2" \
+            https://morrowind.virtastic.app/w/deploy-healthcheck || true)
           test "$code" = 101 || { echo "FATAL: WS upgrade at the edge returned HTTP $code (want 101)" >&2; exit 1; }
           echo "edge health OK (101 upgrade on /w/ + providers)"
 

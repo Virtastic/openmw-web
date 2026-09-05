@@ -346,3 +346,65 @@ test('simpeer: a deferred cell is not forgotten', () => {
   sup.ensure('1,1');   // the caller's next beat
   assert.equal(spawned.length, 2, 'the retry must succeed rather than stay blocked');
 });
+
+// THE ENGINE IGNORES SIGTERM. Measured in the harness on 2026-09-02 and again on 2026-09-04
+// (six ~360 MB peers from finished scenarios still running an hour later). A child that only
+// dies on SIGKILL is therefore the realistic one; the three tests below hold the supervisor to
+// what production actually needs from it.
+function ignoresTerm(child: FakeChild): void {
+  child.kill = (sig: string) => {
+    child.killed.push(sig);
+    if (sig === 'SIGKILL') queueMicrotask(() => child.emit('exit', null, 'SIGKILL'));
+    return true;
+  };
+}
+const withShortGrace = async (fn: () => Promise<void>): Promise<void> => {
+  const was = SimPeerSupervisor.STOP_GRACE_MS;
+  SimPeerSupervisor.STOP_GRACE_MS = 20;
+  try { await fn(); } finally { SimPeerSupervisor.STOP_GRACE_MS = was; }
+};
+const settle = () => new Promise((r) => setTimeout(r, 80)); // past the 20 ms grace, plus the exit turn
+
+test('sim peer: a peer that ignores SIGTERM is SIGKILLed after the grace', () => withShortGrace(async () => {
+  const { sup, spawned } = harness();
+  sup.ensure('world');
+  ignoresTerm(spawned[0]!.child);
+  sup.stop('world');
+  assert.deepEqual(spawned[0]!.child.killed, ['SIGTERM'], 'TERM first: a clean leave is still the preferred path');
+  assert.equal(sup.running, 1, 'still bookkept until it actually exits');
+  await settle();
+  assert.deepEqual(spawned[0]!.child.killed, ['SIGTERM', 'SIGKILL']);
+  assert.equal(sup.running, 0, 'the exit handler ran, so the entry is gone');
+}));
+
+test('sim peer: a reaped zombie does not block the world from ever getting a peer again', () => withShortGrace(async () => {
+  // The production shape of the bug: idle reap -> SIGTERM ignored -> entry stuck as
+  // `stopping` -> ensure() sees "existing" and returns -> that world never gets a peer again,
+  // and the zombie counts against maxPeers for everyone else.
+  const { sup, spawned, advance } = harness();
+  sup.ensure('world');
+  sup.noteHello('world');
+  ignoresTerm(spawned[0]!.child);
+  sup.markIdle('world');
+  advance(61_000);
+  sup.sweep(); // reaps: SIGTERM, which this engine ignores
+  sup.ensure('world'); // a player is back before anything exited
+  assert.equal(spawned.length, 1, 'while the old one is still alive there is nothing to do but wait');
+  await settle(); // ... the escalation fires and the zombie exits
+  advance(20_000); // clear any crash backoff, as a real return would
+  sup.ensure('world');
+  assert.equal(spawned.length, 2, 'once the zombie is gone the world gets a fresh peer');
+}));
+
+test('sim peer: shutdown SIGKILLs outright -- nobody is left to receive a clean leave', async () => {
+  const { sup, spawned } = harness();
+  sup.ensure('a');
+  sup.noteHello('a'); // only one peer STARTS at a time; 'b' is refused until 'a' is up
+  sup.ensure('b');
+  ignoresTerm(spawned[0]!.child);
+  sup.stopAll();
+  assert.deepEqual(spawned[0]!.child.killed, ['SIGKILL']);
+  assert.deepEqual(spawned[1]!.child.killed, ['SIGKILL']);
+  await tick();
+  assert.equal(sup.running, 0, 'a server that has exited leaves no engine behind');
+});
