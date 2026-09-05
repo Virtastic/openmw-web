@@ -532,8 +532,8 @@ target's current cell and the last `[moderation] contextLines` chat lines; `repo
 | name | dir | body |
 |---|---|---|
 | `ConsoleCommand` | S→C, owner-gated | `{script=string}` executed client-side. Remote code execution on the player's own machine: rank 3 only, removable with `[admin] allowConsole=false`, and every use is logged with actor, target and full payload |
-| `AdminTeleport` | S→C | `{cellKey=string, x=, y=, z=}` — the `/tp` and `/tpto` effect; the client moves the player and then reports the move normally (`PlayerCellChange`) |
-| `AdminGive` | S→C | `{recordId=string, count=number}` — the `/give` effect; the client adds the item and reports inventory as usual |
+| `AdminTeleport` | S→C | `{cellKey=string, x=, y=, z=}` — the `tp` and `tpto` effect; the client moves the player and then reports the move normally (`PlayerCellChange`) |
+| `AdminGive` | S→C | `{recordId=string, count=number}` — the `give` effect; the client adds the item and reports inventory as usual |
 
 Commands and their minimum rank: `list` `motd` (read) 0 · `kick` `tp` `tpto` 1 ·
 `motd <text>` `ban` `unban` `ipban` `give` 2 · `setrank` `console` 3. A player who

@@ -86,10 +86,23 @@ export default async function run(ctx) {
   await c.waitFor('Number(window.omw.state.puppetedActors||0) > 0',
     PUPPET_TIMEOUT, 'the client to puppet the cell NPCs (needs a holder)');
 
+  // EVERY LIVE CANDIDATE, NOT THE FIRST KEY. actorProbe lists every actor in the cell —
+  // alive or dead, puppeted or not (actors.lua builds it from cellActors) — and the engine's
+  // order differs per client and per run. Taking the first non-player key therefore picked a
+  // CORPSE or an actor this client had not puppeted often enough to matter: no interceptor
+  // fires, nothing forwards, and the scenario reported "the relay is broken" when the relay
+  // was fine and the target was not hittable. Measured: a run that picked a mudcrab saw zero
+  // CombatHit while a run that picked an NPC saw one per swing.
+  //
+  // So: drop the dead, and swing at each candidate in turn. The assertion is "a swing reaches
+  // the cell's owner", which one live actor proves; which actor it is was never the point.
   const probe = JSON.parse(await c.eval('window.omw.state.actorProbe||"{}"'));
-  const record = Object.keys(probe).find((r) => r !== 'player');
-  assert.ok(record, `no NPC to hit in ${cellKey}: ${JSON.stringify(Object.keys(probe))}`);
-  ctx.log(`swinging at ${record}`);
+  const targets = Object.entries(probe)
+    .filter(([r, v]) => r !== 'player' && !v.dead)
+    .map(([r]) => r);
+  assert.ok(targets.length, `no live NPC to hit in ${cellKey}: ${JSON.stringify(probe)}`);
+  const record = targets[0];
+  ctx.log(`swinging at ${targets.length} live candidate(s): ${targets.join(', ')}`);
 
   // Swing. `hitn:` posts the STOCK Hit event, so it travels the identical path a real weapon
   // swing takes: the puppet's interceptor forwards it and cancels the local damage.
@@ -105,9 +118,10 @@ export default async function run(ctx) {
   // and fails for a reason that has nothing to do with the product.
   let stopArmed = false;
   void (async () => {
-    while (Date.now() < swingUntil && !stopArmed
-           && peer.inbox.events.filter((e) => e.name === 'CombatHit').length === 0) {
-      await c.eval(`window.omw.send('hitn:${record}:7')`);
+    for (let i = 0; Date.now() < swingUntil && !stopArmed
+           && peer.inbox.events.filter((e) => e.name === 'CombatHit').length === 0; i++) {
+      // Rotate: if the first candidate turns out not to be puppeted here, the next one is.
+      await c.eval(`window.omw.send('hitn:${targets[i % targets.length]}:7')`);
       await ctx.sleep(1500);
     }
   })();
@@ -161,13 +175,15 @@ export default async function run(ctx) {
       if (Date.now() - lastSeen >= quietFor) break;
     }
   }
-  ctx.log('swinging UNARMED (fatigue damage) at ' + record);
+  ctx.log(`swinging UNARMED (fatigue damage) at ${targets.length} live candidate(s)`);
   peer.inbox.events.length = 0;
   const fatUntil = Date.now() + 60_000;
   void (async () => {
-    while (Date.now() < fatUntil
-           && peer.inbox.events.filter((e) => e.name === 'CombatHit').length === 0) {
-      await c.eval(`window.omw.send('hitnfat:${record}:5')`);
+    for (let i = 0; Date.now() < fatUntil
+           && peer.inbox.events.filter((e) => e.name === 'CombatHit').length === 0; i++) {
+      // Same rotation as the armed phase. The CombatHit that proved the armed path carries a
+      // REFNUM, not a record id, so there is no name to carry over from it — and none needed.
+      await c.eval(`window.omw.send('hitnfat:${targets[i % targets.length]}:5')`);
       await ctx.sleep(1500);
     }
   })();

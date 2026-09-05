@@ -69,7 +69,7 @@ local function markPuppet(on)
         return
     end
     local ok, err = pcall(function() mp.setPuppet(self.object, on) end)
-    if mp.testSet then
+    if mp.set then
         mp.set('puppetMark', ok and (on and 'marked' or 'unmarked') or ('failed:' .. tostring(err)))
     end
 end
@@ -193,11 +193,11 @@ local function forwardMagicHits()
     if not mp.takeMagicHits then return end
     local ok, hits = pcall(function() return mp.takeMagicHits(self.object) end)
     if not ok then
-        if mp.testSet then mp.set('magicFwd', 'take-failed:' .. tostring(hits)) end
+        if mp.set then mp.set('magicFwd', 'take-failed:' .. tostring(hits)) end
         return
     end
     if not hits or #hits == 0 then return end
-    if mp.testSet then mp.set('magicFwd', 'drained:' .. tostring(#hits)) end
+    if mp.set then mp.set('magicFwd', 'drained:' .. tostring(#hits)) end
     local effects, spellId = {}, nil
     for _, h in ipairs(hits) do
         effects[#effects + 1] = { id = tostring(h.effectId), magnitude = h.magnitude or 0, duration = 0 }
