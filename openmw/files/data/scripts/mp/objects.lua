@@ -13,6 +13,7 @@ local types = require('openmw.types')
 local util = require('openmw.util')
 local world = require('openmw.world')
 local mp = require('openmw.mp')
+local I = require('openmw.interfaces')
 
 local json = require('scripts.mp.json')
 local worldmp = require('scripts.mp.world')
@@ -44,6 +45,7 @@ local pendingSpawns = {} -- tempId -> GameObject (local drop awaiting ObjectSpaw
 local tempCounter = 0
 local opCounter = 0
 local pendingOps = {} -- opId -> {op=, itemId=, n=, key=, obj=}
+local pendingTakes = {} -- opId -> {obj=, at=}: pickups awaiting the server's answer
 local recentPickups = {} -- obj.id -> time (belt+braces beside the byId echo skip)
 local doorPending = {} -- obj.id -> {obj=, at=}
 local containerOpenPending = {} -- obj.id -> {obj=, at=}: deferred first read, see above
@@ -335,6 +337,42 @@ end
 
 -- ---------------------------------------------------------------- local signals
 
+-- PICKING UP A WORLD ITEM IS A REQUEST, NOT AN ANNOUNCEMENT.
+--
+-- This used to let the engine move the item into the inventory natively and relay an
+-- ObjectDelete afterwards -- which the server accepts idempotently. Two players activating the
+-- same item therefore BOTH kept it: the second delete was a silent no-op on a tombstone, but
+-- both clients had already taken it locally. A duplication race in the most ordinary
+-- interaction in the game. Containers never worked like that (ContainerOpRequest asks and the
+-- losing racer is told 'gone'); this is the same shape for loose items.
+--
+-- Registered through I.Activation (objects.init): a handler that returns false cancels the
+-- native activation (files/data/scripts/omw/activationhandlers.lua), exactly as quests.lua does
+-- for NPC dialogue locks. On the server's ok the REAL ActionTake runs via
+-- world._runStandardActivationAction, so theft detection (itemTaken) and everything else on that
+-- path still happens; on 'gone' nothing does, and the relayed ObjectDelete removes the item.
+local function onItemActivate(object, actor)
+    if not deps.ownIdFn() then return nil end -- not Joined: native, as in singleplayer
+    local player = deps.playerFn()
+    if not player or actor.id ~= player.id then return nil end
+    if not types.Item.isCarriable(object) then return nil end
+    local ck = cellKeyOfObj(object)
+    if isChargenCell(ck) then return nil end -- tutorial cells are local-only, by design
+    local addr = addrOf(object)
+    if not addr then
+        -- Nothing on the wire can name this object, so there is nothing to ask about. Native,
+        -- and unreported -- the same outcome the old announce path had for it.
+        return nil
+    end
+    opCounter = opCounter + 1
+    pendingTakes[opCounter] = { obj = object, at = core.getRealTime() }
+    local body = { opId = opCounter, cellKey = ck }
+    for k, v in pairs(addr) do body[k] = v end
+    mp.sendEvent('ObjectTakeRequest', body)
+    return false -- hold the native take until the server answers
+end
+
+
 -- GLOBAL onActivate: pickups, doors, locks, containers all start here.
 function objects.onActivate(object, actor)
     local player = deps.playerFn()
@@ -342,15 +380,9 @@ function objects.onActivate(object, actor)
     local now = core.getRealTime()
 
     if types.Item.objectIsInstance(object) and types.Item.isCarriable(object) then
-        -- Pickup: activation moves the item into the inventory natively; relay the delete.
-        if sendAddressed('ObjectDelete', object) then
-            recentPickups[object.id] = now
-            local netId = objIdToNet[object.id]
-            if netId then
-                netToObj[netId] = nil
-                objIdToNet[object.id] = nil
-            end
-        end
+        -- Pickups are a REQUEST now (onItemActivate below, an I.Activation handler that
+        -- suppresses the native take). Nothing to announce here: the server relays the
+        -- ObjectDelete itself when it grants the take.
         return
     end
 
@@ -553,6 +585,25 @@ handlers.MP_ObjectSpawnAck = function(data)
     netSpawned[obj.id] = true
 end
 
+-- The server refused a drop. The local object was already placed optimistically, so put it
+-- back where the server says it still is -- in the inventory -- and tell the player. Without
+-- this the item sat in the world unnetted forever, invisible to everyone else.
+handlers.MP_ObjectSpawnRefused = function(data)
+    local obj = data and pendingSpawns[data.tempId]
+    if data and data.tempId ~= nil then pendingSpawns[data.tempId] = nil end
+    local player = deps.playerFn()
+    if obj and obj:isValid() and player then
+        pcall(function() obj:moveInto(types.Actor.inventory(player)) end)
+    end
+    if deps.noticeFn then
+        local why = {
+            unowned = 'That drop was refused: the world does not think you are carrying it.',
+            contained = 'Your account cannot place items in a shared world right now.',
+        }
+        deps.noticeFn(why[tostring(data and data.reason or '')] or 'That drop was refused.')
+    end
+end
+
 handlers.MP_ObjectPlace = function(data)
     if not data.netId or netToObj[data.netId] then return end -- own echo: already mapped
     -- M7 RecordsSync: a player-made item arrives as a server recordNetId; resolve it to the
@@ -592,6 +643,38 @@ handlers.MP_ObjectDelete = function(data)
         objIdToNet[obj.id] = nil
     end
     pcall(function() obj:remove() end)
+end
+
+-- (Lives here, below `local handlers = {}`, on purpose: a `handlers.X = ...` placed ABOVE that
+-- declaration indexes a nil GLOBAL at module load and takes the whole script down.)
+handlers.MP_ObjectTakeResult = function(data)
+    local op = data and pendingTakes[data.opId]
+    if not op then return end
+    pendingTakes[data.opId] = nil
+    if not data.ok then
+        -- SAY SO. A refused pickup is an item that did not move when the player clicked it, and
+        -- silence there reads as a broken game. The reasons are read out of worldstate.ts by
+        -- the Lua test suite, so a new one server-side fails a test here instead of shipping.
+        if deps.noticeFn then
+            local why = {
+                gone = 'Someone got there first.',
+                unreachable = 'You cannot reach that.',
+            }
+            deps.noticeFn(why[tostring(data.reason or '')] or 'You cannot take that right now.')
+        end
+        return -- the relayed ObjectDelete tidies the view if somebody else took it
+    end
+    local player = deps.playerFn()
+    local obj = op.obj
+    if not player or not obj or not obj:isValid() then return end
+    recentPickups[obj.id] = core.getRealTime() -- our own ObjectDelete echo must not remove it twice
+    local netId = objIdToNet[obj.id]
+    if netId then
+        netToObj[netId] = nil
+        objIdToNet[obj.id] = nil
+    end
+    -- The genuine ActionTake: itemTaken (crime), inventory add, world delete.
+    pcall(function() world._runStandardActivationAction(obj, player) end)
 end
 
 handlers.MP_ObjectMove = function(data)
@@ -941,6 +1024,9 @@ function objects.tick(now)
     for opId, op in pairs(pendingOps) do
         if op.at and now - op.at > 10 then pendingOps[opId] = nil end
     end
+    for opId, op in pairs(pendingTakes) do
+        if now - op.at > 10 then pendingTakes[opId] = nil end -- an unanswered take is a native no-op
+    end
 
     if now - lastMirror >= 0.5 then
         lastMirror = now
@@ -1050,6 +1136,7 @@ function objects.reset()
     pendingSpawns = {}
     pendingOps = {}
     recentPickups = {}
+    pendingTakes = {}
     doorPending = {}
     containerOpenPending = {}
     -- Retry counters go with the pending opens they belong to, or a world switch would
@@ -1063,6 +1150,24 @@ function objects.reset()
 end
 
 function objects.init(d)
+    -- Arm the pickup veto for every carriable type (see onItemActivate). An EXPLICIT list,
+    -- per concrete type, because addHandlerForType keys on obj.type (a weapon's type is
+    -- Weapon, not Item). The first version iterated `pairs(types)` and matched on
+    -- `t.baseType == types.Item`; through the read-only proxy that armed ZERO types --
+    -- measured -- and the native take then ran with nobody asking, which is worse than the
+    -- announce path it replaced. These names are the engine's own (mwlua ObjectTypeName).
+    if I and I.Activation and I.Activation.addHandlerForType then
+        local n, missing = 0, {}
+        for _, name in ipairs({ 'Armor', 'Clothing', 'Ingredient', 'Light', 'Miscellaneous', 'Potion', 'Weapon', 'Book', 'Lockpick', 'Probe', 'Apparatus', 'Repair' }) do
+            local t = types[name]
+            if t then I.Activation.addHandlerForType(t, onItemActivate); n = n + 1
+            else missing[#missing + 1] = name end
+        end
+        print('[mp] pickup veto armed for ' .. n .. ' item types'
+            .. (#missing > 0 and (' (missing: ' .. table.concat(missing, ',') .. ')') or ''))
+    else
+        print('[mp] WARNING: I.Activation unavailable -- pickups are announced, not requested')
+    end
     deps = d
 end
 

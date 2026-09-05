@@ -33,17 +33,23 @@ async function serverWith(t: { after: (fn: () => unknown) => void }, refuse: boo
   return server;
 }
 
-/** Ask to drop `n` of `recordId` and report whether the server acknowledged the spawn.
- *  Matched on tempId because one client makes several requests here, and a refusal is the
- *  ABSENCE of an ack — so the wait must be short and its timeout is the expected outcome. */
+/** Ask to drop `n` of `recordId`; true if the server acknowledged the spawn, false if it
+ *  REFUSED it. Both are explicit messages now (ObjectSpawnAck / ObjectSpawnRefused), matched on
+ *  tempId because one client makes several requests here. The old version inferred "refused"
+ *  from the ABSENCE of an ack inside one second -- and on a slower box (the prod runner is a
+ *  shared VPS) a GRANTED drop whose ack took longer than that read as refused. That single
+ *  flake failed every multiplayer deploy from 2026-09-02 on. Silence is now a hard failure,
+ *  never a verdict. */
 async function tryDrop(c: TestClient, recordId: string, n: number, tempId: number): Promise<boolean> {
   c.sendEvent('ObjectSpawnRequest', {
     tempId, recordId, cellKey: CELL, x: 0, y: 0, z: 0, rotZ: 0, count: n, fromInventory: true,
   });
-  const ack = await c
-    .waitEvent('ObjectSpawnAck', (v) => (v as { tempId?: number }).tempId === tempId, 1000)
-    .catch(() => undefined);
-  return ack !== undefined;
+  const mine = (v: unknown) => (v as { tempId?: number }).tempId === tempId;
+  const outcome = await Promise.race([
+    c.waitEvent('ObjectSpawnAck', mine, 10_000).then(() => 'ack' as const),
+    c.waitEvent('ObjectSpawnRefused', mine, 10_000).then(() => 'refused' as const),
+  ]);
+  return outcome === 'ack';
 }
 
 test('a drop of something never declared is refused when enforcement is on', async (t) => {

@@ -2,6 +2,64 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web -->
 # openmw-web multiplayer — state of play
 
+## 2026-09-04 (cont.) — Phase 2 closed; picking up an item is a request
+
+**Phase 2 engine generalisation is done.** Four real gaps closed (crime pursuit, levelled-list
+level, difficulty scaling, progression reaching the peer) and two "deferrals" that turned out
+not to be gaps at all (`rest` — handled by AvatarRestore; non-GUI level-up — the client owns
+progression by design). A wanted player is pursued 0.04 s after the bounty lands (s78).
+
+**A world pickup is now `ObjectTakeRequest` → `ObjectTakeResult`.** It was an announcement: the
+engine moved the item into the inventory natively and an `ObjectDelete` was relayed afterwards,
+which the server accepts idempotently — so two players activating the same item BOTH kept it.
+Containers never worked that way (`ContainerOpRequest` already told the losing racer `gone`);
+loose items now match. The client's `I.Activation` handler holds the native take until the
+answer, and on `ok` runs the genuine `ActionTake` via `world._runStandardActivationAction`, so
+theft detection (`itemTaken`) still fires. `objecttake.test.ts`: one winner, loser told `gone`,
+a re-ask on the tombstone is `gone`, out-of-reach is refused rather than left hanging. A refused
+pickup is SAID to the player ("Someone got there first."), and the Lua suite now reads every
+`reply(false, …)` reason out of `worldstate.ts` per server handler and fails if the client
+handler that receives it has no wording — so a new refusal reason cannot ship silent. The same
+suite also guards a class of bug that `loadfile` cannot see: a `handlers.X = …` written above
+`local handlers = {}` indexes a nil global at module load and takes the whole script down.
+
+**A refused drop answers the client now (`ObjectSpawnRefused`), and this is what un-blocked
+production.** Both refusals in the spawn handler (unowned item, contained account) returned in
+SILENCE: the player saw a drop that simply did not happen, the local object sat in the world
+unnetted forever, and the only test of it had to infer "refused" from a missing ack inside one
+second. On a slower box that read a GRANTED drop as refused — which is why `deploy-mp` had
+failed on the OVH runner at its Docker test gate since 2026-09-02 and prod's multiplayer server
+was ten days stale. The client now puts the item back in the inventory and says why; the test
+awaits ack-or-refusal and treats silence as a hard failure. Reproduce that gate locally before
+any `ovhcloud` push: `DOCKER_BUILDKIT=1 docker build --target test -f server/Dockerfile server/`.
+
+**One world-pickup path is still outside the request: drag-and-drop with the inventory window
+open.** `ActionTake` in GUI mode goes to `InventoryWindow::pickUpObject`, which fires no Lua
+activation and no `onItemTransferred` hook in the mp scripts — so that pickup is neither requested
+nor announced: the item vanishes for the picker only, stays as a ghost for everyone else, and can
+be taken a second time. Pre-existing (the old announce path hooked activation only), rare (it needs
+the inventory open while reaching into the world), and the fix is an engine seam: route the GUI
+pickup through the same activation dispatch so the veto sees it.
+
+**What is still the client's word, and why it stays that way for now:** barter, alchemy /
+enchanting, and scripted quest rewards put items in an inventory with no server-arbitrated
+source, and equip / cast / activate are performed client-side and asserted. Arbitrating those
+is the discrete-intent tier — a new vetoing engine hook plus a round trip in front of very
+common interactions, which changes how the game FEELS. Worlds are friends-only, so it waits
+until the game has been played. The drop-conservation ledger is left as is on purpose:
+crediting it from granted takes would double-count against the client's own report.
+
+**Cleanup items, decided rather than done.** E5 was already landed as far as it can be: the
+only puppet damage seam is the magic one; fall/drowning/poison/disease apply locally to a puppet
+and the owner's stats push overwrites them (a flicker on an observer at worst, never a lost hit
+point), and `mwmp/puppets.*` is now the MP registry, not a deletion target. The plausibility
+envelope STAYS: it was waiting on the intent tier, which is deferred, and in degraded mode
+(peer down) it is the only movement-cheat signal there is.
+
+**Build-pipeline fact worth knowing:** engine C++ that runs ON THE PEER reaches it through
+`build-server.sh` (tier2), not `build-engine.sh` (wasm client only). The harness syncs Lua
+into the peer, which makes a missing C++ binding look like working code with a silent guard.
+
 ## 2026-09-04 — the browser suite is green
 
 **51 passed / 1 failed / 4 skipped**, and the one failure is this laptop, not the code: s71 needs

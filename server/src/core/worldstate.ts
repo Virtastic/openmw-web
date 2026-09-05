@@ -46,6 +46,7 @@ const WORLD_EVENTS = new Set([
   'DoorState',
   'ContainerOpen',
   'ContainerOpRequest',
+  'ObjectTakeRequest',
   'ResyncRequest',
 ]);
 
@@ -279,6 +280,7 @@ export class WorldState {
     switch (name) {
       case 'ObjectSpawnRequest': this.enqueue(() => this.spawn(player, body)); break;
       case 'ObjectDelete': this.enqueue(() => this.delete(player, body)); break;
+      case 'ObjectTakeRequest': this.enqueue(() => this.take(player, body)); break;
       case 'ObjectMove': this.enqueue(() => this.move(player, body)); break;
       case 'ObjectLock': this.enqueue(() => this.lock(player, body)); break;
       case 'ObjectEnabled': this.enqueue(() => this.enabled(player, body)); break;
@@ -577,6 +579,14 @@ export class WorldState {
     //
     // Until then this is the signal, and it is a sharp one: a drop of something the sender
     // never declared has no innocent explanation for a real client.
+    // A REFUSED DROP MUST SAY SO. Both refusals below used to return in silence: the client kept
+    // the item in its world unnetted and unacknowledged, the player saw a drop that simply did
+    // not happen, and the only test of this behaviour had to infer "refused" from a missing ack
+    // inside a one-second window -- which on a slower box (the prod runner is a shared VPS) read a
+    // GRANTED drop as refused and failed every multiplayer deploy since 2026-09-02. Named `reply`
+    // so the Lua suite discovers these reasons and holds the client to wording each of them.
+    const reply = (ok: boolean, reason: string) =>
+      player.peer.sendEvent('ObjectSpawnRefused', { tempId, ok, reason });
     const held = this.heldCount?.(player, recordId);
     if (held !== undefined && held < count) {
       metrics.unownedDrops.inc();
@@ -607,13 +617,15 @@ export class WorldState {
         log('warn', 'object.unowned_drop_refused', {
           player: player.name, account: player.accountKey, recordId, count, held,
         });
-        return; // no ack, no placement
+        reply(false, 'unowned'); // no placement -- but SAY so (see reply above)
+        return;
       }
     }
     if (this.contained(player)) {
       metrics.containedActions.inc({ action: 'drop' });
       log('warn', 'contain.drop_refused', { player: player.name, account: player.accountKey, recordId });
-      return; // no ack, no placement: nothing they declared reaches the shared world
+      reply(false, 'contained'); // no placement: nothing they declared reaches the shared world
+      return;
     }
     // The drop is going ahead, so whatever credit backed it is now spent (see setInventoryDebit).
     if (fromInventory) this.debitAcquired?.(player, recordId, count);
@@ -651,7 +663,10 @@ export class WorldState {
       return undefined;
     }
     const doc = await this.cells.get(cellKey);
-    if (name !== 'ObjectDelete' && doc.deleted.includes(ref.key)) return undefined; // dead object
+    // A take has to be told about a dead object, not silently dropped: the client suppressed
+    // its own pickup and is waiting for an answer.
+    if (name !== 'ObjectDelete' && name !== 'ObjectTakeRequest' && doc.deleted.includes(ref.key))
+      return undefined; // dead object
     return { doc, ref, cellKey };
   }
 
@@ -668,6 +683,49 @@ export class WorldState {
     delete doc.containers[ref.key];
     if (!doc.deleted.includes(ref.key)) doc.deleted.push(ref.key);
     this.cells.markDirty(cellKey);
+    this.relayCell(cellKey, 'ObjectDelete', { ...objRefToJs(ref), cellKey, byId: player.id });
+  }
+
+  // PICKING UP A WORLD ITEM IS A REQUEST, NOT AN ANNOUNCEMENT.
+  //
+  // ObjectDelete is how a pickup used to travel: the client moved the item into its inventory
+  // natively and told everyone afterwards, and delete() accepts that idempotently ("re-deletes
+  // change nothing"). Two players activating the same item therefore BOTH kept it -- the second
+  // delete was a silent no-op on a tombstone, but both clients had already taken the item
+  // locally. A duplication race in the most ordinary interaction in the game.
+  //
+  // Containers were never like this: ContainerOpRequest asks, the server answers, and the
+  // losing side of a race is told 'gone'. This is the same shape for loose items. The client's
+  // activation handler suppresses the native take and waits for the Result; on ok it runs the
+  // real ActionTake (so theft detection and everything else in that path still happens), on
+  // 'gone' it does nothing and the relayed ObjectDelete removes the item from its view.
+  private async take(player: Player, body: LTable): Promise<void> {
+    const opId = finite(body.get('opId'));
+    if (opId === undefined) {
+      this.invalid(player, 'ObjectTakeRequest');
+      return;
+    }
+    const reply = (ok: boolean, reason?: string) =>
+      player.peer.sendEvent('ObjectTakeResult', { opId, ok, ...(reason ? { reason } : {}) });
+    const got = await this.docAndRef(player, body, 'ObjectTakeRequest');
+    if (!got) {
+      reply(false, 'unreachable'); // out of reach or unaddressable -- never leave a client waiting
+      return;
+    }
+    const { doc, ref, cellKey } = got;
+    if (doc.deleted.includes(ref.key)) {
+      reply(false, 'gone'); // the losing racer, or a stale client view
+      return;
+    }
+    // First to ask wins. Exactly what delete() does, plus an answer.
+    delete doc.placed[ref.key];
+    delete doc.moved[ref.key];
+    delete doc.locks[ref.key];
+    delete doc.doors[ref.key];
+    delete doc.containers[ref.key];
+    doc.deleted.push(ref.key);
+    this.cells.markDirty(cellKey);
+    reply(true);
     this.relayCell(cellKey, 'ObjectDelete', { ...objRefToJs(ref), cellKey, byId: player.id });
   }
 

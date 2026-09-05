@@ -261,20 +261,32 @@ print('objects.lua -- every container refusal the server can send is worded')
 do
   local ts = io.open('./server/src/core/worldstate.ts'):read('*a')
   local lua = io.open('./openmw/files/data/scripts/mp/objects.lua'):read('*a')
-  local handler = lua:match('MP_ContainerOpResult = function%(data%)(.-)\nend')
-  check('the client handler was found', handler ~= nil)
-  local reasons, seen = {}, {}
-  for r in ts:gmatch("reply%(false,%s*'([a-z_]+)'") do
-    if not seen[r] then seen[r] = true; reasons[#reasons + 1] = r end
+  -- PER SERVER HANDLER. containerOp's reasons must be worded in MP_ContainerOpResult and
+  -- take's in MP_ObjectTakeResult: a 'gone' means different things in each, and the first
+  -- version of this scan pooled every reply(false, ...) in the file and pointed them all at
+  -- the container handler.
+  local function reasonsIn(fnName)
+    local body = ts:match('private async ' .. fnName .. '%(.-\10  }')
+    local out, seen = {}, {}
+    for r in (body or ''):gmatch("reply%(false,%s*'([a-z_]+)'") do
+      if not seen[r] then seen[r] = true; out[#out + 1] = r end
+    end
+    return out
   end
-  check('server refusal reasons were discovered', #reasons > 0, '#' .. #reasons)
-  for _, r in ipairs(reasons) do
-    -- Match the MAPPING ENTRY (`reason = '...'`), not the bare word. A plain substring search
-    -- passes on any mention -- including the comment right above the table, which is how the
-    -- first version of this test passed its own negative control.
-    check('"' .. r .. '" is worded for the player',
-      handler ~= nil and handler:find(r .. "%s*=%s*'") ~= nil,
-      'the item vanishes from the inventory with nothing said')
+  for _, pair in ipairs({ { 'containerOp', 'MP_ContainerOpResult' }, { 'take', 'MP_ObjectTakeResult' }, { 'spawn', 'MP_ObjectSpawnRefused' } }) do
+    local fnName, luaHandler = pair[1], pair[2]
+    local handler = lua:match(luaHandler .. ' = function%(data%)(.-)\10end')
+    check(luaHandler .. ' was found', handler ~= nil)
+    local reasons = reasonsIn(fnName)
+    check(fnName .. '() refusal reasons were discovered', #reasons > 0, '#' .. #reasons)
+    for _, r in ipairs(reasons) do
+      -- Match the MAPPING ENTRY (`reason = '...'`), not the bare word. A plain substring search
+      -- passes on any mention -- including the comment right above the table, which is how the
+      -- first version of this test passed its own negative control.
+      check(fnName .. ' "' .. r .. '" is worded for the player',
+        handler ~= nil and handler:find(r .. "%s*=%s*'") ~= nil,
+        'the item vanishes (or never moves) with nothing said')
+    end
   end
 end
 
@@ -460,6 +472,43 @@ for i = 1, 100 do env.setGlobal('g' .. i, 1) end
 quests.tick(1)
 check('one tick still respects the send budget', #globalUpdates(env.calls) <= 24,
   'sent ' .. #globalUpdates(env.calls) .. ' in a single tick')
+
+-- ============================================================ every mp script: declaration order
+-- A `handlers.X = function ... end` placed ABOVE `local handlers = {}` does not assign into that
+-- table. It indexes a GLOBAL called `handlers`, which is nil, and the whole module fails at LOAD
+-- -- taking every script that requires it down with it. `loadfile` cannot see this: it compiles
+-- the chunk and never runs the top level. This happened for real (objects.lua, the pickup veto:
+-- the handler was written 200 lines above the declaration and parsed perfectly). Pure text, so
+-- it runs without the engine, and it covers every local table, not just `handlers`.
+print('scripts/mp/*.lua -- no local table is assigned into before it is declared')
+local function assignedBeforeDeclared(src)
+  local decl, bad, n = {}, {}, 0
+  for line in (src .. '\n'):gmatch('(.-)\n') do
+    n = n + 1
+    local name = line:match('^local%s+([%a_][%w_]*)%s*=%s*{')
+    if name and not decl[name] then decl[name] = n end
+  end
+  n = 0
+  for line in (src .. '\n'):gmatch('(.-)\n') do
+    n = n + 1
+    local name = line:match('^%s*([%a_][%w_]*)%.[%a_][%w_]*%s*=')
+    if name and decl[name] and n < decl[name] then bad[#bad + 1] = name .. ' at line ' .. n .. ' (declared at ' .. decl[name] .. ')' end
+  end
+  return bad
+end
+-- The guard must be able to FAIL: the exact shape of the real bug, inline.
+local negative = assignedBeforeDeclared('local x = 1\nhandlers.foo = function() end\nlocal handlers = {}\nhandlers.bar = 1\n')
+check('the scan catches an assignment above the declaration', #negative == 1 and negative[1]:find('^handlers at line 2') ~= nil,
+  table.concat(negative, '; '))
+local mpFiles = {}
+local ls = io.popen('ls ./openmw/files/data/scripts/mp/*.lua 2>/dev/null')
+if ls then for path in ls:lines() do mpFiles[#mpFiles + 1] = path end; ls:close() end
+check('the mp scripts were found', #mpFiles >= 10, #mpFiles .. ' files')
+for _, path in ipairs(mpFiles) do
+  local f = io.open(path); local src = f:read('*a'); f:close()
+  local bad = assignedBeforeDeclared(src)
+  check(path:match('([^/]+)$') .. ' assigns into no table before declaring it', #bad == 0, table.concat(bad, '; '))
+end
 
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)
