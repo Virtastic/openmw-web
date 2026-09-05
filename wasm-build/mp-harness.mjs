@@ -375,9 +375,13 @@ async function launchClient(name, mpPort, extraParams = '', opts = {}) {
   // launcher sets this in production and it rides every switch; a harness client had none.
   // Unlike #mplocker this does not flip the page into locker mode, so it is safe in the URL.
   const frag = opts.homeUrl ? `#mphome=${encodeURIComponent(opts.homeUrl)}` : '';
-  const url = `http://127.0.0.1:${PLAY_PORT}/index.html${world}`
+  // opts.url: a page that is NOT the game. The admin dashboard is served by the same
+  // processes this harness drives, and nothing else in CI ever loaded it in a browser -- so
+  // a scenario may point a client at it and use the same eval/waitFor/jsErrors machinery.
+  // Pair it with opts.waitExpr, since such a page never reaches Joined.
+  const url = opts.url ?? (`http://127.0.0.1:${PLAY_PORT}/index.html${world}`
     + `&mp=${encodeURIComponent(mpUrl)}${auth}`
-    + extraParams + frag;
+    + extraParams + frag);
   const chrome = spawn(CHROME, [
     '--headless=new', ...glArgs,
     // --no-sandbox only off the developer machine: Chrome's sandbox needs user namespaces

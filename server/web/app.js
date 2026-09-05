@@ -2332,6 +2332,15 @@ async function pageConsole() {
           </div>`,
           'rkGo', 'Set rank') : '')}
 
+        ${raw(owner ? tool('bi-eraser', 'Reset a cell',
+          'Wipes a cell back to how the game data defines it: dropped items, container contents, '
+          + 'doors, for everyone. The repair for a cell that has been griefed or corrupted. This '
+          + 'had a server action and no button anywhere.',
+          html`<div class="row g-2">
+            <div class="col-12"><input class="form-control vt-mono" id="rcCell" placeholder="cell key, e.g. 0,0 or Balmora, Guild of Mages"></div>
+          </div>`,
+          'rcGo', 'Reset cell') : '')}
+
         <div class="card mb-3"><div class="card-header">
           <h3 class="card-title"><i class="bi bi-code-slash me-2"></i>Anything else</h3></div>
           <div class="card-body">
@@ -2420,6 +2429,23 @@ async function pageConsole() {
       if (!ok) return;
     }
     runCmd(`setrank ${q(n)} ${r}`);
+  };
+  const rc = $('#rcGo');
+  if (rc) rc.onclick = async () => {
+    const cell = $('#rcCell').value.trim();
+    if (!cell) return;
+    const ok = await confirmAction({
+      title: `Reset ${cell}?`,
+      body: html`<p>Everything players left in this cell is gone for everyone, now. There is
+        no undo.</p>`,
+      danger: 'Reset cell',
+      typeToConfirm: cell,
+    });
+    if (!ok) return;
+    try {
+      const r = await api('/action', { method: 'POST', body: { kind: 'resetCell', target: cell } });
+      toast(r.message || 'Cell reset.', r.ok === false ? 'danger' : 'success');
+    } catch (e) { toast(e.message, 'danger'); }
   };
   const rawGo = () => { const l = $('#rawCmd').value.trim(); if (l) runCmd(l.replace(/^\//, '')); };
   $('#rawGo').onclick = rawGo;
