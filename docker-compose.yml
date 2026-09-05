@@ -44,12 +44,11 @@ services:
       dockerfile: Dockerfile
     image: openmw-web:local
     container_name: openmw-web
-    # The image's own default starts the multi-world gateway, which is how the hosted
-    # platform runs. A self-hosted box wants one world, so this entrypoint picks the mode
-    # from <data>/.mode instead. Switching is deliberately NOT a dashboard control: the
-    # dashboard administers a world, and the gateway does not have one of its own, so a
-    # button that flips this would sign you out of the thing you flipped it with. Write
-    # "gateway" into <data>/.mode by hand and restart if you really run multi-world.
+    # The image's own default starts the multiplayer server. This entrypoint picks the mode
+    # from <data>/.mode instead, which the setup wizard writes when you choose single player
+    # or multiplayer; the restart it asks for brings the container back on the other
+    # program. Both programs serve the dashboard, so switching never signs you out of the
+    # thing you switched with.
     entrypoint: ["/usr/local/bin/docker-entrypoint.sh"]
     command: []
     # THIS IS WHAT MAKES THE DASHBOARD'S RESTART BUTTON WORK. The server exits cleanly on
@@ -87,15 +86,6 @@ services:
       # wins over them.
       - S3_ACCESS_KEY_ID=${S3_ACCESS_KEY_ID:-}
       - S3_SECRET_ACCESS_KEY=${S3_SECRET_ACCESS_KEY:-}
-      # Unfinished features the setup wizard will otherwise show greyed out. Currently one:
-      # multiplayer ("all" also works).
-      #
-      #   OMW_EXPERIMENTAL=multiplayer docker compose up -d
-      #
-      # or put OMW_EXPERIMENTAL=multiplayer in a .env file beside this one. This only decides
-      # what a NEW setup may choose; a server already configured for any of them keeps working
-      # whatever this says.
-      - OMW_EXPERIMENTAL=${OMW_EXPERIMENTAL:-}
       # The data-chooser launcher at /. Off by default: a configured server boots straight
       # into sign-in and the game. OMW_ENABLE_LAUNCHER=1 puts the chooser back.
       - OMW_ENABLE_LAUNCHER=${OMW_ENABLE_LAUNCHER:-}

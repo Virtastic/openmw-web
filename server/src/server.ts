@@ -3,7 +3,7 @@
 // Composition root: wires config, stores, gates, plugins, HTTP and WS into a running
 // server. main.ts is the CLI face; tests call startServer() directly.
 
-import pkg from '../package.json';
+import { VERSION } from './version';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { WebSocket } from 'ws';
@@ -16,9 +16,9 @@ import { adminRoutes as adminDashboardRoutes } from './net/admin/routes';
 import { exportDataDir, summariseMetrics } from './net/admin/ops';
 import { writeCaddyfile, launcherEnabled } from './net/admin/caddy-config';
 import { orderedContent } from './net/admin/api-mods';
-import { ResetTokens, sendMail, notifyEvent, type MailConfig } from './net/admin/notify';
+import { notifyEvent, type MailConfig } from './net/admin/notify';
 import { SetupToken } from './net/admin/setup-token';
-import { passwordProblem } from './net/admin/auth';
+import { passwordReset } from './net/admin/reset';
 import { deleteAccount } from './persist/erase';
 import { PlayerStore } from './persist/playerstore';
 import { CellStore } from './persist/cellstore';
@@ -80,10 +80,9 @@ import { WorldBrowser } from './core/worldbrowser';
 import { parseExterior, isChargenCell } from './core/movement';
 import { detectGameData, findPeerBinary, gameDataDir, buildPeerCfg, buildPeerSettings, type GameData } from './core/gamedata';
 
-// From package.json, not a literal: the hardcoded copy sat at 1.1.0 while v1.2.0 shipped,
-// so a freshly updated server kept reporting itself out of date. One source of truth, and
-// the release workflow refuses a tag that does not match it.
-export const VERSION: string = (pkg as { version: string }).version;
+// The version is in ./version (shared with the multiplayer server); re-exported so
+// existing importers keep working.
+export { VERSION };
 
 // Compose extra HTTP route handlers into one: try each in order, first to claim wins.
 // createHttpServer/createAuthRoutes take a single `also` hook, and we have two (admin +
@@ -575,7 +574,6 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // state alone was not a safe gate.
   const setupToken = new SetupToken(opts.dataDir);
   if (!accounts.hasDashboardOwner()) setupToken.arm();
-  const resetTokens = new ResetTokens();
   // Operational alerts ride the log stream the server already writes, filtered by the
   // operator's [notifications].events list. Nothing is sent unless they configured it.
   const unhookNotifier = onLog((entry) => {
@@ -836,6 +834,9 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     // notices, tight enough that a stolen token cannot be used to hammer /console.
     apiLimiter: new IpRateLimiter(600),
     sharedToken: config.admin.dashboardToken,
+    // The multiplayer server proxies an operator's clicks to this game with the platform
+    // credential; see gatewayPrincipal in net/admin/auth.ts. Loopback only.
+    gatewayToken: config.gateway.serverToken,
     setupToken,
     gameDataDir: gameDataDir(sharedDir),
     version: VERSION,
@@ -915,46 +916,11 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     maxSaveBytesPerAccount: config.locker.maxSaveBytesPerAccount,
 
     mailConfigured: () => config.notifications.smtpHost !== '',
-    sendPasswordReset: async (name) => {
-      // Every failure path here is silent BY DESIGN. The endpoint answers identically
-      // whether the account exists, has no address, or has no dashboard access, because a
-      // difference in any of those is an account-and-email enumeration oracle. The operator
-      // who typed their own name knows which it was; an attacker learns nothing.
-      try {
-        const account = await accounts.get(name);
-        if (!account?.email || !account.dashboardRole) return;
-        const token = resetTokens.mint(name.toLowerCase());
-        const base = config.locker.publicBase || `http://127.0.0.1:${port}`;
-        await sendMail(mailCfg(), account.email,
-          'Reset your openmw-mp admin password',
-          [
-            `Someone asked to reset the password for "${account.name}" on ${config.server.name}.`,
-            '',
-            'Open this link to choose a new one. It works once and expires in 30 minutes:',
-            `${base}/admin#reset=${token}`,
-            '',
-            'If this was not you, nothing has changed and you can ignore this message.',
-          ].join('\n'));
-        log('info', 'admin.reset_sent', { account: name.toLowerCase() });
-      } catch (err) {
-        log('warn', 'admin.reset_send_failed', { error: String(err) });
-      }
-    },
-    applyPasswordReset: async (token, password) => {
-      const accountKey = resetTokens.consume(token);
-      if (!accountKey) return { ok: false, message: 'that link has expired or was already used' };
-      const weak = passwordProblem(password, accountKey);
-      if (weak) return { ok: false, message: `password ${weak}` };
-      if (!await accounts.setPassword(accountKey, password)) {
-        return { ok: false, message: 'account not found' };
-      }
-      // Any session opened with the old password is no longer the person's session as far
-      // as we can tell, so end all of them.
-      adminSessions.revokeAccount(accountKey);
-      await accounts.flush();
-      log('warn', 'admin.password_reset', { account: accountKey });
-      return { ok: true, message: 'password changed — sign in with it now' };
-    },
+    ...passwordReset({
+      accounts, sessions: adminSessions, mail: mailCfg,
+      base: () => config.locker.publicBase || `http://127.0.0.1:${port}`,
+      serverName: () => config.server.name,
+    }),
     deleteAccount: async (key) => {
       // Erasure was written to run offline against a quiet data dir. Live, the risk is the
       // account store's write-behind flushing a cached copy back after the delete, so: cut
@@ -990,6 +956,9 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
         cellKey: p.cellKey ?? null,
         rank: p.rank,
         anomalies: moderation.anomaliesFor(p.accountKey),
+        // The roster's mute/unmute buttons were the only way to mute, and nothing showed
+        // whether someone WAS muted.
+        muted: socialRef?.isMuted(SocialStore.SERVER_MUTER, p.accountKey) ?? false,
       })),
     }),
     reports: async (limit) => ({

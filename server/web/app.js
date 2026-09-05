@@ -35,11 +35,22 @@ const token = {
 
 let state = { firstRun: true, authed: false, role: null, name: null, maintenance: { on: false } };
 
+// WHICH GAME. On the multiplayer server the operator opens one of its games, and from then on
+// every per-game call is proxied to that game's process (gateway/admin.ts); one sign-in, one
+// URL. The platform's own calls -- sign-in, setup, the games list, the shared account store,
+// updates -- stay on the platform whatever game is open.
+const GAME_KEY = 'omwmp_admin_game';
+let gameId = (() => { try { return sessionStorage.getItem(GAME_KEY) || ''; } catch { return ''; } })();
+const PLATFORM_PATHS = /^\/(state|login|logout|setup|forgot-password|reset-password|games|rolling-restart|accounts|sessions|totp|updates|update)(\/|\?|$)/;
+const apiPath = (path) => (gameId && !PLATFORM_PATHS.test(path) ? `/games/${gameId}${path}` : path);
+function openGame(id) { gameId = id; try { sessionStorage.setItem(GAME_KEY, id); } catch { /* private mode */ } }
+function closeGame() { gameId = ''; try { sessionStorage.removeItem(GAME_KEY); } catch { /* private mode */ } }
+
 async function api(path, opts = {}) {
   const headers = { ...(opts.headers || {}) };
   if (token.get()) headers.authorization = `Bearer ${token.get()}`;
   if (opts.body !== undefined) headers['content-type'] = 'application/json';
-  const res = await fetch(`/admin/api${path}`, {
+  const res = await fetch(`/admin/api${apiPath(path)}`, {
     ...opts,
     headers,
     body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
@@ -150,6 +161,16 @@ function confirmAction({ title, body, danger = 'Confirm', typeToConfirm = null }
 // be there. It does not: it describes who the world is FOR, and friends can join either
 // way. Hiding the page that shows who is currently playing, on a server they are playing
 // on, is a worse fault than showing a page that happens to be empty.
+// THREE PLACES THE SAME PAGE CAN BE, and each entry says where it belongs:
+//   solo: false   not in single player -- the page acts on players connected to a world, and
+//                 in single player the browser runs the engine and nobody ever connects.
+//   at: 'game'    only on a game: its own roster, mods, game files. On the multiplayer server
+//                 these appear once a game is open, and act on that game through the proxy.
+//   at: 'platform'  only on the multiplayer server, outside any game: the rolling restart.
+//   shared: true  the shared stores (accounts, admin sessions) and the container itself
+//                 (updates): on the multiplayer server they belong to the platform, so they
+//                 step aside while a game is open rather than pretending to be that game's.
+// The rule is "does nothing here", never "sounds like the other mode".
 const NAV = [
   { group: 'Server', items: [
     { hash: '#overview', label: 'Overview', icon: 'bi-speedometer2', role: 'viewer' },
@@ -158,40 +179,48 @@ const NAV = [
     // connects, so the roster is permanently empty and there is nobody to broadcast to, greet
     // with a message of the day, read a chat log for, report, or hand an item. The page is
     // inert rather than merely unhelpful, so it is removed rather than trimmed.
-    { hash: '#console', label: 'Players & commands', icon: 'bi-people', role: 'moderator', solo: false },
-    { hash: '#mods', label: 'Mod manager', icon: 'bi-box-seam', role: 'viewer' },
-    { hash: '#gamefiles', label: 'Game files', icon: 'bi-controller', role: 'viewer' },
+    { hash: '#console', label: 'Players & commands', icon: 'bi-people', role: 'moderator', solo: false, at: 'game' },
+    { hash: '#mods', label: 'Mod manager', icon: 'bi-box-seam', role: 'viewer', at: 'game' },
+    { hash: '#gamefiles', label: 'Game files', icon: 'bi-controller', role: 'viewer', at: 'game' },
   ] },
   // The setup wizard is first-run only and is deliberately NOT listed here. It is a sequence
   // of eleven questions whose answers reshape the deployment, and re-entering it on a running
   // server meant walking back through every one of them to change any one of them. Redeploy
   // to run it again.
+  // Every group the server defines (SECTION_GROUPS) has an entry. Gameplay and Platform had
+  // none, so six gameplay sections and the platform's own sizing were reachable only through
+  // the legacy #settings hash -- present in the file and absent from the page.
   { group: 'Configuration', items: [
     { hash: '#set-core', label: 'Core', icon: 'bi-sliders', role: 'viewer' },
+    { hash: '#set-gameplay', label: 'Gameplay', icon: 'bi-dice-5', role: 'viewer', solo: false },
     { hash: '#set-access', label: 'Access', icon: 'bi-key', role: 'viewer' },
     { hash: '#set-storage', label: 'Storage', icon: 'bi-hdd-stack', role: 'viewer' },
     { hash: '#set-operations', label: 'Operations', icon: 'bi-gear-wide-connected', role: 'viewer' },
+    { hash: '#set-platform', label: 'Platform (advanced)', icon: 'bi-diagram-3', role: 'viewer', solo: false },
   ] },
   { group: 'People', items: [
-    { hash: '#accounts', label: 'Accounts', icon: 'bi-person-lines-fill', role: 'moderator' },
-    { hash: '#sessions', label: 'Admin sessions', icon: 'bi-key', role: 'owner' },
-    { hash: '#security', label: 'My security', icon: 'bi-shield-lock', role: 'viewer' },
+    { hash: '#accounts', label: 'Accounts', icon: 'bi-person-lines-fill', role: 'moderator', shared: true },
+    { hash: '#sessions', label: 'Admin sessions', icon: 'bi-key', role: 'owner', shared: true },
+    { hash: '#security', label: 'My security', icon: 'bi-shield-lock', role: 'viewer', shared: true },
   ] },
   { group: 'Diagnostics', items: [
     { hash: '#logs', label: 'Logs', icon: 'bi-journal-text', role: 'moderator' },
     { hash: '#audit', label: 'Audit trail', icon: 'bi-clipboard-check', role: 'moderator' },
+    // Had a route and a role and no way to reach it.
+    { hash: '#metrics', label: 'Metrics', icon: 'bi-graph-up', role: 'moderator' },
   ] },
-  // Four separate things that share only "not configuration". One page called them all
+  // Separate things that share only "not configuration". One page called them all
   // "Maintenance & restart", which named one of the four in the sidebar and hid the rest.
   { group: 'Danger zone', items: [
-    { hash: '#updates', label: 'Updates', icon: 'bi-cloud-download', role: 'owner' },
+    { hash: '#updates', label: 'Updates', icon: 'bi-cloud-download', role: 'owner', shared: true },
     // Multiplayer only, same rule as the console: the switch is enforced at the multiplayer
     // connection gate and by disconnecting the roster. In single player nobody ever passes
     // either — the browser runs the engine — so the page would claim to close doors it
     // cannot reach.
     { hash: '#maintenance', label: 'Maintenance', icon: 'bi-cone-striped', role: 'owner', solo: false },
+    { hash: '#rolling', label: 'Rolling restart', icon: 'bi-arrow-repeat', role: 'owner', at: 'platform' },
     { hash: '#backup', label: 'Backup', icon: 'bi-archive', role: 'owner' },
-    { hash: '#restart', label: 'Restart', icon: 'bi-arrow-repeat', role: 'owner' },
+    { hash: '#restart', label: 'Restart', icon: 'bi-power', role: 'owner' },
   ] },
 ];
 
@@ -199,6 +228,16 @@ const RANK = { viewer: 0, moderator: 1, owner: 2 };
 const can = (need) => state.authed && RANK[state.role] >= RANK[need];
 /** True when this deployment was set up as a private, one-person world. */
 const singlePlayer = () => state.setup?.deploymentMode === 'single';
+/** True when the process answering is the multiplayer server, not a game. */
+const platform = () => state.platform === true;
+/** Does this page do anything where the operator is right now? See the NAV comment. */
+function navVisible(i) {
+  if (i.solo === false && singlePlayer()) return false;
+  if (i.at === 'platform' && !(platform() && !gameId)) return false;
+  if (i.at === 'game' && platform() && !gameId) return false;
+  if (i.shared && platform() && gameId) return false;
+  return true;
+}
 
 function paintChrome() {
   // Signed out, or anywhere inside first-time setup, there IS no dashboard: no sidebar, no
@@ -216,7 +255,7 @@ function paintChrome() {
   else {
     nav.innerHTML = NAV.map((g) => {
       // `solo: false` marks a page that cannot do anything in a one-person deployment.
-      const items = g.items.filter((i) => can(i.role) && !(i.solo === false && singlePlayer()));
+      const items = g.items.filter((i) => can(i.role) && navVisible(i));
       if (!items.length) return '';
       return html`<li class="nav-header">${g.group}</li>` + items.map((i) => html`
         <li class="nav-item">
@@ -239,7 +278,14 @@ function paintChrome() {
   $('#topWorld').textContent = state.serverName || '';
 
   const banner = $('#banner');
-  banner.innerHTML = (state.configFallback
+  // Which game the operator is looking at, on every page, with the way back. Without it a
+  // roster or a settings form on the multiplayer server has no way of saying WHOSE it is.
+  banner.innerHTML = (platform() && gameId
+    ? html`<div class="callout callout-info py-2">
+        You are looking at one game: <span class="vt-mono">${gameId}</span>.
+        <a href="#games">Back to all games</a>.
+      </div>` : '')
+    + (state.configFallback
     ? html`<div class="callout callout-warning">
         <h5><i class="bi bi-arrow-counterclockwise me-1"></i> Configuration was rolled back</h5>
         The settings last saved here failed to load, so the server started from an earlier
@@ -470,20 +516,6 @@ function choice(name, value, title, blurb, tag = '', tone = 'success', lock = ''
     ${raw(lock ? html`<small class="vt-lock-note">${lock}</small>` : '')}</button>`;
 }
 
-/**
- * Why this answer is unavailable, or '' when it is available.
- *
- * The server decides, and says which variable to set; the page only renders the answer. A
- * state that never loaded is treated as locked, because guessing "available" would offer an
- * answer the save is then going to refuse.
- */
-function expLock(flag, what) {
-  if (state.experimental?.[flag]) return '';
-  const env = state.experimentalEnv || 'OMW_EXPERIMENTAL';
-  return `${what} is experimental and not enabled on this server. Set ${env}=${flag} in the `
-    + 'server\'s environment and restart to choose it.';
-}
-
 function wireChoices(onPick) {
   view().querySelectorAll('[data-choice]').forEach((el) => {
     el.onclick = () => {
@@ -544,20 +576,7 @@ window.addEventListener('popstate', (e) => {
   renderWizard();
 });
 
-/** Answers the server will refuse, and the flag that would allow each. */
-const GATED_ANSWERS = [
-  ['deploymentMode', 'multiplayer', 'multiplayer'],
-];
-
 function renderWizard() {
-  // AN ANSWER THE SERVER WILL REFUSE IS NOT AN ANSWER. The wizard restores from the browser,
-  // so a run begun while a feature was enabled can be resumed after it was turned off, and the
-  // operator would carry a selected tile all the way to a save that rejects it. Dropped back
-  // to unanswered here, which puts them on the same step with Continue disabled and the reason
-  // written on the tile.
-  for (const [key, value, flag] of GATED_ANSWERS) {
-    if (answers[key] === value && !state.experimental?.[flag]) answers[key] = null;
-  }
   // Persist here rather than at each mutation site: every path that changes an answer or the
   // step ends up calling this, so one line covers all of them. The first version saved only
   // from the choice-tile handler, which meant every typed answer, server name, domain, S3
@@ -707,10 +726,10 @@ function stepMode() {
       'Your own world, played on your own. Friends can still join if you invite them, and you '
       + 'decide who may sign up in a moment.'))}
     ${raw(choice('deploymentMode', 'multiplayer', 'Multiplayer',
-      'Built for other people from the start. Morrowind is a single-player game, so playing it '
-      + 'together is a real addition rather than a port: expect rough edges, and do not run a '
-      + 'campaign you would be upset to lose. You get one extra question, the name players see '
-      + 'when they join.', '', 'warning', expLock('multiplayer', 'Multiplayer')))}`,
+      'Built for other people from the start. Everyone gets their own game, can open it to '
+      + 'friends or join someone else\'s, and the server simulates the world for all of them. '
+      + 'Finishing setup restarts this container as the multiplayer server. You get one extra '
+      + 'question, the name players see when they join.', '', 'warning'))}`,
   { disabled: !answers.deploymentMode, need: 'Choose one to carry on.' });
   wireChoices();
 }
@@ -1481,7 +1500,7 @@ function stepReview() {
         not appear on the sign-in page. Add them any time under Settings, single sign-on.
       </div>` : '')}
     <dl class="row small mt-3">
-      ${raw(line('Server', mp ? 'Multiplayer (experimental)' : 'Single player'))}
+      ${raw(line('Server', mp ? 'Multiplayer' : 'Single player'))}
       ${raw(mp ? line('Server name', answers.serverName || '(unset)') : '')}
       ${raw(line('Sign-in methods', answers.loginMethods.length
         ? answers.loginMethods.map((m) => LOGIN_LABEL[m] || m).join(', ')
@@ -1799,10 +1818,7 @@ async function pageOverview() {
       </div>
     </div>`;
   const up = Math.round(o.uptime / 60);
-  const rows = o.players.length ? o.players.map((p) => html`
-    <tr><td>${p.name}</td><td class="text-secondary">${p.account}</td>
-      <td>${p.cellKey || "-"}</td><td>${p.rank}</td></tr>`).join('')
-    : html`<tr><td colspan="4" class="vt-empty">Nobody is in the world right now.</td></tr>`;
+  const upText = up < 60 ? `${up}m` : `${Math.round(up / 60)}h`;
 
   // A SINGLE-PLAYER DASHBOARD IS A DIFFERENT PAGE, not the multiplayer one with things
   // greyed out. The world card named an internal id ("default") nobody chose and links to a
@@ -1817,7 +1833,7 @@ async function pageOverview() {
     view().innerHTML = html`
       <div class="row">
         ${raw(stat('Playing now', `${playing.length}`, 'bi-controller', 'primary'))}
-        ${raw(stat('Uptime', up < 60 ? `${up}m` : `${Math.round(up / 60)}h`, 'bi-clock-history', 'secondary'))}
+        ${raw(stat('Uptime', upText, 'bi-clock-history', 'secondary'))}
         ${raw(sysCards(o.system))}
       </div>
       <div class="card card-outline card-primary">
@@ -1831,21 +1847,158 @@ async function pageOverview() {
     return;
   }
 
-  const checklist = setupChecklist();
+  // THE MULTIPLAYER SERVER IS A THIRD PAGE. It runs one game per person playing, so a single
+  // "World" card and one player cap are the wrong shape here the way the roster count was the
+  // wrong shape in single player. What its operator wants to know is who is playing and in
+  // whose game, then whether the box has room for more.
+  if (o.platform) return renderPlatformOverview(o, stat, upText);
+
+  // A GAME: its own roster. Reached directly on a self-hosted game, or through the proxy on
+  // the multiplayer server, where the getting-started checklist belongs to the platform and
+  // not to the game being looked at.
+  const rows = o.players.length ? o.players.map((p) => html`
+    <tr><td>${p.name}</td><td class="text-secondary">${p.account}</td>
+      <td>${p.cellKey || "-"}</td><td>${rankLabel(p.rank)}</td><td>${raw(playerFlags(p))}</td></tr>`).join('')
+    : html`<tr><td colspan="5" class="vt-empty">Nobody is playing right now.</td></tr>`;
+  const checklist = gameId ? '' : setupChecklist();
   view().innerHTML = html`
     <div class="row">
       ${raw(stat(`Players (of ${o.maxPlayers})`, `${o.players.length}`, 'bi-people', 'primary', '#console'))}
       ${raw(stat('World', o.world.id, 'bi-globe-americas', 'success', '#mods'))}
-      ${raw(stat('Uptime', up < 60 ? `${up}m` : `${Math.round(up / 60)}h`, 'bi-clock-history', 'secondary'))}
+      ${raw(stat('Uptime', upText, 'bi-clock-history', 'secondary'))}
       ${raw(stat('Your role', state.role, 'bi-person-badge', 'warning', '#security'))}
+      ${raw(sysCards(o.system))}
     </div>
     ${raw(checklist)}
     <div class="card card-outline card-primary">
       <div class="card-header"><h3 class="card-title">In world</h3></div>
       <div class="table-responsive"><table class="table table-hover mb-0">
-        <thead><tr><th>Name</th><th>Account</th><th>Location</th><th>Rank</th></tr></thead>
+        <thead><tr><th>Name</th><th>Account</th><th>Location</th><th>Rank</th><th>Flags</th></tr></thead>
         <tbody>${raw(rows)}</tbody></table></div></div>`;
   wireChecklist();
+}
+
+/** In-game rank, explained. The console page spells out the 0-3 scale; the overview showed
+ *  a bare integer. */
+const RANK_LABEL = ['player', 'helper', 'moderator', 'admin'];
+const rankLabel = (r) => `${r} ${RANK_LABEL[r] || ''}`.trim();
+
+/**
+ * What a moderator needs to see next to a name: whether they are muted, and the anti-cheat
+ * tallies the server keeps per account (implausible movement, capped hits, refused content).
+ * Both were computed and sent; neither was ever drawn.
+ */
+function playerFlags(p) {
+  let out = '';
+  if (p.muted) out += html`<span class="badge text-bg-secondary me-1">muted</span>`;
+  for (const [kind, n] of Object.entries(p.anomalies || {})) {
+    out += html`<span class="badge text-bg-warning me-1" title="anti-cheat signal">${kind} ×${n}</span>`;
+  }
+  return out;
+}
+
+/** People first: who is playing and in whose game; then the games; then the box. */
+function renderPlatformOverview(o, stat, upText) {
+  const h = o.health || {};
+  const games = o.games || [];
+  const players = o.players || [];
+  const byId = new Map(games.map((g) => [g.id, g]));
+  // "Michael's game" with the id alongside, small: the name is what an operator recognises,
+  // the id is what the log lines and the proxy use.
+  const gameLabel = (g) => html`${g.label} <span class="text-secondary small vt-mono">${g.id}</span>`;
+
+  const playerRows = players.length ? players.map((p) => {
+    const g = byId.get(p.game);
+    return html`
+    <tr><td>${p.name}</td>
+      <td><a href="#game=${p.game}">${raw(g ? gameLabel(g) : esc(p.game))}</a></td>
+      <td>${p.gameMode === 'party' ? 'Party' : 'Solo'}</td>
+      <td class="text-secondary">${p.cellKey || '-'}</td>
+      <td>${p.level ?? '-'}</td></tr>`;
+  }).join('')
+    : html`<tr><td colspan="5" class="vt-empty">Nobody is playing right now.</td></tr>`;
+
+  const owner = can('owner');
+  const gameRows = games.length ? games.map((g) => html`
+    <tr><td><a href="#game=${g.id}">${raw(gameLabel(g))}</a></td>
+      <td>${g.mode === 'party' ? 'Party' : 'Solo'}</td>
+      <td>${g.playerCount}${raw(g.connectedCount > g.playerCount
+        ? html` <span class="text-secondary small">(+${g.connectedCount - g.playerCount} joining)</span>` : '')}</td>
+      <td>${raw(gameStatus(g))}</td>
+      <td class="text-end text-nowrap">
+        <a class="btn btn-sm btn-outline-secondary" href="#game=${g.id}">Open</a>
+        ${raw(owner ? html`
+        <button class="btn btn-sm btn-outline-secondary" data-game-act="stop" data-g="${g.id}"
+          title="Stop the process; it starts again when its owner returns">Stop</button>
+        <button class="btn btn-sm btn-outline-danger" data-game-act="discard" data-g="${g.id}"
+          title="Stop it and delete its data">Discard</button>` : '')}
+      </td></tr>`).join('')
+    : html`<tr><td colspan="5" class="vt-empty">No games are running. One starts when somebody plays.</td></tr>`;
+
+  const memTone = h.budgetMb > 0 && h.committedMb / h.budgetMb > 0.85 ? 'warning' : 'secondary';
+  view().innerHTML = html`
+    <div class="row">
+      ${raw(stat('Playing now', `${players.length}`, 'bi-people', 'primary'))}
+      ${raw(stat(h.capacity ? `Games running (of ${h.capacity})` : 'Games running', `${h.games ?? games.length}`, 'bi-collection-play', 'success'))}
+      ${raw(stat('Sim peers', `${h.peers ?? 0}`, 'bi-cpu', 'info'))}
+      ${raw(stat(h.budgetMb > 0 ? `Memory committed (of ${h.budgetMb} MB)` : 'Memory committed (no budget set)',
+        `${h.committedMb ?? 0} MB`, 'bi-memory', memTone))}
+      ${raw(stat('Uptime', upText, 'bi-clock-history', 'secondary'))}
+      ${raw(sysCards(o.system))}
+    </div>
+    <div class="card card-outline card-primary mb-3">
+      <div class="card-header"><h3 class="card-title">Playing now</h3></div>
+      <div class="table-responsive"><table class="table table-hover mb-0">
+        <thead><tr><th>Player</th><th>In whose game</th><th>Mode</th><th>Where</th><th>Level</th></tr></thead>
+        <tbody>${raw(playerRows)}</tbody></table></div></div>
+    <div class="card card-outline card-secondary mb-3">
+      <div class="card-header"><h3 class="card-title">Games</h3>
+        <div class="card-tools small text-secondary">${h.capacityReason === 'memory'
+          ? 'Room for more is bound by memory.' : 'Room for more is bound by the game count.'}</div></div>
+      <div class="table-responsive"><table class="table table-hover mb-0">
+        <thead><tr><th>Game</th><th>Mode</th><th>Players</th><th>Status</th><th></th></tr></thead>
+        <tbody>${raw(gameRows)}</tbody></table></div></div>
+    ${raw(setupChecklist())}`;
+  wireChecklist();
+  wireGameActions();
+}
+
+function gameStatus(g) {
+  if (g.blockedUntil) return html`<span class="badge text-bg-danger">crash backoff</span>`;
+  if (!g.up) return html`<span class="badge text-bg-warning">starting</span>`;
+  if (g.reapsInSec !== null && g.reapsInSec !== undefined) {
+    return html`<span class="text-secondary">empty, reaps in ${g.reapsInSec}s</span>`;
+  }
+  const m = Math.round(g.uptime / 60);
+  const peers = g.peerCount ? `, ${g.peerCount} peer${g.peerCount === 1 ? '' : 's'}` : '';
+  return html`up ${m < 60 ? `${m}m` : `${Math.round(m / 60)}h`}${peers}`;
+}
+
+function wireGameActions() {
+  view().querySelectorAll('[data-game-act]').forEach((b) => {
+    b.onclick = async () => {
+      const kind = b.dataset.gameAct, id = b.dataset.g;
+      const ok = kind === 'stop'
+        ? await confirmAction({
+          title: `Stop ${id}?`,
+          body: html`<p>Everyone in it is disconnected. It starts again when its owner comes back.</p>`,
+          danger: 'Stop',
+        })
+        : await confirmAction({
+          title: `Discard ${id}?`,
+          body: html`<p>Stops the game and deletes its data: dropped items, containers, cell
+            state. Characters live in the shared store and are not touched.</p>`,
+          danger: 'Discard',
+          typeToConfirm: id,
+        });
+      if (!ok) return;
+      try {
+        const r = await api(`/games/${id}/${kind}`, { method: 'POST', body: { confirm: id } });
+        toast(r.message || `${kind} done.`);
+        route();
+      } catch (e) { toast(e.message, 'danger'); }
+    };
+  });
 }
 
 /** "just now" / "3m ago" — a timestamp is not what the question wanted. */
@@ -1988,7 +2141,10 @@ function setupChecklist() {
     // item is always done and the link would lead nowhere.
     ...(can('owner') ? [{ done: state.setupCompleted === true, label: 'Run the setup wizard' }] : []),
     { done: state.twoFactor === true, label: 'Add two-factor authentication to your account', hash: '#security' },
-    { done: localStorage.getItem('omwmp_mods_seen') === '1', label: 'Review the game data and mod list', hash: '#mods' },
+    // Not on the multiplayer server: mods belong to a game, and there is no #mods there.
+    ...(platform() ? [] : [
+      { done: localStorage.getItem('omwmp_mods_seen') === '1', label: 'Review the game data and mod list', hash: '#mods' },
+    ]),
     // NOTHING USED TO SAY THIS. An operator could finish setup, upload every file, and still
     // have no way for anyone to play, because the player-facing app ships separately and no
     // screen mentioned it. Derived from a live check, so it clears itself once staged.
@@ -2065,6 +2221,7 @@ async function pageConsole() {
 
   const rosterRows = o.players.length ? o.players.map((p) => html`
     <tr><td>${p.name}</td><td class="text-secondary small">${p.cellKey || '-'}</td>
+      <td class="small">${rankLabel(p.rank)}</td><td>${raw(playerFlags(p))}</td>
       <td class="text-end text-nowrap">
         <button class="btn btn-sm btn-outline-secondary" data-act="kick" data-t="${p.name}"
           title="Disconnect them; they can rejoin">kick</button>
@@ -2074,11 +2231,13 @@ async function pageConsole() {
         <button class="btn btn-sm btn-outline-danger" data-act="ban" data-t="${p.name}"
           title="Kick them and refuse the account from now on">ban</button>
       </td></tr>`).join('')
-    : html`<tr><td colspan="3" class="vt-empty">Nobody is in the world right now.</td></tr>`;
+    : html`<tr><td colspan="5" class="vt-empty">Nobody is playing right now.</td></tr>`;
 
+  // The fields /admin/api/reports actually sends (server.ts): ts, reporter, target, reason.
+  // This read at/by/about/text, so every column was blank whenever a report existed.
   const reportRows = (reports.reports || []).map((r) => html`
-    <tr><td class="small text-secondary text-nowrap">${(r.at || '').slice(5, 16).replace('T', ' ')}</td>
-      <td>${r.by}</td><td>${r.about || '-'}</td><td class="small">${r.text}</td></tr>`).join('');
+    <tr><td class="small text-secondary text-nowrap">${(r.ts || '').slice(5, 16).replace('T', ' ')}</td>
+      <td>${r.reporter}</td><td>${r.target || '-'}</td><td class="small">${r.reason}</td></tr>`).join('');
 
   // A form card: icon + title in a proper AdminLTE card header, inputs, one action button.
   const tool = (icon, title, blurb, bodyHtml, btnId, btnLabel, extra = '') => html`
@@ -2099,9 +2258,16 @@ async function pageConsole() {
             <i class="bi bi-people me-2"></i>In the world, ${o.players.length}
             of ${o.maxPlayers}</h3></div>
           <div class="table-responsive"><table class="table table-hover mb-0">
-            <thead><tr><th>Player</th><th>Where</th><th></th></tr></thead>
+            <thead><tr><th>Player</th><th>Where</th><th>Rank</th><th>Flags</th><th></th></tr></thead>
             <tbody>${raw(rosterRows)}</tbody></table></div>
         </div>
+
+        <div class="card card-outline card-warning mb-3"><div class="card-header">
+          <h3 class="card-title"><i class="bi bi-flag me-2"></i>Player reports</h3></div>
+          <div class="table-responsive"><table class="table table-sm mb-0">
+            <thead><tr><th>When</th><th>From</th><th>About</th><th>Report</th></tr></thead>
+            <tbody>${raw(reportRows || html`<tr><td colspan="4" class="vt-empty">No reports. Good.</td></tr>`)}</tbody>
+          </table></div></div>
 
         ${raw(tool('bi-megaphone', 'Broadcast',
           'A message to everyone currently playing, shown in their chat.',
@@ -2112,19 +2278,20 @@ async function pageConsole() {
           'Shown to every player when they join. Leave it empty and press save to clear it.',
           html`<input class="form-control" id="motdMsg">`,
           'motdGo', 'Save message'))}
-
-        <div class="card card-outline card-warning mb-3"><div class="card-header">
-          <h3 class="card-title"><i class="bi bi-flag me-2"></i>Player reports</h3></div>
-          <div class="table-responsive"><table class="table table-sm mb-0">
-            <thead><tr><th>When</th><th>From</th><th>About</th><th>Report</th></tr></thead>
-            <tbody>${raw(reportRows || html`<tr><td colspan="4" class="vt-empty">No reports. Good.</td></tr>`)}</tbody>
-          </table></div></div>
       </div>
 
       <div class="col-lg-5">
         <div class="card mb-3"><div class="card-header">
           <h3 class="card-title"><i class="bi bi-terminal me-2"></i>Output</h3></div>
           <div class="card-body"><div class="vt-out vt-mono" id="cmdOut">Results of anything you run appear here.</div></div></div>
+
+        ${raw(tool('bi-person-check', 'Bans',
+          'Lift a ban, or ban by address when someone keeps coming back on new accounts.',
+          html`<div class="row g-2">
+            <div class="col-12"><input class="form-control" id="bnName" placeholder="account name or IP address"></div>
+          </div>`,
+          'unbanGo', 'Unban', html`
+          <button class="btn btn-sm btn-outline-danger mt-2 ms-1" id="ipbanGo">IP-ban</button>`))}
 
         ${raw(tool('bi-chat-left-text', 'Read a chat log',
           'What a player has said recently, the moderation trail for a report.',
@@ -2152,14 +2319,6 @@ async function pageConsole() {
             <div class="col-2"><input class="form-control" id="gvCount" type="number" value="1"></div>
           </div>`,
           'gvGo', 'Give'))}
-
-        ${raw(tool('bi-person-check', 'Bans',
-          'Lift a ban, or ban by address when someone keeps coming back on new accounts.',
-          html`<div class="row g-2">
-            <div class="col-12"><input class="form-control" id="bnName" placeholder="account name or IP address"></div>
-          </div>`,
-          'unbanGo', 'Unban', html`
-          <button class="btn btn-sm btn-outline-danger mt-2 ms-1" id="ipbanGo">IP-ban</button>`))}
 
         ${raw(owner ? tool('bi-award', 'Set a rank',
           'In-game moderation power: 0 player, 1 helper, 2 moderator, 3 admin. This is '
@@ -2300,7 +2459,13 @@ async function pageSettings(only) {
   //
   // Hidden, not disabled, and never deleted: the values stay in the file, so a server that
   // later becomes multiplayer gets them all back exactly as they were.
-  const hide = singlePlayer() ? new Set(settingsCache.multiplayerOnly || []) : new Set();
+  // Two cuts, both named by the server. In single player, the sections a lone player cannot
+  // use (MULTIPLAYER_ONLY). In a game's dashboard, the sections only the multiplayer server
+  // reads (GATEWAY_ONLY). On the multiplayer server itself everything shows: what is saved
+  // there is the defaults every game starts from.
+  const hide = singlePlayer() ? new Set(settingsCache.multiplayerOnly || [])
+    : (!platform() || gameId) ? new Set(settingsCache.gatewayOnly || [])
+      : new Set();
   const keep = (names) => names.filter((n) => !hide.has(n));
 
   const groups = [...settingsCache.groups, ...(others.length ? [{ group: 'Other', sections: others.map((s) => s.name) }] : [])]
@@ -3776,9 +3941,13 @@ async function pageMaintenance() {
         <i class="bi bi-cone-striped me-2"></i>Maintenance mode
         ${raw(m.on ? ' <span class="badge text-bg-warning ms-2">on</span>' : '')}</h3></div>
       <div class="card-body">
-      <p class="small text-secondary">Disconnects everyone and refuses new connections with a
-        message. Use it before changing mods or settings, so nobody is halfway through
-        something when the server restarts.</p>
+      <p class="small text-secondary">${raw(platform() && !gameId
+        ? 'Closes every game: everyone is disconnected, nobody can start or join a game, and '
+          + 'the message is shown instead. Use it before changing settings the games share, so '
+          + 'nobody is halfway through something when they restart.'
+        : 'Disconnects everyone and refuses new connections with a message. Use it before '
+          + 'changing mods or settings, so nobody is halfway through something when the server '
+          + 'restarts.')}</p>
       <label class="form-label" for="mMsg">Message shown to players</label>
       <input class="form-control mb-3" id="mMsg" value="${m.message || ''}"
         placeholder="Back in ten minutes, updating mods">
@@ -3816,6 +3985,9 @@ async function pageRestart() {
       ${raw(state.maintenance?.on || singlePlayer() ? '' : html`<div class="vt-section-note mb-3">
         Nobody has been warned. If people are playing, turn on
         <a href="#maintenance">maintenance mode</a> first.</div>`)}
+      ${raw(platform() && !gameId ? html`<div class="vt-section-note mb-3">
+        This restarts the multiplayer server and every game with it. To pick up new settings
+        without dropping everyone at once, use the <a href="#rolling">rolling restart</a>.</div>` : '')}
       <button class="btn btn-warning" id="mRestart">Restart the server</button>
     </div></div></div></div>`;
 
@@ -3828,6 +4000,42 @@ async function pageRestart() {
     if (!ok) return;
     await api('/restart', { method: 'POST' });
     waitForRestart();
+  };
+}
+
+/**
+ * The multiplayer server's own restart: every game, one at a time, empty ones first, busiest
+ * last, and it halts if one does not come back. It existed for a year with no way to ask for
+ * it but a signal from inside the container.
+ */
+async function pageRolling() {
+  setTitle('Rolling restart', 'Restart every game one at a time, so the platform never goes dark.');
+  view().innerHTML = html`
+    <div class="row"><div class="col-12 col-xl-7">
+    <div class="card card-warning card-outline">
+      <div class="card-header"><h3 class="card-title">
+        <i class="bi bi-arrow-repeat me-2"></i>Rolling restart</h3></div>
+      <div class="card-body">
+      <p class="small text-secondary">Each game is drained, restarted, and waited for before the
+        next one is touched, so a settings change reaches every game without the whole platform
+        going down at once. Empty games go first and the busiest last. If a game does not come
+        back the roll stops there and says so in the log, rather than turning one failure into
+        an outage. Players in a game being restarted are disconnected and can rejoin as soon as
+        it is back.</p>
+      <button class="btn btn-warning" id="rollGo">Restart every game, one at a time</button>
+    </div></div></div></div>`;
+  $('#rollGo').onclick = async () => {
+    const ok = await confirmAction({
+      title: 'Start a rolling restart?',
+      body: html`<p>Every game restarts in turn. Each one's players are disconnected while it
+        does, for a few seconds each.</p>`,
+      danger: 'Start',
+    });
+    if (!ok) return;
+    try {
+      const r = await api('/rolling-restart', { method: 'POST' });
+      toast(r.games ? `Rolling ${r.games} game${r.games === 1 ? '' : 's'}. Watch the Overview.` : 'Nothing to restart.');
+    } catch (e) { toast(e.message, 'danger'); }
   };
 }
 
@@ -4216,9 +4424,12 @@ const ROUTES = {
   '#console': pageConsole,
   '#settings': () => pageSettings(),
   '#set-core': () => pageSettings('Core'),
+  '#set-gameplay': () => pageSettings('Gameplay'),
   '#set-access': () => pageSettings('Access'),
   '#set-storage': () => pageSettings('Storage'),
   '#set-operations': () => pageSettings('Operations'),
+  '#set-platform': () => pageSettings('Platform (advanced)'),
+  '#rolling': pageRolling,
   '#mods': pageMods,
   '#gamefiles': pageGameFiles,
   '#accounts': pageAccounts,
@@ -4237,7 +4448,8 @@ const ROUTES = {
 const NEEDS = {
   '#console': 'moderator', '#settings': 'viewer', '#mods': 'viewer',
   '#set-core': 'viewer', '#set-access': 'viewer', '#set-storage': 'viewer',
-  '#set-operations': 'viewer',
+  '#set-operations': 'viewer', '#set-gameplay': 'viewer', '#set-platform': 'viewer',
+  '#rolling': 'owner',
   '#gamefiles': 'viewer', '#accounts': 'moderator',
   '#sessions': 'owner', '#security': 'viewer', '#logs': 'moderator', '#audit': 'moderator',
   '#metrics': 'moderator', '#maintenance': 'owner', '#restart': 'owner', '#backup': 'owner',
@@ -4292,12 +4504,18 @@ async function route() {
   }
   if (!state.authed) return pageLogin();
 
+  // Opening a game, and leaving it. A link, so a row on the Overview and a bookmark both work:
+  // /admin#game=<id> opens that game's console; #games goes back to all of them.
+  const game = /^#game=([A-Za-z0-9][A-Za-z0-9_-]{0,63})$/.exec(hash);
+  if (game && platform()) { openGame(game[1]); return go('#console'); }
+  if (hash === '#games') { closeGame(); return go('#overview'); }
+  if (gameId && !platform()) closeGame(); // a game context from another origin's storage
+
   // Hiding a nav link is not the same as closing the page: the hash still works when typed,
   // bookmarked, or followed from an older link. Send it home rather than rendering a console
   // whose every button would act on a world nobody is connected to.
-  if (singlePlayer() && NAV.some((g) => g.items.some((i) => i.hash === hash && i.solo === false))) {
-    return go('#overview');
-  }
+  const item = NAV.flatMap((g) => g.items).find((i) => i.hash === hash);
+  if (item && !navVisible(item)) return go('#overview');
 
   const need = NEEDS[hash];
   if (need && !can(need)) {

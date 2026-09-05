@@ -2,25 +2,16 @@
 # Copyright (C) 2025-2026 Virtastic - https://virtastic.app
 # SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
 #
-# Picks which server this container runs, from a marker the dashboard writes.
+# Picks which server this container runs, from a marker the setup wizard writes.
 #
-#   single  (default) one world, dist/server.mjs
-#   gateway           the multi-world supervisor, dist/gateway.mjs, which spawns worlds as
-#                     child processes inside THIS container — no extra orchestration needed
+#   single  (default) one game, dist/server.mjs
+#   gateway           the multiplayer server, dist/gateway.mjs, which runs one game process
+#                     per player inside THIS container — no extra orchestration needed
 #
-# Write the marker and restart; the container comes back on the other entry point. That is
-# the whole mechanism.
-#
-# THE ADMIN DASHBOARD DOES NOT RUN IN GATEWAY MODE. gateway/main.ts serves the world
-# directory and the front door, not /admin — the things the dashboard administers (roster,
-# moderation, mods, settings) belong to a world process, and the gateway has none of its own.
-# Verified by switching a container and getting a 404.
-#
-# So this is deliberately NOT exposed as a button in the dashboard: switching would make the
-# dashboard disappear, and switching back means editing this marker over a shell, which is
-# precisely the lockout the rest of this design works to avoid. It is a marker file for
-# whoever is already on the box. If the dashboard ever needs to work here, the admin routes
-# have to be mounted in gateway/main.ts first.
+# The wizard writes the marker when the operator chooses single player or multiplayer (the
+# setup route in net/admin/routes.ts) and asks for a restart; the container comes back on the
+# other entry point. Both programs serve the dashboard at /admin, so the switch is a button
+# on the same page in both directions. That is the whole mechanism.
 set -e
 
 DATA="${OMW_DATA:-/data}"

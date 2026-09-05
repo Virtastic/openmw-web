@@ -37,8 +37,8 @@ export const SECTION_HELP: Record<string, string> = {
   dev: 'Development and testing aids. Should be off on anything real.',
   notifications: 'Outgoing email and webhook alerts. Entirely optional, with no SMTP host set nothing is sent, and password recovery is simply not offered.',
   simPeer: 'The headless OpenMW the server runs itself to simulate NPCs.',
-  gateway: 'Multi-world platform hosting. A single self-hosted world does not need this.',
-  worlds: 'Multi-world capacity planning. Only read when running in gateway mode.',
+  gateway: 'How this game finds the multiplayer server, and the credential it proves itself with. A single self-hosted game leaves the address empty.',
+  worlds: 'How many games the multiplayer server may run at once, and the memory it may commit to them. Read by the multiplayer server only.',
 };
 
 export const HELP: Record<string, FieldHelp> = {
@@ -191,13 +191,13 @@ export const HELP: Record<string, FieldHelp> = {
   'simPeer.startCell': { text: 'Cell the sim peer loads into first.' },
   'simPeer.maxPeers': { text: 'Most sim peers to run at once. Each is a full OpenMW process, so this is a memory ceiling as much as a count.' },
   'simPeer.idleReapMs': { text: 'Shut down a sim peer whose area has had no players for this long.' },
-  'gateway.url': { text: 'Where clients of this world can find the world directory. Empty means no gateway, a single self-hosted world is a complete setup and does not need one.' },
+  'gateway.url': { text: 'Where this game finds the multiplayer server. Empty means there is none: a single self-hosted game is a complete setup and does not need one.' },
   'gateway.serverToken': {
     text: 'Shared secret proving a world process belongs to this platform. Generated automatically; you should not normally set it by hand.',
     danger: 'Changing this breaks the trust between the gateway and every world it runs until they all agree again.',
   },
-  'worlds.maxWorlds': { text: 'Gateway mode only: hard ceiling on simultaneously running worlds.' },
-  'worlds.memBudgetMb': { text: 'Gateway mode only: total memory the supervisor may commit to worlds and their sim peers. 0 disables the memory governor.' },
+  'worlds.maxWorlds': { text: 'Multiplayer server only: hard ceiling on games running at once.' },
+  'worlds.memBudgetMb': { text: 'Multiplayer server only: total memory it may commit to games and their sim peers. 0 disables the memory governor.' },
 };
 
 export function helpFor(section: string, key: string): FieldHelp | undefined {

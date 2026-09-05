@@ -1,13 +1,8 @@
 # Multiplayer setup: SSO + storage locker
 
-> **Multiplayer is experimental and off by default.** The wizard shows it greyed out until the
-> server is started with it enabled:
->
-> ```bash
-> OMW_EXPERIMENTAL=multiplayer docker compose up -d
-> ```
->
-> Everything in this guide assumes you have done that; see
+> Choose **Multiplayer** in the setup wizard; nothing needs enabling first. Finishing the
+> wizard restarts the container as the multiplayer server, whose dashboard is where the rest
+> of this guide happens. Everything in this guide assumes you have done that; see
 > [`../SELF_HOSTING.md`](../SELF_HOSTING.md#quick-start) for the full note.
 
 > **Running the Docker stack?** Then most of this is already done for you. The setup wizard

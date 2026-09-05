@@ -83,3 +83,42 @@ test('the new origin shows the restart sheet, not a sign-in form that errors', (
   assert.ok(boot.includes("history.replaceState(null, '', location.pathname);"),
     'the fragment must not survive into bookmarks and reloads');
 });
+
+// --- the questions that are gone, and the one that is no longer gated ---------------------
+
+test('the delivery question is gone from the wizard, not merely gated', () => {
+  // The server always supplies the game files; per-player cloud copies belong to the game
+  // launcher. A greyed tile would still be a question, so there is no tile at all.
+  assert.doesNotMatch(app, /stepDelivery/, 'the delivery step must not exist');
+  assert.doesNotMatch(app, /playerUploads/, 'no trace of the removed flag in the page');
+  assert.doesNotMatch(app, /'delivery',/, 'no delivery entry in the step list');
+  // The answer still travels, as the one constant value the server also forces.
+  assert.match(app, /deliveryModel: 'serve'/);
+});
+
+test('the server forces serve, whatever the page did', () => {
+  const routes = readFileSync(join(process.cwd(), 'src', 'net', 'admin', 'routes.ts'), 'utf8');
+  const handler = /if \(method === 'POST' && path === '\/admin\/api\/setup'\) \{[\s\S]*?\n    \}/.exec(routes)!;
+  // The endpoint is reachable without the page, so the missing question is enforced here.
+  assert.match(handler[0], /body\.deliveryModel = 'serve';/);
+  assert.doesNotMatch(handler[0], /playerUploads/);
+});
+
+test('the dashboard offers no delivery control either', () => {
+  // Removing the wizard question and leaving a settings toggle would be the same option with
+  // worse framing. Old configs saying verify are still honoured at runtime.
+  const api = readFileSync(join(process.cwd(), 'src', 'net', 'admin', 'api-settings.ts'), 'utf8');
+  assert.ok(api.includes("'setup.deliveryModel',"), 'the field must be in the not-offered list');
+  const help = readFileSync(join(process.cwd(), 'src', 'net', 'admin', 'help.ts'), 'utf8');
+  assert.doesNotMatch(help, /setup\.deliveryModel/, 'no help for a control that does not exist');
+});
+
+test('multiplayer is offered without any environment flag', () => {
+  // It was gated behind OMW_EXPERIMENTAL while it was half-finished. It is finished; a wizard
+  // that greys the tile and a route that refuses the answer would leave the operator unable
+  // to set up the one thing the multiplayer server exists for.
+  assert.doesNotMatch(app, /OMW_EXPERIMENTAL|expLock|GATED_ANSWERS|state\.experimental/);
+  assert.doesNotMatch(app, /Multiplayer \(experimental\)/);
+  const routes = readFileSync(join(process.cwd(), 'src', 'net', 'admin', 'routes.ts'), 'utf8');
+  assert.doesNotMatch(routes, /experimental/i);
+});

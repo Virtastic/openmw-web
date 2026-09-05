@@ -18,10 +18,10 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
 import type { AccountStore, DashboardRole } from '../../core/accounts';
-import { roleAtLeast } from '../../core/accounts';
+import { DASHBOARD_ROLES, roleAtLeast } from '../../core/accounts';
 import type { AdminSessionStore } from '../../auth/identities';
 import type { IpRateLimiter } from '../ratelimit';
-import { clientIp } from '../http';
+import { clientIp, isLoopback } from '../http';
 import { json } from './util';
 import { log } from '../../log';
 
@@ -31,10 +31,14 @@ export interface AuthContext {
   accountName: string;
   /** True when the caller used the legacy shared token rather than a real account. */
   viaSharedToken: boolean;
+  /** True when the multiplayer server is acting for a signed-in operator on this game. */
+  viaGateway?: boolean;
 }
 
 export interface AuthDeps {
   sharedToken: string;
+  /** [gateway].serverToken, or '' — see gatewayPrincipal. */
+  gatewayToken?: string;
   accounts: AccountStore;
   sessions: AdminSessionStore;
   /** Per-IP budget for login attempts. */
@@ -43,9 +47,49 @@ export interface AuthDeps {
   apiLimiter: IpRateLimiter;
 }
 
-function tokenFrom(req: IncomingMessage): string {
+function tokenFrom(req: Pick<IncomingMessage, 'headers'>): string {
   const header = req.headers.authorization;
   return header?.startsWith('Bearer ') ? header.slice(7) : '';
+}
+
+/** The headers the multiplayer server stamps when it proxies an operator's request to a game. */
+export const GATEWAY_ACTOR_HEADERS = {
+  key: 'x-omw-admin-actor', name: 'x-omw-admin-name', role: 'x-omw-admin-role',
+} as const;
+
+/**
+ * THE THIRD PRINCIPAL: the multiplayer server acting for one of its operators.
+ *
+ * Admin sessions live in memory, per process. The multiplayer server signs an operator in
+ * once and then opens the pages of a GAME it supervises on their behalf — a different
+ * process, which cannot recognise the session. So the hop is authenticated with the
+ * platform's own credential, [gateway].serverToken (the one every game already loads from
+ * the shared config), and the acting operator travels in headers so the audit trail names a
+ * person rather than a token.
+ *
+ * LOOPBACK ONLY, judged on the socket peer and never on a header. A game binds every
+ * interface inside its container and the multiplayer server reaches it on 127.0.0.1;
+ * honouring the token from anywhere else would turn a file in the shared dir into an
+ * internet-facing admin credential. A pure function so the refusal can be tested with a
+ * fake request — the only way to present a non-loopback peer in a test.
+ */
+export function gatewayPrincipal(
+  req: Pick<IncomingMessage, 'headers'> & { socket: { remoteAddress?: string | undefined } },
+  token: string,
+): AuthContext | null {
+  if (!sharedTokenOk(tokenFrom(req), token)) return null;
+  if (!isLoopback(req.socket.remoteAddress ?? '')) return null;
+  const h = req.headers;
+  const key = String(h[GATEWAY_ACTOR_HEADERS.key] ?? '').toLowerCase();
+  const role = String(h[GATEWAY_ACTOR_HEADERS.role] ?? '');
+  if (key === '' || !(DASHBOARD_ROLES as readonly string[]).includes(role)) return null;
+  return {
+    role: role as DashboardRole,
+    accountKey: key,
+    accountName: String(h[GATEWAY_ACTOR_HEADERS.name] ?? key),
+    viaSharedToken: false,
+    viaGateway: true,
+  };
 }
 
 function sharedTokenOk(presented: string, want: string): boolean {
@@ -83,6 +127,11 @@ export async function resolveAuth(
       accountName: '(shared-token)',
       viaSharedToken: true,
     };
+  }
+
+  if (deps.gatewayToken) {
+    const viaGateway = gatewayPrincipal(req, deps.gatewayToken);
+    if (viaGateway) return viaGateway;
   }
 
   const accountKey = deps.sessions.resolve(presented);

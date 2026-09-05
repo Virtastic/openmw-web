@@ -95,10 +95,15 @@ test('the single-player dashboard drops the multiplayer furniture', () => {
   assert.match(solo[0], /sysCards\(o\.system\)/);
 });
 
-test('multiplayer keeps its own dashboard', () => {
-  // The fix must not be "delete the multiplayer view".
+test('a game keeps its own dashboard, and the multiplayer server gets a third', () => {
+  // The fix must not be "delete the multiplayer view". A game — self-hosted, or opened through
+  // the multiplayer server — still shows its roster and its cap: one process, one world, and
+  // those numbers are the right shape there.
   assert.match(app, /stat\(`Players \(of \$\{o\.maxPlayers\}\)`/);
   assert.match(app, /stat\('World', o\.world\.id/);
+  // The multiplayer server runs a game per person, so those two tiles are the wrong shape
+  // THERE the way the roster count was in single player. It gets people first.
+  assert.match(app, /if \(o\.platform\) return renderPlatformOverview/);
 });
 
 // --- settings that need a world, or a second person ------------------------------------------
@@ -237,7 +242,10 @@ test('the list ships with the settings payload', () => {
 test('the page filters by it and drops groups left empty', () => {
   // "Platform (advanced)" is simPeer/gateway/worlds and nothing else, so in single player it
   // must go entirely rather than remain as a heading that opens onto nothing.
-  assert.match(app, /const hide = singlePlayer\(\) \? new Set\(settingsCache\.multiplayerOnly \|\| \[\]\) : new Set\(\);/);
+  // The single-player cut first; a game's dashboard hides the multiplayer server's own
+  // sections instead; the multiplayer server hides nothing (it holds every game's defaults).
+  assert.match(app, /const hide = singlePlayer\(\) \? new Set\(settingsCache\.multiplayerOnly \|\| \[\]\)/);
+  assert.match(app, /new Set\(settingsCache\.gatewayOnly \|\| \[\]\)/);
   assert.match(app, /\.filter\(\(g\) => g\.sections\.length\)/);
   const platform = SECTION_GROUPS.find((g) => g.group.startsWith('Platform'))!;
   assert.deepEqual(platform.sections.filter((s) => !MULTIPLAYER_ONLY.includes(s)), [],
@@ -259,9 +267,12 @@ test('the sidebar filters those pages out', () => {
 test('and the hash is closed too, not merely unlinked', () => {
   // A hidden link is still a working URL when typed, bookmarked, or followed from an older
   // link, which would land on a console whose every button acts on an empty world.
-  const guard = /if \(singlePlayer\(\) && NAV\.some[\s\S]*?\n  \}/.exec(app);
-  assert.ok(guard, 'no route guard for solo-hidden pages');
-  assert.match(guard[0], /go\('#overview'\)/);
+  // One predicate decides both the sidebar and the hash, so they cannot disagree.
+  const guard = /if \(item && !navVisible\(item\)\) return go\('#overview'\);/.exec(app);
+  assert.ok(guard, 'no route guard for hidden pages');
+  const visible = /function navVisible\(i\) \{[\s\S]*?\n\}/.exec(app);
+  assert.ok(visible, 'no navVisible');
+  assert.match(visible[0], /i\.solo === false && singlePlayer\(\)/);
 });
 
 test('multiplayer still reaches the console', () => {

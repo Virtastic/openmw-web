@@ -22,7 +22,8 @@ import { AttioHook } from '../integrations/attio';
 import { PlayerStore } from '../persist/playerstore';
 import { BanStore } from '../persist/banstore';
 import { OidcService } from '../auth/oidc';
-import { IdentityStore, LoginTicketStore, SessionIndex, LockerSessionStore } from '../auth/identities';
+import { IdentityStore, LoginTicketStore, SessionIndex, LockerSessionStore, type AdminSessionStore } from '../auth/identities';
+import type { AdminDeps } from '../net/admin/routes';
 import { IpRateLimiter } from '../net/ratelimit';
 import { setTrustCloudflareIp } from '../net/http';
 import { createAuthRoutes } from '../auth/routes';
@@ -270,6 +271,10 @@ export interface FrontDoor {
   /** Derived private-world id for one of this account's characters; undefined = no such
    *  character, and the directory must refuse rather than build a world for a ghost. */
   privateWorldIdFor(accountKey: string, characterId: string): Promise<string | undefined>;
+  /** The shared account store, so the dashboard signs in against the same accounts. */
+  accounts: AccountStore;
+  /** Savegame storage for the dashboard's saves page; undefined when the locker is off. */
+  saveStorage: AdminDeps['saveStorage'];
 }
 
 // All state lives in the shared dir; the same files the world processes read and write.
@@ -279,6 +284,9 @@ export async function buildFrontDoor(
   // Only used to build blob URLs when storage falls back to this server's disk and the
   // operator set no [locker] publicBase — i.e. a single-machine dev run.
   gatewayPort = 8080,
+  // The dashboard's session store, so an SSO round trip with return=admin can sign an
+  // operator into the multiplayer server's dashboard the way it does into a game's.
+  adminSessions?: AdminSessionStore,
 ): Promise<FrontDoor> {
   const config = loadConfig(sharedDir, undefined, sharedDir);
   // The gateway front door loads its own config, so it needs its own call: without this the
@@ -379,11 +387,14 @@ export async function buildFrontDoor(
     || (await chars(req, res, url)) || (await reticket(req, res, url));
   const route = createAuthRoutes(
     { config, oidc, identities, tickets, sessions, lockerSessions, accounts, bans,
+      ...(adminSessions ? { adminSessions } : {}),
       limiter: new IpRateLimiter(config.limits.loginPerMinPerIp) },
     also,
   );
   return {
     route,
+    accounts,
+    saveStorage: () => storage as unknown as ReturnType<NonNullable<AdminDeps['saveStorage']>>,
     /** Drain the CRM queue on shutdown. A record enqueued a moment before SIGTERM would
      *  otherwise wait for the next boot's timer, and a redeploy is exactly when signups
      *  cluster. */

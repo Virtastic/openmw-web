@@ -673,14 +673,15 @@ runs once, and half of what follows is about the first run.
 - [ ] Reloading mid-wizard resumes on the same step with the same answers
 - [ ] The step count matches the rail, and does not jump around as you answer
 
-**The experimental answer.** Multiplayer is greyed out by default; there is no delivery
+**The mode answer.** Single player or multiplayer is a plain choice; there is no delivery
 question at all any more (the server always supplies the game files).
 
-- [ ] Multiplayer is **visible** and greyed, not missing, and names its flag
-- [ ] Clicking it does nothing (a real `disabled` button)
+- [ ] Both tiles are selectable with no environment variable set
+- [ ] Finishing the wizard as multiplayer restarts into the multiplayer server, and
+      `/admin` still answers there with the people-first overview
+- [ ] Finishing it as single player restarts into one game with the solo overview
 - [ ] There is no "how do players get the files" step between Content and Access
 - [ ] S3 storage is **not** greyed: it is only where blobs are kept
-- [ ] Restart with `OMW_EXPERIMENTAL=multiplayer` and the tile becomes selectable
 - [ ] **Maintenance** is absent from the sidebar on a single-player server (it only refuses
       multiplayer connections, which solo does not have), and the Restart page does not
       suggest it there

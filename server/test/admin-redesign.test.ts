@@ -13,12 +13,6 @@ import { readDashboardTree } from '../src/net/admin/settings-store';
 import { validAccountName, accountNameProblem } from '../src/core/accounts';
 import { normaliseDomain } from '../src/net/admin/setup-check';
 
-// These cases answer the wizard the way an operator who has TURNED THE EXPERIMENTS ON would:
-// multiplayer, S3 credentials, serving the files. Those answers are refused by default now, so
-// the flag is set here rather than the payloads being changed to something the tests are not
-// about. experimental.test.ts owns the off-by-default behaviour.
-process.env.OMW_EXPERIMENTAL = 'all';
-
 const OWNER = { name: 'owner@example.com', password: 'a-long-enough-passphrase' };
 
 async function boot(t: { after(fn: () => unknown): void }, override = {}) {

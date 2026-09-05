@@ -15,7 +15,9 @@ import { normaliseDomain } from './setup-check';
 
 /** Sections grouped for the nav. Anything not listed still renders, under "Other". */
 export const SECTION_GROUPS: { group: string; sections: string[]; note?: string }[] = [
-  { group: 'Core', sections: ['setup', 'server', 'login', 'content'] },
+  // [engine] beside [content]: both are checks run against a client as it joins. It was in
+  // no group at all, so it landed in a synthesised "Other" with no sidebar entry.
+  { group: 'Core', sections: ['setup', 'server', 'login', 'content', 'engine'] },
   { group: 'Gameplay', sections: ['rules', 'economy', 'sharing', 'time', 'cellReset', 'gui'] },
   { group: 'Access', sections: ['admin', 'auth', 'moderation', 'authority'] },
   { group: 'Storage', sections: ['locker'] },
@@ -23,10 +25,10 @@ export const SECTION_GROUPS: { group: string; sections: string[]; note?: string 
   {
     group: 'Platform (advanced)',
     sections: ['simPeer', 'gateway', 'worlds'],
-    note: 'Multi-world hosting. A single self-hosted server does not need any of this, ' +
-      'these settings are read by the gateway supervisor, which most deployments never run. ' +
-      'Note that this dashboard is not available while the gateway is running: it administers ' +
-      'a world, and the gateway does not have one of its own.',
+    note: 'How the multiplayer server sizes itself and how each game simulates its world. ' +
+      'Saved here, these are the defaults every game starts with; a game\'s own dashboard ' +
+      'can override the ones it reads for itself. A single self-hosted game only needs the ' +
+      'sim peer section.',
   },
 ];
 
@@ -57,6 +59,16 @@ export const MULTIPLAYER_ONLY = [
   'content', 'engine',
   'simPeer', 'gateway', 'worlds',
 ];
+
+/**
+ * Sections only the MULTIPLAYER SERVER reads (gateway/main.ts), hidden in a game's dashboard.
+ *
+ * Just [worlds]: it sizes the supervisor and nothing else opens it (config.ts). [simPeer] and
+ * [gateway] look like platform settings and are not — every game process reads both, for its
+ * own headless engine and for the token it proves itself to the directory with — so editing
+ * them in a game does something, and the cut stays "does nothing here".
+ */
+export const GATEWAY_ONLY = ['worlds'];
 
 /**
  * Individual fields hidden in single player, for a DIFFERENT reason than the sections above.
@@ -192,8 +204,8 @@ const SECTION_LABEL: Record<string, string> = {
   dev: 'Development aids',
   notifications: 'Email and alerts',
   simPeer: 'World simulation',
-  gateway: 'Multi-world gateway',
-  worlds: 'Multi-world capacity',
+  gateway: 'Multiplayer server link',
+  worlds: 'Multiplayer server capacity',
   engine: 'Engine version',
 };
 
@@ -222,6 +234,7 @@ export function settingsView(dataDir: string, config: unknown): {
   sections: SectionView[];
   fallback: string | null;
   multiplayerOnly: string[];
+  gatewayOnly: string[];
 } {
   const cfg = config as Record<string, unknown>;
   const overrides = readDashboardTree(dataDir);
@@ -303,6 +316,7 @@ export function settingsView(dataDir: string, config: unknown): {
     // Sent rather than duplicated in the page: which sections need a world is a fact about
     // the config, and it belongs next to the grouping that already lives here.
     multiplayerOnly: MULTIPLAYER_ONLY,
+    gatewayOnly: GATEWAY_ONLY,
   };
 }
 

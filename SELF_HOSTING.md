@@ -30,8 +30,10 @@ Useful afterwards:
 
 Worth knowing:
 
-- **Multiplayer is experimental and off by default.** The wizard shows it greyed out; start
-  with `OMW_EXPERIMENTAL=multiplayer docker compose up -d` (or a `.env` file) to unlock it.
+- **Single player or multiplayer is the wizard's first question.** Finishing the wizard
+  restarts the container as the server you chose, and the dashboard follows: a game's
+  dashboard for single player, the people-first one for the multiplayer server. Change your
+  mind later from Settings; it restarts the same way.
 - **The server supplies the game files** to everyone who plays on it - you upload your
   `Data Files` once, in the wizard. Everyone playing still needs to own the game.
 - **The address can move when you answer the hosting question.** A fresh server is plain
@@ -146,9 +148,8 @@ shell access.
 
 ## Multiplayer server
 
-Multiplayer is a real addition to a single-player game - expect rough edges. Unlock it with
-`OMW_EXPERIMENTAL=multiplayer` and the wizard walks you through the rest. Three things to
-know:
+Multiplayer is a real addition to a single-player game - expect rough edges. Choose it in
+the wizard and it walks you through the rest. Three things to know:
 
 1. **The server simulates the world itself** (a headless copy of the engine runs NPCs, so a
    modified client cannot author what an NPC did). That is why it must have its own game

@@ -66,6 +66,8 @@ function bearerOk(header: string | undefined, token: string): boolean {
 export const CLIENT_IP_HEADER = 'x-omw-client-ip';
 
 const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
+/** The socket peer is this machine. The one address a gateway-stamped header may come from. */
+export const isLoopback = (addr: string): boolean => LOOPBACK.has(addr);
 
 // THE TRUST BOUNDARY FOR EVERY FORWARDED-FOR HEADER. A reverse proxy is the only way a request
 // reaches us in production (deploy/openmw-mp.caddy publishes no host ports), and a proxy always

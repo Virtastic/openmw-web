@@ -69,13 +69,42 @@ import {
 } from './mod-install';
 import { engineStatus, resolveLatestRelease, startEngineUpdate } from './update-engine';
 import { requestServerUpdate, updateStatus } from './update-server';
-import { EXPERIMENTAL_ENV, experimental } from '../../core/experimental';
 import { listSaves, saveDownload, saveUploadUrl, saveUploaded, type SavesDeps } from './api-saves';
 import type { LogEntry } from '../../log';
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+/**
+ * WHICH SERVER THIS CONTAINER RUNS. docker-entrypoint.sh reads `<data>/.mode` at boot and
+ * starts one game (dist/server.mjs) or the multiplayer server (dist/gateway.mjs). The setup
+ * wizard is what writes it — the operator's single player / multiplayer answer used to be
+ * recorded as a setting and re-curate the settings pages, and nothing ever started the
+ * program the answer named. Not fatal on a read-only data dir: the settings still saved, and
+ * the log line says what to do by hand.
+ */
+export const MODE_FILE = '.mode';
+export function writeModeMarker(dir: string, mode: 'single' | 'multiplayer'): void {
+  const marker = mode === 'multiplayer' ? 'gateway' : 'single';
+  try {
+    writeFileSync(join(dir, MODE_FILE), `${marker}\n`);
+    log('info', 'admin.mode_written', { mode: marker });
+  } catch (err) {
+    log('error', 'admin.mode_write_failed', {
+      mode: marker, error: String(err),
+      note: `could not write ${MODE_FILE}; write "${marker}" into it by hand and restart`,
+    });
+  }
+}
 
 export interface AdminDeps {
   dataDir: string;
   sharedDir?: string;
+  /** THIS PROCESS IS THE MULTIPLAYER SERVER (gateway/main.ts), not a game. The page branches
+   *  on it: people first, games as rows, per-game pages reached through the proxy. */
+  platform?: boolean;
+  /** [gateway].serverToken. Lets the multiplayer server act for a signed-in operator on a
+   *  game it supervises — see gatewayPrincipal in auth.ts. Honoured from loopback only. */
+  gatewayToken?: string;
   /** Re-read each call: the settings page must show what a restart would actually load. */
   config(): unknown;
   accounts: AccountStore;
@@ -220,6 +249,7 @@ export function adminRoutes(deps: AdminDeps) {
 
   const auth: AuthDeps = {
     sharedToken: deps.sharedToken,
+    gatewayToken: deps.gatewayToken ?? '',
     accounts: deps.accounts,
     sessions: deps.sessions,
     loginLimiter: deps.loginLimiter,
@@ -312,12 +342,9 @@ export function adminRoutes(deps: AdminDeps) {
         role: ctx?.role ?? null,
         name: ctx?.accountName ?? null,
         maintenance: deps.maintenance.get(),
-        // Which wizard answers are unlocked. Sent to everyone rather than to owners only: the
-        // page reads this before anyone has signed in, and the names of half-finished features
-        // are not a secret. The variable that sets them is on the machine, which is the part
-        // that is not.
-        experimental: experimental(),
-        experimentalEnv: EXPERIMENTAL_ENV,
+        // Which of the two servers is answering. The multiplayer server's dashboard is a
+        // different page from a game's: people first, and games as rows.
+        platform: deps.platform === true,
         // Server-side truth for the "add two-factor" nudge. It used to be a localStorage
         // flag, so the reminder reappeared on every other browser and never cleared on the
         // one that mattered.
@@ -710,29 +737,19 @@ export function adminRoutes(deps: AdminDeps) {
       if (!ctx) return true;
       const body = await readJson<WizardAnswers>(req, res);
       if (body === undefined) return true;
-      // THE GREYED TILE IS NOT THE GATE. The wizard restores its answers from the browser, so
-      // a run begun while a feature was enabled can be finished after it was turned off, and
-      // this endpoint is reachable without the page at all. Refused here, where it is a fact
-      // about the server rather than about the markup.
       // The delivery question is gone from the wizard: this server always supplies the game
       // files, and personal cloud copies are the launcher's own feature. Forced here rather
       // than trusted, because the endpoint is reachable without the page.
       body.deliveryModel = 'serve';
-      const on = experimental();
-      const gated: [boolean, string][] = [
-        [body.deploymentMode === 'multiplayer' && !on.multiplayer, 'Multiplayer'],
-      ];
-      const blocked = gated.filter(([hit]) => hit).map(([, name]) => name);
-      if (blocked.length > 0) {
-        json(res, 400, {
-          error: `${blocked.join(' and ')} ${blocked.length === 1 ? 'is' : 'are'} experimental `
-            + `and not enabled on this server. Set ${EXPERIMENTAL_ENV} to turn `
-            + `${blocked.length === 1 ? 'it' : 'them'} on, restart, and answer again.`,
-        });
-        return true;
-      }
       const result = applyWizard(deps.dataDir, body, deps.sharedDir);
       if (!result.ok) { json(res, 400, { error: result.error }); return true; }
+      // THE CHOICE STARTS THE SERVER IT NAMES. Written only when the wizard is FINISHED, so a
+      // half-answered run cannot flip the process, and at the shared dir, which is the
+      // entrypoint's $DATA in both modes. The restart the page asks for next re-enters the
+      // entrypoint and comes back on the other program — both of which serve this dashboard.
+      if (body.completed === true && (body.deploymentMode === 'single' || body.deploymentMode === 'multiplayer')) {
+        writeModeMarker(deps.sharedDir ?? deps.dataDir, body.deploymentMode);
+      }
       // Apply the hosting answer to the proxy immediately. Caddy watches this file, so the
       // certificate is requested within seconds — the wizard sets up HTTPS itself instead of
       // printing a line for the operator to paste into a file it cannot reach.

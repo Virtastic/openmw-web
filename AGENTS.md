@@ -517,13 +517,13 @@ S3 settings; they only exist in the OVH console and on the test server.
 - Node **22** for the server (`node:22-alpine`), npm (not pnpm/yarn), `npm ci`.
 - The server test suite is the deploy gate: `tsc --noEmit && node --test`. If it fails,
   nothing is deployed.
-- **A fresh setup cannot choose multiplayer without `OMW_EXPERIMENTAL=multiplayer`.** The
-  wizard greys the tile and `/admin/api/setup` refuses the answer, so a bring-up script that
-  posts `deploymentMode: "multiplayer"` gets a 400 with the reason. There is no delivery
-  question any more: `/admin/api/setup` forces `deliveryModel: "serve"` (the server supplies
-  the game files; per-player cloud copies are the launcher's own feature). Existing servers
-  are unaffected: the gate is on new setups only, a hand-edited `config.toml` is not gated,
-  and a config already saying `verify` is still honoured at runtime.
+- **The wizard's single player / multiplayer answer starts the server it names.** Finishing
+  the wizard writes `<data>/.mode` (`single` or `gateway`) and the restart it asks for
+  brings the container back on the other program; both serve `/admin`. A bring-up script
+  posts `deploymentMode: "multiplayer", completed: true` to `/admin/api/setup` and then
+  `/admin/api/restart`. There is no delivery question: `/admin/api/setup` forces
+  `deliveryModel: "serve"` (the server supplies the game files; per-player cloud copies are
+  the launcher's own feature), and a config already saying `verify` is still honoured.
 - Tests that answer the wizard with a gated option set the variable themselves
   (`server/test/admin-redesign.test.ts` does); `server/test/experimental.test.ts` owns the
   off-by-default behaviour.

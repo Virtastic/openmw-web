@@ -78,6 +78,9 @@ export interface WorldSettings {
   sharedDir: string;
 }
 
+/** One row of a game's roster, as its /status reports it. */
+export interface WorldPlayer { id: number; name: string; cellKey: string | null; level?: number }
+
 export interface WorldInfo {
   id: string;
   mode: WorldMode;
@@ -90,6 +93,22 @@ export interface WorldInfo {
   // Played, and now empty — an abandoned session waiting to be reaped. Distinct from a world
   // that was just created and has not been joined YET, which is still someone's live intent.
   abandoned: boolean;
+  // WHO IS PLAYING, not just how many. A game's /status has always carried its roster (the
+  // same list the launcher shows); the poller kept only the counts, so the one question the
+  // multiplayer server's dashboard exists to answer — who is in whose game — had its answer
+  // thrown away five seconds before it was asked. INTERNAL: directory.ts projects it out of
+  // the public listing, which anyone who knows a game's id can read.
+  players: WorldPlayer[];
+  // The rest is what the supervisor already knows about a process, surfaced for the
+  // dashboard's health strip. All in memory; none of it costs a syscall.
+  pid?: number;
+  startedAt: number;
+  idleSince?: number;
+  connectedCount: number;
+  peerCount: number;
+  everConnected: boolean;
+  blockedUntil?: number;
+  fastCrashes: number;
 }
 
 interface World {
@@ -105,7 +124,7 @@ interface World {
   // connects); after someone has joined, the shorter idle-reap applies once they leave.
   everConnected?: boolean;
   ownerAccount?: string;
-  lastStatus?: { playerCount: number; connectedCount: number; peerCount: number; maxPlayers: number; name: string };
+  lastStatus?: { playerCount: number; connectedCount: number; peerCount: number; maxPlayers: number; name: string; players?: WorldPlayer[] };
 }
 
 export interface WorldDeps {
@@ -114,7 +133,7 @@ export interface WorldDeps {
   // peerCount is OPTIONAL here and required on World.lastStatus: a world from an older build --
   // or a test fake that predates peers being per-cell -- simply does not report it, and poll()
   // normalises the absence to 1 rather than making every caller restate the default.
-  fetchStatus?: (port: number) => Promise<{ playerCount: number; connectedCount: number; peerCount?: number; maxPlayers: number; name: string } | null>;
+  fetchStatus?: (port: number) => Promise<{ playerCount: number; connectedCount: number; peerCount?: number; maxPlayers: number; name: string; players?: WorldPlayer[] } | null>;
   now?: () => number;
 }
 
@@ -148,6 +167,11 @@ export class WorldSupervisor {
    *  because "how full is the box" is an operator's question, not an internal detail. */
   get committed(): number {
     return this.committedMb();
+  }
+
+  /** How long an empty game lives before the reaper takes it; the dashboard counts down to it. */
+  get idleReapMs(): number {
+    return this.deps.settings.idleReapMs;
   }
 
   /** RAM the running worlds have actually committed, counting the peers they are really
@@ -204,17 +228,29 @@ export class WorldSupervisor {
   }
 
   list(): WorldInfo[] {
-    return [...this.worlds.values()].map((w) => ({
-      id: w.id,
-      mode: w.mode,
-      port: w.port,
-      playerCount: w.lastStatus?.playerCount ?? 0,
-      maxPlayers: w.lastStatus?.maxPlayers ?? 0,
-      name: w.lastStatus?.name ?? w.id,
-      up: w.lastStatus !== undefined,
-      abandoned: w.everConnected === true && w.idleSince !== undefined,
-      ...(w.ownerAccount ? { ownerAccount: w.ownerAccount } : {}),
-    }));
+    return [...this.worlds.values()].map((w) => {
+      const blocked = this.blockedUntil.get(w.id);
+      return {
+        id: w.id,
+        mode: w.mode,
+        port: w.port,
+        playerCount: w.lastStatus?.playerCount ?? 0,
+        maxPlayers: w.lastStatus?.maxPlayers ?? 0,
+        name: w.lastStatus?.name ?? w.id,
+        up: w.lastStatus !== undefined,
+        abandoned: w.everConnected === true && w.idleSince !== undefined,
+        ...(w.ownerAccount ? { ownerAccount: w.ownerAccount } : {}),
+        players: w.lastStatus?.players ?? [],
+        ...(w.child.pid !== undefined ? { pid: w.child.pid } : {}),
+        startedAt: w.startedAt,
+        ...(w.idleSince !== undefined ? { idleSince: w.idleSince } : {}),
+        connectedCount: w.lastStatus?.connectedCount ?? 0,
+        peerCount: w.lastStatus?.peerCount ?? 0,
+        everConnected: w.everConnected === true,
+        ...(blocked !== undefined && this.now() < blocked ? { blockedUntil: blocked } : {}),
+        fastCrashes: this.fastCrashes.get(w.id) ?? 0,
+      };
+    });
   }
 
   get(id: string): WorldInfo | undefined {
@@ -479,11 +515,18 @@ export class WorldSupervisor {
       .replace(/^-+|-+$/g, '').slice(0, 40);
     if (slug === '') return [];
     const id = `priv-${slug}-${charId.slice(-8)}`;
-    const gone: string[] = [];
+    return (await this.discard(id, { charId })) ? [id] : [];
+  }
+
+  /** Stop a game and remove its data, BY ID: the dashboard's "discard this game", where an
+   *  operator names the game rather than the character it was made for. True when anything
+   *  was there to remove. `why` is folded into the audit line. */
+  async discard(id: string, why: Record<string, unknown> = {}): Promise<boolean> {
+    let gone = false;
     const running = this.worlds.get(id);
     if (running) {
       this.stop(id);
-      gone.push(id);
+      gone = true;
       // Bounded: stop() already escalates to SIGKILL on its own timer, so this resolves.
       await new Promise<void>((resolve) => {
         if (running.child.exitCode !== null || running.child.signalCode !== null) return resolve();
@@ -498,9 +541,9 @@ export class WorldSupervisor {
     const dir = join(this.deps.settings.worldsDir, id);
     if (existsSync(dir)) {
       rmSync(dir, { recursive: true, force: true });
-      if (!gone.includes(id)) gone.push(id);
+      gone = true;
     }
-    if (gone.length > 0) log('info', 'world.discarded', { charId, world: id });
+    if (gone) log('info', 'world.discarded', { ...why, world: id });
     return gone;
   }
 
@@ -571,12 +614,27 @@ function delay(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-async function defaultFetchStatus(port: number): Promise<{ playerCount: number; connectedCount: number; peerCount: number; maxPlayers: number; name: string } | null> {
+async function defaultFetchStatus(port: number): Promise<{ playerCount: number; connectedCount: number; peerCount: number; maxPlayers: number; name: string; players: WorldPlayer[] } | null> {
   try {
     const r = await fetch(`http://127.0.0.1:${port}/status`, { signal: AbortSignal.timeout(2000) });
     if (!r.ok) return null;
-    const j = await r.json() as { playerCount?: number; connectedCount?: number; peerCount?: number; maxPlayers?: number; name?: string };
+    const j = await r.json() as { playerCount?: number; connectedCount?: number; peerCount?: number; maxPlayers?: number; name?: string; players?: unknown };
+    // The roster, kept this time. Shape-checked row by row: a game from an older build sends
+    // no list at all, and a row missing a name is not a player.
+    const players: WorldPlayer[] = Array.isArray(j.players)
+      ? j.players.flatMap((p: unknown) => {
+        const row = (p ?? {}) as { id?: unknown; name?: unknown; cellKey?: unknown; level?: unknown };
+        if (typeof row.name !== 'string') return [];
+        return [{
+          id: typeof row.id === 'number' ? row.id : 0,
+          name: row.name,
+          cellKey: typeof row.cellKey === 'string' ? row.cellKey : null,
+          ...(typeof row.level === 'number' ? { level: row.level } : {}),
+        }];
+      })
+      : [];
     return {
+      players,
       playerCount: typeof j.playerCount === 'number' ? j.playerCount : 0,
       connectedCount: typeof j.connectedCount === 'number' ? j.connectedCount : (typeof j.playerCount === 'number' ? j.playerCount : 0),
       // DEFAULTS TO 1, NOT 0. A world that predates this field, or one answering from an older

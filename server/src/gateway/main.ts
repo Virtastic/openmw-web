@@ -15,6 +15,9 @@ import { fileURLToPath } from 'node:url';
 import { WorldSupervisor, reapOrphanWorlds } from './worlds';
 import { startDirectory } from './directory';
 import { buildFrontDoor } from './frontdoor';
+import { gatewayAdminRoutes, platformMaintenance } from './admin';
+import { AdminSessionStore } from '../auth/identities';
+import { VERSION } from '../version';
 import { loadConfig } from '../config';
 import { HARNESS_PASSWORD } from '../auth/harness';
 import { log } from '../log';
@@ -119,15 +122,74 @@ const orphans = await reapOrphanWorlds(worldsDir);
 if (orphans > 0) log('warn', 'gateway.orphans_reaped', { count: orphans });
 
 worlds.startPolling();
+// Dashboard sessions, shared with the front door so SSO can sign an operator in here.
+const adminSessions = new AdminSessionStore();
 // The shared SSO + locker front door, on the same public port as the directory.
 const frontDoor = await buildFrontDoor(sharedDir, (owner, charId) => {
   // A deleted character's solo world can never be reached again — retire it rather than
   // leaving a directory (and, until it is reaped, a process) behind for every character
   // anyone ever deletes.
   return worlds.discardForCharacter(owner, charId).then(() => undefined);
-}, port);
+}, port, adminSessions);
+
+// ROLL THE WORLDS WITHOUT TAKING THE PLATFORM DOWN.
+//
+// WorldSupervisor.rollingRestart() was written, tested twice, and then reachable from nowhere:
+// no route, no signal, no command. It has two callers now — SIGHUP, the ordinary idiom for
+// "reload gracefully" from inside the container, and the dashboard's Rolling restart page.
+//
+// Guarded against overlap: a second request while a roll is in flight would interleave two
+// sequences over the same worlds, and the "wait for the old process to exit" step of one would
+// see the other's replacement and give up on it.
+let rolling = false;
+function requestRoll(): Promise<{ restarted: string[]; failed: string[] }> | 'busy' {
+  if (rolling) {
+    log('warn', 'gateway.rolling_restart_busy', {});
+    return 'busy';
+  }
+  rolling = true;
+  log('info', 'gateway.rolling_restart_requested', { worlds: worlds.running });
+  return worlds.rollingRestart()
+    .then((r) => {
+      log('info', 'gateway.rolling_restart_done',
+        { restarted: r.restarted.length, failed: r.failed.length, failedIds: r.failed.join(',') });
+      return r;
+    })
+    .catch((err) => {
+      log('error', 'gateway.rolling_restart_failed', { error: String(err) });
+      return { restarted: [], failed: [] };
+    })
+    .finally(() => { rolling = false; });
+}
+
+// THE DASHBOARD RUNS HERE TOO. It used to be a game's alone, which meant choosing multiplayer
+// in the wizard switched the container to a program with no /admin — the operator was signed
+// out of the thing they had just used, and the way back was a marker file over a shell.
+const maintenance = platformMaintenance({
+  worlds, sharedDir, worldsDir, token: () => config.gateway.serverToken,
+});
+const adminRoute = gatewayAdminRoutes({
+  worlds,
+  sharedDir,
+  config: () => config,
+  accounts: frontDoor.accounts,
+  sessions: adminSessions,
+  version: VERSION,
+  publicBase: () => config.locker.publicBase || `http://127.0.0.1:${port}`,
+  saveStorage: frontDoor.saveStorage,
+  restart: (reason) => {
+    log('warn', 'gateway.restart_requested', { reason });
+    // The same graceful path SIGTERM takes: games drained, then the container's restart
+    // policy brings this process back — through the entrypoint, which re-reads the mode.
+    process.kill(process.pid, 'SIGTERM');
+  },
+  rollingRestart: requestRoll,
+  maintenance,
+});
 const directory = await startDirectory({
   worlds, host: '0.0.0.0', port, worldsDir,
+  admin: adminRoute,
+  maintenance: () => maintenance.get(),
   // One private world per player the server can hold. These are the SAME quantity seen from
   // two directions — a solo world is where a player is when they are not in a shared one — so
   // a cap below maxPlayers means a server advertising N seats cannot actually seat N people.
@@ -192,7 +254,7 @@ metrics.worldsCapacity.addCollector(() => {
 });
 
 log('info', 'gateway.start', {
-  port: directory.port, worldsDir, sharedDir, serverEntry,
+  port: directory.port, worldsDir, sharedDir, serverEntry, admin: '/admin',
   // NO WORLD RUNS AT BOOT: there is no public world, so nothing spawns a sim peer until a
   // player creates their own — a deploy check must not read that silence as "the peer is
   // broken".
@@ -217,31 +279,10 @@ async function shutdown(signal: string, code = 0): Promise<void> {
 process.on('SIGTERM', () => void shutdown('SIGTERM'));
 process.on('SIGINT', () => void shutdown('SIGINT'));
 
-// ROLL THE WORLDS WITHOUT TAKING THE PLATFORM DOWN.
-//
-// WorldSupervisor.rollingRestart() was written, tested twice, and then reachable from nowhere:
-// no route, no signal, no command. So the thing built to stop a deploy being an outage could
-// not be asked to run, and every restart dropped every player anyway. SIGHUP is the ordinary
-// idiom for "reload gracefully" and needs no auth surface — a signal can only come from someone
-// who is already inside the container.
-//
-// Guarded against overlap: a second HUP while a roll is in flight would interleave two
-// sequences over the same worlds, and the "wait for the old process to exit" step of one would
-// see the other's replacement and give up on it.
-let rolling = false;
+// SIGHUP: the same roll, from inside the container (see requestRoll above).
 process.on('SIGHUP', () => {
   if (shuttingDown) return;
-  if (rolling) {
-    log('warn', 'gateway.rolling_restart_busy', {});
-    return;
-  }
-  rolling = true;
-  log('info', 'gateway.rolling_restart_requested', { worlds: worlds.running });
-  void worlds.rollingRestart()
-    .then((r) => log('info', 'gateway.rolling_restart_done',
-      { restarted: r.restarted.length, failed: r.failed.length, failedIds: r.failed.join(',') }))
-    .catch((err) => log('error', 'gateway.rolling_restart_failed', { error: String(err) }))
-    .finally(() => { rolling = false; });
+  void requestRoll();
 });
 
 // THE GATEWAY HAD NO CRASH HANDLERS AT ALL. Node terminates the process on an unhandled

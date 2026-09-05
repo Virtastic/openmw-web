@@ -101,8 +101,8 @@ whisper/mute/block, in-game reporting and server-side saves are all there.
 On the hosted service, sign-in is SSO only (Google / Discord / Microsoft - no passwords to
 leak; accounts are keyed on the provider's stable ID, never your email). A server you run
 chooses its own sign-in in the setup
-wizard. Running your own is the [quick start](#quick-start-your-own-server) above with
-`OMW_EXPERIMENTAL=multiplayer` set; provider-side steps live in
+wizard. Running your own is the [quick start](#quick-start-your-own-server) above, choosing
+**Multiplayer** in the wizard; provider-side steps live in
 [`docs/MULTIPLAYER-SETUP.md`](docs/MULTIPLAYER-SETUP.md).
 
 ## What's in this repo

@@ -26,15 +26,24 @@ import { join } from 'node:path';
 import { timingSafeEqual } from 'node:crypto';
 import { log } from '../log';
 import { renderMetrics } from '../metrics';
-import type { WorldSupervisor, WorldMode } from './worlds';
+import type { WorldSupervisor, WorldMode, WorldInfo } from './worlds';
 import type { HttpRoute } from '../net/http';
 import { IpRateLimiter } from '../net/ratelimit';
+import { VERIFY_PATH } from '../net/admin/setup-check';
 
 export interface DirectoryDeps {
   worlds: WorldSupervisor;
   host: string;
   port: number;
   maxPerOwner: number;
+  // THE DASHBOARD, on the multiplayer server. gateway/admin.ts builds it; this router only
+  // has to hand it the paths a game's router would claim (/admin, /, /play, the reachability
+  // probe). deploy/Caddyfile keeps /admin off the internet exactly as it does for a game.
+  admin?: HttpRoute;
+  // Platform-wide maintenance (gateway/admin.ts). While it is on, nobody starts or joins a
+  // game: POST /worlds and the /w/* dial both answer 503, and the games already running have
+  // been told to close their own doors.
+  maintenance?: () => { on: boolean; message: string };
   // Where world data dirs live. Used to revive a world that exists on disk but is not
   // running: the directory's EXISTENCE is the proof it is a real world, which is what stops
   // a dialled /w/priv-anything from spawning one.
@@ -130,10 +139,20 @@ export async function startDirectory(deps: DirectoryDeps): Promise<RunningDirect
   // address: `host` used to be a configured guess that defaulted to 127.0.0.1, which is a
   // remote player's OWN machine, and `port` advertised an internal port to everyone.
   // Nothing to configure, nothing to go stale, nothing leaked.
-  const pub = <T extends { id: string; port: number }>(w: T): Omit<T, 'port'> & { wsPath: string } => {
-    const { port: _internalPort, ...rest } = w;
-    return { ...rest, wsPath: `/w/${w.id}` };
-  };
+  //
+  // A PROJECTION, NOT A SPREAD. WorldInfo now also carries the game's roster (names) and its
+  // process details, for the multiplayer server's own dashboard. This listing is public and
+  // GET /worlds/:id answers for any id, so the fields it sends are named one by one — a new
+  // supervisor field must be added here deliberately to reach the internet.
+  const pub = (w: WorldInfo): {
+    id: string; mode: WorldMode; playerCount: number; maxPlayers: number; name: string; up: boolean;
+    abandoned: boolean; ownerAccount?: string; wsPath: string;
+  } => ({
+    id: w.id, mode: w.mode, playerCount: w.playerCount, maxPlayers: w.maxPlayers, name: w.name,
+    up: w.up, abandoned: w.abandoned,
+    ...(w.ownerAccount ? { ownerAccount: w.ownerAccount } : {}),
+    wsPath: `/w/${w.id}`,
+  });
 
   const server: Server = createServer((req, res) => {
     const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
@@ -149,6 +168,19 @@ export async function startDirectory(deps: DirectoryDeps): Promise<RunningDirect
     res.setHeader('access-control-allow-methods', 'GET, POST, DELETE, OPTIONS');
     res.setHeader('access-control-allow-headers', 'content-type, authorization');
     if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
+
+    // The dashboard, when this is the multiplayer server. Same path set a game's router
+    // claims, so an operator's bookmark works on either program.
+    if (deps.admin && (path === '/admin' || path.startsWith('/admin/') || path === '/'
+        || path === '/play' || path === VERIFY_PATH)) {
+      void Promise.resolve(deps.admin(req, res, url)).then((claimed) => {
+        if (!claimed) json(res, 404, { error: 'not found' });
+      }).catch((err) => {
+        log('error', 'admin.route_failed', { path, error: String(err) });
+        if (!res.headersSent) json(res, 500, { error: 'internal' });
+      });
+      return;
+    }
 
     // Front door first: /auth/*, /locker/* and /saves are handled by the shared SSO, locker
     // and savegame services. This list is the real router — a path the front door implements
@@ -262,6 +294,13 @@ export async function startDirectory(deps: DirectoryDeps): Promise<RunningDirect
           json(res, 400, { error: 'mode must be private or party' });
           return;
         }
+        // Closed doors are closed for everyone, so this comes before asking who is knocking:
+        // a launcher gets the maintenance message, not a sign-in error it cannot fix.
+        const maint = deps.maintenance?.();
+        if (maint?.on) {
+          json(res, 503, { error: 'maintenance', message: maint.message || 'the server is in maintenance' });
+          return;
+        }
         // The SESSION says who this is, never the message. A client-supplied account here
         // made the per-owner cap decorative: fabricate a new name per request and one caller
         // exhausts every world slot on the host, each holding its slot for the full startup
@@ -339,6 +378,13 @@ export async function startDirectory(deps: DirectoryDeps): Promise<RunningDirect
   // original upgrade request is replayed verbatim and both directions are piped.
   server.on('upgrade', (req, socket, head) => {
     const path = (req.url ?? '').split('?')[0] ?? '';
+    if (deps.maintenance?.().on) {
+      // Closed doors close for everyone, including a dial that would otherwise revive a
+      // reaped game. The client's retry ladder keeps trying, which is what brings players
+      // back the moment the switch goes off.
+      socket.end('HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n');
+      return;
+    }
     const m = /^\/w\/([A-Za-z0-9][A-Za-z0-9_-]{0,63})$/.exec(path);
     let world = m ? deps.worlds.get(m[1]!) : undefined;
     // RESTART A KNOWN WORLD ON DIAL. A private world is only started when the launcher asks
