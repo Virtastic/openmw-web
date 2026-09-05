@@ -2,6 +2,36 @@
 
 Notable changes to OpenMW-Web. Dates are release dates, newest first.
 
+## 1.3.0
+
+The multiplayer overhaul. 1.2.0 made the server something a person runs from a browser; 1.3.0
+makes the world something several people can actually share: one simulating peer per world
+holds every occupied cell and every player's body, movement is input-authoritative, and there
+are no client-side saves to fork the world.
+
+**The world reacts to you now.** Guards pursue a wanted player (they evaluated a bounty that
+belonged to nobody before), levelled spawns match the nearest player's level instead of a
+level-1 dummy, difficulty scaling applies to real players, and training or levelling reaches the
+peer the moment it happens instead of the next time you picked something up.
+
+**Picking up an item is a request.** Two players reaching for the same item used to both keep
+it. The server now answers, the loser is told so, and containers and loose items behave alike.
+
+**Bars, death and respawn are real.** Health, magicka and fatigue reached nobody for as long as
+the peer has existed (a wire-name mismatch), respawn left you a corpse with healthy bars, a
+returning peer dropped every body at the world origin, and every puppet stopped short of where
+its player actually stood at the end of every walk. All fixed, and every one of them has a
+browser scenario now, because none of them could be seen from the unit tier.
+
+**Sim peers actually stop now.** The headless engine ignores SIGTERM, and the server only ever
+sent SIGTERM -- so every reaped or released peer lived on as a ~360 MB zombie that also kept
+its world from ever getting a peer again and counted against `maxPeers`. Stops escalate to
+SIGKILL; shutdown kills outright. The deploy's protocol health check also walks the real path
+now: it creates a world as the platform, which spawns a world process and its sim peer, then
+dials it.
+
+Server 1014/1020 (6 env-skips), Lua 92/92, browser 53 pass / 1 fail / 4 skip of 58 -- the one fail, if any, is s71, a three-client scenario over this laptop's memory ceiling (documented in STATUS.md). Solo and Party worlds; 32 players per world.
+
 ## 1.2.0
 
 The dashboard release. 1.1.0 put a multiplayer service around the engine; 1.2.0 makes the
