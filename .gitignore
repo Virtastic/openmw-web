@@ -169,3 +169,9 @@ data/caddy/Caddyfile
 
 # release-bundle scratch used by infra/Dockerfile builds
 dist/
+
+# A LOCAL compose override, never repo state. docker compose loads this file automatically,
+# so committing one silently changes what `docker compose up -d` does for everybody who
+# clones: ours pointed the build at Dockerfile.simpeer, which is a ~35 minute engine compile
+# instead of the ~1 minute image docker-compose.yml deliberately tells you to start with.
+/docker-compose.override.yml
