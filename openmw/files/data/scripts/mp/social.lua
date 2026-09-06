@@ -228,6 +228,14 @@ return {
             friends = data.friends or {}
             blocked = data.blocked or {}
             muted = data.muted or {}
+            -- REBUILT FROM THE SNAPSHOT, not merged into it. The live FriendRequestReceived
+            -- only fires when the sender is in this world, so a request from a friend sitting
+            -- in their own game arrives ONLY here. The server's list is authoritative, which
+            -- also means a request accepted or withdrawn elsewhere disappears from this panel.
+            requests = {}
+            for _, r in ipairs(data.requests or {}) do
+                if r.acct then requests[r.acct] = r.name or r.acct end
+            end
             -- Drop any pending request from someone who is now a friend. Clearing it only in
             -- the accept handler left the same person listed as BOTH a friend and a pending
             -- request whenever the accept happened another way — from a second session, or

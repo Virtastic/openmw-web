@@ -609,9 +609,14 @@ per-session, so an id-keyed friendship would expire on every reconnect. The live
 Client → server (event tier). `name` is a typed display name; `acct` is an account key
 returned by a previous `FriendList`:
 
-- `FriendRequest{name}` · `FriendAccept{acct}` · `FriendRemove{acct}`
+- `FriendRequest{name}` · `FriendAccept{name|acct}` · `FriendRemove{acct}` — accept takes the
+  sender's NAME from the panel (the account key is not on the wire) and resolves it against
+  the shared account index, so a request from someone in their own world can be accepted.
 - `BlockAdd{name}` · `BlockRemove{acct}`
-- `InviteSend{acct}` · `InviteAccept{acct}` — travel-to invite
+- `InviteSend{acct}` · `InviteAccept{acct}` — travel-to invite. Invites are stored shared
+  so they reach a player in another world; accepting one from someone who is NOT in this
+  world therefore answers with `JoinFriend` (the world switch) instead of `InviteAccepted`,
+  since no coordinate in this world would mean anything.
 - `PresenceMode{mode}` — one of `public` `friends` `private`
 - `MuteAdd{name}` · `MuteRemove{acct}`
 - `ReportPlayer{name, reason, voice?}` — files a moderation report with the target's current
@@ -622,9 +627,12 @@ returned by a previous `FriendList`:
 Server → client:
 
 - `FriendList{friends:[{acct, name, online, playerId?, cellKey?}], blocked:[{acct, name}],
-  muted:[{acct, name}]}` — full snapshot, sent on join and after any mutation (the client
-  rebuilds its panel from it; there is no incremental form). `blocked` and `muted` are the
-  player's own lists, so the panel can offer the way back
+  muted:[{acct, name}], requests:[{acct, name}]}` — full snapshot, sent on join and after any
+  mutation (the client rebuilds its panel from it; there is no incremental form). `blocked` and
+  `muted` are the player's own lists, so the panel can offer the way back. `requests` is the
+  friend requests waiting for this player: `FriendRequestReceived` only reaches a target who is
+  in the sender's world, and two people each in their own game is the ordinary case, so the
+  snapshot is what actually delivers them
 - `PresenceUpdate{acct, online, playerId?}`
 - `FriendRequestReceived{fromAcct, fromName}` · `InviteReceived{fromAcct, fromName}`
 - `InviteAccepted{cellKey, x, y, z}` — the host's live position, resolved server-side.

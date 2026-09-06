@@ -623,7 +623,13 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     // [login] requireProfile is off by default, so a username is not guaranteed. The fallback
     // is the CHARACTER name, never account.name — a missing handle is a cosmetic gap, the
     // login identifier is a privacy leak. Turn requireProfile on and the fallback goes unused.
-    displayName: (acct) => accounts.cachedByKey(acct)?.username ?? roster.activeForAccount(acct)?.name,
+    // Cache first (it carries the display casing), then the SHARED usernames table for
+    // accounts this process has never seen — a friend in their own world, the sender of a
+    // pending request — then the live roster. Without the middle step every cross-world row
+    // fell through to the account key, which is the login identifier.
+    displayName: (acct) => accounts.cachedByKey(acct)?.username
+      ?? accounts.usernameOf(acct)
+      ?? roster.activeForAccount(acct)?.name,
     // Resolution must accept what players SEE, which is now the username.
     resolveName: (name) => accounts.keyForUsername(name) ?? (accounts.existsNow(name) ? name.toLowerCase() : undefined),
     now: () => Date.now(),

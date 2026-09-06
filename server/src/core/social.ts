@@ -228,9 +228,17 @@ export class Social {
     return out;
   }
 
-  // Friends, and the two lists a player can only ever ADD to from the panel: who they have
-  // blocked and who they have muted. Without them there was no way back -- the typed
-  // commands never offered one either -- so a mis-click was permanent.
+  // Friends, the two lists a player can only ever ADD to from the panel (blocked, muted --
+  // without them a mis-click was permanent), and the friend requests WAITING for them.
+  //
+  // The requests are the load-bearing part. FriendRequestReceived is delivered to the target
+  // only if they are in the SENDER'S world at that moment, and everyone normally sits in their
+  // own game -- so "add a friend by their username", the one flow that exists precisely for
+  // someone who is not standing next to you, stored the request and told nobody. The recipient
+  // never saw it, in that session or any later one. The store had an index on the recipient
+  // (friend_request_to) and a pendingFor() query that only the co-present Players list used.
+  // Sent on join and after every mutation, so it is also self-healing: a live event missed
+  // during a reconnect comes back with the next snapshot.
   private sendFriendList(player: Player): void {
     const acct = player.accountKey;
     const named = (a: AccountKey): { acct: string; name: string } => ({ acct: a, name: this.d.displayName(a) ?? a });
@@ -238,6 +246,7 @@ export class Social {
       friends: this.friendList(acct) as unknown as never,
       blocked: this.d.store.blockedBy(acct).map(named) as unknown as never,
       muted: this.d.store.mutesOf(acct).map(named) as unknown as never,
+      requests: this.d.store.pendingFor(acct, this.d.now()).map(named) as unknown as never,
     });
   }
 
@@ -538,7 +547,16 @@ export class Social {
       return typeof v === 'string' ? v : '';
     };
     const nm = s('name');
-    if (nm !== '') return this.d.roster.findByName(nm)?.accountKey;
+    // The local roster FIRST (a co-present player is matched on the name actually shown in
+    // this world), then the shared account index for everyone else. Roster-only meant every
+    // op routed through here could act only on someone standing next to you — and the two
+    // that matter most are exactly the ones for people who are NOT. FriendAccept resolved to
+    // undefined, fell through to an empty acct and answered 'no_request', so a request from
+    // anyone in their own game could be received and read and never accepted: the whole
+    // add-a-friend-by-username flow dead-ended on its last step. MuteAdd had the same hole
+    // for a friend talking to you from another world. Broadening is safe because each op
+    // gates itself — accept needs a request actually addressed to you, mute is self-scoped.
+    if (nm !== '') return this.d.roster.findByName(nm)?.accountKey ?? this.d.resolveName(nm);
     const acct = s('acct');
     if (acct === '') return undefined;
     return this.d.roster.inWorld().some((p) => p.accountKey === acct) ? acct : undefined;
@@ -716,9 +734,20 @@ export class Social {
         this.sendFriendList(player);
         return true;
       case 'InviteAccept': {
-        const r = this.acceptInvite(player, str('acct'));
+        const from = str('acct');
+        const r = this.acceptInvite(player, from);
         if (r.ok) {
           player.peer.sendEvent('InviteAccepted', { cellKey: r.cellKey, x: r.x, y: r.y, z: r.z });
+        } else if (r.reason === 'not_online' && this.presenceOf(from).online) {
+          // They ARE on the server, just not in this world — the ordinary case, since invites
+          // are stored precisely so they can reach another world (see drainInvites). Accepting
+          // one only ever meant "teleport to their coordinates", which nothing in this process
+          // knows for someone elsewhere, so every cross-world invite answered 'not_online' and
+          // the card sat there refusing to be accepted. "Come join me" across worlds is the
+          // world switch — the same one the friend row's join button asks for, with the same
+          // authorisation checks inside it.
+          this.d.store.removeInvite(from, player.accountKey);
+          void this.joinFriend(player, from);
         } else {
           this.reply(player, 'InviteAccept', false, r.reason);
         }

@@ -261,12 +261,42 @@ export class AccountStore {
   // is tempted to block.
   existsNow(name: string): boolean {
     const key = name.toLowerCase();
-    return this.cache.has(key) || this.keysOnDisk.has(key);
+    if (this.cache.has(key) || this.keysOnDisk.has(key)) return true;
+    // The boot-time key set is a snapshot, and under the gateway the OTHER worlds keep
+    // registering accounts into this same file all day. Whoever signed up after this world
+    // started simply did not exist to us until a restart. One indexed primary-key lookup on a
+    // path the comment above already calls low-frequency, memoised into the set so a repeat
+    // never queries twice.
+    const row = this.db.prepare('SELECT 1 AS hit FROM accounts WHERE key = ?').get(key);
+    if (row) this.keysOnDisk.add(key);
+    return row !== undefined;
   }
 
   // Display casing for an account that may be offline; undefined when it is not cached.
   cachedByKey(key: string): Account | undefined {
     return this.cache.get(key);
+  }
+
+  /** Account key -> public handle, ACROSS PROCESSES.
+   *
+   *  cachedByKey only knows accounts this process has touched, and every world is its own
+   *  process — so a friend, a game owner or a pending request from anyone who onboarded
+   *  elsewhere resolved to no display name at all, and every caller's fallback is the ACCOUNT
+   *  KEY, which for an SSO account is the person's real name. That is the exact leak
+   *  displayName was written to prevent, reopened by the process boundary. The usernames table
+   *  is shared and already carries an index on accountKey (usernames_account) that nothing
+   *  queried.
+   *
+   *  Rows with a reservedUntil are OLD handles held so nobody can impersonate the player;
+   *  the live one is the row without it. The handle comes back lowercased (that is how the
+   *  uniqueness table stores it) — the account doc holds the display casing, and reading that
+   *  is an async disk hit this sync path cannot take. Lowercase and correct beats cased and
+   *  leaking a login identifier. */
+  usernameOf(key: string): string | undefined {
+    const row = this.db
+      .prepare('SELECT username FROM usernames WHERE accountKey = ? AND reservedUntil IS NULL')
+      .get(key.toLowerCase()) as { username: string } | undefined;
+    return row?.username;
   }
 
   // Username -> account key. Players type the PUBLIC HANDLE (it is what every social surface

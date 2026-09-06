@@ -99,8 +99,14 @@ export function gatewayAdminRoutes(deps: GatewayAdminDeps): HttpRoute {
   const token = (): string => deps.config().gateway.serverToken;
 
   const gameRow = (g: WorldInfo, now: number): GameRow => {
+    // Same cross-process rule as a world's displayName: the gateway has touched almost no
+    // accounts, so without the shared usernames table every game would be labelled with its
+    // owner's ACCOUNT KEY — the login identifier, on an operator's screen and in the audit
+    // line — instead of the handle players know them by.
     const ownerName = g.ownerAccount
-      ? (deps.accounts.cachedByKey(g.ownerAccount)?.username ?? g.ownerAccount)
+      ? (deps.accounts.cachedByKey(g.ownerAccount)?.username
+        ?? deps.accounts.usernameOf(g.ownerAccount)
+        ?? g.ownerAccount)
       : null;
     return {
       id: g.id,

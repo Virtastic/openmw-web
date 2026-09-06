@@ -71,6 +71,39 @@ export async function grantLockerSession(client, gwPort, account) {
  * Start a gateway and put a client in its OWN world through it (worlds are created on demand).
  * Returns { client, gwPort, ownId, account, stop }.
  */
+/**
+ * A SECOND player on a gateway that is already running, in their OWN world — which is where
+ * everybody actually is before they go anywhere together. Same four steps the first client
+ * takes (account, world, wait for it, dial through the gateway with #mphome), so a scenario
+ * about two people does not re-derive them and miss one.
+ *
+ * Returns { client, account, ownId }.
+ */
+export async function addClient(ctx, gwPort, opts = {}) {
+  const { name = 'bot-b', ownId = 'priv-own-world-b' } = opts;
+  const account = `${name}-${ctx.runId}`;
+  const token = await harnessSession(gwPort, account);
+  const mk = await fetch(`http://127.0.0.1:${gwPort}/worlds`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify({ id: ownId, mode: 'private' }),
+  });
+  assert.equal(mk.status, 200, `${name}'s own world must be creatable (${mk.status})`);
+  const by = Date.now() + 60_000;
+  let up = false;
+  while (Date.now() < by) {
+    try {
+      if ((await (await fetch(`http://127.0.0.1:${gwPort}/worlds/${ownId}`)).json()).up) { up = true; break; }
+    } catch { /* still booting */ }
+    await ctx.sleep(1000);
+  }
+  assert.ok(up, `${name}'s own world must come up`);
+  const url = `ws://127.0.0.1:${gwPort}/w/${ownId}`;
+  const client = await ctx.launchClient(name, '', { mpUrl: url, homeUrl: url });
+  await grantLockerSession(client, gwPort, account);
+  return { client, account, ownId };
+}
+
 export async function startGatewayAndClient(ctx, opts = {}) {
   const { gwPort, name = 'bot-a', maxWorlds = 4, idleReapMs, ownId = 'priv-own-world' } = opts;
   const worldsDir = mkdtempSync(join(tmpdir(), 'omw-gw-worlds-'));
