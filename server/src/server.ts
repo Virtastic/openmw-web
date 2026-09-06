@@ -528,7 +528,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // savegame URLs the browser cannot reach, and nothing reports that until a transfer fails.
   // An explicit [locker].publicBase still wins inside lockerStorageFrom, so a hand-tuned
   // deployment behind an unusual proxy is unaffected.
-  const lockerBase = lockerPublicBase(config.setup.domain, opts.port);
+  const lockerBase = lockerPublicBase(config.setup.domain, opts.port, config.locker.publicBase);
   const lockerStorage = lockerStorageFrom(config.locker, sharedDir, lockerBase);
   const locker = new Locker({
     dataDir: sharedDir,
@@ -899,7 +899,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     mailConfigured: () => config.notifications.smtpHost !== '',
     ...passwordReset({
       accounts, sessions: adminSessions, mail: mailCfg,
-      base: () => config.locker.publicBase || `http://127.0.0.1:${port}`,
+      base: () => lockerPublicBase(config.setup.domain, port, config.locker.publicBase),
       serverName: () => config.server.name,
     }),
     deleteAccount: async (key) => {

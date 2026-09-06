@@ -15,6 +15,11 @@ export interface FieldHelp {
 }
 
 export const SECTION_HELP: Record<string, string> = {
+  setup: 'The answers you gave in the setup wizard. They are shown here and changed there: '
+    + 'each one decides something the wizard also DOES — which program this container runs, '
+    + 'what the proxy config and its certificate are generated from, what game files are '
+    + 'expected — so retyping the record here would change the note and not the server. '
+    + 'Re-run the wizard to change any of them.',
   server: 'Identity and size of this world: what players see in the browser and how many fit.',
   login: 'Who may create an account and what they must provide before they can play.',
   auth: 'Single sign-on providers. Players can use these instead of (or alongside) a password.',
@@ -139,9 +144,12 @@ export const HELP: Record<string, FieldHelp> = {
     danger: 'A non-empty value here is a standing moderator credential that bypasses accounts and two-factor. It cannot change settings or add accounts, but it can act on players. Prefer a real account with a role.',
   },
 
-  // --- setup: the wizard's answers that are still live configuration ---------------------
-  // Reachable here because the wizard is first-run only. Without these the domain could not
-  // be changed at all after setup, and the Help page still told operators to go and change it.
+  // --- setup: what the WIZARD asks, and what each answer commits you to -------------------
+  //
+  // These were settings-page fields until the deployment shape became wizard-owned, so nothing
+  // renders them today (helpFor only decorates rendered fields). Kept because the text is the
+  // clearest statement of what each answer costs, and the wizard asks exactly these questions:
+  // it belongs next to them, not deleted because one consumer went away.
   'setup.domain': {
     text: 'The domain name players reach this server on. Setting it rewrites the reverse proxy config and a real certificate is fetched within seconds, with nothing to restart. Leave it empty for local network use, which keeps the self-signed certificate and the browser warning that comes with it.',
   },

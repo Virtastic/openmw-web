@@ -202,7 +202,7 @@ const adminRoute = gatewayAdminRoutes({
   version: VERSION,
   // Password-reset links and the dashboard's own absolute URLs. Same derivation as the
   // locker's, so a domain answered once in the wizard reaches every place that mints a URL.
-  publicBase: () => config.locker.publicBase || lockerPublicBase(config.setup.domain, port),
+  publicBase: () => lockerPublicBase(config.setup.domain, port, config.locker.publicBase),
   saveStorage: frontDoor.saveStorage,
   restart: (reason) => {
     log('warn', 'gateway.restart_requested', { reason });
@@ -321,6 +321,11 @@ async function shutdown(signal: string, code = 0): Promise<void> {
   await directory.close();
   unhookNotifier();
   await frontDoor.close(); // drain the CRM queue; a redeploy is when signups cluster
+  // Drain the account store's write-behind queue, which a world does on its way out and this
+  // process did not. Every account MUTATION is write-through, so what was actually at stake
+  // is lastSeenAt — up to one 30s timer of "when did I last see this player" — not lost
+  // accounts. Cheap, and it stops the two programs differing for no reason.
+  await frontDoor.accounts.flush();
   worlds.stopAll();
   // The world processes flush their stores on SIGTERM; give them a moment to do it before
   // this process exits and the shell reaps them.

@@ -54,13 +54,23 @@ if [ -n "$RUN_AS" ] && [ "$(id -u)" = "0" ]; then
   WANT_UID="$(id -u "$RUN_AS" 2>/dev/null || echo '')"
   WANT_GID="$(id -g "$RUN_AS" 2>/dev/null || echo '')"
   if [ -n "$WANT_UID" ]; then
-    HAVE_UID="$(stat -c %u "$DATA" 2>/dev/null || echo '')"
-    if [ -n "$HAVE_UID" ] && [ "$HAVE_UID" != "$WANT_UID" ]; then
-      echo "{\"event\":\"entrypoint.chown\",\"dir\":\"$DATA\",\"from\":$HAVE_UID,\"to\":$WANT_UID}"
+    # EACH MOUNT IS CHECKED ON ITS OWN. gamedata is a SEPARATE bind in docker-compose.yml
+    # ($REPO_DIR/gamedata -> /data/gamedata), so its ownership is independent of /data's.
+    # Testing only the top of /data skipped the repair whenever /data happened to be right,
+    # and left the game files owned by the other uid. They stay world-READABLE, so nothing
+    # looked broken -- until a WRITE, and the dashboard's game-file upload lands in exactly
+    # that directory.
+    for d in "$DATA" "$DATA/gamedata"; do
+      # Plain `if`, not `[ x = y ] && continue`: this script runs under `set -e`, where a
+      # bare AND-OR list whose test fails is the classic way to exit a shell by accident.
+      if [ ! -d "$d" ]; then continue; fi
+      HAVE_UID="$(stat -c %u "$d" 2>/dev/null || echo '')"
+      if [ -z "$HAVE_UID" ] || [ "$HAVE_UID" = "$WANT_UID" ]; then continue; fi
+      echo "{\"event\":\"entrypoint.chown\",\"dir\":\"$d\",\"from\":$HAVE_UID,\"to\":$WANT_UID}"
       # Best effort: a read-only mount is a legitimate deployment, and the server reports an
       # unwritable data dir far better than a failed chown does.
-      chown -R "$WANT_UID:$WANT_GID" "$DATA" 2>/dev/null ||         echo "{\"event\":\"entrypoint.chown_failed\",\"dir\":\"$DATA\",\"note\":\"read-only mount, or not permitted\"}"
-    fi
+      chown -R "$WANT_UID:$WANT_GID" "$d" 2>/dev/null || echo "{\"event\":\"entrypoint.chown_failed\",\"dir\":\"$d\"}"
+    done
     # Re-enter this script as the runtime user. The second pass sees a non-root id and falls
     # straight through to the mode selection below.
     if command -v su-exec >/dev/null 2>&1; then

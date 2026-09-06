@@ -154,7 +154,15 @@ function blobSecret(dir: string): Buffer {
  * got working URLs in single player and URLs pointing at 127.0.0.1 in multiplayer, from the
  * same answer. Nothing reports that; a transfer just fails. One function now, called by both.
  */
-export function lockerPublicBase(setupDomain: string, port: number): string {
+export function lockerPublicBase(setupDomain: string, port: number, explicit = ''): string {
+  // The precedence lives HERE, not in a `||` at each call site. Written out by hand it was
+  // got wrong in both directions on the same day: the multiplayer server dropped the domain
+  // and always used loopback, and the world's password-reset base read
+  // `config.locker.publicBase || http://127.0.0.1:<port>` — where publicBase is only ever
+  // what is in the config FILE, never the value derived from the domain. So a server behind a
+  // domain mailed password-reset links pointing at 127.0.0.1, and that mail is the recovery
+  // path the dashboard exists to provide instead of a shell on the box.
+  if (explicit !== '') return explicit;
   return setupDomain ? `https://${setupDomain}` : `http://127.0.0.1:${port}`;
 }
 

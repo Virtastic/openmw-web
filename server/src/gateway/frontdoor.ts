@@ -314,7 +314,8 @@ export async function buildFrontDoor(
   // The operator's domain, exactly as a world derives it — not loopback. A multiplayer
   // deployment behind a domain was minting blob and savegame URLs no browser could reach.
   const storage = lockerStorageFrom(
-    config.locker, sharedDir, lockerPublicBase(config.setup.domain, gatewayPort),
+    config.locker, sharedDir,
+    lockerPublicBase(config.setup.domain, gatewayPort, config.locker.publicBase),
   );
   const locker = new Locker({
     dataDir: sharedDir,

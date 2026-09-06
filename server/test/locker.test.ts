@@ -227,6 +227,11 @@ test('the public base comes from the domain, and both programs derive it the sam
   assert.equal(lockerPublicBase('play.example.com', 8080), 'https://play.example.com');
   assert.equal(lockerPublicBase('', 8080), 'http://127.0.0.1:8080',
     'no domain answered: loopback is the only honest fallback');
+  // An explicit [locker].publicBase still wins — a deployment behind an unusual proxy.
+  assert.equal(lockerPublicBase('play.example.com', 8080, 'https://cdn.example.net'),
+    'https://cdn.example.net', 'a hand-tuned publicBase must override the derived one');
+  assert.equal(lockerPublicBase('play.example.com', 8080, ''), 'https://play.example.com',
+    'an EMPTY explicit value is not a choice; it must fall through to the domain');
 
   // The regression is a program building its own instead of calling this. Anchored on tokens,
   // never on line endings — this checkout is CRLF and a newline-anchored scan silently
@@ -239,6 +244,18 @@ test('the public base comes from the domain, and both programs derive it the sam
   // And the front door must hand THAT to the storage, not a literal.
   const fd = readFileSync('src/gateway/frontdoor.ts', 'utf8');
   const call = fd.slice(fd.indexOf('lockerStorageFrom('));
-  assert.ok(call.slice(0, 200).includes('lockerPublicBase('),
+  assert.ok(call.slice(0, 220).includes('lockerPublicBase('),
     'the multiplayer locker is built from a hardcoded origin again');
+
+  // THE ANTI-PATTERN ITSELF. Checking that a file merely MENTIONS the helper is not enough:
+  // it passed while server.ts still built the password-reset base as
+  // `config.locker.publicBase || http://127.0.0.1:<port>` a few hundred lines further down —
+  // and publicBase is only ever the config FILE's value, never the one derived from the
+  // domain, so a server behind a domain mailed reset links pointing at loopback. The
+  // precedence belongs inside lockerPublicBase; nothing should be spelling it out again.
+  for (const f of ['src/server.ts', 'src/gateway/main.ts', 'src/gateway/frontdoor.ts']) {
+    const src = readFileSync(f, 'utf8');
+    assert.ok(!/publicBase\s*\|\|/.test(src),
+      `${f} re-implements the publicBase fallback instead of using the helper`);
+  }
 });

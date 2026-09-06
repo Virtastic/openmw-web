@@ -378,14 +378,10 @@ export function applySection(
     }
     // The mask coming back means "unchanged": leave whatever is stored alone.
     if (raw === SECRET_MASK) continue;
-    // People paste "https://mp.example.com/" out of the address bar, because that is where a
-    // domain lives as far as they are concerned. The wizard normalises on the way in and this
-    // path has to as well, or a scheme reaches the proxy config and the site address becomes
-    // https://https://mp.example.com.
-    if (section === 'setup' && key === 'domain' && typeof raw === 'string') {
-      patch[key] = normaliseDomain(raw);
-      continue;
-    }
+    // No setup.domain branch here any more: the guard above refuses every [setup] key, so
+    // normalising one would be unreachable code implying a path that no longer exists. The
+    // wizard still normalises what people paste out of the address bar (applyWizard), which
+    // is now the only way a domain is set.
     patch[key] = raw;
   }
   if (Object.keys(patch).length === 0) return { ok: true };
