@@ -46,6 +46,9 @@ function harness(over: Partial<WorldSettings> = {}) {
   // real fetch applies to a world that does not report the field -- so every existing test keeps
   // pricing a world at exactly worldCostMb.
   const peers = new Map<number, number>();
+  // Ports whose /status the fake fetch refuses to answer — a world that is alive as a process
+  // but serving nothing, which is a different state from down-and-gone or idle-and-empty.
+  const down = new Set<number>();
   const sup = new WorldSupervisor({
     settings,
     now: () => clock,
@@ -54,7 +57,7 @@ function harness(over: Partial<WorldSettings> = {}) {
       spawned.push({ id, args, child });
       return child as unknown as ChildProcess;
     },
-    fetchStatus: async (port) => ({
+    fetchStatus: async (port) => (down.has(port) ? null : {
       playerCount: counts.get(port) ?? 0,
       connectedCount: counts.get(port) ?? 0,
       peerCount: peers.get(port) ?? 1,
@@ -62,7 +65,7 @@ function harness(over: Partial<WorldSettings> = {}) {
       name: `w${port}`,
     }),
   });
-  return { sup, spawned, counts, peers, advance: (ms: number) => { clock += ms; } };
+  return { sup, spawned, counts, peers, down, advance: (ms: number) => { clock += ms; } };
 }
 
 test('worlds: each world gets its own data dir and port', () => {
@@ -453,4 +456,52 @@ test('capacity: a world with no status yet still costs its budget', () => {
   assert.ok(sup.ensure('b', 'private', 'bob'));
   assert.ok(sup.ensure('c', 'private', 'cid'));
   assert.equal(sup.ensure('d', 'private', 'dan'), null, 'unpolled worlds are not free');
+});
+
+// A WORLD THAT WEDGES WHILE OCCUPIED USED TO LIVE FOREVER.
+//
+// The poll deliberately leaves idleSince alone when /status fails, so one missed probe cannot
+// reap a world full of players. But a world that stopped answering WHILE OCCUPIED then matched
+// no reaper at all: idleSince was undefined (people had been connected) and everConnected was
+// true, so both branches of sweep() skipped it. It kept its port, its slot against maxWorlds
+// and its share of the memory budget until the gateway itself restarted — capacity bleeding
+// away, seen by an operator as "no new games can start" beside a dashboard listing a game
+// that is down. Only a process EXIT ended a world; a hang is not an exit.
+test('a world that stops answering while occupied is eventually reaped, not held forever', async () => {
+  const { sup, spawned, counts, down, advance } = harness();
+  sup.ensure('wedged', 'party', 'owner-a');
+  const port = spawned[0]!.child ? 40000 : 40000;
+  counts.set(port, 2); // two people playing
+  await sup.poll();
+  assert.equal(sup.running, 1, 'a world with players must be running');
+
+  // It hangs: the process is alive, /status answers nothing.
+  down.add(port);
+  await sup.poll();
+  assert.equal(sup.running, 1, 'one missed probe must NOT reap it — that is the hiccup case');
+
+  // Still silent, but not yet past the window.
+  advance(4 * 60_000);
+  await sup.poll();
+  assert.equal(sup.running, 1, 'a few minutes of silence is still not proof it is gone');
+
+  // Past it.
+  advance(2 * 60_000);
+  await sup.poll();
+  assert.equal(sup.running, 0, 'a world silent for minutes must be reaped, not held forever');
+});
+
+test('a world that answers again after a blip keeps its slot', async () => {
+  const { sup, counts, down, advance } = harness();
+  sup.ensure('blippy', 'party', 'owner-b');
+  counts.set(40000, 1);
+  await sup.poll();
+  down.add(40000);
+  advance(4 * 60_000);
+  await sup.poll();
+  down.delete(40000); // back
+  await sup.poll();
+  advance(10 * 60_000); // long past the window, but it is answering now
+  await sup.poll();
+  assert.equal(sup.running, 1, 'recovering must clear the down clock, not merely pause it');
 });

@@ -118,6 +118,9 @@ interface World {
   child: ChildProcess;
   startedAt: number;
   idleSince?: number;
+  /** When this world last stopped answering /status, or undefined while it answers. NOT the
+   *  same as idle: an idle world is healthy and empty, this one is not answering at all. */
+  downSince?: number;
   stopping: boolean;
   // True once at least one player has ever connected. A world that has NEVER been reached gets a
   // longer startup grace (a first-play client can spend minutes downloading its data before it
@@ -436,8 +439,20 @@ export class WorldSupervisor {
         // Idle = nobody CONNECTED (loading / at chargen counts), not merely nobody in a cell.
         if (st.connectedCount > 0) { w.idleSince = undefined; w.everConnected = true; }
         else if (w.idleSince === undefined) w.idleSince = this.now();
+        w.downSince = undefined; // answering again
       } else {
         w.lastStatus = undefined; // down: reported as up:false, not omitted
+        // A WEDGED WORLD IS NOT AN IDLE ONE, and nothing used to end it. idleSince is
+        // deliberately left alone here so a momentary hiccup cannot reap a world full of
+        // players — but that also meant a world which stopped answering WHILE OCCUPIED
+        // matched no reaper at all: idleSince was undefined (players had been connected),
+        // everConnected was true, so both branches of sweep() skipped it and it kept its
+        // port, its slot against maxWorlds and its share of the memory budget until the
+        // gateway itself restarted. On a long-lived platform that is capacity bleeding away,
+        // presenting as "no new games can start" beside a dashboard listing a game that is
+        // down. Timed separately, and generously: this is measured in minutes of total
+        // silence, not one missed probe.
+        if (w.downSince === undefined) w.downSince = this.now();
       }
     }));
     this.sweep();
@@ -449,6 +464,10 @@ export class WorldSupervisor {
   private static readonly STARTUP_GRACE_MS = 15 * 60_000;
   /** How long a world gets to drain after SIGTERM before it is killed outright. */
   private static readonly STOP_GRACE_MS = 20_000;
+  /** Unanswered for this long and the world is gone, not merely down. Long enough that no
+   *  ordinary stall — a GC pause, a slow cell load, a busy box — comes close; anything still
+   *  silent after it is not serving the players holding sockets to it either. */
+  private static readonly DOWN_REAP_MS = 5 * 60_000;
 
   sweep(): void {
     const now = this.now();
@@ -464,6 +483,14 @@ export class WorldSupervisor {
       }
       if (w.idleSince !== undefined && w.idleSince <= idleCutoff) {
         log('info', 'world.reaped', { id: w.id, idleMs: now - w.idleSince });
+        this.stop(w.id);
+        continue;
+      }
+      // Alive as a process, but answering nothing. Reported separately from an idle reap
+      // because they mean opposite things to an operator: one is a world nobody wanted, the
+      // other is a world that broke while people were in it.
+      if (w.downSince !== undefined && now - w.downSince >= WorldSupervisor.DOWN_REAP_MS) {
+        log('warn', 'world.reaped_unreachable', { id: w.id, downMs: now - w.downSince });
         this.stop(w.id);
       }
     }
