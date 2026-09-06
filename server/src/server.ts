@@ -365,6 +365,22 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // The whole-world player cap: one world is one peer simulating every occupied cell, so
   // this is a memory decision as much as a policy one (see the scale ramp).
   const MAX_WORLD_PLAYERS = 32;
+  // ONE CAP, ENFORCED AND ADVERTISED. This ceiling used to sit only inside mayJoinWorld, which
+  // answers a question about ACCESS, so a party world that was merely FULL refused its owner's
+  // 33rd friend with "this world is private" — a sentence that is not true, reads as "the host
+  // went solo or blocked you", and cannot be checked from the outside: the host sees a working
+  // world and no error. Meanwhile /status and the dashboard advertised [server].maxPlayers,
+  // which is 64 by default, so the number shown was one nobody enforced.
+  //
+  // Clamped here instead, once, so every consumer agrees: the advertised seat count, the
+  // SERVER_FULL refusal in connection.ts, and the admission check below.
+  if (config.server.maxPlayers > MAX_WORLD_PLAYERS) {
+    log('info', 'server.max_players_capped', {
+      configured: config.server.maxPlayers, effective: MAX_WORLD_PLAYERS,
+      note: 'one world is one peer simulating every occupied cell; this ceiling is a memory decision',
+    });
+    config.server.maxPlayers = MAX_WORLD_PLAYERS;
+  }
   const CHAT_HISTORY_KEEP = 200;
   const CHAT_HISTORY_REPLAY = 60;
   const chatCtx: ChatContext = {
@@ -690,10 +706,11 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       if (worldOwner === '') return !process.env.OMW_WORLD_ID;
       if (accountKey === worldOwner) return true;
       if (worldMode !== 'party') return false;
-      if (!socialStore.areFriends(worldOwner, accountKey)) return false;
-      // humanCount, not humansInWorld(): authed players still loading count too, or ten
-      // friends dialling in the same second all pass a cap none has crossed yet.
-      return roster.humanCount < MAX_WORLD_PLAYERS;
+      return socialStore.areFriends(worldOwner, accountKey);
+      // NO CAPACITY CHECK HERE. "May this account be in this world" and "is there room" are
+      // different questions with different answers, and answering the second one here made a
+      // full world claim to be a private one. Capacity is enforced where it can say so: the
+      // SERVER_FULL disconnect in connection.ts, against the clamped cap above.
     },
     // A world that empties reverts to how it booted. Without this, flipping your world to
     // party once left it party FOREVER: the gateway reuses a running world as-is, so the next
