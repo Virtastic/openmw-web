@@ -15,7 +15,12 @@
 set -e
 
 DATA="${OMW_DATA:-/data}"
-MODE="single"
+# WHAT THIS IMAGE RUNS WHEN NOBODY HAS CHOSEN. The self-hosted image ships 'single' (one
+# person, one game, the common case); the hosted platform image ships 'gateway' in its
+# Dockerfile, because that is what it has always run and a deploy must not silently move a
+# live platform onto a different program. The MARKER still wins over both, which is what
+# makes the setup wizard's answer mean something on either image.
+MODE="${OMW_DEFAULT_MODE:-single}"
 if [ -f "$DATA/.mode" ]; then
   MODE="$(tr -d '[:space:]' < "$DATA/.mode")"
 fi
@@ -42,6 +47,10 @@ case "$MODE" in
     if [ "$MODE" != "single" ]; then
       echo "{\"event\":\"entrypoint.unknown_mode\",\"mode\":\"$MODE\",\"using\":\"single\"}"
     fi
+    # SAY WHICH PROGRAM THIS CONTAINER IS, in both branches. Only the gateway one announced
+    # itself, so 'which mode did this start in?' was answerable from the log for one of the two
+    # answers and had to be inferred for the other.
+    echo "{\"event\":\"entrypoint.mode\",\"mode\":\"single\"}"
     exec node --max-old-space-size="$HEAP" dist/server.mjs --data "$DATA" "$@"
     ;;
 esac

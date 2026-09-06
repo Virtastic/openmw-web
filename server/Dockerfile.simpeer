@@ -157,10 +157,11 @@ COPY server/config.default.toml ./
 # The admin dashboard's page and its vendored AdminLTE/Bootstrap assets, read from disk at
 # runtime (src/net/admin/static.ts) rather than bundled — same as config.default.toml.
 COPY server/web ./web
-# Mode-switch entrypoint: reads <data>/.mode and starts either the single world or the
-# gateway. NOT the default CMD below, because this image's default is what production
-# already runs and changing it here would change that deployment. Self-hosters opt in by
-# setting `entrypoint:` in their compose file; see the root docker-compose.yml.
+# Mode-switch entrypoint: reads <data>/.mode and starts either one game or the multiplayer
+# server. This image DEFAULTS to the multiplayer server (OMW_DEFAULT_MODE below), which is
+# exactly what production has always run, so a deploy changes nothing on its own — but a
+# marker written by the setup wizard is now obeyed here too. Before that, choosing a mode in
+# the wizard was inert on this image: the answer was recorded and the pinned CMD ignored it.
 COPY server/docker-entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 RUN useradd -m app && mkdir -p /data && chown app /data
@@ -171,5 +172,10 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
 # The sim peer is mandatory since 1.1.0: the server probes `openmw` on PATH
 # (/usr/local/bin) and refuses to boot unless the operator mounted valid game data at
 # /data/gamedata. Same heap-cap reasoning as the alpine image.
-ENTRYPOINT []
-CMD ["node", "--max-old-space-size=512", "dist/gateway.mjs", "--worlds", "/data/worlds", "--shared", "/data", "--port", "8080", "--base-port", "9000"]
+# The entrypoint reproduces the pinned command this image used to carry, argument for
+# argument (--worlds /data/worlds --shared /data --port 8080 --base-port 9000) at the same
+# 512 MB heap; OMW_DEFAULT_MODE is what makes it choose that branch with no marker present.
+ENV OMW_DEFAULT_MODE=gateway \
+    OMW_HEAP_MB=512
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+CMD []

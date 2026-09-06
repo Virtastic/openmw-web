@@ -160,7 +160,10 @@ Caddy could not resolve `openmw-mp-test` at all.
 ### The mode flip — run this after touching the wizard, the entrypoint or either main
 
 ```bash
-docker build -t omw-flip:test server && ci/jenkins/verify-mode-flip.sh
+# the self-hosted image (default: one game)
+docker build -t omw-flip:test server && ci/jenkins/verify-mode-flip.sh omw-flip:test 18099 single
+# the hosted platform image (default: the multiplayer server)
+ci/jenkins/build-server.sh && ci/jenkins/verify-mode-flip.sh openmw-mp:tier2 18099 gateway
 ```
 
 Drives a REAL container both ways: wizard answer -> `<data>/.mode` -> SIGTERM -> restart
@@ -168,6 +171,11 @@ policy -> `docker-entrypoint.sh` execs the other program -> its dashboard answer
 mechanisms no unit test sees end to end, and the failure mode is an operator stranded on a
 server that is not the one they chose (or, before both halves landed, on one with no
 dashboard at all). Local only: it makes and destroys its own container and volume on 18099.
+
+BOTH images, because they differ in exactly one thing: what runs when nobody has chosen.
+`server/Dockerfile` ships `single`; `server/Dockerfile.simpeer` sets `OMW_DEFAULT_MODE=gateway`
+so production keeps running what it always ran. A marker outranks both — which is what makes
+the wizard's answer mean anything on the hosted image, where a pinned `CMD` used to ignore it.
 
 ### The contract gate — run this after ANY deploy
 
