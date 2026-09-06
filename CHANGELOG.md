@@ -2,6 +2,48 @@
 
 Notable changes to OpenMW-Web. Dates are release dates, newest first.
 
+## 1.4.0
+
+One way in, for operators and for players. 1.3.0 made the world shareable; 1.4.0 settles who
+administers it and from where.
+
+**The setup wizard now starts the server it names.** Choosing single player or multiplayer used
+to be recorded as a setting and nothing else: which program ran was decided by a marker file
+nothing in the code ever wrote, so the answer was inert. The wizard writes that marker and the
+restart it asks for brings the container back on the other program. It works on the hosted image
+too, where a pinned command had been ignoring the marker entirely — that image now defaults to
+the multiplayer server, exactly what it always ran, so a deploy still changes nothing by itself.
+The multiplayer answer needs no environment flag any more; multiplayer is finished.
+
+**The dashboard runs on the multiplayer server.** It never had one. The things it administers —
+roster, moderation, mods, settings — belong to a game, and the supervisor has none of its own,
+so switching a container to multiplayer left the operator with a 404 and a shell as the only way
+back. It now serves the same dashboard, people first: who is playing and in whose game, then the
+games, then how full the box is. Each game's pages open through a proxy under one sign-in, so a
+kick is two clicks from a player's name rather than a different URL and another password.
+
+**Operator commands have one door.** The in-game admin window, the typed `/slash` path and the
+`AdminCommand` event are gone; a chat line starting with "/" is chat. Everything an operator can
+do goes through the dashboard console and the single gate behind it, which was always where the
+rank check and the audit line lived. A second route to the same actions was a second place for
+that check to be wrong, and one of them ran on the player's own machine.
+
+**Players get the social half back, in the panel.** Reporting was a typed command; muting and
+blocking could be done from a row and undone from nowhere; the privacy control lived in a window
+that had stopped drawing. Report (with a reason), unblock, unmute and who-can-see-me are all in
+the O panel now, and the report still carries the surrounding chat to whoever reads the queue.
+
+**The page and the game speak properly.** The browser sent commands through a single slot the
+engine drained about once a frame, so two commands in the same frame silently destroyed one —
+which is how a test once reported "my attacks do nothing" against a server that was fine. It is
+a queue now, drained whole each frame, and every command is acknowledged, so a caller learns
+whether the thing it asked for actually ran.
+
+**Operational gaps closed.** The multiplayer server keeps its own log history on disk and serves
+it on the Logs page (lifecycle events used to vanish on the restart you wanted to read them
+after), and it sends the same notifications a game does, so `world.*` and `gateway.*` events can
+reach an inbox or a webhook.
+
 ## 1.3.0
 
 The multiplayer overhaul. 1.2.0 made the server something a person runs from a browser; 1.3.0
