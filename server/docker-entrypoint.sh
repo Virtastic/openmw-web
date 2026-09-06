@@ -14,6 +14,23 @@
 # on the same page in both directions. That is the whole mechanism.
 set -e
 
+# A COMMAND PASSED TO `docker run` RUNS INSTEAD OF THE SERVER.
+#
+# This image had no ENTRYPOINT until the mode switch landed, so `docker run <image> node
+# /bots/healthcheck.mjs ...` simply replaced the CMD and ran node. With an entrypoint those
+# words arrive here as "$@" instead, and the branches below append them to the server's own
+# argument list — so the protocol health check in .github/workflows/deploy-mp.yml handed
+# `node /bots/healthcheck.mjs` to the gateway as positional arguments and parseArgs killed it.
+# Caught by that check on a real production deploy; the server itself was up and serving.
+#
+# The ordinary docker idiom: anything that is not a flag is a command to exec verbatim. Flags
+# (and no arguments at all) fall through to the mode selection and are forwarded to the server,
+# which is what the compose files rely on.
+case "${1:-}" in
+  '' | -*) ;;
+  *) exec "$@" ;;
+esac
+
 DATA="${OMW_DATA:-/data}"
 # WHAT THIS IMAGE RUNS WHEN NOBODY HAS CHOSEN. The self-hosted image ships 'single' (one
 # person, one game, the common case); the hosted platform image ships 'gateway' in its
