@@ -2,9 +2,9 @@
 
 Notable changes to OpenMW-Web. Dates are release dates, newest first.
 
-## 1.4.0
+## 1.3.1
 
-One way in, for operators and for players. 1.3.0 made the world shareable; 1.4.0 settles who
+One way in, for operators and for players. 1.3.0 made the world shareable; 1.3.1 settles who
 administers it and from where.
 
 **The setup wizard now starts the server it names.** Choosing single player or multiplayer used
