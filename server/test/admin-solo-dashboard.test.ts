@@ -16,8 +16,10 @@ import { join } from 'node:path';
 import { LockerSessionStore } from '../src/auth/identities';
 import { createSysInfo } from '../src/net/admin/sysinfo';
 import {
-  applySection, DERIVED_FIELDS, MULTIPLAYER_ONLY, SECTION_GROUPS, SOLO_KEEP_FIELDS, settingsView,
+  applySection, applyWizard, DERIVED_FIELDS, MULTIPLAYER_ONLY, SECTION_GROUPS, SOLO_KEEP_FIELDS,
+  settingsView,
 } from '../src/net/admin/api-settings';
+import { ENUM_OPTIONS } from '../src/config';
 import { helpFor } from '../src/net/admin/help';
 import { readDashboardTree } from '../src/net/admin/settings-store';
 
@@ -187,11 +189,13 @@ test('no settings field claims the shared token grants owner rights', () => {
 
 // --- the wizard is first-run only, so its live answers moved to Settings ---------------------
 
-test('the deployment answers that are read at runtime are editable', () => {
-  // Closing the wizard left the domain editable by nothing, while Help still said to go and
-  // change it there. These are read at runtime: proxy config, boot mode, and what the data
-  // checklist expects. deliveryModel is deliberately NOT here any more: the server always
-  // supplies the game files, so there is no delivery control to offer.
+test('[setup] renders, and none of the deployment shape is editable from it', () => {
+  // This once asserted the opposite: domain, hosting, httpPort, deploymentMode and
+  // contentProfile were all offered here as text boxes. Each of them is a decision the wizard
+  // PERFORMS as well as records — the mode marker and a restart, the proxy config and its
+  // certificate, what the game-file checklist expects — so retyping the record from a settings
+  // box changed the stored answer and nothing else, and the dashboard then described a server
+  // that was not running. The wizard is the only place these change now.
   const v = settingsView(mkdtempSync(join(tmpdir(), 'set-')), {
     setup: {
       domain: '', hosting: 'internal', httpPort: 80, deploymentMode: 'single',
@@ -200,10 +204,8 @@ test('the deployment answers that are read at runtime are editable', () => {
     },
   });
   const setup = v.sections.find((s) => s.name === 'setup');
-  assert.ok(setup, '[setup] must render as a section');
-  const keys = setup.fields.map((f) => f.key).sort();
-  assert.deepEqual(keys,
-    ['contentProfile', 'deploymentMode', 'domain', 'hosting', 'httpPort']);
+  assert.deepEqual(setup?.fields.map((f) => f.key) ?? [], [],
+    "[setup] is the wizard's record; nothing in it is editable from the settings page");
 });
 
 test('the answers that are only a RECORD are not offered', () => {
@@ -216,11 +218,13 @@ test('the answers that are only a RECORD are not offered', () => {
   assert.ok(DERIVED_FIELDS.includes('setup.completed'));
 });
 
-test('a pasted URL is normalised into a bare hostname on save', () => {
+test('a pasted URL is normalised into a bare hostname by the wizard', () => {
   // People paste out of the address bar. A scheme reaching the proxy config makes the site
-  // address https://https://mp.example.com.
+  // address https://https://mp.example.com. This used to be asserted against the settings
+  // endpoint; the domain is only settable through the wizard now, so that is where the
+  // normalisation has to hold.
   const dir = mkdtempSync(join(tmpdir(), 'set-'));
-  assert.deepEqual(applySection(dir, 'setup', { domain: 'https://MP.Example.com/' }), { ok: true });
+  assert.deepEqual(applyWizard(dir, { hosting: 'public', domain: 'https://MP.Example.com/' }), { ok: true });
   // Read what was STORED. settingsView reports the config object it is handed, so asking it
   // would only echo the unnormalised value back and prove nothing.
   const stored = readDashboardTree(dir) as { setup?: { domain?: string } };
@@ -667,4 +671,59 @@ test('plugin toggles moved into the modal but stay inside the card element', () 
 test('a drag that starts inside the open modal does not reorder the list', () => {
   const wire = /function wireMods\(m\) \{[\s\S]*?\n\}/.exec(app)!;
   assert.match(wire[0], /e\.target\.closest\('\.modal'\)/);
+});
+
+// THE WIZARD OWNS THE SHAPE OF THE DEPLOYMENT, and the dashboard must not offer to retype it.
+// Each of these decides something the wizard PERFORMS as well as records — which program the
+// container runs, what the proxy config and certificate are generated from, what the game-file
+// checklist expects. Editing the record from a settings box changed the answer without doing
+// any of that, leaving a dashboard describing a server that was not running.
+test('the deployment shape is set by the wizard, and the settings API refuses to change it', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'set-'));
+  const v = settingsView(dir, {
+    setup: {
+      deploymentMode: 'multiplayer', hosting: 'internal', domain: '', httpPort: 80,
+      contentProfile: 'morrowind', completed: true,
+    },
+    server: { name: 'x' },
+  });
+  const setup = v.sections.find((s) => s.name === 'setup');
+  const offered = (setup?.fields ?? []).map((f) => f.key);
+  for (const k of ['deploymentMode', 'hosting', 'domain', 'httpPort', 'contentProfile']) {
+    assert.ok(!offered.includes(k), `${k} must not be an editable settings field: ${offered.join()}`);
+  }
+
+  // AND THE ENDPOINT REFUSES IT. Hiding a field from the page is not a control: this API is
+  // reachable without the page, which is why the wizard forces deliveryModel server-side
+  // rather than trusting its own form.
+  for (const k of ['deploymentMode', 'hosting', 'contentProfile', 'completed']) {
+    const r = applySection(dir, 'setup', { [k]: 'single' });
+    assert.equal(r.ok, false, `POSTing setup.${k} must be refused`);
+  }
+  // A setting the wizard does not own still saves normally.
+  assert.equal(applySection(dir, 'server', { name: 'Renamed' }).ok, true);
+});
+
+// A setting whose values the parser restricts must be offered as a CHOICE. These were text
+// boxes: the only way to find out that sayScope takes 'world' or 'proximity' was to type
+// something else and have the server refuse to boot on the next restart.
+test('settings with a fixed set of values are offered as a dropdown, from the parser list', () => {
+  const v = settingsView(mkdtempSync(join(tmpdir(), 'set-')), {
+    setup: { deploymentMode: 'multiplayer' },
+    rules: { sayScope: 'world', timeSkip: 'owner' },
+    content: { enforce: 'names' },
+  });
+  const field = (sec: string, key: string) =>
+    v.sections.find((s) => s.name === sec)?.fields.find((f) => f.key === key);
+
+  assert.deepEqual(field('rules', 'sayScope')?.options, ENUM_OPTIONS['rules.sayScope']);
+  assert.deepEqual(field('rules', 'timeSkip')?.options, ENUM_OPTIONS['rules.timeSkip']);
+  assert.deepEqual(field('content', 'enforce')?.options, ENUM_OPTIONS['content.enforce']);
+  // Every offered value must be one the parser accepts — that is the whole point of sharing
+  // the list rather than keeping a second copy for the UI.
+  assert.ok(ENUM_OPTIONS['rules.sayScope'].includes('proximity'));
+
+  // And the page must actually render a select for them, not a text box.
+  assert.ok(app.includes('f.options'), 'app.js does not read the options at all');
+  assert.ok(/<select[^]{0,200}data-type="string"/.test(app), 'no dropdown is rendered');
 });

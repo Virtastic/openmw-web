@@ -144,6 +144,20 @@ function blobSecret(dir: string): Buffer {
 }
 
 /** The locker's storage when no S3 endpoint is configured: a directory on this server. */
+/**
+ * The origin a PLAYER'S BROWSER reaches this deployment on, which is what every locker blob
+ * and savegame URL is built from.
+ *
+ * Derived from the wizard's domain answer rather than asked for again (see DERIVED_FIELDS in
+ * net/admin/api-settings.ts). It lived inline in server.ts, so the multiplayer server — a
+ * different program — simply hardcoded loopback: an operator who answered the domain question
+ * got working URLs in single player and URLs pointing at 127.0.0.1 in multiplayer, from the
+ * same answer. Nothing reports that; a transfer just fails. One function now, called by both.
+ */
+export function lockerPublicBase(setupDomain: string, port: number): string {
+  return setupDomain ? `https://${setupDomain}` : `http://127.0.0.1:${port}`;
+}
+
 export function fsStorageFrom(sharedDir: string, publicBase: string): FsStorage {
   const root = join(sharedDir, 'locker-blobs');
   log('info', 'locker.filesystem_storage', { root, publicBase });

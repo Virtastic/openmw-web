@@ -26,12 +26,61 @@ set -e
 # The ordinary docker idiom: anything that is not a flag is a command to exec verbatim. Flags
 # (and no arguments at all) fall through to the mode selection and are forwarded to the server,
 # which is what the compose files rely on.
+DATA="${OMW_DATA:-/data}"
+
+# ------------------------------------------------------------------ ownership repair
+#
+# THE TWO IMAGES DO NOT AGREE ON A UID, AND THE COMPOSE FILE TELLS YOU TO SWITCH BETWEEN THEM.
+#
+# The self-hosted image runs as `node` (uid 1000, from the node base); the image with the
+# engine runs as `app` (uid 1001, from useradd on ubuntu). Following docker-compose.yml's own
+# advice -- "switch the build block below to the simpeer file when you want a world people can
+# actually join" -- therefore handed a data directory written by one user to a process running
+# as the other, and every file in it became unreadable. The server does not start: it dies on
+# EACCES opening /data/blob-secret, which reads like a corrupt install rather than a uid
+# change. Renumbering either image would have broken whichever deployments already had data
+# owned the other way, including production.
+#
+# So the uid is made not to matter. Each image names its own runtime user in OMW_RUN_AS and
+# starts as root; this repairs ownership when it is actually wrong, then drops privileges for
+# good. Recursive chown only when the top of the tree is already wrong -- /data/gamedata is
+# thousands of files and hundreds of megabytes, and paying for that on every boot to change
+# nothing is not free.
+#
+# The drop must EXEC, never fork: this process is PID 1, and the dashboard's restart button
+# works by the server exiting cleanly on SIGTERM. `su` would fork and swallow the signal.
+RUN_AS="${OMW_RUN_AS:-}"
+if [ -n "$RUN_AS" ] && [ "$(id -u)" = "0" ]; then
+  WANT_UID="$(id -u "$RUN_AS" 2>/dev/null || echo '')"
+  WANT_GID="$(id -g "$RUN_AS" 2>/dev/null || echo '')"
+  if [ -n "$WANT_UID" ]; then
+    HAVE_UID="$(stat -c %u "$DATA" 2>/dev/null || echo '')"
+    if [ -n "$HAVE_UID" ] && [ "$HAVE_UID" != "$WANT_UID" ]; then
+      echo "{\"event\":\"entrypoint.chown\",\"dir\":\"$DATA\",\"from\":$HAVE_UID,\"to\":$WANT_UID}"
+      # Best effort: a read-only mount is a legitimate deployment, and the server reports an
+      # unwritable data dir far better than a failed chown does.
+      chown -R "$WANT_UID:$WANT_GID" "$DATA" 2>/dev/null ||         echo "{\"event\":\"entrypoint.chown_failed\",\"dir\":\"$DATA\",\"note\":\"read-only mount, or not permitted\"}"
+    fi
+    # Re-enter this script as the runtime user. The second pass sees a non-root id and falls
+    # straight through to the mode selection below.
+    if command -v su-exec >/dev/null 2>&1; then
+      exec su-exec "$WANT_UID:$WANT_GID" "$0" "$@"
+    elif command -v setpriv >/dev/null 2>&1; then
+      exec setpriv --reuid="$WANT_UID" --regid="$WANT_GID" --clear-groups -- "$0" "$@"
+    elif command -v gosu >/dev/null 2>&1; then
+      exec gosu "$WANT_UID:$WANT_GID" "$0" "$@"
+    else
+      echo "{\"event\":\"entrypoint.no_privilege_drop\",\"note\":\"no su-exec/setpriv/gosu; STAYING ROOT\"}" >&2
+    fi
+  fi
+fi
+
+# A COMMAND PASSED TO `docker run` RUNS INSTEAD OF THE SERVER. Placed after the drop above so
+# it runs as the runtime user too, exactly as it did when the image pinned USER.
 case "${1:-}" in
   '' | -*) ;;
   *) exec "$@" ;;
 esac
-
-DATA="${OMW_DATA:-/data}"
 # WHAT THIS IMAGE RUNS WHEN NOBODY HAS CHOSEN. The self-hosted image ships 'single' (one
 # person, one game, the common case); the hosted platform image ships 'gateway' in its
 # Dockerfile, because that is what it has always run and a deploy must not silently move a

@@ -7,6 +7,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { lockerPublicBase } from '../src/data/fsstorage';
 import { Locker } from '../src/data/locker';
 import { tmpDataDir } from './helpers';
 
@@ -215,4 +216,29 @@ test('the expansions are flagged soloOptional; the base game and the media never
   // Nor the media: without it dialogue auto-skips and the intro never plays.
   assert.equal(by('Music/')!.soloOptional, undefined);
   assert.equal(by('media.tar')!.soloOptional, undefined);
+});
+
+// THE ORIGIN A BROWSER REACHES THIS DEPLOYMENT ON, derived once from the wizard's domain
+// answer. server.ts derived it; the gateway — a different program serving the same players —
+// hardcoded loopback instead, so one answer produced working URLs in single player and URLs
+// pointing at 127.0.0.1 in multiplayer. Nothing reports that: an upload succeeds and the
+// download fails later, which is why the settings page deliberately does not ask again.
+test('the public base comes from the domain, and both programs derive it the same way', async () => {
+  assert.equal(lockerPublicBase('play.example.com', 8080), 'https://play.example.com');
+  assert.equal(lockerPublicBase('', 8080), 'http://127.0.0.1:8080',
+    'no domain answered: loopback is the only honest fallback');
+
+  // The regression is a program building its own instead of calling this. Anchored on tokens,
+  // never on line endings — this checkout is CRLF and a newline-anchored scan silently
+  // matches nothing and passes.
+  const { readFileSync } = await import('node:fs');
+  for (const f of ['src/server.ts', 'src/gateway/frontdoor.ts', 'src/gateway/main.ts']) {
+    const src = readFileSync(f, 'utf8');
+    assert.ok(src.includes('lockerPublicBase('), `${f} must derive the public base, not invent one`);
+  }
+  // And the front door must hand THAT to the storage, not a literal.
+  const fd = readFileSync('src/gateway/frontdoor.ts', 'utf8');
+  const call = fd.slice(fd.indexOf('lockerStorageFrom('));
+  assert.ok(call.slice(0, 200).includes('lockerPublicBase('),
+    'the multiplayer locker is built from a hardcoded origin again');
 });

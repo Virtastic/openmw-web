@@ -39,8 +39,13 @@ export interface ProxySettings {
    *
    * It asks whether you want the bundled sample game, your own local Morrowind, or
    * multiplayer — none of which is a question for somebody who arrived at a particular
-   * server to play on it. That is what "/" is for. Deliberately env-only and not a dashboard
-   * setting: it exists for developing the launcher itself, not for configuring a server.
+   * server to play on it. That is what "/" is for, and it is how the app is meant to be used.
+   *
+   * The launcher is kept working as a SHOWCASE: a page to demonstrate the project with, and
+   * to let somebody try it without committing a server to a particular shape. Env-only and
+   * deliberately not a dashboard setting — it says what this deployment is being used FOR,
+   * which is not the same kind of thing as the settings on that page, and a server someone
+   * plays on should not sprout a chooser because a box got ticked.
    */
   launcher?: boolean;
 }

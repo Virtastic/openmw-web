@@ -368,6 +368,28 @@ function optNum(t: Tree, sec: string, key: string, dflt: number): number {
   return typeof v === 'number' && Number.isFinite(v) ? v : dflt;
 }
 
+/**
+ * EVERY SETTING WITH A FIXED SET OF VALUES, in one place.
+ *
+ * These were validated here and then offered to the operator as a FREE TEXT BOX on the
+ * settings page, so the only way to discover that "world" and "proximity" are the two legal
+ * values for sayScope was to type something else and have the server refuse to boot. The
+ * dashboard reads this map to render a dropdown, which means the choices an operator is shown
+ * and the choices the parser accepts cannot drift apart — they are the same array.
+ *
+ * `as const` matters: it keeps the literal types, so reqEnum below still narrows its return
+ * to the union each field is declared with.
+ */
+export const ENUM_OPTIONS = {
+  'content.enforce': ['strict', 'names', 'off'],
+  'rules.deathPenalty': ['none'],
+  'rules.pvpZone': ['all', 'wilderness', 'none'],
+  'rules.sayScope': ['world', 'proximity'],
+  'rules.timeSkip': ['anyone', 'owner', 'party', 'off'],
+  'engine.enforce': ['warn', 'refuse', 'off'],
+  'limits.renderLod': ['full', 'tiered'],
+} as const;
+
 function reqEnum<T extends string>(t: Tree, sec: string, key: string, allowed: readonly T[]): T {
   const v = (t[sec] as Tree | undefined)?.[key];
   if (typeof v === 'string' && (allowed as readonly string[]).includes(v)) return v as T;
@@ -515,7 +537,7 @@ function validate(t: Tree): Config {
       attioApiKey: reqStr(t, 'integrations', 'attioApiKey'),
       attioBaseUrl: reqStr(t, 'integrations', 'attioBaseUrl'),
     },
-    content: { enforce: reqEnum(t, 'content', 'enforce', ['strict', 'names', 'off'] as const) },
+    content: { enforce: reqEnum(t, 'content', 'enforce', ENUM_OPTIONS['content.enforce']) },
     sharing: {
       journal: reqBool(t, 'sharing', 'journal'),
       questVars: reqBool(t, 'sharing', 'questVars'),
@@ -547,16 +569,16 @@ function validate(t: Tree): Config {
       respawnX: reqSignedNum(t, 'rules', 'respawnX'),
       respawnY: reqSignedNum(t, 'rules', 'respawnY'),
       respawnZ: reqSignedNum(t, 'rules', 'respawnZ'),
-      deathPenalty: reqEnum(t, 'rules', 'deathPenalty', ['none'] as const),
+      deathPenalty: reqEnum(t, 'rules', 'deathPenalty', ENUM_OPTIONS['rules.deathPenalty']),
       pvp: reqBool(t, 'rules', 'pvp'),
-      pvpZone: reqEnum(t, 'rules', 'pvpZone', ['all', 'wilderness', 'none'] as const),
+      pvpZone: reqEnum(t, 'rules', 'pvpZone', ENUM_OPTIONS['rules.pvpZone']),
       safeCells: reqStrArray(t, 'rules', 'safeCells'),
-      sayScope: reqEnum(t, 'rules', 'sayScope', ['world', 'proximity'] as const),
-      timeSkip: reqEnum(t, 'rules', 'timeSkip', ['anyone', 'owner', 'party', 'off'] as const),
+      sayScope: reqEnum(t, 'rules', 'sayScope', ENUM_OPTIONS['rules.sayScope']),
+      timeSkip: reqEnum(t, 'rules', 'timeSkip', ENUM_OPTIONS['rules.timeSkip']),
       difficulty: reqSignedNum(t, 'rules', 'difficulty'),
     },
     engine: {
-      enforce: reqEnum(t, 'engine', 'enforce', ['warn', 'refuse', 'off'] as const),
+      enforce: reqEnum(t, 'engine', 'enforce', ENUM_OPTIONS['engine.enforce']),
       // ENV WINS, AND THAT IS THE WHOLE POINT. A pin written into config.toml by hand is a
       // 12-hex constant that must be edited in lockstep with every engine deploy, and the
       // failure mode when it is not is total: in "refuse" mode a pin that no longer matches the
@@ -628,7 +650,7 @@ function validate(t: Tree): Config {
       lodNearHz: reqPosNum(t, 'limits', 'lodNearHz'),
       lodMidHz: reqPosNum(t, 'limits', 'lodMidHz'),
       lodFarHz: reqPosNum(t, 'limits', 'lodFarHz'),
-      renderLod: reqEnum(t, 'limits', 'renderLod', ['full', 'tiered'] as const),
+      renderLod: reqEnum(t, 'limits', 'renderLod', ENUM_OPTIONS['limits.renderLod']),
       lodNearMaxAvatars: reqNum(t, 'limits', 'lodNearMaxAvatars'),
     },
     authority: {

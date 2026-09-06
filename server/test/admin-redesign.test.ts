@@ -126,20 +126,34 @@ test('wizard answers persist whole, and /state carries the setup record', async 
   assert.ok(state.setup && typeof state.setup === 'object');
   assert.ok('deploymentMode' in state.setup, 'the config default supplies every key');
 
-  // [setup] IS a settings section now. It was excluded while the wizard could be re-run and
-  // owned these answers; the wizard is first-run only, and excluding it then left the domain
-  // editable by nothing at all while the Help page still said to go and change it there.
+  // [setup] IS THE WIZARD'S RECORD, and none of it is editable from the settings page.
   //
-  // Only the live half is offered. The rest is a record of an answer whose effect was written
-  // into [locker], [auth] and [login] at the time, so editing it would change nothing while
-  // looking exactly like it had.
+  // These five were offered here as text boxes. Every one of them is a decision the wizard
+  // performs as well as records — deploymentMode writes the mode marker that decides which
+  // PROGRAM the container runs, hosting/domain/httpPort are what the proxy config and its
+  // certificate are generated from, contentProfile is what the game-file checklist expects.
+  // Retyping the record changed the stored answer and did none of the work, so the dashboard
+  // then described a server that was not running.
   const settings = await (await call('/settings', { token }))
     .json() as { sections: { name: string; fields: { key: string }[] }[] };
   const setup = settings.sections.find((s) => s.name === 'setup');
-  assert.ok(setup, '[setup] should be editable now the wizard is first-run only');
-  const keys = setup.fields.map((f) => f.key).sort();
-  assert.deepEqual(keys,
-    ['contentProfile', 'deploymentMode', 'domain', 'hosting', 'httpPort']);
+  assert.deepEqual(setup?.fields.map((f) => f.key) ?? [], [],
+    'the deployment shape must not be editable outside the wizard');
+
+  // And refused over the wire, not merely absent from the page: this API is reachable
+  // without it.
+  const refused = await call('/settings/setup', {
+    token, method: 'PUT', body: { deploymentMode: 'single' },
+  });
+  assert.equal(refused.status, 400, 'the save must be refused');
+  // Refused for the RIGHT reason. A 4xx alone would also be satisfied by a mistyped path
+  // 404ing, which would prove nothing about the guard.
+  const why = await refused.json() as { error?: string };
+  assert.match(String(why.error), /setup\.deploymentMode/,
+    `the refusal must name the field: ${JSON.stringify(why)}`);
+  // And a field the wizard does not own still saves through the same endpoint.
+  const ok = await call('/settings/server', { token, method: 'PUT', body: { name: 'Renamed' } });
+  assert.equal(ok.status, 200, 'an ordinary setting must still be editable');
 });
 
 test('wizard SSO credentials land in config, and read back masked', async (t) => {

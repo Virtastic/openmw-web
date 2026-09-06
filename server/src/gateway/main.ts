@@ -24,6 +24,8 @@ import { HARNESS_PASSWORD } from '../auth/harness';
 import { log, enableFileLog } from '../log';
 import { metrics } from '../metrics';
 import { mwDataRoutes } from '../net/mwdata-routes';
+import { lockerPublicBase } from '../data/fsstorage';
+import { writeCaddyfile, launcherEnabled } from '../net/admin/caddy-config';
 import { gameDataDir } from '../core/gamedata';
 import { presentMods, readModDoc } from '../core/mods';
 
@@ -198,7 +200,9 @@ const adminRoute = gatewayAdminRoutes({
   accounts: frontDoor.accounts,
   sessions: adminSessions,
   version: VERSION,
-  publicBase: () => config.locker.publicBase || `http://127.0.0.1:${port}`,
+  // Password-reset links and the dashboard's own absolute URLs. Same derivation as the
+  // locker's, so a domain answered once in the wizard reaches every place that mints a URL.
+  publicBase: () => config.locker.publicBase || lockerPublicBase(config.setup.domain, port),
   saveStorage: frontDoor.saveStorage,
   restart: (reason) => {
     log('warn', 'gateway.restart_requested', { reason });
@@ -209,6 +213,21 @@ const adminRoute = gatewayAdminRoutes({
   rollingRestart: requestRoll,
   maintenance,
 });
+// THE REVERSE PROXY'S CONFIG, regenerated from the current answers on every boot — the same
+// thing server.ts does, and for the same reasons it gives: a data directory restored from a
+// backup, or one whose file was deleted, comes back with a working proxy instead of needing
+// the wizard re-run. Only the world program did it, so a MULTIPLAYER server's proxy config
+// was frozen at whatever the wizard last wrote: nothing that changes it at boot — the
+// launcher toggle below, a restored backup — took effect until somebody re-saved the hosting
+// settings by hand. Written to the SHARED dir, which is what the caddy container mounts.
+// No-ops when the content already matches.
+writeCaddyfile(sharedDir, {
+  domain: config.setup.domain,
+  launcher: launcherEnabled(),
+  internal: config.setup.hosting === 'internal',
+  port: config.setup.httpPort,
+});
+
 const directory = await startDirectory({
   worlds, host: '0.0.0.0', port, worldsDir,
   admin: adminRoute,

@@ -165,7 +165,11 @@ COPY server/web ./web
 COPY server/docker-entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 RUN useradd -m app && mkdir -p /data && chown app /data
-USER app
+# NOT `USER app`. The entrypoint starts as root, repairs /data ownership and drops to this
+# user (via setpriv, already in the ubuntu base). This image runs as uid 1001 while the
+# self-hosted alpine image runs as 1000, and docker-compose.yml tells operators to switch
+# between them -- which used to make every existing file unreadable. See docker-entrypoint.sh.
+ENV OMW_RUN_AS=app
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
   CMD wget -qO- http://127.0.0.1:8080/healthz || exit 1

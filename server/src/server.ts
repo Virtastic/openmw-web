@@ -51,7 +51,7 @@ import { IdentityStore, LoginTicketStore, SessionIndex } from './auth/identities
 import { createAuthRoutes } from './auth/routes';
 import { ensureVanillaManifest } from './data/vanilla-manifest';
 import { Locker, loadVanillaManifest } from './data/locker';
-import { lockerStorageFrom, blobRoutes, FsStorage } from './data/fsstorage';
+import { lockerStorageFrom, blobRoutes, FsStorage, lockerPublicBase } from './data/fsstorage';
 import { mwDataRoutes } from './net/mwdata-routes';
 import { createSysInfo } from './net/admin/sysinfo';
 /** Just the parts of the storage backend the saves API needs. */
@@ -528,9 +528,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // savegame URLs the browser cannot reach, and nothing reports that until a transfer fails.
   // An explicit [locker].publicBase still wins inside lockerStorageFrom, so a hand-tuned
   // deployment behind an unusual proxy is unaffected.
-  const lockerBase = config.setup.domain
-    ? `https://${config.setup.domain}`
-    : `http://127.0.0.1:${opts.port}`;
+  const lockerBase = lockerPublicBase(config.setup.domain, opts.port);
   const lockerStorage = lockerStorageFrom(config.locker, sharedDir, lockerBase);
   const locker = new Locker({
     dataDir: sharedDir,

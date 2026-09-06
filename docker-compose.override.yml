@@ -1,0 +1,25 @@
+# THE MULTIPLAYER IMAGE. Compose loads this automatically alongside docker-compose.yml and
+# merges it, so this is the same thing as switching the build block in that file — which its
+# own comments tell you to do "when you want a world people can actually join" — without
+# editing a tracked file.
+#
+# docker-compose.yml builds server/Dockerfile: the server and the dashboard, no compiled
+# OpenMW. That is the right image for setting up and for single player, where the engine runs
+# in the player's own browser. It is NOT enough for multiplayer: a multiplayer world is
+# simulated ON THE SERVER, and only the sim peer may hold cell authority, so without a
+# headless OpenMW every cell stays dormant and no NPC ever moves.
+#
+# Delete this file to go back to the single-player image.
+services:
+  openmw-web:
+    build:
+      # The repo ROOT, not ./server: this build needs openmw/ (the fork) as well.
+      context: .
+      dockerfile: server/Dockerfile.simpeer
+      target: tier2
+      args:
+        # Ninja defaults to nproc+2, which on this box is 34 concurrent g++ processes on
+        # translation units that individually reach 1-2 GB. That exhausts RAM and presents as
+        # a hang, not an error. See the notes in Dockerfile.simpeer.
+        BUILD_JOBS: "6"
+    image: openmw-web-mp:local

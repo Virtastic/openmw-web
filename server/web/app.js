@@ -2543,7 +2543,15 @@ function renderSection(s) {
   const fields = s.fields.map((f) => {
     const id = `f_${s.name.replace(/\./g, '_')}_${f.key}`;
     let input;
-    if (f.type === 'boolean') {
+    // A FIXED SET OF VALUES GETS A DROPDOWN. These were text boxes, so the only way to learn
+    // that sayScope takes 'world' or 'proximity' was to type something else and have the
+    // server refuse to boot on the next restart. The options come from the parser's own list
+    // (config.ts ENUM_OPTIONS), so what is offered here is exactly what is accepted there.
+    if (f.options && f.options.length) {
+      input = html`<select class="form-select" id="${id}" data-type="string">
+        ${raw(f.options.map((o) => html`<option value="${o}" ${raw(o === f.value ? 'selected' : '')}>${o}</option>`).join(''))}
+      </select>`;
+    } else if (f.type === 'boolean') {
       input = html`<div class="form-check form-switch">
         <input class="form-check-input" type="checkbox" id="${id}" data-type="boolean" ${raw(f.value ? 'checked' : '')}>
       </div>`;

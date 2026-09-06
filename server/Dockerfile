@@ -54,7 +54,13 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 # at first write, and "it only works if you remember the -v" is a trap. tier2 already did
 # this; parity matters because the two images are meant to be interchangeable.
 RUN mkdir -p /data && chown node:node /data
-USER node
+# su-exec, for the entrypoint's privilege drop: it execs in place, so the server stays PID 1
+# and still receives the SIGTERM the dashboard's restart button depends on.
+RUN apk add --no-cache su-exec
+# NOT `USER node`. The entrypoint starts as root, repairs /data ownership (the two images
+# historically ran as different uids, which broke switching between them), then drops to this
+# user for good. See server/docker-entrypoint.sh.
+ENV OMW_RUN_AS=node
 EXPOSE 8080
 # busybox wget ships with alpine; /healthz is served on the same port as the WS endpoint.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \

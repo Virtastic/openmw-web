@@ -29,7 +29,7 @@ import { setTrustCloudflareIp } from '../net/http';
 import { createAuthRoutes } from '../auth/routes';
 import { Locker, loadVanillaManifest } from '../data/locker';
 import { ensureVanillaManifest } from '../data/vanilla-manifest';
-import { lockerStorageFrom, blobRoutes, FsStorage } from '../data/fsstorage';
+import { lockerPublicBase, lockerStorageFrom, blobRoutes, FsStorage } from '../data/fsstorage';
 import { saveRoutes, eraseSaves } from '../data/save-routes';
 import { lockerRoutes } from '../data/locker-routes';
 import type { HttpRoute } from '../net/http';
@@ -311,7 +311,11 @@ export async function buildFrontDoor(
     dataDir: sharedDir,
   });
 
-  const storage = lockerStorageFrom(config.locker, sharedDir, `http://127.0.0.1:${gatewayPort}`);
+  // The operator's domain, exactly as a world derives it — not loopback. A multiplayer
+  // deployment behind a domain was minting blob and savegame URLs no browser could reach.
+  const storage = lockerStorageFrom(
+    config.locker, sharedDir, lockerPublicBase(config.setup.domain, gatewayPort),
+  );
   const locker = new Locker({
     dataDir: sharedDir,
     maxBytesPerAccount: config.locker.maxBytesPerAccount,

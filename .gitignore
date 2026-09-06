@@ -160,6 +160,12 @@ data/caddy/Caddyfile
 # /data, same reasons it must never be committed.
 /data.pre-reset*
 /gamedata.pre-reset*
+# Same idea, from a fresh-install walkthrough: the live data and the operator's own copy of
+# Morrowind, moved aside rather than deleted so the run could start clean. Untracked and
+# UNIGNORED, a single `git add -A` would have committed a gigabyte of retail game files
+# nobody is licensed to redistribute.
+/data.before-walkthrough*
+/gamedata.before-walkthrough*
 
 # release-bundle scratch used by infra/Dockerfile builds
 dist/

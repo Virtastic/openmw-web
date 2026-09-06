@@ -9,6 +9,7 @@
 // optional, so a brand-new field appears in the UI on the day it is added, unlabelled but
 // editable, instead of being invisible.
 
+import { ENUM_OPTIONS } from '../../config';
 import { readDashboardTree, saveSection, saveTree, type Tree } from './settings-store';
 import { SECTION_HELP, helpFor } from './help';
 import { normaliseDomain } from './setup-check';
@@ -130,6 +131,16 @@ export const DERIVED_FIELDS = [
   // would change nothing at all while looking exactly like it had, which is worse than not
   // offering it — the real knobs are on this same page, one section away.
   'setup.storage', 'setup.loginMethods', 'setup.registration',
+  // THE SHAPE OF THE DEPLOYMENT. Every one of these was editable here, as a text box, and
+  // each is a decision the wizard walks an operator through with context and consequences —
+  // then acts on: deploymentMode decides which PROGRAM the container runs (the marker file
+  // and a restart), hosting/domain/httpPort are what the proxy config and the certificate
+  // are generated from, and contentProfile is what the game-file checklist expects. Typing a
+  // new value into a settings box changed the record without doing any of that, so the
+  // dashboard would report a shape the server was not running. Re-run the wizard to change
+  // them; it is the only thing that performs the change as well as recording it.
+  'setup.deploymentMode', 'setup.hosting', 'setup.domain', 'setup.httpPort',
+  'setup.contentProfile',
   // Not a question any more, anywhere: the server always supplies the game files ('serve'),
   // and per-player cloud copies belong to the game launcher. Old configs saying 'verify' are
   // still honoured at runtime; they just cannot be produced from here.
@@ -165,6 +176,10 @@ export interface FieldView {
   key: string;
   type: 'string' | 'number' | 'boolean' | 'stringArray' | 'unsupported';
   value: unknown;
+  /** The only legal values, when there is a fixed set (config.ts ENUM_OPTIONS). The page
+   *  renders a dropdown, so a setting whose values the parser restricts cannot be mistyped
+   *  into a server that refuses to boot. */
+  options?: readonly string[];
   secret?: boolean;
   /** True when this key is present in the dashboard's own override file. */
   overridden?: boolean;
@@ -272,10 +287,14 @@ export function settingsView(dataDir: string, config: unknown): {
       const type = fieldType(value);
       const secret = isSecret(name, key);
       const h = helpFor(name, key);
+      // The parser's own list of legal values, so the page can offer them instead of asking
+      // the operator to guess. Keyed the same way the config declares them.
+      const opts = (ENUM_OPTIONS as Record<string, readonly string[]>)[`${name}.${key}`];
       fields.push({
         key,
         type,
         value: secret ? (value === '' ? '' : SECRET_MASK) : value,
+        ...(opts ? { options: opts } : {}),
         ...(secret ? { secret: true } : {}),
         ...(Object.hasOwn(over, key) ? { overridden: true } : {}),
         ...(h?.text ? { help: h.text } : {}),
@@ -344,6 +363,16 @@ export function applySection(
 
   const patch: Tree = {};
   for (const [key, raw] of Object.entries(body)) {
+    // LOCKED FIELDS ARE REFUSED HERE, not merely left off the page. This endpoint is reachable
+    // without the page — the same reason the wizard forces deliveryModel server-side rather
+    // than trusting the form — so a field the dashboard must not change has to be refused by
+    // the server. Until now the view filtered them and the save took them anyway: setup.
+    // completed was one POST away from reopening first-run setup on a live server, which is
+    // an account-takeover dressed as a checkbox.
+    if (DERIVED_FIELDS.includes(`${section}.${key}`)) {
+      return { ok: false, error: `"${section}.${key}" is not changed from here. `
+        + 'It is decided by the setup wizard, which applies the change as well as recording it.' };
+    }
     if (!/^[a-zA-Z][a-zA-Z0-9_]*$/.test(key)) {
       return { ok: false, error: `"${key}" is not a valid setting name. This looks like a bug, please report it.` };
     }
