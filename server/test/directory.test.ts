@@ -4,12 +4,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ChildProcess } from 'node:child_process';
 import { WorldSupervisor } from '../src/gateway/worlds';
 import { startDirectory } from '../src/gateway/directory';
+import { mwDataRoutes } from '../src/net/mwdata-routes';
 
 class FakeChild extends EventEmitter {
   pid = 99;
@@ -374,4 +375,38 @@ test('at the ceiling the platform REFUSES a new world, with a reason the UI can 
     assert.equal(status, 503,
       'over capacity must be 503 — that is the status the client turns into a legible message');
   } finally { await h.cleanup(); }
+});
+
+// THE OPERATOR'S GAME FILES, ON THE MULTIPLAYER SERVER. mwDataRoutes was mounted in server.ts
+// only, so "this server hands out the files" was honoured by a single-player game and silently
+// not by the gateway: a player reached the front door, got 404 for the manifest, and was asked
+// to upload a copy of the game the operator had already uploaded through the dashboard. Same
+// shape as the saves bug the router's own comment records — the route existed, the multiplayer
+// program just never mounted it.
+test('the multiplayer server hands out the game files the operator uploaded', async () => {
+  const shared = mkdtempSync(join(tmpdir(), 'omw-mwdata-'));
+  mkdirSync(join(shared, 'gamedata'), { recursive: true });
+  writeFileSync(join(shared, 'gamedata', 'Morrowind.esm'), 'x'.repeat(64));
+  let delivery = 'serve';
+  const h = await harness();
+  const dir2 = await startDirectory({
+    worlds: h.worlds, host: '127.0.0.1', port: 0, maxPerOwner: 2, worldsDir: shared,
+    mwdata: mwDataRoutes({ gameDataDir: join(shared, 'gamedata'), deliveryModel: () => delivery }),
+  });
+  try {
+    const base = `http://127.0.0.1:${dir2.port}`;
+    const r = await fetch(`${base}/mwdata-manifest.json`);
+    assert.equal(r.status, 200, 'the manifest must be served, not 404 — this is the bug');
+    const files = await r.json() as { p: string; s: number }[];
+    assert.deepEqual(files.map((f) => f.p), ['Morrowind.esm'], `got: ${JSON.stringify(files)}`);
+    const f = await fetch(`${base}/mwdata/Morrowind.esm`);
+    assert.equal(f.status, 200, 'and the files themselves');
+    assert.equal((await f.text()).length, 64);
+
+    // The stored answer still governs: turn serving off and the path stops existing, rather
+    // than 403ing and confirming there is a library here to be had.
+    delivery = 'byo';
+    assert.equal((await fetch(`${base}/mwdata-manifest.json`)).status, 404,
+      'a server that does not serve files must not advertise them');
+  } finally { await dir2.close(); await h.cleanup(); }
 });

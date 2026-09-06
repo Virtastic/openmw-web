@@ -55,6 +55,12 @@ export interface DirectoryDeps {
   // browser has a single public endpoint for sign-in, upload, and world selection. Optional so
   // a bare directory (no SSO/locker) still runs.
   frontDoor?: HttpRoute;
+  /** THE OPERATOR'S OWN COPY OF THE GAME (net/mwdata-routes.ts). A world serves this; the
+   *  multiplayer server never did, so "this server hands out the files" was honoured in
+   *  single player and silently broken in multiplayer — the player reached the front door,
+   *  got 404 for the manifest, and was asked to upload a game the operator had already
+   *  uploaded. */
+  mwdata?: HttpRoute;
   // Bearer token -> account key. POST /worlds spawns an OS process, so it must know WHO is
   // asking: the account used to come from the request body, so anyone could spawn worlds
   // under fabricated names until the global maxWorlds cap was gone, while every per-owner
@@ -192,6 +198,20 @@ export async function startDirectory(deps: DirectoryDeps): Promise<RunningDirect
       void Promise.resolve(deps.frontDoor(req, res, url)).then((claimed) => {
         if (!claimed) { json(res, 404, { error: 'not found' }); }
       }).catch(() => { if (!res.headersSent) json(res, 500, { error: 'internal' }); });
+      return;
+    }
+
+    // The game files, when the operator answered "this server hands out the files". Same
+    // paths a world claims, so the page boots identically on either program. The route itself
+    // re-reads the stored answer and 404s when it is not 'serve'.
+    if (deps.mwdata && (path.startsWith('/mwdata/') || path === '/mwdata-manifest.json'
+        || path === '/mwdata-mods.json')) {
+      void Promise.resolve(deps.mwdata(req, res, url)).then((claimed) => {
+        if (!claimed) { json(res, 404, { error: 'not found' }); }
+      }).catch((err) => {
+        log('error', 'mwdata.route_failed', { path, error: String(err) });
+        if (!res.headersSent) json(res, 500, { error: 'internal' });
+      });
       return;
     }
 

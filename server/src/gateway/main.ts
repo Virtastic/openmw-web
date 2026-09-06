@@ -23,6 +23,9 @@ import { loadConfig } from '../config';
 import { HARNESS_PASSWORD } from '../auth/harness';
 import { log, enableFileLog } from '../log';
 import { metrics } from '../metrics';
+import { mwDataRoutes } from '../net/mwdata-routes';
+import { gameDataDir } from '../core/gamedata';
+import { presentMods, readModDoc } from '../core/mods';
 
 const { values } = parseArgs({
   options: {
@@ -218,6 +221,15 @@ const directory = await startDirectory({
   maxPerOwner: Number(values['max-per-owner'] ?? config.server.maxPlayers),
   metricsToken: config.metrics.enabled ? config.metrics.token : '',
   frontDoor: frontDoor.route,
+  // The operator's uploaded game files, from the SHARED dir — the same one the dashboard
+  // uploads into and every world reads. Answers and mods are re-read per request, so
+  // enabling a mod or switching the delivery answer reaches the next player to load the
+  // page rather than the next restart.
+  mwdata: mwDataRoutes({
+    gameDataDir: gameDataDir(sharedDir),
+    deliveryModel: () => config.setup.deliveryModel,
+    modDoc: () => presentMods(gameDataDir(sharedDir), readModDoc(sharedDir)),
+  }),
   resolveAccount: frontDoor.resolveAccount,
   // Constant-time-ish compare on a fixed-length secret, and an empty token NEVER matches --
   // otherwise an unconfigured platform would treat every anonymous caller as trusted, which
