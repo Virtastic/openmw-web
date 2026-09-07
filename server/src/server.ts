@@ -15,6 +15,7 @@ import { QuestRepair } from './core/quest-repair';
 import { adminRoutes as adminDashboardRoutes } from './net/admin/routes';
 import { exportDataDir, summariseMetrics } from './net/admin/ops';
 import { writeCaddyfile, launcherEnabled } from './net/admin/caddy-config';
+import { saveSection } from './net/admin/settings-store';
 import { orderedContent } from './net/admin/api-mods';
 import { notifyFromLog, type MailConfig } from './net/admin/notify';
 import { SetupToken } from './net/admin/setup-token';
@@ -994,6 +995,37 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
         case 'resetCell':
           await m7.resetCellNow(target);
           return { ok: true, message: `reset ${target}` };
+        case 'respawnHere': {
+          // WHERE SOMEBODY IS STANDING, rather than four numbers nobody knows.
+          //
+          // Respawn is a cell key plus a world-space X/Y/Z, and the settings page asked an
+          // operator to type all four. Nobody knows the grid coordinates of Balmora, and the
+          // shipped default is the DEMO's cell — respawn.ts already warns that it is wrong for
+          // real content, which is an admission that the field is unusable as it stands.
+          //
+          // A dropdown of named cities would need a table of coordinates for every deployment's
+          // content, and this server cannot read one: core/esm.ts parses the TES3 header and
+          // nothing else, so it does not know what cells exist, let alone where in them the
+          // ground is. Guessing would put players inside rock or out at sea.
+          //
+          // The player already solved it by walking there. This takes their live position,
+          // which is by construction a place a person can stand, and works for vanilla, mods
+          // and Tamriel Rebuilt alike without knowing anything about any of them.
+          if (!online) return { ok: false, message: `${target} is not online` };
+          if (!online.cellKey || !online.pose) {
+            return { ok: false, message: `${target} has not finished loading into the world yet` };
+          }
+          const at = { cellKey: online.cellKey, x: online.pose.x, y: online.pose.y, z: online.pose.z };
+          const saved = saveSection(opts.dataDir, 'rules', {
+            respawnCellKey: at.cellKey, respawnX: at.x, respawnY: at.y, respawnZ: at.z,
+          }, sharedDir);
+          if (!saved.ok) return { ok: false, message: saved.error };
+          log('warn', 'admin.respawn_moved', { ...at, from: target });
+          return {
+            ok: true,
+            message: `respawn set to where ${target} is standing (${at.cellKey}) — it applies on restart`,
+          };
+        }
         default:
           return { ok: false, message: `unknown action ${kind}` };
       }

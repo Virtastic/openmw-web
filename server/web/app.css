@@ -127,6 +127,21 @@ body.vt-bare #pageTitle {
 /* The mark is wide (an infinity knot), so it gets width and keeps its own aspect; 28px and
    the AdminLTE opacity-75 dim made it read as a smudge. Full strength, sized to the bar. */
 .brand-image { width: 40px; height: auto; margin-right: .5rem; }
+
+/* THE MARK AND THE WORDMARK SIT ON ONE BASELINE. AdminLTE lays the brand out as inline
+   content, so the image and the text each aligned to whatever the line box gave them: the
+   knot rode high against a wordmark set in a serif with its own ascent, and the pair drifted
+   left of the menu icons below. A flex row with a fixed height centres both against each
+   other and against the bar, and the padding lines the mark up with the icon column of the
+   navigation rather than hanging outside it. */
+.sidebar-brand .brand-link {
+  display: flex;
+  align-items: center;
+  height: 3.5rem;
+  padding: 0 .85rem;
+}
+.sidebar-brand .brand-link .brand-image { margin: 0 .6rem 0 0; flex: 0 0 auto; }
+.sidebar-brand .brand-link .brand-text { line-height: 1; }
 /* AdminLTE sets .brand-link colour on the anchor, which wins over a bare .brand-text rule
    by specificity. Scoped here so the gold actually lands rather than only appearing to. */
 .sidebar-brand .brand-link .brand-text {
@@ -544,4 +559,32 @@ body.vt-loading .app-wrapper { display: block; }
 @media (prefers-reduced-motion: reduce) {
   .ld-glyph { animation: none; }
   .ld-fill { animation: none; width: 100%; }
+}
+
+/* THE SIDEBAR DOES NOT COLLAPSE.
+ *
+ * Removing the toggle button takes the control away, but not the STATE: AdminLTE collapses by
+ * putting `sidebar-collapse` on the body and remembers that in localStorage, so anyone who had
+ * already clicked it would come back to a stripe of unlabelled icons with nothing left on the
+ * page to undo it. It also applies the class itself below its `sidebar-expand-lg` breakpoint.
+ *
+ * So the state is neutralised rather than merely unreachable. This navigation is the only way
+ * around the dashboard, the content beside it does not reflow into anything better, and a
+ * narrow window is a reason to scroll, not to hide the menu.
+ */
+body.sidebar-collapse .app-sidebar,
+body.sidebar-collapse .app-sidebar .sidebar-brand,
+body.sidebar-collapse .app-sidebar .sidebar-wrapper {
+  --lte-sidebar-width: 250px;
+  width: 250px;
+  margin-left: 0;
+  overflow: visible;
+}
+/* AdminLTE hides the labels rather than the bar, so the width alone is not enough. */
+body.sidebar-collapse .app-sidebar .nav-link p,
+body.sidebar-collapse .app-sidebar .brand-text,
+body.sidebar-collapse .app-sidebar .nav-header {
+  display: inline-block;
+  visibility: visible;
+  opacity: 1;
 }

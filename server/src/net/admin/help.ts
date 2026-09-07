@@ -59,7 +59,9 @@ export const HELP: Record<string, FieldHelp> = {
   // --- login ----------------------------------------------------------------------------
   'login.allowRegistration': { text: 'Off means nobody new can sign up; existing accounts still work. Use with an invite code for a closed group.' },
   'login.inviteCode': { text: 'When set, registration also requires this code. A simple way to run a friends-only server without managing accounts by hand.' },
-  'login.requireProfile': { text: 'Require an email and public username before a player can enter the world.' },
+  // Not offered any more — a handle is always required (see DERIVED_FIELDS). Kept because the
+  // wizard explains the same thing when it asks for the first account.
+  'login.requireProfile': { text: 'Every player sets an email and a public username before entering the world. This is always on: the username is what other players see, and without one the only name the server has for somebody is their login identifier.' },
   'login.resumeWindowSec': { text: 'How long a dropped player may silently resume their session before they have to log in again.' },
   'login.allowHarnessAuth': {
     text: 'Test-only fixed-password login used by the automated browser harness.',
@@ -174,6 +176,9 @@ export const HELP: Record<string, FieldHelp> = {
   'authority.actorSilenceSec': { text: 'How long a cell may hold NPCs without sending any movement before it is reported as stalled.' },
 
   // --- locker ---------------------------------------------------------------------------
+  'locker.enabled': {
+    text: 'Whether players may store anything on this server: their own copy of Morrowind, and their savegames. Off means uploads are refused and saves stay in the browser, which is a complete way to play — it just does not follow them to another machine. Everything below only matters while this is on.',
+  },
   'locker.endpoint': { text: 'S3-compatible endpoint (Cloudflare R2, AWS, Backblaze, MinIO). Leave empty to store uploads on this server\'s own disk instead.' },
   'locker.bucket': { text: 'Bucket name for S3 storage.' },
   'locker.region': { text: 'Bucket region. Cloudflare R2 uses "auto".' },

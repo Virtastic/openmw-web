@@ -2077,10 +2077,13 @@ function renderSaves(account, r) {
     ${raw(can('owner') ? html`
       <label class="btn btn-sm btn-outline-secondary mb-0">Import a save<input type="file"
         accept=".omwsave" data-saveup hidden></label>
-      <select class="form-select form-select-sm d-inline-block ms-2" style="width:auto" data-savescope>
-        <option value="solo">into single player</option>
-        <option value="mp">into multiplayer</option>
-      </select>
+      <!-- NO SCOPE CHOOSER. This server is one thing or the other — the wizard decided that,
+           it decides which PROGRAM the container runs, and the dashboard already branches on
+           it everywhere else. Asking again at the moment of an import invited an operator to
+           file a save into the half of the server nobody here is playing, where it would sit
+           looking successful and never appear in anyone's load list. -->
+      <span class="text-secondary small ms-2" data-savescope
+        data-scope="${raw(singlePlayer() ? 'solo' : 'mp')}">into ${raw(singlePlayer() ? 'single player' : 'multiplayer')}</span>
       <div class="mt-1" data-savemsg></div>` : '')}`;
 }
 
@@ -2107,7 +2110,7 @@ function wireSaves(account, box, reload) {
     const file = pick.files[0];
     if (!file) return;
     const msg = box.querySelector('[data-savemsg]');
-    const scope = box.querySelector('[data-savescope]').value;
+    const scope = box.querySelector('[data-savescope]').dataset.scope;
     if (!/\.omwsave$/i.test(file.name)) {
       msg.innerHTML = html`<span class="text-danger">A savegame is a .omwsave file.</span>`;
       return;
@@ -2230,6 +2233,9 @@ async function pageConsole() {
         <button class="btn btn-sm btn-outline-secondary" data-act="unmute" data-t="${p.name}">unmute</button>
         <button class="btn btn-sm btn-outline-danger" data-act="ban" data-t="${p.name}"
           title="Kick them and refuse the account from now on">ban</button>
+        ${raw(owner ? html`<button class="btn btn-sm btn-outline-secondary" data-act="respawnHere"
+          data-t="${p.name}"
+          title="Everyone who dies wakes up where this player is standing. Walk to the spot, then press this — it beats typing cell coordinates.">respawn here</button>` : '')}
       </td></tr>`).join('')
     : html`<tr><td colspan="5" class="vt-empty">Nobody is playing right now.</td></tr>`;
 
@@ -2365,6 +2371,17 @@ async function pageConsole() {
           body: html`<p>They are disconnected now and the account is refused from now on,
             until someone lifts the ban here.</p>`,
           danger: 'Ban',
+        });
+        if (!ok) return;
+      }
+      if (kind === 'respawnHere') {
+        // Confirmed, because it changes where EVERYONE wakes up and the person clicking it may
+        // not realise the scope from a button on one player's row.
+        const ok = await confirmAction({
+          title: 'Move the respawn point here?',
+          body: html`<p>Everyone who dies on this server will wake up where <strong>${target}</strong>
+            is standing right now, instead of the current respawn point.</p>
+            <p class="text-secondary small mb-0">It takes effect after the next restart.</p>`,
         });
         if (!ok) return;
       }

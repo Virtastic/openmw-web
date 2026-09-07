@@ -35,17 +35,27 @@
      and repainted the ground in Bootstrap's stock grey over the launcher's ash. The ground
      is set in app.css, where the rest of the palette lives. -->
 <body class="layout-fixed sidebar-expand-lg">
+<script>
+  // A COLLAPSED SIDEBAR FROM AN EARLIER VISIT IS NOT HONOURED. AdminLTE remembers the state in
+  // localStorage and re-applies it before anything else runs, so an operator who clicked the
+  // old toggle once would keep arriving to a stripe of unlabelled icons — with the button that
+  // caused it now gone. Cleared here, ahead of the vendor script, so there is nothing to
+  // restore. The CSS neutralises the class as well, for the breakpoint AdminLTE applies itself.
+  try {
+    for (const k of Object.keys(localStorage)) if (/sidebar/i.test(k)) localStorage.removeItem(k);
+  } catch { /* private mode: nothing persisted to clear anyway */ }
+</script>
 <div class="app-wrapper">
 
   <!-- Top bar -->
   <nav class="app-header navbar navbar-expand">
     <div class="container-fluid">
       <ul class="navbar-nav">
-        <li class="nav-item">
-          <a class="nav-link" data-lte-toggle="sidebar" href="#" role="button" aria-label="Toggle navigation">
-            <i class="bi bi-list"></i>
-          </a>
-        </li>
+        <!-- NO SIDEBAR TOGGLE. The navigation is the only way around this dashboard and it
+             fits on the screens it is used from, so collapsing it removes the way back and
+             offers nothing: the content beside it does not reflow into anything better. The
+             control also persisted its state, so one stray click left an operator with a
+             stripe of unlabelled icons on every later visit and no obvious way to undo it. -->
         <li class="nav-item d-none d-md-flex align-items-center">
           <span class="navbar-text" id="topWorld"></span>
         </li>

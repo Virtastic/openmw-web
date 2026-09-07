@@ -175,11 +175,18 @@ export function fsStorageFrom(sharedDir: string, publicBase: string): FsStorage 
 /** S3 when the operator configured it, this server's disk otherwise. The locker is never
  *  inert now: an operator with no object-storage account still gets uploads and saves. */
 export function lockerStorageFrom(
-  cfg: { endpoint: string; region: string; bucket: string; publicBase: string;
+  cfg: { enabled?: boolean; endpoint: string; region: string; bucket: string; publicBase: string;
          accessKeyId?: string; secretAccessKey?: string },
   sharedDir: string,
   fallbackBase: string,
-): S3Storage | FsStorage {
+): S3Storage | FsStorage | undefined {
+  // OFF MEANS OFF, and it has to be decided here: every caller in both programs builds its
+  // storage through this function, and "no storage" is already the shape the rest of the code
+  // understands — Locker.enabled reads false and /saves answers saves_disabled.
+  if (cfg.enabled === false) {
+    log('info', 'locker.disabled', { note: 'players cannot store files on this server' });
+    return undefined;
+  }
   const s3 = s3FromEnv({
     endpoint: cfg.endpoint, region: cfg.region, bucket: cfg.bucket,
     ...(cfg.accessKeyId ? { accessKeyId: cfg.accessKeyId } : {}),
