@@ -29,8 +29,10 @@ const MAX_TICK_SEC = 60;
 // refuses more than a month and the tick is now bounded above -- so this only stops a plugin
 // or a bad number from spinning the rollover loop for millions of iterations.
 const MAX_ROLL_DAYS = 3660; // ten years
-// Morrowind's calendar (Sun's Dawn is 28 days; no leap years in-game).
-const MONTH_DAYS = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+// Morrowind's calendar (Sun's Dawn is 28 days; no leap years in-game). Exported because
+// worldstate.ts collapses the same calendar to compare two readings, and a second copy of
+// these numbers is a second chance for them to disagree -- which is exactly what happened.
+export const MONTH_DAYS = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 
 // Phase 2.5: who may skip time, and by how much.
 //   'anyone'  M7 behaviour — any rest/wait advances the shared clock for everybody
