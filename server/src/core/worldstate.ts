@@ -11,6 +11,7 @@ import { lToJs, type LTable, type LValue, type JsLike } from '../proto/lser';
 import { parseObjRef, objRefToJs, netRefKey, type ObjRef } from '../proto/ref';
 import type { Player, Roster } from './players';
 import { cellsVisible, lodStride, parseExterior, MAX_ABS_COORD, type InterestSettings, loadedCells, isChargenCell } from './movement';
+import { MONTH_DAYS } from './worldtime';
 import { unpackActorMoveBatch } from '../proto/movement';
 import { MSG_ACTOR_MOVE_BATCH, packEnvelope, nextBroadcastSeq } from '../proto/envelope';
 import { Authority, type ActorSnapshot } from './authority';
@@ -31,10 +32,19 @@ const MAX_GOLD_DELTA = 1000000;
 // rather than inventing a richer rule.
 const GOLD_RESTOCK_HOURS = 24;
 
-// Morrowind's calendar: 12 months of 28 days, no leap years. Collapsed to one number so two
-// readings can be compared; only DIFFERENCES matter, so the epoch is arbitrary.
+// Morrowind's calendar collapsed to one number so two readings can be compared; only
+// DIFFERENCES matter, so the epoch is arbitrary.
+//
+// MONTHS ARE NOT ALL 28 DAYS. This used to assume they were, while the clock that produces
+// these values rolls the real MW lengths (31/28/31/30/...). The two disagreed, so crossing
+// out of a 31-day month made the "absolute" hour count go BACKWARDS by up to three days --
+// and a merchant whose restock fell due around a month boundary was simply not restocked
+// until the calendar caught up again. MONTH_DAYS is imported rather than restated for that
+// reason: one copy of the calendar, or it drifts again.
 function absGameHours(t: { gameHour: number; day: number; month: number; year: number }): number {
-  return (((t.year * 12 + (t.month - 1)) * 28) + (t.day - 1)) * 24 + t.gameHour;
+  let days = t.year * 365 + (t.day - 1); // sum(MONTH_DAYS) === 365; no leap years in-game
+  for (let m = 0; m < t.month - 1; m++) days += MONTH_DAYS[m] ?? 30;
+  return days * 24 + t.gameHour;
 }
 
 const WORLD_EVENTS = new Set([

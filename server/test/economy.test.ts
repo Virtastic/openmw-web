@@ -217,3 +217,58 @@ test("a merchant's purse is canonical and shared, and deltas from two traders bo
 
   a.close(); b.close(); c.close();
 });
+
+test("a merchant restocks on the 24-hour rule, including across a month boundary", async (t) => {
+  // The restock is fBarterGoldResetDelay: the purse comes back every 24 GAME hours. To
+  // compare two readings the server collapses the calendar to a single hour count -- and
+  // that collapse assumed twelve 28-day months while the clock that produces the readings
+  // rolls the real Morrowind lengths (31/28/31/30/...). Crossing out of a 31-day month
+  // therefore made the count go BACKWARDS by up to three days, and a merchant whose restock
+  // fell due around the boundary stayed drained until the calendar caught up.
+  //
+  // Frozen scale: the only thing that may move the clock here is the explicit advance.
+  const server = await startServer({
+    requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
+    configOverride: { time: { scale: 0 }, limits: { maxConnsPerIp: 16 } },
+  });
+  t.after(() => server.close());
+  const REF = { __refnum: { index: 92, contentFile: 0 } };
+
+  // Sun's Height has 31 days. Park the clock on the last one, so one more day crosses over.
+  server.api.world.advanceTime(351);
+  const before = server.api.world.time();
+  assert.deepEqual({ day: before.day, month: before.month }, { day: 31, month: 7 },
+    'the fixture depends on landing on the last day of a 31-day month');
+
+  const a = await TestClient.connect(server.port);
+  await a.joinAsNew('Trader');
+  await a.waitEvent('PlayerList');
+  a.sendCellChange('0,0', 0, 0, 0);
+  a.sendEvent('ContainerOpen', {
+    ref: REF, cellKey: '0,0', contents: [{ id: 'iron_dagger', n: 1 }], gold: 500,
+  });
+  assert.equal(((await a.waitEvent('ContainerState')).value as { gold?: number }).gold, 500);
+
+  a.sendEvent('ContainerOpRequest', {
+    ref: REF, cellKey: '0,0', opId: 1, op: 'gold', goldDelta: -200,
+  });
+  assert.equal(((await a.waitEvent('ContainerOpResult')).value as { ok: boolean }).ok, true);
+
+  server.api.world.advanceTime(24);
+  const after = server.api.world.time();
+  assert.deepEqual({ day: after.day, month: after.month }, { day: 1, month: 8 },
+    'one day past the 31st must be the first of the next month');
+
+  // A fresh observer: an existing client would replay its own buffered ContainerState.
+  const b = await TestClient.connect(server.port);
+  await b.joinAsNew('Customer');
+  await b.waitEvent('PlayerList');
+  b.sendCellChange('0,0', 0, 0, 0);
+  b.sendEvent('ContainerOpen', { ref: REF, cellKey: '0,0', contents: [], gold: 500 });
+  const state = (await b.waitEvent('ContainerState')).value as { gold?: number };
+  assert.equal(state.gold, 500,
+    `exactly 24 game hours passed, so the purse must be back; 300 means the restock was`
+    + ' skipped because the two halves of the server disagree about how long a month is');
+  a.close();
+  b.close();
+});

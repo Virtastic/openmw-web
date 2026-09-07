@@ -329,3 +329,64 @@ test('an actor leaving a cell is announced to BOTH cells, not just the one it le
 
   peer.close(); here.close(); there.close();
 });
+
+test('actor batches are rate-tiered but NEVER culled: a distant NPC must not freeze', async (t) => {
+  // PROTOCOL.md M9 draws a deliberate line: pose updates are distance-culled and get a
+  // PlayerLeaveView so the client despawns the puppet, while actor batches are tiered by
+  // RATE only and never culled -- actors have no leave-view signal, so cutting the stream
+  // freezes NPC puppets in place instead of removing them.
+  //
+  // The existing 'far player receives no actor traffic' test puts its player in a cell that
+  // is not visible at all, so it proves the CELL rule and says nothing about distance. Apply
+  // the pose path's cull to actors and every test in this file still passes while every
+  // distant NPC in the game stops moving.
+  const server = await startServer({
+    requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
+    configOverride: {
+      server: { password: PEER_PASS },
+      // interestRadius must be >= lodMidRadius (config.ts refuses otherwise). All three LOD
+      // rates are equal so stride is 1 everywhere and the ONLY variable is the cull.
+      limits: {
+        maxConnsPerIp: 16, interestRadius: 400, interestHysteresis: 0, interestMinPeers: 0,
+        lodNearRadius: 200, lodMidRadius: 400, lodNearHz: 15, lodMidHz: 15, lodFarHz: 15,
+      },
+    },
+  });
+  t.after(() => server.close());
+
+  const peer = await TestClient.simPeer(server.port, PEER_PASS, 'Peer');
+  peer.sendCellChange('0,0', 0, 0, 0);
+  await peer.waitEvent('PlayerCellChange');
+  const epoch = ((await peer.waitEvent('ActorAuthorityGrant')).value as { epoch: number }).epoch;
+
+  const near = await TestClient.connect(server.port);
+  const { playerId: nearId } = await near.joinAsNew('Near');
+  await near.waitEvent('PlayerList');
+  near.sendCellChange('0,0', 0, 0, 0);
+  await near.waitEvent('PlayerCellChange');
+
+  const far = await TestClient.connect(server.port);
+  await far.joinAsNew('Far');
+  await far.waitEvent('PlayerList');
+  // The next cell over: cell-visible, so the cell rule lets actor traffic through -- but
+  // 8192 units away, twenty times the interest radius.
+  far.sendCellChange('1,0', 8192, 0, 0);
+  await far.waitEvent('PlayerCellChange');
+
+  far.inbox.batches.length = 0;
+  peer.sendActorMoveBatch(epoch, [REF_ENTRY]);
+  const got = await far.waitActorBatch();
+  assert.deepEqual(got.batch.entries, [REF_ENTRY],
+    'a cell-visible peer beyond the interest radius must still receive actor state');
+
+  // THE CONTROL: culling really is on at this distance. Near is cell-visible to Far and
+  // stands 8192 units away, so Far must never be sent his pose. Without this, the assertion
+  // above is equally satisfied by a server with interest management switched off.
+  await new Promise((r) => setTimeout(r, 400)); // several 66 ms ticks
+  const poses = far.inbox.batches.flatMap((b) => b.entries).filter((e) => e.id === nearId);
+  assert.equal(poses.length, 0,
+    `the pose path must be culling at this distance or this test proves nothing (got ${poses.length})`);
+  peer.close();
+  near.close();
+  far.close();
+});
