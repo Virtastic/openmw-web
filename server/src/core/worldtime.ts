@@ -20,6 +20,15 @@ const TICK_MS = 1_000;
 // million hours is a bug or an attack, not gameplay.
 const MAX_ADVANCE_HOURS = 30 * 24;
 const REASONS = new Set(['rest', 'wait', 'script']);
+// A tick is scheduled every second. A much larger gap means the process was SUSPENDED (a
+// laptop lid, a paused container, a starved box), and crediting that wall clock advances the
+// shared calendar by months in a single broadcast. Time the server was not running is not
+// time that passed in the world.
+const MAX_TICK_SEC = 60;
+// The furthest one call may roll the calendar. Nothing honest comes close -- the request path
+// refuses more than a month and the tick is now bounded above -- so this only stops a plugin
+// or a bad number from spinning the rollover loop for millions of iterations.
+const MAX_ROLL_DAYS = 3660; // ten years
 // Morrowind's calendar (Sun's Dawn is 28 days; no leap years in-game).
 const MONTH_DAYS = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 
@@ -74,7 +83,7 @@ export class WorldClock {
   // Free-run: consume real elapsed time, then broadcast on the 60 s heartbeat.
   private tick(): void {
     const now = Date.now();
-    const elapsedSec = Math.max(0, (now - this.lastRealMs) / 1000);
+    const elapsedSec = Math.min(MAX_TICK_SEC, Math.max(0, (now - this.lastRealMs) / 1000));
     this.lastRealMs = now;
     if (this.ctx.state.timeScale > 0 && elapsedSec > 0) {
       this.addHours((elapsedSec * this.ctx.state.timeScale) / 3600);
@@ -89,12 +98,19 @@ export class WorldClock {
   }
 
   // Normalizing add. Hours may be fractional; day/month/year roll over the MW calendar.
+  //
+  // The hour is normalised ARITHMETICALLY before the calendar rolls, so it always lands in
+  // [0,24) no matter how large the jump. The previous shape subtracted 24 inside a guarded
+  // loop, which meant a jump past roughly 18,000 hours ran out of guard and left gameHour at
+  // a value like 221,952 -- broadcast to every client and persisted to global.json. The day
+  // count is what gets bounded now, and it is bounded high enough that nothing honest sees it.
   private addHours(hours: number): void {
     const t = this.ctx.state;
-    t.gameHour += hours;
-    let guard = 0;
-    while (t.gameHour >= 24 && guard++ < MAX_ADVANCE_HOURS + 32) {
-      t.gameHour -= 24;
+    t.gameHour += Math.max(0, hours); // never rewind: a negative would strand the hour too
+    let days = Math.floor(t.gameHour / 24);
+    t.gameHour -= days * 24;
+    if (days > MAX_ROLL_DAYS) days = MAX_ROLL_DAYS;
+    while (days-- > 0) {
       t.day += 1;
       const len = MONTH_DAYS[t.month - 1] ?? 30;
       if (t.day > len) {

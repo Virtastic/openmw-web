@@ -390,6 +390,16 @@ export class LockerSessionStore {
   private sweep(): void {
     const now = Date.now();
     for (const [t, e] of [...this.tokens]) if (e.expiresAt <= now) this.tokens.delete(t);
+    // lastSeen was swept by nothing. activeSince() filters by its cutoff when it READS, so the
+    // answers were always right and the map behind them only ever grew: one entry for every
+    // account that has ever made an authenticated locker or save request, held for the life of
+    // the process. Small each, unbounded in total, and on a platform that is every account
+    // that ever plays.
+    //
+    // Anything older than a token's lifetime cannot be part of any answer — activeSince is
+    // asked about minutes, never days — so it is dropped on the same pass that expires tokens.
+    const stale = now - this.ttlMs;
+    for (const [account, at] of [...this.lastSeen]) if (at <= stale) this.lastSeen.delete(account);
   }
 }
 

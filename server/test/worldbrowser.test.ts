@@ -140,3 +140,80 @@ test('the gateway credential generates itself, and both halves get the SAME one'
   const explicit = loadConfig(tmpDataDir(), { gateway: { serverToken: 'mine' } }, shared);
   assert.equal(explicit.gateway.serverToken, 'mine', 'an explicit value overrides the minted one');
 });
+
+// ---------------------------------------------------------------- the wire reply
+// Everything above tests the WorldBrowser class. The lobby a player actually SEES is the
+// reply social.ts builds from it, and that reply carries an invariant of its own: the
+// gateway's world record includes `ownerAccount` (ownerWorld matches on it), and the reply
+// is mapped field by field precisely so that key never reaches a client. A spread instead of
+// the mapping would publish every world owner's account to everyone browsing the lobby, and
+// nothing in the suite would have noticed.
+test('the lobby lists worlds without publishing their owners\' accounts', async (t) => {
+  const { createServer } = await import('node:http');
+  const { startServer } = await import('../src/server');
+  const { TestClient } = await import('./helpers');
+
+  const OWNER = 'victim@example.com';
+  const gw = createServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ worlds: [{
+      id: 'w1', mode: 'public', name: "Someone's world", host: '127.0.0.1', port: 19999,
+      playerCount: 1, maxPlayers: 8, up: true, ownerAccount: OWNER,
+    }] }));
+  });
+  await new Promise<void>((r) => gw.listen(0, '127.0.0.1', r));
+  t.after(() => new Promise<void>((r) => { gw.close(() => r()); }));
+  const gwPort = (gw.address() as { port: number }).port;
+
+  const server = await startServer({
+    requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
+    configOverride: {
+      gateway: { url: `http://127.0.0.1:${gwPort}` },
+      limits: { maxConnsPerIp: 16 },
+    },
+  });
+  t.after(() => server.close());
+
+  const c = await TestClient.connect(server.port);
+  await c.joinAsNew('Browser');
+  await c.waitEvent('PlayerList');
+  c.sendEvent('WorldList', {});
+  const reply = (await c.waitEvent('WorldList')).value as {
+    error: string; myPort: number;
+    worlds: { id: string; up: boolean; ownerAccount?: string }[];
+  };
+
+  assert.equal(reply.error, '');
+  assert.equal(reply.worlds.length, 1, 'the world the gateway returned must reach the lobby');
+  assert.equal(reply.worlds[0]?.id, 'w1');
+  assert.equal(reply.worlds[0]?.ownerAccount, undefined,
+    'the owner\'s account key must never be echoed into a client');
+  assert.ok(!JSON.stringify(reply).includes(OWNER),
+    `the reply carried the owner's account: ${JSON.stringify(reply)}`);
+  // So the UI can mark the row the player is already standing in rather than offering a
+  // "join" that reconnects them to where they are.
+  assert.equal(reply.myPort, server.port);
+  c.close();
+  await c.closed;
+});
+
+test('with no gateway the lobby is told so, rather than left loading forever', async (t) => {
+  const { startServer } = await import('../src/server');
+  const { TestClient } = await import('./helpers');
+  const server = await startServer({
+    requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
+    configOverride: { limits: { maxConnsPerIp: 16 } },
+  });
+  t.after(() => server.close());
+  const c = await TestClient.connect(server.port);
+  await c.joinAsNew('Standalone');
+  await c.waitEvent('PlayerList');
+  c.sendEvent('WorldList', {});
+  // The reply is the whole point: an optional-chained call here would send nothing at all
+  // and the player would sit on "Loading worlds..." for a request that was understood.
+  const reply = (await c.waitEvent('WorldList')).value as { error: string; worlds: unknown[] };
+  assert.equal(reply.error, 'no_gateway');
+  assert.deepEqual(reply.worlds, []);
+  c.close();
+  await c.closed;
+});

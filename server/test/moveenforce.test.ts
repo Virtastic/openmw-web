@@ -239,3 +239,50 @@ test('travelling between cells is never mistaken for a warp', async (t) => {
   traveller.close();
   watcher.close();
 });
+
+// A CELL KEY IS ANYTHING THE CLIENT SAYS IT IS, and each new one costs memory forever.
+//
+// It can only be checked for being a short non-empty string: exteriors are a grid, interiors
+// are names out of the operator's own content, and this server never reads that content — so
+// there is nothing to validate against. Every distinct key a client names allocates an
+// authority Cell and a cached CellDoc, and the cache is deliberately never evicted (releasing
+// it would race a detached quest write and silently lose it — see persist/cellstore.ts).
+//
+// That trade was priced against "every cell any player entered", meaning bounded by the size
+// of the map. A client inventing keys breaks the bound, so the session is bounded instead.
+test('a session cannot invent unlimited cells', async (t) => {
+  const dataDir = tmpDataDir();
+  // TWO rate limiters already stop a FAST flood, and the first two versions of this test were
+  // measuring them rather than the cap: it was disconnected with RATE for messages, then again
+  // for bytes. They are not the whole answer — a client pacing itself under both accumulates
+  // cells for as long as it stays connected, and nothing ever reclaims them — but they do mean
+  // this is a slow leak needing patience, not a burst. Both raised here so what is under test
+  // is the cell cap rather than the limiters sitting in front of it.
+  const server = await startServer({
+    requireGameData: false, dataDir, port: 0, host: '127.0.0.1',
+    configOverride: { limits: {
+      msgsPerSec: 100000, bytesPerSec: 1e9, bytesBurst: 1e9, farTravelPerMin: 0,
+    } },
+  });
+  t.after(() => server.close());
+  const c = await TestClient.connect(server.port);
+  await c.joinAsNew('Wanderer');
+  await c.waitEvent('PlayerList');
+
+  // Far beyond the cap, and far beyond any real playthrough.
+  for (let i = 0; i < 4200; i++) c.sendCellChange(`invented-${i}`, 0, 0, 0);
+
+  // Fence the socket so every one of those has certainly been processed.
+  c.sendEvent('ChatSend', { text: 'cellfence' });
+  await c.waitEvent('ChatMessage', (v) => (v as { text?: string }).text === 'cellfence');
+
+  // The server stopped taking new ones rather than allocating for all 4,200. Its own view of
+  // where this player is proves it: the last accepted cell is inside the cap, not the last
+  // one sent.
+  const live = server.roster.activeForAccount('wanderer');
+  assert.ok(live, 'the player must still be connected — the cap refuses cells, not sessions');
+  const at = Number(/invented-(\d+)/.exec(live.cellKey ?? '')?.[1] ?? -1);
+  assert.ok(at >= 0 && at < 4096,
+    `the session was allowed to invent cell ${at}; the cap is 4096 and nothing evicts these`);
+  c.close();
+});

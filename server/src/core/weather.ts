@@ -24,6 +24,14 @@ import { log } from '../log';
 
 const MAX_REGION = 64;
 const MAX_WEATHER_ID = 255;
+// Regions cannot be validated: cell->region lives in the content files and this server never
+// reads them, so a client is free to declare regions that do not exist -- the same hole the
+// per-session cell bound closes in net/connection.ts. It is WORSE here. A cell key costs a
+// session an authority entry; a region costs the WORLD a row in global.json that is written
+// to disk and replayed to every future joiner, one WorldWeather event each. So the bound is
+// global rather than per-session. Vanilla plus both expansions is a dozen or so regions and
+// the largest landmass mods add tens: 256 is far above honest play and far below harm.
+const MAX_REGIONS = 256;
 
 export interface WeatherCtx {
   roster: Roster;
@@ -44,8 +52,13 @@ export class WeatherRegions {
   private queue: Promise<void> = Promise.resolve();
   // playerId -> region they last declared (needed to leave on change/disconnect).
   private playerRegion = new Map<number, string>();
+  // Every region this world has ever admitted, seeded from what is already persisted so a
+  // restart cannot be used to reset the bound.
+  private readonly known: Set<string>;
+  private floodLogged = false;
 
   constructor(private readonly ctx: WeatherCtx) {
+    this.known = new Set(Object.keys(ctx.weather));
     this.authority = new Authority({
       grant: (playerId, key, _epoch, snapshot) => {
         this.send(playerId, 'WorldWeatherAuthority', { region: key, holderId: playerId });
@@ -117,6 +130,21 @@ export class WeatherRegions {
     const playerId = player.id;
     const from = this.playerRegion.get(playerId);
     if (from === to) return;
+    if (!this.known.has(to)) {
+      if (this.known.size >= MAX_REGIONS) {
+        // Refuse the move outright rather than leaving the region on entry: the player stays
+        // where they were and keeps whatever authority they held, which is a consistent state.
+        if (!this.floodLogged) {
+          this.floodLogged = true;
+          log('warn', 'weather.region_flood', {
+            from: player.name, region: to, cap: MAX_REGIONS,
+            note: 'refusing new regions for this world; weather elsewhere is unaffected',
+          });
+        }
+        return;
+      }
+      this.known.add(to);
+    }
     this.playerRegion.set(playerId, to);
     this.enqueue(async () => {
       if (from) await this.authority.onLeave(playerId, from, true);

@@ -173,3 +173,52 @@ test('the shipped harness password is refused unless the operator opts in', asyn
   await c2.joinAsNew('Someone', 'harness-pass-1');
   c2.close();
 });
+
+test('a moderator mute silences the muted player, and nobody else', async (t) => {
+  // The store half of this is covered above, and whisper delivery is covered in
+  // whisper.test.ts -- but only with a PERSONAL mute. isMuted(listener, speaker) answers on
+  // a personal row OR a row under the server pseudo-muter, and the server half had never
+  // been driven through actual chat delivery. Swap those two arguments and the store tests
+  // still pass, the whisper test still passes, and every moderator mute silences the wrong
+  // person on say, party and global. This is the operator's main tool short of a kick.
+  const { server, base } = await boot(t);
+  const act = (kind: string, target: string) => fetch(`${base}/admin/api/action`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ kind, target, detail: '' }),
+  });
+  const heard = (c: TestClient, text: string) =>
+    c.inbox.events.filter((e) => e.name === 'ChatMessage'
+      && (e.value as { text?: string }).text === text).length;
+
+  const alice = await TestClient.connect(server.port);
+  await alice.joinAsNew('Alice');
+  await alice.waitEvent('PlayerList');
+  const bob = await TestClient.connect(server.port);
+  await bob.joinAsNew('Bob');
+  await bob.waitEvent('PlayerList');
+
+  // Control first: without it, "Alice heard nothing" is satisfied by chat being broken.
+  bob.sendEvent('ChatSend', { text: 'before the mute' });
+  await alice.waitEvent('ChatMessage', (v) => (v as { text?: string }).text === 'before the mute');
+
+  assert.equal((await act('mute', 'bob')).status, 200);
+  bob.sendEvent('ChatSend', { text: 'say while muted' });
+  bob.sendEvent('ChatSend', { text: '!global while muted' });
+  // Alice keeps talking: muting Bob must not stop BOB hearing HER. That is the assertion the
+  // argument order actually turns on -- a swap silences the listener instead of the speaker.
+  alice.sendEvent('ChatSend', { text: 'can you still hear me' });
+  await bob.waitEvent('ChatMessage', (v) => (v as { text?: string }).text === 'can you still hear me');
+
+  // Lifting it is the second control AND the fence: Bob's frames are ordered on his own
+  // socket, so once Alice has this one, every muted line before it has been processed.
+  assert.equal((await act('unmute', 'bob')).status, 200);
+  bob.sendEvent('ChatSend', { text: 'after the unmute' });
+  await alice.waitEvent('ChatMessage', (v) => (v as { text?: string }).text === 'after the unmute');
+
+  assert.equal(heard(alice, 'say while muted'), 0, 'a server-muted player must not be heard on say');
+  assert.equal(heard(alice, 'global while muted'), 0,
+    'nor on the global tier -- the tier a flooder would reach for');
+  alice.close();
+  bob.close();
+});

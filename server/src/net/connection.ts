@@ -13,7 +13,7 @@ import type { ContentGate, EngineGate } from '../core/manifest';
 import type { Player, Peer, Roster } from '../core/players';
 import { INPUT_DRIVING_MS, PEER_POSE_FRESH_MS } from '../core/players';
 import type { HookBus } from '../plugins/loader';
-import { handleChatSend, type ChatContext } from '../core/chat';
+import { handleChatSend, serverWhisper, type ChatContext } from '../core/chat';
 import type { Social } from '../core/social';
 import type { Moderation } from '../core/moderation';
 import { TokenBucket, IpRateLimiter } from './ratelimit';
@@ -22,6 +22,22 @@ import { MSG_EVENT, MSG_PLAYER_MOVE, MSG_PLAYER_MOVE_BATCH, MSG_ACTOR_MOVE_BATCH
 import { MSG_PLAYER_INPUT, MSG_AVATAR_MOVE_BATCH, INPUT_PAYLOAD_BYTES, packInputForward, unpackAvatarMoveBatch } from '../proto/input';
 import { unpackMove } from '../proto/movement';
 import { MAX_ABS_COORD , isChargenCell, parseExterior, cellsVisible } from '../core/movement';
+
+/** Distinct cells one session may enter. Vanilla Morrowind is around 1,800 cells in total and
+ *  a long session sees a few hundred, so this is far above honest play — it exists only to
+ *  bound cell keys a client invents, which cannot be validated because the server never reads
+ *  the content that defines what cells exist. */
+const MAX_CELLS_PER_SESSION = 4096;
+
+/** Chat gets its own budget on top of limits.msgsPerSec, because chat AMPLIFIES: one inbound
+ *  line becomes one outbound event per player in the world. limits.msgsPerSec only kills the
+ *  socket ABOVE its rate, so a client sitting just under it sustained ~59 lines a second at
+ *  every player on the world indefinitely -- ~1,900 outbound events a second on a full one --
+ *  and PROTOCOL.md already promises the global tier is rate limited. Nobody sustains five
+ *  lines a second, and the burst absorbs a pasted paragraph or a client catching up, so this
+ *  is invisible to a person and ends a flood without disconnecting anybody. */
+const CHAT_PER_SEC = 5;
+const CHAT_BURST = 20;
 import { handleAvatarItemStatesBatch, handleAvatarStatsBatch, handleStateEvent, syncStateOnJoin, type StateCtx } from '../core/playerstate';
 import type { WorldState } from '../core/worldstate';
 import type { Combat } from '../core/combat';
@@ -180,6 +196,8 @@ export class Connection implements Peer {
   // The cell's actor-authority holder streams NPC batches on top of its own pose, so it
   // must not spend the same budget as everyone else's movement.
   private readonly actorMoveBucket: TokenBucket;
+  private readonly chatBucket = new TokenBucket(CHAT_PER_SEC, CHAT_BURST);
+  private chatWarned = false; // told once per flood, not once per dropped line
   private readonly openedAt = Date.now(); // join-latency origin (== the conn.open log line)
   private closeCounted = false; // exactly one omwmp_disconnects_total sample per session
 
@@ -701,6 +719,18 @@ export class Connection implements Peer {
       metrics.protocolErrors.inc({ kind: 'unknown_event' });
       return;
     }
+    if (!this.chatBucket.take(1)) {
+      // TELL them. A line that silently vanishes reads as broken chat and gets retyped,
+      // which is the one thing that makes a flood worse.
+      if (!this.chatWarned) {
+        this.chatWarned = true;
+        serverWhisper(this.player, 'You are sending messages too quickly.');
+        log('warn', 'chat.rate_limited', { ip: this.ip, player: this.player.name });
+        metrics.rateLimited.inc({ budget: 'chat' });
+      }
+      return;
+    }
+    this.chatWarned = false;
     handleChatSend(
       this.ctx.chatCtx,
       { onChat: (p, t) => this.ctx.hooks.chat({ id: p.id, name: p.name, rank: p.rank }, t) },
@@ -900,6 +930,10 @@ export class Connection implements Peer {
   // stored pose at the new position so players who never send PlayerMove (standing still
   // after a teleport) still appear in batches, then relay to ALL in-world players with
   // the sender's id added (everyone must know who entered/left their bubble).
+  /** Distinct cells this session has entered — the bound on invented cell keys. */
+  private readonly cellsSeen = new Set<string>();
+  private cellFloodLogged = false;
+
   private handleCellChange(body: LValue | undefined): void {
     const player = this.player!;
     const cellKey = body instanceof Map ? body.get('cellKey') : undefined;
@@ -915,6 +949,39 @@ export class Connection implements Peer {
       log('warn', 'conn.bad_cell_change', { ip: this.ip, player: player.name });
       return;
     }
+
+    // HOW MANY DIFFERENT CELLS ONE SESSION MAY INVENT.
+    //
+    // A cell key is checked for being a non-empty string under 128 characters and nothing
+    // else, and it cannot be checked for more: exteriors are a grid, interiors are names out
+    // of the operator's own content, and this server never reads that content. So a client is
+    // free to "enter" cells that do not exist.
+    //
+    // Each distinct key it names costs memory that is never reclaimed: an authority Cell (its
+    // occupancy order, entry times and last snapshot) and a cached empty CellDoc. The cache
+    // not being evicted is a known, deliberate trade — releasing on vacate would race with a
+    // detached quest write and silently lose it (see persist/cellstore.ts) — and that trade
+    // was priced against "every cell any player entered", i.e. bounded by the size of the map.
+    // Unvalidated keys break that bound, turning an accepted slow leak into something a signed
+    // -in player can drive.
+    //
+    // Bounded per SESSION rather than validated, because there is nothing to validate against.
+    // Vanilla Morrowind is on the order of 1,800 cells all told and a long session visits a few
+    // hundred; this is far above honest play and far below anything that hurts.
+    if (!this.cellsSeen.has(cellKey)) {
+      if (this.cellsSeen.size >= MAX_CELLS_PER_SESSION) {
+        if (!this.cellFloodLogged) {
+          this.cellFloodLogged = true;
+          log('warn', 'conn.cell_flood', {
+            ip: this.ip, player: player.name, cells: this.cellsSeen.size,
+            note: 'refusing new cells for this session; reconnecting clears it',
+          });
+        }
+        return;
+      }
+      this.cellsSeen.add(cellKey);
+    }
+
     const oldCell = player.cellKey;
 
     // TELEPORT-HOPPING, bounded without any game data.

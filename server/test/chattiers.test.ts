@@ -75,3 +75,41 @@ test('a bare tier prefix is treated as a typo, not an empty message', async (t) 
   a.close();
   b.close();
 });
+
+test('chat is rate limited, the flooder is told, and it refills', async (t) => {
+  // Chat is the one tier where one client's message budget is spent on everybody else: a
+  // single inbound line becomes one outbound event PER PLAYER. The general budget only
+  // disconnects ABOVE 60/s, so a flooder sitting just under it sustained ~59 lines a second
+  // at every player on the world, forever -- and PROTOCOL.md already promises the global
+  // tier is rate limited. FLOOD stays under the general budget on purpose: this must be the
+  // chat limiter refusing lines, not the connection limiter dropping the socket.
+  const world = await two(t);
+  const FLOOD = 40;
+  for (let i = 0; i < FLOOD; i++) world.a.sendEvent('ChatSend', { text: `flood ${i}` });
+
+  // 1. The flooder is TOLD. A line that silently vanishes reads as broken chat and gets
+  //    retyped, which is the one thing that makes a flood worse.
+  await world.a.waitEvent('ChatMessage', (v) => {
+    const m = v as { channel?: string; text?: string };
+    return m.channel === 'server' && /too quickly/i.test(m.text ?? '');
+  });
+
+  // 2. It REFILLS — a limiter with no way back is a mute. Retrying until a line lands both
+  //    proves that and fences: everything sent before it has been delivered to Bob.
+  const done = 'after the flood';
+  const landed = world.b.waitEvent('ChatMessage', (v) => (v as { text?: string }).text === done);
+  const retry = setInterval(() => world.a.sendEvent('ChatSend', { text: done }), 300);
+  t.after(() => clearInterval(retry));
+  await landed;
+  clearInterval(retry);
+
+  // 3. The control: the flood was CUT, not merely announced. Without the limiter every one
+  //    of the 60 reaches Bob.
+  const heard = world.b.inbox.events.filter((e) =>
+    e.name === 'ChatMessage' && /^flood /.test((e.value as { text?: string }).text ?? '')).length;
+  assert.ok(heard < FLOOD, `every one of the ${FLOOD} flooded lines reached the other player`);
+  assert.ok(heard >= 20,
+    `only ${heard} lines got through; the burst allowance must still cover a pasted paragraph`);
+  world.a.close();
+  world.b.close();
+});
