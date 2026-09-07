@@ -13,9 +13,12 @@
 //   3. and they must not get back IN, which is a different decision in a different place from
 //      the one that threw them out — the world's auth check on rejoin.
 //
-// The third is the one worth the scenario, and the client makes it honest: it has its own retry
-// ladder, so it is hammering the door throughout. The unban at the end is the control — if it
-// could not get back in then either, step 2 proved only that the client had given up.
+// The third is the one worth the scenario, and it needs a FRESH attempt to mean anything. A
+// client that has been refused reaches a terminal state and stops retrying — correct, since a
+// banned player should not hammer the door, but it makes "still disconnected a minute later"
+// worthless as evidence: a client that had simply died would look identical. So the ban is
+// tested against a real page reload, which is what a player does, and the unban is the control:
+// same client, same account, same reload, and the only thing that changed is the ban.
 import assert from 'node:assert/strict';
 import { startGatewayAndClient } from './_gateway.mjs';
 
@@ -71,29 +74,38 @@ export default async function run(ctx) {
       'a banned player must actually be removed from the game, not merely recorded');
     ctx.log('ok: the banned player was disconnected');
 
-    // 2. AND THEY STAY OUT. The client has its own retry ladder — it is trying to get back in
-    // this whole time, which is what makes this a real test rather than a pause. Its rejoin is
-    // refused by the world's auth check, a different decision from the one that removed it.
-    //
-    // NOT a /auth/password probe: these accounts are created through ?mpauto and have no
-    // password, so that call is refused whether or not anyone is banned — it would have passed
-    // for the wrong reason and proved nothing.
-    await ctx.sleep(20000); // several of the client's own reconnect attempts
-    const stillOut = await host.client.eval('window.omw.state.state');
-    assert.notEqual(stillOut, 'Joined',
-      'a banned player got back in on their own reconnect — the ban removed them but does not'
-      + ' keep them out');
-    ctx.log(`ok: still out after retrying (state: ${stillOut})`);
+    // 2. AND THEY STAY OUT. A fresh attempt, not a wait: the client reaches a TERMINAL state
+    // after an auth rejection and stops retrying, which is right — a banned player should not
+    // hammer the door — but it means "still disconnected" a minute later says nothing at all.
+    // The reload is a real re-auth through the front door, the same one a player makes by
+    // opening the page again, and it is the thing a ban has to survive.
+    const reload = async (what, timeoutMs) => {
+      await host.client.eval('setTimeout(function(){ location.reload(); }, 50); 1');
+      await ctx.sleep(2000);
+      return host.client.waitFor(
+        'window.omw.state.state === "Joined" || window.omw.state.state === "Failed"',
+        timeoutMs, what);
+    };
+    await reload('the banned player finished a fresh attempt', 180_000);
+    const afterBan = await host.client.eval('window.omw.state.state');
+    assert.notEqual(afterBan, 'Joined',
+      'a banned player signed straight back in on a fresh page load — the ban removed them but'
+      + ' does not keep them out');
+    ctx.log(`ok: a fresh attempt is refused while banned (state: ${afterBan})`);
 
-    // 3. AND IT IS REVERSIBLE — which is also the CONTROL for step 2. If the client could not
-    // reconnect here either, then step 2 proved only that it had stopped trying.
+    // 3. AND IT IS REVERSIBLE — the CONTROL for step 2. Same client, same account, same reload:
+    // the only thing that changed is the ban. Without this, step 2 would be satisfied by a
+    // client that simply cannot connect for any reason at all.
     const unban = await fetch(`${base}/games/${host.ownId}/action`, {
       method: 'POST', headers: auth, body: JSON.stringify({ kind: 'unban', target: account }),
     });
     assert.equal(unban.status, 200, `unban must be accepted (${unban.status})`);
-    await host.client.waitFor('window.omw.state.state === "Joined"', 90_000,
-      'an unbanned player must get back in on the same retry that was being refused');
-    ctx.log('ok: unbanning let them straight back in — which is what makes step 2 mean anything');
+    await reload('the unbanned player finished a fresh attempt', 180_000);
+    const afterUnban = await host.client.eval('window.omw.state.state');
+    assert.equal(afterUnban, 'Joined',
+      `an unbanned player must be able to come back, got ${afterUnban} — if this cannot connect`
+      + ' either, the refusal above proved nothing about the ban');
+    ctx.log('ok: unbanning let them back in — which is what makes the refusal above mean anything');
 
     ctx.log('PASS: a ban removes them, keeps them out, and can be undone');
   } finally {
