@@ -25,6 +25,34 @@ export interface LogEntry {
 
 const ORDER: Record<LogLevel, number> = { debug: 0, info: 1, warn: 2, error: 3 };
 
+/**
+ * FIELDS WHOSE VALUE MUST NEVER BE WRITTEN DOWN.
+ *
+ * Every sink here is durable in a way a variable is not: the file survives the crash it was
+ * written to explain, the ring is served to anyone with the dashboard's log view, and stdout is
+ * whatever the host's collector keeps forever. So a token that reaches log() is not a token
+ * that was briefly visible — it is one that has been published to three places, and rotating
+ * it is the only fix.
+ *
+ * Pattern-based rather than a list, and deliberately the same shape the settings page masks by
+ * (net/admin/api-settings.ts): a list only fails closed while somebody remembers to extend it,
+ * which is the wrong default for credentials. Matching on the NAME means the next field called
+ * `...Token` is masked because of what it is called, not because it was remembered.
+ */
+const SECRET_FIELD = /pass|secret|token|apikey|api_key|webhook|credential|accesskey|access_key|authorization|cookie/i;
+const REDACTED = '[redacted]';
+
+/** Mask secret-looking fields, one level deep — which is how log fields are actually shaped. */
+function redact(fields: Record<string, unknown>): Record<string, unknown> {
+  let out: Record<string, unknown> | undefined;
+  for (const [k, v] of Object.entries(fields)) {
+    if (!SECRET_FIELD.test(k) || v === undefined || v === null || v === '') continue;
+    out ??= { ...fields };
+    out[k] = REDACTED;
+  }
+  return out ?? fields;
+}
+
 let minLevel: LogLevel = (process.env.LOG_LEVEL as LogLevel) in ORDER ? (process.env.LOG_LEVEL as LogLevel) : 'info';
 
 export function setLogLevel(level: LogLevel): void {
@@ -60,6 +88,9 @@ export function enableFileLog(dir: string): void {
     const logDir = join(dir, 'logs');
     mkdirSync(logDir, { recursive: true });
     logPath = join(logDir, 'server.log');
+    // Seed the counter from whatever a previous run left, so an existing file still rotates at
+    // the right size rather than growing by another MAX_BYTES first.
+    bytesWritten = existsSync(logPath) ? statSync(logPath).size : 0;
   } catch (err) {
     // A read-only or missing data dir must not stop the server from running; stdout still
     // works and that is enough to diagnose why this failed.
@@ -99,10 +130,16 @@ export function logHistory(limit = 200, filter = ''): LogEntry[] {
   return [...older, ...live].slice(-limit);
 }
 
-function rotateIfBig(): void {
+// Bytes in the current file, tracked rather than measured. rotateIfBig ran statSync() before
+// EVERY append — one extra syscall per log line, on a path that a busy server walks thousands
+// of times a minute, to learn something this process is the only writer of. Seeded once when
+// the sink opens and reset on rotate.
+let bytesWritten = 0;
+
+function rotateIfBig(pending: number): void {
   if (!logPath) return;
+  if (bytesWritten + pending < MAX_BYTES) return;
   try {
-    if (!existsSync(logPath) || statSync(logPath).size < MAX_BYTES) return;
     const oldest = `${logPath}.${KEEP}`;
     if (existsSync(oldest)) unlinkSync(oldest);
     for (let i = KEEP - 1; i >= 1; i--) {
@@ -110,7 +147,14 @@ function rotateIfBig(): void {
       if (existsSync(from)) renameSync(from, `${logPath}.${i + 1}`);
     }
     renameSync(logPath, `${logPath}.1`);
-  } catch { /* rotation is best effort; never let it break logging */ }
+    bytesWritten = 0;
+  } catch {
+    // Best effort, and never allowed to break logging. The counter is deliberately NOT reset:
+    // a rotation that failed has not freed anything, so pretending it did would let the file
+    // grow by another whole cap before trying again — and again, unbounded, for as long as
+    // whatever blocks the rename persists. Leaving it over the line means the next write
+    // retries, which is what the stat-per-line version did.
+  }
 }
 
 // --- subscribers ------------------------------------------------------------------------
@@ -133,7 +177,9 @@ export function onLog(fn: Subscriber): () => void {
 
 export function log(level: LogLevel, event: string, fields?: Record<string, unknown>): void {
   if (ORDER[level] < ORDER[minLevel]) return;
-  const entry: LogEntry = { ts: new Date().toISOString(), level, event, ...fields };
+  const entry: LogEntry = {
+    ts: new Date().toISOString(), level, event, ...(fields ? redact(fields) : undefined),
+  };
   const line = JSON.stringify(entry);
   process.stdout.write(line + '\n');
 
@@ -148,8 +194,12 @@ export function log(level: LogLevel, event: string, fields?: Record<string, unkn
 
   if (logPath) {
     try {
-      rotateIfBig();
-      appendFileSync(logPath, line + '\n');
+      // Byte length, not string length: a multi-byte character costs more on disk than it
+      // does in JS, and a size counter that drifts under makes the file grow past its cap.
+      const bytes = Buffer.byteLength(line) + 1;
+      rotateIfBig(bytes);
+      appendFileSync(logPath, line + String.fromCharCode(10));
+      bytesWritten += bytes;
     } catch (err) {
       // Report the first failure to stdout and then stay quiet: a full disk would otherwise
       // turn every subsequent log call into two more lines of noise about the same problem.
