@@ -674,6 +674,29 @@ Storage is `node:sqlite` in the existing data dir. This is only correct because 
 is single-process; if the map is ever region-sharded across processes, the social data has
 to move out to a shared service first.
 
+## Server-to-client replies and pushes
+
+These are sent by the server and were, until now, documented only in the source. They are
+listed here so the wire surface has one complete index: a coverage audit built from this file
+silently skipped every one of them.
+
+| name | dir | body |
+|---|---|---|
+| `CombatRefused` | S→C | `{reason=string}` — an M5 attack the server would not apply (rate, shape, PvP veto). Told rather than dropped, so a swing that does nothing is explainable |
+| `WorldTimeRefused` | S→C | `{reason=string}` — the `[rules] timeSkip` refusal. A Rest that silently does nothing gets pressed again and reported as a bug |
+| `ObjectSpawnRefused` | S→C | `{tempId=number, ok=bool, reason=string}` — M3 drop conservation and placement refusals |
+| `ObjectTakeResult` | S→C | `{opId=number, ok=bool, reason=string?}` — the paired answer to `ObjectTakeRequest`; always sent, so a client never waits |
+| `CellSnapshotReplace` | S→C | `{cellKey=string, placed={…}, deleted={…}}` — the restored cell truth pushed straight after a `WorldCellReset`, so a reset is transparent rather than a kick |
+| `QuestSpawn` | S→C on cell entry | `{recordId=string, questId=string, cellKey=string}` — the operator's quest-repair rules replacing an object the character still needs |
+| `WorldList` | S→C, answering the C→S `WorldList` | `{error=string, myPort=number, worlds={{id, mode, name, host, port, wsPath?, playerCount, maxPlayers, up}, …}}` — mapped field by field: the gateway's record carries `ownerAccount` and it must never reach a client |
+| `WorldCreate` | S→C, answering the C→S `WorldCreate` | `{ok=bool, error=string, world={id, mode, name, host, port, wsPath?}?}` |
+| `WorldMode` | S→C at join and on change | `{mode=string}` — this world's mode, for the where-am-I switcher |
+| `WorldClosed` | S→C | `{reason=string, by=string}` — the owner took the world solo; guests are told before they are disconnected |
+| `SimReady` | S→C | `{ready=bool}` — whether a world peer is simulating yet |
+| `SimAnchors` | S→PEER | `{anchors={…}, interiors={…}, place?}` — the cells the peer is to simulate |
+| `AvatarRestore` | S→PEER | `{id=int, hp?, mp?, ft?}` — restore an avatar's bars from the stored doc |
+| `AvatarResurrect` | S→PEER | `{id=int, …}` — the peer-side half of a respawn |
+
 ## Client-side integration contract (M0)
 
 - Join URL: `index.html?...&mp=<ws(s)-url>&name=<display-name>`; boot JS sets

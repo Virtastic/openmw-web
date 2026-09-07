@@ -727,3 +727,27 @@ test('settings with a fixed set of values are offered as a dropdown, from the pa
   assert.ok(app.includes('f.options'), 'app.js does not read the options at all');
   assert.ok(/<select[^]{0,200}data-type="string"/.test(app), 'no dropdown is rendered');
 });
+
+// THE LIVENESS MAP HAD NO SWEEP. activeSince() filters by its cutoff when it reads, so the
+// answers were always right and the map behind them only grew: one entry for every account
+// that ever made an authenticated locker or save request, kept for the life of the process. On
+// a platform that is every account that ever plays. It is pruned on the same pass that expires
+// tokens now — anything older than a token cannot appear in any answer.
+test('the who-is-playing map does not keep every account that ever signed in', () => {
+  // A short TTL so the sweep has something to do without waiting a day.
+  const s = new LockerSessionStore(50);
+  const stale = s.mint('ghost');
+  s.resolve(stale); // marks 'ghost' as seen
+  assert.equal(s.activeSince(60_000).length, 1, 'the account registered as active');
+
+  // Past the TTL, then any mint triggers the sweep.
+  const until = Date.now() + 80;
+  while (Date.now() < until) { /* the TTL is 50ms; this is short enough to just spin */ }
+  s.mint('someone-else');
+
+  const live = (s as unknown as { lastSeen: Map<string, number> }).lastSeen;
+  assert.equal(live.has('ghost'), false,
+    'an account far past the token lifetime is still held in the liveness map');
+  assert.deepEqual(s.activeSince(60_000).map((a) => a.account), [],
+    'and nothing stale is reported as playing');
+});

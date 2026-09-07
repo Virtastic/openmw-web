@@ -95,6 +95,47 @@ test('actor authority and relay end to end', async (t) => {
     assert.equal(b.inbox.events.filter((e) => e.name === 'ActorStatsDynamic').length, 0);
   });
 
+  // WHAT AN NPC IS WEARING AND WHAT IT IS DOING are relayed state, and neither had a test.
+  // ActorEquip carries the slots a non-holder renders the NPC with; ActorAI carries the package
+  // that drives its animation and facing. Both ride the same holder+epoch chokepoint as
+  // everything else in the Actor family, so both are guarded — but a guard nobody exercises is
+  // one that can be removed by accident, and the symptom would be subtle rather than loud:
+  // guards in the wrong armour and NPCs sliding about in the wrong pose on every screen but
+  // the holder's.
+  await t.test('actor equipment and AI relay from the holder, and only from the holder', async () => {
+    const slots = { 1: 'iron_cuirass', 3: 'iron_helm' };
+    a.sendEvent('ActorEquip', { cellKey: '0,0', epoch: epochA, ref: ACTOR_REF, slots });
+    const eq = await b.waitEvent('ActorEquip');
+    assert.equal((eq.value as { ref?: unknown }).ref !== undefined, true, 'the relay names the actor');
+    assert.deepEqual((eq.value as { slots?: unknown }).slots, slots, 'and carries the slots whole');
+
+    a.sendEvent('ActorAI', { cellKey: '0,0', epoch: epochA, ref: ACTOR_REF, pkg: 'combat' });
+    const ai = await b.waitEvent('ActorAI');
+    assert.equal((ai.value as { pkg?: string }).pkg, 'combat');
+
+    // A NON-HOLDER cannot dress or command somebody else's NPCs. Bob is in the same cell and
+    // knows the live epoch, which is exactly what makes this worth checking: the only thing
+    // stopping him is the holder test.
+    b.inbox.events.length = 0;
+    b.sendEvent('ActorEquip', { cellKey: '0,0', epoch: epochA, ref: ACTOR_REF, slots: { 1: 'daedric_cuirass' } });
+    b.sendEvent('ActorAI', { cellKey: '0,0', epoch: epochA, ref: ACTOR_REF, pkg: 'follow' });
+    // Fence both sockets so a slow relay cannot be mistaken for a dropped one.
+    b.sendEvent('ChatSend', { text: 'equipfence' });
+    await b.waitEvent('ChatMessage', (v) => (v as { text?: string }).text === 'equipfence');
+    assert.equal(a.inbox.events.filter((e) => e.name === 'ActorEquip').length, 0,
+      'a non-holder dressed an NPC and the server relayed it');
+    assert.equal(a.inbox.events.filter((e) => e.name === 'ActorAI').length, 0,
+      'a non-holder drove an NPC and the server relayed it');
+
+    // And a stale epoch from the REAL holder is dropped too — the handoff race guard.
+    b.inbox.events.length = 0;
+    a.sendEvent('ActorEquip', { cellKey: '0,0', epoch: epochA + 99, ref: ACTOR_REF, slots });
+    b.sendEvent('ChatSend', { text: 'epochfence' });
+    await b.waitEvent('ChatMessage', (v) => (v as { text?: string }).text === 'epochfence');
+    assert.equal(b.inbox.events.filter((e) => e.name === 'ActorEquip').length, 0,
+      'an ActorEquip from a stale epoch was relayed');
+  });
+
   await t.test('far player receives no actor traffic', async () => {
     const c = await TestClient.connect(server.port);
     await c.joinAsNew('Cara');

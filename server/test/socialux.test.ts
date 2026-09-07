@@ -241,3 +241,28 @@ test('an invite from someone you blocked is not carried', () => {
     'a block must silence the invite too, or blocking leaks who is asking for you');
   w.close();
 });
+
+// ACCEPTING AN INVITE FROM SOMEBODY IN YOUR OWN WORLD hands back where to walk to, and that
+// event had no test at all — only the cross-world routing beside it did. The whole point of an
+// invite is arriving next to the person who sent it, and the coordinates come from the server
+// because it is the only party that knows where the host actually is: a client that guessed
+// would land in the wrong place, or inside something.
+test("accepting a same-world invite returns the inviter's live position", () => {
+  const w = world();
+  const ada = w.add('ada', 'Ada');
+  const bob = w.add('bob', 'Bob');
+  w.store.addInvite('ada', 'bob', 'world', w.clock, 60_000);
+
+  w.social.handleEvent(bob, 'InviteAccept', new Map([['acct', 'ada']]) as never);
+
+  const got = w.last('bob', 'InviteAccepted');
+  assert.ok(got, 'accepting an invite in your own world must answer with somewhere to go');
+  const at = got.body as { cellKey: string; x: number; y: number; z: number };
+  assert.equal(at.cellKey, ada.cellKey, "the destination must be the INVITER's cell");
+  assert.deepEqual([at.x, at.y, at.z], [ada.pose!.x, ada.pose!.y, ada.pose!.z],
+    "and their live position - a client cannot know this, which is why the server sends it");
+
+  // Spent: an invite is not a standing pass back to somebody's side.
+  assert.equal(w.store.hasInvite('ada', 'bob', w.clock), false, 'the invite must be consumed');
+  w.close();
+});

@@ -116,6 +116,22 @@ test('server-owned clock', async (t) => {
     await c.closed;
   });
 
+  await t.test('an enormous jump still leaves a readable clock', async () => {
+    // The rollover used to subtract 24 inside a guarded loop, so a jump past roughly 18,000
+    // hours ran out of guard and left gameHour at something like 221,952 -- broadcast to
+    // every client and written to global.json. Nothing in the request path can ask for that,
+    // but the plugin entry point can, and so could a tick after the host machine slept.
+    const { c } = await join(server, 'BigJump');
+    await c.waitEvent('WorldTime');
+    server.api.world.advanceTime(1e6); // over a century
+    const t2 = (await c.waitEvent('WorldTime')).value as TimeBody;
+    assert.ok(t2.gameHour >= 0 && t2.gameHour < 24, `gameHour left out of range: ${t2.gameHour}`);
+    assert.ok(t2.day >= 1 && t2.day <= 31, `day out of range: ${t2.day}`);
+    assert.ok(t2.month >= 1 && t2.month <= 12, `month out of range: ${t2.month}`);
+    c.close();
+    await c.closed;
+  });
+
   await t.test('the clock survives a restart', async () => {
     const before = server.api.world.time();
     server.api.world.advanceTime(30);
@@ -242,6 +258,67 @@ test('per-region weather authority', async (t) => {
     c.close();
     await c.closed;
   });
+});
+
+test('a world where time does not skip refuses a rest, and says so', async (t) => {
+  // [rules] timeSkip is a real gameplay rule -- one stranger must not fast-forward a hundred
+  // people into the night -- and it was only ever tested as a dashboard FIELD. What matters
+  // is the behaviour: the shared clock must not move, and the player must be TOLD. A Rest
+  // that silently does nothing gets pressed again and then reported as a bug.
+  const { server } = await boot(t, { rules: { timeSkip: 'off' } });
+  const { c: a } = await join(server, 'WouldSleep');
+  const { c: b } = await join(server, 'Bystander');
+  await a.waitEvent('WorldTime');
+  await b.waitEvent('WorldTime');
+  const before = server.api.world.time();
+
+  a.sendEvent('WorldTimeRequest', { advanceHours: 8, reason: 'rest' });
+  const refusal = (await a.waitEvent('WorldTimeRefused')).value as { reason: string };
+  assert.ok(refusal.reason.length > 0, 'the refusal must carry a reason the player can read');
+  await fence(a, b);
+  assert.deepEqual(server.api.world.time(), before, 'a refused rest must not move the clock');
+  assert.equal(b.inbox.events.filter((e) => e.name === 'WorldTime').length, 0,
+    'and it must not be broadcast to anyone else either');
+  a.close();
+  b.close();
+  await a.closed;
+  await b.closed;
+});
+
+test('a client cannot invent an unlimited number of weather regions', async (t) => {
+  // Regions are DECLARED by the client and cannot be validated -- cell->region lives in the
+  // content files this server never reads. That is the same hole the per-session cell bound
+  // closes, and it is worse here: an accepted region is a row in global.json, written to disk,
+  // and one WorldWeather event pushed at every future joiner for the life of the world.
+  // The general per-session message budget is lifted for this client only: it would kill the
+  // socket first and the test would then prove nothing about regions. A real client capped at
+  // 60 messages a second still adds thirty regions a second, so the bound is what has to hold.
+  const { server } = await boot(t, { limits: { msgsPerSec: 4000, bytesPerSec: 8_000_000, bytesBurst: 32_000_000 } });
+  const { c: a } = await join(server, 'RegionFlood');
+  const ASKED = 300; // past the 256 cap
+  for (let i = 0; i < ASKED; i++) {
+    a.sendEvent('WorldRegionChange', { region: `Invented ${i}` });
+    a.sendEvent('WorldWeather', { region: `Invented ${i}`, current: 1 });
+  }
+  // Two round trips: the weather ops are serialized on their own queue behind the socket.
+  await fence(a, a);
+  await fence(a, a);
+
+  const { c: joiner } = await join(server, 'AfterTheFlood');
+  await fence(joiner, joiner); // everything the join pushed has now been delivered
+  const regions = new Set(joiner.inbox.events
+    .filter((e) => e.name === 'WorldWeather')
+    .map((e) => (e.value as { region: string }).region));
+  assert.ok(regions.has('Invented 255'), 'regions under the cap are still tracked normally');
+  assert.ok(!regions.has('Invented 299'),
+    'a region past the cap must never be admitted -- it would be persisted and replayed forever');
+  assert.equal(regions.size, 256,
+    `a joiner was handed ${regions.size} regions; the cap is what bounds both global.json and`
+    + ' the size of every future join');
+  a.close();
+  joiner.close();
+  await a.closed;
+  await joiner.closed;
 });
 
 test('server-issued custom records', async (t) => {

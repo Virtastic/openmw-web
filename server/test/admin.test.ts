@@ -429,3 +429,43 @@ test('erasure removes everything about an account', async (t) => {
     { account: false, player: false, bans: false, identities: 0, chatLines: 0, reports: 0,
       locker: false, saves: 0, socialRows: 0 });
 });
+
+// /tp AND /tpto ACTUALLY MOVE SOMEBODY.
+//
+// Both were tested for rank gating — who may run them — and never for their effect. That
+// leaves the failure mode where an operator types /tp, is told "Teleported Victim to you", the
+// audit line records it, and the player has not moved: the command reports success from the
+// server's side of a message the client never receives. A moderator pulling somebody out of a
+// stuck spot would have no way to tell the difference between "it worked" and "nothing
+// happened", which is exactly when this command gets used.
+test('the teleport commands move the player they name', async (t) => {
+  const { server } = await boot(t, { admin: { owners: ['Owner'] } });
+  const { c: owner } = await join(server, 'Owner');
+  await server.api.world.promoteOwner('Owner');
+  const { c: victim } = await join(server, 'Victim');
+
+  // Two people, standing apart.
+  owner.sendCellChange('5,5', 100, 200, 300);
+  await owner.waitEvent('PlayerCellChange');
+  victim.sendCellChange('9,9', 10, 20, 30);
+  await victim.waitEvent('PlayerCellChange');
+
+  // /tp brings THEM to ME: the victim is told to go where the owner is standing.
+  assert.match(await slash(owner, '/tp Victim'), /Teleported Victim/);
+  const pulled = await victim.waitEvent('AdminTeleport');
+  const at = pulled.value as { cellKey: string; x: number; y: number; z: number };
+  assert.equal(at.cellKey, '5,5', `sent to ${at.cellKey}, but the owner is in 5,5`);
+  assert.deepEqual([at.x, at.y, at.z], [100, 200, 300], 'and to the exact spot, not the cell corner');
+
+  // /tpto sends ME to THEM, which is the opposite direction through the same code.
+  victim.sendCellChange('7,7', 11, 22, 33);
+  await victim.waitEvent('PlayerCellChange');
+  assert.match(await slash(owner, '/tpto Victim'), /Teleporting you/);
+  const went = await owner.waitEvent('AdminTeleport');
+  const to = went.value as { cellKey: string; x: number; y: number; z: number };
+  assert.equal(to.cellKey, '7,7', 'the operator was sent somewhere other than the target');
+  assert.deepEqual([to.x, to.y, to.z], [11, 22, 33]);
+
+  owner.close();
+  victim.close();
+});
