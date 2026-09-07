@@ -75,9 +75,18 @@ export default async function run(ctx) {
 
     // 2. AND IT CAN BE ACCEPTED. This is what answered not_online: no process here knows where
     // the inviter is standing, because they are not here.
+    await guest.client.eval("window.omw.state.joinFriendTo = ''; window.omw.state.socialResult = ''; 'cleared'");
     await guest.client.cmd(`social:InviteAccept:${invites[0].acct}`);
-    await guest.client.waitFor(`(window.omw.state.joinFriendTo||'') !== ''`, STEP,
-      'accepting an invite from another world starts the switch instead of refusing it');
+    // Either it starts the switch, or the server refuses and SAYS why. Waiting only for the
+    // success signal made a refusal look like a hang, with the reason sitting unread.
+    await guest.client.waitFor(
+      `(window.omw.state.joinFriendTo||'') !== ''`
+      + ` || JSON.parse(window.omw.state.socialResult||'{}').op === 'InviteAccept'`,
+      STEP, 'the server answered the accept');
+    const went = await guest.client.eval("window.omw.state.joinFriendTo||''");
+    const why = await guest.client.eval("window.omw.state.socialResult||'{}'");
+    assert.notEqual(went, '',
+      `accepting an invite from another world was refused instead of starting the switch: ${why}`);
     ctx.log('ok: accepting routed to the world switch');
 
     // 3. AND THEY ACTUALLY ARRIVE. Proven from the HOST's roster, where an `id` is stamped

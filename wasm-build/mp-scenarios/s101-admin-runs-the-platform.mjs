@@ -65,13 +65,17 @@ export default async function run(ctx) {
 
     // 2. THE PROXY — one sign-in reaching into a running game's own admin API. Every per-game
     // page in the dashboard is this call with a different tail.
-    const proxied = await fetch(`${base}/games/${host.ownId}/players`, { headers: auth });
+    // /overview, which the game really serves — the first version of this asked for
+    // /players, a route that does not exist, and read the honest 404 as a broken proxy.
+    const proxied = await fetch(`${base}/games/${host.ownId}/overview`, { headers: auth });
     assert.equal(proxied.status, 200,
       `the operator must reach a game's own API through the gateway (${proxied.status})`);
-    const roster = await proxied.json();
-    const rows = roster.players ?? roster;
-    assert.ok(Array.isArray(rows) && rows.length >= 1,
-      `the game must report its player through the proxy: ${JSON.stringify(roster).slice(0, 200)}`);
+    const view = await proxied.json();
+    assert.ok(view && typeof view === 'object',
+      `the game must answer through the proxy: ${JSON.stringify(view).slice(0, 200)}`);
+    // It must be the GAME answering, not the platform: the platform's own overview says so.
+    assert.notEqual(view.platform, true,
+      'the proxy returned the PLATFORM overview — the hop never reached the game');
     ctx.log('ok: the proxy reaches the running game, authenticated as the operator');
 
     // 3. STOPPING ONE. The action an operator needs when a game misbehaves, and the one that
