@@ -175,6 +175,8 @@ const ACTION_ROLE: Record<string, DashboardRole> = {
   // No in-game equivalent, so nothing was gating this anywhere. It wipes a cell's contents -
   // containers, dropped items, doors, for everyone. Owner.
   resetCell: 'owner',
+  // Writes a setting, and decides where everybody on the server wakes up after dying. Owner.
+  respawnHere: 'owner',
 };
 
 export function adminRoutes(deps: AdminDeps) {

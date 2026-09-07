@@ -141,6 +141,47 @@ export const DERIVED_FIELDS = [
   // them; it is the only thing that performs the change as well as recording it.
   'setup.deploymentMode', 'setup.hosting', 'setup.domain', 'setup.httpPort',
   'setup.contentProfile',
+  // WHERE THE MULTIPLAYER SERVER IS, IS NOT A QUESTION. This deployment IS the multiplayer
+  // server: the gateway supervises the worlds and each world is told the address on its own
+  // command line when it is spawned. Offering an operator a box to point their games at
+  // somebody ELSE's platform is not a configuration, it is a way to break your own server —
+  // and there is no working arrangement on the other side of it.
+  'gateway.url',
+  // The credential a world proves itself with, generated on first boot and rotated by nobody.
+  // Its own help says you should not normally set it by hand, and changing it breaks the trust
+  // between the gateway and every world it runs until they all agree again — which is a
+  // sentence describing an outage, not a setting.
+  'gateway.serverToken',
+  // PATHS INSIDE THE IMAGE, which the image owns. The binary is where the container puts the
+  // headless OpenMW; the config and user-data directories are ones this server creates and
+  // manages for it; the rest are diagnostics. None of them is a decision an operator makes,
+  // every one of them is a way to stop NPCs moving, and the failure is silent — the world
+  // simply goes still, with a dashboard that looks fine. Whoever genuinely needs to move a
+  // binary is editing config.toml on a box they have a shell on, and has the context for it.
+  'simPeer.binary', 'simPeer.configDir', 'simPeer.userDataDir',
+  'simPeer.osgStatsFile', 'simPeer.navmeshTemplate',
+  // A CELL KEY AND THREE WORLD COORDINATES ARE NOT SOMETHING ANYONE KNOWS. Nobody can type
+  // where Balmora is, the shipped default is the DEMO's cell (respawn.ts warns it is wrong for
+  // real content, which concedes the field was unusable), and a number typed slightly wrong
+  // puts every dying player inside rock or out at sea with nothing to say so.
+  //
+  // A list of named cities would need coordinates for every deployment's content, and this
+  // server cannot read them: core/esm.ts parses the TES3 header and stops, so it does not know
+  // what cells exist. Set it from the Overview instead — stand where you want it and use
+  // "respawn here" on your own row, which is by construction a place a person can stand.
+  'rules.respawnCellKey', 'rules.respawnX', 'rules.respawnY', 'rules.respawnZ',
+  // A PLAYER ALWAYS HAS AN EMAIL AND A PUBLIC HANDLE. requireProfile made that optional, and
+  // everything downstream assumed it anyway: the handle is what every social surface shows and
+  // what a typed name resolves against, so with it off the fallback for "no handle" was the
+  // ACCOUNT KEY — the login identifier, and a real name for an SSO account. An operator could
+  // turn a privacy leak on from a checkbox that read like a convenience. It is not a choice.
+  'login.requireProfile',
+  // A LOGIN BYPASS IS NOT A SETTING. allowHarnessAuth is a fixed-password door for the
+  // automated browser tests; its own help text has to say "NEVER enable this on a server
+  // reachable from the internet", which is the clearest possible sign it does not belong on a
+  // page an operator clicks through. It stays reachable from config for the harness, where the
+  // person editing the file has already accepted what it is.
+  'login.allowHarnessAuth',
   // Not a question any more, anywhere: the server always supplies the game files ('serve'),
   // and per-player cloud copies belong to the game launcher. Old configs saying 'verify' are
   // still honoured at runtime; they just cannot be produced from here.
@@ -301,7 +342,15 @@ export function settingsView(dataDir: string, config: unknown): {
         ...(h?.danger ? { danger: h.danger } : {}),
       });
     }
-    sections.push({ name, label: labelFor(name), ...(SECTION_HELP[name] ? { help: SECTION_HELP[name] } : {}), fields });
+    // A SECTION WITH NOTHING TO SHOW AND NOTHING TO SAY IS NOT RENDERED. Locking a field
+    // hides it, and locking every field in a table left a bare accordion behind: a heading an
+    // operator opens, finds empty, and goes looking for the controls that used to be there.
+    // [setup] survives this because it carries help explaining that the wizard owns those
+    // answers, which is the question somebody opening it actually has. [gateway] does not:
+    // where the multiplayer server is was never a question, so there is nothing to explain.
+    if (fields.length > 0 || SECTION_HELP[name]) {
+      sections.push({ name, label: labelFor(name), ...(SECTION_HELP[name] ? { help: SECTION_HELP[name] } : {}), fields });
+    }
 
     // Nested tables become their own sections, e.g. auth.discord, so provider credentials
     // are editable instead of showing up as an "unsupported" blob.
@@ -516,6 +565,20 @@ export function applyWizard(
       next.auth = auth;
     }
   }
+
+  // EVERY SERVER THIS WIZARD SETS UP REQUIRES A PUBLIC HANDLE.
+  //
+  // Set here rather than forced in the config parser, which is where I put it first. The parser
+  // runs for EVERY deployment, including ones that already have players — turning it on under
+  // them refuses entry to every existing account without a profile until they finish
+  // onboarding. It also broke 61 tests, all of which join without one, and a blast radius that
+  // size was the change telling me it was in the wrong place.
+  //
+  // The wizard runs once, at the start, before anybody has an account to be locked out of. A
+  // deployment that predates this keeps whatever its file says; either way the toggle is gone
+  // from the settings page, because a handle is what every social surface shows and the
+  // fallback without one is the account key.
+  if (a.completed === true) merge('login', { requireProfile: true });
 
   if (a.deliveryModel === 'serve') {
     // The server is the source of truth for content, so the locker is how players get it.

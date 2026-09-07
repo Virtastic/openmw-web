@@ -128,6 +128,9 @@ export interface Config {
   // maxSaveBytesPerAccount caps server-side savegames, which are a separate budget from the
   // game-data library — a full library must not make the player unable to save.
   locker: {
+    /** Whether players may store anything on this server at all. See the parse for why this
+     *  is a real switch rather than "did you configure storage". */
+    enabled: boolean;
     endpoint: string; region: string; bucket: string; maxBytesPerAccount: number;
     acceptByNameAndSize: boolean; publicBase: string; maxSaveBytesPerAccount: number;
     accessKeyId: string; secretAccessKey: string;
@@ -552,6 +555,12 @@ function validate(t: Tree): Config {
       refuseUnownedDrops: optBool(t, 'economy', 'refuseUnownedDrops', false),
     },
     locker: {
+      // ON UNLESS SOMEBODY SAYS OTHERWISE. There was no off switch: "enabled" meant "storage
+      // is configured", and storage is ALWAYS configured because an absent S3 endpoint falls
+      // back to this server's own disk. So an operator who did not want to host anyone's files
+      // had no way to say so, and the settings page showed them a storage section with no
+      // indication of whether it was doing anything.
+      enabled: optBool(t, 'locker', 'enabled', true),
       endpoint: reqStr(t, 'locker', 'endpoint'),
       region: reqStr(t, 'locker', 'region'),
       bucket: reqStr(t, 'locker', 'bucket'),
