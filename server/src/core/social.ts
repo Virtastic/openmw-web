@@ -247,6 +247,15 @@ export class Social {
       blocked: this.d.store.blockedBy(acct).map(named) as unknown as never,
       muted: this.d.store.mutesOf(acct).map(named) as unknown as never,
       requests: this.d.store.pendingFor(acct, this.d.now()).map(named) as unknown as never,
+      // AND THE INVITES, for the same reason the requests are here. InviteReceived is pushed
+      // through the local roster only, and drainInvites runs at JOIN — so "come and play with
+      // me" sent to a friend sitting in their own game was stored and never mentioned until
+      // the next time they reconnected. They are stored shared precisely so they can cross a
+      // world; this is the delivery half. Carried in the snapshot, which the presence
+      // heartbeat resends, so it arrives while they are online and heals a missed event.
+      invites: this.d.store.invitesFor(acct, this.d.now())
+        .filter((inv) => !this.d.store.blockedEitherWay(acct, inv.from))
+        .map((inv) => named(inv.from)) as unknown as never,
     });
   }
 

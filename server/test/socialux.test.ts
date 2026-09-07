@@ -45,6 +45,9 @@ function world() {
     // In-world only, exactly like the real one: a display name is a thing you see here.
     findByName: (name: string) =>
       [...players.values()].find((p) => p.name.toLowerCase() === name.toLowerCase()),
+    // Everyone this world is holding. The presence heartbeat walks this to re-send the panel,
+    // which is how a snapshot reaches somebody without them rejoining.
+    inWorld: () => [...players.values()],
   } as unknown as Roster;
   const social = new Social({
     store, roster,
@@ -198,5 +201,43 @@ test('an invite from another world is accepted as a world switch, not refused', 
     `the invite was refused instead of routed: ${JSON.stringify(refusal?.body)}`);
   assert.ok(w.last('bob', 'JoinFriend'), 'the accept never reached the world-switch path');
   assert.equal(w.store.hasInvite(ada, 'bob', w.clock), false, 'the invite was not consumed');
+  w.close();
+});
+
+// "COME AND PLAY WITH ME" HAD TO REACH THEM. InviteReceived is pushed through the local roster
+// and drainInvites runs at JOIN, so an invite to a friend sitting in their own game was stored
+// and never mentioned until they next reconnected — delivered, in the sense that a letter left
+// in a drawer is delivered. The snapshot carries them now, and the presence heartbeat resends
+// it, so it arrives while they are online.
+test('a pending invite from another world is carried in the friend-list snapshot', () => {
+  const w = world();
+  const bob = w.add('bob', 'Bob');
+  const ada = w.register('ada', 'Ada'); // on the server, in her own game
+  w.store.setPresence(ada, 'adas-world', 'Ada', '10,10', false, w.clock);
+  w.store.addInvite(ada, 'bob', 'world', w.clock, 60_000);
+
+  // Nothing was pushed — Ada is not in this world, so there was no peer to push to.
+  assert.equal(w.last('bob', 'InviteReceived'), undefined, 'nothing could have been pushed');
+
+  w.social.refreshPresenceViews(); // the heartbeat, not a rejoin
+  const list = w.last('bob', 'FriendList');
+  const invites = (list?.body.invites ?? []) as { acct: string; name: string }[];
+  assert.deepEqual(invites.map((i) => i.acct), [ada],
+    `the snapshot must carry the pending invite: ${JSON.stringify(list?.body)}`);
+  assert.equal(invites[0]!.name, 'Ada', 'and name the inviter, not their account key');
+  w.close();
+});
+
+test('an invite from someone you blocked is not carried', () => {
+  const w = world();
+  const bob = w.add('bob', 'Bob');
+  const ada = w.register('ada', 'Ada');
+  w.store.addInvite(ada, 'bob', 'world', w.clock, 60_000);
+  w.social.block(bob, 'Ada');
+
+  w.social.refreshPresenceViews();
+  const list = w.last('bob', 'FriendList');
+  assert.deepEqual((list?.body.invites ?? []) as unknown[], [],
+    'a block must silence the invite too, or blocking leaks who is asking for you');
   w.close();
 });

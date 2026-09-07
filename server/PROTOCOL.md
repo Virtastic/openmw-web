@@ -627,14 +627,22 @@ returned by a previous `FriendList`:
 Server → client:
 
 - `FriendList{friends:[{acct, name, online, playerId?, cellKey?}], blocked:[{acct, name}],
-  muted:[{acct, name}], requests:[{acct, name}]}` — full snapshot, sent on join and after any
-  mutation (the client rebuilds its panel from it; there is no incremental form). `blocked` and
-  `muted` are the player's own lists, so the panel can offer the way back. `requests` is the
-  friend requests waiting for this player: `FriendRequestReceived` only reaches a target who is
-  in the sender's world, and two people each in their own game is the ordinary case, so the
-  snapshot is what actually delivers them
+  muted:[{acct, name}], requests:[{acct, name}], invites:[{acct, name}]}` — full snapshot, sent
+  on join, after any mutation, and on the presence heartbeat (the client rebuilds its panel from
+  it; there is no incremental form). `blocked` and `muted` are the player's own lists, so the
+  panel can offer the way back.
+
+  `requests` and `invites` are what is WAITING for this player, and the snapshot is what
+  actually delivers them. `FriendRequestReceived` and `InviteReceived` only reach a target who
+  is in the sender's world, and two people each in their own game is the ordinary case — so
+  without these fields a friend request or an invite sent across worlds was stored and never
+  mentioned until the recipient next reconnected. Blocked senders are filtered out of both.
 - `PresenceUpdate{acct, online, playerId?}`
-- `FriendRequestReceived{fromAcct, fromName}` · `InviteReceived{fromAcct, fromName}`
+- `FriendRequestReceived{fromAcct, fromName}` · `InviteReceived{fromAcct, fromName}` — both
+  are pushed only when the sender is in the RECIPIENT'S world. The `FriendList` snapshot
+  carries pending requests and invites for everyone else, and the presence heartbeat
+  resends it, so a request or invite from a friend in their own game arrives while the
+  recipient is online rather than on their next reconnect.
 - `InviteAccepted{cellKey, x, y, z}` — the host's live position, resolved server-side.
   The client travels to THIS rather than to a coordinate it chose: the server is the only
   party that knows where the host actually is.

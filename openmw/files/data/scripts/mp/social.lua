@@ -236,6 +236,14 @@ return {
             for _, r in ipairs(data.requests or {}) do
                 if r.acct then requests[r.acct] = r.name or r.acct end
             end
+            -- Same story for invites, and the same reason: InviteReceived only fires when the
+            -- inviter is in THIS world, and the server drains stored ones at join. A friend in
+            -- their own game inviting you while you sit in yours produced nothing at all until
+            -- you next reconnected. The snapshot is the delivery path that crosses worlds.
+            invites = {}
+            for _, iv in ipairs(data.invites or {}) do
+                if iv.acct then invites[iv.acct] = { name = iv.name or iv.acct } end
+            end
             -- Drop any pending request from someone who is now a friend. Clearing it only in
             -- the accept handler left the same person listed as BOTH a friend and a pending
             -- request whenever the accept happened another way — from a second session, or
