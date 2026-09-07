@@ -174,6 +174,19 @@ function saveName(v: unknown): string | undefined {
 // PUT, never confirm, repeat -- the bytes are in the bucket and `used()` never moves. An
 // authorisation therefore reserves its size until it is confirmed or expires.
 const RESERVE_TTL_MS = 5 * 60_000;
+/**
+ * HOW MANY OUTSTANDING AUTHORISATIONS ONE ACCOUNT MAY HOLD.
+ *
+ * The TTL bounds how LONG a reservation lives and the quota bounds how many BYTES it may claim,
+ * and neither bounds how MANY there are. An authorisation for size 0 is free against a quota
+ * measured in megabytes, so a signed-in player could ask for one in a loop: the array grows
+ * without limit, and because reserve() rebuilds it with a spread on every call, N requests cost
+ * O(N^2) work as well as O(N) memory. Nothing rate-limits this path.
+ *
+ * A client authorises one upload at a time and confirms it; this is far above any honest use,
+ * and low enough that the loop stops being interesting.
+ */
+const MAX_RESERVATIONS = 32;
 const reservations = new Map<string, { bytes: number; at: number }[]>();
 function pruneReservations(account: string): { bytes: number; at: number }[] {
   const now = Date.now();
@@ -184,8 +197,13 @@ function pruneReservations(account: string): { bytes: number; at: number }[] {
 function reservedBytes(account: string): number {
   return pruneReservations(account).reduce((n, r) => n + r.bytes, 0);
 }
-function reserve(account: string, bytes: number): void {
-  reservations.set(account, [...pruneReservations(account), { bytes, at: Date.now() }]);
+/** False when this account already holds MAX_RESERVATIONS live authorisations. */
+function reserve(account: string, bytes: number): boolean {
+  const live = pruneReservations(account);
+  if (live.length >= MAX_RESERVATIONS) return false;
+  live.push({ bytes, at: Date.now() });
+  reservations.set(account, live);
+  return true;
 }
 function release(account: string, bytes: number): void {
   const live = pruneReservations(account);
@@ -235,7 +253,14 @@ export function saveRoutes(deps: SaveRouteDeps): HttpRoute {
           json(res, 200, { ok: false, reason: 'quota' });
           return true;
         }
-        reserve(accountKey, size);
+        // Refused rather than queued: an account sitting at the cap is either broken or
+        // trying, and both are better told than accumulated. Same shape as the quota answer
+        // above so the client has one thing to handle.
+        if (!reserve(accountKey, size)) {
+          log('warn', 'saves.too_many_authorisations', { account: accountKey, cap: MAX_RESERVATIONS });
+          json(res, 200, { ok: false, reason: 'busy' });
+          return true;
+        }
         json(res, 200, { ok: true, url: await deps.storage.presignPut(keyOf(accountKey, scope, name), size) });
         return true;
       }

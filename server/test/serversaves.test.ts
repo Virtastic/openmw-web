@@ -326,3 +326,34 @@ test('multiplayer keeps the original storage layout', async () => {
   assert.equal(saveKey('ann', 'mp', 'S.omwsave'), 'saves/ann/S.omwsave');
   assert.equal(saveKey('ann', 'solo', 'S.omwsave'), 'saves/ann/solo/S.omwsave');
 });
+
+// AN AUTHORISATION IS FREE UNTIL IT IS BOUNDED.
+//
+// A reservation is bounded by a five-minute TTL (how long) and by the quota (how many BYTES),
+// and neither of those bounds how MANY there are. A size-0 authorisation costs nothing against
+// a quota measured in megabytes, so a signed-in player could ask for one in a loop: the array
+// grew without limit, and because reserve() rebuilt it with a spread every call, N requests
+// cost O(N^2) work as well as O(N) memory — on a path with no rate limiter in front of it.
+test('one account cannot hold unlimited outstanding upload authorisations', async () => {
+  const dir = tmpDataDir();
+  const h = await harness(dir, { 'tok-a': 'alice' });
+  try {
+    const ask = (i: number) => fetch(`${h.base}/saves/authorize-upload`, {
+      method: 'POST', headers: { authorization: 'Bearer tok-a' },
+      body: JSON.stringify({ name: `Loop ${i}.omwsave`, size: 0 }),
+    }).then((r) => r.json() as Promise<{ ok: boolean; reason?: string }>);
+
+    // Well inside the cap: an honest client authorises one at a time, so this must work.
+    const first = await ask(0);
+    assert.equal(first.ok, true, 'an ordinary authorisation must still be granted');
+
+    let refused: { ok: boolean; reason?: string } | undefined;
+    for (let i = 1; i < 200 && !refused; i++) {
+      const r = await ask(i);
+      if (!r.ok) refused = r;
+    }
+    assert.ok(refused, 'an account was allowed unlimited outstanding authorisations');
+    assert.equal(refused.reason, 'busy',
+      `the refusal must say why, in the same shape as the quota answer: ${JSON.stringify(refused)}`);
+  } finally { await h.close(); }
+});
