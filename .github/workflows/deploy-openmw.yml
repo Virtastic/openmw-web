@@ -30,6 +30,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Fetch engine artifacts from the release
+        id: bundle
         # Pass context through env, never interpolate ${{ }} into the shell body (a crafted release
         # tag name could otherwise inject commands).
         env:
@@ -50,6 +51,12 @@ jobs:
           test -f dist/web/index.html || { echo "FATAL: bundle has no index.html" >&2; exit 1; }
           ls dist/web/e/*/openmw.wasm >/dev/null || { echo "FATAL: bundle has no e/<hash>/openmw.wasm" >&2; exit 1; }
           echo "engine dir: $(ls -d dist/web/e/*/)"
+          # The version this image IS, for the tags below. Without it the only tags published
+          # were `latest` and `sha-<short>`: nothing to pin, and a rollback meant hunting for a
+          # commit hash. Emitted with and without the leading v, because an image tag
+          # conventionally carries the bare version while the release is vX.Y.Z.
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
 
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
@@ -64,6 +71,12 @@ jobs:
           tags: |
             type=raw,value=latest
             type=sha
+            # THE VERSION THIS IMAGE IS. `latest` says nothing about what is inside it and a
+            # sha says nothing a human can act on, so an operator had no way to pin a release
+            # or name the one to roll back to. Both forms, since the release is vX.Y.Z and an
+            # image tag is conventionally the bare version.
+            type=raw,value=${{ steps.bundle.outputs.version }}
+            type=raw,value=${{ steps.bundle.outputs.tag }}
 
       - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
