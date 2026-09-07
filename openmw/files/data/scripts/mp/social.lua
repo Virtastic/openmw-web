@@ -251,8 +251,16 @@ return {
             -- this client pressing anything.
             for _, f in ipairs(friends) do
                 requests[f.acct] = nil
-                invites[f.acct] = nil
             end
+            -- INVITES ARE NOT CLEARED HERE, and used to be. A pending friend REQUEST from
+            -- somebody who is already a friend is stale, which is what this loop is for. An
+            -- invite from a friend is the ordinary case — being friends is what lets them
+            -- invite you at all — so dropping it deleted the live ones. The panel showed the
+            -- card from MP_InviteReceived and then lost it on the very next snapshot, which
+            -- the presence heartbeat sends every ten seconds. "Come and play with me" was
+            -- readable for under ten seconds, in the same world, and nobody could say why.
+            -- An invite ends when it is accepted, declined, blocked or expires; the server
+            -- decides that and the snapshot reflects it.
             mirror()
             render()
         end,

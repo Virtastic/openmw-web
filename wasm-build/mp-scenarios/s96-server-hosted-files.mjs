@@ -25,7 +25,11 @@ import { startGatewayAndClient } from './_gateway.mjs';
 // the harness writes its own config and a scenario is the only place to say what it needs.
 export const serverRules = '[setup]\ndeliveryModel = "serve"';
 
-const GW_PORT = 18866;
+// Spaced ten apart from its neighbours on purpose: the gateway puts each world it
+// spawns on GW_PORT + 200 upward, one per client, so adjacent scenarios were handing
+// each other a port the previous run had not finished draining — which surfaces as
+// "the player own world must come up" and looks exactly like a broken product.
+const GW_PORT = 18880;
 
 export default async function run(ctx) {
   // The operator's library, as the dashboard's upload would leave it: real files under the

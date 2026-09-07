@@ -16,7 +16,11 @@ import { startGatewayAndClient, addClient } from './_gateway.mjs';
 
 const OWNER = { name: 'mods@example.com', password: 'a-long-enough-passphrase' };
 const STEP = 30_000;
-const GW_PORT = 18871;
+// Spaced ten apart from its neighbours on purpose: the gateway puts each world it
+// spawns on GW_PORT + 200 upward, one per client, so adjacent scenarios were handing
+// each other a port the previous run had not finished draining — which surfaces as
+// "the player own world must come up" and looks exactly like a broken product.
+const GW_PORT = 18930;
 
 export const bootTimeoutMs = 420_000;
 
