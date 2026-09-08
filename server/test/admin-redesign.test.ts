@@ -634,3 +634,35 @@ test('password sign-in is refused when the operator turned it off', async (t) =>
   });
   assert.equal(r.status, 403, 'the setting is the gate, not just a hidden button');
 });
+
+test('an operator can add a PLAYER without handing them the dashboard', async (t) => {
+  // On a password server there is no self-serve sign-up: /auth/password only ever logs an
+  // existing account in, and login.allowRegistration gates the SSO path alone. So this form is
+  // where a friend's account comes from -- and its role list held only viewer, moderator and
+  // owner. Adding someone to your game therefore gave them a login to your admin dashboard.
+  // '' is the same "no access" the per-account row has always understood.
+  const { call, token } = await boot(t);
+  const made = await call('/accounts/create', {
+    method: 'POST', token, body: { name: 'Friend', password: 'a-long-enough-passphrase', role: '' },
+  });
+  assert.equal(made.status, 200, `creating a player must be allowed: ${await made.text()}`);
+
+  // 1. They cannot reach the dashboard.
+  const login = await call('/login', { method: 'POST', body: { name: 'Friend', password: 'a-long-enough-passphrase' } });
+  assert.equal(login.status, 401, 'a player must not be able to sign in to the dashboard');
+
+  // 2. The control: the account really exists and really works -- otherwise "refused" above is
+  //    satisfied by never having created anything.
+  const listed = await (await call('/accounts', { token })).json() as
+    { accounts: { name: string; dashboardRole?: string | null }[] };
+  const row = listed.accounts.find((a) => a.name.toLowerCase() === 'friend');
+  assert.ok(row, 'the account must exist');
+  assert.ok(!row?.dashboardRole, `a player must hold no dashboard role, got ${row?.dashboardRole}`);
+
+  // 3. And the old behaviour still works, so this is an addition and not a swap.
+  assert.equal((await call('/accounts/create', {
+    method: 'POST', token, body: { name: 'Helper', password: 'a-long-enough-passphrase', role: 'moderator' },
+  })).status, 200);
+  const helper = await call('/login', { method: 'POST', body: { name: 'Helper', password: 'a-long-enough-passphrase' } });
+  assert.equal(helper.status, 200, 'a moderator created the same way still signs in');
+});

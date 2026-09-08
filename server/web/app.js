@@ -3780,13 +3780,15 @@ async function pageAccounts() {
             <input class="form-control" id="naPass" type="password" autocomplete="new-password"></div>
           <div class="col-sm-2"><label class="form-label small">Access</label>
             <select class="form-select" id="naRole">
-              <option value="moderator" selected>moderator</option>
+              <option value="" selected>player (no dashboard)</option>
+              <option value="moderator">moderator</option>
               <option value="viewer">viewer</option>
               <option value="owner">owner</option>
             </select></div>
           <div class="col-sm-2"><button class="btn btn-primary w-100" id="naGo">Create</button></div>
         </div>
-        <div class="form-text">Creates the account and grants dashboard access in one go.
+        <div class="form-text">Creates an account someone can sign in and play with. Leave the
+          access as <b>player</b> unless you also want them in this dashboard.
           To grant access to someone who already plays here, use their row below instead.</div>
         <div id="naErr" class="text-danger small"></div>
       </div></div>` : '')}

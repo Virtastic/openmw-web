@@ -1016,8 +1016,13 @@ export function adminRoutes(deps: AdminDeps) {
       if (body === undefined) return true;
       const name = String(body.name ?? '').trim();
       const password = String(body.password ?? '');
+      // '' MEANS A PLAYER, and it has to be offered here. On a password server there is no
+      // self-serve sign-up -- /auth/password only ever logs an existing account in -- so this
+      // form is where a friend's account comes from, and it could only make moderators,
+      // viewers and owners. Adding someone to your game therefore handed them your dashboard.
+      // The per-account row below has always understood '' as "no access"; creation now does too.
       const role = String(body.role ?? 'moderator');
-      if (!ROLE_SET.has(role)) { json(res, 400, { error: 'unknown role' }); return true; }
+      if (role !== '' && !ROLE_SET.has(role)) { json(res, 400, { error: 'unknown role' }); return true; }
       const why = accountNameProblem(name);
       if (why !== null) { json(res, 400, { error: `that name ${why}` }); return true; }
       const weak = passwordProblem(password, name);
@@ -1029,9 +1034,10 @@ export function adminRoutes(deps: AdminDeps) {
           : 'invalid name' });
         return true;
       }
-      await deps.accounts.setDashboardRole(name, role as DashboardRole);
+      if (role !== '') await deps.accounts.setDashboardRole(name, role as DashboardRole);
       await deps.accounts.flush();
-      log('warn', 'admin.account_created', { account: name.toLowerCase(), role, by: ctx.accountKey });
+      log('warn', 'admin.account_created',
+        { account: name.toLowerCase(), role: role || '(player)', by: ctx.accountKey });
       json(res, 200, { ok: true, name, role });
       return true;
     }
