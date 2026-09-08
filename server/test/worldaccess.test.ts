@@ -66,17 +66,16 @@ test('private world: owner in, stranger refused; party world: friends in', async
 
 // A FULL WORLD MUST NOT CLAIM TO BE A PRIVATE ONE.
 //
-// The whole-world ceiling (one peer simulates every occupied cell, so it is a memory
-// decision) used to live inside mayJoinWorld — a function that answers "may this account be
+// The ceiling used to live inside mayJoinWorld — a function that answers "may this account be
 // here", not "is there room". So the owner's 33rd friend was refused with "this world is
 // private": untrue, unfalsifiable from the player's side (it reads as the host going solo or
-// blocking them), and invisible to the host, who sees a working world and no error. Worse,
-// /status advertised [server].maxPlayers — 64 by default — so the number shown to everyone
-// was one nobody enforced, and the 32..64 window was pure misinformation.
+// blocking them), and invisible to the host, who sees a working world and no error.
 //
-// The ceiling is applied to the configured cap at boot instead, so the advertised seats, the
-// SERVER_FULL refusal and the admission check are the same number and that window is gone.
-test('the advertised player cap is the one actually enforced', async (t) => {
+// The capacity question belongs to the one place that can answer it out loud: the SERVER_FULL
+// disconnect. And the number it answers with is the OPERATOR'S — [server] maxPlayers, the same
+// one /status and the dashboard advertise. Advertised and enforced are the same number because
+// they are literally the same field, not because one was clamped to the other.
+test('the advertised player cap is the number the operator set, and the one enforced', async (t) => {
   const server = await startServer({
     requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
     configOverride: { server: { maxPlayers: 64 } },
@@ -85,8 +84,7 @@ test('the advertised player cap is the one actually enforced', async (t) => {
 
   const status = await (await fetch(`http://127.0.0.1:${server.port}/status`)).json() as
     { maxPlayers: number };
-  assert.ok(status.maxPlayers <= 32,
-    `advertised ${status.maxPlayers} seats, but a world admits at most 32 — the gap is where`
-    + ' a full world used to refuse friends with "this world is private"');
-  assert.equal(status.maxPlayers, 32, 'the configured 64 must be clamped to the world ceiling');
+  assert.equal(status.maxPlayers, 64,
+    'the operator asked for 64 seats; advertising anything else means the number shown is not'
+    + ' the number enforced, which is the gap a full world used to fill with "this world is private"');
 });
