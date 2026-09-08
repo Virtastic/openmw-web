@@ -302,6 +302,8 @@
  .mp-prov:hover{background:#fff} .mp-prov:active{transform:translateY(1px)}
  .mp-prov:focus-visible{outline:2px solid var(--gold); outline-offset:2px}
  .mp-prov svg{width:19px; height:19px; flex:none}
+ .mp-pw{margin-top:6px}
+ .mp-pw #mp-pw-go{margin-top:18px}
  .mp-fine{font-size:11.5px; color:var(--faint); line-height:1.55; margin:16px 0 0}
 
  /* Action cue - the whole tile is clickable, so this is a text prompt, not a button. */
@@ -635,20 +637,19 @@
      <p>Same account, same library. If you uploaded there, this just works, and the other way
         round.</p>`,
    mp: `
-     <div class="m-kicker">Play together &middot; single sign-on</div>
+     <!-- No "single sign-on" here: how you sign in depends on how THIS server was set up, and
+          describeThisServer() says so a few lines down once it has asked. -->
+     <div class="m-kicker">Play together</div>
      <h3 id="modal-title">Multiplayer</h3>
      <p>One account, one character, three ways to play: <b>solo</b> in your own private world,
         in a <b>party</b> with friends, or in the shared <b>public</b> world. Your character and
         progress follow you between all three, on any device.</p>
      <h4>Signing in</h4>
-     <p>Multiplayer uses <b>single sign-on</b> (e.g. Continue with Google), so there's no password
-        to create or manage. Signing in is what lets your character and saves persist and sync.</p>
+     <p id="mp-help-signin">Signing in is what lets your character and saves persist and sync.</p>
      <h4>Your game data</h4>
-     <p>The first time, you upload your own <b>Data Files</b> once to your private, account-only
-        locker; after that they stream back to you on any device. They stay private to you and are
-        never shared. You confirm they're your own backup copies of a game you legally own.</p>
+     <p id="mp-help-data">Checking how this server supplies the game…</p>
      <div class="m-hr"></div>
-     <p style="margin-top:16px">Just press <b>Sign in</b> and choose a provider.</p>`,
+     <p style="margin-top:16px" id="mp-help-go">Press <b>Sign in</b> to get started.</p>`,
    sample: `
      <div class="m-kicker">Free sample &middot; no download of the game</div>
      <h3 id="modal-title">The example world</h3>
@@ -772,7 +773,49 @@
  };
  (function(){
    const bd=$('modal-bd'), body=$('modal-body');
-   function open(key){ body.innerHTML = HELP[key]; bd.classList.add('show'); $('modal-close').focus(); }
+   function open(key){
+     body.innerHTML = HELP[key];
+     bd.classList.add('show'); $('modal-close').focus();
+     if (key === 'mp') describeThisServer();
+   }
+
+   // THIS SERVER, NOT THE HOSTED ONE. Every word under "Signing in" and "Your game data" used
+   // to be written for the hosted platform: single sign-on, and a per-player locker you upload
+   // your own Data Files to. On a self-hosted server that had already been set up for
+   // username-and-password with the game served from disk, both paragraphs were simply untrue --
+   // and the second one told a player to go and upload a copy of Morrowind that the operator
+   // had already installed for everyone. Ask the server instead; it answers both questions.
+   async function describeThisServer(){
+     let providers = [], password = false, serves = false;
+     try {
+       const doc = await (await fetch('/auth/providers')).json();
+       providers = doc.providers || [];
+       password = doc.allowPasswordLogin === true;
+     } catch(e){ /* leave the neutral wording in place */ }
+     // The manifest route 404s unless this server is set to serve the game itself, so its
+     // status IS the answer -- no second endpoint to keep in step with the first.
+     try { serves = (await fetch('/mwdata-manifest.json', { method:'HEAD' })).ok; } catch(e){}
+     const signin = $('mp-help-signin'), data = $('mp-help-data'), go = $('mp-help-go');
+     if (signin) {
+       signin.innerHTML = (password && providers.length ? 'Sign in with a <b>username and password</b>, or with an account you already have elsewhere. '
+         : password ? 'Sign in with the <b>username and password</b> the operator gave you. '
+         : providers.length ? 'Sign in with an account you already have (<b>single sign-on</b>), so there is no password to create or manage. '
+         : 'Sign-in is not set up on this server yet — ask the operator to turn on a way to sign in. ')
+         + 'Signing in is what lets your character and saves persist and sync.';
+     }
+     if (data) {
+       data.innerHTML = serves
+         ? 'Nothing to upload. <b>This server supplies the game</b> to everyone who plays on it, '
+           + 'so it streams to you when you join.'
+         : 'The first time, you upload your own <b>Data Files</b> once to your private, account-only '
+           + 'locker; after that they stream back to you on any device. They stay private to you and '
+           + 'are never shared. You confirm they’re your own backup copies of a game you legally own.';
+     }
+     if (go) {
+       go.innerHTML = 'Just press <b>Sign in</b>'
+         + (password && !providers.length ? '.' : ' and choose how you want to sign in.');
+     }
+   }
    function close(){ bd.classList.remove('show'); }
    // The "?" buttons live inside clickable cards — stop the event so the card's start/pick handler
    // doesn't also fire (on both click and keyboard activation).
@@ -1068,10 +1111,19 @@
    const http = httpBaseOf(url);
    if (!http){ mpNote('The multiplayer server is misconfigured. Contact the operator.','err'); return; }
    mpNote('Connecting…','muted');
-   let list;
+   let list, allowPassword;
    try {
      const r = await fetch(http + '/auth/providers', { mode:'cors' });
-     list = ((await r.json()) || {}).providers || [];
+     const doc = (await r.json()) || {};
+     list = doc.providers || [];
+     // THE SERVER SAYS SO IN THE SAME BREATH. This endpoint has always returned
+     // allowPasswordLogin next to the provider list, and only the provider list was ever read
+     // -- so a server set up for username-and-password (which the wizard offers first, and
+     // which /auth/password serves perfectly well) showed three greyed-out "Soon" buttons and
+     // told the player to go and ask the operator to enable something. The operator had
+     // already enabled it. This was the multiplayer door being shut on a correctly configured
+     // server, and the only way in was the other login page, which nothing links to from here.
+     allowPassword = doc.allowPasswordLogin === true;
    } catch(e){
      mpNote('Could not reach the multiplayer server. It may be down, try again shortly.','err');
      return;
@@ -1097,8 +1149,49 @@
      }
      box.appendChild(b);
    });
-   if (!firstLive) mpNote('No sign-in provider is enabled yet. Ask the operator to turn one on.','err');
-   else firstLive.focus();
+   if (allowPassword) mpPasswordForm(box, http);
+   if (!firstLive && !allowPassword) {
+     mpNote('No sign-in provider is enabled yet. Ask the operator to turn one on.','err');
+   } else if (firstLive) firstLive.focus();
+ }
+
+ // Username-and-password sign-in, rendered under the provider line-up when the server accepts
+ // it. /auth/password answers with exactly what an SSO round trip comes back with -- a boot
+ // ticket, the account key and a locker token -- so this hands off through the SAME fragment
+ // the redirect would have returned, and handleSsoReturn does the rest. One entry path for
+ // both doors: a second copy of character select and world dial-in is how they drift apart.
+ function mpPasswordForm(box, http){
+   const wrap = document.createElement('form');
+   wrap.className = 'mp-pw';
+   wrap.innerHTML =
+     '<label class="ob-field"><span>Username</span><input id="mp-pw-name" autocomplete="username" required></label>'
+   + '<label class="ob-field"><span>Password</span><input id="mp-pw-pass" type="password" autocomplete="current-password" required></label>'
+   + '<button class="mp-prov" id="mp-pw-go" type="submit"><span>Sign in</span></button>';
+   box.appendChild(wrap);
+   wrap.addEventListener('submit', async function(e){
+     e.preventDefault();
+     const go = $('mp-pw-go');
+     go.disabled = true;
+     mpNote('Signing in…','muted');
+     let doc;
+     try {
+       const r = await fetch(http + '/auth/password', {
+         method:'POST', mode:'cors', headers:{ 'content-type':'application/json' },
+         body: JSON.stringify({ name: $('mp-pw-name').value.trim(), password: $('mp-pw-pass').value }),
+       });
+       doc = await r.json();
+       if (!r.ok) { mpNote((doc && doc.error) || 'Could not sign in.','err'); go.disabled = false; return; }
+     } catch(err){
+       mpNote('Could not reach the multiplayer server. It may be down, try again shortly.','err');
+       go.disabled = false; return;
+     }
+     // Same as mpGoProvider: remember which tile asked, because the reload below loses it.
+     try { sessionStorage.setItem('omw-signin-intent', window.__omwSignInIntent || 'mp'); } catch(err){}
+     location.hash = '#mpticket=' + encodeURIComponent(doc.ticket)
+       + '&mpaccount=' + encodeURIComponent(doc.account)
+       + (doc.locker ? '&mplocker=' + encodeURIComponent(doc.locker) : '');
+     location.reload();
+   });
  }
 
  // First-login onboarding modal: collect a unique public username (and email if we have none),
