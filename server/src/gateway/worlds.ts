@@ -475,9 +475,17 @@ export class WorldSupervisor {
     for (const w of [...this.worlds.values()]) {
       if (!w.everConnected) {
         // Never joined: keep it until the startup grace elapses, then reap a truly-stale spawn.
+        //
+        // DISCARD, not stop. stop() ends the process and leaves the directory, so every
+        // abandoned sign-in left a world folder behind for ever -- and a world is created
+        // BEFORE Morrowind's character creation finishes, so backing out of chargen is enough
+        // to make one. Measured on a fresh box: five directories, none running, against a
+        // gateway capacity of twelve. Nobody ever connected to these, so there is no cell
+        // state, no journal and no save to lose; a world that WAS played keeps its directory
+        // through the idle path below, which is the one that must never delete anything.
         if (now - w.startedAt > WorldSupervisor.STARTUP_GRACE_MS) {
           log('info', 'world.reaped', { id: w.id, reason: 'never_joined', ageMs: now - w.startedAt });
-          this.stop(w.id);
+          void this.discard(w.id, { reason: 'never_joined' });
         }
         continue;
       }

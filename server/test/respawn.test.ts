@@ -78,3 +78,28 @@ test('...and does not warn on the demo itself', () => {
   respawn.onServerStart!(api);
   assert.equal(logs.filter((l) => l.event === 'respawn.demo_default_on_real_world').length, 0);
 });
+
+// THE WARNING HAS TO MEAN SOMETHING WHEN SOMEBODY ACTUALLY DIES.
+//
+// onServerStart says the demo coordinate on real content is misconfigured — and onPlayerDeath
+// used it anyway, teleporting the first player who died into a cell their game does not
+// contain. The warning fired on every world boot of the shipped default, so the misconfigured
+// state was the DEFAULT one, not an unusual one.
+test('on real content the demo respawn point is ignored, not teleported into', () => {
+  const here = { cellKey: 'imperial prison ship', x: 61, y: -135, z: -104 };
+  const { api, events, logs } = fakeApi({ simPeer: true, positions: { 1: here } });
+  respawn.onPlayerDeath!(api, DEAD);
+  const res = events.find((e) => e.name === 'PlayerResurrect');
+  assert.deepEqual(res!.body, { ...here, restoreHp: true },
+    'a world running real content must not send a player to the Example Suite village');
+  assert.ok(logs.some((l) => l.event === 'respawn.demo_default_ignored'),
+    'and it must say why it disregarded the configured point');
+});
+
+// The control: on the demo itself the configured point is exactly right, and still used.
+test('on the demo the configured respawn point is still honoured', () => {
+  const { api, events } = fakeApi({ simPeer: false, positions: { 1: { cellKey: 'x', x: 9, y: 9, z: 9 } } });
+  respawn.onPlayerDeath!(api, DEAD);
+  const res = events.find((e) => e.name === 'PlayerResurrect');
+  assert.deepEqual(res!.body, { cellKey: '26,25', x: 216831, y: 204909, z: 513, restoreHp: true });
+});

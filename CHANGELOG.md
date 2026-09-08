@@ -2,6 +2,56 @@
 
 Notable changes to OpenMW-Web. Dates are release dates, newest first.
 
+## 1.3.4
+
+Multiplayer had never simulated a world on a released image. Found by playing the game as a
+player — signing in at the front door with a username and a password, on a server hosting the
+files — rather than by reading it or running the suite.
+
+**The simulation peer could not start. At all.** 1.3.2 correctly made the entrypoint drop
+privileges, so the server runs as an ordinary user; the peer still inherited `HOME=/root`, and
+OpenMW resolves its data path from `HOME` before reading a line of config. It died with
+`Permission denied [/root/.local/share/openmw/data]` and respawned in a loop. Nothing about
+that reaches the player: the world is up, they join it, and they sit on "waiting for the world
+to be simulated" for ever with no NPCs, because a cell only gets an authority holder when a
+peer takes it. The server reports itself healthy throughout.
+
+**Players were asked to upload a game the server already serves.** `/locker/needed` answers
+"which files does this world load", built from the operator's own install, and the client reads
+it as "which files must be in my locker". Those are the same list only when the player is the
+one supplying the game — so a server-hosted deployment showed a six-file, half-gigabyte upload
+checklist for a game the operator had installed once for everybody.
+
+**And the flag that fixes it was dead on arrival.** The game page has always understood a
+"the server holds the data" marker and nothing ever set it — because it could not work: the
+multiplayer branch scrubs the URL fragment the moment it reads the sign-in ticket, and the line
+reading the marker looked at the fragment afterwards.
+
+**A deploy could reach half a client.** The app shell was served with no cache directive, so
+browsers cached it heuristically: the launcher would update while the game page stayed stale,
+and the two then disagreed about the fragment they hand each other. The shells revalidate now;
+the engine stays cached, since a stale one is refused loudly by its hash instead of
+misbehaving quietly.
+
+**Dying on a real server sent you to a cell that does not exist.** The shipped respawn point is
+the Example Suite village. The server warned about that at every boot and then used it anyway,
+teleporting the first player who died into the demo's coordinates. On real content it is now
+treated as unset, which puts them back where they fell — somewhere that exists — and the
+dashboard's "respawn here" sets a real one in a click.
+
+**Every abandoned sign-in leaked a world.** A world is created before Morrowind's character
+creation finishes, so backing out of chargen made one, and the reaper stopped the process while
+leaving the directory. Five of them on a fresh box, none running, against a capacity of twelve.
+Worlds nobody ever joined now take their directory with them; a world that was played keeps its
+data exactly as before.
+
+New browser scenario: the front door. Every existing scenario boots the game page directly with
+an auto-login, which is a side door built for tests — so the sign-in a real player uses, and
+the locker gate behind it, had never been exercised by anything. That is why all of the above
+survived 1052 unit tests, 70 browser scenarios and three deploy health gates.
+
+1052 server tests, 0 failed.
+
 ## 1.3.3
 
 Found by running it, not by reading it. 1.3.2 fixed what the two programs disagreed about;

@@ -6,7 +6,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { mkdtempSync } from 'node:fs';
+import { existsSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ChildProcess } from 'node:child_process';
@@ -65,7 +65,7 @@ function harness(over: Partial<WorldSettings> = {}) {
       name: `w${port}`,
     }),
   });
-  return { sup, spawned, counts, peers, down, advance: (ms: number) => { clock += ms; } };
+  return { sup, spawned, counts, peers, down, settings, advance: (ms: number) => { clock += ms; } };
 }
 
 test('worlds: each world gets its own data dir and port', () => {
@@ -504,4 +504,47 @@ test('a world that answers again after a blip keeps its slot', async () => {
   advance(10 * 60_000); // long past the window, but it is answering now
   await sup.poll();
   assert.equal(sup.running, 1, 'recovering must clear the down clock, not merely pause it');
+});
+
+// AN ABANDONED SIGN-IN USED TO LEAVE A WORLD DIRECTORY BEHIND FOR EVER.
+//
+// A world is created BEFORE Morrowind's character creation finishes, so backing out of chargen
+// is enough to make one — and the never-joined reaper called stop(), which ends the process and
+// leaves the directory. Measured on a real box: five directories, none running, against a
+// gateway capacity of twelve. Nobody ever connected to these, so there is no cell state, no
+// journal and no save to lose.
+test('a world nobody ever joined is discarded, directory and all', async () => {
+  const { sup, settings, advance } = harness();
+  sup.ensure('abandoned', 'private', 'someone');
+  const dir = join(settings.worldsDir, 'abandoned');
+  assert.ok(existsSync(dir), 'the world must have a data directory to begin with');
+
+  // Inside the startup grace: a first-play client can spend minutes fetching its data.
+  await sup.poll();
+  assert.ok(existsSync(dir), 'a world still inside its startup grace must be left alone');
+
+  advance(60 * 60_000);
+  await sup.poll();
+  sup.sweep();
+  await new Promise((r) => setTimeout(r, 50)); // discard() is async
+  assert.equal(existsSync(dir), false,
+    'a world nobody ever joined must take its directory with it, or every abandoned sign-in leaks one');
+});
+
+// THE CONTROL, and the one that must never break: a world somebody PLAYED keeps its data when
+// the idle reaper stops it. That directory is their cell state, their journal and their saves.
+test('a world that was played keeps its directory when it goes idle', async () => {
+  const { sup, settings, counts, advance } = harness();
+  sup.ensure('played', 'private', 'someone');
+  const dir = join(settings.worldsDir, 'played');
+  counts.set(40000, 1);
+  await sup.poll();          // everConnected
+  counts.set(40000, 0);
+  await sup.poll();          // now idle
+  advance(60 * 60_000);
+  await sup.poll();
+  sup.sweep();
+  await new Promise((r) => setTimeout(r, 50));
+  assert.equal(sup.running, 0, 'an idle world is stopped');
+  assert.ok(existsSync(dir), 'but a world that was PLAYED must keep its data');
 });

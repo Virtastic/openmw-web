@@ -40,9 +40,24 @@ export const respawn: Plugin = {
 
   onPlayerDeath(api, player) {
     const r = api.config.rules;
-    const configured = r.respawnCellKey !== ''
+    // THE BOOT WARNING HAS TO MEAN SOMETHING AT RUNTIME TOO. onServerStart already says that
+    // the demo's coordinate on a world running real content is misconfigured -- and then this
+    // used it anyway, teleporting the first player who died into a cell their game does not
+    // contain. Same condition as the warning, so the two cannot disagree: on real content the
+    // demo default is treated as NOT SET, which falls through to where they fell. Respawning
+    // on the spot is not vanilla, but it is somewhere that exists, and the operator has a
+    // one-click fix on the dashboard (admin "respawn here", against a standing player).
+    const demoOnRealContent = r.respawnCellKey === DEMO_RESPAWN_CELL && api.config.simPeer.enabled;
+    const configured = r.respawnCellKey !== '' && !demoOnRealContent
       ? { cellKey: r.respawnCellKey, x: r.respawnX, y: r.respawnY, z: r.respawnZ }
       : undefined;
+    if (demoOnRealContent) {
+      api.log('warn', 'respawn.demo_default_ignored', {
+        id: player.id, cellKey: DEMO_RESPAWN_CELL,
+        note: 'the configured respawn is the Example Suite village and this world runs real '
+          + 'content; respawning where they fell instead of somewhere that does not exist',
+      });
+    }
     // Where they fell. Last resort, but never nowhere.
     const whereTheyFell = api.posOfPlayer?.(player.id);
 
