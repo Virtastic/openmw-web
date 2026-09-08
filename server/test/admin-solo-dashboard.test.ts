@@ -137,18 +137,38 @@ test('every hidden name is a real section, not a typo', () => {
 
 // --- fields the operator is not asked for ----------------------------------------------------
 
-test('publicBase is never offered, in either mode', () => {
-  // The wizard already asked for the domain, generated the proxy config from it and got a
-  // certificate for it. Asking again under another name is a second chance to get it wrong,
-  // and every wrong answer is silent.
+test('publicBase is not offered once the server knows the origin, in either mode', () => {
+  // "Stop asking for what the server already knows" -- the wizard asked for the domain,
+  // generated the proxy config from it and got a certificate for it, so asking again under
+  // another name is a second chance to get it wrong and every wrong answer is silent.
+  //
+  // That premise is what decides it, so the test now supplies it. Held without a domain, the
+  // rule outran its own reason: "internal or behind your own proxy" asks for no domain, the
+  // base falls back to http://127.0.0.1:<port>, and every player on another machine gets save
+  // and upload URLs pointing at their OWN loopback. The server warns and names [locker]
+  // publicBase as the fix -- which the dashboard then refused to accept, leaving the operator
+  // hand-editing config.toml, the one thing this dashboard exists to avoid.
   for (const mode of ['single', 'multiplayer']) {
     const v = settingsView(mkdtempSync(join(tmpdir(), 'set-')), {
-      setup: { deploymentMode: mode }, locker: { publicBase: '', maxBytesPerAccount: 1 },
+      setup: { deploymentMode: mode, domain: 'example.test' },
+      locker: { publicBase: '', maxBytesPerAccount: 1 },
     });
     const locker = v.sections.find((s) => s.name === 'locker')!;
     assert.deepEqual(locker.fields.filter((f) => f.key === 'publicBase'), [], `shown in ${mode}`);
     assert.ok(locker.fields.some((f) => f.key === 'maxBytesPerAccount'), 'the section still renders');
   }
+});
+
+test('publicBase IS offered when no domain was ever captured', () => {
+  // The other half of the rule above: nobody was asked, so nothing is being restated, and the
+  // derived value is loopback -- useless to anyone not sitting at the machine.
+  const v = settingsView(mkdtempSync(join(tmpdir(), 'set-')), {
+    setup: { deploymentMode: 'multiplayer', domain: '' },
+    locker: { publicBase: '', maxBytesPerAccount: 1 },
+  });
+  const locker = v.sections.find((s) => s.name === 'locker')!;
+  assert.ok(locker.fields.some((f) => f.key === 'publicBase'),
+    'with no domain the operator must be able to say what origin their players use');
 });
 
 test('the shared admin token is offered in multiplayer and not in single player', () => {
