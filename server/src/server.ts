@@ -1096,6 +1096,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     }),
     lockerRoutes({
       locker, sessions: lockerSessions,
+      servesGameData: () => config.setup.deliveryModel === 'serve',
       eraseSaves: (acct) => eraseSaves(sharedDir, acct, lockerStorage),
     }),
   )), () => (setupMode ? blockers : []));

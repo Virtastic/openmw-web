@@ -373,6 +373,7 @@ export async function buildFrontDoor(
     orderedContent(gameDataDir(sharedDir), sharedDir));
   const locker2 = lockerRoutes({
     locker, sessions: lockerSessions,
+    servesGameData: () => config.setup.deliveryModel === 'serve',
     requiredContent: () => (worldContent.ok ? worldContent.contentFiles : []),
     eraseSaves: (acct) => eraseSaves(sharedDir, acct, storage),
   });

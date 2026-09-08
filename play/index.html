@@ -2071,7 +2071,16 @@ window.omw = (function(){
        // unreachable — sending the token to get saves forced the locker, and withholding it to
        // get the hosted library silently took saves with it. mwdata=1 says the server holds
        // the data; the token still rides along and still buys saves below.
-       var __hostedData = /[#&]mwdata=1\b/.test(location.hash || '');
+       //
+       // READ IT FROM THE SAVED FRAGMENT TOO, and that is what made this flag dead on arrival.
+       // The multiplayer branch above scrubs location.hash the moment it reads mpticket -- a
+       // single-use credential must not sit in history -- keeping the fragment in
+       // window.__omwBootFrag instead. mpticket is ALWAYS present on the multiplayer path, so
+       // location.hash is ALWAYS empty by the time this line runs: #mwdata=1 could never be
+       // seen here and setting it would have changed nothing. __omwBootFrag has the leading
+       // '#' stripped, hence the start-of-string alternative in the pattern.
+       var __bootFrag = String(window.__omwBootFrag || location.hash || '');
+       var __hostedData = /(^|[#&])mwdata=1($|[&#])/.test(__bootFrag);
        var __mpLocker = !!window.__omwLockerToken && !__hostedData;
 
        // SCRUB THE CLOUD FRAGMENT, for the same reason the multiplayer branch scrubs its own.

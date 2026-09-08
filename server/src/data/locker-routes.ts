@@ -36,6 +36,9 @@ export interface LockerRouteDeps {
   requiredContent?: () => string[];
   /** Delete-my-data must take the savegames with it; supplied where saveRoutes is mounted. */
   eraseSaves?: (accountKey: string) => Promise<number>;
+  /** Does THIS server hand the game out itself ([setup] deliveryModel = "serve")? When it
+   *  does, a player has nothing to upload and must not be asked to. */
+  servesGameData?: () => boolean;
 }
 
 function json(res: ServerResponse, code: number, body: unknown): void {
@@ -144,8 +147,24 @@ export function lockerRoutes(deps: LockerRouteDeps) {
 
       // The upload wizard's checklist: which files the server expects, required vs optional.
       if (req.method === 'GET' && url.pathname === '/locker/needed') {
+        // NOTHING IS NEEDED FROM THE PLAYER WHEN THE SERVER SUPPLIES THE GAME.
+        //
+        // requiredManifest() answers "which files does this world load", built from the
+        // operator's own install. The launcher's boot gate reads it as "which files must be in
+        // MY locker" and opens the upload wizard for every one the account has not uploaded.
+        // Those are the same list only when the player is the one supplying the game.
+        //
+        // With deliveryModel = "serve" the operator installed Morrowind once for everybody and
+        // /mwdata/* streams it. The player still got the full six-file checklist -- "Add your
+        // Morrowind files ... it uploads to your private locker" -- on a server that had
+        // already provided them. Serving the files was wired; the list telling the player to
+        // upload them was not, which is the same one-half-of-two-programs shape as the rest.
+        //
+        // `content` is unrelated and still sent: it is what the world LOADS, and a client whose
+        // content does not match is refused at the door whoever supplied the bytes.
+        const serves = deps.servesGameData?.() === true;
         json(res, 200, {
-          files: deps.locker.requiredManifest(),
+          files: serves ? [] : deps.locker.requiredManifest(),
           // What the world runs. A client missing any of these cannot join it, so the
           // launcher refuses to start rather than letting them find out three screens later.
           content: deps.requiredContent?.() ?? [],

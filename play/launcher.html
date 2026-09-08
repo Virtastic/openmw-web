@@ -1400,7 +1400,20 @@
    // mphome: the player's OWN world, so the switcher can come back to it after a reboot into
    // some other world. Same value as mp= on this first boot; a switch rewrites mp= and keeps
    // this untouched, which is the whole point.
-   const frag = '#mphome=' + encodeURIComponent(worldWs)
+   // DOES THIS SERVER HAND OUT THE GAME? index.html has always understood #mwdata=1 -- "the
+   // server holds the data; the token still rides along and still buys saves" -- and nothing
+   // ever set it, so the multiplayer boot always took the locker path. On a server-hosted
+   // deployment that meant the player was shown "Add your Morrowind files" and asked to upload
+   // ~560 MB the operator had already installed for everyone; and once the server stopped
+   // CLAIMING to need them, the same gate bounced the player out with "this server has no game
+   // manifest configured yet", because an empty locker plus an empty needed-list reads as a
+   // broken server unless you know the server is the one supplying the bytes.
+   //
+   // The manifest route answers 404 unless deliveryModel is "serve", so its status IS the
+   // question. Failure is treated as "not hosted", which is the behaviour that existed before.
+   let hosted = false;
+   try { hosted = (await fetch('/mwdata-manifest.json', { method: 'HEAD' })).ok; } catch(e){}
+   const frag = (hosted ? '#mwdata=1&mphome=' : '#mphome=') + encodeURIComponent(worldWs)
      + '&mp=' + encodeURIComponent(worldWs)
      + '&locker=' + encodeURIComponent(sess.gwHttp)
      + '&mpticket=' + encodeURIComponent(ticket)

@@ -146,3 +146,19 @@ test('public hosting is unchanged: a real certificate, and localhost as a way ba
   assert.match(out, /tls internal/);
   assert.doesNotMatch(out, /auto_https off/, 'the public path must still provision certificates');
 });
+
+test('the app shell revalidates, so a deploy cannot reach half a client', () => {
+  // file_server sends ETag and Last-Modified and no Cache-Control, so a browser falls back to
+  // heuristic freshness and serves the shell from cache without asking. That is how a deploy
+  // lands on half a client: launcher.html updated, index.html still the old copy, and the two
+  // disagreeing about the boot fragment they hand each other -- which is silent, and presents
+  // as the feature simply not working. Measured in a real browser: fetch with cache:'no-store'
+  // had the new code and the ordinary fetch did not, on the same page load.
+  const cfg = renderCaddyfile({ domain: '' });
+  assert.match(cfg, /@shell path \*\.html \//, 'the html shell needs its own matcher');
+  assert.match(cfg, /header @shell Cache-Control "no-cache"/,
+    'the shell must revalidate; no-cache means "ask first", not "do not store"');
+  // The engine is deliberately NOT in it: openmw.wasm/.data are tens of megabytes and a stale
+  // one is refused loudly by the engine hash at SessionHello.
+  assert.doesNotMatch(cfg, /@shell path[^\n]*\.wasm/, 'the engine must stay cacheable');
+});

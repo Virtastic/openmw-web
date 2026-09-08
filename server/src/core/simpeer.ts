@@ -237,6 +237,19 @@ export class SimPeerSupervisor {
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       OPENMW_HEADLESS: '1',
+      // HOME MUST BE WRITABLE BY WHOEVER WE ARE, and after the entrypoint drops privileges we
+      // are not root any more. OpenMW resolves its user data path from HOME before it reads a
+      // single line of config (files/linuxpath.cpp -> ~/.local/share/openmw), so an inherited
+      // HOME=/root killed the peer on startup, every time, as uid 1001:
+      //
+      //   Fatal error: filesystem error: status: Permission denied [/root/.local/share/openmw/data]
+      //
+      // It respawned and died in a loop, and NOTHING about that reaches the player: the world
+      // is up, they join it, and they sit on "Waiting for the world to be simulated..." for
+      // ever with no NPCs, because a cell only gets an authority holder when a peer takes it.
+      // The peer's own config directory is ours by construction -- this process just wrote the
+      // openmw.cfg in it -- so point HOME there.
+      HOME: s.configDir,
       // engine.cpp only forces SingleThreaded under __EMSCRIPTEN__, so a native peer keeps a
       // draw thread parked forever in ThreadSafeQueue::takeFront() drawing nothing. OSG reads
       // this env var itself (ViewerBase.cpp), so no patch is needed.

@@ -155,6 +155,22 @@ ${launcher ? '' : `	# THE LAUNCHER IS OFF UNLESS SOMEBODY ASKED FOR IT (OMW_ENAB
 	# server's paths, so it cannot drift as the server grows new ones, and it degrades
 	# correctly: with no client files staged, /srv/client is empty, nothing matches, and every
 	# request goes to the server.
+	# THE APP SHELL MUST REVALIDATE, THE ENGINE MAY NOT.
+	#
+	# file_server sends ETag and Last-Modified and no Cache-Control at all, so a browser falls
+	# back to HEURISTIC freshness -- roughly a tenth of the file's age -- and serves the shell
+	# from cache without asking. That is how a deploy reaches half a client: launcher.html
+	# updated, index.html still the old copy, and the two halves disagreeing about the boot
+	# fragment they pass each other. Measured here: a fetch with cache:'no-store' had the new
+	# code and the ordinary one did not, on the same page load.
+	#
+	# no-cache does NOT mean "do not store" -- it means "revalidate before use", so the usual
+	# answer stays a 304 with no body. The engine keeps heuristic caching: openmw.wasm/.data
+	# are tens of megabytes, and a stale one is refused loudly at SessionHello by the engine
+	# hash rather than silently misbehaving like a stale shell.
+	@shell path *.html /
+	header @shell Cache-Control "no-cache"
+
 	@static file
 	handle @static {
 		file_server {
