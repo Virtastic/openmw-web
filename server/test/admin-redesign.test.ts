@@ -666,3 +666,35 @@ test('an operator can add a PLAYER without handing them the dashboard', async (t
   const helper = await call('/login', { method: 'POST', body: { name: 'Helper', password: 'a-long-enough-passphrase' } });
   assert.equal(helper.status, 200, 'a moderator created the same way still signs in');
 });
+
+test('the locker origin is offered exactly when the wizard never asked for one', async (t) => {
+  // "Internal or behind your own proxy" captures no domain, so lockerPublicBase falls back to
+  // http://127.0.0.1:<port>. That is correct for the operator sitting at the machine and wrong
+  // for every friend on the LAN: their browser resolves it to their own loopback and every save
+  // and upload fails. The server warns and names [locker] publicBase as the fix -- so the
+  // dashboard has to accept it. It was refused, which made the warning a dead end.
+  //
+  // Two servers rather than one POST: settingsView reads the RUNNING config, and the wizard
+  // restarts the server precisely so a domain change takes effect. Asserting across a restart
+  // is what the operator actually experiences.
+  const offers = async (override: Record<string, unknown>) => {
+    const { call, token } = await boot(t, override);
+    const view = await (await call('/settings', { token })).json() as
+      { sections: { name: string; fields: { key: string }[] }[] };
+    const has = view.sections.find((x) => x.name === 'locker')?.fields.some((f) => f.key === 'publicBase');
+    return { has, call, token };
+  };
+
+  // No domain: offered, and the value the warning asks for is accepted.
+  const lan = await offers({});
+  assert.equal(lan.has, true, 'with no domain the operator must be able to say what origin players use');
+  const saved = await lan.call('/settings/locker', {
+    method: 'PUT', token: lan.token, body: { publicBase: 'http://192.168.1.50' },
+  });
+  assert.equal(saved.status, 200, `the fix the warning names must be accepted: ${await saved.text()}`);
+
+  // With a domain the wizard already asked, derived it, and issued a certificate for it.
+  const hosted = await offers({ setup: { domain: 'example.test' } });
+  assert.equal(hosted.has, false,
+    'with a domain this is derived; asking again is a second chance to get it wrong');
+});

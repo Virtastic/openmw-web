@@ -118,7 +118,15 @@ export const SOLO_KEEP_FIELDS: Record<string, string[]> = {
  * question to anyone who has not already answered it.
  */
 export const DERIVED_FIELDS = [
-  'locker.publicBase',
+  // locker.publicBase is NOT here. Hiding it and REFUSING it are different things, and it only
+  // ever needed the first. Refusal is for fields where a POST is an attack -- setup.completed
+  // reopens first-run setup on a live server -- but writing your own locker origin is just
+  // configuration. Refusing it created a dead end on the one path where the derivation cannot
+  // work: "internal / behind your own proxy" asks for no domain, so the base falls back to
+  // http://127.0.0.1:<port>, every player on another machine on the LAN gets save and upload
+  // URLs pointing at their OWN loopback, and the server's warning tells the operator to set a
+  // field the dashboard refused to accept. It is hidden below when a domain exists (the wizard
+  // did ask, so asking again is the restated-fact problem) and offered when one does not.
   // [setup] is the wizard's record of the answers, and only SOME of it is live configuration.
   //
   // domain, hosting, deploymentMode and contentProfile are read at runtime: they decide the
@@ -295,6 +303,12 @@ export function settingsView(dataDir: string, config: unknown): {
   const overrides = readDashboardTree(dataDir);
   const sections: SectionView[] = [];
   const soloMode = (cfg.setup as { deploymentMode?: string } | undefined)?.deploymentMode === 'single';
+  // A domain means the wizard already asked for the origin, generated the proxy config from it
+  // and issued a certificate for it, so the locker base is derived and restating it is a second
+  // chance to get it wrong. With no domain nobody was ever asked, and the derived value is
+  // loopback -- useless to anyone not sitting at the machine -- so the operator must be able
+  // to say what origin their players actually use.
+  const hasDomain = String((cfg.setup as { domain?: string } | undefined)?.domain ?? '') !== '';
 
   for (const [name, body] of Object.entries(cfg)) {
     // `stated` is a Set the loader adds for its own bookkeeping, and dashboardFallback is
@@ -323,6 +337,7 @@ export function settingsView(dataDir: string, config: unknown): {
       // already knows both facts and a field that is never sent cannot be saved by accident.
       const path = `${name}.${key}`;
       if (DERIVED_FIELDS.includes(path)) continue;
+      if (hasDomain && path === 'locker.publicBase') continue;
       if (soloMode && SOLO_HIDE_FIELDS.includes(path)) continue;
       if (soloMode && SOLO_KEEP_FIELDS[name] && !SOLO_KEEP_FIELDS[name]!.includes(key)) continue;
       const type = fieldType(value);
