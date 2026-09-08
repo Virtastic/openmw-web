@@ -2,6 +2,99 @@
 
 Notable changes to OpenMW-Web. Dates are release dates, newest first.
 
+## 1.3.3
+
+Found by running it, not by reading it. 1.3.2 fixed what the two programs disagreed about;
+1.3.3 is what a player and an operator actually hit when you walk the product end to end.
+
+**A friend handed the server address could not get in.** The Multiplayer card offered three
+greyed-out "Soon" buttons and told them to ask the operator to enable a sign-in method. The
+operator had already enabled one: `/auth/providers` has always reported `allowPasswordLogin`
+beside the provider list, and the launcher read only the list. Password sign-in now renders
+there and hands off through the same path the SSO redirect takes, so character select and world
+dial-in stay one path rather than two that drift.
+
+**The page described a different server from the one the operator set up.** Under "your game
+data" it told players they would upload their own Data Files to a personal locker — on a server
+whose operator had just chosen "served by this server" and installed Morrowind once for
+everyone. It asks the server now: the manifest route answers 404 unless this server serves the
+game, so its status is the answer.
+
+**Adding a friend handed them the dashboard.** There is no self-serve sign-up on a password
+server, so "add someone" is where a friend's account comes from — and its access list held only
+viewer, moderator and owner. Every player an operator added got a login to the admin dashboard.
+"Player" is now offered, and is the default.
+
+**Settings the operator can answer, and none they cannot.** Free text became dropdowns wherever
+the parser already has an enum, fed by one map so the two cannot drift. Fields the wizard
+derives are refused at the endpoint rather than merely hidden. Respawn stopped asking for four
+coordinates nobody knows — the operator points at a standing player instead, which is by
+construction a place a person can stand and works for vanilla, mods and Tamriel Rebuilt alike.
+
+**State nobody owned.** A client could invent unlimited weather regions, each one a row written
+to disk and replayed at every future joiner. Chat had no rate limit despite the protocol
+promising one, so a client sitting just under the message budget reached every player on the
+world indefinitely. The clock's day rollover gave up past ~18,000 hours and left the hour out of
+range on disk, reachable from a plugin or from a tick after the host machine slept — time the
+server was not running is not time that passed in the world. The who-is-playing map was swept
+for tokens but never for its own entries.
+
+**The two halves of the server disagreed about how long a month is.** One collapsed the calendar
+assuming twelve 28-day months while the clock rolled the real Morrowind lengths, so the count
+ran backwards leaving a 31-day month — and a merchant drained near a boundary stayed drained for
+up to three game days.
+
+**An optional browser binding could stop a player reporting movement.** The page bridge is
+Emscripten-only and was called on the first line of `onFrame`, so on any engine without it the
+throw took movement, equipment and barter reporting down with it for the whole session.
+
+**The player cap is the operator's number again.** 1.3.2 clamped it to a hidden 32 while
+`/status` still advertised what was configured; the clamp is gone and capacity is enforced once,
+against the same field that is advertised. And since 1.2.0 the locker origin was never offered
+at all — right when the wizard captured a domain and derived it, wrong on the one path that
+captures none, where the base falls back to loopback and the server's own warning named a field
+the dashboard refused to accept.
+
+Fourteen server-to-client events existed only in the source, so a coverage audit built from the
+protocol document skipped every one of them. They are documented, and the ones that had no test
+have one. The boot-performance gate stopped gating on a ratio that moved 10% with machine load
+and in the wrong direction for its own purpose.
+
+1050 server tests, 64 browser scenarios green on real clients.
+
+## 1.3.2
+
+Thirteen defects, most of them one shape: something wired into one of the two programs and not
+the other, or a rule enforced in the view and not at the door.
+
+**What an operator hits.** The multiplayer server never served the game files they uploaded, so
+players were asked to supply a game the operator had already provided. Switching to the image
+with the engine — which `docker-compose.yml` tells you to do — made every existing file
+unreadable, because the two images ran as different uids; the entrypoint repairs ownership and
+drops privileges now. The multiplayer server never regenerated its proxy config at boot, so a
+restored backup or a changed answer never took effect. Password-reset mail pointed at loopback
+on any server with a domain. The deployment shape (mode, hosting, domain, port, content profile)
+was editable from the settings page, which changed the record and did none of the work the
+wizard does — `setup.completed` was one PUT from reopening first-run setup on a live server.
+
+**What a player hits.** A friend request to someone in their own game was stored and never
+delivered; the row that did arrive named them by their account key, which for an SSO account is
+a real name; and it could not be accepted, because the accept resolved names against the local
+roster. An invite across worlds was never delivered either, and an invite from a friend vanished
+from the panel within ten seconds because every snapshot deleted it. A full world told the
+owner's friend it was private, at a seat count nobody advertised.
+
+**What an operator never sees until it matters.** A world that wedged while occupied was never
+reaped, holding its port, its slot and its memory until the gateway restarted. The log wrote
+credentials to all three sinks, and measured its own file with a syscall on every line. A
+signed-in player could hold unlimited upload authorisations.
+
+Eight new browser scenarios cover paths that had none: server-hosted game files, blocking,
+cross-world invites, the operator's platform actions, closing your world on guests, reports,
+ban/unban, and maintenance. Two of that release's bugs were found by them.
+
+1033 server tests, 54 browser scenarios, mode flip proven on both images.
+
 ## 1.3.1
 
 One way in, for operators and for players. 1.3.0 made the world shareable; 1.3.1 settles who
