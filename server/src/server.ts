@@ -363,25 +363,23 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // Long enough to cover a host crash or page reload (engine boot is tens of seconds on a
   // cold cache) and short enough that a genuine quit does not strand guests in a dead world.
   const OWNER_DISCONNECT_GRACE_MS = opts.ownerGraceMs ?? 90_000;
-  // The whole-world player cap: one world is one peer simulating every occupied cell, so
-  // this is a memory decision as much as a policy one (see the scale ramp).
-  const MAX_WORLD_PLAYERS = 32;
-  // ONE CAP, ENFORCED AND ADVERTISED. This ceiling used to sit only inside mayJoinWorld, which
-  // answers a question about ACCESS, so a party world that was merely FULL refused its owner's
-  // 33rd friend with "this world is private" — a sentence that is not true, reads as "the host
-  // went solo or blocked you", and cannot be checked from the outside: the host sees a working
-  // world and no error. Meanwhile /status and the dashboard advertised [server].maxPlayers,
-  // which is 64 by default, so the number shown was one nobody enforced.
+  // ONE CAP, ENFORCED AND ADVERTISED — and it is the OPERATOR'S number, [server] maxPlayers.
   //
-  // Clamped here instead, once, so every consumer agrees: the advertised seat count, the
-  // SERVER_FULL refusal in connection.ts, and the admission check below.
-  if (config.server.maxPlayers > MAX_WORLD_PLAYERS) {
-    log('info', 'server.max_players_capped', {
-      configured: config.server.maxPlayers, effective: MAX_WORLD_PLAYERS,
-      note: 'one world is one peer simulating every occupied cell; this ceiling is a memory decision',
-    });
-    config.server.maxPlayers = MAX_WORLD_PLAYERS;
-  }
+  // The ceiling used to sit inside mayJoinWorld, which answers a question about ACCESS, so a
+  // party world that was merely FULL refused its owner's 33rd friend with "this world is
+  // private": untrue, and invisible to the host, who sees a working world and no error. That
+  // check is gone from there (below), which is the fix.
+  //
+  // It was briefly replaced by clamping the configured cap to a hard 32 at boot. That over-
+  // reached. The 32 was only ever a PARTY-ADMISSION rule; SERVER_FULL has always been the
+  // operator's configured number, which ships at 256. Clamping turned a party rule into a
+  // global connection cap and silently gave an operator who asked for 256 a world that took
+  // 32 — and it capped the scale ramp (s43) at half its smallest interesting step, since soak
+  // bots connect as ordinary clients and are not the `bot`-flagged dev kind humanCount skips.
+  //
+  // So there is no clamp. Capacity is enforced once, in connection.ts, against the same
+  // config.server.maxPlayers that /status and the dashboard advertise, which is what makes
+  // the advertised number and the enforced number the same number.
   const CHAT_HISTORY_KEEP = 200;
   const CHAT_HISTORY_REPLAY = 60;
   const chatCtx: ChatContext = {
