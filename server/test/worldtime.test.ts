@@ -493,3 +493,44 @@ test('map sharing follows the [sharing] toggle', async (t) => {
   });
 });
 
+
+test('a world full of custom records is still joinable, and stops accepting more', async (t) => {
+  // Two failures, one fixture. Every custom record is stored, persisted, and replayed to every
+  // player who joins from then on -- a peer must resolve an id before an item bearing it
+  // arrives. Nothing bounded the count, and the replay went out as ONE frame.
+  //
+  // LSER refuses to decode past 65,536 nodes and a record costs up to ~263, so a world with a
+  // few hundred enchanted items produced a RecordsSync the client could not decode AT ALL. The
+  // world stopped being joinable and the error named lser, not records. Chunked now; the client
+  // has always merged batches rather than replacing.
+  //
+  // Filled before boot: the ceiling is reached through the store, not through 10,000 frames,
+  // which would measure the message budget instead of the guard.
+  const { RecordStore } = await import('../src/persist/recordstore');
+  const dataDir = tmpDataDir();
+  const fill = new RecordStore(dataDir);
+  await fill.ready();
+  for (let i = 0; i < 10_000; i++) await fill.create('potion', { n: i } as never, 'filler');
+  await fill.flush();
+  assert.equal(fill.count(), 10_000, 'the fixture must actually reach the ceiling');
+
+  // 1. THE WORLD IS STILL JOINABLE. Before chunking this threw LserError and the client never
+  //    finished joining.
+  const { server } = await boot(t, undefined, dataDir);
+  const { c } = await join(server, 'Enchanter');
+  await fence(c, c);
+  const synced = c.inbox.events.filter((e) => e.name === 'RecordsSync')
+    .reduce((n, e) => n + ((e.value as { records: unknown[] }).records?.length ?? 0), 0);
+  assert.equal(synced, 10_000, `the whole set must arrive across batches, got ${synced}`);
+  assert.ok(c.inbox.events.filter((e) => e.name === 'RecordsSync').length > 1,
+    'it must arrive in more than one frame, or the node ceiling is still one enchant away');
+
+  // 2. AND IT REFUSES MORE. An unacked tempId is how the client learns the creation failed.
+  c.sendEvent('RecordCreate', { tempId: 999, kind: 'enchantment', data: { name: 'one too many' } });
+  await fence(c, c);
+  assert.equal(c.inbox.events.filter((e) => e.name === 'RecordCreateAck'
+    && (e.value as { tempId?: number }).tempId === 999).length, 0,
+    'a record past the ceiling must not be acked');
+  c.close();
+  await c.closed;
+});

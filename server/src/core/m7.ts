@@ -24,6 +24,27 @@ const MAX_CELL_KEY = 128;
 // 'invalid shape' -- which is not what happened and sends anyone debugging it the wrong way.
 const MAX_MAP_CELLS = 8192;
 const MAX_RECORD_FIELDS = 128;
+// A WORLD-WIDE CEILING ON CUSTOM RECORDS, for the same reason regions have one and for a worse
+// consequence. Every RecordCreate is appended to the store, INSERTed into SQLite, and -- this is
+// the part that compounds -- replayed in full to every player who joins from then on, because a
+// peer must be able to resolve an id before an item bearing it arrives. Nothing bounded the
+// count: a client spending its ordinary message budget adds records for as long as it likes, and
+// each one makes every future join larger, permanently. Ten thousand is three hundred apiece on
+// a full world, far past any honest campaign of enchanting and alchemy, and far below the point
+// where a join becomes a problem.
+const MAX_CUSTOM_RECORDS = 10_000;
+// THE JOIN REPLAY MUST BE CHUNKED, and this is a correctness bound, not a politeness one. LSER
+// refuses to decode a value with more than 65,536 nodes, and a record costs up to ~263 of them
+// (the row, three keys and their values, and two per data field up to MAX_RECORD_FIELDS). Sent
+// as one frame, a world with a few hundred enchanted items produced a RecordsSync the client
+// could not decode AT ALL -- `lser: more than 65536 nodes` -- so the world stopped being
+// joinable, permanently, and nothing about the failure names records.
+//
+// 128 x 263 is ~33k nodes, half the ceiling with every field used. Chunking is safe without any
+// client change because MP_RecordsSync MERGES: world.lua iterates the batch and applies each
+// record, and the post-creation path already sends a one-record RecordsSync, so a partial batch
+// is the shape it has always handled.
+const RECORDS_PER_SYNC = 128;
 const RESET_TICK_MS = 1_000;
 
 export const M7_EVENTS = new Set([
@@ -55,6 +76,7 @@ export class WorldM7 {
   readonly clock: WorldClock;
   readonly weather: WeatherRegions;
   private recordQueue: Promise<void> = Promise.resolve();
+  private recordFloodLogged = false; // said once, not once per refusal
   private resetTimer?: NodeJS.Timeout;
 
   constructor(private readonly ctx: M7Ctx) {
@@ -141,9 +163,20 @@ export class WorldM7 {
   // ------------------------------------------------------------- records
 
   private sendRecordsSync(player: Player, records: CustomRecord[] = this.ctx.records.all()): void {
-    player.peer.sendEvent('RecordsSync', {
-      records: records.map((r) => ({ recordNetId: r.recordNetId, kind: r.kind, data: r.data })),
-    });
+    // An EMPTY world still sends one empty batch. Chunking with a bare loop skipped the send
+    // entirely when there was nothing to send, which is a different statement on the wire: a
+    // client waiting for RecordsSync to know the record set has arrived waits forever, and a
+    // brand new world is exactly where that happens. Caught by the existing join test.
+    if (records.length === 0) {
+      player.peer.sendEvent('RecordsSync', { records: [] });
+      return;
+    }
+    for (let i = 0; i < records.length; i += RECORDS_PER_SYNC) {
+      player.peer.sendEvent('RecordsSync', {
+        records: records.slice(i, i + RECORDS_PER_SYNC)
+          .map((r) => ({ recordNetId: r.recordNetId, kind: r.kind, data: r.data })),
+      });
+    }
   }
 
   // C->S RecordCreate {tempId, kind, data} -> RecordCreateAck {tempId, recordNetId}.
@@ -159,6 +192,18 @@ export class WorldM7 {
       !(data instanceof Map) || data.size > MAX_RECORD_FIELDS
     ) {
       log('warn', 'records.dropped', { from: player.name, why: 'invalid shape' });
+      return;
+    }
+    if (this.ctx.records.count() >= MAX_CUSTOM_RECORDS) {
+      // Refused the same way a malformed one is: logged, and no ack. The creator's client
+      // treats an unacked tempId as a failed creation, which is what happened.
+      if (!this.recordFloodLogged) {
+        this.recordFloodLogged = true;
+        log('error', 'records.dropped', {
+          from: player.name, why: 'world record ceiling reached', cap: MAX_CUSTOM_RECORDS,
+          note: 'no further custom records are stored in this world; every join replays them all',
+        });
+      }
       return;
     }
     const playerId = player.id;
