@@ -40,7 +40,6 @@ const BASELINE = join(HERE, 'perf-baseline.json');
 // Allowed regression before failing. GL calls are deterministic for a fixed route, so this is
 // tight; it exists to absorb ordering jitter in what the culler admits, not real growth.
 const GL_TOLERANCE = 1.10;   // +10% GL calls per frame
-const BOOT_TOLERANCE = 1.25; // +25% on boot phase ratios (noisier: download and disk cache vary)
 
 // The route. Deliberately dull and fully scripted -- a perf gate that wanders is a perf gate that
 // flaps. Balmora because it is the densest ordinary exterior in the base game and the place the
@@ -85,11 +84,38 @@ export default async function run(ctx) {
   const measured = {
     glTotal: median(glSamples.map((g) => g.total)),
     glDraw: median(glSamples.map((g) => g.draw)),
-    // Boot as a RATIO of total boot, so a slow download on CI does not read as an engine
-    // regression: what we care about is the share spent after the runtime is up.
+  };
+  // bootPostRuntimeShare IS NO LONGER GATED, and the reason is worth keeping.
+  //
+  // It was a ratio "so a slow download on CI does not read as an engine regression". A ratio
+  // does not buy that. Its two halves scale differently with the machine -- before runtimeInit
+  // is download plus a single-core WebAssembly.compile, after it is game data, the ESM store
+  // and engine init -- so the quotient never cancels machine speed. Measured on ONE commit and
+  // ONE engine, changing nothing but the machine:
+  //
+  //     laptop            runtimeInit 1395  firstFrame  5998  -> 0.767
+  //     build box idle    runtimeInit 1923  firstFrame 10371  -> 0.815
+  //     build box loaded                                      -> 0.843
+  //
+  // The number moved 10% with the weather. Worse, it moves the WRONG WAY for its own purpose:
+  // make the download FASTER and the share goes UP, which this reported as a regression. It is
+  // a load detector wearing an engine-regression label, and a gate that fires on the weather
+  // teaches you to ignore the gate.
+  //
+  // What still gates are glTotal and glDraw: GL call COUNTS, machine-independent by
+  // construction, and they held at 1753/1742 and 234/232 against a baseline from ten days and
+  // an engine rebuild ago -- which is the evidence that the engine's own work has not grown.
+  //
+  // The absolutes are recorded from here on so a future shift can be ATTRIBUTED and not merely
+  // detected: the old baseline stored the ratio alone, so when it moved there was no way to
+  // tell whether the numerator grew or the denominator shrank. That is what made this
+  // unresolvable rather than merely wrong.
+  const context = {
     bootPostRuntimeShare: boot.firstFrame > 0
       ? +((boot.firstFrame - (boot.runtimeInit || 0)) / boot.firstFrame).toFixed(3)
       : 0,
+    bootRuntimeInitMs: boot.runtimeInit || 0,
+    bootPostRuntimeMs: boot.firstFrame > 0 ? boot.firstFrame - (boot.runtimeInit || 0) : 0,
   };
   const wallclock = {
     bootFirstFrameMs: boot.firstFrame,
@@ -98,12 +124,13 @@ export default async function run(ctx) {
     streamfs: JSON.parse(await c.eval('JSON.stringify(window.__streamfsStats||null)')),
   };
   ctx.log('measured (gated):', JSON.stringify(measured));
+  ctx.log('boot (recorded, NOT gated -- machine-dependent):', JSON.stringify(context));
   ctx.log('wallclock (informational, machine-dependent):', JSON.stringify(wallclock));
 
   const hadBaseline = existsSync(BASELINE);
   if (!hadBaseline || process.env.OMW_PERF_REBASELINE) {
     mkdirSync(dirname(BASELINE), { recursive: true });
-    writeFileSync(BASELINE, JSON.stringify(measured, null, 2) + '\n');
+    writeFileSync(BASELINE, JSON.stringify({ ...measured, context }, null, 2) + '\n');
     ctx.log(hadBaseline ? 'baseline REWRITTEN (OMW_PERF_REBASELINE)' : 'baseline written (first run)');
     return;
   }
@@ -118,7 +145,12 @@ export default async function run(ctx) {
   };
   check('glTotal', GL_TOLERANCE);
   check('glDraw', GL_TOLERANCE);
-  check('bootPostRuntimeShare', BOOT_TOLERANCE);
+  // No check for bootPostRuntimeShare -- see the note above the `context` block.
+  if (base.context) {
+    ctx.log(`  boot (context only): share ${context.bootPostRuntimeShare} vs `
+      + `${base.context.bootPostRuntimeShare}, post-runtime ${context.bootPostRuntimeMs}ms vs `
+      + `${base.context.bootPostRuntimeMs}ms`);
+  }
 
   assert.equal(fail.length, 0,
     'performance regressed against wasm-build/mp-scenarios/perf-baseline.json:\n  ' + fail.join('\n  ')
