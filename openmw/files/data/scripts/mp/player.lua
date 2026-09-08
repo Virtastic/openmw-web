@@ -706,6 +706,15 @@ end
 -- is run under pcall and answered with an 'ack' event carrying its id -- a throwing handler
 -- reports itself instead of silently killing every command after it in the same frame.
 local function pollCommands()
+    -- THE PAGE BRIDGE IS OPTIONAL, AND THIS RUNS FIRST. mp.pollCommands is a browser binding;
+    -- a headless engine has no page, and an engine built before the bridge existed has no
+    -- binding at all. Unguarded, that threw on the very first frame -- and because this call
+    -- is the first line of onFrame, it took walkTick, testEquipTick, barterMirrorTick AND
+    -- movementTick down with it for the entire session, at 20 errors a second. A sim peer in
+    -- that state answers the wire but never reports itself, so it never takes a cell and
+    -- nothing drives the NPCs, which reads as "authority is broken" and is nothing of the
+    -- kind. An optional convenience must not be able to stop a player reporting movement.
+    if type(mp.pollCommands) ~= 'function' then return end
     local raw = mp.pollCommands()
     if type(raw) ~= 'string' or raw == '' then return end
     local okDecode, list = pcall(json.decode, raw)
