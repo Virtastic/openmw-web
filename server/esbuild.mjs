@@ -36,3 +36,6 @@ await build({ ...common, entryPoints: ['src/testhost.ts'], outfile: 'dist/testho
 // TypeScript TestClient the server suite uses. Harness-only, like testhost: no Dockerfile builds
 // against it and main.ts never imports it.
 await build({ ...common, entryPoints: ['src/testpeer.ts'], outfile: 'dist/testpeer.mjs' });
+// The peer self-test: can a sim peer start on THIS box? Built like the other standalone
+// entry points so a deploy can run it out of the shipped image with no world and no player.
+await build({ ...common, entryPoints: ['src/peercheck.ts'], outfile: 'dist/peercheck.mjs' });
