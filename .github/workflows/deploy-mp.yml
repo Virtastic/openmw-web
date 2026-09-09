@@ -152,6 +152,43 @@ jobs:
             openmw-mp:ovh node /bots/healthcheck.mjs http://openmw-mp:8080 \
               --server-token-file=/gateway-token --allow-refusal=BAD_CONTENT
 
+      # Gate 2b - DID THE SIM PEER ACTUALLY START?
+      #
+      # Every gate above passes with a dead peer, and that is not hypothetical: 1.3.3 shipped a
+      # peer that could not start at all (it inherited HOME=/root after the entrypoint dropped
+      # privileges, so OpenMW could not resolve its data path) and every one of these went
+      # green. The world comes up, /healthz answers, the protocol handshake completes, the edge
+      # upgrades to a websocket -- and a player who joins sits on "waiting for the world to be
+      # simulated" for ever, with no NPCs, because a cell only gets an authority holder when a
+      # peer takes it.
+      #
+      # The probe world created by the gate above spawns a peer, so the evidence is already in
+      # the log by now; this only has to look. simpeer.ready is the positive signal and
+      # simpeer.crashed the negative one, and BOTH are checked: a crash-loop respawns, so a
+      # later 'ready' could otherwise mask an unhealthy peer that is dying repeatedly.
+      - name: Health check (the sim peer actually simulates)
+        run: |
+          set -e
+          LOGS=$(docker logs --since 10m openmw-mp 2>&1 || true)
+          if printf '%s' "$LOGS" | grep -q '"event":"simpeer.crashed"'; then
+            echo "FATAL: a sim peer crashed during this deploy -- the world would never be simulated." >&2
+            printf '%s' "$LOGS" | grep -E '"event":"simpeer\.(crashed|output)"' | tail -20 >&2
+            exit 1
+          fi
+          for i in $(seq 1 30); do
+            printf '%s' "$LOGS" | grep -q '"event":"simpeer.ready"' && { echo "sim peer reached ready"; exit 0; }
+            sleep 4
+            LOGS=$(docker logs --since 10m openmw-mp 2>&1 || true)
+            if printf '%s' "$LOGS" | grep -q '"event":"simpeer.crashed"'; then
+              echo "FATAL: a sim peer crashed while starting." >&2
+              printf '%s' "$LOGS" | grep -E '"event":"simpeer\.(crashed|output)"' | tail -20 >&2
+              exit 1
+            fi
+          done
+          echo "FATAL: no sim peer reached simpeer.ready in 2 minutes." >&2
+          printf '%s' "$LOGS" | grep -E '"event":"(simpeer|world)\.' | tail -20 >&2
+          exit 1
+
       # Gate 3 - the edge path a PLAYER actually takes. The game page and the gateway are one
       # origin (AGENTS.md, "One origin"): index.html refuses to hand its session ticket to a
       # gateway whose hostname differs from the page's, so there is no separate mp.<domain> to
