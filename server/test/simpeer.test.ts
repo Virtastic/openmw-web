@@ -408,3 +408,34 @@ test('sim peer: shutdown SIGKILLs outright -- nobody is left to receive a clean 
   await tick();
   assert.equal(sup.running, 0, 'a server that has exited leaves no engine behind');
 });
+
+// THE PEER'S HOME MUST BE SOMEWHERE IT CAN WRITE.
+//
+// 1.3.2 correctly made the entrypoint drop privileges, so the server no longer runs as root.
+// The peer inherits process.env, and OpenMW resolves its user data path from HOME
+// (files/linuxpath.cpp -> ~/.local/share/openmw) BEFORE it reads a line of config — so an
+// inherited HOME=/root killed it on startup, every time:
+//
+//   Fatal error: filesystem error: status: Permission denied [/root/.local/share/openmw/data]
+//
+// It respawned and died in a loop, and none of that reaches a player: the world is up, they
+// join it, and they sit on "waiting for the world to be simulated" for ever with no NPCs,
+// because a cell only gets an authority holder when a peer takes it. The server reports itself
+// healthy throughout, which is why it shipped. The deploy gate can only see a peer that
+// actually spawns; this is the check that sees the environment itself.
+test('sim peer: HOME points at a directory this process owns, never the inherited one', () => {
+  const before = process.env.HOME;
+  process.env.HOME = '/root';           // what the container hands us after the privilege drop
+  try {
+    const { sup, spawned } = harness();
+    sup.ensure('world');
+    const { env } = spawned[0]!;
+    assert.notEqual(env.HOME, '/root',
+      'the peer must not inherit a HOME it cannot write: OpenMW resolves its data path from it'
+      + ' before reading any config, and dies on startup');
+    assert.equal(env.HOME, '/fake/cfg',
+      "the peer's HOME must be the config directory this server just wrote its openmw.cfg into");
+  } finally {
+    if (before === undefined) delete process.env.HOME; else process.env.HOME = before;
+  }
+});
