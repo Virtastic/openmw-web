@@ -23,6 +23,15 @@ const MAX_RECORD_ID = 64;
 const MAX_COUNT = 10000;
 const MAX_CELL_KEY = 128;
 const MAX_CONTAINER_ENTRIES = 512;
+// A CELL'S STATE IS ONE FRAME, AND THE WIRE HAS A CEILING. WorldCellState and CellSnapshotReplace
+// carry every placed object and every tombstone in a cell in a single LSER value, and LSER
+// refuses anything past 65,536 nodes. A placed object is ~19 nodes, so around 3,400 dropped
+// items made the cell undecodable for everyone entering it, permanently, because the doc is
+// persisted. Nothing bounded either set: drops needed only inventory credit and a tombstone
+// needed only an addressable ref, which for content objects the server cannot check exists.
+// Two thousand each is far past any honest cell and leaves half the ceiling for the rest.
+const MAX_PLACED_PER_CELL = 2000;
+const MAX_DELETED_PER_CELL = 2000;
 // A single barter window cannot move more gold than the richest vendor in the game holds many
 // times over. This does not stop a player selling honestly; it bounds GRIEFING -- a negative
 // delta drains a merchant's purse for everyone in the world, and nothing else caps it.
@@ -638,8 +647,15 @@ export class WorldState {
       return;
     }
     // The drop is going ahead, so whatever credit backed it is now spent (see setInventoryDebit).
-    if (fromInventory) this.debitAcquired?.(player, recordId, count);
     const doc = await this.cells.get(cellKey);
+    // Refused BEFORE the debit: a drop that is not going ahead must not spend the credit that
+    // backed it, or the item is gone from the count and never appears on the ground.
+    if (Object.keys(doc.placed).length >= MAX_PLACED_PER_CELL) {
+      log('warn', 'world.cell_full', { cellKey, by: player.name, cap: MAX_PLACED_PER_CELL });
+      player.peer.sendEvent('ObjectSpawnRefused', { tempId, ok: false, reason: 'cell_full' });
+      return;
+    }
+    if (fromInventory) this.debitAcquired?.(player, recordId, count);
     const netId = this.cells.allocNetId();
     const placed = { netId, recordId, cellKey, x, y, z, rotZ, count, byId: player.id };
     doc.placed[netRefKey(netId)] = placed;
@@ -691,7 +707,7 @@ export class WorldState {
     delete doc.locks[ref.key];
     delete doc.doors[ref.key];
     delete doc.containers[ref.key];
-    if (!doc.deleted.includes(ref.key)) doc.deleted.push(ref.key);
+    if (!doc.deleted.includes(ref.key)) this.tombstone(doc, ref.key, cellKey, player.name);
     this.cells.markDirty(cellKey);
     this.relayCell(cellKey, 'ObjectDelete', { ...objRefToJs(ref), cellKey, byId: player.id });
   }
@@ -733,7 +749,7 @@ export class WorldState {
     delete doc.locks[ref.key];
     delete doc.doors[ref.key];
     delete doc.containers[ref.key];
-    doc.deleted.push(ref.key);
+    this.tombstone(doc, ref.key, cellKey, player.name);
     this.cells.markDirty(cellKey);
     reply(true);
     this.relayCell(cellKey, 'ObjectDelete', { ...objRefToJs(ref), cellKey, byId: player.id });
@@ -1003,6 +1019,17 @@ export class WorldState {
   // own both ends of the wire, so a reset can instead say "here is the truth, discard what
   // you have for this cell": containers restocked, disabled objects re-enabled, spawned
   // objects gone. Sent to everyone who can see the cell, including the resetter.
+  // A tombstone past the cap is dropped, not the deletion: the object is still removed from
+  // this session's view, it just will not survive a reload. That is a degraded cell with a log
+  // line, against the alternative of a cell nobody can enter.
+  private tombstone(doc: CellDoc, key: string, cellKey: string, by: string): void {
+    if (doc.deleted.length >= MAX_DELETED_PER_CELL) {
+      log('warn', 'world.tombstones_full', { cellKey, by, cap: MAX_DELETED_PER_CELL });
+      return;
+    }
+    doc.deleted.push(key);
+  }
+
   sendCellSnapshot(cellKey: string, doc: CellDoc): void {
     for (const p of this.roster.inWorld()) {
       if (!cellsVisible(p.cellKey, cellKey)) continue;
