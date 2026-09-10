@@ -787,6 +787,12 @@ export class Social {
     const friendName = this.d.displayName(targetAcct) ?? targetAcct;
     const own = await this.worlds.ownerWorld(targetAcct);
     if (!own) return fail('not_online');
+    // ASK THE MODE HERE, where the answer costs nothing. A world admits the party only when its
+    // owner has flipped it to 'party'; the default is 'private'. Without this check the reply
+    // was ok, the client RELOADED THE PAGE into the friend's world, the door refused it, and the
+    // player was left in a terminal Failed modal outside the game they had been in -- for the
+    // ordinary case of a friend who had not opened their world yet. Refused now, in place.
+    if (own.mode !== 'party') return fail('not_open');
     player.peer.sendEvent('JoinFriend', {
       ok: true, worldId: own.id, mode: own.mode, host: own.host, port: own.port, friendName,
       ...(own.wsPath ? { wsPath: own.wsPath } : {}),

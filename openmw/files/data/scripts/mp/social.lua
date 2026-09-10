@@ -430,6 +430,7 @@ return {
                     not_friends = 'You are not friends with them.',
                     not_online = 'They are offline.',
                     blocked = 'You cannot join them.',
+                    not_open = 'Their world is not open to friends yet. Ask them to switch to Party.',
                 }
                 status = why[tostring(data.error)] or ('Could not join: ' .. tostring(data.error or '?'))
                 ui.showMessage(status)
