@@ -94,7 +94,13 @@ export class WorldBrowser {
     if (!r || typeof r !== 'object' || '__httpError' in r) return undefined;
     const worlds = (r as { worlds?: unknown }).worlds;
     if (!Array.isArray(worlds)) return undefined;
-    return (worlds as WorldEntry[]).find((w) => w.ownerAccount === accountKey && w.up);
+    // THE WORLD THEY ARE IN, NOT THE FIRST ONE THEY OWN. Worlds are per CHARACTER, and a
+    // world the owner has left stays up until the idle reaper takes it -- so an owner on their
+    // second character has two up worlds, and the map lists the older one first. find() sent
+    // every friend to the stale, empty one. An occupied world is the one to join; with none
+    // occupied the first up one is the best available answer, as before.
+    const mine = (worlds as WorldEntry[]).filter((w) => w.ownerAccount === accountKey && w.up);
+    return mine.find((w) => w.playerCount > 0) ?? mine[0];
   }
 
   async create(player: Player, id: string, mode: string): Promise<{ world?: WorldEntry; error?: string }> {
