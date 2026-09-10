@@ -157,6 +157,16 @@ test('a client heal reaches the peer, and sustained fake healing is refused', as
   assert.equal((restore.value as { hp?: { c?: number } }).hp?.c, 60,
     'a legitimate heal must reach the avatar, or potions do nothing');
 
+  // MAGICKA GOES DOWN TOO. The avatar never casts, so the client is the only thing that spends
+  // magicka; a cast's cost is a LOWER claim, and under raise-only it was thrown away and then
+  // refilled by the avatar's full bar -- every spell was free. A spend must reach the avatar.
+  peer.inbox.events.length = 0;
+  a.sendEvent('PlayerStatsDynamic', { ...bars(60), mp: { c: 10, b: 50 } });
+  const spend = await peer.waitEvent('AvatarRestore',
+    (v) => (v as { id?: number; mp?: unknown })?.id === a.playerId && (v as { mp?: unknown }).mp !== undefined);
+  assert.equal((spend.value as { mp?: { c?: number } }).mp?.c, 10,
+    'a magicka spend must reach the avatar, or casting is free while the peer owns the bars');
+
   // Now the cheat: claim full health over and over. The budget (2x max health per 10s) runs
   // out and further claims are ignored -- the peer's bars stand.
   peer.inbox.events.length = 0;

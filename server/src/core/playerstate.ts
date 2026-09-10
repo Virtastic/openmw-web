@@ -149,7 +149,19 @@ function handleStatsDynamic(ctx: StateCtx, player: Player, body: LTable): boolea
       const have = cur?.[k]; const want = have === undefined ? 0 : Math.min(v.c, have.b);
       return have === undefined ? undefined : (want > have.c + 0.5 ? { c: want, b: have.b } : undefined);
     };
-    const r = { hp: raise('hp', hp), mp: raise('mp', mp), ft: raise('ft', ft) };
+    // MAGICKA IS THE CLIENT'S IN BOTH DIRECTIONS. The avatar never casts (avatar.lua maps the
+    // spell stance to Nothing; the owner's client casts and forwards the hit), so nothing on
+    // the peer ever SPENDS magicka -- and under raise-only the cost of every spell was a
+    // "lower" claim thrown away, then overwritten by the avatar's full bar on its next
+    // report: casting was free. A spend is accepted like a restore, clamped to [0, base];
+    // the trade is that Damage Magicka landed on the avatar is re-raised by the client's next
+    // diff, which is rare, against free spells for every mage, which is constant.
+    const spend = (v: DynamicStatDoc) => {
+      const have = cur?.mp; if (have === undefined) return undefined;
+      const want = Math.max(0, Math.min(v.c, have.b));
+      return Math.abs(want - have.c) > 0.5 ? { c: want, b: have.b } : undefined;
+    };
+    const r = { hp: raise('hp', hp), mp: spend(mp), ft: raise('ft', ft) };
     if (!r.hp && !r.mp && !r.ft) return true; // nothing restored: consumed, not applied
     // Budget the HEALTH restoration (the one that decides whether you die).
     const gained = r.hp ? r.hp.c - (cur?.hp?.c ?? r.hp.c) : 0;
