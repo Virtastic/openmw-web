@@ -613,7 +613,9 @@ local function avatarStreamTick(now)
                     -- bit 3: the avatar is attacking (its owner's use bit reached it). Rides
                     -- the pose flags so the owner's state batch -- and every observer's move
                     -- batch -- carries it; player.lua mirrors it as selfFlags for s67.
-                    flags = avatarUsing[id] and 8 or 0,
+                    -- bit 4: weapon drawn, so every observer's puppet shows the same posture.
+                    flags = (avatarUsing[id] and 8 or 0)
+                        + (types.Actor.getStance(p.obj) == types.Actor.STANCE.Weapon and 16 or 0),
                     animVel = animVel,
                 }
             end)

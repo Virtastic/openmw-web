@@ -109,6 +109,15 @@ return {
             -- now because combat.lua no longer forwards a real swing while the peer holds
             -- the cell -- so a blow lands exactly once, here.
             self.controls.use = bit(input.flags, 3) and 1 or 0
+            -- THE OWNER'S STANCE, OR THE USE BIT IS INERT: an attack only starts from a drawn
+            -- weapon (character.cpp, UpperBodyState::WeaponEquipped). Spell stance maps to
+            -- Nothing on purpose -- the avatar must never cast; the owner's client casts and
+            -- forwards the hit (combat.lua onPuppetSpellHit), and a casting avatar would land it
+            -- twice. So while the owner readies magic the avatar simply stands down.
+            local want = bit(input.flags, 4) and types.Actor.STANCE.Weapon or types.Actor.STANCE.Nothing
+            if types.Actor.getStance(self) ~= want then
+                pcall(function() types.Actor.setStance(self, want) end)
+            end
         end,
     },
     eventHandlers = {

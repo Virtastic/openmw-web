@@ -159,6 +159,14 @@ local function inputTick(now)
     if c.sneak then flags = flags + 2 end
     if c.jump then flags = flags + 4 end
     if (c.use and c.use ~= 0) or now < forceUseUntil then flags = flags + 8 end
+    -- THE STANCE RIDES THE INPUT, or the avatar never swings. The engine only starts an attack
+    -- from UpperBodyState::WeaponEquipped (mwmechanics/character.cpp), and nothing on the peer
+    -- ever drew the avatar's weapon: the use bit arrived at a body standing at ease and did
+    -- nothing, while combat.lua had already cancelled the local swing as the peer's job. Same
+    -- bits as poseFlags (4 weapon, 5 spell); bits 4-5 of the input byte were reserved unused.
+    local stance = types.Actor.getStance(self)
+    if stance == types.Actor.STANCE.Weapon then flags = flags + 16 end
+    if stance == types.Actor.STANCE.Spell then flags = flags + 32 end
     if mp.sendInput then
         mp.sendInput({
             seq = inputSeq,
