@@ -856,6 +856,17 @@ loot bug already fixed here.
   and `snapSpells` iterates the whole spell store, abilities included. It persists by the
   same route diseases do.
 
+* **Client-only damage is discarded while the peer owns the bars.** Health is raise-only from
+  the client (potions, rest) and lower-only from the peer (the avatar takes the hits). That
+  is right for combat, and wrong for the damage that exists only on the client's engine:
+  trapped chests and doors, scripted damage (lava, quest scripts), and drain/damage effects
+  from a spell the player casts on themselves by mistake. The client's hp drops, the server
+  ignores it, and the avatar's next report puts it back. Falls and drowning are NOT in this
+  list -- the avatar falls and drowns too, so accepting client lowers would double them,
+  which is why the rule cannot simply be relaxed. Needs the trap/script hit to be forwarded
+  to the avatar the way spell hits on puppets are (CombatSpellHit), so it lands once, there.
+  Found 2026-09-10 while fixing the magicka and item-state halves of the same rule.
+
 * **A disease caught ON THE PEER never reaches the player.** Diseases are spells in the
   actor's spell list and the client's own list is captured and restored (above) -- but with
   the peer resolving every melee, a diseased creature's bite lands on the AVATAR, and the
