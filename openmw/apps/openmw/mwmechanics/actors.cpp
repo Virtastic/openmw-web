@@ -1669,7 +1669,12 @@ namespace MWMechanics
                     }
                     if (aiActive && inProcessingRange)
                     {
-                        if (engageCombatTimerStatus == Misc::TimerStatus::Elapsed)
+                        // ...and never AS an aggressor: its AI is off, so a combat package
+                        // stacked on it would never execute but would still read as "in
+                        // combat" to everything that asks (retaliation, guards, greetings).
+                        // The template record's Fight rating must not make players hostile.
+                        const bool actorIsAvatar = MWMP::isAvatar(actor.getPtr().getCellRef().getRefNum());
+                        if (engageCombatTimerStatus == Misc::TimerStatus::Elapsed && !actorIsAvatar)
                         {
                             if (!isPlayer)
                                 adjustCommandedActor(actor.getPtr());
@@ -1680,8 +1685,16 @@ namespace MWMechanics
                                     continue;
                                 if (otherActor.getPtr() == actor.getPtr() || isPlayer) // player is not AI-controlled
                                     continue;
-                                engageCombat(
-                                    actor.getPtr(), otherActor.getPtr(), cachedAllies, otherActor.getPtr() == player);
+                                // AN AVATAR IS A PLAYER FOR AGGRESSION. engageCombat only runs the
+                                // fight-rating check when the other actor is the player, and on the
+                                // sim peer the player is its own idle dummy -- so no creature or
+                                // hostile NPC ever attacked a connected player unprovoked: cliff
+                                // racers, rats and bandits all stood and watched. Retaliation
+                                // (mechanicsmanagerimp.cpp actorAttacked) had the same blind
+                                // spot and is fixed beside this. See mwmp/puppets.hpp.
+                                const MWWorld::Ptr& other = otherActor.getPtr();
+                                engageCombat(actor.getPtr(), other, cachedAllies,
+                                    other == player || MWMP::isAvatar(other.getCellRef().getRefNum()));
                             }
                         }
                         if (mTimerUpdateHeadTrack == 0)
