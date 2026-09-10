@@ -84,6 +84,14 @@ local function actorPose(obj)
     local flags = 0
     local ok, running = pcall(function() return types.Actor.isRunning and types.Actor.isRunning(obj) end)
     if ok and running then flags = flags + 1 end
+    -- Posture (bits 4/5, the player pose's bits): an NPC fighting someone on the holder must
+    -- look like it everywhere else -- weapon out, spell readied -- or a player takes damage
+    -- from a body standing at ease. puppet.lua mirrors the stance; it still never swings.
+    local okS, stance = pcall(function() return types.Actor.getStance(obj) end)
+    if okS then
+        if stance == types.Actor.STANCE.Weapon then flags = flags + 16 end
+        if stance == types.Actor.STANCE.Spell then flags = flags + 32 end
+    end
     return {
         obj = obj,
         x = pos.x, y = pos.y, z = pos.z,
