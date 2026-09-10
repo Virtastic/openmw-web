@@ -856,6 +856,16 @@ loot bug already fixed here.
   and `snapSpells` iterates the whole spell store, abilities included. It persists by the
   same route diseases do.
 
+* **A disease caught ON THE PEER never reaches the player.** Diseases are spells in the
+  actor's spell list and the client's own list is captured and restored (above) -- but with
+  the peer resolving every melee, a diseased creature's bite lands on the AVATAR, and the
+  avatar's spell list is a one-way copy (AvatarState in, bars and item states out). The peer
+  body carries the disease and its attribute drain; the player's client never learns it, and
+  the next AvatarState refresh does not shed it either. Needs the same back-channel bars use:
+  the peer diffs the avatar's spell list, the server writes the doc, the client adds the
+  spell. Found 2026-09-10 while auditing the avatar's stance/aggression (which was the
+  reason no bite ever landed at all).
+
 * ~~**Item repair.**~~ Nothing to do, and the entry's premise was wrong. "Condition is
   per-item state on a shared object" is not what repair touches: `mwmechanics/repair.cpp`
   works entirely on the PLAYER'S OWN inventory -- it raises the item's charge, consumes the
