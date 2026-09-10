@@ -33,6 +33,7 @@
 
 #include "actor.hpp"
 #include "actors.hpp"
+#include "../mwmp/puppets.hpp"
 #include "actorutil.hpp"
 #include "aicombat.hpp"
 #include "aipursue.hpp"
@@ -1532,8 +1533,13 @@ namespace MWMechanics
         MWMechanics::CreatureStats& statsTarget = target.getClass().getCreatureStats(target);
         AiSequence& seq = statsTarget.getAiSequence();
 
+        // AN AVATAR ATTACKER IS A PLAYER ATTACKER. A connected player's body on the sim peer
+        // has its AI disabled, so its sequence is never "in combat" with anyone, and it is not
+        // the peer's own dummy player -- so an NPC struck by it never fought back. Together
+        // with engageCombat (actors.cpp) ignoring avatars, the world simply never hit a player.
+        const bool attackerIsPlayer = attacker == player || MWMP::isAvatar(attacker.getCellRef().getRefNum());
         if (!attacker.isEmpty()
-            && (attacker.getClass().getCreatureStats(attacker).getAiSequence().isInCombat(target) || attacker == player)
+            && (attacker.getClass().getCreatureStats(attacker).getAiSequence().isInCombat(target) || attackerIsPlayer)
             && !seq.isInCombat(attacker))
         {
             // Attacker is in combat with us, but we are not in combat with the attacker yet. Time to fight back.
@@ -1545,7 +1551,7 @@ namespace MWMechanics
                 bool peaceful = false;
                 const ESM::RefId& script = target.getClass().getScript(target);
                 if (!script.empty() && target.getRefData().getLocals().hasVar(script, "onpchitme")
-                    && attacker == player)
+                    && attackerIsPlayer)
                 {
                     const int fight
                         = target.getClass().getCreatureStats(target).getAiSetting(AiSetting::Fight).getModified();
