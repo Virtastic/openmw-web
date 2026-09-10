@@ -338,6 +338,13 @@ local function onUpdate(dt)
     -- is what turns a small correction into an overshoot.
     self.controls.run = bit(target.flags, 0) and steering and dist2d > STEER_START
     self.controls.sneak = bit(target.flags, 1)
+    -- Posture: a friend with a sword out looks like it. Purely visual here -- the puppet never
+    -- swings (its controls.use stays 0); the peer's avatar does the hitting.
+    local want = bit(target.flags, 4) and types.Actor.STANCE.Weapon
+        or (bit(target.flags, 5) and types.Actor.STANCE.Spell or types.Actor.STANCE.Nothing)
+    if types.Actor.getStance(self) ~= want then
+        pcall(function() types.Actor.setStance(self, want) end)
+    end
     local jumpEdge = bit(target.flags, 2)
     self.controls.jump = jumpEdge and not prevJump
     prevJump = jumpEdge
