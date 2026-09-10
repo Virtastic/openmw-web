@@ -64,6 +64,7 @@ local function stop()
     self.controls.movement = 0
     self.controls.sideMovement = 0
     self.controls.yawChange = 0
+    self.controls.pitchChange = 0
     self.controls.jump = false
     self.controls.use = 0
     -- Drop the modifiers too, or a coasting avatar keeps its sneak posture (and stealth)
@@ -99,6 +100,11 @@ return {
             self.controls.sideMovement = input.side or 0
             local curYaw = self.rotation:getYaw()
             self.controls.yawChange = shortestArc((input.yaw or curYaw) - curYaw)
+            -- PITCH TOO. The input has always carried it (radians, same scale as the pose) and
+            -- the avatar never applied it, so it aimed level: an arrow at a cliff-top archer, or
+            -- a swing at a rat underfoot, went out flat no matter where the owner was looking.
+            local curPitch = self.rotation:getPitch()
+            self.controls.pitchChange = (input.pitch or curPitch) - curPitch
             self.controls.run = bit(input.flags, 0)
             self.controls.sneak = bit(input.flags, 1)
             local jump = bit(input.flags, 2)
