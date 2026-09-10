@@ -211,6 +211,7 @@ export class WorldState {
     this.authority = new Authority({
       grant: (playerId, cellKey, epoch, snapshot) => {
         this.roster.get(playerId)?.peer.sendEvent('ActorAuthorityGrant', { cellKey, epoch, snapshot });
+        this.replayFollows(playerId, cellKey); // a new holder (a restarted peer) learns who follows whom
         // A cell that just got a simulator may have swings parked on it (combat.ts `hold`),
         // from the window where it had none. Deliver them now rather than having cost those
         // players the attack.
@@ -437,7 +438,19 @@ export class WorldState {
   // fact died where it was born and no companion ever followed anyone. Bounded to exactly
   // that claim: the follow target must be the sender, the sender must be near the cell, and
   // only the player being followed may say the following stopped.
-  private readonly followedBy = new Map<string, number>(); // cellKey/refKey -> player id
+  // Keyed by the ACTOR, not the cell: a companion walks through doors, and a dismissal from
+  // the new cell has to find the claim made in the old one. The cell rides along (updated by
+  // the holder's ActorCellChange) so a claim can be replayed to whoever next holds that cell
+  // -- the peer restarts, and a fresh process has never heard who follows whom.
+  private readonly followedBy = new Map<string, { ref: ObjRef; cellKey: string; follow: number }>();
+  private replayFollows(holderId: number, cellKey: string): void {
+    const holder = this.roster.get(holderId);
+    if (!holder) return;
+    for (const f of this.followedBy.values()) {
+      if (f.cellKey !== cellKey) continue;
+      holder.peer.sendEvent('ActorAI', { ...objRefToJs(f.ref), cellKey, epoch: 0, follow: f.follow });
+    }
+  }
   private followClaim(player: Player, body: LTable): void {
     const cellKey = str(body.get('cellKey'), MAX_CELL_KEY);
     const ref = parseObjRef(body);
@@ -451,12 +464,11 @@ export class WorldState {
       log('warn', 'actor.dropped', { from: player.name, name: 'ActorAI', cellKey, why: 'follow claim from afar' });
       return;
     }
-    const k = `${cellKey}/${ref.key}`;
     if (follow === undefined) {
-      if (this.followedBy.get(k) !== player.id) return; // not yours to dismiss
-      this.followedBy.delete(k);
+      if (this.followedBy.get(ref.key)?.follow !== player.id) return; // not yours to dismiss
+      this.followedBy.delete(ref.key);
     } else {
-      this.followedBy.set(k, player.id);
+      this.followedBy.set(ref.key, { ref, cellKey, follow });
     }
     this.relayCellExcept(cellKey, player.id, 'ActorAI', { ...lToJs(body) as Record<string, JsLike> });
   }
@@ -502,6 +514,8 @@ export class WorldState {
       const payload = { ...lToJs(body) as Record<string, JsLike> };
       this.relayCellExcept(cellKey, player.id, name, payload);
       if (toCellKey !== cellKey) this.relayCellExcept(toCellKey, player.id, name, payload);
+      const f = this.followedBy.get(ref.key);
+      if (f) f.cellKey = toCellKey;
       return;
     }
     // Stats/Equip/AI: relay verbatim cell-scoped (excluding the holder).
