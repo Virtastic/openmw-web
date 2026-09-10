@@ -375,6 +375,29 @@ function handleInventory(ctx: StateCtx, player: Player, body: LTable): boolean {
     if (!peerStatesFresh) {
       if (Object.keys(states).length > 0) doc.itemStates = states;
       else delete doc.itemStates;
+    } else {
+      // PER FIELD, NOT WHOLESALE. Discarding the client's states entirely made three things
+      // the client alone does vanish under the avatar's next report: a cast from an
+      // enchanted item (its CHARGE dropped only on the client -- casting from items was
+      // free), a repair (CONDITION rose only on the client -- hammers did nothing), and a
+      // soul-gem recharge (charge rose). So: charge is the client's in both directions --
+      // the avatar spends it only on cast-on-strike, which its own report still lowers --
+      // and condition may be RAISED by the client (repair) while wear stays the peer's. The
+      // soul stays the peer's: the trap resolves where the kill happens, in the avatar's gem.
+      const merged: Record<string, { condition?: number; charge?: number; soul?: string }[]> = { ...(doc.itemStates ?? {}) };
+      for (const [recId, bucket] of Object.entries(states)) {
+        const have = merged[recId] ?? [];
+        merged[recId] = bucket.map((mine, i) => {
+          const theirs = have[i] ?? {};
+          const out = { ...theirs };
+          if (mine.charge !== undefined) out.charge = mine.charge;
+          if (mine.condition !== undefined && (theirs.condition === undefined || mine.condition > theirs.condition)) {
+            out.condition = mine.condition;
+          }
+          return out;
+        });
+      }
+      doc.itemStates = merged;
     }
     // Phase 4D owner->avatar sync: the peer's copy must track what the player carries --
     // a weapon picked up mid-session has to be IN the avatar's hands for 4C to compute the
