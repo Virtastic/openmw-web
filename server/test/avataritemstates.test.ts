@@ -64,7 +64,7 @@ test('the peer\'s item-state report lands in the doc and reaches the owner', asy
   assert.equal(states.iron_longsword?.[0]?.condition, 37, 'the worn condition must reach the owner');
 });
 
-test('while peer states are fresh the client\'s own itemStates are ignored -- counts still land', async (t) => {
+test("while peer states are fresh the client's states merge per field: repairs and spends land, wear stays the peer's", async (t) => {
   const { peer, a } = await world(t);
   drive(t, a);
   a.sendEvent('PlayerInventory', { items: [{ id: 'iron_longsword', n: 1 }] });
@@ -75,19 +75,42 @@ test('while peer states are fresh the client\'s own itemStates are ignored -- co
   t.after(() => clearInterval(reporter));
   await a.waitEvent('SelfItemStates');
 
-  // The client claims a fully repaired sword AND a new stack of gold.
+  // The client repairs the sword (condition UP: the client alone swings hammers), spends the
+  // charge of a ring (charge DOWN: the client alone casts from items), claims a soul in the
+  // gem it carries (the peer alone fills gems -- the kill resolves there), and a new stack of
+  // gold. Repair and spend must land; the soul must not; the count is the client's as before.
+  clearInterval(reporter);
+  peer.sendEvent('AvatarItemStatesBatch', {
+    entries: [{ id: a.playerId, itemStates: {
+      iron_longsword: [{ condition: 37 }], ring_of_fire: [{ charge: 100 }], misc_soulgem_common: [{}],
+    } }],
+  });
+  await a.waitEvent('SelfItemStates', (v) => Boolean((v as { itemStates?: Record<string, unknown> })?.itemStates?.ring_of_fire));
   peer.inbox.events.length = 0;
   a.sendEvent('PlayerInventory', {
-    items: [{ id: 'iron_longsword', n: 1 }, { id: 'gold_001', n: 40 }],
-    itemStates: { iron_longsword: [{ condition: 999 }] },
+    items: [{ id: 'iron_longsword', n: 1 }, { id: 'ring_of_fire', n: 1 }, { id: 'misc_soulgem_common', n: 1 }, { id: 'gold_001', n: 40 }],
+    itemStates: {
+      iron_longsword: [{ condition: 999 }], ring_of_fire: [{ charge: 10 }], misc_soulgem_common: [{ soul: 'golden_saint' }],
+    },
   });
-  // The forward to the peer carries the doc as written: peer-owned state, client-owned count.
   const st = await peer.waitEvent('AvatarState',
     (v) => (v as { id?: number })?.id === a.playerId
       && Boolean((v as { inventory?: { id: string }[] }).inventory?.some((i) => i.id === 'gold_001')));
-  const body = st.value as { itemStates?: Record<string, { condition?: number }[]> };
-  assert.equal(body.itemStates?.iron_longsword?.[0]?.condition, 37,
-    'the peer\'s reported wear must survive the client\'s repaired claim');
+  const body = st.value as { itemStates?: Record<string, { condition?: number; charge?: number; soul?: string }[]> };
+  assert.equal(body.itemStates?.iron_longsword?.[0]?.condition, 999,
+    'a repair happens only on the client and must reach the avatar, or hammers do nothing');
+  assert.equal(body.itemStates?.ring_of_fire?.[0]?.charge, 10,
+    'a cast from an item spends charge only on the client and must reach the avatar, or it is free');
+  assert.equal(body.itemStates?.misc_soulgem_common?.[0]?.soul, undefined,
+    "the soul is the peer's: the trap resolves where the kill happens");
+
+  // ...and wear reported by the peer afterwards still lowers it: the peer may hurt.
+  peer.sendEvent('AvatarItemStatesBatch', {
+    entries: [{ id: a.playerId, itemStates: { iron_longsword: [{ condition: 900 }] } }],
+  });
+  const worn = await a.waitEvent('SelfItemStates',
+    (v) => (v as { itemStates?: Record<string, { condition?: number }[]> })?.itemStates?.iron_longsword?.[0]?.condition === 900);
+  assert.ok(worn, "the peer's wear report must still land after a repair");
 });
 
 test('an idle (non-driving) player\'s states are not overwritten by the peer', async (t) => {
