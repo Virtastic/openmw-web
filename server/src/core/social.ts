@@ -109,6 +109,10 @@ export class Social {
   }
 
   private readonly worlds?: WorldBrowser;
+  // Reports are retained by TIME, not count, so one player could file thousands inside the
+  // window. A real report takes longer than this to write.
+  private readonly lastReportAt = new Map<AccountKey, number>();
+  private static readonly REPORT_COOLDOWN_MS = 30_000;
 
   // ------------------------------------------------------------------ presence
 
@@ -711,6 +715,13 @@ export class Social {
           this.reply(player, 'ReportPlayer', false, 'no_reason');
           return true;
         }
+        const nowMs = this.d.now();
+        const last = this.lastReportAt.get(player.accountKey) ?? 0;
+        if (nowMs - last < Social.REPORT_COOLDOWN_MS) {
+          this.reply(player, 'ReportPlayer', false, 'too_soon');
+          return true;
+        }
+        this.lastReportAt.set(player.accountKey, nowMs);
         const target = targetAcct ? this.onlinePlayer(targetAcct) : undefined;
         void this.d.report?.({
           reporter: { id: player.id, account: player.accountKey, name: player.name },
