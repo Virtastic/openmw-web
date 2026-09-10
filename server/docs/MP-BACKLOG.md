@@ -653,6 +653,12 @@ request needs a timeout and retry of its own, or the answer needs to be guarante
   With it, every server-sent event has a client handler AND every accepted inbound event is
   sent by someone. The protocol has no dead surface left.
 
+  Then it was reachable and still never fired: `noteFollow` was holder-only, and recruiting is
+  a dialogue action on the recruiting player's client -- never the holder once the peer holds
+  every cell. `ActorAI` is now the one actor fact a non-holder may state, bounded to "follows
+  ME" / "stopped" (`worldstate.ts followClaim`), and the peer carries a player's followers
+  through cell changes with the avatar, since the engine only does that for a real Player.
+
 * **AI package state cannot be read for a foreign actor** from a global script. Still true --
   it is an engine limitation -- but it is no longer a dead end. An actor's OWN local script
   can read its own packages, and `scripts/mp/companion.lua` is that route: the fact is pushed

@@ -404,8 +404,13 @@ actors.handlers.MP_ActorCellChange = function(data)
         pcall(function() p.obj:sendEvent('MP_Detach', {}) end)
         puppetActors[key] = nil
     end
+    -- AN EXTERIOR KEY IS NOT A CELL NAME. teleport() takes a cell NAME (interiors) or '' for
+    -- the exterior, where the position picks the grid square; "x,y" is our own key and the
+    -- engine looked it up as a name, failed inside the pcall, and the actor never arrived --
+    -- so every NPC that walked outdoors kept standing indoors on every other screen.
+    local cellArg = data.toCellKey:match('^%-?%d+,%-?%d+$') and '' or data.toCellKey
     pcall(function()
-        obj:teleport(data.toCellKey, util.vector3(data.x or 0, data.y or 0, data.z or 0))
+        obj:teleport(cellArg, util.vector3(data.x or 0, data.y or 0, data.z or 0))
     end)
 end
 
@@ -437,15 +442,32 @@ end
 --
 -- Holder-only, like every other actor fact: two clients both announcing the same follower
 -- would fight over it, and the holder is the one whose simulation is authoritative anyway.
+local claimedFollow = {} -- refKey -> true: actors we told the server follow US while not holding
+
 function actors.noteFollow(obj, target)
     if not (obj and obj:isValid()) then return end
     local cellKey = actors.cellKeyOfObj(obj)
-    if not cellKey or not actors.isHolderOf(cellKey) then return end
+    if not cellKey then return end
     -- nil target is a real value here: it means 'stopped following', which has to travel or a
     -- dismissed companion keeps trailing everyone else forever.
     local followId = deps.playerIdOf and deps.playerIdOf(target) or nil
+    local epoch = actors.epochOf(cellKey)
+    if not actors.isHolderOf(cellKey) then
+        -- RECRUITING IS A DIALOGUE ACTION, and dialogue runs on the recruiting player's own
+        -- client -- which, on a peer-simulated world, is never the holder. Holder-only here
+        -- meant the fact was born on a non-holder and thrown away, so no companion ever
+        -- followed anyone on any screen. A non-holder may still say exactly one thing about an
+        -- actor: "this one now follows ME" (or stopped). The server holds it to that
+        -- (worldstate.ts followClaim) and relays it to the holder, who starts the package.
+        local key = refKeyOf(obj)
+        local own = deps.ownIdFn and deps.ownIdFn() or nil
+        if followId ~= nil and followId ~= own then return end
+        if followId == nil and not claimedFollow[key] then return end
+        claimedFollow[key] = (followId ~= nil) or nil
+        epoch = epoch or 0 -- a claim is not epoch-checked; the field only has to be present
+    end
     mp.sendEvent('ActorAI', {
-        cellKey = cellKey, epoch = actors.epochOf(cellKey), ref = obj, follow = followId,
+        cellKey = cellKey, epoch = epoch, ref = obj, follow = followId,
     })
 end
 
@@ -453,9 +475,44 @@ end
 -- gets their own avatar, everyone else gets the puppet standing in for that person. Applied
 -- by sending the actor a StartAIPackage event, because AI packages can only be started from
 -- the actor's own local script -- the same asymmetry that made this a client gap.
+-- playerId -> { refKey -> actor }. Companions of each player, as told by MP_ActorAI. The
+-- engine carries a follower through a door only when it follows a PLAYER; on the peer the
+-- target is an avatar (an NPC), so the follower would stop at the door and the player would
+-- walk on alone. global.lua's MP_PlayerCellChange moves these along with the avatar.
+local followersOf = {}
+
+function actors.followersOf(playerId)
+    return followersOf[playerId] or {}
+end
+
+-- The avatar body is REPLACED on a resurrect or an appearance change, and removed when the
+-- player leaves; a Follow package aimed at the old object never finishes and the follower
+-- stands still for good. Re-aim it at the new body, or release it when there is none.
+function actors.refollow(playerId, target)
+    for _, obj in pairs(followersOf[playerId] or {}) do
+        if obj:isValid() then
+            if target then
+                pcall(function() obj:sendEvent('StartAIPackage', { type = 'Follow', target = target }) end)
+            else
+                pcall(function() obj:sendEvent('RemoveAIPackages', 'Follow') end)
+            end
+        end
+    end
+end
+
+function actors.forgetFollowers(playerId)
+    followersOf[playerId] = nil
+end
+
 actors.handlers.MP_ActorAI = function(data)
     local obj = data.ref and data.ref:isValid() and data.ref or nil
     if not obj then return end
+    local key = refKeyOf(obj)
+    for _, list in pairs(followersOf) do list[key] = nil end
+    if data.follow ~= nil then
+        followersOf[data.follow] = followersOf[data.follow] or {}
+        followersOf[data.follow][key] = obj
+    end
     local target = deps.playerObjOf and deps.playerObjOf(data.follow) or nil
     if target then
         pcall(function() obj:sendEvent('StartAIPackage', { type = 'Follow', target = target }) end)

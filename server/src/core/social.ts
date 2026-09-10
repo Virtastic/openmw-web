@@ -110,8 +110,9 @@ export class Social {
 
   private readonly worlds?: WorldBrowser;
   // Reports are retained by TIME, not count, so one player could file thousands inside the
-  // window. A real report takes longer than this to write.
-  private readonly lastReportAt = new Map<AccountKey, number>();
+  // window. A real report takes longer than this to write. Keyed per reporter AND target:
+  // two griefers in one minute is two reports, the same one twice is spam.
+  private readonly lastReportAt = new Map<string, number>();
   private static readonly REPORT_COOLDOWN_MS = 30_000;
 
   // ------------------------------------------------------------------ presence
@@ -716,12 +717,13 @@ export class Social {
           return true;
         }
         const nowMs = this.d.now();
-        const last = this.lastReportAt.get(player.accountKey) ?? 0;
+        const pair = `${player.accountKey}->${targetAcct ?? typed.toLowerCase()}`;
+        const last = this.lastReportAt.get(pair) ?? 0;
         if (nowMs - last < Social.REPORT_COOLDOWN_MS) {
           this.reply(player, 'ReportPlayer', false, 'too_soon');
           return true;
         }
-        this.lastReportAt.set(player.accountKey, nowMs);
+        this.lastReportAt.set(pair, nowMs);
         const target = targetAcct ? this.onlinePlayer(targetAcct) : undefined;
         void this.d.report?.({
           reporter: { id: player.id, account: player.accountKey, name: player.name },

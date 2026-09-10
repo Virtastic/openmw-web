@@ -599,6 +599,7 @@ handlers.MP_ObjectSpawnRefused = function(data)
         local why = {
             unowned = 'That drop was refused: the world does not think you are carrying it.',
             contained = 'Your account cannot place items in a shared world right now.',
+            cell_full = 'This place is too cluttered to drop anything more here.',
         }
         deps.noticeFn(why[tostring(data and data.reason or '')] or 'That drop was refused.')
     end
