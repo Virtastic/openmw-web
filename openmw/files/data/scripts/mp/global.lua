@@ -787,6 +787,7 @@ local function spawnPuppet(id, pose)
         obj:addScript('scripts/mp/puppet.lua', { playerId = id })
     end
     puppets[id] = { obj = obj, name = name }
+    if mp.isSystem and mp.isSystem() then actors.refollow(id, obj) end -- companions aim at the new body
     pushAvatarPolicy()
     applyAvatarDoc(id) -- Phase 2b: a doc that arrived before the body existed lands now
     print('[mp] puppet spawned for ' .. name .. ' (#' .. tostring(id) .. ')')
@@ -811,6 +812,7 @@ local function despawnPuppet(id)
     -- an engine handler that throws ABORTS — which took the rest of MP_PlayerLeaveWorld
     -- with it, leaving the roster mirror stale and remoteCell/lastPose still holding a
     -- player who had left. Same transient-engine-state reasoning as tryTeleport.
+    if mp.isSystem and mp.isSystem() then actors.refollow(id, nil) end -- release, re-aimed on respawn
     if p.obj:isValid() then pcall(function() p.obj:remove() end) end
     print('[mp] puppet despawned for ' .. p.name .. ' (#' .. tostring(id) .. ')')
 end
@@ -1581,6 +1583,7 @@ local eventHandlers = {
             end
         end
         despawnPuppet(data.id)
+        actors.forgetFollowers(data.id) -- gone for good: their companions stop being theirs
         remoteCell[data.id] = nil
         lastPose[data.id] = nil
         mirrorRoster()
@@ -1735,6 +1738,14 @@ local eventHandlers = {
                 if mp.isSystem and mp.isSystem() then
                     print(string.format('[mp] avatar #%d follow-teleport to (%.0f,%.0f,%.0f) ok=%s',
                         data.id, data.x, data.y, data.z, tostring(moved)))
+                    -- COMPANIONS COME THROUGH THE DOOR TOO. The engine only carries followers
+                    -- of a PLAYER across cells; this avatar is an NPC to it, so its follower
+                    -- would be left standing at the door for everyone. Same move, same spot.
+                    if moved then
+                        for _, follower in pairs(actors.followersOf(data.id)) do
+                            tryTeleport(follower, dest, util.vector3(data.x, data.y, data.z))
+                        end
+                    end
                 end
             else
                 spawnPuppet(data.id, data)
@@ -1775,7 +1786,25 @@ local eventHandlers = {
     MP_PlayerStatsDynamic = function(data)
         if not data.id or data.id == net.playerId then return end
         remoteIdentity[data.id] = remoteIdentity[data.id] or {}
+        local was = remoteIdentity[data.id].dynamic
         remoteIdentity[data.id].dynamic = { hp = data.hp, mp = data.mp, ft = data.ft }
+        -- DEATH IS ONE-WAY FOR A BODY. hp 0 killed this puppet (MP_Stats zeroes health and
+        -- the engine plays the death), and a later hp > 0 written onto a dead actor is the
+        -- corpse-with-healthy-bars MP_AvatarResurrect describes: the friend respawned, but on
+        -- every other screen they stayed a body on the floor while their poses steered a
+        -- corpse. Same answer as the peer's: replace the body. Not on the peer itself, where
+        -- AvatarResurrect already did exactly this for the avatar.
+        local revived = was and was.hp and was.hp.c <= 0 and data.hp and data.hp.c > 0
+        if revived and puppets[data.id] and not (mp.isSystem and mp.isSystem()) then
+            local pose = lastPose[data.id]
+            if pose then
+                despawnPuppet(data.id)
+                spawnPuppet(data.id, pose) -- re-applies look, equipment and these bars
+            else
+                rebuildPuppet(data.id)
+            end
+            return
+        end
         pushStatsToPuppet(data.id)
     end,
 

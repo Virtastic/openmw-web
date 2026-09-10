@@ -136,6 +136,45 @@ test('actor authority and relay end to end', async (t) => {
       'an ActorEquip from a stale epoch was relayed');
   });
 
+  // COMPANIONS. Recruiting is a dialogue action on the recruiting player's own client, which is
+  // never the holder on a peer-simulated world -- so a non-holder must be allowed to say exactly
+  // one thing about an actor: "this one follows ME" (or stopped), and nothing wider.
+  await t.test('a non-holder may claim an actor follows them, and only them', async () => {
+    const fence = async (tag: string) => {
+      b.sendEvent('ChatSend', { text: tag });
+      await a.waitEvent('ChatMessage', (v) => (v as { text?: string }).text === tag);
+    };
+    a.inbox.events.length = 0;
+    b.sendEvent('ActorAI', { cellKey: '0,0', epoch: 0, ref: ACTOR_REF, follow: bId });
+    const claim = await a.waitEvent('ActorAI');
+    assert.equal((claim.value as { follow?: number }).follow, bId, 'the holder is told who the actor follows');
+
+    a.inbox.events.length = 0;
+    b.sendEvent('ActorAI', { cellKey: '0,0', epoch: 0, ref: ACTOR_REF, follow: aId }); // somebody else
+    await fence('claimfence1');
+    assert.equal(a.inbox.events.filter((e) => e.name === 'ActorAI').length, 0,
+      'a non-holder made an NPC follow somebody else and the server relayed it');
+
+    // Only the player being followed may dismiss.
+    const d = await TestClient.connect(server.port);
+    await d.joinAsNew('Dana');
+    await d.waitEvent('PlayerList');
+    d.sendCellChange('0,0', 0, 0, 0);
+    await d.waitEvent('PlayerCellChange');
+    a.inbox.events.length = 0;
+    d.sendEvent('ActorAI', { cellKey: '0,0', epoch: 0, ref: ACTOR_REF });
+    d.sendEvent('ChatSend', { text: 'claimfence2' });
+    await a.waitEvent('ChatMessage', (v) => (v as { text?: string }).text === 'claimfence2');
+    assert.equal(a.inbox.events.filter((e) => e.name === 'ActorAI').length, 0,
+      "a stranger dismissed somebody else's companion and the server relayed it");
+
+    b.sendEvent('ActorAI', { cellKey: '0,0', epoch: 0, ref: ACTOR_REF });
+    const dismiss = await a.waitEvent('ActorAI');
+    assert.equal((dismiss.value as { follow?: number }).follow, undefined, 'the follower is dismissed by the one they followed');
+    d.close();
+    await a.waitEvent('PlayerLeaveWorld'); // free her per-IP connection slot before the next test connects
+  });
+
   await t.test('far player receives no actor traffic', async () => {
     const c = await TestClient.connect(server.port);
     await c.joinAsNew('Cara');

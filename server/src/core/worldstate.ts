@@ -431,6 +431,36 @@ export class WorldState {
     return { cellKey, ref };
   }
 
+  // THE ONE ACTOR FACT A NON-HOLDER MAY STATE: "this actor follows me" (or stopped).
+  // Recruiting a companion is a dialogue action, and dialogue runs on the recruiting player's
+  // client -- never the holder on a peer-simulated world -- so under the holder-only rule the
+  // fact died where it was born and no companion ever followed anyone. Bounded to exactly
+  // that claim: the follow target must be the sender, the sender must be near the cell, and
+  // only the player being followed may say the following stopped.
+  private readonly followedBy = new Map<string, number>(); // cellKey/refKey -> player id
+  private followClaim(player: Player, body: LTable): void {
+    const cellKey = str(body.get('cellKey'), MAX_CELL_KEY);
+    const ref = parseObjRef(body);
+    const rawFollow = body.get('follow');
+    const follow = rawFollow === undefined ? undefined : finite(rawFollow);
+    if (!cellKey || !ref || ref.kind !== 'ref' || (rawFollow !== undefined && follow !== player.id)) {
+      this.invalid(player, 'ActorAI');
+      return;
+    }
+    if (player.system || !cellsVisible(player.cellKey, cellKey)) {
+      log('warn', 'actor.dropped', { from: player.name, name: 'ActorAI', cellKey, why: 'follow claim from afar' });
+      return;
+    }
+    const k = `${cellKey}/${ref.key}`;
+    if (follow === undefined) {
+      if (this.followedBy.get(k) !== player.id) return; // not yours to dismiss
+      this.followedBy.delete(k);
+    } else {
+      this.followedBy.set(k, player.id);
+    }
+    this.relayCellExcept(cellKey, player.id, 'ActorAI', { ...lToJs(body) as Record<string, JsLike> });
+  }
+
   private async actorEvent(player: Player, name: string, body: LTable): Promise<void> {
     if (name === 'ActorSnapshot') {
       // Snapshot has no single ref; validate cell+epoch+holder directly, then store.
@@ -446,6 +476,10 @@ export class WorldState {
         return;
       }
       this.authority.setSnapshot(cellKey, { actors: lToJs(actors) as JsLike });
+      return;
+    }
+    if (name === 'ActorAI' && this.authority.holderOf(str(body.get('cellKey'), MAX_CELL_KEY) ?? '') !== player.id) {
+      this.followClaim(player, body);
       return;
     }
     const checked = this.authCheck(player, body, name);
