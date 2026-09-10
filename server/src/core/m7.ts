@@ -78,6 +78,11 @@ export class WorldM7 {
   private recordQueue: Promise<void> = Promise.resolve();
   private recordFloodLogged = false; // said once, not once per refusal
   private resetTimer?: NodeJS.Timeout;
+  // The sweep awaits each reset and runs on a 1 s interval, but lastResetMs is only written
+  // AFTER the awaited wipe -- so a reset slower than a tick let the next tick see the old
+  // stamp and reset the same cell again: two wipes, two WorldCellReset broadcasts, two
+  // snapshots. One flag makes a tick that arrives mid-sweep a no-op.
+  private sweeping = false;
 
   constructor(private readonly ctx: M7Ctx) {
     const m7 = ctx.cells.worldM7();
@@ -271,6 +276,12 @@ export class WorldM7 {
   }
 
   private async sweepResets(): Promise<void> {
+    if (this.sweeping) return;
+    this.sweeping = true;
+    try { await this.sweepResetsOnce(); } finally { this.sweeping = false; }
+  }
+
+  private async sweepResetsOnce(): Promise<void> {
     const now = Date.now();
     for (const entry of Object.values(this.ctx.cells.worldM7().resets)) {
       if (entry.intervalSec > 0 && now - entry.lastResetMs >= entry.intervalSec * 1000) {
