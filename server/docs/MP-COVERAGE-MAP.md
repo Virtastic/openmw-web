@@ -19,8 +19,14 @@ Run locally under `wasm-build/Dockerfile.harness-peer` with `OMW_SIM_PEER_BIN` s
 engine built from the same tree. PASS: s22 (death seen by the other player), s67 (avatar
 swing), s77 (death -> respawn), s31 (shared container), s32 (doors), s58 (melee forward),
 s59 (spell forward), s78 (crime pursuit), s79 (pickup race), s51 (NPC combat), s107 (runtime
-creatures named once, built on both clients). SKIP by design: s66 (covered by server tests),
-s40/s42 (host-load guard). Anything below marked OK without a scenario is a code trace only.
+creatures named once, built on both clients), s95 (play with friends -- FAILED first: every
+join refused not_open, fixed the same day), s100 (invite across worlds), s102 (owner goes
+solo), s61 (dialogue lock), s72 (merchant purse), s03 (chat), s10 (movement puppets), s20
+(identity), s21 (rejoin), s80 (resume), s81 (reconnect), s70 (time), s48/s56 (world switch),
+s30 (objects), s50 (combat), s52 (pvp off), s60/s60b (journal), s62 (quest vars), s71
+(records), s73/s75 (topics), s69 (peer outage). SKIP by design: s66 (covered by server
+tests), s63 (rewrite pending), s40/s42 (host-load guard). Anything below marked OK without a
+scenario is a code trace only.
 
 ## 1. Session
 
