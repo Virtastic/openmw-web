@@ -576,7 +576,7 @@ end
 handlers.MP_QuestSpawn = function(data)
     if type(data.recordId) ~= 'string' then return end
     core.sendGlobalEvent('mpQuestSpawn', {
-        recordId = data.recordId, questId = tostring(data.questId or ''),
+        recordId = data.recordId, questId = tostring(data.questId or ''), forId = data.forId,
     })
 end
 

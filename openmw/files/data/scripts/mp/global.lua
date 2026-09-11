@@ -2259,15 +2259,24 @@ local eventHandlers = {
     -- (that is the whole point of replaying a one-shot), so broadcasting it would put a
     -- second Staada in front of everyone who already killed theirs.
     mpQuestSpawn = function(data)
-        local player = playerScript()
-        if not player or not data.recordId then return end
+        if not data.recordId then return end
+        -- On the peer the server names the player it is owed to (forId) and the encounter is
+        -- placed beside THEIR avatar, where it is simulated like any other actor in the cell.
+        local anchor
+        if mp.isSystem and mp.isSystem() then
+            local p = data.forId ~= nil and puppets[data.forId]
+            anchor = (p and p.obj and p.obj:isValid()) and p.obj or nil
+        else
+            anchor = playerScript()
+        end
+        if not anchor then return end
         local ok, err = pcall(function()
             local obj = world.createObject(data.recordId)
-            obj:teleport(player.cell, player.position + util.vector3(150, 150, 0))
+            obj:teleport(anchor.cell, anchor.position + util.vector3(150, 150, 0))
         end)
         if ok then
             print('[mp] quest spawn replayed: ' .. tostring(data.recordId))
-            notice('Something stirs nearby.')
+            if not (mp.isSystem and mp.isSystem()) then notice('Something stirs nearby.') end
         else
             print('[mp] quest spawn failed: ' .. tostring(err))
         end
