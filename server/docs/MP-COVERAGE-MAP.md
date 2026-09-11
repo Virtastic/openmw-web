@@ -127,7 +127,7 @@ known and recorded; N/A = does not exist in single player either.
 | Scripted Disable/SetDelete of a named runtime actor | holder sees it gone -> ObjectDelete by net id; holder loss purges the cell's named actors | FIXED 09-11 |
 | Scripted PositionCell/SetPos of an NPC | runs on every engine; holder's poses/ActorCellChange win | OK |
 | ForceGreeting | client-side dialogue, no lock taken | OK (two players may both be forced; harmless) |
-| Companion share (follower inventory) | actor inventory as a container: ContainerOp canonical, relayed to the holder | OK |
+| Companion share (follower inventory) | the Companion window is watched like Barter: canonical on open, one diff on close, applied into the live actor's inventory on every engine (the peer's copy fights with it) | FIXED 09-11 (was: local to the giver's screen) |
 | StartScript/StopScript | runs per engine; globals reconcile | OK |
 
 ## 8. World
