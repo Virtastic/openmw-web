@@ -633,6 +633,17 @@ handlers.MP_CrimeUpdate = function(data)
     -- engine's own bounty field is player-only -- hence the MP registry (mwmp/puppets.hpp),
     -- which is what the generalised crime pursuit reads.
     if mp.isSystem and mp.isSystem() then
+        -- SHARED CRIME IS ONE RECORD FOR THE PARTY: every client applies it to its own
+        -- player, so every avatar here has to carry it too, or the peer's guards hunt only
+        -- the one who did it while the clients believe everyone is wanted.
+        if data.shared and deps.allAvatarsFn then
+            local n = 0
+            for _, obj in pairs(deps.allAvatarsFn()) do
+                if obj and obj:isValid() and mp.setAvatarBounty then mp.setAvatarBounty(obj, level); n = n + 1 end
+            end
+            print(string.format('[mp] peer CrimeUpdate shared level=%d avatars=%d', level, n))
+            return
+        end
         local obj = (data.byId ~= nil and deps.avatarObjFn) and deps.avatarObjFn(data.byId) or nil
         print(string.format('[mp] peer CrimeUpdate byId=%s level=%d avatar=%s',
             tostring(data.byId), level, obj and 'yes' or 'NO'))

@@ -404,7 +404,7 @@ function handleInventory(ctx: StateCtx, player: Player, body: LTable): boolean {
     // right damage. Same AvatarState the join sends; applyAvatarDoc reconciles shortfall,
     // surplus and states without duplicating what the body already holds.
     const worldPeer = ctx.worldPeer();
-    if (worldPeer) worldPeer.peer.sendEvent('AvatarState', avatarStateBody(player.id, doc));
+    if (worldPeer) worldPeer.peer.sendEvent('AvatarState', avatarStateBody(player.id, doc, player.bounty));
   });
   // The snapshot now accounts for everything credited since the last one, so the credit is
   // spent. Clearing here (rather than expiring on a timer) is what keeps the ledger from
@@ -636,7 +636,7 @@ export function handleStateEvent(ctx: StateCtx, player: Player, name: string, va
   if (ok && (name === 'PlayerAttributes' || name === 'PlayerSkills' || name === 'PlayerLevel')) {
     const worldPeer = ctx.worldPeer();
     const doc = ctx.store.getCached(player.charId);
-    if (worldPeer && doc) worldPeer.peer.sendEvent('AvatarState', avatarStateBody(player.id, doc));
+    if (worldPeer && doc) worldPeer.peer.sendEvent('AvatarState', avatarStateBody(player.id, doc, player.bounty));
   }
   return true;
 }
@@ -655,7 +655,7 @@ export function syncStateOnJoin(ctx: StateCtx, joiner: Player): void {
     if (doc?.equipment) joiner.peer.sendEvent('PlayerEquipment', { id: other.id, slots: equipmentToL(doc.equipment) });
     // Phase 2b: a JOINING PEER gets the whole character of everyone already here.
     if (joiner.system === true && !other.system && doc) {
-      joiner.peer.sendEvent('AvatarState', avatarStateBody(other.id, doc));
+      joiner.peer.sendEvent('AvatarState', avatarStateBody(other.id, doc, other.bounty));
     }
   }
   const own = ctx.store.getCached(joiner.charId);
@@ -666,7 +666,7 @@ export function syncStateOnJoin(ctx: StateCtx, joiner: Player): void {
     if (own.equipment) other.peer.sendEvent('PlayerEquipment', { id: joiner.id, slots: equipmentToL(own.equipment) });
     // Phase 2b: every PEER gets the whole character of a joining player.
     if (other.system === true && joiner.system !== true) {
-      other.peer.sendEvent('AvatarState', avatarStateBody(joiner.id, own));
+      other.peer.sendEvent('AvatarState', avatarStateBody(joiner.id, own, joiner.bounty));
     }
   }
 }
@@ -688,7 +688,7 @@ export function pushAvatarsToPeer(ctx: StateCtx, peer: Player): void {
   for (const other of ctx.roster.inWorld()) {
     if (other.system === true) continue;
     const doc = ctx.store.getCached(other.charId);
-    if (doc) peer.peer.sendEvent('AvatarState', avatarStateBody(other.id, doc));
+    if (doc) peer.peer.sendEvent('AvatarState', avatarStateBody(other.id, doc, other.bounty));
   }
 }
 
@@ -699,7 +699,8 @@ export function pushAvatarsToPeer(ctx: StateCtx, peer: Player): void {
 // shape (persist/playerstore.ts) is already exactly the right payload; this only sends it.
 // Incremental freshness rides the existing Player* identity relays, which peers receive
 // like any client; this is the join-time snapshot that must precede the avatar acting.
-export function avatarStateBody(id: number, doc: PlayerDoc): JsLike {
+export function avatarStateBody(id: number, doc: PlayerDoc, liveBounty?: number): JsLike {
+  const bounty = liveBounty ?? doc.bounty;
   return {
     id,
     ...(doc.stats ? { stats: doc.stats } : {}),
@@ -707,6 +708,6 @@ export function avatarStateBody(id: number, doc: PlayerDoc): JsLike {
     ...(doc.inventory ? { inventory: doc.inventory } : {}),
     ...(doc.itemStates ? { itemStates: doc.itemStates } : {}),
     ...(doc.factions ? { factions: doc.factions } : {}),
-    ...(doc.bounty !== undefined ? { bounty: doc.bounty } : {}),
+    ...(bounty !== undefined ? { bounty } : {}),
   } as unknown as JsLike;
 }

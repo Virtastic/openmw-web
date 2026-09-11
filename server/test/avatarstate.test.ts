@@ -89,3 +89,33 @@ test('a player joining after the peer is announced to it; a CLIENT never sees Av
   const leaked = b.inbox.events.some((e) => e.name === 'AvatarState');
   assert.equal(leaked, false, "another player's full inventory reached a client");
 });
+
+// THE BOUNTY THE PEER HUNTS IS THE WORLD'S, NOT THE DOC'S. With shared crime the party has one
+// record: every client sets it on its own player, so every avatar must carry it too -- and it
+// must survive the next AvatarState refresh, which used to re-seed each avatar from its own doc
+// (0 for everyone but the campaign it was persisted on).
+test('a shared bounty reaches every avatar and survives an AvatarState refresh', async (t) => {
+  const { server, a } = await bootWithCharacter(t);
+  const b = await TestClient.connect(server.port);
+  t.after(() => b.close());
+  const wb = await b.joinAsNew('Bystander');
+  b.playerId = wb['playerId'] as number;
+  await b.waitEvent('PlayerList');
+  b.sendEvent('PlayerLevel', { level: 2 }); // a fresh player has no doc; give the bystander one
+  await new Promise((r) => setTimeout(r, 300));
+  const peer = await TestClient.simPeer(server.port, PEER_PASS);
+  t.after(() => peer.close());
+  await peer.waitEvent('AvatarState', (v) => (v as { id?: number })?.id === b.playerId, 8000);
+
+  peer.inbox.events.length = 0;
+  a.sendEvent('CrimeUpdate', { bounty: 500, kind: 'murder' });
+  const crime = await peer.waitEvent('CrimeUpdate');
+  assert.equal((crime.value as { shared?: boolean }).shared, true, 'the peer is told the record is shared');
+
+  // A refresh of the BYSTANDER's avatar (any inventory change) must carry the party's bounty.
+  b.sendEvent('PlayerInventory', { items: [{ id: 'gold_001', n: 5 }] });
+  const st = await peer.waitEvent('AvatarState',
+    (v) => (v as { id?: number })?.id === b.playerId && (v as { inventory?: unknown[] }).inventory !== undefined);
+  assert.equal((st.value as { bounty?: number }).bounty, 500,
+    "the bystander's avatar was re-seeded from their own doc and stopped being wanted");
+});
