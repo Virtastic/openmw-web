@@ -46,7 +46,16 @@ local function registerHitVeto()
         if pvpEnabled then return end
         local a = attack.attacker
         local ok, aid = pcall(function() return a and a.id end)
-        if ok and aid and avatarObjIds[aid] then return false end
+        if not (ok and aid) then return end
+        if avatarObjIds[aid] then return false end
+        -- A SUMMON IS ITS SUMMONER'S HAND. The peer summons for every player now, and a
+        -- summon attacks what its master engages: with pvp off another player's scamp could
+        -- bite this avatar when the player could not. The engine records who summoned what.
+        if mp.summonerOf then
+            local okm, master = pcall(mp.summonerOf, a)
+            local okid, mid = pcall(function() return master and master.id end)
+            if okm and okid and mid and avatarObjIds[mid] then return false end
+        end
     end)
 end
 

@@ -1,3 +1,4 @@
+#include "../mwmp/puppets.hpp"
 #include "summoning.hpp"
 
 #include <components/debug/debuglog.hpp>
@@ -118,6 +119,7 @@ namespace MWMechanics
                 MWWorld::Ptr placed = world->safePlaceObject(ref.getPtr(), summoner, summoner.getCell(), 0, 120.f);
                 MWBase::Environment::get().getWorldModel()->registerPtr(placed);
                 creature = placed.getCellRef().getRefNum();
+                MWMP::noteSummon(creature, summoner.getCellRef().getRefNum());
 
                 // Make the summoned creature follow its master and help in fights
                 AiFollow package(summoner);

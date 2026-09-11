@@ -274,6 +274,15 @@ namespace MWMP
             return out;
         };
         // Client: whether the player's own Summon effects spawn a creature HERE (see puppets.hpp).
+        // The actor that summoned this creature, or nil (mwmp/puppets.hpp noteSummon).
+        api["summonerOf"] = [](sol::this_state state, const sol::object& obj) -> sol::object {
+            if (!obj.is<MWLua::Object>())
+                return sol::nil;
+            const ESM::RefNum master = summonerOf(obj.as<MWLua::Object>().id());
+            if (!master.isSet())
+                return sol::nil;
+            return sol::make_object(state, MWLua::GObject(master));
+        };
         api["setLocalSummons"] = [](bool enabled) { setLocalSummons(enabled); };
         api["setLocalSpawns"] = [](bool enabled) { setLocalSpawns(enabled); };
         api["isEnabled"] = []() { return std::getenv("OPENMW_MP_URL") != nullptr; };

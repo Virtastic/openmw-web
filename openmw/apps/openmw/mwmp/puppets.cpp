@@ -180,6 +180,29 @@ namespace MWMP
         }
     }
 
+    namespace
+    {
+        std::unordered_map<ESM::RefNum, ESM::RefNum, RefNumHash, RefNumEq>& summoners()
+        {
+            static std::unordered_map<ESM::RefNum, ESM::RefNum, RefNumHash, RefNumEq> m;
+            return m;
+        }
+    }
+
+    void noteSummon(ESM::RefNum creature, ESM::RefNum summoner)
+    {
+        auto& m = summoners();
+        if (m.size() > 4096)
+            m.clear(); // a session's worth of summons; never a leak
+        m[creature] = summoner;
+    }
+
+    ESM::RefNum summonerOf(ESM::RefNum creature)
+    {
+        const auto it = summoners().find(creature);
+        return it == summoners().end() ? ESM::RefNum{} : it->second;
+    }
+
     void recordCrime(ESM::RefNum avatar, int bounty, std::string kind)
     {
         auto& av = avatars();
