@@ -2462,6 +2462,9 @@ local eventHandlers = {
     mpActorFollow = function(data)
         actors.noteFollow(data and data.actor, data and data.target, data and data.escort)
     end,
+    mpActorCombat = function(data)
+        actors.noteCombat(data and data.actor, data and data.target)
+    end,
 
     mpSocialTab = function(data)
         -- toPlayer, not a world.players loop: the same helper every other player-bound

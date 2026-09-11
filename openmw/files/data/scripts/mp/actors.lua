@@ -493,6 +493,20 @@ function actors.noteDisposition(obj, disposition)
     })
 end
 
+-- COMBAT STATE, the sending half. Holder-only (the holder is where the fight is real): who
+-- this actor is fighting, when that is a player. Rides ActorAI with a `combat` field so the
+-- client's AI-off puppet can be put into the same state and vanilla's own checks -- rest
+-- refused while an enemy is on you, no greeting from someone swinging at you -- read true.
+function actors.noteCombat(obj, target)
+    if not (obj and obj:isValid()) then return end
+    local cellKey = actors.cellKeyOfObj(obj)
+    if not cellKey or not actors.isHolderOf(cellKey) then return end
+    local foeId = deps.playerIdOf and deps.playerIdOf(target) or nil
+    mp.sendEvent('ActorAI', {
+        cellKey = cellKey, epoch = actors.epochOf(cellKey), ref = obj, combat = foeId or false,
+    })
+end
+
 local function aimAt(obj, target, escort)
     if type(escort) == 'table' and type(escort.x) == 'number' then
         pcall(function()
@@ -543,6 +557,18 @@ end
 actors.handlers.MP_ActorAI = function(data)
     local obj = data.ref and data.ref:isValid() and data.ref or nil
     if not obj then return end
+    if data.combat ~= nil then
+        -- The holder says this actor is (or stopped) fighting a player. Stacked on the puppet
+        -- with its AI off it never executes; it only makes the state readable. On MP_Detach
+        -- the AI resumes with the fight it was actually in, which is right.
+        local foe = data.combat and deps.playerObjOf and deps.playerObjOf(data.combat) or nil
+        if foe then
+            pcall(function() obj:sendEvent('StartAIPackage', { type = 'Combat', target = foe }) end)
+        else
+            pcall(function() obj:sendEvent('RemoveAIPackages', 'Combat') end)
+        end
+        return
+    end
     local key = refKeyOf(obj)
     for _, list in pairs(followersOf) do list[key] = nil end
     if data.follow ~= nil then
