@@ -498,7 +498,16 @@ local function applyPhase2(record)
         local dyn = stats.dynamic
         if dyn then
             local d = Actor.stats.dynamic
-            if dyn.hp then d.health(self).base = dyn.hp.b; d.health(self).current = dyn.hp.c end
+            if dyn.hp then
+                -- NEVER RESTORE A CORPSE. Death is a flush point, so a player who died and
+                -- closed the tab has hp 0 on record. Writing 0 onto the live player kills
+                -- them on arrival, the death edge fires again (wasDead was reset), the world
+                -- hears "X has fallen" a second time and the respawn plugin runs again --
+                -- at the spot they died, so a bad spot became a loop across rejoins. They
+                -- already paid for that death. Back at a sliver of health, where they fell.
+                d.health(self).base = dyn.hp.b
+                d.health(self).current = (dyn.hp.c > 0) and dyn.hp.c or math.max(1, math.floor(dyn.hp.b * 0.1))
+            end
             if dyn.mp then d.magicka(self).base = dyn.mp.b; d.magicka(self).current = dyn.mp.c end
             if dyn.ft then d.fatigue(self).base = dyn.ft.b; d.fatigue(self).current = dyn.ft.c end
         end
