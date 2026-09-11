@@ -1,3 +1,4 @@
+#include "../mwmp/puppets.hpp"
 #include <components/debug/debuglog.hpp>
 
 #include <components/sceneutil/positionattitudetransform.hpp>
@@ -619,6 +620,10 @@ namespace MWScript
                 {
                     // create item
                     MWWorld::ManualRef ref(*MWBase::Environment::get().getESMStore(), itemID, 1);
+                    // Multiplayer client: a scripted ACTOR spawn is the peer's to make (it runs
+                    // the same script) and reaches us as a net object; a local one is a statue.
+                    if (ref.getPtr().getClass().isActor() && !MWMP::localSpawnsEnabled())
+                        continue;
                     ref.getPtr().mRef->mData.mPhysicsPostponed = !ref.getPtr().getClass().isActor();
 
                     MWWorld::Ptr ptr = MWBase::Environment::get().getWorld()->safePlaceObject(

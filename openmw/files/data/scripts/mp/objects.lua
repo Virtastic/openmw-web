@@ -549,7 +549,7 @@ end
 -- to being PLACED by a script or tool. The server can only apply "you cannot drop what you
 -- do not have" to the former — ObjectSpawnRequest is the generic place-an-object op, and
 -- refusing everything unowned wrongly blocked scripted containers nobody carries.
-function objects.requestSpawn(obj, posOverride, cellKeyOverride, fromInventory)
+function objects.requestSpawn(obj, posOverride, cellKeyOverride, fromInventory, actor)
     tempCounter = tempCounter + 1
     pendingSpawns[tempCounter] = obj
     local pos = posOverride or obj.position
@@ -567,6 +567,9 @@ function objects.requestSpawn(obj, posOverride, cellKeyOverride, fromInventory)
         rotZ = rotZ,
         count = math.max(obj.count or 1, 1), -- unplaced objects report count 0; server needs >=1
         fromInventory = fromInventory == true,
+        -- The holder naming a runtime-spawned NPC/creature (actors.lua): every client builds
+        -- it from the record and puppets it; the actor stream then addresses it by net id.
+        actor = actor == true or nil,
     })
 end
 
@@ -591,6 +594,12 @@ end
 handlers.MP_ObjectSpawnRefused = function(data)
     local obj = data and pendingSpawns[data.tempId]
     if data and data.tempId ~= nil then pendingSpawns[data.tempId] = nil end
+    if obj and obj:isValid() and types.Actor.objectIsInstance(obj) then
+        -- The holder's naming of a runtime actor was refused (a full cell): it stays a local
+        -- creature nobody else sees, which is the pre-2026-09-11 state, not an item to pocket.
+        print('[mp] net actor naming refused: ' .. tostring(data and data.reason))
+        return
+    end
     local player = deps.playerFn()
     if obj and obj:isValid() and player then
         pcall(function() obj:moveInto(types.Actor.inventory(player)) end)
@@ -612,6 +621,27 @@ handlers.MP_ObjectPlace = function(data)
     -- dynamic id, which could collide with an unrelated local record here.
     local recordId = worldmp.toLocal(data.recordId)
     local ok, obj = pcall(function() return world.createObject(recordId, data.count or 1) end)
+    if data.actor then
+        -- A runtime-spawned NPC/creature the holder named. Built from the record here and
+        -- puppeted by the non-holder sweep like any other actor in the cell; no stand-in --
+        -- a wrong body computes nothing, it just is not there.
+        if not (ok and types.Actor.objectIsInstance(obj)) then
+            if ok then pcall(function() obj:remove() end) end
+            print('[mp] net actor unresolvable: ' .. tostring(data.recordId))
+            return
+        end
+        local cellArg = data.cellKey and (data.cellKey:match('^%-?%d+,%-?%d+$') and '' or data.cellKey)
+        if not cellArg then
+            local player = deps.playerFn()
+            cellArg = (player and player.cell and not player.cell.isExterior) and player.cell.name or ''
+        end
+        pcall(function() obj:teleport(cellArg, util.vector3(data.x, data.y, data.z),
+            { rotation = util.transform.rotateZ(data.rotZ or 0) }) end)
+        netToObj[data.netId] = obj
+        objIdToNet[obj.id] = data.netId
+        netSpawned[obj.id] = true
+        return
+    end
     -- Foreign dynamic record ids can COLLIDE with unrelated local dynamic records (each
     -- client numbers its own "$dynamic" records — B's may be a puppet NPC record!): only
     -- accept a resolution that is actually an item; anything else gets the stand-in.

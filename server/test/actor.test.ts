@@ -186,6 +186,31 @@ test('actor authority and relay end to end', async (t) => {
     await a.waitEvent('PlayerLeaveWorld'); // free her per-IP connection slot before the next test connects
   });
 
+  // RUNTIME-SPAWNED ACTORS. A levelled-list creature or a script spawn exists on the holder's
+  // engine only, with a RefNum nobody else shares. The holder names it through the object-sync
+  // path (actor=true), every client builds it from the record, and the actor family may then
+  // address it by net id. A CLIENT naming an actor is just an item placement (flag dropped).
+  await t.test('the holder names a runtime actor; actor events then address it by net id', async () => {
+    b.inbox.events.length = 0;
+    a.sendEvent('ObjectSpawnRequest', { tempId: 501, recordId: 'cliff racer', cellKey: '0,0', x: 10, y: 20, z: 30, rotZ: 0, count: 1, actor: true });
+    const ack = await a.waitEvent('ObjectSpawnAck', (v) => (v as { tempId?: number }).tempId === 501);
+    const netId = (ack.value as { netId: number }).netId;
+    const placed = await b.waitEvent('ObjectPlace', (v) => (v as { netId?: number }).netId === netId);
+    assert.equal((placed.value as { actor?: boolean }).actor, true, 'clients are told to build an actor, not an item');
+    assert.equal((placed.value as { recordId?: string }).recordId, 'cliff racer');
+
+    b.inbox.events.length = 0;
+    a.sendEvent('ActorStatsDynamic', { cellKey: '0,0', epoch: epochA, net: netId, hp: { c: 5, b: 50 }, mp: { c: 0, b: 0 }, ft: { c: 9, b: 90 } });
+    const st = await b.waitEvent('ActorStatsDynamic');
+    assert.equal((st.value as { net?: number }).net, netId, 'a net-addressed actor event relays with its net id');
+
+    // A client's "actor" placement is an ordinary item placement: the flag does not survive.
+    a.inbox.events.length = 0;
+    b.sendEvent('ObjectSpawnRequest', { tempId: 502, recordId: 'gold_001', cellKey: '0,0', x: 1, y: 2, z: 3, rotZ: 0, count: 1, actor: true });
+    const forged = await a.waitEvent('ObjectPlace', (v) => (v as { recordId?: string }).recordId === 'gold_001');
+    assert.equal((forged.value as { actor?: boolean }).actor, undefined, 'a client made every screen build an actor');
+  });
+
   await t.test('far player receives no actor traffic', async () => {
     const c = await TestClient.connect(server.port);
     await c.joinAsNew('Cara');

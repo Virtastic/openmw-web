@@ -42,9 +42,44 @@ local batchesIn = 0 -- diagnostic: ActorMoveBatch frames applied as a non-holder
 -- --------------------------------------------------------------- ref helpers
 
 local function refKeyOf(obj)
-    -- content-file objects only (actors are never runtime-spawned): stable per session.
+    -- local key, stable per session. Runtime-spawned actors (levelled lists, PlaceAt,
+    -- summons) have no content RefNum: they are addressed on the wire by the net id the
+    -- server gave them (actorAddr), and resolved back with actorOf.
     return 'o:' .. obj.id
 end
+
+-- WIRE ADDRESS of an actor: content ref, or the net id of a runtime-spawned one. nil for a
+-- runtime actor the server has not named yet -- it must not travel until it can be resolved
+-- on the other side.
+local function actorAddr(obj)
+    local netId = deps and deps.netIdOf and deps.netIdOf(obj)
+    if netId then return { net = netId } end
+    if obj.contentFile then return { ref = obj } end
+    return nil
+end
+
+local function withAddr(body, obj)
+    local a = actorAddr(obj)
+    if not a then return nil end
+    body.ref = a.ref
+    body.net = a.net
+    return body
+end
+
+-- The actor a relayed body names, here: a content ref, or our copy of a net actor.
+local function actorOf(data)
+    if data.net ~= nil and deps and deps.objOfNet then
+        local obj = deps.objOfNet(data.net)
+        if obj and obj:isValid() then return obj end
+        return nil
+    end
+    local ref = data.ref
+    local ok, valid = pcall(function() return ref and ref:isValid() end)
+    return (ok and valid) and ref or nil
+end
+
+-- Runtime actors the holder has asked the server to name (netId pending).
+local netPending = {}
 
 local function cellKeyOf(cell)
     if not cell then return nil end
@@ -92,8 +127,10 @@ local function actorPose(obj)
         if stance == types.Actor.STANCE.Weapon then flags = flags + 16 end
         if stance == types.Actor.STANCE.Spell then flags = flags + 32 end
     end
+    local netId = deps and deps.netIdOf and deps.netIdOf(obj)
     return {
-        obj = obj,
+        obj = (not netId) and obj or nil,
+        net = netId,
         x = pos.x, y = pos.y, z = pos.z,
         yaw = obj.rotation:getYaw(),
         pitch = 0,
@@ -117,6 +154,20 @@ local function broadcastCell(cellKey, epoch, cell, now)
     -- fight. Cheap: a multiply per tracked (actor, player) pair, and only for actors in
     -- the cell we are simulating.
     threat.decay(now)
+    -- RUNTIME-SPAWNED ACTORS (levelled lists, PlaceAt, summons) exist on this engine only.
+    -- Ask the server to name each one; it becomes a net object every client builds from the
+    -- record (ObjectPlace with actor=true) and this stream addresses by net id. Until it is
+    -- named nothing about it travels -- nobody could resolve it -- so it is left out below.
+    local addressable = {}
+    for _, obj in ipairs(live) do
+        if obj.contentFile or (deps.netIdOf and deps.netIdOf(obj)) then
+            addressable[#addressable + 1] = obj
+        elseif not netPending[obj.id] and deps.requestNetActor then
+            netPending[obj.id] = true
+            deps.requestNetActor(obj, cellKey)
+        end
+    end
+    live = addressable
     for _, obj in ipairs(live) do
         local key = refKeyOf(obj)
         cell.actors[key] = cell.actors[key] or { deathNo = 0 }
@@ -146,7 +197,7 @@ local function broadcastCell(cellKey, epoch, cell, now)
                 tracked.statsFp = fp
                 tracked.nextStats = now + STATS_MIN_INTERVAL
                 mp.sendEvent('ActorStatsDynamic',
-                    { cellKey = cellKey, epoch = epoch, ref = obj, hp = dyn.hp, mp = dyn.mp, ft = dyn.ft })
+                    withAddr({ cellKey = cellKey, epoch = epoch, hp = dyn.hp, mp = dyn.mp, ft = dyn.ft }, obj))
             end
         end
 
@@ -173,7 +224,7 @@ local function broadcastCell(cellKey, epoch, cell, now)
                     tracked.equipFp = fp
                     tracked.nextEquip = now + EQUIP_MIN_INTERVAL
                     mp.sendEvent('ActorEquip',
-                        { cellKey = cellKey, epoch = epoch, ref = obj, slots = slots })
+                        withAddr({ cellKey = cellKey, epoch = epoch, slots = slots }, obj))
                 end
             end
         end
@@ -193,7 +244,7 @@ local function broadcastCell(cellKey, epoch, cell, now)
                     tracked.dispVal = disp
                     tracked.nextDisp = now + EQUIP_MIN_INTERVAL
                     mp.sendEvent('ActorDisposition',
-                        { cellKey = cellKey, epoch = epoch, ref = obj, disposition = disp })
+                        withAddr({ cellKey = cellKey, epoch = epoch, disposition = disp }, obj))
                 end
             end
         end
@@ -205,7 +256,8 @@ local function broadcastCell(cellKey, epoch, cell, now)
             mp.sendEvent('ActorDeath', {
                 cellKey = cellKey,
                 epoch = epoch,
-                ref = obj,
+                ref = actorAddr(obj) and actorAddr(obj).ref or nil,
+                net = actorAddr(obj) and actorAddr(obj).net or nil,
                 killerPlayerId = deps.ownIdFn(), -- holder attribution; nil-safe on the server
                 deathNo = tracked.deathNo,
                 killedRecordId = obj.recordId,
@@ -233,10 +285,11 @@ local function broadcastCell(cellKey, epoch, cell, now)
                 if toCell and toCell ~= cellKey and tracked.leftTo ~= toCell then
                     tracked.leftTo = toCell
                     local pos = obj.position
-                    mp.sendEvent('ActorCellChange', {
-                        cellKey = cellKey, epoch = epoch, ref = obj, toCellKey = toCell,
+                    local body = withAddr({
+                        cellKey = cellKey, epoch = epoch, toCellKey = toCell,
                         x = pos.x, y = pos.y, z = pos.z,
-                    })
+                    }, obj)
+                    if body then mp.sendEvent('ActorCellChange', body) end
                 end
             else
                 -- Gone entirely (unloaded or destroyed). Drop the row so a recycled key
@@ -257,13 +310,14 @@ local function snapshotCell(cellKey, epoch)
     local snapActors = {}
     for _, obj in ipairs(cellActors(cellKey)) do
         local dyn = dynSnapshot(obj)
-        snapActors[#snapActors + 1] = {
-            ref = obj,
+        local addr = actorAddr(obj)
+        if addr then snapActors[#snapActors + 1] = {
+            ref = addr.ref, net = addr.net,
             x = obj.position.x, y = obj.position.y, z = obj.position.z,
             rotZ = obj.rotation:getYaw(),
             hp = dyn.hp, mp = dyn.mp, ft = dyn.ft,
             dead = types.Actor.isDead(obj),
-        }
+        } end
     end
     mp.sendEvent('ActorSnapshot', { cellKey = cellKey, epoch = epoch, actors = snapActors })
 end
@@ -322,7 +376,7 @@ actors.handlers.MP_ActorAuthorityGrant = function(data)
     -- Apply the handoff snapshot: teleport actors to their last authoritative pose + stats.
     local snap = data.snapshot and data.snapshot.actors or {}
     for _, a in ipairs(snap) do
-        local obj = a.ref and a.ref:isValid() and a.ref or nil
+        local obj = actorOf(a)
         if obj then
             local cellArg = obj.cell and not obj.cell.isExterior and obj.cell.name or ''
             pcall(function()
@@ -379,7 +433,7 @@ actors.handlers.MP_ActorMoveBatch = function(batch)
     local now = core.getRealTime()
     batchesIn = batchesIn + 1
     for _, e in ipairs(batch) do
-        local obj = e.ref and e.ref:isValid() and e.ref or nil
+        local obj = actorOf(e)
         if obj and not types.Player.objectIsInstance(obj) then
             local key = refKeyOf(obj)
             if not puppetActors[key] then
@@ -400,7 +454,7 @@ end
 -- puppet stands where the pose stream stopped -- which is what left a travelling companion
 -- behind for everyone except the player who recruited them.
 actors.handlers.MP_ActorCellChange = function(data)
-    local obj = data.ref and data.ref:isValid() and data.ref or nil
+    local obj = actorOf(data)
     if not obj or type(data.toCellKey) ~= 'string' then return end
     local key = refKeyOf(obj)
     -- DETACH FIRST. The puppet script suppresses this actor's own AI, and it is keyed to the
@@ -423,7 +477,7 @@ actors.handlers.MP_ActorCellChange = function(data)
 end
 
 actors.handlers.MP_ActorStatsDynamic = function(data)
-    local obj = data.ref and data.ref:isValid() and data.ref or nil
+    local obj = actorOf(data)
     if obj and puppetActors[refKeyOf(obj)] then
         pcall(function() obj:sendEvent('MP_Stats', { hp = data.hp, mp = data.mp, ft = data.ft }) end)
     end
@@ -436,7 +490,7 @@ end
 -- disposition lives on the actor's own stats, and setBaseDisposition is a GLOBAL-context call
 -- (local scripts may only modify themselves), which is the context this handler runs in.
 actors.handlers.MP_ActorDisposition = function(data)
-    local obj = data.ref and data.ref:isValid() and data.ref or nil
+    local obj = actorOf(data)
     if not obj or type(data.disposition) ~= 'number' then return end
     local ownPlayer = world.players[1]
     if not (ownPlayer and ownPlayer:isValid()) then return end
@@ -474,10 +528,11 @@ function actors.noteFollow(obj, target, escort)
         claimedFollow[key] = (followId ~= nil) or nil
         epoch = epoch or 0 -- a claim is not epoch-checked; the field only has to be present
     end
-    mp.sendEvent('ActorAI', {
-        cellKey = cellKey, epoch = epoch, ref = obj, follow = followId,
+    local body = withAddr({
+        cellKey = cellKey, epoch = epoch, follow = followId,
         escort = (followId ~= nil and type(escort) == 'table') and escort or nil,
-    })
+    }, obj)
+    if body then mp.sendEvent('ActorAI', body) end
 end
 
 -- PERSUASION, the sending half. Called by quests.lua when a conversation ends and the NPC's
@@ -487,10 +542,11 @@ function actors.noteDisposition(obj, disposition)
     if not (obj and obj:isValid()) or type(disposition) ~= 'number' then return end
     local cellKey = actors.cellKeyOfObj(obj)
     if not cellKey then return end
-    mp.sendEvent('ActorDisposition', {
-        cellKey = cellKey, epoch = actors.epochOf(cellKey) or 0, ref = obj,
+    local body = withAddr({
+        cellKey = cellKey, epoch = actors.epochOf(cellKey) or 0,
         disposition = math.max(0, math.min(100, math.floor(disposition + 0.5))),
-    })
+    }, obj)
+    if body then mp.sendEvent('ActorDisposition', body) end
 end
 
 -- COMBAT STATE, the sending half. Holder-only (the holder is where the fight is real): who
@@ -509,9 +565,10 @@ function actors.noteCombat(obj, target)
         local own = deps.ownIdFn and deps.ownIdFn() or nil
         if foeId == nil or foeId ~= own then return end
     end
-    mp.sendEvent('ActorAI', {
-        cellKey = cellKey, epoch = actors.epochOf(cellKey) or 0, ref = obj, combat = foeId or false,
-    })
+    local body = withAddr({
+        cellKey = cellKey, epoch = actors.epochOf(cellKey) or 0, combat = foeId or false,
+    }, obj)
+    if body then mp.sendEvent('ActorAI', body) end
 end
 
 -- SCRIPTED TRAVEL. "AITravel x y z" from a dialogue result stacks Travel on the talking
@@ -523,10 +580,11 @@ function actors.noteTravel(obj, dest)
     if not (obj and obj:isValid()) or type(dest) ~= 'table' or type(dest.x) ~= 'number' then return end
     local cellKey = actors.cellKeyOfObj(obj)
     if not cellKey then return end
-    mp.sendEvent('ActorAI', {
-        cellKey = cellKey, epoch = actors.epochOf(cellKey) or 0, ref = obj,
+    local body = withAddr({
+        cellKey = cellKey, epoch = actors.epochOf(cellKey) or 0,
         travel = { x = dest.x, y = dest.y or 0, z = dest.z or 0 },
-    })
+    }, obj)
+    if body then mp.sendEvent('ActorAI', body) end
 end
 
 local function aimAt(obj, target, escort)
@@ -577,7 +635,7 @@ function actors.forgetFollowers(playerId)
 end
 
 actors.handlers.MP_ActorAI = function(data)
-    local obj = data.ref and data.ref:isValid() and data.ref or nil
+    local obj = actorOf(data)
     if not obj then return end
     if type(data.travel) == 'table' and type(data.travel.x) == 'number' then
         -- A scripted destination. On a puppet (AI off) it is state only; on the holder the
@@ -618,7 +676,7 @@ actors.handlers.MP_ActorAI = function(data)
 end
 
 actors.handlers.MP_ActorEquip = function(data)
-    local obj = data.ref and data.ref:isValid() and data.ref or nil
+    local obj = actorOf(data)
     if obj and puppetActors[refKeyOf(obj)] then
         pcall(function() obj:sendEvent('MP_Equip', { slots = data.slots or {} }) end)
     end
@@ -629,9 +687,8 @@ end
 -- payday, and without this an infinite-respawn world mints artifacts forever. Applied by
 -- every client in the cell (an event, not a per-player view), so nobody can decline it.
 actors.handlers.MP_ActorStripLoot = function(data)
-    local obj = data.ref
-    local okValid, valid = pcall(function() return obj:isValid() end)
-    if not (okValid and valid) then return end
+    local obj = actorOf(data)
+    if not obj then return end
     pcall(function()
         for _, item in ipairs(types.Actor.inventory(obj):getAll()) do
             if item:isValid() then item:remove() end
@@ -640,7 +697,7 @@ actors.handlers.MP_ActorStripLoot = function(data)
 end
 
 actors.handlers.MP_ActorDeath = function(data)
-    local obj = data.ref and data.ref:isValid() and data.ref or nil
+    local obj = actorOf(data)
     if obj and puppetActors[refKeyOf(obj)] then
         pcall(function() obj:sendEvent('MP_Kill', {}) end)
     end
@@ -711,6 +768,12 @@ end
 -- Phase 4C: does ANYONE simulate this cell right now (the peer, in the one-peer model)?
 -- Distinct from isHolderOf ("do I"). combat.lua asks this to decide whether a real melee
 -- hit is forwarded (nobody simulating: degraded relay) or left to the avatar's own swing.
+-- Does ANY cell we know of have a simulator? The first ActorAuthorityInfo of a session says
+-- "this world is peer-simulated"; used to keep local runtime spawns off from then on.
+function actors.anyHolder()
+    return next(held) ~= nil or next(holderOfCell) ~= nil
+end
+
 function actors.hasHolder(cellKey)
     return cellKey ~= nil and (held[cellKey] ~= nil or holderOfCell[cellKey] ~= nil)
 end

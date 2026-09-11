@@ -105,7 +105,7 @@ known and recorded; N/A = does not exist in single player either.
 | Assault / murder as crimes | commitCrime/actorKilled accept avatars; PlayerCrime to owner | FIXED 09-11 |
 | Death, loot, corpse | ActorDeath, corpse container canonical | OK |
 | Content-placed NPCs/creatures | content RefNum, addressable everywhere | OK |
-| **Runtime-spawned actors** (levelled-list creatures, PlaceAtPC/PlaceAtMe, script spawns) | per-engine dynamic RefNums: the peer's creature and the client's are different objects; clients show AI-off statues, the peer's copy fights avatars unseen | **GAP — in progress** (net-actor sync) |
+| Runtime-spawned actors (levelled-list creatures, PlaceAtPC/PlaceAtMe, script spawns) | the holder names each one through the object-sync path (actor=true); clients build it from the record and puppet it; the actor stream and events address it by net id (contentFile -2 on the wire); clients suppress their own rolls/spawns once any holder is known | FIXED 09-11 (engine + protocol; needs a native-peer scenario to prove end to end) |
 | Replayed one-shot quest encounters | spawned on the peer beside the avatar | FIXED 09-11 |
 
 ## 7. Quests and scripts

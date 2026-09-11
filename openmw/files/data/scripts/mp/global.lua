@@ -815,11 +815,15 @@ end
 -- Re-evaluated as the holder comes and goes; degraded mode (no peer) keeps local summons.
 local localSummonsOn = true
 local function localSummonsTick()
-    if (mp.isSystem and mp.isSystem()) or not mp.setLocalSummons then return end
-    local want = not actors.hasHolder(ownCellKeyCache)
+    if (mp.isSystem and mp.isSystem()) or not (mp.setLocalSpawns or mp.setLocalSummons) then return end
+    -- STICKY on "this world is simulated": levelled lists roll at cell load, before the new
+    -- cell's ActorAuthorityInfo arrives, so gating on our own cell alone would roll a local
+    -- creature in every cell we enter and then learn better. Once any holder has been seen the
+    -- peer is the one spawning; only a peer outage (every holder gone) hands it back to us.
+    local want = not (actors.hasHolder(ownCellKeyCache) or actors.anyHolder())
     if want ~= localSummonsOn then
         localSummonsOn = want
-        pcall(mp.setLocalSummons, want)
+        pcall(mp.setLocalSpawns or mp.setLocalSummons, want)
     end
 end
 
@@ -1255,6 +1259,11 @@ local function start()
     -- it never double-drives or broadcasts them as cell NPCs.
     actors.init({
         playerFn = playerScript,
+        -- Runtime-spawned actors: named by the server through the object-sync path, addressed
+        -- by net id on the actor stream (actors.lua actorAddr / actorOf).
+        netIdOf = objects.netIdOf,
+        objOfNet = objects.objOfNet,
+        requestNetActor = function(obj, cellKey) objects.requestSpawn(obj, nil, cellKey, false, true) end,
         ownCellKeyFn = function() return ownCellKeyCache end,
         ownIdFn = function() return net.state == 'Joined' and net.playerId or nil end,
         isMpPuppetFn = function(obj)
