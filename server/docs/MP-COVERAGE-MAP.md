@@ -13,6 +13,15 @@ does that changes the world has to travel; anything the peer does to a player ha
 back. Status: OK = traced and correct; FIXED = broken until the pass found it (date); GAP =
 known and recorded; N/A = does not exist in single player either.
 
+## 0. Live evidence (native peer + two browser clients, retail data, 2026-09-11)
+
+Run locally under `wasm-build/Dockerfile.harness-peer` with `OMW_SIM_PEER_BIN` set, on the
+engine built from the same tree. PASS: s22 (death seen by the other player), s67 (avatar
+swing), s77 (death -> respawn), s31 (shared container), s32 (doors), s58 (melee forward),
+s59 (spell forward), s78 (crime pursuit), s79 (pickup race), s51 (NPC combat), s107 (runtime
+creatures named once, built on both clients). SKIP by design: s66 (covered by server tests),
+s40/s42 (host-load guard). Anything below marked OK without a scenario is a code trace only.
+
 ## 1. Session
 
 | Action | MP path | Status |
