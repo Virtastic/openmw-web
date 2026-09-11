@@ -479,12 +479,15 @@ export class WorldState {
       holder.peer.sendEvent('ActorAI', { ...objRefToJs(f.ref), cellKey, epoch: 0, follow: f.follow, ...(f.escort ? { escort: f.escort } : {}) });
     }
   }
+  // The four non-holder claims below accept a content ref OR the net id of a runtime actor
+  // the holder named: a quest NPC placed by a script is a net actor, and it can be talked
+  // to, recruited, taunted and sent walking like any other.
   private followClaim(player: Player, body: LTable): void {
     const cellKey = str(body.get('cellKey'), MAX_CELL_KEY);
     const ref = parseObjRef(body);
     const rawFollow = body.get('follow');
     const follow = rawFollow === undefined ? undefined : finite(rawFollow);
-    if (!cellKey || !ref || ref.kind !== 'ref' || (rawFollow !== undefined && follow !== player.id)) {
+    if (!cellKey || !ref || (rawFollow !== undefined && follow !== player.id)) {
       this.invalid(player, 'ActorAI');
       return;
     }
@@ -551,7 +554,7 @@ export class WorldState {
         const t = body.get('travel');
         const tt = t instanceof Map ? t as LTable : undefined;
         const x = tt ? finite(tt.get('x')) : undefined, y = tt ? finite(tt.get('y')) : undefined, z = tt ? finite(tt.get('z')) : undefined;
-        if (!cellKey || !ref || ref.kind !== 'ref' || x === undefined || y === undefined || z === undefined
+        if (!cellKey || !ref || x === undefined || y === undefined || z === undefined
           || Math.abs(x) > MAX_ABS_COORD || Math.abs(y) > MAX_ABS_COORD || Math.abs(z) > MAX_ABS_COORD) {
           this.invalid(player, name);
           return;
@@ -571,7 +574,7 @@ export class WorldState {
         const cellKey = str(body.get('cellKey'), MAX_CELL_KEY);
         const ref = parseObjRef(body);
         const combat = finite(body.get('combat'));
-        if (!cellKey || !ref || ref.kind !== 'ref' || combat !== player.id) { this.invalid(player, name); return; }
+        if (!cellKey || !ref || combat !== player.id) { this.invalid(player, name); return; }
         if (player.system || this.dialogueHolder?.(ref.key) !== player.id || !cellsVisible(player.cellKey, cellKey)) {
           log('warn', 'actor.dropped', { from: player.name, name, cellKey, why: 'combat claim without the conversation' });
           return;
@@ -591,7 +594,7 @@ export class WorldState {
       const cellKey = str(body.get('cellKey'), MAX_CELL_KEY);
       const ref = parseObjRef(body);
       const disposition = finite(body.get('disposition'));
-      if (!cellKey || !ref || ref.kind !== 'ref' || disposition === undefined || disposition < 0 || disposition > 100) {
+      if (!cellKey || !ref || disposition === undefined || disposition < 0 || disposition > 100) {
         this.invalid(player, name);
         return;
       }

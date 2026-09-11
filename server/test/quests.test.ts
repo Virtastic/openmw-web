@@ -303,9 +303,13 @@ test('dialogue lock', async (t) => {
   await t.test('malformed lock requests are dropped', async () => {
     b.sendEvent('DialogueLock', { ref: NPC_REF, cellKey: '5,5' }); // no want
     b.sendEvent('DialogueLock', { cellKey: '5,5', want: true }); // no ref
-    b.sendEvent('DialogueLock', { net: 5, cellKey: '5,5', want: true }); // actors are content refs
+    b.sendEvent('DialogueLock', { net: 'x', cellKey: '5,5', want: true }); // net must be an id
     await fence(b, b);
     assert.equal(b.inbox.events.filter((e) => e.name === 'DialogueLockResult').length, 0);
+    // A runtime actor the holder named (a script-placed quest NPC) is addressed by net id
+    // and can be locked like any other.
+    b.sendEvent('DialogueLock', { net: 5, cellKey: '5,5', want: true });
+    assert.deepEqual((await b.waitEvent('DialogueLockResult')).value, { ref: 5, granted: true });
   });
 });
 
