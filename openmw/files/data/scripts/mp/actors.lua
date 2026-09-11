@@ -174,6 +174,7 @@ local function broadcastCell(cellKey, epoch, cell, now)
         local tracked = cell.actors[key]
         tracked.obj = obj
         tracked.seen = now
+        tracked.netId = deps.netIdOf and deps.netIdOf(obj) or nil
 
         -- Sticky aggro: retarget only when a challenger clears the margin, which is what
         -- stops the enemy strobing between two players and hitting neither.
@@ -293,7 +294,12 @@ local function broadcastCell(cellKey, epoch, cell, now)
                 end
             else
                 -- Gone entirely (unloaded or destroyed). Drop the row so a recycled key
-                -- cannot inherit a stale leftTo and swallow a later, real move.
+                -- cannot inherit a stale leftTo and swallow a later, real move. A NAMED
+                -- runtime actor that is gone here (a script's Disable/SetDelete, a summon
+                -- expiring) is gone everywhere: every client holds a copy built from our word.
+                if tracked.netId then
+                    mp.sendEvent('ObjectDelete', { net = tracked.netId, cellKey = cellKey })
+                end
                 cell.actors[key] = nil
             end
         else
