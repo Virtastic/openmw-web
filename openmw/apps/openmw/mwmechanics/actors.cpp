@@ -1713,6 +1713,17 @@ namespace MWMechanics
                                 playIdleDialogue(actor.getPtr());
                                 updateMovementSpeed(actor.getPtr());
                             }
+                            else if (isConscious(actor.getPtr())
+                                && MWMP::isPuppet(actor.getPtr().getCellRef().getRefNum()))
+                            {
+                                // A PUPPET IS STILL A PERSON TO TALK TO. On a client every NPC in
+                                // a held cell is a puppet with its AI off, and greetings and idle
+                                // chatter lived inside the AI block -- so nobody ever turned to a
+                                // player or said a word to them: a whole town of shop mannequins.
+                                // Motion stays the holder's; a greeting is a look and a voice line.
+                                updateGreetingState(actor.getPtr(), actor, mTimerUpdateHello > 0);
+                                playIdleDialogue(actor.getPtr());
+                            }
                         }
                     }
                     else if (aiActive && !isPlayer && isConscious(actor.getPtr())
