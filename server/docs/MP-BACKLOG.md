@@ -870,6 +870,14 @@ loot bug already fixed here.
   puppet; the disposition change now relays (ActorDisposition from the lock holder), the Fight
   rating and the combat start do not, so a taunted NPC glares and does nothing on the peer.
 
+* **You can rest mid-fight.** Vanilla refuses to rest while an enemy is in combat with you
+  (getEnemiesNearby reads the NPCs' AiSequence). On a client every NPC is a puppet with its
+  AI off and an empty combat state; the fight is on the peer. So a player being chewed on by
+  a nix-hound can open the rest dialog and sleep -- the peer's rat keeps biting the avatar
+  through it, and the owner wakes up dead or at full health depending on who won. Needs the
+  holder's "in combat with player X" bit to ride ActorStatsDynamic (or the pose flags) so the
+  client's copy reads as hostile. 2026-09-11.
+
 * **Dialogue-started AiTravel never reaches the peer.** Follow and Escort now travel from
   the recruiting client (companion.lua -> ActorAI claim), but "AITravel x y z" from a
   dialogue result -- the guard who walks off to fetch someone, the NPC who leaves the room
