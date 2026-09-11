@@ -26,6 +26,18 @@ local nextPoll = 0
 -- Starts nil, which is also "following nobody" -- so an ordinary NPC, which is almost all of
 -- them, never sends a single event in its life.
 local reportedId = nil
+-- ...and who we are fighting, if it is a player. The client's copy of us has its AI off and
+-- an empty combat state, so nothing there knew a fight was on: the player could open the rest
+-- dialog mid-bite. Reported on change like the follow, and relayed the same way (ActorAI).
+local reportedCombat = nil
+
+local function fightingPlayer()
+    local ok, pkg = pcall(function() return I.AI.getActivePackage() end)
+    if not (ok and pkg and pkg.type == 'Combat') then return nil end
+    local t = pkg.target
+    local okv, valid = pcall(function() return t and t:isValid() end)
+    return (okv and valid) and t or nil
+end
 
 local function playerAmong(packageType)
     -- getTargets rather than getActiveTarget: a follower that is momentarily fighting, or
@@ -62,6 +74,14 @@ return {
             local now = core.getRealTime()
             if now < nextPoll then return end
             nextPoll = now + POLL
+
+            -- Combat first: independent of following, and its own change key.
+            local foe = fightingPlayer()
+            local foeId = foe and foe.id or nil
+            if foeId ~= reportedCombat then
+                reportedCombat = foeId
+                core.sendGlobalEvent('mpActorCombat', { actor = self.object, target = foe })
+            end
 
             local target, escort = followedPlayer()
             -- Compared by ID, not by object: two reads of the same actor are different Lua

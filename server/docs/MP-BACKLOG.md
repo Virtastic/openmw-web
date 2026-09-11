@@ -870,7 +870,7 @@ loot bug already fixed here.
   puppet; the disposition change now relays (ActorDisposition from the lock holder), the Fight
   rating and the combat start do not, so a taunted NPC glares and does nothing on the peer.
 
-* **You can rest mid-fight.** Vanilla refuses to rest while an enemy is in combat with you
+* ~~**You can rest mid-fight.**~~ FIXED 2026-09-11 the same hour: companion.lua (which runs on every actor on the holder) now reports who the actor is fighting when it is a player, ActorAI carries it as `combat`, and the client stacks a Combat package on its AI-off puppet -- never executed, but readable: rest is refused, greetings stop. Original note: Vanilla refuses to rest while an enemy is in combat with you
   (getEnemiesNearby reads the NPCs' AiSequence). On a client every NPC is a puppet with its
   AI off and an empty combat state; the fight is on the peer. So a player being chewed on by
   a nix-hound can open the rest dialog and sleep -- the peer's rat keeps biting the avatar
