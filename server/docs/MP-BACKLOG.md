@@ -878,7 +878,7 @@ loot bug already fixed here.
   holder's "in combat with player X" bit to ride ActorStatsDynamic (or the pose flags) so the
   client's copy reads as hostile. 2026-09-11.
 
-* **Dialogue-started AiTravel never reaches the peer.** Follow and Escort now travel from
+* ~~**Dialogue-started AiTravel never reaches the peer.**~~ FIXED 2026-09-11: on an AI-off puppet the active package only changes when a script stacks one, so companion.lua reports a Travel destination on change and the server admits it from the (recent) dialogue-lock holder; the holder walks the actor. The poll concern below did not apply to puppets. Original note: Follow and Escort now travel from
   the recruiting client (companion.lua -> ActorAI claim), but "AITravel x y z" from a
   dialogue result -- the guard who walks off to fetch someone, the NPC who leaves the room
   after the conversation -- is the same client-only class and is not reported. It cannot be
