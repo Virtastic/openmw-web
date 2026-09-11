@@ -1494,8 +1494,11 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     if (!ipTracker.acquire(ip)) {
       log('info', 'conn.ip_cap_refused', { ip });
       metrics.connRefused.inc({ reason: 'ip_cap' });
-      if (ws.readyState === WebSocket.OPEN) ws.send(disconnectMsg('RATE', 'too many connections from your address'));
-      ws.close(1008, 'RATE');
+      // IP_CAP, not RATE: RATE is terminal on the client (a flood is not re-litigated by a
+      // retry), but for a player this is almost always their own dying socket after a wifi
+      // blip still counting against the address for a few seconds. The client retries this one.
+      if (ws.readyState === WebSocket.OPEN) ws.send(disconnectMsg('IP_CAP', 'too many connections from your address'));
+      ws.close(1008, 'IP_CAP');
       return;
     }
     // Setup mode: the admin surface is up so the operator can finish configuring, but there
