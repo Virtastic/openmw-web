@@ -57,6 +57,7 @@ known and recorded; N/A = does not exist in single player either.
 | Being dispelled by an NPC | owner-applied records are tracked by instance on the avatar; one that vanishes before the owner removed it (Dispel, absorb) is reported back as a removal and the owner's engine drops it | FIXED 09-11 |
 | PvP | server veto (pvp rules) + avatar hit veto on the peer; a summon's blow is vetoed when its master is another player's avatar | FIXED 09-11 (summons bypassed pvp-off) |
 | Death | death edge flushed; respawn plugin; avatar rebuilt; puppet rebuilt on other screens | FIXED 09-10 |
+| Activating another player's body (alive or dead) | refused: no blank dialogue on a friend, no loot window on a fallen one (that copy is per-screen and unbacked); player-to-player exchange is drop + pickup | FIXED 09-11 |
 | Kill credit / GetDeadCount | ActorDeath tally shared | OK (attribution logs only) |
 | Companions fight beside you | siding-with on the peer | OK |
 | Resting refused mid-fight | holder relays combat state; puppet carries Combat package | FIXED 09-11 |

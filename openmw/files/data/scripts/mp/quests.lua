@@ -481,7 +481,11 @@ end
 function quests.onNpcActivate(obj, actor)
     local player = playerObj()
     if not player or not actor or actor.id ~= player.id then return end
-    if deps.isMpPuppetFn and deps.isMpPuppetFn(obj) then return end -- remote players aren't NPCs to lock
+    -- A REMOTE PLAYER'S BODY IS NOT AN NPC. Letting the engine's own activation through opened
+    -- a dialogue window on a friend (blank: the puppet record has no dialogue) and, on a
+    -- fallen friend, the LOOT window on their puppet -- a per-screen copy of their inventory
+    -- that nothing on the wire backs. Player-to-player exchange is a drop and a pickup.
+    if deps.isMpPuppetFn and deps.isMpPuppetFn(obj) then return false end
     if not npcAddr(obj) then return end -- no portable ref: cannot be arbitrated
     if lockAllowOnce == obj.id then
         lockAllowOnce = nil
