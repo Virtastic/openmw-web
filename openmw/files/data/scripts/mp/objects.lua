@@ -39,6 +39,7 @@ local CONTAINER_OPEN_DELAY = 0.2
 local ECHO_GUARD_SECONDS = 5
 
 local netActorCount = 0 -- runtime actors built here from the holder's naming (mirror: netActors)
+local recentTakes = {} -- netId -> realTime of our granted take (its delete echo is ours)
 local netToObj = {} -- netId -> GameObject
 local objIdToNet = {} -- obj.id (string) -> netId
 local netSpawned = {} -- obj.id -> true (objects created FROM the network or net-acked)
@@ -686,7 +687,12 @@ end
 handlers.MP_ObjectDelete = function(data)
     local obj = resolveBody(data)
     if not obj then return end
-    if isOwnEcho(data) or recentPickups[obj.id] then return end
+    -- OUR OWN TAKE'S ECHO is the delete for the NET ID we took, not for the object. The
+    -- object outlives the take (it moves into our inventory), and if we drop it again it is
+    -- placed under a NEW net id -- a delete naming that one is a friend picking it up, which
+    -- keyed on the object id read as our stale echo and left the item lying on our screen
+    -- after they had it in their pocket. Trading back within the guard window did exactly this.
+    if isOwnEcho(data) or (data.net ~= nil and recentTakes[data.net]) then return end
     local netId = objIdToNet[obj.id]
     if netId then
         netToObj[netId] = nil
@@ -717,9 +723,10 @@ handlers.MP_ObjectTakeResult = function(data)
     local player = deps.playerFn()
     local obj = op.obj
     if not player or not obj or not obj:isValid() then return end
-    recentPickups[obj.id] = core.getRealTime() -- our own ObjectDelete echo must not remove it twice
+    recentPickups[obj.id] = core.getRealTime() -- the cell frame's deleted list must not remove it twice
     local netId = objIdToNet[obj.id]
     if netId then
+        recentTakes[netId] = core.getRealTime() -- our own ObjectDelete echo, by the id it names
         netToObj[netId] = nil
         objIdToNet[obj.id] = nil
     end
@@ -1074,6 +1081,9 @@ function objects.tick(now)
 
     for id, t in pairs(recentPickups) do
         if now - t > ECHO_GUARD_SECONDS then recentPickups[id] = nil end
+    end
+    for id, t in pairs(recentTakes) do
+        if now - t > ECHO_GUARD_SECONDS then recentTakes[id] = nil end
     end
 
     for opId, op in pairs(pendingOps) do
