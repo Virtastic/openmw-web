@@ -858,7 +858,7 @@ loot bug already fixed here.
   and `snapSpells` iterates the whole spell store, abilities included. It persists by the
   same route diseases do.
 
-* **"Resist arrest" starts a fight nobody simulates.** The arrest dialogue now reaches the
+* ~~**"Resist arrest" starts a fight nobody simulates.**~~ FIXED 2026-09-11: the player who was talking to the NPC (dialogue lock, kept for 5 s after release because the consequence lands on "Goodbye") may claim `combat = me` on ActorAI; the holder starts the real Combat package against the avatar. Covers taunts too. Original note: The arrest dialogue now reaches the
   wanted player (PlayerArrest, 2026-09-11), and pay/jail work because they act on the local
   player and the bounty relays. Resisting runs `StartCombat player` on the GUARD -- on the
   owner's client, where the guard is a puppet with AI off, so the fight is cancelled there and
