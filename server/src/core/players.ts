@@ -90,6 +90,13 @@ export interface Player {
   // dead-avatar bar reports (hp 0) are ignored so the respawned player is not re-killed
   // while the avatar body is being replaced on the peer.
   resurrectedAt?: number;
+  // THE BOUNTY THE WORLD HOLDS THIS PLAYER TO, live. Not doc.bounty: with [sharing] crime the
+  // party has ONE criminal record (shared.bounty), and a guest's crime is persisted on the
+  // campaign they are visiting (quests.ts journalTarget), so the guest's own doc says 0 while
+  // the owner's says the guest's number. Seeding avatars from the doc hunted the host for the
+  // guest's murder and let the guest walk. Set on join from the world's view, updated on
+  // every CrimeUpdate, and what AvatarState carries.
+  bounty?: number;
   // Sliding-window budget for CLIENT-asserted restoration while the peer owns this player's
   // bars (potions, rest, self-heal -- all still client-side until the intent tier). Without a
   // bound, "a raise is a restoration" is an immortality exploit: a modified client claims full

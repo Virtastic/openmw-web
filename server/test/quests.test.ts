@@ -145,7 +145,7 @@ test('shared factions and crime relay', async (t) => {
 
   await t.test('crime update relays with the reporter id', async () => {
     a.sendEvent('CrimeUpdate', { bounty: 40, kind: 'theft' });
-    assert.deepEqual((await b.waitEvent('CrimeUpdate')).value, { bounty: 40, kind: 'theft', byId: aId });
+    assert.deepEqual((await b.waitEvent('CrimeUpdate')).value, { bounty: 40, kind: 'theft', byId: aId, shared: true });
     a.sendEvent('CrimeUpdate', { bounty: -5 });
     await fence(a, b);
     assert.equal(b.inbox.events.filter((e) => e.name === 'CrimeUpdate').length, 0);

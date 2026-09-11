@@ -245,7 +245,19 @@ export class Quests {
 
   // Full journal state for a joining client: the shared map, or their own in individual
   // mode. Always sent (an empty map is a valid, meaningful answer).
+  // The bounty this world holds the player to, at join (players.ts `bounty` says why it is
+  // not the doc's): the party's one record when crime is shared, else the campaign's.
+  seedBounty(player: Player): void {
+    if (this.ctx.isShared('crime')) {
+      player.bounty = this.ctx.cells.sharedQuest().bounty ?? 0;
+      return;
+    }
+    const target = this.ctx.journalTarget(player) ?? player.charId;
+    player.bounty = this.ctx.players.getCached(target)?.bounty ?? 0;
+  }
+
   sendJournalSync(player: Player): void {
+    this.seedBounty(player);
     if (this.ctx.isShared('journal')) {
       const shared = this.ctx.cells.sharedQuest();
       // Seed a FRESH instance from the owner's campaign. Their world's cell store starts
@@ -484,14 +496,23 @@ export class Quests {
     } else {
       log('info', 'quest.standing_not_persisted', { player: player.name, bounty });
     }
-    if (!this.ctx.isShared('crime')) return; // personal bounty
+    player.bounty = bounty;
+    if (!this.ctx.isShared('crime')) {
+      // Personal: nobody else's number moves, but the PEER still has to hunt this avatar.
+      this.ctx.worldPeer?.()?.peer.sendEvent('CrimeUpdate', { bounty, byId: player.id, ...(typeof kind === 'string' ? { kind } : {}) });
+      return;
+    }
     const shared = this.ctx.cells.sharedQuest();
     shared.bounty = bounty;
     this.ctx.cells.saveShared();
+    // ONE record for the party: every avatar is now wanted for it, not just the one who did
+    // it -- the clients already apply it to every local player, so the peer must match.
+    for (const p of this.ctx.roster.inWorld()) if (!p.system) p.bounty = bounty;
     this.relayAll(player.id, 'CrimeUpdate', {
       bounty,
       ...(typeof kind === 'string' ? { kind } : {}),
       byId: player.id,
+      shared: true,
     });
   }
 

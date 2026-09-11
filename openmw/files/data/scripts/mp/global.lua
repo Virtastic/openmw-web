@@ -1193,6 +1193,13 @@ local function start()
             if p and p.obj and p.obj:isValid() then return p.obj end
             return nil
         end,
+        allAvatarsFn = function()
+            local out = {}
+            for _, p in pairs(puppets) do
+                if p.obj and p.obj:isValid() then out[#out + 1] = p.obj end
+            end
+            return out
+        end,
     })
     -- M7 world state (see scripts/mp/world.lua): clock, region/weather authority, custom
     -- records, cell resets, map sharing, server-pushed GUI.
