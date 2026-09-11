@@ -89,7 +89,7 @@ known and recorded; N/A = does not exist in single player either.
 | Scripted enable/disable of refs | ObjectEnabled persisted | OK |
 | Locks, lockpicking, script Lock/Unlock | lockWatch relay, persisted | OK |
 | Trap disarm state | not in the cell doc | GAP (harmless while trap damage is discarded) |
-| Cell resets | server sweep; clients handed restored truth | OK |
+| Cell resets | server sweep; clients handed restored truth; named runtime actors are dropped with the doc and removed on every engine (the peer re-rolls and re-names) | OK |
 | Dynamic records (alchemy, enchant, spellmaking) | RecordsSync chunked; toNet/toLocal at every seam | OK |
 
 ## 6. NPC behaviour (the peer as holder)
