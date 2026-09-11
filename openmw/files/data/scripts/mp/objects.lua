@@ -38,6 +38,7 @@ local DOOR_READ_DELAY = 0.4 -- door starts turning on activation; read the resul
 local CONTAINER_OPEN_DELAY = 0.2
 local ECHO_GUARD_SECONDS = 5
 
+local netActorCount = 0 -- runtime actors built here from the holder's naming (mirror: netActors)
 local netToObj = {} -- netId -> GameObject
 local objIdToNet = {} -- obj.id (string) -> netId
 local netSpawned = {} -- obj.id -> true (objects created FROM the network or net-acked)
@@ -640,6 +641,8 @@ handlers.MP_ObjectPlace = function(data)
         netToObj[data.netId] = obj
         objIdToNet[obj.id] = data.netId
         netSpawned[obj.id] = true
+        netActorCount = netActorCount + 1
+        pcall(function() mp.set('netActors', tostring(netActorCount)) end) -- scenario mirror
         return
     end
     -- Foreign dynamic record ids can COLLIDE with unrelated local dynamic records (each
