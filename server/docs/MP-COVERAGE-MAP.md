@@ -78,7 +78,8 @@ known and recorded; N/A = does not exist in single player either.
 |---|---|---|
 | Pick up / two players race | ObjectTakeRequest first-wins, tombstone, refusal shown | OK |
 | Drop | ObjectSpawn, netId, refused reasons incl. cell_full | FIXED 09-10 (no cell_full line) |
-| Containers, merchants' stock and gold | canonical on first open; gold deltas; 24 h restock | OK |
+| Containers, merchants' stock and gold | canonical on first open; gold deltas; 24 h gold restock; item restock from `origin` on cell reset | OK |
+| Levelled item lists (containers, world) | container contents canonical on first open; a world-placed levelled item ref rolls per engine (rare, cosmetic) | OK |
 | Item condition / charge / soul | per-field merge: charge client, condition raise client, soul peer | FIXED 09-11 |
 | Repair / recharge / soul trap | see above | FIXED 09-11 |
 | Quest items never deplete | container rule | OK |
@@ -101,6 +102,7 @@ known and recorded; N/A = does not exist in single player either.
 | Taunt -> fight; resist arrest -> fight | lock holder claims combat; holder starts it | FIXED 09-11 |
 | Follow / Escort (recruit, escort quests) | companion.lua -> ActorAI claim -> holder; replayed to a new peer; carried through doors | FIXED 09-10/11 |
 | Dialogue-started AiTravel | companion.lua reports; lock holder claim | FIXED 09-11 |
+| Dialogue-started AiWander / AiActivate | not relayed; the holder's copy keeps its own package (cosmetic: an NPC told to stand still by a dialogue keeps wandering elsewhere) | OK (cosmetic) |
 | Guards: crime pursuit, arrest dialogue | registry bounty; AiPursue reaches; PlayerArrest to owner | FIXED 09-11 |
 | Assault / murder as crimes | commitCrime/actorKilled accept avatars; PlayerCrime to owner | FIXED 09-11 |
 | Death, loot, corpse | ActorDeath, corpse container canonical | OK |
