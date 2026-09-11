@@ -474,7 +474,14 @@ namespace MWMP
                     const uint8_t* pose = e + 8; // after the 8-byte ref
                     lserNumber(body, static_cast<double>(i + 1));
                     body.push_back(0x3); // TABLE_START (entry)
-                    lserRefKV(body, "ref", readLE<uint32_t>(e), static_cast<int32_t>(readLE<uint32_t>(e + 4)));
+                    {
+                        const uint32_t index = readLE<uint32_t>(e);
+                        const int32_t contentFile = static_cast<int32_t>(readLE<uint32_t>(e + 4));
+                        if (contentFile == -2)
+                            lserKV(body, "net", static_cast<double>(index)); // net-addressed actor
+                        else
+                            lserRefKV(body, "ref", index, contentFile);
+                    }
                     lserKV(body, "x", readF32(pose));
                     lserKV(body, "y", readF32(pose + 4));
                     lserKV(body, "z", readF32(pose + 8));

@@ -163,9 +163,19 @@ namespace MWMP
             {
                 sol::table e = value.as<sol::table>();
                 sol::object obj = e["obj"];
-                if (!obj.is<MWLua::Object>())
+                ESM::RefNum ref;
+                if (obj.is<MWLua::Object>())
+                    ref = obj.as<MWLua::Object>().id();
+                else if (e["net"].is<double>())
+                {
+                    // A runtime-spawned actor has no content RefNum anyone else shares; it is
+                    // addressed by the server's net id, marked with contentFile -2 on the wire
+                    // (netmanager.cpp decodes it back to `net`). -1 is the engine's own "dynamic".
+                    ref.mIndex = static_cast<uint32_t>(e["net"].get<double>());
+                    ref.mContentFile = -2;
+                }
+                else
                     continue;
-                ESM::RefNum ref = obj.as<MWLua::Object>().id();
                 entries.push_back({ ref.mIndex, ref.mContentFile, e.get_or("x", 0.f), e.get_or("y", 0.f),
                     e.get_or("z", 0.f), e.get_or("yaw", 0.f), e.get_or("pitch", 0.f), e.get_or("animVel", 0.f),
                     static_cast<uint8_t>(e.get_or("flags", 0)) });
@@ -265,6 +275,7 @@ namespace MWMP
         };
         // Client: whether the player's own Summon effects spawn a creature HERE (see puppets.hpp).
         api["setLocalSummons"] = [](bool enabled) { setLocalSummons(enabled); };
+        api["setLocalSpawns"] = [](bool enabled) { setLocalSpawns(enabled); };
         api["isEnabled"] = []() { return std::getenv("OPENMW_MP_URL") != nullptr; };
         api["getUrl"] = []() { return getEnvString("OPENMW_MP_URL"); };
         api["getName"] = []() { return getEnvString("OPENMW_MP_NAME"); };

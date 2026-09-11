@@ -424,7 +424,8 @@ export class WorldState {
     const cellKey = str(body.get('cellKey'), MAX_CELL_KEY);
     const epoch = finite(body.get('epoch'));
     const ref = parseObjRef(body);
-    if (!cellKey || epoch === undefined || !ref || ref.kind !== 'ref') {
+    // Content refs, or the net id of a runtime-spawned actor the holder named (spawn()).
+    if (!cellKey || epoch === undefined || !ref) {
       this.invalid(player, name);
       return undefined;
     }
@@ -719,6 +720,9 @@ export class WorldState {
     // "put an object in the world", which scripts and tools use for things nobody carries
     // (s31 spawns a chest) — so conservation could only ever be counted, never enforced.
     const fromInventory = body.get('fromInventory') === true;
+    // The holder naming a runtime-spawned actor owns nothing of the kind and is not dropping
+    // anything: the ownership ledger does not apply (and would flag the peer's account).
+    const actor = body.get('actor') === true && player.system === true;
     // COUNTED, NOT REFUSED — and that is a measured decision, not caution.
     //
     // Refusing unowned spawns in the shared world was implemented and then backed out: this
@@ -738,7 +742,7 @@ export class WorldState {
     // so the Lua suite discovers these reasons and holds the client to wording each of them.
     const reply = (ok: boolean, reason: string) =>
       player.peer.sendEvent('ObjectSpawnRefused', { tempId, ok, reason });
-    const held = this.heldCount?.(player, recordId);
+    const held = actor ? undefined : this.heldCount?.(player, recordId);
     if (held !== undefined && held < count) {
       metrics.unownedDrops.inc();
       this.moderationNote?.(player.accountKey, 'unowned_drop');
@@ -788,8 +792,11 @@ export class WorldState {
       return;
     }
     if (fromInventory) this.debitAcquired?.(player, recordId, count);
+    // A runtime-spawned ACTOR the holder is naming (levelled-list creature, script spawn).
+    // Holder-only by construction: a client's actor placement would be a body it can then
+    // steer nowhere; the flag is carried so every client builds an actor, not an item.
     const netId = this.cells.allocNetId();
-    const placed = { netId, recordId, cellKey, x, y, z, rotZ, count, byId: player.id };
+    const placed = { netId, recordId, cellKey, x, y, z, rotZ, count, byId: player.id, ...(actor ? { actor: true } : {}) };
     doc.placed[netRefKey(netId)] = placed;
     this.cells.markDirty(cellKey);
     // Ack first: the requester is in the cell-scoped broadcast set, and per-connection

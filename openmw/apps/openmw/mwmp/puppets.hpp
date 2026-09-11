@@ -116,6 +116,12 @@ namespace MWMP
      *  scripts/mp (mp.setLocalSummons) from the cell's holder state; default on (singleplayer). */
     void setLocalSummons(bool enabled);
     bool localSummonsEnabled();
+    /** The same switch, by its real name: every RUNTIME ACTOR SPAWN on a client -- summons,
+     *  levelled-list creatures, PlaceAt/PlaceAtMe -- while a holder simulates the world. The
+     *  peer spawns them and registers each as a net object; the client would otherwise build
+     *  its own copy with a RefNum nobody else has: an AI-off statue next to the real one. */
+    inline void setLocalSpawns(bool enabled) { setLocalSummons(enabled); }
+    inline bool localSpawnsEnabled() { return localSummonsEnabled(); }
 }
 
 #endif

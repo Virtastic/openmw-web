@@ -1,5 +1,7 @@
 #include "creaturelevlist.hpp"
 
+#include "../mwmp/puppets.hpp"
+
 #include <components/esm3/actoridconverter.hpp>
 #include <components/esm3/creaturelevliststate.hpp>
 #include <components/esm3/loadlevlist.hpp>
@@ -123,7 +125,14 @@ namespace MWClass
             store.get<ESM::CreatureLevList>().find(ptr.getCellRef().getRefId()), true, prng,
             avatarLevel > 0 ? std::optional<int>(avatarLevel) : std::nullopt);
 
-        if (!id.empty())
+        // Multiplayer client: the peer rolls this list and its creature arrives as a net
+        // object (mwmp/puppets.hpp localSpawnsEnabled). Rolling here too would put a second,
+        // differently-rolled creature in the cell that only this screen has.
+        if (!id.empty() && !MWMP::localSpawnsEnabled())
+        {
+            customData.mSpawn = false;
+        }
+        else if (!id.empty())
         {
             // Delete the previous creature
             MWWorld::Ptr previous = customData.getSpawnedPtr();
