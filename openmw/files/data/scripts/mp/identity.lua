@@ -21,7 +21,7 @@ local json = require('scripts.mp.json')
 local Actor = types.Actor
 local NPC = types.NPC
 
-local INTERVALS = { appearance = 1.0, equipment = 0.5, dynamic = 0.25, progression = 1.0, inventory = 2.0 }
+local INTERVALS = { appearance = 1.0, equipment = 0.5, dynamic = 0.25, progression = 1.0, inventory = 2.0, active = 0.5 }
 local INVENTORY_CAP = 512
 -- ACQUISITION REPORTING, and why it is a separate faster pass rather than a smaller INTERVAL.
 --
@@ -40,8 +40,8 @@ local ACQUIRE_INTERVAL = 0.25
 
 local identity = {}
 
-local last = { appearance = nil, equipment = nil, dynamic = nil, progression = nil, spells = nil, inventory = nil }
-local nextAt = { appearance = 0, equipment = 0, dynamic = 0, progression = 0, inventory = 0, acquire = 0 }
+local last = { appearance = nil, equipment = nil, dynamic = nil, progression = nil, spells = nil, inventory = nil, active = nil }
+local nextAt = { appearance = 0, equipment = 0, dynamic = 0, progression = 0, inventory = 0, acquire = 0, active = 0 }
 -- recordId -> count, as of the last acquisition pass. Separate from `last.inventory` because
 -- that one only advances on the slow cadence, and comparing against it would re-report the same
 -- gain every 0.25 s until the snapshot caught up.
@@ -161,6 +161,29 @@ local function snapSpells()
         set[spell.id] = true
     end
     return set
+end
+
+-- ACTIVE EFFECTS, for the avatar. Levitate, Water Walking, Fortify Speed, Chameleon, a potion,
+-- a scroll -- cast or drunk on this client and applied to THIS body only, while the peer's
+-- avatar is what physics and NPC awareness actually run against. An avatar that does not
+-- levitate drags its owner out of the sky through reconciliation; one that is not chameleoned
+-- is seen. Temporary effects only: abilities, diseases and curses ride the spellbook, and
+-- constant-effect enchantments ride equipment, so both are already on the avatar. Keyed by
+-- the engine's own instance id so two potions of the same kind are two entries.
+local function snapActive()
+    local set = {}
+    local ok = pcall(function()
+        for _, sp in pairs(Actor.activeSpells(self)) do
+            if sp.temporary and not sp.fromEquipment and sp.activeSpellId ~= nil then
+                local idx = {}
+                for _, e in ipairs(sp.effects or {}) do
+                    if e.index ~= nil then idx[#idx + 1] = e.index end
+                end
+                if #idx > 0 then set[tostring(sp.activeSpellId)] = { id = sp.id, effects = idx } end
+            end
+        end
+    end)
+    return ok and set or nil
 end
 
 -- Per-item state the record id cannot express: wear, remaining enchantment charge, and which
@@ -321,6 +344,27 @@ function identity.tick(now)
 
     if baselineReady then diffSend('inventory', 'PlayerInventory', snapInventory, now) end
 
+    if now >= nextAt.active then
+        nextAt.active = now + INTERVALS.active
+        local active = snapActive()
+        if active then
+            local add, remove = {}, {}
+            for key, sp in pairs(active) do
+                if not (last.active and last.active[key]) then
+                    add[#add + 1] = { key = key, id = sp.id, effects = sp.effects }
+                end
+            end
+            for key, sp in pairs(last.active or {}) do
+                if not active[key] then remove[#remove + 1] = { key = key, id = sp.id } end
+            end
+            if #add > 0 or #remove > 0 then
+                -- Through global for the record registry (toNet), like the spellbook.
+                core.sendGlobalEvent('mpActiveSpellsOut', { add = add, remove = remove })
+            end
+            last.active = active
+        end
+    end
+
     -- Report COUNT INCREASES as they happen. Only increases: a decrease is a drop, a sale or a
     -- use, and the server learns about those from the snapshot — this exists solely to stop the
     -- server's picture being stale in the direction that matters for conservation.
@@ -358,7 +402,7 @@ function identity.reset()
     -- nil, NOT {}: the next pass must re-seed the baseline rather than treat the whole restored
     -- inventory as newly acquired.
     acqCounts = nil
-    nextAt = { appearance = 0, equipment = 0, dynamic = 0, progression = 0, inventory = 0, acquire = 0 }
+    nextAt = { appearance = 0, equipment = 0, dynamic = 0, progression = 0, inventory = 0, acquire = 0, active = 0 }
     wasDead = false
     restoring = false
     pendingPhase2 = nil

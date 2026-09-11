@@ -559,7 +559,49 @@ export function handleAvatarItemStatesBatch(ctx: StateCtx, sender: Player, value
 
 // Returns true when `name` belongs to the M2 state family (whether or not the body
 // validated — invalid bodies are dropped with a warn, never relayed).
+// The owner's temporary active effects, for the avatar (identity.lua snapActive). Nothing is
+// stored: an effect is as long-lived as its duration, and the avatar re-derives nothing from
+// the doc. Validated for shape and bounded, then forwarded to the world peer verbatim.
+const MAX_ACTIVE_SPELL_OPS = 32;
+const MAX_EFFECT_INDEXES = 8; // ESM spells carry at most 8 effects
+type ActiveOp = { key: string; id: string; effects?: number[] };
+function handleActiveSpells(ctx: StateCtx, player: Player, body: LTable): boolean {
+  const list = (v: LValue | undefined, withEffects: boolean): ActiveOp[] | undefined => {
+    const t = tbl(v);
+    if (!t) return [];
+    if (t.size > MAX_ACTIVE_SPELL_OPS) return undefined;
+    const out: ActiveOp[] = [];
+    for (const [, ev] of t) {
+      const e = tbl(ev);
+      const kv = e?.get('key');
+      const key = typeof kv === 'string' && kv.length > 0 && kv.length <= 32 ? kv : undefined;
+      const id = e ? recordId(e.get('id')) : undefined;
+      if (!e || !key || !id) return undefined;
+      if (!withEffects) { out.push({ key, id }); continue; }
+      const fx = tbl(e.get('effects'));
+      if (!fx || fx.size === 0 || fx.size > MAX_EFFECT_INDEXES) return undefined;
+      const effects: number[] = [];
+      for (const [, iv] of fx) {
+        const i = finite(iv);
+        if (i === undefined || !Number.isInteger(i) || i < 0 || i >= MAX_EFFECT_INDEXES) return undefined;
+        effects.push(i);
+      }
+      out.push({ key, id, effects });
+    }
+    return out;
+  };
+  const add = list(body.get('add'), true);
+  const remove = list(body.get('remove'), false);
+  if (!add || !remove) return false;
+  const worldPeer = ctx.worldPeer();
+  if (worldPeer && (add.length > 0 || remove.length > 0)) {
+    worldPeer.peer.sendEvent('AvatarActiveSpells', { id: player.id, add, remove });
+  }
+  return true;
+}
+
 const HANDLERS: Record<string, (ctx: StateCtx, player: Player, body: LTable) => boolean> = {
+  PlayerActiveSpells: handleActiveSpells,
   PlayerAppearance: handleAppearance,
   PlayerEquipment: handleEquipment,
   PlayerStatsDynamic: handleStatsDynamic,

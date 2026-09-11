@@ -1401,6 +1401,31 @@ local eventHandlers = {
         spawnPuppet(data.id, pose)
     end,
 
+    -- The owner's temporary active effects, mirrored onto the avatar (identity.lua snapActive
+    -- says why). Applied with resistances/absorption/reflect ignored: the owner's engine has
+    -- already rolled all of that once, and this is the same body. Stackable so a second
+    -- potion of the same kind is a second instance, as it is on the owner.
+    MP_AvatarActiveSpells = function(data)
+        if not (mp.isSystem and mp.isSystem()) or not data or not data.id then return end
+        local p = puppets[data.id]
+        if not (p and p.obj and p.obj:isValid()) then return end
+        local spells = types.Actor.activeSpells(p.obj)
+        for _, sp in ipairs(data.add or {}) do
+            local localId = sp.id and worldmp.toLocal(sp.id)
+            if localId and #(sp.effects or {}) > 0 then
+                local ok, err = pcall(function()
+                    spells:add({ id = localId, effects = sp.effects, caster = p.obj, stackable = true,
+                        ignoreResistances = true, ignoreSpellAbsorption = true, ignoreReflect = true, quiet = true })
+                end)
+                if not ok then print('[mp] avatar active effect add failed: ' .. tostring(err)) end
+            end
+        end
+        for _, sp in ipairs(data.remove or {}) do
+            local localId = sp.id and worldmp.toLocal(sp.id)
+            if localId then pcall(function() spells:remove(localId) end) end
+        end
+    end,
+
     -- Phase 4A: a client restoration (potion/rest/heal) raised a bar; mirror it onto the
     -- avatar so the peer's next report does not overwrite the heal with the un-restored body.
     MP_AvatarRestore = function(data)
@@ -2318,6 +2343,16 @@ local eventHandlers = {
     -- Spellbook out, mapped — the sibling of mpEquipmentOut, and for the same reason: the
     -- custom-record registry is global-only, so a player-script send would put a raw local
     -- dynamic id on the wire.
+    mpActiveSpellsOut = function(data)
+        local function mapped(list)
+            local out = {}
+            for i, e in ipairs(list or {}) do
+                out[i] = { key = e.key, id = worldmp.toNet(e.id), effects = e.effects }
+            end
+            return out
+        end
+        mp.sendEvent('PlayerActiveSpells', { add = mapped(data.add), remove = mapped(data.remove) })
+    end,
     mpSpellbookOut = function(data)
         local function mapped(list)
             local out = {}

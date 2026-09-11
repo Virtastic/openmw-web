@@ -177,3 +177,28 @@ test('a client heal reaches the peer, and sustained fake healing is refused', as
     `sustained fake healing was accepted ${restores} times -- a modified client would be `
     + 'immortal while the peer owns its bars');
 });
+
+// ACTIVE EFFECTS reach the avatar. Levitate, Water Walking, a potion: cast or drunk on the
+// client, applied to that body only -- and the peer's avatar is what physics and NPC awareness
+// run against. The client diffs its temporary effects; the server checks the shape and forwards.
+test("a client's active effects are forwarded to the peer for the avatar, and garbage is not", async (t) => {
+  const { peer, a } = await world(t);
+  peer.inbox.events.length = 0;
+  a.sendEvent('PlayerActiveSpells', {
+    add: [{ key: '7', id: 'levitate', effects: [0] }, { key: '8', id: 'p_water_walking_s', effects: [0, 1] }],
+    remove: [{ key: '3', id: 'chameleon' }],
+  });
+  const got = await peer.waitEvent('AvatarActiveSpells', (v) => (v as { id?: number })?.id === a.playerId);
+  const body = got.value as { add: { id: string; effects: number[] }[]; remove: { id: string }[] };
+  assert.deepEqual(body.add.map((s) => s.id), ['levitate', 'p_water_walking_s'], 'both adds reach the peer');
+  assert.deepEqual(body.add[1]!.effects, [0, 1], 'effect indexes travel whole');
+  assert.equal(body.remove[0]!.id, 'chameleon', 'the removal reaches the peer');
+
+  // Malformed: an effect index out of any spell's range is refused as a whole message.
+  peer.inbox.events.length = 0;
+  a.sendEvent('PlayerActiveSpells', { add: [{ key: '9', id: 'levitate', effects: [99] }], remove: [] });
+  a.sendEvent('PlayerActiveSpells', { add: [{ key: '10', id: 'fortify_speed', effects: [0] }], remove: [] });
+  const next = await peer.waitEvent('AvatarActiveSpells', (v) => (v as { id?: number })?.id === a.playerId);
+  assert.equal((next.value as { add: { id: string }[] }).add[0]!.id, 'fortify_speed',
+    'the malformed message was dropped, the well-formed one after it was forwarded');
+});
