@@ -1055,8 +1055,17 @@ export class Connection implements Peer {
     // before they ever got here.
     queueMicrotask(() => {
       const owed = this.ctx.questSpawnsOnEntry?.(player, cellKey) ?? [];
+      // WHERE IT IS SPAWNED IS WHERE IT IS SIMULATED. Replayed on the player's own client
+      // this actor was local to one engine in a cell the peer holds: the client's non-holder
+      // sweep puppeted it with its AI off, the player's swings at it were cancelled as the
+      // peer's job, and the peer had never heard of it -- a statue where the fight should be.
+      // With a world peer the encounter is spawned THERE, beside the player's avatar, so it is
+      // a real simulated actor everyone in the cell sees and fights. No peer: as before.
+      const peer = this.ctx.worldPeer();
       for (const spawn of owed) {
-        player.peer.sendEvent('QuestSpawn', { recordId: spawn.recordId, questId: spawn.questId, cellKey });
+        const body = { recordId: spawn.recordId, questId: spawn.questId, cellKey };
+        if (peer) peer.peer.sendEvent('QuestSpawn', { ...body, forId: player.id });
+        else player.peer.sendEvent('QuestSpawn', body);
       }
     });
     player.teleportPose = { x, y, z, at: Date.now(), seq: player.inputSeq ?? 0 }; // peer poses ignored until the avatar arrives (players.ts)

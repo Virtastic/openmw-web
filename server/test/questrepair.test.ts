@@ -94,3 +94,52 @@ test('the whitelist is an honest allowlist, not a blanket claim', async () => {
     'unlisted quests still play — they just do not claim the per-character guarantees');
   await w.close();
 });
+
+// WHERE THE REPLAY LANDS. On a world with a sim peer the encounter is spawned on the PEER,
+// beside the owed player's avatar, so it is a simulated actor everyone fights -- not a local
+// actor the client's non-holder sweep turns into a statue. Without a peer, on the client.
+import { startServer } from '../src/server';
+import { TestClient } from './helpers';
+const PEER_PASS = 'peer-secret-1';
+
+test('a replayed encounter is spawned on the peer when there is one, else on the client', async (t) => {
+  const server = await startServer({
+    requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
+    configOverride: { server: { password: PEER_PASS }, sharing: { journal: false } },
+  });
+  t.after(() => server.close());
+  const a = await TestClient.connect(server.port);
+  t.after(() => a.close());
+  const welcome = await a.joinAsNew('Pilgrim');
+  await a.waitEvent('PlayerList');
+  a.sendEvent('JournalEntry', { questId: 'da_azura', index: 10 });
+  await new Promise((r) => setTimeout(r, 200));
+
+  // No peer: the client is told.
+  a.sendCellChange("azura's coast region", 0, 0, 0);
+  const local = await a.waitEvent('QuestSpawn');
+  assert.equal((local.value as { recordId?: string }).recordId, 'staada');
+  assert.equal((local.value as { forId?: unknown }).forId, undefined);
+
+  // With a peer: the peer is told, for this player, and the client is not.
+  const peer = await TestClient.simPeer(server.port, PEER_PASS);
+  t.after(() => peer.close());
+  // The first character is inside the 900 s replay cooldown, so routing is proved on a
+  // SECOND owed character rather than by re-entering.
+  const b = await TestClient.connect(server.port);
+  t.after(() => b.close());
+  const wb = await b.joinAsNew('Second');
+  const bId = wb['playerId'] as number;
+  await b.waitEvent('PlayerList');
+  b.sendEvent('JournalEntry', { questId: 'da_azura', index: 10 });
+  await new Promise((r) => setTimeout(r, 200));
+  b.inbox.events.length = 0;
+  b.sendCellChange("azura's coast region", 0, 0, 0);
+  const onPeer = await peer.waitEvent('QuestSpawn');
+  assert.equal((onPeer.value as { recordId?: string }).recordId, 'staada');
+  assert.equal((onPeer.value as { forId?: number }).forId, bId, 'the peer is told whose encounter it is');
+  b.sendEvent('ChatSend', { text: 'spawnfence' });
+  await b.waitEvent('ChatMessage', (v) => (v as { text?: string }).text === 'spawnfence');
+  assert.equal(b.inbox.events.filter((e) => e.name === 'QuestSpawn').length, 0,
+    'the client was ALSO told, and would spawn a second local statue');
+});
