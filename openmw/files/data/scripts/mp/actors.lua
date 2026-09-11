@@ -514,6 +514,21 @@ function actors.noteCombat(obj, target)
     })
 end
 
+-- SCRIPTED TRAVEL. "AITravel x y z" from a dialogue result stacks Travel on the talking
+-- player's puppet; the holder's copy never moves. The holder reports its own travel too (it
+-- is authoritative), a non-holder only right after talking to the NPC (worldstate.ts admits
+-- it from the dialogue-lock holder) -- and on an AI-off puppet the only way the active package
+-- changes IS a script, so there is nothing else this could be.
+function actors.noteTravel(obj, dest)
+    if not (obj and obj:isValid()) or type(dest) ~= 'table' or type(dest.x) ~= 'number' then return end
+    local cellKey = actors.cellKeyOfObj(obj)
+    if not cellKey then return end
+    mp.sendEvent('ActorAI', {
+        cellKey = cellKey, epoch = actors.epochOf(cellKey) or 0, ref = obj,
+        travel = { x = dest.x, y = dest.y or 0, z = dest.z or 0 },
+    })
+end
+
 local function aimAt(obj, target, escort)
     if type(escort) == 'table' and type(escort.x) == 'number' then
         pcall(function()
@@ -564,6 +579,15 @@ end
 actors.handlers.MP_ActorAI = function(data)
     local obj = data.ref and data.ref:isValid() and data.ref or nil
     if not obj then return end
+    if type(data.travel) == 'table' and type(data.travel.x) == 'number' then
+        -- A scripted destination. On a puppet (AI off) it is state only; on the holder the
+        -- actor walks there, which is the point.
+        pcall(function()
+            obj:sendEvent('StartAIPackage', { type = 'Travel',
+                destPosition = util.vector3(data.travel.x, data.travel.y or 0, data.travel.z or 0) })
+        end)
+        return
+    end
     if data.combat ~= nil then
         -- The holder says this actor is (or stopped) fighting a player. Stacked on the puppet
         -- with its AI off it never executes; it only makes the state readable. On MP_Detach
