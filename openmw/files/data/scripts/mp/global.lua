@@ -814,7 +814,14 @@ end
 -- our cell the engine must not spawn a local copy too (mwmp/puppets.hpp setLocalSummons).
 -- Re-evaluated as the holder comes and goes; degraded mode (no peer) keeps local summons.
 local localSummonsOn = true
+local localSpawnsDbgAt = 0
+local localSpawnsGuardSaid = false
 local function localSummonsTick()
+    if not localSpawnsGuardSaid then
+        localSpawnsGuardSaid = true
+        pcall(function() mp.set('localSpawnsBind', tostring(mp.setLocalSpawns ~= nil) .. '/' .. tostring(mp.setLocalSummons ~= nil)) end)
+        print('[mp] localSpawns guard: setLocalSpawns=' .. tostring(mp.setLocalSpawns) .. ' setLocalSummons=' .. tostring(mp.setLocalSummons))
+    end
     if (mp.isSystem and mp.isSystem()) or not (mp.setLocalSpawns or mp.setLocalSummons) then return end
     -- STICKY on "this world is simulated": levelled lists roll at cell load, before the new
     -- cell's ActorAuthorityInfo arrives, so gating on our own cell alone would roll a local
@@ -822,6 +829,13 @@ local function localSummonsTick()
     -- peer is the one spawning; only a peer outage (every holder gone) hands it back to us.
     local simulated = net.state == 'Joined' and net.flags and net.flags.simulated == true
     local want = not (simulated or actors.hasHolder(ownCellKeyCache) or actors.anyHolder())
+    -- Diagnostic mirror (s107): why local spawns are on or off, once a second.
+    local nowD = core.getRealTime()
+    if nowD - (localSpawnsDbgAt or 0) >= 1 then
+        localSpawnsDbgAt = nowD
+        pcall(function() mp.set('localSpawnsDbg', string.format('sim=%s bind=%s holder=%s any=%s',
+            tostring(simulated), tostring(mp.setLocalSpawns ~= nil), tostring(actors.hasHolder(ownCellKeyCache)), tostring(actors.anyHolder()))) end)
+    end
     if want ~= localSummonsOn then
         localSummonsOn = want
         pcall(mp.setLocalSpawns or mp.setLocalSummons, want)
