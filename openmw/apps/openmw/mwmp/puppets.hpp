@@ -95,6 +95,19 @@ namespace MWMP
 
     /** Drain the guards that reached ONE avatar since the last call. */
     std::vector<ESM::RefNum> takeArrestsFor(ESM::RefNum avatar);
+
+    /** A crime an avatar committed HERE and somebody reported (reportCrime). The bounty is the
+     *  owner's, on their client; the peer cannot write it, so the increment is recorded for
+     *  the scripts to forward. The registry bounty is bumped at once so the pursuit that
+     *  reportCrime just stacked does not end on its first frame. */
+    struct Crime
+    {
+        ESM::RefNum mAvatar;
+        int mBounty; // the increment, not the total
+        std::string mKind; // theft | assault | murder | trespass | pickpocket | sleeping
+    };
+    void recordCrime(ESM::RefNum avatar, int bounty, std::string kind);
+    std::vector<Crime> takeCrimesFor(ESM::RefNum avatar);
 }
 
 #endif

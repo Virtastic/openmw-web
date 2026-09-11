@@ -738,6 +738,16 @@ local function avatarArrestTick()
     if not (mp.isSystem and mp.isSystem()) or not mp.takeArrests then return end
     for id, p in pairs(puppets) do
         if p.obj and p.obj:isValid() then
+            -- Crimes the avatar committed on this engine (assault, murder: the peer's swing is
+            -- the one that lands). The bounty is the owner's; they get the increment.
+            if mp.takeCrimes then
+                local okc, crimes = pcall(mp.takeCrimes, p.obj)
+                if okc and crimes then
+                    for _, c in ipairs(crimes) do
+                        mp.sendEvent('PlayerCrime', { id = id, bounty = c.bounty, kind = c.kind })
+                    end
+                end
+            end
             local ok, guards = pcall(mp.takeArrests, p.obj)
             if ok and guards then
                 for _, guard in ipairs(guards) do
@@ -1434,6 +1444,21 @@ local eventHandlers = {
     -- the fine, the cell, or resisting -- exactly what it would have done had the guard
     -- reached us here. Nothing to do if we cannot see the guard (another cell, not loaded):
     -- the peer's guard keeps re-reaching every cooldown, so the prompt comes back.
+    -- Our avatar committed a crime on the peer and somebody reported it. Raise our own
+    -- bounty by the increment; quests.lua's diff then sends the CrimeUpdate that every
+    -- other screen -- and the peer -- takes as the truth.
+    MP_PlayerCrime = function(data)
+        if mp.isSystem and mp.isSystem() then return end
+        if not data or type(data.bounty) ~= 'number' then return end
+        local player = playerScript()
+        if not player then return end
+        pcall(function()
+            local level = types.Player.getCrimeLevel(player) or 0
+            types.Player.setCrimeLevel(player, math.max(0, math.floor(level + data.bounty + 0.5)))
+        end)
+        notice(string.format('Your %s was reported. Bounty +%d.', tostring(data.kind or 'crime'), math.floor(data.bounty + 0.5)))
+    end,
+
     MP_PlayerArrest = function(data)
         if mp.isSystem and mp.isSystem() then return end
         local guard = data and data.guard
