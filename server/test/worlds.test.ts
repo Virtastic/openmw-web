@@ -172,6 +172,23 @@ test('worlds: a crash backs off instead of hot-looping', () => {
   assert.ok(sup.ensure('crashy', 'private'), 'but it comes back after the backoff');
 });
 
+// An operator's stop must be a stop. The owner's client is still connected and redials within
+// a second; the front door revives a private world on dial (ensure), so without a hold the
+// game was back 400 ms after it was stopped. The hold is the same instrument as crash backoff.
+test('worlds: an operator stop holds against revival, then the world may come back', async () => {
+  const { sup, spawned, advance } = harness();
+  sup.ensure('w', 'private', 'alice');
+  sup.stop('w');
+  await tick();
+  spawned[0]!.child.emit('exit', 0, 'SIGTERM');
+  await tick();
+  assert.equal(sup.ensure('w', 'private', 'alice'), null, 'revived on the next dial: the stop lasted no time at all');
+  advance(4 * 60_000);
+  assert.equal(sup.ensure('w', 'private', 'alice'), null, 'still held four minutes in');
+  advance(2 * 60_000);
+  assert.ok(sup.ensure('w', 'private', 'alice'), 'a game stopped by mistake comes back on its own after the hold');
+});
+
 test('worlds: a stale exit cannot evict the world that replaced it, and frees no live port', async () => {
   const { sup, spawned, advance } = harness();
   sup.ensure('w', 'private');
@@ -179,6 +196,8 @@ test('worlds: a stale exit cannot evict the world that replaced it, and frees no
   sup.stop('w');
   await tick();
   advance(20_000);
+  assert.equal(sup.ensure('w', 'private'), null, 'an operator stop holds against revival');
+  advance(5 * 60_000);
   sup.ensure('w', 'private');
   assert.equal(spawned.length, 2);
   first.emit('exit', 0, 'SIGTERM'); // the OLD process's exit arrives late

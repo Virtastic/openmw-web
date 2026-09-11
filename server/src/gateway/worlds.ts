@@ -530,10 +530,18 @@ export class WorldSupervisor {
     this.pollTimer.unref();
   }
 
+  // How long an OPERATOR's stop holds against revival. The owner's client is still connected
+  // when the operator stops their game; its reconnect backoff redials within a second and
+  // the front door revives the world on dial -- measured: stopped at :17.9, started again at
+  // :18.3. A stop that lasts 400 ms is not a stop. Long enough for the operator to act (a
+  // ban, a config change), short enough that a game stopped by mistake comes back on its own.
+  static readonly OPERATOR_STOP_HOLD_MS = 5 * 60_000;
+
   stop(id: string): void {
     const w = this.worlds.get(id);
     if (!w) return;
     w.stopping = true;
+    this.blockedUntil.set(id, this.now() + WorldSupervisor.OPERATOR_STOP_HOLD_MS);
     // SIGTERM so the world drains and flushes its stores; main.ts already handles it.
     w.child.kill('SIGTERM');
     // ESCALATE. A world that hangs in its own async shutdown never fires 'exit', and 'exit' is
