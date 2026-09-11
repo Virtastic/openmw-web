@@ -744,6 +744,7 @@ local avatarEffectsAt = 0
 local AVATAR_EFFECTS_EVERY = 1.0
 local avatarSpellsReported = {} -- id -> { localSpellId -> true }
 local avatarEffectsReported = {} -- id -> { activeSpellId -> localRecordId }
+local avatarOwnerEffectsSeen = {} -- id -> { activeSpellId -> localRecordId } owner records seen on the avatar
 
 local function avatarEffectsTick(now)
     if not (mp.isSystem and mp.isSystem()) then return end
@@ -774,8 +775,17 @@ local function avatarEffectsTick(now)
             local known = ownerActive[id] or {}
             local seen = {}
             local reported = avatarEffectsReported[id] or {}
+            -- Owner-applied records are tracked too, by instance, so a Dispel that strips
+            -- the owner's Levitate from the avatar reaches the owner as a removal (else they
+            -- keep flying while their body falls). They are never reported as ADDS: the
+            -- owner put them there.
+            local ownerSeen = {}
+            local ownerReported = avatarOwnerEffectsSeen[id] or {}
             local okE = pcall(function()
                 for _, sp in pairs(types.Actor.activeSpells(p.obj)) do
+                    if sp.temporary and not sp.fromEquipment and sp.activeSpellId ~= nil and known[sp.id] then
+                        ownerSeen[sp.activeSpellId] = sp.id
+                    end
                     if sp.temporary and not sp.fromEquipment and sp.activeSpellId ~= nil
                         and not known[sp.id] then
                         seen[sp.activeSpellId] = sp.id
@@ -802,6 +812,17 @@ local function avatarEffectsTick(now)
                     end
                 end
                 avatarEffectsReported[id] = seen
+                -- An owner record that was on the avatar and is gone before the owner said
+                -- so: dispelled (or absorbed) here. The owner's own expiry also lands here a
+                -- tick before its removal arrives; the client-side remove is idempotent.
+                for aid, rid in pairs(ownerReported) do
+                    if not ownerSeen[aid] and known[rid] then
+                        entry.effectsRemove = entry.effectsRemove or {}
+                        entry.effectsRemove[#entry.effectsRemove + 1] = { id = worldmp.toNet(rid) }
+                        any = true
+                    end
+                end
+                avatarOwnerEffectsSeen[id] = ownerSeen
             end
             if (okS or okE) and any then entries[#entries + 1] = entry end
         end
@@ -963,6 +984,7 @@ local function despawnPuppet(id)
     ownerActive[id] = nil
     avatarSpellsReported[id] = nil
     avatarEffectsReported[id] = nil
+    avatarOwnerEffectsSeen[id] = nil
     -- Guarded, and deliberately AFTER the bookkeeping above: remove() throws when the
     -- object is already gone or otherwise not removable ("Can't remove 0 of 0 items"), and
     -- an engine handler that throws ABORTS — which took the rest of MP_PlayerLeaveWorld
