@@ -1,5 +1,7 @@
 #include "aipursue.hpp"
 
+#include "../mwmp/puppets.hpp"
+
 #include <components/esm3/aisequence.hpp>
 
 #include "../mwbase/environment.hpp"
@@ -47,7 +49,15 @@ namespace MWMechanics
         if (target.getClass().getCreatureStats(target).isDead())
             return true;
 
-        if (target.getClass().getNpcStats(target).getBounty() <= 0)
+        // AN AVATAR'S BOUNTY LIVES IN THE MP REGISTRY, not on its NpcStats (which is 0 for
+        // every NPC). Reading NpcStats here ended the pursuit on its first frame, and
+        // updateCrimePursuit stacked it again on the next -- the guard stood there restarting
+        // a chase it never ran, thousands of times a minute, and no wanted player was ever
+        // reached on a simulated world.
+        const ESM::RefNum targetRef = target.getCellRef().getRefNum();
+        const bool targetIsAvatar = MWMP::isAvatar(targetRef);
+        const int bounty = targetIsAvatar ? MWMP::avatarBounty(targetRef) : target.getClass().getNpcStats(target).getBounty();
+        if (bounty <= 0)
             return true;
 
         actor.getClass().getCreatureStats(actor).setDrawState(DrawState::Nothing);
@@ -67,6 +77,13 @@ namespace MWMechanics
         {
             if (!MWBase::Environment::get().getWorld()->getLOS(target, actor))
                 return false;
+            if (targetIsAvatar)
+            {
+                // The owner is on another machine: the peer's scripts forward this and THEIR
+                // client opens the dialogue with its copy of this guard (mwmp/puppets.hpp).
+                MWMP::recordArrest(targetRef, actor.getCellRef().getRefNum());
+                return true;
+            }
             MWBase::Environment::get().getWindowManager()->pushGuiMode(
                 MWGui::GM_Dialogue, actor); // Arrest player when reached
             return true;

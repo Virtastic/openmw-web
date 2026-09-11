@@ -86,6 +86,15 @@ namespace MWMP
 
     /** Drain everything recorded for ONE actor since the last call. */
     std::vector<MagicHit> takeMagicHitsFor(ESM::RefNum target);
+
+    /** A guard REACHED a wanted avatar (AiPursue). On the local player this opens the arrest
+     *  dialogue; an avatar's owner is on another machine, so it is recorded here for the
+     *  peer's scripts to forward. Rate-limited per avatar: the pursuit package re-stacks
+     *  every frame while the bounty stands, and the owner needs one prompt, not sixty. */
+    void recordArrest(ESM::RefNum avatar, ESM::RefNum guard);
+
+    /** Drain the guards that reached ONE avatar since the last call. */
+    std::vector<ESM::RefNum> takeArrestsFor(ESM::RefNum avatar);
 }
 
 #endif

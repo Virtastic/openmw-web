@@ -119,3 +119,30 @@ test('a shared bounty reaches every avatar and survives an AvatarState refresh',
   assert.equal((st.value as { bounty?: number }).bounty, 500,
     "the bystander's avatar was re-seeded from their own doc and stopped being wanted");
 });
+
+// ARREST. A guard that reaches a wanted avatar on the peer cannot open a dialogue there; the
+// peer reports it and the OWNER's client opens the dialogue with its copy of the guard. Only
+// the world peer may say so -- a client saying it would force a dialogue onto someone's screen.
+test('a guard reaching an avatar on the peer reaches the owner as PlayerArrest; a client cannot forge it', async (t) => {
+  const { server, a } = await bootWithCharacter(t);
+  const peer = await TestClient.simPeer(server.port, PEER_PASS);
+  t.after(() => peer.close());
+  await peer.waitEvent('AvatarState', (v) => (v as { id?: number })?.id === a.playerId, 8000);
+  const GUARD = { __refnum: { index: 77, contentFile: 0 } };
+
+  a.inbox.events.length = 0;
+  peer.sendEvent('PlayerArrest', { id: a.playerId, guard: GUARD });
+  const got = await a.waitEvent('PlayerArrest');
+  assert.ok((got.value as { guard?: unknown }).guard !== undefined, 'the guard reaches the owner');
+
+  const b = await TestClient.connect(server.port);
+  t.after(() => b.close());
+  await b.joinAsNew('Forger');
+  await b.waitEvent('PlayerList');
+  a.inbox.events.length = 0;
+  b.sendEvent('PlayerArrest', { id: a.playerId, guard: GUARD });
+  b.sendEvent('ChatSend', { text: 'arrestfence' });
+  await a.waitEvent('ChatMessage', (v) => (v as { text?: string }).text === 'arrestfence');
+  assert.equal(a.inbox.events.filter((e) => e.name === 'PlayerArrest').length, 0,
+    'a client forced an arrest dialogue onto another player');
+});

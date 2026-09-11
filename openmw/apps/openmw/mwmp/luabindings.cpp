@@ -236,6 +236,18 @@ namespace MWMP
             }
             return out;
         };
+        // The guards that reached a wanted avatar since the last call (AiPursue on the peer
+        // records instead of opening a dialogue nobody is there to see). Global context only:
+        // the caller is global.lua's avatar tick, and the objects come back as GObjects.
+        api["takeArrests"] = [](sol::this_state state, const sol::object& obj) {
+            sol::table out(state, sol::create);
+            if (!obj.is<MWLua::Object>())
+                return out;
+            int i = 1;
+            for (const ESM::RefNum guard : takeArrestsFor(obj.as<MWLua::Object>().id()))
+                out[i++] = MWLua::GObject(guard);
+            return out;
+        };
         api["isEnabled"] = []() { return std::getenv("OPENMW_MP_URL") != nullptr; };
         api["getUrl"] = []() { return getEnvString("OPENMW_MP_URL"); };
         api["getName"] = []() { return getEnvString("OPENMW_MP_NAME"); };
