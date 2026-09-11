@@ -1283,6 +1283,13 @@ local function start()
     -- M3 world-object hub wiring (see scripts/mp/objects.lua).
     objects.init({
         playerFn = playerScript,
+        allAvatarsFn = function()
+            local out = {}
+            for _, p in pairs(puppets) do
+                if p.obj and p.obj:isValid() then out[#out + 1] = p.obj end
+            end
+            return out
+        end,
         ownCellKeyFn = function() return ownCellKeyCache end,
         ownIdFn = function() return net.state == 'Joined' and net.playerId or nil end,
         placeholderItemFn = placeholderItemId,

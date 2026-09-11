@@ -768,7 +768,9 @@ export class WorldState {
     // so the Lua suite discovers these reasons and holds the client to wording each of them.
     const reply = (ok: boolean, reason: string) =>
       player.peer.sendEvent('ObjectSpawnRefused', { tempId, ok, reason });
-    const held = actor ? undefined : this.heldCount?.(player, recordId);
+    // The world peer owns nothing and drops nothing: what it places is the world's (a missed
+    // arrow, a creature's death drop, a scripted item, a named runtime actor). Never judged.
+    const held = actor || player.system === true ? undefined : this.heldCount?.(player, recordId);
     if (held !== undefined && held < count) {
       metrics.unownedDrops.inc();
       this.moderationNote?.(player.accountKey, 'unowned_drop');

@@ -536,6 +536,22 @@ function objects.onItemActive(item)
     for _, obj in pairs(pendingSpawns) do
         if obj.id == item.id then return end
     end
+    -- ON THE PEER a runtime item is the WORLD's: an arrow the avatar shot and missed, ammo
+    -- a creature dropped when it died, an item a script placed. Its own player is a dummy
+    -- parked far from everyone, so the range test below never passed and every such item
+    -- stayed on the peer's engine alone -- you could not pick your arrows back up. Named as
+    -- a placement (no owner, no conservation debit) when it appears near any avatar.
+    if mp.isSystem and mp.isSystem() then
+        if not (deps.allAvatarsFn and item.cell) then return end
+        for _, av in ipairs(deps.allAvatarsFn()) do
+            local okd, d = pcall(function() return (item.position - av.position):length() end)
+            if okd and d <= DROP_DETECT_RANGE then
+                objects.requestSpawn(item, nil, nil, false)
+                return
+            end
+        end
+        return
+    end
     local player = deps.playerFn()
     if not player then return end
     local ok, dist = pcall(function() return (item.position - player.position):length() end)
