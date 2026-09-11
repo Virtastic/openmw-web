@@ -96,6 +96,11 @@ namespace MWMP
     /** Drain the guards that reached ONE avatar since the last call. */
     std::vector<ESM::RefNum> takeArrestsFor(ESM::RefNum avatar);
 
+    /** Which actor summoned a creature (summoning.cpp). A summon is its master's hand: with
+     *  pvp off, another player's scamp must not bite an avatar its master could not. */
+    void noteSummon(ESM::RefNum creature, ESM::RefNum summoner);
+    ESM::RefNum summonerOf(ESM::RefNum creature); // empty RefNum when unknown
+
     /** A crime an avatar committed HERE and somebody reported (reportCrime). The bounty is the
      *  owner's, on their client; the peer cannot write it, so the increment is recorded for
      *  the scripts to forward. The registry bounty is bumped at once so the pursuit that

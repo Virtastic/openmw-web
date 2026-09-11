@@ -54,7 +54,7 @@ known and recorded; N/A = does not exist in single player either.
 | NPC/creature aggression at players | engageCombat treats avatars as players | FIXED 09-11 |
 | NPC retaliation when hit | actorAttacked treats avatar attacker as player | FIXED 09-11 |
 | Being hit: damage, disease, paralysis | peer bars -> SelfStats; AvatarEffectsBatch -> SelfSpells/SelfActiveSpells | FIXED 09-11 |
-| PvP | server veto (pvp rules) + avatar hit veto on the peer | OK |
+| PvP | server veto (pvp rules) + avatar hit veto on the peer; a summon's blow is vetoed when its master is another player's avatar | FIXED 09-11 (summons bypassed pvp-off) |
 | Death | death edge flushed; respawn plugin; avatar rebuilt; puppet rebuilt on other screens | FIXED 09-10 |
 | Kill credit / GetDeadCount | ActorDeath tally shared | OK (attribution logs only) |
 | Companions fight beside you | siding-with on the peer | OK |
