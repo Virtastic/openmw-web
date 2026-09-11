@@ -1,0 +1,142 @@
+# Multiplayer coverage map
+
+Every single-player action, routine and NPC behaviour, mapped to the path it takes in the
+server-centralized model, with its status. This is the checklist the gameplay passes work
+from; MP-BACKLOG.md holds the long-form reasoning for anything marked GAP.
+
+Model in one paragraph: the SERVER holds truth (character docs, cell docs, clock, quest
+state) and relays; ONE SIM PEER per world runs the engine for every occupied cell (NPC AI,
+combat resolution, physics of each player's AVATAR); each CLIENT runs its own engine for
+rendering, UI, dialogue and everything the player does with their own hands, and sees other
+players and NPCs as PUPPETS steered by relayed poses with their AI off. Anything the client
+does that changes the world has to travel; anything the peer does to a player has to come
+back. Status: OK = traced and correct; FIXED = broken until the pass found it (date); GAP =
+known and recorded; N/A = does not exist in single player either.
+
+## 1. Session
+
+| Action | MP path | Status |
+|---|---|---|
+| Sign in (password / SSO ticket) | launcher -> gateway -> world server SessionHello/Login | OK |
+| Create character, chargen | private world `priv-<user>-<char>`; chargen sanctuary keeps the peer out of the cell | OK |
+| Resume after disconnect | resume ticket, same character, world snapshot re-sent; IP_CAP retried | FIXED 09-11 (IP_CAP was terminal RATE) |
+| Join a friend (party) | joinFriend -> ownerWorld (occupied) -> switch -> mayJoinWorld -> chargen gate -> guestSpawn beside owner | FIXED 09-10 |
+| Owner flips party -> private | WorldClosed, 5 s grace, guests switched home | OK |
+| Leave / kick / ban | terminal codes; SUPERSEDED for a second tab | OK |
+| Save / Load / quicksave | refused at StateManager while Joined; menu items hidden | OK |
+
+## 2. Movement and travel
+
+| Action | MP path | Status |
+|---|---|---|
+| Walk/run/sneak/jump | input frame 30 Hz -> avatar on peer -> authoritative pose back; reconciliation | OK |
+| Stance (weapon/spell drawn) | input bits 4-5 -> avatar; pose bit 4 -> puppets | FIXED 09-10 (avatar never drew) |
+| Look pitch | input pitch -> avatar pitchChange | FIXED 09-10 |
+| Doors, load doors | client cell change -> PlayerCellChange -> avatar follow-teleport; door state relayed | OK |
+| Silt strider / boat / guild guide | cell change + time skip request + fare from shared purse | OK |
+| Mark/Recall/Intervention/scripted PositionCell | cell change; far-travel limiter is a signal only | OK |
+| Levitate / Water Walk / Slowfall / Fortify Speed | PlayerActiveSpells -> avatar | FIXED 09-11 |
+| Swimming, drowning, falling | avatar physics; peer-authored bars | OK |
+| Followers through doors | peer moves followers with the avatar; exterior key -> teleport arg | FIXED 09-10 |
+
+## 3. Combat
+
+| Action | MP path | Status |
+|---|---|---|
+| Melee vs NPC | client swing cancelled; avatar swings on peer (stance, use bit) | FIXED 09-10 |
+| Ranged | avatar fires; ammo reconciled via inventory | OK |
+| Blocking, armor, difficulty | peer engine, avatar treated as player for scaling | OK |
+| Spell at NPC (touch/target) | client casts; hit on puppet recorded -> CombatSpellHit -> holder applies record | OK |
+| Self-cast / potion / scroll | PlayerActiveSpells -> avatar (spell stance = Nothing on avatar) | FIXED 09-11 |
+| Cast-on-strike, charge | avatar strike on peer; charge: client both ways, peer lowers | FIXED 09-11 |
+| Summons | effect reaches avatar, peer summons; local copy suppressed while a holder exists | FIXED 09-11 |
+| NPC/creature aggression at players | engageCombat treats avatars as players | FIXED 09-11 |
+| NPC retaliation when hit | actorAttacked treats avatar attacker as player | FIXED 09-11 |
+| Being hit: damage, disease, paralysis | peer bars -> SelfStats; AvatarEffectsBatch -> SelfSpells/SelfActiveSpells | FIXED 09-11 |
+| PvP | server veto (pvp rules) + avatar hit veto on the peer | OK |
+| Death | death edge flushed; respawn plugin; avatar rebuilt; puppet rebuilt on other screens | FIXED 09-10 |
+| Kill credit / GetDeadCount | ActorDeath tally shared | OK (attribution logs only) |
+| Companions fight beside you | siding-with on the peer | OK |
+| Resting refused mid-fight | holder relays combat state; puppet carries Combat package | FIXED 09-11 |
+| Trap / scripted damage | trap effects with duration now mirror; zero-duration and MWScript writes lost | GAP (narrow) |
+
+## 4. Character state
+
+| Action | MP path | Status |
+|---|---|---|
+| hp/mp/ft | peer-authored while driving; client may raise (heal); magicka client both ways | FIXED 09-11 (free casting) |
+| Attributes/skills/level, training, level-up | client diff -> doc -> AvatarState | OK |
+| Skill use from cancelled swings | skill use runs before the Lua cancel | OK |
+| Diseases (caught) | AvatarEffectsBatch -> doc.spells + owner | FIXED 09-11 |
+| Vampirism / lycanthropy | spell list / appearance; werewolf form set on rebuilt bodies | FIXED 09-11 (looked human) |
+| Bounty | live per session; shared crime = party record on every avatar | FIXED 09-11 (host hunted) |
+| Faction rank/expulsion | routed like the journal | OK |
+
+## 5. Inventory and world objects
+
+| Action | MP path | Status |
+|---|---|---|
+| Pick up / two players race | ObjectTakeRequest first-wins, tombstone, refusal shown | OK |
+| Drop | ObjectSpawn, netId, refused reasons incl. cell_full | FIXED 09-10 (no cell_full line) |
+| Containers, merchants' stock and gold | canonical on first open; gold deltas; 24 h restock | OK |
+| Item condition / charge / soul | per-field merge: charge client, condition raise client, soul peer | FIXED 09-11 |
+| Repair / recharge / soul trap | see above | FIXED 09-11 |
+| Quest items never deplete | container rule | OK |
+| Theft, pickpocket, ownership | client-side crime detection; bounty relays | OK |
+| Scripted enable/disable of refs | ObjectEnabled persisted | OK |
+| Locks, lockpicking, script Lock/Unlock | lockWatch relay, persisted | OK |
+| Trap disarm state | not in the cell doc | GAP (harmless while trap damage is discarded) |
+| Cell resets | server sweep; clients handed restored truth | OK |
+| Dynamic records (alchemy, enchant, spellmaking) | RecordsSync chunked; toNet/toLocal at every seam | OK |
+
+## 6. NPC behaviour (the peer as holder)
+
+| Behaviour | MP path | Status |
+|---|---|---|
+| Wander/idle AI, pathing | peer engine; poses 10 Hz relayed; puppets steer | OK |
+| Posture while fighting | actor pose bits 4/5 | FIXED 09-11 |
+| Greetings, idle voice | puppets greet with AI off | FIXED 09-11 |
+| Dialogue (one at a time) | dialogue lock; refusal names the holder | OK |
+| Persuasion (bribe/taunt/admire) | lock holder relays disposition | FIXED 09-11 |
+| Taunt -> fight; resist arrest -> fight | lock holder claims combat; holder starts it | FIXED 09-11 |
+| Follow / Escort (recruit, escort quests) | companion.lua -> ActorAI claim -> holder; replayed to a new peer; carried through doors | FIXED 09-10/11 |
+| Dialogue-started AiTravel | companion.lua reports; lock holder claim | FIXED 09-11 |
+| Guards: crime pursuit, arrest dialogue | registry bounty; AiPursue reaches; PlayerArrest to owner | FIXED 09-11 |
+| Assault / murder as crimes | commitCrime/actorKilled accept avatars; PlayerCrime to owner | FIXED 09-11 |
+| Death, loot, corpse | ActorDeath, corpse container canonical | OK |
+| Content-placed NPCs/creatures | content RefNum, addressable everywhere | OK |
+| **Runtime-spawned actors** (levelled-list creatures, PlaceAtPC/PlaceAtMe, script spawns) | per-engine dynamic RefNums: the peer's creature and the client's are different objects; clients show AI-off statues, the peer's copy fights avatars unseen | **GAP — in progress** (net-actor sync) |
+| Replayed one-shot quest encounters | spawned on the peer beside the avatar | FIXED 09-11 |
+
+## 7. Quests and scripts
+
+| Mechanism | MP path | Status |
+|---|---|---|
+| Journal | shared per instance; guests borrow the host's | OK |
+| Topics learned | shared with the journal | OK |
+| Globals (quest gates) | peer's write wins within the driving window; dialogue-result names client-owned | OK |
+| Member variables on cell scripts | MemberVarUpdate relay | OK |
+| Faction standing, bounty | routed to the campaign | OK |
+| OnDeath / GetDeadCount | shared tally | OK |
+| Scripted PlaceAt / PositionCell of NPCs | see runtime-spawned actors | GAP |
+| Scripted AddItem/RemoveItem on NPCs | runs on every engine identically (deterministic) | OK (by construction) |
+| StartScript/StopScript | runs per engine; globals reconcile | OK |
+
+## 8. World
+
+| Mechanism | MP path | Status |
+|---|---|---|
+| Clock, time scale, rest/wait | server clock; rest policy (owner/anyone/off); refusals told | OK |
+| Weather | WorldWeather authority | OK |
+| Map exploration | shared when enabled | OK |
+
+## 9. Hardening (security / performance)
+
+| Concern | Where | Status |
+|---|---|---|
+| Forged peer-only events (AvatarStats/ItemStates/Effects, PlayerArrest/Crime) | world-peer-only gates, tested | OK |
+| Non-holder actor claims (follow/escort/travel/combat/disposition) | bounded to self / lock holder; follower cap 8 | OK |
+| Client effect floods | PlayerActiveSpells budget 40 ops / 5 s | OK |
+| LSER node ceiling | RecordsSync chunked; cell frame caps | OK |
+| Per-IP cap for households | default 8; IP_CAP transient | FIXED 09-11 |
+| Report spam | per reporter+target cooldown | FIXED 09-10 |
