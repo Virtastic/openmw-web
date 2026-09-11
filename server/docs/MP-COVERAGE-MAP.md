@@ -54,6 +54,7 @@ known and recorded; N/A = does not exist in single player either.
 | NPC/creature aggression at players | engageCombat treats avatars as players | FIXED 09-11 |
 | NPC retaliation when hit | actorAttacked treats avatar attacker as player | FIXED 09-11 |
 | Being hit: damage, disease, paralysis | peer bars -> SelfStats; AvatarEffectsBatch -> SelfSpells/SelfActiveSpells | FIXED 09-11 |
+| Being dispelled by an NPC | a Dispel that strips an OWNER-applied effect (Levitate) from the avatar is not reported back (the peer diff skips owner records); the owner keeps flying until the effect's own timer | GAP (narrow; Dispel-casting NPCs are rare) |
 | PvP | server veto (pvp rules) + avatar hit veto on the peer; a summon's blow is vetoed when its master is another player's avatar | FIXED 09-11 (summons bypassed pvp-off) |
 | Death | death edge flushed; respawn plugin; avatar rebuilt; puppet rebuilt on other screens | FIXED 09-10 |
 | Kill credit / GetDeadCount | ActorDeath tally shared | OK (attribution logs only) |
