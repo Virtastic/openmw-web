@@ -78,7 +78,8 @@ function combat.onPuppetHit(data)
         -- nothing. Send it and let the server decide; it is the one holding the authority
         -- table, and quoting a stale epoch is the only thing it actually needs protecting from.
         local epoch = deps.epochOf(cellKey)
-        target = { ref = data.victim, cellKey = cellKey }
+        local netId = deps.netIdOf and deps.netIdOf(data.victim)
+        target = { ref = (not netId) and data.victim or nil, net = netId, cellKey = cellKey }
         if epoch then target.epoch = epoch end
     else
         return
@@ -112,7 +113,8 @@ function combat.onPuppetSpellHit(data)
     elseif data.victim and data.victim:isValid() then
         local cellKey = deps.cellKeyOfObj(data.victim)
         if not cellKey then note('no-cell') return end
-        target = { ref = data.victim, cellKey = cellKey }
+        local netId = deps.netIdOf and deps.netIdOf(data.victim)
+        target = { ref = (not netId) and data.victim or nil, net = netId, cellKey = cellKey }
         local epoch = deps.epochOf(cellKey)
         if epoch then target.epoch = epoch end
     else
@@ -172,6 +174,7 @@ local function resolveVictim(data)
         return target.playerId == deps.ownIdFn() and deps.playerFn() or nil
     end
     local obj = target.ref
+    if target.net ~= nil and deps.objOfNet then obj = deps.objOfNet(target.net) end
     if obj and obj:isValid() and deps.isHolderOf(deps.cellKeyOfObj(obj)) then
         return obj
     end
@@ -185,6 +188,7 @@ combat.handlers = {}
 -- does the hitting and they are ignored entirely.
 local function creditThreat(data)
     local ref = data.ref
+    if data.net ~= nil and deps.objOfNet then ref = deps.objOfNet(data.net) end
     local ok, valid = pcall(function() return ref and ref:isValid() end)
     if not (ok and valid) then return end
     local dmg = (data.damage and data.damage.health) or 0

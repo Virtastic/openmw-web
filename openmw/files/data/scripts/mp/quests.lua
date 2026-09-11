@@ -595,6 +595,7 @@ end
 handlers.MP_MemberVarUpdate = function(data)
     if type(data.name) ~= 'string' or type(data.value) ~= 'number' then return end
     local obj = data.ref
+    if data.net ~= nil and deps.objOfNet then obj = deps.objOfNet(data.net) end
     local okValid, valid = pcall(function() return obj:isValid() end)
     if not (okValid and valid) then return end
     local script = world.mwscript.getLocalScript(obj)
@@ -707,6 +708,8 @@ end
 
 handlers.MP_DialogueLockResult = function(data)
     local obj = data.ref
+    -- A net-addressed NPC comes back as its net id (quests.ts refBody), not a GObject.
+    if type(obj) == 'number' and deps.objOfNet then obj = deps.objOfNet(obj) end
     local okValid, valid = pcall(function() return obj:isValid() end)
     if not (okValid and valid) then return end
     if not lockPending or lockPending.id ~= obj.id then

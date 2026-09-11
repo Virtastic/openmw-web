@@ -85,7 +85,7 @@ function parseTarget(v: LValue | undefined): CombatTarget | null {
   const cellKey = str(t.get('cellKey'), MAX_CELL_KEY);
   const rawEpoch = t.get('epoch');
   const epoch = rawEpoch === undefined ? undefined : finite(rawEpoch);
-  if (!ref || ref.kind !== 'ref' || !cellKey) return null; // actors are content refs
+  if (!ref || !cellKey) return null; // a content ref, or the net id of a runtime actor the holder named
   if (rawEpoch !== undefined && epoch === undefined) return null; // present but not a number
   return { kind: 'actor', ref, cellKey, ...(epoch !== undefined ? { epoch } : {}) };
 }
