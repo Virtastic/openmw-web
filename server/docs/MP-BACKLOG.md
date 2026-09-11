@@ -875,7 +875,11 @@ loot bug already fixed here.
   the next AvatarState refresh does not shed it either. Needs the same back-channel bars use:
   the peer diffs the avatar's spell list, the server writes the doc, the client adds the
   spell. Found 2026-09-10 while auditing the avatar's stance/aggression (which was the
-  reason no bite ever landed at all).
+  reason no bite ever landed at all). The same back-channel is what a hostile NPC's spell
+  needs: Paralyze, Burden, Silence, Blind, Sound land on the AVATAR (the peer is where the
+  cast resolves) and the owner's client never feels them -- the avatar stops, the pose
+  stream stops with it, and the owner sees themselves snapped in place with no idea why.
+  The owner->avatar direction is wired (PlayerActiveSpells, 2026-09-11); this is the other.
 
 * ~~**Item repair.**~~ Nothing to do, and the entry's premise was wrong. "Condition is
   per-item state on a shared object" is not what repair touches: `mwmechanics/repair.cpp`
