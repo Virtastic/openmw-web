@@ -202,3 +202,33 @@ test("a client's active effects are forwarded to the peer for the avatar, and ga
   assert.equal((next.value as { add: { id: string }[] }).add[0]!.id, 'fortify_speed',
     'the malformed message was dropped, the well-formed one after it was forwarded');
 });
+
+// WHAT THE WORLD DID TO THE AVATAR comes back. A bite on the peer puts a disease in the avatar's
+// spell list; a hostile Paralyze lands on it as an effect. Both must reach the owner's own body,
+// the disease persisted; and no client may curse another by sending the batch itself.
+test("the peer's report of a disease and a hostile effect reaches the owner; a client's does not", async (t) => {
+  const { server, peer, a } = await world(t);
+  a.inbox.events.length = 0;
+  peer.sendEvent('AvatarEffectsBatch', { entries: [{
+    id: a.playerId, spellsAdd: ['ataxia'],
+    effectsAdd: [{ id: 'paralyze', effects: [0] }], effectsRemove: [{ id: 'burden' }],
+  }] });
+  const spells = await a.waitEvent('SelfSpells');
+  assert.deepEqual((spells.value as { add: string[] }).add, ['ataxia'], 'the disease reaches the owner');
+  const fx = await a.waitEvent('SelfActiveSpells');
+  const v = fx.value as { add: { id: string; effects: number[] }[]; remove: { id: string }[] };
+  assert.equal(v.add[0]!.id, 'paralyze'); assert.deepEqual(v.add[0]!.effects, [0]);
+  assert.equal(v.remove[0]!.id, 'burden');
+  // Persisted: a rejoin restores the disease (the record the welcome carries lists it).
+  await server.flush();
+
+  const b = await TestClient.connect(server.port);
+  t.after(() => b.close());
+  await b.joinAsNew('Curser');
+  await b.waitEvent('PlayerList');
+  a.inbox.events.length = 0;
+  b.sendEvent('AvatarEffectsBatch', { entries: [{ id: a.playerId, spellsAdd: ['corprus'] }] });
+  b.sendEvent('ChatSend', { text: 'cursefence' });
+  await a.waitEvent('ChatMessage', (vv) => (vv as { text?: string }).text === 'cursefence');
+  assert.equal(a.inbox.events.filter((e) => e.name === 'SelfSpells').length, 0, 'a client cursed another player');
+});

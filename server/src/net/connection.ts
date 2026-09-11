@@ -38,7 +38,7 @@ const MAX_CELLS_PER_SESSION = 4096;
  *  is invisible to a person and ends a flood without disconnecting anybody. */
 const CHAT_PER_SEC = 5;
 const CHAT_BURST = 20;
-import { handleAvatarItemStatesBatch, handleAvatarStatsBatch, handleStateEvent, syncStateOnJoin, type StateCtx } from '../core/playerstate';
+import { handleAvatarEffectsBatch, handleAvatarItemStatesBatch, handleAvatarStatsBatch, handleStateEvent, syncStateOnJoin, type StateCtx } from '../core/playerstate';
 import type { WorldState } from '../core/worldstate';
 import type { Combat } from '../core/combat';
 import type { Quests } from '../core/quests';
@@ -667,6 +667,12 @@ export class Connection implements Peer {
     if (name === 'AvatarItemStatesBatch') {
       // Phase 4D: the peer's avatar wear/charge/soul reports (system-only).
       handleAvatarItemStatesBatch(this.ctx.stateCtx, this.player, value);
+      return;
+    }
+    if (name === 'AvatarEffectsBatch') {
+      // The peer reports what the world did to each avatar (disease, hostile effects); the
+      // owner's client applies it to the body the player sees. System-only, checked inside.
+      handleAvatarEffectsBatch(this.ctx.stateCtx, this.player, value);
       return;
     }
     if (name === 'PlayerCrime') {

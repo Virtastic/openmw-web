@@ -902,7 +902,7 @@ loot bug already fixed here.
   a chest one player disarmed is still armed for the next -- harmless today only because the
   trap's damage is then discarded by this same rule.
 
-* **A disease caught ON THE PEER never reaches the player.** Diseases are spells in the
+* ~~**A disease caught ON THE PEER never reaches the player.**~~ FIXED 2026-09-11: the peer diffs each avatar's spell list against the doc and its temporary effects against what the owner sent (AvatarEffectsBatch); the server persists new spells and relays both to the owner, whose engine applies them (SelfSpells / SelfActiveSpells) and flags them so they are not echoed back. Original note kept below for the reasoning. Diseases are spells in the
   actor's spell list and the client's own list is captured and restored (above) -- but with
   the peer resolving every melee, a diseased creature's bite lands on the AVATAR, and the
   avatar's spell list is a one-way copy (AvatarState in, bars and item states out). The peer

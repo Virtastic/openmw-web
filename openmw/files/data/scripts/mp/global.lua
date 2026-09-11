@@ -730,6 +730,85 @@ local function avatarItemStatesTick(now)
     if #entries > 0 then mp.sendEvent('AvatarItemStatesBatch', { entries = entries }) end
 end
 
+-- WHAT THE WORLD DID TO THE AVATAR, back to its owner. The owner->avatar direction carries
+-- what the player cast or drank (MP_AvatarActiveSpells); this is the other half. A diseased
+-- rat's bite lands on the avatar (the peer resolves the hit) and puts a disease in the
+-- avatar's SPELL LIST; a hostile caster's Paralyze, Burden or Silence lands on the avatar as
+-- an ACTIVE EFFECT. Neither reached the player's own engine: the player kept walking while
+-- their body stood paralysed on the peer, and never caught a disease in their life.
+--   * spells: anything in the avatar's list that the doc did not put there, reported once;
+--   * effects: temporary, not from equipment, and not a record the owner sent us -- diffed by
+--     instance so a second Burden is a second report and an expiry is a removal.
+local ownerActive = {} -- id -> { localRecordId -> count } effects the OWNER applied here
+local avatarEffectsAt = 0
+local AVATAR_EFFECTS_EVERY = 1.0
+local avatarSpellsReported = {} -- id -> { localSpellId -> true }
+local avatarEffectsReported = {} -- id -> { activeSpellId -> localRecordId }
+
+local function avatarEffectsTick(now)
+    if not (mp.isSystem and mp.isSystem()) then return end
+    if now - avatarEffectsAt < AVATAR_EFFECTS_EVERY then return end
+    avatarEffectsAt = now
+    local entries = {}
+    for id, p in pairs(puppets) do
+        if p.obj and p.obj:isValid() then
+            local entry = { id = id }
+            local any = false
+            -- Spells the world gave the avatar (disease, blight, a curse).
+            local docSpells = {}
+            for _, sid in ipairs((avatarDocs[id] and avatarDocs[id].spells) or {}) do
+                docSpells[worldmp.toLocal(sid)] = true
+            end
+            avatarSpellsReported[id] = avatarSpellsReported[id] or {}
+            local okS = pcall(function()
+                for _, spell in pairs(types.Actor.spells(p.obj)) do
+                    if not docSpells[spell.id] and not avatarSpellsReported[id][spell.id] then
+                        avatarSpellsReported[id][spell.id] = true
+                        entry.spellsAdd = entry.spellsAdd or {}
+                        entry.spellsAdd[#entry.spellsAdd + 1] = worldmp.toNet(spell.id)
+                        any = true
+                    end
+                end
+            end)
+            -- Effects the world put on the avatar.
+            local known = ownerActive[id] or {}
+            local seen = {}
+            local reported = avatarEffectsReported[id] or {}
+            local okE = pcall(function()
+                for _, sp in pairs(types.Actor.activeSpells(p.obj)) do
+                    if sp.temporary and not sp.fromEquipment and sp.activeSpellId ~= nil
+                        and not known[sp.id] then
+                        seen[sp.activeSpellId] = sp.id
+                        if not reported[sp.activeSpellId] then
+                            local idx = {}
+                            for _, e in ipairs(sp.effects or {}) do
+                                if e.index ~= nil then idx[#idx + 1] = e.index end
+                            end
+                            if #idx > 0 then
+                                entry.effectsAdd = entry.effectsAdd or {}
+                                entry.effectsAdd[#entry.effectsAdd + 1] = { id = worldmp.toNet(sp.id), effects = idx }
+                                any = true
+                            end
+                        end
+                    end
+                end
+            end)
+            if okE then
+                for aid, rid in pairs(reported) do
+                    if not seen[aid] then
+                        entry.effectsRemove = entry.effectsRemove or {}
+                        entry.effectsRemove[#entry.effectsRemove + 1] = { id = worldmp.toNet(rid) }
+                        any = true
+                    end
+                end
+                avatarEffectsReported[id] = seen
+            end
+            if (okS or okE) and any then entries[#entries + 1] = entry end
+        end
+    end
+    if #entries > 0 then mp.sendEvent('AvatarEffectsBatch', { entries = entries }) end
+end
+
 -- ARREST. A guard that reaches a wanted avatar on the peer cannot open a dialogue nobody is
 -- there to see; the engine records the reach (mwmp/puppets.hpp recordArrest) and this hands
 -- it to the server for the owner's client, which opens the dialogue with ITS copy of the
@@ -847,6 +926,9 @@ local function despawnPuppet(id)
     avatarUsing[id] = nil
     avatarItemStatesLast[id] = nil
     avatarItemStatesSentAt[id] = nil
+    ownerActive[id] = nil
+    avatarSpellsReported[id] = nil
+    avatarEffectsReported[id] = nil
     -- Guarded, and deliberately AFTER the bookkeeping above: remove() throws when the
     -- object is already gone or otherwise not removable ("Can't remove 0 of 0 items"), and
     -- an engine handler that throws ABORTS — which took the rest of MP_PlayerLeaveWorld
@@ -1447,6 +1529,52 @@ local eventHandlers = {
         spawnPuppet(data.id, pose)
     end,
 
+    -- The world did something to our avatar on the peer (see avatarEffectsTick): a disease
+    -- goes into our spell list; an effect is applied to our own body. Effects applied here
+    -- are flagged to the player script so identity.lua's owner->avatar diff does not send them
+    -- straight back and double them on the avatar.
+    MP_SelfSpells = function(data)
+        if mp.isSystem and mp.isSystem() then return end
+        local player = playerScript()
+        if not player or not data then return end
+        for _, sid in ipairs(data.add or {}) do
+            local localId = worldmp.toLocal(sid)
+            if localId then pcall(function() types.Actor.spells(player):add(localId) end) end
+        end
+    end,
+    MP_SelfActiveSpells = function(data)
+        if mp.isSystem and mp.isSystem() then return end
+        local player = playerScript()
+        if not player or not data then return end
+        local spells = types.Actor.activeSpells(player)
+        for _, sp in ipairs(data.add or {}) do
+            local localId = sp.id and worldmp.toLocal(sp.id)
+            if localId and #(sp.effects or {}) > 0 then
+                toPlayer('MP_PeerEffect', { id = localId, on = true })
+                local ok, err = pcall(function()
+                    spells:add({ id = localId, effects = sp.effects, caster = player, stackable = true,
+                        ignoreResistances = true, ignoreSpellAbsorption = true, ignoreReflect = true })
+                end)
+                if not ok then print('[mp] peer effect apply failed: ' .. tostring(err)) end
+            end
+        end
+        for _, sp in ipairs(data.remove or {}) do
+            local localId = sp.id and worldmp.toLocal(sp.id)
+            if localId then
+                pcall(function()
+                    local victims = {}
+                    for _, active in pairs(spells) do
+                        if active.temporary and active.id == localId and active.activeSpellId then
+                            victims[#victims + 1] = active.activeSpellId
+                        end
+                    end
+                    for _, aid in ipairs(victims) do spells:remove(aid) end
+                end)
+                toPlayer('MP_PeerEffect', { id = localId, on = false })
+            end
+        end
+    end,
+
     -- A guard reached OUR avatar on the peer. Open the dialogue with our copy of that guard:
     -- the local player carries the bounty (CrimeUpdate relay), so vanilla's greeting offers
     -- the fine, the cell, or resisting -- exactly what it would have done had the guard
@@ -1486,8 +1614,10 @@ local eventHandlers = {
         local p = puppets[data.id]
         if not (p and p.obj and p.obj:isValid()) then return end
         local spells = types.Actor.activeSpells(p.obj)
+        ownerActive[data.id] = ownerActive[data.id] or {}
         for _, sp in ipairs(data.add or {}) do
             local localId = sp.id and worldmp.toLocal(sp.id)
+            if localId then ownerActive[data.id][localId] = (ownerActive[data.id][localId] or 0) + 1 end
             if localId and #(sp.effects or {}) > 0 then
                 local ok, err = pcall(function()
                     spells:add({ id = localId, effects = sp.effects, caster = p.obj, stackable = true,
@@ -1501,6 +1631,10 @@ local eventHandlers = {
         -- is the same caveat as stacking above and costs nothing real.
         for _, sp in ipairs(data.remove or {}) do
             local localId = sp.id and worldmp.toLocal(sp.id)
+            if localId and ownerActive[data.id][localId] then
+                ownerActive[data.id][localId] = ownerActive[data.id][localId] - 1
+                if ownerActive[data.id][localId] <= 0 then ownerActive[data.id][localId] = nil end
+            end
             if localId then
                 pcall(function()
                     local victims = {}
@@ -2659,6 +2793,7 @@ return {
                 avatarStatsTick(now) -- Phase 4A: peer reports avatar bars to the server
                 avatarItemStatesTick(now) -- Phase 4D: peer reports avatar wear/charge/soul
                 avatarArrestTick() -- a guard reached a wanted avatar: tell its owner
+                avatarEffectsTick(now) -- disease, paralysis: what the world did to the avatar
             end
         end,
     },
