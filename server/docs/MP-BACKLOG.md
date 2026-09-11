@@ -897,7 +897,12 @@ loot bug already fixed here.
   list -- the avatar falls and drowns too, so accepting client lowers would double them,
   which is why the rule cannot simply be relaxed. Needs the trap/script hit to be forwarded
   to the avatar the way spell hits on puppets are (CombatSpellHit), so it lands once, there.
-  Found 2026-09-10 while fixing the magicka and item-state halves of the same rule. Related:
+  Found 2026-09-10 while fixing the magicka and item-state halves of the same rule.
+  NARROWED 2026-09-11: a trap's spell lands on the client's player as an ACTIVE EFFECT, and
+  PlayerActiveSpells now carries those to the avatar -- so a fire trap with a duration hurts
+  the avatar (once, there) and the bars come back. What is still lost: effects of zero
+  duration (instant Damage Health is applied and gone before the half-second diff sees it)
+  and MWScript writes (ModHealth, lava scripts), which are not effects at all. Related:
   a DISARMED trap is not synced either (locks are; the trap spell is not in the cell doc), so
   a chest one player disarmed is still armed for the next -- harmless today only because the
   trap's damage is then discarded by this same rule.
