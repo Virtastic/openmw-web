@@ -553,7 +553,13 @@ export class Quests {
     }
     const held = this.dialogueLocks.get(ref.key);
     if (!want) {
-      if (held?.playerId === player.id) this.dialogueLocks.delete(ref.key);
+      if (held?.playerId === player.id) {
+        this.dialogueLocks.delete(ref.key);
+        // A dialogue's consequences land AFTER the window closes -- a taunted NPC or a guard
+        // whose arrest was resisted starts combat on "Goodbye" -- and the client's report of
+        // that state polls at 1 Hz. Keep "who was just talking to it" for a moment.
+        this.recentlyHeld.set(ref.key, { playerId: player.id, at: Date.now() });
+      }
       player.peer.sendEvent('DialogueLockResult', { ref: refBody(ref), granted: false });
       return;
     }
@@ -575,8 +581,15 @@ export class Quests {
     }
   }
 
+  private readonly recentlyHeld = new Map<string, { playerId: number; at: number }>();
+  private static readonly RECENT_LOCK_MS = 5_000;
   dialogueHolder(refKey: string): number | undefined {
-    return this.dialogueLocks.get(refKey)?.playerId;
+    const live = this.dialogueLocks.get(refKey)?.playerId;
+    if (live !== undefined) return live;
+    const recent = this.recentlyHeld.get(refKey);
+    if (recent && Date.now() - recent.at <= Quests.RECENT_LOCK_MS) return recent.playerId;
+    if (recent) this.recentlyHeld.delete(refKey);
+    return undefined;
   }
 }
 

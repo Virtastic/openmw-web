@@ -518,6 +518,22 @@ export class WorldState {
       return;
     }
     if (name === 'ActorAI' && this.authority.holderOf(str(body.get('cellKey'), MAX_CELL_KEY) ?? '') !== player.id) {
+      if (body.get('combat') !== undefined) {
+        // "THIS NPC NOW FIGHTS ME." A taunt, or resisting arrest, starts combat as a dialogue
+        // result -- on the talking player's client, where the NPC is a puppet, so the fight
+        // never reached the holder and the NPC glared. The player who was just talking to it
+        // may say so, about themselves only; the holder starts the real fight.
+        const cellKey = str(body.get('cellKey'), MAX_CELL_KEY);
+        const ref = parseObjRef(body);
+        const combat = finite(body.get('combat'));
+        if (!cellKey || !ref || ref.kind !== 'ref' || combat !== player.id) { this.invalid(player, name); return; }
+        if (player.system || this.dialogueHolder?.(ref.key) !== player.id || !cellsVisible(player.cellKey, cellKey)) {
+          log('warn', 'actor.dropped', { from: player.name, name, cellKey, why: 'combat claim without the conversation' });
+          return;
+        }
+        this.relayCellExcept(cellKey, player.id, name, { ...lToJs(body) as Record<string, JsLike> });
+        return;
+      }
       this.followClaim(player, body);
       return;
     }

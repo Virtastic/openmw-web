@@ -245,6 +245,29 @@ test('dialogue lock', async (t) => {
       "a bystander changed an NPC's mind without talking to it");
   });
 
+  // TAUNT / RESIST ARREST: the one who was talking may say the NPC now fights THEM, even a
+  // moment after the window closed; never someone else, never about a third player.
+  await t.test('the lock holder may say the NPC now fights them, for a few seconds after release', async () => {
+    b.inbox.events.length = 0;
+    a.sendEvent('ActorAI', { ref: NPC_REF, cellKey: '0,0', epoch: 0, combat: aId });
+    const fight = await b.waitEvent('ActorAI');
+    assert.equal((fight.value as { combat?: number }).combat, aId, 'the holder is told who the NPC fights');
+    a.sendEvent('DialogueLock', { ref: NPC_REF, cellKey: '0,0', want: false });
+    await a.waitEvent('DialogueLockResult');
+    b.inbox.events.length = 0;
+    a.sendEvent('ActorAI', { ref: NPC_REF, cellKey: '0,0', epoch: 0, combat: aId }); // just after Goodbye
+    const late = await b.waitEvent('ActorAI');
+    assert.equal((late.value as { combat?: number }).combat, aId, 'the consequence lands after the window closes');
+    a.inbox.events.length = 0;
+    b.sendEvent('ActorAI', { ref: NPC_REF, cellKey: '0,0', epoch: 0, combat: aId }); // Bob: not talking, not about himself
+    b.sendEvent('ChatSend', { text: 'combatfence' });
+    await a.waitEvent('ChatMessage', (v) => (v as { text?: string }).text === 'combatfence');
+    assert.equal(a.inbox.events.filter((e) => e.name === 'ActorAI').length, 0, 'a bystander set an NPC on someone');
+    // Re-take the lock so the release subtest below still has something to release.
+    a.sendEvent('DialogueLock', { ref: NPC_REF, cellKey: '0,0', want: true });
+    await a.waitEvent('DialogueLockResult');
+  });
+
   await t.test('explicit release frees the NPC', async () => {
     a.sendEvent('DialogueLock', { ref: NPC_REF, cellKey: '0,0', want: false });
     await a.waitEvent('DialogueLockResult');

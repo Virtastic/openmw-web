@@ -500,10 +500,17 @@ end
 function actors.noteCombat(obj, target)
     if not (obj and obj:isValid()) then return end
     local cellKey = actors.cellKeyOfObj(obj)
-    if not cellKey or not actors.isHolderOf(cellKey) then return end
+    if not cellKey then return end
     local foeId = deps.playerIdOf and deps.playerIdOf(target) or nil
+    if not actors.isHolderOf(cellKey) then
+        -- Not ours to say -- except "it now fights ME", the result of a taunt or of resisting
+        -- arrest, which happens on this client and nowhere else. The server admits it from the
+        -- player who was just talking to the NPC (worldstate.ts), and the holder starts the fight.
+        local own = deps.ownIdFn and deps.ownIdFn() or nil
+        if foeId == nil or foeId ~= own then return end
+    end
     mp.sendEvent('ActorAI', {
-        cellKey = cellKey, epoch = actors.epochOf(cellKey), ref = obj, combat = foeId or false,
+        cellKey = cellKey, epoch = actors.epochOf(cellKey) or 0, ref = obj, combat = foeId or false,
     })
 end
 
