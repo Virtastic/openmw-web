@@ -45,7 +45,7 @@ known and recorded; N/A = does not exist in single player either.
 | Action | MP path | Status |
 |---|---|---|
 | Melee vs NPC | client swing cancelled; avatar swings on peer (stance, use bit) | FIXED 09-10 |
-| Ranged | avatar fires; ammo reconciled via inventory | OK |
+| Ranged | avatar fires; ammo reconciled via inventory; a missed arrow (and any runtime item the world creates near an avatar: death drops, scripted items) is named by the peer as a world placement, so it can be picked up on every screen | FIXED 09-11 (was: peer-local, arrows unrecoverable) |
 | Blocking, armor, difficulty | peer engine, avatar treated as player for scaling | OK |
 | Spell at NPC (touch/target) | client casts; hit on puppet recorded -> CombatSpellHit -> holder applies record | OK |
 | Self-cast / potion / scroll | PlayerActiveSpells -> avatar (spell stance = Nothing on avatar) | FIXED 09-11 |
