@@ -107,7 +107,7 @@ known and recorded; N/A = does not exist in single player either.
 | Assault / murder as crimes | commitCrime/actorKilled accept avatars; PlayerCrime to owner | FIXED 09-11 |
 | Death, loot, corpse | ActorDeath, corpse container canonical | OK |
 | Content-placed NPCs/creatures | content RefNum, addressable everywhere | OK |
-| Runtime-spawned actors (levelled-list creatures, PlaceAtPC/PlaceAtMe, script spawns) | the holder names each one through the object-sync path (actor=true); clients build it from the record and puppet it; the actor stream and events address it by net id (contentFile -2 on the wire); clients suppress their own rolls/spawns once any holder is known | FIXED 09-11 (engine + protocol; needs a native-peer scenario to prove end to end) |
+| Runtime-spawned actors (levelled-list creatures, PlaceAtPC/PlaceAtMe, script spawns) | the holder names each one through the object-sync path (actor=true); clients build it from the record and puppet it; the actor stream and events address it by net id (contentFile -2 on the wire); clients suppress their own rolls/spawns once any holder is known | FIXED 09-11 (engine + protocol). Live: the native peer against retail data named `scrib`, `kwama forager`, `scrib` in `-2,-7` within 60 ms of its grant, no drops; the client half (build from record, resolve by net id) is covered by actor.test.ts and the Lua runner, and owes a browser scenario |
 | Replayed one-shot quest encounters | spawned on the peer beside the avatar | FIXED 09-11 |
 
 ## 7. Quests and scripts
