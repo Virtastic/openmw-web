@@ -452,7 +452,7 @@ end
 -- would fight over it, and the holder is the one whose simulation is authoritative anyway.
 local claimedFollow = {} -- refKey -> true: actors we told the server follow US while not holding
 
-function actors.noteFollow(obj, target)
+function actors.noteFollow(obj, target, escort)
     if not (obj and obj:isValid()) then return end
     local cellKey = actors.cellKeyOfObj(obj)
     if not cellKey then return end
@@ -476,7 +476,20 @@ function actors.noteFollow(obj, target)
     end
     mp.sendEvent('ActorAI', {
         cellKey = cellKey, epoch = epoch, ref = obj, follow = followId,
+        escort = (followId ~= nil and type(escort) == 'table') and escort or nil,
     })
+end
+
+local function aimAt(obj, target, escort)
+    if type(escort) == 'table' and type(escort.x) == 'number' then
+        pcall(function()
+            obj:sendEvent('StartAIPackage', { type = 'Escort', target = target,
+                destPosition = util.vector3(escort.x, escort.y or 0, escort.z or 0),
+                duration = escort.duration or 0 })
+        end)
+    else
+        pcall(function() obj:sendEvent('StartAIPackage', { type = 'Follow', target = target }) end)
+    end
 end
 
 -- ...and the receiving half. The target is resolved LOCALLY: the player who recruited them
@@ -497,12 +510,14 @@ end
 -- player leaves; a Follow package aimed at the old object never finishes and the follower
 -- stands still for good. Re-aim it at the new body, or release it when there is none.
 function actors.refollow(playerId, target)
-    for _, obj in pairs(followersOf[playerId] or {}) do
+    for _, f in pairs(followersOf[playerId] or {}) do
+        local obj = f.obj
         if obj:isValid() then
             if target then
-                pcall(function() obj:sendEvent('StartAIPackage', { type = 'Follow', target = target }) end)
+                aimAt(obj, target, f.escort)
             else
                 pcall(function() obj:sendEvent('RemoveAIPackages', 'Follow') end)
+                pcall(function() obj:sendEvent('RemoveAIPackages', 'Escort') end)
             end
         end
     end
@@ -519,15 +534,16 @@ actors.handlers.MP_ActorAI = function(data)
     for _, list in pairs(followersOf) do list[key] = nil end
     if data.follow ~= nil then
         followersOf[data.follow] = followersOf[data.follow] or {}
-        followersOf[data.follow][key] = obj
+        followersOf[data.follow][key] = { obj = obj, escort = data.escort }
     end
     local target = deps.playerObjOf and deps.playerObjOf(data.follow) or nil
     if target then
-        pcall(function() obj:sendEvent('StartAIPackage', { type = 'Follow', target = target }) end)
+        aimAt(obj, target, data.escort)
     else
         -- Only Follow is removed, never the whole stack: clearing everything would also cancel
         -- the combat and wander packages that make the actor an actor.
         pcall(function() obj:sendEvent('RemoveAIPackages', 'Follow') end)
+        pcall(function() obj:sendEvent('RemoveAIPackages', 'Escort') end)
     end
 end
 

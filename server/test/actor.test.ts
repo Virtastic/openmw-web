@@ -155,6 +155,17 @@ test('actor authority and relay end to end', async (t) => {
     assert.equal(a.inbox.events.filter((e) => e.name === 'ActorAI').length, 0,
       'a non-holder made an NPC follow somebody else and the server relayed it');
 
+    // An escort is a follow with a destination; a destination that is not four finite numbers
+    // is refused as a whole message.
+    a.inbox.events.length = 0;
+    b.sendEvent('ActorAI', { cellKey: '0,0', epoch: 0, ref: ACTOR_REF, follow: bId, escort: { x: 100, y: 200, z: 3, duration: 0 } });
+    const esc = await a.waitEvent('ActorAI');
+    assert.deepEqual((esc.value as { escort?: unknown }).escort, { x: 100, y: 200, z: 3, duration: 0 }, 'the destination reaches the holder');
+    a.inbox.events.length = 0;
+    b.sendEvent('ActorAI', { cellKey: '0,0', epoch: 0, ref: ACTOR_REF, follow: bId, escort: { x: 'far' } });
+    await fence('escortfence');
+    assert.equal(a.inbox.events.filter((e) => e.name === 'ActorAI').length, 0, 'a malformed escort was relayed');
+
     // Only the player being followed may dismiss.
     const d = await TestClient.connect(server.port);
     await d.joinAsNew('Dana');
