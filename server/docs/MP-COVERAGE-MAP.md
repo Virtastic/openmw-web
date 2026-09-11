@@ -101,6 +101,7 @@ known and recorded; N/A = does not exist in single player either.
 |---|---|---|
 | Wander/idle AI, pathing | peer engine; poses 10 Hz relayed; puppets steer | OK |
 | Posture while fighting | actor pose bits 4/5 | FIXED 09-11 |
+| Seeing a friend swing | the pose stream's use bit: its release plays the weapon's attack animation on the puppet (animation only -- a real `use` would run this engine's hit chain on the local player) | FIXED 09-11 (was: a friend fought as a statue with a weapon out) |
 | Greetings, idle voice | puppets greet with AI off | FIXED 09-11 |
 | Dialogue (one at a time) | dialogue lock; refusal names the holder | OK |
 | Persuasion (bribe/taunt/admire) | lock holder relays disposition | FIXED 09-11 |
