@@ -1783,7 +1783,7 @@ local eventHandlers = {
                     -- would be left standing at the door for everyone. Same move, same spot.
                     if moved then
                         for _, follower in pairs(actors.followersOf(data.id)) do
-                            tryTeleport(follower, dest, util.vector3(data.x, data.y, data.z))
+                            tryTeleport(follower.obj, dest, util.vector3(data.x, data.y, data.z))
                         end
                     end
                 end
@@ -2227,7 +2227,7 @@ local eventHandlers = {
     -- script cannot read AI package state for a foreign actor. This is the only route by which
     -- the fact reaches anywhere it can be acted on.
     mpActorFollow = function(data)
-        actors.noteFollow(data and data.actor, data and data.target)
+        actors.noteFollow(data and data.actor, data and data.target, data and data.escort)
     end,
 
     mpSocialTab = function(data)
