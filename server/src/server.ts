@@ -1052,6 +1052,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     // the whole world now, so this is normally 0 or 1; the gateway's governor still reads it.
     peerCount: simPeers.running,
     pvp: config.rules.pvp,
+    mode: worldMode === 'party' ? 'party' : 'private',
     players: roster.humansInWorld().map((p) => ({
       id: p.id,
       name: p.name,

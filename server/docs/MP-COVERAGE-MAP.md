@@ -30,7 +30,7 @@ s40/s42 (host-load guard). Anything below marked OK without a scenario is a code
 | Create character, chargen | private world `priv-<user>-<char>`; chargen sanctuary keeps the peer out of the cell | OK |
 | Resume after disconnect | resume ticket, same character, world snapshot re-sent; IP_CAP retried | FIXED 09-11 (IP_CAP was terminal RATE) |
 | Rejoin after dying and closing the tab | doc has hp 0 (death flushes); restored at 10% health on both the client and the peer's avatar, where they fell | FIXED 09-11 (was: die again on arrival, second "has fallen", respawn loop) |
-| Join a friend (party) | joinFriend -> ownerWorld (occupied) -> switch -> mayJoinWorld -> chargen gate -> guestSpawn beside owner | FIXED 09-10 |
+| Join a friend (party) | joinFriend -> ownerWorld (occupied, LIVE mode from the world's /status) -> switch -> mayJoinWorld -> chargen gate -> guestSpawn beside owner | FIXED 09-11 (the 09-10 pre-switch mode check read a mode fixed at process start, so every join was refused as not_open; caught live by s95) |
 | Owner flips party -> private | WorldClosed, 5 s grace, guests switched home | OK |
 | Leave / kick / ban | terminal codes; SUPERSEDED for a second tab | OK |
 | Save / Load / quicksave | refused at StateManager while Joined; menu items hidden | OK |

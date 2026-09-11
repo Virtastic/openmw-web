@@ -136,7 +136,7 @@ export interface WorldDeps {
   // peerCount is OPTIONAL here and required on World.lastStatus: a world from an older build --
   // or a test fake that predates peers being per-cell -- simply does not report it, and poll()
   // normalises the absence to 1 rather than making every caller restate the default.
-  fetchStatus?: (port: number) => Promise<{ playerCount: number; connectedCount: number; peerCount?: number; maxPlayers: number; name: string; players?: WorldPlayer[] } | null>;
+  fetchStatus?: (port: number) => Promise<{ playerCount: number; connectedCount: number; peerCount?: number; maxPlayers: number; name: string; players?: WorldPlayer[]; mode?: WorldMode } | null>;
   now?: () => number;
 }
 
@@ -432,6 +432,13 @@ export class WorldSupervisor {
     await Promise.all([...this.worlds.values()].map(async (w) => {
       const st = await fetchStatus(w.port);
       if (st) {
+        // THE WORLD'S MODE IS THE WORLD'S TO SAY. It was fixed here at process start
+        // (OMW_WORLD_MODE), so an owner's flip to Party never reached the directory: the
+        // friend-join check read the stale 'private' and refused every friend as not_open.
+        if (st.mode && st.mode !== w.mode) {
+          log('info', 'world.mode_observed', { id: w.id, from: w.mode, to: st.mode });
+          w.mode = st.mode;
+        }
         // Normalised HERE so the rest of the supervisor reads a definite number. Absent means a
         // world that predates the field, which runs at least the one peer worldCostMb already
         // includes -- reading it as 0 would price such a world as free to the memory governor.
@@ -649,11 +656,11 @@ function delay(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-async function defaultFetchStatus(port: number): Promise<{ playerCount: number; connectedCount: number; peerCount: number; maxPlayers: number; name: string; players: WorldPlayer[] } | null> {
+async function defaultFetchStatus(port: number): Promise<{ playerCount: number; connectedCount: number; peerCount: number; maxPlayers: number; name: string; players: WorldPlayer[]; mode?: WorldMode } | null> {
   try {
     const r = await fetch(`http://127.0.0.1:${port}/status`, { signal: AbortSignal.timeout(2000) });
     if (!r.ok) return null;
-    const j = await r.json() as { playerCount?: number; connectedCount?: number; peerCount?: number; maxPlayers?: number; name?: string; players?: unknown };
+    const j = await r.json() as { playerCount?: number; connectedCount?: number; peerCount?: number; maxPlayers?: number; name?: string; players?: unknown; mode?: unknown };
     // The roster, kept this time. Shape-checked row by row: a game from an older build sends
     // no list at all, and a row missing a name is not a player.
     const players: WorldPlayer[] = Array.isArray(j.players)
@@ -679,6 +686,7 @@ async function defaultFetchStatus(port: number): Promise<{ playerCount: number; 
       peerCount: typeof j.peerCount === 'number' ? j.peerCount : 1,
       maxPlayers: typeof j.maxPlayers === 'number' ? j.maxPlayers : 0,
       name: typeof j.name === 'string' ? j.name : `world:${port}`,
+      ...(j.mode === 'party' || j.mode === 'private' ? { mode: j.mode } : {}),
     };
   } catch {
     return null; // not up yet, or wedged — either way it is not joinable
