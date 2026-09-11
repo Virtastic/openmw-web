@@ -1327,6 +1327,9 @@ local function start()
         isHolderOf = actors.isHolderOf,
         hasHolder = actors.hasHolder,
         cellKeyOfObj = actors.cellKeyOfObj,
+        -- A runtime actor the holder named is addressed by its net id (actors.lua actorAddr).
+        netIdOf = objects.netIdOf,
+        objOfNet = objects.objOfNet,
         -- PvP is a server rule (SessionWelcome.flags.pvp); default OFF until told otherwise.
         isPvpEnabled = function() return net.flags and net.flags.pvp == true end,
     })
@@ -1337,6 +1340,7 @@ local function start()
         playerFn = playerScript,
         dispositionOutFn = function(obj, d) actors.noteDisposition(obj, d) end,
         netIdOf = objects.netIdOf, -- a script-placed quest NPC is a net actor; lock it like any other
+        objOfNet = objects.objOfNet,
         ownCellKeyFn = function() return ownCellKeyCache end,
         ownIdFn = function() return net.state == 'Joined' and net.playerId or nil end,
         noticeFn = notice,
