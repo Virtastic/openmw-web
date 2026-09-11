@@ -255,6 +255,11 @@ export interface SessionFlags {
   lodNearRadius: number;
   lodMidRadius: number;
   lodNearMaxAvatars: number; // hard ceiling on fully-simulated avatars; 0 = radius only
+  // A sim peer simulates this world: the client must not roll its own levelled-list
+  // creatures or script-spawned actors (they arrive as named net objects from the holder).
+  // Known at join, before the first cell's authority info -- which is after the first
+  // cell's lists have already rolled.
+  simulated?: boolean;
 }
 
 // Character slots: what the client's select UI needs — never the whole doc.
