@@ -518,6 +518,27 @@ export class WorldState {
       return;
     }
     if (name === 'ActorAI' && this.authority.holderOf(str(body.get('cellKey'), MAX_CELL_KEY) ?? '') !== player.id) {
+      if (body.get('travel') !== undefined) {
+        // "THIS NPC NOW WALKS TO X", a dialogue result (AITravel) -- same admission as the
+        // combat claim below: the player who was just talking to it, near the cell, finite
+        // in-world coordinates. The holder walks the real actor there.
+        const cellKey = str(body.get('cellKey'), MAX_CELL_KEY);
+        const ref = parseObjRef(body);
+        const t = body.get('travel');
+        const tt = t instanceof Map ? t as LTable : undefined;
+        const x = tt ? finite(tt.get('x')) : undefined, y = tt ? finite(tt.get('y')) : undefined, z = tt ? finite(tt.get('z')) : undefined;
+        if (!cellKey || !ref || ref.kind !== 'ref' || x === undefined || y === undefined || z === undefined
+          || Math.abs(x) > MAX_ABS_COORD || Math.abs(y) > MAX_ABS_COORD || Math.abs(z) > MAX_ABS_COORD) {
+          this.invalid(player, name);
+          return;
+        }
+        if (player.system || this.dialogueHolder?.(ref.key) !== player.id || !cellsVisible(player.cellKey, cellKey)) {
+          log('warn', 'actor.dropped', { from: player.name, name, cellKey, why: 'travel claim without the conversation' });
+          return;
+        }
+        this.relayCellExcept(cellKey, player.id, name, { ...lToJs(body) as Record<string, JsLike> });
+        return;
+      }
       if (body.get('combat') !== undefined) {
         // "THIS NPC NOW FIGHTS ME." A taunt, or resisting arrest, starts combat as a dialogue
         // result -- on the talking player's client, where the NPC is a puppet, so the fight

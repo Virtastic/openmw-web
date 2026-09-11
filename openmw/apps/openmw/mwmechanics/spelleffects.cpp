@@ -666,9 +666,13 @@ namespace MWMechanics
                 // the peer beside the avatar (the effect travels there); a local copy would be
                 // a second creature that fights nothing. The effect stays active with no
                 // creature of its own here, exactly as a failed summon does.
+#ifdef __EMSCRIPTEN__
+                // Client-only by construction: the native build is the sim peer, which is the
+                // holder and never suppresses its own summons.
                 if (target == MWMechanics::getPlayer() && !MWMP::localSummonsEnabled())
                     effect.mArg = ESM::RefNum();
                 else
+#endif
                     effect.mArg = summonCreature(effect.mEffectId, target);
             }
             else if (effect.mEffectId == ESM::MagicEffect::BoundGloves)

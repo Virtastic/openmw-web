@@ -31,6 +31,17 @@ local reportedId = nil
 -- dialog mid-bite. Reported on change like the follow, and relayed the same way (ActorAI).
 local reportedCombat = nil
 
+-- ...and where we are travelling, if a script sent us. On a puppet the AI never runs, so the
+-- top of the package stack is static -- the only thing that can change it is a dialogue result
+-- ("AITravel x y z" on Goodbye), which is exactly the case that never reached the holder.
+local reportedTravel = nil
+local function travelDest()
+    local ok, pkg = pcall(function() return I.AI.getActivePackage() end)
+    if not (ok and pkg and pkg.type == 'Travel' and pkg.destPosition) then return nil end
+    local d = pkg.destPosition
+    return { x = d.x, y = d.y, z = d.z }
+end
+
 local function fightingPlayer()
     local ok, pkg = pcall(function() return I.AI.getActivePackage() end)
     if not (ok and pkg and pkg.type == 'Combat') then return nil end
@@ -81,6 +92,13 @@ return {
             if foeId ~= reportedCombat then
                 reportedCombat = foeId
                 core.sendGlobalEvent('mpActorCombat', { actor = self.object, target = foe })
+            end
+
+            local dest = travelDest()
+            local destKey = dest and string.format('%.0f,%.0f,%.0f', dest.x, dest.y, dest.z) or nil
+            if destKey ~= reportedTravel then
+                reportedTravel = destKey
+                if dest then core.sendGlobalEvent('mpActorTravel', { actor = self.object, dest = dest }) end
             end
 
             local target, escort = followedPlayer()

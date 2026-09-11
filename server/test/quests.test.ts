@@ -263,6 +263,16 @@ test('dialogue lock', async (t) => {
     b.sendEvent('ChatSend', { text: 'combatfence' });
     await a.waitEvent('ChatMessage', (v) => (v as { text?: string }).text === 'combatfence');
     assert.equal(a.inbox.events.filter((e) => e.name === 'ActorAI').length, 0, 'a bystander set an NPC on someone');
+    // ...and where a dialogue sent it (AITravel on Goodbye): same admission.
+    b.inbox.events.length = 0;
+    a.sendEvent('ActorAI', { ref: NPC_REF, cellKey: '0,0', epoch: 0, travel: { x: 10, y: 20, z: 30 } });
+    const walk = await b.waitEvent('ActorAI');
+    assert.deepEqual((walk.value as { travel?: unknown }).travel, { x: 10, y: 20, z: 30 }, 'the destination reaches the holder');
+    a.inbox.events.length = 0;
+    b.sendEvent('ActorAI', { ref: NPC_REF, cellKey: '0,0', epoch: 0, travel: { x: 1, y: 2, z: 3 } });
+    b.sendEvent('ChatSend', { text: 'travelfence' });
+    await a.waitEvent('ChatMessage', (v) => (v as { text?: string }).text === 'travelfence');
+    assert.equal(a.inbox.events.filter((e) => e.name === 'ActorAI').length, 0, 'a bystander sent an NPC walking');
     // Re-take the lock so the release subtest below still has something to release.
     a.sendEvent('DialogueLock', { ref: NPC_REF, cellKey: '0,0', want: true });
     await a.waitEvent('DialogueLockResult');
