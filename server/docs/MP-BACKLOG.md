@@ -849,7 +849,9 @@ loot bug already fixed here.
   LYCANTHROPY is explicitly handled: form is a flag on NpcStats, so nothing generic carried
   it, and `identity.lua` captures it with `NPC.isWerewolf` and restores it with
   `NPC.setWerewolf`. It rides `appearance` because that is what it is, and because appearance
-  is relayed -- other players see the wolf rather than a man with a wolf's stats.
+  is relayed -- and until 2026-09-11 that relay only REBUILT the body when the flag changed,
+  it never set the form on the new body, so other players saw a man with a wolf's stats after
+  all. spawnPuppet now calls setWerewolf from the relayed appearance, avatar included.
 
   VAMPIRISM needs nothing of its own. `character.cpp` derives it from the Vampirism MAGIC
   EFFECT magnitude, which comes from the `vampire_<clan>` ABILITY in the spell list --
