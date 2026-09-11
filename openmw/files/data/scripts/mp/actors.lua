@@ -333,7 +333,14 @@ end
 local function attachActorPuppets(cellKey)
     for _, obj in ipairs(cellActors(cellKey)) do
         local key = refKeyOf(obj)
-        if not puppetActors[key] then
+        -- A stale row (the object it named was removed -- a named runtime actor deleted, a
+        -- corpse disposed -- and the engine reused the slot) must not block the new actor.
+        local have = puppetActors[key]
+        if have then
+            local okv, same = pcall(function() return have.obj:isValid() and have.obj.id == obj.id end)
+            if not (okv and same) then have = nil end
+        end
+        if not have then
             local ok = pcall(function()
                 obj:addScript('scripts/mp/puppet.lua', { actorKey = key })
             end)
