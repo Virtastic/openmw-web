@@ -103,6 +103,22 @@ export class WorldBrowser {
     return mine.find((w) => w.playerCount > 0) ?? mine[0];
   }
 
+  // Tell the directory this world's mode changed, now, so a friend's join reads the truth
+  // before the next poll. Best effort: the poll still observes it within its interval.
+  async reportMode(worldId: string, ownerAccount: string, mode: 'private' | 'party'): Promise<void> {
+    if (!this.enabled) return;
+    const token = this.deps.serverToken ?? '';
+    if (!token) return;
+    const r = await this.call(`/worlds/${encodeURIComponent(worldId)}`, {
+      method: 'PATCH',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ mode, account: ownerAccount }),
+    });
+    if (!r || (typeof r === 'object' && '__httpError' in r)) {
+      log('warn', 'worldbrowser.mode_report_failed', { worldId, mode, status: (r as { __httpError?: number } | null)?.__httpError ?? 'unreachable' });
+    }
+  }
+
   async create(player: Player, id: string, mode: string): Promise<{ world?: WorldEntry; error?: string }> {
     if (!this.enabled) return { error: 'no_gateway' };
     if (mode !== 'private' && mode !== 'party') return { error: 'bad_mode' };

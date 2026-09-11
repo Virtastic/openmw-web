@@ -128,9 +128,9 @@ export default async function run(ctx) {
         120_000, "the guest arrived in the host's world");
     } catch (e) {
       // The failing waiter is the HOST; what went wrong is on the GUEST. Say what it saw.
-      const gs = await guest.client.eval('JSON.stringify({state: window.omw.state.state, dial: window.omw.state.dialTarget, why: window.omw.state.lastNotice, err: window.omw.state.lastError, detail: window.omw.state.lastErrorDetail, where: window.omw.state.whereNow, social: window.omw.state.socialResult})').catch(() => 'n/a');
+      const gs = await guest.client.eval('JSON.stringify({state: window.omw.state.state, dial: window.omw.state.dialTarget, join: window.omw.state.joinFriendResult, joinTo: window.omw.state.joinFriendTo, err: window.omw.state.lastError, where: window.omw.state.whereNow})').catch(() => 'n/a');
       ctx.log(`guest state at failure: ${gs}`);
-      const tail = (guest.client.logs || []).filter((l) => /\[mp\]|EXC/.test(l)).slice(-25).join(String.fromCharCode(10));
+      const tail = (typeof guest.client.logTail === 'function') ? guest.client.logTail() : 'n/a';
       ctx.log('guest [mp] tail: ' + tail);
       throw e;
     }

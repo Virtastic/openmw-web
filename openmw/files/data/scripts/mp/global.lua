@@ -1869,6 +1869,9 @@ local eventHandlers = {
     -- ACTION, so the redial happens here; the hub is told first so it can show a failure.
     MP_JoinFriend = function(data)
         toPlayer('MP_JoinFriend', data)
+        -- The server's exact answer, for the scenarios: a refusal in place looks like nothing
+        -- happened from the host's screen, and the reason is the whole diagnosis.
+        pcall(function() mp.set('joinFriendResult', json.encode({ ok = data and data.ok, error = data and data.error, worldId = data and data.worldId })) end)
         if not data or data.ok ~= true then return end
         local url = worldUrlOf(data)
         if not url then return end
@@ -2439,6 +2442,7 @@ local eventHandlers = {
         }
         local op = tostring(data.op or '')
         if not OPS[op] then return end
+        if op == 'JoinFriend' then print('[mp] JoinFriend sent for ' .. tostring(data.acct)) end
         mp.sendEvent(op, {
             name = data.name, acct = data.acct, mode = data.mode, id = data.id,
             target = data.target, kind = data.kind, payload = data.payload,

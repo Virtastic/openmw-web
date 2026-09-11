@@ -791,7 +791,12 @@ export class Social {
   // Friendship is required both ways — you cannot chase a stranger across worlds.
   async joinFriend(player: Player, targetAcct: AccountKey): Promise<void> {
     const me = player.accountKey;
-    const fail = (detail: string): void => player.peer.sendEvent('JoinFriend', { ok: false, error: detail });
+    const fail = (detail: string): void => {
+      // Logged: a refusal here is invisible from every other screen (the guest stays put), and
+      // the reason is the whole diagnosis when "join my friend" does nothing.
+      log('info', 'social.join_refused', { player: player.name, target: targetAcct, why: detail });
+      player.peer.sendEvent('JoinFriend', { ok: false, error: detail });
+    };
     if (targetAcct === '' || targetAcct === me) return fail('self');
     if (!this.d.store.areFriends(me, targetAcct)) return fail('not_friends');
     if (this.d.store.blockedEitherWay(me, targetAcct)) return fail('blocked');
