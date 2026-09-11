@@ -1,5 +1,6 @@
 #include "puppets.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <map>
 
@@ -162,6 +163,45 @@ namespace MWMP
             if (it->mAvatar == avatar)
             {
                 out.push_back(it->mGuard);
+                it = q.erase(it);
+            }
+            else
+                ++it;
+        }
+        return out;
+    }
+
+    namespace
+    {
+        std::vector<Crime>& crimes()
+        {
+            static std::vector<Crime> v;
+            return v;
+        }
+    }
+
+    void recordCrime(ESM::RefNum avatar, int bounty, std::string kind)
+    {
+        auto& av = avatars();
+        const auto it = av.find(avatar);
+        if (it == av.end())
+            return;
+        it->second = std::max(0, it->second + bounty);
+        if (crimes().size() >= sMaxPending)
+            return;
+        crimes().push_back({ avatar, bounty, std::move(kind) });
+        Log(Debug::Info) << "[mp] avatar " << avatar.mIndex << " committed " << crimes().back().mKind << " bounty +" << bounty;
+    }
+
+    std::vector<Crime> takeCrimesFor(ESM::RefNum avatar)
+    {
+        std::vector<Crime> out;
+        auto& q = crimes();
+        for (auto it = q.begin(); it != q.end();)
+        {
+            if (it->mAvatar == avatar)
+            {
+                out.push_back(*it);
                 it = q.erase(it);
             }
             else

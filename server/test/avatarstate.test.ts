@@ -135,14 +135,22 @@ test('a guard reaching an avatar on the peer reaches the owner as PlayerArrest; 
   const got = await a.waitEvent('PlayerArrest');
   assert.ok((got.value as { guard?: unknown }).guard !== undefined, 'the guard reaches the owner');
 
+  // ...and a crime the avatar committed on the peer reaches the owner as an increment.
+  peer.sendEvent('PlayerCrime', { id: a.playerId, bounty: 40, kind: 'assault' });
+  const crime = await a.waitEvent('PlayerCrime');
+  assert.deepEqual(crime.value, { bounty: 40, kind: 'assault' }, 'the increment and kind reach the owner');
+
   const b = await TestClient.connect(server.port);
   t.after(() => b.close());
   await b.joinAsNew('Forger');
   await b.waitEvent('PlayerList');
   a.inbox.events.length = 0;
   b.sendEvent('PlayerArrest', { id: a.playerId, guard: GUARD });
+  b.sendEvent('PlayerCrime', { id: a.playerId, bounty: 5000, kind: 'murder' });
   b.sendEvent('ChatSend', { text: 'arrestfence' });
   await a.waitEvent('ChatMessage', (v) => (v as { text?: string }).text === 'arrestfence');
   assert.equal(a.inbox.events.filter((e) => e.name === 'PlayerArrest').length, 0,
     'a client forced an arrest dialogue onto another player');
+  assert.equal(a.inbox.events.filter((e) => e.name === 'PlayerCrime').length, 0,
+    'a client made another player wanted');
 });

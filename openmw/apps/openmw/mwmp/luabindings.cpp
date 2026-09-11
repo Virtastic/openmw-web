@@ -248,6 +248,21 @@ namespace MWMP
                 out[i++] = MWLua::GObject(guard);
             return out;
         };
+        // Crimes an avatar committed here since the last call: {bounty=<increment>, kind=<string>}.
+        api["takeCrimes"] = [](sol::this_state state, const sol::object& obj) {
+            sol::table out(state, sol::create);
+            if (!obj.is<MWLua::Object>())
+                return out;
+            int i = 1;
+            for (const Crime& c : takeCrimesFor(obj.as<MWLua::Object>().id()))
+            {
+                sol::table e(state, sol::create);
+                e["bounty"] = c.mBounty;
+                e["kind"] = c.mKind;
+                out[i++] = e;
+            }
+            return out;
+        };
         api["isEnabled"] = []() { return std::getenv("OPENMW_MP_URL") != nullptr; };
         api["getUrl"] = []() { return getEnvString("OPENMW_MP_URL"); };
         api["getName"] = []() { return getEnvString("OPENMW_MP_NAME"); };

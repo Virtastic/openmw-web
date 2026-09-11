@@ -1154,8 +1154,11 @@ namespace MWMechanics
     {
         // NOTE: victim may be empty
 
-        // Only player can commit crime
-        if (player != getPlayer())
+        // Only player can commit crime -- and on the sim peer every connected player is an
+        // AVATAR, not the dummy getPlayer(). Without this, assault and murder by a player on a
+        // simulated world were never crimes: the client cancels its own swing (the peer's job),
+        // and the peer's swing came from a body this gate did not recognise.
+        if (player != getPlayer() && !MWMP::isAvatar(player.getCellRef().getRefNum()))
             return false;
 
         if (type == OT_Assault)
@@ -1480,6 +1483,19 @@ namespace MWMechanics
 
         if (reported)
         {
+            const ESM::RefNum offender = player.getCellRef().getRefNum();
+            if (MWMP::isAvatar(offender))
+            {
+                // The bounty belongs to the owner's client; the peer records the increment for
+                // the scripts to forward, bumps the registry so the pursuit stacked above runs,
+                // and does none of the faction bookkeeping below -- that follows on the owner's
+                // machine from the CrimeUpdate their own engine produces.
+                const char* kind = type == OT_Theft ? "theft" : type == OT_Assault ? "assault"
+                    : type == OT_Murder ? "murder" : type == OT_Pickpocket ? "pickpocket"
+                    : type == OT_Trespassing ? "trespass" : "sleeping";
+                MWMP::recordCrime(offender, bounty, kind);
+                return reported;
+            }
             player.getClass().getNpcStats(player).setBounty(
                 std::max(0, player.getClass().getNpcStats(player).getBounty() + bounty));
 
@@ -1599,10 +1615,13 @@ namespace MWMechanics
 
         const MWMechanics::NpcStats& victimStats = victim.getClass().getNpcStats(victim);
         const MWWorld::Ptr& player = getPlayer();
-        bool canCommit = attacker == player && canCommitCrimeAgainst(victim, attacker);
+        // An avatar's kill is a player's kill (see commitCrime). The crime is committed AS the
+        // avatar so the bounty lands on its owner, not on the peer's dummy.
+        const bool attackerIsAvatar = MWMP::isAvatar(attacker.getCellRef().getRefNum());
+        bool canCommit = (attacker == player || attackerIsAvatar) && canCommitCrimeAgainst(victim, attacker);
 
         // For now we report only about crimes of player and player's followers
-        if (attacker != player)
+        if (attacker != player && !attackerIsAvatar)
         {
             std::set<MWWorld::Ptr> playerFollowers;
             getActorsSidingWith(player, playerFollowers);
@@ -1616,7 +1635,7 @@ namespace MWMechanics
         // Simple check for who attacked first: if the player attacked first, a crimeId should be set
         // Doesn't handle possible edge case where no one reported the assault, but in such a case,
         // for bystanders it is not possible to tell who attacked first, anyway.
-        commitCrime(player, victim, MWBase::MechanicsManager::OT_Murder);
+        commitCrime(attackerIsAvatar ? attacker : player, victim, MWBase::MechanicsManager::OT_Murder);
     }
 
     bool MechanicsManager::awarenessCheck(const MWWorld::Ptr& ptr, const MWWorld::Ptr& observer, bool useCache)

@@ -669,6 +669,23 @@ export class Connection implements Peer {
       handleAvatarItemStatesBatch(this.ctx.stateCtx, this.player, value);
       return;
     }
+    if (name === 'PlayerCrime') {
+      // An avatar committed a crime on the peer (assault, murder). The bounty is the owner's:
+      // the increment goes to their client, whose own CrimeUpdate then carries the total.
+      // World peer only, same as PlayerArrest: a client cannot make somebody else wanted.
+      if (this.player.system !== true || this.player !== this.ctx.worldPeer()) {
+        log('warn', 'conn.crime_forged', { from: this.player.name, account: this.player.accountKey });
+        return;
+      }
+      const body = value instanceof Map ? value : undefined;
+      const idv = body?.get('id'); const bv = body?.get('bounty'); const kv = body?.get('kind');
+      const id = typeof idv === 'number' ? idv : undefined;
+      const bounty = typeof bv === 'number' && Number.isFinite(bv) && Math.abs(bv) <= 100_000 ? bv : undefined;
+      const target = id !== undefined ? this.ctx.roster.get(id) : undefined;
+      if (!target || target.system === true || !target.inWorld || bounty === undefined) return;
+      target.peer.sendEvent('PlayerCrime', { bounty, ...(typeof kv === 'string' ? { kind: kv.slice(0, 16) } : {}) });
+      return;
+    }
     if (name === 'PlayerArrest') {
       // A guard reached a wanted avatar on the peer; the owner's client opens the arrest
       // dialogue with its copy of that guard. Only THE world peer may say so -- a client
