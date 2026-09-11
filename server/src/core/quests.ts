@@ -547,7 +547,9 @@ export class Quests {
     const ref = parseObjRef(body);
     const cellKey = str(body.get('cellKey'), MAX_CELL_KEY);
     const want = body.get('want');
-    if (!ref || ref.kind !== 'ref' || !cellKey || typeof want !== 'boolean') {
+    // A content ref, or the net id of a runtime actor the holder named (a script-placed
+    // quest NPC is one): the lock keys on ref.key either way.
+    if (!ref || !cellKey || typeof want !== 'boolean') {
       this.drop(player, 'DialogueLock', 'invalid shape');
       return;
     }

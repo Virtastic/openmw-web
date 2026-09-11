@@ -430,10 +430,21 @@ local function mirrorLock(state)
     mp.set('dialogueLock', json.encode(state))
 end
 
+-- Wire address of an NPC: its content ref, or the net id of a runtime actor the holder named
+-- (a quest NPC placed by a script). Nil for a body nobody else can resolve.
+local function npcAddr(obj)
+    local netId = deps.netIdOf and deps.netIdOf(obj)
+    if netId then return { net = netId } end
+    if obj.contentFile then return { ref = obj } end
+    return nil
+end
+
 local function requestLock(obj)
     lockPending = obj
+    local a = npcAddr(obj)
+    if not a then return end
     mp.sendEvent('DialogueLock', {
-        ref = obj, cellKey = deps.ownCellKeyFn(), want = true,
+        ref = a.ref, net = a.net, cellKey = deps.ownCellKeyFn(), want = true,
     })
 end
 
@@ -458,7 +469,8 @@ function quests.releaseLock(why)
         end
     end
     lockDisposition = nil
-    mp.sendEvent('DialogueLock', { ref = obj, cellKey = deps.ownCellKeyFn(), want = false })
+    local a = npcAddr(obj)
+    if a then mp.sendEvent('DialogueLock', { ref = a.ref, net = a.net, cellKey = deps.ownCellKeyFn(), want = false }) end
     mirrorLock({ ref = obj:isValid() and obj.recordId or '?', granted = false, why = why or 'released' })
 end
 
@@ -468,7 +480,7 @@ function quests.onNpcActivate(obj, actor)
     local player = playerObj()
     if not player or not actor or actor.id ~= player.id then return end
     if deps.isMpPuppetFn and deps.isMpPuppetFn(obj) then return end -- remote players aren't NPCs to lock
-    if not obj.contentFile then return end -- no portable ref: cannot be arbitrated
+    if not npcAddr(obj) then return end -- no portable ref: cannot be arbitrated
     if lockAllowOnce == obj.id then
         lockAllowOnce = nil
         return -- granted: let the engine open the dialogue window

@@ -1336,6 +1336,7 @@ local function start()
     quests.init({
         playerFn = playerScript,
         dispositionOutFn = function(obj, d) actors.noteDisposition(obj, d) end,
+        netIdOf = objects.netIdOf, -- a script-placed quest NPC is a net actor; lock it like any other
         ownCellKeyFn = function() return ownCellKeyCache end,
         ownIdFn = function() return net.state == 'Joined' and net.playerId or nil end,
         noticeFn = notice,
