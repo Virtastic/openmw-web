@@ -191,7 +191,12 @@ bytesBurst = 262144               # 4x rate
 # multiplier so an operator can widen the shed window without also widening the kill window.
 maxBufferedBytes = 262144         # 256 KB ~= 4 s of the byte budget
 maxBufferedBytesHard = 1048576    # 1 MB
-maxConnsPerIp = 3
+# Per source IP. The target audience is friends, and friends share a NAT: a LAN party of four
+# is four sockets from one address, and a reconnect after a wifi blip briefly makes it five
+# while the dying socket drains. 3 refused the fourth friend with conn.ip_cap_refused and
+# nothing on their screen explained it. 8 covers a household with headroom; a flood still
+# hits the per-session budgets long before it hits this.
+maxConnsPerIp = 8
 # Non-adjacent EXTERIOR cell changes allowed per minute, per player. 0 disables.
 #
 # The speed envelope deliberately forgives a cell change, because a door is a teleport — which
