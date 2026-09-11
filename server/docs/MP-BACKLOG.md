@@ -856,6 +856,15 @@ loot bug already fixed here.
   and `snapSpells` iterates the whole spell store, abilities included. It persists by the
   same route diseases do.
 
+* **"Resist arrest" starts a fight nobody simulates.** The arrest dialogue now reaches the
+  wanted player (PlayerArrest, 2026-09-11), and pay/jail work because they act on the local
+  player and the bounty relays. Resisting runs `StartCombat player` on the GUARD -- on the
+  owner's client, where the guard is a puppet with AI off, so the fight is cancelled there and
+  never told to the peer; the peer's guard keeps re-reaching and the prompt returns every
+  cooldown. Same class as the dialogue-started AiTravel below: a package stacked on a puppet
+  by a dialogue result needs to travel to the holder. The bounty increase from resisting DOES
+  relay, so the player is at least more wanted, not less.
+
 * **Dialogue-started AiTravel never reaches the peer.** Follow and Escort now travel from
   the recruiting client (companion.lua -> ActorAI claim), but "AITravel x y z" from a
   dialogue result -- the guard who walks off to fetch someone, the NPC who leaves the room
