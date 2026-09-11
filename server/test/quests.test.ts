@@ -231,6 +231,20 @@ test('dialogue lock', async (t) => {
     assert.deepEqual((await b.waitEvent('DialogueLockResult')).value, { ref: NPC2_REF, granted: true });
   });
 
+  // PERSUASION: the one talking may say how the NPC now feels; anyone else may not.
+  await t.test('the lock holder may relay the disposition it changed; a bystander may not', async () => {
+    b.inbox.events.length = 0;
+    a.sendEvent('ActorDisposition', { ref: NPC_REF, cellKey: '0,0', epoch: 0, disposition: 75 });
+    const got = await b.waitEvent('ActorDisposition');
+    assert.equal((got.value as { disposition?: number }).disposition, 75, 'the bribe reaches the other screen');
+    a.inbox.events.length = 0;
+    b.sendEvent('ActorDisposition', { ref: NPC_REF, cellKey: '0,0', epoch: 0, disposition: 5 }); // not talking to them
+    b.sendEvent('ChatSend', { text: 'dispfence' });
+    await a.waitEvent('ChatMessage', (v) => (v as { text?: string }).text === 'dispfence');
+    assert.equal(a.inbox.events.filter((e) => e.name === 'ActorDisposition').length, 0,
+      "a bystander changed an NPC's mind without talking to it");
+  });
+
   await t.test('explicit release frees the NPC', async () => {
     a.sendEvent('DialogueLock', { ref: NPC_REF, cellKey: '0,0', want: false });
     await a.waitEvent('DialogueLockResult');
