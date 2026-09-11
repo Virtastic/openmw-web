@@ -820,7 +820,8 @@ local function localSummonsTick()
     -- cell's ActorAuthorityInfo arrives, so gating on our own cell alone would roll a local
     -- creature in every cell we enter and then learn better. Once any holder has been seen the
     -- peer is the one spawning; only a peer outage (every holder gone) hands it back to us.
-    local want = not (actors.hasHolder(ownCellKeyCache) or actors.anyHolder())
+    local simulated = net.state == 'Joined' and net.flags and net.flags.simulated == true
+    local want = not (simulated or actors.hasHolder(ownCellKeyCache) or actors.anyHolder())
     if want ~= localSummonsOn then
         localSummonsOn = want
         pcall(mp.setLocalSpawns or mp.setLocalSummons, want)

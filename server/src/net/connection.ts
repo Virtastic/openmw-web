@@ -1690,6 +1690,7 @@ export class Connection implements Peer {
         lodNearRadius: this.ctx.config.limits.lodNearRadius,
         lodMidRadius: this.ctx.config.limits.lodMidRadius,
         lodNearMaxAvatars: this.ctx.config.limits.lodNearMaxAvatars,
+        simulated: this.ctx.config.simPeer.enabled || this.ctx.worldPeer() !== undefined,
       },
       (account.characters ?? []).map(({ id, name, lastPlayedAt }) => ({ id, name, lastPlayedAt })),
       char?.id ?? '',
