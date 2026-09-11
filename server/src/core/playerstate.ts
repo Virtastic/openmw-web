@@ -767,9 +767,18 @@ export function pushAvatarsToPeer(ctx: StateCtx, peer: Player): void {
 // like any client; this is the join-time snapshot that must precede the avatar acting.
 export function avatarStateBody(id: number, doc: PlayerDoc, liveBounty?: number): JsLike {
   const bounty = liveBounty ?? doc.bounty;
+  // NEVER BUILD A CORPSE. Death is a flush point, so a character who died and left has hp 0
+  // on record; an avatar built from that is dead on arrival and its first bar report kills
+  // the player who just rejoined (identity.lua restores them at a sliver for the same
+  // reason -- the two copies must agree). The death was already paid for last session.
+  let stats = doc.stats;
+  const hp = stats?.dynamic?.hp;
+  if (stats && hp && hp.c <= 0) {
+    stats = { ...stats, dynamic: { ...stats.dynamic!, hp: { c: Math.max(1, Math.floor(hp.b * 0.1)), b: hp.b } } };
+  }
   return {
     id,
-    ...(doc.stats ? { stats: doc.stats } : {}),
+    ...(stats ? { stats } : {}),
     ...(doc.spells ? { spells: doc.spells } : {}),
     ...(doc.inventory ? { inventory: doc.inventory } : {}),
     ...(doc.itemStates ? { itemStates: doc.itemStates } : {}),

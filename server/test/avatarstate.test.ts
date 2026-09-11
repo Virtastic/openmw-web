@@ -154,3 +154,17 @@ test('a guard reaching an avatar on the peer reaches the owner as PlayerArrest; 
   assert.equal(a.inbox.events.filter((e) => e.name === 'PlayerCrime').length, 0,
     'a client made another player wanted');
 });
+
+// NEVER BUILD A CORPSE. A character who died and closed the tab has hp 0 on record (death is
+// a flush point). The avatar the peer builds for their rejoin must not be dead on arrival, or
+// its first bar report kills the player who just came back.
+test("a character who left dead is handed to the peer with a sliver of health, not a corpse", async (t) => {
+  const { server, a } = await bootWithCharacter(t);
+  a.sendEvent('PlayerStatsDynamic', { hp: { c: 0, b: 80 }, mp: { c: 10, b: 50 }, ft: { c: 5, b: 100 } });
+  await new Promise((r) => setTimeout(r, 300));
+  const peer = await TestClient.simPeer(server.port, PEER_PASS);
+  t.after(() => peer.close());
+  const got = await peer.waitEvent('AvatarState', (v) => (v as { id?: number }).id === a.playerId, 8000);
+  const hp = (got.value as { stats?: { dynamic?: { hp?: { c: number; b: number } } } }).stats?.dynamic?.hp;
+  assert.ok(hp && hp.c > 0 && hp.c <= 8 && hp.b === 80, `avatar seeded with hp ${JSON.stringify(hp)}: a corpse, or a full heal`);
+});

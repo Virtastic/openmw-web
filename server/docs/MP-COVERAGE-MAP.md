@@ -20,6 +20,7 @@ known and recorded; N/A = does not exist in single player either.
 | Sign in (password / SSO ticket) | launcher -> gateway -> world server SessionHello/Login | OK |
 | Create character, chargen | private world `priv-<user>-<char>`; chargen sanctuary keeps the peer out of the cell | OK |
 | Resume after disconnect | resume ticket, same character, world snapshot re-sent; IP_CAP retried | FIXED 09-11 (IP_CAP was terminal RATE) |
+| Rejoin after dying and closing the tab | doc has hp 0 (death flushes); restored at 10% health on both the client and the peer's avatar, where they fell | FIXED 09-11 (was: die again on arrival, second "has fallen", respawn loop) |
 | Join a friend (party) | joinFriend -> ownerWorld (occupied) -> switch -> mayJoinWorld -> chargen gate -> guestSpawn beside owner | FIXED 09-10 |
 | Owner flips party -> private | WorldClosed, 5 s grace, guests switched home | OK |
 | Leave / kick / ban | terminal codes; SUPERSEDED for a second tab | OK |
