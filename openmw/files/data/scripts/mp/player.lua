@@ -85,6 +85,10 @@ local lastPoseMirror = 0
 local GOLD_SERVICE_MODES = {
     Barter = true, Training = true, Travel = true, SpellBuying = true,
     SpellCreation = true, Enchanting = true, MerchantRepair = true,
+    -- COMPANION SHARE is the same shape: a live actor's inventory, open in a window, moved
+    -- both ways, reconciled once on close. Without it what you handed your follower existed
+    -- on your screen only; the peer's copy -- the one that fights -- carried none of it.
+    Companion = true,
 }
 
 local barterTarget = nil -- harness 'barter:open': the NPC whose purse is mirrored
