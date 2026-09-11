@@ -180,6 +180,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // There is no public world. A gateway world boots private (the owner's own game) and the
   // owner flips it to 'party' to admit friends; a standalone stack has no gateway and the
   // account system is its door.
+  let worldBrowserRef: WorldBrowser | undefined; // assigned when the gateway is configured (below)
   let worldMode = opts.worldMode ?? process.env.OMW_WORLD_MODE ?? 'private';
   if (worldMode === 'public') {
     // A stale env or config asking for the deleted mode must not quietly become admit-all.
@@ -660,8 +661,8 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     // F3: only when a gateway is configured. Without one the Worlds tab reports that this
     // is a standalone world, which is an honest answer and a valid setup.
     ...(config.gateway.url
-      ? { worlds: new WorldBrowser({ gatewayUrl: config.gateway.url,
-          serverToken: config.gateway.serverToken, ownPort: () => port }) }
+      ? { worlds: (worldBrowserRef = new WorldBrowser({ gatewayUrl: config.gateway.url,
+          serverToken: config.gateway.serverToken, ownPort: () => port })) }
       : {}),
   });
   socialRef = social;
@@ -730,6 +731,9 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       if (mode !== 'private' && mode !== 'party') return 'bad_mode';
       worldMode = mode;
       log('info', 'world.mode_flip', { world: worldId, owner: worldOwner, mode });
+      // The directory is what a friend's join consults (social.ts joinFriend reads the
+      // owner's world mode from it); it must hear this before the owner can say "come in".
+      void worldBrowserRef?.reportMode(worldId, worldOwner, mode);
       // The UI must never GUESS which world it is in. It used to render Solo/Party/Public from
       // a localStorage note of what the player last clicked, which survived reloads and
       // reconnects and so could claim you were somewhere you were not. The server owns this.

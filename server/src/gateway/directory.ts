@@ -283,6 +283,27 @@ export async function startDirectory(deps: DirectoryDeps): Promise<RunningDirect
       return;
     }
 
+    // A world process reporting its owner's Solo<->Party flip (server.ts setWorldMode).
+    // Trusted-server credential only -- a player cannot open somebody else's world from
+    // outside -- and the account named must be that world's owner.
+    if (req.method === 'PATCH' && path.startsWith('/worlds/')) {
+      const id = decodeURIComponent(path.slice('/worlds/'.length));
+      let body = '';
+      req.on('data', (c) => { body += c; if (body.length > 1024) req.destroy(); });
+      req.on('end', () => {
+        if (!deps.isTrustedServer?.(req.headers.authorization ?? '')) { json(res, 401, { error: 'server credential required' }); return; }
+        let parsed: { mode?: unknown; account?: unknown } = {};
+        try { parsed = JSON.parse(body || '{}'); } catch { json(res, 400, { error: 'bad json' }); return; }
+        if (parsed.mode !== 'private' && parsed.mode !== 'party') { json(res, 400, { error: 'mode must be private or party' }); return; }
+        const w = deps.worlds.get(id);
+        if (!w) { json(res, 404, { error: 'no such world' }); return; }
+        if (w.ownerAccount !== undefined && parsed.account !== w.ownerAccount) { json(res, 403, { error: 'not the owner' }); return; }
+        deps.worlds.setMode(id, parsed.mode);
+        json(res, 200, { id, mode: parsed.mode });
+      });
+      return;
+    }
+
     if (req.method === 'POST' && path === '/harness/session' && deps.mintHarnessSession) {
       let body = '';
       req.on('data', (c) => { body += c; if (body.length > 4096) req.destroy(); });

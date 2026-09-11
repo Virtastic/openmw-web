@@ -438,3 +438,21 @@ test('directory: an owner flipping to Party is observed by the next poll', async
       'the directory still thinks the world is private: every friend join is refused as not_open');
   } finally { worlds.stopAll(); }
 });
+
+// ...and the world TELLS the directory the moment it flips, so a friend who clicks join the
+// instant the host says "I'm open" is not refused inside the poll interval. Trusted-server
+// credential only; the named account must be the owner.
+test('directory: a world reports its owner\'s flip and the directory adopts it at once', async () => {
+  const h = await harness();
+  try {
+    const created = await (await fetch(`${h.base}/worlds`, {
+      method: 'POST', headers: { authorization: 'Bearer alice' }, body: JSON.stringify({ id: 'alices-game', mode: 'private', account: 'alice' }),
+    })).json() as { id: string };
+    assert.equal(created.id, 'alices-game');
+    const patch = (auth: string, body: unknown) => fetch(`${h.base}/worlds/alices-game`, { method: 'PATCH', headers: { authorization: auth, 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    assert.equal((await patch('Bearer alice', { mode: 'party', account: 'alice' })).status, 401, 'a player session may not flip a world from outside');
+    assert.equal((await patch('Bearer platform-secret', { mode: 'party', account: 'mallory' })).status, 403, 'a world may only report its own owner');
+    assert.equal((await patch('Bearer platform-secret', { mode: 'party', account: 'alice' })).status, 200);
+    assert.equal(h.worlds.get('alices-game')?.mode, 'party', 'the directory did not adopt the reported flip');
+  } finally { await h.cleanup(); }
+});

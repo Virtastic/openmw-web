@@ -450,7 +450,10 @@ local function dispatch(cmd)
 
         -- Cross-world join a friend.
         local jfAcct = cmd:match('^joinfriend:(.+)$')
-        if jfAcct then core.sendGlobalEvent('mpSocial', { op = 'JoinFriend', acct = jfAcct }) end
+        if jfAcct then
+            print('[mp] joinfriend command for ' .. jfAcct)
+            core.sendGlobalEvent('mpSocial', { op = 'JoinFriend', acct = jfAcct })
+        end
         -- Owner in-place Solo<->Party flip of their own world.
         local wmMode = cmd:match('^worldmode:(%a+)$')
         if wmMode then core.sendGlobalEvent('mpSocial', { op = 'SetWorldMode', mode = wmMode }) end

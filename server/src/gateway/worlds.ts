@@ -260,6 +260,19 @@ export class WorldSupervisor {
     return this.list().find((w) => w.id === id);
   }
 
+  // THE WORLD TELLS US, THE MOMENT IT HAPPENS. The poll also observes a flip, but five
+  // seconds later -- and a friend who clicks "join" the instant their host says "I'm open"
+  // was refused as not_open inside that window, which is the normal human timing.
+  setMode(id: string, mode: WorldMode): boolean {
+    const w = this.worlds.get(id);
+    if (!w) return false;
+    if (w.mode !== mode) {
+      log('info', 'world.mode_set', { id, from: w.mode, to: mode });
+      w.mode = mode;
+    }
+    return true;
+  }
+
   // Idempotent. Returns the world (existing or new), or null if it could not be started —
   // callers must handle null rather than assume a world exists.
   ensure(id: string, mode: WorldMode, ownerAccount?: string): WorldInfo | null {
