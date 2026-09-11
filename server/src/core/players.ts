@@ -97,6 +97,9 @@ export interface Player {
   // guest's murder and let the guest walk. Set on join from the world's view, updated on
   // every CrimeUpdate, and what AvatarState carries.
   bounty?: number;
+  // PlayerActiveSpells budget (playerstate.ts handleActiveSpells).
+  activeOpsWindowAt?: number;
+  activeOpsInWindow?: number;
   // Sliding-window budget for CLIENT-asserted restoration while the peer owns this player's
   // bars (potions, rest, self-heal -- all still client-side until the intent tier). Without a
   // bound, "a raise is a restoration" is an immortality exploit: a modified client claims full
