@@ -825,6 +825,7 @@ local function localSummonsTick()
     if want ~= localSummonsOn then
         localSummonsOn = want
         pcall(mp.setLocalSpawns or mp.setLocalSummons, want)
+        pcall(function() mp.set('localSpawns', want and 'on' or 'off') end) -- scenario mirror
     end
 end
 
