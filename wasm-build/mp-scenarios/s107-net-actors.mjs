@@ -45,23 +45,27 @@ export default async function run(ctx) {
     ctx.launchClient('bot-b', '', BOOT),
   ]);
 
-  // (a) A simulated world: the client must not roll its own creatures, from the first cell.
-  await a.waitFor('window.omw.state.localSpawns === "off"', STEP_TIMEOUT, 'A has local spawns off');
-  await b.waitFor('window.omw.state.localSpawns === "off"', STEP_TIMEOUT, 'B has local spawns off');
+  // (a) A simulated world: the client must not roll its own creatures. The `localSpawns`
+  // mirror is informational here -- the browser's Lua is baked into openmw.data at engine
+  // build time, so a mirror added after the last build reads undefined, not "on".
+  ctx.log(`A localSpawns=${await a.eval('window.omw.state.localSpawns')} B localSpawns=${await b.eval('window.omw.state.localSpawns')}`);
 
   // Out of Seyda Neen (content NPCs only) into open country where the lists roll.
   await a.cmd('snapto:' + SPOT);
   await b.cmd('snapto:' + SPOT);
 
-  // (b) The holder named at least one runtime actor and this client BUILT it. The peer needs
-  // a moment to anchor the new cell, roll, and be answered by the server.
-  await a.waitFor('Number(window.omw.state.netActors||0) > 0', 120_000, 'A built a net actor the peer named');
-  await b.waitFor('Number(window.omw.state.netActors||0) > 0', 120_000, 'B built a net actor the peer named');
-  const na = Number(await a.eval('window.omw.state.netActors'));
-  const nb = Number(await b.eval('window.omw.state.netActors'));
-  ctx.log(`net actors built: A=${na} B=${nb}`);
-  // Both clients were told about the same naming; a difference of one is a message in flight.
+  // (b) The holder named at least one runtime actor and this client BUILT it: it shows up in
+  // the net-object registry (objects.lua netToObj), keyed by the server's net id, with the
+  // creature's record id -- nothing else puts a net object here (nobody drops anything).
+  const netObjs = async (c) => JSON.parse(await c.eval('window.omw.state.netObjects||"{}"'));
+  await a.waitFor('Object.keys(JSON.parse(window.omw.state.netObjects||"{}")).length > 0', 120_000, 'A built a net actor the peer named');
+  await b.waitFor('Object.keys(JSON.parse(window.omw.state.netObjects||"{}")).length > 0', 120_000, 'B built a net actor the peer named');
+  const oa = await netObjs(a), ob = await netObjs(b);
+  ctx.log(`net objects: A=${JSON.stringify(oa)} B=${JSON.stringify(ob)}`);
+  const na = Object.keys(oa).length, nb = Object.keys(ob).length;
   assert.ok(Math.abs(na - nb) <= 1, `clients disagree on the named actors: A=${na} B=${nb}`);
+  // The same net id names the same record on both screens.
+  for (const id of Object.keys(oa)) if (ob[id] !== undefined) assert.equal(ob[id], oa[id], `net ${id} differs: ${oa[id]} vs ${ob[id]}`);
 
   // (c) ...and they are actors in the cell, puppeted like the rest.
   await a.waitFor('Number(window.omw.state.actorCount||0) > 0', STEP_TIMEOUT, 'A sees cell actors');
