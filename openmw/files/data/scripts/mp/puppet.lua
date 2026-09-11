@@ -96,6 +96,41 @@ local stuckSince = nil
 local placed = false
 local lastProgressPos = nil
 local prevJump = false
+local prevUse = false -- the owner's use bit last pose: its release is one swing to show
+
+-- A SWING YOU CAN SEE. The pose stream carries the owner's use bit, and nothing here drew a
+-- swing: a friend fighting beside you stood with the weapon out and the enemy took damage
+-- from a statue. Setting controls.use would run this engine's real hit chain -- and land a
+-- blow on the LOCAL player, who the peer is already hitting on the owner's behalf -- so this
+-- is animation only, the same way MP_CastFx mirrors a cast. The group follows the weapon
+-- in the right hand; hand-to-hand when there is none.
+local SWING_GROUP_OF_TYPE = {
+    ShortBladeOneHand = 'weapononehand', LongBladeOneHand = 'weapononehand',
+    BluntOneHand = 'weapononehand', AxeOneHand = 'weapononehand',
+    LongBladeTwoHand = 'weapontwohand', BluntTwoClose = 'weapontwohand', AxeTwoHand = 'weapontwohand',
+    BluntTwoWide = 'weapontwowide', SpearTwoWide = 'weapontwowide',
+    MarksmanBow = 'bowandarrow', MarksmanCrossbow = 'crossbow', MarksmanThrown = 'throwweapon',
+}
+local function showSwing()
+    pcall(function()
+        local anim = require('openmw.animation')
+        local group = 'handtohand'
+        local weapon = types.Actor.getEquipment(self, types.Actor.EQUIPMENT_SLOT.CarriedRight)
+        if weapon and types.Weapon.objectIsInstance(weapon) then
+            local rec = types.Weapon.record(weapon)
+            for name, t in pairs(types.Weapon.TYPE) do
+                if rec and rec.type == t and SWING_GROUP_OF_TYPE[name] then group = SWING_GROUP_OF_TYPE[name] end
+            end
+        end
+        local ranged = group == 'bowandarrow' or group == 'crossbow' or group == 'throwweapon'
+        anim.playBlendedAnimation(self, group, {
+            priority = anim.PRIORITY.Weapon,
+            startKey = ranged and 'shoot start' or 'chop start',
+            stopKey = ranged and 'shoot release' or 'chop follow stop',
+            speed = 1.2,
+        })
+    end)
+end
 local tier = TIER_NEAR -- last tier stamped on a pose; near until told otherwise
 local dead = false
 local pendingEquip = nil -- M2: slot map waiting for granted items to land in the inventory
@@ -348,6 +383,10 @@ local function onUpdate(dt)
     local jumpEdge = bit(target.flags, 2)
     self.controls.jump = jumpEdge and not prevJump
     prevJump = jumpEdge
+    -- Hold is the wind-up, release is the blow: show the swing on the FALLING edge.
+    local using = bit(target.flags, 3)
+    if prevUse and not using then showSwing() end
+    prevUse = using
 end
 
 return {
