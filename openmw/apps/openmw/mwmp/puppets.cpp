@@ -1,5 +1,8 @@
 #include "puppets.hpp"
 
+#include <chrono>
+#include <map>
+
 #include <components/debug/debuglog.hpp>
 
 #include <unordered_map>
@@ -114,6 +117,57 @@ namespace MWMP
         if (pending().size() >= sMaxPending)
             return;
         pending().push_back(hit);
+    }
+
+    namespace
+    {
+        struct Arrest
+        {
+            ESM::RefNum mAvatar;
+            ESM::RefNum mGuard;
+        };
+        std::vector<Arrest>& arrests()
+        {
+            static std::vector<Arrest> v;
+            return v;
+        }
+        std::map<ESM::RefNum, std::chrono::steady_clock::time_point>& lastArrestAt()
+        {
+            static std::map<ESM::RefNum, std::chrono::steady_clock::time_point> m;
+            return m;
+        }
+        constexpr auto sArrestCooldown = std::chrono::seconds(8);
+    }
+
+    void recordArrest(ESM::RefNum avatar, ESM::RefNum guard)
+    {
+        const auto now = std::chrono::steady_clock::now();
+        auto& at = lastArrestAt();
+        const auto it = at.find(avatar);
+        if (it != at.end() && now - it->second < sArrestCooldown)
+            return;
+        at[avatar] = now;
+        if (arrests().size() >= sMaxPending)
+            return;
+        arrests().push_back({ avatar, guard });
+        Log(Debug::Info) << "[mp] guard " << guard.mIndex << " reached wanted avatar " << avatar.mIndex;
+    }
+
+    std::vector<ESM::RefNum> takeArrestsFor(ESM::RefNum avatar)
+    {
+        std::vector<ESM::RefNum> out;
+        auto& q = arrests();
+        for (auto it = q.begin(); it != q.end();)
+        {
+            if (it->mAvatar == avatar)
+            {
+                out.push_back(it->mGuard);
+                it = q.erase(it);
+            }
+            else
+                ++it;
+        }
+        return out;
     }
 
     std::vector<MagicHit> takeMagicHitsFor(ESM::RefNum target)

@@ -809,6 +809,14 @@ return {
             end)
             mp.set('selfItemStates', tostring(next(data.itemStates) ~= nil))
         end,
+        -- Arrest (global.lua MP_PlayerArrest): the guard that reached our avatar, resolved
+        -- to our copy of it. UI modes are player-script-only, hence the hop.
+        MP_OpenDialogue = function(data)
+            local target = data and data.target
+            local okv, valid = pcall(function() return target and target:isValid() end)
+            if not (okv and valid) then return end
+            pcall(function() I.UI.addMode('Dialogue', { target = target }) end)
+        end,
         MP_SelfStats = function(data)
             if not data or not data.hp then return end
             -- Scenario mirror: proves the PEER-authoritative bars actually flowed (a local

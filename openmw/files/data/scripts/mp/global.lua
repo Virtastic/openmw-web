@@ -730,6 +730,27 @@ local function avatarItemStatesTick(now)
     if #entries > 0 then mp.sendEvent('AvatarItemStatesBatch', { entries = entries }) end
 end
 
+-- ARREST. A guard that reaches a wanted avatar on the peer cannot open a dialogue nobody is
+-- there to see; the engine records the reach (mwmp/puppets.hpp recordArrest) and this hands
+-- it to the server for the owner's client, which opens the dialogue with ITS copy of the
+-- guard -- and vanilla's own greeting does the rest: pay the fine, go to jail, or resist.
+local function avatarArrestTick()
+    if not (mp.isSystem and mp.isSystem()) or not mp.takeArrests then return end
+    for id, p in pairs(puppets) do
+        if p.obj and p.obj:isValid() then
+            local ok, guards = pcall(mp.takeArrests, p.obj)
+            if ok and guards then
+                for _, guard in ipairs(guards) do
+                    local okv, valid = pcall(function() return guard:isValid() end)
+                    if okv and valid then
+                        mp.sendEvent('PlayerArrest', { id = id, guard = guard })
+                    end
+                end
+            end
+        end
+    end
+end
+
 -- Phase 4C safety: the peer resolves avatar-vs-avatar melee natively, so the server's
 -- allowPlayerHit veto never sees it. Tell every avatar whether pvp is on and which bodies
 -- are avatars, so avatar.lua can veto player-on-player damage while it is off. PvE is
@@ -1406,6 +1427,21 @@ local eventHandlers = {
         lastPose[data.id] = pose
         despawnPuppet(data.id)
         spawnPuppet(data.id, pose)
+    end,
+
+    -- A guard reached OUR avatar on the peer. Open the dialogue with our copy of that guard:
+    -- the local player carries the bounty (CrimeUpdate relay), so vanilla's greeting offers
+    -- the fine, the cell, or resisting -- exactly what it would have done had the guard
+    -- reached us here. Nothing to do if we cannot see the guard (another cell, not loaded):
+    -- the peer's guard keeps re-reaching every cooldown, so the prompt comes back.
+    MP_PlayerArrest = function(data)
+        if mp.isSystem and mp.isSystem() then return end
+        local guard = data and data.guard
+        local okv, valid = pcall(function() return guard and guard:isValid() end)
+        if not (okv and valid) then return end
+        local player = playerScript()
+        if not player then return end
+        toPlayer('MP_OpenDialogue', { target = guard })
     end,
 
     -- The owner's temporary active effects, mirrored onto the avatar (identity.lua snapActive
@@ -2580,6 +2616,7 @@ return {
                 end
                 avatarStatsTick(now) -- Phase 4A: peer reports avatar bars to the server
                 avatarItemStatesTick(now) -- Phase 4D: peer reports avatar wear/charge/soul
+                avatarArrestTick() -- a guard reached a wanted avatar: tell its owner
             end
         end,
     },

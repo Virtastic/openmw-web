@@ -48,7 +48,7 @@ import type { BanStore } from '../persist/banstore';
 import type { ResumeStore, ResumeTicket } from '../core/resume';
 import type { LoginTicketStore, SessionIndex } from '../auth/identities';
 import type { PlayerStore, PlayerDoc } from '../persist/playerstore';
-import { lserDecode, lserEncode, jsToL, LserError, type JsLike, type LValue } from '../proto/lser';
+import { lserDecode, lserEncode, jsToL, lToJs, LserError, type JsLike, type LValue } from '../proto/lser';
 import {
   parseSessionMessage,
   helloOk,
@@ -667,6 +667,23 @@ export class Connection implements Peer {
     if (name === 'AvatarItemStatesBatch') {
       // Phase 4D: the peer's avatar wear/charge/soul reports (system-only).
       handleAvatarItemStatesBatch(this.ctx.stateCtx, this.player, value);
+      return;
+    }
+    if (name === 'PlayerArrest') {
+      // A guard reached a wanted avatar on the peer; the owner's client opens the arrest
+      // dialogue with its copy of that guard. Only THE world peer may say so -- a client
+      // sending this would be forcing a dialogue onto somebody else's screen.
+      if (this.player.system !== true || this.player !== this.ctx.worldPeer()) {
+        log('warn', 'conn.arrest_forged', { from: this.player.name, account: this.player.accountKey });
+        return;
+      }
+      const body = value instanceof Map ? value : undefined;
+      const idv = body?.get('id');
+      const id = typeof idv === 'number' ? idv : undefined;
+      const guard = body?.get('guard');
+      const target = id !== undefined ? this.ctx.roster.get(id) : undefined;
+      if (!target || target.system === true || !target.inWorld || guard === undefined) return;
+      target.peer.sendEvent('PlayerArrest', { guard: lToJs(guard) as JsLike });
       return;
     }
     if (handleStateEvent(this.ctx.stateCtx, this.player, name, value)) return; // M2 family
