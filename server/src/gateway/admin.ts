@@ -262,7 +262,7 @@ export function gatewayAdminRoutes(deps: GatewayAdminDeps): HttpRoute {
         const ctx = await gate(req, res, auth, 'owner');
         if (!ctx) return true;
         if (!deps.worlds.get(id)) { json(res, 404, { error: 'no such game' }); return true; }
-        deps.worlds.stop(id);
+        deps.worlds.stop(id, true); // an operator's stop holds against the owner's redial
         log('warn', 'admin.game_stopped', { by: ctx.accountKey, game: id });
         json(res, 200, { ok: true, message: `stopping ${id}; it comes back when its owner returns` });
         return true;

@@ -178,7 +178,7 @@ test('worlds: a crash backs off instead of hot-looping', () => {
 test('worlds: an operator stop holds against revival, then the world may come back', async () => {
   const { sup, spawned, advance } = harness();
   sup.ensure('w', 'private', 'alice');
-  sup.stop('w');
+  sup.stop('w', true);
   await tick();
   spawned[0]!.child.emit('exit', 0, 'SIGTERM');
   await tick();
@@ -193,7 +193,7 @@ test('worlds: a stale exit cannot evict the world that replaced it, and frees no
   const { sup, spawned, advance } = harness();
   sup.ensure('w', 'private');
   const first = spawned[0]!.child;
-  sup.stop('w');
+  sup.stop('w', true);
   await tick();
   advance(20_000);
   assert.equal(sup.ensure('w', 'private'), null, 'an operator stop holds against revival');

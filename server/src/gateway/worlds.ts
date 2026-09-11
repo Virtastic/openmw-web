@@ -537,11 +537,13 @@ export class WorldSupervisor {
   // ban, a config change), short enough that a game stopped by mistake comes back on its own.
   static readonly OPERATOR_STOP_HOLD_MS = 5 * 60_000;
 
-  stop(id: string): void {
+  // `hold`: an OPERATOR's stop is held against revival; the reaper's, the rolling restart's
+  // and shutdown's are not -- an idle-reaped world MUST come back on its owner's next dial.
+  stop(id: string, hold = false): void {
     const w = this.worlds.get(id);
     if (!w) return;
     w.stopping = true;
-    this.blockedUntil.set(id, this.now() + WorldSupervisor.OPERATOR_STOP_HOLD_MS);
+    if (hold) this.blockedUntil.set(id, this.now() + WorldSupervisor.OPERATOR_STOP_HOLD_MS);
     // SIGTERM so the world drains and flushes its stores; main.ts already handles it.
     w.child.kill('SIGTERM');
     // ESCALATE. A world that hangs in its own async shutdown never fires 'exit', and 'exit' is
