@@ -77,6 +77,7 @@ known and recorded; N/A = does not exist in single player either.
 | Action | MP path | Status |
 |---|---|---|
 | Pick up / two players race | ObjectTakeRequest first-wins, tombstone, refusal shown | OK |
+| Loot in the last 2 s before a disconnect/kick | inventory snapshot is 2 s diffed; the acquisition ledger is a timing hint, not state; the rejoin restore never confiscates surplus, so the client's local copy wins on rejoin | OK (bounded loss window ≤ 2 s, by design) |
 | Drop | ObjectSpawn, netId, refused reasons incl. cell_full | FIXED 09-10 (no cell_full line) |
 | Containers, merchants' stock and gold | canonical on first open; gold deltas; 24 h gold restock; item restock from `origin` on cell reset | OK |
 | Levelled item lists (containers, world) | container contents canonical on first open; a world-placed levelled item ref rolls per engine (rare, cosmetic) | OK |
