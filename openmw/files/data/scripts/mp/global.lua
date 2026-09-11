@@ -1420,9 +1420,22 @@ local eventHandlers = {
                 if not ok then print('[mp] avatar active effect add failed: ' .. tostring(err)) end
             end
         end
+        -- remove() takes the INSTANCE id (activeSpellId), not the record id, and the peer's
+        -- instance is its own: find it by record. Every instance of that record goes, which
+        -- is the same caveat as stacking above and costs nothing real.
         for _, sp in ipairs(data.remove or {}) do
             local localId = sp.id and worldmp.toLocal(sp.id)
-            if localId then pcall(function() spells:remove(localId) end) end
+            if localId then
+                pcall(function()
+                    local victims = {}
+                    for _, active in pairs(spells) do
+                        if active.temporary and active.id == localId and active.activeSpellId then
+                            victims[#victims + 1] = active.activeSpellId
+                        end
+                    end
+                    for _, aid in ipairs(victims) do spells:remove(aid) end
+                end)
+            end
         end
     end,
 
