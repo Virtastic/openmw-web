@@ -633,7 +633,10 @@ end
 -- somewhere else and reconnecting would have the two sessions fight; RATE means the client was
 -- dropped for flooding, and hammering the door is precisely the wrong reply; BAD_ENGINE /
 -- BAD_CONTENT / BAD_PROTO will refuse identically every time.
-local TRANSIENT_DISCONNECT = { SHUTDOWN = true, SERVER_FULL = true }
+-- IP_CAP: too many sockets from this address RIGHT NOW -- which, for a player, is almost
+-- always their own previous socket still draining after a wifi blip, gone in seconds. A
+-- terminal modal for that would strand the exact person a reconnect exists for.
+local TRANSIENT_DISCONNECT = { SHUTDOWN = true, SERVER_FULL = true, IP_CAP = true }
 
 dispatch.SessionDisconnect = function(msg)
     net.lastError = msg.code

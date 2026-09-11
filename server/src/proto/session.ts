@@ -108,6 +108,7 @@ export type DisconnectCode =
   | 'SUPERSEDED'
   | 'KICKED'
   | 'RATE'
+  | 'IP_CAP'
   | 'SERVER_FULL'
   | 'SHUTDOWN';
 

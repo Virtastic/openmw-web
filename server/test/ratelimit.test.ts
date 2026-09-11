@@ -12,7 +12,7 @@ test('rate limits', async (t) => {
     dataDir: tmpDataDir(),
     port: 0,
     host: '127.0.0.1',
-    configOverride: { limits: { msgsPerSec: 10 } },
+    configOverride: { limits: { msgsPerSec: 10, maxConnsPerIp: 3 } },
   });
   t.after(() => server.close());
 
@@ -28,7 +28,7 @@ test('rate limits', async (t) => {
   await t.test('4th connection from the same IP is refused', async () => {
     const conns = await Promise.all([1, 2, 3].map(() => TestClient.connect(server.port)));
     const fourth = await TestClient.connect(server.port);
-    await fourth.waitDisconnect('RATE');
+    await fourth.waitDisconnect('IP_CAP');
     const { code } = await fourth.closed;
     assert.equal(code, 1008);
     // The first three are still alive and usable.
