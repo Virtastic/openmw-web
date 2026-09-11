@@ -82,6 +82,7 @@ local lastPoseMirror = 0
 -- tradewindow, trainingwindow, travelwindow, spellbuyingwindow, spellcreationdialog,
 -- enchanting and merchantrepair. Barter alone was covered for a while, which left the other
 -- six paying into a per-client purse that never empties.
+local liveContainerOpen = false -- a pickpocket window is up (Container mode on a live actor)
 local GOLD_SERVICE_MODES = {
     Barter = true, Training = true, Travel = true, SpellBuying = true,
     SpellCreation = true, Enchanting = true, MerchantRepair = true,
@@ -877,9 +878,26 @@ return {
             -- arbitrate. Barter is the only one that moves STOCK, but all seven pay the NPC
             -- out of one field -- getBarterGold -- so all seven have to be watched or the
             -- purse forks per client again through whichever window is not covered.
-            if GOLD_SERVICE_MODES[data.newMode] and data.arg then
+            -- PICKPOCKETING is the Container window opened on a LIVE actor (a dead one is loot,
+            -- synced by the activation path). Same shape again: what the thief lifted must
+            -- leave the NPC on every engine, or the mark still has it for everyone else and a
+            -- second thief lifts the same ring. The detection roll stays the thief's client's.
+            local function liveActorArg(mode, arg)
+                if mode ~= 'Container' or not arg then return false end
+                local ok, live = pcall(function()
+                    return types.Actor.objectIsInstance(arg) and not types.Actor.isDead(arg)
+                end)
+                return ok and live == true
+            end
+            local openedLive = (GOLD_SERVICE_MODES[data.newMode] and data.arg)
+                or liveActorArg(data.newMode, data.arg)
+            local closedLive = (GOLD_SERVICE_MODES[data.oldMode] and not GOLD_SERVICE_MODES[data.newMode])
+                or (data.oldMode == 'Container' and data.newMode ~= 'Container' and liveContainerOpen)
+            if openedLive then
+                liveContainerOpen = liveActorArg(data.newMode, data.arg)
                 core.sendGlobalEvent('mpBarterOpen', { merchant = data.arg })
-            elseif GOLD_SERVICE_MODES[data.oldMode] and not GOLD_SERVICE_MODES[data.newMode] then
+            elseif closedLive then
+                liveContainerOpen = false
                 core.sendGlobalEvent('mpBarterClose', {})
             end
         end,

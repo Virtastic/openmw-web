@@ -85,7 +85,8 @@ known and recorded; N/A = does not exist in single player either.
 | Item condition / charge / soul | per-field merge: charge client, condition raise client, soul peer | FIXED 09-11 |
 | Repair / recharge / soul trap | see above | FIXED 09-11 |
 | Quest items never deplete | container rule | OK |
-| Theft, pickpocket, ownership | client-side crime detection; bounty relays | OK |
+| Theft (owned items in the world) | client-side crime detection; bounty relays; the take itself is a normal ObjectTakeRequest | OK |
+| Pickpocket | the Container window on a live actor rides the live-container path (canonical on open, diff on close); the stolen item leaves the NPC on every engine; the detection roll stays the thief's client's | FIXED 09-11 (was: local to the thief; the mark kept it for everyone else) |
 | Scripted enable/disable of refs | ObjectEnabled persisted | OK |
 | Locks, lockpicking, script Lock/Unlock | lockWatch relay, persisted | OK |
 | Trap disarm state | not in the cell doc | GAP (harmless while trap damage is discarded) |
