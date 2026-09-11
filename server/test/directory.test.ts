@@ -410,3 +410,31 @@ test('the multiplayer server hands out the game files the operator uploaded', as
       'a server that does not serve files must not advertise them');
   } finally { await dir2.close(); await h.cleanup(); }
 });
+
+// THE WORLD'S MODE IS THE WORLD'S TO SAY. The directory fixed a world's mode at process start
+// and never asked again, so an owner's flip to Party never reached the friend-join check,
+// which refused every friend with not_open. The world's /status carries the live mode now
+// and the poll adopts it.
+test('directory: an owner flipping to Party is observed by the next poll', async () => {
+  const wdir = mkdtempSync(join(tmpdir(), 'omw-dir-'));
+  let liveMode: 'private' | 'party' = 'private';
+  const worlds = new WorldSupervisor({
+    settings: {
+      worldsDir: wdir, gatewayPort: 8080, serverEntry: '/fake/server.mjs', nodeBin: '/fake/node',
+      basePort: 43000, maxWorlds: 5, idleReapMs: 60_000, startTimeoutMs: 1000, restartBackoffMs: 1000,
+      sharedDir: mkdtempSync(join(tmpdir(), 'omw-shared-')),
+    },
+    spawner: () => new FakeChild() as unknown as ChildProcess,
+    fetchStatus: async (port) => ({ playerCount: 1, connectedCount: 1, maxPlayers: 32, name: `w${port}`, mode: liveMode }),
+  });
+  try {
+    const w = worlds.ensure('priv-alice-x', 'private', 'alice');
+    assert.ok(w);
+    await worlds.poll();
+    assert.equal(worlds.list().find((x) => x.id === 'priv-alice-x')?.mode, 'private');
+    liveMode = 'party'; // the owner flipped, on the world process
+    await worlds.poll();
+    assert.equal(worlds.list().find((x) => x.id === 'priv-alice-x')?.mode, 'party',
+      'the directory still thinks the world is private: every friend join is refused as not_open');
+  } finally { worlds.stopAll(); }
+});
