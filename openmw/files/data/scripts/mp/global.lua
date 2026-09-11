@@ -820,6 +820,13 @@ local function spawnPuppet(id, pose)
         obj:addScript('scripts/mp/puppet.lua', { playerId = id })
     end
     puppets[id] = { obj = obj, name = name }
+    -- THE WOLF. The appearance relay carries isWerewolf and a change rebuilds the body -- and
+    -- the body was always built a man: nothing set the form on it. A transformed player looked
+    -- human on every other screen, and the avatar fought with human hands on the peer.
+    local app = remoteIdentity[id] and remoteIdentity[id].appearance
+    if app and app.isWerewolf then
+        pcall(function() types.NPC.setWerewolf(obj, true) end)
+    end
     if mp.isSystem and mp.isSystem() then actors.refollow(id, obj) end -- companions aim at the new body
     pushAvatarPolicy()
     applyAvatarDoc(id) -- Phase 2b: a doc that arrived before the body existed lands now
