@@ -856,6 +856,16 @@ loot bug already fixed here.
   and `snapSpells` iterates the whole spell store, abilities included. It persists by the
   same route diseases do.
 
+* **Dialogue-started AiTravel never reaches the peer.** Follow and Escort now travel from
+  the recruiting client (companion.lua -> ActorAI claim), but "AITravel x y z" from a
+  dialogue result -- the guard who walks off to fetch someone, the NPC who leaves the room
+  after the conversation -- is the same client-only class and is not reported. It cannot be
+  reported the same way blind: a puppeted NPC's top package is its RECORD's own package (AI
+  off, stack static), so every wandering NPC would re-declare its own Travel once a second
+  and the peer would restart what it is already running. Needs a "this package was
+  stacked after the conversation" signal (the dialogue-close edge plus a package diff on
+  that one actor), not a poll. 2026-09-11.
+
 * **A summon is cast twice, and only the peer's one fights.** With PlayerActiveSpells the
   owner's Summon effect now reaches the avatar and the peer summons a creature that sides
   with it, engages what the avatar engages, and is relayed to every client as a cell actor.
