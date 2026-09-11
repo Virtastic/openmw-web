@@ -48,6 +48,8 @@ function combat.onPuppetHit(data)
     -- s51/s58 as its regression guard; magic (onPuppetSpellHit) is unaffected -- the avatar
     -- does not cast. Degraded mode (no peer) means no melee until the peer returns, by design.
     if not data.mpTest then return end
+    -- Mirror for the scenarios: which address a test swing went out under, or why it did not.
+    local function fwd(why) pcall(function() mp.set('hitFwd', why) end) end
     local target
     if data.playerId then
         -- Player victim. PvP off: cancel silently — the server drops these anyway, but
@@ -61,6 +63,7 @@ function combat.onPuppetHit(data)
         if not cellKey then
             -- Nothing to address the target with. Rare, and genuinely undeliverable.
             print('[mp] combat: victim has no cell, hit not forwarded')
+            fwd('no-cell')
             return
         end
         -- THE EPOCH IS OPTIONAL ON THE WIRE, AND THIS USED TO REFUSE TO SEND WITHOUT ONE.
@@ -96,6 +99,7 @@ function combat.onPuppetHit(data)
     if data.weaponId then body.weaponId = data.weaponId end
     if data.ammoId then body.ammoId = data.ammoId end
     if data.hitPos then body.hitPos = data.hitPos end
+    fwd(target.net and ('net:' .. tostring(target.net)) or (target.playerId and 'player' or 'ref'))
     mp.sendEvent('CombatHit', body)
 end
 
@@ -198,6 +202,12 @@ end
 combat.handlers.MP_CombatHit = function(data)
     creditThreat(data)
     local victim = resolveVictim(data)
+    if mp.isSystem and mp.isSystem() then
+        local t = data.target or {}
+        print(string.format('[mp] CombatHit on peer: net=%s ref=%s cell=%s resolved=%s',
+            tostring(t.net), tostring(t.ref and t.ref.recordId), tostring(t.cellKey),
+            victim and tostring(victim.recordId) or 'NO'))
+    end
     if not victim then return end
     local info = attackInfoFrom(data)
     -- Re-emit the STOCK Hit event: scripts/omw/combat/interface.lua turns it into
