@@ -414,7 +414,9 @@ export class Quests {
     const name = str(body.get('name'));
     const value = finite(body.get('value'));
     const cellKey = player.cellKey;
-    if (!ref || ref.kind !== 'ref' || !name || value === undefined || !cellKey) {
+    // A content ref, or the net id of a runtime actor the holder named (a script-placed NPC
+    // runs its own local script like any other).
+    if (!ref || !name || value === undefined || !cellKey) {
       this.drop(player, 'MemberVarUpdate', 'invalid shape or no cell');
       return;
     }

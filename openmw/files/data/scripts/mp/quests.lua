@@ -29,6 +29,16 @@ local quests = {}
 --                                  rosterNameFn, isMpPuppetFn}
 local deps = nil
 
+-- Wire address of an NPC: its content ref, or the net id of a runtime actor the holder named
+-- (a quest NPC placed by a script). Nil for a body nobody else can resolve.
+local function npcAddr(obj)
+    local netId = deps.netIdOf and deps.netIdOf(obj)
+    if netId then return { net = netId } end
+    if obj.contentFile then return { ref = obj } end
+    return nil
+end
+
+
 local DIFF_INTERVAL = 1.0 -- globals / factions / crime poll (PROTOCOL.md §M6: 1 s diff)
 local MEMBER_WATCH_SECONDS = 6 -- MemberVarUpdate piggybacks on an interaction window
 local MEMBER_POLL = 0.25
@@ -410,7 +420,8 @@ local function tickMemberVars(now)
                 if watch.last[name] ~= value then
                     watch.last[name] = value
                     -- No cellKey in the body: the server infers it from our current cell.
-                    mp.sendEvent('MemberVarUpdate', { ref = watch.obj, name = name, value = value })
+                    local a = npcAddr(watch.obj)
+                    if a then mp.sendEvent('MemberVarUpdate', { ref = a.ref, net = a.net, name = name, value = value }) end
                 end
             end
         end
@@ -428,15 +439,6 @@ end
 local function mirrorLock(state)
     lastLockMirror = state
     mp.set('dialogueLock', json.encode(state))
-end
-
--- Wire address of an NPC: its content ref, or the net id of a runtime actor the holder named
--- (a quest NPC placed by a script). Nil for a body nobody else can resolve.
-local function npcAddr(obj)
-    local netId = deps.netIdOf and deps.netIdOf(obj)
-    if netId then return { net = netId } end
-    if obj.contentFile then return { ref = obj } end
-    return nil
 end
 
 local function requestLock(obj)
