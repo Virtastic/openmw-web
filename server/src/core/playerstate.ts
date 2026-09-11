@@ -563,6 +563,8 @@ export function handleAvatarItemStatesBatch(ctx: StateCtx, sender: Player, value
 // stored: an effect is as long-lived as its duration, and the avatar re-derives nothing from
 // the doc. Validated for shape and bounded, then forwarded to the world peer verbatim.
 const MAX_ACTIVE_SPELL_OPS = 32;
+const ACTIVE_OPS_WINDOW_MS = 5_000;
+const ACTIVE_OPS_BUDGET = 40; // adds+removes per window; a potion binge is a handful
 const MAX_EFFECT_INDEXES = 8; // ESM spells carry at most 8 effects
 type ActiveOp = { key: string; id: string; effects?: number[] };
 function handleActiveSpells(ctx: StateCtx, player: Player, body: LTable): boolean {
@@ -593,6 +595,20 @@ function handleActiveSpells(ctx: StateCtx, player: Player, body: LTable): boolea
   const add = list(body.get('add'), true);
   const remove = list(body.get('remove'), false);
   if (!add || !remove) return false;
+  // THE PEER PAYS FOR EVERY ADD. An honest client diffs at 0.5 s and a potion is one entry;
+  // 60 messages a second of 32 adds each is a way to make the world's one simulator spend
+  // its frame on activeSpells:add. Budgeted per player, and over budget is dropped and
+  // counted -- the same "signal, never an action" shape as the movement envelope.
+  const nowMs = Date.now();
+  if (player.activeOpsWindowAt === undefined || nowMs - player.activeOpsWindowAt > ACTIVE_OPS_WINDOW_MS) {
+    player.activeOpsWindowAt = nowMs;
+    player.activeOpsInWindow = 0;
+  }
+  player.activeOpsInWindow = (player.activeOpsInWindow ?? 0) + add.length + remove.length;
+  if (player.activeOpsInWindow > ACTIVE_OPS_BUDGET) {
+    noteGain(ctx, player, 'active_spell_flood', { inWindow: player.activeOpsInWindow });
+    return true; // consumed, not forwarded
+  }
   const worldPeer = ctx.worldPeer();
   if (worldPeer && (add.length > 0 || remove.length > 0)) {
     worldPeer.peer.sendEvent('AvatarActiveSpells', { id: player.id, add, remove });
