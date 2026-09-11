@@ -662,7 +662,14 @@ namespace MWMechanics
             {
                 if (!target.isInCell())
                     return ESM::ActiveEffect::Flag_Invalid;
-                effect.mArg = summonCreature(effect.mEffectId, target);
+                // Multiplayer: while a peer holds this cell the player's summon is spawned on
+                // the peer beside the avatar (the effect travels there); a local copy would be
+                // a second creature that fights nothing. The effect stays active with no
+                // creature of its own here, exactly as a failed summon does.
+                if (target == MWMechanics::getPlayer() && !MWMP::localSummonsEnabled())
+                    effect.mArg = ESM::RefNum();
+                else
+                    effect.mArg = summonCreature(effect.mEffectId, target);
             }
             else if (effect.mEffectId == ESM::MagicEffect::BoundGloves)
             {

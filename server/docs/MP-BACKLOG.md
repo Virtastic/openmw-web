@@ -880,7 +880,7 @@ loot bug already fixed here.
   stacked after the conversation" signal (the dialogue-close edge plus a package diff on
   that one actor), not a poll. 2026-09-11.
 
-* **A summon is cast twice, and only the peer's one fights.** With PlayerActiveSpells the
+* ~~**A summon is cast twice, and only the peer's one fights.**~~ FIXED 2026-09-11: while a holder simulates the player's cell the engine no longer spawns the local copy (mwmp setLocalSummons, driven by actors.hasHolder in global.lua); the effect stays active on the client with no creature of its own, the peer's is the one that fights. Degraded mode keeps local summons. Original note: With PlayerActiveSpells the
   owner's Summon effect now reaches the avatar and the peer summons a creature that sides
   with it, engages what the avatar engages, and is relayed to every client as a cell actor.
   The owner's OWN engine still summons a local copy as well: a client-only actor with its own

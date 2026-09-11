@@ -108,6 +108,14 @@ namespace MWMP
     };
     void recordCrime(ESM::RefNum avatar, int bounty, std::string kind);
     std::vector<Crime> takeCrimesFor(ESM::RefNum avatar);
+
+    /** CLIENT ONLY. While a peer simulates the cell the player stands in, the player's own
+     *  Summon effects must not spawn a creature here: the same effect reaches the avatar
+     *  (PlayerActiveSpells) and the peer's summon is the one that fights and is relayed. A
+     *  local copy is a ghost with its own AI whose blows on puppets are cancelled. Toggled by
+     *  scripts/mp (mp.setLocalSummons) from the cell's holder state; default on (singleplayer). */
+    void setLocalSummons(bool enabled);
+    bool localSummonsEnabled();
 }
 
 #endif
