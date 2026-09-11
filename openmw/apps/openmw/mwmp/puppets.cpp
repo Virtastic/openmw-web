@@ -210,6 +210,25 @@ namespace MWMP
         return out;
     }
 
+    namespace
+    {
+        bool& localSummons()
+        {
+            static bool v = true;
+            return v;
+        }
+    }
+
+    void setLocalSummons(bool enabled)
+    {
+        localSummons() = enabled;
+    }
+
+    bool localSummonsEnabled()
+    {
+        return localSummons();
+    }
+
     std::vector<MagicHit> takeMagicHitsFor(ESM::RefNum target)
     {
         std::vector<MagicHit> out;

@@ -809,6 +809,20 @@ local function avatarEffectsTick(now)
     if #entries > 0 then mp.sendEvent('AvatarEffectsBatch', { entries = entries }) end
 end
 
+-- SUMMONS SPAWN WHERE THEY FIGHT. Our Summon effect reaches the avatar, and the peer's
+-- creature is the one that engages and is relayed to everyone -- so while a holder simulates
+-- our cell the engine must not spawn a local copy too (mwmp/puppets.hpp setLocalSummons).
+-- Re-evaluated as the holder comes and goes; degraded mode (no peer) keeps local summons.
+local localSummonsOn = true
+local function localSummonsTick()
+    if (mp.isSystem and mp.isSystem()) or not mp.setLocalSummons then return end
+    local want = not actors.hasHolder(ownCellKeyCache)
+    if want ~= localSummonsOn then
+        localSummonsOn = want
+        pcall(mp.setLocalSummons, want)
+    end
+end
+
 -- ARREST. A guard that reaches a wanted avatar on the peer cannot open a dialogue nobody is
 -- there to see; the engine records the reach (mwmp/puppets.hpp recordArrest) and this hands
 -- it to the server for the owner's client, which opens the dialogue with ITS copy of the
@@ -2779,6 +2793,7 @@ return {
                 objects.tick(now)
                 actors.tick(now)
                 quests.tick(now)
+                localSummonsTick() -- summons spawn on the peer while it holds our cell
                 worldmp.tick(now)
                 mirrorDoor(now)
                 avatarStreamTick(now) -- Phase 3: peer streams authoritative avatar poses

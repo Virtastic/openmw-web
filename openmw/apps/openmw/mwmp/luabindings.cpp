@@ -263,6 +263,8 @@ namespace MWMP
             }
             return out;
         };
+        // Client: whether the player's own Summon effects spawn a creature HERE (see puppets.hpp).
+        api["setLocalSummons"] = [](bool enabled) { setLocalSummons(enabled); };
         api["isEnabled"] = []() { return std::getenv("OPENMW_MP_URL") != nullptr; };
         api["getUrl"] = []() { return getEnvString("OPENMW_MP_URL"); };
         api["getName"] = []() { return getEnvString("OPENMW_MP_NAME"); };
