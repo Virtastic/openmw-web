@@ -856,6 +856,14 @@ loot bug already fixed here.
   and `snapSpells` iterates the whole spell store, abilities included. It persists by the
   same route diseases do.
 
+* **A summon is cast twice, and only the peer's one fights.** With PlayerActiveSpells the
+  owner's Summon effect now reaches the avatar and the peer summons a creature that sides
+  with it, engages what the avatar engages, and is relayed to every client as a cell actor.
+  The owner's OWN engine still summons a local copy as well: a client-only actor with its own
+  AI, in no holder's snapshot, whose hits on puppets are cancelled -- a ghost that circles the
+  fight doing nothing. Conjurers see two scamps. The client-side summon should be suppressed
+  (or its actor hidden) whenever the peer holds the cell. 2026-09-11.
+
 * **Client-only damage is discarded while the peer owns the bars.** Health is raise-only from
   the client (potions, rest) and lower-only from the peer (the avatar takes the hits). That
   is right for combat, and wrong for the damage that exists only on the client's engine:
