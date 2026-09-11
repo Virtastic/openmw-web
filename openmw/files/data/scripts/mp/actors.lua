@@ -480,6 +480,19 @@ function actors.noteFollow(obj, target, escort)
     })
 end
 
+-- PERSUASION, the sending half. Called by quests.lua when a conversation ends and the NPC's
+-- disposition is not what it was when it began. The server admits it from the player who
+-- held that NPC's dialogue lock (worldstate.ts), so this is sent BEFORE the lock is released.
+function actors.noteDisposition(obj, disposition)
+    if not (obj and obj:isValid()) or type(disposition) ~= 'number' then return end
+    local cellKey = actors.cellKeyOfObj(obj)
+    if not cellKey then return end
+    mp.sendEvent('ActorDisposition', {
+        cellKey = cellKey, epoch = actors.epochOf(cellKey) or 0, ref = obj,
+        disposition = math.max(0, math.min(100, math.floor(disposition + 0.5))),
+    })
+end
+
 local function aimAt(obj, target, escort)
     if type(escort) == 'table' and type(escort.x) == 'number' then
         pcall(function()

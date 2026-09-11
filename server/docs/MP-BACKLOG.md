@@ -863,7 +863,10 @@ loot bug already fixed here.
   never told to the peer; the peer's guard keeps re-reaching and the prompt returns every
   cooldown. Same class as the dialogue-started AiTravel below: a package stacked on a puppet
   by a dialogue result needs to travel to the holder. The bounty increase from resisting DOES
-  relay, so the player is at least more wanted, not less.
+  relay, so the player is at least more wanted, not less. TAUNTING is the same hole one step
+  earlier: a successful taunt raises the NPC's Fight and starts combat on the talking client's
+  puppet; the disposition change now relays (ActorDisposition from the lock holder), the Fight
+  rating and the combat start do not, so a taunted NPC glares and does nothing on the peer.
 
 * **Dialogue-started AiTravel never reaches the peer.** Follow and Escort now travel from
   the recruiting client (companion.lua -> ActorAI claim), but "AITravel x y z" from a

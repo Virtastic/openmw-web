@@ -437,12 +437,27 @@ local function requestLock(obj)
     })
 end
 
+local lockDisposition = nil -- the NPC's disposition when the conversation began
+
 function quests.releaseLock(why)
     local obj = lockHeld
     lockHeld = nil
     lockPending = nil
     lockAllowOnce = nil
     if not obj then return end
+    -- Did the conversation change their mind? Admire, intimidate, taunt, bribe all write the
+    -- NPC's base disposition on THIS engine only; tell the holder while the lock still says
+    -- we were the one talking. Sent before the release below on purpose.
+    if lockDisposition ~= nil and deps.dispositionOutFn then
+        local player = playerObj()
+        local okd, now = pcall(function()
+            return player and obj:isValid() and types.NPC.getBaseDisposition(obj, player) or nil
+        end)
+        if okd and type(now) == 'number' and now ~= lockDisposition then
+            deps.dispositionOutFn(obj, now)
+        end
+    end
+    lockDisposition = nil
     mp.sendEvent('DialogueLock', { ref = obj, cellKey = deps.ownCellKeyFn(), want = false })
     mirrorLock({ ref = obj:isValid() and obj.recordId or '?', granted = false, why = why or 'released' })
 end
@@ -689,6 +704,9 @@ handlers.MP_DialogueLockResult = function(data)
     if data.granted then
         lockHeld = obj
         lockAllowOnce = obj.id
+        local player = playerObj()
+        local okd, d = pcall(function() return player and types.NPC.getBaseDisposition(obj, player) or nil end)
+        lockDisposition = (okd and type(d) == 'number') and d or nil
         mirrorLock({ ref = obj.recordId, granted = true })
         -- Re-run the activation we cancelled; this time the handler lets it through.
         local player = playerObj()

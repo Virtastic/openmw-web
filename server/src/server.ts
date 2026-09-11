@@ -532,6 +532,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     worldGlobals: config.sharing.worldGlobals,
     worldPeer: () => worldPeerImpl(),
   });
+  world.dialogueHolder = (refKey) => quests.dialogueHolder(refKey);
 
   // Phase C. The store is opened here so its lifetime matches the server's; social.stop()
   // clears presence timers that would otherwise keep the process alive on shutdown.

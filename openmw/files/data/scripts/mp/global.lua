@@ -1207,6 +1207,7 @@ local function start()
     -- global-gated in 0.52 (setCrimeLevel, world.mwscript).
     quests.init({
         playerFn = playerScript,
+        dispositionOutFn = function(obj, d) actors.noteDisposition(obj, d) end,
         ownCellKeyFn = function() return ownCellKeyCache end,
         ownIdFn = function() return net.state == 'Joined' and net.playerId or nil end,
         noticeFn = notice,

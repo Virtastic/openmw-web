@@ -199,6 +199,9 @@ export class WorldState {
 
   /** Set by the server: a cell gained an authority holder. See the grant callback below. */
   onHolderGained?: (cellKey: string) => void;
+  // Who holds the conversation lock on an NPC (quests.ts). Wired by server.ts; the second
+  // actor fact a non-holder may state hangs off it (see actorEvent, ActorDisposition).
+  dialogueHolder?: (refKey: string) => number | undefined;
 
   constructor(
     private readonly roster: Roster,
@@ -506,6 +509,26 @@ export class WorldState {
     }
     if (name === 'ActorAI' && this.authority.holderOf(str(body.get('cellKey'), MAX_CELL_KEY) ?? '') !== player.id) {
       this.followClaim(player, body);
+      return;
+    }
+    if (name === 'ActorDisposition' && this.authority.holderOf(str(body.get('cellKey'), MAX_CELL_KEY) ?? '') !== player.id) {
+      // PERSUASION HAPPENS IN A DIALOGUE, on the talking player's client -- never the holder
+      // on a peer-simulated world -- so under the holder-only rule a bribe or a taunt changed
+      // an NPC's mind on one screen and nowhere else. The one player who may say how the NPC
+      // now feels is the one the server let talk to it: the dialogue-lock holder, while the
+      // lock stands (the client sends this before releasing). Bounded to that, and to [0,100].
+      const cellKey = str(body.get('cellKey'), MAX_CELL_KEY);
+      const ref = parseObjRef(body);
+      const disposition = finite(body.get('disposition'));
+      if (!cellKey || !ref || ref.kind !== 'ref' || disposition === undefined || disposition < 0 || disposition > 100) {
+        this.invalid(player, name);
+        return;
+      }
+      if (player.system || this.dialogueHolder?.(ref.key) !== player.id || !cellsVisible(player.cellKey, cellKey)) {
+        log('warn', 'actor.dropped', { from: player.name, name, cellKey, why: 'disposition without the conversation' });
+        return;
+      }
+      this.relayCellExcept(cellKey, player.id, name, { ...lToJs(body) as Record<string, JsLike> });
       return;
     }
     const checked = this.authCheck(player, body, name);
