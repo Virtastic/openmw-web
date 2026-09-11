@@ -510,5 +510,40 @@ for _, path in ipairs(mpFiles) do
   check(path:match('([^/]+)$') .. ' assigns into no table before declaring it', #bad == 0, table.concat(bad, '; '))
 end
 
+-- A `local function f` is nil above its own line: a call to it from an earlier function is a
+-- runtime "attempt to call a nil value" the stubs only reach if that path executes. Caught
+-- 2026-09-11 in quests.lua (npcAddr used by the member-var poller, declared 20 lines lower).
+-- Static, so it needs no path to execute: every `local function NAME` in a file, and every
+-- bare `NAME(` above that line that is not itself a declaration or a field access.
+local function calledBeforeDeclared(src)
+  local decl, bad, n = {}, {}, 0
+  for line in (src .. '\n'):gmatch('(.-)\n') do
+    n = n + 1
+    local name = line:match('^local%s+function%s+([%a_][%w_]*)%s*%(')
+    if name and not decl[name] then decl[name] = n end
+  end
+  n = 0
+  for line in (src .. '\n'):gmatch('(.-)\n') do
+    n = n + 1
+    local code = line:gsub('%-%-.*$', '')
+    for pre, name in code:gmatch('([^%w_%.:]?)([%a_][%w_]*)%s*%(') do
+      if decl[name] and n < decl[name] and pre ~= '.' and pre ~= ':'
+        and not code:match('^%s*local%s+function%s+' .. name .. '%s*%(')
+        and not code:match('function%s+' .. name .. '%s*%(') then
+        bad[#bad + 1] = name .. ' at line ' .. n .. ' (declared at ' .. decl[name] .. ')'
+      end
+    end
+  end
+  return bad
+end
+local negCall = calledBeforeDeclared('local function a()\n  return b()\nend\nlocal function b() return 1 end\n')
+check('the scan catches a call above the local function declaration', #negCall == 1 and negCall[1]:find('^b at line 2') ~= nil,
+  table.concat(negCall, '; '))
+for _, path in ipairs(mpFiles) do
+  local f = io.open(path); local src = f:read('*a'); f:close()
+  local bad = calledBeforeDeclared(src)
+  check(path:match('([^/]+)$') .. ' calls no local function above its declaration', #bad == 0, table.concat(bad, '; '))
+end
+
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)
