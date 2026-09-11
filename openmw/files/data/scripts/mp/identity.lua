@@ -170,11 +170,23 @@ end
 -- is seen. Temporary effects only: abilities, diseases and curses ride the spellbook, and
 -- constant-effect enchantments ride equipment, so both are already on the avatar. Keyed by
 -- the engine's own instance id so two potions of the same kind are two entries.
+-- Effects the PEER put on us (global.lua MP_SelfActiveSpells): they came from the avatar, so
+-- they must not go back to it. Counted per record id; MP_PeerEffect on/off maintains it.
+local peerEffects = {}
+function identity.notePeerEffect(id, on)
+    if type(id) ~= 'string' then return end
+    if on then peerEffects[id] = (peerEffects[id] or 0) + 1
+    elseif peerEffects[id] then
+        peerEffects[id] = peerEffects[id] - 1
+        if peerEffects[id] <= 0 then peerEffects[id] = nil end
+    end
+end
+
 local function snapActive()
     local set = {}
     local ok = pcall(function()
         for _, sp in pairs(Actor.activeSpells(self)) do
-            if sp.temporary and not sp.fromEquipment and sp.activeSpellId ~= nil then
+            if sp.temporary and not sp.fromEquipment and sp.activeSpellId ~= nil and not peerEffects[sp.id] then
                 local idx = {}
                 for _, e in ipairs(sp.effects or {}) do
                     if e.index ~= nil then idx[#idx + 1] = e.index end

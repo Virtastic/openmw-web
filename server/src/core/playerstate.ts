@@ -616,6 +616,56 @@ function handleActiveSpells(ctx: StateCtx, player: Player, body: LTable): boolea
   return true;
 }
 
+// WHAT THE WORLD DID TO THE AVATAR, from the peer (global.lua avatarEffectsTick): spells the
+// avatar acquired (a disease from a bite) and temporary effects landed on it (Paralyze, Burden,
+// Silence from a hostile caster). Spells are persisted -- a disease is a fact about the
+// character -- and both halves go to the owner's client, which applies them to the body the
+// player is actually looking at. World peer only: a client saying this would be cursing others.
+export function handleAvatarEffectsBatch(ctx: StateCtx, sender: Player, value: LValue | undefined): void {
+  if (sender.system !== true || sender !== ctx.worldPeer()) return;
+  const body = tbl(value);
+  const entries = body ? tbl(body.get('entries')) : undefined;
+  if (!entries || entries.size > MAX_ACTIVE_SPELL_OPS) return;
+  for (const [, ev] of entries) {
+    const e = tbl(ev);
+    if (!e) continue;
+    const id = finite(e.get('id'));
+    const p = id !== undefined ? ctx.roster.get(id) : undefined;
+    if (!p || p.system === true || !p.inWorld) continue;
+    const spellsAdd: string[] = [];
+    const rawSpells = tbl(e.get('spellsAdd'));
+    if (rawSpells) {
+      if (rawSpells.size > MAX_ACTIVE_SPELL_OPS) continue;
+      for (const [, sv] of rawSpells) { const sid = recordId(sv); if (!sid) { spellsAdd.length = 0; break; } spellsAdd.push(sid); }
+    }
+    const ops = (v: LValue | undefined, withEffects: boolean): ActiveOp[] => {
+      const t = tbl(v); const out: ActiveOp[] = [];
+      if (!t || t.size > MAX_ACTIVE_SPELL_OPS) return out;
+      for (const [, ov] of t) {
+        const o = tbl(ov); const rid = o ? recordId(o.get('id')) : undefined;
+        if (!o || !rid) return [];
+        if (!withEffects) { out.push({ key: rid, id: rid }); continue; }
+        const fx = tbl(o.get('effects')); const effects: number[] = [];
+        if (!fx || fx.size === 0 || fx.size > MAX_EFFECT_INDEXES) return [];
+        for (const [, iv] of fx) { const i = finite(iv); if (i === undefined || !Number.isInteger(i) || i < 0 || i >= MAX_EFFECT_INDEXES) return []; effects.push(i); }
+        out.push({ key: rid, id: rid, effects });
+      }
+      return out;
+    };
+    const add = ops(e.get('effectsAdd'), true);
+    const remove = ops(e.get('effectsRemove'), false);
+    if (spellsAdd.length > 0) {
+      ctx.store.update(p.charId, (doc) => {
+        const have = new Set(doc.spells ?? []);
+        for (const sid of spellsAdd) have.add(sid);
+        doc.spells = [...have].slice(0, MAX_SPELLS);
+      }, 'now');
+      p.peer.sendEvent('SelfSpells', { add: spellsAdd });
+    }
+    if (add.length > 0 || remove.length > 0) p.peer.sendEvent('SelfActiveSpells', { add, remove });
+  }
+}
+
 const HANDLERS: Record<string, (ctx: StateCtx, player: Player, body: LTable) => boolean> = {
   PlayerActiveSpells: handleActiveSpells,
   PlayerAppearance: handleAppearance,

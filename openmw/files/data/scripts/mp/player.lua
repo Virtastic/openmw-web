@@ -811,6 +811,9 @@ return {
         end,
         -- Arrest (global.lua MP_PlayerArrest): the guard that reached our avatar, resolved
         -- to our copy of it. UI modes are player-script-only, hence the hop.
+        MP_PeerEffect = function(data)
+            if data then identity.notePeerEffect(data.id, data.on == true) end
+        end,
         MP_OpenDialogue = function(data)
             local target = data and data.target
             local okv, valid = pcall(function() return target and target:isValid() end)
