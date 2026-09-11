@@ -162,7 +162,13 @@ local function broadcastCell(cellKey, epoch, cell, now)
     for _, obj in ipairs(live) do
         if obj.contentFile or (deps.netIdOf and deps.netIdOf(obj)) then
             addressable[#addressable + 1] = obj
-        elseif not netPending[obj.id] and deps.requestNetActor then
+        elseif not netPending[obj.id] and deps.requestNetActor
+            -- CONTENT RECORDS ONLY. A levelled creature, a script spawn, a summon: all bodies
+            -- built from a record everyone has. A "Generated:" record is a puppet or avatar
+            -- body this engine minted -- seen here for one tick between despawnPuppet
+            -- forgetting it and the engine removing it -- and naming it made every client
+            -- try to build an actor from a record only this process knows.
+            and not tostring(obj.recordId):lower():match('^generated:') then
             netPending[obj.id] = true
             deps.requestNetActor(obj, cellKey)
         end
