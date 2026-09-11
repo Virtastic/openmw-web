@@ -415,7 +415,30 @@ export class WorldState {
   }
 
   authorityLeave(playerId: number, cellKey: string, connected: boolean): void {
-    this.enqueue(() => this.authority.onLeave(playerId, cellKey, connected));
+    this.enqueue(async () => {
+      await this.authority.onLeave(playerId, cellKey, connected);
+      // NAMED RUNTIME ACTORS DIE WITH THEIR HOLDER. A levelled-list creature the peer named
+      // exists on the peer's engine; when the peer leaves the cell or restarts, nothing
+      // simulates it, and the next holder rolls and names its own. Left in the doc they
+      // would pile up, one generation per restart, as statues on every client.
+      if (this.authority.holderOf(cellKey) === undefined) await this.purgeNamedActors(cellKey);
+    });
+  }
+
+  private async purgeNamedActors(cellKey: string): Promise<void> {
+    const doc = await this.cells.get(cellKey);
+    let n = 0;
+    for (const [key, p] of Object.entries(doc.placed)) {
+      if ((p as { actor?: boolean }).actor !== true) continue;
+      delete doc.placed[key];
+      delete doc.moved[key];
+      n++;
+      this.relayCell(cellKey, 'ObjectDelete', { net: p.netId, cellKey, byId: 0 });
+    }
+    if (n > 0) {
+      this.cells.markDirty(cellKey);
+      log('info', 'world.named_actors_purged', { cellKey, n });
+    }
   }
 
   // Validates {cellKey, epoch} against the current authority for the sender's cell.
