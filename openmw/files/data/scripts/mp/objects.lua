@@ -723,6 +723,11 @@ handlers.MP_ObjectTakeResult = function(data)
         netToObj[netId] = nil
         objIdToNet[obj.id] = nil
     end
+    -- ONCE IT IS IN OUR POCKET IT IS OURS TO DROP. An item that ARRIVED from the net was
+    -- marked so its own ObjectPlace could never read as a local drop -- and the mark followed
+    -- the object into the inventory, so dropping it again was ignored as that same echo. An
+    -- item a friend handed you could not be handed on; trading stopped after one hop.
+    netSpawned[obj.id] = nil
     -- The genuine ActionTake: itemTaken (crime), inventory add, world delete.
     pcall(function() world._runStandardActivationAction(obj, player) end)
 end
