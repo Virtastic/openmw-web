@@ -446,6 +446,7 @@ export class WorldState {
   // the holder's ActorCellChange) so a claim can be replayed to whoever next holds that cell
   // -- the peer restarts, and a fresh process has never heard who follows whom.
   private readonly followedBy = new Map<string, { ref: ObjRef; cellKey: string; follow: number; escort?: Record<string, number> }>();
+  private static readonly MAX_FOLLOWERS = 8;
   private replayFollows(holderId: number, cellKey: string): void {
     const holder = this.roster.get(holderId);
     if (!holder) return;
@@ -485,6 +486,15 @@ export class WorldState {
       if (this.followedBy.get(ref.key)?.follow !== player.id) return; // not yours to dismiss
       this.followedBy.delete(ref.key);
     } else {
+      // A recruit needs a conversation; a claim needs a message. Vanilla has no cap because
+      // it has no forged claims. Eight is more companions than any quest hands out at once,
+      // and it stops "every guard in Balmora follows me" from being one loop on a modified client.
+      let mine = 0;
+      for (const f of this.followedBy.values()) if (f.follow === player.id) mine++;
+      if (mine >= WorldState.MAX_FOLLOWERS && this.followedBy.get(ref.key)?.follow !== player.id) {
+        log('warn', 'actor.dropped', { from: player.name, name: 'ActorAI', cellKey, why: 'follower cap' });
+        return;
+      }
       this.followedBy.set(ref.key, { ref, cellKey, follow, ...(escort ? { escort } : {}) });
     }
     this.relayCellExcept(cellKey, player.id, 'ActorAI', { ...lToJs(body) as Record<string, JsLike> });
