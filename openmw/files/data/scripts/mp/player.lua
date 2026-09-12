@@ -584,6 +584,12 @@ local function dispatch(cmd)
         if hp then
             types.Actor.stats.dynamic.health(self).current = tonumber(hp)
         end
+        -- setmp:<n>: what a cast (lower) or a restore-magicka potion (higher) does to the
+        -- local bar; the avatar never casts, so this is the only writer of magicka (s113).
+        local mpv = cmd:match('^setmp:(-?[%d.]+)$')
+        if mpv then
+            types.Actor.stats.dynamic.magicka(self).current = tonumber(mpv)
+        end
         local race, head, hair = cmd:match('^applyrace:([^:]+):([^:]+):([^:]*)$')
         if race then
             mp.applyChargen({ race = race, head = head, hair = hair, isMale = true })
@@ -833,6 +839,7 @@ return {
             -- Scenario mirror: proves the PEER-authoritative bars actually flowed (a local
             -- fall would drop hp too; only this marker distinguishes the sources).
             mp.set('selfStats', string.format('%.0f/%.0f', data.hp.c, data.hp.b))
+            if data.mp then mp.set('selfMagicka', string.format('%.0f/%.0f', data.mp.c, data.mp.b)) end
             identity.notePeerBars(data.hp.c, data.mp and data.mp.c, data.ft and data.ft.c)
             pcall(function()
                 local d = types.Actor.stats.dynamic
