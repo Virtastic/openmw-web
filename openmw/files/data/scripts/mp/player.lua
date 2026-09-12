@@ -692,6 +692,11 @@ local function dispatch(cmd)
             core.sendGlobalEvent('mpTestMemberVar',
                 { id = mvRec, name = mvName, value = tonumber(mvVal) })
         end
+        -- follow:<recordId>: what a recruiting dialogue result ("AIFollow player") does on the
+        -- recruiting player's own client -- stacks Follow on the local copy of the NPC. The
+        -- companion chain (companion.lua -> ActorAI claim -> holder) takes it from there (s114).
+        local followRec = cmd:match('^follow:(.+)$')
+        if followRec then core.sendGlobalEvent('mpTestFollow', { id = followRec }) end
         if cmd == 'dlg:release' then
             core.sendGlobalEvent('mpDialogueClosed', {})
         else
