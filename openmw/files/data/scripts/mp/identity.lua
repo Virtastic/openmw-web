@@ -153,12 +153,12 @@ end
 -- take away. Accumulated here, claimed on top of the peer's last word at the next diff.
 -- Magicka is the same story in BOTH directions: the avatar never casts, so a cast's cost is
 -- a local drop the next report refills (casting was free half the time), and a restore
--- potion is a local rise it takes away. Health and fatigue claim gains only (damage is the
--- peer's); magicka claims the net local change.
+-- potion is a local rise it takes away. Health claims gains only (damage is the peer's);
+-- magicka claims the net local change. Fatigue is NOT tracked: both engines regenerate it,
+-- so claiming our regen on top of the avatar's would double the recovery rate.
 local tracked = {
     hp = { stat = 'health', gainsOnly = true },
     mp = { stat = 'magicka', gainsOnly = false },
-    ft = { stat = 'fatigue', gainsOnly = true },
 }
 for _, t in pairs(tracked) do t.peer = nil; t.prev = nil; t.delta = 0 end
 function identity.notePeerBars(hp, mpv, ft)
