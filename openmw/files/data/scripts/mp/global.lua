@@ -2719,11 +2719,13 @@ local eventHandlers = {
             if obj:isValid() and obj.recordId == data.id then
                 -- The builtin ai.lua handles this on the NPC's own script, exactly like a
                 -- dialogue result's AIFollow lands.
-                pcall(function() obj:sendEvent('StartAIPackage', { type = 'Follow', target = playerScript() }) end)
+                local ok, err = pcall(function() obj:sendEvent('StartAIPackage', { type = 'Follow', target = playerScript() }) end)
+                pcall(function() mp.set('testFollow', ok and ('sent:' .. tostring(obj.id)) or ('failed:' .. tostring(err))) end)
                 return
             end
         end
         print('[mp] mpTestFollow: no actor with record ' .. tostring(data.id))
+        pcall(function() mp.set('testFollow', 'no-actor') end)
     end,
     -- Marks a topic as locally learned for the DIFF only; see quests.testLearnTopic for why
     -- the engine gives no way to do this for real from a script.

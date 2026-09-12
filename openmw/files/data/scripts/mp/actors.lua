@@ -538,7 +538,10 @@ function actors.noteFollow(obj, target, escort)
         -- (worldstate.ts followClaim) and relays it to the holder, who starts the package.
         local key = refKeyOf(obj)
         local own = deps.ownIdFn and deps.ownIdFn() or nil
-        if followId ~= nil and followId ~= own then return end
+        if followId ~= nil and followId ~= own then
+            pcall(function() mp.set('followClaim', 'not-mine:' .. tostring(followId) .. '/' .. tostring(own)) end)
+            return
+        end
         if followId == nil and not claimedFollow[key] then return end
         claimedFollow[key] = (followId ~= nil) or nil
         epoch = epoch or 0 -- a claim is not epoch-checked; the field only has to be present
@@ -547,6 +550,8 @@ function actors.noteFollow(obj, target, escort)
         cellKey = cellKey, epoch = epoch, follow = followId,
         escort = (followId ~= nil and type(escort) == 'table') and escort or nil,
     }, obj)
+    -- Scenario mirror (s114): what went out, or why nothing did.
+    pcall(function() mp.set('followClaim', body and ('sent:' .. tostring(followId)) or 'no-addr') end)
     if body then mp.sendEvent('ActorAI', body) end
 end
 
@@ -680,6 +685,10 @@ actors.handlers.MP_ActorAI = function(data)
         followersOf[data.follow][key] = { obj = obj, escort = data.escort }
     end
     local target = deps.playerObjOf and deps.playerObjOf(data.follow) or nil
+    if mp.isSystem and mp.isSystem() then
+        print(string.format('[mp] follow claim: %s -> player %s target=%s holder=%s', tostring(obj.recordId),
+            tostring(data.follow), target and 'yes' or 'NO', tostring(actors.isHolderOf(actors.cellKeyOfObj(obj)))))
+    end
     if target then
         aimAt(obj, target, data.escort)
     else

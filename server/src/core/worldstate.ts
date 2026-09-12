@@ -524,6 +524,7 @@ export class WorldState {
       }
       this.followedBy.set(ref.key, { ref, cellKey, follow, ...(escort ? { escort } : {}) });
     }
+    log('info', 'actor.follow_claim', { from: player.name, cellKey, key: ref.key, follow: follow ?? null, escort: escort !== undefined });
     this.relayCellExcept(cellKey, player.id, 'ActorAI', { ...lToJs(body) as Record<string, JsLike> });
   }
 

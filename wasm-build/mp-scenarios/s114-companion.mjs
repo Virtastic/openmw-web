@@ -31,15 +31,15 @@ export default async function run(ctx) {
   const start = pa[rec];
   ctx.log(`A recruits "${rec}" at (${Math.round(start.x)},${Math.round(start.y)})`);
 
-  // Recruit: the conversation (dialogue lock) and the dialogue result (Follow on A's copy).
-  await a.cmd(`dlg:${rec}`);
-  await ctx.sleep(1_500);
+  // Recruit: the dialogue result (Follow stacked on A's copy of the NPC). The conversation
+  // itself pauses the game, and companion.lua only polls once it is closed -- as in play,
+  // where the claim goes out after Goodbye. The server admits a follow claim on proximity.
   await a.cmd(`follow:${rec}`);
-  await ctx.sleep(2_500); // companion.lua polls at 1 Hz; the claim needs the lock still held
-  await a.cmd('dlg:release');
+  await ctx.sleep(2_500); // companion.lua polls at 1 Hz
 
-  // Walk away. The companion must come along -- on B's screen, which did nothing.
-  const dest = { x: start.x + 900, y: start.y + 300, z: start.z + 32 };
+  // Walk away -- to the spawn point, known dry land (an arbitrary offset put A in the bay).
+  // The companion must come along -- on B's screen, which did nothing.
+  const dest = { x: -12288, y: -69632, z: 87 };
   await a.cmd(`snapto:${Math.round(dest.x)},${Math.round(dest.y)},${Math.round(dest.z)}`);
   const deadline = Date.now() + 90_000;
   let dB = Infinity, dA = Infinity;
@@ -50,6 +50,9 @@ export default async function run(ctx) {
     if (dB < 350 && dA < 350) break;
     await ctx.sleep(1_000);
   }
+  const mpLines = (a.logTail ? a.logTail(600) : '').split(String.fromCharCode(10)).filter((l) => /follow|Follow|mpTestFollow|ActorAI/i.test(l)).slice(-8);
+  ctx.log('A follow-related tail: ' + mpLines.join(' || '));
+  ctx.log(`A testFollow=${await a.eval('window.omw.state.testFollow')} companionReport=${await a.eval('window.omw.state.companionReport')} followClaim=${await a.eval('window.omw.state.followClaim')}`);
   ctx.log(`companion distance to A after the walk: on A ${Math.round(dA)}, on B ${Math.round(dB)} (started ${Math.round(dist2(start, dest))} away)`);
   assert.ok(dB < 350, `B never saw "${rec}" follow A (${Math.round(dB)} units away): the recruit claim did not reach the holder, or the holder's follower is not relayed`);
   assert.ok(dA < 350, `A's own copy of "${rec}" did not arrive (${Math.round(dA)} units away)`);
