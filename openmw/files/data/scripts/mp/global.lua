@@ -1122,6 +1122,18 @@ end
 -- this safe instead: 8s is long enough to outlast a slow world load on a busy machine, and
 -- short enough that a player is very unlikely to have walked 25+ units of their own accord
 -- before it lapses. Correctness of "you are where you logged out" beats elegance here.
+-- ...UNLESS THE PLAYER HAS TAKEN THE CONTROLS. "Very unlikely to have walked 25+ units" was
+-- wrong: walking is ~100 units a second, and a player who starts moving the instant the world
+-- appears was dragged back to the spawn for the rest of the window, twice in a row (s110
+-- measured it as a snap that never stuck). The engine's late placement never presses a key;
+-- the player does. Any control input, or a scripted snap, ends the hold on the spot.
+local function releaseRestoreHold(why)
+    if restoreTarget then
+        restoreTarget = nil
+        print('[mp] restore hold released: ' .. tostring(why))
+    end
+end
+
 local function restorePositionTick(now)
     if not restoreTarget then return end
     local player = playerScript()
@@ -1250,6 +1262,7 @@ local function puppetTick()
         local key = toCellKey(player.cell)
         if key ~= ownCellKeyCache then
             ownCellKeyCache = key
+            pcall(function() mp.set('cell', tostring(key)) end) -- scenario mirror
             refreshVisibility()
             if net.state == 'Joined' then
                 quests.onCellChanged()
@@ -2407,6 +2420,35 @@ local eventHandlers = {
     end,
 
     -- Toggle/lock/unlock the nearest content-file door (the real ref path).
+    -- The nearest load door, activated by the player: the engine's own transition, with
+    -- everything the cell change drags along (avatar follow-teleport, followers, puppets).
+    mpDoorEnter = function()
+        local player = playerScript()
+        if not (player and player.cell) then return end
+        local best, bestDist = nil, math.huge
+        local function scan(cell)
+            local ok, doors = pcall(function() return cell:getAll(types.Door) end)
+            if not ok then return end
+            for _, door in ipairs(doors) do
+                if types.Door.isTeleport(door) then
+                    local d = (door.position - player.position):length()
+                    if d < bestDist then best, bestDist = door, d end
+                end
+            end
+        end
+        if player.cell.isExterior then
+            for dx = -1, 1 do for dy = -1, 1 do
+                pcall(function() scan(world.getExteriorCell(player.cell.gridX + dx, player.cell.gridY + dy)) end)
+            end end
+        else
+            scan(player.cell)
+        end
+        if not best then print('[mp] door:enter: no load door nearby'); mp.set('doorEnter', 'none'); return end
+        local dest = ''
+        pcall(function() local c = types.Door.destCell(best); dest = c and (c.name ~= '' and c.name or (c.gridX .. ',' .. c.gridY)) or '' end)
+        mp.set('doorEnter', tostring(best.recordId) .. ' -> ' .. dest)
+        pcall(function() best:activateBy(player) end)
+    end,
     mpDoorToggle = function()
         local door = nearestDoor()
         if door then objects.onActivate(door, playerScript()) ; pcall(function() types.Door.activateDoor(door) end) end
@@ -2639,6 +2681,7 @@ local eventHandlers = {
     mpSelfSnap = function(data)
         local player = playerScript()
         if not player or not data or not data.x then return end
+        releaseRestoreHold('snap')
         pcall(function()
             player:teleport(player.cell, util.vector3(data.x, data.y, data.z))
         end)
@@ -2734,6 +2777,8 @@ local eventHandlers = {
     mpTestBounty = function(data) quests.testSetBounty(data.n) end,
     mpTestFaction = function(data) quests.testJoinFaction(data.id, data.rank) end,
     mpTestDialogue = function(data) quests.testActivateNpc(data.id) end,
+    -- The player pressed something (player.lua): the rejoin position hold must let go.
+    mpPlayerTookControls = function() releaseRestoreHold('controls') end,
     mpTestFollow = function(data)
         for _, obj in ipairs(world.activeActors) do
             if obj:isValid() and obj.recordId == data.id then

@@ -151,10 +151,18 @@ local INPUT_EVERY = 1 / 30
 
 local forceUseUntil = 0 -- harness: attack:<ms> holds the use bit without a real keypress
 
+local tookControlsSaid = false -- once per session: the rejoin position hold lets go
 local function inputTick(now)
     -- The PEER's own dummy player has no avatar and the server drops its input
     -- (playerInputDropped{from_peer}); 30 Hz of frames for the bin.
     if mp.isSystem and mp.isSystem() then return end
+    if not tookControlsSaid then
+        local c = self.controls
+        if (c.movement or 0) ~= 0 or (c.sideMovement or 0) ~= 0 or c.jump or (c.use and c.use ~= 0) then
+            tookControlsSaid = true
+            core.sendGlobalEvent('mpPlayerTookControls', {})
+        end
+    end
     if now - lastInputSend < INPUT_EVERY then return end
     lastInputSend = now
     inputSeq = inputSeq + 1
@@ -648,6 +656,8 @@ local function dispatch(cmd)
         local killNpc = cmd:match('^killnpc:(.+)$')
         if killNpc then core.sendGlobalEvent('mpKillNpc', { id = killNpc }) end
         if cmd == 'door:toggle' then core.sendGlobalEvent('mpDoorToggle', {}) end
+        -- door:enter: walk through the nearest LOAD door, the way a player does (s117).
+        if cmd == 'door:enter' then core.sendGlobalEvent('mpDoorEnter', {}) end
         local lockLevel = cmd:match('^door:lock:(%d+)$')
         if lockLevel then core.sendGlobalEvent('mpDoorLock', { level = tonumber(lockLevel) }) end
         if cmd == 'door:unlock' then core.sendGlobalEvent('mpDoorUnlock', {}) end

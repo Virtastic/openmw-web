@@ -24,8 +24,13 @@ export default async function run(ctx) {
   const simPeer = ctx.startSimPeer('-2,-7');
   if (!simPeer) { ctx.log('SKIP: no simulating sim peer available (OMW_SIM_PEER_BIN unset).'); return; }
   const a = await ctx.launchClient('bot-a', '', BOOT);
+  await a.waitFor('window.omw.state.state === "Joined"', 60_000, 'A joined');
   await a.cmd('snapto:' + SPOT);
   await a.waitFor('Object.keys(JSON.parse(window.omw.state.netObjects||"{}")).length > 0', 120_000, 'A built a named creature');
+  // The snap must have LANDED before the probe means anything: the probe is the player's own
+  // cell, and a snap sent a beat too early left A in Seyda Neen reading the peer's -2,-7 names.
+  await a.waitFor('(function(){const n=Object.values(JSON.parse(window.omw.state.netObjects||"{}"));const p=JSON.parse(window.omw.state.actorProbe||"{}");return n.some((r)=>p[r]&&!p[r].dead);})()',
+    60_000, 'A stands in the cell with a living named creature');
   await a.waitFor('Number(window.omw.state.puppetedActors||0) > 0', 30_000, 'A puppeted the cell actors');
 
   // Stand next to the creature: a bite has a reach, and the avatar follow-teleports with us.
