@@ -207,10 +207,30 @@ local SNAP_COOLDOWN_S = 2.0
 -- which input its pose accounts for, so a sample from before the jump is recognisable and
 -- ignored; the avatar's poses after it has followed us carry a newer sequence.
 local teleportSeq = nil
+local lastOwnPos = nil -- teleport (single-frame jump) detector; see PlayerCellChange below
 
 local function onSelfState(e)
     if not e or not e.x then return end
     if teleportSeq ~= nil and (tonumber(e.lastInputSeq) or 0) <= teleportSeq then return end
+    -- BEFORE THE DETECTOR HAS SEEN THE JUMP. A far teleport loads a new region, and the
+    -- engine stalls for seconds with the player already standing at the destination and no
+    -- onUpdate running -- so the cell change is not yet announced, the server keeps
+    -- streaming the old place, and those samples are delivered (events land before
+    -- onUpdate) the moment the stall ends. lastOwnPos is still the pre-stall spot: if we are
+    -- now far from it we have jumped, and a sample near where we were is from before the
+    -- jump. (s122: the 3-second drag back to the spawn, 3/3 alone, that the sequence gate
+    -- alone still let through.)
+    if lastOwnPos ~= nil then
+        local here = self.position
+        if (here - lastOwnPos):length2() > 512 * 512 then
+            local ox, oy, oz = e.x - lastOwnPos.x, e.y - lastOwnPos.y, e.z - lastOwnPos.z
+            if ox * ox + oy * oy + oz * oz < SNAP_DIST * SNAP_DIST then
+                teleportSeq = math.max(teleportSeq or 0, inputSeq)
+                mp.set('selfStale', string.format('%.0f,%.0f,%.0f seq=%s', e.x, e.y, e.z, tostring(e.lastInputSeq)))
+                return
+            end
+        end
+    end
     local pos = self.position
     local dx, dy, dz = e.x - pos.x, e.y - pos.y, e.z - pos.z
     local dist = math.sqrt(dx * dx + dy * dy + dz * dz)
@@ -237,8 +257,6 @@ local function onSelfState(e)
         mp.correctSelf(dx * CORRECT_GAIN, dy * CORRECT_GAIN, dz * CORRECT_GAIN)
     end
 end
-
-local lastOwnPos = nil -- teleport (single-frame jump) detector; see PlayerCellChange below
 
 local function movementTick()
     if mp.status().state ~= 'Joined' then
