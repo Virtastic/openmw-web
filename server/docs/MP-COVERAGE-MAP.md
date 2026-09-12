@@ -22,7 +22,8 @@ s59 (spell forward), s78 (crime pursuit), s79 (pickup race), s51 (NPC combat), s
 creatures named once, built on both clients), s108 (trade both ways, one inventory at every
 step), s109 (two players kill a peer-named wild creature -- FAILED first: every client rolled
 a private ghost of each creature near the spawn before the spawn gate was down; fixed the
-same day, engine default + Lua), s95 (play with friends -- FAILED first: every
+same day, engine default + Lua), s110 (a provoked wild creature's blows reach the player: peer
+avatar damage -> SelfStats, no hit injection on the victim), s95 (play with friends -- FAILED first: every
 join refused not_open, fixed the same day), s100 (invite across worlds), s102 (owner goes
 solo), s61 (dialogue lock), s72 (merchant purse), s03 (chat), s10 (movement puppets), s20
 (identity), s21 (rejoin), s80 (resume), s81 (reconnect), s70 (time), s48/s56 (world switch),
