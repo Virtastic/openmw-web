@@ -79,13 +79,17 @@ export default async function run(ctx) {
     await guest.client.cmd(`social:InviteAccept:${invites[0].acct}`);
     // Either it starts the switch, or the server refuses and SAYS why. Waiting only for the
     // success signal made a refusal look like a hang, with the reason sitting unread.
+    // joinFriendTo lives only until the page reloads for the new world (a few hundred ms);
+    // the world being left is the same yes, and a refusal still says why (s97 has the note).
     await guest.client.waitFor(
       `(window.omw.state.joinFriendTo||'') !== ''`
+      + ` || String(window.omw.state.state||'') !== 'Joined'`
       + ` || JSON.parse(window.omw.state.socialResult||'{}').op === 'InviteAccept'`,
       STEP, 'the server answered the accept');
     const went = await guest.client.eval("window.omw.state.joinFriendTo||''");
+    const left = String(await guest.client.eval("window.omw.state.state||''")) !== 'Joined';
     const why = await guest.client.eval("window.omw.state.socialResult||'{}'");
-    assert.notEqual(went, '',
+    assert.ok(went !== '' || left,
       `accepting an invite from another world was refused instead of starting the switch: ${why}`);
     ctx.log('ok: accepting routed to the world switch');
 
