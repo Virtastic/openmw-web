@@ -1277,6 +1277,7 @@ local function puppetTick()
     end
 end
 
+local dialPending = false -- the first dial waits for the first frame (see start)
 local function start()
     -- net.lua cannot reach the player script, so it announces through this. Set before
     -- anything can drop, or the very first outage would be the silent one.
@@ -1478,8 +1479,15 @@ local function start()
             admin.reset()
         end
     end
+    -- DIAL FROM THE FIRST FRAME, NOT FROM SCRIPT LOAD. This runs inside the engine's new-game
+    -- setup, BEFORE the starting cell is loaded, and mp.connect opens the socket at once --
+    -- but the hello is sent from net.onOpen, which Lua only reaches once the game loop
+    -- ticks, after the load. With retail data streamed on a first visit that is a minute or
+    -- more, the server's hello window is 45 s, and the session died as BAD_PROTO before the
+    -- player ever saw the world (s127: every join after a world switch, and any first join on
+    -- a slow box). Opening the socket once we are actually ticking costs nothing.
     if net.state == 'Offline' or net.state == 'Failed' then
-        net.start()
+        dialPending = true
     end
 end
 
@@ -2985,6 +2993,10 @@ return {
             quests.onGlobalWritten(name, value)
         end,
         onUpdate = function()
+            if dialPending then
+                dialPending = false
+                if net.state == 'Offline' or net.state == 'Failed' then net.start() end
+            end
             net.tick()
             flushNotices()
             restoreTick()

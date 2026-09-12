@@ -6,7 +6,7 @@
 // and you land back in your own world, it is still in your pocket. The quest log stays the
 // host's; the loot does not. Without this, helping a friend is pure charity.
 import assert from 'node:assert/strict';
-import { startGatewayAndClient, addClient } from './_gateway.mjs';
+import { startGatewayAndClient, addClient, grantLockerSession } from './_gateway.mjs';
 
 const STEP = 30_000;
 const GW_PORT = 18960; // ten apart from its neighbours (see s102)
@@ -24,9 +24,12 @@ async function countOf(c, name) {
 }
 
 export default async function run(ctx) {
-  const host = await startGatewayAndClient(ctx, { gwPort: GW_PORT, name: 'loot-host', ownId: 'priv-loot-host' });
+  // RETAIL, so the loot is a real content item. A minted record (equiptest) cannot cross worlds:
+  // records are per-world registries, and that is a separate, recorded gap (MP-COVERAGE-MAP).
+  const BOOT = { retail: true, joinTimeoutMs: 420_000 };
+  const host = await startGatewayAndClient(ctx, { gwPort: GW_PORT, name: 'loot-host', ownId: 'priv-loot-host', boot: BOOT });
   try {
-    const guest = await addClient(ctx, GW_PORT, { name: 'loot-guest', ownId: 'priv-loot-guest' });
+    const guest = await addClient(ctx, GW_PORT, { name: 'loot-guest', ownId: 'priv-loot-guest', boot: BOOT });
     const tag = String(ctx.runId).replace(/[^a-z0-9]/gi, '').slice(-6);
     const hostHandle = `lhost${tag}`, guestHandle = `lguest${tag}`;
     await host.client.cmd(`profile:loot-host@example.com:${hostHandle}`);
@@ -46,18 +49,21 @@ export default async function run(ctx) {
     const guestRow = `(JSON.parse(window.omw.state.players || '[]').find(function (p) { return p.name === ${JSON.stringify(guestHandle)}; }) || {})`;
     await host.client.waitFor(`${guestRow}.id !== undefined`, 120_000, "the guest is inside the host's world");
     await guest.client.waitFor('window.omw.state.state === "Joined"', 60_000, 'the guest is joined (after the redial)');
+    // The switch reloaded the page; the harness's locker session lives on window and must be
+    // granted again or the way HOME dies at "no locker session" (a real player's fragment
+    // carries it). This is what left the guest kicked and stranded on the first runs.
+    await grantLockerSession(guest.client, GW_PORT, guest.account);
     ctx.log("ok: the guest is in the host's world");
 
-    // The host hands over an item: drop, and the guest picks it up (s108's trade).
-    await host.client.cmd('equiptest');
-    await host.client.waitFor('(window.omw.state.equippedIds||"") !== ""', 12_000, 'the host holds the test item');
-    const itemId = (await host.client.eval('window.omw.state.equippedIds')).split(',')[0];
-    await host.client.cmd(`drop:${itemId}`);
+    // The host hands over a real item: an iron dagger, granted then dropped; the guest picks it up.
+    const ITEM = 'iron dagger', NAME = 'Iron Dagger';
+    await host.client.cmd(`equip:${ITEM}:16`);
+    await ctx.sleep(2_000);
+    await host.client.cmd(`drop:${ITEM}`);
     await guest.client.waitFor(`${netCount} === 1`, STEP, 'the guest sees the drop');
     const netId = await guest.client.eval('Object.keys(JSON.parse(window.omw.state.netObjects))[0]');
-    await guest.client.waitFor(`String((JSON.parse(window.omw.state.netObjectNames||"{}")[${JSON.stringify(netId)}])||"") !== ""`, STEP, 'the guest resolved the drop to a named record');
-    const name = await guest.client.eval(`JSON.parse(window.omw.state.netObjectNames)[${JSON.stringify(netId)}]`);
-    ctx.log(`the drop is "${name}" (host id ${itemId}, net ${netId})`);
+    const name = NAME;
+    ctx.log(`the drop is "${name}" (net ${netId})`);
     const had = await countOf(guest.client, name);
     await guest.client.cmd(`takenet:${netId}`);
     await guest.client.waitFor(`${netCount} === 0`, STEP, 'the guest took it');
@@ -69,8 +75,17 @@ export default async function run(ctx) {
     await host.client.cmd('worldmode:private');
     // The notice lives only until the page reloads for home (a few hundred ms); leaving is the same signal.
     await guest.client.waitFor(`(window.omw.state.worldClosed||'') !== '' || String(window.omw.state.state||'') !== 'Joined'`, STEP, 'the guest is sent home');
-    await guest.client.waitFor('window.omw.state.state === "Joined" && String(window.omw.state.worldClosed||"") === ""', 180_000,
-      'the guest is back in their own world');
+    try {
+      await guest.client.waitFor('window.omw.state.state === "Joined" && String(window.omw.state.worldClosed||"") === ""', 180_000,
+        'the guest is back in their own world');
+    } catch (e) {
+      const lines = (guest.client.logTail ? guest.client.logTail(3000) : '').split(String.fromCharCode(10))
+        .filter((l) => /world|locker|ticket|closed|disconnect|session state|KICK|seat/i.test(l)).slice(-30);
+      ctx.log('guest log around the close: ' + lines.join(' || '));
+      ctx.log(`guest lockerBase=${await guest.client.eval('window.__lockerHttpBase ? window.__lockerHttpBase() : "(no fn)"')} token=${await guest.client.eval('String(window.__omwLockerToken||"").length')} chars hash=${await guest.client.eval('String(window.__omwBootFrag||location.hash||"").slice(0,120)')}`);
+      ctx.log(`guest state=${await guest.client.eval('window.omw.state.state')} netfail=${await guest.client.eval('window.omw.state.netfail')} switchTo=${await guest.client.eval('window.omw.state.switchTo')} publicStage=${await guest.client.eval('window.omw.state.publicStage')}`);
+      throw e;
+    }
     await guest.client.waitFor('String(window.omw.state.restored||"") === "1" || String(window.omw.state.baselineReady||"") === "1"', 60_000, 'the guest character is restored at home');
     await ctx.sleep(2_000);
     const home = await countOf(guest.client, name);

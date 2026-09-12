@@ -80,7 +80,7 @@ export async function grantLockerSession(client, gwPort, account) {
  * Returns { client, account, ownId }.
  */
 export async function addClient(ctx, gwPort, opts = {}) {
-  const { name = 'bot-b', ownId = 'priv-own-world-b' } = opts;
+  const { name = 'bot-b', ownId = 'priv-own-world-b', boot = {} } = opts; // boot: extra launchClient opts (retail: true)
   const account = `${name}-${ctx.runId}`;
   const token = await harnessSession(gwPort, account);
   const mk = await fetch(`http://127.0.0.1:${gwPort}/worlds`, {
@@ -99,13 +99,13 @@ export async function addClient(ctx, gwPort, opts = {}) {
   }
   assert.ok(up, `${name}'s own world must come up`);
   const url = `ws://127.0.0.1:${gwPort}/w/${ownId}`;
-  const client = await ctx.launchClient(name, '', { mpUrl: url, homeUrl: url });
+  const client = await ctx.launchClient(name, '', { mpUrl: url, homeUrl: url, ...boot });
   await grantLockerSession(client, gwPort, account);
   return { client, account, ownId };
 }
 
 export async function startGatewayAndClient(ctx, opts = {}) {
-  const { gwPort, name = 'bot-a', maxWorlds = 4, idleReapMs, ownId = 'priv-own-world' } = opts;
+  const { gwPort, name = 'bot-a', maxWorlds = 4, idleReapMs, ownId = 'priv-own-world', boot = {} } = opts;
   const worldsDir = mkdtempSync(join(tmpdir(), 'omw-gw-worlds-'));
   const gw = spawn(process.execPath, [
     join(ROOT, 'server', 'dist', 'gateway.mjs'),
@@ -164,7 +164,7 @@ export async function startGatewayAndClient(ctx, opts = {}) {
     // derives a path no world serves; and a switch reloads the page, so without #mphome the
     // client relearns "my own world" as wherever it just landed.
     const ownUrl = `ws://127.0.0.1:${gwPort}/w/${ownId}`;
-    const client = await ctx.launchClient(name, '', { mpUrl: ownUrl, homeUrl: ownUrl });
+    const client = await ctx.launchClient(name, '', { mpUrl: ownUrl, homeUrl: ownUrl, ...boot });
     await grantLockerSession(client, gwPort, account);
     return { client, gwPort, ownId, account, stop };
   } catch (err) {
