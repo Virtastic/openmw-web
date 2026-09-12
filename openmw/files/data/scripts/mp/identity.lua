@@ -161,7 +161,10 @@ local tracked = {
     mp = { stat = 'magicka', gainsOnly = false },
 }
 for _, t in pairs(tracked) do t.peer = nil; t.prev = nil; t.delta = 0 end
+local peerBarsAt = nil -- when the peer last reported; past PEER_RULES_S our own bars rule again
+local PEER_RULES_S = 5 -- server/src/core/players.ts INPUT_DRIVING_MS, the same predicate
 function identity.notePeerBars(hp, mpv, ft)
+    peerBarsAt = core.getRealTime()
     local v = { hp = hp, mp = mpv, ft = ft }
     for k, t in pairs(tracked) do
         if v[k] ~= nil then
@@ -342,18 +345,28 @@ function identity.tick(now)
         nextAt.dynamic = now + INTERVALS.dynamic
         local dyn = snapDynamic()
         mp.set('hp', tostring(dyn.hp.c)) -- mirror unconditionally (diff may be seeded)
-        for k, t in pairs(tracked) do
-            if t.peer and math.abs(t.delta) > 0.5 and not dead then
-                -- Claim the local change on top of what the peer last said, not on top of
-                -- whatever the bar shows this frame (which a report may have just reset).
-                dyn[k].c = math.floor(math.max(0, math.min(dyn[k].b, t.peer + t.delta)) + 0.5)
+        if peerBarsAt and now - peerBarsAt < PEER_RULES_S and not dead then
+            -- THE PEER RULES OUR BARS: send only what we changed, on top of what the peer
+            -- last said -- never a bar we merely echo from its report. An echoed report the
+            -- peer has since overtaken (a bite landed, a spend applied) would be taken as a
+            -- fresh claim: the bite undone, the cast refilled (s113).
+            local claim, any = {}, false
+            for k, t in pairs(tracked) do
+                if math.abs(t.delta) > 0.5 then
+                    claim[k] = { c = math.floor(math.max(0, math.min(dyn[k].b, t.peer + t.delta)) + 0.5), b = dyn[k].b }
+                    any = true
+                end
+                t.delta = 0
             end
-            t.delta = 0
-        end
-        local fp = fingerprint(dyn)
-        if fp ~= last.dynamic then
-            last.dynamic = fp
-            mp.sendEvent('PlayerStatsDynamic', dyn)
+            if any then mp.sendEvent('PlayerStatsDynamic', claim) end
+            last.dynamic = nil -- the next full snapshot (peer gone) must send unconditionally
+        else
+            for _, t in pairs(tracked) do t.delta = 0 end
+            local fp = fingerprint(dyn)
+            if fp ~= last.dynamic then
+                last.dynamic = fp
+                mp.sendEvent('PlayerStatsDynamic', dyn)
+            end
         end
     end
 
@@ -458,6 +471,7 @@ end
 function identity.reset()
     last = {}
     for _, t in pairs(tracked) do t.peer = nil; t.prev = nil; t.delta = 0 end
+    peerBarsAt = nil
     -- nil, NOT {}: the next pass must re-seed the baseline rather than treat the whole restored
     -- inventory as newly acquired.
     acqCounts = nil
