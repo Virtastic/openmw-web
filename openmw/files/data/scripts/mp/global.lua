@@ -2785,16 +2785,28 @@ local eventHandlers = {
         local player = playerScript()
         if not (player and player.cell) then return end
         local best, bestD = nil, math.huge
-        pcall(function()
-            for _, obj in ipairs(player.cell:getAll(types.Item)) do
-                local ok, owned = pcall(function() return obj.owner and obj.owner.recordId ~= nil and types.Item.isCarriable(obj) end)
+        local scanned, errs = 0, nil
+        local okScan, errScan = pcall(function()
+            -- getAll() with no type: types.Item is a category, not a record type, and asking
+            -- for it returned nothing (silently, under the pcall this used to hide in).
+            for _, obj in ipairs(player.cell:getAll()) do
+                scanned = scanned + 1
+                local ok, owned = pcall(function()
+                    return types.Item.objectIsInstance(obj) and types.Item.isCarriable(obj) and obj.owner and obj.owner.recordId ~= nil
+                end)
+                if not ok then errs = owned end
                 if ok and owned and obj.contentFile then
                     local d = (obj.position - player.position):length()
                     if d < bestD then best, bestD = obj, d end
                 end
             end
         end)
-        if not best then mp.set('takeOwned', 'none'); print('[mp] takeowned: nothing owned here'); return end
+        if not okScan then errs = errScan end
+        if not best then
+            mp.set('takeOwned', 'none (scanned ' .. scanned .. (errs and (', err: ' .. tostring(errs)) or '') .. ')')
+            print('[mp] takeowned: nothing owned here (scanned ' .. scanned .. ')')
+            return
+        end
         mp.set('takeOwned', string.format('%s of %s at %.0f', tostring(best.recordId), tostring(best.owner.recordId), bestD))
         -- Stand beside it first: theft is judged where the hand is.
         pcall(function() player:teleport(player.cell, best.position + util.vector3(40, 0, 8)) end)
