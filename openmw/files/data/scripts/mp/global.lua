@@ -2793,8 +2793,16 @@ local eventHandlers = {
                     return
                 end
                 -- The builtin ai.lua handles this on the NPC's own script, exactly like a
-                -- dialogue result's AIFollow lands.
-                local ok, err = pcall(function() obj:sendEvent('StartAIPackage', { type = 'Follow', target = playerScript() }) end)
+                -- dialogue result's AIFollow / AIEscort / AITravel lands.
+                local pkg
+                if data.travel then
+                    pkg = { type = 'Travel', destPosition = util.vector3(data.travel.x, data.travel.y, data.travel.z) }
+                elseif data.escort then
+                    pkg = { type = 'Escort', target = playerScript(), destPosition = util.vector3(data.escort.x, data.escort.y, data.escort.z), duration = 0 }
+                else
+                    pkg = { type = 'Follow', target = playerScript() }
+                end
+                local ok, err = pcall(function() obj:sendEvent('StartAIPackage', pkg) end)
                 pcall(function() mp.set('testFollow', ok and ('sent:' .. tostring(obj.id)) or ('failed:' .. tostring(err))) end)
                 return
             end
