@@ -2257,7 +2257,10 @@ local eventHandlers = {
             if item.recordId == data.id then
                 -- Native transfer only: the container watch (armed by chest:open) diffs the
                 -- inventory change into the ContainerOpRequest — the same path a UI put takes.
-                item:moveInto(types.Container.content(chestObj))
+                -- A corpse keeps its loot in Actor.inventory, a chest in Container.content.
+                local store = types.Actor.objectIsInstance(chestObj) and types.Actor.inventory(chestObj)
+                    or types.Container.content(chestObj)
+                item:moveInto(store)
                 return
             end
         end
@@ -2266,6 +2269,12 @@ local eventHandlers = {
     -- Open the chest formally (ContainerOpen with a contents snapshot; the first opener's
     -- snapshot becomes canonical server-side).
     mpChestOpen = function(data)
+        -- A NET ID names any lootable body: the test chest, or a corpse the peer named
+        -- (s111). Adopt it as the chest so chest:put / chesttake work on it too.
+        if data and data.netId then
+            local o = objects.objOfNet(data.netId)
+            if o and o:isValid() then chestObj = o end
+        end
         if chestObj and chestObj:isValid() then
             objects.onActivate(chestObj, playerScript())
         elseif data and data.netId then

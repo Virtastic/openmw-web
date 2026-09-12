@@ -104,6 +104,42 @@ identity.tick(3.0)
 check('reset re-seeds rather than reporting the restored inventory',
   #acquiredEvents(env.calls) == 1, '#got=' .. #acquiredEvents(env.calls))
 
+-- ------------------------------------------------------------ identity.lua: a heal sticks
+-- While the peer reports our bars, a potion raises the local bar between two reports and the
+-- next report puts it back; the 4 Hz diff seldom saw it. The per-frame gain is claimed on
+-- top of the peer's last word instead.
+print('identity.lua — client heal claimed over the peer report')
+local function dynEvents(calls)
+  local out = {}
+  for _, c in ipairs(calls.events) do
+    if c.name == 'PlayerStatsDynamic' then out[#out + 1] = c.body end
+  end
+  return out
+end
+fresh()
+env = stubs.install({})
+identity = require('scripts.mp.identity')
+identity.markBaselineReady()
+env.dyn.health.current = 60
+identity.notePeerBars(60)      -- the peer says 60/100
+identity.tick(0)               -- seeds: 60
+local n0 = #dynEvents(env.calls)
+env.dyn.health.current = 75    -- frame: the potion ticked (+15)
+identity.tick(0.05)
+identity.notePeerBars(60)      -- the peer's next report resets the bar...
+env.dyn.health.current = 60
+identity.tick(0.10)
+env.dyn.health.current = 62    -- ...and the potion keeps ticking (+2)
+identity.tick(0.30)            -- past the 0.25 s diff
+local got = dynEvents(env.calls)
+check('the heal is claimed as peer + local gain, not the reset bar',
+  #got == n0 + 1 and got[#got].hp.c == 77, 'events=' .. #got .. ' hp=' .. tostring(got[#got] and got[#got].hp.c))
+identity.notePeerBars(40)      -- the peer hurts us: a report LOWER than local
+env.dyn.health.current = 40
+identity.tick(0.60)
+got = dynEvents(env.calls)
+check('a peer-authored drop is not re-claimed as a heal', got[#got].hp.c == 40, 'hp=' .. tostring(got[#got].hp.c))
+
 -- ==================================================== social.lua: refusal text for the player
 -- SocialResult carries a WIRE CODE. It was rendered straight into the UI, so a refused op
 -- said things like "InviteSend: blocked" and a successful one said "InviteSend: ok".
