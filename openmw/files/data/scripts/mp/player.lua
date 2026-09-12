@@ -636,6 +636,17 @@ local function dispatch(cmd)
         if mpv then
             types.Actor.stats.dynamic.magicka(self).current = tonumber(mpv)
         end
+        -- setskill:<id>:<n> / skillof:<id>: what training or use does to a skill's base, and a
+        -- read of it (s132: a guest's progress comes home with them).
+        local skId, skVal = cmd:match('^setskill:([%w_]+):(%d+)$')
+        if skId then
+            pcall(function() types.NPC.stats.skills[skId](self).base = tonumber(skVal) end)
+        end
+        local skRead = cmd:match('^skillof:([%w_]+)$')
+        if skRead then
+            local ok, v = pcall(function() return types.NPC.stats.skills[skRead](self).base end)
+            mp.set('skillOf', tostring(ok and v or -1))
+        end
         -- sethpbase:<n>: what a level-up does to the maximum (s121).
         local hpb = cmd:match('^sethpbase:(-?[%d.]+)$')
         if hpb then
