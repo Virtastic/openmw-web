@@ -114,4 +114,26 @@ return {
             core.sendGlobalEvent('mpActorFollow', { actor = self.object, target = target, escort = escort })
         end,
     },
+    eventHandlers = {
+        -- THE BARS A HANDOFF HANDS US. Dynamic-stat setters are Self-gated (mwlua/stats.cpp),
+        -- so the holder cannot write a snapshot's health onto an actor from the global script
+        -- -- it threw inside a pcall, and every actor a new holder took over came back at
+        -- whatever health its own engine had, a half-dead bandit at full. This script is on
+        -- every NPC and creature already, so the write lands here.
+        mpSetStats = function(dyn)
+            if type(dyn) ~= 'table' then return end
+            pcall(function()
+                local d = types.Actor.stats.dynamic
+                local map = { hp = 'health', mp = 'magicka', ft = 'fatigue' }
+                for k, statName in pairs(map) do
+                    local v = dyn[k]
+                    if v then
+                        local stat = d[statName](self)
+                        if v.b then stat.base = v.b end
+                        if v.c then stat.current = v.c end
+                    end
+                end
+            end)
+        end,
+    },
 }

@@ -136,6 +136,35 @@ return {
         end,
     },
     eventHandlers = {
+        -- The owner's character, applied to this body: the doc on spawn (global.lua
+        -- applyAvatarDoc), a client heal or spend later (MP_AvatarRestore). Stat setters
+        -- are Self-gated in mwlua/stats.cpp, so this is the only place they can land.
+        mpAvatarStats = function(stats)
+            if type(stats) ~= 'table' then return end
+            local okL, errL = pcall(function()
+                if stats.level then types.Actor.stats.level(self).current = stats.level end
+                for name, v in pairs(stats.attributes or {}) do
+                    local a = types.Actor.stats.attributes[name]
+                    if a then a(self).base = v end
+                end
+                if types.NPC.objectIsInstance(self) then
+                    for name, v in pairs(stats.skills or {}) do
+                        local s = types.NPC.stats.skills[name]
+                        if s then s(self).base = v end
+                    end
+                end
+                local map = { hp = 'health', mp = 'magicka', ft = 'fatigue' }
+                for k, statName in pairs(map) do
+                    local d = stats.dynamic and stats.dynamic[k]
+                    if d then
+                        local stat = types.Actor.stats.dynamic[statName](self)
+                        if d.b then stat.base = d.b end
+                        if d.c then stat.current = d.c end
+                    end
+                end
+            end)
+            if not okL then print('[mp] avatar stats apply failed: ' .. tostring(errL)) end
+        end,
         mpAvatarPolicy = function(data)
             if data.pvp ~= nil then pvpEnabled = data.pvp == true end
             if type(data.avatarObjIds) == 'table' then avatarObjIds = data.avatarObjIds end
