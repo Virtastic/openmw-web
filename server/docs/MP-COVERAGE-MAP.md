@@ -53,7 +53,8 @@ friend's world with retail data, picks up what the host dropped, is sent home wh
 still has it), s128 (a guest FIGHTS in a friend's world: through the real door, the host's gateway
 world spawns its own peer -- managedPeer now reaches gateway worlds via the shared config -- and host
 and guest kill the same NPC together), s129 (the host's TAB CLOSES: the guest plays on through
-the 90 s grace, then is sent home as owner_left and lands joined in their own world), s95 (play with friends -- FAILED first: every
+the 90 s grace, then is sent home as owner_left and lands joined in their own world), s130 (the host is INDOORS when the friend joins: the guest lands
+in the same room beside them, and the room is simulated for both), s95 (play with friends -- FAILED first: every
 join refused not_open, fixed the same day), s100 (invite across worlds), s102 (owner goes
 solo), s61 (dialogue lock), s72 (merchant purse), s03 (chat), s10 (movement puppets), s20
 (identity), s21 (rejoin), s80 (resume), s81 (reconnect), s70 (time), s48/s56 (world switch),
