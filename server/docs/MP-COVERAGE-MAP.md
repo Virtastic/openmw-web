@@ -56,7 +56,9 @@ solo), s61 (dialogue lock), s72 (merchant purse), s03 (chat), s10 (movement pupp
 (identity), s21 (rejoin), s80 (resume), s81 (reconnect), s70 (time), s48/s56 (world switch),
 s30 (objects), s50 (combat), s52 (pvp off), s60/s60b (journal), s62 (quest vars), s71
 (records), s73/s75 (topics), s69 (peer outage). s66 (PvP damage lands on the driving victim's avatar and the peer's bars reach the owner --
-re-armed 09-11, PASS). SKIP by design: s63 (rewrite pending), s40/s42 (host-load guard). Anything below marked OK without a
+re-armed 09-11, PASS), s63 (rewritten on the friend path 09-12: a guest borrows the host's
+journal, their deed lands in the host's log, and their own campaign is untouched at home -- PASS).
+SKIP by design: (rewrite pending), s40/s42 (host-load guard). Anything below marked OK without a
 scenario is a code trace only.
 
 ## 1. Session
