@@ -16,7 +16,7 @@ export default async function run(ctx) {
   const simPeer = ctx.startSimPeer('-2,-9');
   if (!simPeer) { ctx.log('SKIP: no simulating sim peer available (OMW_SIM_PEER_BIN unset).'); return; }
   const a = await ctx.launchClient('bot-a', '', BOOT);
-  await a.waitFor('/^\d+\/\d+$/.test(String(window.omw.state.selfMagicka||""))', 300_000, 'the peer reports A\'s magicka (driving the input tier)');
+  await a.waitFor('String(window.omw.state.selfMagicka||"").indexOf("/") > 0', 300_000, 'the peer reports the magicka of A (driving the input tier)');
   const full = parseBars(await a.eval('window.omw.state.selfMagicka'));
   ctx.log(`peer-reported magicka: ${full.c}/${full.b}`);
   assert.ok(full.b >= 2, 'need a magicka pool to spend from');
