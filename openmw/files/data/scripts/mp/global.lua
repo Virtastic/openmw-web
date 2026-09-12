@@ -2714,6 +2714,17 @@ local eventHandlers = {
     mpTestBounty = function(data) quests.testSetBounty(data.n) end,
     mpTestFaction = function(data) quests.testJoinFaction(data.id, data.rank) end,
     mpTestDialogue = function(data) quests.testActivateNpc(data.id) end,
+    mpTestFollow = function(data)
+        for _, obj in ipairs(world.activeActors) do
+            if obj:isValid() and obj.recordId == data.id then
+                -- The builtin ai.lua handles this on the NPC's own script, exactly like a
+                -- dialogue result's AIFollow lands.
+                pcall(function() obj:sendEvent('StartAIPackage', { type = 'Follow', target = playerScript() }) end)
+                return
+            end
+        end
+        print('[mp] mpTestFollow: no actor with record ' .. tostring(data.id))
+    end,
     -- Marks a topic as locally learned for the DIFF only; see quests.testLearnTopic for why
     -- the engine gives no way to do this for real from a script.
     mpTestLearnTopic = function(data) quests.testLearnTopic(data.id) end,
