@@ -31,12 +31,26 @@ export default async function run(ctx) {
   await ctx.sleep(3_000);
   ctx.log(`A asked "${rec}" to escort them to the spawn (claim=${await a.eval('window.omw.state.followClaim')}, report=${await a.eval('window.omw.state.companionReport')}); ${Math.round(dist2(start, DEST))} units to go`);
 
-  // A tags along (an escort waits for its charge); B watches from the spawn.
-  const deadline = Date.now() + 120_000;
+  // A tags along: an escort walks only while its charge is within ~450 units (aiescort.cpp),
+  // and the avatar follows the client only on a JUMP of 512+ units (the pose stream is the
+  // peer's while it simulates) -- so A catches up in strides, like a player who lets the
+  // guide get ahead and then jogs after them. B watches from the spawn.
+  const deadline = Date.now() + 150_000;
   let dB = Infinity, dA = Infinity;
+  let stood = { x: start.x + 80, y: start.y };
   while (Date.now() < deadline) {
     const qa = await probeOf(a);
-    if (qa[rec]) { dA = dist2(qa[rec], DEST); await a.cmd(`snapto:${Math.round(qa[rec].x + 60)},${Math.round(qa[rec].y)},${Math.round(qa[rec].z + 8)}`); }
+    if (qa[rec]) {
+      dA = dist2(qa[rec], DEST);
+      // The guide has walked its ~450 and is waiting: stride after it. A stride is at least
+      // 512 units (the avatar follows only a jump that big) and lands just short of the guide.
+      const gap = dist2(qa[rec], stood);
+      if (gap >= 460) {
+        const step = Math.max(540, gap - 40); // the jump detector wants MORE than 512
+        stood = { x: stood.x + (qa[rec].x - stood.x) * step / gap, y: stood.y + (qa[rec].y - stood.y) * step / gap };
+        await a.cmd(`snapto:${Math.round(stood.x)},${Math.round(stood.y)},${Math.round(qa[rec].z + 8)}`);
+      }
+    }
     const qb = await probeOf(b);
     if (qb[rec]) dB = dist2(qb[rec], DEST);
     if (dB < 400 && dA < 400) break;
