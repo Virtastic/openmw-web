@@ -154,6 +154,7 @@ function M.install(opts)
     advance = function(sec) realTime = realTime + sec end,
     now = function() return realTime end,
     setInventory = function(items) inventory = items end,
+    dyn = dyn, -- the dynamic stats, mutable: a heal is `dyn.health.current = 100`
     spellbook = spellbook,
     world = world,
     globals = globalVars,

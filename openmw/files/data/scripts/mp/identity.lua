@@ -144,6 +144,27 @@ local function snapDynamic()
     return { hp = stat(d.health(self)), mp = stat(d.magicka(self)), ft = stat(d.fatigue(self)) }
 end
 
+-- WHAT THE CLIENT HEALED, MEASURED PER FRAME. While the peer's avatar rules our bars
+-- (player.lua MP_SelfStats writes them ~4 Hz), a potion, resting or a self-cast restore
+-- raises the LOCAL bar between two reports and the next report puts it straight back --
+-- so the 4 Hz diff below rarely saw the raise at all, and the server never heard of it
+-- (measured: sethp to full, peer-reported bars stayed down; a potion healed a fraction).
+-- The heal is still real: it is the sum of the per-frame increases, which no report can
+-- take away. Accumulated here, claimed on top of the peer's last word at the next diff.
+local peerHp = nil -- the last hp the peer reported for us (nil: nobody is reporting)
+local prevHp = nil -- last frame's local hp, after any report was applied
+local hpGain = 0   -- local increases since the last claim
+function identity.notePeerBars(hp)
+    peerHp = hp
+    prevHp = hp -- a report's own write is not a local gain (nor a loss)
+end
+local function trackLocalGain()
+    local ok, h = pcall(function() return Actor.stats.dynamic.health(self).current end)
+    if not ok or not h then return end
+    if prevHp and h > prevHp then hpGain = hpGain + (h - prevHp) end
+    prevHp = h
+end
+
 local function snapProgression()
     local attributes, skills = {}, {}
     for _, id in ipairs(ATTRIBUTES) do
@@ -300,10 +321,17 @@ function identity.tick(now)
     end
     wasDead = dead
 
+    trackLocalGain()
     if now >= nextAt.dynamic then
         nextAt.dynamic = now + INTERVALS.dynamic
         local dyn = snapDynamic()
         mp.set('hp', tostring(dyn.hp.c)) -- mirror unconditionally (diff may be seeded)
+        if peerHp and hpGain > 0.5 and not dead then
+            -- Claim the heal on top of what the peer last said, not on top of whatever the
+            -- local bar shows this frame (which a report may have just reset).
+            dyn.hp.c = math.floor(math.min(dyn.hp.b, peerHp + hpGain) + 0.5)
+        end
+        hpGain = 0
         local fp = fingerprint(dyn)
         if fp ~= last.dynamic then
             last.dynamic = fp
@@ -411,6 +439,7 @@ end
 
 function identity.reset()
     last = {}
+    peerHp, prevHp, hpGain = nil, nil, 0
     -- nil, NOT {}: the next pass must re-seed the baseline rather than treat the whole restored
     -- inventory as newly acquired.
     acqCounts = nil
