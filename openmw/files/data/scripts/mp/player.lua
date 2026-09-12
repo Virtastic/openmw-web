@@ -704,6 +704,20 @@ local function dispatch(cmd)
         local lockLevel = cmd:match('^door:lock:(%d+)$')
         if lockLevel then core.sendGlobalEvent('mpDoorLock', { level = tonumber(lockLevel) }) end
         if cmd == 'door:unlock' then core.sendGlobalEvent('mpDoorUnlock', {}) end
+        -- countname:<display name>: count by the record's NAME. A record minted in another
+        -- world arrives here under a different local id (M7 maps server ids per world), so
+        -- counting by id across a world switch asks for something that does not exist (s127).
+        local countName = cmd:match('^countname:(.+)$')
+        if countName then
+            local n = 0
+            pcall(function()
+                for _, item in ipairs(types.Actor.inventory(self):getAll()) do
+                    local okn, name = pcall(function() return item.type.record(item).name end)
+                    if okn and name == countName then n = n + item.count end
+                end
+            end)
+            mp.set('countName', tostring(n))
+        end
         local countId = cmd:match('^count:(.+)$')
         if countId then
             local ok, n = pcall(function()
