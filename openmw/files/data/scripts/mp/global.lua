@@ -834,7 +834,10 @@ end
 -- creature is the one that engages and is relayed to everyone -- so while a holder simulates
 -- our cell the engine must not spawn a local copy too (mwmp/puppets.hpp setLocalSummons).
 -- Re-evaluated as the holder comes and goes; degraded mode (no peer) keeps local summons.
-local localSummonsOn = true
+-- Mirrors the engine's own default (mwmp/puppets.cpp): a human multiplayer client starts
+-- with local spawns OFF, before the first cell loads; only a confirmed degraded world (joined,
+-- nobody simulating) turns them on.
+local localSummonsOn = not (mp.isEnabled() and not (mp.isSystem and mp.isSystem()))
 local localSpawnsDbgAt = 0
 local localSpawnsGuardSaid = false
 local function localSummonsTick()
@@ -842,6 +845,7 @@ local function localSummonsTick()
         localSpawnsGuardSaid = true
         pcall(function() mp.set('localSpawnsBind', tostring(mp.setLocalSpawns ~= nil) .. '/' .. tostring(mp.setLocalSummons ~= nil)) end)
         print('[mp] localSpawns guard: setLocalSpawns=' .. tostring(mp.setLocalSpawns) .. ' setLocalSummons=' .. tostring(mp.setLocalSummons))
+        pcall(function() mp.set('localSpawns', localSummonsOn and 'on' or 'off') end) -- scenario mirror
     end
     if (mp.isSystem and mp.isSystem()) or not (mp.setLocalSpawns or mp.setLocalSummons) then return end
     -- STICKY on "this world is simulated": levelled lists roll at cell load, before the new
@@ -849,7 +853,10 @@ local function localSummonsTick()
     -- creature in every cell we enter and then learn better. Once any holder has been seen the
     -- peer is the one spawning; only a peer outage (every holder gone) hands it back to us.
     local simulated = net.state == 'Joined' and net.flags and net.flags.simulated == true
-    local want = not (simulated or actors.hasHolder(ownCellKeyCache) or actors.anyHolder())
+    -- Not joined yet is not "degraded": the socket is still connecting while the starting
+    -- cells load, and a creature rolled in that window is a ghost only this screen can see.
+    local want = net.state == 'Joined'
+        and not (simulated or actors.hasHolder(ownCellKeyCache) or actors.anyHolder())
     -- Diagnostic mirror (s107): why local spawns are on or off, once a second.
     local nowD = core.getRealTime()
     if nowD - (localSpawnsDbgAt or 0) >= 1 then
@@ -2288,14 +2295,25 @@ local eventHandlers = {
             local p = puppets[data.playerId]
             victim = p and p.obj:isValid() and p.obj or nil
         elseif data.record then
+            -- Several bodies can share a record (two scribs in one cell): prefer the one we
+            -- puppet -- the body everyone sees -- over a local-only twin, like a real swing at
+            -- the creature in front of the player would.
             for _, obj in ipairs(world.activeActors) do
-                if obj:isValid() and obj.recordId == data.record then victim = obj break end
+                if obj:isValid() and obj.recordId == data.record then
+                    if actors.isPuppetedActor(obj) then victim = obj break end
+                    victim = victim or obj
+                end
             end
         end
         if not victim then
             print('[mp] mpTestHit: no victim for ' .. json.encode(data))
             return
         end
+        -- Which body the hook chose: a scenario that fails "hits do nothing" needs to know
+        -- whether it swung at the puppet everyone else sees, or at a local twin.
+        print(string.format('[mp] mpTestHit: %s id=%s content=%s net=%s puppeted=%s',
+            tostring(victim.recordId), tostring(victim.id), tostring(victim.contentFile),
+            tostring(objects.netIdOf(victim)), tostring(actors.isPuppetedActor(victim))))
         -- WHICH DAMAGE CHANNEL. The engine fills EITHER health OR fatigue and never both
         -- (mwlua/luamanagerimp.cpp onHit), and an UNARMED blow in Morrowind is a fatigue hit.
         -- This hook used to hardcode health, which is precisely why the suite could not catch

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
 #include <map>
 
 #include <components/debug/debuglog.hpp>
@@ -237,7 +238,13 @@ namespace MWMP
     {
         bool& localSummons()
         {
-            static bool v = true;
+            // OFF FROM THE FIRST FRAME ON A MULTIPLAYER CLIENT. The Lua side used to switch this
+            // off once the server said "this world is simulated" -- but the starting cells load
+            // (and their levelled lists roll) while the socket is still connecting, so every
+            // client began the game with a private, unhittable copy of each wild creature near
+            // the spawn point, standing beside the peer's real one. The sim peer (OPENMW_MP_SYSTEM)
+            // is the process that rolls them; singleplayer has no URL and keeps vanilla.
+            static bool v = !(std::getenv("OPENMW_MP_URL") != nullptr && std::getenv("OPENMW_MP_SYSTEM") == nullptr);
             return v;
         }
     }

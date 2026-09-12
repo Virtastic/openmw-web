@@ -189,6 +189,10 @@ end
 -- PRE-mitigation damage to the victim's owner, and returns false to cancel the entire local
 -- chain. Nothing is applied here: armor/difficulty/sounds belong to the owner's engine.
 local function onHitIntercept(attack)
+    if attack.mpTest then
+        print(string.format('[mp] puppet intercept: %s key=%s pid=%s', tostring(self.object.recordId),
+            tostring(actorKey), tostring(playerId)))
+    end
     if not playerId and not actorKey then return end -- not a live puppet: let the engine be
     local weapon = attack.weapon
     core.sendGlobalEvent('mpCombatHit', {
