@@ -165,6 +165,7 @@ scenario is a code trace only.
 | Mechanism | MP path | Status |
 |---|---|---|
 | Journal | shared per instance; guests borrow the host's | OK |
+| Guest loot goes home | inventory diffs write to the GUEST's charId; the home world restores it | Live: s127 (a vanilla item). GAP: a record MINTED in the host's world (an enchanted item, a potion the host brewed) is a per-world record id; the guest's home world has no definition for it and the restore drops it silently. Fix needs record definitions to travel with the character doc |
 | Topics learned | shared with the journal | OK |
 | Globals (quest gates) | peer's write wins within the driving window; dialogue-result names client-owned | OK |
 | Member variables on cell scripts | MemberVarUpdate relay | OK |
