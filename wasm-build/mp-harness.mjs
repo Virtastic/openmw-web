@@ -295,6 +295,9 @@ function startSimPeer(port, password, cellKey, gameDataDir, watch) {
     if (existsSync(peerScripts)) {
       rmSync(peerScripts, { recursive: true, force: true });
       cpSync(join(ROOT, 'openmw', 'files', 'data', 'scripts', 'mp'), peerScripts, { recursive: true });
+      // The script LIST too: which types carry which script is part of what is under test
+      // (companion.lua on NPCs was a one-line change to this file).
+      cpSync(join(ROOT, 'openmw', 'files', 'data', 'mp.omwscripts'), join(dirname(dirname(peerScripts)), 'mp.omwscripts'));
     }
   } catch (e) {
     console.log(`[harness] WARNING: could not sync mp scripts into the peer (${e.message}). `

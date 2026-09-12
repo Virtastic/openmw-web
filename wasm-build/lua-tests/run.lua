@@ -591,5 +591,26 @@ for _, path in ipairs(mpFiles) do
   check(path:match('([^/]+)$') .. ' calls no local function above its declaration', #bad == 0, table.concat(bad, '; '))
 end
 
+-- ============================================ mp.omwscripts: one line per script path
+-- The engine keeps only the LAST line naming a path (components/lua/configuration.cpp), so
+-- `NPC: x.lua` followed by `CREATURE: x.lua` attaches x.lua to creatures only. companion.lua
+-- sat like that for weeks: no NPC ever carried it, and no companion ever followed anyone.
+print('mp.omwscripts -- every script path is listed once')
+do
+  local f = io.open('./openmw/files/data/mp.omwscripts'); local cfg = f:read('*a'); f:close()
+  local seen, dups = {}, {}
+  for line in cfg:gmatch('[^' .. string.char(10) .. ']+') do
+    line = line:gsub(string.char(13) .. '$', '')
+    if not line:match('^%s*#') and not line:match('^%s*%+') then
+      local path = line:match(':%s*(%S+%.lua)%s*$')
+      if path then
+        if seen[path] then dups[#dups + 1] = path end
+        seen[path] = true
+      end
+    end
+  end
+  check('no script path appears on two lines (the first is silently dropped)', #dups == 0, table.concat(dups, ', '))
+end
+
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)

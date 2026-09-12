@@ -697,6 +697,8 @@ local function dispatch(cmd)
         -- companion chain (companion.lua -> ActorAI claim -> holder) takes it from there (s114).
         local followRec = cmd:match('^follow:(.+)$')
         if followRec then core.sendGlobalEvent('mpTestFollow', { id = followRec }) end
+        local probeRec = cmd:match('^followprobe:(.+)$')
+        if probeRec then core.sendGlobalEvent('mpTestFollow', { id = probeRec, probe = true }) end
         if cmd == 'dlg:release' then
             core.sendGlobalEvent('mpDialogueClosed', {})
         else

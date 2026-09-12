@@ -36,6 +36,17 @@ export default async function run(ctx) {
   // where the claim goes out after Goodbye. The server admits a follow claim on proximity.
   await a.cmd(`follow:${rec}`);
   await ctx.sleep(2_500); // companion.lua polls at 1 Hz
+  await a.cmd(`followprobe:${rec}`);
+  await ctx.sleep(1_000);
+  ctx.log(`A followProbe=${await a.eval('window.omw.state.followProbe')}`);
+  const creature = Object.keys(pa).find((r) => /mudcrab|scrib|rat|slaughterfish|kwama/.test(r));
+  if (creature) {
+    await a.cmd(`followprobe:${creature}`); await ctx.sleep(1_000);
+    ctx.log(`A followProbe on creature ${creature}=${await a.eval('window.omw.state.followProbe')}`);
+  }
+  ctx.log('A luaErrors: ' + a.luaErrors().slice(-6).join(' || '));
+  const tail = (a.logTail ? a.logTail(80) : '').split(String.fromCharCode(10)).filter((l) => !/Local map|navmesh|audio/.test(l)).slice(-25);
+  ctx.log('A tail: ' + tail.join(' || '));
 
   // Walk away -- to the spawn point, known dry land (an arbitrary offset put A in the bay).
   // The companion must come along -- on B's screen, which did nothing.

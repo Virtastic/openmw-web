@@ -12,8 +12,11 @@ MENU: scripts/mp/menu.lua
 # AI package state for a foreign actor -- an engine limitation, and the reason ActorAI sat as
 # dead protocol surface. An actor's own script can read its own packages. Silent unless the
 # answer changes, which for an ordinary NPC is never.
-NPC: scripts/mp/companion.lua
-CREATURE: scripts/mp/companion.lua
+# ONE LINE FOR BOTH TYPES. The engine keeps only the LAST line naming a script path
+# (components/lua/configuration.cpp: "only the last occurrence will be used"), so as two
+# lines this attached to creatures only -- no NPC ever had it, and no companion, escort or
+# scripted-travel claim was ever born on an NPC (s114 measured it).
+NPC,CREATURE: scripts/mp/companion.lua
 CUSTOM: scripts/mp/puppet.lua
 # Phase 3: the input-driven body on the SIM PEER only (global.lua attaches it when
 # mp.isSystem()); everywhere else the same body gets puppet.lua instead.

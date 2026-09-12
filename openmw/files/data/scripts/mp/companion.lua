@@ -117,6 +117,21 @@ return {
         end,
     },
     eventHandlers = {
+        -- Scenario probe (s114): what this actor's AI stack looks like from its own script.
+        mpTestFollowProbe = function()
+            local out = {}
+            local okA, pkg = pcall(function() return I.AI.getActivePackage() end)
+            out[#out + 1] = 'active=' .. tostring(okA and pkg and pkg.type or (okA and 'none' or ('ERR:' .. tostring(pkg))))
+            local okT, targets = pcall(function() return I.AI.getTargets('Follow') end)
+            out[#out + 1] = 'followTargets=' .. tostring(okT and targets and #targets or ('ERR:' .. tostring(targets)))
+            if okT and targets and targets[1] then
+                local t = targets[1]
+                out[#out + 1] = 'first=' .. tostring(t.recordId) .. '/player=' .. tostring(types.Player.objectIsInstance(t))
+            end
+            local n = 0
+            pcall(function() I.AI.filterPackages(function(p) n = n + 1; out[#out + 1] = 'pkg:' .. tostring(p.type); return true end) end)
+            pcall(function() require('openmw.mp').set('followProbe', table.concat(out, ' ')) end)
+        end,
         -- THE BARS A HANDOFF HANDS US. Dynamic-stat setters are Self-gated (mwlua/stats.cpp),
         -- so the holder cannot write a snapshot's health onto an actor from the global script
         -- -- it threw inside a pcall, and every actor a new holder took over came back at

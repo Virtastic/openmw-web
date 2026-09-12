@@ -2717,6 +2717,10 @@ local eventHandlers = {
     mpTestFollow = function(data)
         for _, obj in ipairs(world.activeActors) do
             if obj:isValid() and obj.recordId == data.id then
+                if data.probe then
+                    pcall(function() obj:sendEvent('mpTestFollowProbe', {}) end)
+                    return
+                end
                 -- The builtin ai.lua handles this on the NPC's own script, exactly like a
                 -- dialogue result's AIFollow lands.
                 local ok, err = pcall(function() obj:sendEvent('StartAIPackage', { type = 'Follow', target = playerScript() }) end)
