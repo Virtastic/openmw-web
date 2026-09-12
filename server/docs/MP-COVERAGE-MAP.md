@@ -35,7 +35,8 @@ back), s117 (a companion comes indoors with you through a load door and your fri
 you both there), s118 (a fight INDOORS: the peer holds the room as an anchor -- the first scenario
 to run the server's own peer lifecycle, `managedPeer`; a hand-spawned peer never anchors a room), s119 (the peer is killed; the server notices,
 restarts it, re-anchors the cell and a fight resolves under the new one), s120 (two players two
-cells apart: one peer, two anchors, both fights resolve), s95 (play with friends -- FAILED first: every
+cells apart: one peer, two anchors, both fights resolve), s121 (a level-up's new maximum reaches the
+avatar and a heal fills the new pool -- FAILED first: the base was thrown away while the peer ruled), s95 (play with friends -- FAILED first: every
 join refused not_open, fixed the same day), s100 (invite across worlds), s102 (owner goes
 solo), s61 (dialogue lock), s72 (merchant purse), s03 (chat), s10 (movement puppets), s20
 (identity), s21 (rejoin), s80 (resume), s81 (reconnect), s70 (time), s48/s56 (world switch),
@@ -99,7 +100,7 @@ scenario is a code trace only.
 | Action | MP path | Status |
 |---|---|---|
 | hp/mp/ft | peer-authored while driving; client may raise (heal); magicka client both ways. identity.lua measures the LOCAL change per frame and claims only the changed bars on top of the peer's last report (an echoed snapshot used to undo bites and refill casts; a heal was reset before the 4 Hz diff saw it) | FIXED 09-11 twice. Live: s112 (heal sticks), s113 (cast costs, potion restores) |
-| Attributes/skills/level, training, level-up | client diff -> doc -> AvatarState -> avatar.lua mpAvatarStats (Self context: every stat setter is Self-gated, the global-script write threw inside a pcall and the avatar stayed a level-1 template with a template health pool) | FIXED 09-11 |
+| Attributes/skills/level, training, level-up | client diff -> doc -> AvatarState -> avatar.lua mpAvatarStats; a level-up's new MAXIMUM health/magicka/fatigue is claimed by identity.lua and accepted server-side as a plausible base step (<=60, one per stat per 10 s), forwarded with the current preserved (was dropped while the peer ruled: the old pool stayed on the body that fights) (Self context: every stat setter is Self-gated, the global-script write threw inside a pcall and the avatar stayed a level-1 template with a template health pool) | FIXED 09-11 |
 | Skill use from cancelled swings | skill use runs before the Lua cancel | OK |
 | Diseases (caught) | AvatarEffectsBatch -> doc.spells + owner | FIXED 09-11 |
 | Vampirism / lycanthropy | spell list / appearance; werewolf form set on rebuilt bodies | FIXED 09-11 (looked human) |
