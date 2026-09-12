@@ -402,12 +402,8 @@ actors.handlers.MP_ActorAuthorityGrant = function(data)
                 obj:teleport(cellArg, util.vector3(a.x, a.y, a.z),
                     { rotation = util.transform.rotateZ(a.rotZ or 0) })
             end)
-            pcall(function()
-                local d = types.Actor.stats.dynamic
-                if a.hp then d.health(obj).base = a.hp.b; d.health(obj).current = a.hp.c end
-                if a.mp then d.magicka(obj).base = a.mp.b; d.magicka(obj).current = a.mp.c end
-                if a.ft then d.fatigue(obj).base = a.ft.b; d.fatigue(obj).current = a.ft.c end
-            end)
+            -- Self-gated write: the actor's own script (companion.lua mpSetStats) applies it.
+            pcall(function() obj:sendEvent('mpSetStats', { hp = a.hp, mp = a.mp, ft = a.ft }) end)
         end
     end
     print('[mp] actor authority GRANTED for ' .. cellKey .. ' epoch ' .. tostring(data.epoch))

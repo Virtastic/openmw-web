@@ -463,30 +463,12 @@ local function applyAvatarDoc(id)
     -- pursued on sight instead of only after their next offence.
     if mp.setAvatarBounty then pcall(function() mp.setAvatarBounty(obj, doc.bounty or 0) end) end
     -- Stats first: a fight against a default-statted mannequin is the bug this fixes.
-    pcall(function()
-        local stats = doc.stats or {}
-        if stats.level then types.Actor.stats.level(obj).current = stats.level end
-        for name, v in pairs(stats.attributes or {}) do
-            local a = types.Actor.stats.attributes[name]
-            if a then a(obj).base = v end
-        end
-        for name, v in pairs(stats.skills or {}) do
-            local s = types.NPC.stats.skills[name]
-            if s then s(obj).base = v end
-        end
-        local dyn = stats.dynamic
-        if dyn then
-            local map = { hp = 'health', mp = 'magicka', ft = 'fatigue' }
-            for k, statName in pairs(map) do
-                local d = dyn[k]
-                if d then
-                    local stat = types.Actor.stats.dynamic[statName](obj)
-                    if d.b then stat.base = d.b end
-                    if d.c then stat.current = d.c end
-                end
-            end
-        end
-    end)
+    -- IN THE AVATAR'S OWN SCRIPT. Every stat setter in mwlua/stats.cpp is Self-gated
+    -- ("Allowed only in local scripts for 'openmw.self'"); writing them from here threw on
+    -- the first line, and the pcall that used to wrap this block swallowed it -- so the
+    -- avatar stayed the level-1 template it was built from: attributes, skills, level and
+    -- the HEALTH POOL. A level-20 player's avatar had a level-1 body's bars.
+    pcall(function() obj:sendEvent('mpAvatarStats', doc.stats or {}) end)
     for _, sid in ipairs(doc.spells or {}) do
         pcall(function() types.Actor.spells(obj):add(sid) end)
     end
@@ -1735,13 +1717,10 @@ local eventHandlers = {
         if not (mp.isSystem and mp.isSystem()) or not data or not data.id then return end
         local p = puppets[data.id]
         if not p or not p.obj or not p.obj:isValid() then return end
-        pcall(function()
-            local d = types.Actor.stats.dynamic
-            local map = { hp = 'health', mp = 'magicka', ft = 'fatigue' }
-            for k, statName in pairs(map) do
-                if data[k] and data[k].c then d[statName](p.obj).current = data[k].c end
-            end
-        end)
+        -- Self-gated write (see applyAvatarDoc): the avatar's script applies it. Done from
+        -- here it threw inside a pcall, and no potion, rest or self-heal ever reached the
+        -- avatar -- the next report undid every one of them (s112).
+        pcall(function() p.obj:sendEvent('mpAvatarStats', { dynamic = { hp = data.hp, mp = data.mp, ft = data.ft } }) end)
     end,
 
     -- Phase 3: a player's input frame, routed to the avatar that embodies them. Only the
