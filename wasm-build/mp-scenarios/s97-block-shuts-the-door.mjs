@@ -65,7 +65,10 @@ export default async function run(ctx) {
     // joinFriendTo is set ONLY when the server said yes and the client is redialling, so it is
     // the one signal that separates "allowed" from "refused". (The refusal text lives in a Lua
     // local the panel renders and never mirrors, so there is nothing else to read.)
-    await guest.client.waitFor(`(window.omw.state.joinFriendTo||'') !== ''`, STEP,
+    // joinFriendTo lives only until the page RELOADS for the new world (index.html: "the whole
+    // switch is already a page reload"), a few hundred ms after it is set -- a 250 ms poll
+    // caught it on lucky runs and missed it on the rest. Leaving the world is the same yes.
+    await guest.client.waitFor(`(window.omw.state.joinFriendTo||'') !== '' || String(window.omw.state.state||'') !== 'Joined'`, STEP,
       'the server allowed the join while they were friends');
     const guestRow =
       `(JSON.parse(window.omw.state.players || '[]')
