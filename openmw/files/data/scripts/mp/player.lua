@@ -258,6 +258,17 @@ local function onSelfState(e)
     end
 end
 
+-- The UI mode, mirrored ON CHANGE (it used to be written only on a key press, so a dialogue
+-- the engine opened by itself -- an arrest, s126 -- was invisible to the scenarios).
+local lastUiModeSaid = nil
+local function uiModeMirrorTick()
+    local ok, mode = pcall(function() return tostring(I.UI.getMode() or 'none') end)
+    if ok and mode ~= lastUiModeSaid then
+        lastUiModeSaid = mode
+        mp.set('uiMode', mode)
+    end
+end
+
 local function movementTick()
     if mp.status().state ~= 'Joined' then
         lastCellKey = nil -- rejoin resends PlayerCellChange (required to become visible)
@@ -268,6 +279,7 @@ local function movementTick()
     inputTick(now) -- Phase 3: raw intent to the peer, beside the pose stream
     identity.tick(now) -- M2: appearance/equipment/stats/inventory diff broadcasts
     identity.equipRetryTick(now)
+    uiModeMirrorTick()
 
     -- PlayerCellChange: immediately once Joined (before it we are invisible and receive no
     -- batches), then on every cell change -- AND on any single-frame position jump. A jump

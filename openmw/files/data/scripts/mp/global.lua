@@ -876,6 +876,7 @@ local function avatarArrestTick()
                 for _, guard in ipairs(guards) do
                     local okv, valid = pcall(function() return guard:isValid() end)
                     if okv and valid then
+                        print(string.format('[mp] arrest: %s reached avatar #%s', tostring(guard.recordId), tostring(id)))
                         mp.sendEvent('PlayerArrest', { id = id, guard = guard })
                     end
                 end
