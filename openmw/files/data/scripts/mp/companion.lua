@@ -30,6 +30,7 @@ local reportedId = nil
 -- an empty combat state, so nothing there knew a fight was on: the player could open the rest
 -- dialog mid-bite. Reported on change like the follow, and relayed the same way (ActorAI).
 local reportedCombat = nil
+local escortSaid = 0 -- peer diagnostic cadence (above)
 
 -- ...and where we are travelling, if a script sent us. On a puppet the AI never runs, so the
 -- top of the package stack is static -- the only thing that can change it is a dialogue result
@@ -86,6 +87,24 @@ return {
             if now < nextPoll then return end
             nextPoll = now + POLL
 
+            -- Diagnostic on the PEER only: an escorting/following NPC says where it is with
+            -- its charge every few seconds (s123). Silent for everything else.
+            local mpapi = require('openmw.mp')
+            if mpapi.isSystem and mpapi.isSystem() then
+                local okA, pkg = pcall(function() return I.AI.getActivePackage() end)
+                if okA and pkg and (pkg.type == 'Escort' or pkg.type == 'Follow') then
+                    escortSaid = (escortSaid or 0) + 1
+                    if escortSaid % 5 == 1 then
+                        local t = pkg.target
+                        local okd, d = pcall(function() return (t.position - self.position):length() end)
+                        local okp, dp = pcall(function() return (pkg.destPosition - self.position):length() end)
+                        print(string.format('[mp] %s on peer: %s leader=%s at %s; dest %s away; pos=(%.0f,%.0f,%.0f)',
+                            pkg.type, tostring(self.object.recordId), t and tostring(t.recordId) or 'none',
+                            okd and string.format('%.0f', d) or '?', okp and string.format('%.0f', dp) or '?',
+                            self.position.x, self.position.y, self.position.z))
+                    end
+                end
+            end
             -- Combat first: independent of following, and its own change key.
             local foe = fightingPlayer()
             local foeId = foe and foe.id or nil
@@ -110,6 +129,13 @@ return {
             reportedId = id
             -- Scenario mirror (s114): the last follow fact this actor reported.
             pcall(function() require('openmw.mp').set('companionReport', tostring(self.object.recordId) .. '=' .. tostring(id)) end)
+            -- On the peer this is the holder's own NPC changing its mind: worth a line (s123).
+            local mpapi = require('openmw.mp')
+            if mpapi.isSystem and mpapi.isSystem() then
+                local okA, pkg = pcall(function() return I.AI.getActivePackage() end)
+                print(string.format('[mp] companion report on peer: %s -> %s active=%s dest=%s', tostring(self.object.recordId), tostring(id),
+                    tostring(okA and pkg and pkg.type), tostring(okA and pkg and pkg.destPosition)))
+            end
 
             -- The GLOBAL script decides whether we are the cell's authority and whether this
             -- is worth putting on the wire. This script only knows a fact about itself.
