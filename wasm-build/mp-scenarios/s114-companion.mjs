@@ -31,6 +31,11 @@ export default async function run(ctx) {
   const start = pa[rec];
   ctx.log(`A recruits "${rec}" at (${Math.round(start.x)},${Math.round(start.y)})`);
 
+  // Stand beside them first: you recruit by talking, and AiFollow activates only with the
+  // target in range and in sight (mwmechanics/aifollow.cpp), on the peer where the avatar is.
+  await a.cmd(`snapto:${Math.round(start.x + 80)},${Math.round(start.y)},${Math.round(start.z + 8)}`);
+  await ctx.sleep(4_000);
+
   // Recruit: the dialogue result (Follow stacked on A's copy of the NPC). The conversation
   // itself pauses the game, and companion.lua only polls once it is closed -- as in play,
   // where the claim goes out after Goodbye. The server admits a follow claim on proximity.
@@ -39,14 +44,7 @@ export default async function run(ctx) {
   await a.cmd(`followprobe:${rec}`);
   await ctx.sleep(1_000);
   ctx.log(`A followProbe=${await a.eval('window.omw.state.followProbe')}`);
-  const creature = Object.keys(pa).find((r) => /mudcrab|scrib|rat|slaughterfish|kwama/.test(r));
-  if (creature) {
-    await a.cmd(`followprobe:${creature}`); await ctx.sleep(1_000);
-    ctx.log(`A followProbe on creature ${creature}=${await a.eval('window.omw.state.followProbe')}`);
-  }
   ctx.log('A luaErrors: ' + a.luaErrors().slice(-6).join(' || '));
-  const tail = (a.logTail ? a.logTail(80) : '').split(String.fromCharCode(10)).filter((l) => !/Local map|navmesh|audio/.test(l)).slice(-25);
-  ctx.log('A tail: ' + tail.join(' || '));
 
   // Walk away -- to the spawn point, known dry land (an arbitrary offset put A in the bay).
   // The companion must come along -- on B's screen, which did nothing.
