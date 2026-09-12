@@ -305,6 +305,39 @@ do
     s:find('MP_SocialNotice = function', 1, true) ~= nil)
 end
 
+-- ============================== every server->client event, generically, the same way
+-- The two hand-checked above were found by a diff; this is the diff, kept. Every
+-- sendEvent('X') / relayCell('X') / relayAll('X') in server/src must meet an MP_X handler
+-- somewhere in scripts/mp (or a C++ MP_X in mwmp/). One with none is dropped in silence.
+print('client -- every server->client event has an MP_ handler')
+do
+  local srv = {}
+  local ls = io.popen("find ./server/src -name '*.ts' -not -path '*/test/*'")
+  for path in ls:lines() do
+    local f = io.open(path); if f then srv[#srv + 1] = f:read('*a'); f:close() end
+  end
+  ls:close()
+  local sent, seen = {}, {}
+  for _, src in ipairs(srv) do
+    for name in src:gmatch("sendEvent%('([%w_]+)'") do if not seen[name] then seen[name] = true; sent[#sent + 1] = name end end
+    for name in src:gmatch("relay%a*%([^)]-'([%u][%w_]+)'") do if not seen[name] then seen[name] = true; sent[#sent + 1] = name end end
+  end
+  local lua = {}
+  local lsl = io.popen("find ./openmw/files/data/scripts/mp -name '*.lua'")
+  for path in lsl:lines() do local f = io.open(path); if f then lua[#lua + 1] = f:read('*a'); f:close() end end
+  lsl:close()
+  local cpp = {}
+  local lsc = io.popen("find ./openmw/apps/openmw/mwmp -name '*.cpp'")
+  for path in lsc:lines() do local f = io.open(path); if f then cpp[#cpp + 1] = f:read('*a'); f:close() end end
+  lsc:close()
+  local all = table.concat(lua, string.char(10)) .. string.char(10) .. table.concat(cpp, string.char(10))
+  local missing = {}
+  for _, name in ipairs(sent) do
+    if not all:find('MP_' .. name, 1, true) then missing[#missing + 1] = name end
+  end
+  check(#sent .. ' server->client events all have a handler', #sent > 20 and #missing == 0, table.concat(missing, ', '))
+end
+
 -- ================================== container refusals are explained, and stay explained
 -- A refused container op UNDOES the optimistic local take, so the item disappears out of the
 -- player's inventory a moment after they picked it up. Silence there reads as the game eating
