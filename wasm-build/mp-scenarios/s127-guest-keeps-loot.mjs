@@ -47,7 +47,19 @@ export default async function run(ctx) {
     const guestFriends = JSON.parse(await guest.client.eval("window.omw.state.friends||'[]'"));
     await guest.client.cmd(`joinfriend:${guestFriends[0].acct}`);
     const guestRow = `(JSON.parse(window.omw.state.players || '[]').find(function (p) { return p.name === ${JSON.stringify(guestHandle)}; }) || {})`;
-    await host.client.waitFor(`${guestRow}.id !== undefined`, 120_000, "the guest is inside the host's world");
+    // A RETAIL reload: the page reboots into the host's world and streams the game data again,
+    // and the socket is dialled only once the world is up (global.lua: first frame). Minutes.
+    try {
+      await host.client.waitFor(`${guestRow}.id !== undefined`, 300_000, "the guest is inside the host's world");
+    } catch (e) {
+      const lines = (guest.client.logTail ? guest.client.logTail(4000) : '').split(String.fromCharCode(10))
+        .filter((l) => /session state|Starting a new game|Loading cell|changing world|world change|ticket|Joined|locker/i.test(l)).slice(-25);
+      ctx.log('guest log through the switch: ' + lines.join(' || '));
+      const raw = (guest.client.logTail ? guest.client.logTail(60) : '').split(String.fromCharCode(10)).filter((l) => !/Local map|GL_INVALID|RigGeometry/.test(l)).slice(-30);
+      ctx.log('guest raw tail: ' + raw.join(' || '));
+      ctx.log(`guest page: state=${await guest.client.eval('window.omw.state.state')} href=${await guest.client.eval('location.href.slice(0,200)')} jsErrors=${JSON.stringify((guest.client.jsErrors ? guest.client.jsErrors() : []).slice(-3))}`);
+      throw e;
+    }
     await guest.client.waitFor('window.omw.state.state === "Joined"', 60_000, 'the guest is joined (after the redial)');
     // The switch reloaded the page; the harness's locker session lives on window and must be
     // granted again or the way HOME dies at "no locker session" (a real player's fragment
