@@ -748,6 +748,12 @@ local function dispatch(cmd)
         -- companion chain (companion.lua -> ActorAI claim -> holder) takes it from there (s114).
         local followRec = cmd:match('^follow:(.+)$')
         if followRec then core.sendGlobalEvent('mpTestFollow', { id = followRec }) end
+        -- escort:<record>:x,y,z / travel:<record>:x,y,z: the other two dialogue results
+        -- ("AIEscort player 0 x y z", "AITravel x y z") stacked on the local copy (s123, s124).
+        local escRec, ex, ey, ez = cmd:match('^escort:(.+):(-?[%d.]+),(-?[%d.]+),(-?[%d.]+)$')
+        if escRec then core.sendGlobalEvent('mpTestFollow', { id = escRec, escort = { x = tonumber(ex), y = tonumber(ey), z = tonumber(ez) } }) end
+        local trvRec, tx, ty, tz = cmd:match('^travel:(.+):(-?[%d.]+),(-?[%d.]+),(-?[%d.]+)$')
+        if trvRec then core.sendGlobalEvent('mpTestFollow', { id = trvRec, travel = { x = tonumber(tx), y = tonumber(ty), z = tonumber(tz) } }) end
         local probeRec = cmd:match('^followprobe:(.+)$')
         if probeRec then core.sendGlobalEvent('mpTestFollow', { id = probeRec, probe = true }) end
         if cmd == 'dlg:release' then
