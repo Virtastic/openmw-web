@@ -58,7 +58,7 @@ s30 (objects), s50 (combat), s52 (pvp off), s60/s60b (journal), s62 (quest vars)
 (records), s73/s75 (topics), s69 (peer outage). s66 (PvP damage lands on the driving victim's avatar and the peer's bars reach the owner --
 re-armed 09-11, PASS), s63 (rewritten on the friend path 09-12: a guest borrows the host's
 journal, their deed lands in the host's log, and their own campaign is untouched at home -- PASS).
-SKIP by design: (rewrite pending), s40/s42 (host-load guard). Anything below marked OK without a
+SKIP by design: s40/s42 (host-load guard). Anything below marked OK without a
 scenario is a code trace only.
 
 ## 1. Session
@@ -168,7 +168,7 @@ scenario is a code trace only.
 
 | Mechanism | MP path | Status |
 |---|---|---|
-| Journal | shared per instance; guests borrow the host's | OK |
+| Journal | shared per instance; guests borrow the host's | OK. Live: s63 (friend path, retail) |
 | Guest loot goes home | inventory diffs write to the GUEST's charId; the home world restores it | Live: s127 (a vanilla item) -- FAILED first, twice, for real: (1) the first dial went out before the cell load and a slow retail load killed the session as BAD_PROTO; (2) the reboot into the friend's world wrote start=Seyda+Neen and the boot reader did not decode the '+', so the engine died at new game and the page sat at the loading screen forever. GAP: a record MINTED in the host's world (an enchanted item, a potion the host brewed) is a per-world record id; the guest's home world has no definition for it and the restore drops it silently. Fix needs record definitions to travel with the character doc |
 | Topics learned | shared with the journal | OK |
 | Globals (quest gates) | peer's write wins within the driving window; dialogue-result names client-owned | OK |
