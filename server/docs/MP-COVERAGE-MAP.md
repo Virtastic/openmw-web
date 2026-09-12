@@ -23,7 +23,11 @@ creatures named once, built on both clients), s108 (trade both ways, one invento
 step), s109 (two players kill a peer-named wild creature -- FAILED first: every client rolled
 a private ghost of each creature near the spawn before the spawn gate was down; fixed the
 same day, engine default + Lua), s110 (a provoked wild creature's blows reach the player: peer
-avatar damage -> SelfStats, no hit injection on the victim), s95 (play with friends -- FAILED first: every
+avatar damage -> SelfStats, no hit injection on the victim), s111 (two players loot the same kill:
+canonical corpse, one take wins, by net id), s112 (a client heal sticks against the peer's bars --
+FAILED twice first: the heal was reset before it was reported, then the avatar's stat write
+threw in a pcall), s113 (a cast costs magicka and a potion restores it -- FAILED first: an echoed
+report refilled the bar), s95 (play with friends -- FAILED first: every
 join refused not_open, fixed the same day), s100 (invite across worlds), s102 (owner goes
 solo), s61 (dialogue lock), s72 (merchant purse), s03 (chat), s10 (movement puppets), s20
 (identity), s21 (rejoin), s80 (resume), s81 (reconnect), s70 (time), s48/s56 (world switch),
@@ -86,8 +90,8 @@ scenario is a code trace only.
 
 | Action | MP path | Status |
 |---|---|---|
-| hp/mp/ft | peer-authored while driving; client may raise (heal); magicka client both ways | FIXED 09-11 (free casting) |
-| Attributes/skills/level, training, level-up | client diff -> doc -> AvatarState | OK |
+| hp/mp/ft | peer-authored while driving; client may raise (heal); magicka client both ways. identity.lua measures the LOCAL change per frame and claims only the changed bars on top of the peer's last report (an echoed snapshot used to undo bites and refill casts; a heal was reset before the 4 Hz diff saw it) | FIXED 09-11 twice. Live: s112 (heal sticks), s113 (cast costs, potion restores) |
+| Attributes/skills/level, training, level-up | client diff -> doc -> AvatarState -> avatar.lua mpAvatarStats (Self context: every stat setter is Self-gated, the global-script write threw inside a pcall and the avatar stayed a level-1 template with a template health pool) | FIXED 09-11 |
 | Skill use from cancelled swings | skill use runs before the Lua cancel | OK |
 | Diseases (caught) | AvatarEffectsBatch -> doc.spells + owner | FIXED 09-11 |
 | Vampirism / lycanthropy | spell list / appearance; werewolf form set on rebuilt bodies | FIXED 09-11 (looked human) |
