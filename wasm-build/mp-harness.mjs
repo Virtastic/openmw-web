@@ -13,7 +13,7 @@
 // kills ONLY the PIDs this harness spawned — never any pkill pattern (repo hard rule: the
 // user's real Chrome must be untouchable; every client runs in a throwaway --user-data-dir).
 import { spawn, execSync } from 'node:child_process';
-import { cpSync, existsSync, mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { cpSync, existsSync, mkdtempSync, readdirSync, rmSync, statSync, symlinkSync } from 'node:fs';
 import net from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -75,7 +75,7 @@ async function waitHttp(url, timeoutMs, what) {
 // OMW_WORLD_MODE / OMW_WORLD_ID) rather than config-driven, so it cannot be set through
 // serverRules. Exported as a function receiving the run id, because an owner is an ACCOUNT
 // NAME and account names carry the run-id suffix.
-async function startGameServer(extraRules = '', extraEnv = {}) {
+async function startGameServer(extraRules = '', extraEnv = {}, opts = {}) {
   // testhost.mjs, NOT server.mjs. main.ts refuses to boot without real game data, a peer
   // binary and a server password (the tier-2 mandate) — right for a deployment, fatal for a
   // harness whose whole point is a throwaway data dir with none of those. When that landed,
@@ -127,6 +127,23 @@ async function startGameServer(extraRules = '', extraEnv = {}) {
     // patched it locally; it belongs here, once, for every scenario.
     ['limits', ['maxConnsPerIp = 64', 'loginPerMinPerIp = 100000']],
   ]);
+  // THE SERVER'S OWN SIM PEER (`export const managedPeer = true`). Every other scenario
+  // spawns a peer by hand at one cell; that never exercises the production lifecycle --
+  // simPeerPass anchoring every occupied cell, INTERIORS held as room anchors, restart and
+  // reaping -- so a room nobody simulated (s118) was invisible to the harness. With this the
+  // server sees game data, spawns the peer itself and anchors wherever the players go.
+  if (opts.managedPeer && process.env.OMW_SIM_PEER_BIN && existsSync(process.env.OMW_SIM_PEER_BIN)) {
+    syncPeerScripts();
+    const gd = join(ROOT, 'play', 'mwdata');
+    try { symlinkSync(gd, join(dataDir, 'gamedata'), 'dir'); } catch (e) { console.log('[harness] gamedata symlink failed: ' + e.message); }
+    sections.set('simPeer', [
+      `binary = ${JSON.stringify(process.env.OMW_SIM_PEER_BIN)}`,
+      `configDir = ${JSON.stringify(join(dataDir, 'peer-config'))}`,
+      `userDataDir = ${JSON.stringify(join(dataDir, 'peer-user'))}`,
+      'startCell = "-2,-9"', 'maxPeers = 1', 'anchorIdleSec = 60', 'idleReapMs = 600000',
+      'startTimeoutMs = 240000', 'restartBackoffMs = 5000',
+    ]);
+  }
   // Default section is `rules`: scenarios predating the merge export a bare key
   // (`serverRules = 'pvp = true'`) because the old writer appended straight after the
   // [rules] table. Honour that implicit contract rather than throwing — otherwise those
@@ -256,6 +273,24 @@ async function ensurePlayServer() {
 // declaring it aborts startup with "Content file specified more than once", which is a
 // confusing way to spend an afternoon. Keep this in step with buildPeerCfg rather than
 // inventing a second config.
+// THE PEER MUST RUN THE SCRIPTS UNDER TEST, not the ones baked into its image (see the note
+// in startSimPeer). Shared by the hand-spawned peer and the server-managed one.
+function syncPeerScripts() {
+  const peerScripts = '/usr/local/share/openmw/resources/vfs/scripts/mp';
+  try {
+    if (existsSync(peerScripts)) {
+      rmSync(peerScripts, { recursive: true, force: true });
+      cpSync(join(ROOT, 'openmw', 'files', 'data', 'scripts', 'mp'), peerScripts, { recursive: true });
+      // The script LIST too: which types carry which script is part of what is under test
+      // (companion.lua on NPCs was a one-line change to this file).
+      cpSync(join(ROOT, 'openmw', 'files', 'data', 'mp.omwscripts'), join(dirname(dirname(peerScripts)), 'mp.omwscripts'));
+    }
+  } catch (e) {
+    console.log(`[harness] WARNING: could not sync mp scripts into the peer (${e.message}). `
+      + 'The peer will run its baked copy, so client-script changes will not be under test.');
+  }
+}
+
 function startSimPeer(port, password, cellKey, gameDataDir, watch) {
   const bin = process.env.OMW_SIM_PEER_BIN;
   if (!bin || !existsSync(bin)) return null;
@@ -290,19 +325,7 @@ function startSimPeer(port, password, cellKey, gameDataDir, watch) {
   // correctly and the peer fails on old code, so the feature looks broken in a way that points
   // at neither. Cost several rebuild cycles to spot — a 0-based index fix in combat.lua looked
   // inert because only half the fleet had it.
-  const peerScripts = '/usr/local/share/openmw/resources/vfs/scripts/mp';
-  try {
-    if (existsSync(peerScripts)) {
-      rmSync(peerScripts, { recursive: true, force: true });
-      cpSync(join(ROOT, 'openmw', 'files', 'data', 'scripts', 'mp'), peerScripts, { recursive: true });
-      // The script LIST too: which types carry which script is part of what is under test
-      // (companion.lua on NPCs was a one-line change to this file).
-      cpSync(join(ROOT, 'openmw', 'files', 'data', 'mp.omwscripts'), join(dirname(dirname(peerScripts)), 'mp.omwscripts'));
-    }
-  } catch (e) {
-    console.log(`[harness] WARNING: could not sync mp scripts into the peer (${e.message}). `
-      + 'The peer will run its baked copy, so client-script changes will not be under test.');
-  }
+  syncPeerScripts();
   const proc = spawn(bin, [
     '--config', cfgDir, '--replace', 'config', '--user-data', userDir,
     '--skip-menu', '--start', cellKey, '--no-sound',
@@ -756,10 +779,10 @@ for (const file of files) {
   console.log(`\n=== scenario ${file} ===`);
   try {
     // Import first: a scenario may declare server rules it needs (e.g. pvp = true).
-    const { default: run, serverRules, serverEnv, critical } = await import(pathToFileURL(join(SCENARIO_DIR, file)));
+    const { default: run, serverRules, serverEnv, critical, managedPeer } = await import(pathToFileURL(join(SCENARIO_DIR, file)));
     isCritical = !!critical;
     const envForRun = typeof serverEnv === 'function' ? serverEnv(RUN_ID) : (serverEnv ?? {});
-    server = await startGameServer(serverRules, envForRun);
+    server = await startGameServer(serverRules, envForRun, { managedPeer: !!managedPeer });
     await run({
       // CAPTURE ANY CHILD A SCENARIO SPAWNS. Gateways were started with stdio:'ignore', so a
       // gateway that came up healthy while every world it spawned crashed on startup looked
@@ -785,7 +808,11 @@ for (const file of files) {
       // A REAL simulating peer, for scenarios that need NPCs to move rather than just a cell to
       // have an owner. Returns null when the binary is absent (the plain harness image), so a
       // scenario can skip cleanly instead of failing.
-      startSimPeer: (cellKey, gameDataDir) => startSimPeer(
+      // Under `managedPeer` the SERVER spawns and anchors it (simPeerPass); the call is
+      // answered so the scenario's skip-guard sees a peer, and nothing is spawned twice.
+      startSimPeer: (cellKey, gameDataDir) => (managedPeer && process.env.OMW_SIM_PEER_BIN && existsSync(process.env.OMW_SIM_PEER_BIN))
+        ? { managed: true, stop: () => {} }
+        : startSimPeer(
         server.port, SERVER_PASSWORD, cellKey,
         gameDataDir ?? join(ROOT, 'play', 'mwdata'),
         (label, proc) => {

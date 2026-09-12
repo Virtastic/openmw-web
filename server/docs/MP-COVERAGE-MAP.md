@@ -32,7 +32,8 @@ screen -- FAILED first: companion.lua was never on an NPC), s115 (a conjurer's S
 stands on both screens as one net actor: owner active spell -> avatar -> peer summons -> named),
 s116 (a spell at another player: parked on the puppet, forwarded, applied to the avatar, bars
 back), s117 (a companion comes indoors with you through a load door and your friend finds
-you both there), s95 (play with friends -- FAILED first: every
+you both there), s118 (a fight INDOORS: the peer holds the room as an anchor -- the first scenario
+to run the server's own peer lifecycle, `managedPeer`; a hand-spawned peer never anchors a room), s95 (play with friends -- FAILED first: every
 join refused not_open, fixed the same day), s100 (invite across worlds), s102 (owner goes
 solo), s61 (dialogue lock), s72 (merchant purse), s03 (chat), s10 (movement puppets), s20
 (identity), s21 (rejoin), s80 (resume), s81 (reconnect), s70 (time), s48/s56 (world switch),
