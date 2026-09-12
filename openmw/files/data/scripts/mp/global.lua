@@ -2332,7 +2332,12 @@ local eventHandlers = {
     -- without this there is no automated way to exercise it at all.
     mpTestCastAt = function(data)
         local victim = nil
+        if data.playerId then
+            local p = puppets[data.playerId]
+            victim = p and p.obj:isValid() and p.obj or nil
+        end
         for _, obj in ipairs(world.activeActors) do
+            if victim then break end
             if obj:isValid() and obj.recordId == data.record then victim = obj break end
         end
         if not victim then
@@ -2377,6 +2382,21 @@ local eventHandlers = {
         else
             mp.set('castAt', 'cast:' .. tostring(testCastSpellId))
         end
+    end,
+
+    -- Cast a spell on YOURSELF, the way the engine records it: an active spell on the player
+    -- (a summon, a buff). Whether it does anything depends on the owner->avatar channel.
+    mpTestSelfCast = function(data)
+        local player = playerScript()
+        if not player then return end
+        local ok, err = pcall(function()
+            local spell = core.magic.spells.records[data.id]
+            if not spell then error('no such spell: ' .. tostring(data.id)) end
+            local indexes = {}
+            for i = 1, #spell.effects do indexes[i] = i - 1 end
+            types.Actor.activeSpells(player):add({ id = data.id, effects = indexes, caster = player })
+        end)
+        pcall(function() mp.set('selfCast', ok and ('cast:' .. tostring(data.id)) or ('failed:' .. tostring(err))) end)
     end,
 
     -- M4 test hook: kill a specific cell NPC (holder side drives the death edge).

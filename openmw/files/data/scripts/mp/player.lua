@@ -635,6 +635,16 @@ local function dispatch(cmd)
         if castRec then
             core.sendGlobalEvent('mpTestCastAt', { record = castRec, magnitude = tonumber(castMag) })
         end
+        -- castp:<playerId>:<magnitude>: the same magic path at another PLAYER's puppet (s116).
+        local castPid, castPMag = cmd:match('^castp:(%d+):([%d.]+)$')
+        if castPid then
+            core.sendGlobalEvent('mpTestCastAt', { playerId = tonumber(castPid), magnitude = tonumber(castPMag) })
+        end
+        -- selfcast:<spellId>: what casting a spell on yourself does locally -- an active spell
+        -- on the player's own body (a summon, a buff). The avatar receives it through
+        -- PlayerActiveSpells and the peer acts on it (s115).
+        local selfSpell = cmd:match('^selfcast:(.+)$')
+        if selfSpell then core.sendGlobalEvent('mpTestSelfCast', { id = selfSpell }) end
         local killNpc = cmd:match('^killnpc:(.+)$')
         if killNpc then core.sendGlobalEvent('mpKillNpc', { id = killNpc }) end
         if cmd == 'door:toggle' then core.sendGlobalEvent('mpDoorToggle', {}) end
