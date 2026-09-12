@@ -129,12 +129,17 @@ function handleStatsDynamic(ctx: StateCtx, player: Player, body: LTable): boolea
   const hp = parseDynamicStat(body.get('hp'));
   const mp = parseDynamicStat(body.get('mp'));
   const ft = parseDynamicStat(body.get('ft'));
-  if (!hp || !mp || !ft) return false;
+  if (!hp && !mp && !ft) return false;
   // Phase 4A: while the PEER is reporting this player's avatar bars, the client's own
   // assertion is ignored -- one writer, same shape as the movement freshness gate. The
   // client's claim resumes ruling the moment peer reports stop (peer down, input tier
   // inactive for this player), so degraded mode needs no switchover signal here either.
   if (player.peerStatsAt !== undefined && Date.now() - player.peerStatsAt <= PEER_STATS_FRESH_MS) {
+    // A CLAIM NAMES ONLY WHAT THE CLIENT CHANGED. identity.lua sends just the bars it has a
+    // local heal or spend for while the peer rules; a bar it merely echoes from the peer's
+    // last report is omitted. Echoed, a report already overtaken by damage on the peer
+    // re-raised the health (the bite undone) and re-filled the magicka (the cast free)
+    // -- s113 measured the spend land at 12/50 and bounce back to 50/50 three seconds later.
     // CLIENT MAY HEAL, PEER MAY HURT. Potions, resting and self-cast healing all happen on
     // the client's engine (the avatar drinks nothing until the intent tier lands), so a
     // client assertion that RAISES a bar is a restoration and must reach the avatar -- or
@@ -161,7 +166,7 @@ function handleStatsDynamic(ctx: StateCtx, player: Player, body: LTable): boolea
       const want = Math.max(0, Math.min(v.c, have.b));
       return Math.abs(want - have.c) > 0.5 ? { c: want, b: have.b } : undefined;
     };
-    const r = { hp: raise('hp', hp), mp: spend(mp), ft: raise('ft', ft) };
+    const r = { hp: hp && raise('hp', hp), mp: mp && spend(mp), ft: ft && raise('ft', ft) };
     if (!r.hp && !r.mp && !r.ft) return true; // nothing restored: consumed, not applied
     // Budget the HEALTH restoration (the one that decides whether you die).
     const gained = r.hp ? r.hp.c - (cur?.hp?.c ?? r.hp.c) : 0;
@@ -192,6 +197,8 @@ function handleStatsDynamic(ctx: StateCtx, player: Player, body: LTable): boolea
   // and closes the tab in the same second would otherwise rejoin alive — a progress bug and
   // an exploit at once. Being alive is still cheap (sweep), so this costs a write per death,
   // not per tick.
+  // Client-authoritative (nobody simulating this player): the full triple is the contract.
+  if (!hp || !mp || !ft) return false;
   const died = hp.c <= 0;
   ctx.store.update(player.charId, (doc) => {
     doc.stats = { ...doc.stats, dynamic: { hp, mp, ft } };

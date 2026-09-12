@@ -138,7 +138,7 @@ identity.notePeerBars(40)      -- the peer hurts us: a report LOWER than local
 env.dyn.health.current = 40
 identity.tick(0.60)
 got = dynEvents(env.calls)
-check('a peer-authored drop is not re-claimed as a heal', got[#got].hp.c == 40, 'hp=' .. tostring(got[#got].hp.c))
+check('a peer-authored drop is neither re-claimed nor echoed', #got == n0 + 1, 'events=' .. #got)
 identity.notePeerBars(nil, 50, nil) -- the peer says magicka 50/50
 env.dyn.magicka.current = 50
 identity.tick(0.90)
