@@ -31,7 +31,8 @@ report refilled the bar), s114 (a recruited NPC follows the player on the OTHER 
 screen -- FAILED first: companion.lua was never on an NPC), s115 (a conjurer's Summon Scamp
 stands on both screens as one net actor: owner active spell -> avatar -> peer summons -> named),
 s116 (a spell at another player: parked on the puppet, forwarded, applied to the avatar, bars
-back), s95 (play with friends -- FAILED first: every
+back), s117 (a companion comes indoors with you through a load door and your friend finds
+you both there), s95 (play with friends -- FAILED first: every
 join refused not_open, fixed the same day), s100 (invite across worlds), s102 (owner goes
 solo), s61 (dialogue lock), s72 (merchant purse), s03 (chat), s10 (movement puppets), s20
 (identity), s21 (rejoin), s80 (resume), s81 (reconnect), s70 (time), s48/s56 (world switch),
@@ -65,7 +66,7 @@ scenario is a code trace only.
 | Mark/Recall/Intervention/scripted PositionCell | cell change; far-travel limiter is a signal only | OK |
 | Levitate / Water Walk / Slowfall / Fortify Speed | PlayerActiveSpells -> avatar | FIXED 09-11 |
 | Swimming, drowning, falling | avatar physics; peer-authored bars | OK |
-| Followers through doors | peer moves followers with the avatar; exterior key -> teleport arg | FIXED 09-10 |
+| Followers through doors | peer moves followers with the avatar; exterior key -> teleport arg | FIXED 09-10. Live: s117 |
 
 ## 3. Combat
 
