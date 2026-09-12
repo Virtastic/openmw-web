@@ -732,6 +732,9 @@ local function dispatch(cmd)
             core.sendGlobalEvent('mpSelfSnap',
                 { x = tonumber(snX), y = tonumber(snY), z = tonumber(snZ) })
         end
+        -- takeowned: pick up the nearest item in this cell that BELONGS to someone -- a theft,
+        -- through the same activation the hand uses, with the owner in the room (s125).
+        if cmd == 'takeowned' then core.sendGlobalEvent('mpTestTakeOwned', {}) end
         local bountyN = cmd:match('^bounty:(%d+)$')
         if bountyN then core.sendGlobalEvent('mpTestBounty', { n = tonumber(bountyN) }) end
         local facId, facRank = cmd:match('^faction:([^:]+):(%d+)$')
