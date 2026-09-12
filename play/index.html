@@ -1239,7 +1239,11 @@ window.omw = (function(){
    arguments: (function(){
      try {
        var m = /[?&]start=([^&]+)/.exec(location.search);
-       if (m) return ['--skip-menu', '--start', decodeURIComponent(m[1])];
+       // '+' IS A SPACE HERE. A world change rebuilds the query with URLSearchParams, which
+       // writes "Seyda Neen" as start=Seyda+Neen; decodeURIComponent leaves the '+', and the
+       // engine died at boot with "Interior cell is not found: 'Seyda+Neen'" -- every join of a
+       // friend's world from a launch that named a cell with a space (s127).
+       if (m) return ['--skip-menu', '--start', decodeURIComponent(m[1].replace(/\+/g, '%20'))];
        // Multiplayer boot: never show the title menu — the launcher's character loader IS the
        // menu now. Keyed on ?mp= (survives a reload; the fragment gets scrubbed) so a reload
        // rejoins straight in-world via the parked resume token instead of dead-ending at the
@@ -1255,7 +1259,7 @@ window.omw = (function(){
          // window standing somewhere they did not choose. The server still teleports to the
          // exact coordinates; this just makes the starting CELL the right one.
          var ms = /[#&]mpstart=([^&]+)/.exec(location.hash || '');
-         return ms ? ['--skip-menu', '--start', decodeURIComponent(ms[1])] : ['--skip-menu'];
+         return ms ? ['--skip-menu', '--start', decodeURIComponent(ms[1].replace(/\+/g, '%20'))] : ['--skip-menu'];
        }
      } catch (e) {}
      return [];
