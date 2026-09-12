@@ -28,7 +28,10 @@ canonical corpse, one take wins, by net id), s112 (a client heal sticks against 
 FAILED twice first: the heal was reset before it was reported, then the avatar's stat write
 threw in a pcall), s113 (a cast costs magicka and a potion restores it -- FAILED first: an echoed
 report refilled the bar), s114 (a recruited NPC follows the player on the OTHER player's
-screen -- FAILED first: companion.lua was never on an NPC), s95 (play with friends -- FAILED first: every
+screen -- FAILED first: companion.lua was never on an NPC), s115 (a conjurer's Summon Scamp
+stands on both screens as one net actor: owner active spell -> avatar -> peer summons -> named),
+s116 (a spell at another player: parked on the puppet, forwarded, applied to the avatar, bars
+back), s95 (play with friends -- FAILED first: every
 join refused not_open, fixed the same day), s100 (invite across worlds), s102 (owner goes
 solo), s61 (dialogue lock), s72 (merchant purse), s03 (chat), s10 (movement puppets), s20
 (identity), s21 (rejoin), s80 (resume), s81 (reconnect), s70 (time), s48/s56 (world switch),
