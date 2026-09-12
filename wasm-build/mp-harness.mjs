@@ -136,6 +136,11 @@ async function startGameServer(extraRules = '', extraEnv = {}, opts = {}) {
     syncPeerScripts();
     const gd = join(ROOT, 'play', 'mwdata');
     try { symlinkSync(gd, join(dataDir, 'gamedata'), 'dir'); } catch (e) { console.log('[harness] gamedata symlink failed: ' + e.message); }
+    // THE PEER'S CREDENTIAL, IN THE SHARED CONFIG TOO. This server gets it as --server-password;
+    // a world the gateway spawns gets no argv and reads <shared>/config.toml (loadConfig merges
+    // it) -- so with this line every gateway world spawns and authenticates its own peer, which
+    // is how a guest gets simulated NPCs in a friend's world (s128).
+    sections.get('server').push(`password = ${JSON.stringify(SERVER_PASSWORD)}`);
     sections.set('simPeer', [
       `binary = ${JSON.stringify(process.env.OMW_SIM_PEER_BIN)}`,
       `configDir = ${JSON.stringify(join(dataDir, 'peer-config'))}`,

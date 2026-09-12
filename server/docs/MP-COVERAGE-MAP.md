@@ -50,7 +50,9 @@ sent, on both screens), s125 (theft: an owned bottle taken in the shop with the 
 the granted take runs the engine's ActionTake, the bounty rises, and the party shares it), s126 (the guard catches you: the peer's guard
 reaches the avatar, PlayerArrest travels, the arrest dialogue opens on the wanted player's client), s127 (a GUEST takes their loot home: joins a
 friend's world with retail data, picks up what the host dropped, is sent home when the host closes up, and
-still has it), s95 (play with friends -- FAILED first: every
+still has it), s128 (a guest FIGHTS in a friend's world: through the real door, the host's gateway
+world spawns its own peer -- managedPeer now reaches gateway worlds via the shared config -- and host
+and guest kill the same NPC together), s95 (play with friends -- FAILED first: every
 join refused not_open, fixed the same day), s100 (invite across worlds), s102 (owner goes
 solo), s61 (dialogue lock), s72 (merchant purse), s03 (chat), s10 (movement puppets), s20
 (identity), s21 (rejoin), s80 (resume), s81 (reconnect), s70 (time), s48/s56 (world switch),
