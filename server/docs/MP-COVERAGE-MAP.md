@@ -13,7 +13,12 @@ does that changes the world has to travel; anything the peer does to a player ha
 back. Status: OK = traced and correct; FIXED = broken until the pass found it (date); GAP =
 known and recorded; N/A = does not exist in single player either.
 
-## 0. Live evidence (native peer + two browser clients, retail data, 2026-09-11)
+## 0. Live evidence (native peer + two browser clients, retail data, 2026-09-11/12)
+
+FULL SWEEP 2026-09-12 05:26-07:40 on the engine baked from `5a0b9e3d`: 85 scenarios, 80 PASS,
+3 SKIP by design (s43 host-load, s57, s63), 2 that failed in the sweep and pass alone (s42 crowded
+cell under host load, s47 a gateway port collision). An earlier sweep the same night found and
+fixed the rejoin-hold drag-back (s110) and two mirror races (s97/s100).
 
 Run locally under `wasm-build/Dockerfile.harness-peer` with `OMW_SIM_PEER_BIN` set, on the
 engine built from the same tree. PASS: s22 (death seen by the other player), s67 (avatar
