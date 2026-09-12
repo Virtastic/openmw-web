@@ -106,6 +106,8 @@ export interface Player {
   // health every tick and never dies. See playerstate.ts handleStatsDynamic.
   restoreWindowAt?: number;
   restoreInWindow?: number;
+  // When each bar's MAXIMUM last stepped (a level-up); one step per window per stat.
+  baseStepAt?: Partial<Record<'hp' | 'mp' | 'ft', number>>;
   // Where this player's last cell change / teleport claimed they landed. While set, the
   // peer's avatar poses are ignored for them: the avatar teleports on the RELAY of the cell
   // change, so its stream still says the old place for a while -- and one stale sample is a

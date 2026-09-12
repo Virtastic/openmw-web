@@ -167,6 +167,22 @@ test('a client heal reaches the peer, and sustained fake healing is refused', as
   assert.equal((spend.value as { mp?: { c?: number } }).mp?.c, 10,
     'a magicka spend must reach the avatar, or casting is free while the peer owns the bars');
 
+  // A LEVEL-UP RAISES THE MAXIMUM. The base is client-authored (nothing on the peer levels
+  // anyone), so a plausibly stepped new base reaches the avatar with the current preserved --
+  // while the peer ruled the bars it used to be dropped with the rest of the claim, and the
+  // player who levelled mid-session fought on with the old pool.
+  peer.inbox.events.length = 0;
+  a.sendEvent('PlayerStatsDynamic', { ...bars(60), hp: { c: 60, b: 115 } });
+  const levelUp = await peer.waitEvent('AvatarRestore',
+    (v) => (v as { id?: number; hp?: { b?: number } })?.id === a.playerId && (v as { hp?: { b?: number } }).hp?.b === 115);
+  assert.equal((levelUp.value as { hp?: { c?: number } }).hp?.c, 60, 'the current bar is preserved across a raised maximum');
+  // ...within reason. A jump the game cannot produce is the modified-client shape: refused.
+  peer.inbox.events.length = 0;
+  a.sendEvent('PlayerStatsDynamic', { ...bars(60), hp: { c: 60, b: 900 } });
+  await new Promise((r) => setTimeout(r, 400));
+  assert.ok(!peer.inbox.events.some((e) => e.name === 'AvatarRestore' && (e.value as { hp?: { b?: number } })?.hp?.b === 900),
+    'a 785-point jump in maximum health was forwarded to the avatar');
+
   // Now the cheat: claim full health over and over. The budget (2x max health per 10s) runs
   // out and further claims are ignored -- the peer's bars stand.
   peer.inbox.events.length = 0;

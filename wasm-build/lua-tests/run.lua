@@ -149,6 +149,15 @@ env.dyn.magicka.current = 50
 identity.tick(1.20)
 got = dynEvents(env.calls)
 check('the cost of a cast survives the refill from the avatar', got[#got].mp.c == 30, 'mp=' .. tostring(got[#got].mp.c))
+identity.notePeerBars(40, nil, nil)
+env.dyn.health.current = 40
+identity.tick(1.50)                -- settle: base said = 100
+local n1 = #dynEvents(env.calls)
+env.dyn.health.base = 110          -- level-up: the maximum rises, current does not
+identity.tick(1.80)
+got = dynEvents(env.calls)
+check('a raised maximum is claimed even with no change in current', #got == n1 + 1 and got[#got].hp and got[#got].hp.b == 110,
+  'events=' .. #got .. ' b=' .. tostring(got[#got] and got[#got].hp and got[#got].hp.b))
 
 -- ==================================================== social.lua: refusal text for the player
 -- SocialResult carries a WIRE CODE. It was rendered straight into the UI, so a refused op

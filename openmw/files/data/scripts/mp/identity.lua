@@ -160,7 +160,7 @@ local tracked = {
     hp = { stat = 'health', gainsOnly = true },
     mp = { stat = 'magicka', gainsOnly = false },
 }
-for _, t in pairs(tracked) do t.peer = nil; t.prev = nil; t.delta = 0 end
+for _, t in pairs(tracked) do t.peer = nil; t.prev = nil; t.delta = 0; t.baseSaid = nil end
 local peerBarsAt = nil -- when the peer last reported; past PEER_RULES_S our own bars rule again
 local PEER_RULES_S = 5 -- server/src/core/players.ts INPUT_DRIVING_MS, the same predicate
 function identity.notePeerBars(hp, mpv, ft)
@@ -352,10 +352,15 @@ function identity.tick(now)
             -- fresh claim: the bite undone, the cast refilled (s113).
             local claim, any = {}, false
             for k, t in pairs(tracked) do
-                if math.abs(t.delta) > 0.5 then
+                -- A changed MAXIMUM is a claim too (a level-up, endurance, intelligence): the
+                -- base is ours to say, and the avatar must get it or the new maximum exists
+                -- on no body that fights.
+                local baseMoved = t.baseSaid ~= nil and math.abs(dyn[k].b - t.baseSaid) > 0.5
+                if math.abs(t.delta) > 0.5 or baseMoved then
                     claim[k] = { c = math.floor(math.max(0, math.min(dyn[k].b, t.peer + t.delta)) + 0.5), b = dyn[k].b }
                     any = true
                 end
+                t.baseSaid = dyn[k].b
                 t.delta = 0
             end
             if any then mp.sendEvent('PlayerStatsDynamic', claim) end
@@ -470,7 +475,7 @@ end
 
 function identity.reset()
     last = {}
-    for _, t in pairs(tracked) do t.peer = nil; t.prev = nil; t.delta = 0 end
+    for _, t in pairs(tracked) do t.peer = nil; t.prev = nil; t.delta = 0; t.baseSaid = nil end
     peerBarsAt = nil
     -- nil, NOT {}: the next pass must re-seed the baseline rather than treat the whole restored
     -- inventory as newly acquired.

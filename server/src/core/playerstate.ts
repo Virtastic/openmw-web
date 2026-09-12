@@ -147,12 +147,39 @@ function handleStatsDynamic(ctx: StateCtx, player: Player, body: LTable): boolea
     // A LOWER value is ignored: damage is peer-authored. Raises are capped at base. This is
     // the pre-input-tier trust boundary for healing, no wider; the intent tier narrows it.
     const cur = ctx.store.getCached(player.charId)?.stats?.dynamic;
+    // A LEVEL-UP RAISES THE MAXIMUM, AND ONLY THE CLIENT LEVELS UP. The base of a bar is a
+    // client-authored fact (level, endurance, intelligence -- all of them travel as client
+    // diffs already), and while the peer ruled the bars it was thrown away with the rest of
+    // the claim: a player who levelled mid-session kept the old maximum on the avatar, the
+    // body that actually fights, until they relogged. Accepted within a plausible step; a
+    // jump beyond it is the modified-client shape and is refused, loudly.
+    // A level in Morrowind adds at most a few dozen points, minutes apart; the budget is one
+    // step of that size per stat per window, so ramping the maximum 50 points a tick to
+    // 2000 and "healing" to it is refused at the second step.
+    const MAX_BASE = 2000, MAX_BASE_STEP = 60, BASE_STEP_WINDOW_MS = 10_000;
+    const newBase = (k: 'hp' | 'mp' | 'ft', v: DynamicStatDoc): number | undefined => {
+      const have = cur?.[k]; if (have === undefined) return undefined;
+      if (Math.abs(v.b - have.b) < 0.5) return undefined;
+      const nowMs = Date.now();
+      const steps = (player.baseStepAt ??= {});
+      if (v.b < 1 || v.b > MAX_BASE || Math.abs(v.b - have.b) > MAX_BASE_STEP
+        || (steps[k] !== undefined && nowMs - steps[k] < BASE_STEP_WINDOW_MS)) {
+        noteGain(ctx, player, 'base_step', { stat: k, from: have.b, to: v.b });
+        return undefined;
+      }
+      steps[k] = nowMs;
+      return v.b;
+    };
     const raise = (k: 'hp' | 'mp' | 'ft', v: DynamicStatDoc) => {
-      // `have.b`, NEVER `v.b`: `v` is the client's own untrusted body, so capping against
-      // its claimed base let a modified client assert `{c: 99999, b: 99999}` and be stored at
-      // ten times its real maximum -- then forwarded to the avatar as a restore.
-      const have = cur?.[k]; const want = have === undefined ? 0 : Math.min(v.c, have.b);
-      return have === undefined ? undefined : (want > have.c + 0.5 ? { c: want, b: have.b } : undefined);
+      // `have.b` (or a plausibly stepped new base), NEVER `v.b` outright: `v` is the client's
+      // own untrusted body, so capping against its claimed base let a modified client assert
+      // `{c: 99999, b: 99999}` and be stored at ten times its real maximum -- then forwarded
+      // to the avatar as a restore.
+      const have = cur?.[k]; if (have === undefined) return undefined;
+      const b = newBase(k, v) ?? have.b;
+      const want = Math.min(v.c, b);
+      if (want > have.c + 0.5 || b !== have.b) return { c: Math.max(want, Math.min(have.c, b)), b };
+      return undefined;
     };
     // MAGICKA IS THE CLIENT'S IN BOTH DIRECTIONS. The avatar never casts (avatar.lua maps the
     // spell stance to Nothing; the owner's client casts and forwards the hit), so nothing on
@@ -163,8 +190,9 @@ function handleStatsDynamic(ctx: StateCtx, player: Player, body: LTable): boolea
     // diff, which is rare, against free spells for every mage, which is constant.
     const spend = (v: DynamicStatDoc) => {
       const have = cur?.mp; if (have === undefined) return undefined;
-      const want = Math.max(0, Math.min(v.c, have.b));
-      return Math.abs(want - have.c) > 0.5 ? { c: want, b: have.b } : undefined;
+      const b = newBase('mp', v) ?? have.b;
+      const want = Math.max(0, Math.min(v.c, b));
+      return (Math.abs(want - have.c) > 0.5 || b !== have.b) ? { c: want, b } : undefined;
     };
     const r = { hp: hp && raise('hp', hp), mp: mp && spend(mp), ft: ft && raise('ft', ft) };
     if (!r.hp && !r.mp && !r.ft) return true; // nothing restored: consumed, not applied

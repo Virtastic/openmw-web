@@ -598,6 +598,11 @@ local function dispatch(cmd)
         if mpv then
             types.Actor.stats.dynamic.magicka(self).current = tonumber(mpv)
         end
+        -- sethpbase:<n>: what a level-up does to the maximum (s121).
+        local hpb = cmd:match('^sethpbase:(-?[%d.]+)$')
+        if hpb then
+            types.Actor.stats.dynamic.health(self).base = tonumber(hpb)
+        end
         local race, head, hair = cmd:match('^applyrace:([^:]+):([^:]+):([^:]*)$')
         if race then
             mp.applyChargen({ race = race, head = head, hair = hair, isMale = true })
