@@ -48,7 +48,9 @@ this window), s123 (an escort quest: the NPC leads ~450 units, waits for its cha
 arrives on both screens), s124 ("AITravel" from a dialogue: the NPC walks 2900 units to where it was
 sent, on both screens), s125 (theft: an owned bottle taken in the shop with the owner there;
 the granted take runs the engine's ActionTake, the bounty rises, and the party shares it), s126 (the guard catches you: the peer's guard
-reaches the avatar, PlayerArrest travels, the arrest dialogue opens on the wanted player's client), s95 (play with friends -- FAILED first: every
+reaches the avatar, PlayerArrest travels, the arrest dialogue opens on the wanted player's client), s127 (a GUEST takes their loot home: joins a
+friend's world with retail data, picks up what the host dropped, is sent home when the host closes up, and
+still has it), s95 (play with friends -- FAILED first: every
 join refused not_open, fixed the same day), s100 (invite across worlds), s102 (owner goes
 solo), s61 (dialogue lock), s72 (merchant purse), s03 (chat), s10 (movement puppets), s20
 (identity), s21 (rejoin), s80 (resume), s81 (reconnect), s70 (time), s48/s56 (world switch),
@@ -165,7 +167,7 @@ scenario is a code trace only.
 | Mechanism | MP path | Status |
 |---|---|---|
 | Journal | shared per instance; guests borrow the host's | OK |
-| Guest loot goes home | inventory diffs write to the GUEST's charId; the home world restores it | Live: s127 (a vanilla item). GAP: a record MINTED in the host's world (an enchanted item, a potion the host brewed) is a per-world record id; the guest's home world has no definition for it and the restore drops it silently. Fix needs record definitions to travel with the character doc |
+| Guest loot goes home | inventory diffs write to the GUEST's charId; the home world restores it | Live: s127 (a vanilla item) -- FAILED first, twice, for real: (1) the first dial went out before the cell load and a slow retail load killed the session as BAD_PROTO; (2) the reboot into the friend's world wrote start=Seyda+Neen and the boot reader did not decode the '+', so the engine died at new game and the page sat at the loading screen forever. GAP: a record MINTED in the host's world (an enchanted item, a potion the host brewed) is a per-world record id; the guest's home world has no definition for it and the restore drops it silently. Fix needs record definitions to travel with the character doc |
 | Topics learned | shared with the journal | OK |
 | Globals (quest gates) | peer's write wins within the driving window; dialogue-result names client-owned | OK |
 | Member variables on cell scripts | MemberVarUpdate relay | OK |
