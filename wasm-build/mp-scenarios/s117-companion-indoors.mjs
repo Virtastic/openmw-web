@@ -20,7 +20,9 @@ export default async function run(ctx) {
   const [a, b] = await Promise.all([ctx.launchClient('bot-a', '', BOOT), ctx.launchClient('bot-b', '', BOOT)]);
   for (const c of [a, b]) await c.waitFor('Number(window.omw.state.puppetedActors||0) > 0', 300_000, `${c.name} puppeted the cell actors`);
   const [pa, pb] = await Promise.all([probeOf(a), probeOf(b)]);
-  const rec = Object.keys(pa).find((r) => r !== 'player' && pb[r] && !pa[r].dead && !pa[r].guard);
+  // An NPC, not a creature: the probe does not say which is which, so exclude the Seyda Neen
+  // wildlife by name; a mudcrab at the water's edge is not a companion anybody recruits.
+  const rec = Object.keys(pa).find((r) => r !== 'player' && pb[r] && !pa[r].dead && !pa[r].guard && !/mudcrab|scrib|rat|slaughterfish|kwama|cliff/.test(r));
   assert.ok(rec, 'need a living NPC visible to both clients');
   const start = pa[rec];
 
@@ -34,6 +36,8 @@ export default async function run(ctx) {
   // Through the nearest load door.
   const outside = await cellOf(a);
   await a.cmd('door:enter');
+  await ctx.sleep(1_000);
+  ctx.log(`A door:enter -> ${await a.eval('window.omw.state.doorEnter')} (cell before: ${outside})`);
   await a.waitFor(`String(window.omw.state.cell||"") !== ${JSON.stringify(outside)}`, STEP, 'A changed cell through the door');
   const inside = await cellOf(a);
   ctx.log(`A went ${outside} -> ${inside} via ${await a.eval('window.omw.state.doorEnter')}`);

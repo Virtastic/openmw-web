@@ -29,8 +29,14 @@ export default async function run(ctx) {
   await a.waitFor('Object.keys(JSON.parse(window.omw.state.netObjects||"{}")).length > 0', 120_000, 'A built a named creature');
   // The snap must have LANDED before the probe means anything: the probe is the player's own
   // cell, and a snap sent a beat too early left A in Seyda Neen reading the peer's -2,-7 names.
-  await a.waitFor('(function(){const n=Object.values(JSON.parse(window.omw.state.netObjects||"{}"));const p=JSON.parse(window.omw.state.actorProbe||"{}");return n.some((r)=>p[r]&&!p[r].dead);})()',
-    60_000, 'A stands in the cell with a living named creature');
+  try {
+    await a.waitFor('(function(){const n=Object.values(JSON.parse(window.omw.state.netObjects||"{}"));const p=JSON.parse(window.omw.state.actorProbe||"{}");return n.some((r)=>p[r]&&!p[r].dead);})()',
+      60_000, 'A stands in the cell with a living named creature');
+  } catch (e) {
+    const lines = (a.logTail ? a.logTail(4000) : '').split(String.fromCharCode(10)).filter((l) => /\[mp\]/.test(l) && /SNAP|snap|restore|teleport|cell|Joined|hold/.test(l)).slice(-40);
+    ctx.log('A movement-related [mp] lines: ' + lines.join(' || '));
+    throw e;
+  }
   await a.waitFor('Number(window.omw.state.puppetedActors||0) > 0', 30_000, 'A puppeted the cell actors');
 
   // Stand next to the creature: a bite has a reach, and the avatar follow-teleports with us.
