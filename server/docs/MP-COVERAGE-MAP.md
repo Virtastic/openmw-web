@@ -28,8 +28,8 @@ join refused not_open, fixed the same day), s100 (invite across worlds), s102 (o
 solo), s61 (dialogue lock), s72 (merchant purse), s03 (chat), s10 (movement puppets), s20
 (identity), s21 (rejoin), s80 (resume), s81 (reconnect), s70 (time), s48/s56 (world switch),
 s30 (objects), s50 (combat), s52 (pvp off), s60/s60b (journal), s62 (quest vars), s71
-(records), s73/s75 (topics), s69 (peer outage). SKIP by design: s66 (covered by server
-tests), s63 (rewrite pending), s40/s42 (host-load guard). Anything below marked OK without a
+(records), s73/s75 (topics), s69 (peer outage). s66 (PvP damage lands on the driving victim's avatar and the peer's bars reach the owner --
+re-armed 09-11, PASS). SKIP by design: s63 (rewrite pending), s40/s42 (host-load guard). Anything below marked OK without a
 scenario is a code trace only.
 
 ## 1. Session
