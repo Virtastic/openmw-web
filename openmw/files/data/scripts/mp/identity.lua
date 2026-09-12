@@ -151,18 +151,34 @@ end
 -- (measured: sethp to full, peer-reported bars stayed down; a potion healed a fraction).
 -- The heal is still real: it is the sum of the per-frame increases, which no report can
 -- take away. Accumulated here, claimed on top of the peer's last word at the next diff.
-local peerHp = nil -- the last hp the peer reported for us (nil: nobody is reporting)
-local prevHp = nil -- last frame's local hp, after any report was applied
-local hpGain = 0   -- local increases since the last claim
-function identity.notePeerBars(hp)
-    peerHp = hp
-    prevHp = hp -- a report's own write is not a local gain (nor a loss)
+-- Magicka is the same story in BOTH directions: the avatar never casts, so a cast's cost is
+-- a local drop the next report refills (casting was free half the time), and a restore
+-- potion is a local rise it takes away. Health and fatigue claim gains only (damage is the
+-- peer's); magicka claims the net local change.
+local tracked = {
+    hp = { stat = 'health', gainsOnly = true },
+    mp = { stat = 'magicka', gainsOnly = false },
+    ft = { stat = 'fatigue', gainsOnly = true },
+}
+for _, t in pairs(tracked) do t.peer = nil; t.prev = nil; t.delta = 0 end
+function identity.notePeerBars(hp, mpv, ft)
+    local v = { hp = hp, mp = mpv, ft = ft }
+    for k, t in pairs(tracked) do
+        if v[k] ~= nil then
+            t.peer = v[k]
+            t.prev = v[k] -- a report's own write is neither a local gain nor a loss
+        end
+    end
 end
-local function trackLocalGain()
-    local ok, h = pcall(function() return Actor.stats.dynamic.health(self).current end)
-    if not ok or not h then return end
-    if prevHp and h > prevHp then hpGain = hpGain + (h - prevHp) end
-    prevHp = h
+local function trackLocalChange()
+    for _, t in pairs(tracked) do
+        local ok, cur = pcall(function() return Actor.stats.dynamic[t.stat](self).current end)
+        if ok and cur and t.prev then
+            local d = cur - t.prev
+            if d > 0 or not t.gainsOnly then t.delta = t.delta + d end
+        end
+        if ok and cur then t.prev = cur end
+    end
 end
 
 local function snapProgression()
@@ -321,17 +337,19 @@ function identity.tick(now)
     end
     wasDead = dead
 
-    trackLocalGain()
+    trackLocalChange()
     if now >= nextAt.dynamic then
         nextAt.dynamic = now + INTERVALS.dynamic
         local dyn = snapDynamic()
         mp.set('hp', tostring(dyn.hp.c)) -- mirror unconditionally (diff may be seeded)
-        if peerHp and hpGain > 0.5 and not dead then
-            -- Claim the heal on top of what the peer last said, not on top of whatever the
-            -- local bar shows this frame (which a report may have just reset).
-            dyn.hp.c = math.floor(math.min(dyn.hp.b, peerHp + hpGain) + 0.5)
+        for k, t in pairs(tracked) do
+            if t.peer and math.abs(t.delta) > 0.5 and not dead then
+                -- Claim the local change on top of what the peer last said, not on top of
+                -- whatever the bar shows this frame (which a report may have just reset).
+                dyn[k].c = math.floor(math.max(0, math.min(dyn[k].b, t.peer + t.delta)) + 0.5)
+            end
+            t.delta = 0
         end
-        hpGain = 0
         local fp = fingerprint(dyn)
         if fp ~= last.dynamic then
             last.dynamic = fp
@@ -439,7 +457,7 @@ end
 
 function identity.reset()
     last = {}
-    peerHp, prevHp, hpGain = nil, nil, 0
+    for _, t in pairs(tracked) do t.peer = nil; t.prev = nil; t.delta = 0 end
     -- nil, NOT {}: the next pass must re-seed the baseline rather than treat the whole restored
     -- inventory as newly acquired.
     acqCounts = nil

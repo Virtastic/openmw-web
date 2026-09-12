@@ -139,6 +139,16 @@ env.dyn.health.current = 40
 identity.tick(0.60)
 got = dynEvents(env.calls)
 check('a peer-authored drop is not re-claimed as a heal', got[#got].hp.c == 40, 'hp=' .. tostring(got[#got].hp.c))
+identity.notePeerBars(nil, 50, nil) -- the peer says magicka 50/50
+env.dyn.magicka.current = 50
+identity.tick(0.90)
+env.dyn.magicka.current = 30       -- frame: we cast (-20)
+identity.tick(0.95)
+identity.notePeerBars(nil, 50, nil) -- the avatar never cast: its report refills the bar
+env.dyn.magicka.current = 50
+identity.tick(1.20)
+got = dynEvents(env.calls)
+check('the cost of a cast survives the refill from the avatar', got[#got].mp.c == 30, 'mp=' .. tostring(got[#got].mp.c))
 
 -- ==================================================== social.lua: refusal text for the player
 -- SocialResult carries a WIRE CODE. It was rendered straight into the UI, so a refused op
