@@ -32,7 +32,7 @@ export default async function run(ctx) {
   await a.waitFor('String(window.omw.state.takeOwned||"") !== ""', STEP, 'A picked something to steal');
   const what = await a.eval('window.omw.state.takeOwned');
   ctx.log(`A steals: ${what}`);
-  assert.notEqual(what, 'none', 'nothing owned in this shop');
+  assert.ok(!String(what).startsWith('none'), `nothing owned in this shop: ${what}`);
 
   await a.waitFor('Number(window.omw.state.bounty||"0") > 0', 60_000, 'A is wanted (the theft was judged on the granted take)');
   const ba = await bountyOf(a);
