@@ -44,7 +44,9 @@ cells apart: one peer, two anchors, both fights resolve), s121 (a level-up's new
 avatar and a heal fills the new pool -- FAILED first: the base was thrown away while the peer ruled), s122 (a
 far teleport STICKS -- FAILED 3/3 first: a state sample from before the jump, delivered after the
 region-load stall, dragged the player back to where they left; every fast travel, Recall and door had
-this window), s95 (play with friends -- FAILED first: every
+this window), s123 (an escort quest: the NPC leads ~450 units, waits for its charge, continues;
+arrives on both screens), s124 ("AITravel" from a dialogue: the NPC walks 2900 units to where it was
+sent, on both screens), s95 (play with friends -- FAILED first: every
 join refused not_open, fixed the same day), s100 (invite across worlds), s102 (owner goes
 solo), s61 (dialogue lock), s72 (merchant purse), s03 (chat), s10 (movement puppets), s20
 (identity), s21 (rejoin), s80 (resume), s81 (reconnect), s70 (time), s48/s56 (world switch),
@@ -147,7 +149,7 @@ scenario is a code trace only.
 | Persuasion (bribe/taunt/admire) | lock holder relays disposition | FIXED 09-11 |
 | Taunt -> fight; resist arrest -> fight | lock holder claims combat; holder starts it | FIXED 09-11 |
 | Follow / Escort (recruit, escort quests) | companion.lua -> ActorAI claim -> holder; replayed to a new peer; carried through doors. companion.lua was listed on two lines (NPC, CREATURE) and the engine keeps the last: NO NPC carried it until 09-12 -- every claim below was creature-only | FIXED 09-10/11, REALLY FIXED 09-12. Live: s114 |
-| Dialogue-started AiTravel | companion.lua reports; lock holder claim (see the two-lines note above: dead on NPCs until 09-12) | FIXED 09-11/12 |
+| Dialogue-started AiTravel | companion.lua reports; lock holder claim (see the two-lines note above: dead on NPCs until 09-12) | FIXED 09-11/12. Live: s124 (travel), s123 (escort) |
 | Dialogue-started AiWander / AiActivate | not relayed; the holder's copy keeps its own package (cosmetic: an NPC told to stand still by a dialogue keeps wandering elsewhere) | OK (cosmetic) |
 | Guards: crime pursuit, arrest dialogue | registry bounty; AiPursue reaches; PlayerArrest to owner | FIXED 09-11 |
 | Assault / murder as crimes | commitCrime/actorKilled accept avatars; PlayerCrime to owner | FIXED 09-11 |
