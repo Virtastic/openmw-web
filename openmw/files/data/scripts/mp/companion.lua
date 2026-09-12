@@ -108,6 +108,8 @@ return {
             local id = target and ((escort and 'escort:' or 'follow:') .. tostring(target.id)) or nil
             if id == reportedId then return end
             reportedId = id
+            -- Scenario mirror (s114): the last follow fact this actor reported.
+            pcall(function() require('openmw.mp').set('companionReport', tostring(self.object.recordId) .. '=' .. tostring(id)) end)
 
             -- The GLOBAL script decides whether we are the cell's authority and whether this
             -- is worth putting on the wire. This script only knows a fact about itself.
