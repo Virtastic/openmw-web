@@ -833,7 +833,7 @@ return {
             -- Scenario mirror: proves the PEER-authoritative bars actually flowed (a local
             -- fall would drop hp too; only this marker distinguishes the sources).
             mp.set('selfStats', string.format('%.0f/%.0f', data.hp.c, data.hp.b))
-            identity.notePeerBars(data.hp.c)
+            identity.notePeerBars(data.hp.c, data.mp and data.mp.c, data.ft and data.ft.c)
             pcall(function()
                 local d = types.Actor.stats.dynamic
                 d.health(self).current = data.hp.c
