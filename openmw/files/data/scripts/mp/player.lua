@@ -201,9 +201,16 @@ local SNAP_DIST = 256
 local CORRECT_GAIN = 0.25 -- fraction of the divergence per state batch (~15 Hz)
 local lastSnapAt = 0
 local SNAP_COOLDOWN_S = 2.0
+-- OUR OWN TELEPORT, BY INPUT SEQUENCE. A state batch already in flight when we jumped still
+-- carries the place we left; reconciling against it dragged us straight back (16539 units,
+-- s122: teleport, back to the spawn 3 s later, forward again, every time). The batch says
+-- which input its pose accounts for, so a sample from before the jump is recognisable and
+-- ignored; the avatar's poses after it has followed us carry a newer sequence.
+local teleportSeq = nil
 
 local function onSelfState(e)
     if not e or not e.x then return end
+    if teleportSeq ~= nil and (tonumber(e.lastInputSeq) or 0) <= teleportSeq then return end
     local pos = self.position
     local dx, dy, dz = e.x - pos.x, e.y - pos.y, e.z - pos.z
     local dist = math.sqrt(dx * dx + dy * dy + dz * dz)
@@ -269,6 +276,7 @@ local function movementTick()
     local atOrigin = pos.x == 0 and pos.y == 0 and pos.z == 0
     if key and not atOrigin and (key ~= lastCellKey or jumped) then
         lastCellKey = key
+        teleportSeq = inputSeq -- every state sample up to here describes the old place
         mp.sendEvent('PlayerCellChange', { cellKey = key, x = pos.x, y = pos.y, z = pos.z })
     end
 
