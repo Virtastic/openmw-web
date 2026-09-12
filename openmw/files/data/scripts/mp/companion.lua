@@ -92,7 +92,7 @@ return {
             local mpapi = require('openmw.mp')
             if mpapi.isSystem and mpapi.isSystem() then
                 local okA, pkg = pcall(function() return I.AI.getActivePackage() end)
-                if okA and pkg and (pkg.type == 'Escort' or pkg.type == 'Follow') then
+                if okA and pkg and (pkg.type == 'Escort' or pkg.type == 'Follow' or pkg.type == 'Pursue') then
                     escortSaid = (escortSaid or 0) + 1
                     if escortSaid % 5 == 1 then
                         local t = pkg.target
