@@ -52,7 +52,8 @@ reaches the avatar, PlayerArrest travels, the arrest dialogue opens on the wante
 friend's world with retail data, picks up what the host dropped, is sent home when the host closes up, and
 still has it), s128 (a guest FIGHTS in a friend's world: through the real door, the host's gateway
 world spawns its own peer -- managedPeer now reaches gateway worlds via the shared config -- and host
-and guest kill the same NPC together), s95 (play with friends -- FAILED first: every
+and guest kill the same NPC together), s129 (the host's TAB CLOSES: the guest plays on through
+the 90 s grace, then is sent home as owner_left and lands joined in their own world), s95 (play with friends -- FAILED first: every
 join refused not_open, fixed the same day), s100 (invite across worlds), s102 (owner goes
 solo), s61 (dialogue lock), s72 (merchant purse), s03 (chat), s10 (movement puppets), s20
 (identity), s21 (rejoin), s80 (resume), s81 (reconnect), s70 (time), s48/s56 (world switch),
@@ -72,7 +73,8 @@ scenario is a code trace only.
 | Resume after disconnect | resume ticket, same character, world snapshot re-sent; IP_CAP retried | FIXED 09-11 (IP_CAP was terminal RATE) |
 | Rejoin after dying and closing the tab | doc has hp 0 (death flushes); restored at 10% health on both the client and the peer's avatar, where they fell | FIXED 09-11 (was: die again on arrival, second "has fallen", respawn loop) |
 | Join a friend (party) | joinFriend -> ownerWorld (occupied, LIVE mode from the world's /status) -> switch -> mayJoinWorld -> chargen gate -> guestSpawn beside owner | FIXED 09-11 (the 09-10 pre-switch mode check read a mode fixed at process start, so every join was refused as not_open; caught live by s95) |
-| Owner flips party -> private | WorldClosed, 5 s grace, guests switched home | OK |
+| Owner flips party -> private | WorldClosed, 5 s grace, guests switched home | OK. Live: s102 |
+| Owner's tab closes (no Solo flip) | owner_left, 90 s grace while guests keep playing, then owner_gone -> WorldClosed('owner_left') -> guests home | OK. Live: s129 |
 | Leave / kick / ban | terminal codes; SUPERSEDED for a second tab | OK |
 | Save / Load / quicksave | refused at StateManager while Joined; menu items hidden | OK |
 
