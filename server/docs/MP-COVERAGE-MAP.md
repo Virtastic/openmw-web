@@ -47,7 +47,8 @@ region-load stall, dragged the player back to where they left; every fast travel
 this window), s123 (an escort quest: the NPC leads ~450 units, waits for its charge, continues;
 arrives on both screens), s124 ("AITravel" from a dialogue: the NPC walks 2900 units to where it was
 sent, on both screens), s125 (theft: an owned bottle taken in the shop with the owner there;
-the granted take runs the engine's ActionTake, the bounty rises, and the party shares it), s95 (play with friends -- FAILED first: every
+the granted take runs the engine's ActionTake, the bounty rises, and the party shares it), s126 (the guard catches you: the peer's guard
+reaches the avatar, PlayerArrest travels, the arrest dialogue opens on the wanted player's client), s95 (play with friends -- FAILED first: every
 join refused not_open, fixed the same day), s100 (invite across worlds), s102 (owner goes
 solo), s61 (dialogue lock), s72 (merchant purse), s03 (chat), s10 (movement puppets), s20
 (identity), s21 (rejoin), s80 (resume), s81 (reconnect), s70 (time), s48/s56 (world switch),
@@ -152,7 +153,7 @@ scenario is a code trace only.
 | Follow / Escort (recruit, escort quests) | companion.lua -> ActorAI claim -> holder; replayed to a new peer; carried through doors. companion.lua was listed on two lines (NPC, CREATURE) and the engine keeps the last: NO NPC carried it until 09-12 -- every claim below was creature-only | FIXED 09-10/11, REALLY FIXED 09-12. Live: s114 |
 | Dialogue-started AiTravel | companion.lua reports; lock holder claim (see the two-lines note above: dead on NPCs until 09-12) | FIXED 09-11/12. Live: s124 (travel), s123 (escort) |
 | Dialogue-started AiWander / AiActivate | not relayed; the holder's copy keeps its own package (cosmetic: an NPC told to stand still by a dialogue keeps wandering elsewhere) | OK (cosmetic) |
-| Guards: crime pursuit, arrest dialogue | registry bounty; AiPursue reaches; PlayerArrest to owner | FIXED 09-11 |
+| Guards: crime pursuit, arrest dialogue | registry bounty; AiPursue reaches; PlayerArrest to owner | FIXED 09-11. Live: s78 (pursuit), s126 (arrest dialogue opens) |
 | Assault / murder as crimes | commitCrime/actorKilled accept avatars; PlayerCrime to owner | FIXED 09-11 |
 | Death, loot, corpse | ActorDeath, corpse container canonical | OK |
 | Content-placed NPCs/creatures | content RefNum, addressable everywhere | OK |
