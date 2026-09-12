@@ -27,7 +27,8 @@ avatar damage -> SelfStats, no hit injection on the victim), s111 (two players l
 canonical corpse, one take wins, by net id), s112 (a client heal sticks against the peer's bars --
 FAILED twice first: the heal was reset before it was reported, then the avatar's stat write
 threw in a pcall), s113 (a cast costs magicka and a potion restores it -- FAILED first: an echoed
-report refilled the bar), s95 (play with friends -- FAILED first: every
+report refilled the bar), s114 (a recruited NPC follows the player on the OTHER player's
+screen -- FAILED first: companion.lua was never on an NPC), s95 (play with friends -- FAILED first: every
 join refused not_open, fixed the same day), s100 (invite across worlds), s102 (owner goes
 solo), s61 (dialogue lock), s72 (merchant purse), s03 (chat), s10 (movement puppets), s20
 (identity), s21 (rejoin), s80 (resume), s81 (reconnect), s70 (time), s48/s56 (world switch),
@@ -129,8 +130,8 @@ scenario is a code trace only.
 | Dialogue (one at a time) | dialogue lock; refusal names the holder | OK |
 | Persuasion (bribe/taunt/admire) | lock holder relays disposition | FIXED 09-11 |
 | Taunt -> fight; resist arrest -> fight | lock holder claims combat; holder starts it | FIXED 09-11 |
-| Follow / Escort (recruit, escort quests) | companion.lua -> ActorAI claim -> holder; replayed to a new peer; carried through doors | FIXED 09-10/11 |
-| Dialogue-started AiTravel | companion.lua reports; lock holder claim | FIXED 09-11 |
+| Follow / Escort (recruit, escort quests) | companion.lua -> ActorAI claim -> holder; replayed to a new peer; carried through doors. companion.lua was listed on two lines (NPC, CREATURE) and the engine keeps the last: NO NPC carried it until 09-12 -- every claim below was creature-only | FIXED 09-10/11, REALLY FIXED 09-12. Live: s114 |
+| Dialogue-started AiTravel | companion.lua reports; lock holder claim (see the two-lines note above: dead on NPCs until 09-12) | FIXED 09-11/12 |
 | Dialogue-started AiWander / AiActivate | not relayed; the holder's copy keeps its own package (cosmetic: an NPC told to stand still by a dialogue keeps wandering elsewhere) | OK (cosmetic) |
 | Guards: crime pursuit, arrest dialogue | registry bounty; AiPursue reaches; PlayerArrest to owner | FIXED 09-11 |
 | Assault / murder as crimes | commitCrime/actorKilled accept avatars; PlayerCrime to owner | FIXED 09-11 |
