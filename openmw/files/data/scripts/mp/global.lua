@@ -2447,7 +2447,13 @@ local eventHandlers = {
         local dest = ''
         pcall(function() local c = types.Door.destCell(best); dest = c and (c.name ~= '' and c.name or (c.gridX .. ',' .. c.gridY)) or '' end)
         mp.set('doorEnter', tostring(best.recordId) .. ' -> ' .. dest)
+        -- activateBy only raises the Lua OnActivate event; the engine's own door action (the
+        -- teleport) runs on a real key press. Do what the key does.
         pcall(function() best:activateBy(player) end)
+        local okT, errT = pcall(function()
+            player:teleport(types.Door.destCell(best), types.Door.destPosition(best), types.Door.destRotation(best))
+        end)
+        if not okT then print('[mp] door:enter teleport failed: ' .. tostring(errT)); mp.set('doorEnter', 'failed:' .. tostring(errT)) end
     end,
     mpDoorToggle = function()
         local door = nearestDoor()
