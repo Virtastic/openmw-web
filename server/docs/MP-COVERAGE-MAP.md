@@ -60,7 +60,9 @@ FAILED first: the host world flushed the trained skill to the shared players.db,
 pre-visit copy back over it on the return; the logout release in connection.ts had never fired on an ordinary
 disconnect (its roster guard still saw the leaving session itself), fixed the same day, PASS), s133 (the leader walks
 into a building and the friend follows through the same door: both in the same interior, each seeing the other, the
-room held by the world peer), s95 (play with friends -- FAILED first: every
+room held by the world peer), s134 (the guest's TAB DIES mid-visit: the loot taken before the drop is on their character
+when they boot at home, they rejoin the friend -- still party -- as a guest with it in hand, and the host sees them
+back; three worlds' caches of one character, in order), s95 (play with friends -- FAILED first: every
 join refused not_open, fixed the same day), s100 (invite across worlds), s102 (owner goes
 solo), s61 (dialogue lock), s72 (merchant purse), s03 (chat), s10 (movement puppets), s20
 (identity), s21 (rejoin), s80 (resume), s81 (reconnect), s70 (time), s48/s56 (world switch),
