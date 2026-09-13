@@ -116,3 +116,86 @@ test('flipping back to Solo evicts the guests who are already inside', async (t)
   ben.close();
   ada.close();
 });
+
+// THE DOOR CLOSES BEHIND YOU TOO. The friends list is the only way into a party world, but it
+// was checked at the door only: a guest the host had just BLOCKED stayed in the host's world,
+// seeing and hearing everything, until the host went solo and threw out everyone. Ending the
+// friendship -- unfriend or block, from either side -- must send that one guest home and
+// leave the rest of the party alone.
+test('unfriending or blocking a guest sends them home; the other guest stays', async (t) => {
+  const shared = tmpDataDir();
+  const pub = await startServer({ requireGameData: false, dataDir: tmpDataDir(), sharedDir: shared, port: 0, host: '127.0.0.1' });
+  t.after(() => pub.close());
+  for (const name of ['Host', 'Pest', 'Pal']) {
+    const c = await TestClient.connect(pub.port);
+    await c.joinAsNew(name);
+    c.close();
+    await c.closed;
+  }
+  await pub.flush();
+  const store = new SocialStore(shared);
+  store.addFriend('host', 'pest', Date.now());
+  store.addFriend('host', 'pal', Date.now());
+  store.close();
+
+  const world = await startServer({ requireGameData: false,
+    dataDir: tmpDataDir(), sharedDir: shared, port: 0, host: '127.0.0.1',
+    worldId: 'priv-host', worldMode: 'party', worldOwner: 'host',
+  });
+  t.after(() => world.close());
+  const host = await TestClient.connect(world.port);
+  await host.joinExisting('Host');
+  const pest = await TestClient.connect(world.port);
+  await pest.joinExisting('Pest');
+  const pal = await TestClient.connect(world.port);
+  await pal.joinExisting('Pal');
+  t.after(() => { host.close(); pal.close(); });
+
+  // The host blocks Pest: Pest is told to go home, and then dropped; Pal is untouched.
+  host.sendEvent('BlockAdd', { name: 'Pest' });
+  const closed = (await pest.waitEvent('WorldClosed')).value as { reason?: string; by?: string };
+  assert.equal(closed.reason, 'unfriended');
+  assert.equal(closed.by, 'Host', 'the notice names the owner by character name');
+  await pest.waitDisconnect('KICKED');
+  assert.equal(pal.inbox.events.filter((e) => e.name === 'WorldClosed').length, 0, 'the other guest must not be sent home');
+  assert.equal(host.inbox.events.filter((e) => e.name === 'WorldClosed').length, 0, 'the owner never moves');
+
+  // ...and the door stays shut: Pest cannot come back in.
+  const again = await TestClient.connect(world.port);
+  again.hello();
+  await again.waitJson('SessionHelloOk');
+  again.login('Pest', 'hunter22');
+  await again.waitDisconnect('AUTH_FAILED');
+});
+
+test('a guest who unfriends the host while visiting goes home; the host stays put', async (t) => {
+  const shared = tmpDataDir();
+  const pub = await startServer({ requireGameData: false, dataDir: tmpDataDir(), sharedDir: shared, port: 0, host: '127.0.0.1' });
+  t.after(() => pub.close());
+  for (const name of ['Host', 'Leaver']) {
+    const c = await TestClient.connect(pub.port);
+    await c.joinAsNew(name);
+    c.close();
+    await c.closed;
+  }
+  await pub.flush();
+  const store = new SocialStore(shared);
+  store.addFriend('host', 'leaver', Date.now());
+  store.close();
+  const world = await startServer({ requireGameData: false,
+    dataDir: tmpDataDir(), sharedDir: shared, port: 0, host: '127.0.0.1',
+    worldId: 'priv-host', worldMode: 'party', worldOwner: 'host',
+  });
+  t.after(() => world.close());
+  const host = await TestClient.connect(world.port);
+  await host.joinExisting('Host');
+  const leaver = await TestClient.connect(world.port);
+  await leaver.joinExisting('Leaver');
+  t.after(() => host.close());
+
+  leaver.sendEvent('FriendRemove', { acct: 'host' });
+  const closed = (await leaver.waitEvent('WorldClosed')).value as { reason?: string };
+  assert.equal(closed.reason, 'unfriended');
+  await leaver.waitDisconnect('KICKED');
+  assert.equal(host.inbox.events.filter((e) => e.name === 'WorldClosed').length, 0, 'the owner is never evicted from their own world');
+});

@@ -72,7 +72,10 @@ back; three worlds' caches of one character, in order), s135 (the host's CLOCK i
 "owner", a guest's rest is refused and told, the host's clock stays, the guest's engine-advanced clock is handed back within
 seconds instead of a shift ahead until the next periodic WorldTime, and the host's rest still moves time for both), s136 (a PARTY OF THREE: the host and two friends through the real door,
 three names on every screen, a guest's chat reaches the host and the other guest, the two guests trade with each other
-inside the host's world, and both land home when the host closes up), s95 (play with friends -- FAILED first: every
+inside the host's world, and both land home when the host closes up), s139 (the host BLOCKS a guest who is already
+inside -- FAILED first: the friends list was checked only at the door, so a blocked guest stayed until the host went
+solo and evicted everyone; now ending the friendship, from either side, sends that one guest home with the reason
+"unfriended" and the other guest stays; fixed the same day, PASS), s95 (play with friends -- FAILED first: every
 join refused not_open, fixed the same day), s100 (invite across worlds), s102 (owner goes
 solo), s61 (dialogue lock), s72 (merchant purse), s03 (chat), s10 (movement puppets), s20
 (identity), s21 (rejoin), s80 (resume), s81 (reconnect), s70 (time), s48/s56 (world switch),
@@ -198,6 +201,7 @@ scenario is a code trace only.
 | Globals (quest gates) | peer's write wins within the driving window; dialogue-result names client-owned | OK |
 | Member variables on cell scripts | MemberVarUpdate relay | OK |
 | Faction standing, bounty | routed to the campaign | OK |
+| Host blocks / unfriends a guest mid-session | Social.friendshipEnded -> closeToGuest: WorldClosed(unfriended) + kick after 5 s; the other guests stay; either side ending it sends the GUEST home, the owner never moves | FIXED 09-13 (was: door-only check, the blocked guest stayed). Live: s139 |
 | OnDeath / GetDeadCount | shared tally | OK |
 | Scripted PlaceAt / PositionCell of NPCs | see runtime-spawned actors | GAP |
 | Scripted AddItem/RemoveItem on NPCs | runs on every engine identically (deterministic) | OK (by construction) |
