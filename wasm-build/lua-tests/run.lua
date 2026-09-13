@@ -297,6 +297,14 @@ do
     'a refused Rest is silent again')
   check('social.lua tells the player why time did not pass',
     s:find('MP_WorldTimeRefused = function', 1, true) ~= nil)
+  -- ...and world.lua hands the adopted hours back, or the refused player lives ahead of
+  -- everyone else until the next periodic WorldTime.
+  local w = io.open('./openmw/files/data/scripts/mp/world.lua'):read('*a')
+  check('global.lua hands a refused rest to world.lua before the notice',
+    g:find('MP_WorldTimeRefused = function(data) worldmp.timeRefused()', 1, true) ~= nil)
+  check('world.lua gives back the hours a refused rest adopted',
+    w:find('function worldmp.timeRefused()', 1, true) ~= nil
+    and w:find('targetAbs = targetAbs - pendingJump', 1, true) ~= nil)
   -- SocialNotice: server-side notices worth surfacing.
   check('global.lua forwards MP_SocialNotice',
     g:find('MP_SocialNotice', 1, true) ~= nil,

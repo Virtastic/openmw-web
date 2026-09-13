@@ -1534,7 +1534,8 @@ local eventHandlers = {
     -- deliberately — m7.ts's own comment is "Refusals are TOLD to the player — a Rest that
     -- silently does nothing gets pressed again and then reported as a bug". Which is exactly
     -- what happened, because the telling never arrived.
-    MP_WorldTimeRefused = function(data) toPlayer('MP_WorldTimeRefused', data) end,
+    -- world.lua first (hand the adopted hours back), then the player's notice.
+    MP_WorldTimeRefused = function(data) worldmp.timeRefused(); toPlayer('MP_WorldTimeRefused', data) end,
     -- SocialNotice: server-side notices worth surfacing (kicks, closures).
     MP_SocialNotice = function(data) toPlayer('MP_SocialNotice', data) end,
     -- Why that swing did nothing. The attacker's client has ALREADY cancelled its own damage by

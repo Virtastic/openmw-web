@@ -12,6 +12,7 @@ import assert from 'node:assert/strict';
 import { startServer, type RunningServer } from '../src/server';
 import type { DeepPartial, Config } from '../src/config';
 import { TestClient, tmpDataDir } from './helpers';
+import { SocialStore } from '../src/core/socialstore';
 
 interface TimeBody { gameHour: number; day: number; month: number; year: number; timeScale: number }
 
@@ -533,4 +534,53 @@ test('a world full of custom records is still joinable, and stops accepting more
     'a record past the ceiling must not be acked');
   c.close();
   await c.closed;
+});
+
+// THE DEFAULT, not a dashboard field. A friend's world is the host's game: with no [rules]
+// override at all, a GUEST's rest is refused and told, the clock does not move, and the
+// OWNER's rest still moves it for everyone. Standalone stacks have no owner and admit anyone
+// (the tests above). This pins the shipped default; s135 proves the same thing live.
+test('by default a guest cannot rest for the host, and the host can rest for the guest', async (t) => {
+  const shared = tmpDataDir();
+  const pub = await startServer({ requireGameData: false, dataDir: tmpDataDir(), sharedDir: shared, port: 0, host: '127.0.0.1' });
+  t.after(() => pub.close());
+  for (const name of ['Hosta', 'Guesta']) {
+    const c = await TestClient.connect(pub.port);
+    await c.joinAsNew(name);
+    c.close();
+    await c.closed;
+  }
+  await pub.flush();
+  const social = new SocialStore(shared);
+  social.addFriend('hosta', 'guesta', Date.now());
+  social.close();
+
+  const world = await startServer({ requireGameData: false,
+    dataDir: tmpDataDir(), sharedDir: shared, port: 0, host: '127.0.0.1',
+    worldId: 'priv-hosta', worldMode: 'party', worldOwner: 'hosta',
+    configOverride: { time: { scale: 0 } } as never,
+  });
+  t.after(() => world.close());
+  const host = await TestClient.connect(world.port);
+  await host.joinExisting('Hosta');
+  const guest = await TestClient.connect(world.port);
+  await guest.joinExisting('Guesta');
+  await host.waitEvent('WorldTime');
+  await guest.waitEvent('WorldTime');
+  const before = world.api.world.time();
+
+  guest.sendEvent('WorldTimeRequest', { advanceHours: 8, reason: 'rest' });
+  const refusal = (await guest.waitEvent('WorldTimeRefused')).value as { reason: string };
+  assert.match(refusal.reason, /owner/i, 'the guest is told whose clock it is');
+  await fence(guest, host);
+  assert.deepEqual(world.api.world.time(), before, "a guest's rest must not move the host's clock");
+
+  host.sendEvent('WorldTimeRequest', { advanceHours: 8, reason: 'rest' });
+  const moved = (await guest.waitEvent('WorldTime')).value as { gameHour: number };
+  assert.ok(typeof moved.gameHour === 'number', "the host's rest reaches the guest as WorldTime");
+  assert.notDeepEqual(world.api.world.time(), before, "the host's rest must move the clock");
+  guest.close();
+  host.close();
+  await guest.closed;
+  await host.closed;
 });

@@ -62,7 +62,9 @@ disconnect (its roster guard still saw the leaving session itself), fixed the sa
 into a building and the friend follows through the same door: both in the same interior, each seeing the other, the
 room held by the world peer), s134 (the guest's TAB DIES mid-visit: the loot taken before the drop is on their character
 when they boot at home, they rejoin the friend -- still party -- as a guest with it in hand, and the host sees them
-back; three worlds' caches of one character, in order), s95 (play with friends -- FAILED first: every
+back; three worlds' caches of one character, in order), s135 (the host's CLOCK is the host's: `timeSkip` now defaults to
+"owner", a guest's rest is refused and told, the host's clock stays, the guest's engine-advanced clock is handed back within
+seconds instead of a shift ahead until the next periodic WorldTime, and the host's rest still moves time for both), s95 (play with friends -- FAILED first: every
 join refused not_open, fixed the same day), s100 (invite across worlds), s102 (owner goes
 solo), s61 (dialogue lock), s72 (merchant purse), s03 (chat), s10 (movement puppets), s20
 (identity), s21 (rejoin), s80 (resume), s81 (reconnect), s70 (time), s48/s56 (world switch),
@@ -200,7 +202,7 @@ scenario is a code trace only.
 
 | Mechanism | MP path | Status |
 |---|---|---|
-| Clock, time scale, rest/wait | server clock; rest policy (owner/anyone/off); refusals told | OK |
+| Clock, time scale, rest/wait | server clock; rest policy defaults to OWNER (the host leads; standalone stacks have no owner and admit anyone); refusals told, and the refused player's adopted hours are handed back at once | FIXED 09-12 (default was anyone: a guest could fast-forward the host's game). Live: s135, s70 |
 | Weather | WorldWeather authority | OK |
 | Map exploration | shared when enabled | OK |
 

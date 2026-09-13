@@ -65,6 +65,11 @@ local lastLocalAbs = nil -- our own clock at the previous tick (jump detector ba
 local lastTickAt = nil
 local timeScale = nil
 local timeRequests = 0 -- WorldTimeRequests WE originated (mechanism evidence)
+-- Hours we adopted locally on the strength of a request the server has not answered yet. A
+-- refusal hands them back (see worldmp.timeRefused); a WorldTime clears them, whichever way
+-- it went, because the server's clock is the truth from then on.
+local pendingJump = 0
+local timeRefused = 0 -- refusals received (mechanism evidence)
 local timeApplied = 0 -- WorldTime bodies applied
 
 local ownRegion = nil
@@ -242,6 +247,7 @@ local function tickClock(now)
             -- Adopt it locally: the server will echo it back as WorldTime and the slew
             -- must not then treat our own rest as a gap to close twice.
             if targetAbs then targetAbs = targetAbs + jump end
+            pendingJump = pendingJump + jump
         end
     end
 
@@ -504,6 +510,7 @@ handlers.MP_WorldTime = function(data)
     target = data
     targetAbs = targetAbsOf(data)
     timeApplied = timeApplied + 1
+    pendingJump = 0
     -- ADOPT THE WORLD'S CLOCK OUTRIGHT ON ARRIVAL. The server's clock free-runs whether or
     -- not anyone is connected, so a world left alone for an afternoon is game-DAYS ahead of
     -- a client that just booted. Slewing that difference walks the sky through cycle after
@@ -606,6 +613,18 @@ end
 
 worldmp.handlers = handlers
 
+-- The server refused our Rest/Wait ([rules] timeSkip: a guest may not fast-forward the
+-- host's game). The engine already advanced OUR clock and the jump detector adopted it into
+-- the target, so without this the refused player lived up to a minute ahead of everyone
+-- else until the next periodic WorldTime slewed them back. Hand the hours back now; the
+-- slew rolls the sky back over a couple of seconds, the same way another player's rest
+-- rolls it forward. social.lua tells the player why.
+function worldmp.timeRefused()
+    if targetAbs and pendingJump > 0 then targetAbs = targetAbs - pendingJump end
+    pendingJump = 0
+    timeRefused = timeRefused + 1
+end
+
 -- ================================================================== region / map
 
 local function tickRegion()
@@ -655,6 +674,7 @@ local function mirror()
     mp.set('clockWritable', clockWritable == nil and '' or tostring(clockWritable))
     mp.set('timeApplied', string.format('%.0f', timeApplied))
     mp.set('timeRequests', string.format('%.0f', timeRequests))
+    mp.set('timeRefused', string.format('%.0f', timeRefused))
     mp.set('region', ownRegion or '')
     local holder = ownRegion and regionHolder[ownRegion] or nil
     mp.set('weatherHolder', holder and string.format('%.0f', holder) or 'none')
@@ -710,6 +730,8 @@ function worldmp.reset()
     lastLocalAbs = nil
     lastTickAt = nil
     timeRequests = 0
+    timeRefused = 0
+    pendingJump = 0
     timeApplied = 0
     ownRegion = nil
     regionHolder = {}
