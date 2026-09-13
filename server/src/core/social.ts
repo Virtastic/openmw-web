@@ -85,6 +85,11 @@ export interface SocialDeps {
     reason: string;
     voice: boolean;
   }): Promise<unknown>;
+  /** The friendship that admitted a guest to this world is over (unfriend or block, from
+   *  either side): send that guest home now. The friends list is the only door in
+   *  (server.ts mayJoinWorld); without this it only barred the NEXT join, and someone the
+   *  host had just blocked stayed in their world until the host went solo. */
+  friendshipEnded?(a: AccountKey, b: AccountKey): void;
 }
 
 export class Social {
@@ -383,6 +388,7 @@ export class Social {
 
   removeFriend(player: Player, other: AccountKey): void {
     this.d.store.removeFriend(player.accountKey, other);
+    this.d.friendshipEnded?.(player.accountKey, other);
     // Both sides get a fresh list: an unfriend that only updates the initiator leaves the
     // other player believing they still have a friend they cannot see.
     for (const acct of [player.accountKey, other]) {
@@ -402,6 +408,7 @@ export class Social {
     // Blocking implies unfriending and drops any pending requests either way — otherwise a
     // blocked person remains in the friends list, still leaking presence and location.
     this.d.store.removeFriend(player.accountKey, target);
+    this.d.friendshipEnded?.(player.accountKey, target);
     this.d.store.removeRequest(player.accountKey, target);
     this.d.store.removeRequest(target, player.accountKey);
     this.dropInvitesBetween(player.accountKey, target);

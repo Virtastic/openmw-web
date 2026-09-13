@@ -4814,7 +4814,8 @@ window.omw = (function(){
         // visible, so the copy has to read correctly without one.
         var by = esc(String(m.worldClosedBy || ''));
         showNotice('Returning to your own world',
-          (by ? '<b>' + by + '</b> has closed their world.'
+          (wc === 'unfriended' ? 'You are no longer on the friends list that let you into that world.'
+            : by ? '<b>' + by + '</b> has closed their world.'
               : 'The world you were in has closed.')
           + ' You are being taken back to your own world. Nothing you did there is lost.',
           GLYPH_WORLD);

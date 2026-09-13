@@ -460,19 +460,28 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // evicting it threw away authority over every cell the owner was standing in — so going
   // Solo froze the NPCs and rubber-banded the player when it came back. It is not in the
   // party, so no door is being closed on it.
+  const sendGuestHome = (conn: Connection, reason: string): void => {
+    const p = conn.player;
+    if (!p || p.accountKey === worldOwner || p.rank >= 1) return;
+    if (p.system === true) return;
+    // The owner's CHARACTER name, off the live roster — never the account display name,
+    // which carries the signed-in person's real name.
+    p.peer.sendEvent('WorldClosed',
+      { reason, by: roster.activeForAccount(worldOwner)?.name ?? '' });
+    const t = setTimeout(() => {
+      if (connections.has(conn)) conn.disconnect('KICKED', 'this world is no longer open to your party');
+    }, 5000);
+    t.unref();
+  };
   const closeToGuests = (reason: string): void => {
+    for (const conn of [...connections]) sendGuestHome(conn, reason);
+  };
+  // ONE guest, when the friendship that let them in ends (Social.friendshipEnded). Either
+  // side may end it; the guest is the one who goes home, and the owner never moves.
+  const closeToGuest = (accountKey: string, reason: string): void => {
+    if (worldOwner === '' || accountKey === worldOwner) return;
     for (const conn of [...connections]) {
-      const p = conn.player;
-      if (!p || p.accountKey === worldOwner || p.rank >= 1) continue;
-      if (p.system === true) continue;
-      // The owner's CHARACTER name, off the live roster — never the account display name,
-      // which carries the signed-in person's real name.
-      p.peer.sendEvent('WorldClosed',
-        { reason, by: roster.activeForAccount(worldOwner)?.name ?? '' });
-      const t = setTimeout(() => {
-        if (connections.has(conn)) conn.disconnect('KICKED', 'this world is no longer open to your party');
-      }, 5000);
-      t.unref();
+      if (conn.player?.accountKey === accountKey) sendGuestHome(conn, reason);
     }
   };
 
@@ -648,6 +657,10 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     // Resolution must accept what players SEE, which is now the username.
     resolveName: (name) => accounts.keyForUsername(name) ?? (accounts.existsNow(name) ? name.toLowerCase() : undefined),
     now: () => Date.now(),
+    friendshipEnded: (a, b) => {
+      if (a === worldOwner) closeToGuest(b, 'unfriended');
+      else if (b === worldOwner) closeToGuest(a, 'unfriended');
+    },
     // A4/3.8: the context-menu report writes to the same queue as /report.
     report: (doc) => moderation.reports.write({
       ts: new Date().toISOString(),
