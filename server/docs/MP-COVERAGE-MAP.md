@@ -55,7 +55,12 @@ world spawns its own peer -- managedPeer now reaches gateway worlds via the shar
 and guest kill the same NPC together), s129 (the host's TAB CLOSES: the guest plays on through
 the 90 s grace, then is sent home as owner_left and lands joined in their own world), s130 (the host is INDOORS when the friend joins: the guest lands
 in the same room beside them, and the room is simulated for both), s131 (a guest DIES while visiting: respawns at the host world's
-respawn point, health back, still a guest the host can see, not sent home), s95 (play with friends -- FAILED first: every
+respawn point, health back, still a guest the host can see, not sent home), s132 (what a guest LEARNS comes home --
+FAILED first: the host world flushed the trained skill to the shared players.db, then the guest's home world wrote its
+pre-visit copy back over it on the return; the logout release in connection.ts had never fired on an ordinary
+disconnect (its roster guard still saw the leaving session itself), fixed the same day, PASS), s133 (the leader walks
+into a building and the friend follows through the same door: both in the same interior, each seeing the other, the
+room held by the world peer), s95 (play with friends -- FAILED first: every
 join refused not_open, fixed the same day), s100 (invite across worlds), s102 (owner goes
 solo), s61 (dialogue lock), s72 (merchant purse), s03 (chat), s10 (movement puppets), s20
 (identity), s21 (rejoin), s80 (resume), s81 (reconnect), s70 (time), s48/s56 (world switch),

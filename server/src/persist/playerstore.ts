@@ -206,7 +206,8 @@ export class PlayerStore {
   private materializePosition(doc: PlayerDoc): void {
     if (doc.positions) {
       const mine = doc.positions[this.worldId];
-      if (mine) { doc.position = { ...mine }; return; }
+      // The `at` stamp is the map's, not the pose's: it must not ride into the Welcome.
+      if (mine) { doc.position = { cellKey: mine.cellKey, x: mine.x, y: mine.y, z: mine.z }; return; }
       // NEVER "no position at all". Deleting it left the client to the engine's own default,
       // which put a player switching to the public world at exterior cell 0,0 — the grid
       // ORIGIN, open sea. They drowned there and the respawn point then threw them somewhere
@@ -218,7 +219,7 @@ export class PlayerStore {
       // they have never visited is where they last stood, not nowhere. Every world here runs
       // the same content, so the cell resolves.
       const seeded = mostRecentPosition(doc.positions);
-      if (seeded) doc.position = { ...seeded };
+      if (seeded) doc.position = { cellKey: seeded.cellKey, x: seeded.x, y: seeded.y, z: seeded.z };
       else delete doc.position;
     }
     // No positions map = pre-slot doc from this world's own dir; keep legacy position as-is.

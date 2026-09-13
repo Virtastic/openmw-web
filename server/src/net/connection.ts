@@ -359,7 +359,12 @@ export class Connection implements Peer {
       if (this.player.inWorld && !superseded) {
         this.ctx.onPlayerLeftWorld?.(this.player.accountKey);
       }
-      if (heldByAnother === undefined || heldByAnother.charId !== charId) {
+      // `heldByAnother === this.player` is the ORDINARY logout (nobody has taken the account),
+      // and it must release too. The old test `heldByAnother === undefined` could never be true
+      // here (the roster still lists this session), so a plain disconnect never released, and
+      // a guest's evening in a friend's world was overwritten by their home world's stale copy
+      // the moment they came back (s132). Only a same-character supersede keeps the cache.
+      if (!superseded || heldByAnother.charId !== charId) {
         this.ctx.track?.(this.ctx.players.releaseCached(charId));
       }
       // M8: park a resume ticket BEFORE the roster slot goes, so a reconnect within

@@ -44,6 +44,52 @@ test('a world re-reads a character it let go, instead of trusting its own copy',
     'world A wrote its stale copy back over the newer one');
 });
 
+// THE SAME THING THROUGH A REAL SOCKET. The store test above releases by hand; the server's
+// own logout path never did. Its guard asked "is somebody else holding this account?" with a
+// roster lookup that still returned THIS session (roster.remove runs later), so an ordinary
+// disconnect never released, and a guest who trained in a friend's world (another process,
+// same players.db) came home to find their home world write its pre-visit copy back (s132).
+test('a plain disconnect lets the character go, so the next join sees what other worlds wrote', async (t) => {
+  const dataDir = tmpDataDir();
+  const server = await startServer({
+    requireGameData: false, dataDir, port: 0, host: '127.0.0.1',
+    configOverride: { login: { allowHarnessAuth: true } } as never,
+  });
+  t.after(() => server.close());
+
+  let a = await TestClient.connect(server.port);
+  const { welcome } = await a.joinAsNew('Traveller', 'hunter22');
+  const charId = String(welcome['characterId']);
+  await a.waitEvent('PlayerList');
+  a.sendEvent('PlayerAppearance', { race: 'dark elf', head: 'h', hair: 'x', isMale: true, class: 'warrior', name: 'Traveller' });
+  a.sendEvent('ChargenComplete', {});
+  a.sendEvent('PlayerSkills', { longblade: 35 });
+  a.sendEvent('ChatSend', { text: 'sync' });
+  await a.waitEvent('ChatMessage', (v) => (v as { text?: string }).text === 'sync');
+  a.close();
+  await a.closed;
+  // The server's own close handler (logout flush + release) runs a beat after ours.
+  await new Promise((r) => setTimeout(r, 300));
+  await server.flush();
+
+  // The evening in a friend's world: another process writes the same row.
+  const away = new PlayerStore(dataDir, 'friend-world');
+  assert.equal((await away.get(charId))?.stats?.skills?.longblade, 35);
+  away.update(charId, (d) => { d.stats = { ...d.stats, skills: { longblade: 42 } }; });
+  await away.flushAll();
+
+  // Home again: the Welcome must carry 42, not the copy this process cached before the trip.
+  a = await TestClient.connect(server.port);
+  t.after(() => a.close());
+  a.hello();
+  await a.waitJson('SessionHelloOk');
+  a.login('Traveller', 'hunter22');
+  const w = await a.waitJson('SessionWelcome');
+  const rec = w['playerRecord'] as { stats?: { skills?: Record<string, number> } } | null;
+  assert.equal(rec?.stats?.skills?.longblade, 42,
+    'the world answered from the copy it cached before the player left, and its next flush would overwrite the trip');
+});
+
 // A character created in-game kept the slot's placeholder label — "New character" — in the
 // launcher and in the social panel, forever. onCharacterNamed writes the chargen name onto
 // the slot, but it fires on PlayerAppearance, which arrives while the slot is still
