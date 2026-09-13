@@ -15,6 +15,12 @@ known and recorded; N/A = does not exist in single player either.
 
 ## 0. Live evidence (native peer + two browser clients, retail data, 2026-09-11/12)
 
+Full sweep on bake #27 (2026-09-12 21:01-23:42, 100 scenarios): 96 PASS, 2 SKIP by design (s43 needs a GPU box,
+s57 awaits its rewrite), 2 FAIL (s42, s51) that both PASS on a clean rerun -- they ran while 40 dead scenarios' gateway
+worlds and 14 of their peers were still alive (the harness SIGTERMed the gateway and SIGKILLed it mid-drain; worlds
+do not exit on TERM, peers ignore it). Fixed the same night: the gateway runs in its own process group and the harness
+kills the group. Effective: 98/98 that can run here.
+
 FULL SWEEP 2026-09-12 05:26-07:40 on the engine baked from `5a0b9e3d`: 85 scenarios, 80 PASS,
 3 SKIP by design (s43 host-load, s57, s63), 2 that failed in the sweep and pass alone (s42 crowded
 cell under host load, s47 a gateway port collision). An earlier sweep the same night found and
@@ -125,7 +131,7 @@ scenario is a code trace only.
 | Activating another player's body (alive or dead) | refused: no blank dialogue on a friend, no loot window on a fallen one (that copy is per-screen and unbacked); player-to-player exchange is drop + pickup | FIXED 09-11 |
 | Kill credit / GetDeadCount | ActorDeath tally shared | OK (attribution logs only) |
 | Companions fight beside you | siding-with on the peer | OK |
-| Resting refused mid-fight | holder relays combat state; puppet carries Combat package | FIXED 09-11 |
+| Resting refused mid-fight | holder relays combat state; puppet carries Combat package; the engine's own verdict (World::canRest bit 4) is what the client reads | FIXED 09-11. Live: s137 (the peer's creature engages you; your engine says enemies nearby) |
 | Trap / scripted damage | trap effects with duration now mirror; zero-duration and MWScript writes lost | GAP (narrow) |
 
 ## 4. Character state
@@ -152,6 +158,7 @@ scenario is a code trace only.
 | Item condition / charge / soul | per-field merge: charge client, condition raise client, soul peer | FIXED 09-11 |
 | Repair / recharge / soul trap | see above | FIXED 09-11 |
 | Quest items never deplete | container rule | OK |
+| Quest item carried out by a GUEST | loot writes to the guest's charId (by design: guests keep loot, quests stay with the host), so a guest who pockets the host's Dwemer puzzle box and goes home takes the host's quest with it; nothing flags it, nothing asks. Remedy today: the host asks the friend to drop it before leaving | GAP (design; a "leave quest loot behind" prompt on WorldClosed is the smallest fix) |
 | Theft (owned items in the world) | client-side crime detection; bounty relays; the take itself is a normal ObjectTakeRequest | OK |
 | Pickpocket | the Container window on a live actor rides the live-container path (canonical on open, diff on close); the stolen item leaves the NPC on every engine; the detection roll stays the thief's client's | FIXED 09-11 (was: local to the thief; the mark kept it for everyone else) |
 | Scripted enable/disable of refs | ObjectEnabled persisted | OK |

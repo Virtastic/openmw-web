@@ -879,7 +879,12 @@ for (const file of files) {
     torndown = true;
     // SIGKILL, not TERM: the engine ignores TERM (see startSimPeer.stop). Idempotent on a
     // process the scenario already stopped.
-    for (const p of ownedChildren) { try { p.kill('SIGKILL'); } catch { /* already gone */ } }
+    // The GROUP first: a detached child (the gateway) owns worlds and peers that must go with
+    // it; for a non-detached child -pid names no group and throws, and the plain kill follows.
+    for (const p of ownedChildren) {
+      try { process.kill(-p.pid, 'SIGKILL'); } catch { /* not a group leader, or gone */ }
+      try { p.kill('SIGKILL'); } catch { /* already gone */ }
+    }
     // A scenario that PASSES while a Lua handler was throwing is not a pass — it means the
     // assertions happened to be satisfied by some other path while a subsystem was dead.
     // Reported (not failed) so it cannot be silently normalised, and so a green suite still

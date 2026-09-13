@@ -130,9 +130,18 @@ export async function startGatewayAndClient(ctx, opts = {}) {
     // indistinguishable from a working one.
     stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...process.env, OMW_ALLOW_HARNESS_AUTH: '1' },
+    // ITS OWN PROCESS GROUP, so the worlds the gateway spawns -- and the peers those worlds
+    // spawn -- die with it. A SIGTERM to the gateway alone starts a drain the harness's own
+    // teardown then SIGKILLs mid-way, and the worlds (which do not exit on TERM) and their
+    // peers (which ignore it) lived on: a full sweep on 2026-09-12 had 40 dead scenarios'
+    // worlds and 14 of their peers still running, 10 GB and every core, starving the rest.
+    detached: true,
   });
   ctx.watchChild('gateway', gw);
-  const stop = () => { try { gw.kill('SIGTERM'); } catch { /* already gone */ } };
+  const stop = () => {
+    try { process.kill(-gw.pid, 'SIGKILL'); } catch { /* group already gone */ }
+    try { gw.kill('SIGKILL'); } catch { /* already gone */ }
+  };
 
   try {
     assert.ok(await waitHttp(`http://127.0.0.1:${gwPort}/healthz`, 30_000), 'the gateway must come up');
