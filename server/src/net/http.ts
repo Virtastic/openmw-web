@@ -330,8 +330,8 @@ export function clientLogRoute(req: IncomingMessage, res: ServerResponse, path: 
         const text = raw.slice(0, MAX_CLIENT_LOG_LINE);
         // Level is INFERRED here rather than taken from the client: a caller could otherwise
         // mark everything 'error' and drown the operator's real alerts.
-        const level = /error|ABORT|fatal/i.test(text) ? 'error'
-          : /warn/i.test(text) ? 'warn' : 'info';
+        const level = /\berror\b|\bABORT\b|\bfatal\b/i.test(text) ? 'error'
+          : /\bwarn/i.test(text) ? 'warn' : 'info';
         log(level, 'client.log', { ip, session, text });
       }
       res.writeHead(204);
