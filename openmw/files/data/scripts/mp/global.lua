@@ -1074,7 +1074,8 @@ local testItemRecordId = nil -- dynamic record for the equiptest harness hook
 local chestRecordId = nil
 local chestObj = nil
 local lastChestOpId = nil
-local testCastSpellId = nil -- created once by mpTestCastAt
+local testCastSpellId = nil -- created once by mpTestCastAt (harmful)
+local testHealSpellId = nil -- ...and the beneficial one (Restore Health)
 local lastDoorMirror = 0
 
 local function nearestDoor()
@@ -2435,32 +2436,33 @@ local eventHandlers = {
         -- (combat.lua MP_CombatSpellHit), finds nothing, and silently applies nothing — which
         -- is exactly how this failed the first time. Pick one out of the shared content
         -- instead, so both sides can resolve it.
-        if not testCastSpellId then
-            local harmful = { damagehealth = true, firedamage = true, shockdamage = true,
-                              frostdamage = true, poison = true }
+        local want = data.beneficial and { restorehealth = true } or
+            { damagehealth = true, firedamage = true, shockdamage = true, frostdamage = true, poison = true }
+        local cachedRef = data.beneficial and 'heal' or 'harm'
+        local spellId = data.beneficial and testHealSpellId or testCastSpellId
+        if not spellId then
             local okFind = pcall(function()
                 for _, spell in pairs(core.magic.spells.records) do
                     for _, eff in ipairs(spell.effects or {}) do
                         local id = eff.effect and eff.effect.id or eff.id
-                        if id and harmful[tostring(id)] then
-                            testCastSpellId = spell.id
-                            return
-                        end
+                        if id and want[tostring(id)] then spellId = spell.id return end
                     end
                 end
             end)
-            if not okFind or not testCastSpellId then
-                print('[mp] mpTestCastAt: no harmful spell in this content')
-                mp.set('castAt', 'no-harmful-spell')
+            if not okFind or not spellId then
+                print('[mp] mpTestCastAt: no ' .. cachedRef .. ' spell in this content')
+                mp.set('castAt', 'no-' .. cachedRef .. '-spell')
                 return
             end
+            if data.beneficial then testHealSpellId = spellId else testCastSpellId = spellId end
         end
         local okAdd, err = pcall(function()
             types.Actor.activeSpells(victim):add({
-                id = testCastSpellId, effects = { 0 },
+                id = spellId, effects = { 0 },
                 caster = playerScript(), ignoreResistances = true,
             })
         end)
+        local testCastSpellId = spellId -- for the mirror below
         if not okAdd then
             print('[mp] mpTestCastAt failed: ' .. tostring(err))
             mp.set('castAt', 'add-failed:' .. tostring(err))

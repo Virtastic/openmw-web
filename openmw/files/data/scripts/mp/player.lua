@@ -751,7 +751,13 @@ local function dispatch(cmd)
         local castPid, castPMag = cmd:match('^castp:(%d+):([%d.]+)$')
         if castPid then
             core.sendGlobalEvent('mpTestCastAt', { playerId = tonumber(castPid), magnitude = tonumber(castPMag) })
+        end        -- healp:<playerId>: a helper HEALS a friend -- a beneficial Restore Health at their
+        -- puppet. Crosses the PvP veto (help, not harm) and lands on the owner's avatar.
+        local healPid = cmd:match('^healp:(%d+)$')
+        if healPid then
+            core.sendGlobalEvent('mpTestCastAt', { playerId = tonumber(healPid), beneficial = true })
         end
+
         -- selfcast:<spellId>: what casting a spell on yourself does locally -- an active spell
         -- on the player's own body (a summon, a buff). The avatar receives it through
         -- PlayerActiveSpells and the peer acts on it (s115).

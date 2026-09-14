@@ -237,16 +237,20 @@ local function forwardMagicHits()
     end
     if not hits or #hits == 0 then return end
     if mp.set then mp.set('magicFwd', 'drained:' .. tostring(#hits)) end
-    local effects, spellId = {}, nil
+    local effects, spellId, beneficial = {}, nil, false
     for _, h in ipairs(hits) do
         effects[#effects + 1] = { id = tostring(h.effectId), magnitude = h.magnitude or 0, duration = 0 }
         spellId = spellId or (h.spellId ~= '' and h.spellId or nil)
+        -- A helper's heal on a friend: forwarded like damage, but it must cross the PvP veto
+        -- (which stops harm, not help) and apply as a restore on the owner's avatar.
+        if h.beneficial == true then beneficial = true end
     end
     core.sendGlobalEvent('mpCombatSpellHit', {
         victim = self.object,
         playerId = playerId,
         effects = effects,
         spellId = spellId,
+        beneficial = beneficial,
     })
 end
 

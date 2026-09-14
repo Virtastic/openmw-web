@@ -133,6 +133,7 @@ scenario is a code trace only.
 | Baseline gate after a reconnect / direct boot | identity.reset() shut the gate on every tick outside Joined and only the first chargenstate flip reopened it: a new character's inventory, skills and level stopped uploading after any blip (and its mirror kept saying ready) | FIXED 09-13 |
 | Ranged | avatar fires; ammo reconciled via inventory; a missed arrow (and any runtime item the world creates near an avatar: death drops, scripted items) is named by the peer as a world placement, so it can be picked up on every screen | FIXED 09-11 (was: peer-local, arrows unrecoverable) |
 | Blocking, armor, difficulty | peer engine, avatar treated as player for scaling | OK |
+| Heal / restore a FRIEND | RestoreHealth/Magicka/Fatigue on another player's puppet used to apply locally and revert, and the forward was gated behind PvP (off by default): a drop-in helper could not heal anyone. spelleffects.cpp now diverts beneficial restores to the owner like damage, tagged beneficial so combat.lua and the server let it cross the PvP veto (harm only); it lands on the wounded player's avatar | ADDED 09-14. Live: s144 (PvP off; a helper tops a wounded friend from 35 to 95) |
 | Spell at NPC (touch/target) | client casts; hit on puppet recorded -> CombatSpellHit -> holder applies record | OK |
 | Self-cast / potion / scroll | PlayerActiveSpells -> avatar (spell stance = Nothing on avatar) | FIXED 09-11 |
 | Cast-on-strike, charge | avatar strike on peer; charge: client both ways, peer lowers | FIXED 09-11 |

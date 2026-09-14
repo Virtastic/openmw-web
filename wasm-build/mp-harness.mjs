@@ -767,6 +767,21 @@ async function launchClient(name, mpPort, extraParams = '', opts = {}) {
 }
 
 // --- scenario runner -------------------------------------------------------------------------
+// A BENIGN CDP TIMEOUT MUST NEVER ABORT THE WHOLE RUN. A Runtime.evaluate against a page that
+// is navigating (a world switch) or mid-boot can go unanswered; the awaiting scenario handles
+// that (its waitFor throws and the scenario fails or retries), but a fire-and-forget caller (the
+// 150 ms mirror poll, a log pump) leaves the rejection unowned, and Node aborts the process on
+// it -- killing every scenario still queued (a full sweep died at s60b this way). Swallow the
+// CDP-timeout shape here; anything else re-throws so a real bug still surfaces.
+process.on('unhandledRejection', (err) => {
+  const msg = err instanceof Error ? err.message : String(err);
+  if (/no answer from the browser in \d+s/.test(msg)) {
+    console.error('[harness] swallowed a stray CDP timeout (page navigating/dead): ' + msg);
+    return;
+  }
+  throw err;
+});
+
 const wanted = process.argv.slice(2);
 // A leading underscore marks a LIBRARY, not a scenario. Without this the shared gateway
 // helper would be imported and run as one, fail for having no default export, and read as
