@@ -581,7 +581,9 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   locker.configureAccepted(await loadVanillaManifest(sharedDir), [], {
     acceptByNameAndSize: config.locker.acceptByNameAndSize,
   });
-  const lockerSessions = new LockerSessionStore();
+  // Persisted for the same reason as the gateway's: a restart must not sign a playing
+  // player out (see LockerSessionStore).
+  const lockerSessions = new LockerSessionStore(24 * 60 * 60 * 1000, sharedDir);
   const adminSessions = new AdminSessionStore();
   // Claiming the first administrator account needs proof of access to this machine. Armed
   // only while nobody holds the dashboard owner role; see setup-token.ts for why account
