@@ -243,6 +243,12 @@
    font-size:34px; color:var(--ink)}
  .cs-sub{margin:10px 0 0; color:var(--muted); font-size:14.5px}
  .cs-grid{display:flex; flex-wrap:wrap; justify-content:center; gap:16px; margin:34px 0 8px}
+ /* Friends whose world is open right now: one click boots straight into it. */
+ .cs-friends{margin:18px auto 0; max-width:560px; text-align:left}
+ .cs-friends h4{margin:0 0 8px; font:600 11px/1.4 "Optima","Gill Sans",sans-serif; letter-spacing:.12em; text-transform:uppercase; color:var(--muted)}
+ .cs-friend{display:flex; align-items:center; justify-content:space-between; gap:12px; padding:9px 12px; border:1px solid var(--line); border-radius:8px; margin-bottom:6px}
+ .cs-friend .who{font-size:14px; color:var(--ink)} .cs-friend .who b{color:var(--gold)}
+ .cs-friend .as{font-size:12px; color:var(--muted); margin-left:6px}
  .cs-tile{position:relative; width:230px; border:1px solid var(--line); border-radius:10px;
    padding:24px 18px 20px; box-sizing:border-box; text-align:center;
    background:linear-gradient(170deg,rgba(26,20,11,.9),rgba(12,9,5,.92));
@@ -1322,6 +1328,39 @@
          grid.appendChild(nt);
        }
        if (chars.length === 0) showCreate();
+       renderFriends(chars);
+     }
+     // FRIENDS PLAYING NOW. A drop-in used to be two full boots: home first, then the social
+     // panel, then a second reload into the friend's world. The gateway knows which friends
+     // have a world open to friends and occupied, so the launcher offers the join here and the
+     // boot goes straight there (bootGame reads chosenChar.joinWsPath). Joins as the most
+     // recently played finished character: an unfinished one cannot enter a shared world (the
+     // destination's chargen gate), and a fresh page is where creation belongs.
+     async function renderFriends(chars){
+       const old = bd.querySelector('.cs-friends'); if (old) old.remove();
+       let data = null;
+       try { data = await (await fetch(gwHttp + '/auth/friends-playing', { headers: auth })).json(); } catch(e){ return; }
+       const friends = (data && data.friends) || [];
+       if (!friends.length) return;
+       const ready = chars.filter((c) => !c.needsChargen)
+         .sort((a, b) => String(b.lastPlayedAt || '').localeCompare(String(a.lastPlayedAt || '')));
+       const wrap = document.createElement('div'); wrap.className = 'cs-friends';
+       const h = document.createElement('h4'); h.textContent = 'Friends playing now'; wrap.appendChild(h);
+       friends.forEach((f) => {
+         const row = document.createElement('div'); row.className = 'cs-friend';
+         const who = document.createElement('div'); who.className = 'who';
+         who.innerHTML = '<b></b> has their world open' + (f.players > 1 ? ' (' + f.players + ' playing)' : '');
+         who.querySelector('b').textContent = f.name;
+         if (ready[0]) { const as = document.createElement('span'); as.className = 'as'; as.textContent = 'join as ' + ready[0].name; who.appendChild(as); }
+         row.appendChild(who);
+         const b = document.createElement('button'); b.className = 'btn btn-ghost'; b.type = 'button';
+         b.textContent = ready[0] ? 'Join' : 'Finish a character first';
+         b.disabled = !ready[0];
+         b.onclick = () => done(Object.assign({}, ready[0], { joinWsPath: f.wsPath, joinName: f.name }));
+         row.appendChild(b);
+         wrap.appendChild(row);
+       });
+       grid.parentNode.insertBefore(wrap, grid.nextSibling);
      }
      $('cs-back').onclick = () => done(null);
      note.textContent = '';
@@ -1391,6 +1430,11 @@
    // machine. A path we join to our OWN origin cannot be wrong for whoever is holding it.
    const wsProto = /^wss:/.test(sess.gwUrl) ? 'wss' : 'ws';
    const worldWs = wsProto + '://' + location.host + world.wsPath;
+   // A JOIN FROM THE LAUNCHER: dial the friend's world directly; our own world (just opened
+   // above, so it is up to come home to) rides as mphome exactly as on a normal boot. The
+   // destination admits us if it is still open to friends and places us beside the host
+   // (server.ts guestSpawn); if it closed meanwhile, the refused dial goes home (net.lua).
+   const dialWs = chosenChar.joinWsPath ? (wsProto + '://' + location.host + chosenChar.joinWsPath) : worldWs;
    // EVERYTHING rides in the fragment now, mp and locker included. Fragments are not logged,
    // cached or sent as a Referer, and they do not sit in the address bar inviting a player to
    // retype the world address. The ticket is single-use and the server authorises every
@@ -1414,7 +1458,7 @@
    let hosted = false;
    try { hosted = (await fetch('/mwdata-manifest.json', { method: 'HEAD' })).ok; } catch(e){}
    const frag = (hosted ? '#mwdata=1&mphome=' : '#mphome=') + encodeURIComponent(worldWs)
-     + '&mp=' + encodeURIComponent(worldWs)
+     + '&mp=' + encodeURIComponent(dialWs)
      + '&locker=' + encodeURIComponent(sess.gwHttp)
      + '&mpticket=' + encodeURIComponent(ticket)
      + (sess.lockerToken ? '&mplocker=' + encodeURIComponent(sess.lockerToken) : '')
@@ -1429,6 +1473,7 @@
      // Only NAMED cells: --start takes a cell name, and an exterior grid ref ("-2,-9") is not
      // one. Exteriors keep the teleport (and the loading screen that hides it).
      + (function(){
+         if (chosenChar.joinWsPath) return ''; // the host's world places us beside the host
          var p = (chosenChar.positions || {})[privId];
          var cell = p && p.cellKey;
          return (cell && !/^-?\d+,\s*-?\d+$/.test(cell)) ? '&mpstart=' + encodeURIComponent(cell) : '';

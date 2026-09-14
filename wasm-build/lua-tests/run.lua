@@ -295,6 +295,56 @@ do
   check('global.lua forwards MP_WorldTimeRefused',
     g:find('MP_WorldTimeRefused', 1, true) ~= nil,
     'a refused Rest is silent again')
+  -- EVERY SCRIPT MUST PARSE. A script with a syntax error is silently not attached by the
+  -- engine ("Can't start ... avatar.lua: '}' expected"), and the body it belongs to just does
+  -- nothing -- which read as a gameplay bug for an hour. The runner's Lua is 5.1 and the
+  -- engine's 5.4, so this catches structure (a stray `end`), not every 5.4-only construct.
+  for _, f in ipairs({ 'global', 'player', 'identity', 'world', 'actors', 'avatar', 'companion', 'puppet', 'combat', 'social', 'objects', 'net', 'admin', 'menu', 'quests', 'interp' }) do
+    local fh = io.open('./openmw/files/data/scripts/mp/' .. f .. '.lua')
+    if fh then
+      local src = fh:read('*a'); fh:close()
+      local fn, err = loadstring(src, f .. '.lua')
+      check(f .. '.lua parses', fn ~= nil, tostring(err))
+    end
+  end
+  -- The engine is Lua 5.4: math.atan2 / math.pow / unpack are gone there, and the runner's
+  -- own Lua may still have them, so a script that passes here can still throw in the game.
+  for _, f in ipairs({ 'global', 'player', 'identity', 'world', 'actors', 'avatar', 'companion', 'puppet', 'combat', 'social', 'objects', 'net' }) do
+    local fh = io.open('./openmw/files/data/scripts/mp/' .. f .. '.lua')
+    if fh then
+      local src = fh:read('*a'); fh:close()
+      check(f .. '.lua uses no Lua 5.1-only math/base functions (the engine is 5.4)',
+        not src:find('math.atan2', 1, true) and not src:find('math.pow', 1, true)
+        and not src:find('[^.]unpack%('))
+    end
+  end
+  -- A dial refused by a world that is not ours must go HOME, not dead-end at "sign in again".
+  local n = io.open('./openmw/files/data/scripts/mp/net.lua'):read('*a')
+  check('net.lua hands an admission refusal to the go-home hook before the fresh-ticket ask',
+    n:find("net.lastErrorDetail == 'this world is private' and net.onRefusedAway", 1, true) ~= nil
+    and n:find('net.onRefusedAway', 1, true) < n:find("askPageForFreshTicket('credential refused", 1, true))
+  check('global.lua wires net.onRefusedAway to the WorldClosed notice + switch home',
+    g:find('net.onRefusedAway = function', 1, true) ~= nil and g:find("goHome({ reason = 'not_open' })", 1, true) ~= nil)
+  -- Self reconciliation must run ONCE PER FRAME against the newest sample, never per sample:
+  -- a slow client receives the same pose many times between physics steps, and correcting on
+  -- each one multiplied the gain into a runaway oscillation (300 units after one sword swing).
+  local pl = io.open('./openmw/files/data/scripts/mp/player.lua'):read('*a')
+  check('player.lua reconciles the self pose in a per-frame tick, not in the MP_SelfState handler',
+    pl:find('local function selfReconcileTick()', 1, true) ~= nil
+    and pl:find('selfReconcileTick() -- Phase 3', 1, true) ~= nil
+    and not pl:find('local function onSelfState%(e%).-mp%.correctSelf.-local function selfReconcileTick'))
+  -- The baseline gate reopens on EVERY connection for a finished character, not just when
+  -- chargenstate first flips: identity.reset() shuts it on every tick outside Joined.
+  check('global.lua re-sends MP_ChargenDone to the player script on every connection',
+    g:find("mp%.sendEvent%('ChargenComplete', {}%).-p:sendEvent%('MP_ChargenDone', {}%)%s*end%s*chargenReported = true") ~= nil)
+  local idn = io.open('./openmw/files/data/scripts/mp/identity.lua'):read('*a')
+  check('identity.reset clears the baselineReady mirror',
+    idn:find("baselineReady = false%s+mp%.set%('baselineReady', '0'%)") ~= nil)
+  -- The peer attaches avatar.lua INSTEAD of puppet.lua, so the equipment push must land there
+  -- too, or every avatar fights bare-handed (it did, until s138 tried to draw a bow).
+  local av = io.open('./openmw/files/data/scripts/mp/avatar.lua'):read('*a')
+  check('avatar.lua applies MP_Equip on the avatar body (setEquipment is Self-gated)',
+    av:find('MP_Equip = function', 1, true) ~= nil and av:find('pcall(types.Actor.setEquipment, self, slots)', 1, true) ~= nil)
   check('social.lua tells the player why time did not pass',
     s:find('MP_WorldTimeRefused = function', 1, true) ~= nil)
   -- ...and world.lua hands the adopted hours back, or the refused player lives ahead of

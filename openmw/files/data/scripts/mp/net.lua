@@ -403,6 +403,14 @@ function net.onClose()
     -- forever instead of saying "sign in again". The auth ladder above has already tried the
     -- alternatives by the time we get here.
     if net.lastError == 'AUTH_FAILED' then
+        -- REFUSED AT THE DOOR OF SOMEBODY ELSE'S WORLD. The host went solo (or blocked us)
+        -- while we were on our way over: the credential is fine, so a fresh ticket cannot
+        -- help and the "sign in again" modal is a lie that strands the player. Go home
+        -- instead, once, and say why (global.lua wires the hook: notice + switch to own).
+        if net.lastErrorDetail == 'this world is private' and net.onRefusedAway and net.onRefusedAway() then
+            net.lastError = nil
+            return
+        end
         -- Last stop before the terminal modal. For an SSO user this covers the spent or
         -- expired ticket (the world we dialed was slower than the ticket's life, or a
         -- reconnect re-presented one already redeemed): a fresh ticket fixes exactly this,

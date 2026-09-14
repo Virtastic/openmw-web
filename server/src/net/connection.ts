@@ -133,6 +133,13 @@ export interface ServerCtx {
   // Owner-only in-place flip of THIS world between 'private' (solo) and 'party' (joinable
   // by the owner's friends). Used by the where-am-I switcher.
   setWorldMode(accountKey: string, rank: number, mode: string): 'ok' | 'not_owner' | 'bad_mode' | 'not_flippable';
+  /** The owner (or an admin) sends ONE guest home without blocking or unfriending them: the
+   *  ordinary "kick" every co-op lobby has. The guest may come back as long as they are still
+   *  a friend and the world is still open. */
+  kickGuest(byAccountKey: string, rank: number, targetName: string): 'ok' | 'not_owner' | 'no_such_player' | 'self';
+  /** Who hosts this world, for the WorldMode event: the owner's character name (never the
+   *  account) and whether the asking connection IS the owner. */
+  worldHost(accountKey: string): { owner: string; isOwner: boolean };
   /** A player left the world. Acts only if they were its OWNER: a guest world with no host
    *  closes after a grace window (server.ts onPlayerLeftWorld). */
   onPlayerLeftWorld?(accountKey: string): void;
@@ -749,6 +756,12 @@ export class Connection implements Peer {
       });
       this.ctx.track?.(done);
       void done;
+      return;
+    }
+    if (name === 'WorldKick') {
+      const target = value instanceof Map && typeof value.get('name') === 'string' ? (value.get('name') as string) : '';
+      const r = this.ctx.kickGuest(this.player.accountKey, this.player.rank, target);
+      this.player.peer.sendEvent('SocialResult', { op: 'WorldKick', ok: r === 'ok', detail: r });
       return;
     }
     if (name === 'SetWorldMode') {
@@ -1794,7 +1807,7 @@ export class Connection implements Peer {
       // play, rather than holding a screen forever for something that is not coming.
       this.player.peer.sendEvent('SimReady', { ready: this.ctx.simReady?.() ?? true });
     }
-    this.player.peer.sendEvent('WorldMode', { mode: this.ctx.worldMode() });
+    this.player.peer.sendEvent('WorldMode', { mode: this.ctx.worldMode(), ...this.ctx.worldHost(this.player.accountKey) });
     this.ctx.hooks.playerJoinWorld({ id: this.player.id, name: this.player.name, rank: this.player.rank });
   }
 }

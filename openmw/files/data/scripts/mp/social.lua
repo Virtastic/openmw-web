@@ -107,6 +107,7 @@ local SOCIAL_OK = {
     FriendAccept  = 'You are now friends.',
     FriendRemove  = 'Friend removed.',
     BlockAdd      = 'Blocked.',
+    WorldKick     = 'Sent home.',
     BlockRemove   = 'Unblocked.',
     MuteAdd       = 'Muted.',
     MuteRemove    = 'Unmuted.',

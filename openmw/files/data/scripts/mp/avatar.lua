@@ -32,6 +32,7 @@ local avatarObjIds = {}
 local input = nil -- latest {seq, move, side, yaw, pitch, flags}
 local inputAt = 0
 local INPUT_HOLD_S = 0.35 -- coast to a stop when the stream stops
+local USE_HOLD_S = 2.0 -- ...but keep a held attack/draw this long (see the hold branch)
 
 local prevJump = false
 local hitHandlerRegistered = false
@@ -83,6 +84,42 @@ local function stop()
     prevJump = false
 end
 
+-- THE AVATAR'S HANDS. global.lua pushes equipment as an MP_Equip event on the body, and the
+-- handler lived only in puppet.lua -- which the peer never attaches (an avatar carries this
+-- script INSTEAD, so the two cannot fight over controls). So no avatar ever equipped anything:
+-- the inventory reconciled, the weapon sat in the pack, and every melee the peer computed for
+-- a player was a bare-handed one; a bow could not be drawn at all (s138). setEquipment is
+-- Self-gated, so this is the only place it can land. Same retry as puppet.lua: the granted
+-- items land a frame or more after the event.
+local pendingEquip = nil
+local equipRetryUntil = 0
+local function equipTick(now)
+    if not pendingEquip then return end
+    local have = {}
+    for _, item in ipairs(types.Actor.inventory(self):getAll()) do have[item.recordId] = true end
+    local ready = true
+    for _, id in pairs(pendingEquip) do
+        if not have[id] then ready = false end
+    end
+    if ready or now > equipRetryUntil then
+        -- BY OBJECT, THE LARGEST STACK. A record id equips the first matching stack, and the
+        -- pack can hold two of the same record: the single item the equipment push fabricated
+        -- before the inventory doc arrived, and the real stack the doc granted beside it. A
+        -- quiver bound to the lone arrow loosed one shot and the avatar stood there with the
+        -- other twenty-three in the pack.
+        local best = {}
+        for _, item in ipairs(types.Actor.inventory(self):getAll()) do
+            local b = best[item.recordId]
+            if not b or (item.count or 1) > (b.count or 1) then best[item.recordId] = item end
+        end
+        local slots = {}
+        for slot, id in pairs(pendingEquip) do slots[slot] = best[id] or id end
+        local ok, err = pcall(types.Actor.setEquipment, self, slots)
+        if not ok then print('[mp] avatar equip failed: ' .. tostring(err)) end
+        pendingEquip = nil
+    end
+end
+
 return {
     engineHandlers = {
         onActive = function()
@@ -96,13 +133,23 @@ return {
             if mp.setAvatar then mp.setAvatar(self.object, true) end
         end,
         onUpdate = function()
+            equipTick(core.getRealTime())
             -- I.Combat comes from the builtin combat script on this body; if it was not up
             -- at onActive, register on a later tick rather than losing the veto (puppet.lua
             -- learned the same lesson).
             if not hitHandlerRegistered then registerHitVeto() end
             local now = core.getRealTime()
             if not input or now - inputAt > INPUT_HOLD_S then
+                -- THE DRAW SURVIVES A SLOW STREAM. Motion coasts to a stop when frames lapse,
+                -- but the use bit used to drop with it -- and a client at a few fps (a big
+                -- scene, a loading hitch, a headless test) sends frames further apart than
+                -- the hold, so every bow the avatar drew was released the instant the stream
+                -- stuttered: a minimum-strength shot for 2 damage no matter how long the
+                -- owner held the button (measured 1.6 per arrow from a long bow). A bow held
+                -- a moment longer harms nothing; keep it for a bounded while.
+                local keepUse = input and bit(input.flags, 3) and now - inputAt <= USE_HOLD_S
                 stop()
+                if keepUse then self.controls.use = 1 end
                 return
             end
             self.controls.movement = input.move or 0
@@ -164,6 +211,12 @@ return {
                 end
             end)
             if not okL then print('[mp] avatar stats apply failed: ' .. tostring(errL)) end
+        end,
+        MP_Equip = function(data)
+            local slots = {}
+            for slot, id in pairs(data.slots or {}) do slots[tonumber(slot) or slot] = id end
+            pendingEquip = slots
+            equipRetryUntil = core.getRealTime() + 3
         end,
         mpAvatarPolicy = function(data)
             if data.pvp ~= nil then pvpEnabled = data.pvp == true end

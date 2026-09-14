@@ -60,7 +60,13 @@ still has it), s128 (a guest FIGHTS in a friend's world: through the real door, 
 world spawns its own peer -- managedPeer now reaches gateway worlds via the shared config -- and host
 and guest kill the same NPC together), s129 (the host's TAB CLOSES: the guest plays on through
 the 90 s grace, then is sent home as owner_left and lands joined in their own world), s130 (the host is INDOORS when the friend joins: the guest lands
-in the same room beside them, and the room is simulated for both), s131 (a guest DIES while visiting: respawns at the host world's
+in the same room beside them, and the room is simulated for both), s137 (REST REFUSED MID-FIGHT with the peer's
+creature: the engine's own canRest verdict flips to enemies-nearby on the owner's screen), s138 (an ARCHER kills the peer's
+creature with real arrows from the avatar -- see §3 for the three faults it found), s140 (the host goes SOLO while the friend
+is mid-reboot into their world: the refused dial goes home with a reason instead of the sign-in-again modal), s141 (the host
+SENDS ONE GUEST HOME without blocking: told, dropped, the other guest stays, the friendship stands and they come back on the
+next invite; the guest's UI knew whose world it was visiting), s142 (JOIN FROM THE LAUNCHER: a cold boot that dials the
+friend's world directly lands beside the host as a guest, and the host going solo still sends them home), s131 (a guest DIES while visiting: respawns at the host world's
 respawn point, health back, still a guest the host can see, not sent home), s132 (what a guest LEARNS comes home --
 FAILED first: the host world flushed the trained skill to the shared players.db, then the guest's home world wrote its
 pre-visit copy back over it on the return; the logout release in connection.ts had never fired on an ordinary
@@ -94,6 +100,7 @@ scenario is a code trace only.
 | Create character, chargen | private world `priv-<user>-<char>`; chargen sanctuary keeps the peer out of the cell | OK |
 | Resume after disconnect | resume ticket, same character, world snapshot re-sent; IP_CAP retried | FIXED 09-11 (IP_CAP was terminal RATE) |
 | Rejoin after dying and closing the tab | doc has hp 0 (death flushes); restored at 10% health on both the client and the peer's avatar, where they fell | FIXED 09-11 (was: die again on arrival, second "has fallen", respawn loop) |
+| Join a friend FROM THE LAUNCHER | GET /auth/friends-playing (locker Bearer): friends whose world is open to friends and occupied, the world they are IN; the character screen shows "Friends playing now -- Join as <last played>" and bootGame dials that world with our own as mphome. One boot instead of two full reloads | ADDED 09-13. Live: s142 (cold boot straight into the friend's world, lands beside the host, way home holds) |
 | Join a friend (party) | joinFriend -> ownerWorld (occupied, LIVE mode from the world's /status) -> switch -> mayJoinWorld -> chargen gate -> guestSpawn beside owner | FIXED 09-11 (the 09-10 pre-switch mode check read a mode fixed at process start, so every join was refused as not_open; caught live by s95) |
 | Owner flips party -> private | WorldClosed, 5 s grace, guests switched home | OK. Live: s102 |
 | Owner's tab closes (no Solo flip) | owner_left, 90 s grace while guests keep playing, then owner_gone -> WorldClosed('owner_left') -> guests home | OK. Live: s129 |
@@ -104,7 +111,7 @@ scenario is a code trace only.
 
 | Action | MP path | Status |
 |---|---|---|
-| Walk/run/sneak/jump | input frame 30 Hz -> avatar on peer -> authoritative pose back; reconciliation | OK |
+| Walk/run/sneak/jump | input frame 30 Hz -> avatar on peer -> authoritative pose back; reconciliation (per frame, see §3) | OK |
 | Stance (weapon/spell drawn) | input bits 4-5 -> avatar; pose bit 4 -> puppets | FIXED 09-10 (avatar never drew) |
 | Look pitch | input pitch -> avatar pitchChange | FIXED 09-10 |
 | Doors, load doors | client cell change -> PlayerCellChange -> avatar follow-teleport; door state relayed | OK |
@@ -118,7 +125,10 @@ scenario is a code trace only.
 
 | Action | MP path | Status |
 |---|---|---|
-| Melee vs NPC | client swing cancelled; avatar swings on peer (stance, use bit) | FIXED 09-10 |
+| Melee vs NPC | client swing cancelled; avatar swings on peer (stance, use bit) WITH THE PLAYER'S WEAPON: the equipment push (MP_Equip) was handled only by puppet.lua, which the peer never attaches, so every avatar fought bare-handed; avatar.lua now applies it | FIXED 09-10 (swing), FIXED 09-13 (weapon in hand). Live: s138 |
+| Ranged (the avatar looses) | the owner's stance/yaw/pitch/use ride the input tier; the avatar draws and releases on the peer, the arrow collides with the creature it holds, projectileHit rolls and damages natively. Three faults found on the way: no weapon in the avatar's hands (above), a quiver bound to a fabricated single arrow (equipment re-pushed after the doc reconciles; largest stack wins), and a held draw released at MINIMUM strength whenever the input stream stuttered (avatar.lua kept `use` only for the 0.35 s motion hold; a client at a few fps sends frames further apart) -- 1.6 damage per long-bow arrow became 18 | FIXED 09-13. Live: s138 (a stung scrib charges the archer; two arrows kill it) |
+| Reconciliation under load | one correction per FRAME toward the newest peer pose; per-SAMPLE corrections multiplied the gain on a slow client into a runaway oscillation (26 -> 46 -> 81 -> 300 units after one swing, then a hard snap) | FIXED 09-13 |
+| Baseline gate after a reconnect / direct boot | identity.reset() shut the gate on every tick outside Joined and only the first chargenstate flip reopened it: a new character's inventory, skills and level stopped uploading after any blip (and its mirror kept saying ready) | FIXED 09-13 |
 | Ranged | avatar fires; ammo reconciled via inventory; a missed arrow (and any runtime item the world creates near an avatar: death drops, scripted items) is named by the peer as a world placement, so it can be picked up on every screen | FIXED 09-11 (was: peer-local, arrows unrecoverable) |
 | Blocking, armor, difficulty | peer engine, avatar treated as player for scaling | OK |
 | Spell at NPC (touch/target) | client casts; hit on puppet recorded -> CombatSpellHit -> holder applies record | OK |
@@ -201,6 +211,7 @@ scenario is a code trace only.
 | Globals (quest gates) | peer's write wins within the driving window; dialogue-result names client-owned | OK |
 | Member variables on cell scripts | MemberVarUpdate relay | OK |
 | Faction standing, bounty | routed to the campaign | OK |
+| Host sends a guest home (kick) | WorldKick (owner/admin only) -> closeToGuest('kicked'): that one guest gets WorldClosed + the 5 s drop, the friendship and the open door stand (they can come back), the other guests stay. UI: "send home" on a guest's row for the host; the guest's panel says "Visiting <host>'s world" with a Leave button (WorldMode now carries the host's character name and isOwner) | ADDED 09-13. Live: s141 |
 | Host blocks / unfriends a guest mid-session | Social.friendshipEnded -> closeToGuest: WorldClosed(unfriended) + kick after 5 s; the other guests stay; either side ending it sends the GUEST home, the owner never moves | FIXED 09-13 (was: door-only check, the blocked guest stayed). Live: s139 |
 | OnDeath / GetDeadCount | shared tally | OK |
 | Scripted PlaceAt / PositionCell of NPCs | see runtime-spawned actors | GAP |

@@ -38,7 +38,7 @@ export default async function run(ctx) {
     for (const [handle, g] of [[PEST, pest], [PAL, pal]]) {
       const acct = JSON.parse(await g.client.eval("window.omw.state.friends||'[]'"))[0].acct;
       await g.client.cmd(`joinfriend:${acct}`);
-      await host.client.waitFor(`${rowOf(handle)}.id !== undefined`, 120_000, `the host sees ${handle} arrive`);
+      await host.client.waitFor(`${rowOf(handle)}.id !== undefined`, 300_000, `the host sees ${handle} arrive`);
       await g.client.waitFor('window.omw.state.state === "Joined"', 60_000, `${handle} is joined after the redial`);
       await grantLockerSession(g.client, GW_PORT, g.account);
     }

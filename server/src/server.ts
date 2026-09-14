@@ -476,6 +476,10 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   const closeToGuests = (reason: string): void => {
     for (const conn of [...connections]) sendGuestHome(conn, reason);
   };
+  const hostOf = (accountKey: string): { owner: string; isOwner: boolean } => ({
+    owner: roster.activeForAccount(worldOwner)?.name ?? '',
+    isOwner: worldOwner !== '' && accountKey === worldOwner,
+  });
   // ONE guest, when the friendship that let them in ends (Social.friendshipEnded). Either
   // side may end it; the guest is the one who goes home, and the owner never moves.
   const closeToGuest = (accountKey: string, reason: string): void => {
@@ -750,7 +754,9 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       // The UI must never GUESS which world it is in. It used to render Solo/Party/Public from
       // a localStorage note of what the player last clicked, which survived reloads and
       // reconnects and so could claim you were somewhere you were not. The server owns this.
-      for (const conn of connections) conn.player?.peer.sendEvent('WorldMode', { mode });
+      for (const conn of connections) {
+        if (conn.player) conn.player.peer.sendEvent('WorldMode', { mode, ...hostOf(conn.player.accountKey) });
+      }
       // mayJoinWorld only gates ARRIVAL. Flipping back to Solo therefore closed the door
       // while leaving every guest standing inside. Closing means closing: tell each guest
       // to go home (their client knows its own world and dials it), then drop anyone still
@@ -792,6 +798,20 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
         });
       }
     },
+    worldHost: hostOf,
+    // "Send home": the host's ordinary kick. Not a block (the friendship stands, the door
+    // stays open), not a flip (the other guests stay). The guest gets the same WorldClosed
+    // notice with its own reason, and the 5 s drop behind it.
+    kickGuest: (byAccountKey: string, rank: number, targetName: string): 'ok' | 'not_owner' | 'no_such_player' | 'self' => {
+      if (rank < 1 && (worldOwner === '' || byAccountKey !== worldOwner)) return 'not_owner';
+      const wanted = targetName.trim().toLowerCase();
+      const target = roster.inWorld().find((p) => !p.system && p.name.toLowerCase() === wanted);
+      if (!target) return 'no_such_player';
+      if (target.accountKey === byAccountKey || target.accountKey === worldOwner) return 'self';
+      log('info', 'world.guest_kicked', { world: worldId, by: byAccountKey, guest: target.accountKey });
+      closeToGuest(target.accountKey, 'kicked');
+      return 'ok';
+    },
     onPlayerLeftWorld: (accountKey: string): void => {
       // Only OUR row: a player who moved to another world has already written a row naming
       // that world, and deleting theirs from the world they left would blink them offline.
@@ -813,7 +833,9 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
         if (roster.activeForAccount(worldOwner)) return; // the host is back; nothing closes
         log('info', 'world.owner_gone', { world: worldId, owner: worldOwner });
         worldMode = 'private';
-        for (const conn of connections) conn.player?.peer.sendEvent('WorldMode', { mode: 'private' });
+        for (const conn of connections) {
+          if (conn.player) conn.player.peer.sendEvent('WorldMode', { mode: 'private', ...hostOf(conn.player.accountKey) });
+        }
         closeToGuests('owner_left');
       }, OWNER_DISCONNECT_GRACE_MS);
       ownerGraceTimer.unref();

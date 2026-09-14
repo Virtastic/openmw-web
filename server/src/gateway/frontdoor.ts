@@ -14,6 +14,7 @@
 // — the ticket grants exactly one auth attempt there, nothing more.
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { SocialStore } from '../core/socialstore';
 import { detectGameData, gameDataDir } from '../core/gamedata';
 import { orderedContent } from '../net/admin/api-mods';
 import { loadConfig } from '../config';
@@ -278,6 +279,41 @@ export interface FrontDoor {
 }
 
 // All state lives in the shared dir; the same files the world processes read and write.
+/** GET /auth/friends-playing: the signed-in account's friends whose world is open to friends
+ *  and occupied right now -- what the launcher shows as "join <name>" so a drop-in is ONE boot
+ *  straight into the friend's world, not a boot home followed by a second full reload. The
+ *  destination still authorizes (mayJoinWorld: party + friends); this only says who is
+ *  reachable. Blocked either way is not a friend for this purpose. */
+export function friendsPlayingRoutes(
+  accounts: AccountStore,
+  lockerSessions: LockerSessionStore,
+  social: SocialStore,
+  worldsNow: () => { ownerAccount?: string; mode: string; up: boolean; playerCount: number; id: string }[],
+): HttpRoute {
+  return async (req, res, url) => {
+    if (url.pathname !== '/auth/friends-playing') return false;
+    res.setHeader('access-control-allow-origin', req.headers.origin ?? '*');
+    res.setHeader('access-control-allow-headers', 'authorization');
+    if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return true; }
+    if (req.method !== 'GET') { sendJson(res, 405, { error: 'method_not_allowed' }); return true; }
+    const auth = req.headers.authorization ?? '';
+    const accountKey = lockerSessions.resolve(auth.startsWith('Bearer ') ? auth.slice(7) : '');
+    if (!accountKey) { sendJson(res, 401, { error: 'sign_in_first' }); return true; }
+    const worlds = worldsNow();
+    const friends = social.friendsOf(accountKey)
+      .filter((f) => !social.blockedEitherWay(accountKey, f.account))
+      .map((f) => {
+        // The world they are IN: an owner on their second character has two worlds up.
+        const open = worlds.filter((w) => w.ownerAccount === f.account && w.up && w.mode === 'party');
+        const w = open.find((x) => x.playerCount > 0) ?? open[0];
+        return w ? { acct: f.account, name: accounts.cachedByKey(f.account)?.username ?? accounts.usernameOf(f.account) ?? f.account, worldId: w.id, wsPath: `/w/${w.id}`, players: w.playerCount } : null;
+      })
+      .filter((x): x is NonNullable<typeof x> => x !== null);
+    sendJson(res, 200, { friends });
+    return true;
+  };
+}
+
 export async function buildFrontDoor(
   sharedDir: string,
   onCharacterDeleted?: (owner: { accountKey: string; username?: string }, charId: string) => void,
@@ -287,6 +323,9 @@ export async function buildFrontDoor(
   // The dashboard's session store, so an SSO round trip with return=admin can sign an
   // operator into the multiplayer server's dashboard the way it does into a game's.
   adminSessions?: AdminSessionStore,
+  // The live world list, for /auth/friends-playing. Absent (a standalone front door) the
+  // route answers an empty list.
+  worldsNow?: () => { ownerAccount?: string; mode: string; up: boolean; playerCount: number; id: string }[],
 ): Promise<FrontDoor> {
   const config = loadConfig(sharedDir, undefined, sharedDir);
   // The gateway front door loads its own config, so it needs its own call: without this the
@@ -387,10 +426,13 @@ export async function buildFrontDoor(
   const profile = profileRoutes(accounts, lockerSessions, attio);
   const chars = characterRoutes(accounts, lockerSessions, players, onCharacterDeleted);
   const reticket = ticketRoutes(accounts, lockerSessions, tickets);
+  const social = new SocialStore(sharedDir);
+  const playing = friendsPlayingRoutes(accounts, lockerSessions, social, worldsNow ?? (() => []));
   const also: HttpRoute = async (req, res, url) =>
     (await blobs(req, res, url)) || (await saves(req, res, url))
     || (await locker2(req, res, url)) || (await profile(req, res, url))
-    || (await chars(req, res, url)) || (await reticket(req, res, url));
+    || (await chars(req, res, url)) || (await reticket(req, res, url))
+    || (await playing(req, res, url));
   const route = createAuthRoutes(
     { config, oidc, identities, tickets, sessions, lockerSessions, accounts, bans,
       ...(adminSessions ? { adminSessions } : {}),
@@ -404,7 +446,7 @@ export async function buildFrontDoor(
     /** Drain the CRM queue on shutdown. A record enqueued a moment before SIGTERM would
      *  otherwise wait for the next boot's timer, and a redeploy is exactly when signups
      *  cluster. */
-    close: () => attio.close(),
+    close: () => { social.close(); return attio.close(); },
     resolveAccount: (auth: string) =>
       lockerSessions.resolve(auth.startsWith('Bearer ') ? auth.slice(7) : ''),
     // Mints a locker session directly, for the browser harness ONLY. Exposed here but wired

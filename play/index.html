@@ -4394,7 +4394,7 @@ window.omw = (function(){
     // called renderSocial(), and then hit the unchanged-signature early return: the segment
     // stayed on the old choice and the panel looked hung even though the switch had happened.
     var sig = [sTab, lastWhere, String(m.whereNow || ''), sStatusText, m.friends, m.players, m.friendRequests,
-      m.invites, m.availability, m.presenceMode, m.worldMode, m.blocked, m.muted].join(' ')
+      m.invites, m.availability, m.presenceMode, m.worldMode, m.blocked, m.muted, m.amHost, m.worldHost].join(' ')
     if (!force && sig === lastSocialSig) return;
     lastSocialSig = sig;
     var friends = pj(m.friends)||[], players = pj(m.players)||[];
@@ -4446,6 +4446,23 @@ window.omw = (function(){
     var wn = m.whereNow == null ? '' : String(m.whereNow);
     if (wn) lastWhere = wn;
     var where = el('div','whererow');
+    var amHost = String(m.amHost || '') === 'true';
+    var hostName = String(m.worldHost || '');
+    if (!amHost && hostName) {
+      // A GUEST. This is somebody else's game: say whose, and offer the one thing a guest
+      // can do about it -- leave. (Solo/Party are the host's controls; a guest clicking them
+      // went home anyway, which read as the switcher being broken.)
+      where.appendChild(el('span','lb','Visiting <b>' + esc(hostName) + "</b>'s world"));
+      var leave = el('button','btn','Leave');
+      leave.onclick = function(){
+        closeSocial();
+        cmd('where:solo');
+        window.__omwLoading.show('Going home', 'Back to your own world…');
+        setStatus('');
+      };
+      where.appendChild(leave);
+      sBody.appendChild(where);
+    } else {
     where.appendChild(el('span','lb','Playing'));
     where.appendChild(seg([['solo','Solo'],['party','Party']], lastWhere, async function(v){
       // Solo closes your world to guests; Party opens it to your friends. Both are in-place
@@ -4460,6 +4477,7 @@ window.omw = (function(){
       renderSocial();
     }));
     sBody.appendChild(where);
+    }
     var sec = el('div');
     if (sTab === 'friends'){
       reqs.forEach(function(q){ var c = el('div','card');
@@ -4526,6 +4544,9 @@ window.omw = (function(){
           cmd('social:FriendRequest:'+p.name); setStatus('Friend request sent.'); }, true]);
         // Everything that targets a PERSON goes by name for the same reason.
         acts.push(['mute', function(){ cmd('social:MuteAdd:'+p.name); }]);
+        // THE HOST'S KICK. Sends that one guest home, keeps the friendship and the open
+        // door -- the ordinary lobby control, next to the harsher block.
+        if (amHost) acts.push(['send home', function(){ cmd('social:WorldKick:'+p.name); setStatus('Sent home.'); }]);
         acts.push(['block', function(){ cmd('social:BlockAdd:'+p.name); }]);
         // REPORT, one click from the row. The typed /report is gone; this is the only way,
         // and it files the same report with the same chat context attached.
@@ -4814,7 +4835,9 @@ window.omw = (function(){
         // visible, so the copy has to read correctly without one.
         var by = esc(String(m.worldClosedBy || ''));
         showNotice('Returning to your own world',
-          (wc === 'unfriended' ? 'You are no longer on the friends list that let you into that world.'
+          (wc === 'kicked' ? (by ? '<b>' + by + '</b> sent you home.' : 'The host sent you home.')
+            : wc === 'unfriended' ? 'You are no longer on the friends list that let you into that world.'
+            : wc === 'not_open' ? 'That world is no longer open to you: the host has gone solo.'
             : by ? '<b>' + by + '</b> has closed their world.'
               : 'The world you were in has closed.')
           + ' You are being taken back to your own world. Nothing you did there is lost.',

@@ -512,11 +512,30 @@ async function launchClient(name, mpPort, extraParams = '', opts = {}) {
       browser.addEventListener('error', () => rej(new Error('CDP ws error')), { once: true });
     });
     let mid = 1;
-    const bsend = (method, params = {}, sessionId) => new Promise((resolve, reject) => {
+    // BOUNDED. A Runtime.evaluate against a page that is navigating away (a world switch is a
+    // full reload) can simply never be answered, and a scenario that awaited it hung for 40
+    // minutes with nothing to say (s140, 2026-09-13). Every CDP call answers or throws.
+    // GENEROUS, because a booting page blocks its main thread for minutes under load (a
+    // retail boot after ten scenarios) and an evaluate issued then is merely late, not lost.
+    // And NEVER an unhandled rejection: some callers fire and forget (the log pump, the
+    // teardown), and a rejection nobody awaits took the whole harness process down at s67 of
+    // a twelve-scenario run. The catch below keeps awaiters' rejections intact.
+    const CDP_TIMEOUT_MS = 300_000;
+    const bsend = (method, params = {}, sessionId) => {
+      const p = bsendRaw(method, params, sessionId);
+      p.catch(() => {});
+      return p;
+    };
+    const bsendRaw = (method, params = {}, sessionId) => new Promise((resolve, reject) => {
       const id = mid++;
+      const timer = setTimeout(() => {
+        browser.removeEventListener('message', onMsg);
+        reject(new Error(`${method}: no answer from the browser in ${CDP_TIMEOUT_MS / 1000}s (page navigating or dead)`));
+      }, CDP_TIMEOUT_MS);
       const onMsg = (ev) => {
         const m = JSON.parse(ev.data);
         if (m.id === id) {
+          clearTimeout(timer);
           browser.removeEventListener('message', onMsg);
           m.error ? reject(new Error(method + ': ' + m.error.message)) : resolve(m.result);
         }
@@ -781,6 +800,7 @@ for (const file of files) {
   // recorded after the finally, where that binding is out of scope.
   let isCritical = false;
   const childLogs = []; // scenario-spawned processes (gateways), dumped on failure
+  const peerBufs = []; // every sim peer's full stdout (ctx.peerLogTail)
   console.log(`\n=== scenario ${file} ===`);
   try {
     // Import first: a scenario may declare server rules it needs (e.g. pvp = true).
@@ -825,7 +845,11 @@ for (const file of files) {
           proc.stdout?.on('data', (d) => buf.push(String(d)));
           proc.stderr?.on('data', (d) => buf.push(String(d)));
           childLogs.push({ label, tail: () => buf.join('').split(NL).slice(-40).join(NL) });
+          peerBufs.push(buf);
         }),
+      // The sim peers' stdout so far (all of it, not the 40-line failure tail): a scenario
+      // can read the peer's side of a mechanism it cannot see from the client.
+      peerLogTail: (n = 4000) => peerBufs.map((b) => b.join('').split(NL).slice(-n).join(NL)).join(NL),
       serverDataDir: server.dataDir,
       serverStatus: server.status,
       serverKill: server.kill,

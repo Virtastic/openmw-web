@@ -199,3 +199,64 @@ test('a guest who unfriends the host while visiting goes home; the host stays pu
   await leaver.waitDisconnect('KICKED');
   assert.equal(host.inbox.events.filter((e) => e.name === 'WorldClosed').length, 0, 'the owner is never evicted from their own world');
 });
+
+// THE HOST'S ORDINARY KICK. Every co-op lobby has "remove from party" beside "block". Here the
+// only eviction was Solo (everyone out) or block (unfriend forever). WorldKick sends ONE guest
+// home, keeps the friendship and the open door: they can come straight back if invited again.
+// And WorldMode tells every client whose world it is, so a guest's UI can say "Visiting X".
+test('the host sends one guest home without blocking them; a guest cannot kick; WorldMode names the host', async (t) => {
+  const shared = tmpDataDir();
+  const pub = await startServer({ requireGameData: false, dataDir: tmpDataDir(), sharedDir: shared, port: 0, host: '127.0.0.1' });
+  t.after(() => pub.close());
+  for (const name of ['Host', 'Guest', 'Pal']) {
+    const c = await TestClient.connect(pub.port);
+    await c.joinAsNew(name);
+    c.close();
+    await c.closed;
+  }
+  await pub.flush();
+  const store = new SocialStore(shared);
+  store.addFriend('host', 'guest', Date.now());
+  store.addFriend('host', 'pal', Date.now());
+  store.close();
+  const world = await startServer({ requireGameData: false,
+    dataDir: tmpDataDir(), sharedDir: shared, port: 0, host: '127.0.0.1',
+    worldId: 'priv-host', worldMode: 'party', worldOwner: 'host',
+  });
+  t.after(() => world.close());
+  const host = await TestClient.connect(world.port);
+  await host.joinExisting('Host');
+  const guest = await TestClient.connect(world.port);
+  await guest.joinExisting('Guest');
+  const pal = await TestClient.connect(world.port);
+  await pal.joinExisting('Pal');
+  t.after(() => { host.close(); pal.close(); });
+
+  // Everyone was told whose world this is at join.
+  const hostMode = (await host.waitEvent('WorldMode')).value as { owner?: string; isOwner?: boolean };
+  assert.equal(hostMode.isOwner, true);
+  const guestMode = (await guest.waitEvent('WorldMode')).value as { owner?: string; isOwner?: boolean };
+  assert.equal(guestMode.isOwner, false);
+  assert.equal(guestMode.owner, 'Host', "the guest's client can say whose world it is visiting");
+
+  // A guest cannot kick.
+  guest.sendEvent('WorldKick', { name: 'Pal' });
+  const denied = (await guest.waitEvent('SocialResult', (v) => (v as { op?: string }).op === 'WorldKick')).value as { ok?: boolean; detail?: string };
+  assert.equal(denied.ok, false);
+  assert.equal(denied.detail, 'not_owner');
+
+  // The host sends Guest home: told with its own reason, dropped after the grace; Pal stays.
+  host.sendEvent('WorldKick', { name: 'Guest' });
+  const r = (await host.waitEvent('SocialResult', (v) => (v as { op?: string }).op === 'WorldKick')).value as { ok?: boolean };
+  assert.equal(r.ok, true);
+  const closed = (await guest.waitEvent('WorldClosed')).value as { reason?: string; by?: string };
+  assert.equal(closed.reason, 'kicked');
+  assert.equal(closed.by, 'Host');
+  await guest.waitDisconnect('KICKED');
+  assert.equal(pal.inbox.events.filter((e) => e.name === 'WorldClosed').length, 0, 'the other guest stays');
+
+  // Not a block: still friends, and the door is still open, so they can walk back in.
+  const back = await TestClient.connect(world.port);
+  await back.joinExisting('Guest');
+  back.close();
+});
