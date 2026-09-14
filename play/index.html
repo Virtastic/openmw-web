@@ -545,7 +545,7 @@ window.omw = (function(){
    function want(text, cls){
      if (mode === 'all') return true;
      if (cls === 'err') return true;
-     return /error|warn|failed|ABORT|Lua error/i.test(text);
+     return /\berror\b|\bwarn|\bfailed\b|\bABORT\b|Lua error/i.test(text);
    }
    function flush(){
      if (sending || !queue.length) return;
@@ -2526,7 +2526,10 @@ window.omw = (function(){
              hide:function(){ el.classList.remove('show'); },
              onPick:function(cb){ pick.onclick=cb; },
              setPick:function(label,enabled){ pick.textContent=label; pick.disabled=!enabled; },
-             note:function(msg,cls){ noteEl.textContent=msg||''; noteEl.className='wz-note'+(cls?' '+cls:''); },
+             note:function(msg,cls){ noteEl.textContent=msg||''; noteEl.className='wz-note'+(cls?' '+cls:'');
+               // A red note is the wizard's only account of what went wrong; ship it with the
+               // rest of the page's errors (see __omwShipLog) or the operator never sees it.
+               if (cls==='err' && msg) append('[locker] wizard: '+msg,'err'); },
              render:function(needed,haveNames){
                list.innerHTML=''; rows={};
                var LABEL={ 'sound/':'Voices', 'music/':'Music', 'video/':'Videos',
@@ -2553,6 +2556,11 @@ window.omw = (function(){
                r.li.className='wz-li'+(r.req?'':' opt')+(state?' '+state:'');
                r.ic.textContent = state==='done'?'✓':(state==='err'?'!':'');
                if(text!=null) r.st.textContent=text;
+             },
+             // The rows an aborted run left spinning ("hashing…"): mark them so the retry
+             // button and the checklist tell the same story.
+             failBusy:function(text){
+               Object.keys(rows).forEach(function(k){ if ((' '+rows[k].li.className+' ').indexOf(' busy ')!==-1) wiz.set(k,'err',text); });
              }
            };
          })();
@@ -2740,7 +2748,15 @@ window.omw = (function(){
 
              // The single entry point for both pickers: classify what was handed to us, then
              // upload core files, loose media (per-file) and voice (one pack).
-             async function ingest(list){
+             // Every picker calls this fire-and-forget, so it must not be able to reject: a
+             // file that cannot be read (a handle whose permission lapsed, a locked file, an
+             // oversized arrayBuffer) used to fail unobserved and leave the wizard on
+             // "Checking..." with a spinner forever -- the prod trace of 2026-09-11 (a new
+             // player, media-manifest fetched, then silence, gone two minutes later).
+             function ingest(list){
+               return ingestInner(list).catch(function(e){ wiz.failBusy('failed'); stop('Could not read your files ('+(e&&e.message||e)+'). Try again.'); });
+             }
+             async function ingestInner(list){
                var core={}, loose=[], voice=[];
                var wanted={}; fileNeeded.forEach(function(f){ wanted[f.name.toLowerCase()]=f.name; });
                // WHAT THE PACK IS ALLOWED TO CONTAIN. The server verifies media.tar entry by
@@ -4022,7 +4038,7 @@ window.omw = (function(){
     // test renderer (SwiftShader) genuinely has no compressed formats -- so this would fire on
     // every scenario, every time, and put a panel in front of a bot that cannot dismiss it. A
     // diagnostic that interferes with the thing it is diagnosing is worse than the bug.
-    if (/[?&]mpauto=1/.test(location.search)) return;
+    if (/[?&]mpauto=1\b/.test(location.search)) return;
     setTimeout(function(){
       try {
         // NOT URGENT. This is information, not a decision the player has to make before they
