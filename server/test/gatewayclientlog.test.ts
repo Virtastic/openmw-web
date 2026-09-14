@@ -54,4 +54,13 @@ test('POST /clientlog on the gateway is recorded as client.log', async (t) => {
   assert.equal(seen.find((s) => /Lua error/.test(s.text))?.level, 'error');
   assert.equal(seen.find((s) => /warning only/.test(s.text))?.level, 'warn');
   assert.equal(seen.find((s) => /No locker session/.test(s.text))?.level, 'info');
+
+  // The directory answers every preflight itself. The filesystem locker's presigned blob
+  // upload is a cross-origin PUT to this port on any self-host that does not reverse-proxy
+  // the page and the gateway together, and it was refused ("Method PUT is not allowed").
+  const pre = await fetch(`http://127.0.0.1:${dir.port}/locker/blob/x/y`, {
+    method: 'OPTIONS', headers: { origin: 'http://localhost:8910', 'access-control-request-method': 'PUT' },
+  });
+  assert.equal(pre.status, 204);
+  assert.match(pre.headers.get('access-control-allow-methods') ?? '', /\bPUT\b/);
 });
