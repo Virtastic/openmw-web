@@ -171,7 +171,12 @@ export async function startDirectory(deps: DirectoryDeps): Promise<RunningDirect
     // DELETE: character deletion (/auth/characters). The directory answers ALL preflights on
     // this port, so a method missing here is blocked by the browser before the front-door
     // route ever sees it — which read as "could not reach the server" on the delete button.
-    res.setHeader('access-control-allow-methods', 'GET, POST, DELETE, OPTIONS');
+    // PUT: the filesystem locker's presigned blob upload (data/fsstorage.ts) lands on this
+    // port when there is no S3, and its URL names the gateway's own origin -- a different one
+    // from the page's on any self-host that does not reverse-proxy the two together. The
+    // preflight is answered HERE before that route runs, so without PUT in this list every
+    // upload in the wizard died on "Method PUT is not allowed" and the library never filled.
+    res.setHeader('access-control-allow-methods', 'GET, POST, PUT, DELETE, OPTIONS');
     res.setHeader('access-control-allow-headers', 'content-type, authorization');
     if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
 

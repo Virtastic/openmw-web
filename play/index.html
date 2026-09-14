@@ -2718,8 +2718,25 @@ window.omw = (function(){
                wiz.note('All set. Starting Morrowind.','ok');
                (async function(){
                  var got; try { got=(await (await api('/locker/files')).json()).files; } catch(e){ got=null; }
+                 await reseat();
                  setTimeout(function(){ wiz.hide(); resolve(got||[]); }, 800);
                })();
+             }
+             // ASK FOR THE SEAT AGAIN. The launcher opened this player's world BEFORE the boot,
+             // and a world nobody has joined is discarded after a 15-minute grace -- a first
+             // upload of a full library is often longer than that on a home connection, so
+             // the engine would dial a world that no longer existed (502, and nothing on disk
+             // to revive). POST /worlds is create-or-join, keyed on the character, so this is
+             // a no-op while the world is still up and a fresh start when it is not; the
+             // engine's own dial ladder covers the seconds it takes to come up.
+             async function reseat(){
+               var ch = (typeof ENV !== 'undefined' && ENV.OPENMW_MP_CHARACTER) || '';
+               if (!window.__omwMPEnabled || !ch) return;
+               try {
+                 var r = await api('/worlds', { method:'POST', headers:{ 'content-type':'application/json' },
+                   body: JSON.stringify({ mode:'private', characterId: ch }), signal: AbortSignal.timeout(15000) });
+                 append('[locker] world re-opened after the upload (' + r.status + ')', r.ok ? undefined : 'err');
+               } catch(e){ append('[locker] could not re-open the world after the upload: '+(e&&e.message||e),'err'); }
              }
 
              // Upload one already-hashed record with live per-row status. Returns true on success.
