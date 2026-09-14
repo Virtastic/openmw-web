@@ -94,6 +94,13 @@ local GOLD_SERVICE_MODES = {
 
 local barterTarget = nil -- harness 'barter:open': the NPC whose purse is mirrored
 local walkCmd = nil -- harness 'walk:<dx>,<dy>,<ms>' injection
+local jumpFrames = 0 -- harness 'jump': frames left holding the jump control (an edge the input sender cannot miss)
+-- harness 'use:<ms>' -- wait, that name is taken by the inventory hook; this is 'press:<ms>':
+-- the use key held on THIS engine (attack from a drawn weapon, or a cast from the spell
+-- stance), through the same control the mouse button drives. attack:<ms> only forwards the
+-- use bit to the peer (the avatar swings); it never presses anything here, so no scenario
+-- had ever driven a real client-side cast (s147/s148).
+local pressUntil = 0
 local pendingTestEquip = nil -- harness 'equip:<id>:<slot>': equip once the grant lands
 
 local function cellKey()
@@ -209,10 +216,28 @@ local SNAP_COOLDOWN_S = 2.0
 -- ignored; the avatar's poses after it has followed us carry a newer sequence.
 local teleportSeq = nil
 local lastOwnPos = nil -- teleport (single-frame jump) detector; see PlayerCellChange below
+-- WHERE WE ANNOUNCED WE WENT, and until when a sample from anywhere else is stale. The input
+-- sequence alone cannot tell: a sample the peer produced BEFORE it applied our teleport still
+-- acknowledges inputs we sent after it, so it passed as fresh, sat 900 units from us, and
+-- reconciliation snapped us straight back to the old spot (s151: a same-cell teleport was
+-- undone on the client while the avatar arrived at the destination alone). Bounded, so a
+-- peer that never follows cannot leave us uncorrected forever.
+local teleportTo = nil -- {x, y, z, until_}
+local TELEPORT_GRACE_S = 4
 
 local function onSelfState(e)
     if not e or not e.x then return end
     if teleportSeq ~= nil and (tonumber(e.lastInputSeq) or 0) <= teleportSeq then return end
+    if teleportTo ~= nil then
+        local tx, ty, tz = e.x - teleportTo.x, e.y - teleportTo.y, e.z - teleportTo.z
+        if tx * tx + ty * ty + tz * tz <= SNAP_DIST * SNAP_DIST then
+            teleportTo = nil -- the avatar arrived; corrections mean something again
+        elseif core.getRealTime() < teleportTo.until_ then
+            return -- the peer has not moved the avatar yet: this sample describes the old place
+        else
+            teleportTo = nil
+        end
+    end
     -- BEFORE THE DETECTOR HAS SEEN THE JUMP. A far teleport loads a new region, and the
     -- engine stalls for seconds with the player already standing at the destination and no
     -- onUpdate running -- so the cell change is not yet announced, the server keeps
@@ -324,6 +349,10 @@ local function movementTick()
     if key and not atOrigin and (key ~= lastCellKey or jumped) then
         lastCellKey = key
         teleportSeq = inputSeq -- every state sample up to here describes the old place
+        if jumped then
+            teleportTo = { x = pos.x, y = pos.y, z = pos.z, until_ = now + TELEPORT_GRACE_S }
+            latestSelf = nil -- the sample already in hand describes the old place: reconciling to it undoes the teleport
+        end
         mp.sendEvent('PlayerCellChange', { cellKey = key, x = pos.x, y = pos.y, z = pos.z })
     end
 
@@ -379,11 +408,34 @@ local function faceTick()
     faceApplied = false
 end
 
+local function pressTick()
+    if pressUntil == 0 then return end
+    if core.getRealTime() < pressUntil then
+        self.controls.use = 1
+    else
+        self.controls.use = 0
+        I.Controls.overrideCombatControls(false)
+        pressUntil = 0
+    end
+end
+
 local function walkTick()
+    pressTick()
+    if jumpFrames > 0 then
+        jumpFrames = jumpFrames - 1
+        self.controls.jump = jumpFrames > 0
+        if jumpFrames == 0 and not walkCmd then I.Controls.overrideMovementControls(false) end
+        if not walkCmd then return end
+    end
     if not walkCmd then return end
     if core.getRealTime() >= walkCmd.stopAt then
         self.controls.movement = 0
         self.controls.sideMovement = 0
+        -- Every posture bit off in the SAME frame as the stop: the stop is an edge-triggered
+        -- input send, and it carries whatever the controls say right now (s145).
+        self.controls.run = false
+        self.controls.sneak = false
+        self.controls.jump = false
         I.Controls.overrideMovementControls(false)
         walkCmd = nil
         return
@@ -391,6 +443,8 @@ local function walkTick()
     self.controls.movement = walkCmd.dy
     self.controls.sideMovement = walkCmd.dx
     self.controls.run = walkCmd.run
+    self.controls.sneak = walkCmd.sneak
+    self.controls.jump = walkCmd.up
 end
 
 -- HARNESS ONLY. Mirrors the merchant's purse so a scenario can assert on it. Polled rather
@@ -670,6 +724,52 @@ local function dispatch(cmd)
             core.sendGlobalEvent('mpGrantItem', { id = grantId })
             pendingTestEquip = { id = grantId, slot = tonumber(grantSlot), until_ = core.getRealTime() + 5 }
         end
+        -- give:<recordId> puts one in the pack without equipping it; use:<recordId> uses it
+        -- the way the inventory click does (drink a potion, read a scroll, light a torch).
+        local giveId = cmd:match('^give:(.+)$')
+        if giveId then core.sendGlobalEvent('mpGrantItem', { id = giveId }) end
+        local useId = cmd:match('^use:(.+)$')
+        if useId then
+            local item = types.Actor.inventory(self):find(useId)
+            if item then core.sendGlobalEvent('UseItem', { object = item, actor = self })
+            else print('[mp] use: not in the pack: ' .. useId) end
+        end
+        -- selectench:<recordId>: pick an enchanted item (a scroll) in the magic menu, so the
+        -- next use in the spell stance casts it -- the player's own path to reading a scroll.
+        local enchId = cmd:match('^selectench:(.+)$')
+        if enchId then
+            local item = types.Actor.inventory(self):find(enchId)
+            if item then types.Actor.setSelectedEnchantedItem(self, item)
+            else print('[mp] selectench: not in the pack: ' .. enchId) end
+        end
+        -- selected: what the use key would cast right now (the magic menu's selection).
+        -- body: the engine's own view of our body -- swimming, on the ground, z, health.
+        if cmd == 'body' then
+            local ok, v = pcall(function()
+                local swim = types.Actor.isSwimming and tostring(types.Actor.isSwimming(self)) or '?'
+                local d = mp.drownState and mp.drownState() or {}
+                return string.format('swim=%s ground=%s z=%.0f hp=%.1f submerged=%s breath=%s god=%s wb=%s', swim,
+                    tostring(types.Actor.isOnGround(self)), self.position.z, types.Actor.stats.dynamic.health(self).current,
+                    tostring(d.submerged), tostring(d.breath), tostring(d.godmode), tostring(d.waterBreathing))
+            end)
+            mp.set('body', ok and v or ('err:' .. tostring(v)))
+        end
+        -- actives: the ids of our active spells right now (did the cast take?).
+        if cmd == 'actives' then
+            local ids = {}
+            pcall(function() for _, sp in pairs(types.Actor.activeSpells(self)) do ids[#ids + 1] = tostring(sp.id) end end)
+            table.sort(ids)
+            mp.set('actives', table.concat(ids, ','))
+        end
+        if cmd == 'selected' then
+            local ok, v = pcall(function()
+                local ei = types.Actor.getSelectedEnchantedItem(self)
+                if ei then return 'item:' .. tostring(ei.recordId) end
+                local sp = types.Actor.getSelectedSpell(self)
+                return sp and ('spell:' .. tostring(sp.id)) or 'none'
+            end)
+            mp.set('selected', ok and v or ('err:' .. tostring(v)))
+        end
         if cmd == 'equiptest' then -- demo content has no items; global creates one
             core.sendGlobalEvent('mpTestItem', {})
         end
@@ -763,6 +863,27 @@ local function dispatch(cmd)
         -- PlayerActiveSpells and the peer acts on it (s115).
         local selfSpell = cmd:match('^selfcast:(.+)$')
         if selfSpell then core.sendGlobalEvent('mpTestSelfCast', { id = selfSpell }) end
+        -- learnspell:<spellId>: know it and select it, so the use key in the spell stance
+        -- casts it through the engine's own path (a real cast carries an activeSpellId, which
+        -- the effect mirror needs; the selfcast hook above bypasses that and never reaches the
+        -- avatar -- fine for a local effect, wrong for proving the mirror).
+        -- mintspell:<effect>:<magnitude>:<seconds>: a cheap self spell of one effect, learned
+        -- and selected (see global.lua mpMintSpell); the id lands in the 'mintedSpell' mirror.
+        local mEff, mMag, mDur = cmd:match('^mintspell:([%w_]+):(%d+):(%d+)$')
+        if mEff then
+            core.sendGlobalEvent('mpMintSpell', { effect = mEff, magnitude = tonumber(mMag), duration = tonumber(mDur) })
+        end
+        local learnId = cmd:match('^learnspell:(.+)$')
+        if learnId then
+            pcall(function()
+                types.Actor.spells(self):add(learnId)
+                types.Actor.setSelectedSpell(self, learnId)
+            end)
+        end
+        -- dispel:<spellId>: end one of our own active spells (levitation off mid-air = a fall
+        -- the engine measures, unlike a teleport; s147).
+        local dispelId = cmd:match('^dispel:(.+)$')
+        if dispelId then pcall(function() types.Actor.activeSpells(self):remove(dispelId) end) end
         local killNpc = cmd:match('^killnpc:(.+)$')
         if killNpc then core.sendGlobalEvent('mpKillNpc', { id = killNpc }) end
         if cmd == 'door:toggle' then core.sendGlobalEvent('mpDoorToggle', {}) end
@@ -795,6 +916,13 @@ local function dispatch(cmd)
         -- M7/M8 hooks (all resolved in the GLOBAL script).
         local restHours = cmd:match('^rest:([%d.]+)$')
         if restHours then core.sendGlobalEvent('mpTestRest', { hours = tonumber(restHours) }) end
+        -- sleep:<hours>: the real thing (the wait dialog's loop: heal + advance, per hour),
+        -- not the clock-only rest above. -1 in the mirror when the binding is missing.
+        local sleepHours = cmd:match('^sleep:(%d+)$')
+        if sleepHours then
+            local ok = pcall(function() mp.restHours(tonumber(sleepHours), true) end)
+            mp.set('slept', ok and sleepHours or '-1')
+        end
         -- The engine's rest verdict (bit 4 = enemies nearby): does a fight the peer runs
         -- against us count as one on THIS screen? -1 when the binding is missing.
         if cmd == 'canrest' then
@@ -878,6 +1006,8 @@ local function dispatch(cmd)
         -- controls the mouse would drive; applied by faceTick under the movement override.
         -- Angles as the engine's own aim (pathfinding.hpp getZAngleToDir / getXAngleToDir).
         if cmd == 'stance:weapon' then pcall(function() types.Actor.setStance(self, types.Actor.STANCE.Weapon) end) end
+        if cmd == 'stance:spell' then pcall(function() types.Actor.setStance(self, types.Actor.STANCE.Spell) end) end
+        if cmd == 'stance:none' then pcall(function() types.Actor.setStance(self, types.Actor.STANCE.Nothing) end) end
         local fx, fy, fz = cmd:match('^face:(-?[%d.]+),(-?[%d.]+),(-?[%d.]+)$')
         if fx then
             local p = self.position
@@ -890,14 +1020,27 @@ local function dispatch(cmd)
             local pos = self.position
             core.sendGlobalEvent('mpSelfSnap', { x = pos.x, y = pos.y, z = pos.z + tonumber(tdz) })
         end
-        local dx, dy, ms = cmd:match('^walk:(-?[%d.]+),(-?[%d.]+),(%d+)$')
+        -- walk:<dx>,<dy>,<ms>[:run|:sneak] -- the optional mode is what a friend's puppet is
+        -- expected to show (s145); jump queues one jump edge on the next frame.
+        local dx, dy, ms, mode = cmd:match('^walk:(-?[%d.]+),(-?[%d.]+),(%d+):?(%a*)$') -- mode: run | sneak | up
         if dx then
             walkCmd = {
                 dx = tonumber(dx),
                 dy = tonumber(dy),
-                run = false,
+                run = mode == 'run',
+                sneak = mode == 'sneak',
+                up = mode == 'up', -- jump held: how a levitating player climbs (s148)
                 stopAt = core.getRealTime() + tonumber(ms) / 1000,
             }
+            I.Controls.overrideMovementControls(true)
+        end
+        local pressMs = cmd:match('^press:(%d+)$')
+        if pressMs then
+            pressUntil = core.getRealTime() + tonumber(pressMs) / 1000
+            I.Controls.overrideCombatControls(true)
+        end
+        if cmd == 'jump' then
+            jumpFrames = 4 -- held ~3 frames, released on the 4th
             I.Controls.overrideMovementControls(true)
         end
     end
@@ -1014,6 +1157,13 @@ return {
             local okv, valid = pcall(function() return target and target:isValid() end)
             if not (okv and valid) then return end
             pcall(function() I.UI.addMode('Dialogue', { target = target }) end)
+        end,
+        MP_SpellMinted = function(data)
+            pcall(function()
+                types.Actor.spells(self):add(data.id)
+                types.Actor.setSelectedSpell(self, data.id)
+            end)
+            mp.set('mintedSpell', tostring(data.id))
         end,
         MP_SelfStats = function(data)
             if not data or not data.hp then return end

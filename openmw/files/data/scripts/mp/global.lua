@@ -288,6 +288,11 @@ local puppets = {} -- id -> {obj=GameObject, name=string}
 local remoteCell = {} -- id -> last cellKey (from PlayerCellChange relays)
 local moveRx = 0 -- DIAGNOSTIC: total MoveBatch pose entries routed to puppets
 local lastPose = {} -- id -> last known {x=, y=, z=}
+-- HARNESS MIRROR ONLY: the newest posture flags of each remote player and how many jump
+-- edges we have seen from them, so a scenario on THIS screen can assert that a friend's
+-- run / sneak / jump / stance actually arrived (s145). Not used by the puppet itself.
+local lastFlags = {} -- id -> flags of the newest routed batch entry
+local jumpEdges = {} -- id -> count of bit-2 rising edges
 local remoteIdentity = {} -- id -> {appearance=, equipment=, dynamic=} (M2; kept across spawns)
 local puppetRecordIds = {} -- identity fingerprint -> generated NPC record id (immutable)
 local ownCellKeyCache = nil
@@ -452,6 +457,13 @@ end
 -- much of its input the pose already contains (reconciliation hangs off it).
 local lastInputSeq = {}
 local avatarUsing = {} -- id -> the use bit of the newest routed input (mirrors "attacking")
+-- The owner's whole posture, not just the use bit. The avatar stream used to forward only
+-- "attacking" and "weapon drawn", so under the peer a friend sneaking walked upright on every
+-- other screen, never jumped, and never showed a spell stance (s145). run / sneak come from
+-- the newest input; a jump is an EDGE in a 30 Hz input stream and the avatar stream is
+-- slower, so it is latched until the next stream entry carries it.
+local lastInputFlags = {} -- id -> flags of the newest routed input
+local jumpPending = {} -- id -> true until the next avatar stream entry has carried the edge
 local avatarStreamAt = 0
 local AVATAR_STREAM_EVERY = 0.05 -- 20 Hz, matching the peer's own frame pacing
 
@@ -624,12 +636,18 @@ local function avatarStreamTick(now)
                     -- the pose flags so the owner's state batch -- and every observer's move
                     -- batch -- carries it; player.lua mirrors it as selfFlags for s67.
                     -- bit 4: weapon drawn, so every observer's puppet shows the same posture.
-                    flags = (avatarUsing[id] and 8 or 0)
-                        + (types.Actor.getStance(p.obj) == types.Actor.STANCE.Weapon and 16 or 0),
+                    flags = (lastInputFlags[id] or 0) % 4 -- bits 0-1: run, sneak (owner's input)
+                        + (jumpPending[id] and 4 or 0) -- bit 2: a latched jump edge
+                        + (avatarUsing[id] and 8 or 0)
+                        + (types.Actor.getStance(p.obj) == types.Actor.STANCE.Weapon and 16 or 0)
+                        -- bit 5 from the OWNER's input: the avatar deliberately never enters
+                        -- the spell stance (avatar.lua -- it must never cast), so its own
+                        -- stance can never say "spell ready"; the friend's screen still should.
+                        + (math.floor((lastInputFlags[id] or 0) / 32) % 2 == 1 and 32 or 0),
                     animVel = animVel,
                 }
             end)
-            if not ok then entries[#entries] = nil end
+            if not ok then entries[#entries] = nil else jumpPending[id] = nil end
         end
     end
     if #entries > 0 and mp.sendAvatarMoveBatch then mp.sendAvatarMoveBatch(entries) end
@@ -997,6 +1015,10 @@ local function despawnPuppet(id)
     pushAvatarPolicyQueued = true
     avatarStatsSentAt[id] = nil
     avatarUsing[id] = nil
+    lastInputFlags[id] = nil
+    jumpPending[id] = nil
+    lastFlags[id] = nil
+    jumpEdges[id] = nil
     avatarItemStatesLast[id] = nil
     avatarItemStatesSentAt[id] = nil
     ownerActive[id] = nil
@@ -1056,8 +1078,10 @@ local function mirrorPuppets()
                 table.sort(eq)
             end
             local rec = types.NPC.records[p.obj.recordId]
+            local okS, st = pcall(types.Actor.getStance, p.obj)
             m[tostring(id)] = { x = pos.x, y = pos.y, z = pos.z,
-                name = rec and rec.name or p.name, eq = eq }
+                name = rec and rec.name or p.name, eq = eq,
+                flags = lastFlags[id] or 0, jumps = jumpEdges[id] or 0, stance = okS and st or -1 }
         end
     end
     mp.set('puppets', json.encode(m))
@@ -1815,7 +1839,10 @@ local eventHandlers = {
         local p = puppets[data.id]
         if not p or not p.obj or not p.obj:isValid() then return end
         if data.seq then lastInputSeq[data.id] = data.seq end
-        avatarUsing[data.id] = math.floor((data.flags or 0) / 8) % 2 == 1
+        local f = data.flags or 0
+        avatarUsing[data.id] = math.floor(f / 8) % 2 == 1
+        lastInputFlags[data.id] = f
+        if math.floor(f / 4) % 2 == 1 then jumpPending[data.id] = true end
         p.obj:sendEvent('mpAvatarInput', data)
     end,
 
@@ -2055,6 +2082,11 @@ local eventHandlers = {
             local e = entryBuf[i]
             if e.id ~= net.playerId then
                 lastPose[e.id] = { x = e.x, y = e.y, z = e.z }
+                local f = e.flags or 0
+                if math.floor(f / 4) % 2 == 1 and math.floor((lastFlags[e.id] or 0) / 4) % 2 == 0 then
+                    jumpEdges[e.id] = (jumpEdges[e.id] or 0) + 1
+                end
+                lastFlags[e.id] = f
                 -- NEVER into the chargen cells. spawnPuppet places a puppet in the LOCAL
                 -- player's own cell (destCellArg), and this path has no cell test of its own —
                 -- MP_PlayerCellChange checks visibility, a move batch does not. That is how a
@@ -2830,6 +2862,28 @@ local eventHandlers = {
     mpTestRest = function(data) worldmp.testRest(data.hours) end,
     mpTestRecord = function(data) worldmp.testCreateRecord(data.name, data.noRegister) end,
     mpTestSpell = function(data) worldmp.testCreateSpell(data.name) end,
+    -- Harness: mint a self-targeted spell with ONE known effect, cheap enough that a fresh
+    -- character always lands it (s147/s148: a levitation strong enough to climb with, where
+    -- the retail spells are slow, short, and a coin-flip at low Alteration). The player
+    -- script learns and selects it on MP_SpellMinted.
+    mpMintSpell = function(data)
+        local ok, rec = pcall(function()
+            return world.createRecord(core.magic.spells.createRecordDraft({
+                name = 'harness ' .. tostring(data.effect),
+                type = core.magic.SPELL_TYPE.Spell,
+                cost = 1,
+                effects = { { id = data.effect, range = 0, area = 0,
+                    magnitudeMin = data.magnitude, magnitudeMax = data.magnitude, duration = data.duration } },
+            }))
+        end)
+        if not ok then print('[mp] mpMintSpell failed: ' .. tostring(rec)) return end
+        -- Registered with the server like any player-made spell (s71): the active-effect
+        -- mirror maps ids to NET ids on the way to the avatar, and an unregistered record
+        -- cannot cross -- the owner levitated while their avatar stood on the ground and
+        -- reconciliation dragged them straight back down.
+        worldmp.registerRecord(rec.id)
+        toPlayer('MP_SpellMinted', { id = rec.id, effect = data.effect })
+    end,
     mpTestEnchanted = function(data) worldmp.testCreateEnchanted(data.name) end,
     mpTestWeather = function(data) worldmp.testWeather(data.index) end,
     -- Test-only opener for the social overlay's signal. The harness cannot drive SDL keys

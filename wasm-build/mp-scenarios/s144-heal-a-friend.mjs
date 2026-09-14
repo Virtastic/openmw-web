@@ -19,6 +19,7 @@ export default async function run(ctx) {
   const [hurt, helper] = await Promise.all([ctx.launchClient('hurt', '', BOOT), ctx.launchClient('helper', '', BOOT)]);
   await hurt.waitFor('String(window.omw.state.selfStats||"").indexOf("/") > 0', 300_000, 'the peer reports the hurt player\'s bars (driving)');
   await hurt.waitFor('Number(window.omw.state.playerId||0) > 0', STEP, 'the hurt player knows its id');
+  await hurt.waitFor('String(window.omw.state.baselineReady||"") === "1"', STEP, 'the hurt character is settled (identity diffs may speak)');
   const hurtId = Number(await hurt.eval('window.omw.state.playerId'));
   // PvP is OFF (the default): the helper must still be able to heal.
   assert.notEqual(await helper.eval('window.omw.state.pvp'), 'true', 'this proves the friendly default, so PvP must be off');

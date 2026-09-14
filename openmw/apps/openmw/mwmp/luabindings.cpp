@@ -3,6 +3,7 @@
 #include "luabindings.hpp"
 #include "puppets.hpp"
 
+#include <algorithm>
 #include <cstdlib>
 #include <vector>
 
@@ -37,6 +38,9 @@
 
 #include "../mwmechanics/activespells.hpp"
 #include "../mwmechanics/creaturestats.hpp"
+#include "../mwmechanics/npcstats.hpp"
+#include "../mwmechanics/magiceffects.hpp"
+#include <components/esm3/loadmgef.hpp>
 
 #include "../mwworld/class.hpp"
 #include "../mwworld/esmstore.hpp"
@@ -303,6 +307,33 @@ namespace MWMP
         // behalf reaches this client as a puppet carrying a Combat package (actors.lua
         // MP_ActorAI), and that package is what enemiesNearby() counts. Read-only.
         api["canRest"] = []() { return MWBase::Environment::get().getWorld()->canRest(); };
+        // HARNESS: the engine's own drowning inputs for the player (s149): is the body
+        // submerged by the rule updateDrowning uses, how much breath is left, god mode.
+        api["drownState"] = [](sol::this_state ts) {
+            sol::state_view lua(ts);
+            sol::table t = lua.create_table();
+            MWBase::World* world = MWBase::Environment::get().getWorld();
+            const MWWorld::Ptr player = world->getPlayerPtr();
+            t["submerged"] = world->isSubmerged(player);
+            t["swimming"] = world->isSwimming(player);
+            t["breath"] = player.getClass().getNpcStats(player).getTimeToStartDrowning();
+            t["godmode"] = world->getGodModeState();
+            t["waterBreathing"] = player.getClass().getCreatureStats(player).getMagicEffects()
+                .getOrDefault(ESM::MagicEffect::WaterBreathing).getMagnitude();
+            return t;
+        };
+        // HARNESS: rest or sleep for N hours exactly as the wait dialog does it (one
+        // mechanics rest + one hour of world time per hour, WaitDialog::onWaitingProgressChanged),
+        // so a scenario can prove that sleeping heals a peer-ruled body (s150). The dialog
+        // itself cannot be driven without SDL keys.
+        api["restHours"] = [](int hours, bool sleep) {
+            const int n = std::max(0, std::min(hours, 24 * 7));
+            for (int i = 0; i < n; ++i)
+            {
+                MWBase::Environment::get().getMechanicsManager()->rest(1, sleep);
+                MWBase::Environment::get().getWorld()->advanceTime(1);
+            }
+        };
         // Phase B SSO: a one-time login ticket the boot JS lifted out of the URL fragment
         // after the provider round trip. Empty when signing in with a password.
         api["getLoginTicket"] = []() { return getEnvString("OPENMW_MP_TICKET"); };

@@ -386,6 +386,20 @@ local function onUpdate(dt)
     local want = bit(target.flags, 4) and types.Actor.STANCE.Weapon
         or (bit(target.flags, 5) and types.Actor.STANCE.Spell or types.Actor.STANCE.Nothing)
     if types.Actor.getStance(self) ~= want then
+        -- The engine refuses the spell stance on a body with nothing selected to cast, and a
+        -- puppet knows no spells: a friend readying magic stood at ease on every other screen
+        -- (s145). Any spell will do -- the puppet never casts; the pose is the point.
+        if want == types.Actor.STANCE.Spell and not types.Actor.getSelectedSpell(self) then
+            pcall(function()
+                for _, rec in ipairs(core.magic.spells.records) do
+                    if rec.type == core.magic.SPELL_TYPE.Spell then
+                        types.Actor.spells(self):add(rec.id)
+                        types.Actor.setSelectedSpell(self, rec.id)
+                        break
+                    end
+                end
+            end)
+        end
         pcall(function() types.Actor.setStance(self, want) end)
     end
     local jumpEdge = bit(target.flags, 2)
