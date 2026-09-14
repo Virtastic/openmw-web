@@ -170,7 +170,7 @@ scenario is a code trace only.
 
 | Action | MP path | Status |
 |---|---|---|
-| Pick up / two players race | ObjectTakeRequest first-wins, tombstone, refusal shown | OK |
+| Pick up / two players race | ObjectTakeRequest first-wins, tombstone, refusal shown | OK. Live: s79 |
 | Loot in the last 2 s before a disconnect/kick | inventory snapshot is 2 s diffed; the acquisition ledger is a timing hint, not state; the rejoin restore never confiscates surplus, so the client's local copy wins on rejoin | OK (bounded loss window ≤ 2 s, by design) |
 | Drop | ObjectSpawn, netId, refused reasons incl. cell_full | FIXED 09-10 (no cell_full line) |
 | Containers, merchants' stock and gold | canonical on first open; gold deltas; 24 h gold restock; item restock from `origin` on cell reset | OK |
@@ -179,7 +179,7 @@ scenario is a code trace only.
 | Repair / recharge / soul trap | see above | FIXED 09-11 |
 | Quest items never deplete | container rule | OK |
 | Quest item carried out by a GUEST | loot writes to the guest's charId (by design: guests keep loot, quests stay with the host), so a guest who pockets the host's Dwemer puzzle box and goes home takes the host's quest with it; nothing flags it, nothing asks. Remedy today: the host asks the friend to drop it before leaving | GAP (design; a "leave quest loot behind" prompt on WorldClosed is the smallest fix) |
-| Theft (owned items in the world) | client-side crime detection; bounty relays; the take itself is a normal ObjectTakeRequest | OK |
+| Theft (owned items in the world) | client-side crime detection; bounty relays; the take itself is a normal ObjectTakeRequest | OK. Live: s125 |
 | Pickpocket | the Container window on a live actor rides the live-container path (canonical on open, diff on close); the stolen item leaves the NPC on every engine; the detection roll stays the thief's client's | FIXED 09-11 (was: local to the thief; the mark kept it for everyone else) |
 | Scripted enable/disable of refs | ObjectEnabled persisted | OK |
 | Locks, lockpicking, script Lock/Unlock | lockWatch relay, persisted | OK |
@@ -203,7 +203,7 @@ scenario is a code trace only.
 | Dialogue-started AiWander / AiActivate | not relayed; the holder's copy keeps its own package (cosmetic: an NPC told to stand still by a dialogue keeps wandering elsewhere) | OK (cosmetic) |
 | Guards: crime pursuit, arrest dialogue | registry bounty; AiPursue reaches; PlayerArrest to owner | FIXED 09-11. Live: s78 (pursuit), s126 (arrest dialogue opens) |
 | Assault / murder as crimes | commitCrime/actorKilled accept avatars; PlayerCrime to owner | FIXED 09-11 |
-| Death, loot, corpse | ActorDeath, corpse container canonical | OK |
+| Death, loot, corpse | ActorDeath, corpse container canonical | OK. Live: s111 (loot the kill) |
 | Content-placed NPCs/creatures | content RefNum, addressable everywhere | OK |
 | Runtime-spawned actors (levelled-list creatures, PlaceAtPC/PlaceAtMe, script spawns) | the holder names each one through the object-sync path (actor=true); clients build it from the record and puppet it; the actor stream and events address it by net id (contentFile -2 on the wire); clients suppress their own rolls/spawns once any holder is known | FIXED 09-11 (engine + protocol). Live: the native peer against retail data named `scrib`, `kwama forager`, `scrib` in `-2,-7` within 60 ms of its grant, no drops; the client half is proven by s107 under the native-peer harness: two browser clients built the same three named creatures with matching net ids |
 | Replayed one-shot quest encounters | spawned on the peer beside the avatar | FIXED 09-11 |
