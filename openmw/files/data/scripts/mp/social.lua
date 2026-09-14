@@ -10,15 +10,24 @@
 -- Identity on the wire is the ACCOUNT KEY (`acct`), never the player id: ids are
 -- per-session, so an id-keyed friend would vanish on every reconnect.
 local core = require('openmw.core')
-local ui = require('openmw.ui')
 local util = require('openmw.util')
 local async = require('openmw.async')
 local input = require('openmw.input')
 local mp = require('openmw.mp')
 local I = require('openmw.interfaces')
+local self = require('openmw.self')
 
 
 local json = require('scripts.mp.json')
+
+-- One-line notices go to the HTML chat feed (bottom-right, rendered by index.html from the
+-- chatLog mirror that player.lua keeps), the same place join/leave and connection notices
+-- land. They used to be ui.showMessage, which is MyGUI's bottom-centre message box: the same
+-- kind of message popped in two corners with two looks, and outside the shared queue. The
+-- feed lives in a sibling PLAYER script, and an event is the only door between the two.
+local function notice(text)
+    self:sendEvent('MP_UiChatMessage', { channel = 'server', text = tostring(text) })
+end
 
 -- `isOpen` is deliberately separate from `element`. Using the element slot itself as the
 -- open flag (element = true) made destroy() call `element:destroy()` on a BOOLEAN, which
@@ -268,7 +277,7 @@ return {
         MP_FriendRequestReceived = function(data)
             if data.fromAcct then
                 requests[data.fromAcct] = data.fromName or data.fromAcct
-                ui.showMessage(tostring(requests[data.fromAcct]) .. ' sent you a friend request (F)')
+                notice(tostring(requests[data.fromAcct]) .. ' sent you a friend request (F)')
                 mirror()
                 render()
             end
@@ -276,7 +285,7 @@ return {
         MP_InviteReceived = function(data)
             if data.fromAcct then
                 invites[data.fromAcct] = { name = data.fromName or data.fromAcct }
-                ui.showMessage(tostring(invites[data.fromAcct].name) .. ' invited you to join them (F)')
+                notice(tostring(invites[data.fromAcct].name) .. ' invited you to join them (F)')
                 mirror()
                 render()
             end
@@ -351,7 +360,7 @@ return {
                 elseif why == 'unreachable' then human = 'The world directory did not answer.'
                 end
                 status = human
-                ui.showMessage(human)
+                notice(human)
             end
             mp.set('worldCreate', json.encode({ ok = data.ok, error = data.error }))
             render()
@@ -379,7 +388,7 @@ return {
             local reason = tostring(data.reason or '')
             if reason == '' then reason = 'you cannot pass time here' end
             status = reason:sub(1, 1):upper() .. reason:sub(2) .. '.'
-            ui.showMessage(status)
+            notice(status)
             render()
         end,
         -- The swing was real and the server threw it away, because the cell it landed in is not
@@ -393,11 +402,11 @@ return {
             else
                 status = 'This area is not being simulated right now; attacks will not land.'
             end
-            ui.showMessage(status)
+            notice(status)
         end,
         MP_SocialNotice = function(data)
             status = 'Something changed: ' .. tostring(data.kind or 'notice')
-            ui.showMessage(status)
+            notice(status)
             mirror()
             render()
         end,
@@ -416,7 +425,7 @@ return {
                 -- Machinery, not a player action. Never narrated, success or failure.
             else
                 status = socialText(data.op, data.ok == true, tostring(data.detail or ''))
-                if data.ok ~= true then ui.showMessage(status) end
+                if data.ok ~= true then notice(status) end
             end
             mp.set('socialResult', json.encode({ op = data.op, ok = data.ok, detail = data.detail }))
             mirror()
@@ -436,7 +445,7 @@ return {
                     no_gateway = 'This server runs a single world, so there is nowhere else to join.',
                 }
                 status = why[tostring(data.error)] or ('Could not join: ' .. tostring(data.error or '?'))
-                ui.showMessage(status)
+                notice(status)
             end
             render()
         end,
