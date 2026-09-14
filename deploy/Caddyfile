@@ -79,7 +79,12 @@
 	# /admin, /metrics, /healthz and /status stay unreachable from the internet.
 	# Upstream is overridable because the container is named per environment.
 	#   /saves/*  server-side savegames (same auth and storage as the locker).
-	@gateway path /w/* /ws /auth/* /locker/* /saves /saves/* /worlds /worlds/*
+	#   /clientlog the page's error reporter (play/index.html __omwShipLog). Bounded and
+	#             rate-limited in server/src/net/http.ts. Without this route the static site
+	#             answered it 404 and every client-side failure report was thrown away --
+	#             the two sign-in failures of 2026-09-14 had to be reconstructed from the
+	#             edge access log because the page's own account of them never arrived.
+	@gateway path /w/* /ws /auth/* /locker/* /saves /saves/* /worlds /worlds/* /clientlog
 	reverse_proxy @gateway {$MP_UPSTREAM:openmw-mp:8080} {
 		# STRIP CLIENT-SUPPLIED ADDRESS HEADERS. The gateway trusts these because its peer is
 		# this proxy, on a private network — but "the peer is private" only means the header
