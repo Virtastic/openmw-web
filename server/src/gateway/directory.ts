@@ -27,7 +27,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { log } from '../log';
 import { renderMetrics } from '../metrics';
 import type { WorldSupervisor, WorldMode, WorldInfo } from './worlds';
-import type { HttpRoute } from '../net/http';
+import { clientLogRoute, type HttpRoute } from '../net/http';
 import { IpRateLimiter } from '../net/ratelimit';
 import { VERIFY_PATH } from '../net/admin/setup-check';
 
@@ -174,6 +174,10 @@ export async function startDirectory(deps: DirectoryDeps): Promise<RunningDirect
     res.setHeader('access-control-allow-methods', 'GET, POST, DELETE, OPTIONS');
     res.setHeader('access-control-allow-headers', 'content-type, authorization');
     if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
+
+    // The page's error reporter. On the deployed site every /clientlog reaches THIS port, so
+    // the route a world already answers has to be answered here too or the report is lost.
+    if (clientLogRoute(req, res, path)) return;
 
     // The dashboard, when this is the multiplayer server. Same path set a game's router
     // claims, so an operator's bookmark works on either program.

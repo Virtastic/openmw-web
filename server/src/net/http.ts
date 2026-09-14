@@ -291,6 +291,57 @@ function clientLogAllowed(ip: string): boolean {
   return true;
 }
 
+// The page's error reporter. Exported because it must answer on BOTH programs: a world's
+// port (where it began) and the gateway directory -- on the deployed site every /clientlog
+// the page sends arrives at the gateway, and while only the world knew the path the gateway
+// answered 404 and every client-side failure report was lost. Returns true when claimed.
+export function clientLogRoute(req: IncomingMessage, res: ServerResponse, path: string): boolean {
+  if (req.method === 'POST' && path === '/clientlog') {
+    res.setHeader('access-control-allow-origin', '*');
+    // clientIp, not the raw socket: behind the reverse proxy every request has the PROXY's
+    // address, so a raw-socket bucket would be one shared budget for the whole internet --
+    // the same bug that once made loginPerMinPerIp refuse the sixth person to sign in.
+    const ip = clientIp(req);
+    if (!clientLogAllowed(ip)) {
+      // 429 rather than a silent drop: a client shipping too fast should back off, and a
+      // silent success would have it keep going forever.
+      sendText(res, 429, 'slow down');
+      return true;
+    }
+    let body = '';
+    let tooBig = false;
+    req.on('data', (chunk: Buffer) => {
+      if (tooBig) return;
+      body += chunk.toString('utf8');
+      if (body.length > MAX_CLIENT_LOG_BYTES) { tooBig = true; body = ''; }
+    });
+    req.on('end', () => {
+      if (tooBig) { sendText(res, 413, 'too large'); return; }
+      let lines: unknown;
+      let session = '';
+      try {
+        const parsed = JSON.parse(body) as { lines?: unknown; session?: unknown };
+        lines = parsed.lines;
+        session = typeof parsed.session === 'string' ? parsed.session.slice(0, 64) : '';
+      } catch { sendText(res, 400, 'bad json'); return; }
+      if (!Array.isArray(lines)) { sendText(res, 400, 'lines must be an array'); return; }
+      for (const raw of lines.slice(0, MAX_CLIENT_LOG_LINES)) {
+        if (typeof raw !== 'string') continue;
+        const text = raw.slice(0, MAX_CLIENT_LOG_LINE);
+        // Level is INFERRED here rather than taken from the client: a caller could otherwise
+        // mark everything 'error' and drown the operator's real alerts.
+        const level = /error|ABORT|fatal/i.test(text) ? 'error'
+          : /warn/i.test(text) ? 'warn' : 'info';
+        log(level, 'client.log', { ip, session, text });
+      }
+      res.writeHead(204);
+      res.end();
+    });
+    return true;
+  }
+  return false;
+}
+
 export function createHttpServer(
   status: () => StatusSnapshot,
   metricsOpts: MetricsOptions,
@@ -348,49 +399,7 @@ export function createHttpServer(
     // POST endpoint on the public internet, so it is bounded on every axis that matters:
     // body size, line count, line length, and a per-IP rate limit. Nothing here is trusted --
     // it is recorded as `client.log` with the reporting IP, never interpreted.
-    if (req.method === 'POST' && path === '/clientlog') {
-      res.setHeader('access-control-allow-origin', '*');
-      // clientIp, not the raw socket: behind the reverse proxy every request has the PROXY's
-      // address, so a raw-socket bucket would be one shared budget for the whole internet --
-      // the same bug that once made loginPerMinPerIp refuse the sixth person to sign in.
-      const ip = clientIp(req);
-      if (!clientLogAllowed(ip)) {
-        // 429 rather than a silent drop: a client shipping too fast should back off, and a
-        // silent success would have it keep going forever.
-        sendText(res, 429, 'slow down');
-        return;
-      }
-      let body = '';
-      let tooBig = false;
-      req.on('data', (chunk: Buffer) => {
-        if (tooBig) return;
-        body += chunk.toString('utf8');
-        if (body.length > MAX_CLIENT_LOG_BYTES) { tooBig = true; body = ''; }
-      });
-      req.on('end', () => {
-        if (tooBig) { sendText(res, 413, 'too large'); return; }
-        let lines: unknown;
-        let session = '';
-        try {
-          const parsed = JSON.parse(body) as { lines?: unknown; session?: unknown };
-          lines = parsed.lines;
-          session = typeof parsed.session === 'string' ? parsed.session.slice(0, 64) : '';
-        } catch { sendText(res, 400, 'bad json'); return; }
-        if (!Array.isArray(lines)) { sendText(res, 400, 'lines must be an array'); return; }
-        for (const raw of lines.slice(0, MAX_CLIENT_LOG_LINES)) {
-          if (typeof raw !== 'string') continue;
-          const text = raw.slice(0, MAX_CLIENT_LOG_LINE);
-          // Level is INFERRED here rather than taken from the client: a caller could otherwise
-          // mark everything 'error' and drown the operator's real alerts.
-          const level = /error|ABORT|fatal/i.test(text) ? 'error'
-            : /warn/i.test(text) ? 'warn' : 'info';
-          log(level, 'client.log', { ip, session, text });
-        }
-        res.writeHead(204);
-        res.end();
-      });
-      return;
-    }
+    if (clientLogRoute(req, res, path)) return;
     if (req.method === 'OPTIONS' && path === '/clientlog') {
       res.writeHead(204, {
         'access-control-allow-origin': '*',
