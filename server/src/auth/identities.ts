@@ -214,6 +214,26 @@ const TICKET_MIGRATIONS = [
   },
 ];
 
+// A SIGNED-IN BROWSER SESSION SURVIVES A DEPLOY. These tokens are how a signed-in player
+// reaches the locker and their saves, and they advertise a 24 h life -- but the store was a
+// bare in-memory Map, so every restart (every deploy, every rolling restart) silently signed
+// EVERYONE out mid-session. What the player sees is not "signed out": the cloud/demo boot
+// dead-ends at "No locker session. Please sign in again." on a black screen. Persisted in the
+// shared dir like login tickets, so a redeploy is invisible to whoever is playing.
+const LOCKER_SESSION_MIGRATIONS = [
+  {
+    name: '001-locker-sessions',
+    up: (db: DatabaseSync) => {
+      db.exec(`CREATE TABLE locker_sessions (
+        token      TEXT PRIMARY KEY,
+        accountKey TEXT NOT NULL,
+        expiresAt  INTEGER NOT NULL
+      )`);
+      db.exec('CREATE INDEX locker_sessions_expiry ON locker_sessions (expiresAt)');
+    },
+  },
+];
+
 export class LoginTicketStore {
   private readonly tickets = new Map<string, LoginTicket>();
   private readonly timer: NodeJS.Timeout;
@@ -344,21 +364,54 @@ export class LoginTicketStore {
 // but the locker session must survive a multi-file upload.
 export class LockerSessionStore {
   private readonly tokens = new Map<string, { accountKey: string; expiresAt: number }>();
-  constructor(private readonly ttlMs = 24 * 60 * 60 * 1000) {}
+  // Absent (tests, and any caller that passes no dir) the store behaves exactly as it did:
+  // memory only, gone on restart. Given a shared dir the rows outlive the process.
+  private readonly db?: DatabaseSync;
+
+  constructor(private readonly ttlMs = 24 * 60 * 60 * 1000, sharedDir?: string) {
+    if (sharedDir) {
+      try {
+        this.db = openDb(join(sharedDir, 'locker-sessions.db'), LOCKER_SESSION_MIGRATIONS);
+      } catch (err) {
+        // Not fatal: without it sessions are memory-only again, which is the old behaviour.
+        // Loud, because the symptom (everyone signed out by a deploy) is hard to attribute.
+        log('error', 'locker.session_store_unavailable', { dir: sharedDir, error: String(err) });
+      }
+    }
+  }
 
   private readonly lastSeen = new Map<string, number>();
 
   mint(accountKey: string): string {
     this.sweep();
     const token = randomBytes(32).toString('base64url');
-    this.tokens.set(token, { accountKey, expiresAt: Date.now() + this.ttlMs });
+    const expiresAt = Date.now() + this.ttlMs;
+    this.tokens.set(token, { accountKey, expiresAt });
+    try {
+      this.db?.prepare('INSERT OR REPLACE INTO locker_sessions (token, accountKey, expiresAt) VALUES (?, ?, ?)')
+        .run(token, accountKey, expiresAt);
+    } catch (err) {
+      log('error', 'locker.session_persist_failed', { error: String(err) });
+    }
     return token;
   }
 
   resolve(token: string): string | undefined {
     if (token === '') return undefined;
-    const e = this.tokens.get(token);
-    if (!e || e.expiresAt <= Date.now()) { if (e) this.tokens.delete(token); return undefined; }
+    let e = this.tokens.get(token);
+    // A TOKEN MINTED BEFORE THIS PROCESS STARTED. After a deploy the map is empty and every
+    // signed-in player looks like a stranger; the row is the proof they signed in.
+    if (!e && this.db) {
+      try {
+        const row = this.db.prepare('SELECT accountKey, expiresAt FROM locker_sessions WHERE token = ?')
+          .get(token) as { accountKey?: string; expiresAt?: number } | undefined;
+        if (row && typeof row.accountKey === 'string' && typeof row.expiresAt === 'number') {
+          e = { accountKey: row.accountKey, expiresAt: row.expiresAt };
+          this.tokens.set(token, e);
+        }
+      } catch { /* unreadable row: treat as no session */ }
+    }
+    if (!e || e.expiresAt <= Date.now()) { if (e) this.forget(token); return undefined; }
     // WHO IS PLAYING, in the one deployment where nobody joins a world.
     //
     // The dashboard counts players from the WS roster, which is right for multiplayer and
@@ -385,11 +438,22 @@ export class LockerSessionStore {
 
   revokeAccount(accountKey: string): void {
     for (const [t, e] of [...this.tokens]) if (e.accountKey === accountKey) this.tokens.delete(t);
+    // A revoked account must stay revoked across a restart, or the row would sign them back in.
+    try { this.db?.prepare('DELETE FROM locker_sessions WHERE accountKey = ?').run(accountKey); }
+    catch { /* best effort */ }
+  }
+
+  private forget(token: string): void {
+    this.tokens.delete(token);
+    try { this.db?.prepare('DELETE FROM locker_sessions WHERE token = ?').run(token); }
+    catch { /* best effort */ }
   }
 
   private sweep(): void {
     const now = Date.now();
     for (const [t, e] of [...this.tokens]) if (e.expiresAt <= now) this.tokens.delete(t);
+    try { this.db?.prepare('DELETE FROM locker_sessions WHERE expiresAt <= ?').run(now); }
+    catch { /* another process may be sweeping the same rows */ }
     // lastSeen was swept by nothing. activeSince() filters by its cutoff when it READS, so the
     // answers were always right and the map behind them only ever grew: one entry for every
     // account that has ever made an authenticated locker or save request, held for the life of
