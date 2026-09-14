@@ -242,6 +242,7 @@ namespace MWMP
                 e["spellId"] = h.mSpellId;
                 e["magnitude"] = h.mMagnitude;
                 e["stat"] = h.mStat;
+                e["beneficial"] = h.mBeneficial;
                 out[i++] = e;
             }
             return out;

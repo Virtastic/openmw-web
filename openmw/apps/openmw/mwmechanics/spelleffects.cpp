@@ -786,15 +786,36 @@ namespace MWMechanics
                 if (target.getClass().isNpc())
                     restoreSkill(target, effect, effect.mMagnitude);
             }
-            else if (effect.mEffectId == ESM::MagicEffect::RestoreHealth)
+            else if (effect.mEffectId == ESM::MagicEffect::RestoreHealth
+                || effect.mEffectId == ESM::MagicEffect::RestoreMagicka
+                || effect.mEffectId == ESM::MagicEffect::RestoreFatigue)
             {
-                affectedHealth = true;
-                adjustDynamicStat(target, Stats::Health, effect.mMagnitude);
+                auto targetStat = effect.mEffectId == ESM::MagicEffect::RestoreMagicka
+                    ? Stats::Magicka
+                    : (effect.mEffectId == ESM::MagicEffect::RestoreFatigue ? Stats::Fatigue : Stats::Health);
+#ifdef __EMSCRIPTEN__
+                // MULTIPLAYER: healing a FRIEND'S puppet is theirs to apply, exactly like
+                // damage (above). Applied here it would help for a frame and then revert on
+                // the owner's next stats push -- a drop-in helper could not actually heal
+                // anyone. Record it for scripts/mp to forward to the owner, marked beneficial
+                // so it crosses the PvP veto, and apply nothing locally.
+                if (MWMP::isPuppet(target.getCellRef().getRefNum()))
+                {
+                    MWMP::MagicHit hit{ target.getCellRef().getRefNum(),
+                        caster.isEmpty() ? ESM::RefNum{} : caster.getCellRef().getRefNum(),
+                        effect.mEffectId.serializeText(), spellParams.getSourceSpellId().serializeText(),
+                        effect.mMagnitude, targetStat == Stats::Health ? 0 : (targetStat == Stats::Magicka ? 1 : 2) };
+                    hit.mBeneficial = true;
+                    MWMP::recordMagicHit(hit);
+                }
+                else
+#endif
+                {
+                    if (targetStat == Stats::Health)
+                        affectedHealth = true;
+                    adjustDynamicStat(target, targetStat, effect.mMagnitude);
+                }
             }
-            else if (effect.mEffectId == ESM::MagicEffect::RestoreMagicka)
-                adjustDynamicStat(target, Stats::Magicka, effect.mMagnitude);
-            else if (effect.mEffectId == ESM::MagicEffect::RestoreFatigue)
-                adjustDynamicStat(target, Stats::Fatigue, effect.mMagnitude);
             else if (effect.mEffectId == ESM::MagicEffect::SunDamage)
             {
                 //// isInCell shouldn't be needed, but updateActor called during game start

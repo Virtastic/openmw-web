@@ -87,6 +87,10 @@ namespace MWMP
         float mMagnitude;
         // 0 = health, 1 = magicka, 2 = fatigue. Matches the order spelleffects.cpp picks.
         int mStat;
+        // A helper healing a friend is a beneficial hit: it bypasses the PvP veto (which
+        // exists to stop players HARMING each other), and the owner applies the restore as a
+        // gain rather than damage. Damage hits leave this false.
+        bool mBeneficial = false;
     };
 
     /** Record an effect the damage site declined to apply. Bounded; excess is dropped. */

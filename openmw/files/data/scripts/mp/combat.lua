@@ -112,7 +112,9 @@ function combat.onPuppetSpellHit(data)
     if #effects == 0 then note('no-effects') return end
     local target
     if data.playerId then
-        if not deps.isPvpEnabled() then note('pvp-off') return end
+        -- PvP off stops players HARMING each other; a heal on a friend is help, and must go
+        -- through. Beneficial hits (spelleffects.cpp marks restores) skip the veto.
+        if not deps.isPvpEnabled() and not data.beneficial then note('pvp-off') return end
         target = { playerId = data.playerId }
     elseif data.victim and data.victim:isValid() then
         local cellKey = deps.cellKeyOfObj(data.victim)
@@ -133,6 +135,7 @@ function combat.onPuppetSpellHit(data)
         -- Without it MP_CombatSpellHit looks up nil and silently applies nothing.
         spellId = data.spellId or effects[1].id,
         casterId = deps.ownIdFn() or 0,
+        beneficial = data.beneficial == true,
     })
 end
 

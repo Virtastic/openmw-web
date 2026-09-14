@@ -224,7 +224,7 @@ export class Combat {
 
   // Resolves the union to the single session that owns damage application, or null when
   // the target is unknown / the actor's cell authority does not match the sender's claim.
-  private resolveOwner(attacker: Player, target: CombatTarget, name: string): Player | null {
+  private resolveOwner(attacker: Player, target: CombatTarget, name: string, beneficial = false): Player | null {
     if (target.kind === 'player') {
       const victim = this.ctx.roster.get(target.playerId);
       if (!victim || !victim.inWorld) {
@@ -237,7 +237,7 @@ export class Combat {
         this.drop(attacker, name, 'attacker not near the target player');
         return null;
       }
-      if (!this.ctx.allowPlayerHit(attacker, victim.id, name)) return null; // pvp plugin veto
+      if (!beneficial && !this.ctx.allowPlayerHit(attacker, victim.id, name)) return null; // pvp plugin veto (harm only)
       // Phase 4B: while the victim is DRIVING the input tier, their own stat assertions are
       // ignored (4A one-writer rule) -- so damage applied on their client would vanish. The
       // world peer applies the hit to the victim's AVATAR instead, and the damage travels
@@ -378,7 +378,11 @@ export class Combat {
         return;
       }
     }
-    const owner = this.resolveOwner(player, target, 'CombatSpellHit');
+    // A beneficial spell (a helper's heal) is not an attack: it crosses the PvP veto, which
+    // exists to stop players harming each other, not helping. Everything else about the route
+    // (proximity, the input-driving avatar redirect) is unchanged.
+    const beneficial = body.get('beneficial') === true;
+    const owner = this.resolveOwner(player, target, 'CombatSpellHit', beneficial);
     if (!owner) return;
     owner.peer.sendEvent('CombatSpellHit', { ...(lToJs(body) as Record<string, JsLike>), attackerId: player.id });
   }
