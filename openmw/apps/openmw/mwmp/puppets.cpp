@@ -89,6 +89,21 @@ namespace MWMP
         return avatars().find(ref) != avatars().end();
     }
 
+    namespace
+    {
+        int sPartyLevel = 0;
+    }
+
+    void setPartyLevel(int level)
+    {
+        sPartyLevel = level > 0 ? level : 0;
+    }
+
+    int partyLevel()
+    {
+        return sPartyLevel;
+    }
+
     int avatarBounty(ESM::RefNum ref)
     {
         const auto it = avatars().find(ref);

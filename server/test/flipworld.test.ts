@@ -233,11 +233,13 @@ test('the host sends one guest home without blocking them; a guest cannot kick; 
   t.after(() => { host.close(); pal.close(); });
 
   // Everyone was told whose world this is at join.
-  const hostMode = (await host.waitEvent('WorldMode')).value as { owner?: string; isOwner?: boolean };
+  const hostMode = (await host.waitEvent('WorldMode')).value as { owner?: string; isOwner?: boolean; ownerId?: number };
   assert.equal(hostMode.isOwner, true);
-  const guestMode = (await guest.waitEvent('WorldMode')).value as { owner?: string; isOwner?: boolean };
+  const guestMode = (await guest.waitEvent('WorldMode')).value as { owner?: string; isOwner?: boolean; ownerId?: number };
   assert.equal(guestMode.isOwner, false);
   assert.equal(guestMode.owner, 'Host', "the guest's client can say whose world it is visiting");
+  // The owner's connection id rides too: the sim peer scales levelled lists to the LEADER.
+  assert.equal(guestMode.ownerId, 1, 'the peer needs the leader by id (the host joined first: id 1)');
 
   // A guest cannot kick.
   guest.sendEvent('WorldKick', { name: 'Pal' });

@@ -432,6 +432,8 @@ return {
                     not_online = 'They are offline.',
                     blocked = 'You cannot join them.',
                     not_open = 'Their world is not open to friends yet. Ask them to switch to Party.',
+                    self = 'That is you.',
+                    no_gateway = 'This server runs a single world, so there is nowhere else to join.',
                 }
                 status = why[tostring(data.error)] or ('Could not join: ' .. tostring(data.error or '?'))
                 ui.showMessage(status)

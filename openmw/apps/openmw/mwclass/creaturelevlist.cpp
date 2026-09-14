@@ -1,6 +1,7 @@
 #include "creaturelevlist.hpp"
 
 #include "../mwmp/puppets.hpp"
+#include <components/debug/debuglog.hpp>
 
 #include <components/esm3/actoridconverter.hpp>
 #include <components/esm3/creaturelevliststate.hpp>
@@ -124,6 +125,11 @@ namespace MWClass
         const ESM::RefId& id = MWMechanics::getLevelledItem(
             store.get<ESM::CreatureLevList>().find(ptr.getCellRef().getRefId()), true, prng,
             avatarLevel > 0 ? std::optional<int>(avatarLevel) : std::nullopt);
+        // Said once per roll so the harness can see which level the world was scaled to.
+        if (avatarLevel > 0)
+            Log(Debug::Info) << "[mp] levelled spawn " << ptr.getCellRef().getRefId() << " rolled at level "
+                             << avatarLevel << (MWMP::partyLevel() > 0 ? " (party leader)" : " (nearest avatar)")
+                             << " -> " << id;
 
         // Multiplayer client: the peer rolls this list and its creature arrives as a net
         // object (mwmp/puppets.hpp localSpawnsEnabled). Rolling here too would put a second,

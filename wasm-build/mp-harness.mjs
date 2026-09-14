@@ -820,7 +820,7 @@ for (const file of files) {
         const buf = [];
         proc.stdout?.on('data', (d) => buf.push(String(d)));
         proc.stderr?.on('data', (d) => buf.push(String(d)));
-        childLogs.push({ label, tail: () => buf.join('').split('\n').slice(-40).join('\n') });
+        childLogs.push({ label, tail: () => buf.join('').split('\n').slice(-40).join('\n'), full: (n) => buf.join('').split('\n').slice(-n).join('\n') });
         return proc;
       },
       runId: RUN_ID,
@@ -850,6 +850,9 @@ for (const file of files) {
       // The sim peers' stdout so far (all of it, not the 40-line failure tail): a scenario
       // can read the peer's side of a mechanism it cannot see from the client.
       peerLogTail: (n = 4000) => peerBufs.map((b) => b.join('').split(NL).slice(-n).join(NL)).join(NL),
+      // A watched child's whole stdout (a gateway's, which carries its worlds' and their
+      // managed peers' lines) -- for a scenario that needs the far side's narration.
+      childLogTail: (label, n = 6000) => childLogs.filter((c) => c.label === label && c.full).map((c) => c.full(n)).join(NL),
       serverDataDir: server.dataDir,
       serverStatus: server.status,
       serverKill: server.kill,

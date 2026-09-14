@@ -476,9 +476,13 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   const closeToGuests = (reason: string): void => {
     for (const conn of [...connections]) sendGuestHome(conn, reason);
   };
-  const hostOf = (accountKey: string): { owner: string; isOwner: boolean } => ({
+  const hostOf = (accountKey: string): { owner: string; isOwner: boolean; ownerId: number } => ({
     owner: roster.activeForAccount(worldOwner)?.name ?? '',
     isOwner: worldOwner !== '' && accountKey === worldOwner,
+    // The owner's connection id, for the sim peer: levelled lists roll against the LEADER's
+    // level (mwmp/puppets.hpp setPartyLevel), and the peer keys its avatar docs by id. 0 when
+    // the owner is not in the world (or the world has none).
+    ownerId: roster.activeForAccount(worldOwner)?.id ?? 0,
   });
   // ONE guest, when the friendship that let them in ends (Social.friendshipEnded). Either
   // side may end it; the guest is the one who goes home, and the owner never moves.

@@ -168,7 +168,7 @@ check('a raised maximum is claimed even with no change in current', #got == n1 +
 print('social.lua -- SocialResult is rendered in English')
 do
   local f = io.open('./openmw/files/data/scripts/mp/social.lua')
-  local src = f:read('*a'); f:close()
+  local src = f:read('*a'):gsub('\r\n', '\n'); f:close() -- a Windows checkout (autocrlf) hands back CRLF
   local chunk = src:match('(local SOCIAL_FAIL = .-\nend\n)')
   check('the message tables were found', chunk ~= nil)
   local socialText
