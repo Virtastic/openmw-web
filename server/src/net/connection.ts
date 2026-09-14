@@ -139,7 +139,7 @@ export interface ServerCtx {
   kickGuest(byAccountKey: string, rank: number, targetName: string): 'ok' | 'not_owner' | 'no_such_player' | 'self';
   /** Who hosts this world, for the WorldMode event: the owner's character name (never the
    *  account) and whether the asking connection IS the owner. */
-  worldHost(accountKey: string): { owner: string; isOwner: boolean };
+  worldHost(accountKey: string): { owner: string; isOwner: boolean; ownerId: number };
   /** A player left the world. Acts only if they were its OWNER: a guest world with no host
    *  closes after a grace window (server.ts onPlayerLeftWorld). */
   onPlayerLeftWorld?(accountKey: string): void;
@@ -1808,6 +1808,13 @@ export class Connection implements Peer {
       this.player.peer.sendEvent('SimReady', { ready: this.ctx.simReady?.() ?? true });
     }
     this.player.peer.sendEvent('WorldMode', { mode: this.ctx.worldMode(), ...this.ctx.worldHost(this.player.accountKey) });
+    // THE OWNER ARRIVING (or returning) changes the answer for everyone already here: the
+    // host's name on every guest's panel, and the owner id the peer scales the world to.
+    if (this.ctx.worldHost(this.player.accountKey).isOwner) {
+      for (const other of this.ctx.roster.inWorld()) {
+        if (other.id !== this.player.id) other.peer.sendEvent('WorldMode', { mode: this.ctx.worldMode(), ...this.ctx.worldHost(other.accountKey) });
+      }
+    }
     this.ctx.hooks.playerJoinWorld({ id: this.player.id, name: this.player.name, rank: this.player.rank });
   }
 }

@@ -461,6 +461,21 @@ local AVATAR_STREAM_EVERY = 0.05 -- 20 Hz, matching the peer's own frame pacing
 -- processes never receive AvatarState and never enter this path.
 local avatarDocs = {}
 
+-- The party leader's level, from their avatar doc, onto the engine (peer only). Called when
+-- the leader is named (WorldMode) and whenever their doc arrives or changes (AvatarState).
+local partyOwnerId = 0
+local partyLevelSaid = nil
+local function applyPartyLevel()
+    if not (mp.isSystem and mp.isSystem() and mp.setPartyLevel) then return end
+    local doc = partyOwnerId > 0 and avatarDocs[partyOwnerId] or nil
+    local level = doc and doc.stats and tonumber(doc.stats.level) or 0
+    if level ~= (partyLevelSaid or -1) then
+        partyLevelSaid = level
+        mp.setPartyLevel(level)
+        print(string.format('[mp] party level -> %d (leader #%d)', level, partyOwnerId))
+    end
+end
+
 local function applyAvatarDoc(id)
     local doc = avatarDocs[id]
     local p = puppets and puppets[id]
@@ -1810,6 +1825,7 @@ local eventHandlers = {
         if not data or not data.id then return end
         avatarDocs[data.id] = data
         applyAvatarDoc(data.id)
+        if data.id == partyOwnerId then applyPartyLevel() end
     end,
 
     -- The owner of the world we are standing in went Solo, so it is no longer open to us.
@@ -1878,6 +1894,10 @@ local eventHandlers = {
         -- them; the page shows "Visiting X's world" with a Leave button instead.
         mp.set('worldHost', tostring(data and data.owner or ''))
         mp.set('amHost', (data and data.isOwner == true) and 'true' or 'false')
+        -- THE PEER: which avatar is the leader. Levelled lists roll against their level
+        -- everywhere in this world (mp.setPartyLevel), not against whoever is nearest.
+        partyOwnerId = tonumber(data and data.ownerId) or 0
+        applyPartyLevel()
         mirrorRoster()
         -- Which world you are in is invisible otherwise — the scenery is identical — and it
         -- decides who can see you. Announced on CHANGE only; the server also sends this at

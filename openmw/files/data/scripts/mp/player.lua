@@ -685,6 +685,9 @@ local function dispatch(cmd)
         end
         -- setskill:<id>:<n> / skillof:<id>: what training or use does to a skill's base, and a
         -- read of it (s132: a guest's progress comes home with them).
+        -- setlevel:<n>: the character's level (a leveled-list scaling and progression probe).
+        local lvl = cmd:match('^setlevel:(%d+)$')
+        if lvl then pcall(function() types.Actor.stats.level(self).current = tonumber(lvl) end) end
         local skId, skVal = cmd:match('^setskill:([%w_]+):(%d+)$')
         if skId then
             pcall(function() types.NPC.stats.skills[skId](self).base = tonumber(skVal) end)

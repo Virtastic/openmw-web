@@ -314,7 +314,11 @@ export class SimPeerSupervisor {
           const t = line.trim();
           if (t === '') continue;
           const bad = /fatal|error|exception|terminate|assert/i.test(t);
-          log(bad ? 'warn' : 'debug', 'simpeer.output', { key, text: t.slice(0, 1000) });
+          // Our own "[mp]" lines are the peer narrating multiplayer decisions (party level,
+          // avatar equipment, spawns): info, so an operator's world log and the harness can
+          // see them without turning the engine's whole debug firehose on.
+          const ours = t.includes('[mp]');
+          log(bad ? 'warn' : ours ? 'info' : 'debug', 'simpeer.output', { key, text: t.slice(0, 1000) });
         }
       });
     };

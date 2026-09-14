@@ -284,6 +284,10 @@ namespace MWMP
             return sol::make_object(state, MWLua::GObject(master));
         };
         api["setLocalSummons"] = [](bool enabled) { setLocalSummons(enabled); };
+        // Peer only: the world owner's level, which levelled lists roll against everywhere
+        // (mwmechanics/actors.cpp nearestAvatarLevel). 0 = no owner known, nearest avatar rules.
+        api["setPartyLevel"] = [](int level) { setPartyLevel(level); };
+        api["partyLevel"] = []() { return partyLevel(); };
         api["setLocalSpawns"] = [](bool enabled) { setLocalSpawns(enabled); };
         api["isEnabled"] = []() { return std::getenv("OPENMW_MP_URL") != nullptr; };
         api["getUrl"] = []() { return getEnvString("OPENMW_MP_URL"); };

@@ -64,6 +64,14 @@ namespace MWMP
     /** Forget every avatar — session loss, world switch. */
     void clearAvatars();
 
+    /** THE LEADER'S LEVEL SCALES THE WORLD. Levelled lists on the sim peer used to roll against
+     *  the nearest avatar, so a level-3 friend helping a level-20 host met level-3 creatures
+     *  wherever THEY stood -- the host's game got easier around the helper. Set from the world
+     *  owner's character (global.lua, from AvatarState); 0 means no owner is known and the
+     *  nearest avatar rules as before. */
+    void setPartyLevel(int level);
+    int partyLevel();
+
     /** One harmful magic effect that was NOT applied locally, waiting to be forwarded. */
     struct MagicHit
     {

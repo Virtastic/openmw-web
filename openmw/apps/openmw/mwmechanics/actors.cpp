@@ -1981,6 +1981,10 @@ namespace MWMechanics
 
     int Actors::nearestAvatarLevel(const osg::Vec3f& pos) const
     {
+        // The party leader's level, when the world has one (mwmp/puppets.hpp setPartyLevel):
+        // the host's game stays the host's game wherever a helper happens to be standing.
+        if (MWMP::partyLevel() > 0)
+            return MWMP::partyLevel();
         int level = 0;
         float bestDist2 = std::numeric_limits<float>::max();
         for (const Actor& actor : mActors)
