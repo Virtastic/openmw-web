@@ -15,8 +15,7 @@ known and recorded; N/A = does not exist in single player either.
 
 ## 0. Live evidence (native peer + two browser clients, retail data, 2026-09-11/12)
 
-Full sweep on the rebuilt stack (2026-09-14, 108 scenarios): 104 PASS, 2 SKIP by design (s43 needs a GPU box,
-s57 awaits its Phase-W rewrite), 0 FAIL -- the entire live suite green, including the whole drop-in flow (join,
+Full sweep on the rebuilt stack (2026-09-14, 108 scenarios): 105 PASS, 1 SKIP by design (s43 needs a GPU box), 0 FAIL -- the entire live suite green, including the whole drop-in flow (join,
 guest loot/skills/journal, kick, refused-at-the-door, join-from-launcher, leader-level scaling, and a helper
 healing a friend). The harness now swallows a stray CDP timeout at process level, so one navigating page can no
 longer abort the run (a sweep died at s60b before that fix).
@@ -111,6 +110,7 @@ scenario is a code trace only.
 | Owner's tab closes (no Solo flip) | owner_left, 90 s grace while guests keep playing, then owner_gone -> WorldClosed('owner_left') -> guests home | OK. Live: s129 |
 | Leave / kick / ban | terminal codes; SUPERSEDED for a second tab | OK |
 | Save / Load / quicksave | refused at StateManager while Joined; menu items hidden | OK |
+| Return to your own world after it was reaped | revive-on-dial with the owner (still private); the auth ladder mints a fresh ticket when the parked resume token is gone with the reaped process | OK. Live: s57 (go help a friend, own world reaps, dial home revives it) |
 
 ## 2. Movement and travel
 
