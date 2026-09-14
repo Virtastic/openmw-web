@@ -1,8 +1,8 @@
 {
   "version": "0.0.1",
   "configurations": [
-    { "name": "openmw-web", "runtimeExecutable": "python3",
-      "runtimeArgs": ["server.py"], "cwd": "play", "port": 8795, "autoPort": true },
+    { "name": "openmw-web", "runtimeExecutable": "python",
+      "runtimeArgs": ["server.py"], "cwd": "play", "port": 8910, "autoPort": true },
     { "name": "openmw-mp", "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev", "--", "--data", "./devdata", "--port", "8080"],
       "cwd": "server", "port": 8080 },

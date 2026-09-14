@@ -1219,10 +1219,15 @@ window.omw = (function(){
  // and blast-radius, NOT a security boundary: the server authorises every connection with
  // a single-use ticket, and the same-origin-host gate below is what actually stops a
  // crafted link pointing the client at somebody else's server.
+ // THE SAVED COPY FIRST. Both boot doors erase the fragment from the address bar once they
+ // have read it (a credential must not sit in history) and keep it in __omwBootFrag; a reader
+ // that runs after that scrub -- lockerHttpBase() is one, and it runs at mount time -- saw an
+ // empty hash, returned null for `locker`, and the cloud-locker boot bounced every sign-in
+ // with "No locker session. Please sign in again." while the session itself was fine.
  function bootParam(name){
-   var re = new RegExp('[#&?]' + name + '=([^&]+)');
-   var m = re.exec(location.hash || '') || re.exec(location.search || '');
-   return m ? decodeURIComponent(m[1]) : null;
+   var re = new RegExp('(^|[#&?])' + name + '=([^&]+)');
+   var m = re.exec(String(window.__omwBootFrag || '')) || re.exec(location.hash || '') || re.exec(location.search || '');
+   return m ? decodeURIComponent(m[2]) : null;
      }
  window.__omwBootParam = bootParam;
  var Module = {
