@@ -11,7 +11,7 @@ import assert from 'node:assert/strict';
 import { LockerSessionStore } from '../src/auth/identities';
 import { tmpDataDir } from './helpers';
 
-test('a locker session survives a restart, and expiry/revocation still hold', () => {
+test('a locker session survives a restart, and expiry/revocation still hold', async () => {
   const dir = tmpDataDir();
   const before = new LockerSessionStore(24 * 60 * 60 * 1000, dir);
   const token = before.mint('alice');
@@ -30,6 +30,9 @@ test('a locker session survives a restart, and expiry/revocation still hold', ()
   // An EXPIRED row must not resurrect a session either.
   const shortLived = new LockerSessionStore(1, dir);
   const stale = shortLived.mint('bob');
+  // Let the 1 ms TTL actually elapse: mint and resolve inside the same millisecond is not
+  // expired yet, and the deploy's test gate lost that race where a laptop never did.
+  await new Promise((r) => setTimeout(r, 5));
   const later = new LockerSessionStore(1, dir);
   assert.equal(later.resolve(stale), undefined, 'an expired session resolved after a restart');
 
