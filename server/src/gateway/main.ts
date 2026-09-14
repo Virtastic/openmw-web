@@ -155,7 +155,7 @@ const frontDoor = await buildFrontDoor(sharedDir, (owner, charId) => {
   // leaving a directory (and, until it is reaped, a process) behind for every character
   // anyone ever deletes.
   return worlds.discardForCharacter(owner, charId).then(() => undefined);
-}, port, adminSessions);
+}, port, adminSessions, () => worlds.list());
 
 // ROLL THE WORLDS WITHOUT TAKING THE PLATFORM DOWN.
 //

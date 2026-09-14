@@ -293,6 +293,11 @@ namespace MWMP
         // the server keeps it out of the player list / count / maxPlayers. A normal client
         // never sets it (getenv null), so this is false for every human.
         api["isSystem"] = []() { return std::getenv("OPENMW_MP_SYSTEM") != nullptr; };
+        // The engine's own rest verdict (MWBase::World::RestPermitted bits: 4 = enemies nearby).
+        // Test evidence for the vanilla rule under MP: an NPC the PEER is fighting on our
+        // behalf reaches this client as a puppet carrying a Combat package (actors.lua
+        // MP_ActorAI), and that package is what enemiesNearby() counts. Read-only.
+        api["canRest"] = []() { return MWBase::Environment::get().getWorld()->canRest(); };
         // Phase B SSO: a one-time login ticket the boot JS lifted out of the URL fragment
         // after the provider round trip. Empty when signing in with a password.
         api["getLoginTicket"] = []() { return getEnvString("OPENMW_MP_TICKET"); };

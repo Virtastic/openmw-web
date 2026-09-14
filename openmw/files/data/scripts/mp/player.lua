@@ -198,7 +198,8 @@ end
 --   small divergence  -> a capped mp.correctSelf offset, resolved by the next physics step
 --   past the hard threshold -> one snap through the global teleport path (cooldown below)
 local SNAP_DIST = 256
-local CORRECT_GAIN = 0.25 -- fraction of the divergence per state batch (~15 Hz)
+local CORRECT_GAIN = 0.25 -- fraction of the divergence per FRAME that has a fresh sample
+local latestSelf = nil -- newest authoritative self pose, consumed by selfReconcileTick
 local lastSnapAt = 0
 local SNAP_COOLDOWN_S = 2.0
 -- OUR OWN TELEPORT, BY INPUT SEQUENCE. A state batch already in flight when we jumped still
@@ -231,6 +232,21 @@ local function onSelfState(e)
             end
         end
     end
+    -- LATEST WINS, APPLIED ONCE PER FRAME (selfReconcileTick). The correction used to run
+    -- here, per SAMPLE: the peer streams the same pose every pass, the server fans each one
+    -- out, and on a slow client (a big scene, a low-end machine, a loading hitch) a dozen
+    -- identical samples landed between two physics steps. Each added CORRECT_GAIN of the
+    -- SAME divergence to the accumulated physics offset, so the effective gain was 3x, 5x,
+    -- 10x -- an overshoot past the avatar, a larger correction back, and a growing
+    -- oscillation that ran the player hundreds of units away until the hard snap caught it
+    -- (measured: 26 -> 46 -> 81 -> 300 units after one sword swing, then a 303-unit snap).
+    latestSelf = e
+end
+
+local function selfReconcileTick()
+    local e = latestSelf
+    if not e then return end
+    latestSelf = nil
     local pos = self.position
     local dx, dy, dz = e.x - pos.x, e.y - pos.y, e.z - pos.z
     local dist = math.sqrt(dx * dx + dy * dy + dz * dz)
@@ -253,7 +269,7 @@ local function onSelfState(e)
     if mp.correctSelf then
         -- The engine caps the per-call offset (it is load-bearing: an uncapped correction
         -- pushes through geometry before physics gets a say); the gain keeps the approach
-        -- smooth over several batches instead of a visible yank.
+        -- smooth over several frames instead of a visible yank.
         mp.correctSelf(dx * CORRECT_GAIN, dy * CORRECT_GAIN, dz * CORRECT_GAIN)
     end
 end
@@ -276,6 +292,7 @@ local function movementTick()
         return
     end
     local now = core.getRealTime()
+    selfReconcileTick() -- Phase 3: one correction per frame toward the newest peer pose
     inputTick(now) -- Phase 3: raw intent to the peer, beside the pose stream
     identity.tick(now) -- M2: appearance/equipment/stats/inventory diff broadcasts
     identity.equipRetryTick(now)
@@ -337,6 +354,31 @@ end
 
 -- Harness walk injection: overrides the omw input controls for the duration so the two
 -- writers can't fight over self.controls (I.Controls.overrideMovementControls).
+-- One frame of rotation control toward faceCmd (the face: hook), then hands the controls
+-- back unless a walk is still running. Two frames: the first turns, the second zeroes the
+-- change so a stale delta cannot keep spinning the player.
+local faceCmd = nil
+local faceApplied = false
+local function faceTick()
+    if not faceCmd then return end
+    if not faceApplied then
+        I.Controls.overrideMovementControls(true)
+        local curYaw, curPitch = self.rotation:getYaw(), self.rotation:getPitch()
+        local dyaw = faceCmd.yaw - curYaw
+        while dyaw > math.pi do dyaw = dyaw - 2 * math.pi end
+        while dyaw < -math.pi do dyaw = dyaw + 2 * math.pi end
+        self.controls.yawChange = dyaw
+        self.controls.pitchChange = faceCmd.pitch - curPitch
+        faceApplied = true
+        return
+    end
+    self.controls.yawChange = 0
+    self.controls.pitchChange = 0
+    if not walkCmd then I.Controls.overrideMovementControls(false) end
+    faceCmd = nil
+    faceApplied = false
+end
+
 local function walkTick()
     if not walkCmd then return end
     if core.getRealTime() >= walkCmd.stopAt then
@@ -369,7 +411,12 @@ local function testEquipTick()
     local now = core.getRealTime()
     for _, item in ipairs(types.Actor.inventory(self):getAll()) do
         if item.recordId == pendingTestEquip.id then
-            types.Actor.setEquipment(self, { [pendingTestEquip.slot] = pendingTestEquip.id })
+            -- MERGE, do not replace: setEquipment takes the whole table, so equipping the
+            -- arrows (slot 18) used to unequip the bow (slot 16) a moment after it was set.
+            local eq = {}
+            pcall(function() for slot, it in pairs(types.Actor.getEquipment(self)) do eq[slot] = it end end)
+            eq[pendingTestEquip.slot] = pendingTestEquip.id
+            types.Actor.setEquipment(self, eq)
             pendingTestEquip = nil
             return
         end
@@ -395,7 +442,7 @@ local function dispatch(cmd)
             -- being a real key the moment someone's handle differs from their login name. The
             -- server resolves names against its roster and the shared account index.
             local byName = (sop == 'FriendRequest' or sop == 'BlockAdd' or sop == 'FriendAccept'
-                or sop == 'MuteAdd' or sop == 'ReportPlayer')
+                or sop == 'MuteAdd' or sop == 'ReportPlayer' or sop == 'WorldKick')
             -- The arg does NOT always belong in name/acct. PresenceMode reads `mode` and
             -- SetAvailability reads `state` on the server, so routing their argument into
             -- `acct` meant the server saw an empty value and refused with no_such_player --
@@ -739,6 +786,12 @@ local function dispatch(cmd)
         -- M7/M8 hooks (all resolved in the GLOBAL script).
         local restHours = cmd:match('^rest:([%d.]+)$')
         if restHours then core.sendGlobalEvent('mpTestRest', { hours = tonumber(restHours) }) end
+        -- The engine's rest verdict (bit 4 = enemies nearby): does a fight the peer runs
+        -- against us count as one on THIS screen? -1 when the binding is missing.
+        if cmd == 'canrest' then
+            local ok, v = pcall(function() return mp.canRest and mp.canRest() or -1 end)
+            mp.set('canRest', tostring(ok and v or -1))
+        end
         local recName = cmd:match('^mkrec:(.+)$')
         if recName then core.sendGlobalEvent('mpTestRecord', { name = recName }) end
         local localRec = cmd:match('^mklocal:(.+)$')
@@ -809,6 +862,20 @@ local function dispatch(cmd)
         -- Harness: hold the attack (use) bit for <ms> so the peer's avatar swings (s67).
         local atkMs = cmd:match('^attack:(%d+)$')
         if atkMs then forceUseUntil = core.getRealTime() + tonumber(atkMs) / 1000 end
+        -- Harness: draw the weapon (the stance rides the input, so the avatar draws too) and
+        -- face a point -- an archer's shot on the peer is aimed by the avatar's yaw and pitch,
+        -- which are ours. The camera FOLLOWS the player's rotation (camera.cpp
+        -- rotateCameraToTrackingPtr), not the reverse, so this goes through the rotation
+        -- controls the mouse would drive; applied by faceTick under the movement override.
+        -- Angles as the engine's own aim (pathfinding.hpp getZAngleToDir / getXAngleToDir).
+        if cmd == 'stance:weapon' then pcall(function() types.Actor.setStance(self, types.Actor.STANCE.Weapon) end) end
+        local fx, fy, fz = cmd:match('^face:(-?[%d.]+),(-?[%d.]+),(-?[%d.]+)$')
+        if fx then
+            local p = self.position
+            local dx, dy, dz = tonumber(fx) - p.x, tonumber(fy) - p.y, tonumber(fz) - (p.z + 100) -- the arrow leaves the hand, not the eye
+            local len = math.sqrt(dx * dx + dy * dy + dz * dz)
+            faceCmd = { yaw = math.atan(dx, dy), pitch = len > 0 and -math.asin(dz / len) or 0 }
+        end
         local tdz = cmd:match('^tpz:(-?[%d.]+)$')
         if tdz then
             local pos = self.position
@@ -889,6 +956,7 @@ return {
         end,
         onFrame = function() -- runs while paused too — the harness must not stall in menus
             pollCommands()
+            faceTick()
             walkTick()
             testEquipTick()
             barterMirrorTick()

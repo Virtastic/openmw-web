@@ -491,6 +491,7 @@ function identity.reset()
     -- reopened by the same two events as the first time: applyPhase2 for a returning character,
     -- MP_ChargenDone for a brand new one.
     baselineReady = false
+    mp.set('baselineReady', '0') -- the mirror must not keep saying 1 across a reset (it did)
 end
 
 -- --- rejoin restore ----------------------------------------------------------------------

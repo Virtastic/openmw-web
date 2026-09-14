@@ -80,7 +80,9 @@ export async function grantLockerSession(client, gwPort, account) {
  * Returns { client, account, ownId }.
  */
 export async function addClient(ctx, gwPort, opts = {}) {
-  const { name = 'bot-b', ownId = 'priv-own-world-b', boot = {} } = opts; // boot: extra launchClient opts (retail: true)
+  // boot: extra launchClient opts (retail: true). dial: boot straight into ANOTHER world (a
+  // friend's) with our own as mphome -- what the launcher's "join <friend>" does.
+  const { name = 'bot-b', ownId = 'priv-own-world-b', boot = {}, dial } = opts;
   const account = `${name}-${ctx.runId}`;
   const token = await harnessSession(gwPort, account);
   const mk = await fetch(`http://127.0.0.1:${gwPort}/worlds`, {
@@ -99,7 +101,7 @@ export async function addClient(ctx, gwPort, opts = {}) {
   }
   assert.ok(up, `${name}'s own world must come up`);
   const url = `ws://127.0.0.1:${gwPort}/w/${ownId}`;
-  const client = await ctx.launchClient(name, '', { mpUrl: url, homeUrl: url, ...boot });
+  const client = await ctx.launchClient(name, '', { mpUrl: dial ?? url, homeUrl: url, ...boot });
   await grantLockerSession(client, gwPort, account);
   return { client, account, ownId };
 }

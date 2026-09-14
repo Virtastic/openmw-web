@@ -77,6 +77,14 @@ local function chargenTick()
     -- Re-sent each session (idempotent) so pre-flag characters self-migrate.
     if chargenDone and not chargenReported and net.state == 'Joined' then
         mp.sendEvent('ChargenComplete', {})
+        -- ...AND THE PLAYER SCRIPT, every connection, not only the first. identity.reset() runs
+        -- on every tick spent outside Joined and shuts the baseline gate; the block above only
+        -- reopened it the ONE time chargenstate flipped. A brand-new character whose page
+        -- dialled after chargen (a direct boot), or who reconnected after a blip, therefore
+        -- kept its inventory, skills and level to itself for the rest of the session -- the
+        -- avatar fought bare-handed and nothing persisted until the next reload (s138).
+        local p = world.players[1]
+        if p then p:sendEvent('MP_ChargenDone', {}) end
         chargenReported = true
     end
 end
@@ -570,6 +578,11 @@ local function applyAvatarDoc(id)
     end)
     end
     mp.set('avatarApplied', tostring(id))
+    -- RE-BIND THE HANDS TO THE RECONCILED STACKS. The equipment push can arrive before the
+    -- inventory doc and fabricates a single item for an empty slot; the doc then grants the
+    -- real stack beside it. An avatar whose quiver slot still pointed at that lone arrow
+    -- loosed exactly one shot and then stood there with 19 in the pack (s138).
+    pushEquipmentToPuppet(id)
 end
 
 -- Phase 3 (peer only): stream the authoritative avatar poses back. mp.sendAvatarMoveBatch
@@ -1505,6 +1518,39 @@ net.onProfileResult = function(msg)
     toPlayer('MP_ProfileResult', { ok = msg.ok == true, error = msg.error or '' })
 end
 
+-- The world we are in, or were on our way to, is no longer ours to be in: say why through
+-- the notice the page shows for WorldClosed, and dial our own world. Two callers: the
+-- server's WorldClosed and a dial the destination refused (net.onRefusedAway below).
+local function goHome(data)
+    -- Mirrored so the HTML overlay can say WHY the world just changed under the player.
+    mp.set('worldClosedBy', tostring(data.by or ''))
+    mp.set('worldClosed', tostring(data.reason or 'closed'))
+    -- A SEQUENCE, not the value. The reason is a constant ('owner_went_solo'), so the UI
+    -- deduping on the value alone silently swallowed the second and every later kick in a
+    -- session: the player was redialed with nothing on screen explaining why.
+    noticeSeq = noticeSeq + 1
+    mp.set('noticeSeq', tostring(noticeSeq))
+    if worldUrls.own and net.currentTarget() ~= worldUrls.own then
+        return net.switchTo(worldUrls.own)
+    end
+    return false
+end
+
+-- A refused dial into somebody else's world (net.lua: AUTH_FAILED "this world is private"
+-- on a target that is not our own): the host went solo or blocked us while we were on the
+-- way. Not a credential problem; go home and say so instead of the sign-in-again modal.
+net.onRefusedAway = function()
+    -- We never JOINED this page (the refusal came at the door), so worldUrls.own has not been
+    -- learned from a welcome yet: read the boot fragment's mphome directly.
+    if not worldUrls.own then
+        local home = mp.getHomeUrl and mp.getHomeUrl() or ''
+        if type(home) == 'string' and home ~= '' then worldUrls.own = home end
+    end
+    if not worldUrls.own or net.currentTarget() == worldUrls.own then return false end
+    print('[mp] refused at the door of ' .. tostring(net.currentTarget()) .. ' -- going home')
+    return goHome({ reason = 'not_open' })
+end
+
 local eventHandlers = {
     MP_TransportOpen = function() net.onOpen() end,
     MP_TransportClose = function() net.onClose() end,
@@ -1826,6 +1872,12 @@ local eventHandlers = {
         local m = tostring(data and data.mode or '')
         local was = worldMode
         worldMode = m == 'party' and 'party' or 'solo'
+        -- WHOSE WORLD THIS IS. A guest used to see the same "Playing: Solo | Party" switcher
+        -- as the host, with Party lit, and nothing on screen said they were in somebody
+        -- else's game. The server names the host (character name) and says whether we are
+        -- them; the page shows "Visiting X's world" with a Leave button instead.
+        mp.set('worldHost', tostring(data and data.owner or ''))
+        mp.set('amHost', (data and data.isOwner == true) and 'true' or 'false')
         mirrorRoster()
         -- Which world you are in is invisible otherwise — the scenery is identical — and it
         -- decides who can see you. Announced on CHANGE only; the server also sends this at
@@ -1838,17 +1890,7 @@ local eventHandlers = {
     end,
     MP_WorldClosed = function(data)
         toPlayer('MP_WorldClosed', data)
-        -- Mirrored so the HTML overlay can say WHY the world just changed under the player.
-        mp.set('worldClosedBy', tostring(data.by or ''))
-        mp.set('worldClosed', tostring(data.reason or 'closed'))
-        -- A SEQUENCE, not the value. The reason is a constant ('owner_went_solo'), so the UI
-        -- deduping on the value alone silently swallowed the second and every later kick in a
-        -- session: the player was redialed with nothing on screen explaining why.
-        noticeSeq = noticeSeq + 1
-        mp.set('noticeSeq', tostring(noticeSeq))
-        if worldUrls.own and net.currentTarget() ~= worldUrls.own then
-            net.switchTo(worldUrls.own)
-        end
+        goHome(data)
     end,
 
     -- The server answers InviteAccept with the host's live position. Travelling is done
@@ -2519,6 +2561,8 @@ local eventHandlers = {
             -- Social UX: availability (Online/Offline), cross-world join, and the owner's
             -- in-place Solo<->Party world flip.
             SetAvailability = true, JoinFriend = true, SetWorldMode = true,
+            -- The host's "send home": one guest, no block, no flip.
+            WorldKick = true,
             -- F3 world browser. The server takes the ACCOUNT from the authenticated
             -- session, never from here, so a client cannot list or create sessions under
             -- someone else's identity.
