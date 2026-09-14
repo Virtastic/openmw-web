@@ -35,14 +35,23 @@ test('POST /clientlog on the gateway is recorded as client.log', async (t) => {
   const dir = await startDirectory({ worlds, host: '127.0.0.1', port: 0, maxPerOwner: 4, worldsDir: wdir });
   t.after(async () => { await dir.close(); worlds.stopAll(); });
 
-  const seen: string[] = [];
-  const off = onLog((e) => { if (e.event === 'client.log') seen.push(String((e as { text?: unknown }).text ?? '')); });
+  const seen: { level: string; text: string }[] = [];
+  const off = onLog((e) => { if (e.event === 'client.log') seen.push({ level: e.level, text: String((e as { text?: unknown }).text ?? '') }); });
   t.after(off);
 
   const res = await fetch(`http://127.0.0.1:${dir.port}/clientlog`, {
     method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ session: 'abc', lines: ['[locker] No locker session. Please sign in again.'] }),
+    body: JSON.stringify({ session: 'abc', lines: [
+      '[locker] No locker session. Please sign in again.',
+      '[mp] Lua error: boom',
+      '[assets] pack unavailable, warning only',
+    ] }),
   });
   assert.equal(res.status, 204, 'the gateway must answer the reporter, not 404 it');
-  assert.ok(seen.some((s) => /No locker session/.test(s)), 'the line must land in the server log');
+  assert.ok(seen.some((s) => /No locker session/.test(s.text)), 'the line must land in the server log');
+  // LEVEL IS INFERRED SERVER-SIDE, and the regexes doing it had their \b word boundaries stored
+  // as backspace bytes -- every client line, "Lua error" included, was logged at info.
+  assert.equal(seen.find((s) => /Lua error/.test(s.text))?.level, 'error');
+  assert.equal(seen.find((s) => /warning only/.test(s.text))?.level, 'warn');
+  assert.equal(seen.find((s) => /No locker session/.test(s.text))?.level, 'info');
 });
