@@ -15,7 +15,11 @@ known and recorded; N/A = does not exist in single player either.
 
 ## 0. Live evidence (native peer + two browser clients, retail data, 2026-09-11/12)
 
-Full sweep on bake #27 (2026-09-12 21:01-23:42, 100 scenarios): 96 PASS, 2 SKIP by design (s43 needs a GPU box,
+Full sweep on the rebuilt stack (2026-09-14, 108 scenarios): 104 PASS, 2 SKIP by design (s43 needs a GPU box,
+s57 awaits its Phase-W rewrite), 0 FAIL -- the entire live suite green, including the whole drop-in flow (join,
+guest loot/skills/journal, kick, refused-at-the-door, join-from-launcher, leader-level scaling, and a helper
+healing a friend). The harness now swallows a stray CDP timeout at process level, so one navigating page can no
+longer abort the run (a sweep died at s60b before that fix).
 s57 awaits its rewrite), 2 FAIL (s42, s51) that both PASS on a clean rerun -- they ran while 40 dead scenarios' gateway
 worlds and 14 of their peers were still alive (the harness SIGTERMed the gateway and SIGKILLed it mid-drain; worlds
 do not exit on TERM, peers ignore it). Fixed the same night: the gateway runs in its own process group and the harness
