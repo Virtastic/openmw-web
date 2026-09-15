@@ -141,6 +141,14 @@ Branch: `test/posture-seen`. Sweeps: Jenkins `openmw-web-dev` #89 (9/17), #90 (1
 | 194 | Ban rows attribute dashboard bans to "dashboard", not the operator | server.ts:1076 |
 | 195 | First-run setup trusts XFF from any private peer: behind an operator's own proxy without XFF every internet client looks private during the setup window | routes.ts:338; document beside the LAN copy |
 | 196 | Slow growth: erased never pruned; quests.ts peerMemberAt grows per cell|ref|name; Export streams gamedata/ (multi-GB); the 1 Hz "avatar submerged" info line ships in production Lua with a sync append per line | playerstore.ts:156, quests.ts, ops.ts:46, global.lua:664 |
+| 197 | Reconciliation has no latency compensation: the peer's pose (as of lastInputSeq, one RTT old) is compared with the client's CURRENT position, so on a real link every stop/jump/doorway rubber-bands by RTT x speed (invisible on the LAN harness) | player.lua:299-330 ring of {seq,pos} in inputTick; divergence = e.pos - posAt(e.lastInputSeq); harness needs a debugStateDelayMs knob |
+| 198 | One in ~three jumps never reaches the avatar: 30 Hz input vs the peer's 20 Hz tick, the second event of a tick overwrites the first (jump bit lost); observers latch it, so friends see a jump the avatar never made | avatar.lua:227-233 latch jump/use bits until consumed |
+| 199 | Doors relay ~1-1.5 s late (read waits for Idle): the owner walks through while the avatar is stopped by the closed door (rubber-band/SELF SNAP); rotateDoor rolls back while the avatar is in the arc and stacks AiAvoidDoor the avatar never runs (deadlock while pushing); a close in the window is reversed by the stale open | objects.lua:420, 1168-1188 send the intended state at activation |
+| 200 | Every exterior cell-border crossing follow-teleports the mover's puppet and avatar (pop for friends; fall height zeroed on the peer = no fall damage across a border, second trigger for #74) | global.lua:2356 skip the teleport when both keys are exterior and the body is within SNAP_DIST |
+| 201 | Movement effects (Levitate/Slowfall/Water Walking/Fortify Acrobatics) reach/leave the avatar up to 0.5 s + RTT late (INTERVALS.active 0.5): the owner hangs after expiry, dips on cast | identity.lua:24 active diff 0.1 s or per frame for the movement subset |
+| 202 | Observer puppets miss ~25% of jump edges (20 Hz avatar stream sampled by the server's 66 ms tick); sub-66 ms use clicks lost too | connection.ts:930 OR the edge bits into p.pose.flags until broadcast once |
+| 203 | GAP: scripted movers (mod elevators, SetPos/Move on activators) are per-engine and unsynced; no client emits ObjectMove | objects.lua:819 holder-authoritative relay when a mod needs it |
+| 204 | Design ceiling: a WebSocket stall > 0.35 s collapses buffered inputs to the last one on the peer; the owner is dragged back by the stall length | avatar.lua:231 input queueing + #197 |
 
 ## Open (found, not fixed)
 
