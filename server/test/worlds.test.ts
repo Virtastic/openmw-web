@@ -594,3 +594,44 @@ test('rolling restart: a world the owner flipped to party restarts with its BOOT
   assert.deepEqual(r.restarted, ['priv-host-1']);
   assert.equal(envs[1]!['OMW_WORLD_MODE'], 'private', 'the replacement boots as the original did, not as the flip');
 });
+
+// #186/#191: SIGUSR1 (the backup cron's "flush now") reaches every world, and shutdown waits
+// for the children to actually exit rather than a fixed 3 s against a 20 s drain.
+test('worlds: SIGUSR1 is relayed to every world and allExited waits for the last one', async () => {
+  // A child that answers signals the way a real world does: SIGUSR1 flushes and keeps
+  // running; SIGTERM drains and exits a little later.
+  class LiveChild extends EventEmitter {
+    killed: string[] = [];
+    pid = 778;
+    exitCode: number | null = null;
+    signalCode: string | null = null;
+    kill(sig: string): boolean {
+      this.killed.push(sig);
+      if (sig === 'SIGTERM') setTimeout(() => { this.exitCode = 0; this.emit('exit', 0, null); }, 20);
+      return true;
+    }
+  }
+  const children: LiveChild[] = [];
+  const settings: WorldSettings = {
+    worldsDir: mkdtempSync(join(tmpdir(), 'omw-worlds-')), gatewayPort: 8080, serverEntry: '/fake/server.mjs',
+    nodeBin: '/fake/node', basePort: 41000, maxWorlds: 3, idleReapMs: 60_000, startTimeoutMs: 60_000,
+    restartBackoffMs: 15_000, sharedDir: mkdtempSync(join(tmpdir(), 'omw-shared-')),
+  };
+  const sup = new WorldSupervisor({
+    settings,
+    spawner: () => { const c = new LiveChild(); children.push(c); return c as unknown as ChildProcess; },
+  });
+  sup.ensure('a', 'private');
+  sup.ensure('b', 'private');
+  sup.signalAll('SIGUSR1');
+  assert.deepEqual(children.map((c) => c.killed), [['SIGUSR1'], ['SIGUSR1']], 'both worlds got the flush signal');
+  assert.equal(sup.running, 2, 'a flush signal is not a stop');
+
+  sup.stopAll();
+  let exited = false;
+  const wait = sup.allExited().then(() => { exited = true; });
+  await tick();
+  assert.equal(exited, false, 'still draining: the gateway must not exit yet');
+  await wait;
+  assert.ok(children.every((c) => c.exitCode === 0), 'resolved only once every child had exited');
+});

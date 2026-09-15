@@ -108,6 +108,9 @@ test('deleting an account leaves no trace in any database', async (t) => {
         .all() as { name: string }[];
       for (const { name } of tables) {
         if (name === 'schema_migrations') continue;
+        // The tombstone table names the erased KEYS on purpose: it is what stops a world
+        // that still has the doc cached from writing it back (checked below).
+        if (name === 'erased') continue;
         const cols = (db.prepare(`PRAGMA table_info(${name})`).all() as { name: string }[]).map((c) => c.name);
         for (const row of db.prepare(`SELECT * FROM ${name}`).all() as Record<string, unknown>[]) {
           const blob = cols.map((c) => String(row[c] ?? '')).join(' ').toLowerCase();
@@ -121,4 +124,19 @@ test('deleting an account leaves no trace in any database', async (t) => {
     }
   }
   assert.deepEqual(leaks, [], `erasure left data behind:\n${leaks.join('\n')}`);
+
+  // THE RESURRECTION. `players` above is a live world's store with the doc still cached, and
+  // a gateway dashboard delete runs erase.ts from ANOTHER process: the world's next flush
+  // wrote the character straight back as a row no account points at. erase.ts writes the
+  // tombstone now, so the flush drops it.
+  players.update(char.id, (d) => { d.inventory = [{ id: 'gold_001', n: 1 }]; }, 'sweep');
+  await players.flushAll();
+  const playersDb = new DatabaseSync(join(dir, 'players.db'));
+  try {
+    assert.equal(playersDb.prepare('SELECT 1 FROM players WHERE key = ?').get(char.id), undefined,
+      'a flush after erasure resurrected the character doc');
+  } finally {
+    playersDb.close();
+  }
+  await players.close();
 });

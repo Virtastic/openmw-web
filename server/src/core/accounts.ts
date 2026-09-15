@@ -10,7 +10,7 @@ import { randomBytes } from 'node:crypto';
 import { hash, verify, Algorithm } from '@node-rs/argon2';
 import type { DatabaseSync } from 'node:sqlite';
 import { readdir } from 'node:fs/promises';
-import { openDb, tx } from '../persist/sqlite';
+import { checkpoint, openDb, tx } from '../persist/sqlite';
 
 const ACCOUNT_MIGRATIONS = [
   {
@@ -715,6 +715,7 @@ export class AccountStore {
         log('error', 'accounts.flush_failed', { account: key, error: String(err) });
       }
     }
+    checkpoint(this.db);
   }
 
   async close(): Promise<void> {

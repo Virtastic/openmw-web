@@ -9,7 +9,7 @@
 import { unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
-import { openDb, tx } from './sqlite';
+import { checkpoint, openDb, tx } from './sqlite';
 
 const PLAYER_MIGRATIONS = [
   {
@@ -355,6 +355,7 @@ export class PlayerStore {
 
   async flushAll(): Promise<void> {
     for (const key of [...this.dirty]) await this.flushKey(key);
+    checkpoint(this.db); // so a backup tarred after SIGUSR1 sees one file, not db+wal+shm
   }
 
   // Docs stay cached after logout: they are tiny, getCached() must stay valid across a

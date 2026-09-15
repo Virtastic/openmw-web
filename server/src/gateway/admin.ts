@@ -196,6 +196,27 @@ export function gatewayAdminRoutes(deps: GatewayAdminDeps): HttpRoute {
     restart: deps.restart,
     exportData: async (res) => exportDataDir(deps.sharedDir, res),
     deleteAccount: async (key) => {
+      // Same order as the single-world path (server.ts): cut the live sessions, drain the
+      // write-behind, then erase. Here the sessions live in the WORLDS, so every running
+      // game is told to kick; and the character's solo world is retired, or its next flush
+      // wrote the character straight back (the row without a slot that #188 found).
+      const account = await deps.accounts.get(key);
+      const h = GATEWAY_ACTOR_HEADERS;
+      await Promise.all(deps.worlds.list().filter((w) => w.up).map((g) =>
+        fetch(`http://127.0.0.1:${g.port}/admin/api/action`, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            authorization: `Bearer ${token()}`,
+            [h.key]: '(platform)', [h.name]: 'the multiplayer server', [h.role]: 'owner',
+          },
+          body: JSON.stringify({ kind: 'kick', target: key, detail: 'account erased' }),
+          signal: AbortSignal.timeout(3000),
+        }).catch((err) => log('warn', 'admin.erase_kick_failed', { game: g.id, error: String(err) }))));
+      if (account) {
+        const owner = { accountKey: key, ...(account.username ? { username: account.username } : {}) };
+        for (const c of account.characters ?? []) await deps.worlds.discardForCharacter(owner, c.id);
+      }
       await deps.accounts.flush();
       const report = await deleteAccount(deps.sharedDir, key);
       if (!report.account && !report.player) return { ok: false, message: 'nothing found under that name' };

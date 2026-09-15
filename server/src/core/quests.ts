@@ -14,7 +14,7 @@ import { parseObjRef, type ObjRef } from '../proto/ref';
 import type { Player, Roster } from './players';
 import { INPUT_DRIVING_MS } from './players';
 import { cellsVisible } from './movement';
-import type { CellStore, FactionState } from '../persist/cellstore';
+import { cellMapFull, type CellStore, type FactionState } from '../persist/cellstore';
 import type { PlayerStore } from '../persist/playerstore';
 import { log } from '../log';
 
@@ -485,14 +485,20 @@ export class Quests {
         return;
       }
     }
-    void this.storeMemberVar(cellKey, ref, name, value);
+    void this.storeMemberVar(cellKey, ref, name, value, player.name);
     this.relayCell(cellKey, player.id, 'MemberVarUpdate', { ...(lToJs(body) as Record<string, JsLike>) });
   }
 
-  private async storeMemberVar(cellKey: string, ref: ObjRef, name: string, value: number): Promise<void> {
+  private async storeMemberVar(cellKey: string, ref: ObjRef, name: string, value: number, by: string): Promise<void> {
     const doc = await this.ctx.cells.get(cellKey);
     const vars = (doc.memberVars ??= {});
-    (vars[ref.key] ??= {})[name] = value;
+    const own = (vars[ref.key] ??= {});
+    // Capped on STORE, not only on send (worldstate.ts drops the whole map from the snapshot
+    // past the cap): a doc that kept growing was still persisted and still too big to ship.
+    let total = 0;
+    for (const v of Object.values(vars)) total += Object.keys(v).length;
+    if (cellMapFull(own, name, cellKey, 'memberVars', by, total)) return;
+    own[name] = value;
     this.ctx.cells.markDirty(cellKey);
   }
 

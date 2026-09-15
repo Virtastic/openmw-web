@@ -6,8 +6,10 @@
 // last one destroys reports OTHER players filed about this account — the alternative is
 // keeping a dossier on someone who asked to be forgotten, which is not erasure. Take a
 // backup first if you are erasing someone you may still need to ban.
-// Runs OFFLINE against the data directory (`--delete-account
-// <name>`) so it cannot race a live session's write-behind flush.
+// Runs against the data directory, offline (`--delete-account <name>`) or from the dashboard
+// of a live server. Live, the caller kicks the sessions and drains the write-behind first,
+// and the player rows get a tombstone (see erasePlayerDocs) so a world's next flush drops
+// the doc instead of writing it back.
 //
 // What it deliberately does NOT touch, because the data is not keyed to the account:
 //   * world/cell docs — a chest the player opened is world state, not personal data; the
@@ -35,6 +37,9 @@ function withDb<T>(path: string, fallback: T, fn: (db: DatabaseSync) => T): T {
   if (!existsSync(path)) return fallback;
   const db = new DatabaseSync(path);
   try {
+    // A live world may be mid-write on this very file; without a timeout that is an instant
+    // SQLITE_BUSY throw, which the dashboard rendered as a 500 on delete.
+    db.exec('PRAGMA busy_timeout = 5000');
     return fn(db);
   } catch (err) {
     if (/no such table/i.test(String(err))) return fallback;
@@ -145,9 +150,20 @@ function erasePlayerDocs(dataDir: string, key: string): boolean {
   const charIds = (readAccountDoc(dataDir, key)?.characters ?? [])
     .map((c) => c.id)
     .filter((id): id is string => typeof id === 'string');
-  return withDb(join(dataDir, 'players.db'), false, (db) =>
-    [key, ...charIds].some(
-      (k) => Number(db.prepare('DELETE FROM players WHERE key = ?').run(k).changes) > 0));
+  return withDb(join(dataDir, 'players.db'), false, (db) => {
+    let erased = false;
+    for (const k of [key, ...charIds]) {
+      if (Number(db.prepare('DELETE FROM players WHERE key = ?').run(k).changes) > 0) erased = true;
+      // THE TOMBSTONE. A world that still has this doc cached writes it straight back at its
+      // next flush unless the `erased` table says not to (playerstore.ts flushKey). The
+      // in-process eraser wrote it; this one did not, so a dashboard delete on a gateway
+      // resurrected the character as a row no account points at. A pre-002 database has no
+      // table, and nothing that old can resurrect either.
+      try { db.prepare('INSERT OR REPLACE INTO erased (key, at) VALUES (?, ?)').run(k, Date.now()); }
+      catch { /* no erased table yet (pre-002) */ }
+    }
+    return erased;
+  });
 }
 
 

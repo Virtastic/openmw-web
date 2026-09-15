@@ -55,6 +55,14 @@ services:
     # SIGTERM and Docker starts it again; without this policy the button would stop the
     # server and leave the operator with no way to bring it back from a browser.
     restart: unless-stopped
+    # A real init as PID 1 reaps orphaned processes. The multiplayer server runs a headless
+    # OpenMW per occupied cell; one that outlives a killed world would otherwise sit as a
+    # zombie holding ~360 MB until the container restarts.
+    init: true
+    # The gateway waits for every world to drain (players and cells flushed) before it exits,
+    # and a world gets 20 s before it is killed outright. Docker's default 10 s would SIGKILL
+    # the whole container mid-flush on every `compose down` and every update.
+    stop_grace_period: 30s
     # ${REPO_DIR:-.} ON EVERY BIND SOURCE: setup.sh/setup.ps1 write the checkout's absolute
     # host path into .env as REPO_DIR. Relative sources break the moment compose runs
     # anywhere but the host shell - the updater container below runs compose too, and a

@@ -15,7 +15,7 @@ import { MONTH_DAYS } from './worldtime';
 import { unpackActorMoveBatch } from '../proto/movement';
 import { MSG_ACTOR_MOVE_BATCH, packEnvelope, nextBroadcastSeq } from '../proto/envelope';
 import { Authority, type ActorSnapshot } from './authority';
-import { CellStore, emptyCellDoc, type CellDoc, type ContainerItems } from '../persist/cellstore';
+import { CellStore, cellMapFull, emptyCellDoc, type CellDoc, type ContainerItems } from '../persist/cellstore';
 import { log } from '../log';
 import { metrics } from '../metrics';
 
@@ -1030,7 +1030,10 @@ export class WorldState {
     }
     const placed = doc.placed[ref.key];
     if (placed) Object.assign(placed, { x, y, z, rotZ }); // spawned: placed entry is truth
-    else doc.moved[ref.key] = { x, y, z, rotZ };
+    else {
+      if (cellMapFull(doc.moved, ref.key, cellKey, 'moved', player.name)) return;
+      doc.moved[ref.key] = { x, y, z, rotZ };
+    }
     this.cells.markDirty(cellKey);
     this.relayCell(cellKey, 'ObjectMove', { ...objRefToJs(ref), cellKey, x, y, z, rotZ, byId: player.id });
   }
@@ -1045,6 +1048,7 @@ export class WorldState {
       this.invalid(player, 'ObjectLock');
       return;
     }
+    if (cellMapFull(doc.locks, ref.key, cellKey, 'locks', player.name)) return;
     doc.locks[ref.key] = lockLevel;
     this.cells.markDirty(cellKey);
     this.relayCell(cellKey, 'ObjectLock', {
@@ -1089,7 +1093,10 @@ export class WorldState {
     // Enabled is the vanilla default: record only the DISABLED state, so the doc does not
     // grow a row for every object a script ever touches.
     if (on) delete map[ref.key];
-    else map[ref.key] = false;
+    else {
+      if (cellMapFull(map, ref.key, cellKey, 'enabled', player.name)) return;
+      map[ref.key] = false;
+    }
     this.cells.markDirty(cellKey);
     this.relayCell(cellKey, 'ObjectEnabled', { ...objRefToJs(ref), cellKey, enabled: on, byId: player.id });
   }
@@ -1103,6 +1110,7 @@ export class WorldState {
       this.invalid(player, 'DoorState');
       return;
     }
+    if (cellMapFull(doc.doors, ref.key, cellKey, 'doors', player.name)) return;
     doc.doors[ref.key] = open;
     this.cells.markDirty(cellKey);
     this.relayCell(cellKey, 'DoorState', { ...objRefToJs(ref), cellKey, open, byId: player.id });

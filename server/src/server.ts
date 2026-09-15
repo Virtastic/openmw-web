@@ -1066,7 +1066,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
         reason: doc.reason,
       })),
     }),
-    action: async (kind, target, detail) => {
+    action: async (kind, target, detail, by) => {
       const online = target === '' ? undefined : roster.activeForAccount(target.toLowerCase());
       switch (kind) {
         case 'kick':
@@ -1074,11 +1074,16 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
           online.peer.disconnect('KICKED', detail || 'kicked by a moderator');
           return { ok: true, message: `kicked ${target}` };
         case 'ban':
-          bans.banAccount(target, 'dashboard', detail || 'banned by a moderator');
+          // The OPERATOR's name, not "dashboard": a ban row that names its issuer is the
+          // one a later moderator can ask about.
+          bans.banAccount(target, by || 'dashboard', detail || 'banned by a moderator');
           online?.peer.disconnect('BANNED', detail || 'banned by a moderator');
           return { ok: true, message: `banned ${target}` };
-        case 'unban':
-          return { ok: bans.unbanAccount(target), message: `unban ${target}` };
+        case 'unban': {
+          const lifted = bans.unbanAccount(target);
+          if (lifted) log('info', 'moderation.unban', { target: target.toLowerCase(), by });
+          return { ok: lifted, message: `unban ${target}` };
+        }
         case 'mute':
         case 'unmute': {
           // Server-side mute rides the same account-level list the voice/chat client

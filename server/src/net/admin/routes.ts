@@ -119,7 +119,8 @@ export interface AdminDeps {
   // --- the original moderation surface, unchanged ---
   overview(): unknown | Promise<unknown>;
   reports(limit: number): Promise<unknown>;
-  action(kind: string, target: string, detail: string): Promise<{ ok: boolean; message: string }>;
+  /** `by` is the signed-in operator's account name, so a ban row names who issued it. */
+  action(kind: string, target: string, detail: string, by: string): Promise<{ ok: boolean; message: string }>;
 
   // --- new capability, supplied by server.ts so this module stays free of game types ---
   /** Run one ADMIN_COMMANDS entry as `actor`. Returns the same text the chat path returns. */
@@ -600,7 +601,7 @@ export function adminRoutes(deps: AdminDeps) {
         return true;
       }
       const result = await deps.action(
-        kind, String(body.target ?? ''), String(body.detail ?? ''),
+        kind, String(body.target ?? ''), String(body.detail ?? ''), ctx.accountName,
       );
       log('info', 'admin.dashboard_action',
         { kind: body.kind, target: body.target, ok: result.ok, by: ctx.accountKey });

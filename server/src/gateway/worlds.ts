@@ -375,8 +375,12 @@ export class WorldSupervisor {
     try {
       // 'inherit': a world's logs flow through the gateway's stdout so `docker logs` shows every
       // world (auth, joins, errors) in one place. Without it a world failure is invisible.
+      // detached: the world leads its own process group, and its sim peers (spawned
+      // non-detached by simpeer.ts) join it. That is what lets a SIGKILL escalation below
+      // take the peers with the world: a peer that outlived a SIGKILLed world redialled
+      // forever (~360 MB each) and counted against the peer cap until the box was restarted.
       const spawner = this.deps.spawner
-        ?? ((_id, a, env) => spawn(s.nodeBin, a, { env, stdio: 'inherit' }));
+        ?? ((_id, a, env) => spawn(s.nodeBin, a, { env, stdio: 'inherit', detached: process.platform !== 'win32' }));
       child = spawner(id, args, {
         ...process.env,
         OMW_WORLD_ID: id,
@@ -392,7 +396,7 @@ export class WorldSupervisor {
     }
     this.usedPorts.add(port);
     // Record the pid so a NEW gateway can find the children of a dead one. Worlds are spawned
-    // non-detached but without PDEATHSIG, so a gateway that dies takes nothing with it: the
+    // in their own process group and without PDEATHSIG, so a gateway that dies takes nothing with it: the
     // orphans keep their ports, and the new gateway's allocPort — which only knows its own
     // freshly-empty usedPorts — hands out the same port, the world dies EADDRINUSE, backs off,
     // and retries forever. A healthy-looking gateway with zero joinable worlds.
@@ -560,9 +564,30 @@ export class WorldSupervisor {
     const kill = setTimeout(() => {
       if (this.worlds.get(id) !== w) return; // it exited; nothing to escalate to
       log('warn', 'world.sigkill_escalated', { id, pid: w.child.pid ?? -1 });
-      w.child.kill('SIGKILL');
+      killGroup(w.child);
     }, WorldSupervisor.STOP_GRACE_MS);
     kill.unref();
+  }
+
+  /** Relay a signal to every running world: SIGUSR1 = "flush now" (README backup cron). */
+  signalAll(signal: NodeJS.Signals): void {
+    for (const w of this.worlds.values()) {
+      try { w.child.kill(signal); } catch { /* exited between the map read and the kill */ }
+    }
+  }
+
+  /** Resolves once every world has exited, or after STOP_GRACE_MS plus the SIGKILL margin —
+   *  stop() escalates on its own timer, so this is bounded either way. */
+  allExited(): Promise<void> {
+    const alive = [...this.worlds.values()].filter((w) => w.child.exitCode === null && w.child.signalCode === null);
+    if (alive.length === 0) return Promise.resolve();
+    return new Promise((resolve) => {
+      let left = alive.length;
+      const done = (): void => { if (--left === 0) { clearTimeout(t); resolve(); } };
+      const t = setTimeout(resolve, WorldSupervisor.STOP_GRACE_MS + 5_000);
+      t.unref();
+      for (const w of alive) w.child.once('exit', done);
+    });
   }
 
   // A deleted character's solo world is dead weight: nobody can ever reach it again, because
@@ -685,6 +710,16 @@ function delay(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+// SIGKILL the world's whole process group (the world plus the sim peers it spawned). Windows
+// has no process groups and the world is spawned attached there, so it falls back to the
+// child alone; so does a spawner that did not detach (a test fake).
+function killGroup(child: ChildProcess): void {
+  if (process.platform !== 'win32' && child.pid !== undefined) {
+    try { process.kill(-child.pid, 'SIGKILL'); return; } catch { /* not a group leader, or gone */ }
+  }
+  try { child.kill('SIGKILL'); } catch { /* already gone */ }
+}
+
 async function defaultFetchStatus(port: number): Promise<{ playerCount: number; connectedCount: number; peerCount: number; maxPlayers: number; name: string; players: WorldPlayer[]; mode?: WorldMode; ownerPresent?: boolean } | null> {
   try {
     const r = await fetch(`http://127.0.0.1:${port}/status`, { signal: AbortSignal.timeout(2000) });
@@ -723,7 +758,7 @@ async function defaultFetchStatus(port: number): Promise<{ playerCount: number; 
   }
 }
 
-// ORPHANS FROM A PREVIOUS GATEWAY. Worlds are spawned non-detached but without PDEATHSIG, so a
+// ORPHANS FROM A PREVIOUS GATEWAY. Worlds are spawned in their own process group, without PDEATHSIG, so a
 // gateway that dies (or is SIGKILLed) leaves every world process running and holding its port.
 // The replacement gateway starts with an empty usedPorts, hands out a port an orphan still
 // owns, and that world dies EADDRINUSE -> backoff -> retry, forever: the gateway looks healthy

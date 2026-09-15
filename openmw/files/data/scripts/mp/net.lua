@@ -89,6 +89,7 @@ local reconnectAttempt = 0 -- reset on a successful Joined
 -- catch. Retry a few times, then say so.
 local everJoined = false
 local UNREACHABLE_ATTEMPTS = 3
+local SYSTEM_GIVE_UP_ATTEMPTS = 30 -- a headless peer, after joining: see the quit below
 -- Monotonic and NEVER reset, unlike reconnectAttempt. A test that watches for a transient
 -- ("state left Joined") races the redial, which on localhost can complete between polls;
 -- a counter that only ever grows cannot be missed.
@@ -436,6 +437,16 @@ function net.onClose()
         net.lastErrorDetail = net.lastErrorDetail or 'could not reach the server'
         mp.set('lastError', tostring(net.lastError) .. ' ' .. tostring(net.lastErrorDetail))
         setState('Failed')
+        return
+    end
+    -- A SIM PEER whose world is gone has nothing to redial for. A human's client redials
+    -- forever because the character is in there; a headless peer that once joined and then
+    -- lost its server for 30 backoffs (5-10 minutes with the jittered 30 s cap) is an orphan of a world
+    -- that was SIGKILLed out from under it, and it sat at ~360 MB redialling until the box
+    -- was restarted. Quit and let the process end.
+    if everJoined and mp.isSystem() and reconnectAttempt >= SYSTEM_GIVE_UP_ATTEMPTS then
+        print(string.format('[mp] system peer: server gone for %d redials — quitting', reconnectAttempt))
+        core.quit()
         return
     end
     if net.state == 'Joined' or reconnecting then

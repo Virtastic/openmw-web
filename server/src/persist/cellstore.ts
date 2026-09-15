@@ -8,7 +8,7 @@
 
 import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
-import { openDb, tx } from './sqlite';
+import { checkpoint, openDb, tx } from './sqlite';
 
 const CELL_MIGRATIONS = [
   {
@@ -47,6 +47,26 @@ export interface PlacedObject {
 }
 
 export type ContainerItems = { id: string; n: number }[];
+
+// THE KEYED MAPS HAVE A CEILING TOO. placed and deleted were capped (worldstate.ts) after
+// 3,400 drops made a cell undecodable; moved, locks, doors and memberVars were not, and
+// ~11k ObjectMoves (three minutes at 60 msg/s from one client, each naming a fresh ref)
+// pushed WorldCellState past the LSER node ceiling the same way — every entrant thereafter
+// disconnected BAD_PROTO, permanently, because the doc is persisted. Same number as
+// MAX_PLACED_PER_CELL: far past any honest cell, half the ceiling left for the rest.
+export const MAX_KEYS_PER_CELL = 2000;
+
+/** True (and logged) when `key` is NEW to `map` and the map is already at the cap. An
+ *  existing key always updates: the cap bounds growth, not play. `size` overrides the
+ *  count for a map whose entries are nested (memberVars). */
+export function cellMapFull(
+  map: Record<string, unknown>, key: string, cellKey: string, what: string, by: string, size?: number,
+): boolean {
+  if (key in map) return false;
+  if ((size ?? Object.keys(map).length) < MAX_KEYS_PER_CELL) return false;
+  log('warn', 'world.cell_map_full', { cellKey, map: what, by, cap: MAX_KEYS_PER_CELL });
+  return true;
+}
 
 export interface CellDoc {
   placed: Record<string, PlacedObject>; // key "n:<netId>"
@@ -388,6 +408,7 @@ export class CellStore {
   async flushAll(): Promise<void> {
     for (const key of [...this.dirty]) await this.flushKey(key);
     await this.globalWrite; // kills / shared quest state must be on disk too
+    checkpoint(this.db);
   }
 
   async close(): Promise<void> {

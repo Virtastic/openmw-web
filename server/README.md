@@ -286,17 +286,24 @@ Re-measure with `free -m` + `docker stats --no-stream` before raising limits.
 ## Backups
 
 Nightly cron on the VPS (installed manually, one-time — same convention as other /opt
-services). SIGUSR1 makes the server flush all dirty state to disk first:
+services). SIGUSR1 makes the server flush all dirty state to disk first. In multiplayer
+mode the container runs the gateway, which flushes its own account store and relays the
+signal to every world process (players, cells, records, bans, chat); each flush ends with a
+`wal_checkpoint(TRUNCATE)`, so `tar` sees one `.db` per store rather than a db/-wal/-shm
+trio captured at three different instants. The container is `openmw-web` for the
+self-hosting `docker-compose.yml` (`openmw-mp` on the hosted VPS, `docker-compose.prod.yml`);
+`gamedata/` is your own Morrowind files, so exclude it like the dashboard's export does:
 
 ```sh
-# /etc/cron.d/openmw-mp-backup (as root)
-15 4 * * * root docker kill -s USR1 openmw-mp && sleep 2 \
-  && tar czf /opt/openmw-mp/backups/data-$(date +\%F).tar.gz -C /opt/openmw-mp data \
-  && find /opt/openmw-mp/backups -name 'data-*.tar.gz' -mtime +14 -delete
+# /etc/cron.d/openmw-web-backup (as root); <checkout> is where docker-compose.yml lives
+15 4 * * * root docker kill -s USR1 openmw-web && sleep 5 \
+  && tar czf <checkout>/backups/data-$(date +\%F).tar.gz -C <checkout> --exclude=data/gamedata data \
+  && find <checkout>/backups -name 'data-*.tar.gz' -mtime +14 -delete
 ```
 
-Restore: stop the container, untar over `/opt/openmw-mp/data`, `docker compose up -d`.
-The deploy workflow never touches `/opt/openmw-mp/data`, so redeploys are always safe.
+Restore: stop the container, untar over `data/` (`/opt/openmw-mp/data` on the VPS),
+`docker compose up -d`. The deploy workflow never touches `/opt/openmw-mp/data`, so
+redeploys are always safe.
 
 ### Verifying the backup actually restores
 

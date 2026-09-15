@@ -5,9 +5,37 @@
 
 import { spawn } from 'node:child_process';
 import type { ServerResponse } from 'node:http';
-import { basename, dirname } from 'node:path';
+import { readdirSync, type Dirent } from 'node:fs';
+import { DatabaseSync } from 'node:sqlite';
+import { basename, dirname, join } from 'node:path';
 import { renderMetrics } from '../../metrics';
 import { log } from '../../log';
+import { checkpoint } from '../../persist/sqlite';
+
+/**
+ * Fold every SQLite WAL under the dir into its main file before tar copies them. tar reads
+ * db, -wal and -shm at three different instants; a restore of that trio is whatever SQLite
+ * can salvage. After a TRUNCATE checkpoint the .db alone is the database. Best effort per
+ * file: a db another process is writing checkpoints as far as it can and the rest rides in
+ * its -wal as before.
+ */
+export function checkpointAll(dir: string): number {
+  let n = 0;
+  let entries: Dirent[];
+  try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return 0; }
+  for (const e of entries) {
+    const p = join(dir, e.name);
+    if (e.isDirectory()) { if (e.name !== 'gamedata') n += checkpointAll(p); continue; }
+    if (!e.name.endsWith('.db') && !e.name.endsWith('.sqlite')) continue;
+    try {
+      const db = new DatabaseSync(p);
+      try { db.exec('PRAGMA busy_timeout = 5000'); checkpoint(db); n++; } finally { db.close(); }
+    } catch (err) {
+      log('warn', 'admin.export_checkpoint_failed', { db: p, error: String(err) });
+    }
+  }
+  return n;
+}
 
 /**
  * The Prometheus registry, regrouped for humans.
@@ -48,9 +76,13 @@ export async function exportDataDir(dataDir: string, res: ServerResponse): Promi
   const name = basename(dataDir);
   const stamp = new Date().toISOString().slice(0, 10);
 
+  checkpointAll(dataDir);
   // -C parent <name>: paths inside the archive stay relative, so it extracts into a folder
   // instead of spraying absolute paths over whatever machine unpacks it.
-  const tar = spawn('tar', ['-czf', '-', '-C', parent, name], { stdio: ['ignore', 'pipe', 'pipe'] });
+  // gamedata/ is the operator's own Morrowind files (multi-GB, re-uploadable, not state);
+  // streaming it made the backup too big to download and said nothing about the players.
+  const tar = spawn('tar', ['-czf', '-', '-C', parent, `--exclude=${name}/gamedata`, name],
+    { stdio: ['ignore', 'pipe', 'pipe'] });
 
   let failed = false;
   tar.on('error', (err) => {

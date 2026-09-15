@@ -15,7 +15,7 @@
 
 import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
-import { openDb, tx } from './sqlite';
+import { checkpoint, openDb, tx } from './sqlite';
 import type { JsLike } from '../proto/lser';
 import { log } from '../log';
 import { timeFlush } from '../metrics';
@@ -139,8 +139,9 @@ export class RecordStore {
     );
   }
 
-  flush(): Promise<void> {
-    return this.write;
+  async flush(): Promise<void> {
+    await this.write;
+    checkpoint(this.db);
   }
 
   close(): Promise<void> {

@@ -674,11 +674,13 @@ end
 -- Phase 3 (peer only): stream the authoritative avatar poses back. mp.sendAvatarMoveBatch
 -- -> 0x0105 -> the server fans out 0x0101 to everyone and 0x0103 (with lastInputSeq) to
 -- each owner. Sent fresh every pass — a stale pose is a rubber-band on the wrong side.
--- HARNESS DIAGNOSTIC (peer): once a second, say what the engine thinks of a submerged
--- avatar's drowning inputs. Cheap, and the only window into the peer's side of s149.
+-- HARNESS DIAGNOSTIC (peer): say what the engine thinks of a submerged avatar's drowning
+-- inputs. The only window into the peer's side of s149 — but this ships in production Lua
+-- and every line is a sync append to the peer's log, so once per 10 s, not once a second.
+local DROWN_PROBE_EVERY = 10
 local drownSaidAt = 0
 local function avatarDrownProbe(now)
-    if now - drownSaidAt < 1 then return end
+    if now - drownSaidAt < DROWN_PROBE_EVERY then return end
     drownSaidAt = now
     if not mp.drownState then return end
     for id, p in pairs(puppets) do

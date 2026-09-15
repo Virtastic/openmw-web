@@ -7,7 +7,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { contentRefKey, netRefKey, parseRefKey } from '../src/proto/ref';
-import { CellStore } from '../src/persist/cellstore';
+import { CellStore, MAX_KEYS_PER_CELL } from '../src/persist/cellstore';
 import { startServer, type RunningServer } from '../src/server';
 import { TestClient, tmpDataDir } from './helpers';
 
@@ -271,4 +271,40 @@ test("a dropped item's wear, charge and soul reach the other client and the cell
   a.sendEvent('ObjectSpawnRequest', { tempId: 2, recordId: 'gold_001', cellKey: '0,0', x: 1, y: 2, z: 3, rotZ: 0, count: 5, state: { condition: -5, soul: 7 } });
   const plain = (await b.waitEvent('ObjectPlace', (v) => (v as { recordId: string }).recordId === 'gold_001')).value as { state?: unknown };
   assert.equal(plain.state, undefined);
+});
+
+// #189: the keyed maps (moved/locks/doors) had no cap. ~11k ObjectMoves from one client, each
+// naming a fresh ref, pushed WorldCellState past the LSER node ceiling and every entrant
+// thereafter disconnected BAD_PROTO — permanently, because the doc is persisted. A NEW key past
+// MAX_KEYS_PER_CELL is refused; an existing key still updates.
+test('a cell map at the cap refuses new keys and still updates existing ones', async (t) => {
+  const dataDir = tmpDataDir();
+  const seed = new CellStore(dataDir);
+  const seeded = await seed.get('0,0');
+  for (let i = 0; i < MAX_KEYS_PER_CELL; i++) seeded.moved[`c:${i}:5`] = { x: i, y: 0, z: 0, rotZ: 0 };
+  seed.markDirty('0,0');
+  await seed.close();
+
+  const server = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1' });
+  t.after(() => server.close());
+  const a = await TestClient.connect(server.port);
+  t.after(() => a.close());
+  await a.joinAsNew('Mover');
+  await a.waitEvent('PlayerList');
+  a.sendCellChange('0,0', 0, 0, 0);
+  await a.waitEvent('WorldCellState');
+
+  a.sendEvent('ObjectMove', { ref: { __refnum: { index: 99999, contentFile: 5 } }, cellKey: '0,0', x: 1, y: 2, z: 3, rotZ: 0 });
+  a.sendEvent('ObjectMove', { ref: { __refnum: { index: 1, contentFile: 5 } }, cellKey: '0,0', x: 7, y: 8, z: 9, rotZ: 0 });
+  // The second (existing key) relays; the first (new key past the cap) must not have.
+  const mv = (await a.waitEvent('ObjectMove')).value as { ref: { __refnum: { index: number } }; x: number };
+  assert.equal(mv.ref.__refnum.index, 1);
+  assert.equal(mv.x, 7);
+  await server.flush();
+  const store = new CellStore(dataDir);
+  const doc = await store.get('0,0');
+  assert.equal(Object.keys(doc.moved).length, MAX_KEYS_PER_CELL, 'the cap held');
+  assert.equal(doc.moved['c:99999:5'], undefined);
+  assert.equal(doc.moved['c:1:5']?.x, 7, 'an existing key still updates');
+  await store.close();
 });

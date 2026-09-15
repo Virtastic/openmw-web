@@ -14,7 +14,7 @@
 
 import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
-import { openDb, tx } from './sqlite';
+import { checkpoint, openDb, tx } from './sqlite';
 import { log } from '../log';
 import { timeFlush } from '../metrics';
 
@@ -155,7 +155,8 @@ export class BanStore {
     );
   }
 
-  flush(): Promise<void> {
-    return this.write;
+  async flush(): Promise<void> {
+    await this.write;
+    checkpoint(this.db);
   }
 }

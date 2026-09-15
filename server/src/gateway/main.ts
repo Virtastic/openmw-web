@@ -328,14 +328,26 @@ async function shutdown(signal: string, code = 0): Promise<void> {
   // accounts. Cheap, and it stops the two programs differing for no reason.
   await frontDoor.accounts.flush();
   worlds.stopAll();
-  // The world processes flush their stores on SIGTERM; give them a moment to do it before
-  // this process exits and the shell reaps them.
+  // The world processes flush their stores on SIGTERM. WAIT for them: this is the container's
+  // main process, and its exit ends the container with every child mid-drain — a fixed 3 s here
+  // against the worlds' 20 s stop grace lost the last sweep of every world on each deploy.
+  // Bounded by the supervisor's own SIGKILL escalation (docker-compose stop_grace_period is
+  // sized to match).
   // Non-zero on the crash path so whatever supervises this process restarts it, rather than
   // treating a crash as a clean stop.
-  setTimeout(() => process.exit(code), 3000).unref();
+  await worlds.allExited();
+  process.exit(code);
 }
 process.on('SIGTERM', () => void shutdown('SIGTERM'));
 process.on('SIGINT', () => void shutdown('SIGINT'));
+// SIGUSR1 = "flush everything now" (README backup cron). The gateway itself holds only the
+// account store's write-behind; the worlds hold the players and cells, so relay it. Without
+// a handler Node treats SIGUSR1 as "start the inspector" and nothing was flushed.
+process.on('SIGUSR1', () => {
+  log('info', 'gateway.flush_signal', { worlds: worlds.running });
+  void frontDoor.accounts.flush();
+  worlds.signalAll('SIGUSR1');
+});
 
 // SIGHUP: the same roll, from inside the container (see requestRoll above).
 process.on('SIGHUP', () => {

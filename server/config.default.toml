@@ -438,12 +438,21 @@ to = ""
 webhookUrl = ""
 # Which structured log events raise a notification. These are the ones worth waking up for:
 # a config rollback means a save did not survive a restart, and the rest are actions with
-# consequences for a real person. Add any event name the server logs.
+# consequences for a real person. The second group is persistence and process failures: a
+# flush that failed is progress that did not reach disk, a crashed world or server is
+# players dropped, an unsimulated cell is NPCs standing still, and a platform at capacity is
+# a player refused a game. Add any event name the server logs.
 events = [
   "admin.config_fallback",
   "admin.console",
   "admin.account_deleted",
   "admin.maintenance",
+  "players.flush_failed",
+  "world.cell_flush_failed",
+  "world.crashed",
+  "world.at_cap",
+  "simpeer.cells_unsimulated",
+  "server.crash",
 ]
 
 [auth]

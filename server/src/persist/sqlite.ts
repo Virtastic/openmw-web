@@ -120,3 +120,12 @@ export function tx<T>(db: DatabaseSync, fn: () => T): T {
     throw err;
   }
 }
+
+// Fold the WAL back into the main file and truncate it. Called after a store's flush so a
+// backup that tars the data dir a moment later (README "Backups", the dashboard export) copies
+// one consistent .db instead of a db/-wal/-shm trio captured at three different instants.
+// Best effort: a checkpoint cannot complete past a reader in another process, and the next
+// flush tries again.
+export function checkpoint(db: DatabaseSync): void {
+  try { db.exec('PRAGMA wal_checkpoint(TRUNCATE)'); } catch { /* busy or closed: next flush */ }
+}
