@@ -151,6 +151,14 @@ end
 local function broadcastCell(cellKey, epoch, cell, now)
     local batch = {}
     local live = cellActors(cellKey)
+    -- THE WORLD'S RECORD OF THIS CELL, once it is loaded here. The holder used to simulate
+    -- from a vanilla load: a door the players opened stayed shut for its pathing, a smuggler
+    -- they killed stood up again after every restart. The grant asks once too, but the
+    -- engine may not have the cell yet then; the first actor seen is the sure sign it does.
+    if not cell.resynced and #live > 0 then
+        cell.resynced = true
+        mp.sendEvent('ResyncRequest', { cellKey = cellKey })
+    end
     -- Phase 4: threat decays continuously, so a hit landed a minute ago stops owning the
     -- fight. Cheap: a multiply per tracked (actor, player) pair, and only for actors in
     -- the cell we are simulating.
@@ -400,6 +408,7 @@ actors.handlers.MP_ActorAuthorityGrant = function(data)
     detachActorPuppetsInCell(cellKey)
     holderOfCell[cellKey] = deps.ownIdFn()
     held[cellKey] = { epoch = data.epoch or 0, actors = {} }
+    mp.sendEvent('ResyncRequest', { cellKey = cellKey }) -- doors, locks, the dead (see broadcastCell)
     -- Apply the handoff snapshot: teleport actors to their last authoritative pose + stats.
     local snap = data.snapshot and data.snapshot.actors or {}
     for _, a in ipairs(snap) do
@@ -757,15 +766,39 @@ end
 -- ActorDeath relay and the shared kill tally can be asserted end to end.
 -- WorldCellState names every actor recorded dead in this cell. A puppet already here dies
 -- now; one puppeted later dies on registration (above). Keyed by refKey, like the relay.
--- Not for cells we hold: the holder's own engine is the authority there.
+-- In a cell we HOLD the body dies for real (the peer loads vanilla after a restart).
+-- The wire names an actor "c:<index>:<contentFile>" or "n:<netId>" (proto/ref.ts); the
+-- puppet table is keyed by the local object id (refKeyOf). Resolve first -- looked up raw,
+-- the wire key matched nothing and every recorded death was a no-op.
+local function objOfWireKey(key)
+    local netId = key:match('^n:(%d+)$')
+    if netId then return deps.objOfNet and deps.objOfNet(tonumber(netId)) end
+    local index, cf = key:match('^c:(%d+):(%d+)$')
+    if not index then return nil end
+    local contentName = core.contentFiles.list[tonumber(cf) + 1]
+    if not contentName then return nil end
+    local ok, obj = pcall(function() return world.getObjectByFormId(core.getFormId(contentName, tonumber(index))) end)
+    return ok and obj or nil
+end
+
 function actors.noteCellDeaths(cellKey, keys)
-    for _, key in ipairs(keys or {}) do
-        local have = puppetActors[key]
-        local okv, valid = pcall(function() return have and have.obj:isValid() end)
-        if okv and valid then
-            pcall(function() have.obj:sendEvent('MP_Kill', {}) end)
+    for _, wireKey in ipairs(keys or {}) do
+        local obj = objOfWireKey(wireKey)
+        local okv, valid = pcall(function() return obj and obj:isValid() end)
+        if not (okv and valid) then
+            -- Not loaded here yet: nothing to key on. The next WorldCellState for the cell
+            -- (sent on every entry) says it again once the object exists.
         else
-            pendingDeaths[key] = true
+            local key = refKeyOf(obj)
+            if held[cellKey] then
+                -- We simulate this cell: the body dies for real, in its own Self context
+                -- (dynamic stats are Self-gated; testkill.lua is exactly that one write).
+                if not types.Actor.isDead(obj) then pcall(function() obj:addScript('scripts/mp/testkill.lua', {}) end) end
+            elseif puppetActors[key] then
+                pcall(function() obj:sendEvent('MP_Kill', {}) end)
+            else
+                pendingDeaths[key] = true
+            end
         end
     end
 end
@@ -907,8 +940,12 @@ function actors.tick(now)
                 -- you when you are wanted" is only meaningful about a guard.
                 local isGuard = false
                 pcall(function() isGuard = types.NPC.record(obj).class == 'guard' end)
+                -- hp is the HOLDER's view once mirrored (MP_Stats): a corpse the simulator
+                -- reloaded alive reads dead here with hp climbing back up (s157).
+                local hp = -1
+                pcall(function() hp = types.Actor.stats.dynamic.health(obj).current end)
                 probe[rec] = { x = p.x, y = p.y, z = p.z, dead = types.Actor.isDead(obj),
-                    guard = isGuard }
+                    guard = isGuard, hp = hp }
             end
         end
         mp.set('actorProbe', json.encode(probe))

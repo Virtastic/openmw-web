@@ -275,9 +275,16 @@ export class WorldState {
     return this.queue;
   }
 
+  // The HOLDER hears everything about a cell it simulates, wherever its own avatar stands:
+  // the peer anchors far interiors and exteriors, and a door opened there must open for its
+  // pathing too, not only for the players within a cell of it.
+  private hears(p: Player, cellKey: string): boolean {
+    return cellsVisible(p.cellKey, cellKey) || (p.system === true && this.authority.holderOf(cellKey) === p.id);
+  }
+
   private relayCell(cellKey: string, name: string, body: JsLike): void {
     for (const p of this.roster.inWorld()) {
-      if (cellsVisible(p.cellKey, cellKey)) p.peer.sendEvent(name, body);
+      if (this.hears(p, cellKey)) p.peer.sendEvent(name, body);
     }
   }
 
@@ -285,7 +292,7 @@ export class WorldState {
   // own actors.
   private relayCellExcept(cellKey: string, exceptId: number, name: string, body: JsLike): void {
     for (const p of this.roster.inWorld()) {
-      if (p.id !== exceptId && cellsVisible(p.cellKey, cellKey)) p.peer.sendEvent(name, body);
+      if (p.id !== exceptId && this.hears(p, cellKey)) p.peer.sendEvent(name, body);
     }
   }
 
