@@ -96,3 +96,37 @@ test("a client's enable/disable of a ref the peer just wrote is dropped; after t
   const state = (await bob.waitEvent('WorldCellState', (v) => (v as { cellKey: string }).cellKey === '0,0')).value as { disabled: string[] };
   assert.deepEqual(state.disabled, ['c:700:0']);
 });
+
+// WHAT YOU CAN SEE, NOT ONLY WHERE YOU STAND. An exterior loads its 3x3, and an item dropped
+// near a border is recorded under the neighbour. Cell state went out for the entered cell
+// only, so a friend arriving in the middle cell never saw the thing dropped for them until
+// they crossed the line. Entry now yields the neighbours' records too, the entered cell first.
+test('entering an exterior cell yields the neighbours\' records as well', async (t) => {
+  const server = await startServer({ requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1' });
+  t.after(() => server.close());
+  const dropper = await TestClient.connect(server.port);
+  t.after(() => dropper.close());
+  await dropper.joinAsNew('Dropper');
+  dropper.sendCellChange('1,0', 0, 0, 0);
+  await dropper.waitEvent('PlayerCellChange');
+  dropper.sendEvent('ObjectSpawnRequest', { tempId: 1, recordId: 'gold_001', cellKey: '1,0', x: 4100, y: 10, z: 0, rotZ: 0, count: 5 });
+  await dropper.waitEvent('ObjectSpawnAck');
+
+  const friend = await TestClient.connect(server.port);
+  t.after(() => friend.close());
+  await friend.joinAsNew('Friend');
+  await friend.waitEvent('PlayerList');
+  friend.inbox.events.length = 0;
+  friend.sendCellChange('0,0', 0, 0, 0);
+  const first = (await friend.waitEvent('WorldCellState')).value as { cellKey: string };
+  assert.equal(first.cellKey, '0,0', 'the entered cell comes first');
+  const neighbour = (await friend.waitEvent('WorldCellState', (v) => (v as { cellKey: string }).cellKey === '1,0', 3000)).value as { placed: { recordId: string }[] };
+  assert.equal(neighbour.placed[0]?.recordId, 'gold_001', 'the neighbour\'s record carries the drop');
+
+  // An interior yields itself only.
+  friend.inbox.events.length = 0;
+  friend.sendCellChange('some tavern', 0, 0, 0);
+  await friend.waitEvent('WorldCellState', (v) => (v as { cellKey: string }).cellKey === 'some tavern');
+  await new Promise((r) => setTimeout(r, 200));
+  assert.equal(friend.inbox.events.filter((e) => e.name === 'WorldCellState').length, 0, 'an interior has no neighbours');
+});

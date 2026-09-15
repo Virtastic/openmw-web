@@ -1146,8 +1146,9 @@ export class Connection implements Peer {
     // the rubber-banding: up to five seconds of moving around an unsimulated cell before the
     // peer catches up and corrects you.
     if (player.system !== true) this.ctx.onPeerJoined?.();
-    // M3: entering a cell always yields its delta doc; the vacated cell may flush.
-    this.ctx.world.sendCellState(player, cellKey);
+    // M3: entering a cell always yields its delta doc (and its neighbours' -- they are loaded
+    // too); the vacated cell may flush.
+    this.ctx.world.sendCellStateAround(player, cellKey);
     // M4: hand off / claim authority. Leave the old cell before claiming the new one.
     //
     // A PEER RELEASES ONLY WHAT IS EMPTY. Its footprint is the ANCHOR set (simPeerPass owns
@@ -1776,7 +1777,7 @@ export class Connection implements Peer {
         if (!pose) continue;
         p.peer.sendEvent('PlayerCellChange', { id: this.player.id, cellKey, x: pose.x, y: pose.y, z: pose.z });
       }
-      this.ctx.world.sendCellState(this.player, cellKey);
+      this.ctx.world.sendCellStateAround(this.player, cellKey);
       this.ctx.world.authorityEnter(this.player, cellKey);
     }
     // WHERE EVERYONE ELSE IS. Position is only ever RELAYED, so a joiner learned about the

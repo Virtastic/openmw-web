@@ -1210,6 +1210,21 @@ export class WorldState {
     for (const [refId, count] of this.cells.allKills()) player.peer.sendEvent('WorldKillCount', { refId, count });
   }
 
+  // THE CELLS A PLAYER CAN SEE, not only the one they stand in. An exterior loads its 3x3,
+  // and an item dropped near a border lands in -- and is recorded under -- the neighbour.
+  // Sent only for the entered cell, a player arriving in the middle cell never saw it until
+  // they crossed the line; the friend who dropped it for them pointed at nothing.
+  sendCellStateAround(player: Player, cellKey: string): void {
+    this.sendCellState(player, cellKey); // the entered cell first: it is the one the client waits on
+    const at = parseExterior(cellKey);
+    if (!at) return;
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        if (dx !== 0 || dy !== 0) this.sendCellState(player, `${at.x + dx},${at.y + dy}`);
+      }
+    }
+  }
+
   sendCellState(player: Player, cellKey: string): void {
     this.enqueue(async () => {
       const doc = this.cells.getCached(cellKey) ?? (await this.cells.get(cellKey)) ?? emptyCellDoc();

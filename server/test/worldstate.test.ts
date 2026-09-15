@@ -100,6 +100,7 @@ test('world objects and containers end to end', async (t) => {
     a.sendEvent('DoorState', { ref: doorRef, cellKey: '0,0', open: true });
     assert.deepEqual((await a.waitEvent('DoorState')).value, { ref: doorRef, cellKey: '0,0', open: true, byId: aId });
 
+    a.inbox.events.length = 0; // entry sent the 3x3's records; only the answer to THIS request counts
     a.sendEvent('ResyncRequest', { cellKey: '0,0' });
     const state = (await a.waitEvent('WorldCellState')).value as {
       moved: Record<string, unknown>; locks: Record<string, unknown>; doors: Record<string, boolean>;
@@ -200,6 +201,7 @@ test('world objects and containers end to end', async (t) => {
     await a.waitEvent('ObjectDelete', (v) => (v as { net?: number }).net === barrelNetId);
     a.sendEvent('ObjectDelete', { net: barrelNetId, cellKey: '0,0' }); // idempotent
     await a.waitEvent('ObjectDelete', (v) => (v as { net?: number }).net === barrelNetId);
+    a.inbox.events.length = 0; // entry sent the 3x3's records; only the answer to THIS request counts
     a.sendEvent('ResyncRequest', { cellKey: '0,0' });
     const state = (await a.waitEvent('WorldCellState')).value as { placed: unknown[]; deleted: string[] };
     assert.deepEqual(state.placed, []);

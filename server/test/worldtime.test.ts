@@ -421,6 +421,7 @@ test('operator cell resets', async (t) => {
     const reset = (await c.waitEvent('WorldCellReset', () => true, 15_000)).value as { cellKey: string };
     assert.equal(reset.cellKey, '9,9');
 
+    c.inbox.events.length = 0; // entry sent the 3x3's records; only the answers to THESE requests count
     c.sendEvent('ResyncRequest', { cellKey: '9,9' });
     const wiped = (await c.waitEvent('WorldCellState', (v) => (v as { cellKey: string }).cellKey === '9,9')).value as
       { placed: unknown[] };
