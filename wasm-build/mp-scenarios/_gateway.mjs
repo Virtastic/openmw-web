@@ -68,6 +68,42 @@ export async function grantLockerSession(client, gwPort, account) {
 }
 
 /**
+ * The dashboard's HTTP surface (/admin/api/*), exactly as server/web/app.js calls it: JSON
+ * in and out with a Bearer session token, and the one exception -- a game-file upload is a
+ * raw octet-stream body with the path in the query. `token` is settable after /setup/owner
+ * or /login answers. Every call returns { status, body }; the caller asserts, because which
+ * status is right is the scenario's business (a 409 is the CORRECT answer to a second owner).
+ */
+export function adminApi(gwPort, token = '') {
+  const base = `http://127.0.0.1:${gwPort}/admin/api`;
+  const api = {
+    token,
+    async call(method, path, body, headers = {}) {
+      const r = await fetch(base + path, {
+        method,
+        headers: { ...(api.token ? { authorization: `Bearer ${api.token}` } : {}),
+          ...(body !== undefined && !(body instanceof ReadableStream) ? { 'content-type': 'application/json' } : {}),
+          ...headers },
+        body: body === undefined ? undefined : (body instanceof ReadableStream ? body : JSON.stringify(body)),
+        ...(body instanceof ReadableStream ? { duplex: 'half' } : {}),
+        signal: AbortSignal.timeout(600_000),
+      });
+      const text = await r.text();
+      let parsed = null;
+      try { parsed = JSON.parse(text); } catch { parsed = text; }
+      return { status: r.status, body: parsed };
+    },
+    get: (path) => api.call('GET', path),
+    post: (path, body) => api.call('POST', path, body ?? {}),
+    put: (path, body) => api.call('PUT', path, body ?? {}),
+    /** POST /mods/upload?name=<relative path> with the file streamed as the body (app.js sendOne). */
+    upload: (relPath, stream) => api.call('POST', `/mods/upload?name=${encodeURIComponent(relPath)}`, stream,
+      { 'content-type': 'application/octet-stream' }),
+  };
+  return api;
+}
+
+/**
  * Start a gateway and put a client in its OWN world through it (worlds are created on demand).
  * Returns { client, gwPort, ownId, account, stop }.
  */

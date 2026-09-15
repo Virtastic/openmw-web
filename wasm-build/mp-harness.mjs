@@ -562,6 +562,11 @@ async function launchClient(name, mpPort, extraParams = '', opts = {}) {
     await bsend('Page.enable', {}, sessionId);
     await bsend('Runtime.enable', {}, sessionId);
     await bsend('Log.enable', {}, sessionId);
+    // opts.newDocScript: JS run at the top of EVERY document this tab loads, before the page's
+    // own scripts (Page.addScriptToEvaluateOnNewDocument). A scenario that drives the real
+    // launcher never builds the game URL itself -- the launcher does, and navigates -- so this
+    // is the only hook that can see that boot before index.html acts on it (s170).
+    if (opts.newDocScript) await bsend('Page.addScriptToEvaluateOnNewDocument', { source: opts.newDocScript }, sessionId);
     await bsend('Page.navigate', { url }, sessionId);
 
     // PNG screenshot of the client's viewport (visual checks / M1 puppet captures).
@@ -910,6 +915,9 @@ for (const file of files) {
       childLogTail: (label, n = 6000) => childLogs.filter((c) => c.label === label && c.full).map((c) => c.full(n)).join(NL),
       serverDataDir: server.dataDir,
       serverStatus: server.status,
+      // For a scenario whose worlds are spawned OUTSIDE this harness's testhost (a gateway
+      // running the real server.mjs, s170): their peers still have to run the scripts under test.
+      syncPeerScripts,
       // The server's own stdout: the one place a death is undeniable (respawn.sent).
       serverLogTail: (n = 400) => server.logTail(n),
       serverKill: server.kill,

@@ -19,7 +19,7 @@ HOST_SRC="${HOST_SRC:-/home/jenkins/morrowind-src}"
 ENGINE="${ENGINE_TAG:-morrowind:test}"
 PEER="${PEER_TAG:-openmw-mp:tier2}"
 OUT="wasm-build/harness-out"
-LOG="$OUT/jenkins-${BUILD_NUMBER:-local}.log"
+LOG="${LOG:-$OUT/jenkins-${BUILD_NUMBER:-local}.log}"
 
 cd "$SRC"
 [ -d play/mwdata ] || { echo "FATAL: play/mwdata (game data for the peer) is missing on the builder"; exit 1; }
@@ -42,10 +42,12 @@ mkdir -p "$OUT"
 echo "==> scenarios: ${SCENARIOS:-<full suite>} (log: $LOG)"
 # --user: files the run writes into /repo must stay owned by jenkins or the next checkout fails.
 # The harness itself exits 1 on any FAIL, which fails the stage.
+# HARNESS_DOCKER_ARGS: extra `docker run` flags for a wrapper that needs more environment in
+# the container (run-fresh-install.sh points the play server at its own gateway).
 set +e
 # shellcheck disable=SC2086
 docker run --rm --entrypoint sh --user "$(id -u):$(id -g)" -e HOME=/tmp \
-  -e OMW_SIM_PEER_BIN=/usr/local/bin/openmw \
+  -e OMW_SIM_PEER_BIN=/usr/local/bin/openmw ${HARNESS_DOCKER_ARGS:-} \
   -v "$HOST_SRC:/repo" openmw-harness-peer:local \
   -c '[ -x server/node_modules/.bin/tsc ] || (cd server && npm ci); exec node wasm-build/mp-harness.mjs "$@"' \
   -- ${SCENARIOS:-} 2>&1 | tee "$LOG"
