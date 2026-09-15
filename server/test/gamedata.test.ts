@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { detectGameData, buildPeerCfg, gameDataDir } from '../src/core/gamedata';
+import { detectGameData, buildPeerCfg, buildPeerSettings, gameDataDir } from '../src/core/gamedata';
 
 function dirWith(files: string[]): string {
   const d = mkdtempSync(join(tmpdir(), 'omw-gd-'));
@@ -252,4 +252,8 @@ test('but an ENABLED expansion still requires its archive', () => {
   const r = detectGameData(dirWith(['Morrowind.esm', 'Morrowind.bsa', 'Tribunal.esm']));
   assert.equal(r.ok, false);
   assert.deepEqual(r.missing, ['Tribunal.bsa']);
+});
+
+test('the peer settings put physics on its own thread (#267)', () => {
+  assert.match(buildPeerSettings(), /^\[Physics\]\nasync num threads = 1$/m);
 });

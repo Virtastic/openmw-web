@@ -1,7 +1,7 @@
 // Copyright (C) 2025-2026 Virtastic - https://virtastic.app
 // SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
-// Crowded-cell survival: the actor-authority holder sheds instead of being disconnected,
-// the abuse budgets still disconnect, and a client that stops draining is shed then
+// Crowded-cell survival: the peer's actor stream is never shed, a player's is shed instead
+// of disconnected, the abuse budgets still disconnect, and a client that stops draining is shed then
 // dropped WITHOUT touching its neighbours.
 
 import test from 'node:test';
@@ -36,35 +36,56 @@ test('movement budgets shed; abuse budgets still disconnect', async (t) => {
   });
   t.after(() => server.close());
 
-  await t.test('holder over the actor budget sheds and stays connected', async () => {
-    // The holder is the sim peer; `watcher` is an ordinary player receiving the stream.
+  await t.test('the peer holding five cells at 20 Hz is never shed (#264)', async () => {
+    // The holder is the sim peer, exempt from the actor bucket as it is from bytes and
+    // msgs: a 60/s bucket admitted three cells' streams and froze the rest. Each cell needs
+    // an occupant to stay held, and that occupant is the fence that proves its stream flows.
     const holder = await TestClient.simPeer(server.port, PEER_PASS, 'shed_holder');
-    const watcher = await TestClient.connect(server.port);
-    await watcher.joinAsNew('shed_watcher');
-    await watcher.waitEvent('PlayerList');
-
-    holder.sendCellChange('90,90', 0, 0, 0);
-    const grant = await holder.waitEvent('ActorAuthorityGrant');
-    const epoch = (grant.value as { epoch: number }).epoch;
-    watcher.sendCellChange('90,90', 0, 0, 0);
-    await watcher.waitEvent('ActorAuthorityInfo');
+    const cells: { watcher: TestClient; epoch: number }[] = [];
+    for (let i = 0; i < 5; i++) {
+      const key = `9${i},90`;
+      const watcher = await TestClient.connect(server.port);
+      await watcher.joinAsNew(`shed_watcher_${i}`);
+      await watcher.waitEvent('PlayerList');
+      watcher.sendCellChange(key, 0, 0, 0);
+      await watcher.waitEvent('PlayerCellChange');
+      holder.sendCellChange(key, 0, 0, 0);
+      const grant = await holder.waitEvent('ActorAuthorityGrant', (v) => (v as { cellKey: string }).cellKey === key);
+      cells.push({ watcher, epoch: (grant.value as { epoch: number }).epoch });
+    }
 
     const before = counter('actor_shed');
-    for (let i = 0; i < 60; i++) holder.sendActorMoveBatch(epoch, [REF_ENTRY]);
-    // The first batches are under budget and must still relay; the rest are shed.
-    await watcher.waitActorBatch();
-    assert.ok(counter('actor_shed') > before, 'actor overrun did not register as a shed');
-
-    // The mechanism under test: the session survives, so the cell keeps its authority.
+    const ticks = 40; // 2 s at 20 Hz
+    for (let tick = 0; tick < ticks; tick++) {
+      for (const c of cells) holder.sendActorMoveBatch(c.epoch, [{ ...REF_ENTRY, pose: { ...REF_ENTRY.pose, x: tick } }]);
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    for (const c of cells) await c.watcher.waitActorBatch((b) => b.batch.epoch === c.epoch && b.batch.entries[0]!.pose.x === ticks - 1);
+    assert.equal(counter('actor_shed'), before, 'the peer was shed');
     assert.equal(holder.isClosed, false);
-    holder.sendJson({ t: 'SessionPing', clientTime: 1 });
-    await holder.waitJson('SessionPong');
-    assert.equal(counter('move_shed'), 0); // the two budgets are separate: actor traffic spent no own-pose tokens
+    assert.equal(counter('move_shed'), 0);
     assert.equal(metrics.disconnects.get({ code: 'RATE' }) ?? 0, 0);
 
     holder.close();
-    watcher.close();
-    await Promise.all([holder.closed, watcher.closed]);
+    for (const c of cells) c.watcher.close();
+    await Promise.all([holder.closed, ...cells.map((c) => c.watcher.closed)]);
+  });
+
+  await t.test('a player over the actor budget sheds and stays connected', async () => {
+    // Not the peer, so the bucket applies; the frames go nowhere (no authority) but the
+    // budget is what is under test: an overrun sheds, it does not disconnect.
+    const c = await TestClient.connect(server.port);
+    await c.joinAsNew('shed_faker');
+    await c.waitEvent('PlayerList');
+    const before = counter('actor_shed');
+    for (let i = 0; i < 60; i++) c.sendActorMoveBatch(1, [REF_ENTRY]);
+    c.sendJson({ t: 'SessionPing', clientTime: 1 });
+    await c.waitJson('SessionPong');
+    assert.ok(counter('actor_shed') > before, 'actor overrun did not register as a shed');
+    assert.equal(c.isClosed, false);
+    assert.equal(metrics.disconnects.get({ code: 'RATE' }) ?? 0, 0);
+    c.close();
+    await c.closed;
   });
 
   await t.test('own-pose overrun sheds too', async () => {
@@ -181,6 +202,17 @@ test('a stalled reader is shed, then dropped, without touching its neighbours', 
     assert.ok((metrics.backpressureDropped.get({ kind: 'actor' }) ?? 0) > before, 'no backpressure drop counted');
     assert.equal(bob.inbox.actorBatches.length, 0, 'stalled session was still fed actor batches');
     assert.equal(bob.isClosed, false, 'a soft-limit overrun must not close the session');
+  });
+
+  await t.test('the hard ceiling is not enforced for ~2 s after a cell entry (#269)', async () => {
+    // Bob entered 92,92 moments ago: nine cell docs may be what fills his buffer. The
+    // frame is still shed (soft limit), the session is not dropped.
+    stalledBytes = 1_048_577;
+    alice.sendActorMoveBatch(epoch, [{ ...REF_ENTRY, pose: { ...REF_ENTRY.pose, x: 98 } }]);
+    await carol.waitActorBatch((b) => b.batch.entries[0]!.pose.x === 98);
+    assert.equal(bob.isClosed, false, 'dropped inside the entry window');
+    assert.equal(metrics.disconnects.get({ code: 'BACKLOG' }) ?? 0, 0);
+    await new Promise((r) => setTimeout(r, 2100));
   });
 
   await t.test('past the hard ceiling the stalled session is disconnected, the peers are not', async () => {

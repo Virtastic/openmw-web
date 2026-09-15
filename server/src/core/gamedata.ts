@@ -268,6 +268,10 @@ export function buildPeerSettings(): string {
     'enabled = false',
     '[Navigator]',
     'max nav mesh tiles cache size = 268435456',
+    // The peer is single-threaded otherwise and the box has spare cores: physics off the
+    // main thread is the one parallelism the engine offers for free (#267).
+    '[Physics]',
+    'async num threads = 1',
     '',
   ].join('\n');
 }

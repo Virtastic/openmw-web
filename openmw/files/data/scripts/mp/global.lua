@@ -3157,9 +3157,13 @@ local eventHandlers = {
     -- Script removal lives here because removeScript is bound on GObject only. Both senders
     -- have already done whatever had to happen first (puppet.lua re-enables AI before
     -- asking), and the event hop is exactly what guarantees that ordering.
+    -- Two MP_Detach senders (handoff and despawn) can queue two of these for one actor,
+    -- and a creature that had already shed the script threw on the second removeScript
+    -- (s125 in #90/#91): a detach on a body without the script is a no-op.
     mpPuppetDetached = function(data)
-        if data.obj and data.obj:isValid() then
-            data.obj:removeScript('scripts/mp/puppet.lua')
+        local obj = data.obj
+        if obj and obj:isValid() and obj:hasScript('scripts/mp/puppet.lua') then
+            pcall(obj.removeScript, obj, 'scripts/mp/puppet.lua')
         end
     end,
 

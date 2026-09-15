@@ -304,7 +304,10 @@ export class Connection implements Peer {
     if (type === MSG_PLAYER_MOVE_BATCH || type === MSG_ACTOR_MOVE_BATCH) {
       const { maxBufferedBytes, maxBufferedBytesHard } = this.ctx.config.limits;
       const buffered = this.bufferedBytes;
-      if (buffered > maxBufferedBytesHard) {
+      // A cell entry lands nine cell docs at once (sendCellStateAround); for ~2 s after
+      // one, a full buffer is that burst draining, not a reader that has stopped.
+      const entering = Date.now() - (this.player?.cellStateBurstAt ?? 0) < 2000;
+      if (buffered > maxBufferedBytesHard && !entering) {
         log('info', 'conn.backpressure_drop', { ip: this.ip, player: this.player?.name, buffered });
         this.disconnect('BACKLOG', 'outbound buffer overflow (client is not reading)');
         return false;
@@ -486,7 +489,9 @@ export class Connection implements Peer {
     if (binType === MSG_ACTOR_MOVE_BATCH || binType === MSG_PLAYER_MOVE || binType === MSG_PLAYER_INPUT) {
       const bucket = binType === MSG_ACTOR_MOVE_BATCH ? this.actorMoveBucket
         : binType === MSG_PLAYER_INPUT ? this.inputBucket : this.moveBucket;
-      if (!bucket.take(1)) {
+      // The peer's actor stream is exempt like its bytes and msgs: at 20 Hz per held cell
+      // a 60/s actor bucket admits three cells and starves the rest (#264).
+      if (!(authedPeerIn && binType === MSG_ACTOR_MOVE_BATCH) && !bucket.take(1)) {
         metrics.rateLimited.inc({ budget: binType === MSG_ACTOR_MOVE_BATCH ? 'actor_shed' : binType === MSG_PLAYER_INPUT ? 'input_shed' : 'move_shed' });
         return;
       }

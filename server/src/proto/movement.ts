@@ -162,6 +162,15 @@ export function packActorMoveBatch(epoch: number, entries: ActorEntry[]): Buffer
   return b;
 }
 
+// The relay path needs only the epoch (it names the cell) and a sane length; decoding N
+// poses to read a header at 20 Hz per held cell was pure waste (#271).
+export function peekActorMoveBatchEpoch(payload: Buffer): number {
+  if (payload.length < 5) throw new ProtoError('ActorMoveBatch payload shorter than header');
+  if (payload.length !== 5 + payload.readUInt8(4) * ACTOR_ENTRY_BYTES)
+    throw new ProtoError('ActorMoveBatch payload size does not match count');
+  return payload.readUInt32LE(0);
+}
+
 export function unpackActorMoveBatch(payload: Buffer): ActorMoveBatch {
   if (payload.length < 5) throw new ProtoError('ActorMoveBatch payload shorter than header');
   const epoch = payload.readUInt32LE(0);

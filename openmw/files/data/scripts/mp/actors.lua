@@ -88,42 +88,52 @@ local function cellKeyOf(cell)
     return string.lower(cell.name)
 end
 
--- Live NPCs/creatures physically in the given cellKey, excluding the player and any MP
--- puppets (remote-player avatars we spawned — those are driven by player move frames, and
--- driving/broadcasting them as actors would double-drive them).
-local function cellActors(cellKey)
+-- Live NPCs/creatures bucketed by cell key, excluding the player and any MP puppets
+-- (remote-player avatars we spawned — those are driven by player move frames, and
+-- driving/broadcasting them as actors would double-drive them). ONE scan of activeActors:
+-- the holder used to rescan every actor once per held cell per tick (#267).
+local function actorsByCell()
     local out = {}
     for _, obj in ipairs(world.activeActors) do
         if obj:isValid()
             and not types.Player.objectIsInstance(obj)
-            and cellKeyOf(obj.cell) == cellKey
             and not deps.isMpPuppetFn(obj) then
-            out[#out + 1] = obj
+            local key = cellKeyOf(obj.cell)
+            if key then
+                local list = out[key]
+                if not list then list = {}; out[key] = list end
+                list[#list + 1] = obj
+            end
         end
     end
     return out
 end
 
+local function cellActors(cellKey)
+    return actorsByCell()[cellKey] or {}
+end
+
 -- --------------------------------------------------------------- holder mode
+
+-- pcall targets, module-level: a closure per actor per tick was garbage at 20 Hz x N (#267).
+local function speedsOf(obj) return types.Actor.getWalkSpeed(obj), types.Actor.getCurrentSpeed(obj) end
+local function isRunning(obj) return types.Actor.isRunning and types.Actor.isRunning(obj) end
+local function stanceOf(obj) return types.Actor.getStance(obj) end
 
 local function actorPose(obj)
     local pos = obj.position
-    local walkSpeed = 0
-    local speed = 0
-    pcall(function()
-        walkSpeed = types.Actor.getWalkSpeed(obj)
-        speed = types.Actor.getCurrentSpeed(obj)
-    end)
+    local okV, walkSpeed, speed = pcall(speedsOf, obj)
+    if not okV then walkSpeed, speed = 0, 0 end
     local animVel = walkSpeed > 0 and (speed / walkSpeed) or 0
     -- Coarse AI-package hint from motion (reading a foreign actor's AI package is not
     -- exposed to global scripts; motion is a good enough facing/anim hint for puppets).
     local flags = 0
-    local ok, running = pcall(function() return types.Actor.isRunning and types.Actor.isRunning(obj) end)
+    local ok, running = pcall(isRunning, obj)
     if ok and running then flags = flags + 1 end
     -- Posture (bits 4/5, the player pose's bits): an NPC fighting someone on the holder must
     -- look like it everywhere else -- weapon out, spell readied -- or a player takes damage
     -- from a body standing at ease. puppet.lua mirrors the stance; it still never swings.
-    local okS, stance = pcall(function() return types.Actor.getStance(obj) end)
+    local okS, stance = pcall(stanceOf, obj)
     if okS then
         if stance == types.Actor.STANCE.Weapon then flags = flags + 16 end
         if stance == types.Actor.STANCE.Spell then flags = flags + 32 end
@@ -148,9 +158,8 @@ local function dynSnapshot(obj)
     return { hp = stat(d.health(obj)), mp = stat(d.magicka(obj)), ft = stat(d.fatigue(obj)) }
 end
 
-local function broadcastCell(cellKey, epoch, cell, now)
+local function broadcastCell(cellKey, epoch, cell, now, live)
     local batch = {}
-    local live = cellActors(cellKey)
     -- THE WORLD'S RECORD OF THIS CELL, once it is loaded here. The holder used to simulate
     -- from a vanilla load: a door the players opened stayed shut for its pathing, a smuggler
     -- they killed stood up again after every restart. The grant asks once too, but the
@@ -322,8 +331,10 @@ local function broadcastCell(cellKey, epoch, cell, now)
         end
     end
 
-    if #batch > 0 then
-        mp.sendActorMoveBatch(epoch, batch)
+    -- The wire count is a u8 (netmanager.cpp caps at 255): a bigger cell goes out as
+    -- several batches or actor 256+ never moves (#271).
+    for i = 1, #batch, 255 do
+        mp.sendActorMoveBatch(epoch, { table.unpack(batch, i, math.min(i + 254, #batch)) })
     end
 end
 
@@ -952,8 +963,9 @@ function actors.tick(now)
     -- peer's 50ms frames only cleared every SECOND frame, so a "15 Hz" stream was really 10 Hz,
     -- and the interpolator's 100ms render delay had no jitter margin left at that spacing.
     -- One knob, on the server, instead of two that alias against each other.
+    local byCell = next(held) and actorsByCell() or nil
     for cellKey, cell in pairs(held) do
-        broadcastCell(cellKey, cell.epoch, cell, now)
+        broadcastCell(cellKey, cell.epoch, cell, now, byCell[cellKey] or {})
     end
     if now - lastSnapshot >= SNAPSHOT_SECONDS then
         lastSnapshot = now

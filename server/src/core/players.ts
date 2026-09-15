@@ -96,6 +96,9 @@ export interface Player {
   // dead-avatar bar reports (hp 0) are ignored so the respawned player is not re-killed
   // while the avatar body is being replaced on the peer.
   resurrectedAt?: number;
+  // Wall-clock of the last sendCellStateAround: nine fat cell docs land in one burst and the
+  // outbound hard ceiling is not what a healthy client crossing a city gate should die of.
+  cellStateBurstAt?: number;
   // THE BOUNTY THE WORLD HOLDS THIS PLAYER TO, live. Not doc.bounty: with [sharing] crime the
   // party has ONE criminal record (shared.bounty), and a guest's crime is persisted on the
   // campaign they are visiting (quests.ts journalTarget), so the guest's own doc says 0 while

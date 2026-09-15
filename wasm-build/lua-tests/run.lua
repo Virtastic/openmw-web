@@ -1166,5 +1166,29 @@ do
   check('every mp.omwscripts path is listed in files/data/CMakeLists.txt (the peer image)', #missing == 0, table.concat(missing, ', '))
 end
 
+print('actors.lua / global.lua -- scale: one actor scan per tick, chunked batches, a detach without the script is a no-op')
+do
+  local ac = io.open('./openmw/files/data/scripts/mp/actors.lua'):read('*a')
+  local g = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  -- Backlog 267: the holder bucketed nothing and rescanned every active actor once per held
+  -- cell per tick, with a fresh pcall closure per actor per read.
+  check('actors.tick buckets activeActors by cell ONCE and hands each held cell its list',
+    ac:find('local byCell = next(held) and actorsByCell() or nil', 1, true) ~= nil
+    and ac:find('broadcastCell(cellKey, cell.epoch, cell, now, byCell[cellKey] or {})', 1, true) ~= nil
+    and ac:find('local function broadcastCell(cellKey, epoch, cell, now, live)', 1, true) ~= nil)
+  check('actorPose pcalls module-level functions, not per-actor closures',
+    ac:find('pcall(speedsOf, obj)', 1, true) ~= nil and ac:find('pcall(isRunning, obj)', 1, true) ~= nil
+    and ac:find('pcall(stanceOf, obj)', 1, true) ~= nil
+    and not ac:find('local function actorPose(obj).-pcall%(function'))
+  -- Backlog 271: the wire count is a u8; a cell of 256+ actors left the rest frozen.
+  check('broadcastCell sends a big cell as several batches of at most 255',
+    ac:find('for i = 1, #batch, 255 do', 1, true) ~= nil
+    and ac:find('mp.sendActorMoveBatch(epoch, { table.unpack(batch, i, math.min(i + 254, #batch)) })', 1, true) ~= nil)
+  -- s125 (#90/#91): removeScript threw on a creature that no longer had puppet.lua.
+  check('mpPuppetDetached is a no-op on a body without puppet.lua',
+    g:find("obj:hasScript('scripts/mp/puppet.lua') then", 1, true) ~= nil
+    and g:find("pcall(obj.removeScript, obj, 'scripts/mp/puppet.lua')", 1, true) ~= nil)
+end
+
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)

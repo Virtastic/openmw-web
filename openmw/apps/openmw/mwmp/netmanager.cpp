@@ -323,7 +323,7 @@ namespace MWMP
         for (const ActorMoveEntry& e : entries)
         {
             if (n++ >= 255)
-                break; // u8 count cap; caller chunks larger cells
+                break; // u8 count cap; actors.lua broadcastCell chunks a bigger cell into several batches (#271)
             appendLE<uint32_t>(frame, e.mIndex);
             appendLE<int32_t>(frame, e.mContentFile);
             appendPose(frame, e.mX, e.mY, e.mZ, e.mYaw, e.mPitch, e.mFlags, e.mAnimVel);

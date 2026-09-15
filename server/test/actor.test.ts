@@ -9,7 +9,7 @@ import test from 'node:test';
 // refuses every peer.
 const PEER_PASS = 'peer-secret-1';
 import assert from 'node:assert/strict';
-import { packActorMoveBatch, unpackActorMoveBatch, type ActorEntry } from '../src/proto/movement';
+import { packActorMoveBatch, unpackActorMoveBatch, peekActorMoveBatchEpoch, type ActorEntry } from '../src/proto/movement';
 import { startServer, type RunningServer } from '../src/server';
 import { TestClient, tmpDataDir } from './helpers';
 
@@ -27,6 +27,10 @@ test('ActorMoveBatch codec round-trips', () => {
   const back = unpackActorMoveBatch(buf);
   assert.equal(back.epoch, 5);
   assert.deepEqual(back.entries, [REF_ENTRY]);
+  // The relay path reads the header only, with the same length check (#271).
+  assert.equal(peekActorMoveBatchEpoch(buf), 5);
+  assert.throws(() => peekActorMoveBatchEpoch(buf.subarray(0, buf.length - 1)), /size does not match/);
+  assert.throws(() => peekActorMoveBatchEpoch(buf.subarray(0, 3)), /shorter than header/);
 });
 
 test('actor authority and relay end to end', async (t) => {

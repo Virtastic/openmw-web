@@ -382,6 +382,30 @@ export function jsToL(v: JsLike): LValue {
   return t;
 }
 
+// What the decoder will count for this body: one node per value and one per table key
+// (arrays: one per index). Lets a sender budget against LSER_MAX_NODES before encoding.
+export function lserNodeCount(v: JsLike): number {
+  if (v === null || v === undefined || typeof v !== 'object') return 1;
+  if (v instanceof Map) {
+    let n = 1;
+    for (const [k, item] of v) n += lserNodeCount(k as JsLike) + lserNodeCount(item as JsLike);
+    return n;
+  }
+  if (Array.isArray(v)) {
+    let n = 1;
+    for (const item of v) n += 1 + lserNodeCount(item);
+    return n;
+  }
+  const keys = Object.keys(v);
+  if (keys.some((k) => k.startsWith('__'))) return 1; // userdata
+  let n = 1;
+  for (const k of keys) {
+    const item = (v as { [key: string]: JsLike })[k];
+    if (item !== null && item !== undefined) n += 1 + lserNodeCount(item);
+  }
+  return n;
+}
+
 // Canonical JSON-able form (used by lser-dump and test fixtures):
 // tables with keys exactly 1..n (in order) -> array; all-string keys -> object;
 // anything else -> {"__kv": [[key, value], ...]}. Userdata wrappers pass through.

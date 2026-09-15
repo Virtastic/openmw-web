@@ -7,7 +7,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { contentRefKey, netRefKey, parseRefKey } from '../src/proto/ref';
-import { CellStore, MAX_KEYS_PER_CELL } from '../src/persist/cellstore';
+import { CellStore, MAX_KEYS_PER_CELL, emptyCellDoc } from '../src/persist/cellstore';
+import { cellStateBody, CELL_STATE_NODE_BUDGET } from '../src/core/worldstate';
+import { jsToL, lserEncode, lserDecode, lserNodeCount, LSER_MAX_NODES } from '../src/proto/lser';
 import { startServer, type RunningServer } from '../src/server';
 import { TestClient, tmpDataDir } from './helpers';
 
@@ -414,4 +416,39 @@ test('ActorAI kind position from a non-holder reaches the holder', async (t) => 
   bob.sendEvent('ActorAI', { ref: dagoth, cellKey: '0,0', epoch: 0, position: { cell: '', x: 1, y: 2, z: 3 } });
   await new Promise((r) => setTimeout(r, 200));
   assert.equal(peer.inbox.events.filter((e) => e.name === 'ActorAI').length, 0, 'a far position claim reached the holder');
+});
+
+// #269: the per-map caps add up to more than the LSER ceiling, so the frame is budgeted at
+// send time. A doc with EVERY map at its cap must still decode on the client.
+test('a cell doc at every cap is trimmed to a frame the decoder accepts', () => {
+  const doc = emptyCellDoc();
+  for (let i = 0; i < MAX_KEYS_PER_CELL; i++) {
+    doc.placed[`n:${i}`] = { netId: i, recordId: 'misc_com_bottle_01', cellKey: '0,0', x: i, y: 0, z: 0, rotZ: 0, count: 1, byId: 1, state: { condition: 3 } };
+    doc.deleted.push(`c:${i}:0`);
+    doc.moved[`c:${i}:1`] = { x: i, y: 1, z: 2, rotZ: 3 };
+    doc.locks[`c:${i}:2`] = i % 2 ? 50 : null;
+    doc.doors[`c:${i}:3`] = true;
+    doc.containers[`c:${i}:4`] = { stateSeq: 1, items: Array.from({ length: 32 }, (_, j) => ({ id: `item_${j}`, n: 1 })) };
+    (doc.memberVars ??= {})[`c:${i}:5`] = { state: 1 };
+    (doc.enabled ??= {})[`c:${i}:6`] = i % 2 === 0;
+  }
+  for (const withMemberVars of [true, false]) {
+    const body = cellStateBody('0,0', doc, ['c:1:7'], withMemberVars);
+    const nodes = lserNodeCount(body);
+    assert.ok(nodes <= CELL_STATE_NODE_BUDGET, `${nodes} nodes over the budget`);
+    assert.ok(nodes < LSER_MAX_NODES);
+    const back = lserDecode(lserEncode(jsToL(body))) as Map<string, unknown>; // throws NODES past the ceiling
+    assert.equal((back.get('deleted') as Map<number, unknown>).size, MAX_KEYS_PER_CELL, 'tombstones are never trimmed');
+    assert.equal((back.get('locks') as Map<string, unknown>).size, MAX_KEYS_PER_CELL, 'locks are never trimmed');
+    // The oldest drops survive; the trimmed tail is the newest (placed is the last resort).
+    const placed = back.get('placed') as Map<number, Map<string, unknown>>;
+    assert.ok(placed.size > MAX_KEYS_PER_CELL / 2 && placed.size < MAX_KEYS_PER_CELL, `placed kept ${placed.size}`);
+    assert.equal(placed.get(1)!.get('netId'), 0);
+    assert.equal((back.get('moved') as Map<string, unknown>).size, 0, 'moved goes first');
+    assert.ok((back.get('containers') as Map<string, unknown>).size < MAX_KEYS_PER_CELL, 'containers go next');
+  }
+  // A small doc is sent whole: no trimming below the budget.
+  const small = emptyCellDoc();
+  small.moved['c:1:1'] = { x: 1, y: 2, z: 3, rotZ: 4 };
+  assert.deepEqual(cellStateBody('0,0', small, [], true)['moved'], { 'c:1:1': { x: 1, y: 2, z: 3, rotZ: 4 } });
 });

@@ -7,12 +7,12 @@
 // are transactional: first-opener contents become canonical, take/put conserve items,
 // the losing racer gets ok=false.
 
-import { lToJs, type LTable, type LValue, type JsLike } from '../proto/lser';
+import { lToJs, lserNodeCount, type LTable, type LValue, type JsLike } from '../proto/lser';
 import { parseObjRef, objRefToJs, netRefKey, parseRefKey, type ObjRef } from '../proto/ref';
 import { INPUT_DRIVING_MS, type Player, type Roster } from './players';
 import { cellsVisible, lodStride, parseExterior, MAX_ABS_COORD, type InterestSettings, loadedCells, isChargenCell } from './movement';
 import { MONTH_DAYS } from './worldtime';
-import { unpackActorMoveBatch } from '../proto/movement';
+import { peekActorMoveBatchEpoch } from '../proto/movement';
 import { MSG_ACTOR_MOVE_BATCH, packEnvelope, nextBroadcastSeq } from '../proto/envelope';
 import { Authority, type ActorSnapshot } from './authority';
 import { CellStore, cellMapFull, emptyCellDoc, type CellDoc, type ContainerItems } from '../persist/cellstore';
@@ -37,6 +37,12 @@ const MAX_FIRST_OPEN_GOLD = 50_000;
 const MAX_PLACED_PER_CELL = 2000;
 const MAX_DELETED_PER_CELL = 2000;
 const MAX_MEMBER_VARS_PER_CELL = 2000;
+// The per-map caps do not add up to a cell that fits: every map merely AT its cap is past
+// 65,536 nodes (placed alone is ~40k), and a doc that cannot be decoded makes every
+// entrant BAD_PROTO forever. So the frame is budgeted at SEND time: what does not fit is
+// trimmed, least essential first, and logged. 60k leaves the envelope and the rest of the
+// event some room under the ceiling.
+export const CELL_STATE_NODE_BUDGET = 60_000;
 function memberVarEntries(doc: CellDoc): number {
   let n = 0;
   for (const vars of Object.values(doc.memberVars ?? {})) n += Object.keys(vars).length;
@@ -112,6 +118,48 @@ function finite(v: LValue | undefined): number | undefined {
 // held it. Everything else keeps the ceiling.
 const MAX_GOLD = 100_000_000;
 const GOLD = 'gold_001';
+// The wire form of a cell doc, for WorldCellState and CellSnapshotReplace alike, trimmed to
+// fit the LSER ceiling: moved first (the object still exists, at its content-file pose),
+// then containers (a re-open re-rolls from origin), then memberVars (script defaults), and
+// as the last resort the newest placed objects (2,000 drops with item state are ~48k nodes
+// on their own; a cell nobody can enter is worse than a cell missing its latest litter). An
+// entry is dropped whole; the log line says how many of each.
+export function cellStateBody(cellKey: string, doc: CellDoc, deaths: string[], withMemberVars: boolean): Record<string, JsLike> {
+  const locks: Record<string, JsLike> = {};
+  for (const [key, level] of Object.entries(doc.locks)) locks[key] = level === null ? {} : { lockLevel: level };
+  const body: Record<string, JsLike> = {
+    cellKey,
+    placed: Object.values(doc.placed).map((p) => ({ ...p })),
+    deleted: [...doc.deleted],
+    moved: { ...doc.moved },
+    locks,
+    doors: { ...doc.doors },
+    containers: Object.fromEntries(
+      Object.entries(doc.containers).map(([key, c]) => [key, { items: c.items.map((i) => ({ ...i })), stateSeq: c.stateSeq }]),
+    ),
+    disabled: disabledKeys(doc),
+    enabled: enabledKeys(doc),
+    deaths,
+  };
+  // Bounded like placed/deleted; past the cap the cell simply sends none.
+  if (withMemberVars) body['memberVars'] = memberVarEntries(doc) <= MAX_MEMBER_VARS_PER_CELL ? { ...(doc.memberVars ?? {}) } : {};
+  let nodes = lserNodeCount(body);
+  if (nodes <= CELL_STATE_NODE_BUDGET) return body;
+  const dropped: Record<string, number> = {};
+  for (const field of ['moved', 'containers', 'memberVars', 'placed']) {
+    const map = body[field] as Record<string, JsLike> | JsLike[] | undefined;
+    if (!map) continue;
+    for (const k of Object.keys(map).reverse()) {
+      if (nodes <= CELL_STATE_NODE_BUDGET) break;
+      nodes -= 1 + lserNodeCount((map as Record<string, JsLike>)[k]!);
+      if (Array.isArray(map)) map.pop(); else delete map[k];
+      dropped[field] = (dropped[field] ?? 0) + 1;
+    }
+  }
+  log('warn', 'world.cell_state_trimmed', { cellKey, nodes, ...dropped });
+  return body;
+}
+
 const disabledKeys = (doc: CellDoc): string[] => Object.keys(doc.enabled ?? {}).filter((k) => doc.enabled![k] === false);
 const enabledKeys = (doc: CellDoc): string[] => Object.keys(doc.enabled ?? {}).filter((k) => doc.enabled![k] === true);
 
@@ -786,7 +834,7 @@ export class WorldState {
   handleActorMoveBatch(player: Player, payload: Buffer): void {
     let epoch: number;
     try {
-      epoch = unpackActorMoveBatch(payload).epoch;
+      epoch = peekActorMoveBatchEpoch(payload);
     } catch (err) {
       log('warn', 'actor.bad_batch', { from: player.name, error: String(err) });
       return;
@@ -1393,6 +1441,7 @@ export class WorldState {
   // Sent only for the entered cell, a player arriving in the middle cell never saw it until
   // they crossed the line; the friend who dropped it for them pointed at nothing.
   sendCellStateAround(player: Player, cellKey: string): void {
+    player.cellStateBurstAt = Date.now(); // connection.ts: the entry burst is not a stalled reader
     this.sendCellState(player, cellKey); // the entered cell first: it is the one the client waits on
     const at = parseExterior(cellKey);
     if (!at) return;
@@ -1407,31 +1456,13 @@ export class WorldState {
     this.enqueue(async () => {
       const doc = this.cells.getCached(cellKey) ?? (await this.cells.get(cellKey)) ?? emptyCellDoc();
       const deaths = this.liveDeaths(doc, cellKey); // before placed is read: an expired corpse takes its spawn entry with it
-      const locks: Record<string, JsLike> = {};
-      for (const [key, level] of Object.entries(doc.locks)) locks[key] = level === null ? {} : { lockLevel: level };
-      player.peer.sendEvent('WorldCellState', {
-        cellKey,
-        placed: Object.values(doc.placed).map((p) => ({ ...p })),
-        deleted: [...doc.deleted],
-        moved: { ...doc.moved },
-        locks,
-        doors: { ...doc.doors },
-        containers: Object.fromEntries(
-          Object.entries(doc.containers).map(([key, c]) => [key, { items: c.items.map((i) => ({ ...i })), stateSeq: c.stateSeq }]),
-        ),
-        // Phase 4: refKeys a script disabled, and (backlog 218) the ones a script re-enabled
-        // -- an absent key means whatever the content files say.
-        disabled: disabledKeys(doc),
-        enabled: enabledKeys(doc),
-        // WHO IS DEAD HERE. ActorDeath was relayed once and stored, and nothing ever read the
-        // store back: a friend who entered the cell after the kill (or anyone after a relog)
-        // found the smuggler chief standing again -- AI off, unlootable, unkillable.
-        deaths,
-        // M6 per-object script locals. Stored on every MemberVarUpdate (quests.storeMemberVar)
-        // and never read back: a joiner's copy of a scripted object started from the content
-        // file's defaults. Bounded like placed/deleted; past the cap the cell simply sends none.
-        memberVars: memberVarEntries(doc) <= MAX_MEMBER_VARS_PER_CELL ? { ...(doc.memberVars ?? {}) } : {},
-      });
+      // The body carries: placed/deleted/moved/locks/doors/containers; Phase 4 disabled and
+      // (backlog 218) enabled refKeys -- an absent key means whatever the content files say;
+      // WHO IS DEAD HERE (ActorDeath was relayed once and stored, and nothing read the store
+      // back: a friend entering after the kill found the smuggler chief standing again -- AI
+      // off, unlootable, unkillable); and M6 per-object script locals (stored on every
+      // MemberVarUpdate and never read back, so a joiner's copy started from the defaults).
+      player.peer.sendEvent('WorldCellState', cellStateBody(cellKey, doc, deaths, true));
     });
   }
 
@@ -1485,24 +1516,12 @@ export class WorldState {
 
   sendCellSnapshot(cellKey: string, doc: CellDoc): void {
     const deaths = this.liveDeaths(doc, cellKey); // before placed is read, as in sendCellState
+    // locks: a reset re-locks what the doc says (nothing, after a reset) -- it used to leave
+    // stale locks standing. Built once; every viewer gets the same frame.
+    const body = cellStateBody(cellKey, doc, deaths, false);
     for (const p of this.roster.inWorld()) {
       if (!cellsVisible(p.cellKey, cellKey)) continue;
-      const locks: Record<string, JsLike> = {};
-      for (const [key, level] of Object.entries(doc.locks)) locks[key] = level === null ? {} : { lockLevel: level };
-      p.peer.sendEvent('CellSnapshotReplace', {
-        cellKey,
-        placed: Object.values(doc.placed).map((x) => ({ ...x })),
-        deleted: [...doc.deleted],
-        moved: { ...doc.moved },
-        locks, // a reset re-locks what the doc says (nothing, after a reset) -- it used to leave stale locks standing
-        deaths,
-        doors: { ...doc.doors },
-        containers: Object.fromEntries(
-          Object.entries(doc.containers).map(([key, c]) => [key, { items: c.items.map((i) => ({ ...i })), stateSeq: c.stateSeq }]),
-        ),
-        disabled: disabledKeys(doc),
-        enabled: enabledKeys(doc),
-      });
+      p.peer.sendEvent('CellSnapshotReplace', body);
     }
     log('info', 'world.cell_snapshot_replace', { cellKey, containers: Object.keys(doc.containers).length });
   }
