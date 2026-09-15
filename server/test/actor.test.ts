@@ -538,3 +538,58 @@ test('a follow claim survives a world restart', async (t) => {
   const replayed = await peer2.waitEvent('ActorAI', (v) => (v as { follow?: number }).follow === backId, 3000);
   assert.deepEqual((replayed.value as { ref: unknown }).ref, ACTOR_REF, 'the companion follows the returning character again');
 });
+
+// Backlog 149: NOTHING EVER RESPAWNED. A death was stored without a date and replayed on
+// every cell entry forever, and noteCellDeaths kills the body for real on the holder -- so
+// even the engine's own CellStore::respawn was undone the moment the cell was entered again.
+// A death now carries the world hour it happened at and is forgotten after
+// fCorpseRespawnDelay (72 h), together with the placed entry of a peer-rolled levelled spawn.
+test('a death is forgotten after fCorpseRespawnDelay, and the levelled corpse with it', async (t) => {
+  const server = await startServer({
+    requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
+    configOverride: { server: { password: PEER_PASS }, time: { scale: 0 } }, // only advanceTime moves the clock
+  });
+  t.after(() => server.close());
+  const peer = await TestClient.simPeer(server.port, PEER_PASS, 'Peer');
+  peer.sendCellChange('0,0', 0, 0, 0);
+  await peer.waitEvent('PlayerCellChange');
+  const epoch = ((await peer.waitEvent('ActorAuthorityGrant')).value as { epoch: number }).epoch;
+
+  // A content-file actor and a peer-rolled levelled creature both die.
+  peer.sendEvent('ObjectSpawnRequest', { tempId: 7, recordId: 'cliff racer', cellKey: '0,0', x: 1, y: 2, z: 3, rotZ: 0, count: 1, actor: true });
+  const netId = ((await peer.waitEvent('ObjectSpawnAck')).value as { netId: number }).netId;
+  peer.sendEvent('ActorDeath', { cellKey: '0,0', epoch, ref: ACTOR_REF, deathNo: 1, killedRecordId: 'smuggler' });
+  peer.sendEvent('ActorDeath', { cellKey: '0,0', epoch, net: netId, deathNo: 1, killedRecordId: 'cliff racer' });
+  await peer.waitEvent('WorldKillCount', (v) => (v as { refId?: string }).refId === 'cliff racer');
+
+  // The peer stays as holder (a holder leaving purges its named actors anyway); a player walks
+  // in and out to observe what the cell says on entry.
+  const b = await TestClient.connect(server.port);
+  t.after(() => b.close());
+  await b.joinAsNew('Walker');
+  await b.waitEvent('PlayerList');
+  const stateAfter = async (hours: number) => {
+    server.api.world.advanceTime(hours);
+    b.sendCellChange('5,5', 0, 0, 0);
+    await b.waitEvent('PlayerCellChange');
+    b.inbox.events.length = 0; // a stale WorldCellState for 0,0 must not answer for this entry
+    b.sendCellChange('0,0', 0, 0, 0);
+    return (await b.waitEvent('WorldCellState', (v) => (v as { cellKey: string }).cellKey === '0,0')).value as
+      { deaths: string[]; placed: { netId: number }[] };
+  };
+
+  const at10 = await stateAfter(10);
+  assert.deepEqual(at10.deaths.sort(), ['c:42:0', `n:${netId}`].sort(), 'ten hours on, both are still dead');
+  assert.equal(at10.placed.length, 1, 'the levelled corpse is still placed');
+
+  const at80 = await stateAfter(70);
+  assert.deepEqual(at80.deaths, [], 'past 72 h the deaths are forgotten: the engine may respawn');
+  assert.equal(at80.placed.length, 0, 'the levelled spawn goes with its death: the peer rolls a fresh one');
+
+  // The forgotten record does not shadow a fresh kill of the respawned actor.
+  peer.sendEvent('ActorDeath', { cellKey: '0,0', epoch, ref: ACTOR_REF, deathNo: 1, killedRecordId: 'smuggler' });
+  const tally = await peer.waitEvent('WorldKillCount', (v) => (v as { refId?: string; count?: number }).refId === 'smuggler' && (v as { count?: number }).count === 2);
+  assert.deepEqual(tally.value, { refId: 'smuggler', count: 2 }, 'the same deathNo was read as a duplicate of the forgotten death');
+  peer.close();
+  await peer.closed;
+});

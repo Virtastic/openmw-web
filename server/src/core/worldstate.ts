@@ -50,6 +50,10 @@ const MAX_GOLD_DELTA = 1000000;
 // (dialogue.cpp), and only the purse -- not their stock -- so this matches that exactly
 // rather than inventing a richer rule.
 const GOLD_RESTOCK_HOURS = 24;
+// fCorpseRespawnDelay (vanilla 72): a dead actor's record is forgotten after this many game
+// hours, at which point the engine's own CellStore::respawn stands a fresh one up. No GMST
+// table is read server-side; the value is the unmodded default, like GOLD_RESTOCK_HOURS.
+const CORPSE_RESPAWN_HOURS = 72;
 
 // Morrowind's calendar collapsed to one number so two readings can be compared; only
 // DIFFERENCES matter, so the epoch is arbitrary.
@@ -709,9 +713,10 @@ export class WorldState {
       return;
     }
     const doc = await this.cells.get(cellKey);
-    const deaths = (doc.actorDeaths ??= {});
-    if ((deaths[ref.key] ?? -Infinity) >= deathNo) return; // duplicate death event
-    deaths[ref.key] = deathNo;
+    const nowH = absGameHours(this.cells.worldM7().time);
+    const deaths = this.deathsOf(doc, nowH);
+    if ((deaths[ref.key]?.deathNo ?? -Infinity) >= deathNo) return; // duplicate death event
+    deaths[ref.key] = { deathNo, atH: nowH };
     this.cells.markDirty(cellKey);
     // A corpse follows nobody: a restarted peer replayed the claim and stood the companion up.
     this.followedBy.delete(ref.key);
@@ -1311,6 +1316,7 @@ export class WorldState {
   sendCellState(player: Player, cellKey: string): void {
     this.enqueue(async () => {
       const doc = this.cells.getCached(cellKey) ?? (await this.cells.get(cellKey)) ?? emptyCellDoc();
+      const deaths = this.liveDeaths(doc, cellKey); // before placed is read: an expired corpse takes its spawn entry with it
       const locks: Record<string, JsLike> = {};
       for (const [key, level] of Object.entries(doc.locks)) locks[key] = level === null ? {} : { lockLevel: level };
       player.peer.sendEvent('WorldCellState', {
@@ -1329,13 +1335,42 @@ export class WorldState {
         // WHO IS DEAD HERE. ActorDeath was relayed once and stored, and nothing ever read the
         // store back: a friend who entered the cell after the kill (or anyone after a relog)
         // found the smuggler chief standing again -- AI off, unlootable, unkillable.
-        deaths: Object.keys(doc.actorDeaths ?? {}),
+        deaths,
         // M6 per-object script locals. Stored on every MemberVarUpdate (quests.storeMemberVar)
         // and never read back: a joiner's copy of a scripted object started from the content
         // file's defaults. Bounded like placed/deleted; past the cap the cell simply sends none.
         memberVars: memberVarEntries(doc) <= MAX_MEMBER_VARS_PER_CELL ? { ...(doc.memberVars ?? {}) } : {},
       });
     });
+  }
+
+  // WHO IS STILL DEAD HERE. A death older than fCorpseRespawnDelay is forgotten, and with it
+  // the placed entry of a peer-rolled levelled spawn (the corpse would otherwise be rebuilt
+  // and re-killed on every entry, and each peer restart rolled one more live creature on
+  // top of it). Content-file actors need no placed entry: the engine's CellStore::respawn
+  // re-stands them once the server stops saying they are dead. Read at send time rather than
+  // on a timer: cell entry is the only moment the answer is observable.
+  private liveDeaths(doc: CellDoc, cellKey: string): string[] {
+    if (!doc.actorDeaths) return [];
+    const nowH = absGameHours(this.cells.worldM7().time);
+    const deaths = this.deathsOf(doc, nowH);
+    for (const [key, d] of Object.entries(deaths)) {
+      if (nowH - d.atH < CORPSE_RESPAWN_HOURS) continue;
+      delete deaths[key];
+      delete doc.placed[key];
+      this.cells.markDirty(cellKey);
+    }
+    return Object.keys(deaths);
+  }
+
+  // Docs written before the timestamp hold a bare deathNo. Upgraded in place on first touch,
+  // dated NOW: a corpse of unknown age starts its 72 h from here rather than vanishing at once.
+  private deathsOf(doc: CellDoc, nowH: number): NonNullable<CellDoc['actorDeaths']> {
+    const deaths = (doc.actorDeaths ??= {});
+    for (const [key, d] of Object.entries(deaths as Record<string, number | { deathNo: number; atH: number }>)) {
+      if (typeof d === 'number') deaths[key] = { deathNo: d, atH: nowH };
+    }
+    return deaths;
   }
 
   // Phase 3.7: authoritative full-cell resync applied IN PLACE by connected clients.
@@ -1358,6 +1393,7 @@ export class WorldState {
   }
 
   sendCellSnapshot(cellKey: string, doc: CellDoc): void {
+    const deaths = this.liveDeaths(doc, cellKey); // before placed is read, as in sendCellState
     for (const p of this.roster.inWorld()) {
       if (!cellsVisible(p.cellKey, cellKey)) continue;
       const locks: Record<string, JsLike> = {};
@@ -1368,7 +1404,7 @@ export class WorldState {
         deleted: [...doc.deleted],
         moved: { ...doc.moved },
         locks, // a reset re-locks what the doc says (nothing, after a reset) -- it used to leave stale locks standing
-        deaths: Object.keys(doc.actorDeaths ?? {}),
+        deaths,
         doors: { ...doc.doors },
         containers: Object.fromEntries(
           Object.entries(doc.containers).map(([key, c]) => [key, { items: c.items.map((i) => ({ ...i })), stateSeq: c.stateSeq }]),

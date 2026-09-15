@@ -70,9 +70,11 @@ export interface CellDoc {
     gold?: number; goldOrigin?: number; goldRestockAt?: number;
   }>;
   // M4: last actor snapshot folded when the cell went dormant ({actors:[...]}, JSON-safe),
-  // and per-actor highest processed deathNo (dedup + death persistence).
+  // and per-actor highest processed deathNo (dedup + death persistence) with the ABSOLUTE
+  // game hour it happened at, so the record expires on fCorpseRespawnDelay (WorldState
+  // .liveDeaths). Older docs hold a bare deathNo; WorldState.deathsOf upgrades them in place.
   actorOverrides?: unknown;
-  actorDeaths?: Record<string, number>;
+  actorDeaths?: Record<string, { deathNo: number; atH: number }>;
   // M6: per-object MWScript locals, refKey -> {varName: value}.
   memberVars?: Record<string, Record<string, number>>;
   // Phase 4: refKey -> false for objects a script DISABLED. Enabled is the vanilla

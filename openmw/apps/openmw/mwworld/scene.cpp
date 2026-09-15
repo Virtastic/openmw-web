@@ -691,14 +691,23 @@ namespace MWWorld
                 }
                 if (std::find(mActiveCells.begin(), mActiveCells.end(), cell) != mActiveCells.end())
                     continue;
-                loadCell(*cell, nullptr, false, osg::Vec3f(0.f, 0.f, 0.f), nullptr);
+                // respawn=true: this is the ONLY load path the sim peer takes for a room it does
+                // not stand in, and with false nothing in a multiplayer world ever ran
+                // CellStore::respawn -- no corpse cleared, no levelled list re-rolled, no
+                // container restocked, for the life of the world (backlog 149). The server
+                // forgets a death after fCorpseRespawnDelay, so the re-stood actor is not
+                // re-killed by the cell state that follows.
+                loadCell(*cell, nullptr, true, osg::Vec3f(0.f, 0.f, 0.f), nullptr);
             }
         }
 
         // Re-run the grid so newly anchored regions load and dropped ones unload. Cheap when
         // nothing changed, which is the common case (the server resends the same list).
+        // changeEvent=true is what changeCellGrid passes to loadCell as `respawn` (same reason
+        // as the interior load above); its other effect, one frame of mCellChanged, only
+        // makes MWScript `CellChanged` read 1 on the peer for that frame.
         if (exteriorsChanged && mCurrentCell != nullptr && mCurrentCell->getCell()->isExterior())
-            requestChangeCellGrid(mLastPlayerPos, mCurrentGridCenter, false);
+            requestChangeCellGrid(mLastPlayerPos, mCurrentGridCenter, true);
     }
 
     bool Scene::isAnchoredInterior(const MWWorld::CellStore* cell) const
