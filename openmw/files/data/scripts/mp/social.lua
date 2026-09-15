@@ -457,8 +457,10 @@ return {
                 -- Machinery, not a player action. Never narrated, success or failure.
             else
                 status = socialText(data.op, data.ok == true, tostring(data.detail or ''))
-                if data.ok ~= true then notice(status) end
             end
+            -- OK and refused alike reach the feed (#32): "Invitation sent." lived only in the
+            -- panel's status line, so a player who closed the panel never saw whether it went.
+            if not SOCIAL_SILENT[data.op] then notice(status) end
             mp.set('socialResult', json.encode({ op = data.op, ok = data.ok, detail = data.detail }))
             mirror()
             render()

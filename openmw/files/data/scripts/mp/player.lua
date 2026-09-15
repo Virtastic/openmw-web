@@ -88,6 +88,14 @@ local lastPoseMirror = 0
 -- six paying into a per-client purse that never empties.
 local liveContainerOpen = false -- a pickpocket window is up (Container mode on a live actor)
 local arrestDialoguePending = false -- the next Dialogue mode is MP_PlayerArrest's: no lock request (343)
+-- The world's rest rule, off WorldMode (#262). A guest under timeSkip=owner used to get the
+-- whole wait animation, a fast-forwarded sky, THEN the refusal and the sky slewing back. The
+-- Rest window is refused before it opens instead; the sleep itself must still happen for a
+-- guest to level (#256), so the pending level-up is offered in its place.
+local restRule = { isOwner = true, timeSkip = 'anyone' }
+local function restRefusedHere()
+    return not restRule.isOwner and (restRule.timeSkip == 'owner' or restRule.timeSkip == 'party')
+end
 local GOLD_SERVICE_MODES = {
     Barter = true, Training = true, Travel = true, SpellBuying = true,
     SpellCreation = true, Enchanting = true, MerchantRepair = true,
@@ -1329,6 +1337,10 @@ return {
             pcall(I.SkillProgression.skillUsed, data.skill, { useType = data.useType or 0 })
         end,
         MP_UiChatMessage = pushMessage,
+        -- Whose world, and its rest rule (global.lua forwards the server's WorldMode; #262).
+        MP_WorldMode = function(data)
+            restRule = { isOwner = data and data.isOwner == true, timeSkip = tostring(data and data.timeSkip or 'anyone') }
+        end,
         -- M2 rejoin restore: global.lua forwards SessionWelcome.playerRecord here (after
         -- granting the inventory and teleporting us to record.position).
         MP_ApplyRecord = function(record)
@@ -1363,6 +1375,17 @@ return {
             -- Esc (or any other window) closed our Interface mode -> drop the chat window.
             if chatElement and data.newMode == nil then
                 destroyChat()
+            end
+            -- A guest's Rest in a timeSkip=owner world is refused BEFORE the bed lies (#262):
+            -- the window closes, one line says why, and a level earned since the last sleep
+            -- is offered now, since the sleep that would have offered it never happens.
+            if data.newMode == 'Rest' and restRefusedHere() then
+                pcall(function() I.UI.removeMode('Rest') end)
+                pushMessage({ channel = 'server', text = 'Only the world owner can rest for everyone.' })
+                local okLvl, due = pcall(function()
+                    return types.Actor.stats.level(self).progress >= (tonumber(core.getGMST('iLevelUpTotal')) or 10)
+                end)
+                if okLvl and due then pcall(function() I.UI.addMode('LevelUp') end) end
             end
             -- M6: leaving the dialogue window releases the NPC's conversation lock
             -- (PROTOCOL.md §M6: "released on close, cell change, or disconnect").

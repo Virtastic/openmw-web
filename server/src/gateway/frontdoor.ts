@@ -310,9 +310,13 @@ export function friendsPlayingRoutes(
         // The world they are IN: an owner on their second character has two worlds up.
         // ...and the owner is actually IN it: a Party world in its host's crash grace, or one
         // the host exited on purpose a moment ago, is not somewhere to join.
-        const open = worlds.filter((w) => w.ownerAccount === f.account && w.up && w.mode === 'party' && w.ownerPresent !== false);
-        const w = open.find((x) => x.playerCount > 0) ?? open[0];
-        return w ? { acct: f.account, name: accounts.cachedByKey(f.account)?.username ?? accounts.usernameOf(f.account) ?? f.account, worldId: w.id, wsPath: `/w/${w.id}`, players: w.playerCount } : null;
+        const mine = worlds.filter((w) => w.ownerAccount === f.account && w.up && w.ownerPresent !== false);
+        const open = mine.filter((w) => w.mode === 'party');
+        // A friend playing SOLO is listed too (#89) -- "playing solo", no join: an online friend
+        // used to be invisible here, which read as "offline". Occupied only: an idle private
+        // world is nobody playing.
+        const w = open.find((x) => x.playerCount > 0) ?? open[0] ?? mine.find((x) => x.mode === 'private' && x.playerCount > 0);
+        return w ? { acct: f.account, name: accounts.cachedByKey(f.account)?.username ?? accounts.usernameOf(f.account) ?? f.account, worldId: w.id, wsPath: `/w/${w.id}`, players: w.playerCount, mode: w.mode } : null;
       })
       .filter((x): x is NonNullable<typeof x> => x !== null);
     sendJson(res, 200, { friends });

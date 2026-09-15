@@ -1461,5 +1461,42 @@ do
     and lb:find('return takeBlockFor(ptr.getCellRef().getRefNum());', 1, true) ~= nil)
 end
 
+print('UX rows -- social OK lines reach the feed, the late host hears who went home, a guest\'s Rest is refused before the bed lies (29, 32, 262)')
+do
+  local g = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  local s = io.open('./openmw/files/data/scripts/mp/social.lua'):read('*a')
+  local p = io.open('./openmw/files/data/scripts/mp/player.lua'):read('*a'):gsub('\r\n', '\n')
+  local srv = io.open('./server/src/server.ts'):read('*a')
+  -- #32: "Invitation sent." / "Sent home." / "Friend request sent." used to stay in the panel.
+  local handler = s:match('MP_SocialResult = function%(data%)(.-)mp%.set')
+  check('MP_SocialResult notices OK results too, machinery excepted',
+    handler ~= nil and handler:find('if not SOCIAL_SILENT[data.op] then notice(status) end', 1, true) ~= nil
+      and handler:find('if data.ok ~= true then notice(status) end', 1, true) == nil)
+  -- #29: the grace expiry records the names; hostOf hands them to the owner once.
+  check('server.ts records the guests the grace sent home and WorldMode carries them once to the owner',
+    srv:find('guestsSentHome = { at: Date.now(), names }', 1, true) ~= nil
+      and srv:find('if (sentHome) guestsSentHome = undefined;', 1, true) ~= nil)
+  check('global.lua narrates the sent-home guests to the returning owner',
+    g:find("notice('Your guests were sent home while you were away: ' .. table.concat(data.sentHome, ', ') .. '.')", 1, true) ~= nil)
+  -- #262: WorldMode carries the rest rule; a guest's Rest window is refused on open and the
+  -- pending level-up is offered instead (the sleep that would have offered it never happens).
+  check('WorldMode carries timeSkip and global.lua forwards it to player.lua',
+    srv:find('timeSkip: worldOwner === ', 1, true) ~= nil
+      and g:find("toPlayer('MP_WorldMode', { isOwner = data and data.isOwner == true, timeSkip =", 1, true) ~= nil
+      and p:find('MP_WorldMode = function(data)', 1, true) ~= nil)
+  check("a guest's Rest under timeSkip=owner is closed with a notice and the level-up offered",
+    p:find("if data.newMode == 'Rest' and restRefusedHere() then", 1, true) ~= nil
+      and p:find("I.UI.removeMode('Rest')", 1, true) ~= nil
+      and p:find("text = 'Only the world owner can rest for everyone.'", 1, true) ~= nil
+      and p:find("types.Actor.stats.level(self).progress >= (tonumber(core.getGMST('iLevelUpTotal')) or 10)", 1, true) ~= nil
+      and p:find("I.UI.addMode('LevelUp')", 1, true) ~= nil)
+  -- The rule itself, executed: only a non-owner under owner/party is refused here.
+  local chunk = p:match('(local restRule = .-\nend\n)')
+  local restRefusedHere = chunk and assert((loadstring or load)(chunk .. '\nreturn function(o, t) restRule = { isOwner = o, timeSkip = t }; return restRefusedHere() end'))()
+  check('restRefusedHere: guest+owner refused, owner never, anyone never',
+    restRefusedHere ~= nil and restRefusedHere(false, 'owner') == true and restRefusedHere(false, 'party') == true
+      and restRefusedHere(true, 'owner') == false and restRefusedHere(false, 'anyone') == false and restRefusedHere(false, 'off') == false)
+end
+
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)

@@ -2259,6 +2259,8 @@ local eventHandlers = {
         partyOwnerId = tonumber(data and data.ownerId) or 0
         applyPartyLevel()
         mirrorRoster()
+        -- The rest rule, for player.lua's pre-emptive refusal of a guest's Rest (#262).
+        toPlayer('MP_WorldMode', { isOwner = data and data.isOwner == true, timeSkip = tostring(data and data.timeSkip or 'anyone') })
         -- Which world you are in is invisible otherwise — the scenery is identical — and it
         -- decides who can see you. Announced on CHANGE only; the server also sends this at
         -- join, which is not a transition worth narrating.
@@ -2277,6 +2279,11 @@ local eventHandlers = {
             -- transition above never fires: the one thing a guest most wants said -- whose world
             -- this is -- was said nowhere but the panel.
             notice("You are in " .. tostring(data.owner) .. "'s world.")
+        end
+        -- THE HOST WHO CAME BACK TOO LATE (#29). The crash grace ran out and the guests were
+        -- sent home; the server names them once, on the owner's first WorldMode after return.
+        if data and data.isOwner == true and type(data.sentHome) == 'table' and #data.sentHome > 0 then
+            notice('Your guests were sent home while you were away: ' .. table.concat(data.sentHome, ', ') .. '.')
         end
     end,
     MP_WorldClosed = function(data)

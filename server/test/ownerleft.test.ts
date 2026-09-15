@@ -150,6 +150,47 @@ test('a host alone who reloads inside the grace comes back to a Party world', as
   await guest.waitEvent('PlayerList');
 });
 
+// #29: THE HOST WHO CAME BACK TOO LATE is told who was sent home -- once, on their first
+// WorldMode after the return, and the WorldMode carries the timeSkip rule (#262).
+test('a host returning after the grace hears which guests were sent home', async (t) => {
+  const dataDir = tmpDataDir();
+  const social = new SocialStore(dataDir);
+  social.addFriend('host', 'guest', Date.now());
+  social.close();
+  const server = await startServer({
+    requireGameData: false, dataDir, port: 0, host: '127.0.0.1',
+    worldMode: 'party', worldOwner: 'host', ownerGraceMs: 500,
+    configOverride: { login: { allowHarnessAuth: true } } as never,
+  });
+  t.after(() => server.close());
+  let owner = await TestClient.connect(server.port);
+  await owner.joinAsNew('Host', 'hunter22');
+  const first = (await owner.waitEvent('WorldMode')).value as { timeSkip?: string; sentHome?: string[] };
+  assert.equal(first.timeSkip, 'owner', 'the rest rule rides WorldMode');
+  assert.equal(first.sentHome, undefined, 'nothing to report on a first join');
+  const guest = await TestClient.connect(server.port);
+  t.after(() => guest.close());
+  await guest.joinAsNew('Guest', 'hunter22');
+  await guest.waitEvent('PlayerList');
+  owner.close();
+  await owner.closed;
+  await guest.waitEvent('WorldClosed', () => true, 8000); // the grace ran out
+
+  owner = await TestClient.connect(server.port);
+  await owner.joinExisting('Host');
+  const back = (await owner.waitEvent('WorldMode')).value as { mode?: string; sentHome?: string[] };
+  assert.equal(back.mode, 'private');
+  assert.deepEqual(back.sentHome, ['Guest'], 'the returning host was not told who went home');
+  owner.close();
+  await owner.closed;
+
+  owner = await TestClient.connect(server.port);
+  t.after(() => owner.close());
+  await owner.joinExisting('Host');
+  const again = (await owner.waitEvent('WorldMode')).value as { sentHome?: string[] };
+  assert.equal(again.sentHome, undefined, 'the notice repeated on a later join');
+});
+
 // A DELIBERATE EXIT IS NOT A CRASH. Exit, a character switch, "join a friend": the client
 // says PlayerLeaving and the world closes to guests now, not ninety seconds later -- and in
 // the meantime nobody new is admitted into a world with no host in it.

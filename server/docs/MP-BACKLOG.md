@@ -224,7 +224,7 @@ Branch: `test/posture-seen`. Sweeps: Jenkins `openmw-web-dev` #89 (9/17), #90 (1
 | 237 | Two equipped rings of one record collapse to one on the avatar/relog (record-id slot resolution = first match) | mwlua actor.cpp:52 | done — bake needed | actor.cpp findInInventory record-id branch walks the store and prefers a copy not already equipped (InventoryStore::isEquipped) or a stack with count > 1; falls back to search() |
 | 255 | No hit VFX/sound on a puppet for the caster (the seam returns before playEffects) | spelleffects.cpp:1456 | done — bake needed | spelleffects.cpp puppet seam calls playEffects once on first application (non-Lua actives; same temporary/equipment non-looping rule as the desktop path) |
 | 261 | Finding the host (#139): no map-marker Lua API; smallest real design = mp.setPartyMarker over WindowManager custom markers (minimap + map, active 3x3 only) + the friend's cell name in the social panel for the far case | luabindings.cpp, global.lua mirrorPuppets |
-| 262 | Guest Rest UX: full wait animation, sky fast-forwards, then refused, sky slews back, heal undone by the next peer report ("the bed lied"); a pre-emptive refusal must NOT remove the sleep or guests stop levelling (#256) | timeSkip rule in WorldMode; UiModeChanged Rest for a non-owner → notice + level-up check |
+| 262 | Guest Rest UX: full wait animation, sky fast-forwards, then refused, sky slews back, heal undone by the next peer report ("the bed lied"); a pre-emptive refusal must NOT remove the sleep or guests stop levelling (#256) | server.ts hostOf timeSkip on WorldMode; global.lua forwards MP_WorldMode to player.lua; player.lua UiModeChanged Rest for a non-owner under owner/party removes the mode, notices, and I.UI.addMode(LevelUp) when progress >= iLevelUpTotal (no new binding: the LevelUp ui mode already exists) | fixed | ownerleft.test.ts (timeSkip on WorldMode); lua-tests (rule executed + wiring); needs a bake |
 | 264 | SCALE BLOCKER: the peer's actor stream draws from actorMoveBucket (60/s): ≥4 populated held cells starve the rest (same 3 cells pass every tick, the other cells' NPCs freeze) — certain in a TR city, already reachable in Balmora | connection.ts:485 exempt the authed peer as bytes/msgs already are | fixed | connection.ts: the authed peer is exempt from actorMoveBucket as from bytes/msgs; backpressure.test.ts: the peer holding 5 cells at 20 Hz for 2 s, zero actor_shed, every cell's stream flows; a player's actor batches still shed |
 | 265 | Co-anchored interiors share one Bullet world and one navmesh at overlapping coordinates: NPCs in interior A collide with B's walls; anchored-interior pathfinding is straight-line | scene.cpp:700 skip the navigator add for anchors; collision groups per cell (engine work) — do not anchor >1 interior until then |
 | 266 | Exterior navmesh covers only ~6,100 u around the dummy: AiFollow/Escort/pursuit in another anchored exterior walk straight through buildings | navmeshmanager.cpp:75 multi-centre ranges (engine work) |
@@ -358,58 +358,58 @@ Branch: `test/posture-seen`. Sweeps: Jenkins `openmw-web-dev` #89 (9/17), #90 (1
 | # | Item | Notes |
 |---|---|---|
 | 28 | Magnitude re-roll on the avatar (spell with a range is rolled again on the peer) | no engine API to inject a magnitude; would need a binding or a per-cast fixed record |
-| 29 | "Your guests were sent home while you were away" narration for a returning host | server.ts onPlayerLeftWorld + WorldMode |
-| 30 | Gateway restart with a party: revived as private, guests get 502 then not_open | design-adjacent: host flips Party again |
+| 29 | "Your guests were sent home while you were away" narration for a returning host | fixed: server.ts guestsSentHome -> WorldMode.sentHome once to the returning owner; global.lua narrates it; ownerleft.test.ts |
+| 30 | Gateway restart with a party: revived as private, guests get 502 then not_open | fixed: worlds.ts `.mode` written on every flip/observed mode, read at start -> OMW_WORLD_LAST_MODE resumes party (boot mode stays private, #9); worlds.test.ts |
 | 31 | Half-open socket: client has no pong watchdog | net.lua |
-| 32 | Social OK notices ("Invitation sent.", "Sent home.") never mirrored to the feed | social.lua status |
+| 32 | Social OK notices ("Invitation sent.", "Sent home.") never mirrored to the feed | fixed: MP_SocialResult notices every non-silent result; lua-tests |
 | 33 | Dying inside a dialogue: lock release unverified | quests.lua |
 | 34 | No harness hook opens Training/Travel/SpellCreation/Enchanting (`svc:open:<Mode>`) | player.lua |
 | 35 | PvP kill: no attribution; no scenario kills a player with PvP on | combat.ts |
 | 44 | Resist arrest: MP_OpenDialogue bypasses the dialogue lock; guard puppets never report "fights me" | global.lua, puppet.lua, quests.lua | 
 | 45 | Jail: time skip is a local advanceTime, not through the server clock; skill loss/confiscation unverified | jailscreen path, world.lua |
 | 46 | Pickpocket caught: victim's startCombat happens on an AI-off puppet, never reported | puppet.lua |
-| 47 | Guest rest under timeSkip=owner: the clock is refused but the local heal is claimed (free full heal) | identity.lua / world.lua timeRefused |
+| 47 | Guest rest under timeSkip=owner: the clock is refused but the local heal is claimed (free full heal) | superseded by #69 / #256 |
 | 48 | Guest's local advanceTime changes weather; holder re-sends only on change | world.lua tickWeather (clear lastWeatherSent every ~60 s) |
-| 49 | dayspassed never written by writeLocalTime: TimeStamp goes backwards (powers/day, corpse timers, disease) | world.lua TIME_FIELDS |
-| 50 | Map exploration/markers not persisted (blank map every login, solo included); custom markers not shared | identity.lua, playerstore.ts |
+| 49 | dayspassed never written by writeLocalTime: TimeStamp goes backwards (powers/day, corpse timers, disease) | superseded by #150 |
+| 50 | Map exploration/markers not persisted (blank map every login, solo included); custom markers not shared | superseded by #260 (exploration); custom markers still not shared |
 | 51 | Dialogue topics relayed, never persisted | quests.ts |
 | 52 | Cell reset: vanilla loot never reappears on a running engine (only future joiners) | objects.lua |
 | 53 | Weather region freezes when the holder goes indoors (no handoff) | weather.ts |
-| 54 | Item condition: peer wholesale report can undo a fresh repair in the merge window | playerstate.ts handleAvatarItemStatesBatch |
+| 54 | Item condition: peer wholesale report can undo a fresh repair in the merge window | superseded by #163 |
 | 55 | Enchant charge oscillates (both engines run passive recharge) | cosmetic |
-| 56 | Mixed stacks (one damaged of five) collapse into one stack on relog | global.lua restore (create one object per state entry) |
+| 56 | Mixed stacks (one damaged of five) collapse into one stack on relog | superseded by #234 |
 | 57 | Container put/take carries no item state | objects.lua snapshotContainer, worldstate.ts |
-| 58 | Bound items recorded in the inventory doc; a relog inside the window grants a permanent one | identity.lua snapInventory (skip sMagicBound*ID) |
+| 58 | Bound items recorded in the inventory doc; a relog inside the window grants a permanent one | superseded by #70 |
 | 59 | Summon: holder loss mid-effect leaves no local creature until recast | global.lua |
 | 60 | Alchemy: identical potions brewed by two players are two records (doc bloat) | m7.ts (dedupe by content) |
-| 73 | Knockdown/hit-recoil on the avatar not relayed: owner rubber-bands instead of "cannot move" | global.lua stats entry + player.lua controls override |
+| 73 | Knockdown/hit-recoil on the avatar not relayed: owner rubber-bands instead of "cannot move" | superseded by #116 / #309 |
 | 74 | Long fall: self-snap → PlayerCellChange → avatar teleported mid-air → fall height reset → free fall | player.lua jump detector vs falling |
 | 75 | Peer restart mid-swim spawns the avatar at the last cell-change point; owner snapped there | connection.ts teleportPose gate |
 | 76 | threat.lua is dead code (relayed CombatHit shape never matches); NPCs strobe between two attackers | combat.lua, threat.lua |
 | 77 | Dialogue holder's NPC keeps wandering on the peer while talking; the other player watches it walk off | actors.lua (Wander distance 0 on lock) |
 | 78 | Greeting/idle on the peer targets the parked dummy: NPCs near the park spot face nothing | actors.cpp (skip when peerRulesBody) |
-| 79 | Escort claim needs no dialogue lock: any client can send any NPC walking | worldstate.ts |
+| 79 | Escort claim needs no dialogue lock: any client can send any NPC walking | superseded by #363 (an escort is a follow claim with a destination) |
 | 80 | "npc"->AddItem in a dialogue result lands on the local puppet only | no relay for non-holder NPC inventory |
-| 81 | Level +1 per message at 60/s reaches 255 in 4 s; attributes/skills unbounded | playerstate.ts clamp + one step per 10 s |
+| 81 | Level +1 per message at 60/s reaches 255 in 4 s; attributes/skills unbounded | superseded by #99 / #369 |
 | 82 | Gold placement with fromInventory=false is counted, never refused (party worlds) | worldstate.ts |
-| 83 | Fabricated first ContainerOpen becomes canonical (poison every container in a town) | worldstate.ts plausibility cap |
+| 83 | Fabricated first ContainerOpen becomes canonical (poison every container in a town) | superseded by #99 / #365 |
 | 84 | ActorAI travel destination bounded only by MAX_ABS_COORD | worldstate.ts (±2 cells) |
 | 85 | Guest can set the host's quest globals (by design of the shared journal) | quests.ts — wontfix? |
 | 86 | Memory governor prices a world at 640 MB regardless of anchors/party size | worlds.ts /status anchors |
 | 87 | No harness run beyond 4 browsers; soak bots never touch containers or a peer | bots/soak.ts |
-| 88 | BAD_CONTENT terminal: nothing tells the player that a reload after the mod mounts is the remedy | index.html mpErrorModal |
-| 89 | Launcher "friends playing now" lists party+occupied only; an online-but-solo friend is invisible | launcher.html |
+| 88 | BAD_CONTENT terminal: nothing tells the player that a reload after the mod mounts is the remedy | fixed: index.html one automatic reload (sessionStorage guard, cleared on Joined), then the remedy sentence + Reload button; mp-ux-pages.test.ts |
+| 89 | Launcher "friends playing now" lists party+occupied only; an online-but-solo friend is invisible | fixed: /auth/friends-playing lists an occupied solo world with `mode`; launcher rows "is playing solo", no join; friendsplaying.test.ts |
 | 100 | s147 on the managed peer: avatar follow-teleported to z=1453 on release and no fall damage reported; server logged avatar_stats_gated (client sent no input for 6 s mid-ritual) -- why does a standing client stop driving? | player.lua inputTick / harness |
 | 101 | Nametags: none rendered over puppets (only the crosshair tooltip); stale name after a rename | needs an OSG text node |
-| 106 | Companions not persisted across a world restart (follow claims are memory only) | worldstate.ts followedBy → cell doc |
-| 107 | memberVars (per-object MWScript locals) persisted but never replayed to joiners/peer | quests.ts, WorldCellState |
+| 106 | Companions not persisted across a world restart (follow claims are memory only) | superseded by #117 |
+| 107 | memberVars (per-object MWScript locals) persisted but never replayed to joiners/peer | superseded by #117 |
 | 108 | Player and cell docs sweep on independent 45 s timers: a crash can dupe or lose a container take | playerstore/cellstore |
-| 109 | Arrows land twice (owner's local miss + the peer's); missed arrows stored in the puppet copy | objects.lua onItemActive / launchProjectile gate |
+| 109 | Arrows land twice (owner's local miss + the peer's); missed arrows stored in the puppet copy | superseded by #116 |
 | 110 | Essential-NPC message shown on the peer, never the owner | done — bake needed: global.lua actorDeathFn notices sKilledEssential for an essential NPC record on every MP_ActorDeath (pcall-guarded); lua-tests source check |
-| 111 | hitn: bypasses the real swing path (combat.lua ignores non-test Hits); most kill scenarios prove the relay, not the swing | scenarios → attack:/press: |
-| 112 | sethp:/rest: hooks are direct writes; no scenario exercises death-from-damage, the wait dialog, training, level-up dialog | hooks |
+| 111 | hitn: bypasses the real swing path (combat.lua ignores non-test Hits); most kill scenarios prove the relay, not the swing | superseded by #238 |
+| 112 | sethp:/rest: hooks are direct writes; no scenario exercises death-from-damage, the wait dialog, training, level-up dialog | superseded by #241 (death from damage), #242 (real casts), #256 (level-up hook); the wait dialog and training still unexercised |
 | 113 | Mirrors that are never cleared (hitFwd, spellFwd, castAt, doorEnter, takeOwned, chestOp) let a second wait pass instantly | scenarios: clear before waiting |
-| 114 | SKIP detection by log text; a sweep of skips exits 0 | mp-harness.mjs |
+| 114 | SKIP detection by log text; a sweep of skips exits 0 | superseded by #244 |
 | 115 | Peer clock is load-dependent (fixed dt 1/20 per tick): duration-based asserts compare two clocks | engine.cpp headless |
 | 125 | /auth/link puts the session token in a query the edge logs; dead in gateway mode | routes.ts |
 | 126 | ActorBatch is one uncapped message per cell per frame: a TR metropolis exterior is ~100 KB/s per client | actors.lua |

@@ -1352,10 +1352,14 @@
        friends.forEach((f) => {
          const row = document.createElement('div'); row.className = 'cs-friend';
          const who = document.createElement('div'); who.className = 'who';
-         who.innerHTML = '<b></b> has their world open' + (f.players > 1 ? ' (' + f.players + ' playing)' : '');
+         // A friend playing SOLO is listed, not joinable (#89): the join rule (#103) is the
+         // gateway's, and a Solo world admits nobody, so the row says so and offers nothing.
+         const solo = f.mode === 'private';
+         who.innerHTML = solo ? '<b></b> is playing solo' : '<b></b> has their world open' + (f.players > 1 ? ' (' + f.players + ' playing)' : '');
          who.querySelector('b').textContent = f.name;
-         if (ready[0]) { const as = document.createElement('span'); as.className = 'as'; as.textContent = 'join as ' + ready[0].name; who.appendChild(as); }
+         if (ready[0] && !solo) { const as = document.createElement('span'); as.className = 'as'; as.textContent = 'join as ' + ready[0].name; who.appendChild(as); }
          row.appendChild(who);
+         if (solo) { wrap.appendChild(row); return; }
          const b = document.createElement('button'); b.className = 'btn btn-ghost'; b.type = 'button';
          b.textContent = ready[0] ? 'Join' : 'Finish a character first';
          b.disabled = !ready[0];

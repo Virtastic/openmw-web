@@ -1539,7 +1539,13 @@ window.omw = (function(){
              // A themed modal (matching the app) with an explicit "Go back" button, rather than
              // a raw overlay + auto-redirect. The auto-redirect fired the browser's "Leave site?"
              // dialog; the button sets __omwAllowLeave so navigation is clean.
-             function mpErrorModal(title, msg){
+             // The remedy for BAD_CONTENT (#88): the world's mod list changed under this page, and
+             // the page fetches it at load, so a reload is the fix. One is tried automatically,
+             // once per tab (sessionStorage), before the modal ever shows; the modal keeps a
+             // Reload button for the second time round.
+             var BAD_CONTENT_REMEDY = 'The world’s mod list changed since this page loaded — reload to fetch it.';
+             var BAD_CONTENT_RELOADED = 'omw-badcontent-reloaded';
+             function mpErrorModal(title, msg, opts){
                killEngine(); // top-level: stop the WASM render loop + audio so it stops eating CPU
                if (document.getElementById('mp-error-modal') || document.getElementById('omw-fatal')) return;
                var wrap = document.createElement('div'); wrap.id = 'mp-error-modal';
@@ -1566,12 +1572,22 @@ window.omw = (function(){
                // ON PURPOSE: tell the world before going, so a Party world closes to its
                // guests now rather than after the crash grace (see net.lua switchTo).
                btn.onclick = function(){ window.__omwAllowLeave = true; try { sessionStorage.removeItem('omwmp:bootfrag'); sessionStorage.removeItem('omwmp:chatlog'); } catch(e){} try { window.omw.send('leaving', 300); } catch(e){} try { if (window.Module) Module.__omwRunning = false; } catch(e){} setTimeout(function(){ location.href = signedIn ? 'launcher.html#characters' : 'launcher.html'; }, 150); };
+               if (opts && opts.reload) {
+                 var rl = document.createElement('button');
+                 rl.textContent = 'Reload';
+                 rl.style.cssText = btn.style.cssText;
+                 rl.onclick = function(){ window.__omwAllowLeave = true; try { if (window.Module) Module.__omwRunning = false; } catch(e){} location.reload(); };
+                 box.appendChild(rl);
+                 btn.style.marginTop = '10px';
+                 btn.style.background = 'none'; btn.style.color = '#d3a84e';
+               }
                box.appendChild(btn); wrap.appendChild(box); document.body.appendChild(wrap);
              }
              (function(){
                var handled = false;
                setInterval(function(){
                  var s = window.omw.state.state;
+                 if (s === 'Joined') { try { sessionStorage.removeItem(BAD_CONTENT_RELOADED); } catch(e){} }
                  if (s === 'Failed' && !handled){
                    handled = true;
                    // Lua's own human sentence (netfail) first; the code+detail rendering is the fallback.
@@ -1579,7 +1595,23 @@ window.omw = (function(){
                    // join that failed; the title says which.
                    var code = mpErrorCode(window.omw.state.lastError);
                    var ended = code === 'KICKED' || code === 'SUPERSEDED' || code === 'BANNED' || code === 'SHUTDOWN';
-                   mpErrorModal(ended ? 'Disconnected' : 'Can’t join multiplayer', String(window.omw.state.netfail || '') || friendlyMpError(window.omw.state.lastError));
+                   var msg = String(window.omw.state.netfail || '') || friendlyMpError(window.omw.state.lastError);
+                   if (code === 'BAD_CONTENT') {
+                     var reloaded = false;
+                     try { reloaded = sessionStorage.getItem(BAD_CONTENT_RELOADED) === '1'; } catch(e){}
+                     if (!reloaded) {
+                       try { sessionStorage.setItem(BAD_CONTENT_RELOADED, '1'); } catch(e){ reloaded = true; } // no guard, no auto-reload
+                     }
+                     if (!reloaded) {
+                       console.log('[mp] BAD_CONTENT — reloading once to fetch the current mod list');
+                       window.__omwAllowLeave = true; try { if (window.Module) Module.__omwRunning = false; } catch(e){}
+                       location.reload();
+                       return;
+                     }
+                     mpErrorModal('Can’t join multiplayer', msg + ' ' + BAD_CONTENT_REMEDY, { reload: true });
+                     return;
+                   }
+                   mpErrorModal(ended ? 'Disconnected' : 'Can’t join multiplayer', msg);
                  }
                }, 1000);
              })();

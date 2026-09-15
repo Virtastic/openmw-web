@@ -6,7 +6,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ChildProcess } from 'node:child_process';
@@ -618,6 +618,42 @@ test('rolling restart: a world the owner flipped to party restarts with its BOOT
   const r = await sup.rollingRestart({ readyTimeoutMs: 1_000 });
   assert.deepEqual(r.restarted, ['priv-host-1']);
   assert.equal(envs[1]!['OMW_WORLD_MODE'], 'private', 'the replacement boots as the original did, not as the flip');
+});
+
+// #30: a party world revived after a gateway restart comes back as a party -- resumed, not
+// booted as one (#9 keeps the boot mode private).
+test('revive: a world last seen as party is resumed as party, still booted private', async () => {
+  const worldsDir = mkdtempSync(join(tmpdir(), 'omw-worlds-'));
+  const envs: NodeJS.ProcessEnv[] = [];
+  const mk = () => new WorldSupervisor({
+    settings: {
+      worldsDir, serverEntry: '/f', nodeBin: '/n', gatewayPort: 8080, basePort: 45000, maxWorlds: 3,
+      idleReapMs: 60_000, startTimeoutMs: 1_000, restartBackoffMs: 100,
+      sharedDir: mkdtempSync(join(tmpdir(), 'omw-shared-')),
+    },
+    now: () => 1_000_000,
+    spawner: (_id, _args, env) => { envs.push(env); return new FakeChild() as unknown as ChildProcess; },
+    fetchStatus: async () => ({ playerCount: 1, connectedCount: 1, peerCount: 1, maxPlayers: 32, name: 'w', mode: 'party' }),
+  });
+  const first = mk();
+  assert.ok(first.ensure('priv-host-2', 'private', 'acct-host'));
+  assert.equal(envs[0]!['OMW_WORLD_LAST_MODE'], undefined, 'a fresh world has no mode to resume');
+  first.setMode('priv-host-2', 'party'); // the world reported the owner's flip
+  assert.equal(readFileSync(join(worldsDir, 'priv-host-2', '.mode'), 'utf8'), 'party');
+
+  const second = mk(); // the gateway restarted: a new supervisor, the dir on disk
+  const w = second.ensure('priv-host-2', 'private', 'acct-host');
+  assert.ok(w);
+  assert.equal(envs[1]!['OMW_WORLD_MODE'], 'private', 'the process still boots private');
+  assert.equal(envs[1]!['OMW_WORLD_LAST_MODE'], 'party', 'and is told to resume the party');
+  assert.equal(w.mode, 'party', 'the directory answers party before the first poll');
+
+  await second.poll(); // the poll also remembers what it observes
+  first.setMode('priv-host-2', 'private');
+  assert.equal(readFileSync(join(worldsDir, 'priv-host-2', '.mode'), 'utf8'), 'private');
+  const third = mk();
+  third.ensure('priv-host-2', 'private', 'acct-host');
+  assert.equal(envs[2]!['OMW_WORLD_LAST_MODE'], undefined, 'a world last seen solo is not resumed as party');
 });
 
 // #186/#191: SIGUSR1 (the backup cron's "flush now") reaches every world, and shutdown waits

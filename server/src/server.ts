@@ -191,6 +191,13 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     worldMode = 'private';
   }
   const worldModeAtBoot = worldMode;
+  // A REVIVED PARTY (#30). The gateway remembers the last observed mode in the world dir and
+  // hands it over as a resume, never as the boot mode: the chargen gate, the empty-world
+  // revert and the public flag all read worldModeAtBoot (private) as before (#9).
+  if (worldModeAtBoot === 'private' && process.env.OMW_WORLD_LAST_MODE === 'party') {
+    worldMode = 'party';
+    log('info', 'world.mode_resumed', { mode: worldMode });
+  }
 
   // Background writes still in flight. close() drains these BEFORE shutting the stores, so a
   // fire-and-forget write can never land on a closed database — which both throws an unhandled
@@ -527,14 +534,26 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   const closeToGuests = (reason: string): void => {
     for (const conn of [...connections]) sendGuestHome(conn, reason);
   };
-  const hostOf = (accountKey: string): { owner: string; isOwner: boolean; ownerId: number } => ({
-    owner: roster.activeForAccount(worldOwner)?.name ?? '',
-    isOwner: worldOwner !== '' && accountKey === worldOwner,
-    // The owner's connection id, for the sim peer: levelled lists roll against the LEADER's
-    // level (mwmp/puppets.hpp setPartyLevel), and the peer keys its avatar docs by id. 0 when
-    // the owner is not in the world (or the world has none).
-    ownerId: roster.activeForAccount(worldOwner)?.id ?? 0,
-  });
+  // Guests the crash grace sent home while the owner was away (#29): told to the owner ONCE,
+  // on the first WorldMode they receive after coming back, then forgotten.
+  let guestsSentHome: { at: number; names: string[] } | undefined;
+  const hostOf = (accountKey: string): { owner: string; isOwner: boolean; ownerId: number; timeSkip: string; sentHome?: string[] } => {
+    const isOwner = worldOwner !== '' && accountKey === worldOwner;
+    const sentHome = isOwner && guestsSentHome ? guestsSentHome.names : undefined;
+    if (sentHome) guestsSentHome = undefined;
+    return {
+      owner: roster.activeForAccount(worldOwner)?.name ?? '',
+      isOwner,
+      // The owner's connection id, for the sim peer: levelled lists roll against the LEADER's
+      // level (mwmp/puppets.hpp setPartyLevel), and the peer keys its avatar docs by id. 0 when
+      // the owner is not in the world (or the world has none).
+      ownerId: roster.activeForAccount(worldOwner)?.id ?? 0,
+      // [rules] timeSkip as m7.maySkipTime applies it (#262): a guest's client refuses the
+      // Rest before the bed animation instead of after. A world with no owner admits anyone.
+      timeSkip: worldOwner === '' && config.rules.timeSkip !== 'off' ? 'anyone' : config.rules.timeSkip,
+      ...(sentHome ? { sentHome } : {}),
+    };
+  };
   // ONE guest, when the friendship that let them in ends (Social.friendshipEnded). Either
   // side may end it; the guest is the one who goes home, and the owner never moves.
   const closeToGuest = (accountKey: string, reason: string): void => {
@@ -954,6 +973,8 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
         ownerGraceTimer = undefined;
         if (roster.activeForAccount(worldOwner)) return; // the host is back; nothing closes
         log('info', 'world.owner_gone', { world: worldId, owner: worldOwner });
+        const names = roster.inWorld().filter((p) => !p.system && p.accountKey !== worldOwner).map((p) => p.name);
+        if (names.length > 0) guestsSentHome = { at: Date.now(), names };
         worldMode = 'private';
         for (const conn of connections) {
           if (conn.player) conn.player.peer.sendEvent('WorldMode', { mode: 'private', ...hostOf(conn.player.accountKey) });

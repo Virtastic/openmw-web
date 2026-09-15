@@ -28,6 +28,10 @@ const OWNER_FILE = '.owner';
 // The pid of the process last started for this world, so a NEW gateway can reap the children
 // of a dead one. See reapOrphanWorlds.
 const PID_FILE = '.pid';
+// The mode the world was LAST seen in (every flip, every poll that observes one), so a revival
+// after a gateway restart brings a party back as a party (#30). Not the boot mode: the process
+// still boots private (chargen gate, empty-world revert, #9) and is handed this as a resume.
+const MODE_FILE = '.mode';
 // Ceiling on the crash-bookkeeping maps. Far above any plausible number of worlds in flight,
 // so it only ever trims history nobody is going to consult.
 const MAX_TRACKED_WORLDS = 4096;
@@ -275,8 +279,27 @@ export class WorldSupervisor {
     if (w.mode !== mode) {
       log('info', 'world.mode_set', { id, from: w.mode, to: mode });
       w.mode = mode;
+      this.rememberMode(id, mode);
     }
     return true;
+  }
+
+  private rememberMode(id: string, mode: WorldMode): void {
+    try {
+      writeFileSync(join(this.deps.settings.worldsDir, id, MODE_FILE), mode, 'utf8');
+    } catch (err) {
+      log('warn', 'world.mode_write_failed', { id, error: String(err) });
+    }
+  }
+
+  /** The mode the world was last seen in, or undefined when it was never flipped. */
+  private lastModeOnDisk(id: string): WorldMode | undefined {
+    try {
+      const v = readFileSync(join(this.deps.settings.worldsDir, id, MODE_FILE), 'utf8').trim();
+      return v === 'party' || v === 'private' ? v : undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   /** True while the world is draining after SIGTERM: ensure() refuses it, but that refusal is
@@ -373,6 +396,10 @@ export class WorldSupervisor {
         return null;
       }
     }
+    // A party that lost its gateway comes back as a party: the process boots private as
+    // always and RESUMES the remembered flip once up (server.ts OMW_WORLD_LAST_MODE), so the
+    // guests' retry lands in an open world rather than "not_open" until the host flips again.
+    const lastMode = mode === 'private' ? this.lastModeOnDisk(id) : undefined;
     // Tell the world where its gateway is. Without this the world browser is off and no
     // client can ever discover — or switch to — another world.
     const args = [s.serverEntry, '--data', dataDir, '--shared', s.sharedDir, '--port', String(port),
@@ -395,6 +422,7 @@ export class WorldSupervisor {
         // owner only; party = owner or current party members). The directory's listing
         // filter is visibility, never authorization — this is the authorization.
         OMW_WORLD_OWNER: ownerAccount ?? '',
+        ...(lastMode === 'party' ? { OMW_WORLD_LAST_MODE: 'party' } : {}),
       });
     } catch (err) {
       log('error', 'world.spawn_failed', { id, error: String(err) });
@@ -411,7 +439,7 @@ export class WorldSupervisor {
     } catch (err) {
       log('warn', 'world.pid_write_failed', { id, error: String(err) });
     }
-    const world: World = { id, mode, bootMode: mode, port, child, startedAt: this.now(), stopping: false, ownerAccount };
+    const world: World = { id, mode: lastMode ?? mode, bootMode: mode, port, child, startedAt: this.now(), stopping: false, ownerAccount };
     this.worlds.set(id, world);
     log('info', 'world.started', { id, mode, port, pid: child.pid ?? -1 });
 
@@ -467,6 +495,7 @@ export class WorldSupervisor {
         if (st.mode && st.mode !== w.mode) {
           log('info', 'world.mode_observed', { id: w.id, from: w.mode, to: st.mode });
           w.mode = st.mode;
+          this.rememberMode(w.id, st.mode);
         }
         // Normalised HERE so the rest of the supervisor reads a definite number. Absent means a
         // world that predates the field, which runs at least the one peer worldCostMb already

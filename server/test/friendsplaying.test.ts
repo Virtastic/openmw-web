@@ -14,10 +14,10 @@ import { SocialStore } from '../src/core/socialstore';
 import { friendsPlayingRoutes } from '../src/gateway/frontdoor';
 import { tmpDataDir } from './helpers';
 
-test('friends-playing lists only friends with an open, occupied world, and names the world they are in', async (t) => {
+test('friends-playing lists friends in an open or solo occupied world, and names the world they are in', async (t) => {
   const dir = tmpDataDir();
   const accounts = new AccountStore(dir);
-  for (const n of ['Alice', 'Bob', 'Cara', 'Dan']) await accounts.createSso(n);
+  for (const n of ['Alice', 'Bob', 'Cara', 'Dan', 'Eve']) await accounts.createSso(n);
   await accounts.setUsername((await accounts.get('bob'))!, 'BobbyB');
   await accounts.flush();
   const social = new SocialStore(dir);
@@ -25,6 +25,7 @@ test('friends-playing lists only friends with an open, occupied world, and names
   social.addFriend('alice', 'bob', now);
   social.addFriend('alice', 'cara', now);
   social.addFriend('alice', 'dan', now);
+  social.addFriend('alice', 'eve', now);
   social.addBlock('dan', 'alice', now); // Dan blocked Alice: not on her list, party or not
   const sessions = new LockerSessionStore();
   const worlds = [
@@ -32,6 +33,7 @@ test('friends-playing lists only friends with an open, occupied world, and names
     { id: 'priv-bob-now', ownerAccount: 'bob', mode: 'party', up: true, playerCount: 2 },
     { id: 'priv-cara', ownerAccount: 'cara', mode: 'private', up: true, playerCount: 1 },
     { id: 'priv-dan', ownerAccount: 'dan', mode: 'party', up: true, playerCount: 1 },
+    { id: 'priv-eve', ownerAccount: 'eve', mode: 'private', up: true, playerCount: 0 }, // idle: not playing
   ];
   const route = friendsPlayingRoutes(accounts, sessions, social, () => worlds);
   const server: Server = createServer((req, res) => {
@@ -45,8 +47,9 @@ test('friends-playing lists only friends with an open, occupied world, and names
   assert.equal((await fetch(`${base}/auth/friends-playing`)).status, 401, 'signed in only');
   const r = await fetch(`${base}/auth/friends-playing`, { headers: { authorization: `Bearer ${sessions.mint('alice')}` } });
   assert.equal(r.status, 200);
-  const { friends } = (await r.json()) as { friends: { acct: string; name: string; worldId: string; wsPath: string; players: number }[] };
+  const { friends } = (await r.json()) as { friends: { acct: string; name: string; worldId: string; wsPath: string; players: number; mode: string }[] };
   assert.deepEqual(friends, [
-    { acct: 'bob', name: 'BobbyB', worldId: 'priv-bob-now', wsPath: '/w/priv-bob-now', players: 2 },
-  ], 'Bob (in his occupied party world) only: Cara is private, Dan blocked her');
+    { acct: 'bob', name: 'BobbyB', worldId: 'priv-bob-now', wsPath: '/w/priv-bob-now', players: 2, mode: 'party' },
+    { acct: 'cara', name: 'cara', worldId: 'priv-cara', wsPath: '/w/priv-cara', players: 1, mode: 'private' },
+  ], 'Bob (occupied party world) and Cara (playing solo, #89): Eve is idle, Dan blocked her');
 });
