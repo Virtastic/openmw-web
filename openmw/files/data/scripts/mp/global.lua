@@ -1633,7 +1633,15 @@ local function start()
         requestNetActor = function(obj, cellKey) objects.requestSpawn(obj, nil, cellKey, false, true) end,
         ownCellKeyFn = function() return ownCellKeyCache end,
         ownIdFn = function() return net.state == 'Joined' and net.playerId or nil end,
-        actorDeathFn = function(obj) quests.onActorDeath(obj) end,
+        actorDeathFn = function(obj)
+            quests.onActorDeath(obj)
+            -- #110: the peer's engine showed sKilledEssential; the owner's copy never died locally.
+            pcall(function()
+                if types.NPC.objectIsInstance(obj) and types.NPC.record(obj).isEssential then
+                    notice(core.getGMST('sKilledEssential'))
+                end
+            end)
+        end,
         corpseFn = objects.onCorpse, -- #297: the holder's copy of a corpse becomes canonical
         toNet = worldmp.toNet, -- #296: visible NPC magic travels in wire record ids
         toLocal = worldmp.toLocal,

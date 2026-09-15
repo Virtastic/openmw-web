@@ -931,7 +931,9 @@ do
     q:find("if forced then%s+local player = playerObj%(%)%s+if player then pcall%(function%(%) player:sendEvent%('MP_CloseDialogue', {}%) end%) end") ~= nil)
   check('actors.lua hands every MP_ActorDeath to the quest layer',
     ac:find('if obj and deps.actorDeathFn then pcall(deps.actorDeathFn, obj) end', 1, true) ~= nil
-    and g:find('actorDeathFn = function(obj) quests.onActorDeath(obj) end', 1, true) ~= nil)
+    and g:find("actorDeathFn = function%(obj%)%s+quests.onActorDeath%(obj%)") ~= nil)
+  check('#110 an essential NPC death names sKilledEssential on every client, inside pcall',
+    g:find("pcall%(function%(%)%s+if types.NPC.objectIsInstance%(obj%) and types.NPC.record%(obj%).isEssential then%s+notice%(core.getGMST%('sKilledEssential'%)%)") ~= nil)
   check('quests.onActorDeath closes the window on the lock holder and releases the lock',
     q:find("function quests.onActorDeath(obj)", 1, true) ~= nil
     and q:find("lockHeld:isValid%(%) and lockHeld.id == obj.id%) then return end%s+local player = playerObj%(%)%s+if player then pcall%(function%(%) player:sendEvent%('MP_CloseDialogue', {}%) end%) end%s+quests.releaseLock%('dead'%)") ~= nil)

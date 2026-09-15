@@ -307,7 +307,8 @@ namespace MWMechanics
         if (validVictim)
         {
             // Non-enchanted arrows shot at enemies have a chance to turn up in their inventory
-            if (victim != getPlayer() && !appliedEnchantment)
+            // MP #313: a puppet's inventory is the owner's; the local roll would give it a phantom arrow
+            if (victim != getPlayer() && !appliedEnchantment && !MWMP::isPuppet(victim.getCellRef().getRefNum()))
             {
                 static const float fProjectileThrownStoreChance
                     = gmst.find("fProjectileThrownStoreChance")->mValue.getFloat();

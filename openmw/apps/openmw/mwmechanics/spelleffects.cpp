@@ -1355,6 +1355,12 @@ namespace MWMechanics
                 hit.mReflected = (effect.mFlags & ESM::ActiveEffect::Flag_Ignore_Reflect) != 0;
                 MWMP::recordMagicHit(hit);
                 effect.mFlags |= ESM::ActiveEffect::Flag_Applied;
+                // MP #255: the seam returns before the desktop path's playEffects, so the puppet
+                // never showed the hit VFX/sound on the caster's screen. Play them once here.
+                if (!spellParams.hasFlag(ESM::ActiveSpells::Flag_Lua))
+                    playEffects(target, *magicEffect,
+                        spellParams.hasFlag(ESM::ActiveSpells::Flag_Temporary)
+                            || (spellParams.hasFlag(ESM::ActiveSpells::Flag_Equipment) && playNonLooping));
             }
             effect.mTimeLeft -= dt;
             return { MagicApplicationResult::Type::APPLIED, receivedMagicDamage, affectedHealth };

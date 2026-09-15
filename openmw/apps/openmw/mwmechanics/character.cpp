@@ -1160,6 +1160,8 @@ namespace MWMechanics
                 mAnimation->releaseArrow(mAttackStrength);
                 mReadyToHit = false;
             }
+            else if (MWMP::isPuppet(mPtr.getCellRef().getRefNum()))
+                mAnimation->detachArrow(); // MP #137: a puppet whose hit was cancelled drops the glued arrow
         }
         else if (action == "shoot follow attach")
             mAnimation->attachArrow();

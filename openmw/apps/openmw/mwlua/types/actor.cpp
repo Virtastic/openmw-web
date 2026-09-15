@@ -54,6 +54,20 @@ namespace MWLua
             if (oldIt != store.end() && oldIt->getCellRef().getRefId() == recordId)
                 return { oldIt, true }; // already equipped
             itemPtr = store.search(recordId);
+            if (isInventoryStore && !itemPtr.isEmpty())
+            {
+                // MP #237: two rings of one id — prefer a copy not already worn in another slot
+                MWWorld::InventoryStore& inv = static_cast<MWWorld::InventoryStore&>(store);
+                for (MWWorld::ContainerStoreIterator iter = store.begin(); iter != store.end(); ++iter)
+                {
+                    if (iter->getCellRef().getRefId() == recordId && iter->getCellRef().getCount() > 0
+                        && (!inv.isEquipped(*iter) || iter->getCellRef().getCount() > 1))
+                    {
+                        itemPtr = *iter;
+                        break;
+                    }
+                }
+            }
             if (itemPtr.isEmpty() || itemPtr.getCellRef().getCount() == 0)
             {
                 Log(Debug::Warning) << "There is no object with recordId='" << stringId << "' in inventory";
