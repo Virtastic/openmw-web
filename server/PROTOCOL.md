@@ -482,6 +482,7 @@ factions, crime. Sharing is operator-configurable per family (`[sharing]`).
 | `FactionUpdate` | C→S; relayed when `[sharing] factions` | `{factionId=string, rank=number, reputation=number?, expelled=bool?}` |
 | `CrimeUpdate` | C→S; relayed when `[sharing] crime` | `{bounty=number, kind=string?}` — shared vs personal bounty is a server policy flag |
 | `DialogueLock` | C→S | `{ref=RefNum, cellKey=, want=bool}` → `DialogueLockResult {ref, granted=bool, holderId=u16?}` — one player may converse with an NPC at a time; released on close, cell change, or disconnect |
+| `GlobalScriptsUpdate` | C→S | `{started=[scriptId…]?, stopped=[scriptId…]?}` — the running GLOBAL scripts (Sleepers, VampireCheck, MoveMehra…) diffed every few seconds; stored as `scripts` on the campaign doc (`journalTarget`) so a relog keeps them running. `GlobalScriptsSync {running=[…]}` S→C at join: the client starts any it lacks |
 
 Kill counts ride M4's `WorldKillCount`. Applying a received journal/faction/var update MUST
 NOT re-broadcast it (echo guard) — clients seed their diff caches from applied state.
@@ -688,7 +689,7 @@ silently skipped every one of them.
 | `ObjectSpawnRefused` | S→C | `{tempId=number, ok=bool, reason=string}` — M3 drop conservation and placement refusals |
 | `ObjectTakeResult` | S→C | `{opId=number, ok=bool, reason=string?}` — the paired answer to `ObjectTakeRequest`; always sent, so a client never waits |
 | `CellSnapshotReplace` | S→C | `{cellKey=string, placed={…}, deleted={…}}` — the restored cell truth pushed straight after a `WorldCellReset`, so a reset is transparent rather than a kick |
-| `QuestSpawn` | S→C on cell entry | `{recordId=string, questId=string, cellKey=string}` — the operator's quest-repair rules replacing an object the character still needs |
+| `QuestSpawn` | S→C on cell entry, or on a client's actor spawn request | `{recordId=string, questId=string?, cellKey=string, forId=u16?, x=, y=, z=, count=?}` — the operator's quest-repair rules replacing an object the character still needs; or (backlog 214) a client's `ObjectSpawnRequest{actor=true, …}` (a `PlaceAtPC` its engine declined to build) forwarded to the cell's holder with its spot, 10/min per player, refused with `ObjectSpawnRefused{reason='rate'}` past that |
 | `WorldList` | S→C, answering the C→S `WorldList` | `{error=string, myPort=number, worlds={{id, mode, name, host, port, wsPath?, playerCount, maxPlayers, up}, …}}` — mapped field by field: the gateway's record carries `ownerAccount` and it must never reach a client |
 | `WorldCreate` | S→C, answering the C→S `WorldCreate` | `{ok=bool, error=string, world={id, mode, name, host, port, wsPath?}?}` |
 | `WorldMode` | S→C at join and on change | `{mode=string}` — this world's mode, for the where-am-I switcher |

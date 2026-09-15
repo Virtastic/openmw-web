@@ -648,6 +648,23 @@ function actors.noteTravel(obj, dest)
     if body then mp.sendEvent('ActorAI', body) end
 end
 
+-- SCRIPTED TELEPORT (backlog 216). "PositionCell" from a player-gated script (GetDistance
+-- Player, OnActivate, a dialogue result) moved an AI-off puppet on this client; the holder's
+-- real actor never moved -- Dagoth Ur stayed out of the Heart chamber on the peer, Mehra never
+-- reached the Ghostgate for the guest. The engine notes the move (mwmp/puppets.hpp) under the
+-- cell the actor is LEAVING, the one somebody holds; the holder teleports the real one. The
+-- holder itself says nothing: its move is the authoritative one and streams out as a pose.
+function actors.notePosition(obj, cellName, pos)
+    if not (obj and obj:isValid()) or type(pos) ~= 'table' or type(pos.x) ~= 'number' then return end
+    local cellKey = type(pos.cellKey) == 'string' and pos.cellKey ~= '' and pos.cellKey or actors.cellKeyOfObj(obj)
+    if not cellKey or actors.isHolderOf(cellKey) then return end
+    local body = withAddr({
+        cellKey = cellKey, epoch = actors.epochOf(cellKey) or 0,
+        position = { cell = tostring(cellName or ''), x = pos.x, y = pos.y or 0, z = pos.z or 0 },
+    }, obj)
+    if body then mp.sendEvent('ActorAI', body) end
+end
+
 local function aimAt(obj, target, escort)
     if type(escort) == 'table' and type(escort.x) == 'number' then
         pcall(function()
@@ -698,6 +715,13 @@ end
 actors.handlers.MP_ActorAI = function(data)
     local obj = actorOf(data)
     if not obj then return end
+    if type(data.position) == 'table' and type(data.position.x) == 'number' then
+        -- A scripted teleport from a non-holder (notePosition); the server sends it to the
+        -- holder only. An empty cell name is the default exterior, resolved from x,y.
+        local p = data.position
+        pcall(function() obj:teleport(tostring(p.cell or ''), util.vector3(p.x, p.y or 0, p.z or 0)) end)
+        return
+    end
     if type(data.travel) == 'table' and type(data.travel.x) == 'number' then
         -- A scripted destination. On a puppet (AI off) it is state only; on the holder the
         -- actor walks there, which is the point.

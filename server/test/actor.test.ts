@@ -204,11 +204,13 @@ test('actor authority and relay end to end', async (t) => {
     const st = await b.waitEvent('ActorStatsDynamic');
     assert.equal((st.value as { net?: number }).net, netId, 'a net-addressed actor event relays with its net id');
 
-    // A client's "actor" placement is an ordinary item placement: the flag does not survive.
+    // A client's "actor" placement is never placed by the server: it is a spawn REQUEST the
+    // holder fulfils (backlog 214), so no screen builds anything on the client's say-so.
     a.inbox.events.length = 0;
     b.sendEvent('ObjectSpawnRequest', { tempId: 502, recordId: 'gold_001', cellKey: '0,0', x: 1, y: 2, z: 3, rotZ: 0, count: 1, actor: true });
-    const forged = await a.waitEvent('ObjectPlace', (v) => (v as { recordId?: string }).recordId === 'gold_001');
-    assert.equal((forged.value as { actor?: boolean }).actor, undefined, 'a client made every screen build an actor');
+    const asked = await a.waitEvent('QuestSpawn', (v) => (v as { recordId?: string }).recordId === 'gold_001');
+    assert.equal((asked.value as { forId?: number }).forId, bId, 'the holder is asked, for that player');
+    assert.equal(a.inbox.events.filter((e) => e.name === 'ObjectPlace').length, 0, 'a client made every screen build an actor');
   });
 
   await t.test('far player receives no actor traffic', async () => {

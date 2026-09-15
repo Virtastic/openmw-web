@@ -27,8 +27,10 @@
 #include "../mwbase/inputmanager.hpp"
 #include "../mwbase/mechanicsmanager.hpp"
 #include "../mwmechanics/actorutil.hpp"
+#include "../mwbase/scriptmanager.hpp"
 #include "../mwbase/statemanager.hpp"
 #include "../mwbase/windowmanager.hpp"
+#include "../mwscript/globalscripts.hpp"
 #include "../mwgui/mode.hpp"
 #include "../mwbase/world.hpp"
 
@@ -336,6 +338,54 @@ namespace MWMP
             if (!master.isSet())
                 return sol::nil;
             return sol::make_object(state, MWLua::GObject(master));
+        };
+        // What player-gated scripts did on this engine since the last call (puppets.hpp
+        // ScriptNote): an array of {kind='enable'|'spawn'|'position', ref=<GObject>, on=bool,
+        // recordId, count, cellKey, cellName, x, y, z}. Global context: the objects come back
+        // as GObjects, and a far-cell one may not resolve (obj:isValid() false) -- its id and
+        // cellKey still travel, which is all the relay needs.
+        api["takeScriptNotes"] = [](sol::this_state state) {
+            sol::table out(state, sol::create);
+            int i = 1;
+            for (const ScriptNote& n : takeScriptNotes())
+            {
+                sol::table e(state, sol::create);
+                e["kind"] = n.mKind;
+                if (n.mRef.isSet())
+                    e["ref"] = MWLua::GObject(n.mRef);
+                e["on"] = n.mOn;
+                if (!n.mRecordId.empty())
+                    e["recordId"] = n.mRecordId;
+                e["count"] = n.mCount;
+                e["cellKey"] = n.mCellKey;
+                e["cellName"] = n.mCellName;
+                e["x"] = n.mPos[0];
+                e["y"] = n.mPos[1];
+                e["z"] = n.mPos[2];
+                out[i++] = e;
+            }
+            return out;
+        };
+        // Backlog 219: the global scripts running here (Sleepers, VampireCheck, MoveMehra...),
+        // and a way to start one. Vanilla Lua exposes neither: getGlobalScript needs a name and
+        // nothing starts a script. Persisted on the campaign so a relog keeps them running.
+        api["runningGlobalScripts"] = [](sol::this_state state) {
+            sol::table out(state, sol::create);
+            int i = 1;
+            for (const auto& [id, desc] : MWBase::Environment::get().getScriptManager()->getGlobalScripts().getScripts())
+                if (desc->mRunning)
+                    out[i++] = id.serializeText();
+            return out;
+        };
+        api["startGlobalScript"] = [luaManager = context.mLuaManager](std::string_view id) {
+            // stringRefId, not deserializeText: the latter only resolves ids already interned
+            // (see getDeadCount above) and a script this session never ran is exactly that.
+            ESM::RefId script = ESM::RefId::stringRefId(id);
+            // Queued like setDeadCount: script bookkeeping belongs to the main update, not a
+            // Lua call in the middle of it. An unknown record logs and does nothing (addScript).
+            luaManager->addAction(
+                [script] { MWBase::Environment::get().getScriptManager()->getGlobalScripts().addScript(script); },
+                "MPStartGlobalScript");
         };
         api["setLocalSummons"] = [](bool enabled) { setLocalSummons(enabled); };
         // Peer only: the world owner's level, which levelled lists roll against everywhere

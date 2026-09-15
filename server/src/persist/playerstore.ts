@@ -105,6 +105,9 @@ export interface PlayerDoc {
   // Phase 4: character-shadowed mwscript globals — quest progress variables that must NOT
   // travel between players (see quests.ts WORLD_GLOBALS). Restored on join/world-hop.
   globals?: Record<string, number>;
+  // Backlog 219: the campaign's running global scripts (Sleepers, VampireCheck...), started
+  // again at join. Owned by journalTarget like the journal.
+  scripts?: string[];
   factions?: Record<string, { rank: number; reputation?: number; expelled?: boolean }>;
   bounty?: number;
 }

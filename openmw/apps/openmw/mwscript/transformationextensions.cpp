@@ -426,6 +426,15 @@ namespace MWScript
                 }
 
                 MWWorld::Ptr base = ptr;
+                // Multiplayer client (backlog 216): a player-gated script moved an actor the
+                // peer simulates (Dagoth Ur to the Heart, Mehra to the Ghostgate). Here it is
+                // an AI-off puppet; the holder has to make the same move. Noted under the cell
+                // it is LEAVING, which is the one somebody holds.
+                if (!isPlayer && ptr.getClass().isActor() && MWMP::isClient())
+                    MWMP::recordScriptNote({ "position", ptr.getCellRef().getRefNum(), false, {}, 1,
+                        MWMP::cellKeyOf(*ptr.getCell()),
+                        store->isExterior() ? std::string() : std::string(store->getCell()->getNameId()),
+                        { x, y, z } });
                 ptr = world->moveObject(ptr, store, osg::Vec3f(x, y, z));
                 dynamic_cast<MWScript::InterpreterContext&>(runtime.getContext()).updatePtr(base, ptr);
 
@@ -483,6 +492,11 @@ namespace MWScript
                 }
                 else
                 {
+                    if (ptr.getClass().isActor() && MWMP::isClient()) // see OpPositionCell
+                        MWMP::recordScriptNote({ "position", ptr.getCellRef().getRefNum(), false, {}, 1,
+                            MWMP::cellKeyOf(*ptr.getCell()),
+                            ptr.getCell()->isExterior() ? std::string() : std::string(ptr.getCell()->getCell()->getNameId()),
+                            { x, y, z } });
                     ptr = world->moveObject(ptr, osg::Vec3f(x, y, z), true, true);
                 }
                 dynamic_cast<MWScript::InterpreterContext&>(runtime.getContext()).updatePtr(base, ptr);
@@ -620,10 +634,25 @@ namespace MWScript
                 {
                     // create item
                     MWWorld::ManualRef ref(*MWBase::Environment::get().getESMStore(), itemID, 1);
-                    // Multiplayer client: a scripted ACTOR spawn is the peer's to make (it runs
-                    // the same script) and reaches us as a net object; a local one is a statue.
+                    // Multiplayer client: a scripted ACTOR spawn is the holder's to make; a local
+                    // one is a statue. But the holder never runs THIS script (backlog 214: it is
+                    // gated on GetPCSleep / OnActivate / a dialogue result, which only happen
+                    // here), so the request travels: scripts/mp asks the server to have the
+                    // holder spawn it, at vanilla's first-choice spot (safePlaceObject dir 0..3).
                     if (ref.getPtr().getClass().isActor() && !MWMP::localSpawnsEnabled())
+                    {
+                        if (i == 0)
+                        {
+                            const ESM::Position ipos = actor.getRefData().getPosition();
+                            const osg::Quat orientation(ipos.rot[2], osg::Vec3f(0, 0, -1));
+                            const osg::Vec3f axis = direction < 2 ? osg::Vec3f(0, 1, 0) : osg::Vec3f(1, 0, 0);
+                            const float sign = (direction == 0 || direction == 3) ? 1.f : -1.f;
+                            const osg::Vec3f at = ipos.asVec3() + (orientation * axis) * (distance * sign);
+                            MWMP::recordScriptNote({ "spawn", {}, false, itemID.serializeText(), count,
+                                MWMP::cellKeyOf(*actor.getCell()), {}, { at.x(), at.y(), at.z() } });
+                        }
                         continue;
+                    }
                     ref.getPtr().mRef->mData.mPhysicsPostponed = !ref.getPtr().getClass().isActor();
 
                     MWWorld::Ptr ptr = MWBase::Environment::get().getWorld()->safePlaceObject(

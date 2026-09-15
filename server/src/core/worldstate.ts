@@ -112,6 +112,9 @@ function finite(v: LValue | undefined): number | undefined {
 // held it. Everything else keeps the ceiling.
 const MAX_GOLD = 100_000_000;
 const GOLD = 'gold_001';
+const disabledKeys = (doc: CellDoc): string[] => Object.keys(doc.enabled ?? {}).filter((k) => doc.enabled![k] === false);
+const enabledKeys = (doc: CellDoc): string[] => Object.keys(doc.enabled ?? {}).filter((k) => doc.enabled![k] === true);
+
 function itemCount(v: LValue | undefined, id?: string): number | undefined {
   const cap = id === GOLD ? MAX_GOLD : MAX_COUNT;
   return typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= cap ? v : undefined;
@@ -500,6 +503,8 @@ export class WorldState {
   // -- the peer restarts, and a fresh process has never heard who follows whom.
   private readonly followedBy = new Map<string, { ref: ObjRef; cellKey: string; follow: number; charId: string; escort?: Record<string, number> }>();
   private static readonly MAX_FOLLOWERS = 8;
+  private static readonly MAX_ACTOR_SPAWNS_PER_MIN = 10; // a sleeper ambush is one or two
+  private actorSpawnsBy = new Map<number, number[]>(); // playerId -> recent request times (spawn)
   private replayFollows(holderId: number, cellKey: string): void {
     const holder = this.roster.get(holderId);
     if (!holder) return;
@@ -614,6 +619,35 @@ export class WorldState {
       return;
     }
     if (name === 'ActorAI' && this.authority.holderOf(str(body.get('cellKey'), MAX_CELL_KEY) ?? '') !== player.id) {
+      if (body.get('position') !== undefined) {
+        // "THIS NPC IS NOW THERE" (backlog 216): a PositionCell/Position from a player-gated
+        // script (GetDistance Player, OnActivate, a dialogue result) ran on one client, on an
+        // AI-off puppet. Sent to the HOLDER only, who teleports the real actor; everyone else
+        // sees it move through the actor stream. Same admission as travel minus the dialogue
+        // lock (a Heart-chamber script has no conversation), so: a human, near the cell, with
+        // finite in-world coordinates and a bounded destination name.
+        const cellKey = str(body.get('cellKey'), MAX_CELL_KEY);
+        const ref = parseObjRef(body);
+        const p = body.get('position');
+        const pt = p instanceof Map ? p as LTable : undefined;
+        const x = pt ? finite(pt.get('x')) : undefined, y = pt ? finite(pt.get('y')) : undefined, z = pt ? finite(pt.get('z')) : undefined;
+        const cell = pt?.get('cell');
+        if (!cellKey || !ref || x === undefined || y === undefined || z === undefined
+          || Math.abs(x) > MAX_ABS_COORD || Math.abs(y) > MAX_ABS_COORD || Math.abs(z) > MAX_ABS_COORD
+          || (cell !== undefined && (typeof cell !== 'string' || cell.length > MAX_CELL_KEY))) {
+          this.invalid(player, name);
+          return;
+        }
+        if (player.system || !cellsVisible(player.cellKey, cellKey)) {
+          log('warn', 'actor.dropped', { from: player.name, name, cellKey, why: 'position claim from afar' });
+          return;
+        }
+        const holder = this.authority.holderOf(cellKey);
+        const to = holder === undefined ? undefined : this.roster.get(holder);
+        if (!to) return; // nobody simulates it: the client's own move stands
+        to.peer.sendEvent(name, { ...lToJs(body) as Record<string, JsLike> });
+        return;
+      }
       if (body.get('travel') !== undefined) {
         // "THIS NPC NOW WALKS TO X", a dialogue result (AITravel) -- same admission as the
         // combat claim below: the player who was just talking to it, near the cell, finite
@@ -830,6 +864,28 @@ export class WorldState {
     // The holder naming a runtime-spawned actor owns nothing of the kind and is not dropping
     // anything: the ownership ledger does not apply (and would flag the peer's account).
     const actor = body.get('actor') === true && player.system === true;
+    if (body.get('actor') === true && !actor) {
+      // A HUMAN'S SCRIPT WANTS AN ACTOR (backlog 214). PlaceAtPC from a GetPCSleep, OnActivate
+      // or dialogue result runs on the player's client only, whose engine declined to build a
+      // statue and asked instead. Not placed here: the HOLDER of the cell spawns it (its own
+      // naming sweep then registers it as a net actor everyone sees) through the same
+      // QuestSpawn replay the Staada rule used. Rate-capped per player: a modified client
+      // could otherwise fill a cell with dremora one event at a time.
+      const now = Date.now();
+      const recent = (this.actorSpawnsBy.get(player.id) ?? []).filter((t) => now - t < 60_000);
+      if (recent.length >= WorldState.MAX_ACTOR_SPAWNS_PER_MIN) {
+        log('warn', 'object.actor_spawn_refused', { from: player.name, recordId, cellKey, inLastMinute: recent.length });
+        player.peer.sendEvent('ObjectSpawnRefused', { tempId, ok: false, reason: 'rate' });
+        return;
+      }
+      recent.push(now);
+      this.actorSpawnsBy.set(player.id, recent);
+      const holder = this.authority.holderOf(cellKey);
+      const to = (holder === undefined ? undefined : this.roster.get(holder)) ?? player; // no simulator: the asker's own engine
+      to.peer.sendEvent('QuestSpawn', { recordId, cellKey, x, y, z, count, forId: player.id });
+      log('info', 'world.actor_spawn_forwarded', { recordId, cellKey, by: player.name, to: to.name });
+      return;
+    }
     // COUNTED, NOT REFUSED — and that is a measured decision, not caution.
     //
     // Refusing unowned spawns in the shared world was implemented and then backed out: this
@@ -945,7 +1001,13 @@ export class WorldState {
     // and the strider's purse delta goes out one frame after the cell change -- from a cell
     // the player is no longer near. The merchant purse op alone may name the cell just left.
     const fare = name === 'ContainerOpRequest' && body.get('op') === 'gold' && cellKey === player.prevCellKey;
-    if (!player.system && !fare && !cellsVisible(player.cellKey, cellKey)) {
+    // NO REACH GATE FOR ENABLE/DISABLE (backlog 213/218). Scripts toggle FAR cells as a matter
+    // of course -- Startup disables a hundred quest refs across Vvardenfell, a dialogue result
+    // enables Dagoth Gares in a cave the player has never seen -- and the client reports the
+    // OBJECT's cell, not its own. Abuse buys little: an unlock or a delete is loot, a disable
+    // is a hidden statue, and the peer's window still wins over a contrary human write.
+    const farOk = name === 'ObjectEnabled';
+    if (!player.system && !fare && !farOk && !cellsVisible(player.cellKey, cellKey)) {
       log('warn', 'object.out_of_reach', { from: player.name, name, at: player.cellKey ?? null, cellKey });
       return undefined;
     }
@@ -1089,14 +1151,14 @@ export class WorldState {
         return;
       }
     }
+    // BOTH STATES PERSIST (backlog 218). "Enabled is the vanilla default" was true until a
+    // human's Startup disables were persisted (213): now a ref the content files ship ENABLED
+    // may be disabled by one script and re-enabled by a later one (Dagoth Gares, the
+    // stronghold stages), and a stored `true` is what replays that reveal to the next
+    // entrant instead of the disable it undid. A row per touched ref, not per object.
     const map = (doc.enabled ??= {});
-    // Enabled is the vanilla default: record only the DISABLED state, so the doc does not
-    // grow a row for every object a script ever touches.
-    if (on) delete map[ref.key];
-    else {
-      if (cellMapFull(map, ref.key, cellKey, 'enabled', player.name)) return;
-      map[ref.key] = false;
-    }
+    if (cellMapFull(map, ref.key, cellKey, 'enabled', player.name)) return;
+    map[ref.key] = on;
     this.cells.markDirty(cellKey);
     this.relayCell(cellKey, 'ObjectEnabled', { ...objRefToJs(ref), cellKey, enabled: on, byId: player.id });
   }
@@ -1357,9 +1419,10 @@ export class WorldState {
         containers: Object.fromEntries(
           Object.entries(doc.containers).map(([key, c]) => [key, { items: c.items.map((i) => ({ ...i })), stateSeq: c.stateSeq }]),
         ),
-        // Phase 4: refKeys a script disabled. Sent as a list because only disables are
-        // recorded — an absent key means enabled, the vanilla default.
-        disabled: Object.keys(doc.enabled ?? {}),
+        // Phase 4: refKeys a script disabled, and (backlog 218) the ones a script re-enabled
+        // -- an absent key means whatever the content files say.
+        disabled: disabledKeys(doc),
+        enabled: enabledKeys(doc),
         // WHO IS DEAD HERE. ActorDeath was relayed once and stored, and nothing ever read the
         // store back: a friend who entered the cell after the kill (or anyone after a relog)
         // found the smuggler chief standing again -- AI off, unlootable, unkillable.
@@ -1437,7 +1500,8 @@ export class WorldState {
         containers: Object.fromEntries(
           Object.entries(doc.containers).map(([key, c]) => [key, { items: c.items.map((i) => ({ ...i })), stateSeq: c.stateSeq }]),
         ),
-        disabled: Object.keys(doc.enabled ?? {}),
+        disabled: disabledKeys(doc),
+        enabled: enabledKeys(doc),
       });
     }
     log('info', 'world.cell_snapshot_replace', { cellKey, containers: Object.keys(doc.containers).length });

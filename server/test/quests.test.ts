@@ -384,6 +384,37 @@ test('shared quest state survives a restart', async (t) => {
   await c.closed;
 });
 
+// Backlog 219: Sleepers / VampireCheck / MoveMehra are started once and expected to run for
+// the rest of the game; the engine starts every session with none of them. The campaign doc
+// keeps the union of started minus stopped, and hands it back at join.
+test('running global scripts persist on the campaign doc and come back at join', async (t) => {
+  const { server } = await boot(t);
+  const a = await TestClient.connect(server.port);
+  await a.joinAsNew('Alice');
+  await a.waitEvent('PlayerList');
+  a.sendEvent('GlobalScriptsUpdate', { started: ['Sleepers', 'VampireCheck'] });
+  a.sendEvent('GlobalScriptsUpdate', { started: ['MoveMehra'], stopped: ['vampirecheck'] });
+  a.sendEvent('GlobalScriptsUpdate', { started: [] }); // nothing: dropped, not an error
+  await fence(a, a);
+  await server.flush();
+  a.close();
+  await a.closed;
+
+  const again = await TestClient.connect(server.port);
+  t.after(() => again.close());
+  await again.joinExisting('Alice');
+  const sync = (await again.waitEvent('GlobalScriptsSync')).value as { running: string[] };
+  assert.deepEqual([...sync.running].sort(), ['movemehra', 'sleepers']);
+
+  // Standalone: the sender's own doc. Another character has nothing running, so no sync at all.
+  const b = await TestClient.connect(server.port);
+  t.after(() => b.close());
+  await b.joinAsNew('Bob');
+  await b.waitEvent('PlayerList');
+  await new Promise((r) => setTimeout(r, 200));
+  assert.equal(b.inbox.events.filter((e) => e.name === 'GlobalScriptsSync').length, 0);
+});
+
 test('dialogue topics reach the other player, and never bounce back to the sender', async (t) => {
   const dataDir = tmpDataDir();
   const server = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1' });

@@ -647,7 +647,57 @@ handlers.MP_QuestSpawn = function(data)
     if type(data.recordId) ~= 'string' then return end
     core.sendGlobalEvent('mpQuestSpawn', {
         recordId = data.recordId, questId = tostring(data.questId or ''), forId = data.forId,
+        -- Backlog 214: a client's PlaceAtPC, forwarded with its spot; nil for a replay.
+        cellKey = data.cellKey, x = data.x, y = data.y, z = data.z, count = data.count,
     })
+end
+
+-- RUNNING GLOBAL SCRIPTS (backlog 219). Sleepers, VampireCheck, MoveMehra, All_Nerevarine
+-- are started once by a script and expected to run for the rest of the game; this engine
+-- starts every session with none of them, so a relog silently ended the sleeper dreams and
+-- made vampirism unreachable. Diffed every few seconds against the last report and sent as
+-- started/stopped; the campaign doc keeps the union and hands it back at join.
+-- Nil-guarded: an engine baked before mp.runningGlobalScripts keeps the vanilla behaviour.
+local SCRIPTS_INTERVAL = 5.0
+local nextScriptsAt = 0
+local reportedScripts = nil -- name -> true, as last told to the server
+-- Never persisted: the tutorial's scripts stop themselves and would drag a joiner into chargen;
+-- Startup is the engine's own once-per-game entry (main is left alone -- it always runs).
+local function scriptIsCampaign(id)
+    local l = string.lower(id)
+    return l:sub(1, 7) ~= 'chargen' and l ~= 'startup'
+end
+
+local function diffGlobalScripts()
+    if not mp.runningGlobalScripts then return end
+    local ok, list = pcall(mp.runningGlobalScripts)
+    if not (ok and type(list) == 'table') then return end
+    local now = {}
+    for _, id in ipairs(list) do
+        if type(id) == 'string' and scriptIsCampaign(id) then now[string.lower(id)] = true end
+    end
+    local started, stopped = {}, {}
+    for id in pairs(now) do
+        if not (reportedScripts and reportedScripts[id]) then started[#started + 1] = id end
+    end
+    for id in pairs(reportedScripts or {}) do
+        if not now[id] then stopped[#stopped + 1] = id end
+    end
+    reportedScripts = now
+    if #started == 0 and #stopped == 0 then return end
+    mp.sendEvent('GlobalScriptsUpdate', { started = started, stopped = stopped })
+end
+
+handlers.MP_GlobalScriptsSync = function(data)
+    if not mp.startGlobalScript or type(data.running) ~= 'table' then return end
+    local n = 0
+    for _, id in ipairs(data.running) do
+        if type(id) == 'string' and scriptIsCampaign(id) then
+            local ok = pcall(mp.startGlobalScript, id)
+            if ok then n = n + 1 end
+        end
+    end
+    if n > 0 then print('[mp] started ' .. tostring(n) .. ' campaign global scripts') end
 end
 
 handlers.MP_MemberVarUpdate = function(data)
@@ -917,6 +967,10 @@ function quests.tick(now)
         diffCrime()
         diffTopics()
     end
+    if now >= nextScriptsAt then
+        nextScriptsAt = now + SCRIPTS_INTERVAL
+        diffGlobalScripts()
+    end
     tickMemberVars(now)
     if now - lastMirror >= MIRROR_INTERVAL then
         lastMirror = now
@@ -936,6 +990,7 @@ function quests.reset()
     globalsSeeded = false
     factions = {}
     factionsSeeded = false
+    reportedScripts = nil -- the next world hears the full running list again
     bounty = nil
     memberWatch = {}
     memberApplied = {}

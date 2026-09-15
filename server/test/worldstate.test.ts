@@ -313,3 +313,105 @@ test('a cell map at the cap refuses new keys and still updates existing ones', a
   assert.equal(doc.moved['c:1:5']?.x, 7, 'an existing key still updates');
   await store.close();
 });
+
+// Backlog 213/218: Startup and dialogue scripts toggle refs in cells the player has never
+// seen, and the client reports them under the OBJECT's cell. No reach gate for enable/disable;
+// both states persist and replay to whoever enters later.
+test("a human's far-cell disable persists and replays; a later enable persists and replays too", async (t) => {
+  const server = await startServer({ requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1' });
+  t.after(() => server.close());
+  const host = await TestClient.connect(server.port);
+  t.after(() => host.close());
+  await host.joinAsNew('Host');
+  host.sendCellChange('0,0', 0, 0, 0);
+  await host.waitEvent('PlayerCellChange');
+  const gares = { __refnum: { index: 4242, contentFile: 0 } };
+  host.sendEvent('ObjectEnabled', { ref: gares, cellKey: 'ilunibi, soul\'s rattle', enabled: false }); // Startup, far away
+  await new Promise((r) => setTimeout(r, 200));
+
+  const guest = await TestClient.connect(server.port);
+  t.after(() => guest.close());
+  await guest.joinAsNew('Guest');
+  guest.sendCellChange('ilunibi, soul\'s rattle', 0, 0, 0);
+  const first = (await guest.waitEvent('WorldCellState', (v) => (v as { cellKey: string }).cellKey === 'ilunibi, soul\'s rattle')).value as { disabled: string[]; enabled: string[] };
+  assert.deepEqual(first.disabled, ['c:4242:0'], 'the far-cell disable did not persist');
+  assert.deepEqual(first.enabled, []);
+
+  // The host's dialogue later enables him -- still from afar, and it must OVERRIDE the disable.
+  host.sendEvent('ObjectEnabled', { ref: gares, cellKey: 'ilunibi, soul\'s rattle', enabled: true });
+  await guest.waitEvent('ObjectEnabled', (v) => (v as { enabled: boolean }).enabled === true);
+  const late = await TestClient.connect(server.port);
+  t.after(() => late.close());
+  await late.joinAsNew('Late');
+  late.sendCellChange('ilunibi, soul\'s rattle', 0, 0, 0);
+  const second = (await late.waitEvent('WorldCellState', (v) => (v as { cellKey: string }).cellKey === 'ilunibi, soul\'s rattle')).value as { disabled: string[]; enabled: string[] };
+  assert.deepEqual(second.disabled, [], 'the enable did not undo the persisted disable');
+  assert.deepEqual(second.enabled, ['c:4242:0'], 'the enable did not persist as a reveal');
+});
+
+// Backlog 214: a client's PlaceAtPC actor is the HOLDER's to spawn (the client's engine
+// declined to build a statue). Forwarded as QuestSpawn with its spot; rate-capped per player.
+test("a human's actor spawn request is forwarded to the holder; the 11th in a minute is refused", async (t) => {
+  const PEER_PASS = 'peer-secret-1';
+  const server = await startServer({
+    requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
+    configOverride: { server: { password: PEER_PASS } },
+  });
+  t.after(() => server.close());
+  const bob = await TestClient.connect(server.port);
+  t.after(() => bob.close());
+  const { playerId: bobId } = await bob.joinAsNew('Bob');
+  bob.sendCellChange('0,0', 0, 0, 0);
+  await bob.waitEvent('PlayerCellChange');
+  const peer = await TestClient.simPeer(server.port, PEER_PASS);
+  t.after(() => peer.close());
+  peer.sendCellChange('0,0', 0, 0, 0);
+  await peer.waitEvent('ActorAuthorityGrant', (v) => (v as { cellKey: string }).cellKey === '0,0');
+
+  const req ={ tempId: 0, actor: true, recordId: 'dreamer_01', cellKey: '0,0', x: 100, y: 200, z: 0, rotZ: 0, count: 2 };
+  bob.sendEvent('ObjectSpawnRequest', req);
+  const spawn = (await peer.waitEvent('QuestSpawn')).value as Record<string, unknown>;
+  assert.equal(spawn['recordId'], 'dreamer_01');
+  assert.equal(spawn['x'], 100);
+  assert.equal(spawn['count'], 2);
+  assert.equal(spawn['forId'], bobId);
+  assert.equal(bob.inbox.events.filter((e) => e.name === 'ObjectPlace').length, 0, 'the server placed the actor itself');
+
+  for (let i = 0; i < 9; i++) bob.sendEvent('ObjectSpawnRequest', req);
+  bob.sendEvent('ObjectSpawnRequest', req); // the 11th
+  const refused = (await bob.waitEvent('ObjectSpawnRefused')).value as { reason: string };
+  assert.equal(refused.reason, 'rate');
+  await new Promise((r) => setTimeout(r, 200));
+  assert.equal(peer.inbox.events.filter((e) => e.name === 'QuestSpawn').length, 9, 'the cap did not hold'); // 10 forwarded, the first consumed above
+});
+
+// Backlog 216: a PositionCell from a player-gated script moved a puppet on one client; the
+// holder is told and moves the real actor.
+test('ActorAI kind position from a non-holder reaches the holder', async (t) => {
+  const PEER_PASS = 'peer-secret-1';
+  const server = await startServer({
+    requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
+    configOverride: { server: { password: PEER_PASS } },
+  });
+  t.after(() => server.close());
+  const bob = await TestClient.connect(server.port);
+  t.after(() => bob.close());
+  await bob.joinAsNew('Bob');
+  bob.sendCellChange('0,0', 0, 0, 0);
+  await bob.waitEvent('PlayerCellChange');
+  const peer = await TestClient.simPeer(server.port, PEER_PASS);
+  t.after(() => peer.close());
+  peer.sendCellChange('0,0', 0, 0, 0);
+  await peer.waitEvent('ActorAuthorityGrant', (v) => (v as { cellKey: string }).cellKey === '0,0');
+  const dagoth = { __refnum: { index: 777, contentFile: 0 } };
+  bob.sendEvent('ActorAI', { ref: dagoth, cellKey: '0,0', epoch: 0, position: { cell: 'akulakhan\'s chamber', x: 1, y: 2, z: 3 } });
+  const got = (await peer.waitEvent('ActorAI', (v) => (v as { position?: unknown }).position !== undefined)).value as { position: Record<string, unknown> };
+  assert.deepEqual(got.position, { cell: 'akulakhan\'s chamber', x: 1, y: 2, z: 3 });
+  // ...but not from afar.
+  peer.inbox.events.length = 0;
+  bob.sendCellChange('20,20', 0, 0, 0);
+  await bob.waitEvent('PlayerCellChange');
+  bob.sendEvent('ActorAI', { ref: dagoth, cellKey: '0,0', epoch: 0, position: { cell: '', x: 1, y: 2, z: 3 } });
+  await new Promise((r) => setTimeout(r, 200));
+  assert.equal(peer.inbox.events.filter((e) => e.name === 'ActorAI').length, 0, 'a far position claim reached the holder');
+});

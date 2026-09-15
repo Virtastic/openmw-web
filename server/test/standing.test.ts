@@ -175,3 +175,30 @@ test("personal crime: a guest's welcome carries their own bounty, not the host's
   const gw = await guest.joinExisting('Guest', 'hunter22');
   assert.equal((gw['playerRecord'] as Record<string, unknown>)['bounty'], 500, "personal crime seeded the guest with the host's 400");
 });
+
+// Backlog 215: the peer's idle dummy runs the OnDeath scripts (PCRaiseRank after Bolvyn,
+// Trebonius, Eno Hlaalu) and reported a FactionUpdate that landed on the HOST's campaign doc
+// -- a demotion when factions are not shared. A system peer has no standing to write.
+test("a system peer's FactionUpdate does not touch the campaign doc", async (t) => {
+  const dataDir = tmpDataDir();
+  const solo = await startServer({
+    requireGameData: false, dataDir, port: 0, host: '127.0.0.1', worldMode: 'private',
+    configOverride: { login: { allowHarnessAuth: true }, server: { password: 'peer-secret-1' } } as never,
+  });
+  t.after(() => solo.close());
+  const a = await TestClient.connect(solo.port);
+  const { welcome } = await a.joinAsNew('Ranker', 'hunter22');
+  const charId = String(welcome['characterId']);
+  await a.waitEvent('PlayerList');
+  chargen(a, 'Ranker');
+  a.sendEvent('FactionUpdate', { factionId: 'fightersguild', rank: 3 });
+  await solo.flush();
+  const peer = await TestClient.simPeer(solo.port, 'peer-secret-1');
+  peer.sendEvent('FactionUpdate', { factionId: 'fightersguild', rank: 0 }); // the dummy's OnDeath script
+  peer.sendEvent('FactionUpdate', { factionId: 'morag tong', rank: 1 });
+  await new Promise((r) => setTimeout(r, 200));
+  peer.close(); a.close(); await a.closed; await solo.flush(); await solo.close();
+  const factions = readPlayerDoc(dataDir, charId)?.['factions'] as Record<string, unknown>;
+  assert.deepEqual(factions['fightersguild'], { rank: 3 }, "the peer's write demoted the host");
+  assert.equal(factions['morag tong'], undefined, "the peer's write ranked the host");
+});

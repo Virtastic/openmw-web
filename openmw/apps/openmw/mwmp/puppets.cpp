@@ -6,6 +6,10 @@
 #include <map>
 
 #include <components/debug/debuglog.hpp>
+#include <components/misc/strings/lower.hpp>
+
+#include "../mwworld/cell.hpp"
+#include "../mwworld/cellstore.hpp"
 
 #include <unordered_map>
 #include <unordered_set>
@@ -272,6 +276,47 @@ namespace MWMP
     bool localSummonsEnabled()
     {
         return localSummons();
+    }
+
+    bool isClient()
+    {
+        static const bool v = std::getenv("OPENMW_MP_URL") != nullptr && std::getenv("OPENMW_MP_SYSTEM") == nullptr;
+        return v;
+    }
+
+    namespace
+    {
+        std::vector<ScriptNote>& scriptNotes()
+        {
+            static std::vector<ScriptNote> v;
+            return v;
+        }
+    }
+
+    void recordScriptNote(ScriptNote note)
+    {
+        // Singleplayer has nobody to tell and nothing draining the queue. Larger than the other
+        // queues: Startup alone disables ~100 refs before the socket has joined and drained once.
+        constexpr std::size_t sMaxNotes = 2048;
+        static const bool mp = std::getenv("OPENMW_MP_URL") != nullptr;
+        if (!mp || scriptNotes().size() >= sMaxNotes)
+            return;
+        scriptNotes().push_back(std::move(note));
+    }
+
+    std::vector<ScriptNote> takeScriptNotes()
+    {
+        std::vector<ScriptNote> out;
+        out.swap(scriptNotes());
+        return out;
+    }
+
+    std::string cellKeyOf(const MWWorld::CellStore& cell)
+    {
+        const MWWorld::Cell* c = cell.getCell();
+        if (c->isExterior())
+            return std::to_string(c->getGridX()) + "," + std::to_string(c->getGridY());
+        return Misc::StringUtils::lowerCase(c->getNameId());
     }
 
     std::vector<MagicHit> takeMagicHitsFor(ESM::RefNum target)

@@ -97,9 +97,9 @@ export interface CellDoc {
   actorDeaths?: Record<string, { deathNo: number; atH: number }>;
   // M6: per-object MWScript locals, refKey -> {varName: value}.
   memberVars?: Record<string, Record<string, number>>;
-  // Phase 4: refKey -> false for objects a script DISABLED. Enabled is the vanilla
-  // default, so only disables are recorded (see WorldState.enabled).
-  enabled?: Record<string, false>;
+  // Phase 4: refKey -> the enabled state a script last set. A `true` is a scripted reveal
+  // (backlog 218) replayed on entry; an absent key is whatever the content files say.
+  enabled?: Record<string, boolean>;
   // Who follows whom, refKey -> the CHARACTER followed (a session id dies with the process;
   // WorldState.hydrateFollows resolves it back to one). Escort rides along as claimed.
   follows?: Record<string, { charId: string; escort?: Record<string, number> }>;

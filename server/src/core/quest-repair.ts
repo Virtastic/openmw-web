@@ -32,16 +32,11 @@ export interface SpawnRule {
   cooldownSec: number;
 }
 
-// The vanilla cases the community's own TES3MP fix scripts had to special-case. Shipped as
-// defaults so a fresh install behaves correctly; an operator's quests.json replaces them.
-export const DEFAULT_SPAWN_RULES: SpawnRule[] = [
-  {
-    // Azura's quest: Staada spawns once when the shrine is used. A second player standing
-    // in an empty shrine with an active quest entry is the canonical report.
-    questId: 'da_azura', minIndex: 1, maxIndex: 49,
-    cellKey: 'azura\'s coast region', recordId: 'staada', cooldownSec: 900,
-  },
-];
+// Empty since backlog 214: a client-triggered PlaceAtPC (Staada at the shrine, the sleeper
+// ambush, Tashpi's ghost) now travels as an actor ObjectSpawnRequest and the holder spawns it
+// (worldstate.ts spawn), so no hand-written rule per quest is needed. The mechanism stays for
+// an operator's quests.json.
+export const DEFAULT_SPAWN_RULES: SpawnRule[] = [];
 
 // Quests verified to work under the party model. Everything else still PLAYS — it just
 // behaves like TES3MP does today (best-effort shared world) rather than claiming the

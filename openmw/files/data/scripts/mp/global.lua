@@ -1069,6 +1069,23 @@ local function localSummonsTick()
     end
 end
 
+-- WHAT A SCRIPT DID THAT ONLY THIS ENGINE SAW (mwmp/puppets.hpp ScriptNote): a far-cell
+-- Enable/Disable, a PlaceAtPC actor the client declined to build, a PositionCell on a puppet.
+-- Drained only once joined, so a Startup that ran before the socket opened still travels.
+-- Nil-guarded: an engine baked before the hook has no takeScriptNotes and keeps the polls.
+local function scriptNotesTick()
+    if not mp.takeScriptNotes then return end
+    local ok, notes = pcall(mp.takeScriptNotes)
+    if not (ok and notes) then return end
+    for _, n in ipairs(notes) do
+        if n.kind == 'position' then
+            actors.notePosition(n.ref, n.cellName, n)
+        else
+            objects.onScriptNote(n)
+        end
+    end
+end
+
 -- ARREST. A guard that reaches a wanted avatar on the peer cannot open a dialogue nobody is
 -- there to see; the engine records the reach (mwmp/puppets.hpp recordArrest) and this hands
 -- it to the server for the owner's client, which opens the dialogue with ITS copy of the
@@ -2962,19 +2979,39 @@ local eventHandlers = {
     -- second Staada in front of everyone who already killed theirs.
     mpQuestSpawn = function(data)
         if not data.recordId then return end
-        -- On the peer the server names the player it is owed to (forId) and the encounter is
-        -- placed beside THEIR avatar, where it is simulated like any other actor in the cell.
-        local anchor
-        if mp.isSystem and mp.isSystem() then
-            local p = data.forId ~= nil and puppets[data.forId]
-            anchor = (p and p.obj and p.obj:isValid()) and p.obj or nil
+        local cell, pos
+        if type(data.x) == 'number' then
+            -- Backlog 214: a client's script placed an actor at a known spot (PlaceAtPC on a
+            -- GetPCSleep / OnActivate / dialogue result) and its engine declined to build it;
+            -- it lands exactly there, on the engine that simulates the cell (or back on the
+            -- asker's own when nobody does). The holder's naming sweep nets it from there.
+            local key = tostring(data.cellKey or '')
+            local gx, gy = key:match('^(%-?%d+),(%-?%d+)$')
+            local okc, c = pcall(function()
+                if gx then return world.getExteriorCell(tonumber(gx), tonumber(gy)) end
+                return world.getCellByName(key)
+            end)
+            if not (okc and c) then return end
+            cell, pos = c, util.vector3(data.x, data.y or 0, data.z or 0)
         else
-            anchor = playerScript()
+            -- On the peer the server names the player it is owed to (forId) and the encounter
+            -- is placed beside THEIR avatar, where it is simulated like any other actor.
+            local anchor
+            if mp.isSystem and mp.isSystem() then
+                local p = data.forId ~= nil and puppets[data.forId]
+                anchor = (p and p.obj and p.obj:isValid()) and p.obj or nil
+            else
+                anchor = playerScript()
+            end
+            if not anchor then return end
+            cell, pos = anchor.cell, anchor.position + util.vector3(150, 150, 0)
         end
-        if not anchor then return end
+        local n = math.min(math.max(math.floor(tonumber(data.count) or 1), 1), 10)
         local ok, err = pcall(function()
-            local obj = world.createObject(data.recordId)
-            obj:teleport(anchor.cell, anchor.position + util.vector3(150, 150, 0))
+            for _ = 1, n do
+                local obj = world.createObject(data.recordId)
+                obj:teleport(cell, pos)
+            end
         end)
         if ok then
             print('[mp] quest spawn replayed: ' .. tostring(data.recordId))
@@ -3491,6 +3528,7 @@ return {
             if net.state == 'Joined' then
                 local now = core.getRealTime()
                 droppedInboundTick(now)
+                scriptNotesTick() -- backlog 213/214/216: what player-gated scripts did here
                 objects.tick(now)
                 actors.tick(now)
                 quests.tick(now)

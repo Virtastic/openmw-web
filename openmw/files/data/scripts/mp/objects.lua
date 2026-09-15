@@ -1061,14 +1061,21 @@ handlers.MP_WorldCellState = function(data)
         local obj = resolveRefKey(refKey)
         if obj then setContainerContents(obj, cont.items or {}) end
     end
-    -- Phase 4: refs a script disabled. Only disables are recorded server-side (enabled is
-    -- the vanilla default), so this list is authoritative for "hidden", and everything
-    -- absent from it keeps whatever the content files say.
+    -- Phase 4: refs a script disabled, and (backlog 218) refs a script re-enabled after a
+    -- persisted disable -- a reveal the content files do not know about. Everything absent
+    -- from both keeps whatever the content files say.
     for _, refKey in ipairs(data.disabled or {}) do
         local obj = resolveRefKey(refKey)
         if obj and obj:isValid() then
             enableWatch[obj.id] = false
             pcall(function() obj:setEnabled(false) end)
+        end
+    end
+    for _, refKey in ipairs(data.enabled or {}) do
+        local obj = resolveRefKey(refKey)
+        if obj and obj:isValid() then
+            enableWatch[obj.id] = true
+            pcall(function() obj:setEnabled(true) end)
         end
     end
     -- M6 per-object script locals: the same apply path as a live MemberVarUpdate (quests.lua),
@@ -1095,12 +1102,39 @@ end
 
 objects.handlers = handlers
 
+-- ---------------------------------------------------------------- script notes
+
+-- WHAT A SCRIPT DID THAT THE OWN-CELL POLL CANNOT SEE (mp.takeScriptNotes, backlog 213/214/218).
+-- The engine records every Enable/Disable at its one choke point (World::enable), so a Startup
+-- or dialogue script toggling a ref in a cell the player has never visited is reported under
+-- THE OBJECT's cell -- the object itself may not even resolve here (no cell loaded), and the
+-- relay needs only its id and that key. And a PlaceAtPC actor the client declined to build
+-- (localSpawns off) is asked of the server, which has the holder spawn it (mpQuestSpawn).
+function objects.onScriptNote(n)
+    if n.kind == 'enable' then
+        local obj = n.ref
+        if not obj or type(n.cellKey) ~= 'string' or n.cellKey == '' then return end
+        local on = n.on == true
+        -- enableWatch is the echo mute: a network apply (MP_ObjectEnabled) writes the value
+        -- before touching the object, so its own World::enable note reads as already known.
+        if enableWatch[obj.id] == on then return end
+        enableWatch[obj.id] = on
+        sendAddressed('ObjectEnabled', obj, { enabled = on, cellKey = n.cellKey })
+    elseif n.kind == 'spawn' then
+        if type(n.recordId) ~= 'string' or type(n.cellKey) ~= 'string' or isChargenCell(n.cellKey) then return end
+        mp.sendEvent('ObjectSpawnRequest', {
+            tempId = 0, actor = true, recordId = n.recordId, cellKey = n.cellKey,
+            x = n.x, y = n.y, z = n.z, rotZ = 0, count = math.max(1, math.floor(tonumber(n.count) or 1)),
+        })
+    end
+end
+
 -- ---------------------------------------------------------------- tick
 
 function objects.tick(now)
     -- Phase 4: watch the player's cell for scripted enable/disable. Cheap (a boolean read
-    -- per object at 1 Hz) and only for the cell we are standing in, which is the only one
-    -- whose scripts are running for us anyway.
+    -- per object at 1 Hz) and only for the cell we are standing in. The fallback behind
+    -- onScriptNote above, for an engine baked before the choke-point hook existed.
     if now >= nextEnablePoll then
         nextEnablePoll = now + ENABLE_POLL
         local player = deps.playerFn()

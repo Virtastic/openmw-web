@@ -295,6 +295,22 @@ do
   check('global.lua forwards MP_WorldTimeRefused',
     g:find('MP_WorldTimeRefused', 1, true) ~= nil,
     'a refused Rest is silent again')
+  -- Backlog 213/214/216/218: the engine's script notes are drained once joined and reach
+  -- the three consumers; the object's OWN cell key travels; a scripted teleport lands on
+  -- the holder; a persisted re-enable is applied at cell entry.
+  local ob = io.open('./openmw/files/data/scripts/mp/objects.lua'):read('*a')
+  local ac = io.open('./openmw/files/data/scripts/mp/actors.lua'):read('*a')
+  check('global.lua drains mp.takeScriptNotes inside the Joined tick',
+    g:find("if net.state == 'Joined' then.-scriptNotesTick%(%)") ~= nil and g:find('pcall(mp.takeScriptNotes)', 1, true) ~= nil)
+  check("objects.onScriptNote sends ObjectEnabled under the OBJECT's cell key",
+    ob:find("sendAddressed('ObjectEnabled', obj, { enabled = on, cellKey = n.cellKey })", 1, true) ~= nil)
+  check('objects.onScriptNote asks the server for a scripted actor spawn',
+    ob:find("mp.sendEvent%('ObjectSpawnRequest', {%s*tempId = 0, actor = true") ~= nil)
+  check('WorldCellState applies persisted re-enables', ob:find('for _, refKey in ipairs(data.enabled or {}) do', 1, true) ~= nil)
+  check('actors.notePosition rides ActorAI and the holder teleports on it',
+    ac:find('position = { cell = tostring(cellName or ', 1, true) ~= nil and ac:find("obj:teleport(tostring(p.cell or ''), util.vector3(p.x", 1, true) ~= nil)
+  check('mpQuestSpawn places a forwarded PlaceAtPC at its spot',
+    g:find("if type(data.x) == 'number' then", 1, true) ~= nil and g:find('world.getCellByName(key)', 1, true) ~= nil)
   -- EVERY SCRIPT MUST PARSE. A script with a syntax error is silently not attached by the
   -- engine ("Can't start ... avatar.lua: '}' expected"), and the body it belongs to just does
   -- nothing -- which read as a gameplay bug for an hour. The runner's Lua is 5.1 and the
@@ -774,6 +790,39 @@ do
   check('the re-run activation does not shorten the conversation watch back to 6 s',
     q:find('if lockHeld and lockHeld.id == object.id and memberWatch[object.id] then return end', 1, true) ~= nil)
 end
+-- ============================================================ quests.lua: running global scripts (219)
+print('quests.lua -- running global scripts are diffed, chargen never travels, the sync starts what is missing')
+fresh()
+package.loaded['scripts.mp.quests'] = nil -- fresh() keeps it; this needs a module bound to THIS stub
+env = stubs.install({})
+local running = { 'Sleepers', 'CharGenBed', 'Startup' }
+env.mp.runningGlobalScripts = function() return running end
+local startedIds = {}
+env.mp.startGlobalScript = function(id) startedIds[#startedIds + 1] = id end
+quests = require('scripts.mp.quests')
+quests.init({ playerFn = function() return nil end })
+local function scriptUpdates(calls)
+  local out = {}
+  for _, c in ipairs(calls.events) do if c.name == 'GlobalScriptsUpdate' then out[#out + 1] = c.body end end
+  return out
+end
+quests.tick(0)
+local ups = scriptUpdates(env.calls)
+check('the first poll reports the full running list as started', #ups == 1 and #ups[1].started == 1 and ups[1].started[1] == 'sleepers',
+  'a script started before the socket opened (Startup) would otherwise never be persisted')
+check('chargen and startup scripts never travel', #ups == 1 and #ups[1].stopped == 0)
+running = { 'Sleepers', 'VampireCheck' }
+quests.tick(5)
+ups = scriptUpdates(env.calls)
+check('a newly started script is sent as started, nothing else', #ups == 2 and #ups[2].started == 1 and ups[2].started[1] == 'vampirecheck' and #ups[2].stopped == 0)
+running = { 'VampireCheck' }
+quests.tick(10)
+ups = scriptUpdates(env.calls)
+check('a script that ended is sent as stopped', #ups == 3 and ups[3].stopped[1] == 'sleepers' and #ups[3].started == 0)
+quests.tick(15)
+check('no change, no event', #scriptUpdates(env.calls) == 3)
+quests.handlers.MP_GlobalScriptsSync({ running = { 'MoveMehra', 'chargenstate' } })
+check('the join sync starts the campaign scripts and skips chargen ones', #startedIds == 1 and startedIds[1] == 'MoveMehra')
 
 -- ============================================================ every mp script: declaration order
 -- A `handlers.X = function ... end` placed ABOVE `local handlers = {}` does not assign into that

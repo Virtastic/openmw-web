@@ -86,7 +86,10 @@ export const QUEST_EVENTS = new Set([
   'CrimeUpdate',
   'DialogueLock',
   'TopicsLearned',
+  'GlobalScriptsUpdate',
 ]);
+// A campaign's running global scripts: vanilla plus the expansions start well under a hundred.
+const MAX_SCRIPTS = 256;
 
 export interface QuestCtx {
   roster: Roster;
@@ -175,8 +178,51 @@ export class Quests {
       case 'CrimeUpdate': this.crime(player, body); break;
       case 'TopicsLearned': this.topics(player, body); break;
       case 'DialogueLock': this.dialogueLock(player, body); break;
+      case 'GlobalScriptsUpdate': this.scripts(player, body); break;
     }
     return true;
+  }
+
+  // ---------------------------------------------------------------- global scripts
+
+  // RUNNING GLOBAL SCRIPTS ARE CAMPAIGN STATE (backlog 219). Sleepers, VampireCheck and
+  // MoveMehra are started once by a script and expected to run for the rest of the game; the
+  // engine here starts every session with nothing running, so a relog silently ended them.
+  // A diff, not a list: two engines (the host and the peer) each report what they run, and
+  // a full list from one would erase what the other started. Stopped is honoured too --
+  // scripts end themselves (StopScript) and a stale entry would restart them every join.
+  private scripts(player: Player, body: LTable): void {
+    const ids = (v: LValue | undefined): string[] | undefined => {
+      if (v === undefined) return [];
+      if (!(v instanceof Map) || v.size > MAX_SCRIPTS) return undefined;
+      const out: string[] = [];
+      for (const [, id] of v) {
+        const s = str(id);
+        if (!s) return undefined;
+        out.push(s.toLowerCase());
+      }
+      return out;
+    };
+    const started = ids(body.get('started')), stopped = ids(body.get('stopped'));
+    if (!started || !stopped || (started.length === 0 && stopped.length === 0)) {
+      this.drop(player, 'GlobalScriptsUpdate', 'invalid shape');
+      return;
+    }
+    const target = this.ctx.journalTarget(player);
+    if (target === undefined) return; // the shared world persists no campaign
+    this.ctx.players.update(target, (doc) => {
+      const set = new Set(doc.scripts ?? []);
+      for (const s of stopped) set.delete(s);
+      for (const s of started) set.add(s);
+      doc.scripts = [...set].slice(0, MAX_SCRIPTS);
+    });
+  }
+
+  sendScriptsSync(player: Player): void {
+    const source = this.ctx.journalTarget(player);
+    const running = source === undefined ? [] : (this.ctx.players.getCached(source)?.scripts ?? []);
+    if (running.length === 0) return;
+    player.peer.sendEvent('GlobalScriptsSync', { running: [...running] });
   }
 
   // ---------------------------------------------------------------- journal
@@ -516,6 +562,8 @@ export class Quests {
   // --------------------------------------------------------- factions/crime
 
   private faction(player: Player, body: LTable): void {
+    // The peer's idle dummy is nobody's character: its PCRaiseRank/PCExpell from OnDeath scripts (backlog 215) must not touch the campaign.
+    if (player.system) return;
     const factionId = str(body.get('factionId'));
     const rank = finite(body.get('rank'));
     const reputation = body.get('reputation') === undefined ? undefined : finite(body.get('reputation'));

@@ -1840,6 +1840,7 @@ export class Connection implements Peer {
     syncStateOnJoin(this.ctx.stateCtx, this.player); // M2 late-joiner appearance/equipment sync
     this.ctx.quests.sendJournalSync(this.player); // M6 full journal state at join
     this.ctx.quests.sendGlobalSync(this.player); // Phase 4 character-shadowed quest globals
+    this.ctx.quests.sendScriptsSync(this.player); // backlog 219: the campaign's running global scripts
     this.ctx.social.onJoin(this.player); // Phase C FriendList + presence to friends
     // M8 resume completeness: a rejoin-in-place gets everything a fresh join gets
     // (PlayerList, M2 appearance/equipment/stats, JournalSync, WorldTime, weather,

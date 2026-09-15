@@ -7,6 +7,11 @@
 
 #include <components/esm3/refnum.hpp>
 
+namespace MWWorld
+{
+    class CellStore;
+}
+
 // WHO OWNS AN ACTOR'S DAMAGE, asked synchronously from C++.
 //
 // In multiplayer an actor a remote peer simulates is a PUPPET here: its position and stats are
@@ -148,6 +153,34 @@ namespace MWMP
      *  avatar. Gate the local decrement on this; the sound, the knockdown and the hit
      *  overlay stay, they are what the player feels. */
     inline bool peerRulesBody() { return !localSummonsEnabled(); }
+
+    /** A multiplayer CLIENT (a browser engine with a session URL), as opposed to the sim peer
+     *  (OPENMW_MP_SYSTEM) or singleplayer (no URL). Read once: the environment never changes. */
+    bool isClient();
+
+    /** A SCRIPT DID SOMETHING ONLY THIS ENGINE SAW (backlog 213/214/216). Player-gated mwscripts
+     *  -- dialogue results, OnActivate, GetPCSleep, Startup -- run on the client that triggered
+     *  them and nowhere else: an Enable/Disable of a ref in a far cell, a PlaceAtPC actor the
+     *  client itself declined to build (localSpawnsEnabled), a PositionCell on an AI-off puppet.
+     *  Recorded at the choke points, drained by scripts/mp (mp.takeScriptNotes) and relayed to
+     *  whoever simulates it. Same shape as the crime/arrest queues: C++ records, Lua polls,
+     *  the queue is bounded. */
+    struct ScriptNote
+    {
+        std::string mKind; // enable | spawn | position
+        ESM::RefNum mRef; // enable, position: the object
+        bool mOn = false; // enable
+        std::string mRecordId; // spawn: the actor record
+        int mCount = 1; // spawn
+        std::string mCellKey; // the OBJECT's cell (before a move), in the wire's key form
+        std::string mCellName; // position: the destination interior's name, "" for an exterior
+        float mPos[3] = { 0.f, 0.f, 0.f }; // spawn, position
+    };
+    void recordScriptNote(ScriptNote note);
+    std::vector<ScriptNote> takeScriptNotes();
+    /** The wire's cell key (scripts/mp cellKeyOfObj): "x,y" for an exterior, the lower-cased
+     *  name otherwise. */
+    std::string cellKeyOf(const MWWorld::CellStore& cell);
 }
 
 #endif

@@ -92,6 +92,8 @@
 
 #include "../mwclass/door.hpp"
 
+#include "../mwmp/puppets.hpp"
+
 #include "../mwphysics/actor.hpp"
 #include "../mwphysics/collisiontype.hpp"
 #include "../mwphysics/object.hpp"
@@ -787,6 +789,10 @@ namespace MWWorld
         if (!reference.getRefData().isEnabled())
         {
             reference.getRefData().enable();
+            // Multiplayer (backlog 213/218): the one choke every scripted Enable passes through,
+            // whichever cell the ref is in. scripts/mp relays it under the OBJECT's cell.
+            MWMP::recordScriptNote({ "enable", reference.getCellRef().getRefNum(), true, {}, 1,
+                MWMP::cellKeyOf(*reference.getCell()) });
 
             if (mWorldScene->getActiveCells().find(reference.getCell()) != mWorldScene->getActiveCells().end()
                 && reference.getCellRef().getCount())
@@ -832,6 +838,8 @@ namespace MWWorld
             throw std::runtime_error("can not disable player object");
 
         reference.getRefData().disable();
+        MWMP::recordScriptNote({ "enable", reference.getCellRef().getRefNum(), false, {}, 1,
+            MWMP::cellKeyOf(*reference.getCell()) }); // see enable()
 
         if (reference.getCellRef().getRefNum().hasContentFile())
         {
