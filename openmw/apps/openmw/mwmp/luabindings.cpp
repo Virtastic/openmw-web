@@ -309,11 +309,16 @@ namespace MWMP
         api["canRest"] = []() { return MWBase::Environment::get().getWorld()->canRest(); };
         // HARNESS: the engine's own drowning inputs for the player (s149): is the body
         // submerged by the rule updateDrowning uses, how much breath is left, god mode.
-        api["drownState"] = [](sol::this_state ts) {
+        api["drownState"] = [](sol::this_state ts, sol::optional<sol::object> who) {
             sol::state_view lua(ts);
             sol::table t = lua.create_table();
             MWBase::World* world = MWBase::Environment::get().getWorld();
-            const MWWorld::Ptr player = world->getPlayerPtr();
+            // The player by default; any NPC when asked (the peer probing an avatar).
+            MWWorld::Ptr player = world->getPlayerPtr();
+            if (who && who->is<MWLua::Object>())
+                player = who->as<MWLua::Object>().ptr();
+            if (player.isEmpty() || !player.getClass().isNpc())
+                return t;
             t["submerged"] = world->isSubmerged(player);
             t["swimming"] = world->isSwimming(player);
             t["breath"] = player.getClass().getNpcStats(player).getTimeToStartDrowning();

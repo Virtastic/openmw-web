@@ -117,3 +117,77 @@ test('a guest leaving closes nothing', async (t) => {
   ]);
   assert.equal(got, 'open', 'a guest leaving closed the host out of their own world');
 });
+
+// A HOST ALONE WHO BLIPS KEEPS PARTY. Both cleanup callbacks fired on the same disconnect:
+// the grace was armed and, one line later, the world-empty revert put the mode back to
+// Solo -- so a host who reloaded before their friend arrived came back to Solo with no
+// notice, and the friend's Join answered "this world is private". The grace owns the revert.
+test('a host alone who reloads inside the grace comes back to a Party world', async (t) => {
+  const dataDir = tmpDataDir();
+  const social = new SocialStore(dataDir);
+  social.addFriend('host', 'guest', Date.now());
+  social.close();
+  const server = await startServer({
+    requireGameData: false, dataDir, port: 0, host: '127.0.0.1',
+    worldMode: 'party', worldOwner: 'host', ownerGraceMs: 900,
+    configOverride: { login: { allowHarnessAuth: true } } as never,
+  });
+  t.after(() => server.close());
+  let owner = await TestClient.connect(server.port);
+  await owner.joinAsNew('Host', 'hunter22');
+  await owner.waitEvent('PlayerList');
+  owner.close();
+  await owner.closed; // alone: the world is now EMPTY, inside the grace
+
+  owner = await TestClient.connect(server.port);
+  await owner.joinExisting('Host');
+  const mode = (await owner.waitEvent('WorldMode')).value as { mode?: string };
+  assert.equal(mode.mode, 'party', 'the host came back to a Solo world');
+  // ...and the friend can still come in.
+  const guest = await TestClient.connect(server.port);
+  t.after(() => { owner.close(); guest.close(); });
+  await guest.joinAsNew('Guest', 'hunter22');
+  await guest.waitEvent('PlayerList');
+});
+
+// A DELIBERATE EXIT IS NOT A CRASH. Exit, a character switch, "join a friend": the client
+// says PlayerLeaving and the world closes to guests now, not ninety seconds later -- and in
+// the meantime nobody new is admitted into a world with no host in it.
+test('a host who leaves on purpose closes the world at once; a hostless world admits nobody', async (t) => {
+  const dataDir = tmpDataDir();
+  const social = new SocialStore(dataDir);
+  social.addFriend('host', 'guest', Date.now());
+  social.addFriend('host', 'late', Date.now());
+  social.close();
+  const server = await startServer({
+    requireGameData: false, dataDir, port: 0, host: '127.0.0.1',
+    worldMode: 'party', worldOwner: 'host', ownerGraceMs: 60_000,
+    configOverride: { login: { allowHarnessAuth: true } } as never,
+  });
+  t.after(() => server.close());
+  const owner = await TestClient.connect(server.port);
+  await owner.joinAsNew('Host', 'hunter22');
+  await owner.waitEvent('PlayerList');
+  const guest = await TestClient.connect(server.port);
+  t.after(() => guest.close());
+  await guest.joinAsNew('Guest', 'hunter22');
+  await guest.waitEvent('PlayerList');
+
+  // First, a crash: the host drops without a word. The grace runs (60 s); during it a
+  // newcomer must NOT be admitted into a world with nobody to visit.
+  owner.close();
+  await owner.closed;
+  const late = await TestClient.connect(server.port);
+  late.hello();
+  await late.waitJson('SessionHelloOk');
+  late.login('Late', 'hunter22');
+  await late.waitDisconnect('AUTH_FAILED');
+  // The host comes back inside the grace, then leaves ON PURPOSE: closed at once.
+  const back = await TestClient.connect(server.port);
+  await back.joinExisting('Host');
+  await back.waitEvent('PlayerList');
+  back.sendEvent('PlayerLeaving', {});
+  const closed = await guest.waitEvent('WorldClosed', () => true, 3000);
+  assert.equal((closed.value as { reason?: string }).reason, 'owner_left', 'a deliberate exit must close the world now, not after the grace');
+  back.close();
+});

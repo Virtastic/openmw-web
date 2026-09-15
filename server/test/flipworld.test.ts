@@ -257,8 +257,13 @@ test('the host sends one guest home without blocking them; a guest cannot kick; 
   await guest.waitDisconnect('KICKED');
   assert.equal(pal.inbox.events.filter((e) => e.name === 'WorldClosed').length, 0, 'the other guest stays');
 
-  // Not a block: still friends, and the door is still open, so they can walk back in.
+  // Not a block: still friends. But "send home" STICKS for a while -- without that the guest
+  // was back beside the host a minute later from the launcher's "Friends playing now", and
+  // the host's only real tool was Block, which also ends the friendship.
+  assert.equal(new SocialStore(shared).areFriends('host', 'guest'), true, 'a kick must not end the friendship');
   const back = await TestClient.connect(world.port);
-  await back.joinExisting('Guest');
-  back.close();
+  back.hello();
+  await back.waitJson('SessionHelloOk');
+  back.login('Guest', 'hunter22');
+  await back.waitDisconnect('AUTH_FAILED');
 });

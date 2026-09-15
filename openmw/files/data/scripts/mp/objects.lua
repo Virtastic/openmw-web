@@ -284,9 +284,15 @@ local function setContainerContents(obj, items)
     if equipped and next(equipped) then
         equipPending[obj.id] = { obj = obj, slots = equipped, until_ = core.getRealTime() + EQUIP_RESTORE_WINDOW }
     end
-    -- Never re-diff a network apply as a local op.
+    -- Never re-diff a network apply as a local op -- and never against a HALF-APPLIED one.
+    -- item:remove() empties the store now, but createObject+moveInto lands on the next
+    -- delayed-actions pass, so a snapshot taken here is empty (chest) or the pre-canonical
+    -- stock (a live actor, where the non-live read returned nil and the old baseline stood).
+    -- Either way the next poll reported the difference as OUR put/take: loot doubled on every
+    -- second opener, and a friend's purchase deleted a matching item from our own pack. The
+    -- baseline is taken on the next poll instead, from the store as it really is.
     local watch = containerWatch[obj.id]
-    if watch then watch.last = snapshotContainer(obj) or watch.last end
+    if watch then watch.last = nil; watch.rebase = true; watch.nextPoll = core.getRealTime() + CONTAINER_POLL end
 end
 
 local function applyContainerDelta(obj, itemId, dn)
@@ -308,7 +314,7 @@ local function applyContainerDelta(obj, itemId, dn)
         end
     end)
     local watch = containerWatch[obj.id]
-    if watch then watch.last = snapshotContainer(obj) or watch.last end
+    if watch then watch.last = nil; watch.rebase = true; watch.nextPoll = core.getRealTime() + CONTAINER_POLL end
 end
 
 -- Diff a watched container against its last snapshot and report every change. Extracted so the
@@ -317,6 +323,13 @@ local function diffContainer(obj, watch)
     local current = snapshotContainer(obj, watch.live)
     if not current then
         dropOut('ContainerOpRequest', 'contents-unreadable', tostring(obj.recordId))
+        return
+    end
+    if watch.rebase or watch.last == nil then
+        -- The first read after a network apply: the store as it really is, now that the
+        -- deferred rewrite has landed. Nothing to report.
+        watch.rebase = nil
+        watch.last = current
         return
     end
     local seen = {}
@@ -793,6 +806,12 @@ local function applyMerchantGold(obj, gold)
     if not (obj and obj:isValid()) or type(gold) ~= 'number' then return end
     if not types.Actor.objectIsInstance(obj) then return end
     pcall(function() types.Actor.setBarterGold(obj, math.max(0, math.floor(gold))) end)
+    -- The purse delta we report on close is (now - baseline). The baseline was read from the
+    -- LOCAL purse before the canonical figure arrived, so closing a shop without trading
+    -- after somebody else had sent the server's delta of (canonical - local): every second
+    -- trader left the merchant broke.
+    local watch = containerWatch[obj.id]
+    if watch and watch.gold ~= nil then watch.gold = math.max(0, math.floor(gold)) end
 end
 
 handlers.MP_ContainerState = function(data)
@@ -906,6 +925,8 @@ handlers.MP_WorldCellState = function(data)
     for _, place in ipairs(data.placed or {}) do
         handlers.MP_ObjectPlace(place)
     end
+    -- The dead stay dead for a late arrival (see actors.noteCellDeaths).
+    if deps.cellDeathsFn and data.deaths and #data.deaths > 0 then deps.cellDeathsFn(data.cellKey, data.deaths) end
     for _, refKey in ipairs(data.deleted or {}) do
         local obj = resolveRefKey(refKey)
         if obj and obj:isValid() and not recentPickups[obj.id] then
@@ -1036,10 +1057,20 @@ function objects.tick(now)
             doorPending[id] = nil
             local obj = pending.obj
             if obj:isValid() then
-                -- Report the state the door is HEADING to (isOpen is false mid-swing, so
-                -- use "not fully closed" as the intent).
-                local open = not types.Door.isClosed(obj)
-                sendAddressed('DoorState', obj, { open = open })
+                -- ONCE THE SWING IS OVER. isClosed is only true in the Idle state, and a
+                -- closing door at 90 deg/s is still Closing 0.4 s after the touch -- so every
+                -- close was reported as "open", nobody else ever saw a door shut, and the
+                -- closer found it open again on their next visit. Wait for Idle (bounded).
+                local okS, st = pcall(types.Door.getDoorState, obj)
+                local idle = not okS or st == nil or st == types.Door.STATE.Idle
+                if not idle and (pending.tries or 0) < 8 then
+                    pending.tries = (pending.tries or 0) + 1
+                    pending.at = now + 0.3
+                    doorPending[id] = pending
+                else
+                    local open = not types.Door.isClosed(obj)
+                    sendAddressed('DoorState', obj, { open = open })
+                end
             end
         end
     end

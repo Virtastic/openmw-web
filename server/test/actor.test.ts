@@ -283,9 +283,14 @@ test('actor authority and relay end to end', async (t) => {
     await d.waitEvent('PlayerCellChange');
     const grant = await d.waitEvent('ActorAuthorityGrant');
     const ep = (grant.value as { epoch: number }).epoch;
+    // THE TALLY IS REPLAYED AT JOIN: a fresh engine's GetDeadCount must not read 0 for a
+    // record the world has already seen die (a "kill X and report back" quest completed in
+    // an earlier session).
+    const replayed = await d.waitEvent('WorldKillCount', (v) => (v as { refId?: string }).refId === 'cliffracer');
+    assert.deepEqual(replayed.value, { refId: 'cliffracer', count: 2 }, 'the persisted tally was not replayed at join');
     // A new kill on the same recordId must continue from the persisted count (2 -> 3).
     d.sendEvent('ActorDeath', { cellKey: '7,7', epoch: ep, ref: { __refnum: { index: 1, contentFile: 0 } }, killerPlayerId: 1, deathNo: 1, killedRecordId: 'cliffracer' });
-    const kc = await d.waitEvent('WorldKillCount');
+    const kc = await d.waitEvent('WorldKillCount', (v) => (v as { count?: number }).count === 3);
     assert.deepEqual(kc.value, { refId: 'cliffracer', count: 3 });
     d.close();
     await d.closed;

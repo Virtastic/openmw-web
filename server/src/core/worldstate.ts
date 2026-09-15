@@ -92,8 +92,15 @@ function finite(v: LValue | undefined): number | undefined {
   return typeof v === 'number' && Number.isFinite(v) ? v : undefined;
 }
 
-function itemCount(v: LValue | undefined): number | undefined {
-  return typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= MAX_COUNT ? v : undefined;
+// GOLD IS A STACK (see playerstate.ts): 10,001 gold dropped or stashed was silently invalid
+// -- no refusal on the wire -- so it lay on the ground on the dropper's screen alone and was
+// gone after a resync, while their inventory had already told the server they no longer
+// held it. Everything else keeps the ceiling.
+const MAX_GOLD = 100_000_000;
+const GOLD = 'gold_001';
+function itemCount(v: LValue | undefined, id?: string): number | undefined {
+  const cap = id === GOLD ? MAX_GOLD : MAX_COUNT;
+  return typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= cap ? v : undefined;
 }
 
 function parseItems(v: LValue | undefined): ContainerItems | undefined {
@@ -102,7 +109,7 @@ function parseItems(v: LValue | undefined): ContainerItems | undefined {
   for (const [, entry] of v) {
     const t = entry instanceof Map ? entry : undefined;
     const id = t ? str(t.get('id'), MAX_RECORD_ID) : undefined;
-    const n = t ? itemCount(t.get('n')) : undefined;
+    const n = t ? itemCount(t.get('n'), id) : undefined;
     if (!id || n === undefined) return undefined;
     out.push({ id, n });
   }
@@ -734,7 +741,7 @@ export class WorldState {
     const y = coord(body.get('y'));
     const z = coord(body.get('z'));
     const rotZ = finite(body.get('rotZ'));
-    const count = itemCount(body.get('count'));
+    const count = itemCount(body.get('count'), recordId);
     if (tempId === undefined || !recordId || !cellKey || x === undefined || y === undefined || z === undefined
       || rotZ === undefined || count === undefined) {
       this.invalid(player, 'ObjectSpawnRequest');
@@ -1061,7 +1068,7 @@ export class WorldState {
     const opId = finite(body.get('opId'));
     const op = body.get('op');
     const itemId = str(body.get('itemId'), MAX_RECORD_ID);
-    const n = itemCount(body.get('n'));
+    const n = itemCount(body.get('n'), itemId);
     // 'gold' is the merchant-purse op and carries a SIGNED delta instead of an item, so it is
     // validated separately from take/put rather than bent through itemCount (which requires >= 1).
     const isGold = op === 'gold';
@@ -1130,7 +1137,7 @@ export class WorldState {
       if (item.n === 0) cont.items.splice(cont.items.indexOf(item), 1);
     } else {
       // put: always accepted except hard caps (conservation guard, not gameplay).
-      if (item && item.n + n > MAX_COUNT) {
+      if (item && item.n + n > (itemId === GOLD ? MAX_GOLD : MAX_COUNT)) {
         reply(false, 'full', cont.stateSeq);
         return;
       }
@@ -1157,6 +1164,13 @@ export class WorldState {
 
   // Sent on every PlayerCellChange and ResyncRequest — ALWAYS, even for an untouched
   // cell (empty maps): the client gets one deterministic "cell delta applied" point.
+  /** THE KILL TALLY, AT JOIN. bumpKill persisted it and nothing ever sent it back: on a
+   *  fresh engine GetDeadCount read 0, so "kill X and report back" could not be completed
+   *  once the session that made the kill ended. */
+  sendKillCounts(player: Player): void {
+    for (const [refId, count] of this.cells.allKills()) player.peer.sendEvent('WorldKillCount', { refId, count });
+  }
+
   sendCellState(player: Player, cellKey: string): void {
     this.enqueue(async () => {
       const doc = this.cells.getCached(cellKey) ?? (await this.cells.get(cellKey)) ?? emptyCellDoc();
@@ -1175,6 +1189,10 @@ export class WorldState {
         // Phase 4: refKeys a script disabled. Sent as a list because only disables are
         // recorded — an absent key means enabled, the vanilla default.
         disabled: Object.keys(doc.enabled ?? {}),
+        // WHO IS DEAD HERE. ActorDeath was relayed once and stored, and nothing ever read the
+        // store back: a friend who entered the cell after the kill (or anyone after a relog)
+        // found the smuggler chief standing again -- AI off, unlootable, unkillable.
+        deaths: Object.keys(doc.actorDeaths ?? {}),
       });
     });
   }

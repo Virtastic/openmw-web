@@ -644,6 +644,11 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   let socialRef: Social | undefined; // read by mute checks and presence (built above)
   // Armed when the owner of a party world disconnects; cleared on close(). See onPlayerLeftWorld.
   let ownerGraceTimer: NodeJS.Timeout | undefined;
+  // "Send home" cooldown per account (kickGuest / mayJoinWorld). Ten minutes: long enough
+  // that the launcher's "Friends playing now" cannot walk them straight back in, short
+  // enough that a change of heart needs no admin.
+  const kickedUntil = new Map<string, number>();
+  const KICK_COOLDOWN_MS = 10 * 60_000;
   const socialStore = new SocialStore(sharedDir);
   const social = new Social({
     store: socialStore,
@@ -730,6 +735,12 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       if (worldOwner === '') return !process.env.OMW_WORLD_ID;
       if (accountKey === worldOwner) return true;
       if (worldMode !== 'party') return false;
+      if ((kickedUntil.get(accountKey) ?? 0) > Date.now()) return false;
+      // NO HOST, NO NEWCOMERS -- while the host's crash grace runs. A newcomer used to be
+      // admitted into a world whose host had just dropped (no guestSpawn, the host's own
+      // controls on their panel) and evicted a minute later. A world the host is still
+      // booting into has no grace armed and admits friends as before.
+      if (ownerGraceTimer && !roster.activeForAccount(worldOwner)) return false;
       return socialStore.areFriends(worldOwner, accountKey);
       // NO CAPACITY CHECK HERE. "May this account be in this world" and "is there room" are
       // different questions with different answers, and answering the second one here made a
@@ -740,6 +751,12 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     // party once left it party FOREVER: the gateway reuses a running world as-is, so the next
     // session silently rejoined a joinable world instead of the solo one it asked for.
     onWorldEmpty: () => {
+      // NOT WHILE THE HOST'S GRACE RUNS. Both callbacks fire on the same cleanup, this one
+      // second: a host alone in a Party world who reloaded (or whose whole party dropped in
+      // one edge blip) had the grace armed and the mode reverted to Solo in the same frame,
+      // so they came back to Solo with no notice and a co-dropped guest's resume was refused
+      // as "this world is private". The grace timer owns the revert until it expires.
+      if (ownerGraceTimer) return;
       if (worldMode !== worldModeAtBoot) {
         log('info', 'world.mode_reverted', { from: worldMode, to: worldModeAtBoot });
         worldMode = worldModeAtBoot;
@@ -815,8 +832,25 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       if (!target) return 'no_such_player';
       if (target.accountKey === byAccountKey || target.accountKey === worldOwner) return 'self';
       log('info', 'world.guest_kicked', { world: worldId, by: byAccountKey, guest: target.accountKey });
+      // STICKY. Without this the guest was back beside the host a minute later from the
+      // launcher's "Friends playing now" -- the host's only real tool was Block, which also
+      // ends the friendship. A kick shuts the door for a while; the friendship stands.
+      kickedUntil.set(target.accountKey, Date.now() + KICK_COOLDOWN_MS);
       closeToGuest(target.accountKey, 'kicked');
       return 'ok';
+    },
+    // DELIBERATE DEPARTURE. Exit, a character switch, "join a friend": the client says so
+    // (PlayerLeaving) and the world closes to guests now, with the same notice the grace
+    // would have given them ninety seconds later -- the grace is for crashes.
+    onPlayerLeaving: (accountKey: string): void => {
+      if (worldOwner === '' || accountKey !== worldOwner || worldMode !== 'party') return;
+      log('info', 'world.owner_leaving', { world: worldId, owner: worldOwner });
+      if (ownerGraceTimer) { clearTimeout(ownerGraceTimer); ownerGraceTimer = undefined; }
+      worldMode = 'private';
+      for (const conn of connections) {
+        if (conn.player) conn.player.peer.sendEvent('WorldMode', { mode: 'private', ...hostOf(conn.player.accountKey) });
+      }
+      closeToGuests('owner_left');
     },
     onPlayerLeftWorld: (accountKey: string): void => {
       // Only OUR row: a player who moved to another world has already written a row naming
@@ -1098,6 +1132,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     peerCount: simPeers.running,
     pvp: config.rules.pvp,
     mode: worldMode === 'party' ? 'party' : 'private',
+    ownerPresent: worldOwner !== '' && roster.activeForAccount(worldOwner) !== undefined,
     players: roster.humansInWorld().map((p) => ({
       id: p.id,
       name: p.name,

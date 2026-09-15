@@ -40,6 +40,9 @@ export interface StatusSnapshot {
   // asked again, so an owner's flip to Party was invisible to the friend-join check, which
   // refused every friend with not_open. Reported here; the gateway's poll keeps its copy fresh.
   mode?: 'private' | 'party';
+  // Is the owner actually here? A Party world in its owner's crash grace is open on paper
+  // and hostless in fact; the launcher must not offer it as "X has their world open".
+  ownerPresent?: boolean;
   uptime: number; // seconds
   version: string;
 }

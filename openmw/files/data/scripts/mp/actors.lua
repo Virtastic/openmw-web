@@ -67,6 +67,7 @@ local function withAddr(body, obj)
 end
 
 -- The actor a relayed body names, here: a content ref, or our copy of a net actor.
+local pendingDeaths = {} -- refKey -> true: recorded dead by the world, not yet a puppet here
 local function actorOf(data)
     if data.net ~= nil and deps and deps.objOfNet then
         local obj = deps.objOfNet(data.net)
@@ -350,7 +351,14 @@ local function attachActorPuppets(cellKey)
             local ok = pcall(function()
                 obj:addScript('scripts/mp/puppet.lua', { actorKey = key })
             end)
-            if ok then puppetActors[key] = { obj = obj, cellKey = cellKey } end
+            if ok then
+                puppetActors[key] = { obj = obj, cellKey = cellKey }
+                -- Died before we got here: the world says so; the body must agree.
+                if pendingDeaths[key] then
+                    pendingDeaths[key] = nil
+                    pcall(function() obj:sendEvent('MP_Kill', {}) end)
+                end
+            end
         end
     end
 end
@@ -747,6 +755,21 @@ end
 
 -- Test hook (holder side): damage a specific cell NPC to death so the death edge, the
 -- ActorDeath relay and the shared kill tally can be asserted end to end.
+-- WorldCellState names every actor recorded dead in this cell. A puppet already here dies
+-- now; one puppeted later dies on registration (above). Keyed by refKey, like the relay.
+-- Not for cells we hold: the holder's own engine is the authority there.
+function actors.noteCellDeaths(cellKey, keys)
+    for _, key in ipairs(keys or {}) do
+        local have = puppetActors[key]
+        local okv, valid = pcall(function() return have and have.obj:isValid() end)
+        if okv and valid then
+            pcall(function() have.obj:sendEvent('MP_Kill', {}) end)
+        else
+            pendingDeaths[key] = true
+        end
+    end
+end
+
 function actors.killActorByRecord(recordId)
     watchKillRecord = recordId
     for _, obj in ipairs(cellActors(deps.ownCellKeyFn())) do

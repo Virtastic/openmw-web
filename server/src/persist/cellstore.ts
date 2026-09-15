@@ -249,6 +249,11 @@ export class CellStore {
     return this.kills.get(refId) ?? 0;
   }
 
+  /** Every record with a tally, for the join-time replay (GetDeadCount on a fresh engine). */
+  allKills(): [string, number][] {
+    return [...this.kills.entries()];
+  }
+
   // M6 shared quest state. Mutate through sharedQuest() then call saveShared() — writes
   // are atomic and coalesced by the same fire-and-forget path as the counters.
   sharedQuest(): SharedQuestState {

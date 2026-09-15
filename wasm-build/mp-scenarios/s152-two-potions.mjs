@@ -11,7 +11,7 @@ import assert from 'node:assert/strict';
 const STEP = 30_000;
 const BOOT = { retail: true, joinTimeoutMs: 420_000 };
 const POTION = 'p_restore_health_s'; // Restore Health, a few seconds long (retail)
-const GAP_MS = 2_000; // between the two drinks: the second outlives the first by this much
+const GAP_MS = 3_500; // between the two drinks (a cheap potion lasts 5 s): the second outlives the first by this much
 
 const parseBars = (s) => { const m = /^(\d+)\/(\d+)$/.exec(String(s ?? '')); return m ? { c: Number(m[1]), b: Number(m[2]) } : null; };
 const bars = async (c) => parseBars(await c.eval('window.omw.state.selfStats'));
@@ -41,18 +41,18 @@ export default async function run(ctx) {
   await a.cmd(`use:${POTION}`);
   await ctx.sleep(GAP_MS);
   await a.cmd(`use:${POTION}`);
-  const seen = []; // instance counts over time
-  const by = Date.now() + 40_000;
+  const seen = []; // instance counts over time, with seconds since the second drink
+  const t0 = Date.now();
+  const by = t0 + 40_000;
   let maxSeen = 0, sawOneAfterTwo = false;
   while (Date.now() < by) {
     const n = (await actives(a)).filter((id) => id === POTION).length;
-    seen.push(n);
+    seen.push(`${((Date.now() - t0) / 1000).toFixed(1)}s:${n}`);
     maxSeen = Math.max(maxSeen, n);
     if (maxSeen === 2 && n === 1) sawOneAfterTwo = true;
     if (maxSeen >= 1 && n === 0) break;
-    await ctx.sleep(250);
   }
-  ctx.log(`instances over time: ${seen.join('')}`);
+  ctx.log(`instances over time: ${seen.join(' ')}`);
   assert.equal(maxSeen, 2, `both potions must be active together (peak ${maxSeen})`);
   assert.ok(sawOneAfterTwo, 'the second potion was cancelled with the first (2 -> 0, never 1): the peer removed every instance of the record');
   const end = await bars(a);

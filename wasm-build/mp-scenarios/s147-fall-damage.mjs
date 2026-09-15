@@ -90,7 +90,19 @@ export default async function run(ctx) {
   await a.cmd('walk:0,1,1'); // end the climb now
   await a.cmd(`dispel:${lev}`);
   ctx.log(`released at z=${top.toFixed(0)} (+${(top - ground).toFixed(0)})`);
-  await a.waitFor(`Math.abs(JSON.parse(window.omw.state.pose||"{}").z - ${ground}) < 60`, STEP, 'landed');
+  // Landed = the engine says on-ground again (the flight drifted, so the ground here is not
+  // the ground we left). Poll the body mirror.
+  const landedBy = Date.now() + 40_000;
+  let onGround = false, bodyLine = '';
+  while (Date.now() < landedBy && !onGround) {
+    await ctx.sleep(1_000);
+    await a.eval("if (window.omw.state) window.omw.state.body = null; 'c';"); await a.cmd('body');
+    await a.waitFor("typeof window.omw.state.body === 'string'", 5_000, 'body');
+    bodyLine = String(await a.eval('window.omw.state.body'));
+    onGround = /ground=true/.test(bodyLine);
+  }
+  ctx.log(`after the release: ${bodyLine}`);
+  assert.ok(onGround, `never landed: ${bodyLine} (the dispel did not reach the avatar, so reconciliation held the player up?)`);
   // Damage is applied on landing on both sides; give the peer a few reports to settle.
   let after = before;
   const by = Date.now() + 15_000;

@@ -90,6 +90,7 @@ export interface WorldInfo {
   name: string;
   up: boolean;
   ownerAccount?: string; // private/party: who created it
+  ownerPresent?: boolean; // live: the owner is connected (a Party world in its owner's grace is not open to newcomers)
   // Played, and now empty — an abandoned session waiting to be reaped. Distinct from a world
   // that was just created and has not been joined YET, which is still someone's live intent.
   abandoned: boolean;
@@ -127,7 +128,7 @@ interface World {
   // connects); after someone has joined, the shorter idle-reap applies once they leave.
   everConnected?: boolean;
   ownerAccount?: string;
-  lastStatus?: { playerCount: number; connectedCount: number; peerCount: number; maxPlayers: number; name: string; players?: WorldPlayer[] };
+  lastStatus?: { playerCount: number; connectedCount: number; peerCount: number; maxPlayers: number; name: string; players?: WorldPlayer[]; ownerPresent?: boolean };
 }
 
 export interface WorldDeps {
@@ -136,7 +137,7 @@ export interface WorldDeps {
   // peerCount is OPTIONAL here and required on World.lastStatus: a world from an older build --
   // or a test fake that predates peers being per-cell -- simply does not report it, and poll()
   // normalises the absence to 1 rather than making every caller restate the default.
-  fetchStatus?: (port: number) => Promise<{ playerCount: number; connectedCount: number; peerCount?: number; maxPlayers: number; name: string; players?: WorldPlayer[]; mode?: WorldMode } | null>;
+  fetchStatus?: (port: number) => Promise<{ playerCount: number; connectedCount: number; peerCount?: number; maxPlayers: number; name: string; players?: WorldPlayer[]; mode?: WorldMode; ownerPresent?: boolean } | null>;
   now?: () => number;
 }
 
@@ -243,6 +244,7 @@ export class WorldSupervisor {
         up: w.lastStatus !== undefined,
         abandoned: w.everConnected === true && w.idleSince !== undefined,
         ...(w.ownerAccount ? { ownerAccount: w.ownerAccount } : {}),
+        ...(w.lastStatus?.ownerPresent !== undefined ? { ownerPresent: w.lastStatus.ownerPresent } : {}),
         players: w.lastStatus?.players ?? [],
         ...(w.child.pid !== undefined ? { pid: w.child.pid } : {}),
         startedAt: w.startedAt,
@@ -679,11 +681,11 @@ function delay(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-async function defaultFetchStatus(port: number): Promise<{ playerCount: number; connectedCount: number; peerCount: number; maxPlayers: number; name: string; players: WorldPlayer[]; mode?: WorldMode } | null> {
+async function defaultFetchStatus(port: number): Promise<{ playerCount: number; connectedCount: number; peerCount: number; maxPlayers: number; name: string; players: WorldPlayer[]; mode?: WorldMode; ownerPresent?: boolean } | null> {
   try {
     const r = await fetch(`http://127.0.0.1:${port}/status`, { signal: AbortSignal.timeout(2000) });
     if (!r.ok) return null;
-    const j = await r.json() as { playerCount?: number; connectedCount?: number; peerCount?: number; maxPlayers?: number; name?: string; players?: unknown; mode?: unknown };
+    const j = await r.json() as { playerCount?: number; connectedCount?: number; peerCount?: number; maxPlayers?: number; name?: string; players?: unknown; mode?: unknown; ownerPresent?: unknown };
     // The roster, kept this time. Shape-checked row by row: a game from an older build sends
     // no list at all, and a row missing a name is not a player.
     const players: WorldPlayer[] = Array.isArray(j.players)
@@ -700,6 +702,7 @@ async function defaultFetchStatus(port: number): Promise<{ playerCount: number; 
       : [];
     return {
       players,
+      ...(typeof j.ownerPresent === 'boolean' ? { ownerPresent: j.ownerPresent } : {}),
       playerCount: typeof j.playerCount === 'number' ? j.playerCount : 0,
       connectedCount: typeof j.connectedCount === 'number' ? j.connectedCount : (typeof j.playerCount === 'number' ? j.playerCount : 0),
       // DEFAULTS TO 1, NOT 0. A world that predates this field, or one answering from an older

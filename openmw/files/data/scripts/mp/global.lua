@@ -636,8 +636,28 @@ end
 -- Phase 3 (peer only): stream the authoritative avatar poses back. mp.sendAvatarMoveBatch
 -- -> 0x0105 -> the server fans out 0x0101 to everyone and 0x0103 (with lastInputSeq) to
 -- each owner. Sent fresh every pass — a stale pose is a rubber-band on the wrong side.
+-- HARNESS DIAGNOSTIC (peer): once a second, say what the engine thinks of a submerged
+-- avatar's drowning inputs. Cheap, and the only window into the peer's side of s149.
+local drownSaidAt = 0
+local function avatarDrownProbe(now)
+    if now - drownSaidAt < 1 then return end
+    drownSaidAt = now
+    if not mp.drownState then return end
+    for id, p in pairs(puppets) do
+        if p.obj and p.obj:isValid() then
+            local ok, d = pcall(mp.drownState, p.obj)
+            if ok and d and d.submerged then
+                local okh, hp = pcall(function() return types.Actor.stats.dynamic.health(p.obj).current end)
+                print(string.format('[mp] avatar #%d submerged: breath=%s hp=%s god=%s wb=%s', id,
+                    tostring(d.breath), tostring(okh and hp or '?'), tostring(d.godmode), tostring(d.waterBreathing)))
+            end
+        end
+    end
+end
+
 local function avatarStreamTick(now)
     if not (mp.isSystem and mp.isSystem()) then return end
+    avatarDrownProbe(now)
     if now - avatarStreamAt < AVATAR_STREAM_EVERY then return end
     avatarStreamAt = now
     local entries = {}
@@ -1387,6 +1407,7 @@ local function start()
     -- M3 world-object hub wiring (see scripts/mp/objects.lua).
     objects.init({
         playerFn = playerScript,
+        cellDeathsFn = function(cellKey, keys) actors.noteCellDeaths(cellKey, keys) end,
         allAvatarsFn = function()
             local out = {}
             for _, p in pairs(puppets) do
@@ -1992,10 +2013,16 @@ local eventHandlers = {
         -- Which world you are in is invisible otherwise — the scenery is identical — and it
         -- decides who can see you. Announced on CHANGE only; the server also sends this at
         -- join, which is not a transition worth narrating.
+        -- FOR THE PERSON IT HAPPENED TO. A guest arriving in a friend's Party world got the
+        -- host's line ("your world, open to your friends"); a guest being sent home got "your
+        -- own world (solo)" while still standing in the host's. The owner is told about their
+        -- world; a guest is told whose world they are in; the eviction has its own notice.
         if was ~= nil and was ~= worldMode then
-            local where = worldMode == 'party' and 'your world, open to your friends'
-                or 'your own world (solo)'
-            notice('You are now in ' .. where .. '.')
+            if data and data.isOwner == true then
+                notice('You are now in ' .. (worldMode == 'party' and 'your world, open to your friends' or 'your own world (solo)') .. '.')
+            elseif worldMode == 'party' and data and data.owner and data.owner ~= '' then
+                notice("You are in " .. tostring(data.owner) .. "'s world.")
+            end
         end
     end,
     MP_WorldClosed = function(data)
@@ -2843,6 +2870,11 @@ local eventHandlers = {
         elseif mode == 'party' then
             if inOwn or not worldUrls.own then mp.sendEvent('SetWorldMode', { mode = 'party' })
             else pendingFlip = 'party'; net.switchTo(worldUrls.own) end
+        elseif mode == 'home' then
+            -- LEAVE A FRIEND'S WORLD, and nothing else. The guest panel's Leave used to send
+            -- 'solo', which also queued a Solo flip for the guest's OWN world -- a host who
+            -- had visited a friend came home to find their own party dismissed.
+            if not inOwn and worldUrls.own then net.switchTo(worldUrls.own) end
         elseif mode == 'offline' then
             if not inOwn and worldUrls.own then worldUrls.lastOut = net.currentTarget() end
             mp.sendEvent('SetAvailability', { state = 'offline' })

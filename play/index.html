@@ -1515,7 +1515,9 @@ window.omw = (function(){
                btn.style.cssText = 'margin-top:22px;width:100%;box-sizing:border-box;padding:13px 20px;'
                  + 'border-radius:6px;cursor:pointer;border:1px solid #eecb78;font:600 12.5px/1 Optima,"Gill Sans",sans-serif;'
                  + 'letter-spacing:.12em;text-transform:uppercase;background:linear-gradient(180deg,#d3a84e,#8a6838);color:#1a1207';
-               btn.onclick = function(){ window.__omwAllowLeave = true; try { if (window.Module) Module.__omwRunning = false; } catch(e){} location.href = 'launcher.html'; };
+               // ON PURPOSE: tell the world before going, so a Party world closes to its
+               // guests now rather than after the crash grace (see net.lua switchTo).
+               btn.onclick = function(){ window.__omwAllowLeave = true; try { window.omw.send('leaving', 300); } catch(e){} try { if (window.Module) Module.__omwRunning = false; } catch(e){} setTimeout(function(){ location.href = 'launcher.html'; }, 150); };
                box.appendChild(btn); wrap.appendChild(box); document.body.appendChild(wrap);
              }
              (function(){
@@ -3998,10 +4000,20 @@ window.omw = (function(){
     var keep = frag.split('&').filter(function(kv){
       var k = kv.split('=')[0];
       if (swChar && (k === 'mpchar' || k === 'mpcharname')) return false;
-      return k !== 'mp' && k !== 'mpticket' && k !== 'mpstart' && k !== 'mpnew' && kv !== '';
+      return k !== 'mp' && k !== 'mpticket' && k !== 'mpstart' && k !== 'mpnew' && k !== 'mpclosed' && k !== 'mpclosedby' && kv !== '';
     });
     keep.unshift('mp=' + encodeURIComponent(wsUrl), 'mpticket=' + encodeURIComponent(ticket));
     if (swChar) keep.push('mpchar=' + encodeURIComponent(swChar));
+    // WHY WE ARE GOING. An eviction ("X sent you home", "the host has gone solo") is shown
+    // as a modal and, a few hundred milliseconds later, this navigation wipes it -- the
+    // player lands at home with no idea what happened. Carry the reason; the new page says
+    // it once it is standing.
+    var wcNow = String((window.omw && window.omw.state && window.omw.state.worldClosed) || '');
+    if (wcNow) {
+      keep.push('mpclosed=' + encodeURIComponent(wcNow));
+      var wcBy = String((window.omw && window.omw.state && window.omw.state.worldClosedBy) || '');
+      if (wcBy) keep.push('mpclosedby=' + encodeURIComponent(wcBy));
+    }
     // Flush saves and settings before the navigation, exactly as a tab close would.
     try { if (window.__omwSync) window.__omwSync(); } catch (e) {}
     // The beforeunload guard asks "leave site?" whenever the engine is running. This IS a
@@ -4494,7 +4506,7 @@ window.omw = (function(){
       var leave = el('button','btn','Leave');
       leave.onclick = function(){
         closeSocial();
-        cmd('where:solo');
+        cmd('where:home'); // leave the friend's world; our own world's mode is untouched
         window.__omwLoading.show('Going home', 'Back to your own world…');
         setStatus('');
       };
@@ -4829,7 +4841,33 @@ window.omw = (function(){
   // the "I cannot send messages" bug, and it was invisible to every test because nothing in
   // CI ever loads this page. See pagescope.test.ts, which now fails on undeclared identifiers.
   var seenNetState = null, everJoinedOnce = false;
+  // The eviction copy, shared by the live notice and the one carried across a reboot.
+  function worldClosedCopy(wc, byRaw){
+    var by = esc(String(byRaw || ''));
+    return (wc === 'kicked' ? (by ? '<b>' + by + '</b> sent you home.' : 'The host sent you home.')
+        : wc === 'unfriended' ? 'You are no longer on the friends list that let you into that world.'
+        : wc === 'not_open' ? 'That world is no longer open to you: the host has gone solo.'
+        : by ? '<b>' + by + '</b> has closed their world.'
+          : 'The world you were in has closed.')
+      + ' You are back in your own world. Nothing you did there is lost.';
+  }
+  // Said ONCE the new page is standing (not behind the loading screen): the reason the
+  // previous page carried in its fragment (see rebootIntoWorld).
+  var carriedClosedShown = false;
+  function carriedNoticeWatch(m){
+    if (carriedClosedShown) return;
+    if (String(m.state || '') !== 'Joined') return;
+    var frag = String(window.__omwBootFrag || '');
+    var mc = /(^|&)mpclosed=([^&]+)/.exec(frag);
+    if (!mc) { carriedClosedShown = true; return; }
+    carriedClosedShown = true;
+    var byM = /(^|&)mpclosedby=([^&]+)/.exec(frag);
+    showNotice('Back in your own world', worldClosedCopy(decodeURIComponent(mc[2]), byM ? decodeURIComponent(byM[2]) : ''), GLYPH_WORLD);
+    // Do not carry it a second time.
+    window.__omwBootFrag = frag.split('&').filter(function(kv){ return !/^mpclosed(by)?=/.test(kv); }).join('&');
+  }
   function noticeWatch(m){
+    carriedNoticeWatch(m);
     var ns = m.netstate == null ? '' : String(m.netstate);
     if (ns !== seenNetState){
       seenNetState = ns;
@@ -4871,15 +4909,7 @@ window.omw = (function(){
       if (wc) {
         // The name is optional on purpose: the server sends it only when the owner is still
         // visible, so the copy has to read correctly without one.
-        var by = esc(String(m.worldClosedBy || ''));
-        showNotice('Returning to your own world',
-          (wc === 'kicked' ? (by ? '<b>' + by + '</b> sent you home.' : 'The host sent you home.')
-            : wc === 'unfriended' ? 'You are no longer on the friends list that let you into that world.'
-            : wc === 'not_open' ? 'That world is no longer open to you: the host has gone solo.'
-            : by ? '<b>' + by + '</b> has closed their world.'
-              : 'The world you were in has closed.')
-          + ' You are being taken back to your own world. Nothing you did there is lost.',
-          GLYPH_WORLD);
+        showNotice('Returning to your own world', worldClosedCopy(wc, m.worldClosedBy), GLYPH_WORLD);
       }
     }
   }

@@ -11,7 +11,7 @@ const STEP = 30_000;
 const BOOT = { retail: true, joinTimeoutMs: 420_000 };
 // Both boot at the retail start (Seyda Neen, -2,-9): dry land. The s109 spot's ground is the
 // sea (z=-133), no place to prove a float.
-const TORCH = 'light_torch_01'; // retail light id
+const TORCH = 'torch'; // the player's torch (carryable); light_torch_01 is a wall sconce
 const CARRIED_LEFT = 17; // MWWorld::InventoryStore::Slot_CarriedLeft
 
 const pose = async (c) => JSON.parse(await c.eval('window.omw.state.pose||"null"'));

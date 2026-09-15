@@ -581,6 +581,9 @@ local function dispatch(cmd)
         if ccName then core.sendGlobalEvent('mpCharCreate', { name = ccName }) end
         local csId = cmd:match('^charswitch:(%w+)$')
         if csId then core.sendGlobalEvent('mpCharSwitch', { id = csId }) end
+        -- leaving: the page's Exit button, on its way to the launcher. A deliberate departure
+        -- closes a Party world to its guests now (server onPlayerLeaving), not after the grace.
+        if cmd == 'leaving' then pcall(function() mp.sendEvent('PlayerLeaving', {}) end) end
         if cmd == 'chars' then core.sendGlobalEvent('mpChars', {}) end
         local text = cmd:match('^chat:(.*)$')
         if text and text ~= '' then

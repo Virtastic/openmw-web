@@ -276,6 +276,12 @@ end
 function net.switchTo(url)
     mp.set('publicStage', 'switchTo:' .. tostring(url))
     if type(url) ~= 'string' or url == '' then return false end
+    -- ON PURPOSE. A world change is a deliberate departure: if we host a Party world, it
+    -- closes to our guests now, with the same notice they would otherwise have got after
+    -- the ninety-second crash grace -- during which the launcher still advertised the world
+    -- and admitted newcomers into a game with no host in it. Best effort; the socket is
+    -- about to go either way.
+    if net.state == 'Joined' then pcall(function() mp.sendEvent('PlayerLeaving', {}) end) end
     -- The page owns navigation; Lua cannot reload itself. It mints a fresh login ticket and
     -- rebuilds the boot fragment for `url`.
     mp.set('switchTo', url)

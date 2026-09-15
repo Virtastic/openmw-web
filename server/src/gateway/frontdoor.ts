@@ -288,7 +288,7 @@ export function friendsPlayingRoutes(
   accounts: AccountStore,
   lockerSessions: LockerSessionStore,
   social: SocialStore,
-  worldsNow: () => { ownerAccount?: string; mode: string; up: boolean; playerCount: number; id: string }[],
+  worldsNow: () => { ownerAccount?: string; ownerPresent?: boolean; mode: string; up: boolean; playerCount: number; id: string }[],
 ): HttpRoute {
   return async (req, res, url) => {
     if (url.pathname !== '/auth/friends-playing') return false;
@@ -304,7 +304,9 @@ export function friendsPlayingRoutes(
       .filter((f) => !social.blockedEitherWay(accountKey, f.account))
       .map((f) => {
         // The world they are IN: an owner on their second character has two worlds up.
-        const open = worlds.filter((w) => w.ownerAccount === f.account && w.up && w.mode === 'party');
+        // ...and the owner is actually IN it: a Party world in its host's crash grace, or one
+        // the host exited on purpose a moment ago, is not somewhere to join.
+        const open = worlds.filter((w) => w.ownerAccount === f.account && w.up && w.mode === 'party' && w.ownerPresent !== false);
         const w = open.find((x) => x.playerCount > 0) ?? open[0];
         return w ? { acct: f.account, name: accounts.cachedByKey(f.account)?.username ?? accounts.usernameOf(f.account) ?? f.account, worldId: w.id, wsPath: `/w/${w.id}`, players: w.playerCount } : null;
       })
@@ -325,7 +327,7 @@ export async function buildFrontDoor(
   adminSessions?: AdminSessionStore,
   // The live world list, for /auth/friends-playing. Absent (a standalone front door) the
   // route answers an empty list.
-  worldsNow?: () => { ownerAccount?: string; mode: string; up: boolean; playerCount: number; id: string }[],
+  worldsNow?: () => { ownerAccount?: string; ownerPresent?: boolean; mode: string; up: boolean; playerCount: number; id: string }[],
 ): Promise<FrontDoor> {
   const config = loadConfig(sharedDir, undefined, sharedDir);
   // The gateway front door loads its own config, so it needs its own call: without this the

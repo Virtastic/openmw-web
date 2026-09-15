@@ -143,6 +143,9 @@ export interface ServerCtx {
   /** A player left the world. Acts only if they were its OWNER: a guest world with no host
    *  closes after a grace window (server.ts onPlayerLeftWorld). */
   onPlayerLeftWorld?(accountKey: string): void;
+  /** The player is leaving ON PURPOSE (Exit, a character switch, joining a friend). If they
+   *  own this world it closes to guests now instead of after the crash grace. */
+  onPlayerLeaving?(accountKey: string): void;
   /** Is this character in the wrong PRIVATE world? Private world ids end with the last 8 of
    *  their character's id, so the owner arriving with any other character is a routing error
    *  to refuse at the door — not something to diagnose downstream, again. */
@@ -702,6 +705,10 @@ export class Connection implements Peer {
       const target = id !== undefined ? this.ctx.roster.get(id) : undefined;
       if (!target || target.system === true || !target.inWorld || bounty === undefined) return;
       target.peer.sendEvent('PlayerCrime', { bounty, ...(typeof kv === 'string' ? { kind: kv.slice(0, 16) } : {}) });
+      return;
+    }
+    if (name === 'PlayerLeaving') {
+      this.ctx.onPlayerLeaving?.(this.player.accountKey);
       return;
     }
     if (name === 'PlayerArrest') {
@@ -1741,6 +1748,7 @@ export class Connection implements Peer {
     // so the client renders them through the path it already has — history is not a different
     // kind of message, it is the same messages, earlier.
     this.ctx.replayChat?.(this.player);
+    this.ctx.world.sendKillCounts(this.player);
     syncStateOnJoin(this.ctx.stateCtx, this.player); // M2 late-joiner appearance/equipment sync
     this.ctx.quests.sendJournalSync(this.player); // M6 full journal state at join
     this.ctx.quests.sendGlobalSync(this.player); // Phase 4 character-shadowed quest globals
