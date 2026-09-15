@@ -538,6 +538,33 @@ test('map sharing follows the [sharing] toggle', async (t) => {
     back.close();
     await back.closed;
   });
+
+  // Backlog 388: pins m7.ts MAX_EXPLORED = 8192 (commit 6ce7b7db; was 1024, and the FIFO
+  // dropped the oldest -- Seyda Neen -- once a Vvardenfell + mainland campaign passed it).
+  // 8200 keys in two frames (MAX_MAP_CELLS is per frame): 8192 come back, the first 8 are gone.
+  await t.test('the explored map keeps 8192 exterior keys, newest first to go is the 8193rd-oldest', async () => {
+    const { server } = await boot(t, { sharing: { map: false } });
+    const { c: a } = await join(server, 'MapWide');
+    a.sendEvent('PlayerAppearance', { race: 'dark elf', head: 'h', hair: 'x', isMale: true, class: 'warrior', name: 'MapWide' });
+    a.sendEvent('ChargenComplete', {});
+    const keys = Array.from({ length: 8200 }, (_, i) => `${i % 100},${Math.floor(i / 100)}`);
+    a.sendEvent('WorldMapExplored', { cellKeys: keys.slice(0, 4100) });
+    a.sendEvent('WorldMapExplored', { cellKeys: keys.slice(4100) });
+    await fence(a, a);
+    a.close();
+    await a.closed;
+    await new Promise((r) => setTimeout(r, 300));
+    await server.flush();
+
+    const back = await TestClient.connect(server.port);
+    const w = await back.joinExisting('MapWide');
+    const rec = w['playerRecord'] as { explored?: string[] } | null;
+    assert.equal(rec?.explored?.length, 8192, 'the cap is 8192, not 1024');
+    assert.deepEqual(rec?.explored?.slice(0, 2), [keys[8], keys[9]], 'the oldest 8 went, the rest kept in order');
+    assert.equal(rec?.explored?.at(-1), keys[8199], 'the newest survive');
+    back.close();
+    await back.closed;
+  });
 });
 
 

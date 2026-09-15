@@ -133,6 +133,46 @@ test('#361 (past the join grace) the jump is refused unless a cast, door or conv
   await b.waitEvent('PlayerCellChange', (v) => (v as { id?: number; z?: number }).id === a.playerId && (v as { z?: number }).z === 3000);
 });
 
+// #362 spellbook half: pins playerstate.ts handleSpellbook's byAccount check (commit 56e147e1) --
+// a custom record minted by ANOTHER account is refused (StateRefused{PlayerSpellbook}, anomaly
+// spellbook_foreign_record) and never lands in the doc; the minter's own add still does.
+test('#362 a spellbook add of another account\'s custom record is refused; the minter\'s own lands', async (t) => {
+  const { server, dataDir } = await boot(t);
+  const { c: a, charId: aChar } = await join(t, server, 'Spellmaker');
+  const { c: b, charId: bChar } = await join(t, server, 'Copycat');
+  a.sendEvent('RecordCreate', { tempId: 1, kind: 'spell', data: { name: 'private bolt', cost: 10,
+    effects: [{ id: 'firedamage', magnitudeMin: 5, magnitudeMax: 10, duration: 1 }] } });
+  const rid = ((await a.waitEvent('RecordCreateAck')).value as { recordNetId: string }).recordNetId;
+  await b.waitEvent('RecordsSync', (v) => ((v as { records?: { recordNetId?: string }[] }).records ?? []).some((r) => r.recordNetId === rid));
+
+  const refused = b.waitEvent('StateRefused');
+  b.sendEvent('PlayerSpellbook', { add: [rid], remove: [] });
+  assert.equal(((await refused).value as { kind?: string }).kind, 'PlayerSpellbook');
+  a.sendEvent('PlayerSpellbook', { add: [rid], remove: [] });
+  await fence(a, a);
+  await settle();
+  await server.flush();
+  assert.deepEqual(readPlayerDoc(dataDir, bChar)?.['spells'] ?? [], [], "the foreign record landed in the copycat's book");
+  assert.deepEqual(readPlayerDoc(dataDir, aChar)?.['spells'], [rid], "the minter's own add was refused");
+});
+
+// #363 position half: pins worldstate.ts MAX_POSITION_CLAIMS_PER_MIN = 5 (commit 56e147e1) --
+// a script's PositionCell fires once, a loop does not: the 6th claim in a minute is dropped
+// (anomaly position_claim) while the first 5 reach the holder.
+test('#363 a non-holder\'s position claims are bounded to 5 a minute', async (t) => {
+  const { server } = await boot(t);
+  const peer = await TestClient.simPeer(server.port, PEER_PASS);
+  t.after(() => peer.close());
+  peer.sendCellChange('0,0', 0, 0, 0);
+  await peer.waitEvent('ActorAuthorityGrant', (v) => (v as { cellKey: string }).cellKey === '0,0');
+  const { c } = await join(t, server, 'Teleporter');
+  peer.inbox.events.length = 0;
+  for (let i = 1; i <= 6; i++) c.sendEvent('ActorAI', { cellKey: '0,0', epoch: 0, ref: NPC_REF, position: { x: i, y: 0, z: 0 } });
+  await fence(c, peer);
+  const got = peer.inbox.events.filter((e) => e.name === 'ActorAI').map((e) => (e.value as { position: { x: number } }).position.x);
+  assert.deepEqual(got, [1, 2, 3, 4, 5], 'the first five relay, the sixth is dropped');
+});
+
 test('#364 a loose object must be within reach; a streamed actor is not an object', async (t) => {
   const { server } = await boot(t);
   // The peer anchors 5,5; the (still-in-chargen) human stands in the neighbour 5,6, which the

@@ -14,6 +14,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseExterior, isChargenCell } from '../src/core/movement';
+import { startServer } from '../src/server';
+import { TestClient, tmpDataDir } from './helpers';
 
 type Pose = { x: number; y: number; z: number };
 
@@ -38,35 +40,61 @@ function anchorsFor(players: { cellKey: string; pose: Pose }[]): {
 
 const at = (cellKey: string, x: number, y: number, z = 0) => ({ cellKey, pose: { x, y, z } });
 
-// The expiry rule server.ts simPeerPass applies to held anchors (backlog 382): an exterior
-// outlives its last human by anchorIdleSec; an interior is dropped the pass its last human
-// leaves; the dummy only ever stands in an exterior.
-type Held = Map<string, { pose: Pose; until: number }>;
-function passFor(held: Held, players: { cellKey: string; pose: Pose }[], now: number, idleMs: number): {
-  held: Held; stand: string | undefined;
-} {
-  for (const p of players) if (!isChargenCell(p.cellKey)) held.set(p.cellKey, { pose: p.pose, until: now + idleMs });
-  const occupied = new Set(players.map((p) => p.cellKey));
-  for (const [ck, a] of [...held]) if (a.until <= now || (!parseExterior(ck) && !occupied.has(ck))) held.delete(ck);
-  const stand = players.find((p) => held.has(p.cellKey) && parseExterior(p.cellKey) !== null)?.cellKey;
-  return { held, stand };
-}
-
-test('an interior expires the pass its last human leaves; an exterior keeps anchorIdleSec; the dummy stays outdoors', () => {
-  const held: Held = new Map();
+// Backlog 382, on the wire: pins server.ts simPeerPass (commit 6ce7b7db) -- an interior anchor
+// is dropped the pass its last human leaves (occupied = the humans' cellKeys; before, it
+// lingered anchorIdleSec like an exterior), and the dummy's `place` is only ever an exterior
+// (before, it stood in whichever cell the first human held, interior included). No engine:
+// [simPeer].enabled is flipped after boot with an empty binary, so the supervisor spawns
+// nothing and the pass talks to the TestClient peer. A pass is every 5 s.
+test('on the wire: two occupied interiors both anchor; one emptied is gone next pass; the dummy stays outdoors', async (t) => {
+  const PEER_PASS = 'peer-secret-1';
+  const server = await startServer({ requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
+    configOverride: { server: { password: PEER_PASS }, limits: { maxConnsPerIp: 16 }, simPeer: { anchorIdleSec: 60 } } });
+  t.after(() => server.close());
+  server.config.simPeer.enabled = true;
+  const peer = await TestClient.simPeer(server.port, PEER_PASS);
+  t.after(() => peer.close());
   const shop = 'balmora, ravirr: trader', club = 'balmora, council club';
-  let r = passFor(held, [at(shop, 1, 1), at(club, 2, 2), at('-3,-2', 3, 3)], 0, 60_000);
-  assert.deepEqual([...r.held.keys()].sort(), ['-3,-2', club, shop], 'both interiors anchored while occupied');
-  assert.equal(r.stand, '-3,-2');
+  const join = async (name: string, cell: string) => {
+    const c = await TestClient.connect(server.port);
+    t.after(() => c.close());
+    await c.joinAsNew(name);
+    await c.waitEvent('PlayerList');
+    c.sendCellChange(cell, 1, 1, 0);
+    return c;
+  };
+  type Anchors = { anchors: unknown[]; interiors: string[]; place?: { cellKey: string } };
+  const nextPass = async (pred: (a: Anchors) => boolean, what: string) =>
+    (await peer.waitEvent('SimAnchors', (v) => pred(v as Anchors), 12_000).catch(() => assert.fail(what))).value as Anchors;
 
-  // The shopper leaves the trader; the walker steps indoors. Next pass, 5 s on.
-  r = passFor(held, [at(club, 2, 2), at(club, 4, 4)], 5_000, 60_000);
-  assert.deepEqual([...r.held.keys()].sort(), ['-3,-2', club], 'the emptied interior is gone at once; the exterior lingers');
-  assert.equal(r.stand, undefined, 'the dummy never stands indoors, even with everyone inside');
+  const shopper = await join('Shopper', shop);
+  await join('Drinker', club);
+  const walker = await join('Walker', '-3,-2');
+  let a = await nextPass((v) => v.interiors.length === 2 && v.anchors.length === 1, 'both interiors never anchored beside the street');
+  assert.deepEqual([...a.interiors].sort(), [club, shop]);
+  assert.equal(a.place?.cellKey, '-3,-2', 'the dummy stands with the walker, outdoors');
 
-  // The exterior outlives its last human by anchorIdleSec, then goes too.
-  r = passFor(held, [at(club, 2, 2)], 65_000, 60_000);
-  assert.deepEqual([...r.held.keys()], [club]);
+  // The shopper steps out into the street: the trader is gone the very next pass, well
+  // inside anchorIdleSec.
+  peer.inbox.events.length = 0;
+  const t0 = Date.now();
+  shopper.sendCellChange('-3,-2', 2, 2, 0);
+  a = await nextPass((v) => !v.interiors.includes(shop), 'the emptied interior lingered past a pass');
+  assert.ok(Date.now() - t0 < 12_000, 'dropped within the pass after the exit, not after anchorIdleSec');
+  assert.deepEqual(a.interiors, [club], 'the still-occupied interior is kept');
+  assert.equal(a.place?.cellKey, '-3,-2');
+
+  // Everyone indoors: the street empties into the club. The exterior anchor lingers (idle
+  // grace) but nobody stands there, so the dummy is placed nowhere rather than inside the
+  // club (a third active interior, pre-fix: the first human's cell, whatever it was).
+  peer.inbox.events.length = 0;
+  for (const c of [shopper, walker]) c.sendCellChange(club, 3, 3, 0);
+  await new Promise((r) => setTimeout(r, 5_500)); // the periodic pass, after both moves landed
+  const last = peer.inbox.events.filter((e) => e.name === 'SimAnchors').at(-1)?.value as Anchors | undefined;
+  assert.ok(last, 'no pass after everyone went indoors');
+  assert.deepEqual(last.interiors, [club]);
+  assert.equal(last.anchors.length, 1, 'the street keeps its anchor for anchorIdleSec');
+  assert.equal(last.place, undefined, `the dummy stood indoors: ${last.place?.cellKey}`);
 });
 
 test('players in the same cell produce one anchor, at a real player position', () => {

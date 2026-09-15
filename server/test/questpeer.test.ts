@@ -203,6 +203,50 @@ test('the owner and the peer may regress a journal stage; a guest may not', asyn
   assert.equal(doc.journal?.['mq_restart'], 30, 'the campaign doc follows the log, restart included');
 });
 
+// #366: pins quests.ts guestWriteUnbacked (commit 56e147e1) on the GlobalVarUpdate path -- a
+// GUEST's bare campaign global (no dialogue lock, none released within 10 s) is relayed live
+// but never lands in the host's doc (anomaly guest_quest_write); once the guest holds a
+// DialogueLock the same write persists. The host's write is unchanged.
+test("a guest's bare GlobalVarUpdate is relayed but not persisted; out of a conversation it lands", async (t) => {
+  const { SocialStore } = await import('../src/core/socialstore');
+  const { readPlayerDoc } = await import('./helpers');
+  const dataDir = tmpDataDir();
+  new SocialStore(dataDir).addFriend('host', 'guest', Date.now());
+  const server = await startServer({
+    requireGameData: false, dataDir, port: 0, host: '127.0.0.1',
+    worldMode: 'party', worldOwner: 'host',
+    configOverride: { server: { password: PEER_PASS }, login: { allowHarnessAuth: true } } as never,
+  });
+  t.after(() => server.close());
+  const peer = await TestClient.simPeer(server.port, PEER_PASS);
+  t.after(() => peer.close());
+  const host = await TestClient.connect(server.port);
+  t.after(() => host.close());
+  const hostChar = String((await host.joinAsNew('Host', 'hunter22')).welcome['characterId']);
+  await host.waitEvent('PlayerList');
+  host.sendCellChange('0,0', 0, 0, 0);
+  const guest = await TestClient.connect(server.port);
+  t.after(() => guest.close());
+  await guest.joinAsNew('Guest', 'hunter22');
+  await guest.waitEvent('PlayerList');
+  guest.sendCellChange('0,0', 0, 0, 0);
+
+  guest.sendEvent('GlobalVarUpdate', { name: 'mp_campaign_gate', value: 9 }); // no conversation behind it
+  assert.equal(((await host.waitEvent('GlobalVarUpdate', gv('mp_campaign_gate'), 3000)).value as { value: number }).value, 9,
+    'the bare write is still relayed live');
+  await server.flush();
+  let hostDoc = readPlayerDoc(dataDir, hostChar) as { globals?: Record<string, number> };
+  assert.equal(hostDoc.globals?.['mp_campaign_gate'], undefined, "a guest's bare write landed in the host's campaign (#366)");
+
+  guest.sendEvent('DialogueLock', { net: 7, cellKey: '0,0', want: true });
+  await guest.waitEvent('DialogueLockResult');
+  guest.sendEvent('GlobalVarUpdate', { name: 'mp_campaign_gate', value: 10 });
+  await host.waitEvent('GlobalVarUpdate', (v) => gv('mp_campaign_gate')(v) && (v as { value: number }).value === 10, 3000);
+  await server.flush();
+  hostDoc = readPlayerDoc(dataDir, hostChar) as { globals?: Record<string, number> };
+  assert.equal(hostDoc.globals?.['mp_campaign_gate'], 10, "a guest's dialogue-backed write persists to the campaign");
+});
+
 // ONE BODY'S STATE STAYS WITH THAT BODY. PCVampire/PCWerewolf and their counters are globals
 // in the vanilla scripts, so they shadowed to the CAMPAIGN doc like every character global:
 // a guest turning vampire made the host a vampire on the host's next login, and the peer's
