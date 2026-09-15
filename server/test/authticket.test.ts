@@ -7,7 +7,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { AccountStore } from '../src/core/accounts';
 import { LockerSessionStore, LoginTicketStore } from '../src/auth/identities';
@@ -43,8 +43,10 @@ test('locker token mints a claimable single-use ticket; no token = 401', async (
 // the launcher (tile click, "Join as X", continue-creation, Exit re-entry) ends in bootGame,
 // which must mint a FRESH ticket right before it navigates — after the world is opened, so
 // nothing slow sits between the mint and the boot.
-test('launcher mints the boot ticket inside bootGame, right before navigating', () => {
-  const html = readFileSync(join(import.meta.dirname, '..', '..', 'play', 'launcher.html'), 'utf8');
+const launcherPath = join(import.meta.dirname, '..', '..', 'play', 'launcher.html');
+const launcherOpts = existsSync(launcherPath) ? {} : { skip: 'play/launcher.html is not part of the server image' };
+test('launcher mints the boot ticket inside bootGame, right before navigating', launcherOpts, () => {
+  const html = readFileSync(launcherPath, 'utf8');
   const boot = html.slice(html.indexOf('async function bootGame('), html.indexOf("location.href = 'index.html' + frag;"));
   const mint = boot.indexOf("'/auth/ticket'");
   assert.ok(mint > 0, 'bootGame POSTs /auth/ticket');
