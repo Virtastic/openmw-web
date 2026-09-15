@@ -147,6 +147,17 @@ Branch: `test/posture-seen`. Sweeps: Jenkins `openmw-web-dev` #89 (9/17), #90 (1
 | 126 | ActorBatch is one uncapped message per cell per frame: a TR metropolis exterior is ~100 KB/s per client | actors.lua |
 | 127 | No TR scenario in the harness; builder gamedata has no mods | harness |
 | 128 | Dashboard-disabled expansion (Tribunal) refuses every browser client (page load order includes all masters present) | index.html buildLoadOrder vs gamedata.ts |
+| 129 | Puppet swing is always a chop, played on use RELEASE at 1.2x: the wind-up starts after the blow landed; swings shown in spell stance with the weapon hidden | puppet.lua:126-131, 409-411 |
+| 130 | Co-op melee is silent: puppet.lua:210 `return false` cancels the hit chain, so no Health Damage / miss sound, no blood, no hit reaction on any NPC in a peer-held cell; the owner being hit gets no sound and no red overlay (MP_SelfStats only writes hp) | puppet.lua:210, player.lua:1253 |
+| 131 | A friend casting shows nothing: CombatCast is never sent by any client (MP_CastFx dead), no cast sound, no hands VFX | player.lua (send on use edge in spell stance), combat.ts:401 relays already |
+| 132 | Levitate/slowfall/waterwalking not in VISIBLE_EFFECT: the observer's puppet falls under a flying friend and snaps up every second (pogo) | global.lua:823 |
+| 133 | Puppet never looks up/down: peer streams pitch=0, puppet ignores pitchChange | global.lua:678, puppet.lua:367 |
+| 134 | Puppet runs at the template's Speed (observers never get attributes): a fast player's puppet lags 128 units then teleports | MP_Stats add speed; puppet.lua |
+| 135 | A friend's doors swing silently (World::activateDoor has no sound; the sound is in Door::activate) | objects.lua:854 MP_DoorState → playSound3d(openSound/closeSound) |
+| 136 | Degraded mode (no peer): poseFlags bit 3 = inAir on the sender, read as `use` by the puppet: every landing plays a phantom chop | player.lua:119 vs puppet.lua:409 |
+| 137 | Puppet bow: `shoot attach` runs, `shoot release` gated on mReadyToHit: the arrow may stay glued to the hand after a shot | character.cpp:1141-1145 |
+| 138 | Revive is despawn+spawn: no get-up animation on the puppet | global.lua:2383 |
+| 139 | Feature gaps: no chat bubbles, emotes, party marker on map/compass, friend highlight beyond the crosshair name | — |
 
 ## Wontfix / by design
 
