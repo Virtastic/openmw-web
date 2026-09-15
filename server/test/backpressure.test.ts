@@ -186,7 +186,9 @@ test('a stalled reader is shed, then dropped, without touching its neighbours', 
   await t.test('past the hard ceiling the stalled session is disconnected, the peers are not', async () => {
     stalledBytes = 1_048_577;
     alice.sendActorMoveBatch(epoch, [{ ...REF_ENTRY, pose: { ...REF_ENTRY.pose, x: 99 } }]);
-    const msg = await bob.waitDisconnect('RATE');
+    // BACKLOG, not RATE: a discarded background tab is the usual culprit, and it comes back
+    // to a parked resume ticket -- net.lua treats BACKLOG as transient, RATE as terminal.
+    const msg = await bob.waitDisconnect('BACKLOG');
     assert.match(String(msg['detail']), /outbound buffer/);
     await bob.closed;
 

@@ -209,6 +209,9 @@ export class Connection implements Peer {
   // The cell's actor-authority holder streams NPC batches on top of its own pose, so it
   // must not spend the same budget as everyone else's movement.
   private readonly actorMoveBucket: TokenBucket;
+  // Input frames (0x0102) are as lossy as poses: a >2 s stall followed by the catch-up
+  // burst emptied msgBucket and kicked the player with terminal RATE. Own bucket, shed.
+  private readonly inputBucket = new TokenBucket(60, 120);
   private readonly chatBucket = new TokenBucket(CHAT_PER_SEC, CHAT_BURST);
   private chatWarned = false; // told once per flood, not once per dropped line
   private readonly openedAt = Date.now(); // join-latency origin (== the conn.open log line)
@@ -286,7 +289,7 @@ export class Connection implements Peer {
       const buffered = this.bufferedBytes;
       if (buffered > maxBufferedBytesHard) {
         log('info', 'conn.backpressure_drop', { ip: this.ip, player: this.player?.name, buffered });
-        this.disconnect('RATE', 'outbound buffer overflow (client is not reading)');
+        this.disconnect('BACKLOG', 'outbound buffer overflow (client is not reading)');
         return false;
       }
       if (buffered > maxBufferedBytes) {
@@ -463,10 +466,11 @@ export class Connection implements Peer {
     // burst (a hitching or tab-throttled client catching up) is self-correcting, since every
     // pose is absolute. Abuse is still bounded — by bytesPerSec, which does disconnect, and
     // by msgsPerSec for everything that actually carries state.
-    if (binType === MSG_ACTOR_MOVE_BATCH || binType === MSG_PLAYER_MOVE) {
-      const actor = binType === MSG_ACTOR_MOVE_BATCH;
-      if (!(actor ? this.actorMoveBucket : this.moveBucket).take(1)) {
-        metrics.rateLimited.inc({ budget: actor ? 'actor_shed' : 'move_shed' });
+    if (binType === MSG_ACTOR_MOVE_BATCH || binType === MSG_PLAYER_MOVE || binType === MSG_PLAYER_INPUT) {
+      const bucket = binType === MSG_ACTOR_MOVE_BATCH ? this.actorMoveBucket
+        : binType === MSG_PLAYER_INPUT ? this.inputBucket : this.moveBucket;
+      if (!bucket.take(1)) {
+        metrics.rateLimited.inc({ budget: binType === MSG_ACTOR_MOVE_BATCH ? 'actor_shed' : binType === MSG_PLAYER_INPUT ? 'input_shed' : 'move_shed' });
         return;
       }
     } else if (!authedPeerIn && !this.msgBucket.take(1)) {

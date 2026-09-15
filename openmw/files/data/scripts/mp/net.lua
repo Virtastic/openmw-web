@@ -650,7 +650,10 @@ end
 -- IP_CAP: too many sockets from this address RIGHT NOW -- which, for a player, is almost
 -- always their own previous socket still draining after a wifi blip, gone in seconds. A
 -- terminal modal for that would strand the exact person a reconnect exists for.
-local TRANSIENT_DISCONNECT = { SHUTDOWN = true, SERVER_FULL = true, IP_CAP = true }
+-- BACKLOG: the server's outbound buffer overflowed because this tab stopped reading (a
+-- background tab the browser throttled or discarded). A resume ticket is parked for it, so
+-- the returning tab rejoins in place instead of being told it flooded.
+local TRANSIENT_DISCONNECT = { SHUTDOWN = true, SERVER_FULL = true, IP_CAP = true, BACKLOG = true }
 
 dispatch.SessionDisconnect = function(msg)
     net.lastError = msg.code

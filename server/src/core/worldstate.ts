@@ -746,60 +746,62 @@ export class WorldState {
   }
 
   // ActorMoveBatch (binary 0x0200): validate holder+epoch, relay the raw payload
-  // cell-scoped (excluding the holder). Enqueued so it orders against authority changes.
+  // cell-scoped (excluding the holder). Synchronous: the holder/epoch reads are in-memory,
+  // and enqueueing put the 20 Hz NPC stream behind every DB-awaiting op on the mutation
+  // chain (one cold cell read stalled it for everyone).
   handleActorMoveBatch(player: Player, payload: Buffer): void {
-    this.enqueue(() => {
-      let epoch: number;
-      try {
-        epoch = unpackActorMoveBatch(payload).epoch;
-      } catch (err) {
-        log('warn', 'actor.bad_batch', { from: player.name, error: String(err) });
-        return;
+    let epoch: number;
+    try {
+      epoch = unpackActorMoveBatch(payload).epoch;
+    } catch (err) {
+      log('warn', 'actor.bad_batch', { from: player.name, error: String(err) });
+      return;
+    }
+    // The epoch names the cell (authority.ts cellOfEpoch): the peer streams every cell it
+    // anchors, not only the one its avatar stands in.
+    const cellKey = this.authority.cellOfEpoch(epoch) ?? player.cellKey;
+    if (!cellKey || this.authority.holderOf(cellKey) !== player.id) {
+      // The anti-cheat chokepoint: only the cell's holder may author its actors. Counted
+      // (not just dropped) so forgery is VISIBLE — a modified client trying to move
+      // everyone's NPCs shows up in /metrics instead of failing silently.
+      metrics.actorBatchRejected.inc({ reason: cellKey ? 'not_holder' : 'no_cell' });
+      return;
+    }
+    if (this.authority.currentEpoch(cellKey) !== epoch) {
+      metrics.actorBatchRejected.inc({ reason: 'stale_epoch' });
+      return;
+    }
+    // Liveness: this holder is demonstrably doing the job. Recorded only for ACCEPTED
+    // frames, so a stale-epoch sender cannot keep a dead cell looking alive.
+    this.authority.noteActorFrame(cellKey);
+    const batchNo = (this.actorBatchNo.get(cellKey) ?? 0) + 1;
+    this.actorBatchNo.set(cellKey, batchNo);
+    // Distance is only comparable between exterior cells (same reason as pose interest
+    // management); interiors keep the flat cell-granular stream. Measured from the STREAMED
+    // cell's centre, not the holder's pose: the peer's dummy is parked wherever it last
+    // walked, so measuring from it put the NPCs in a player's own cell at the far rate.
+    const c = this.interest ? parseExterior(cellKey) : null;
+    const cx = c ? (c.x + 0.5) * 8192 : 0;
+    const cy = c ? (c.y + 0.5) * 8192 : 0;
+    // Serialized ONCE for the whole fan-out: unlike pose batches (whose entry list differs
+    // per recipient), every peer gets byte-identical actor bytes, so re-enveloping per peer
+    // was pure copying. Safe because the envelope seq is server-global, not per-connection.
+    let frame: Buffer | undefined;
+    for (const p of this.roster.inWorld()) {
+      if (p.id === player.id || !cellsVisible(p.cellKey, cellKey)) continue;
+      // LOD: a player across the cell does not need 15 Hz NPC updates. Rate only, NEVER
+      // culled — actors have no leave-view signal, so cutting the stream would freeze
+      // NPC puppets in place instead of removing them. The recipient's own cell is never
+      // strided: those are the NPCs standing next to them.
+      if (c && p.pose && p.cellKey !== cellKey) {
+        const dx = p.pose.x - cx;
+        const dy = p.pose.y - cy;
+        const st = lodStride(dx * dx + dy * dy, this.interest!);
+        if (st > 1 && (batchNo + p.id) % st !== 0) continue;
       }
-      // The epoch names the cell (authority.ts cellOfEpoch): the peer streams every cell it
-      // anchors, not only the one its avatar stands in.
-      const cellKey = this.authority.cellOfEpoch(epoch) ?? player.cellKey;
-      if (!cellKey || this.authority.holderOf(cellKey) !== player.id) {
-        // The anti-cheat chokepoint: only the cell's holder may author its actors. Counted
-        // (not just dropped) so forgery is VISIBLE — a modified client trying to move
-        // everyone's NPCs shows up in /metrics instead of failing silently.
-        metrics.actorBatchRejected.inc({ reason: cellKey ? 'not_holder' : 'no_cell' });
-        return;
-      }
-      if (this.authority.currentEpoch(cellKey) !== epoch) {
-        metrics.actorBatchRejected.inc({ reason: 'stale_epoch' });
-        return;
-      }
-      // Liveness: this holder is demonstrably doing the job. Recorded only for ACCEPTED
-      // frames, so a stale-epoch sender cannot keep a dead cell looking alive.
-      this.authority.noteActorFrame(cellKey);
-      {
-      }
-      const batchNo = (this.actorBatchNo.get(cellKey) ?? 0) + 1;
-      this.actorBatchNo.set(cellKey, batchNo);
-      // Distance is only comparable between exterior cells (same reason as pose interest
-      // management); interiors keep the flat cell-granular stream.
-      const holderPose = this.interest && parseExterior(cellKey) ? player.pose : undefined;
-      // Serialized ONCE for the whole fan-out: unlike pose batches (whose entry list differs
-      // per recipient), every peer gets byte-identical actor bytes, so re-enveloping per peer
-      // was pure copying. Safe because the envelope seq is server-global, not per-connection.
-      let frame: Buffer | undefined;
-      for (const p of this.roster.inWorld()) {
-        if (p.id === player.id || !cellsVisible(p.cellKey, cellKey)) continue;
-        // LOD: a player across the cell does not need 15 Hz NPC updates. Rate only, NEVER
-        // culled — actors have no leave-view signal, so cutting the stream would freeze
-        // NPC puppets in place instead of removing them.
-        if (holderPose && p.pose) {
-          const dx = p.pose.x - holderPose.x;
-          const dy = p.pose.y - holderPose.y;
-          const dz = p.pose.z - holderPose.z;
-          const st = lodStride(dx * dx + dy * dy + dz * dz, this.interest!);
-          if (st > 1 && (batchNo + p.id) % st !== 0) continue;
-        }
-        frame ??= packEnvelope(MSG_ACTOR_MOVE_BATCH, nextBroadcastSeq(), payload);
-        p.peer.sendBinaryFrame(MSG_ACTOR_MOVE_BATCH, frame);
-      }
-    });
+      frame ??= packEnvelope(MSG_ACTOR_MOVE_BATCH, nextBroadcastSeq(), payload);
+      p.peer.sendBinaryFrame(MSG_ACTOR_MOVE_BATCH, frame);
+    }
   }
 
   // ---------------------------------------------------------------- objects

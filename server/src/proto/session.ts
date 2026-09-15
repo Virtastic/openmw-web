@@ -108,6 +108,7 @@ export type DisconnectCode =
   | 'SUPERSEDED'
   | 'KICKED'
   | 'RATE'
+  | 'BACKLOG' // outbound buffer overflow: the client stopped reading (background tab), transient
   | 'IP_CAP'
   | 'SERVER_FULL'
   | 'SHUTDOWN';

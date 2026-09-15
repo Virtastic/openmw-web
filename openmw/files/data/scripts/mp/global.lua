@@ -321,6 +321,19 @@ local remoteIdentity = {} -- id -> {appearance=, equipment=, dynamic=} (M2; kept
 local puppetRecordIds = {} -- identity fingerprint -> generated NPC record id (immutable)
 local ownCellKeyCache = nil
 local lastPuppetMirror = 0
+-- Inbound frames the engine shed past its 4 MB cap (a throttled background tab). Only the
+-- lossy tiers are shed, but a shed actor batch can still leave an NPC parked where it was:
+-- one ResyncRequest per second while the counter moves trues the own cell up.
+local lastDroppedInbound = 0
+local lastDropCheckAt = 0
+local function droppedInboundTick(now)
+    if now - lastDropCheckAt < 1 then return end
+    lastDropCheckAt = now
+    local dropped = mp.status().droppedInbound or 0
+    if dropped == lastDroppedInbound then return end
+    lastDroppedInbound = dropped
+    if ownCellKeyCache then mp.sendEvent('ResyncRequest', { cellKey = ownCellKeyCache }) end
+end
 
 local function toCellKey(cell)
     if not cell then return nil end
@@ -3428,6 +3441,7 @@ return {
             chargenTick()
             if net.state == 'Joined' then
                 local now = core.getRealTime()
+                droppedInboundTick(now)
                 objects.tick(now)
                 actors.tick(now)
                 quests.tick(now)

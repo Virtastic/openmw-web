@@ -167,6 +167,9 @@ namespace MWMP
             return false;
         mState = State::Connecting;
         mSeq = 0;
+        // The server's broadcast counter restarts with the world process; a stale-drop
+        // watermark carried across a reconnect refused every pose as old for hours.
+        mLastMoveSeqIn = 0;
         mCloseCode = 0;
         mCloseReason.clear();
         return true;
@@ -346,8 +349,16 @@ namespace MWMP
     {
         if (mInboundBytes + size > sInboundCap)
         {
-            ++mStats.mDroppedInbound;
-            return;
+            // Over the cap (a throttled background tab that stopped pumping): shed only the
+            // lossy tiers, which the next frame corrects. Events and session JSON are state
+            // and are queued regardless -- dropping one would need a resync the client
+            // cannot know to ask for.
+            const uint16_t type = (!isText && size >= 6) ? readLE<uint16_t>(data) : 0;
+            if (type == sTypePlayerMoveBatch || type == sTypeActorMoveBatch || type == sTypePlayerStateBatch)
+            {
+                ++mStats.mDroppedInbound;
+                return;
+            }
         }
         mInbound.push_back({ isText, std::string(reinterpret_cast<const char*>(data), size) });
         mInboundBytes += size;

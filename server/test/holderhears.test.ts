@@ -164,3 +164,32 @@ test("the peer's actor batches for a far held cell reach the players standing th
   peer.sendActorMoveBatch(e2, [entry]);
   assert.equal((await bob.waitActorBatch()).batch.epoch, e2, 'Bob gets the 9,9 stream');
 });
+
+// LOD IS MEASURED FROM THE STREAMED CELL. The peer's dummy stands wherever it last walked;
+// the server measured actor LOD from THAT pose, so a player in another exterior cell got the
+// NPCs in their OWN cell at the far rate (1 Hz: park, stutter, teleport). A recipient standing
+// in the streamed cell is never strided, however far the dummy is parked.
+test("a player far from the peer's dummy gets every batch for the cell they stand in", async (t) => {
+  const server = await startServer({ requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1', configOverride: { server: { password: PEER_PASS } } });
+  t.after(() => server.close());
+  const bob = await TestClient.connect(server.port);
+  t.after(() => bob.close());
+  await bob.joinAsNew('Bob');
+  bob.sendCellChange('0,0', 4096, 4096, 0);
+  await bob.waitEvent('PlayerCellChange');
+
+  const peer = await TestClient.simPeer(server.port, PEER_PASS);
+  t.after(() => peer.close());
+  peer.sendCellChange('0,0', 4096, 4096, 0);
+  const e = ((await peer.waitEvent('ActorAuthorityGrant', (v) => (v as { cellKey: string }).cellKey === '0,0')).value as { epoch: number }).epoch;
+  // The dummy walks off to the next cell, far past lodMidRadius from Bob; 0,0 stays held
+  // because Bob keeps it occupied.
+  peer.sendCellChange('1,0', 8192 + 8000, 4096, 0);
+  await peer.waitEvent('ActorAuthorityGrant', (v) => (v as { cellKey: string }).cellKey === '1,0');
+  await peer.waitEvent('PlayerCellChange');
+
+  const entry = { ref: { index: 42, contentFile: 0 }, pose: { x: 1, y: 2, z: 3, yaw: 0, pitch: 0, flags: 0, animVel: 0, counter: 0 } };
+  bob.inbox.actorBatches.length = 0;
+  for (let i = 0; i < 10; i++) peer.sendActorMoveBatch(e, [entry]);
+  for (let i = 0; i < 10; i++) await bob.waitActorBatch((b) => b.batch.epoch === e);
+});
