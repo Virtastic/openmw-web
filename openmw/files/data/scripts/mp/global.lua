@@ -2705,18 +2705,20 @@ local eventHandlers = {
         local door = nearestDoor()
         if door then objects.onActivate(door, playerScript()) ; pcall(function() types.Door.activateDoor(door) end) end
     end,
+    -- silent = what an MWScript Lock/Unlock does: the object changes and nothing is sent;
+    -- the cell poll in objects.lua has to notice (s158).
     mpDoorLock = function(data)
         local door = nearestDoor()
         if door then
             pcall(function() types.Lockable.lock(door, data.level or 50) end)
-            mp.sendEvent('ObjectLock', { ref = door, cellKey = ownCellKeyCache, lockLevel = data.level or 50 })
+            if not data.silent then mp.sendEvent('ObjectLock', { ref = door, cellKey = ownCellKeyCache, lockLevel = data.level or 50 }) end
         end
     end,
-    mpDoorUnlock = function()
+    mpDoorUnlock = function(data)
         local door = nearestDoor()
         if door then
             pcall(function() types.Lockable.unlock(door) end)
-            mp.sendEvent('ObjectLock', { ref = door, cellKey = ownCellKeyCache })
+            if not (data and data.silent) then mp.sendEvent('ObjectLock', { ref = door, cellKey = ownCellKeyCache }) end
         end
     end,
 

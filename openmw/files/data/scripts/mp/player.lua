@@ -921,6 +921,11 @@ local function dispatch(cmd)
         local lockLevel = cmd:match('^door:lock:(%d+)$')
         if lockLevel then core.sendGlobalEvent('mpDoorLock', { level = tonumber(lockLevel) }) end
         if cmd == 'door:unlock' then core.sendGlobalEvent('mpDoorUnlock', {}) end
+        -- door:scriptlock:<n> / door:scriptunlock: the object changes with nothing sent, as a
+        -- quest script's Lock/Unlock does; the cell poll must carry it (s158).
+        local scriptLock = cmd:match('^door:scriptlock:(%d+)$')
+        if scriptLock then core.sendGlobalEvent('mpDoorLock', { level = tonumber(scriptLock), silent = true }) end
+        if cmd == 'door:scriptunlock' then core.sendGlobalEvent('mpDoorUnlock', { silent = true }) end
         -- countname:<display name>: count by the record's NAME. A record minted in another
         -- world arrives here under a different local id (M7 maps server ids per world), so
         -- counting by id across a world switch asks for something that does not exist (s127).

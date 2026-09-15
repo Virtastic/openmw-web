@@ -67,6 +67,10 @@ local lockWatch = {} -- obj.id -> {obj=, locked=, level=, until_=}
 -- of the player's own cell rather than a watch window. Entries double as the echo mute:
 -- a network apply writes the new value here before touching the object.
 local enableWatch = {}
+-- Same poll, for locks a SCRIPT sets (a quest unlocking a door, a trap re-locking a chest):
+-- lockWatch only watches for 4 s after an activation, and a Lock with nobody touching the
+-- object was never seen. obj.id -> lock level (false = unlocked); doubles as the echo mute.
+local scriptLockWatch = {}
 local nextEnablePoll = 0
 local ENABLE_POLL = 1.0 -- seconds; a reveal appearing within a second reads as instant
 local containerWatch = {} -- obj.id -> {obj=, last={id->n}, nextPoll=, until_=}
@@ -768,8 +772,9 @@ handlers.MP_ObjectLock = function(data)
     if isOwnEcho(data) then return end
     local obj = resolveBody(data)
     if not (obj and types.Lockable.objectIsInstance(obj)) then return end
-    -- Mute the lock watcher: a network apply must not bounce back as a local change.
+    -- Mute the lock watchers: a network apply must not bounce back as a local change.
     lockWatch[obj.id] = nil
+    scriptLockWatch[obj.id] = data.lockLevel or false
     if data.lockLevel then
         pcall(function() types.Lockable.lock(obj, data.lockLevel) end)
     else
@@ -953,6 +958,7 @@ handlers.MP_WorldCellState = function(data)
         local obj = resolveRefKey(refKey)
         if obj and obj:isValid() and types.Lockable.objectIsInstance(obj) then
             lockWatch[obj.id] = nil
+            scriptLockWatch[obj.id] = lockInfo.lockLevel or false
             if lockInfo.lockLevel then
                 pcall(function() types.Lockable.lock(obj, lockInfo.lockLevel) end)
             else
@@ -1016,6 +1022,16 @@ function objects.tick(now)
                     elseif was ~= on then
                         enableWatch[obj.id] = on
                         sendAddressed('ObjectEnabled', obj, { enabled = on })
+                    end
+                    if types.Lockable.objectIsInstance(obj) then
+                        local level = types.Lockable.isLocked(obj) and types.Lockable.getLockLevel(obj) or false
+                        local had = scriptLockWatch[obj.id]
+                        if had == nil then
+                            scriptLockWatch[obj.id] = level
+                        elseif had ~= level and not lockWatch[obj.id] then -- an activation's own watch reports its own
+                            scriptLockWatch[obj.id] = level
+                            sendAddressed('ObjectLock', obj, { lockLevel = level or nil })
+                        end
                     end
                 end
             end
@@ -1083,8 +1099,9 @@ function objects.tick(now)
             local locked = types.Lockable.isLocked(obj)
             if locked ~= watch.locked then
                 watch.locked = locked
-                sendAddressed('ObjectLock', obj,
-                    { lockLevel = locked and types.Lockable.getLockLevel(obj) or nil })
+                local level = locked and types.Lockable.getLockLevel(obj) or nil
+                scriptLockWatch[id] = level or false -- the cell poll must not report it again
+                sendAddressed('ObjectLock', obj, { lockLevel = level })
             end
         end
     end
