@@ -76,6 +76,7 @@ local wasMoving = false
 local jumpQueued = false
 local prevJumpCtl = false
 local lastCellKey = nil
+local knockedUntil = 0 -- backlog 73: the peer's avatar is on the floor; hold our body still
 local lastPoseMirror = 0
 -- Every GUI mode that can pay an NPC out of its purse. Verified against the engine rather
 -- than guessed: these are exactly the call sites of setGoldPool that a player can reach --
@@ -340,6 +341,14 @@ local function movementTick()
     -- snapped the player straight back (and the detector then announced the old spot). Seen
     -- with every same-cell teleport: the client stayed put while its avatar went.
     if lastOwnPos ~= nil and (self.position - lastOwnPos):length2() > SNAP_DIST * SNAP_DIST then latestSelf = nil end
+    -- Backlog 73: knockdown is not relayed by the engine, so while the peer reports the avatar
+    -- knocked down (MP_SelfStats.kd) the owner kept walking and reconciliation rubber-banded
+    -- them back. Zero the controls before the intent goes out: nobody walks lying down.
+    if now < knockedUntil then
+        self.controls.movement = 0
+        self.controls.sideMovement = 0
+        self.controls.jump = false
+    end
     selfReconcileTick() -- Phase 3: one correction per frame toward the newest peer pose
     inputTick(now) -- Phase 3: raw intent to the peer, beside the pose stream
     identity.tick(now) -- M2: appearance/equipment/stats/inventory diff broadcasts
@@ -1248,6 +1257,8 @@ return {
             mp.set('selfStats', string.format('%.0f/%.0f', data.hp.c, data.hp.b))
             if data.mp then mp.set('selfMagicka', string.format('%.0f/%.0f', data.mp.c, data.mp.b)) end
             identity.notePeerBars(data.hp.c, data.mp and data.mp.c, data.ft and data.ft.c)
+            -- Backlog 73: reports come at 4 Hz; hold a little past the next one.
+            if data.kd == true then knockedUntil = core.getRealTime() + 0.5 end
             pcall(function()
                 local d = types.Actor.stats.dynamic
                 d.health(self).current = data.hp.c

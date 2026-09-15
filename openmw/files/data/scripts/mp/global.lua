@@ -723,11 +723,13 @@ local function avatarStatsTick(now)
                 return { id = id,
                     hp = { c = hp.current, b = hp.base },
                     mp = { c = m.current, b = m.base },
-                    ft = { c = ft.current, b = ft.base } }
+                    ft = { c = ft.current, b = ft.base },
+                    -- Backlog 73: knocked down here = the owner must stop walking (player.lua).
+                    kd = (mp.isKnockedDown and mp.isKnockedDown(p.obj)) == true or nil }
             end)
             if ok and entry then
-                local key = string.format('%d:%.1f/%.1f %.1f/%.1f %.1f/%.1f', entry.id,
-                    entry.hp.c, entry.hp.b, entry.mp.c, entry.mp.b, entry.ft.c, entry.ft.b)
+                local key = string.format('%d:%.1f/%.1f %.1f/%.1f %.1f/%.1f %s', entry.id,
+                    entry.hp.c, entry.hp.b, entry.mp.c, entry.mp.b, entry.ft.c, entry.ft.b, tostring(entry.kd))
                 -- Diff for cadence, REFRESH for correctness: the server may drop a report
                 -- (the owner's input tier not warmed up yet, a teleport race), and a dropped
                 -- report the diff never retries is a player whose bars freeze forever.
@@ -960,6 +962,7 @@ local function localSummonsTick()
     -- cells load, and a creature rolled in that window is a ghost only this screen can see.
     local want = net.state == 'Joined'
         and not (simulated or actors.hasHolder(ownCellKeyCache) or actors.anyHolder())
+    objects.setPeerRules(not want) -- backlog 109: the peer's avatar fires the real arrows
     -- Diagnostic mirror (s107): why local spawns are on or off, once a second.
     local nowD = core.getRealTime()
     if nowD - (localSpawnsDbgAt or 0) >= 1 then

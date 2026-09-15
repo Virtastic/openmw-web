@@ -230,6 +230,16 @@ namespace MWMP
             setAvatarBounty(obj.as<MWLua::Object>().id(), bounty);
         };
         api["clearAvatars"] = []() { clearAvatars(); };
+        // Backlog 73: knockdown is not in the Lua stats API; the peer reports it with the avatar
+        // bars so the owner stops driving a body that is lying on the floor.
+        api["isKnockedDown"] = [](const sol::object& obj) -> bool {
+            if (!obj.is<MWLua::Object>())
+                return false;
+            const MWWorld::Ptr& ptr = obj.as<MWLua::Object>().ptrOrEmpty();
+            if (ptr.isEmpty() || !ptr.getClass().isActor())
+                return false;
+            return ptr.getClass().getCreatureStats(ptr).getKnockedDown();
+        };
         // Drain the harmful magic effects the engine declined to apply to THIS actor, so its
         // puppet script can forward them to whoever owns it. Per-object on purpose: the puppet
         // local script already has the object and already forwards melee the same way

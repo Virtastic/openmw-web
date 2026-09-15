@@ -37,6 +37,13 @@ local DOOR_READ_DELAY = 0.4 -- door starts turning on activation; read the resul
 -- Reported as a plant that opens blank and stays blank. Read it a beat later instead.
 local CONTAINER_OPEN_DELAY = 0.2
 local ECHO_GUARD_SECONDS = 5
+local peerRules = false -- objects.setPeerRules
+
+local AMMO = { [types.Weapon.TYPE.Arrow] = true, [types.Weapon.TYPE.Bolt] = true, [types.Weapon.TYPE.MarksmanThrown] = true }
+local function isAmmo(obj)
+    local ok, t = pcall(function() return types.Weapon.record(obj).type end)
+    return ok and AMMO[t] == true
+end
 
 local netActorCount = 0 -- runtime actors built here from the holder's naming (mirror: netActors)
 local recentTakes = {} -- netId -> realTime of our granted take (its delete echo is ours)
@@ -574,7 +581,21 @@ function objects.onItemActive(item)
     if not player then return end
     local ok, dist = pcall(function() return (item.position - player.position):length() end)
     if not ok or dist > DROP_DETECT_RANGE then return end
+    -- Backlog 109: under input authority our engine still launches the projectile locally
+    -- while the peer's avatar launches the real one. A missed arrow then lands on BOTH
+    -- engines and each reported it as a placement (ours with fromInventory=true, the peer's
+    -- with false): a friend saw two arrows. The peer's copy is the one that counts; drop ours.
+    if peerRules and isAmmo(item) then
+        pcall(function() item:remove() end)
+        return
+    end
     objects.requestSpawn(item, nil, nil, true) -- came OUT of our inventory: conservation applies
+end
+
+-- global.lua localSummonsTick: true while a holder (or the server's simulated flag) rules
+-- our body, i.e. while the peer's avatar fires the real projectiles.
+function objects.setPeerRules(v)
+    peerRules = v == true
 end
 
 -- Register a locally-created runtime object with the server (drops, test chests). The

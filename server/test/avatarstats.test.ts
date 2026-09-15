@@ -61,6 +61,22 @@ test('a driving player gets MP_SelfStats from the peer report, and observers see
   assert.ok(seen, 'observers render the peer-simulated bars');
 });
 
+// Backlog 73: knockdown is not in the engine's stream, so it rides the bars.
+test('a knocked-down report reaches the owner as SelfStats.kd', async (t) => {
+  const { server, peer, a } = await world(t);
+  let seq = 0;
+  a.sendInput({ move: 1 }, ++seq);
+  const timer = setInterval(() => a.sendInput({ move: 1 }, ++seq), 100);
+  t.after(() => clearInterval(timer));
+  const reporter = setInterval(() => peer.sendEvent('AvatarStatsBatch', {
+    entries: [{ id: a.playerId, ...bars(42), kd: true }],
+  }), 100);
+  t.after(() => clearInterval(reporter));
+  const self = await a.waitEvent('SelfStats', (v) => (v as { kd?: unknown })?.kd === true);
+  assert.ok(self, 'the owner must learn they are knocked down');
+  void server;
+});
+
 test("while peer reports are fresh the client's own assertion is ignored", async (t) => {
   const { server, peer, a } = await world(t);
   const b = await TestClient.connect(server.port);

@@ -591,7 +591,8 @@ export function handleAvatarStatsBatch(ctx: StateCtx, sender: Player, value: LVa
     // BARE NAME: the engine prefixes MP_ on arrival (mwmp/netmanager.cpp), so sending
     // 'MP_SelfStats' made the client look for a handler named MP_MP_SelfStats and the bars
     // never reached a real player. The unit tests read raw wire names, so they passed.
-    p.peer.sendEvent('SelfStats', { hp, mp, ft });
+    // Backlog 73: knocked down on the peer -> the owner holds still (player.lua MP_SelfStats).
+    p.peer.sendEvent('SelfStats', { hp, mp, ft, kd: e.get('kd') === true });
   }
 }
 
