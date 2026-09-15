@@ -26,6 +26,7 @@
 #include "../mwbase/environment.hpp"
 #include "../mwbase/inputmanager.hpp"
 #include "../mwbase/mechanicsmanager.hpp"
+#include "../mwmechanics/actorutil.hpp"
 #include "../mwbase/statemanager.hpp"
 #include "../mwbase/windowmanager.hpp"
 #include "../mwbase/world.hpp"
@@ -323,6 +324,11 @@ namespace MWMP
             t["swimming"] = world->isSwimming(player);
             t["breath"] = player.getClass().getNpcStats(player).getTimeToStartDrowning();
             t["godmode"] = world->getGodModeState();
+            // Why a submerged avatar might NOT be drowning (s149): the mechanics loop only
+            // runs updateDrowning for an NPC that is in processing range while AI is active.
+            t["inRange"] = MWMechanics::inSimProcessingRange(player);
+            t["aiActive"] = MWBase::Environment::get().getMechanicsManager()->isAIActive();
+            t["dead"] = player.getClass().getCreatureStats(player).isDead();
             t["waterBreathing"] = player.getClass().getCreatureStats(player).getMagicEffects()
                 .getOrDefault(ESM::MagicEffect::WaterBreathing).getMagnitude();
             return t;

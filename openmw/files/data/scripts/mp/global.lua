@@ -648,8 +648,8 @@ local function avatarDrownProbe(now)
             local ok, d = pcall(mp.drownState, p.obj)
             if ok and d and d.submerged then
                 local okh, hp = pcall(function() return types.Actor.stats.dynamic.health(p.obj).current end)
-                print(string.format('[mp] avatar #%d submerged: breath=%s hp=%s god=%s wb=%s', id,
-                    tostring(d.breath), tostring(okh and hp or '?'), tostring(d.godmode), tostring(d.waterBreathing)))
+                print(string.format('[mp] avatar #%d submerged: breath=%s hp=%s god=%s wb=%s inRange=%s ai=%s dead=%s', id,
+                    tostring(d.breath), tostring(okh and hp or '?'), tostring(d.godmode), tostring(d.waterBreathing), tostring(d.inRange), tostring(d.aiActive), tostring(d.dead)))
             end
         end
     end
