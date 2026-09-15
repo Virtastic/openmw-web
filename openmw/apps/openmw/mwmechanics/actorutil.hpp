@@ -37,6 +37,12 @@ namespace MWMechanics
      *  a range check would cull exactly the NPCs the server asked to simulate. */
     bool inSimProcessingRange(const MWWorld::Ptr& actor);
 
+    /** The player, or on the sim peer a PLAYER'S BODY (an avatar): every rule gated on
+     *  "attacker == getPlayer()" -- the sneak-attack critical, weapon skill use, OnPCHitMe --
+     *  ran on the owner's dead local copy and never on the avatar that actually lands the
+     *  blow. This is the predicate those gates want. */
+    bool isPlayerOrAvatar(const MWWorld::Ptr& actor);
+
     /** MP (Phase 2): the werewolf stat swap, actor-generic. These used to live on
      *  MWWorld::Player (saveStats/setWerewolfStats/restoreStats), so only the singleton
      *  player could ever transform correctly; the snapshot now lives in the actor's own

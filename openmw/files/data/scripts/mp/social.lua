@@ -281,7 +281,7 @@ return {
         MP_FriendRequestReceived = function(data)
             if data.fromAcct then
                 requests[data.fromAcct] = data.fromName or data.fromAcct
-                notice(tostring(requests[data.fromAcct]) .. ' sent you a friend request (F)')
+                notice(tostring(requests[data.fromAcct]) .. ' sent you a friend request (O)')
                 mirror()
                 render()
             end
@@ -294,7 +294,7 @@ return {
                 invites[data.fromAcct] = { name = data.fromName or data.fromAcct }
                 if not invitesSaid[data.fromAcct] then
                     invitesSaid[data.fromAcct] = true
-                    notice(tostring(invites[data.fromAcct].name) .. ' invited you to join them (F)')
+                    notice(tostring(invites[data.fromAcct].name) .. ' invited you to join them (O)')
                 end
                 mirror()
                 render()

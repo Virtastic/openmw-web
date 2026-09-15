@@ -344,8 +344,19 @@ export class Connection implements Peer {
       // touched — a connect/quit without any state must not fabricate an empty snapshot.
       const { charId, cellKey, pose } = this.player;
       if (this.ctx.players.getCached(charId)) {
+        const credit = this.player.pendingAcquired;
         this.ctx.players.update(charId, (doc) => {
           if (cellKey && pose) doc.position = { cellKey, x: pose.x, y: pose.y, z: pose.z };
+          // WHAT WAS PICKED UP IN THE LAST TWO SECONDS. The take was a server transaction (the
+          // container lost it) but the character's own declaration is a 2 s diff that never
+          // came: the item was destroyed, not duped. The per-event credit knows; fold it in.
+          if (credit && credit.size > 0) {
+            const inv = (doc.inventory ??= []);
+            for (const [id, n] of credit) {
+              const have = inv.find((i) => i.id === id);
+              if (have) have.n += n; else inv.push({ id, n });
+            }
+          }
         });
         this.ctx.track?.(this.ctx.players.flushKey(charId));
       }

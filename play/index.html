@@ -1552,7 +1552,8 @@ window.omw = (function(){
                  var s = window.omw.state.state;
                  if (s === 'Failed' && !handled){
                    handled = true;
-                   mpErrorModal('Can’t join multiplayer', friendlyMpError(window.omw.state.lastError));
+                   // Lua's own human sentence (netfail) first; the code+detail rendering is the fallback.
+                   mpErrorModal('Can’t join multiplayer', String(window.omw.state.netfail || '') || friendlyMpError(window.omw.state.lastError));
                  }
                }, 1000);
              })();
@@ -4584,12 +4585,13 @@ window.omw = (function(){
         c.appendChild(el('div','who','<div class="nm">'+esc(q.name)+'</div><div class="st">wants to be your friend</div>'));
         [['accept', function(){ cmd('social:FriendAccept:'+q.acct); }, true],
          ['block', function(){ cmd('social:BlockAdd:'+q.name); }]].forEach(function(a){
-          var b = el('button','btn'+(a[2]?' pri':''),a[0]); b.onclick = a[1]; c.appendChild(b); });
+          // Once: a second click on accept answered "that invitation has expired" right after the success.
+          var b = el('button','btn'+(a[2]?' pri':''),a[0]); b.onclick = function(){ b.disabled = true; a[1](); }; c.appendChild(b); });
         sec.appendChild(c); });
       invites.forEach(function(iv){ var c = el('div','card');
         c.appendChild(el('div','who','<div class="nm">'+esc(iv.name)+'</div><div class="st">invited you to join them</div>'));
         var b = el('button','btn pri','accept');
-        b.onclick = function(){ cmd('social:InviteAccept:'+iv.acct); };
+        b.onclick = function(){ b.disabled = true; cmd('social:InviteAccept:'+iv.acct); };
         c.appendChild(b); sec.appendChild(c); });
       sec.appendChild(el('h3',null,'Friends'));
       if (!friends.length) sec.appendChild(el('div','empty','No friends yet. Add someone below, or from Players.'));
@@ -5272,7 +5274,9 @@ window.omw = (function(){
     }
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     if (!ready) return;               // no multiplayer UI until the character exists
+    if (netHold) return;              // behind "Reconnecting…": an invisible chat would eat the keys
     var k = (e.key || '').toLowerCase();
+    if (k === 'enter' && !chatOpen) k = 't'; // Enter-to-chat, the habit every other game taught
     if (k !== 't' && k !== 'o') return;
     e.preventDefault(); e.stopPropagation(); suppressSignals();
     // An impatient first-timer pressing the keys the tour is describing has understood it.

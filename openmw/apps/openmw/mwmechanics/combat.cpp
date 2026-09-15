@@ -275,7 +275,8 @@ namespace MWMechanics
                 attacker.getClass().skillUsageSucceeded(attacker, weaponSkill, ESM::Skill::Weapon_SuccessfulHit);
 
             const MWMechanics::AiSequence& sequence = victim.getClass().getCreatureStats(victim).getAiSequence();
-            bool unaware = attacker == getPlayer() && !sequence.isInCombat()
+            // The avatar is the player's body on the peer: its sneak attacks are the player's.
+            bool unaware = isPlayerOrAvatar(attacker) && !sequence.isInCombat()
                 && !MWBase::Environment::get().getMechanicsManager()->awarenessCheck(attacker, victim);
             bool knockedDown = victim.getClass().getCreatureStats(victim).getKnockedDown();
             if (knockedDown || unaware)
@@ -320,7 +321,7 @@ namespace MWMechanics
         if (victimStats.getFatigue().getCurrent() >= 0)
         {
             // Maybe we should keep an aware state for actors updated every so often instead of testing every time
-            bool unaware = (!victimStats.getAiSequence().isInCombat()) && (attacker == getPlayer())
+            bool unaware = (!victimStats.getAiSequence().isInCombat()) && isPlayerOrAvatar(attacker)
                 && (!MWBase::Environment::get().getMechanicsManager()->awarenessCheck(attacker, victim));
             if (!(victimStats.getKnockedDown() || victimStats.isParalyzed() || unaware))
             {

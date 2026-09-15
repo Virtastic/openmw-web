@@ -562,7 +562,11 @@ export function handleAvatarStatsBatch(ctx: StateCtx, sender: Player, value: LVa
     // The window CLOSES on the first living report: the fresh avatar body is up, so a later
     // death is a real one and must not be swallowed by a window that never expired.
     if (hp.c > 0) p.resurrectedAt = undefined;
-    if (p.lastInputAt === undefined || now - p.lastInputAt > PEER_STATS_FRESH_MS) {
+    // Not driving -- except for a DEATH. A player alt-tabbed for an hour is not driving, but
+    // the avatar is still standing in the world where an NPC can kill it; gating the report
+    // meant the death was never recorded and the stale client's bars re-ruled on return,
+    // a free resurrect. The avatar is the body in the world; if it died, the player died.
+    if ((p.lastInputAt === undefined || now - p.lastInputAt > PEER_STATS_FRESH_MS) && hp.c > 0) {
       if (p.statsDropLogged !== true) {
         p.statsDropLogged = true;
         log('info', 'simpeer.avatar_stats_gated', {

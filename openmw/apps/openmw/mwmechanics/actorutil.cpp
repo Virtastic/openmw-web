@@ -8,6 +8,7 @@
 #include "../mwworld/class.hpp"
 #include "../mwworld/esmstore.hpp"
 #include "../mwworld/player.hpp"
+#include "../mwmp/puppets.hpp"
 
 #include <components/settings/values.hpp>
 
@@ -63,6 +64,15 @@ namespace MWMechanics
             best = std::min(best, dx * dx + dy * dy);
         }
         return best;
+    }
+
+    bool isPlayerOrAvatar(const MWWorld::Ptr& actor)
+    {
+        if (actor.isEmpty())
+            return false;
+        if (actor == getPlayer())
+            return true;
+        return MWMP::isAvatar(actor.getCellRef().getRefNum());
     }
 
     bool inSimProcessingRange(const MWWorld::Ptr& actor)

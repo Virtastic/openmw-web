@@ -734,19 +734,21 @@ namespace MWClass
             MWMechanics::CreatureStats& statsAttacker = attacker.getClass().getCreatureStats(attacker);
             // First handle the attacked actor
             if (!stats.getHitAttemptActor().isSet()
-                && (statsAttacker.getAiSequence().isInCombat(ptr) || attacker == MWMechanics::getPlayer()))
+                && (statsAttacker.getAiSequence().isInCombat(ptr) || MWMechanics::isPlayerOrAvatar(attacker)))
                 stats.setHitAttemptActor(attacker.getCellRef().getRefNum());
 
             // Next handle the attacking actor
             if (!statsAttacker.getHitAttemptActor().isSet()
-                && (statsAttacker.getAiSequence().isInCombat(ptr) || attacker == MWMechanics::getPlayer()))
+                && (statsAttacker.getAiSequence().isInCombat(ptr) || MWMechanics::isPlayerOrAvatar(attacker)))
                 statsAttacker.setHitAttemptActor(ptr.getCellRef().getRefNum());
         }
 
         if (!object.empty())
             stats.setLastHitAttemptObject(object);
 
-        if (setOnPcHitMe && !attacker.isEmpty() && attacker == MWMechanics::getPlayer())
+        // OnPCHitMe fires for the player's BODY on the peer too: the quest script that reacts
+        // to being struck by the player runs on the engine where the blow lands.
+        if (setOnPcHitMe && MWMechanics::isPlayerOrAvatar(attacker))
         {
             const ESM::RefId& script = getScript(ptr);
             /* Set the OnPCHitMe script variable. The script is responsible for clearing it. */

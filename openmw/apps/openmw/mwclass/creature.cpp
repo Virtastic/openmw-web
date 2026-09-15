@@ -389,7 +389,7 @@ namespace MWClass
         if (!object.empty())
             stats.setLastHitAttemptObject(object);
 
-        if (setOnPcHitMe && !attacker.isEmpty() && attacker == MWMechanics::getPlayer())
+        if (setOnPcHitMe && MWMechanics::isPlayerOrAvatar(attacker))
         {
             const ESM::RefId& script = ptr.get<ESM::Creature>()->mBase->mScript;
             /* Set the OnPCHitMe script variable. The script is responsible for clearing it. */

@@ -1328,7 +1328,19 @@ namespace MWMechanics
         if (!(effect.mFlags & ESM::ActiveEffect::Flag_Remove) && target.getClass().isActor()
             && MWMP::isPuppet(target.getCellRef().getRefNum()))
         {
-            if (!(effect.mFlags & ESM::ActiveEffect::Flag_Applied))
+            // A WEAPON'S ON-STRIKE ENCHANTMENT IS THE AVATAR'S SWING. The avatar lands the blow
+            // on the peer and casts the enchantment there natively; the owner's dead local
+            // swing cast it too, and forwarding that applied every on-strike effect twice and
+            // drained the charge on both copies. Cast-once (a scroll) and cast-when-used items
+            // are the owner's casts and still travel.
+            bool onStrike = false;
+            const ESM::RefId ench = spellParams.getEnchantment();
+            if (!ench.empty())
+            {
+                const ESM::Enchantment* rec = world->getStore().get<ESM::Enchantment>().search(ench);
+                onStrike = rec != nullptr && rec->mData.mType == ESM::Enchantment::WhenStrikes;
+            }
+            if (!(effect.mFlags & ESM::ActiveEffect::Flag_Applied) && !onStrike)
             {
                 MWMP::MagicHit hit{ target.getCellRef().getRefNum(),
                     caster.isEmpty() ? ESM::RefNum{} : caster.getCellRef().getRefNum(),

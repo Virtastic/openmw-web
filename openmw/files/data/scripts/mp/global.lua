@@ -2063,6 +2063,11 @@ local eventHandlers = {
             elseif worldMode == 'party' and data and data.owner and data.owner ~= '' then
                 notice("You are in " .. tostring(data.owner) .. "'s world.")
             end
+        elseif was == nil and data and data.isOwner ~= true and data.owner and data.owner ~= '' then
+            -- A GUEST ARRIVES ON A FRESH PAGE (every join is a reboot), so `was` is nil and the
+            -- transition above never fires: the one thing a guest most wants said -- whose world
+            -- this is -- was said nowhere but the panel.
+            notice("You are in " .. tostring(data.owner) .. "'s world.")
         end
     end,
     MP_WorldClosed = function(data)

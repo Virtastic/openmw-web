@@ -1321,11 +1321,15 @@ export class WorldState {
   sendCellSnapshot(cellKey: string, doc: CellDoc): void {
     for (const p of this.roster.inWorld()) {
       if (!cellsVisible(p.cellKey, cellKey)) continue;
+      const locks: Record<string, JsLike> = {};
+      for (const [key, level] of Object.entries(doc.locks)) locks[key] = level === null ? {} : { lockLevel: level };
       p.peer.sendEvent('CellSnapshotReplace', {
         cellKey,
         placed: Object.values(doc.placed).map((x) => ({ ...x })),
         deleted: [...doc.deleted],
         moved: { ...doc.moved },
+        locks, // a reset re-locks what the doc says (nothing, after a reset) -- it used to leave stale locks standing
+        deaths: Object.keys(doc.actorDeaths ?? {}),
         doors: { ...doc.doors },
         containers: Object.fromEntries(
           Object.entries(doc.containers).map(([key, c]) => [key, { items: c.items.map((i) => ({ ...i })), stateSeq: c.stateSeq }]),
