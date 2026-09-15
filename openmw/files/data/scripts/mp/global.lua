@@ -1159,8 +1159,9 @@ local function mirrorPuppets()
                 end
             end)
             table.sort(actives)
+            local okD, dead = pcall(types.Actor.isDead, p.obj)
             m[tostring(id)] = { x = pos.x, y = pos.y, z = pos.z,
-                name = rec and rec.name or p.name, eq = eq, actives = actives,
+                name = rec and rec.name or p.name, eq = eq, actives = actives, dead = okD and dead or false,
                 flags = lastFlags[id] or 0, jumps = jumpEdges[id] or 0, stance = okS and st or -1 }
         end
     end

@@ -47,7 +47,13 @@ export default async function run(ctx) {
     await ctx.sleep(3_000);
     const before = await poseOf(guest.client);
     assert.ok(Math.hypot(before.x - at.x, before.y - at.y) > 500, 'the guest did not step away from the spawn point');
+    const guestId = String(await guest.client.eval('window.omw.state.playerId'));
+    const puppetDead = `((JSON.parse(window.omw.state.puppets||"{}")[${JSON.stringify(guestId)}]||{}).dead === true)`;
     await guest.client.cmd('sethp:0');
+    // THE HOST SEES IT: the puppet falls (the relayed bars hit zero) and gets up again with
+    // the revive. Nobody asserted this before; a death that only the dying player saw is
+    // half a death.
+    await host.client.waitFor(puppetDead, STEP, 'the host sees the guest fall');
     // Respawn: moved, alive again, and STILL in the host's world with the host watching.
     let pose = before;
     const by = Date.now() + 90_000;
@@ -61,6 +67,7 @@ export default async function run(ctx) {
     assert.equal(await guest.client.eval('window.omw.state.state'), 'Joined', 'the guest must still be connected after dying');
     assert.equal(await guest.client.eval('String(window.omw.state.worldClosed||"")'), '', 'dying must not send the guest home');
     await host.client.waitFor(`${guestRow}.id !== undefined`, STEP, "the host still sees the guest after the respawn");
+    await host.client.waitFor(`!${puppetDead}`, STEP, 'the host sees the guest get up');
     ctx.log(`PASS: the guest died and respawned inside the host's world (${Math.round(Math.hypot(pose.x - before.x, pose.y - before.y))} units away), still a guest the host can see`);
   } finally {
     host.stop();
