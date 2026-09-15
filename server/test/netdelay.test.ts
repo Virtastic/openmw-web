@@ -36,11 +36,16 @@ test('netdelay: N ms actually delays, in order', async () => {
   const d = new NetDelay(30);
   const t0 = Date.now();
   const order: number[] = [];
+  // The FIFO's own timer is unref'd (a queued frame must never hold a dying process up), so
+  // with nothing else alive node:test's Linux runner exited with this promise pending. Hold the
+  // loop for the test's duration.
+  const hold = setTimeout(() => {}, 5_000);
   const done = new Promise<void>((resolve) => {
     d.push(() => order.push(1));
     d.push(() => { order.push(2); resolve(); });
   });
   await done;
+  clearTimeout(hold);
   assert.deepEqual(order, [1, 2]);
   assert.ok(Date.now() - t0 >= 25, `held for ${Date.now() - t0} ms, wanted ~30`);
 });

@@ -40,11 +40,11 @@ export class NetDelay {
   private arm(): void {
     const head = this.q[0];
     if (!head) { this.timer = undefined; return; }
-    // NOT unref'd: a frame in the FIFO is a frame the other side is owed; an unref'd timer let
-    // the process (and node:test's file runner on Linux) exit with it still queued, which is
-    // exactly the "client only saw the close code" bug the FIFO was fixed for (backlog 339).
-    // A delay of at most a few hundred ms cannot hold a shutdown up meaningfully.
+    // unref'd: a queued frame must never hold a dying process up (a heartbeat re-arms this
+    // forever on a socket that is already closed). A test that only exercises the FIFO has to
+    // hold the loop itself.
     this.timer = setTimeout(() => this.drain(), Math.max(0, head.due - this.clock()));
+    this.timer.unref();
   }
 
   private drain(): void {
