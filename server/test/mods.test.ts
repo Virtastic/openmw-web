@@ -150,6 +150,34 @@ test('the peer cfg gets one data= per mod, in order, after the base game', () =>
   assert.ok(cfg.indexOf('fallback-archive=Morrowind.bsa') < cfg.indexOf('fallback-archive=A.bsa'));
 });
 
+// Backlog 301: grass is groundcover=, never content= -- and so never in the manifest.
+test('a grass plugin (by name or by flag) is groundcover= on the peer and absent from content', () => {
+  const dir = retail();
+  const stack = resolveMods({ ...emptyDoc(), mods: [
+    mod({ slug: 'veg', plugins: [
+      { file: 'Vurt_Trees.esp', enabled: true },
+      { file: 'Vurt_Groundcover.esp', enabled: true },
+      { file: 'Grass_AC.esp', enabled: true },
+      { file: 'Meadows.esp', enabled: true, groundcover: true },
+      { file: 'Off_Grass.esp', enabled: false },
+    ] }),
+  ] });
+  assert.deepEqual(stack.content, ['Vurt_Trees.esp']);
+  assert.deepEqual(stack.groundcover, ['Vurt_Groundcover.esp', 'Grass_AC.esp', 'Meadows.esp']);
+  const cfg = buildPeerCfg(detectGameData(dir), '/res', stack).split('\n');
+  assert.ok(cfg.includes('content=Vurt_Trees.esp'));
+  for (const g of stack.groundcover) {
+    assert.ok(cfg.includes(`groundcover=${g}`), `${g} must be groundcover=`);
+    assert.ok(!cfg.includes(`content=${g}`), `${g} must not be content=`);
+  }
+  // The flag round-trips through the doc.
+  const d = tmp();
+  writeFileSync(join(d, 'modlist.json'), JSON.stringify({ version: 2, entries: [], mods: [
+    { slug: 'veg', plugins: [{ file: 'Meadows.esp', enabled: true, groundcover: true }, { file: 'Trees.esp', enabled: true }] },
+  ] }));
+  assert.deepEqual(readModDoc(d).mods[0]!.plugins.map((p) => p.groundcover), [true, undefined]);
+});
+
 test('no stack means the cfg is exactly what it always was', () => {
   // Every existing caller passes two arguments. This is the guard that they keep working.
   const dir = retail();

@@ -598,15 +598,23 @@ export function saveModOrder(
     if (seen.has(slug)) return fail(400, `listed twice: ${slug}`);
     seen.add(slug);
 
+    // Backlog 301: the dashboard may also flag a plugin `groundcover: true` (a grass plugin
+    // whose name does not say so); the flag rides the plugin record from then on.
     const wanted = Array.isArray(row.plugins)
-      ? new Map((row.plugins as { file?: unknown; enabled?: unknown }[])
+      ? new Map((row.plugins as { file?: unknown; enabled?: unknown; groundcover?: unknown }[])
         .filter((p) => typeof p.file === 'string')
-        .map((p) => [(p.file as string).toLowerCase(), p.enabled !== false]))
+        .map((p) => [(p.file as string).toLowerCase(),
+          { enabled: p.enabled !== false, groundcover: typeof p.groundcover === 'boolean' ? p.groundcover : undefined }]))
       : null;
     next.push({
       ...mod,
       enabled: row.enabled !== false,
-      plugins: mod.plugins.map((p) => ({ ...p, enabled: wanted?.get(p.file.toLowerCase()) ?? p.enabled })),
+      plugins: mod.plugins.map((p) => {
+        const w = wanted?.get(p.file.toLowerCase());
+        const { groundcover: was, ...rest } = p;
+        const groundcover = w?.groundcover ?? was;
+        return { ...rest, enabled: w?.enabled ?? p.enabled, ...(groundcover ? { groundcover: true } : {}) };
+      }),
     });
   }
   // A mod the browser did not mention keeps its place at the end rather than vanishing: the

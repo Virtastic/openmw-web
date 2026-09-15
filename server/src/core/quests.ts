@@ -13,6 +13,8 @@ import { lToJs, type LTable, type LValue, type JsLike } from '../proto/lser';
 import { parseObjRef, type ObjRef } from '../proto/ref';
 import type { Player, Roster } from './players';
 import { INPUT_DRIVING_MS } from './players';
+
+const PEER_MEMBER_TTL_MS = 10 * 60_000; // backlog 196: how long a peer-written member var stays "peer-owned" in memory
 import { cellsVisible } from './movement';
 import { cellMapFull, type CellStore, type FactionState } from '../persist/cellstore';
 import type { PlayerDoc, PlayerStore } from '../persist/playerstore';
@@ -445,6 +447,7 @@ export class Quests {
   // untouched, so dialogue-driven quest state stays exactly as it was.
   private peerGlobalAt = new Map<string, number>();
   private peerMemberAt = new Map<string, number>();
+  private peerMemberWrites = 0;
 
   private globalVar(player: Player, body: LTable): void {
     const name = str(body.get('name'));
@@ -599,6 +602,12 @@ export class Quests {
     const nowMs = Date.now();
     if (player.system === true) {
       this.peerMemberAt.set(memberKey, nowMs);
+      // Backlog 196: one entry per cell|ref|name the peer ever wrote, never removed -- prune
+      // what is long past INPUT_DRIVING_MS (10 min is generous) every few thousand writes,
+      // so the map tracks what the peer is CURRENTLY driving rather than everything it has.
+      if (++this.peerMemberWrites % 4096 === 0) {
+        for (const [k, at] of this.peerMemberAt) if (nowMs - at > PEER_MEMBER_TTL_MS) this.peerMemberAt.delete(k);
+      }
     } else {
       const at = this.peerMemberAt.get(memberKey);
       if (at !== undefined && nowMs - at <= INPUT_DRIVING_MS) {

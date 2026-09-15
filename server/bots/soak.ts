@@ -30,6 +30,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { TestClient } from '../test/helpers';
+import { containerCycle, dropOp, pickOp } from './soak-ops';
 import { MSG_PLAYER_MOVE_BATCH, MSG_ACTOR_MOVE_BATCH } from '../src/proto/envelope';
 import { unpackActorMoveBatch, unpackMoveBatch, type ActorEntry } from '../src/proto/movement';
 
@@ -128,6 +129,15 @@ const NAME_PREFIX = (() => {
   if (i === -1) return 'soak';
   const v = process.argv[i + 1];
   if (!v || v.startsWith('--')) throw new Error('--prefix needs a value, e.g. --prefix wave2_');
+  return v;
+})();
+// --server-password <pw>: the [server] password of an ATTACHED world, which is what lets a
+// fake system peer be believed (backlog 87). Absent = no peer.
+const SERVER_PASSWORD = (() => {
+  const i = process.argv.indexOf('--server-password');
+  if (i === -1) return '';
+  const v = process.argv[i + 1];
+  if (!v || v.startsWith('--')) throw new Error('--server-password needs a value');
   return v;
 })();
 const MOVE_HZ = 15; // matches the real client's sampler
@@ -382,6 +392,7 @@ async function main(): Promise<void> {
 
   const failures: string[] = [];
   const bots: Bot[] = [];
+  let fakePeer: TestClient | null = null;
 
   try {
     await waitHealth(port, 15_000);
@@ -389,6 +400,15 @@ async function main(): Promise<void> {
       `[soak] server pid=${serverPid ?? 'attached'} port=${port} steps=${STEPS.join('->')} stepMinutes=${STEP_MINUTES} ` +
       `cells=${ONECELL ? `1 (${ONE_CELL_KEY})` : CELLS}${RAMP ? ' [ramp]' : ''}`,
     );
+    // --server-password <pw>: stand up a FAKE system peer holding the soak cell, so the
+    // bots' object/container traffic also crosses the peer relay (backlog 87). Only with a
+    // password: an unset one refuses every system connection, and standalone runs set none.
+    // It answers the wire and simulates nothing — a smoke tool, not the sim peer.
+    if (SERVER_PASSWORD) {
+      fakePeer = await TestClient.simPeer(port, SERVER_PASSWORD, `${NAME_PREFIX}peer`);
+      fakePeer.sendCellChange(ONE_CELL_KEY, CELL_ORIGIN.x, CELL_ORIGIN.y, 0);
+      console.log('[soak] fake system peer connected (holds the cell, simulates nothing)');
+    }
 
     const samples: { t: number; rss: number; latency: number }[] = [];
     const rows: StepRow[] = [];
@@ -516,15 +536,27 @@ async function main(): Promise<void> {
             b.client.sendCellChange(b.cellKey, b.x, b.y, 512);
           }
         }
+        // DROP, THEN PICK UP (backlog 87): the spawn is acked with a net id, and the take of
+        // that id runs the reach check + placed-object path a real pickup takes.
         if (tick % (MOVE_HZ * 7) === 0) {
           const b = bots[(tick * 3) % bots.length];
           if (b && !b.disconnected) {
-            b.client.sendEvent('ObjectSpawnRequest', {
-              tempId: tick,
-              recordId: 'misc_soak_item',
-              cellKey: b.cellKey,
-              x: b.x, y: b.y, z: 512, rotZ: 0, count: 1,
-            });
+            const drop = dropOp(tick, b.cellKey, b.x, b.y, 512);
+            b.client.sendEvent(drop.name, drop.body);
+            b.client.waitEvent('ObjectSpawnAck', (v) => (v as { tempId: number }).tempId === tick, 5_000)
+              .then((ack) => {
+                const pick = pickOp(tick, b.cellKey, (ack.value as { netId: number }).netId);
+                if (!b.disconnected) b.client.sendEvent(pick.name, pick.body);
+              })
+              .catch(() => {}); // a missed ack is what the shed/drop counters are for
+          }
+        }
+        // THE CHEST (backlog 87): open (first opener rolls the loot), take one, put one —
+        // the transactional container path, contended across bots in the same cell.
+        if (tick % (MOVE_HZ * 8) === 0) {
+          const b = bots[(tick * 13) % bots.length];
+          if (b && !b.disconnected) {
+            for (const m of containerCycle(tick, b.cellKey)) b.client.sendEvent(m.name, m.body);
           }
         }
 
@@ -914,6 +946,7 @@ async function main(): Promise<void> {
     }
   } finally {
     for (const b of bots) { try { b.client.ws.close(); } catch {} }
+    try { fakePeer?.ws.close(); } catch {}
     await sleep(500);
     server?.kill('SIGTERM');
     // A profiled server must be allowed to exit on its own or V8 never flushes the

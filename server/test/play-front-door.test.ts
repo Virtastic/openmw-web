@@ -178,3 +178,19 @@ test('buildLoadOrder accepts every content extension the peer does', clientOpts,
   assert.match(fn[0], /\/\\\.\(esp\|omwaddon\|omwgame\|omwscripts\)\$\//);
   assert.match(fn[0], /\/\\\.esm\$\/\.test\(lower\)\) modEsm/);
 });
+
+// Backlog 299 (locker half): the locker manifest's sha256 reaches net.lua through the engine
+// env, so a locker boot's SessionHello can be verified by a `strict` world.
+test('a locker boot hands each plugin sha256 to Lua', clientOpts, () => {
+  assert.ok(index.includes("ENV.OPENMW_MP_CONTENT_SHA256 = (ENV.OPENMW_MP_CONTENT_SHA256 ? ENV.OPENMW_MP_CONTENT_SHA256 + ';' : '') + f.name.toLowerCase() + '=' + f.sha256"),
+    'the locker mount loop must publish lowercase name=sha256 pairs');
+  const lua = readFileSync(join(process.cwd(), '..', 'openmw', 'files', 'data', 'scripts', 'mp', 'net.lua'), 'utf8');
+  assert.ok(lua.includes('sha256 = hashes[string.lower(name)]'), 'net.lua must put the hash on the manifest entry');
+});
+
+// Backlog 389: a sequential miss prefetches the next chunk of the same file in the worker.
+test('streamfs prefetches the next chunk after a sequential miss', sfsOpts, () => {
+  assert.ok(sfs.includes('if (m.next && m.pkey && !prefetch)'), 'one outstanding prefetch, persistable URLs only');
+  assert.ok(sfs.includes('if (prefetch && prefetch.ckey === ckey) await prefetch.done;'), 'a read of the chunk in flight must wait for it, not refetch');
+  assert.ok(sfs.includes('S.lastMiss.end === start'), 'sequential = this miss starts where the last one ended');
+});

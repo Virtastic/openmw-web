@@ -494,6 +494,10 @@ namespace MWMP
         // into the boot fragment and every switch carries it through.
         api["getHomeUrl"] = []() { return getEnvString("OPENMW_MP_HOME"); };
         api["getEngineHash"] = []() { return getEnvString("OPENMW_MP_ENGINEHASH"); };
+        // Backlog 299: `lowercase-name=sha256;...` for the content files the page could hash
+        // (a locker boot: the locker manifest carries each plugin's sha256). Lua cannot read
+        // files, so this is the only way a client manifest ever carries a hash. Empty otherwise.
+        api["getContentHashes"] = []() { return getEnvString("OPENMW_MP_CONTENT_SHA256"); };
         api["vectorsEnabled"] = []() { return std::getenv("OPENMW_MP_VECTORS") != nullptr; };
         // Test seam for the multiplayer console gate. The harness cannot press a key (no SDL
         // injection), so without a way to REQUEST the console and then observe whether it

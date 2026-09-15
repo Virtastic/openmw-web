@@ -41,15 +41,17 @@ docker build --no-cache -t openmw-harness-peer:local -f wasm-build/Dockerfile.ha
 mkdir -p "$OUT"
 echo "==> scenarios: ${SCENARIOS:-<full suite>} (log: $LOG)"
 # --user: files the run writes into /repo must stay owned by jenkins or the next checkout fails.
+# That uid cannot write the root-owned resources tree, so mp-harness.mjs's syncPeerScripts
+# cannot copy the repo's mp scripts into the peer: mount them over the image path instead
+# (the peer then runs the checkout's Lua, and syncPeerScripts verifies by hash that it does —
+# a mismatch fails the run, backlog 184).
 # The harness itself exits 1 on any FAIL, which fails the stage.
 # HARNESS_DOCKER_ARGS: extra `docker run` flags for a wrapper that needs more environment in
 # the container (run-fresh-install.sh points the play server at its own gateway).
+PEER_RES=/usr/local/share/openmw/resources/vfs
 set +e
 # shellcheck disable=SC2086
-docker run --rm --entrypoint sh --user "$(id -u):$(id -g)" -e HOME=/tmp \
-  -e OMW_SIM_PEER_BIN=/usr/local/bin/openmw ${HARNESS_DOCKER_ARGS:-} \
-  -v "$HOST_SRC:/repo" openmw-harness-peer:local \
-  -c '[ -x server/node_modules/.bin/tsc ] || (cd server && npm ci); exec node wasm-build/mp-harness.mjs "$@"' \
+docker run --rm --entrypoint sh --user "$(id -u):$(id -g)" -e HOME=/tmp   -e OMW_SIM_PEER_BIN=/usr/local/bin/openmw ${HARNESS_DOCKER_ARGS:-}   -v "$HOST_SRC:/repo"   -v "$HOST_SRC/openmw/files/data/scripts/mp:$PEER_RES/scripts/mp:ro"   -v "$HOST_SRC/openmw/files/data/mp.omwscripts:$PEER_RES/mp.omwscripts:ro"   openmw-harness-peer:local   -c '[ -x server/node_modules/.bin/tsc ] || (cd server && npm ci); exec node wasm-build/mp-harness.mjs "$@"' \
   -- ${SCENARIOS:-} 2>&1 | tee "$LOG"
 rc=${PIPESTATUS[0]}
 set -e

@@ -79,6 +79,7 @@
       let ctrl, data;
       const handles = new Map();   // id -> FileSystemFileHandle
       const files = new Map();     // id -> File (cached getFile() result)
+      let prefetch = null;         // {ckey, done}: the one outstanding sequential prefetch (backlog 389)
       onmessage = async (e) => {
         const m = e.data;
         if (m.init) { ctrl = new Int32Array(m.ctrl); data = new Uint8Array(m.data); return; }
@@ -102,6 +103,9 @@
             const ckey = m.pkey ? 'https://sfs.chunk/' + encodeURIComponent(m.pkey) + '/' + m.start : null;
             if (ckey) {
               try {
+                // A prefetch of exactly this chunk may be in flight (backlog 389): wait for it
+                // rather than fetching the same bytes twice.
+                if (prefetch && prefetch.ckey === ckey) await prefetch.done;
                 const hit = await (await caches.open('mwdata-chunks-v1')).match(ckey);
                 if (hit) buf = new Uint8Array(await hit.arrayBuffer());
               } catch (e) { /* Cache API unavailable: fall through to the network */ }
@@ -121,6 +125,25 @@
           ctrl[1] = buf.length;         // bytes delivered
           Atomics.store(ctrl, 0, m.gen);  // completion flag = generation
           Atomics.notify(ctrl, 0);
+          // SEQUENTIAL PREFETCH (backlog 389): the main thread says this miss followed the
+          // previous chunk of the same file (m.next = the chunk after it), which is what a
+          // first TR boot looks like -- ~500 serial range requests, each a full round trip
+          // of main-thread stall. Pull the next chunk into the persistent cache now, off the
+          // critical path, so the next miss is a Cache API hit. One outstanding at a time,
+          // and only for persistable (same-origin, unsigned) URLs: the cache key is the
+          // same formula the read path uses, so nothing else changes.
+          if (m.next && m.pkey && !prefetch) {
+            const nkey = 'https://sfs.chunk/' + encodeURIComponent(m.pkey) + '/' + m.next.start;
+            prefetch = { ckey: nkey, done: (async () => {
+              try {
+                const c = await caches.open('mwdata-chunks-v1');
+                if (await c.match(nkey)) return;
+                const r = await fetch(m.url, { headers: { Range: 'bytes=' + m.next.start + '-' + (m.next.end - 1) } });
+                if (r.ok || r.status === 206) await c.put(nkey, new Response(await r.arrayBuffer()));
+              } catch (e) { /* best effort: the read path fetches it itself */ }
+              finally { prefetch = null; }
+            })() };
+          }
         } catch (err) {
           ctrl[1] = -1;
           Atomics.store(ctrl, 0, m.gen);
@@ -132,7 +155,7 @@
   let generation = 0;
   // src: {url} for a range-fetched URL, or {id} for a local file handle. cacheKey uniquely
   // identifies the (source, offset) chunk across both modes.
-  function fetchChunkSync(src, cacheKey, start, end) {
+  function fetchChunkSync(src, cacheKey, start, end, size) {
     const hit = S.cache.get(cacheKey);
     if (hit) {
       S.cache.delete(cacheKey); S.cache.set(cacheKey, hit); // move-to-end (most-recently-used)
@@ -140,7 +163,12 @@
       return hit;
     }
     const gen = ++generation;
-    S.worker.postMessage(Object.assign({ start, end, gen }, src));
+    // Backlog 389: a miss right after the previous chunk of the same file is a sequential
+    // walk; tell the worker which chunk comes next so it can prefetch it (URL sources only).
+    const seq = S.lastMiss && S.lastMiss.key === cacheKey.slice(0, cacheKey.lastIndexOf(':')) && S.lastMiss.end === start;
+    S.lastMiss = { key: cacheKey.slice(0, cacheKey.lastIndexOf(':')), end };
+    const next = seq && src.url && end - start === CHUNK && end < size ? { start: end, end: Math.min(end + CHUNK, size) } : null;
+    S.worker.postMessage(Object.assign({ start, end, gen, next }, src));
     // Spin until the worker signals completion. The worker thread runs independently, so
     // this terminates; local reads complete in ~1-5ms. (Atomics.wait is disallowed on
     // the main thread, so poll.)
@@ -170,7 +198,7 @@
       const pos = position + done;
       const cs = Math.floor(pos / CHUNK) * CHUNK;
       const ce = Math.min(cs + CHUNK, size);
-      const chunk = fetchChunkSync(src, keyPrefix + ':' + cs, cs, ce);
+      const chunk = fetchChunkSync(src, keyPrefix + ':' + cs, cs, ce, size);
       const within = pos - cs;
       const n = Math.min(length - done, chunk.length - within);
       if (n <= 0) break;

@@ -43,6 +43,7 @@ function M.install(opts)
     getName = function() return opts.name or 'tester' end,
     getPassword = function() return opts.password or '' end,
     getEngineHash = function() return opts.engineHash or 'abcdef123456' end,
+    getContentHashes = function() return opts.contentHashes or '' end, -- backlog 299: 'name=sha256;...'
     getResumeToken = function() return opts.resumeToken or '' end,
     setResumeToken = function() end,
     getLoginTicket = function() return opts.loginTicket or '' end,

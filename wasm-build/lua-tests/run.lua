@@ -1556,5 +1556,34 @@ do
     and g:find('THERE IS NO PER-ACTOR RESURRECT', 1, true) == nil)
 end
 
+-- ============================================================ net.lua: locker sha256 (backlog 299)
+-- A locker boot knows each plugin's sha256 (the page hands them over as name=sha pairs); the
+-- SessionHello manifest must carry them, matched case-insensitively, and omit the field for
+-- anything the page could not hash so `names` worlds see exactly the old shape.
+print('net.lua — manifest sha256 from the page')
+do
+  fresh()
+  local env = stubs.install({ contentFiles = { 'builtin.omwscripts', 'Morrowind.esm', 'TR_Mainland.esm' },
+    contentHashes = 'morrowind.esm=' .. string.rep('a', 64) .. ';tr_mainland.esm=' .. string.rep('b', 64) })
+  local net = require('scripts.mp.net')
+  local json = require('scripts.mp.json')
+  net.onOpen()
+  local hello
+  for _, raw in ipairs(env.calls.json) do local m = json.decode(raw); if m.t == 'SessionHello' then hello = m end end
+  check('SessionHello was sent', hello ~= nil)
+  local m = hello and hello.manifest or {}
+  check('a hashed plugin carries its sha256 regardless of name case',
+    m[2] and m[2].name == 'Morrowind.esm' and m[2].sha256 == string.rep('a', 64)
+    and m[3] and m[3].sha256 == string.rep('b', 64), hello and json.encode(m) or 'no hello')
+  check('an unhashed file carries no sha256 field', m[1] and m[1].name == 'builtin.omwscripts' and m[1].sha256 == nil)
+  fresh()
+  env = stubs.install({ contentFiles = { 'Morrowind.esm' } })
+  net = require('scripts.mp.net')
+  net.onOpen()
+  local plain
+  for _, raw in ipairs(env.calls.json) do local d = json.decode(raw); if d.t == 'SessionHello' then plain = d end end
+  check('no page hashes = the old manifest shape', plain and plain.manifest[1].sha256 == nil)
+end
+
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)

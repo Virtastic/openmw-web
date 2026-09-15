@@ -22,7 +22,15 @@ export interface ModPlugin {
   /** Plugins this one declares as masters, from its TES3 header. Used to warn before a
    *  disable that would abort the engine at startup. */
   masters?: string[];
+  /** Backlog 301: a grass plugin. Emitted as `groundcover=` on both engines (instanced,
+   *  not addressable: no refs to simulate on the peer, no statics in the browser) and never
+   *  part of the content manifest. Set by the dashboard, or implied by the filename. */
+  groundcover?: boolean;
 }
+
+export const GROUNDCOVER_RE = /grass|groundcover/i;
+export const isGroundcover = (p: { file: string; groundcover?: boolean }): boolean =>
+  p.groundcover === true || GROUNDCOVER_RE.test(p.file);
 
 export interface InstalledMod {
   /** Folder name under gamedata/mods, and the id in every API. `[a-z0-9-]{1,64}`. */
@@ -114,6 +122,7 @@ export function readModDoc(dataDir: string): ModDoc {
               file: p.file as string,
               enabled: p.enabled !== false,
               ...(Array.isArray(p.masters) ? { masters: (p.masters as unknown[]).map(str) } : {}),
+              ...(p.groundcover === true ? { groundcover: true } : {}),
             }))
           : [],
         archives: Array.isArray(m.archives) ? (m.archives as unknown[]).map(str).filter(Boolean) : [],
@@ -172,6 +181,8 @@ export interface ModStack {
   dataDirs: string[];
   /** Plugin filenames in load order: every mod's masters, then every mod's plugins. */
   content: string[];
+  /** Grass plugins, in mod order: `groundcover=` lines, never `content=` (backlog 301). */
+  groundcover: string[];
   /** Bare archive filenames, in mod order. */
   archives: string[];
   /** Same bare name shipped by more than one mod: OpenMW can only address one of them. */
@@ -220,6 +231,7 @@ export function resolveMods(doc: ModDoc): ModStack {
   const declaredMasters = new Map<string, string[]>();
   const masters: string[] = [];
   const plugins: string[] = [];
+  const groundcover: string[] = [];
   const archives: string[] = [];
   const bsaSeen = new Map<string, string[]>();
   const contentSeen = new Map<string, string[]>();
@@ -241,6 +253,9 @@ export function resolveMods(doc: ModDoc): ModStack {
       owners.push(m.slug);
       contentSeen.set(key, owners);
       if (owners.length > 1) continue;
+      // ponytail: groundcover skips the master-order/missing-master pass; a grass plugin's
+      // master is the landmass it grasses, which is loaded or the operator has bigger problems.
+      if (isGroundcover(p)) { groundcover.push(p.file); continue; }
       (pluginRank(p.file) === 0 ? masters : plugins).push(p.file);
       if (Array.isArray(p.masters)) declaredMasters.set(key, p.masters.map((m) => m.toLowerCase()));
     }
@@ -274,6 +289,7 @@ export function resolveMods(doc: ModDoc): ModStack {
   return {
     dataDirs,
     content,
+    groundcover,
     archives,
     bsaCollisions: [...bsaSeen].filter(([, o]) => o.length > 1).map(([name, owners]) => ({ name, owners })),
     contentCollisions: [...contentSeen].filter(([, o]) => o.length > 1).map(([file, owners]) => ({ file, owners })),

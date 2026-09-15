@@ -122,6 +122,7 @@ export interface PlayerDoc {
 export type LivePosition = { cellKey: string; x: number; y: number; z: number };
 
 const SWEEP_MS = 45_000;
+const ERASED_TTL_MS = 90 * 24 * 3_600_000; // backlog 196: erased tombstones older than this are dropped at boot
 const EQUIP_DEBOUNCE_MS = 10_000;
 
 /** The player's latest known position across all worlds — by `at` when the entries carry it,
@@ -184,6 +185,9 @@ export class PlayerStore {
   constructor(dataDir: string, worldId = 'default') {
     this.db = openDb(join(dataDir, 'players.db'), PLAYER_MIGRATIONS);
     this.worldId = worldId;
+    // Backlog 196: a tombstone only has to outlive any sweep that could still rewrite the
+    // row (seconds); 90 days is generous, and without this the table grows forever.
+    try { this.db.prepare('DELETE FROM erased WHERE at < ?').run(Date.now() - ERASED_TTL_MS); } catch { /* best effort */ }
     this.sweepTimer = setInterval(() => {
       void this.flushAll();
     }, SWEEP_MS);

@@ -2298,7 +2298,7 @@ window.omw = (function(){
         * the ordinary case, and a mod that cannot be mounted is not a reason to refuse the game.
         */
        async function mountServerMods(){
-         var out = { dirs: [], content: [], archives: [] };
+         var out = { dirs: [], content: [], groundcover: [], archives: [] };
          if (/[?&]nomods=1\b/.test(location.search)) return out;
          var doc;
          try {
@@ -2380,6 +2380,12 @@ window.omw = (function(){
          (doc.content || []).forEach(function(c){
            var real = ok[c.toLowerCase()];
            if (real) out.content.push(real);
+         });
+         // Backlog 301: grass plugins are groundcover=, never content= -- instanced by the
+         // engine rather than placed as statics, and absent from the manifest the gate compares.
+         (doc.groundcover || []).forEach(function(g){
+           var real = ok[g.toLowerCase()];
+           if (real) out.groundcover.push(real);
          });
 
          // LAST GATE: a plugin whose master is not loaded aborts the engine at startup, and
@@ -3217,6 +3223,11 @@ window.omw = (function(){
                }
                FS.writeFile('/mwdata/'+f.name, new Uint8Array(buf));
                content.push(f.name);
+               // Backlog 299: the locker manifest already carries each plugin's sha256, and
+               // Lua cannot hash a file. Hand the hashes to net.lua (mp.getContentHashes,
+               // lowercase name=sha256 pairs) so a locker boot's manifest lets a `strict`
+               // world refuse a same-named different-version plugin instead of desyncing.
+               if (f.sha256) ENV.OPENMW_MP_CONTENT_SHA256 = (ENV.OPENMW_MP_CONTENT_SHA256 ? ENV.OPENMW_MP_CONTENT_SHA256 + ';' : '') + f.name.toLowerCase() + '=' + f.sha256;
              } else if (f.name === 'media.tar'){
                // Voice pack: thousands of tiny files in one object. Fetch once (cached by
                // sha256 like everything else), then unpack straight into the data dir so the
@@ -3627,6 +3638,7 @@ window.omw = (function(){
                mods.archives.forEach(function(a){ cfg.push('fallback-archive='+a); });
                lo.content.forEach(function(c){ cfg.push('content='+c); });
                mods.content.forEach(function(c){ cfg.push('content='+c); });
+               (mods.groundcover || []).forEach(function(g){ cfg.push('groundcover='+g); }); // backlog 301
                if (window.__omwMPEnabled) cfg.push('content=mp.omwscripts'); // ?mp= (M0 multiplayer)
                if (!window.__noMovies)
                  cfg.push('fallback=Movies_Company_Logo,bethesda logo.bik',

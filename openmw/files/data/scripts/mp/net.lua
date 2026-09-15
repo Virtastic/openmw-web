@@ -144,9 +144,15 @@ local function buildManifest()
     -- core.contentFiles.list (mwlua/corebindings.cpp initContentFilesBindings) exposes NAMES
     -- only — file sizes are not reachable from Lua, so M0 sends size=0 and the server's
     -- `names` content policy must compare name+order only.
+    -- Backlog 299: hashes the PAGE knew (a locker boot has each plugin's sha256 in its
+    -- manifest), keyed by lowercase name. Absent for every other boot; the server's `strict`
+    -- refuses an unhashed client and `names` ignores the field, so nothing else changes.
+    local hashes = {}
+    local raw = mp.getContentHashes and mp.getContentHashes() or ''
+    for name, sha in string.gmatch(raw, '([^=;]+)=([0-9a-f]+)') do hashes[name] = sha end
     local manifest = {}
     for i, name in ipairs(core.contentFiles.list) do
-        manifest[i] = { name = name, size = 0, idx = i - 1 }
+        manifest[i] = { name = name, size = 0, idx = i - 1, sha256 = hashes[string.lower(name)] }
     end
     return manifest
 end

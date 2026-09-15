@@ -1645,15 +1645,24 @@ void OMW::Engine::go()
     // MUST stay headless-only: a fixed dt in single-player makes game time run slow on a
     // struggling machine — the 200 ms hitch clamp exists precisely to prevent that. This
     // buys CONSISTENCY, not replay determinism (Misc::Rng stays process-global).
+    //
+    // CATCH-UP (backlog 115): a fixed 1/limit per tick made the peer's clock LOAD-DEPENDENT --
+    // a tick that took 80 ms still advanced game time 50 ms, so under load the peer fell
+    // behind wall-clock and every duration-based assert compared two clocks. The dt is now
+    // the real elapsed time whenever a tick overran the budget, capped at 250 ms so a stall
+    // (cell load, GC) does not teleport the simulation; a tick within budget keeps the fixed
+    // step, so the common case is unchanged.
     static const bool headlessFixedDt = std::getenv("OPENMW_HEADLESS") != nullptr;
     const double fixedDt = 1.0 / std::max(1.0f, Settings::video().mFramerateLimit.get());
+    constexpr double headlessMaxDt = 0.25;
     while (!mViewer->done() && !mStateManager->hasQuitRequest())
     {
+        const double realDt = std::chrono::duration_cast<std::chrono::duration<double>>(
+            frameRateLimiter.getLastFrameDuration()).count();
         const double dt = (headlessFixedDt
-                              ? fixedDt
-                              : std::chrono::duration_cast<std::chrono::duration<double>>(
-                                    std::min(frameRateLimiter.getLastFrameDuration(), maxSimulationInterval))
-                                    .count())
+                              ? std::min(std::max(realDt, fixedDt), headlessMaxDt)
+                              : std::min(realDt,
+                                    std::chrono::duration_cast<std::chrono::duration<double>>(maxSimulationInterval).count()))
             * timeManager.getSimulationTimeScale();
 
         mViewer->advance(timeManager.getRenderingSimulationTime());

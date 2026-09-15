@@ -165,7 +165,7 @@ export function mwDataRoutes(deps: MwDataDeps): HttpRoute {
           files,
         });
       }
-      const body = JSON.stringify({ v: 2, mods, content: stack.content, archives: stack.archives, disabled });
+      const body = JSON.stringify({ v: 2, mods, content: stack.content, groundcover: stack.groundcover, archives: stack.archives, disabled });
       modCache = { at: key, body };
       res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-cache' });
       res.end(req.method === 'HEAD' ? undefined : body);

@@ -13,7 +13,8 @@
 // kills ONLY the PIDs this harness spawned — never any pkill pattern (repo hard rule: the
 // user's real Chrome must be untouchable; every client runs in a throwaway --user-data-dir).
 import { spawn, execSync } from 'node:child_process';
-import { cpSync, existsSync, mkdtempSync, readdirSync, rmSync, statSync, symlinkSync } from 'node:fs';
+import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import net from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -282,20 +283,44 @@ async function ensurePlayServer() {
 // inventing a second config.
 // THE PEER MUST RUN THE SCRIPTS UNDER TEST, not the ones baked into its image (see the note
 // in startSimPeer). Shared by the hand-spawned peer and the server-managed one.
+//
+// HONEST, NOT HOPEFUL (backlog 184). Under Jenkins the resources tree is root-owned and the
+// harness runs as the jenkins uid, so the copy fails with EACCES; run-harness.sh bind-mounts the
+// repo's scripts over the image path instead. Either way the peer must end up running the repo's
+// scripts: after the sync (or its failure) both trees are hashed and any difference FAILS the
+// run, instead of a warning nobody reads while the peer executes last week's Lua.
 function syncPeerScripts() {
   const peerScripts = '/usr/local/share/openmw/resources/vfs/scripts/mp';
+  if (!existsSync(peerScripts)) return;
+  const repoScripts = join(ROOT, 'openmw', 'files', 'data', 'scripts', 'mp');
+  const peerList = join(dirname(dirname(peerScripts)), 'mp.omwscripts');
+  const repoList = join(ROOT, 'openmw', 'files', 'data', 'mp.omwscripts');
   try {
-    if (existsSync(peerScripts)) {
-      rmSync(peerScripts, { recursive: true, force: true });
-      cpSync(join(ROOT, 'openmw', 'files', 'data', 'scripts', 'mp'), peerScripts, { recursive: true });
-      // The script LIST too: which types carry which script is part of what is under test
-      // (companion.lua on NPCs was a one-line change to this file).
-      cpSync(join(ROOT, 'openmw', 'files', 'data', 'mp.omwscripts'), join(dirname(dirname(peerScripts)), 'mp.omwscripts'));
-    }
+    rmSync(peerScripts, { recursive: true, force: true });
+    cpSync(repoScripts, peerScripts, { recursive: true });
+    // The script LIST too: which types carry which script is part of what is under test
+    // (companion.lua on NPCs was a one-line change to this file).
+    cpSync(repoList, peerList);
   } catch (e) {
-    console.log(`[harness] WARNING: could not sync mp scripts into the peer (${e.message}). `
-      + 'The peer will run its baked copy, so client-script changes will not be under test.');
+    console.log(`[harness] mp scripts not synced into the peer (${e.message}); verifying the baked/mounted copy instead`);
   }
+  const diff = [];
+  if (hashTree(repoScripts) !== hashTree(peerScripts)) diff.push(peerScripts);
+  if (hashFile(repoList) !== hashFile(peerList)) diff.push(peerList);
+  if (diff.length) {
+    throw new Error(`FATAL: the peer's scripts differ from the repo (${diff.join(', ')}). `
+      + 'Build the peer image from the branch under test, or mount the repo scripts over the image path (ci/jenkins/run-harness.sh).');
+  }
+}
+function hashFile(p) { return existsSync(p) ? createHash('sha256').update(readFileSync(p)).digest('hex') : 'missing'; }
+function hashTree(dir) {
+  const h = createHash('sha256');
+  for (const f of readdirSync(dir, { recursive: true }).map(String).sort()) {
+    const p = join(dir, f);
+    if (!statSync(p).isFile()) continue;
+    h.update(f.replace(/\\/g, '/')).update('\0').update(readFileSync(p)).update('\0');
+  }
+  return h.digest('hex');
 }
 
 function startSimPeer(port, password, cellKey, gameDataDir, watch) {
