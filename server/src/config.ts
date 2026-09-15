@@ -783,6 +783,16 @@ export function loadConfig(dataDir: string, override?: DeepPartial<Config>, shar
       operatorTrees.push(shared);
       base = deepMerge(base, shared);
     }
+    // The gateway's dashboard writes its layer next to that shared config.toml (admin.ts runs
+    // with dataDir = sharedDir), so a world must read it too or every dashboard setting is
+    // silently ignored by the worlds. Same ladder as below: newest layer that validates wins.
+    for (const layer of dashboardLayers(sharedDir)) {
+      const merged = deepMerge(base, layer.tree);
+      try { validate(merged); } catch { continue; }
+      if (Object.keys(layer.tree).length) operatorTrees.push(layer.tree);
+      base = merged;
+      break;
+    }
   }
   const operatorPath = join(dataDir, 'config.toml');
   if (existsSync(operatorPath)) {

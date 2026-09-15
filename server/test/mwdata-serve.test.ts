@@ -138,3 +138,39 @@ test('game data and mods serve identically with S3 configured', async () => {
     assert.deepEqual(stack.content, ['A.esp']);
   } finally { await s.stop(); }
 });
+
+// Backlog 178: re-installing a mod keeps the slug URL and changes the bytes. Under "immutable"
+// the browser served the old .esm out of its cache until somebody cleared it by hand.
+test('a mod file revalidates by ETag; retail stays immutable; ranges survive', async () => {
+  const dir = fixture();
+  mkdirSync(join(dir, 'mods', 'a-mod'), { recursive: true });
+  writeFileSync(join(dir, 'mods', 'a-mod', 'A.esp'), 'plugin-v1');
+  const s = await serve(dir, 'serve');
+  try {
+    const retail = await fetch(`${s.base}/mwdata/Morrowind.esm`);
+    assert.match(retail.headers.get('cache-control') ?? '', /immutable/);
+
+    const v1 = await fetch(`${s.base}/mwdata/mods/a-mod/A.esp`);
+    assert.equal(v1.headers.get('cache-control'), 'no-cache');
+    const tag = v1.headers.get('etag') ?? '';
+    assert.ok(tag, 'mod files carry an ETag');
+    assert.equal((await fetch(`${s.base}/mwdata/mods/a-mod/A.esp`,
+      { headers: { 'if-none-match': tag } })).status, 304);
+    const part = await fetch(`${s.base}/mwdata/mods/a-mod/A.esp`,
+      { headers: { range: 'bytes=0-5', 'if-range': tag } });
+    assert.equal(part.status, 206);
+    assert.equal(await part.text(), 'plugin');
+
+    // Re-install: different bytes, a later mtime, same URL. The old tag no longer validates
+    // and a stale If-Range gets the whole new file rather than a slice of the wrong one.
+    await new Promise((r) => setTimeout(r, 20));
+    writeFileSync(join(dir, 'mods', 'a-mod', 'A.esp'), 'plugin-v2!!');
+    const again = await fetch(`${s.base}/mwdata/mods/a-mod/A.esp`, { headers: { 'if-none-match': tag } });
+    assert.equal(again.status, 200);
+    assert.equal(await again.text(), 'plugin-v2!!');
+    const stale = await fetch(`${s.base}/mwdata/mods/a-mod/A.esp`,
+      { headers: { range: 'bytes=0-5', 'if-range': tag } });
+    assert.equal(stale.status, 200);
+    assert.equal(await stale.text(), 'plugin-v2!!');
+  } finally { await s.stop(); }
+});

@@ -48,6 +48,14 @@ export interface ProxySettings {
    * plays on should not sprout a chooser because a box got ticked.
    */
   launcher?: boolean;
+  /**
+   * A multiplayer (gateway) deployment. There the launcher is not a showcase but the ONLY way
+   * in: "/" signs a player in and hands them to /launcher.html, which asks the gateway for a
+   * profile, a character and a world (only /w/<id> is accepted on the socket). Redirecting
+   * /launcher.html to / in that mode looped every player back to the front door forever.
+   * OMW_ENABLE_LAUNCHER=1 stays a manual override for the single-player showcase.
+   */
+  multiplayer?: boolean;
 }
 
 /**
@@ -58,7 +66,7 @@ export interface ProxySettings {
  * how they would fix it — a mistyped domain must not take the admin page down with it.
  */
 export function renderCaddyfile(
-  { domain, upstream = 'openmw-web:8080', launcher = false, internal = false, port = 80 }: ProxySettings,
+  { domain, upstream = 'openmw-web:8080', launcher = false, multiplayer = false, internal = false, port = 80 }: ProxySettings,
 ): string {
   const site = (address: string, tls: string): string => `
 ${address} {
@@ -116,7 +124,8 @@ ${tls}
 	handle @mwdata {
 		reverse_proxy ${upstream}
 	}
-${launcher ? '' : `	# THE LAUNCHER IS OFF UNLESS SOMEBODY ASKED FOR IT (OMW_ENABLE_LAUNCHER=1).
+${launcher || multiplayer ? '' : `	# THE LAUNCHER IS OFF UNLESS SOMEBODY ASKED FOR IT (OMW_ENABLE_LAUNCHER=1) OR THIS IS A
+	# MULTIPLAYER DEPLOYMENT, where it is the way in (see ProxySettings.multiplayer).
 	#
 	# It is the hosted site's chooser: bundled sample, your own local Morrowind, or multiplayer.
 	# None of those is a question for a player who came to THIS server to play on it, and "/"

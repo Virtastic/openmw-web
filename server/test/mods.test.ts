@@ -15,8 +15,9 @@ import { join } from 'node:path';
 import {
   emptyDoc, presentMods, readModDoc, resolveMods, writeModDoc, type InstalledMod,
 } from '../src/core/mods';
-import { buildPeerCfg, detectGameData } from '../src/core/gamedata';
-import { saveMods } from '../src/net/admin/api-mods';
+import { buildPeerCfg, detectGameData, gameDataDir } from '../src/core/gamedata';
+import { orderedContent, saveMods } from '../src/net/admin/api-mods';
+import { DASHBOARD_FILE, loadConfig } from '../src/config';
 
 const tmp = (): string => mkdtempSync(join(tmpdir(), 'mods-'));
 
@@ -264,4 +265,36 @@ test('a plugin is ordered after the masters it declares, whatever the install or
     mod({ slug: 'patch', plugins: [{ file: 'TR_Patch.esp', enabled: true, masters: ['TR_Mainland.esm', 'Morrowind.esm'] }] }),
   ] });
   assert.deepEqual(s.content, ['Tamriel_Data.esm', 'TR_Mainland.esm', 'TR_Patch.esp']);
+});
+
+// A GATEWAY WORLD READS THE SHARED DIR (backlog 169). Worlds are spawned with an empty --data
+// and --shared /data; the gateway dashboard writes modlist.json and config.dashboard.toml under
+// the shared dir. A world reading its own dir ran vanilla, became the canonical content list
+// and refused every player BAD_CONTENT, and ignored every dashboard setting.
+test('a gateway world sees the shared modlist and the shared dashboard layer', () => {
+  const shared = tmp();
+  const world = tmp();
+  const gd = gameDataDir(shared);
+  mkdirSync(join(gd, 'mods', 'tr'), { recursive: true });
+  for (const f of ['Morrowind.esm', 'Morrowind.bsa']) writeFileSync(join(gd, f), 'x');
+  writeFileSync(join(gd, 'mods', 'tr', 'TR_Mainland.esm'), 'x');
+  writeModDoc(shared, { ...emptyDoc(), entries: [{ file: 'Morrowind.esm', enabled: true }], mods: [
+    mod({ slug: 'tr', plugins: [{ file: 'TR_Mainland.esm', enabled: true }] }),
+  ] });
+  writeFileSync(join(shared, DASHBOARD_FILE), '[sharing]\njournal = false\n');
+
+  // What server.ts does with sharedDir: the mod stack and the base load order both come from
+  // the shared document, and the world's own (empty) dir contributes nothing.
+  const stack = resolveMods(presentMods(gd, readModDoc(shared)));
+  assert.deepEqual(stack.content, ['TR_Mainland.esm']);
+  assert.deepEqual(orderedContent(gd, shared).map((e) => e.file), ['Morrowind.esm']);
+  assert.deepEqual(orderedContent(gd, world), []);
+
+  const cfg = loadConfig(world, undefined, shared);
+  assert.equal(cfg.sharing.journal, false, 'the shared dashboard layer reaches the world');
+  assert.equal(cfg.dashboardFallback, undefined);
+  // Single-world mode is unchanged: the layer next to config.toml is read as before, and a
+  // world with no shared dir sees only its own files.
+  assert.equal(loadConfig(shared, undefined, shared).sharing.journal, false);
+  assert.equal(loadConfig(world).sharing.journal, true);
 });

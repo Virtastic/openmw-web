@@ -345,6 +345,9 @@ export function clientLogRoute(req: IncomingMessage, res: ServerResponse, path: 
   return false;
 }
 
+/** How long a client may spend uploading one request: see the note in createHttpServer. */
+export const UPLOAD_REQUEST_TIMEOUT_MS = 6 * 60 * 60 * 1000;
+
 export function createHttpServer(
   status: () => StatusSnapshot,
   metricsOpts: MetricsOptions,
@@ -470,6 +473,6 @@ export function createHttpServer(
   //
   // The body is still bounded by MAX_UPLOAD_BYTES, which is the limit that actually matters
   // here: a hostile client cannot send more than the cap however long it takes.
-  server.requestTimeout = 6 * 60 * 60 * 1000;
+  server.requestTimeout = UPLOAD_REQUEST_TIMEOUT_MS;
   return server;
 }

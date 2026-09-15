@@ -23,7 +23,11 @@ import { MSG_PLAYER_STATE_BATCH, packPlayerStateBatch } from '../proto/input';
 import { PEER_POSE_FRESH_MS } from './players';
 
 export const BATCH_INTERVAL_MS = 66;
-export const MAX_ABS_COORD = 512000;
+// Sanity bound on a pose, not a world size: 512000 (62.5 cells) left Tamriel Rebuilt's mainland,
+// which reaches cell -60 (~491k units), 2.5 cells of headroom, and past it a player was invisible
+// and frozen to everyone else with no message. 4,000,000 is ~488 cells; poses travel as float32
+// (proto/movement.ts), whose ULP at 4M is 0.25 units, still sub-visible.
+export const MAX_ABS_COORD = 4_000_000;
 
 const EXTERIOR_RE = /^(-?\d+),(-?\d+)$/;
 

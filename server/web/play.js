@@ -97,11 +97,14 @@
   /**
    * Hand the ticket to the game page.
    *
-   * A self-hosted server is ONE world, so none of the launcher's platform steps apply: it
-   * asks a gateway for a profile, a character list and a world to put them in, and those
-   * routes (/auth/profile, /auth/characters) exist only in the gateway build. Here the
-   * ticket is the whole handshake, because that is all the connection path wants: the engine
-   * sends SessionLoginTicket and the server answers SessionWelcome.
+   * Single player: the ticket is the whole handshake, and the game page boots straight away.
+   *
+   * Multiplayer: this front door is a GATEWAY, and a gateway's socket accepts only /w/<id>
+   * (booting #mp=wss://host/ws here dialled a door that does not exist: 502, "could not be
+   * reached", forever). The launcher is the page that asks the gateway for a profile, a
+   * character list and a world to put them in (/auth/profile, /auth/characters), so the
+   * ticket goes there, in the same fragment an SSO round trip comes back with -- its
+   * handleSsoReturn takes over from here.
    *
    * In the FRAGMENT, never the query: a ticket is a credential, and a fragment is not sent
    * to a server, written to an access log, or leaked through Referer.
@@ -124,15 +127,10 @@
       return;
     }
 
-    const ws = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`;
-    location.href = '/index.html'
-      + `#mp=${encodeURIComponent(ws)}`
-      + `&mpticket=${encodeURIComponent(res.ticket)}`
+    location.href = '/launcher.html'
+      + `#mpticket=${encodeURIComponent(res.ticket)}`
       + acct
-      + `&locker=${encodeURIComponent(location.origin)}`
-      + lock
-      + data
-      + (res.name ? `&mpcharname=${encodeURIComponent(res.name)}` : '');
+      + lock;
   };
 
   const form = $('#pwForm');

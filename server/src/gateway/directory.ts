@@ -27,7 +27,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { log } from '../log';
 import { renderMetrics } from '../metrics';
 import type { WorldSupervisor, WorldMode, WorldInfo } from './worlds';
-import { clientLogRoute, type HttpRoute } from '../net/http';
+import { clientLogRoute, UPLOAD_REQUEST_TIMEOUT_MS, type HttpRoute } from '../net/http';
 import { IpRateLimiter } from '../net/ratelimit';
 import { VERIFY_PATH } from '../net/admin/setup-check';
 
@@ -497,6 +497,10 @@ export async function startDirectory(deps: DirectoryDeps): Promise<RunningDirect
     socket.on('error', bail);
   });
 
+  // The gateway receives the mod uploads in multiplayer mode (admin.ts runs on this port), so
+  // Node's 5-minute default cut a 2.7 GB Tamriel_Data upload slower than ~9 MB/s off as "the
+  // connection dropped". Same cap as the world server; headersTimeout stays default (http.ts).
+  server.requestTimeout = UPLOAD_REQUEST_TIMEOUT_MS;
   await new Promise<void>((resolve) => server.listen(deps.port, deps.host, resolve));
   const addr = server.address();
   const port = typeof addr === 'object' && addr !== null ? addr.port : deps.port;

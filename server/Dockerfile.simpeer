@@ -142,7 +142,9 @@ COPY server/web ./web
 RUN npm run build && npm test
 
 FROM runtime AS tier2
-RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates wget \
+# p7zip-full: mod archives from Nexus (TR, Tamriel_Data) are as often .7z as .zip, and
+# sevenzip.ts spawns `7z`; the single-player image installs alpine's p7zip for the same reason.
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates wget p7zip-full \
     && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*

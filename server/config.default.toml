@@ -567,7 +567,9 @@ maxPeers = 0
 # border does not flap the peer's grid. Dropping an anchor is cheap; this is pure hysteresis.
 anchorIdleSec = 60
 idleReapMs = 120000               # reap a peer whose world has had no humans this long
-startTimeoutMs = 120000           # retail data load is slow; generous, and failure is non-fatal
+# A cold peer loading Tamriel Rebuilt takes minutes, and cold starts are serialised: at 120 s
+# the sweeper SIGKILLed it mid-load and left the cell unsimulated. Failure is still non-fatal.
+startTimeoutMs = 300000
 restartBackoffMs = 15000          # after a crash, wait before respawning (no hot crash loop)
 
 # F3 supervisor sizing. Read by the GATEWAY process (dist/gateway.mjs) only; a single world

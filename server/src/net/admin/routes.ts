@@ -660,12 +660,13 @@ export function adminRoutes(deps: AdminDeps) {
       // change to it has to reach the proxy the same way a domain change does.
       if (section === 'setup' && ['domain', 'hosting', 'httpPort']
         .some((k) => Object.hasOwn(body, k))) {
-        const pend = pending('setup') as { domain?: unknown; hosting?: unknown; httpPort?: unknown };
+        const pend = pending('setup') as { domain?: unknown; hosting?: unknown; httpPort?: unknown; deploymentMode?: unknown };
         const internal = pend.hosting === 'internal';
         const domain = internal ? '' : normaliseDomain(String(pend.domain ?? ''));
         writeCaddyfile(deps.dataDir, {
           domain,
           launcher: launcherEnabled(),
+          multiplayer: pend.deploymentMode === 'multiplayer',
           internal,
           port: Number(pend.httpPort ?? 80),
         });
@@ -762,6 +763,7 @@ export function adminRoutes(deps: AdminDeps) {
       writeCaddyfile(deps.dataDir, {
         domain,
         launcher: launcherEnabled(),
+        multiplayer: body.deploymentMode === 'multiplayer',
         internal,
         port: Number(body.httpPort ?? 80),
       });

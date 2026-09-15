@@ -912,10 +912,14 @@ function stepHosting() {
     <p class="text-secondary small">This decides whether the bundled proxy handles HTTPS for
       you, or stays out of the way. You can change it later.</p>
     ${raw(choice('hosting', 'internal', 'Internal or behind your own proxy',
-      'Plain HTTP on a port you choose. Right for a home network or a LAN party, for a port '
-      + 'you forward yourself, and for putting your own reverse proxy, tunnel or load balancer '
-      + 'in front. Nothing here handles certificates in this mode, because whatever sits in '
-      + 'front of it should.', 'Simplest'))}
+      'Plain HTTP on a port you choose. Right for a port you forward yourself, and for putting '
+      + 'your own reverse proxy, tunnel or load balancer in front. Nothing here handles '
+      + 'certificates in this mode, because whatever sits in front of it should. '
+      + 'Be aware: browsers only run the game on a SECURE page (HTTPS, or localhost). Over plain '
+      + 'HTTP from another machine, a home network or LAN party included, every player sees '
+      + '"Browser not supported". You will need a domain with TLS, a tunnel that terminates '
+      + 'HTTPS, or the chrome://flags "Insecure origins treated as secure" exception set on '
+      + 'each player\'s browser.', 'Simplest'))}
     ${raw(choice('hosting', 'public', 'Public',
       'Reachable from the internet, so people can join from anywhere. This needs a domain name '
       + 'pointed at this machine and ports 80 and 443 forwarded to it on your router. Both are '

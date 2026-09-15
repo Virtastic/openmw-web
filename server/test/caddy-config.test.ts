@@ -94,6 +94,15 @@ test('and IS served when the environment asks for it', () => {
   assert.doesNotMatch(out, /@launcher/);
 });
 
+// Backlog 171: on a multiplayer (gateway) deployment the launcher is the way in, not a
+// showcase -- "/" signs a player in and sends them to /launcher.html. Redirecting it back to
+// "/" looped every player at the front door forever.
+test('and IS served on a multiplayer deployment without the env override', () => {
+  const out = renderCaddyfile({ domain: 'mp.example.test', multiplayer: true });
+  assert.doesNotMatch(out, /@launcher/);
+  assert.match(renderCaddyfile({ domain: 'mp.example.test', multiplayer: false }), /@launcher/);
+});
+
 test('the gate applies to a domain deployment too, in both blocks', () => {
   const out = renderCaddyfile({ domain: 'mp.example.test' });
   assert.equal(out.split('@launcher path').length - 1, 2);

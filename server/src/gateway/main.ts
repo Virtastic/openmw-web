@@ -224,6 +224,7 @@ const adminRoute = gatewayAdminRoutes({
 writeCaddyfile(sharedDir, {
   domain: config.setup.domain,
   launcher: launcherEnabled(),
+  multiplayer: config.setup.deploymentMode === 'multiplayer',
   internal: config.setup.hosting === 'internal',
   port: config.setup.httpPort,
 });

@@ -180,10 +180,12 @@ export function mwDataRoutes(deps: MwDataDeps): HttpRoute {
     }
 
     let size: number;
+    let etag: string;
     try {
       const st = await stat(path);
       if (!st.isFile()) throw new Error('not a file');
       size = st.size;
+      etag = `"${st.size.toString(16)}-${Math.floor(st.mtimeMs).toString(16)}"`;
     } catch {
       res.writeHead(404); res.end(); return true;
     }
@@ -191,14 +193,24 @@ export function mwDataRoutes(deps: MwDataDeps): HttpRoute {
     // RANGES ARE THE WHOLE POINT. StreamFS mounts each file and reads slices of it for the
     // length of the session; without 206 support the engine would pull entire BSAs into
     // memory, which is exactly what this path exists to avoid.
+    //
+    // Retail files are immutable: they do not change under a running session, and re-fetching
+    // hundreds of megabytes on every boot is the difference between usable and not. A MOD is
+    // not: re-installing one keeps the slug URL and changes the bytes, and immutable served
+    // the old .esm out of the browser cache until the operator cleared it by hand. So mod
+    // files revalidate on every use (ETag of size+mtime; a 304 costs a round trip, not the
+    // bytes) and a stale If-Range falls back to the whole file, as the spec says.
+    const isModFile = path.startsWith(resolve(deps.gameDataDir, MODS_SUBDIR) + sep);
     const head: Record<string, string> = {
       'accept-ranges': 'bytes',
       'content-type': 'application/octet-stream',
-      // Immutable: retail game files do not change under a running session, and re-fetching
-      // hundreds of megabytes on every boot is the difference between usable and not.
-      'cache-control': 'public, max-age=31536000, immutable',
+      'cache-control': isModFile ? 'no-cache' : 'public, max-age=31536000, immutable',
+      etag,
     };
-    const range = /^bytes=(\d*)-(\d*)$/.exec(String(req.headers.range ?? ''));
+    if (req.headers['if-none-match'] === etag) { res.writeHead(304, head); res.end(); return true; }
+    const ifRange = req.headers['if-range'];
+    const range = ifRange !== undefined && ifRange !== etag ? null
+      : /^bytes=(\d*)-(\d*)$/.exec(String(req.headers.range ?? ''));
     if (range && (range[1] !== '' || range[2] !== '')) {
       // A suffix range ("-500") is the last N bytes; otherwise start..end inclusive.
       const start = range[1] === '' ? Math.max(0, size - Number(range[2])) : Number(range[1]);

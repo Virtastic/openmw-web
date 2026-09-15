@@ -644,6 +644,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   writeCaddyfile(opts.dataDir, {
     domain: config.setup.domain,
     launcher: launcherEnabled(),
+    multiplayer: config.setup.deploymentMode === 'multiplayer',
     internal: config.setup.hosting === 'internal',
     port: config.setup.httpPort,
   });
@@ -1188,7 +1189,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       deliveryModel: () => config.setup.deliveryModel,
       // Re-read per request, like the delivery answer above: enabling a mod in the dashboard
       // should reach the next player to load the page, not the next restart.
-      modDoc: () => presentMods(gameDataDir(sharedDir), readModDoc(opts.dataDir)),
+      modDoc: () => presentMods(gameDataDir(sharedDir), readModDoc(sharedDir)),
     }),
     saveRoutes({
       storage: lockerStorage, sessions: lockerSessions, dataDir: sharedDir,
@@ -1217,7 +1218,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // real client's includes engine-resource entries (builtin.omwscripts, *.omwgame) that no
   // data folder contains.
   // The operator's saved load order, if the dashboard's mod manager has ever written one.
-  const gameData = detectGameData(gameDataDir(sharedDir), orderedContent(gameDataDir(sharedDir), opts.dataDir));
+  const gameData = detectGameData(gameDataDir(sharedDir), orderedContent(gameDataDir(sharedDir), sharedDir));
   log('info', 'gamedata.detect', { ok: gameData.ok, reason: gameData.reason });
 
   // THE SIM PEER IS NOT OPTIONAL. There is exactly one mode: the server runs its own headless
@@ -1353,7 +1354,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     // dashboard last saved.
     writeFileSync(join(cfgDir, 'openmw.cfg'),
       buildPeerCfg(gameData, resources,
-        resolveMods(presentMods(gameDataDir(sharedDir), readModDoc(opts.dataDir)))));
+        resolveMods(presentMods(gameDataDir(sharedDir), readModDoc(sharedDir)))));
     // Pace the peer. Headless means nothing else will.
     writeFileSync(join(cfgDir, 'settings.cfg'), buildPeerSettings());
     config.simPeer.configDir = cfgDir;

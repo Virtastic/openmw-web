@@ -21,7 +21,7 @@ import { TestClient, tmpDataDir } from './helpers';
 // somewhere reachable measures as plausible again and is forgiven. That is the right behaviour
 // and the wrong test — it would report enforcement as broken when it is working as designed.
 //
-// SIZED TO STAY IN BOUNDS. MAX_ABS_COORD is 512000 and handleMove rejects anything past it
+// SIZED TO STAY IN BOUNDS. MAX_ABS_COORD was 512000 (now 4M) and handleMove rejects anything past it
 // outright, so at 400k a hop everything after the first was refused by the BOUNDS check — in
 // both worlds. The lobby assertion passed anyway, for entirely the wrong reason, and only the
 // private-world control noticed. 8 hops of 60000 tops out at 480000, inside the bound, and

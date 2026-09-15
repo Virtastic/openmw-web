@@ -35,11 +35,12 @@ test('single player boots WITHOUT mp=, which is what makes it single player', ()
     'sending mp= is exactly the bug: it turns single player into multiplayer');
 });
 
-test('multiplayer still gets mp= and a ticket', () => {
-  // The other half of the branch must keep working; a fix that disabled multiplayer instead
-  // of routing around it would pass the test above and be just as broken.
-  assert.match(play, /#mp=\$\{encodeURIComponent\(ws\)\}/);
-  assert.match(play, /mpticket=\$\{encodeURIComponent\(res\.ticket\)\}/);
+test('multiplayer hands the ticket to the launcher, never dials /ws itself', () => {
+  // Backlog 171: a multiplayer front door is a GATEWAY whose socket accepts only /w/<id>, so
+  // booting #mp=wss://host/ws was a 502 forever. The launcher is what picks the world; it
+  // reads the same #mpticket fragment an SSO round trip returns with.
+  assert.match(play, /'\/launcher\.html'\s*\+\s*`#mpticket=\$\{encodeURIComponent\(res\.ticket\)\}`/);
+  assert.doesNotMatch(play, /[#&]mp=\$\{/, 'nothing on this page may dial the gateway socket');
 });
 
 test('an unreadable state defaults to single player, the mode that needs no world', () => {

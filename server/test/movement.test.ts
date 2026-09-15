@@ -169,7 +169,7 @@ test('movement relay over real clients', async (t) => {
   });
 
   await t.test('out-of-bounds and non-finite moves are ignored', async () => {
-    a.sendMove({ x: 600000, y: 0, z: 0 });
+    a.sendMove({ x: 5_000_000, y: 0, z: 0 });
     a.sendMove({ x: Number.NaN, y: 0, z: 0 });
     a.sendMove({ x: 11, y: 0, z: 0 });
     const batch = await b.waitBatch((x) => x.entries.some((e) => e.id === aId));
