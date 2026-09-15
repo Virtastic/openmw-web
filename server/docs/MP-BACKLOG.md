@@ -187,6 +187,16 @@ Branch: `test/posture-seen`. Sweeps: Jenkins `openmw-web-dev` #89 (9/17), #90 (1
 | 235 | A refused container take leaves its acquisition credit in pendingAcquired; a disconnect folds it into the doc (dup with the race winner) | worldstate.ts:1255 decrement pendingAcquired on gone/rolling/full |
 | 236 | The drop debit trims doc.inventory but not doc.itemStates: a disconnect within 2 s of dropping one of two same-record items restores the survivor with the dropped one's state | server.ts:459 splice the bucket |
 | 237 | Two equipped rings of one record collapse to one on the avatar/relog (record-id slot resolution = first match) | mwlua actor.cpp:52 |
+| 238 | No scenario kills an NPC with a REAL melee swing: combat.lua:50 forwards hits only when mpTest; s51/s58/s109/s111/s118/s119/s120/s128/s157 prove the synthetic relay, the avatar-swing path players take is unproven; s52's PvP-off gate likewise | new s164 real-melee kill (equip/stance/attack loop, s138 idiom); s52 rewrite |
+| 239 | s72 merchant purse passes with purse sync absent (two untouched merchants read the ESM default; may even be two different NPCs) | s72 → s161 idiom or delete |
+| 240 | Weak asserts: s137 never asserts the enemies-nearby bit was CLEAR before; s149 counts any damage as drowning (s999:153 breath check missing); s110/s112/s66/s116 compare current<base instead of current<before; s143's roll assert is inside `if (rolls.length>0)`; s140:41 waits on a stale socialResult; s999 compares a value with itself | per row |
+| 241 | Deaths by sethp:0 (s22/s77/s131; s131 has NO peer in a peer-ruled world): death-from-damage never exercised | managedPeer + fall/drown idiom |
+| 242 | Spell scenarios park effects (castat:/castp:/healp:/selfcast: = activeSpells:add) instead of casting: s59/s144/s116/s115 stay green with the cast path broken | learnspell/mintspell + stance:spell + face: + press: (s146 idiom) |
+| 243 | s117 companion-indoors: hand peer never holds the interior, door:enter teleports by hook — no holder asserted | managedPeer + authorityHolder assert (s118:94 idiom); door:enter without the hook teleport |
+| 244 | Harness: skips exit 0 (mp-harness.mjs:1038 ok = !err; #114 still open); load-gated convergence skips in s10/s40/s42/s43 turn a real divergence into SKIP on a loaded builder; s62 marks itself SKIP mid-run; Lua errors are printed, never fail | mp-harness.mjs exit code; fail on divergence regardless of load |
+| 245 | Diagnostic scenarios (s11, s65, s74, s98) assert nothing and count as PASS | `diagnostic` export reported separately |
+| 246 | s20 asserts the sender's own mirror (proves nothing about the wire); s31/s111 chesttake: is a direct sendContainerOpByNet (the UI take diff is never raced); s32 door:lock: sends ObjectLock itself (s158's watch is the real path) | per row |
+| 247 | Coverage map overstates: topics "OK" (s73 injects into testLearned; s75 says organic UNPROVEN); barter:sell writes the purse directly (TradeWindow not drivable headless) — say so | MP-COVERAGE-MAP.md rows |
 
 ## Open (found, not fixed)
 
