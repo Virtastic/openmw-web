@@ -167,6 +167,17 @@ Branch: `test/posture-seen`. Sweeps: Jenkins `openmw-web-dev` #89 (9/17), #90 (1
 | 146 | Theft/trespass victim reactions (startCombat, disposition drop) land on the thief's AI-off puppet copy; a Fight-70 NPC that would attack a thief just barks | generalises #46 |
 | 147 | Personal-crime mode (crime=false) seeds a guest with the HOST's bounty | quests.ts:250 seedBounty from own cached doc |
 | 148 | mStolenItems not persisted: after a relog stolen goods sell back to the victim and are not confiscated on arrest | needs a binding |
+| 149 | Nothing ever respawns and corpses never clear: the peer never runs CellStore::respawn (anchors with respawn=false), actorDeaths has no timestamp and is replayed forever; each peer restart adds one live levelled roll and keeps every old corpse | worldstate.ts:710 deaths {deathNo, atH} + fCorpseRespawnDelay expiry; scene.cpp:694/701 respawn=true, changeEvent=true on the peer |
+| 150 | dayspassed is boot-relative (offset learned from what this engine booted with): every relog resets it, no two engines agree; DaysPassed-stamped timers (vampire incubation, lycanthropy, mod timers) misfire. Refines #71 | world.lua:186 dayspassed = totalDays - EPOCH_DAYS + 1 |
+| 151 | PCVampire/PCWerewolf/counters shadow to the CAMPAIGN doc: a guest turning vampire makes the host a vampire on next login, and the peer's dummy becomes a werewolf | quests.ts:38 CHARACTER_GLOBALS: persist to charId only, never relay/seed |
+| 152 | Werewolf avatar fights with human numbers (applyWerewolfStats only for actor==player); transformation rebuilds the puppet mid-fight | mechanicsmanagerimp.cpp:1960 isAvatar; global.lua:2352 setWerewolf in place |
+| 153 | Relog as a werewolf leaves negative attribute modifiers at dawn (setWerewolf(true) runs before the base writes in phase 2) | identity.lua:656 move to end of applyPhase2 |
+| 154 | A vampire friend looks human on your screen (head swap reads the Vampirism effect; puppets never get it) | identity.lua snapAppearance vampireSpell; global.lua:1075 |
+| 155 | Mark position lost on relog/world hop (no binding, not in the doc): Recall does nothing | luabindings.cpp mp.getMark/setMark; identity.lua |
+| 156 | Sleep ambush spawns a creature only the sleeper sees (spawnRandomCreature not gated on localSpawnsEnabled) | waitdialog.cpp:271 |
+| 157 | Corprus worsening resets on relog (worsen count not on the wire) | activespells.cpp:188 |
+| 158 | No "contracted disease" message when the avatar catches it | global.lua:1811 MP_SelfSpells ui.showMessage sMagicContractDisease |
+| 159 | Peer follow-teleport ignores vanilla follower rules (in combat, stayoutside, >800 units): a stay-outside guar rides the strider indoors | global.lua:2324 |
 
 ## Wontfix / by design
 
