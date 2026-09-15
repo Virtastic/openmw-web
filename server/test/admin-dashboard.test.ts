@@ -210,6 +210,32 @@ test('an account with no dashboard role cannot sign in to the dashboard', async 
   assert.equal(r.status, 401, 'having an account is not having dashboard access');
 });
 
+// Backlog 379: "I forgot it" needs neither SMTP nor a shell on the box. Owner-only, policy
+// applied, the account's dashboard sessions ended, the change audit-logged.
+test('an owner can set a player password from the accounts page', async (t) => {
+  const { call, dataDir, server } = await boot(t);
+  const ownerToken = await makeOwner(call, dataDir);
+  await server.accounts.register('Forgetful', 'the-old-password-here');
+  await call('/accounts/role', { method: 'POST', token: ownerToken, body: { name: 'Forgetful', role: 'viewer' } });
+  const theirs = (await (await call('/login', { method: 'POST',
+    body: { name: 'Forgetful', password: 'the-old-password-here' } })).json() as { token: string }).token;
+  assert.equal((await call('/overview', { token: theirs })).status, 200);
+
+  assert.equal((await call('/accounts/password', { method: 'POST', token: theirs,
+    body: { name: 'Forgetful', password: 'a-brand-new-password' } })).status, 403, 'owner only');
+  assert.equal((await call('/accounts/password', { method: 'POST', token: ownerToken,
+    body: { name: 'Forgetful', password: 'short' } })).status, 400, 'the password policy applies');
+  assert.equal((await call('/accounts/password', { method: 'POST', token: ownerToken,
+    body: { name: 'Nobody', password: 'a-brand-new-password' } })).status, 404);
+  assert.equal((await call('/accounts/password', { method: 'POST', token: ownerToken,
+    body: { name: 'Forgetful', password: 'a-brand-new-password' } })).status, 200);
+
+  assert.ok(await server.accounts.verifyLogin('Forgetful', 'a-brand-new-password'), 'the new one works');
+  assert.equal(await server.accounts.verifyLogin('Forgetful', 'the-old-password-here'), null, 'the old one is gone');
+  assert.equal((await call('/overview', { token: theirs })).status, 401,
+    'sessions opened with the old password end with it');
+});
+
 test('the legacy shared token works, and is a moderator rather than an owner', async (t) => {
   // Automation was written against this before roles existed, so it has to keep working —
   // but it was resolving to OWNER, which silently upgraded every copy sitting in a cron job
@@ -288,6 +314,7 @@ const MATRIX: { path: string; method: string; need: 'viewer' | 'moderator' | 'ow
   { path: '/setup', method: 'POST', need: 'owner', body: { serverName: 'X' } },
   { path: '/mods', method: 'PUT', need: 'owner', body: { entries: [] } },
   { path: '/accounts/role', method: 'POST', need: 'owner', body: { name: 'nobody', role: 'viewer' } },
+  { path: '/accounts/password', method: 'POST', need: 'owner', body: { name: 'nobody', password: 'a-long-enough-one' } },
   { path: '/sessions', method: 'GET', need: 'owner' },
   { path: '/sessions/revoke', method: 'POST', need: 'owner', body: { id: 'nope' } },
   { path: '/maintenance', method: 'POST', need: 'owner', body: { on: false, message: '' } },

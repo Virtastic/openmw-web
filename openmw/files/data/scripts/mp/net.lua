@@ -312,7 +312,7 @@ end
 function net.onOpen()
     send({
         t = 'SessionHello',
-        proto = 2, -- the mp912026 overhaul: input tier, Solo/Party, no party events
+        proto = 3, -- the 2026-09-15 wire (2 = mp912026 overhaul: input tier, Solo/Party)
         engineHash = mp.getEngineHash(),
         lserVersion = 0,
         manifest = buildManifest(),

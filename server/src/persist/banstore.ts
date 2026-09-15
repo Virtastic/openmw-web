@@ -159,4 +159,9 @@ export class BanStore {
     await this.write;
     checkpoint(this.db);
   }
+
+  async close(): Promise<void> {
+    await this.flush();
+    this.db.close();
+  }
 }

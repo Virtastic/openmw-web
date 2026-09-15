@@ -200,7 +200,7 @@ which is the same amount of simulation without the server believing the job is c
 
 Client → server:
 
-- `{"t":"SessionHello", "proto":1, "engineHash":"<12-hex or empty>", "lserVersion":0,
+- `{"t":"SessionHello", "proto":3, "engineHash":"<12-hex or empty>", "lserVersion":0,
    "manifest":[{"name":"Morrowind.esm","size":123,"idx":0}, …], "resumeToken":"<opt>"}`
   **`engineHash` may only be empty under `[engine] enforce = "warn"` or `"off"`.** Under
   `"refuse"` a client that sends none is refused with `BAD_ENGINE` — an absent hash used to be

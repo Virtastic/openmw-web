@@ -84,7 +84,14 @@
 	#             answered it 404 and every client-side failure report was thrown away --
 	#             the two sign-in failures of 2026-09-14 had to be reconstructed from the
 	#             edge access log because the page's own account of them never arrived.
-	@gateway path /w/* /ws /auth/* /locker/* /saves /saves/* /worlds /worlds/* /clientlog
+	#   /mwdata/*, /mwdata-manifest.json, /mwdata-mods.json  SERVER-HOSTED game data, the
+	#             same three paths the self-hosted template proxies (caddy-config.ts @mwdata).
+	#             Without them the static site answered the launcher's HEAD 404, so every prod
+	#             player booted on the LOCKER path -- which refuses non-retail files, so a
+	#             Tamriel Rebuilt peer refused every prod client BAD_CONTENT. The gateway still
+	#             answers 404 (= "not hosted", locker fallback) unless prod's config.toml sets
+	#             [setup] deliveryModel = "serve"; prod MUST set that for hosted data.
+	@gateway path /w/* /ws /auth/* /locker/* /saves /saves/* /worlds /worlds/* /clientlog /mwdata/* /mwdata-manifest.json /mwdata-mods.json
 	reverse_proxy @gateway {$MP_UPSTREAM:openmw-mp:8080} {
 		# STRIP CLIENT-SUPPLIED ADDRESS HEADERS. The gateway trusts these because its peer is
 		# this proxy, on a private network — but "the peer is private" only means the header

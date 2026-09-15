@@ -34,6 +34,7 @@ import type { AdminSessionStore } from '../auth/identities';
 import { Moderation } from '../core/moderation';
 import { gameDataDir } from '../core/gamedata';
 import { deleteAccount } from '../persist/erase';
+import { BanStore } from '../persist/banstore';
 import { log, logHistory } from '../log';
 import { IpRateLimiter } from '../net/ratelimit';
 import { clientIp, CLIENT_IP_HEADER, type HttpRoute } from '../net/http';
@@ -186,7 +187,17 @@ export function gatewayAdminRoutes(deps: GatewayAdminDeps): HttpRoute {
         reason: doc.reason,
       })),
     }),
-    action: async () => refuse,
+    // Bans live in the SHARED bans.db, so lifting one needs no game: a fresh store reads
+    // the db as it is now (a long-lived one would only know the bans it booted with).
+    // Every other kind acts on the players of one game, and stays refused here.
+    action: async (kind, target, _detail, by) => {
+      if (kind !== 'unban') return refuse;
+      const bans = new BanStore(deps.sharedDir);
+      const lifted = bans.unbanAccount(target);
+      await bans.close();
+      if (lifted) log('info', 'moderation.unban', { target: target.toLowerCase(), by });
+      return { ok: lifted, message: lifted ? `unban ${target}` : `${target} was not banned` };
+    },
     runCommand: async () => refuse,
     commandCatalog: () => [],
     // Ring plus on-disk history: world.* and gateway.* lifecycle events survive a restart.

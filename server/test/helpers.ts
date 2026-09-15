@@ -165,7 +165,7 @@ export class TestClient {
     // false to model a protocol-only participant (a load bot that will never send an
     // ActorMoveBatch) — see bots/soak.ts --attach.
     this.sendJson({
-      t: 'SessionHello', proto: 2, engineHash, lserVersion: 0, manifest,
+      t: 'SessionHello', proto: 3, engineHash, lserVersion: 0, manifest,
       simulatesActors: this.simulatesActors,
       ...(this.system ? { system: true } : {}),
     });

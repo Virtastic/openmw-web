@@ -41,7 +41,10 @@ let state = { firstRun: true, authed: false, role: null, name: null, maintenance
 // updates -- stay on the platform whatever game is open.
 const GAME_KEY = 'omwmp_admin_game';
 let gameId = (() => { try { return sessionStorage.getItem(GAME_KEY) || ''; } catch { return ''; } })();
-const PLATFORM_PATHS = /^\/(state|login|logout|setup|forgot-password|reset-password|games|rolling-restart|accounts|sessions|totp|updates|update)(\/|\?|$)/;
+// mods is PLATFORM on the multiplayer server: one game data dir (gameDataDir(sharedDir)) is
+// shared by every game, and only the gateway's /admin/api/mods* routes see it. Proxied to a
+// game it hit that WORLD's empty data dir -- a 2.7 GB upload then "That upload has expired".
+const PLATFORM_PATHS = /^\/(state|login|logout|setup|forgot-password|reset-password|games|rolling-restart|accounts|sessions|totp|updates|update|mods)(\/|\?|$)/;
 const apiPath = (path) => (gameId && !PLATFORM_PATHS.test(path) ? `/games/${gameId}${path}` : path);
 function openGame(id) { gameId = id; try { sessionStorage.setItem(GAME_KEY, id); } catch { /* private mode */ } }
 function closeGame() { gameId = ''; try { sessionStorage.removeItem(GAME_KEY); } catch { /* private mode */ } }
@@ -164,10 +167,10 @@ function confirmAction({ title, body, danger = 'Confirm', typeToConfirm = null }
 // THREE PLACES THE SAME PAGE CAN BE, and each entry says where it belongs:
 //   solo: false   not in single player -- the page acts on players connected to a world, and
 //                 in single player the browser runs the engine and nobody ever connects.
-//   at: 'game'    only on a game: its own roster, mods, game files. On the multiplayer server
+//   at: 'game'    only on a game: its own roster. On the multiplayer server
 //                 these appear once a game is open, and act on that game through the proxy.
 //   at: 'platform'  only on the multiplayer server, outside any game: the rolling restart.
-//   shared: true  the shared stores (accounts, admin sessions) and the container itself
+//   shared: true  the shared stores (accounts, admin sessions, game data + mods) and the container itself
 //                 (updates): on the multiplayer server they belong to the platform, so they
 //                 step aside while a game is open rather than pretending to be that game's.
 // The rule is "does nothing here", never "sounds like the other mode".
@@ -180,8 +183,9 @@ const NAV = [
     // with a message of the day, read a chat log for, report, or hand an item. The page is
     // inert rather than merely unhelpful, so it is removed rather than trimmed.
     { hash: '#console', label: 'Players & commands', icon: 'bi-people', role: 'moderator', solo: false, at: 'game' },
-    { hash: '#mods', label: 'Mod manager', icon: 'bi-box-seam', role: 'viewer', at: 'game' },
-    { hash: '#gamefiles', label: 'Game files', icon: 'bi-controller', role: 'viewer', at: 'game' },
+    // shared, not at:'game': the multiplayer server has ONE game data dir for all its games.
+    { hash: '#mods', label: 'Mod manager', icon: 'bi-box-seam', role: 'viewer', shared: true },
+    { hash: '#gamefiles', label: 'Game files', icon: 'bi-controller', role: 'viewer', shared: true },
   ] },
   // The setup wizard is first-run only and is deliberately NOT listed here. It is a sequence
   // of eleven questions whose answers reshape the deployment, and re-entering it on a running
@@ -2148,10 +2152,8 @@ function setupChecklist() {
     // item is always done and the link would lead nowhere.
     ...(can('owner') ? [{ done: state.setupCompleted === true, label: 'Run the setup wizard' }] : []),
     { done: state.twoFactor === true, label: 'Add two-factor authentication to your account', hash: '#security' },
-    // Not on the multiplayer server: mods belong to a game, and there is no #mods there.
-    ...(platform() ? [] : [
-      { done: localStorage.getItem('omwmp_mods_seen') === '1', label: 'Review the game data and mod list', hash: '#mods' },
-    ]),
+    // On the multiplayer server too: game data is shared by every game and lives on the platform.
+    { done: localStorage.getItem('omwmp_mods_seen') === '1', label: 'Review the game data and mod list', hash: '#mods' },
     // NOTHING USED TO SAY THIS. An operator could finish setup, upload every file, and still
     // have no way for anyone to play, because the player-facing app ships separately and no
     // screen mentioned it. Derived from a live check, so it clears itself once staged.
@@ -3697,6 +3699,8 @@ async function pageAccounts() {
           ${raw(a.banned && can('moderator')
             ? html`<button class="btn btn-sm btn-outline-secondary" data-unban="${a.name}">unban</button> ` : '')}
           ${raw(can('owner')
+            ? html`<button class="btn btn-sm btn-outline-secondary" data-pw="${a.name}">set password</button> ` : '')}
+          ${raw(can('owner')
             ? html`<button class="btn btn-sm btn-outline-danger" data-del="${a.name}">erase</button>` : '')}</td>
       </tr>
       <tr class="vt-saves-row"><td colspan="6" class="pt-0">
@@ -3739,6 +3743,16 @@ async function pageAccounts() {
           await api('/accounts/role', { method: 'POST', body: { name: sel.dataset.roleFor, role: sel.value } });
           toast(`Updated access for ${sel.dataset.roleFor}.`);
         } catch (e) { toast(e.message, 'danger'); render($('#accQ').value); }
+      };
+    });
+    view().querySelectorAll('[data-pw]').forEach((b) => {
+      b.onclick = async () => {
+        const password = prompt(`New password for ${b.dataset.pw} (12+ characters):`);
+        if (!password) return;
+        try {
+          await api('/accounts/password', { method: 'POST', body: { name: b.dataset.pw, password } });
+          toast(`Password set for ${b.dataset.pw}.`);
+        } catch (e) { toast(e.message, 'danger'); }
       };
     });
     view().querySelectorAll('[data-unban]').forEach((b) => {

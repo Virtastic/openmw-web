@@ -65,6 +65,10 @@ services:
     # x86-64 Linux container with one player in one exterior cell, and a peer anchoring several
     # busy cells will cost more. server/scripts/measure-capacity.ts does it.
     mem_limit: 8g
+    # A real init as PID 1 reaps orphaned sim peers (one per occupied world); without it a
+    # peer that outlives a killed world sits as a zombie holding ~450 MB until the container
+    # restarts. Same as the dev compose (docker-compose.yml).
+    init: true
     # SIGTERM triggers a full persistence flush; give it time before SIGKILL.
     stop_grace_period: 30s
 networks:

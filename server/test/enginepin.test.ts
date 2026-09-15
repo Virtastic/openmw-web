@@ -71,7 +71,7 @@ test('refuse mode does not lock the sim peer out of its own world', async (t) =>
 
   const peer = await TestClient.connect(server.port);
   peer.sendJson({
-    t: 'SessionHello', proto: 2, engineHash: '', lserVersion: 0, manifest: [],
+    t: 'SessionHello', proto: 3, engineHash: '', lserVersion: 0, manifest: [],
     system: true, simulatesActors: true,
   });
   const hello = await peer.waitJson('SessionHelloOk');
@@ -89,7 +89,7 @@ test('...but an ordinary client with no hash still is', async (t) => {
   t.after(() => server.close());
 
   const c = await TestClient.connect(server.port);
-  c.sendJson({ t: 'SessionHello', proto: 2, engineHash: '', lserVersion: 0, manifest: [] });
+  c.sendJson({ t: 'SessionHello', proto: 3, engineHash: '', lserVersion: 0, manifest: [] });
   const bye = await c.waitJson('SessionDisconnect');
   assert.equal((bye as { code?: string }).code, 'BAD_ENGINE');
   c.close();

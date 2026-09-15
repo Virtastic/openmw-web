@@ -37,6 +37,7 @@
 //   GET  /admin/api/metrics            [moderator] the existing registry, as JSON
 //   GET  /admin/api/accounts           [moderator]
 //   POST /admin/api/accounts/role      [owner]
+//   POST /admin/api/accounts/password  [owner]     set a player's password (forgot it)
 //   POST /admin/api/accounts/delete    [owner]     the GDPR erasure path
 //   GET  /admin/api/sessions           [owner]
 //   POST /admin/api/sessions/revoke    [owner]
@@ -1069,6 +1070,26 @@ export function adminRoutes(deps: AdminDeps) {
       if (role === undefined) deps.sessions.revokeAccount(name.toLowerCase());
       await deps.accounts.flush();
       log('info', 'admin.role_changed', { account: name.toLowerCase(), role: role ?? null, by: ctx.accountKey });
+      json(res, 200, { ok: true });
+      return true;
+    }
+    // "I forgot it" without SMTP or a shell on the box. Owner-only, same audit shape as
+    // /accounts/role; the old password's sessions end, as the mailed reset does.
+    if (method === 'POST' && path === '/admin/api/accounts/password') {
+      const ctx = await gate(req, res, auth, 'owner');
+      if (!ctx) return true;
+      const body = await readJson<{ name?: string; password?: string }>(req, res);
+      if (body === undefined) return true;
+      const name = String(body.name ?? '');
+      const password = String(body.password ?? '');
+      const weak = passwordProblem(password, name);
+      if (weak) { json(res, 400, { error: `password ${weak}` }); return true; }
+      if (!await deps.accounts.setPassword(name, password)) {
+        json(res, 404, { error: 'no such account' }); return true;
+      }
+      deps.sessions.revokeAccount(name.toLowerCase());
+      await deps.accounts.flush();
+      log('warn', 'admin.password_set', { account: name.toLowerCase(), by: ctx.accountKey });
       json(res, 200, { ok: true });
       return true;
     }

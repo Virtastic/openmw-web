@@ -24,6 +24,7 @@ import { gatewayPrincipal, GATEWAY_ACTOR_HEADERS } from '../src/net/admin/auth';
 import { GATEWAY_ONLY, SECTION_GROUPS, settingsView } from '../src/net/admin/api-settings';
 import { MODE_FILE } from '../src/net/admin/routes';
 import { AccountStore } from '../src/core/accounts';
+import { BanStore } from '../src/persist/banstore';
 import { AdminSessionStore } from '../src/auth/identities';
 import { loadConfig } from '../src/config';
 import { startServer } from '../src/server';
@@ -310,6 +311,20 @@ test('the multiplayer server serves the dashboard: people first, games by proxy'
   assert.equal((await api('/games/beta/discard', { method: 'POST', body: JSON.stringify({ confirm: 'wrong' }) })).status, 400);
   assert.equal((await api('/games/beta/discard', { method: 'POST', body: JSON.stringify({ confirm: 'beta' }) })).status, 200);
   assert.ok(!existsSync(join(worldsDir, 'beta')));
+  // UNBAN WITHOUT A GAME (backlog 380): bans.db is shared, so the platform can lift one
+  // itself; every other kind still needs a game's roster and is refused as before.
+  const bans = new BanStore(sharedDir);
+  bans.banAccount('Troll', 'owner-a', 'griefing');
+  await bans.close();
+  const unban = await j(await api('/action', { method: 'POST', body: JSON.stringify({ kind: 'unban', target: 'Troll' }) }));
+  assert.equal(unban.ok, true, 'lifted from the shared store');
+  const check = new BanStore(sharedDir);
+  assert.equal(check.isAccountBanned('Troll'), undefined, 'and gone from bans.db');
+  await check.close();
+  const again = await j(await api('/action', { method: 'POST', body: JSON.stringify({ kind: 'unban', target: 'Troll' }) }));
+  assert.equal(again.ok, false, 'lifting nothing says so');
+  const kick = await j(await api('/action', { method: 'POST', body: JSON.stringify({ kind: 'kick', target: 'Runner' }) }));
+  assert.equal(kick.ok, false, 'a kick still needs a game');
   assert.equal((await api('/rolling-restart', { method: 'POST' })).status, 200);
   assert.equal(rolls, 1);
   assert.equal((await api('/games/alpha/stop', { method: 'POST' })).status, 200);

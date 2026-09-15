@@ -7,7 +7,7 @@ sim-peer image (tier2, ~25 min cold) and the multiplayer browser-harness sweeps 
 LAN Jenkins box (`builder`, 192.168.1.130: 32 cores, 38 GB). That box is **dev/test only** —
 it deploys to the test app server (192.168.1.131) and never to prod.
 
-**Prod is GitHub Actions**: `deploy-ovh` / `deploy-mp` run on push to `main` and ship to OVH.
+**Prod is GitHub Actions**: `deploy-ovh` / `deploy-mp` run on push to `ovhcloud` (NOT `main`) and ship to OVH.
 Nothing in Jenkins reaches prod.
 
 ### The Jenkins job: `openmw-web-dev`
@@ -48,7 +48,11 @@ keep working locally while it runs.
 ## Process
 
 feature branch → PR to protected `main` → `gh pr merge --rebase --delete-branch` → fast-forward
-`dev`, `ovhcloud`, `multiplayer912026` to `main`. Client-Lua or C++ edits need an engine rebake
+`dev`, `ovhcloud`, `multiplayer912026` to `main`. **Merging to `main` alone deploys nothing**:
+`deploy-ovh` / `deploy-mp` trigger on push to `ovhcloud`, so prod ships only when `ovhcloud` is
+fast-forwarded. Before pushing `ovhcloud`, tag the running prod image on the box for rollback
+(`docker tag openmw-mp:ovh openmw-mp:prev`) — the deploy overwrites `:ovh` and keeps no previous.
+Client-Lua or C++ edits need an engine rebake
 (browser Lua is baked into openmw.data); peer C++ edits need a tier2 rebuild; both before trusting
 a harness verdict.
 

@@ -185,6 +185,7 @@ jobs:
             --data '{"files":[
               "https://morrowind.virtastic.app/",
               "https://morrowind.virtastic.app/index.html",
+              "https://morrowind.virtastic.app/launcher.html",
               "https://morrowind.virtastic.app/og.png",
               "https://morrowind.virtastic.app/robots.txt",
               "https://morrowind.virtastic.app/sitemap.xml"

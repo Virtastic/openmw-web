@@ -112,7 +112,7 @@ try {
 }
 ws.addEventListener('open', () => {
   if (ws.protocol !== 'omw-mp.2') fail(`server accepted wrong subprotocol '${ws.protocol}'`);
-  ws.send(JSON.stringify({ t: 'SessionHello', proto: 2, engineHash: '', lserVersion: 0, manifest: [] }));
+  ws.send(JSON.stringify({ t: 'SessionHello', proto: 3, engineHash: '', lserVersion: 0, manifest: [] }));
 });
 ws.addEventListener('message', (ev) => {
   let msg;
