@@ -545,6 +545,13 @@ function identity.forgetDeclared(eventName)
     if kind then last[kind] = nil end
 end
 
+-- Spells whose add went out under a local id (global.lua mpSpellbookOut): diffed again next
+-- tick, by which time the registry answers with the net id.
+function identity.forgetSpells(ids)
+    if not last.spells then return end
+    for _, id in ipairs(ids or {}) do last.spells[id] = nil end
+end
+
 function identity.reset()
     last = {}
     for _, t in pairs(tracked) do t.peer = nil; t.prev = nil; t.delta = 0; t.baseSaid = nil end

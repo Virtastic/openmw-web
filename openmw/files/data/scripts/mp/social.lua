@@ -43,6 +43,7 @@ local blocked = {} -- {acct, name}: who I have blocked, so the panel can offer u
 local muted = {} -- {acct, name}: who I have muted, so the panel can offer unmute
 local requests = {} -- acct -> name (incoming friend requests)
 local invites = {} -- acct -> {name=} (world invites: come stand next to me)
+local invitesSaid = {} -- acct -> true once toasted; forgotten when the invite leaves the snapshot
 local presence = 'friends'
 -- Availability (Online/Offline) — a SEPARATE axis from presence (which is "who sees my
 -- location"). Offline peels you into your Solo world, hidden and unjoinable. Echoed back by
@@ -254,6 +255,9 @@ return {
             for _, iv in ipairs(data.invites or {}) do
                 if iv.acct then invites[iv.acct] = { name = iv.name or iv.acct } end
             end
+            for acct in pairs(invitesSaid) do
+                if not invites[acct] then invitesSaid[acct] = nil end -- a fresh invite later toasts again
+            end
             -- Drop any pending request from someone who is now a friend. Clearing it only in
             -- the accept handler left the same person listed as BOTH a friend and a pending
             -- request whenever the accept happened another way — from a second session, or
@@ -284,8 +288,14 @@ return {
         end,
         MP_InviteReceived = function(data)
             if data.fromAcct then
+                -- Said once per invite: the server re-delivers a standing invite on every
+                -- join inside its two minutes, and a reconnect or a world switch toasted it
+                -- again each time.
                 invites[data.fromAcct] = { name = data.fromName or data.fromAcct }
-                notice(tostring(invites[data.fromAcct].name) .. ' invited you to join them (F)')
+                if not invitesSaid[data.fromAcct] then
+                    invitesSaid[data.fromAcct] = true
+                    notice(tostring(invites[data.fromAcct].name) .. ' invited you to join them (F)')
+                end
                 mirror()
                 render()
             end

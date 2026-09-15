@@ -1207,6 +1207,7 @@ return {
         end,
         MP_ResyncActive = function() identity.resyncActive() end,
         MP_ForgetDeclared = function(data) identity.forgetDeclared(data and data.kind) end,
+        MP_ForgetSpells = function(data) identity.forgetSpells(data and data.ids) end,
         MP_SpellMinted = function(data)
             pcall(function()
                 types.Actor.spells(self):add(data.id)

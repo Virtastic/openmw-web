@@ -253,6 +253,12 @@ test("a merchant restocks on the 24-hour rule, including across a month boundary
     ref: REF, cellKey: '0,0', opId: 1, op: 'gold', goldDelta: -200,
   });
   assert.equal(((await a.waitEvent('ContainerOpResult')).value as { ok: boolean }).ok, true);
+  // ...and buys the dagger and sells a yam. Stock used to be canonical-forever: the potions
+  // and arrows bought on day one were gone from the world for good.
+  a.sendEvent('ContainerOpRequest', { ref: REF, cellKey: '0,0', opId: 2, op: 'take', itemId: 'iron_dagger', n: 1 });
+  assert.equal(((await a.waitEvent('ContainerOpResult', (v) => (v as { opId: number }).opId === 2)).value as { ok: boolean }).ok, true);
+  a.sendEvent('ContainerOpRequest', { ref: REF, cellKey: '0,0', opId: 3, op: 'put', itemId: 'ash_yam', n: 1 });
+  assert.equal(((await a.waitEvent('ContainerOpResult', (v) => (v as { opId: number }).opId === 3)).value as { ok: boolean }).ok, true);
 
   server.api.world.advanceTime(24);
   const after = server.api.world.time();
@@ -265,7 +271,9 @@ test("a merchant restocks on the 24-hour rule, including across a month boundary
   await b.waitEvent('PlayerList');
   b.sendCellChange('0,0', 0, 0, 0);
   b.sendEvent('ContainerOpen', { ref: REF, cellKey: '0,0', contents: [], gold: 500 });
-  const state = (await b.waitEvent('ContainerState')).value as { gold?: number };
+  const state = (await b.waitEvent('ContainerState')).value as { gold?: number; items: { id: string; n: number }[] };
+  assert.deepEqual(state.items.map((i) => i.id + ':' + i.n).sort(), ['ash_yam:1', 'iron_dagger:1'],
+    'the bought dagger is back in stock and the sold yam stays');
   assert.equal(state.gold, 500,
     `exactly 24 game hours passed, so the purse must be back; 300 means the restock was`
     + ' skipped because the two halves of the server disagree about how long a month is');

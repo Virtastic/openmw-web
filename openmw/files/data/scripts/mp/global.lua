@@ -3014,13 +3014,23 @@ local eventHandlers = {
         end
         mp.sendEvent('PlayerActiveSpells', { add = mapped(data.add), remove = mapped(data.remove) })
     end,
+    -- A spell made at the spellmaker's is a dynamic record still registering on the tick its
+    -- add is diffed: toNet answers with the LOCAL id, and that is what the doc kept -- on
+    -- relog it named nothing. Same cure as the inventory: the add goes out, and the diff
+    -- cache forgets that spell so the next tick says it again with the net id.
     mpSpellbookOut = function(data)
+        local pending = {}
         local function mapped(list)
             local out = {}
-            for i, id in ipairs(list or {}) do out[i] = worldmp.toNet(id) end
+            for i, id in ipairs(list or {}) do
+                local net = worldmp.toNet(id)
+                if net == id and worldmp.isDynamicId and worldmp.isDynamicId(id) then pending[#pending + 1] = id end
+                out[i] = net
+            end
             return out
         end
         mp.sendEvent('PlayerSpellbook', { add = mapped(data.add), remove = mapped(data.remove) })
+        if #pending > 0 then toPlayer('MP_ForgetSpells', { ids = pending }) end
     end,
     mpTestRest = function(data) worldmp.testRest(data.hours) end,
     mpTestRecord = function(data) worldmp.testCreateRecord(data.name, data.noRegister) end,

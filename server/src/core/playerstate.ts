@@ -324,7 +324,11 @@ function handleSpellbook(ctx: StateCtx, player: Player, body: LTable): boolean {
   if (add === undefined || remove === undefined) return false;
   ctx.store.update(player.charId, (doc) => {
     const spells = new Set(doc.spells ?? []);
-    for (const id of add) spells.add(id);
+    // A LOCAL dynamic id ("$dynamic3", "Generated:0x1") is one engine's private name for a
+    // record still registering; it means nothing to the next engine and never belongs in
+    // the doc. The client re-declares the spell under its net id a tick later (global.lua
+    // mpSpellbookOut).
+    for (const id of add) if (!(id.startsWith('$') || id.startsWith('Generated:'))) spells.add(id);
     for (const id of remove) spells.delete(id);
     doc.spells = [...spells].slice(0, MAX_SPELLS);
   });

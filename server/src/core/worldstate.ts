@@ -1084,8 +1084,21 @@ export class WorldState {
         // Snapped forward from NOW rather than advanced by one period: a world left alone for
         // a month should restock once on the next visit, not run the loop thirty times.
         cont.goldRestockAt = nowH + GOLD_RESTOCK_HOURS;
+        let changed = false;
         if (cont.gold !== cont.goldOrigin) {
           cont.gold = cont.goldOrigin;
+          changed = true;
+        }
+        // AND THE STOCK. The engine refills a merchant's restocking entries on each open from
+        // its own record, and the canonical list overwrote that on every client -- so the
+        // potions and arrows bought on day one were gone from the world for good. Back up to
+        // the first-seen count for whatever ran low; what players sold the merchant stays.
+        for (const o of cont.origin ?? []) {
+          const have = cont.items.find((i) => i.id === o.id);
+          if (!have) { cont.items.push({ ...o }); changed = true; }
+          else if (have.n < o.n) { have.n = o.n; changed = true; }
+        }
+        if (changed) {
           cont.stateSeq += 1;
           this.cells.markDirty(cellKey);
           log('debug', 'world.merchant_restock', { cellKey, gold: cont.gold });
