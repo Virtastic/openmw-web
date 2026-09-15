@@ -1392,21 +1392,41 @@
      // inventory) was always per-character; only the world was not. doc.positions is keyed by
      // world id, so per-character worlds are what that was already built for.
      privId = 'priv-' + publicId + '-' + String(chosenChar.id).slice(-8);
+     // A JOIN-FRIEND BOOT DOES NOT OPEN OUR OWN WORLD. We are dialling the host's world; our
+     // home only has to exist when we come back to it, and the gateway revives a world that
+     // is on disk the moment it is dialled (directory.ts revive-on-dial). Spawning it here
+     // meant a process nobody connected to, and the never-joined reaper took its directory
+     // with it after 15 min -- the guest's own cell state, gone (backlog 272). A character
+     // that has never played its home (no position recorded under this id) still asks, so
+     // the id is the server's and the dir exists to revive later.
+     if (chosenChar.joinWsPath && (chosenChar.positions || {})[privId]) {
+       world = { wsPath: '/w/' + privId };
+     } else {
      // The locker token is what identifies us: the server resolves the account from this
      // header and IGNORES any account in the body, because a body-supplied name let one
      // caller fabricate owners and exhaust every world slot. Sending it in the body only,
      // as this did, is an unauthenticated request — the server answers 401 sign_in_first.
-     const r = await fetch(sess.gwHttp + '/worlds', { method:'POST',
+     const open = () => fetch(sess.gwHttp + '/worlds', { method:'POST',
        headers:{ 'content-type':'application/json', authorization: 'Bearer ' + sess.lockerToken },
        // characterId lets the SERVER derive the world id and refuse a character that no
        // longer exists — a stale tab computing privId locally is how worlds got minted for
        // ghosts. privId stays as the fallback for older servers.
        body: JSON.stringify({ mode:'private', id: privId, characterId: String(chosenChar.id) }) });
+     let r = await open();
      world = await r.json();
+     // Continue within seconds of the idle reap finds the old process still draining; the
+     // gateway says "restarting" rather than "full", and it is back once that process exits
+     // (a few seconds). One retry covers it; a second refusal is reported as it comes.
+     if (r.status === 503 && world && world.error === 'restarting') {
+       await new Promise((res) => setTimeout(res, 3000));
+       r = await open(); world = await r.json();
+     }
      // A FULL PLATFORM IS NOT AN UNREACHABLE ONE. Both used to land in the same catch and be
      // reported as "the multiplayer server may be unreachable", which is wrong in the way that
      // wastes a player's evening: they retry, it keeps failing, and nothing says the box is
      // simply out of room. 503 means come back; 429 means this account already has its worlds.
+     if (r.status === 503 && world && world.error === 'restarting') throw new CapacityError(
+       'Your world is still shutting down from your last session. Try again in a few seconds.');
      if (r.status === 503) throw new CapacityError('The server is full right now — every world '
        + 'slot is in use. This is us running out of room, not anything wrong with your account. '
        + 'Try again in a few minutes.');
@@ -1417,6 +1437,7 @@
        : (world.error || 'the server could not open your world'));
      // The server may have derived a DIFFERENT id than we computed; its answer is the truth.
      if (world.id) privId = 'priv-' + String(world.id).replace(/^priv-/, '');
+     }
    } catch(e){
      // A capacity refusal is a complete sentence on its own; do not append the "unreachable"
      // guess to it, which is what made a full server look like a broken one.
@@ -1521,7 +1542,31 @@
    const err = /[#&]mperror=([^&]+)/.exec(h);
    if (err){
      history.replaceState(null,'',location.pathname);
-     launcherError('Sign-in failed', decodeURIComponent(err[1]).replace(/_/g,' ') + '. Please try again.');
+     // The codes server/src/auth/routes.ts sends back (plus the OIDC exchange codes it
+     // forwards). "Please try again" only where trying again can change anything: a refused
+     // registration, a ban or a linked identity does not become a sign-in on the second click.
+     var code = decodeURIComponent(err[1]);
+     var said = {
+       registration_disabled: 'This server is not accepting new accounts.',
+       invite_required: 'This server is invite-only. Ask the person running it for an invite link.',
+       banned: 'This account is banned from this server.',
+       link_conflict: 'That sign-in is already linked to a different account. Sign in with the account it belongs to, or use another provider.',
+       provider_disabled: 'That sign-in provider is switched off on this server. Pick another.',
+       unknown_provider: 'That sign-in provider is not set up on this server. Pick another.',
+       provider_refused: 'The sign-in provider refused, or you cancelled. Please try again.',
+       provider_unreachable: 'The sign-in provider could not be reached. Please try again in a moment.',
+       disabled: 'That sign-in provider is switched off on this server. Pick another.',
+       discovery: 'The sign-in provider could not be reached. Please try again in a moment.',
+       network: 'The sign-in provider could not be reached. Please try again in a moment.',
+       http: 'The sign-in provider answered with an error. Please try again in a moment.',
+       busy: 'The sign-in provider is busy. Please try again in a moment.',
+       rate: 'Too many sign-in attempts from your connection. Wait a minute and try again.',
+       not_signed_in: 'Your session has ended. Sign in again.',
+       state: 'The sign-in took too long or was started in another tab. Please try again.',
+       bad_callback: 'The sign-in came back incomplete. Please try again.',
+       account: 'The server could not set up your account. Please try again; if it keeps happening, tell the person running the server.',
+     }[code] || (code.replace(/_/g,' ') + '. Please try again.');
+     launcherError('Sign-in failed', said);
      return;
    }
    const tk = /[#&]mpticket=([^&]+)/.exec(h);

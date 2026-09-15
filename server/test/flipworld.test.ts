@@ -140,7 +140,7 @@ test('unfriending or blocking a guest sends them home; the other guest stays', a
 
   const world = await startServer({ requireGameData: false,
     dataDir: tmpDataDir(), sharedDir: shared, port: 0, host: '127.0.0.1',
-    worldId: 'priv-host', worldMode: 'party', worldOwner: 'host',
+    worldId: 'priv-host', worldMode: 'party', worldOwner: 'host', guestKickGraceMs: 500,
   });
   t.after(() => world.close());
   const host = await TestClient.connect(world.port);
@@ -184,7 +184,7 @@ test('a guest who unfriends the host while visiting goes home; the host stays pu
   store.close();
   const world = await startServer({ requireGameData: false,
     dataDir: tmpDataDir(), sharedDir: shared, port: 0, host: '127.0.0.1',
-    worldId: 'priv-host', worldMode: 'party', worldOwner: 'host',
+    worldId: 'priv-host', worldMode: 'party', worldOwner: 'host', guestKickGraceMs: 500,
   });
   t.after(() => world.close());
   const host = await TestClient.connect(world.port);
@@ -221,7 +221,7 @@ test('the host sends one guest home without blocking them; a guest cannot kick; 
   store.close();
   const world = await startServer({ requireGameData: false,
     dataDir: tmpDataDir(), sharedDir: shared, port: 0, host: '127.0.0.1',
-    worldId: 'priv-host', worldMode: 'party', worldOwner: 'host',
+    worldId: 'priv-host', worldMode: 'party', worldOwner: 'host', guestKickGraceMs: 500,
   });
   t.after(() => world.close());
   const host = await TestClient.connect(world.port);

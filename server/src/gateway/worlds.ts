@@ -279,6 +279,12 @@ export class WorldSupervisor {
     return true;
   }
 
+  /** True while the world is draining after SIGTERM: ensure() refuses it, but that refusal is
+   *  "come back in seconds", not "the box is full" -- the directory tells them apart (278). */
+  isStopping(id: string): boolean {
+    return this.worlds.get(id)?.stopping === true;
+  }
+
   // Idempotent. Returns the world (existing or new), or null if it could not be started —
   // callers must handle null rather than assume a world exists.
   ensure(id: string, mode: WorldMode, ownerAccount?: string): WorldInfo | null {
@@ -513,9 +519,17 @@ export class WorldSupervisor {
         // gateway capacity of twelve. Nobody ever connected to these, so there is no cell
         // state, no journal and no save to lose; a world that WAS played keeps its directory
         // through the idle path below, which is the one that must never delete anything.
+        //
+        // "Nobody connected to THIS process" is not "nobody ever played here": a REVIVED
+        // world (a launcher join that also spawned the guest's own home, a returning
+        // character whose first data download outlasts the grace) has a world/world.db on
+        // disk from earlier sessions. That is looted containers, drops, doors and deaths,
+        // and it was deleted here (backlog 272). Discard only a fresh spawn; stop the rest.
         if (now - w.startedAt > WorldSupervisor.STARTUP_GRACE_MS) {
-          log('info', 'world.reaped', { id: w.id, reason: 'never_joined', ageMs: now - w.startedAt });
-          void this.discard(w.id, { reason: 'never_joined' });
+          const played = existsSync(join(this.deps.settings.worldsDir, w.id, 'world', 'world.db'));
+          log('info', 'world.reaped', { id: w.id, reason: 'never_joined', ageMs: now - w.startedAt, played });
+          if (played) this.stop(w.id);
+          else void this.discard(w.id, { reason: 'never_joined' });
         }
         continue;
       }

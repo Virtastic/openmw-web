@@ -314,7 +314,9 @@ end
 
 -- Human-readable reasons for the codes a real player can actually hit.
 local FAIL_TEXT = {
-    AUTH_FAILED = 'wrong password for this account name',
+    -- The detail carries the reason (expired ticket, wrong character, sign in again); a
+    -- fixed "wrong password" here was wrong for every one of them (backlog 276).
+    AUTH_FAILED = 'sign-in was refused',
     BAD_CONTENT = 'your game data does not match the server',
     BAD_ENGINE = 'your game build does not match the server',
     BAD_PROTO = 'protocol mismatch — update the game or the server',
@@ -322,7 +324,7 @@ local FAIL_TEXT = {
     BANNED = 'you are banned from this server',
     KICKED = 'you were kicked',
     RATE = 'disconnected for flooding',
-    SUPERSEDED = 'this account logged in from somewhere else',
+    SUPERSEDED = 'this character logged in from somewhere else',
     SHUTDOWN = 'the server shut down',
     UNREACHABLE = 'could not reach the server',
 }
@@ -1740,6 +1742,8 @@ local function start()
         elseif state == 'Failed' then
             local why = FAIL_TEXT[net.lastError] or net.lastError or 'connection failed'
             local detail = net.lastErrorDetail
+            -- UNREACHABLE's detail is the same sentence; do not say it twice.
+            if detail == why then detail = nil end
             mp.set('netfail', why .. (detail and detail ~= '' and (' (' .. detail .. ')') or ''))
         end
         -- CONNECTION STATE IS A MODAL, NOT CHAT. A drop repeats every backoff tick, so

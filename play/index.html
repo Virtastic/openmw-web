@@ -1385,15 +1385,19 @@ window.omw = (function(){
              // when the thing that was supposed to (the settle hold) turned out to be gated on
              // chargen, every new character sat on a loading screen that could never go away.
              // A suppression that can outlive its owner is not acceptable here: whatever
-             // happens, the screen is released. 30s is comfortably longer than any real settle
-             // (the hold itself gives up at 30s and its grace is 5s) and far shorter than
-             // "forever" — the point is a bound, not a generous one.
+             // happens, the screen is released. The ceiling is the sim peer's own start
+             // timeout (a cold peer on a big mod set takes minutes: 30 s dropped the player
+             // into a frozen world with no word, backlog 274) plus the hold's grace, and far
+             // shorter than "forever" — the point is a bound, not a generous one.
+             // ponytail: a constant; the page reads no /status or welcome that could carry
+             // the server's simPeer.startTimeoutMs. Add a mirror there if operators tune it.
+             window.__omwSettleCeilingMs = 300000;
              setTimeout(function(){
                if (!window.__omwMPSettling) return;
                window.__omwMPSettling = false;
                try { window.__omwLoading.hide(); } catch (e) {}
                try { if (window.__omwLog) window.__omwLog('[mp] settle hold released by timeout', 'err'); } catch (e) {}
-             }, 30000);
+             }, window.__omwSettleCeilingMs + 10000);
              ENV.OPENMW_MP_URL = mpUrl;
              // NOTE ON URL FLAGS — deliberately NOT blocked here, and the reasoning matters.
              //
@@ -1499,23 +1503,21 @@ window.omw = (function(){
              // failed session is a dead end — never leave the player parked in the single-player
              // menu behind a red DOM banner. Show the app's themed error screen and return them
              // to the launcher to sign in again. Lua mirrors state/lastError via mp.set.
+             // Lua writes "CODE detail" (net.lua): the code decides the title and the fallback
+             // sentence, the detail is the useful half of the sentence.
+             function mpErrorCode(raw){ var s = String(raw || ''); var sp = s.indexOf(' '); return sp > 0 ? s.slice(0, sp) : s; }
              function friendlyMpError(raw){
-               // Lua writes "CODE detail" (net.lua); the switch below wants the code, and the
-               // detail is the useful half of the sentence -- every refusal used to read as
-               // "could not be reached (BAD_CONTENT ...)".
                var s = String(raw || ''); var sp = s.indexOf(' ');
-               var code = sp > 0 ? s.slice(0, sp) : s, detail = sp > 0 ? s.slice(sp + 1) : '';
-               var base = friendlyMpErrorBase(code);
-               return detail ? base + ' (' + detail + ')' : base;
-             }
-             function friendlyMpErrorBase(code){
+               var code = mpErrorCode(s), detail = sp > 0 ? s.slice(sp + 1) : '';
+               var base;
                switch(code){
-                 case 'AUTH_FAILED': return 'Your sign-in could not be verified, or it expired during loading. Please sign in again.';
-                 case 'BANNED':      return 'This account is not allowed on the server.';
-                 case 'BAD_CONTENT': return 'Your game files do not match the server.';
-                 case 'FULL':        return 'The server is full right now. Try again shortly.';
-                 default:            return 'The server could not be reached'+(code?' ('+code+')':'')+'.';
+                 case 'AUTH_FAILED': base = 'Your sign-in could not be verified, or it expired during loading. Please sign in again.'; break;
+                 case 'BANNED':      base = 'This account is not allowed on the server.'; break;
+                 case 'BAD_CONTENT': base = 'Your game files do not match the server.'; break;
+                 case 'FULL': case 'SERVER_FULL': base = 'The server is full right now. Try again shortly.'; break;
+                 default:            base = 'The server could not be reached'+(code?' ('+code+')':'')+'.';
                }
+               return detail ? base + ' (' + detail + ')' : base;
              }
              // A themed modal (matching the app) with an explicit "Go back" button, rather than
              // a raw overlay + auto-redirect. The auto-redirect fired the browser's "Leave site?"
@@ -1537,13 +1539,16 @@ window.omw = (function(){
                  + 'font-size:24px;color:#ece0c6">' + title + '</h2>'
                  + '<p style="margin:12px 0 0;font-size:14px;line-height:1.6;color:#a5987e">' + msg + '</p>';
                var btn = document.createElement('button');
-               btn.textContent = 'Go back to sign in';
+               // The session is usually still good (a kick, a duplicate login, an expired
+               // boot ticket): take them back to their characters, not through SSO again.
+               var signedIn = false; try { signedIn = !!sessionStorage.getItem('omw-mp-session'); } catch(e){}
+               btn.textContent = signedIn ? 'Back to your characters' : 'Go back to sign in';
                btn.style.cssText = 'margin-top:22px;width:100%;box-sizing:border-box;padding:13px 20px;'
                  + 'border-radius:6px;cursor:pointer;border:1px solid #eecb78;font:600 12.5px/1 Optima,"Gill Sans",sans-serif;'
                  + 'letter-spacing:.12em;text-transform:uppercase;background:linear-gradient(180deg,#d3a84e,#8a6838);color:#1a1207';
                // ON PURPOSE: tell the world before going, so a Party world closes to its
                // guests now rather than after the crash grace (see net.lua switchTo).
-               btn.onclick = function(){ window.__omwAllowLeave = true; try { sessionStorage.removeItem('omwmp:bootfrag'); sessionStorage.removeItem('omwmp:chatlog'); } catch(e){} try { window.omw.send('leaving', 300); } catch(e){} try { if (window.Module) Module.__omwRunning = false; } catch(e){} setTimeout(function(){ location.href = 'launcher.html'; }, 150); };
+               btn.onclick = function(){ window.__omwAllowLeave = true; try { sessionStorage.removeItem('omwmp:bootfrag'); sessionStorage.removeItem('omwmp:chatlog'); } catch(e){} try { window.omw.send('leaving', 300); } catch(e){} try { if (window.Module) Module.__omwRunning = false; } catch(e){} setTimeout(function(){ location.href = signedIn ? 'launcher.html#characters' : 'launcher.html'; }, 150); };
                box.appendChild(btn); wrap.appendChild(box); document.body.appendChild(wrap);
              }
              (function(){
@@ -1553,7 +1558,11 @@ window.omw = (function(){
                  if (s === 'Failed' && !handled){
                    handled = true;
                    // Lua's own human sentence (netfail) first; the code+detail rendering is the fallback.
-                   mpErrorModal('Can’t join multiplayer', String(window.omw.state.netfail || '') || friendlyMpError(window.omw.state.lastError));
+                   // A session that ENDED (kicked, logged in elsewhere, banned mid-game) is not a
+                   // join that failed; the title says which.
+                   var code = mpErrorCode(window.omw.state.lastError);
+                   var ended = code === 'KICKED' || code === 'SUPERSEDED' || code === 'BANNED' || code === 'SHUTDOWN';
+                   mpErrorModal(ended ? 'Disconnected' : 'Can’t join multiplayer', String(window.omw.state.netfail || '') || friendlyMpError(window.omw.state.lastError));
                  }
                }, 1000);
              })();
@@ -4249,7 +4258,13 @@ window.omw = (function(){
       if (readyAt) {
         if (Date.now() - readyAt >= GRACE_MS) { settled(); return; }
       } else {
-        if (Date.now() > until) { settled(); return; } // let the net layer speak
+        if (Date.now() > until) { // let the net layer speak
+          settled();
+          // The world is up but its peer is not: say so, in a corner the player can close,
+          // and take it down the moment SimReady lands (274).
+          if (opts && opts.banner && (st.state || '') === 'Joined') stillStartingBanner();
+          return;
+        }
         if (!said && (st.state || '') === 'Joined') {
           said = true;
           window.__omwLoading.show('Almost there', 'Waiting for the world to be simulated…');
@@ -4260,6 +4275,20 @@ window.omw = (function(){
   }
 
 
+  function stillStartingBanner(){
+    if (document.getElementById('omw-still-starting')) return;
+    var b = el('div', null, 'The world is still starting (a big mod set takes a few minutes). '
+      + '<button style="margin-left:10px;cursor:pointer;background:none;border:1px solid #8a6838;'
+      + 'color:#ece0c6;border-radius:4px;padding:2px 8px">Dismiss</button>');
+    b.id = 'omw-still-starting';
+    b.style.cssText = 'position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:9000;'
+      + 'padding:10px 14px;background:rgba(22,17,13,.94);border:1px solid rgba(138,104,56,.5);'
+      + 'border-radius:6px;color:#a5987e;font:14px/1.4 -apple-system,"Segoe UI",Roboto,sans-serif';
+    var gone = function(){ clearInterval(t); if (b.parentNode) b.parentNode.removeChild(b); };
+    b.querySelector('button').onclick = gone;
+    var t = setInterval(function(){ if (window.omw.state.simReady === '1') gone(); }, 500);
+    document.body.appendChild(b);
+  }
   function pj(s){ try { return JSON.parse(s); } catch(e){ return null; } }
   function esc(s){ return String(s==null?'':s).replace(/[&<>]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];}); }
   function el(tag, cls, html){ var d = document.createElement(tag); if (cls) d.className = cls; if (html!=null) d.innerHTML = html; return d; }
@@ -4611,11 +4640,12 @@ window.omw = (function(){
       // Solo closes your world to guests; Party opens it to your friends. Both are in-place
       // flips of the SAME world — no reconnect, no travel. Closing on guests is their
       // business too, but the server narrates it to them (WorldClosed), so no confirm here.
+      // No loading screen: the flip does not move anyone, and SimReady is only sent at
+      // join, so holding for it here sat every click on a black "waiting for the world" for
+      // the full ceiling (backlog 273). The server's SocialResult toast is the ack.
       setWhere(v);
       closeSocial();
       cmd('where:' + v);
-      window.__omwLoading.show('Switching world', 'Syncing with the server…');
-      holdUntilSimulated(30000);
       setStatus('');
       renderSocial();
     }));
@@ -5112,7 +5142,7 @@ window.omw = (function(){
     // forever. Whether the world has settled has nothing to do with whether chargen has.
     if (window.__omwMPSettling && !settleStarted && (m.state || '') === 'Joined') {
       settleStarted = true;
-      holdUntilSimulated(30000, { fresh: true });
+      holdUntilSimulated(window.__omwSettleCeilingMs || 300000, { fresh: true, banner: true });
     }
     if (ready) noticeWatch(m);
     profileWatch(m);
@@ -5203,8 +5233,20 @@ window.omw = (function(){
         try { window.omw.state.serverRestarting = ''; } catch (e) {}
       }
     }
+    // A request or invite that arrived through the 10 s snapshot (the sender is in another
+    // world) is named in the panel's status line, not just added to a closed panel (275).
+    var pend = (m.friendRequests || '') + '|' + (m.invites || '');
+    if (pend !== seenPending) {
+      seenPending = pend;
+      var now = {};
+      (pj(m.friendRequests)||[]).forEach(function(q){ now['r:'+q.acct] = q.name + ' sent you a friend request.'; });
+      (pj(m.invites)||[]).forEach(function(iv){ now['i:'+iv.acct] = iv.name + ' invited you to join them.'; });
+      if (ready) for (var k in now) if (!(k in seenPendingKeys)) setStatus(now[k]);
+      seenPendingKeys = now;
+    }
     if (socialOpen) renderSocial();
   }, 150);
+  var seenPending = '', seenPendingKeys = {};
   // A cell load blocks the emscripten main loop, so nothing repaints while it runs — not even
   // OpenMW's own loading screen. The overlay therefore has to be UP before the block starts.
   // The engine signals on door activation (one frame early); rAF is the only watcher fast

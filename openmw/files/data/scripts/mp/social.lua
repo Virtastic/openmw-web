@@ -44,6 +44,7 @@ local muted = {} -- {acct, name}: who I have muted, so the panel can offer unmut
 local requests = {} -- acct -> name (incoming friend requests)
 local invites = {} -- acct -> {name=} (world invites: come stand next to me)
 local invitesSaid = {} -- acct -> true once toasted; forgotten when the invite leaves the snapshot
+local requestsSaid = {} -- same, for friend requests (the snapshot is their only cross-world path)
 local presence = 'friends'
 -- Availability (Online/Offline) — a SEPARATE axis from presence (which is "who sees my
 -- location"). Offline peels you into your Solo world, hidden and unjoinable. Echoed back by
@@ -266,6 +267,24 @@ return {
             for _, f in ipairs(friends) do
                 requests[f.acct] = nil
             end
+            -- SAY WHAT IS NEW. A request or invite from someone in ANOTHER world reaches this
+            -- client only through this snapshot, and a silent rebuild meant the card sat in
+            -- a closed panel unseen (backlog 275). Once per acct, like the live events.
+            for acct, name in pairs(requests) do
+                if not requestsSaid[acct] then
+                    requestsSaid[acct] = true
+                    notice(tostring(name) .. ' sent you a friend request (O)')
+                end
+            end
+            for acct in pairs(requestsSaid) do
+                if not requests[acct] then requestsSaid[acct] = nil end
+            end
+            for acct, iv in pairs(invites) do
+                if not invitesSaid[acct] then
+                    invitesSaid[acct] = true
+                    notice(tostring(iv.name) .. ' invited you to join them (O)')
+                end
+            end
             -- INVITES ARE NOT CLEARED HERE, and used to be. A pending friend REQUEST from
             -- somebody who is already a friend is stale, which is what this loop is for. An
             -- invite from a friend is the ordinary case — being friends is what lets them
@@ -281,7 +300,10 @@ return {
         MP_FriendRequestReceived = function(data)
             if data.fromAcct then
                 requests[data.fromAcct] = data.fromName or data.fromAcct
-                notice(tostring(requests[data.fromAcct]) .. ' sent you a friend request (O)')
+                if not requestsSaid[data.fromAcct] then
+                    requestsSaid[data.fromAcct] = true
+                    notice(tostring(requests[data.fromAcct]) .. ' sent you a friend request (O)')
+                end
                 mirror()
                 render()
             end

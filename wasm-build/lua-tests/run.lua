@@ -510,6 +510,19 @@ do
     'a notice can evaporate with nobody told why')
   check('social.lua tells the player about it',
     s:find('MP_SocialNotice = function', 1, true) ~= nil)
+  -- Backlog 275: a request or invite from someone in ANOTHER world only ever arrives in the
+  -- FriendList snapshot, which rebuilt the panel in silence. Noticed once per acct.
+  local fl = s:match('MP_FriendList = function%(data%)(.-)MP_FriendRequestReceived')
+  check('social.lua MP_FriendList notices a newly present friend request and invite',
+    fl ~= nil and fl:find("if not requestsSaid[acct] then", 1, true) ~= nil
+    and fl:find("notice(tostring(name) .. ' sent you a friend request (O)')", 1, true) ~= nil
+    and fl:find("if not invitesSaid[acct] then", 1, true) ~= nil
+    and fl:find("notice(tostring(iv.name) .. ' invited you to join them (O)')", 1, true) ~= nil,
+    'a cross-world request or invite is silent again')
+  -- Backlog 276: AUTH_FAILED is not always a wrong password; the detail says which.
+  check("global.lua does not blame every AUTH_FAILED on the password",
+    g:find("AUTH_FAILED = 'sign-in was refused'", 1, true) ~= nil
+    and g:find('if detail == why then detail = nil end', 1, true) ~= nil)
   -- Backlog 136: pose bit 3 is USE on both ends. player.lua sent inAir there and puppet.lua
   -- read it as a swing, so every landing in degraded mode played a phantom chop.
   local pp = io.open('./openmw/files/data/scripts/mp/puppet.lua'):read('*a')

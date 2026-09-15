@@ -403,7 +403,14 @@ export async function startDirectory(deps: DirectoryDeps): Promise<RunningDirect
         }
 
         const world = deps.worlds.ensure(id, mode as WorldMode, account);
-        if (!world) { json(res, 503, { error: 'no capacity for another world right now' }); return; }
+        if (!world) {
+          // A world still draining from the idle reap is refused by ensure() too, and that
+          // read as "the server is full" to a player who clicked Continue twenty seconds
+          // after being reaped. It is back the moment the old process exits; say so and the
+          // launcher retries once (backlog 278).
+          if (deps.worlds.isStopping(id)) { json(res, 503, { error: 'restarting' }); return; }
+          json(res, 503, { error: 'no capacity for another world right now' }); return;
+        }
         json(res, 200, pub(world));
       });
       return;

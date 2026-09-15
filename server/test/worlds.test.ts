@@ -6,7 +6,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { existsSync, mkdtempSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ChildProcess } from 'node:child_process';
@@ -548,6 +548,25 @@ test('a world nobody ever joined is discarded, directory and all', async () => {
   await new Promise((r) => setTimeout(r, 50)); // discard() is async
   assert.equal(existsSync(dir), false,
     'a world nobody ever joined must take its directory with it, or every abandoned sign-in leaks one');
+});
+
+// A REVIVED WORLD IS NOT A FRESH SPAWN. A launcher join of a friend also spawned the guest's
+// own home world, and a returning character's first data download can outlast the grace: in
+// both, nobody connects to the NEW process inside 15 min, but world/world.db from earlier
+// sessions is on disk. The never-joined path deleted the whole directory (backlog 272).
+test('a revived world nobody connected to is stopped, not discarded', async () => {
+  const { sup, settings, advance } = harness();
+  sup.ensure('revived', 'private', 'someone');
+  const dir = join(settings.worldsDir, 'revived');
+  mkdirSync(join(dir, 'world'), { recursive: true });
+  writeFileSync(join(dir, 'world', 'world.db'), 'cells');
+  advance(60 * 60_000);
+  await sup.poll();
+  sup.sweep();
+  await new Promise((r) => setTimeout(r, 50));
+  assert.equal(sup.running, 0, 'the unreached process is still reaped');
+  assert.ok(existsSync(join(dir, 'world', 'world.db')),
+    'a world with cell state on disk must keep it even when nobody reached this process');
 });
 
 // THE CONTROL, and the one that must never break: a world somebody PLAYED keeps its data when

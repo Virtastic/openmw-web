@@ -123,6 +123,8 @@ export interface StartOptions {
   worldOwner?: string; // accountKey; '' only on a standalone (non-gateway) stack
   /** Test seam: how long a party world stays open after its owner disconnects. */
   ownerGraceMs?: number;
+  /** Test seam: how long a guest told to go home gets before being dropped. */
+  guestKickGraceMs?: number;
   presenceMs?: number; // social heartbeat period (tests shorten it)
   configOverride?: DeepPartial<Config>; // tests
 }
@@ -499,9 +501,12 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     // which carries the signed-in person's real name.
     p.peer.sendEvent('WorldClosed',
       { reason, by: roster.activeForAccount(worldOwner)?.name ?? '' });
+    // Long enough for the trip: the client answers WorldClosed by minting a home ticket
+    // and rebooting, and a slow mint lost the race to 5 s -- "you were kicked" in place of
+    // going home (backlog 281). A guest who has left is no longer in `connections`.
     const t = setTimeout(() => {
       if (connections.has(conn)) conn.disconnect('KICKED', 'this world is no longer open to your party');
-    }, 5000);
+    }, opts.guestKickGraceMs ?? 30_000);
     t.unref();
   };
   const closeToGuests = (reason: string): void => {
@@ -925,11 +930,34 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     // dialling in — never the owner, never a resume-in-place), place them at the owner's live
     // position so they land next to the leader rather than at some default corner. Returns null
     // when it should not apply (not party, is the owner, owner not present/located yet).
+    //
+    // TWICE FIXED HERE (backlog 280). A guest whose host had no pose yet (still loading, a
+    // peer restart) got nothing and stood at the engine's default start for good: the
+    // teleport is now DEFERRED until the host's next pose. And a guest booted again by the
+    // auth rescue is not a fresh arrival: they hold a position in this world already, and
+    // being yanked back beside the host threw away where they had walked to.
     guestSpawn: (accountKey: string): { cellKey: string; x: number; y: number; z: number } | null => {
       if (worldMode !== 'party' || worldOwner === '' || accountKey === worldOwner) return null;
+      const guest = roster.activeForAccount(accountKey);
+      if (guest && playerStore.getCached(guest.charId)?.positions?.[worldId]) return null;
       const owner = roster.activeForAccount(worldOwner);
-      if (!owner || !owner.cellKey || !owner.pose) return null;
-      return { cellKey: owner.cellKey, x: owner.pose.x, y: owner.pose.y, z: owner.pose.z };
+      if (!owner) return null;
+      if (owner.cellKey && owner.pose) {
+        return { cellKey: owner.cellKey, x: owner.pose.x, y: owner.pose.y, z: owner.pose.z };
+      }
+      // ponytail: a 1 s poll for the host's first pose rather than a hook in connection.ts's
+      // pose path; one timer per waiting guest, bounded by the peer start timeout.
+      const until = Date.now() + config.simPeer.startTimeoutMs;
+      const t = setInterval(() => {
+        const host = roster.activeForAccount(worldOwner);
+        const g = roster.activeForAccount(accountKey);
+        if (!g || !g.inWorld || Date.now() > until) { clearInterval(t); return; }
+        if (!host || !host.cellKey || !host.pose) return;
+        clearInterval(t);
+        g.peer.sendEvent('InviteAccepted', { cellKey: host.cellKey, x: host.pose.x, y: host.pose.y, z: host.pose.z });
+      }, 1000);
+      t.unref();
+      return null;
     },
     // Chargen gate only when this world is spawned by a gateway (OMW_WORLD_ID set) and is not
     // the private world at boot — a standalone server has no other world to create the

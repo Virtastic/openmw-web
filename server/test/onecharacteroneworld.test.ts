@@ -56,3 +56,50 @@ test('an account banned in one world is dropped from another within a heartbeat'
   new BanStore(sharedDir).banAccount('pest', 'admin', 'griefing'); // what /ban in world A writes
   await guest.waitDisconnect('BANNED');
 });
+
+// A GUEST IS PLACED BESIDE THE HOST, EVEN WHEN THE HOST HAS NOT MOVED YET. The spawn was
+// one-shot at the guest's join: a host still loading (no pose) meant the guest stood at the
+// engine's default start for good. And a guest booted again by the auth rescue already has
+// a position in this world; yanking them back beside the host threw that away (backlog 280).
+test('a guest joining before the host has a pose is teleported on the host\'s first cell', async (t) => {
+  const { SocialStore } = await import('../src/core/socialstore');
+  const dataDir = tmpDataDir();
+  const social = new SocialStore(dataDir);
+  social.addFriend('host', 'guest', Date.now());
+  social.close();
+  const server = await startServer({
+    requireGameData: false, dataDir, port: 0, host: '127.0.0.1',
+    worldId: 'priv-host', worldMode: 'party', worldOwner: 'host',
+    configOverride: { login: { allowHarnessAuth: true } } as never,
+  });
+  t.after(() => server.close());
+
+  const host = await TestClient.connect(server.port);
+  t.after(() => host.close());
+  await host.joinAsNew('Host', 'hunter22');
+  await host.waitEvent('PlayerList');
+
+  const guest = await TestClient.connect(server.port);
+  await guest.joinAsNew('Guest', 'hunter22');
+  await guest.waitEvent('PlayerList');
+  const early = await guest.waitEvent('InviteAccepted', () => true, 300).then(() => true, () => false);
+  assert.equal(early, false, 'nothing to place the guest beside yet: the host has no pose');
+
+  host.sendCellChange('Balmora, South Wall Cornerclub', 10, 20, 30);
+  const at = (await guest.waitEvent('InviteAccepted', () => true, 3000)).value as { cellKey: string; x: number };
+  assert.equal(at.cellKey, 'Balmora, South Wall Cornerclub', 'the deferred spawn lands beside the host');
+  assert.equal(at.x, 10);
+
+  // The guest walks off and reboots (the auth rescue: a fresh ticket, not a resume). They
+  // keep their own position; a second InviteAccepted would put them back beside the host.
+  guest.sendCellChange('Seyda Neen, Census and Excise Office', 1, 2, 3);
+  await new Promise((r) => setTimeout(r, 100));
+  guest.close();
+  await guest.closed;
+  const again = await TestClient.connect(server.port);
+  t.after(() => again.close());
+  await again.joinExisting('Guest', 'hunter22');
+  await again.waitEvent('PlayerList');
+  const moved = await again.waitEvent('InviteAccepted', () => true, 1500).then(() => true, () => false);
+  assert.equal(moved, false, 'a guest with a position in this world is not re-spawned beside the host');
+});
