@@ -89,3 +89,49 @@ test('a dialogue-only global (never written by the peer) is untouched by the gat
   assert.equal((got.value as { value: number }).value, 3,
     'dialogue-driven quest state stays exactly as it was');
 });
+
+// THE CAMPAIGN'S GLOBALS, FOR EVERYONE WHO RUNS ITS SCRIPTS. The peer simulates the host's
+// world and a guest runs the host's quest scripts, and both were seeded from their OWN doc
+// (the peer's empty ephemeral one; the guest's home campaign) -- so a script gated on a
+// global the host set through dialogue ran the other way on the very engine that simulates
+// it. And the host's write never reached the peer live at all (only peer writes were
+// relayed). Now: a human's campaign write reaches the peer, and a joining peer or guest is
+// seeded from the owner's doc.
+test("the host's quest global reaches the peer live, and seeds a joining peer and guest", async (t) => {
+  const { SocialStore } = await import('../src/core/socialstore');
+  const dataDir = tmpDataDir();
+  new SocialStore(dataDir).addFriend('host', 'guest', Date.now());
+  const server = await startServer({
+    requireGameData: false, dataDir, port: 0, host: '127.0.0.1',
+    worldMode: 'party', worldOwner: 'host',
+    configOverride: { server: { password: PEER_PASS }, login: { allowHarnessAuth: true } } as never,
+  });
+  t.after(() => server.close());
+  const peer = await TestClient.simPeer(server.port, PEER_PASS);
+  t.after(() => peer.close());
+  const host = await TestClient.connect(server.port);
+  t.after(() => host.close());
+  await host.joinAsNew('Host', 'hunter22');
+  await host.waitEvent('PlayerList');
+  host.sendCellChange('0,0', 0, 0, 0);
+  peer.inbox.events.length = 0;
+  host.sendEvent('GlobalVarUpdate', { name: 'mp_campaign_gate', value: 2 }); // a dialogue result
+  const live = await peer.waitEvent('GlobalVarUpdate', gv('mp_campaign_gate'), 3000);
+  assert.equal((live.value as { value: number }).value, 2, 'the simulator hears the host\'s campaign write');
+  await new Promise((r) => setTimeout(r, 100));
+
+  // A guest joins the host's world: seeded from the HOST's campaign, not their own.
+  const guest = await TestClient.connect(server.port);
+  t.after(() => guest.close());
+  await guest.joinAsNew('Guest', 'hunter22');
+  const seeded = await guest.waitEvent('GlobalVarSync', () => true, 5000);
+  assert.equal((seeded.value as { globals: Record<string, number> }).globals['mp_campaign_gate'], 2,
+    'a guest runs the host\'s scripts on the host\'s globals');
+
+  // A restarted peer (a fresh session) is seeded the same way.
+  const peer2 = await TestClient.simPeer(server.port, PEER_PASS, 'simpeer-two');
+  t.after(() => peer2.close());
+  const seededPeer = await peer2.waitEvent('GlobalVarSync', () => true, 5000);
+  assert.equal((seededPeer.value as { globals: Record<string, number> }).globals['mp_campaign_gate'], 2,
+    'a fresh simulator starts from the campaign\'s globals');
+});

@@ -367,6 +367,13 @@ export class Quests {
       // another's engine. Relayed even where nothing persists (standalone stack, owner
       // offline) -- live sync and campaign persistence are different jobs.
       if (player.system === true) this.relayAll(player.id, 'GlobalVarUpdate', { name, value });
+      // And the other way: the peer runs the cell scripts for the campaign a HUMAN advanced
+      // through dialogue, so it must hear those writes or its copies gate on stale values
+      // (a door that never unlocks, an NPC that never appears, for everyone in the world).
+      else {
+        const peer = this.ctx.worldPeer?.();
+        if (peer && peer.id !== player.id) peer.peer.sendEvent('GlobalVarUpdate', { name, value });
+      }
       if (target === undefined) return; // unowned instance: persists nothing
       this.ctx.players.update(target, (doc) => {
         (doc.globals ??= {})[name] = value;
@@ -395,8 +402,15 @@ export class Quests {
 
   // A joining client gets its character's shadowed globals back, so quest state that never
   // travels world-wide still survives a relog or a world hop.
+  //
+  // The CAMPAIGN's globals, which is the sender's own only on a standalone stack: a guest
+  // runs the host's quest scripts and the peer simulates the host's world, and both used to
+  // be seeded from their own doc -- a guest's home-campaign values inside the host's world,
+  // and the peer's empty ephemeral doc -- so a script gated on a global the host had set
+  // ran the other way on the very engine that simulates it.
   sendGlobalSync(player: Player): void {
-    const globals = { ...(this.ctx.players.getCached(player.charId)?.globals ?? {}) };
+    const source = this.ctx.journalTarget(player) ?? player.charId;
+    const globals = { ...(this.ctx.players.getCached(source)?.globals ?? {}) };
     // Filter on the way OUT too, not just on the way in: characters saved before
     // CLIENT_GLOBALS existed already have a chargenstate on disk, and sending it would
     // re-break exactly the players this fixes.
