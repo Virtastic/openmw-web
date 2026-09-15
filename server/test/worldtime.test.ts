@@ -551,15 +551,15 @@ test('a world full of custom records is still joinable, and stops accepting more
   // world stopped being joinable and the error named lser, not records. Chunked now; the client
   // has always merged batches rather than replacing.
   //
-  // Filled before boot: the ceiling is reached through the store, not through 10,000 frames,
+  // Filled before boot: the ceiling is reached through the store, not through 50,000 frames,
   // which would measure the message budget instead of the guard.
   const { RecordStore } = await import('../src/persist/recordstore');
   const dataDir = tmpDataDir();
   const fill = new RecordStore(dataDir);
   await fill.ready();
-  for (let i = 0; i < 10_000; i++) await fill.create('potion', { n: i } as never, 'filler');
+  for (let i = 0; i < 50_000; i++) await fill.create('potion', { n: i } as never, 'filler');
   await fill.flush();
-  assert.equal(fill.count(), 10_000, 'the fixture must actually reach the ceiling');
+  assert.equal(fill.count(), 50_000, 'the fixture must actually reach the ceiling');
 
   // 1. THE WORLD IS STILL JOINABLE. Before chunking this threw LserError and the client never
   //    finished joining.
@@ -568,7 +568,7 @@ test('a world full of custom records is still joinable, and stops accepting more
   await fence(c, c);
   const synced = c.inbox.events.filter((e) => e.name === 'RecordsSync')
     .reduce((n, e) => n + ((e.value as { records: unknown[] }).records?.length ?? 0), 0);
-  assert.equal(synced, 10_000, `the whole set must arrive across batches, got ${synced}`);
+  assert.equal(synced, 50_000, `the whole set must arrive across batches, got ${synced}`);
   assert.ok(c.inbox.events.filter((e) => e.name === 'RecordsSync').length > 1,
     'it must arrive in more than one frame, or the node ceiling is still one enchant away');
 
@@ -580,6 +580,25 @@ test('a world full of custom records is still joinable, and stops accepting more
     'a record past the ceiling must not be acked');
   c.close();
   await c.closed;
+});
+
+// Backlog 315: the record registry is one per DEPLOYMENT. Two worlds on one shared dir used to
+// mint mp_<kind>_1 each, so a friend's potion carried home resolved to a stranger's record.
+// Both stores open the same file, mint, and must see each other's ids and rows.
+test('two worlds on one shared dir mint distinct custom-record ids', async () => {
+  const { RecordStore } = await import('../src/persist/recordstore');
+  const shared = tmpDataDir();
+  const a = new RecordStore(shared);
+  const b = new RecordStore(shared);
+  await Promise.all([a.ready(), b.ready()]);
+  const [ra, rb] = await Promise.all([a.create('potion', { n: 1 } as never, 'a'), b.create('potion', { n: 2 } as never, 'b')]);
+  assert.notEqual(ra.recordNetId, rb.recordNetId, 'two worlds must not mint the same id');
+  const rc = await a.create('spell', {} as never);
+  assert.equal(rc.recordNetId, 'mp_spell_3', 'the counter is shared, not per process');
+  assert.equal(a.count(), 3);
+  assert.equal(b.count(), 3, 'a sibling world sees the rows the other appended');
+  assert.equal(b.get(rc.recordNetId)?.kind, 'spell', 'and resolves them by id');
+  await Promise.all([a.close(), b.close()]);
 });
 
 // THE DEFAULT, not a dashboard field. A friend's world is the host's game: with no [rules]

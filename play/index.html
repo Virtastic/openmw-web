@@ -652,6 +652,22 @@ window.omw = (function(){
  window.__omwLog = append;
  function fatalOverlay(title, detail, showReload, opts){
    opts = opts || {};
+   // A RETURNING CHARACTER PARKED IN A CELL THIS LOAD ORDER NO LONGER HAS (backlog 317). The
+   // launcher boots them with --start <cell> (#mpstart) and the engine aborts at boot with
+   // "Interior cell is not found: '...'" -- a removed mod's interior, a disabled expansion.
+   // Reboot ONCE without the fragment: the engine starts at its default, and global.lua's
+   // restore then moves them to the world's respawn point and says why. Once, keyed on the
+   // cell, so a fatal the reboot does not cure still lands on this overlay.
+   try {
+     var ms = /[#&]mpstart=([^&]+)/.exec(location.hash || '');
+     if (ms && /cell .* not found/i.test(String(detail || ''))
+         && sessionStorage.getItem('omw-mpstart-retried') !== ms[1]) {
+       sessionStorage.setItem('omw-mpstart-retried', ms[1]);
+       location.hash = (location.hash || '').replace(/[#&]mpstart=[^&]+/, '').replace(/^&/, '#');
+       location.reload();
+       return;
+     }
+   } catch(e){}
    killEngine();
    // A fatal BEFORE the engine is up means the engine must never come up. The loader keeps
    // downloading and compiling behind the overlay (openmw.js + wasm + data + the pthread

@@ -20,7 +20,12 @@ import { daysPassed } from './worldtime';
 import { log } from '../log';
 
 const MAX_ID = 64;
-const MAX_JOURNAL_LOG = 2000;
+// 5000 (backlog 321): 2000 dropped the BEGINNING of a long campaign (Tamriel Rebuilt passes it).
+// The bound is the JournalSync frame: an entry is 12 LSER nodes ({q,i,d,m,dm}), so 5000 is
+// ~60k of the 65,536-node ceiling with room for a ~2000-quest map beside it (pinned by a
+// test: 5000 entries + 700 quests = 61.4k). Past that the sync must be chunked like
+// RecordsSync; it is not, yet.
+const MAX_JOURNAL_LOG = 5000;
 const MAX_CELL_KEY = 128;
 const MAX_INDEX = 0x7fffffff;
 
@@ -276,7 +281,10 @@ export class Quests {
       this.relayAll(player.id, 'JournalEntry', { questId, index: idx });
       return;
     }
-    const ownerChar = this.ctx.journalTarget(player);
+    // INDIVIDUAL MODE IS THE PLAYER'S OWN LOG (backlog 320): it used to write to the host's
+    // doc while the map came from the player's, a hybrid nobody asked for.
+    const ownerChar = this.ctx.isShared('journal') || player.system === true
+      ? this.ctx.journalTarget(player) : player.charId;
     // Phase 3.7: journal advances flush AT THE WRITE, not on the 45 s sweep. A verified
     // TES3MP failure is a disconnect mid-quest permanently corrupting progression
     // (Tribunal MQ, issue #268 — open since 2017): the stage was in memory and the crash
@@ -358,18 +366,21 @@ export class Quests {
     this.seedBounty(player);
     if (this.ctx.isShared('journal')) {
       const shared = this.ctx.cells.sharedQuest();
-      // Seed a FRESH instance from the owner's campaign. Their world's cell store starts
-      // empty, so without this the owner would arrive in their own world to a blank journal
-      // and every guest would adopt that blank. Only ever seeds an empty map, so it cannot
-      // overwrite progress made here.
+      // Seed the instance from the owner's campaign, ALWAYS as max(shared, own) (backlog
+      // 320). Seeding only an empty map meant a shared->individual->shared flip replayed the
+      // stale shared map over stages the owner earned in individual mode, every login.
+      // Max can never regress progress made here; it only lifts stages the owner's doc is
+      // ahead on.
       const ownerChar = this.ctx.ownerCharId();
-      if (ownerChar !== undefined && player.charId === ownerChar
-        && Object.keys(shared.journal).length === 0) {
-        const own = this.ctx.players.getCached(ownerChar)?.journal;
-        if (own && Object.keys(own).length > 0) {
-          Object.assign(shared.journal, own);
+      if (ownerChar !== undefined && player.charId === ownerChar) {
+        const own = this.ctx.players.getCached(ownerChar)?.journal ?? {};
+        let lifted = 0;
+        for (const [q, i] of Object.entries(own)) {
+          if ((shared.journal[q] ?? -1) < i) { shared.journal[q] = i; lifted++; }
+        }
+        if (lifted > 0) {
           this.ctx.cells.saveShared();
-          log('info', 'quest.journal_seeded', { from: ownerChar, quests: Object.keys(own).length });
+          log('info', 'quest.journal_seeded', { from: ownerChar, quests: lifted });
         }
       }
     }
@@ -378,8 +389,9 @@ export class Quests {
     const quests = this.ctx.isShared('journal')
       ? { ...this.ctx.cells.sharedQuest().journal }
       : { ...(this.ctx.players.getCached(player.charId)?.journal ?? {}) };
-    // The dated log lives on the doc the entries were recorded to (journalTarget), in order.
-    const logChar = this.ctx.journalTarget(player);
+    // The dated log lives on the doc the entries were recorded to (journalTarget), in order;
+    // in individual mode that is the player's own doc, and nothing is borrowed (backlog 320).
+    const logChar = this.ctx.isShared('journal') ? this.ctx.journalTarget(player) : player.charId;
     const journalLog = (logChar === undefined ? [] : (this.ctx.players.getCached(logChar)?.journalLog ?? []))
       .map((e) => ({ ...e }));
     // BORROWED: this sync carries a campaign that is not this character's own, so the client
@@ -388,7 +400,7 @@ export class Quests {
     // Driving it off the sync (rather than a "leaving" event) makes it self-correcting: this
     // message is sent on EVERY join, so a missed transition repairs itself on the next one.
     const owner = this.ctx.ownerCharId();
-    const borrowed = owner !== undefined && owner !== player.charId;
+    const borrowed = this.ctx.isShared('journal') && owner !== undefined && owner !== player.charId;
     player.peer.sendEvent('JournalSync', { quests, borrowed, journalLog });
   }
 
@@ -603,7 +615,9 @@ export class Quests {
     // bounty followed them home out of a campaign their own quest log knew nothing about —
     // and the shared world, which persists no quest progress at all, still ranked them up.
     // A visit either changes your character or it does not; it cannot be half of each.
-    const target = this.ctx.journalTarget(player);
+    // Unless factions are NOT shared (backlog 319): then a guest's rank is their own, and
+    // writing it to the host's doc demoted the host on their next login.
+    const target = this.ctx.isShared('factions') ? this.ctx.journalTarget(player) : player.charId;
     if (target !== undefined) {
       this.ctx.players.update(target, (doc) => {
         (doc.factions ??= {})[factionId] = state;

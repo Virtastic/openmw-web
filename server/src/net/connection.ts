@@ -1812,6 +1812,10 @@ export class Connection implements Peer {
         lodMidRadius: this.ctx.config.limits.lodMidRadius,
         lodNearMaxAvatars: this.ctx.config.limits.lodNearMaxAvatars,
         simulated: this.ctx.config.simPeer.enabled || this.ctx.worldPeer() !== undefined,
+        respawn: {
+          cellKey: this.ctx.config.rules.respawnCellKey, x: this.ctx.config.rules.respawnX,
+          y: this.ctx.config.rules.respawnY, z: this.ctx.config.rules.respawnZ,
+        },
       },
       (account.characters ?? []).map(({ id, name, lastPlayedAt }) => ({ id, name, lastPlayedAt })),
       char?.id ?? '',

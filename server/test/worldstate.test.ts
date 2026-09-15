@@ -212,7 +212,9 @@ test('world objects and containers end to end', async (t) => {
     a.sendEvent('ResyncRequest', { cellKey: '0,0' });
     const state = (await a.waitEvent('WorldCellState')).value as { placed: unknown[]; deleted: string[] };
     assert.deepEqual(state.placed, []);
-    assert.deepEqual(state.deleted.filter((k) => k === `n:${barrelNetId}`), [`n:${barrelNetId}`]); // exactly one tombstone
+    // Backlog 318: a spawned object's truth is `placed`; it takes NO tombstone (summons and
+    // levelled spawns were filling the per-cell cap with keys nothing looks up).
+    assert.deepEqual(state.deleted.filter((k) => k === `n:${barrelNetId}`), []);
   });
 
   await t.test('restart: docs persist, netId counter never reuses', async () => {
@@ -234,7 +236,7 @@ test('world objects and containers end to end', async (t) => {
     const state = (await d.waitEvent('WorldCellState')).value as {
       deleted: string[]; containers: Record<string, { items: { id: string; n: number }[]; stateSeq: number }>;
     };
-    assert.ok(state.deleted.includes(`n:${barrelNetId}`), 'tombstone survived restart');
+    assert.ok(!(`n:${barrelNetId}` in ((state as { placed?: Record<string, unknown> }).placed ?? {})), 'the deletion survived restart');
     assert.ok(state.containers[CONT_KEY], 'container canonical survived restart');
     d.sendEvent('ObjectSpawnRequest', { tempId: 1, recordId: 'crate_01', cellKey: '0,0', x: 0, y: 0, z: 0, rotZ: 0, count: 1 });
     const ack = (await d.waitEvent('ObjectSpawnAck')).value as { netId: number };

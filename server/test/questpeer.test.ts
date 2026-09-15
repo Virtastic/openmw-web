@@ -256,3 +256,47 @@ test("a guest's PCVampire stays on the guest: not the host doc, not the peer, re
   assert.equal(globals['PCVampire'], 1, 'a rejoin restores the vampirism to the same character');
   assert.equal(globals['mp_campaign_gate'], 5, 'alongside the campaign globals');
 });
+
+// THE CAMPAIGN HAS AN OWNER EVEN WHILE THE OWNER IS CRASHED (backlog 316). journalTarget was
+// answered from the roster, so through the host's 90 s crash grace the world thought it had
+// no owner: a peer-driven journal entry took the standalone path and landed in every GUEST's
+// home doc, and a guest's own quest write persisted nowhere. The owner's charId is latched
+// on their join and answers whenever the roster cannot.
+test("through the host's crash grace the peer's journal entry lands on the host, not the guest", async (t) => {
+  const { SocialStore } = await import('../src/core/socialstore');
+  const { readPlayerDoc } = await import('./helpers');
+  const dataDir = tmpDataDir();
+  new SocialStore(dataDir).addFriend('host', 'guest', Date.now());
+  const server = await startServer({
+    requireGameData: false, dataDir, port: 0, host: '127.0.0.1',
+    worldMode: 'party', worldOwner: 'host',
+    configOverride: { server: { password: PEER_PASS }, login: { allowHarnessAuth: true } } as never,
+  });
+  t.after(() => server.close());
+  const peer = await TestClient.simPeer(server.port, PEER_PASS);
+  t.after(() => peer.close());
+  const host = await TestClient.connect(server.port);
+  const hostChar = String((await host.joinAsNew('Host', 'hunter22')).welcome['characterId']);
+  await host.waitEvent('PlayerList');
+  host.sendCellChange('0,0', 0, 0, 0);
+  const guest = await TestClient.connect(server.port);
+  t.after(() => guest.close());
+  const guestChar = String((await guest.joinAsNew('Guest', 'hunter22')).welcome['characterId']);
+  await guest.waitEvent('PlayerList');
+  guest.sendCellChange('0,0', 0, 0, 0);
+
+  // The host's socket dies: no PlayerLeaving, the roster forgets them, the grace begins.
+  host.close();
+  await host.closed;
+  await new Promise((r) => setTimeout(r, 200));
+  assert.equal(server.roster.activeForAccount('host'), undefined, 'the roster has no owner during the grace');
+
+  peer.sendEvent('JournalEntry', { questId: 'mq_grace', index: 40 });
+  const je = (v: unknown) => (v as { questId?: string })?.questId === 'mq_grace';
+  assert.equal(((await guest.waitEvent('JournalEntry', je, 3000)).value as { index: number }).index, 40);
+  await server.flush();
+  const guestDoc = readPlayerDoc(dataDir, guestChar) as { journal?: Record<string, number> };
+  assert.equal(guestDoc.journal?.['mq_grace'], undefined, "a guest's home doc is untouched by the campaign");
+  const hostDoc = readPlayerDoc(dataDir, hostChar) as { journal?: Record<string, number> };
+  assert.equal(hostDoc.journal?.['mq_grace'], 40, "the owner's campaign advanced while they were away");
+});

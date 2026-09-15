@@ -224,7 +224,9 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     dataDir: sharedDir,
   });
   const cellStore = new CellStore(opts.dataDir, true);
-  const recordStore = new RecordStore(opts.dataDir);
+  // SHARED, not per world (backlog 315): the player doc carries custom-record ids across
+  // worlds, so the registry that mints them must be one per deployment.
+  const recordStore = new RecordStore(sharedDir);
   const bans = new BanStore(sharedDir);
   // Phase B: the identity index must be complete before the listener opens too — a missed
   // (iss,sub) entry would hand a returning player a brand new empty account.
@@ -235,6 +237,18 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   const sessions = new SessionIndex();
   const oidc = new OidcService(config.auth);
   await cellStore.ready(); // netId ceiling must be loaded before any spawn
+  // THE PLAYED MARKER (backlog 322). The gateway's never-joined reaper discards a world
+  // directory nobody ever played in; it used to test world/world.db, which the sqlite
+  // constructor above creates the moment a world boots, so it never fired. The marker is
+  // written on the first HUMAN join (onPlayerJoined) -- and backfilled here for a world
+  // played before the marker existed, so a revival is never mistaken for a fresh spawn.
+  const playedMarker = join(opts.dataDir, '.played');
+  const markPlayed = (): void => {
+    if (existsSync(playedMarker)) return;
+    try { writeFileSync(playedMarker, ''); }
+    catch (err) { log('warn', 'world.played_marker_failed', { error: String(err) }); }
+  };
+  if (cellStore.cellsWithDeltas().length > 0) markPlayed();
   await recordStore.ready(); // custom-record ids must not restart from 1 after a reboot
   const roster = new Roster();
   // M8: /motd rewrites this at runtime; SessionWelcome and the motd plugin read it here.
@@ -576,6 +590,11 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // here because the world is built before the combat relay and neither should import the other.
   world.onHolderGained = (cellKey) => combat.flushCell(cellKey);
 
+  // The owner ALWAYS enters first, so by the time a guest or the peer writes anything the
+  // latch is set; it follows a character switch because every join of theirs rewrites it.
+  let ownerCharLatch: string | undefined;
+  const ownerCharId = (): string | undefined =>
+    (worldOwner === '' ? undefined : (roster.activeForAccount(worldOwner)?.charId ?? ownerCharLatch));
   const quests = new Quests({
     roster,
     cells: cellStore,
@@ -583,10 +602,13 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     isShared: (family) => hooks.shareFamily(family),
     regressAllowed: (questId) => hooks.journalRegress(questId),
     // Where a journal advance is persisted: the world owner's character (guests keep loot,
-    // not quests), or the player's own on a standalone stack with no owner.
+    // not quests), or the player's own on a standalone stack with no owner. The roster
+    // answers while the owner is present; the latch (set on every join of theirs) answers
+    // through the 90 s crash grace, when the roster has no owner but the campaign still
+    // does (backlog 316: peer writes landed in every guest's home doc meanwhile).
     journalTarget: (player) =>
-      (worldOwner !== '' ? roster.activeForAccount(worldOwner)?.charId : player.charId),
-    ownerCharId: () => (worldOwner === '' ? undefined : roster.activeForAccount(worldOwner)?.charId),
+      (worldOwner !== '' ? ownerCharId() : player.charId),
+    ownerCharId,
     worldGlobals: config.sharing.worldGlobals,
     worldPeer: () => worldPeerImpl(),
     holderOf: (cellKey) => world.holderOf(cellKey),
@@ -1630,6 +1652,8 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // session in evicts that session on ITS next beat, and the write is what it keys on.
   ctx.onPlayerJoined = (p) => {
     if (p.system || p.bot) return;
+    if (worldOwner !== '' && p.accountKey === worldOwner) ownerCharLatch = p.charId;
+    markPlayed();
     try { socialStore.setPresence(p.accountKey, presenceWorld, p.name, p.cellKey, false, Date.now(), worldMode); }
     catch (err) { log('warn', 'presence.join_write_failed', { error: String(err) }); }
   };

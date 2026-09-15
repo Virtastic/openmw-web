@@ -522,11 +522,16 @@ export class WorldSupervisor {
         //
         // "Nobody connected to THIS process" is not "nobody ever played here": a REVIVED
         // world (a launcher join that also spawned the guest's own home, a returning
-        // character whose first data download outlasts the grace) has a world/world.db on
-        // disk from earlier sessions. That is looted containers, drops, doors and deaths,
-        // and it was deleted here (backlog 272). Discard only a fresh spawn; stop the rest.
+        // character whose first data download outlasts the grace) has cell state on disk
+        // from earlier sessions. That is looted containers, drops, doors and deaths, and it
+        // was deleted here (backlog 272). Discard only a fresh spawn; stop the rest.
+        //
+        // The tell is the `.played` marker the world process writes on its first HUMAN join
+        // (server.ts markPlayed). world/world.db was the tell before, and the sqlite
+        // constructor creates that the moment a world boots, so nothing was ever discarded
+        // and every abandoned sign-in leaked a directory (backlog 322).
         if (now - w.startedAt > WorldSupervisor.STARTUP_GRACE_MS) {
-          const played = existsSync(join(this.deps.settings.worldsDir, w.id, 'world', 'world.db'));
+          const played = existsSync(join(this.deps.settings.worldsDir, w.id, '.played'));
           log('info', 'world.reaped', { id: w.id, reason: 'never_joined', ageMs: now - w.startedAt, played });
           if (played) this.stop(w.id);
           else void this.discard(w.id, { reason: 'never_joined' });

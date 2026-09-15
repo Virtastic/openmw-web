@@ -255,6 +255,9 @@ export interface SessionFlags {
   renderLod: 'full' | 'tiered'; // 'full' = pre-G2 behaviour (every puppet fully driven)
   lodNearRadius: number;
   lodMidRadius: number;
+  // Backlog 317: where the client puts a character whose stored cell no longer exists in
+  // this load order (a removed mod's interior). The world's [rules].respawn* point.
+  respawn?: { cellKey: string; x: number; y: number; z: number };
   lodNearMaxAvatars: number; // hard ceiling on fully-simulated avatars; 0 = radius only
   // A sim peer simulates this world: the client must not roll its own levelled-list
   // creatures or script-spawned actors (they arrive as named net objects from the holder).

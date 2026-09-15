@@ -1299,5 +1299,20 @@ do
     and pp:find('if recent and lastSwingPos and I.Combat and I.Combat.spawnBloodEffect then', 1, true) ~= nil)
 end
 
+print('global.lua -- a stored cell that no longer exists falls back to the Welcome respawn (backlog 317)')
+do
+  local g = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  check('restoreTick checks the stored cell exists before the teleport, and falls back to flags.respawn',
+    g:find('if record.position and not cellExists(record.position.cellKey) then', 1, true) ~= nil
+    and g:find('local fb = net.flags and net.flags.respawn', 1, true) ~= nil
+    and (g:find('local function cellExists(cellKey)', 1, true) or math.huge)
+      < (g:find('local function restoreTick()', 1, true) or 0))
+  check('cellExists pcalls both the exterior and the named lookup',
+    g:find('if gx then return world.getExteriorCell(gx, gy) end', 1, true) ~= nil
+    and g:find('return world.getCellByName(cellKey)', 1, true) ~= nil)
+  check('the player is told where they were moved',
+    g:find("notice('Your last location no longer exists (a mod was removed); you were moved to '", 1, true) ~= nil)
+end
+
 print(string.format('\n%d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)

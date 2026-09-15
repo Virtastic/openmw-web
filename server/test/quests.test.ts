@@ -493,3 +493,58 @@ test('dialogue topics reach the other player, and never bounce back to the sende
 
   a.close(); b.close();
 });
+
+// Backlog 320: flipping journal sharing off and on again. In individual mode the owner's
+// advances went to the host's doc through journalTarget (a hybrid: own map, host's log), and
+// on the flip back the shared map was only seeded when EMPTY -- so a stale shared map replayed
+// over the stages earned in individual mode, every login. Seed = max(shared, own), always.
+test('shared -> individual -> shared keeps the owner\'s highest stage', async (t) => {
+  const dataDir = tmpDataDir();
+  const owned = (journal: boolean) => startServer({
+    requireGameData: false, dataDir, port: 0, host: '127.0.0.1', worldMode: 'private', worldOwner: 'host',
+    configOverride: { login: { allowHarnessAuth: true }, sharing: { journal } } as never,
+  });
+  const q = 'a1_1_thelefthanded';
+  const sync = async (c: TestClient) =>
+    ((await c.waitEvent('JournalSync')).value as { quests: Record<string, number>; borrowed: boolean; journalLog: { q: string; i: number }[] });
+
+  const s1 = await owned(true);
+  const a = await TestClient.connect(s1.port);
+  await a.joinAsNew('Host', 'hunter22');
+  await a.waitEvent('PlayerList');
+  await sync(a);
+  a.sendEvent('JournalEntry', { questId: q, index: 10 });
+  await new Promise((r) => setTimeout(r, 100));
+  await s1.flush(); a.close(); await a.closed; await s1.close();
+
+  const s2 = await owned(false);
+  const b = await TestClient.connect(s2.port);
+  await b.joinExisting('Host', 'hunter22');
+  const own = await sync(b);
+  assert.equal(own.quests[q], 10);
+  assert.equal(own.borrowed, false, 'nothing is borrowed in individual mode');
+  assert.deepEqual(own.journalLog.map((e) => e.i), [10], "individual mode serves the player's own log");
+  b.sendEvent('JournalEntry', { questId: q, index: 30 });
+  await new Promise((r) => setTimeout(r, 100));
+  await s2.flush(); b.close(); await b.closed; await s2.close();
+
+  const s3 = await owned(true);
+  t.after(() => s3.close());
+  const c = await TestClient.connect(s3.port);
+  t.after(() => c.close());
+  await c.joinExisting('Host', 'hunter22');
+  const back = await sync(c);
+  assert.equal(back.quests[q], 30, 'the stale shared map regressed the stage earned in individual mode');
+  assert.deepEqual(back.journalLog.map((e) => e.i), [10, 30], 'the dated log kept both entries');
+});
+
+// Backlog 321: the journalLog cap is bounded by the JournalSync frame, not by taste. A full
+// log beside a large quest map must decode -- LSER refuses past 65,536 nodes.
+test('a full journal log and a large quest map fit one JournalSync frame', async () => {
+  const { lserNodeCount, LSER_MAX_NODES } = await import('../src/proto/lser');
+  const journalLog = Array.from({ length: 5000 }, (_, i) => ({ q: `quest_${i % 700}`, i: (i % 20) * 10, d: i, m: 1 + (i % 12), dm: 1 + (i % 30) }));
+  const quests: Record<string, number> = {};
+  for (let i = 0; i < 700; i++) quests[`quest_${i}`] = 190;
+  const nodes = lserNodeCount({ quests, borrowed: false, journalLog });
+  assert.ok(nodes < LSER_MAX_NODES, `${nodes} nodes: a full JournalSync would not decode`);
+});

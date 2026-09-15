@@ -202,3 +202,35 @@ test("a system peer's FactionUpdate does not touch the campaign doc", async (t) 
   assert.deepEqual(factions['fightersguild'], { rank: 3 }, "the peer's write demoted the host");
   assert.equal(factions['morag tong'], undefined, "the peer's write ranked the host");
 });
+
+// Backlog 319: with factions NOT shared a guest's rank is their own. The write still went
+// through journalTarget (the HOST's doc) before the isShared check, so a guest's guild rank
+// overwrote the host's and the host logged in demoted.
+test("with factions off, a guest's rank lands on the guest's doc, not the host's", async (t) => {
+  const { SocialStore } = await import('../src/core/socialstore');
+  const dataDir = tmpDataDir();
+  new SocialStore(dataDir).addFriend('host', 'guest', Date.now());
+  const off = { login: { allowHarnessAuth: true }, sharing: { factions: false } } as never;
+  const world = await startServer({ requireGameData: false, dataDir: tmpDataDir(), sharedDir: dataDir, port: 0, host: '127.0.0.1', worldMode: 'party', worldOwner: 'host', worldId: 'priv-host', configOverride: off });
+  t.after(() => world.close());
+  const host = await TestClient.connect(world.port);
+  t.after(() => host.close());
+  const hostChar = String((await host.joinAsNew('Host', 'hunter22')).welcome['characterId']);
+  await host.waitEvent('PlayerList');
+  chargen(host, 'Host');
+  host.sendEvent('FactionUpdate', { factionId: 'fightersguild', rank: 3 });
+
+  const guest = await TestClient.connect(world.port);
+  t.after(() => guest.close());
+  const guestChar = String((await guest.joinAsNew('Guest', 'hunter22')).welcome['characterId']);
+  await guest.waitEvent('PlayerList');
+  chargen(guest, 'Guest');
+  guest.sendEvent('FactionUpdate', { factionId: 'fightersguild', rank: 1 });
+  await new Promise((r) => setTimeout(r, 100));
+  await world.flush();
+
+  const h = readPlayerDoc(dataDir, hostChar)?.['factions'] as Record<string, unknown>;
+  const g = readPlayerDoc(dataDir, guestChar)?.['factions'] as Record<string, unknown>;
+  assert.deepEqual(h['fightersguild'], { rank: 3 }, "the guest's rank demoted the host");
+  assert.deepEqual(g['fightersguild'], { rank: 1 }, "the guest's own rank was not recorded");
+});

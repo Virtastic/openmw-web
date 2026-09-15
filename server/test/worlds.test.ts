@@ -537,6 +537,10 @@ test('a world nobody ever joined is discarded, directory and all', async () => {
   sup.ensure('abandoned', 'private', 'someone');
   const dir = join(settings.worldsDir, 'abandoned');
   assert.ok(existsSync(dir), 'the world must have a data directory to begin with');
+  // Backlog 322: the sqlite constructor creates world/world.db the moment a world boots, so a
+  // discard keyed on it never fired. A booted-but-never-joined world looks exactly like this.
+  mkdirSync(join(dir, 'world'), { recursive: true });
+  writeFileSync(join(dir, 'world', 'world.db'), 'schema only');
 
   // Inside the startup grace: a first-play client can spend minutes fetching its data.
   await sup.poll();
@@ -552,14 +556,16 @@ test('a world nobody ever joined is discarded, directory and all', async () => {
 
 // A REVIVED WORLD IS NOT A FRESH SPAWN. A launcher join of a friend also spawned the guest's
 // own home world, and a returning character's first data download can outlast the grace: in
-// both, nobody connects to the NEW process inside 15 min, but world/world.db from earlier
-// sessions is on disk. The never-joined path deleted the whole directory (backlog 272).
+// both, nobody connects to the NEW process inside 15 min, but the world's `.played` marker
+// (written by the world process on its first human join) is on disk. The never-joined path
+// deleted the whole directory (backlog 272).
 test('a revived world nobody connected to is stopped, not discarded', async () => {
   const { sup, settings, advance } = harness();
   sup.ensure('revived', 'private', 'someone');
   const dir = join(settings.worldsDir, 'revived');
   mkdirSync(join(dir, 'world'), { recursive: true });
   writeFileSync(join(dir, 'world', 'world.db'), 'cells');
+  writeFileSync(join(dir, '.played'), '');
   advance(60 * 60_000);
   await sup.poll();
   sup.sweep();

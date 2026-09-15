@@ -805,6 +805,7 @@ handlers.MP_ObjectTakeResult = function(data)
             local why = {
                 gone = 'Someone got there first.',
                 unreachable = 'You cannot reach that.',
+                cell_full = 'This place has seen too much taken; it cannot be picked up here.',
             }
             deps.noticeFn(why[tostring(data.reason or '')] or 'You cannot take that right now.')
         end

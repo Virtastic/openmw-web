@@ -27,15 +27,15 @@ const MAX_CELL_KEY = 128;
 const MAX_MAP_CELLS = 8192;
 const MAX_EXPLORED = 1024; // exterior keys kept on a character doc (backlog 260)
 const MAX_RECORD_FIELDS = 128;
-// A WORLD-WIDE CEILING ON CUSTOM RECORDS, for the same reason regions have one and for a worse
-// consequence. Every RecordCreate is appended to the store, INSERTed into SQLite, and -- this is
+// A DEPLOYMENT-WIDE CEILING ON CUSTOM RECORDS (the store is shared by every world since backlog
+// 315), for the same reason regions have one and for a worse consequence. Every RecordCreate is appended to the store, INSERTed into SQLite, and -- this is
 // the part that compounds -- replayed in full to every player who joins from then on, because a
 // peer must be able to resolve an id before an item bearing it arrives. Nothing bounded the
 // count: a client spending its ordinary message budget adds records for as long as it likes, and
-// each one makes every future join larger, permanently. Ten thousand is three hundred apiece on
-// a full world, far past any honest campaign of enchanting and alchemy, and far below the point
-// where a join becomes a problem.
-const MAX_CUSTOM_RECORDS = 10_000;
+// each one makes every future join larger, permanently. Fifty thousand across a deployment's
+// worlds is far past any honest campaign of enchanting and alchemy (~400 frames of 128 on a
+// join) and still below the point where a join becomes a problem.
+const MAX_CUSTOM_RECORDS = 50_000;
 // THE JOIN REPLAY MUST BE CHUNKED, and this is a correctness bound, not a politeness one. LSER
 // refuses to decode a value with more than 65,536 nodes, and a record costs up to ~263 of them
 // (the row, three keys and their values, and two per data field up to MAX_RECORD_FIELDS). Sent
@@ -233,7 +233,7 @@ export class WorldM7 {
       if (!this.recordFloodLogged) {
         this.recordFloodLogged = true;
         log('error', 'records.dropped', {
-          from: player.name, why: 'world record ceiling reached', cap: MAX_CUSTOM_RECORDS,
+          from: player.name, why: 'record ceiling reached', cap: MAX_CUSTOM_RECORDS,
           note: 'no further custom records are stored in this world; every join replays them all',
         });
       }

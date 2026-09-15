@@ -1119,8 +1119,16 @@ export class WorldState {
       return;
     }
     const { doc, ref, cellKey } = got;
-    if (doc.deleted.includes(ref.key)) {
+    // A spawned object's truth is doc.placed (backlog 318): gone from there = gone, no
+    // tombstone needed or written. Content refs are tombstoned, and when the cell cannot
+    // hold another the take is REFUSED rather than answered ok and forgotten on reload --
+    // an ok that does not persist is the loot duping on every reload.
+    if (doc.deleted.includes(ref.key) || (ref.kind === 'net' && !(ref.key in doc.placed))) {
       reply(false, 'gone'); // the losing racer, or a stale client view
+      return;
+    }
+    if (ref.kind === 'ref' && !this.tombstone(doc, ref.key, cellKey, player.name)) {
+      reply(false, 'cell_full');
       return;
     }
     // First to ask wins. Exactly what delete() does, plus an answer.
@@ -1129,7 +1137,6 @@ export class WorldState {
     delete doc.locks[ref.key];
     delete doc.doors[ref.key];
     delete doc.containers[ref.key];
-    this.tombstone(doc, ref.key, cellKey, player.name);
     this.cells.markDirty(cellKey);
     reply(true);
     this.relayCell(cellKey, 'ObjectDelete', { ...objRefToJs(ref), cellKey, byId: player.id });
@@ -1514,13 +1521,17 @@ export class WorldState {
   // objects gone. Sent to everyone who can see the cell, including the resetter.
   // A tombstone past the cap is dropped, not the deletion: the object is still removed from
   // this session's view, it just will not survive a reload. That is a degraded cell with a log
-  // line, against the alternative of a cell nobody can enter.
-  private tombstone(doc: CellDoc, key: string, cellKey: string, by: string): void {
+  // line, against the alternative of a cell nobody can enter (take() refuses instead).
+  // Net refs (n:) never take a tombstone: doc.placed is their truth, and summons and levelled
+  // spawns were filling the cap with keys nothing would ever look up (backlog 318).
+  private tombstone(doc: CellDoc, key: string, cellKey: string, by: string): boolean {
+    if (key.startsWith('n:')) return true;
     if (doc.deleted.length >= MAX_DELETED_PER_CELL) {
       log('warn', 'world.tombstones_full', { cellKey, by, cap: MAX_DELETED_PER_CELL });
-      return;
+      return false;
     }
     doc.deleted.push(key);
+    return true;
   }
 
   sendCellSnapshot(cellKey: string, doc: CellDoc): void {

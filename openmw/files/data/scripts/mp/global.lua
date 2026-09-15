@@ -1367,6 +1367,19 @@ local function mirrorDoor(now)
     end
 end
 
+-- Does the cell a stored position names still exist in THIS load order? A character parked
+-- in a removed mod's interior (or a disabled expansion's cell) has a cellKey nothing here
+-- resolves; teleporting to it throws, and the F5 path then dropped them at exterior 0,0 --
+-- open sea -- and persisted the drowning (backlog 317).
+local function cellExists(cellKey)
+    local gx, gy = parseExteriorKey(cellKey)
+    local ok, cell = pcall(function()
+        if gx then return world.getExteriorCell(gx, gy) end
+        return world.getCellByName(cellKey)
+    end)
+    return ok and cell ~= nil
+end
+
 local function teleportPlayerTo(position)
     local player = playerScript()
     if not player or not position then return end
@@ -1500,6 +1513,20 @@ local function restoreTick()
     end
     if restored > 0 then print('[mp] restored state on ' .. tostring(restored) .. ' item(s)') end
 
+    -- A position in a cell this load order no longer has: the Welcome's respawn point
+    -- (flags.respawn, the world's [rules].respawn*) instead, and say so (backlog 317).
+    if record.position and not cellExists(record.position.cellKey) then
+        local fb = net.flags and net.flags.respawn
+        print('[mp] restore: cell "' .. tostring(record.position.cellKey) .. '" is not in this load order')
+        if type(fb) == 'table' and type(fb.cellKey) == 'string' and cellExists(fb.cellKey) then
+            notice('Your last location no longer exists (a mod was removed); you were moved to '
+                .. tostring(fb.cellKey))
+            record.position = { cellKey = fb.cellKey, x = fb.x or 0, y = fb.y or 0, z = fb.z or 0 }
+        else
+            notice('Your last location no longer exists (a mod was removed); you start where the game puts you')
+            record.position = nil
+        end
+    end
     mp.set('restorePos', record.position and json.encode(record.position) or 'none')
     if record.position then
         teleportPlayerTo(record.position)
