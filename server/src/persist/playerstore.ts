@@ -80,6 +80,7 @@ export interface PlayerDoc {
     attributes?: Record<string, number>;
     skills?: Record<string, number>;
     level?: number;
+    reputation?: number; // 0..255, NpcStats-only in the engine: nothing else carries it across a relog
   };
   spells?: string[];
   // The Mark spell's spot: the engine's serialized cell id and a position. Lives in NpcStats

@@ -281,7 +281,7 @@ Event-body conventions: arrays = 1-based integer-keyed tables; nil fields = omit
 | `PlayerEquipment` | C→S on change (client diffs); relayed to ALL with `id` | `{slots={[slotNumber]=recordId, …}}` — full snapshot, slot numbers per `types.Actor.EQUIPMENT_SLOT` |
 | `PlayerStatsDynamic` | C→S on change (0.25 s poll, instant on death); relayed to VISIBLE with `id` | `{hp={c=number,b=number}, mp={c=,b=}, ft={c=,b=}}` (current/base) |
 | `PlayerAttributes` / `PlayerSkills` | C→S on change (1 s diff) | the body IS the flat `{name=number}` map (≤64 entries, keys ≤32 chars) — no wrapper key, unlike the other bodies | 
-| `PlayerLevel` | C→S on change | `{level=int 1..255}`; stored for persistence; not relayed in M2 |
+| `PlayerLevel` | C→S on change | `{level=int 1..255, reputation=int 0..255?}`; stored for persistence; not relayed in M2. Reputation is NpcStats-only in the engine, so it rides here (backlog 223) |
 | `PlayerSpellbook` | C→S `{add={id,…}, remove={id,…}}` | stored; not relayed in M2 |
 | `PlayerInventory` | C→S full snapshot `{items={{id=recordId, n=count}, …}}` on change (2 s diff, cap 512 entries) | stored for rejoin restore; not relayed |
 | `PlayerItemAcquired` | C→S `{id=recordId, n=count}` on every count INCREASE (0.25 s scan) | credits the item against drop conservation; SPENT by a drop that uses it, and cleared wholesale by the next `PlayerInventory`. Not stored, not relayed |
@@ -478,7 +478,7 @@ factions, crime. Sharing is operator-configurable per family (`[sharing]`).
 | `JournalEntry` | C→S; relayed to all when `[sharing] journal` | `{questId=string, index=number, actorRefId=string?}` — server arbitrates **monotonic max per questId** (a lagging client can never regress a shared quest); non-monotonic updates are stored but not relayed unless `questId` is in the operator's `regressAllowlist` |
 | `JournalSync` | S→C at join | `{quests={[questId]=index, …}}` — full shared journal state (shared mode) or the player's own stored journal (individual mode) |
 | `GlobalVarUpdate` | C→S; relayed to all when `[sharing] questVars` | `{name=string, value=number, seq=number?}` — MWScript globals; **last-write-wins with a per-variable sequence**; the time globals (`GameHour/Day/Month/Year/DaysPassed`) are EXCLUDED here and owned by M7 |
-| `MemberVarUpdate` | C→S; relayed cell-scoped | `{ref=RefNum, name=string, value=number}` — per-object MWScript locals, piggybacked on object interaction |
+| `MemberVarUpdate` | C→S; relayed cell-scoped (the cell's HOLDER hears it wherever it stands) | `{ref=RefNum, name=string, value=number}` — per-object MWScript locals, piggybacked on object interaction and on the dialogue lock (watched for the whole conversation, last diff on release) |
 | `FactionUpdate` | C→S; relayed when `[sharing] factions` | `{factionId=string, rank=number, reputation=number?, expelled=bool?}` |
 | `CrimeUpdate` | C→S; relayed when `[sharing] crime` | `{bounty=number, kind=string?}` — shared vs personal bounty is a server policy flag |
 | `DialogueLock` | C→S | `{ref=RefNum, cellKey=, want=bool}` → `DialogueLockResult {ref, granted=bool, holderId=u16?}` — one player may converse with an NPC at a time; released on close, cell change, or disconnect |
@@ -494,9 +494,10 @@ member variable gets written twice and character globals were last-writer-wins. 
 client `GlobalVarUpdate` / `MemberVarUpdate` for a name the **peer wrote within
 `INPUT_DRIVING_MS`** is dropped (`quest.global_peer_owned` / `quest.member_peer_owned`);
 names the peer never writes — dialogue-result scripts run only on the client that talked —
-are untouched, so dialogue-driven quest state is exactly as before. And the peer's
-**character-global** writes are now relayed live to every client in the world (peer-origin
-only; client→client stays unrelayed), so local script copies stop holding a stale value
+are untouched, so dialogue-driven quest state is exactly as before. And **character-global**
+writes are relayed live to every client in the world whoever wrote them (the peer's from
+Phase 4E; a human's since backlog 224 — one campaign per instance, and the other human's
+journal had already advanced with it), so local script copies stop holding a stale value
 until the next login's `GlobalVarSync`. Persistence is unchanged: `journalTarget` already
 routes a system sender to the world owner's doc (standalone stacks and an offline owner
 persist nothing for the peer, as they did for guests — live relay still happens).

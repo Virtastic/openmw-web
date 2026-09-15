@@ -48,20 +48,17 @@ export default async function run(ctx) {
   }
   ctx.log(`ok: ${Object.keys(gA).length} globals tracked, none of them the M7 clock`);
 
-  // Phase 4 INVERTED M6 here: a quest global is CHARACTER-SHADOWED by default and relayed
-  // to nobody. Only the small WORLD_GLOBALS set (weather, blight, ghostfence) travels. The
-  // reason is in quests.ts: relaying progress globals makes two party members at different
-  // stages overwrite each other through the 1s diff sync, forever — and can skip a quest.
-  // So the contract this pins is the OPPOSITE of "B receives it".
+  // ONE CAMPAIGN PER INSTANCE (backlog 224). Phase 4 made a quest global CHARACTER-SHADOWED
+  // (persisted to the campaign doc, not seq-arbitrated) and relayed it to the peer only, so
+  // B's Global filters and local script copies sat on the stale value until relog although
+  // the journal had already advanced. It now reaches every engine running the campaign; the
+  // peer-owned write window (questpeer.test.ts) is what keeps the TES3MP ping-pong out.
   await a.eval(`window.omw.send('gvar:${GLOBAL}:${GLOBAL_VALUE}')`);
   const seesGlobal = (c) =>
     `Object.entries(JSON.parse(window.omw.state.globalVars||"{}")).some(([k,v])=>k.toLowerCase()===${JSON.stringify(GLOBAL.toLowerCase())}&&v===${GLOBAL_VALUE})`;
   await a.waitFor(seesGlobal(a), STEP_TIMEOUT, `A wrote ${GLOBAL}=${GLOBAL_VALUE}`);
-  // Give the diff sync several rounds to (wrongly) deliver it before declaring it contained.
-  await ctx.sleep(6000);
-  assert.equal(await b.eval(seesGlobal(b)), false,
-    `${GLOBAL} is a progress global and must stay on A's character — B must never see it`);
-  ctx.log(`ok: ${GLOBAL}=${GLOBAL_VALUE} shadowed to A's character, not relayed`);
+  await b.waitFor(seesGlobal(b), STEP_TIMEOUT, `B received ${GLOBAL}=${GLOBAL_VALUE} (GlobalVarUpdate applied)`);
+  ctx.log(`ok: ${GLOBAL}=${GLOBAL_VALUE} reached B live`);
 
   // --- crime -------------------------------------------------------------------------
   await a.eval(`window.omw.send('bounty:${BOUNTY}')`);
@@ -109,11 +106,9 @@ export default async function run(ctx) {
   const ka = globalKey(ga2, GLOBAL);
   ctx.log(`after settle: A ${GLOBAL}=${ga2[ka]} B ${GLOBAL}=${gb2[kb]}`);
   assert.equal(ga2[ka], GLOBAL_VALUE, 'A drifted: an applied update was echoed back');
-  // B tracks the same 138 globals — it has this one at its own vanilla default. What must
-  // never happen is B taking A's VALUE. A shadowed global that leaks late is the same bug as
-  // one that leaks immediately, just harder to see.
-  assert.notEqual(gb2[kb], GLOBAL_VALUE,
-    `B took A's ${GLOBAL}=${GLOBAL_VALUE} — a character-shadowed global escaped to another player`);
+  // B applied A's value and must still hold it: a bounce would have A and B trading updates
+  // and one of them drifting back to the vanilla default.
+  assert.equal(gb2[kb], GLOBAL_VALUE, `B drifted off ${GLOBAL}=${GLOBAL_VALUE} after applying it`);
   assert.equal(await a.eval('window.omw.state.bounty'), String(BOUNTY), 'A bounty drifted');
   ctx.log('ok: echo guards held across globals/crime/factions');
 }

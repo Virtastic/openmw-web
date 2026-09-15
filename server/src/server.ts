@@ -564,6 +564,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     ownerCharId: () => (worldOwner === '' ? undefined : roster.activeForAccount(worldOwner)?.charId),
     worldGlobals: config.sharing.worldGlobals,
     worldPeer: () => worldPeerImpl(),
+    holderOf: (cellKey) => world.holderOf(cellKey),
   });
   world.dialogueHolder = (refKey) => quests.dialogueHolder(refKey);
 

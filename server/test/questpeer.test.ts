@@ -136,6 +136,70 @@ test("the host's quest global reaches the peer live, and seeds a joining peer an
     'a fresh simulator starts from the campaign\'s globals');
 });
 
+// ONE CAMPAIGN, EVERY ENGINE. A human's dialogue-set quest global reached the peer and the
+// doc, never the OTHER human live: the guest's Global filters and local script copies sat on
+// the stale value until relog although the journal had advanced (backlog 224). The
+// peer-owned window above is what guards against ping-pong; human-to-human is plain relay.
+test("a human's campaign global reaches the other human live", async (t) => {
+  const { a, b, peer } = await world(t);
+  a.sendEvent('GlobalVarUpdate', { name: 'mp_dialogue_stage', value: 4 }); // not a world global: campaign-shadowed
+  const [gb, gp] = await Promise.all([
+    b.waitEvent('GlobalVarUpdate', gv('mp_dialogue_stage'), 3000),
+    peer.waitEvent('GlobalVarUpdate', gv('mp_dialogue_stage'), 3000),
+  ]);
+  assert.equal((gb.value as { value: number }).value, 4, 'the other human hears the dialogue result');
+  assert.equal((gp.value as { value: number }).value, 4, 'and so does the simulator');
+});
+
+// A QUEST RESTART IS THE OWNER'S TO MAKE. SetJournalIndex to a lower stage from the world's
+// owner (or from the peer's scripts) was dropped by monotonic-max, so it came back on the next
+// login and later advances below the old maximum were silently lost (backlog 225). A guest
+// still cannot rewind the log.
+test('the owner and the peer may regress a journal stage; a guest may not', async (t) => {
+  const { SocialStore } = await import('../src/core/socialstore');
+  const { readPlayerDoc } = await import('./helpers');
+  const dataDir = tmpDataDir();
+  new SocialStore(dataDir).addFriend('host', 'guest', Date.now());
+  const server = await startServer({
+    requireGameData: false, dataDir, port: 0, host: '127.0.0.1',
+    worldMode: 'party', worldOwner: 'host',
+    configOverride: { server: { password: PEER_PASS }, login: { allowHarnessAuth: true } } as never,
+  });
+  t.after(() => server.close());
+  const peer = await TestClient.simPeer(server.port, PEER_PASS);
+  t.after(() => peer.close());
+  const host = await TestClient.connect(server.port);
+  t.after(() => host.close());
+  const hostChar = String((await host.joinAsNew('Host', 'hunter22')).welcome['characterId']);
+  await host.waitEvent('PlayerList');
+  host.sendCellChange('0,0', 0, 0, 0);
+  const guest = await TestClient.connect(server.port);
+  t.after(() => guest.close());
+  await guest.joinAsNew('Guest', 'hunter22');
+  await guest.waitEvent('PlayerList');
+  guest.sendCellChange('0,0', 0, 0, 0);
+  const je = (v: unknown) => (v as { questId?: string })?.questId === 'mq_restart';
+  const idx = (e: { value: unknown }) => (e.value as { index: number }).index;
+
+  host.sendEvent('JournalEntry', { questId: 'mq_restart', index: 50 });
+  assert.equal(idx(await guest.waitEvent('JournalEntry', je, 3000)), 50);
+  host.sendEvent('JournalEntry', { questId: 'mq_restart', index: 10 }); // the owner restarts the quest
+  assert.equal(idx(await guest.waitEvent('JournalEntry', je, 3000)), 10, "the owner's restart reaches the guest");
+  host.sendEvent('JournalEntry', { questId: 'mq_restart', index: 20 }); // ...and a later advance below the old max lands
+  assert.equal(idx(await guest.waitEvent('JournalEntry', je, 3000)), 20, 'an advance below the old maximum is not lost');
+  peer.sendEvent('JournalEntry', { questId: 'mq_restart', index: 5 }); // the simulator's scripts may too
+  assert.equal(idx(await guest.waitEvent('JournalEntry', je, 3000)), 5, "the peer's regress is authoritative");
+  host.inbox.events.length = 0;
+  guest.sendEvent('JournalEntry', { questId: 'mq_restart', index: 1 }); // a guest cannot rewind the campaign
+  guest.sendEvent('JournalEntry', { questId: 'mq_restart', index: 30 }); // a fence: this one IS relayed
+  assert.equal(idx(await host.waitEvent('JournalEntry', je, 3000)), 30);
+  assert.equal(host.inbox.events.filter((e) => e.name === 'JournalEntry' && idx(e) === 1).length, 0, "a guest's regress is still blocked");
+
+  await server.flush();
+  const doc = readPlayerDoc(dataDir, hostChar) as { journal?: Record<string, number> };
+  assert.equal(doc.journal?.['mq_restart'], 30, 'the campaign doc follows the log, restart included');
+});
+
 // ONE BODY'S STATE STAYS WITH THAT BODY. PCVampire/PCWerewolf and their counters are globals
 // in the vanilla scripts, so they shadowed to the CAMPAIGN doc like every character global:
 // a guest turning vampire made the host a vampire on the host's next login, and the peer's

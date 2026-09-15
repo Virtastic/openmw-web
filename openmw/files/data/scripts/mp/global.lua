@@ -1544,6 +1544,7 @@ local function start()
         requestNetActor = function(obj, cellKey) objects.requestSpawn(obj, nil, cellKey, false, true) end,
         ownCellKeyFn = function() return ownCellKeyCache end,
         ownIdFn = function() return net.state == 'Joined' and net.playerId or nil end,
+        actorDeathFn = function(obj) quests.onActorDeath(obj) end,
         isMpPuppetFn = function(obj)
             for _, p in pairs(puppets) do
                 if p.obj:isValid() and p.obj.id == obj.id then return true end
@@ -3257,6 +3258,10 @@ local eventHandlers = {
     end,
     mpDialogueClosed = function()
         quests.releaseLock('windowclosed')
+    end,
+    -- The window opened without an activation (ForceGreeting): take the lock after the fact.
+    mpDialogueForced = function(data)
+        if data and data.target then quests.onDialogueForced(data.target) end
     end,
     mpTestQuest = function(data) quests.testSetQuestStage(data.id, data.stage) end,
     mpTestGlobal = function(data) quests.testSetGlobal(data.name, data.value) end,

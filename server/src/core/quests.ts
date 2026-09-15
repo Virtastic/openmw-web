@@ -113,6 +113,8 @@ export interface QuestCtx {
   // Operator additions to the world-shared global set (total conversions).
   worldGlobals?: string[];
   worldPeer?(): Player | undefined;
+  // Who simulates a cell (worldstate.ts): the holder hears its cells wherever it stands.
+  holderOf?(cellKey: string): number | undefined;
 }
 
 function tbl(v: LValue | undefined): LTable | undefined {
@@ -148,9 +150,13 @@ export class Quests {
     for (const p of this.ctx.roster.inWorld()) if (p.id !== exceptId) p.peer.sendEvent(name, body);
   }
 
+  // The same predicate as worldstate.ts hears(): the holder anchors far cells while its own
+  // avatar stands elsewhere, and an NPC's locals written in one of them must reach the
+  // engine that runs that NPC's script (backlog 222).
   private relayCell(cellKey: string, exceptId: number, name: string, body: JsLike): void {
     for (const p of this.ctx.roster.inWorld()) {
-      if (p.id !== exceptId && cellsVisible(p.cellKey, cellKey)) p.peer.sendEvent(name, body);
+      if (p.id === exceptId) continue;
+      if (cellsVisible(p.cellKey, cellKey) || (p.system === true && this.ctx.holderOf?.(cellKey) === p.id)) p.peer.sendEvent(name, body);
     }
   }
 
@@ -236,7 +242,14 @@ export class Quests {
     const current = shared.journal[questId];
     const advances = current === undefined || idx > current;
     const regressing = !advances && idx < current;
-    if (regressing && !this.ctx.regressAllowed(questId)) {
+    // THE CAMPAIGN'S OWNER MAY RESTART A QUEST. Monotonic-max was written against a LAGGING
+    // client, and a guest still cannot rewind the log -- but a SetJournalIndex to a lower
+    // stage from the owner's own dialogue, or from the peer's scripts, is the campaign
+    // itself moving (backlog 225). Dropped, it came back on the next login and every later
+    // advance below the old maximum was silently lost too.
+    const authoritative = player.system === true
+      || (this.ctx.ownerCharId() !== undefined && this.ctx.ownerCharId() === player.charId);
+    if (regressing && !authoritative && !this.ctx.regressAllowed(questId)) {
       // Monotonic-max arbitration: a lagging client cannot rewind the instance's campaign.
       log('debug', 'quest.journal_regress_blocked', { questId, have: current, got: idx, from: player.name });
       return;
@@ -393,18 +406,16 @@ export class Quests {
       const target = this.ctx.journalTarget(player);
       // Phase 4E: the peer's write is the campaign's authoritative state, so every client
       // in the world receives it LIVE (their local script copies would otherwise hold a
-      // stale value until the next login's GlobalVarSync). Peer-origin only: client-to-
-      // client stays unrelayed, which is what keeps one player's dialogue from moving
-      // another's engine. Relayed even where nothing persists (standalone stack, owner
-      // offline) -- live sync and campaign persistence are different jobs.
-      if (player.system === true) this.relayAll(player.id, 'GlobalVarUpdate', { name, value });
-      // And the other way: the peer runs the cell scripts for the campaign a HUMAN advanced
-      // through dialogue, so it must hear those writes or its copies gate on stale values
-      // (a door that never unlocks, an NPC that never appears, for everyone in the world).
-      else {
-        const peer = this.ctx.worldPeer?.();
-        if (peer && peer.id !== player.id) peer.peer.sendEvent('GlobalVarUpdate', { name, value });
-      }
+      // stale value until the next login's GlobalVarSync). Relayed even where nothing
+      // persists (standalone stack, owner offline) -- live sync and campaign persistence
+      // are different jobs.
+      //
+      // A HUMAN'S write goes the same way (backlog 224). It used to reach the peer only,
+      // "to keep one player's dialogue from moving another's engine" -- but there is ONE
+      // campaign per instance, the other human's journal already advanced with it, and the
+      // guest's Global filters and local script copies sat on the stale value until relog.
+      // The ping-pong the old rule feared is what the peer-owned window above is for.
+      this.relayAll(player.id, 'GlobalVarUpdate', { name, value });
       if (target === undefined) return; // unowned instance: persists nothing
       this.ctx.players.update(target, (doc) => {
         (doc.globals ??= {})[name] = value;

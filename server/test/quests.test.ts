@@ -152,20 +152,20 @@ test('shared factions and crime relay', async (t) => {
   });
 });
 
-// Phase 4 changed the DEFAULT: a global is character-shadowed (per character, never
-// relayed) unless it describes the world, because relaying quest-progress globals makes
-// two party members at different stages overwrite each other forever. The seq/LWW
-// arbitration below still governs the globals that DO travel, so these tests declare a
-// pair of world globals to exercise it — and assert the new shadowing directly.
+// Phase 4 changed the DEFAULT: a global is character-shadowed (persisted to the CAMPAIGN,
+// not seq-arbitrated) unless it describes the world. It is still relayed live to every
+// engine running that campaign (backlog 224: one campaign per instance, and the other
+// human's journal had already advanced with it); the peer-owned window (questpeer.test.ts)
+// is what stops the TES3MP ping-pong. The seq/LWW arbitration below governs the WORLD
+// globals, so these tests declare a pair of them to exercise it.
 test('global and member variables', async (t) => {
   const { server } = await boot(t, { sharing: { worldGlobals: ['world_flag', 'seqless_var'] } });
   const { a, b } = await twoInCell(server);
 
-  await t.test('a quest-progress global is character-shadowed, never relayed', async () => {
+  await t.test('a quest-progress global is relayed plain (no seq): campaign state, not arbitrated', async () => {
     a.sendEvent('GlobalVarUpdate', { name: 'nerevarine', value: 1, seq: 5 });
-    await fence(a, b);
-    assert.equal(b.inbox.events.filter((e) => e.name === 'GlobalVarUpdate').length, 0,
-      'quest progress must not travel between players (the TES3MP ping-pong)');
+    assert.deepEqual((await b.waitEvent('GlobalVarUpdate')).value, { name: 'nerevarine', value: 1 },
+      'a dialogue result must reach the other human live');
   });
 
   await t.test('world global relays and echoes the accepted seq', async () => {
@@ -226,6 +226,31 @@ test('global and member variables', async (t) => {
     late.close();
     await late.closed;
   });
+});
+
+// THE HOLDER HEARS ITS CELLS (worldstate.ts hears(), now for quest relays too). The peer's
+// avatar parks a cell away while it keeps simulating the NPC whose locals a dialogue result
+// just wrote; relayed by the avatar's neighbourhood alone, the one engine running that
+// NPC's script never heard the write (backlog 222).
+test('a member var reaches the peer holding the cell while its avatar stands elsewhere', async (t) => {
+  const PEER_PASS = 'peer-secret-1';
+  const { server } = await boot(t, { server: { password: PEER_PASS } });
+  const bob = await TestClient.connect(server.port);
+  t.after(() => bob.close());
+  await bob.joinAsNew('Bob');
+  await bob.waitEvent('PlayerList');
+  bob.sendCellChange('0,0', 0, 0, 0);
+  await bob.waitEvent('PlayerCellChange');
+  const peer = await TestClient.simPeer(server.port, PEER_PASS);
+  t.after(() => peer.close());
+  peer.sendCellChange('0,0', 0, 0, 0);
+  await peer.waitEvent('ActorAuthorityGrant', (v) => (v as { cellKey: string }).cellKey === '0,0');
+  peer.sendCellChange('9,9', 0, 0, 0); // parked far away; Bob keeps 0,0 occupied and held
+  await peer.waitEvent('ActorAuthorityGrant', (v) => (v as { cellKey: string }).cellKey === '9,9');
+  peer.inbox.events.length = 0;
+  bob.sendEvent('MemberVarUpdate', { ref: NPC_REF, name: 'talked', value: 1 });
+  const heard = await peer.waitEvent('MemberVarUpdate', () => true, 3000);
+  assert.deepEqual(heard.value, { ref: NPC_REF, name: 'talked', value: 1 }, 'the simulator of the NPC hears its locals change');
 });
 
 test('dialogue lock', async (t) => {

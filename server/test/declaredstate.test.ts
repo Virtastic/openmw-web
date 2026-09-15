@@ -253,6 +253,30 @@ test('a rich player keeps their inventory: big gold passes, and a refusal is ann
 // The Mark spot (backlog 155) lives in NpcStats only, so nothing carried it and Recall did
 // nothing after a relog. A cell id and three finite numbers land in the doc; anything else
 // is refused (and named, so the client re-sends).
+// REPUTATION IS NpcStats-ONLY in the engine, so nothing carried it: every relog reset it to
+// 0 and every PcReputation-gated topic vanished (backlog 223). It rides on PlayerLevel, a
+// uint8 like the engine's, and comes back with the record.
+test('reputation rides on PlayerLevel into the doc, clamped to a byte', async (t) => {
+  const dataDir = tmpDataDir();
+  const server = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1' });
+  t.after(() => server.close());
+  const c = await TestClient.connect(server.port);
+  t.after(() => c.close());
+  const { welcome } = await c.joinAsNew('Famous');
+  const charId = String(welcome['characterId']);
+  await c.waitEvent('PlayerList');
+  c.sendEvent('PlayerLevel', { level: 1, reputation: 12 });
+  const refused = c.waitEvent('StateRefused');
+  c.sendEvent('PlayerLevel', { level: 1, reputation: 300 });
+  assert.equal(((await refused).value as { kind?: string }).kind, 'PlayerLevel');
+  c.sendEvent('PlayerLevel', { level: 1 }); // no reputation field: the doc keeps what it had
+  await new Promise((r) => setTimeout(r, 200));
+  await server.flush();
+  const doc = readPlayerDoc(dataDir, charId) as { stats?: { level?: number; reputation?: number } };
+  assert.equal(doc.stats?.level, 1);
+  assert.equal(doc.stats?.reputation, 12, 'the reputation survives in the doc, and the out-of-range one did not replace it');
+});
+
 test('a PlayerMark lands in the doc; a malformed one is refused', async (t) => {
   const dataDir = tmpDataDir();
   const server = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1' });

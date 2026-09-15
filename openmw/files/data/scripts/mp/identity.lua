@@ -247,7 +247,11 @@ local function snapProgression()
         local ok, m = pcall(mp.getMark)
         if ok and type(m) == 'table' and m.cell ~= '' then mark = m end
     end
-    return { attributes = attributes, skills = skills, level = Actor.stats.level(self).current, mark = mark }
+    -- Reputation (backlog 223): NpcStats only, like the mark, so it reset to 0 on every relog
+    -- and every PcReputation-gated topic vanished. Rides on PlayerLevel.
+    local okRep, rep = pcall(function() return NPC.stats.reputation(self).current end)
+    return { attributes = attributes, skills = skills, level = Actor.stats.level(self).current, mark = mark,
+        reputation = okRep and type(rep) == 'number' and rep or nil }
 end
 
 local function snapSpells()
@@ -487,9 +491,10 @@ function identity.tick(now)
             last.skills = sfp
             mp.sendEvent('PlayerSkills', prog.skills)
         end
-        if prog.level ~= last.level then
+        if prog.level ~= last.level or prog.reputation ~= last.reputation then
             last.level = prog.level
-            mp.sendEvent('PlayerLevel', { level = prog.level })
+            last.reputation = prog.reputation
+            mp.sendEvent('PlayerLevel', { level = prog.level, reputation = prog.reputation })
         end
         -- The mark, when the engine can read one; only a SET mark is sent (nothing clears one).
         if prog.mark then
@@ -692,6 +697,7 @@ local function applyPhase2(record)
     local ok, err = pcall(function()
         local stats = record.stats or {}
         if stats.level then Actor.stats.level(self).current = stats.level end
+        if stats.reputation then pcall(function() NPC.stats.reputation(self).current = stats.reputation end) end
         for id, v in pairs(stats.attributes or {}) do
             local base = id:match('^(.-)_damage$')
             local stat = Actor.stats.attributes[base or id]
@@ -787,6 +793,7 @@ local function applyPhase2(record)
         last.progression = fingerprint(prog.attributes)
         last.skills = fingerprint(prog.skills)
         last.level = prog.level
+        last.reputation = prog.reputation
         last.mark = prog.mark and fingerprint(prog.mark) or nil
         last.spells = snapSpells()
         last.inventory = fingerprint(snapInventory())

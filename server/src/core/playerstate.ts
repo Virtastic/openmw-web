@@ -319,6 +319,10 @@ function handleMark(ctx: StateCtx, player: Player, body: LTable): boolean {
 function handleLevel(ctx: StateCtx, player: Player, body: LTable): boolean {
   const level = finite(body.get('level'));
   if (level === undefined || !Number.isInteger(level) || level < 1 || level > 255) return false;
+  // Reputation rides along (backlog 223): a uint8 in the engine, 0..255 or refused.
+  const repRaw = body.get('reputation');
+  const reputation = repRaw === undefined ? undefined : finite(repRaw);
+  if (repRaw !== undefined && (reputation === undefined || !Number.isInteger(reputation) || reputation < 0 || reputation > 255)) return false;
   // A level moves by ONE at a time in Morrowind. Several at once is not a fast player, it is
   // a declaration — same absurd-only bar as the movement envelope, same non-rejecting answer.
   const had = ctx.store.getCached(player.charId)?.stats?.level;
@@ -341,7 +345,7 @@ function handleLevel(ctx: StateCtx, player: Player, body: LTable): boolean {
     return false;
   }
   // Level-up is a specced flush point.
-  ctx.store.update(player.charId, (doc) => (doc.stats = { ...doc.stats, level }), 'now');
+  ctx.store.update(player.charId, (doc) => (doc.stats = { ...doc.stats, level, ...(reputation !== undefined ? { reputation } : {}) }), 'now');
   return true;
 }
 

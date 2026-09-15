@@ -735,6 +735,46 @@ quests.tick(1)
 check('one tick still respects the send budget', #globalUpdates(env.calls) <= 24,
   'sent ' .. #globalUpdates(env.calls) .. ' in a single tick')
 
+-- ============================================================ quests.lua: dialogue lock edges
+-- Source checks (the engine's UI and death paths cannot run here). A ForceGreeting opens the
+-- window with no activation, so no lock was taken and every result of the conversation was
+-- dropped as nobody's (backlog 226); an NPC killed mid-conversation left the window open on the
+-- corpse (backlog 228); the interaction watch expired 6 s into a conversation so a dialogue
+-- result's local writes never travelled (backlog 222).
+print('quests.lua -- forced greetings take the lock, a dead partner closes the window, locals flush on release')
+do
+  local q = io.open('./openmw/files/data/scripts/mp/quests.lua'):read('*a')
+  local pl = io.open('./openmw/files/data/scripts/mp/player.lua'):read('*a')
+  local g = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  local ac = io.open('./openmw/files/data/scripts/mp/actors.lua'):read('*a')
+  check('player.lua reports a Dialogue window that opened without an activation (mpDialogueForced)',
+    pl:find("data.newMode == 'Dialogue' and not talking(data.oldMode) and data.arg", 1, true) ~= nil
+    and pl:find("core.sendGlobalEvent('mpDialogueForced', { target = data.arg })", 1, true) ~= nil)
+  check('global.lua routes mpDialogueForced to quests.onDialogueForced',
+    g:find('mpDialogueForced = function(data)', 1, true) ~= nil and g:find('quests.onDialogueForced(data.target)', 1, true) ~= nil)
+  check('quests.onDialogueForced requests the lock as forced, unless already held or pending',
+    q:find('function quests.onDialogueForced(obj)', 1, true) ~= nil and q:find('requestLock(obj, true)', 1, true) ~= nil
+    and q:find('if lockPending and lockPending.id == obj.id then return end', 1, true) ~= nil)
+  check('a forced grant sets lockHeld/lockDisposition like the activation path and does not re-activate',
+    q:find('lockAllowOnce = not forced and obj.id or nil', 1, true) ~= nil
+    and q:find('if player and not forced then obj:activateBy(player) end', 1, true) ~= nil)
+  check('a forced denial closes the window the other holder owns',
+    q:find("if forced then%s+local player = playerObj%(%)%s+if player then pcall%(function%(%) player:sendEvent%('MP_CloseDialogue', {}%) end%) end") ~= nil)
+  check('actors.lua hands every MP_ActorDeath to the quest layer',
+    ac:find('if obj and deps.actorDeathFn then pcall(deps.actorDeathFn, obj) end', 1, true) ~= nil
+    and g:find('actorDeathFn = function(obj) quests.onActorDeath(obj) end', 1, true) ~= nil)
+  check('quests.onActorDeath closes the window on the lock holder and releases the lock',
+    q:find("function quests.onActorDeath(obj)", 1, true) ~= nil
+    and q:find("lockHeld:isValid%(%) and lockHeld.id == obj.id%) then return end%s+local player = playerObj%(%)%s+if player then pcall%(function%(%) player:sendEvent%('MP_CloseDialogue', {}%) end%) end%s+quests.releaseLock%('dead'%)") ~= nil)
+  check('player.lua removes the Dialogue mode on MP_CloseDialogue',
+    pl:find("MP_CloseDialogue = function()", 1, true) ~= nil and pl:find("I.UI.removeMode('Dialogue')", 1, true) ~= nil)
+  check('the lock grant arms an open-ended member-var watch and the release flushes it',
+    q:find('until_ = math.huge', 1, true) ~= nil and q:find('armLockWatch(obj)', 1, true) ~= nil
+    and q:find('if obj:isValid() then pcall(flushMemberVars, watch) end', 1, true) ~= nil)
+  check('the re-run activation does not shorten the conversation watch back to 6 s',
+    q:find('if lockHeld and lockHeld.id == object.id and memberWatch[object.id] then return end', 1, true) ~= nil)
+end
+
 -- ============================================================ every mp script: declaration order
 -- A `handlers.X = function ... end` placed ABOVE `local handlers = {}` does not assign into that
 -- table. It indexes a GLOBAL called `handlers`, which is nil, and the whole module fails at LOAD

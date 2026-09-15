@@ -766,6 +766,8 @@ actors.handlers.MP_ActorDeath = function(data)
     if obj and puppetActors[refKeyOf(obj)] then
         pcall(function() obj:sendEvent('MP_Kill', {}) end)
     end
+    -- The one we were talking to (quests.lua closes the window, backlog 228).
+    if obj and deps.actorDeathFn then pcall(deps.actorDeathFn, obj) end
 end
 
 -- Server-authoritative kill tallies, re-asserted every mirror tick.

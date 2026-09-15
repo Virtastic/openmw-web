@@ -1334,6 +1334,11 @@ return {
         MP_TestItem = function(data)
             pendingTestEquip = { id = data.id, slot = 0, until_ = core.getRealTime() + 5 }
         end,
+        -- The NPC we are talking to died, or someone else holds the conversation we were
+        -- forced into: shut the window (quests.lua releases the lock).
+        MP_CloseDialogue = function()
+            pcall(function() I.UI.removeMode('Dialogue') end)
+        end,
         -- M2 respawn: global.lua already teleported us; revive + optionally top up stats.
         MP_DoResurrect = function(data)
             mp.resurrect()
@@ -1357,6 +1362,14 @@ return {
             local function talking(m) return m == 'Dialogue' or GOLD_SERVICE_MODES[m] ~= nil end
             if talking(data.oldMode) and not talking(data.newMode) then
                 core.sendGlobalEvent('mpDialogueClosed', {})
+            end
+            -- A window that opened with no activation behind it (a script's ForceGreeting, a
+            -- guard's arrest): the global script takes the lock after the fact, or the results
+            -- of this conversation are dropped as nobody's (backlog 226). A normal click
+            -- already holds it; quests.lua tells the two apart.
+            if data.newMode == 'Dialogue' and not talking(data.oldMode) and data.arg then
+                local okNpc, isNpc = pcall(function() return types.NPC.objectIsInstance(data.arg) end)
+                if okNpc and isNpc then core.sendGlobalEvent('mpDialogueForced', { target = data.arg }) end
             end
             -- PAID SERVICES. `arg` is the actor the window belongs to (pushGuiMode passes it
             -- through uiModeChanged for every mode), which is the NPC the server has to

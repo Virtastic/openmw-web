@@ -88,6 +88,7 @@ local memberApplied = {} -- "<recordId>.<var>" -> value (inbound MemberVarUpdate
 local lockPending = nil -- GameObject we asked for and have not heard back about
 local lockHeld = nil -- GameObject we currently hold the conversation on
 local lockAllowOnce = nil -- obj.id whose next activation must pass through unblocked
+local lockForced = false -- the window is already open (ForceGreeting): no activateBy on grant
 local lastLockMirror = nil
 
 local nextDiffAt = 0
@@ -401,6 +402,9 @@ function quests.onActivate(object, actor)
     if not object.contentFile then return end -- runtime objects have no portable RefNum
     local script = world.mwscript.getLocalScript(object)
     if not script then return end
+    -- The NPC we are talking to is already watched for the whole conversation (armWatch on
+    -- the grant); the re-run activation must not shorten that to the 6 s window.
+    if lockHeld and lockHeld.id == object.id and memberWatch[object.id] then return end
     memberWatch[object.id] = {
         obj = object,
         script = script,
@@ -410,23 +414,40 @@ function quests.onActivate(object, actor)
     }
 end
 
+local function flushMemberVars(watch)
+    local snap = scriptVarSnapshot(watch.script)
+    for name, value in pairs(snap) do
+        if watch.last[name] ~= value then
+            watch.last[name] = value
+            -- No cellKey in the body: the server infers it from our current cell.
+            local a = npcAddr(watch.obj)
+            if a then mp.sendEvent('MemberVarUpdate', { ref = a.ref, net = a.net, name = name, value = value }) end
+        end
+    end
+end
+
 local function tickMemberVars(now)
     for id, watch in pairs(memberWatch) do
         if now > watch.until_ or not watch.obj:isValid() then
             memberWatch[id] = nil
         elseif now >= watch.nextPoll then
             watch.nextPoll = now + MEMBER_POLL
-            local snap = scriptVarSnapshot(watch.script)
-            for name, value in pairs(snap) do
-                if watch.last[name] ~= value then
-                    watch.last[name] = value
-                    -- No cellKey in the body: the server infers it from our current cell.
-                    local a = npcAddr(watch.obj)
-                    if a then mp.sendEvent('MemberVarUpdate', { ref = a.ref, net = a.net, name = name, value = value }) end
-                end
-            end
+            flushMemberVars(watch)
         end
     end
+end
+
+-- A CONVERSATION IS NOT A 6 s WINDOW. The activation watch above expired while the player
+-- was still reading topics, so a dialogue result that wrote the NPC's locals (a quest
+-- counter, a "talked" flag) after that was never relayed (backlog 222). The lock grant arms
+-- an open-ended watch that the release closes with one last diff.
+local function armLockWatch(obj)
+    local ok, script = pcall(world.mwscript.getLocalScript, obj)
+    if not (ok and script) then return end
+    memberWatch[obj.id] = {
+        obj = obj, script = script, last = scriptVarSnapshot(script),
+        nextPoll = core.getRealTime() + MEMBER_POLL, until_ = math.huge,
+    }
 end
 
 -- ================================================================== dialogue lock
@@ -442,8 +463,9 @@ local function mirrorLock(state)
     mp.set('dialogueLock', json.encode(state))
 end
 
-local function requestLock(obj)
+local function requestLock(obj, forced)
     lockPending = obj
+    lockForced = forced == true
     local a = npcAddr(obj)
     if not a then return end
     mp.sendEvent('DialogueLock', {
@@ -472,6 +494,12 @@ function quests.releaseLock(why)
         end
     end
     lockDisposition = nil
+    -- Their script locals too: the last diff, then the watch runs out like any other.
+    local watch = memberWatch[obj.id]
+    if watch then
+        if obj:isValid() then pcall(flushMemberVars, watch) end
+        watch.until_ = core.getRealTime() + MEMBER_WATCH_SECONDS
+    end
     local a = npcAddr(obj)
     if a then mp.sendEvent('DialogueLock', { ref = a.ref, net = a.net, cellKey = deps.ownCellKeyFn(), want = false }) end
     mirrorLock({ ref = obj:isValid() and obj.recordId or '?', granted = false, why = why or 'released' })
@@ -495,6 +523,29 @@ function quests.onNpcActivate(obj, actor)
     if lockHeld and lockHeld:isValid() and lockHeld.id == obj.id then return end
     requestLock(obj)
     return false
+end
+
+-- The dialogue window opened WITHOUT an activation: ForceGreeting from a script (Fargoth's
+-- welcome, the Census clerk, a guard's arrest). No handler ran, so no lock was taken and
+-- every result of that conversation (AITravel, StartCombat, ModDisposition, the NPC's
+-- locals) was dropped as "without the conversation" (backlog 226). Take the lock now; the
+-- grant path knows the window is already open.
+function quests.onDialogueForced(obj)
+    local okValid, valid = pcall(function() return obj:isValid() end)
+    if not (okValid and valid) or not npcAddr(obj) then return end
+    if lockHeld and lockHeld:isValid() and lockHeld.id == obj.id then return end
+    if lockPending and lockPending.id == obj.id then return end
+    if deps.isMpPuppetFn and deps.isMpPuppetFn(obj) then return end
+    requestLock(obj, true)
+end
+
+-- The one we are talking to died (a friend's blow, reported by the holder): the window would
+-- stay open on the corpse and its results still execute (backlog 228). Close it, let go.
+function quests.onActorDeath(obj)
+    if not (lockHeld and obj and lockHeld:isValid() and lockHeld.id == obj.id) then return end
+    local player = playerObj()
+    if player then pcall(function() player:sendEvent('MP_CloseDialogue', {}) end) end
+    quests.releaseLock('dead')
 end
 
 -- ================================================================== network appliers
@@ -731,17 +782,26 @@ handlers.MP_DialogueLockResult = function(data)
         return -- a want=false acknowledgement, or a result we no longer care about
     end
     lockPending = nil
+    local forced = lockForced
+    lockForced = false
     if data.granted then
         lockHeld = obj
-        lockAllowOnce = obj.id
+        lockAllowOnce = not forced and obj.id or nil
         local player = playerObj()
         local okd, d = pcall(function() return player and types.NPC.getBaseDisposition(obj, player) or nil end)
         lockDisposition = (okd and type(d) == 'number') and d or nil
+        armLockWatch(obj)
         mirrorLock({ ref = obj.recordId, granted = true })
-        -- Re-run the activation we cancelled; this time the handler lets it through.
-        local player = playerObj()
-        if player then obj:activateBy(player) end
+        -- Re-run the activation we cancelled; this time the handler lets it through. A forced
+        -- greeting's window is already open: nothing to re-run.
+        if player and not forced then obj:activateBy(player) end
     else
+        -- A forced greeting on an NPC someone else holds: the window is open on our screen
+        -- with no right to its results. Shut it; the notice says why.
+        if forced then
+            local player = playerObj()
+            if player then pcall(function() player:sendEvent('MP_CloseDialogue', {}) end) end
+        end
         local holder = data.holderId and deps.rosterNameFn and deps.rosterNameFn(data.holderId)
         local who = holder or (data.holderId and ('player ' .. string.format('%.0f', data.holderId)))
             or 'someone else'
@@ -882,6 +942,7 @@ function quests.reset()
     lockPending = nil
     lockHeld = nil
     lockAllowOnce = nil
+    lockForced = false
 end
 
 -- ================================================================== test hooks
