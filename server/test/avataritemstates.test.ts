@@ -146,3 +146,31 @@ test('a CLIENT sending AvatarItemStatesBatch is ignored', async (t) => {
   ]);
   assert.equal(got, false, 'only the world peer may author avatar item states');
 });
+
+test("the peer's report merges per field: a charge the client spent is not refunded, a drain still lands (backlog 163)", async (t) => {
+  const { peer, a } = await world(t);
+  drive(t, a);
+  a.sendEvent('PlayerInventory', { items: [{ id: 'ring_of_fire', n: 1 }] });
+  await new Promise((r) => setTimeout(r, 150));
+  peer.sendEvent('AvatarItemStatesBatch', {
+    entries: [{ id: a.playerId, itemStates: { ring_of_fire: [{ charge: 100 }] } }],
+  });
+  await a.waitEvent('SelfItemStates', (v) => Boolean((v as { itemStates?: Record<string, unknown> })?.itemStates?.ring_of_fire));
+  // The client casts from the ring: charge 60 in the doc.
+  a.sendEvent('PlayerInventory', { items: [{ id: 'ring_of_fire', n: 1 }], itemStates: { ring_of_fire: [{ charge: 60 }] } });
+  await new Promise((r) => setTimeout(r, 150));
+  // The avatar has not applied the spend yet and reports the old 100: NOT a refund.
+  peer.sendEvent('AvatarItemStatesBatch', {
+    entries: [{ id: a.playerId, itemStates: { ring_of_fire: [{ charge: 100 }] } }],
+  });
+  const kept = await a.waitEvent('SelfItemStates', (v) => Boolean((v as { itemStates?: Record<string, unknown> })?.itemStates?.ring_of_fire));
+  assert.equal((kept.value as { itemStates: Record<string, { charge?: number }[]> }).itemStates.ring_of_fire?.[0]?.charge, 60,
+    'the peer reporting the pre-cast charge must not refund the spend');
+  // A cast-on-strike drain on the avatar: 40 lands.
+  peer.sendEvent('AvatarItemStatesBatch', {
+    entries: [{ id: a.playerId, itemStates: { ring_of_fire: [{ charge: 40 }] } }],
+  });
+  const drained = await a.waitEvent('SelfItemStates',
+    (v) => (v as { itemStates?: Record<string, { charge?: number }[]> })?.itemStates?.ring_of_fire?.[0]?.charge === 40);
+  assert.ok(drained, "the peer's drain must still lower the charge");
+});

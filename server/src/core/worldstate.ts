@@ -1219,6 +1219,14 @@ export class WorldState {
       // erase the earlier trade; deltas commute, so both land.
       const before = cont.gold ?? 0;
       const after = Math.max(0, before + (goldDelta ?? 0));
+      // A single trade moving more than the merchant's whole starting purse is not a trade the
+      // window can make (a sale pays out at most the purse; a buy pays in at most the stock's
+      // worth, which is the same order). Not refused -- the cap above stands -- but noted, so
+      // a client zeroing or filling a purse by hand shows up on the moderation ledger.
+      if (cont.goldOrigin !== undefined && Math.abs(goldDelta ?? 0) > cont.goldOrigin) {
+        this.moderationNote?.(player.accountKey, 'merchant_gold_delta');
+        log('warn', 'world.merchant_gold_anomaly', { by: player.name, account: player.accountKey, goldDelta, goldOrigin: cont.goldOrigin, cellKey });
+      }
       cont.gold = after;
       cont.stateSeq += 1;
       this.cells.markDirty(cellKey);

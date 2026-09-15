@@ -459,6 +459,38 @@ do
   end
 end
 
+-- ============================== objects.lua / player.lua: the barter window is a long window
+-- Backlog 160/161/162. objects.lua needs types.Weapon.TYPE at load, which the stubs do not
+-- carry, so these read the source: each check names the exact expression the fix hangs on.
+print('objects.lua / player.lua -- a service window syncs for as long as it is open')
+do
+  local o = io.open('./openmw/files/data/scripts/mp/objects.lua'):read('*a')
+  local p = io.open('./openmw/files/data/scripts/mp/player.lua'):read('*a')
+  -- 160: a live (merchant) watch never expires on the chest's 15 s clock; onBarterClose ends it.
+  check('a live watch has no expiry (until_ = math.huge), a chest keeps CONTAINER_WATCH_SECONDS',
+    o:find('until_ = live and math.huge or (now + CONTAINER_WATCH_SECONDS)', 1, true) ~= nil,
+    'a trade longer than 15 s stops syncing')
+  check('onBarterClose still ends every live watch',
+    (o:match('function objects%.onBarterClose%(%)(.-)\nend') or ''):find('containerWatch[id] = nil', 1, true) ~= nil)
+  -- 161: record ids cross the container wire in net form, as the drop path does.
+  local c2i = o:match('local function countsToItems%(counts%)(.-)\nend') or ''
+  check('ContainerOpen contents / put-take ids go out through worldmp.toNet', c2i:find('worldmp.toNet(id)', 1, true) ~= nil)
+  local sco = o:match('function objects%.sendContainerOp%(obj, op, itemId, n%)(.-)\nend') or ''
+  check('sendContainerOp maps the item id toNet before it is pended and sent', sco:find('itemId = worldmp.toNet(itemId)', 1, true) ~= nil)
+  local scc = o:match('local function setContainerContents%(obj, items%)(.-)\nend') or ''
+  check('setContainerContents creates from worldmp.toLocal(entry.id)', scc:find('world.createObject(worldmp.toLocal(entry.id)', 1, true) ~= nil,
+    "a friend's potion is created under the author's local id")
+  local acd = o:match('local function applyContainerDelta%(obj, itemId, dn%)(.-)\nend') or ''
+  check('applyContainerDelta maps the wire id toLocal', acd:find('itemId = worldmp.toLocal(itemId)', 1, true) ~= nil)
+  -- 162: the dialogue lock survives Dialogue -> Barter/Training/... -> Dialogue.
+  check('player.lua releases the dialogue lock only when leaving every talking mode',
+    p:find("local function talking(m) return m == 'Dialogue' or GOLD_SERVICE_MODES[m] ~= nil end", 1, true) ~= nil
+    and p:find('if talking(data.oldMode) and not talking(data.newMode) then', 1, true) ~= nil,
+    'Dialogue -> Barter fires mpDialogueClosed and a second player can open the merchant mid-trade')
+  check('player.lua no longer releases on the bare Dialogue edge',
+    p:find("if data.oldMode == 'Dialogue' and data.newMode ~= 'Dialogue' then", 1, true) == nil)
+end
+
 -- ================================ world.lua: the weather continuity handback is not an echo
 -- A holder drops any WorldWeather for its own region, so it never applies its own echo back
 -- onto itself. The server's CONTINUITY handback — the weather a region had before it went

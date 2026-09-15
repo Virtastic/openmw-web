@@ -236,13 +236,17 @@ local function snapshotContainer(obj, allowLive)
     return counts
 end
 
+-- WIRE FORM. A player-made record (potion, enchanted item) travels as the server's recordNetId,
+-- exactly as the drop path does (requestSpawn toNet / MP_ObjectPlace toLocal); content ids pass
+-- through. Before this a friend saw your potion as THEIR own local `Generated:` id, and restock
+-- re-added the bogus id forever.
 local function countsToItems(counts)
     local items = {}
     local ids = {}
     for id in pairs(counts) do ids[#ids + 1] = id end
     table.sort(ids)
     for _, id in ipairs(ids) do
-        if counts[id] > 0 then items[#items + 1] = { id = id, n = counts[id] } end
+        if counts[id] > 0 then items[#items + 1] = { id = worldmp.toNet(id), n = counts[id] } end
     end
     return items
 end
@@ -285,7 +289,7 @@ local function setContainerContents(obj, items)
             item:remove()
         end
         for _, entry in ipairs(items or {}) do
-            local okc, created = pcall(function() return world.createObject(entry.id, entry.n) end)
+            local okc, created = pcall(function() return world.createObject(worldmp.toLocal(entry.id), entry.n) end)
             if okc then created:moveInto(content) end
         end
     end)
@@ -309,6 +313,7 @@ end
 local function applyContainerDelta(obj, itemId, dn)
     local content = lootStore(obj, true)
     if not content then return end
+    itemId = worldmp.toLocal(itemId)
     pcall(function()
         if dn > 0 then
             local okc, created = pcall(function() return world.createObject(itemId, dn) end)
@@ -487,7 +492,12 @@ local function openContainerNow(object, now, live)
             -- Poll on the NEXT tick, not a quarter second from now. A harvest can resolve and the
             -- object can go away inside that gap, and the take is then unreportable.
             nextPoll = 0,
-            until_ = now + CONTAINER_WATCH_SECONDS,
+            -- A chest has no close signal, so its watch expires. A service window HAS one
+            -- (onBarterClose ends every live watch), so a live watch never expires: sharing the
+            -- chest's 15 s meant a longer trade stopped syncing -- stock dupes, the gold delta
+            -- never sent, training paid into a per-client purse. The tick's invalid-object
+            -- branch still ends a live watch whose merchant went away.
+            until_ = live and math.huge or (now + CONTAINER_WATCH_SECONDS),
         }
         return
     end
@@ -942,8 +952,9 @@ handlers.MP_ContainerOpResult = function(data)
         if player then
             pcall(function()
                 local left = op.n
+                local localId = worldmp.toLocal(op.itemId)
                 for _, item in ipairs(types.Actor.inventory(player):getAll()) do
-                    if item.recordId == op.itemId and left > 0 then
+                    if item.recordId == localId and left > 0 then
                         local take = math.min(left, item.count)
                         item:remove(take)
                         left = left - take
@@ -1264,6 +1275,7 @@ function objects.sendContainerOp(obj, op, itemId, n)
         dropOut('ContainerOpRequest', 'unaddressable', tostring(obj.recordId))
         return nil
     end
+    itemId = worldmp.toNet(itemId) -- net form: the Update echo names it in net form and consumes this op
     pendingOps[opCounter] = { op = op, itemId = itemId, n = n, key = refKeyOfObj(obj), obj = obj, at = core.getRealTime() }
     local body = { opId = opCounter, op = op, itemId = itemId, n = n, cellKey = cellKeyOfObj(obj) }
     for k, v in pairs(addr) do body[k] = v end

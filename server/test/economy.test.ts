@@ -307,3 +307,33 @@ test("a travel fare lands on the caravaner's purse from the destination cell", a
   await new Promise((r2) => setTimeout(r2, 200));
   assert.equal(a.inbox.events.filter((e) => e.name === 'ContainerOpResult').length, 0, 'a take from afar is still out of reach');
 });
+
+// A delta larger than the merchant's whole starting purse is not something the trade window
+// can produce. The cap stands (it is not refused); it is NOTED against the account, so a client
+// zeroing or filling a purse by hand shows on the moderation ledger (backlog 166).
+test('a gold delta beyond the merchant\'s starting purse is counted as an anomaly, a real trade is not', async (t) => {
+  const TOKEN = 'dash-token';
+  const server = await startServer({ requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
+    configOverride: { admin: { dashboardToken: TOKEN } } });
+  t.after(() => server.close());
+  const REF = { __refnum: { index: 94, contentFile: 0 } };
+  const a = await TestClient.connect(server.port);
+  t.after(() => a.close());
+  await a.joinAsNew('Alice');
+  await a.waitEvent('PlayerList');
+  a.sendCellChange('0,0', 0, 0, 0);
+  a.sendEvent('ContainerOpen', { ref: REF, cellKey: '0,0', contents: [], gold: 500 });
+  await a.waitEvent('ContainerState');
+  const anomalies = async () => {
+    const overview = await (await fetch(`http://127.0.0.1:${server.port}/admin/api/overview`, {
+      headers: { authorization: `Bearer ${TOKEN}` },
+    })).json() as { players: { account: string; anomalies: Record<string, number> }[] };
+    return overview.players.find((p) => p.account === 'alice')?.anomalies ?? {};
+  };
+  a.sendEvent('ContainerOpRequest', { ref: REF, cellKey: '0,0', opId: 1, op: 'gold', goldDelta: -500 });
+  assert.equal(((await a.waitEvent('ContainerOpResult')).value as { ok: boolean }).ok, true);
+  assert.deepEqual(await anomalies(), {}, 'selling the merchant out of his whole purse is a trade, not a flag');
+  a.sendEvent('ContainerOpRequest', { ref: REF, cellKey: '0,0', opId: 2, op: 'gold', goldDelta: 5000 });
+  assert.equal(((await a.waitEvent('ContainerOpResult')).value as { ok: boolean }).ok, true, 'the cap is unchanged: still applied');
+  assert.equal((await anomalies()).merchant_gold_delta, 1, 'a delta ten times the purse is noted against the account');
+});

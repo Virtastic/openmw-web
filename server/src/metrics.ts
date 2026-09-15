@@ -335,6 +335,10 @@ export const metrics = {
     new Counter('omwmp_contained_actions_total',
       'Actions refused in the shared world because the account is quarantined.', ['action']),
   ),
+  recordsRefused: reg(
+    new Counter('omwmp_records_refused_total',
+      'Custom records (RecordCreate) refused for a field beyond the vanilla caps.', []),
+  ),
   resumeNoPose: reg(
     new Counter('omwmp_resume_no_pose_total', 'Resumes that fell back to the stored doc position (rubber-band risk).', []),
   ),

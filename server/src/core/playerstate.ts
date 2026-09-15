@@ -650,12 +650,30 @@ export function handleAvatarItemStatesBatch(ctx: StateCtx, sender: Player, value
     const states = parseItemStatesL(tbl(e.get('itemStates')));
     if (Object.keys(states).length > MAX_INVENTORY) continue;
     p.peerItemStatesAt = now;
+    // PER FIELD, the mirror of the client->doc rule above. A wholesale replace refunded within
+    // one report interval what only the client spends: a cast-when-used charge (the avatar
+    // still held the pre-cast charge and reported it back), a repair likewise. Charge and
+    // condition can only go DOWN by a peer report (wear and cast-on-strike drain are the
+    // peer's); the soul is the peer's outright (the kill resolves in the avatar's gem).
+    // ponytail: a client raise (repair, recharge) that lands between two peer reports is
+    // clipped to the older figure once; a seq stamp on AvatarState would close that window.
+    const merged: Record<string, { condition?: number; charge?: number; soul?: string }[]> = {};
     ctx.store.update(p.charId, (doc) => {
-      if (Object.keys(states).length > 0) doc.itemStates = states;
+      const have = doc.itemStates ?? {};
+      for (const [rid, bucket] of Object.entries(states)) {
+        merged[rid] = bucket.map((theirs, i) => {
+          const mine = have[rid]?.[i] ?? {};
+          const out = { ...theirs };
+          if (theirs.charge !== undefined && mine.charge !== undefined) out.charge = Math.min(theirs.charge, mine.charge);
+          if (theirs.condition !== undefined && mine.condition !== undefined) out.condition = Math.min(theirs.condition, mine.condition);
+          return out;
+        });
+      }
+      if (Object.keys(merged).length > 0) doc.itemStates = merged;
       else delete doc.itemStates;
     }, 'sweep');
     const wire: Record<string, JsLike[]> = {};
-    for (const [rid, bucket] of Object.entries(states)) wire[rid] = bucket as JsLike[];
+    for (const [rid, bucket] of Object.entries(merged)) wire[rid] = bucket as JsLike[];
     p.peer.sendEvent('SelfItemStates', { itemStates: wire }); // bare name; the engine adds MP_
   }
 }

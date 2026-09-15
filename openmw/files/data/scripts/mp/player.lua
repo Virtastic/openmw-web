@@ -666,7 +666,9 @@ local function dispatch(cmd)
         -- because a merchant's gold only moves through a GUI a bot has no other way to open.
         -- Nearest-NPC rather than a hardcoded id so the scenario does not depend on which
         -- cell the harness happens to start in.
-        if cmd == 'barter:open' then
+        -- barter:open:<recordId> names the merchant instead (the one a dlg: lock was taken on).
+        local wantMerchant = cmd:match('^barter:open:(.+)$')
+        if cmd == 'barter:open' or wantMerchant then
             local best, bestD2 = nil, nil
             -- nearby.actors, NOT cell:getAll(). getAll is a GLOBAL-script API; a player script
             -- is local and does not have it, so this read `attempt to call a nil value (method
@@ -679,7 +681,8 @@ local function dispatch(cmd)
             -- it spans the LOADED cells rather than only the one the player stands in, so a
             -- merchant one cell over is still found.
             for _, obj in ipairs(nearby.actors) do
-                if types.NPC.objectIsInstance(obj) and not types.Player.objectIsInstance(obj) then
+                if types.NPC.objectIsInstance(obj) and not types.Player.objectIsInstance(obj)
+                    and (not wantMerchant or obj.recordId == wantMerchant) then
                     local okd, dead = pcall(function() return types.Actor.isDead(obj) end)
                     if okd and not dead then
                         local d2 = (obj.position - self.position):length2()
@@ -696,6 +699,20 @@ local function dispatch(cmd)
         end
         if cmd == 'barter:close' then
             pcall(function() I.UI.removeMode('Barter') end)
+        end
+        -- barter:sell:<recordId> / barter:buy:<recordId>: one item moves between the pack and
+        -- the barterTarget's inventory and the merchant's purse moves by its value -- what the
+        -- trade window does, on a bot that cannot click it. Global context, like give:/chest:,
+        -- because a local script cannot touch another actor's inventory. The live container
+        -- watch armed by barter:open reports the stock change; the purse delta goes on close.
+        local tradeDir, tradeId = cmd:match('^barter:(sell):(.+)$')
+        if not tradeDir then tradeDir, tradeId = cmd:match('^barter:(buy):(.+)$') end
+        if tradeDir then
+            if barterTarget and barterTarget:isValid() then
+                core.sendGlobalEvent('mpTestBarter', { merchant = barterTarget, id = tradeId, sell = tradeDir == 'sell' })
+            else
+                print('[mp] barter:' .. tradeDir .. ': no barter window open (barter:open first)')
+            end
         end
 
         -- HARNESS ONLY. Learns a dialogue topic and mirrors what this player knows, so a
@@ -1318,7 +1335,11 @@ return {
             end
             -- M6: leaving the dialogue window releases the NPC's conversation lock
             -- (PROTOCOL.md §M6: "released on close, cell change, or disconnect").
-            if data.oldMode == 'Dialogue' and data.newMode ~= 'Dialogue' then
+            -- A service window opened FROM the dialogue (Dialogue -> Barter -> Dialogue) is still
+            -- the same conversation: releasing on the Dialogue->Barter edge let a second player
+            -- open the merchant mid-trade and lost the bribe/admire made after the trade.
+            local function talking(m) return m == 'Dialogue' or GOLD_SERVICE_MODES[m] ~= nil end
+            if talking(data.oldMode) and not talking(data.newMode) then
                 core.sendGlobalEvent('mpDialogueClosed', {})
             end
             -- PAID SERVICES. `arg` is the actor the window belongs to (pushGuiMode passes it

@@ -17,6 +17,7 @@ import { WeatherRegions } from './weather';
 import type { CellStore, CellDoc } from '../persist/cellstore';
 import { RecordStore, RECORD_KINDS, type RecordKind, type CustomRecord } from '../persist/recordstore';
 import { log } from '../log';
+import { metrics } from '../metrics';
 
 const MAX_CELL_KEY = 128;
 // A DoS bound, not a gameplay bound. 1024 is inside what a thorough player explores across
@@ -46,6 +47,26 @@ const MAX_CUSTOM_RECORDS = 10_000;
 // is the shape it has always handled.
 const RECORDS_PER_SYNC = 128;
 const RESET_TICK_MS = 1_000;
+// RECORD BODIES ARE CLIENT-AUTHORED AND REPLAYED TO THE PEER, whose avatar then fights with them.
+// Nothing bounded the numbers: chopMaxDamage=9999 or Fortify Health 10000 for 10^6 s were stored
+// and handed to everyone. Capped at 4x the vanilla maxima -- generous for any honest mod, useless
+// for a cheat: the spellmaker/enchanter sliders stop at magnitude 100 per effect and duration
+// 1440 s, and the strongest retail weapons (Daedric claymore, Chrysamere) top out near 50 per
+// swing type.
+const MAX_EFFECT_MAGNITUDE = 4 * 100;
+const MAX_EFFECT_DURATION = 4 * 1440;
+const MAX_WEAPON_DAMAGE = 4 * 50;
+const DAMAGE_FIELDS = ['chopMinDamage', 'chopMaxDamage', 'slashMinDamage', 'slashMaxDamage', 'thrustMinDamage', 'thrustMaxDamage'];
+function recordWithinCaps(data: unknown): boolean {
+  if (!data || typeof data !== 'object') return true;
+  const d = data as Record<string, unknown>;
+  const over = (v: unknown, cap: number) => typeof v === 'number' && (v > cap || v < 0);
+  if (DAMAGE_FIELDS.some((f) => over(d[f], MAX_WEAPON_DAMAGE))) return false;
+  const effects = Array.isArray(d['effects']) ? d['effects'] as Record<string, unknown>[] : [];
+  return !effects.some((e) => e && typeof e === 'object'
+    && (over(e['magnitudeMin'], MAX_EFFECT_MAGNITUDE) || over(e['magnitudeMax'], MAX_EFFECT_MAGNITUDE)
+      || over(e['duration'], MAX_EFFECT_DURATION)));
+}
 
 export const M7_EVENTS = new Set([
   'WorldTimeRequest',
@@ -215,6 +236,13 @@ export class WorldM7 {
     const playerId = player.id;
     const accountKey = player.accountKey;
     const jsData = lToJs(data) as JsLike;
+    if (!recordWithinCaps(jsData)) {
+      // Same refusal as a malformed body: logged, counted, no ack (the client treats an
+      // unacked tempId as a failed creation).
+      metrics.recordsRefused.inc();
+      log('warn', 'records.dropped', { from: player.name, account: accountKey, kind, why: 'beyond caps' });
+      return;
+    }
     this.recordQueue = this.recordQueue
       .then(async () => {
         const record = await this.ctx.records.create(kind as RecordKind, jsData, accountKey);

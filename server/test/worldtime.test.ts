@@ -399,6 +399,29 @@ test('server-issued custom records', async (t) => {
   });
 });
 
+// Record bodies are client-authored and replayed to the peer, whose avatar fights with them.
+// A field beyond 4x the vanilla maximum (spellmaker magnitude 100, duration 1440 s, retail
+// weapon damage ~50) is a cheat, not a mod: refused like a malformed body (backlog 167).
+test('absurd record bodies are refused, sane ones minted', async (t) => {
+  const { server } = await boot(t);
+  const { c: a } = await join(server, 'Cheater');
+  await a.waitEvent('RecordsSync');
+  const { c: b } = await join(server, 'Peer');
+  await b.waitEvent('RecordsSync');
+  a.sendEvent('RecordCreate', { tempId: 11, kind: 'weapon', data: { name: 'godsword', chopMaxDamage: 9999 } });
+  a.sendEvent('RecordCreate', { tempId: 12, kind: 'spell', data: { name: 'immortality',
+    effects: [{ id: 'fortifyhealth', magnitudeMin: 10000, magnitudeMax: 10000, duration: 1000000 }] } });
+  a.sendEvent('RecordCreate', { tempId: 13, kind: 'weapon', data: { name: 'fine blade', chopMinDamage: 10, chopMaxDamage: 60 } });
+  a.sendEvent('RecordCreate', { tempId: 14, kind: 'spell', data: { name: 'big heal',
+    effects: [{ id: 'restorehealth', magnitudeMin: 100, magnitudeMax: 100, duration: 60 }] } });
+  await fence(a, b);
+  const acks = a.inbox.events.filter((e) => e.name === 'RecordCreateAck').map((e) => (e.value as { tempId: number }).tempId);
+  assert.deepEqual(acks, [13, 14], 'only the two within-cap records are acked');
+  assert.equal(b.inbox.events.filter((e) => e.name === 'RecordsSync').length, 2, 'the peer learns only those two');
+  a.close(); b.close();
+  await a.closed; await b.closed;
+});
+
 test('operator cell resets', async (t) => {
   const dataDir = tmpDataDir();
   const { server } = await boot(t, { cellReset: { cells: ['9,9'], intervalSec: 2 } }, dataDir);

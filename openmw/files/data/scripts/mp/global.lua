@@ -3155,6 +3155,27 @@ local eventHandlers = {
         if data and data.merchant then objects.onBarterOpen(data.merchant) end
     end,
     mpBarterClose = function() objects.onBarterClose() end,
+    -- HARNESS ONLY (player.lua barter:sell:/barter:buy:): one item crosses between the pack and
+    -- the merchant, and the merchant's purse moves by its value, as the trade window would.
+    mpTestBarter = function(data)
+        local player = playerScript()
+        local m = data and data.merchant
+        if not (player and m and m:isValid() and type(data.id) == 'string') then return end
+        local from = data.sell and types.Actor.inventory(player) or types.Actor.inventory(m)
+        local to = data.sell and types.Actor.inventory(m) or types.Actor.inventory(player)
+        local item = from:find(data.id)
+        if not item then
+            print('[mp] barter:' .. (data.sell and 'sell' or 'buy') .. ': ' .. data.id .. ' is not in the ' .. (data.sell and 'pack' or 'stock'))
+            return
+        end
+        local okv, value = pcall(function() return item.type.record(item).value end)
+        value = (okv and type(value) == 'number') and value or 0
+        pcall(function() (item.count > 1 and item:split(1) or item):moveInto(to) end)
+        pcall(function()
+            local gold = types.Actor.getBarterGold(m)
+            types.Actor.setBarterGold(m, math.max(0, gold + (data.sell and -value or value)))
+        end)
+    end,
     mpDialogueClosed = function()
         quests.releaseLock('windowclosed')
     end,
