@@ -23,6 +23,7 @@ import { fileURLToPath } from 'node:url';
 // away. The repo is the bind mount, so this lands on the host where a person can open it.
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
+export const diagnostic = true; // asserts nothing: reported as DIAG, not counted as a PASS
 export default async function run(ctx) {
   const a = await ctx.launchClient('map-look');
 

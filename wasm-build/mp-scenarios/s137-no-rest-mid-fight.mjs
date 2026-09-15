@@ -37,6 +37,8 @@ export default async function run(ctx) {
   const before = await canRest(a);
   assert.ok(before >= 0, `mp.canRest is not bound on this engine (${before})`);
   ctx.log(`rest verdict before the fight: ${before} (enemies-nearby bit ${(before & ENEMIES_NEARBY) ? 'SET' : 'clear'})`);
+  // The bit must be CLEAR before the fight, or the flip below is not this scenario's doing.
+  assert.equal(before & ENEMIES_NEARBY, 0, `enemies-nearby already set before any hit (verdict ${before}); the fight below proves nothing`);
 
   // Pick the fight: a light hit, so the creature turns on us rather than dying. The swing
   // goes to the peer, the peer's creature enters Combat with our avatar, companion.lua

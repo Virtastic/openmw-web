@@ -6,16 +6,21 @@
 // on a dead socket. Dying is the most ordinary thing that happens to a helper.
 import assert from 'node:assert/strict';
 import { startGatewayAndClient, addClient, grantLockerSession } from './_gateway.mjs';
+import { drown } from './_death.mjs';
 
+// The host's world spawns its own peer (the gateway config carries simPeer under
+// managedPeer, s128/s143): a peer-ruled world where the guest's body can actually drown.
+export const managedPeer = true;
 const STEP = 30_000;
 const GW_PORT = 19010; // ten apart from its neighbours (see s102)
 export const bootTimeoutMs = 420_000;
 const poseOf = async (c) => JSON.parse(await c.eval('window.omw.state.pose||"null"'));
 
 export default async function run(ctx) {
-  const host = await startGatewayAndClient(ctx, { gwPort: GW_PORT, name: 'die-host', ownId: 'priv-die-host' });
+  const BOOT = { retail: true, joinTimeoutMs: 420_000 }; // retail: the sea bed is in Morrowind.esm, and so is the peer's world
+  const host = await startGatewayAndClient(ctx, { gwPort: GW_PORT, name: 'die-host', ownId: 'priv-die-host', boot: BOOT });
   try {
-    const guest = await addClient(ctx, GW_PORT, { name: 'die-guest', ownId: 'priv-die-guest' });
+    const guest = await addClient(ctx, GW_PORT, { name: 'die-guest', ownId: 'priv-die-guest', boot: BOOT });
     const tag = String(ctx.runId).replace(/[^a-z0-9]/gi, '').slice(-6);
     const hostHandle = `dhost${tag}`, guestHandle = `dguest${tag}`;
     await host.client.cmd(`profile:die-host@example.com:${hostHandle}`);
@@ -39,21 +44,22 @@ export default async function run(ctx) {
     const worldUrl = String(await guest.client.eval('String(window.omw.state.publicStage||"")'));
     ctx.log("ok: the guest is in the host's world");
 
-    // Walk away from the spawn point first (the guest is placed beside the host, who stands on
-    // it), or the respawn is a move of zero units and proves nothing -- s22's lesson.
+    // The guest dies BY DAMAGE, on the world's own peer (backlog 241; sethp:0 was a client
+    // claim, and a peer-ruled world with no peer in the scenario proved nothing): drowned on
+    // the sea bed west of town -- which is also far from the spawn point, so the respawn is
+    // a visible move (s22's lesson).
     await guest.client.waitFor('Number(window.omw.state.hp||"0") > 0', STEP, 'the guest has health');
+    await guest.client.waitFor('Number(window.omw.state.puppetedActors||0) > 0', 300_000, "the host's world is peer-held around the guest");
     const at = await poseOf(guest.client);
-    await guest.client.cmd(`snapto:${Math.round(at.x + 900)},${Math.round(at.y)},${Math.round(at.z + 8)}`);
-    await ctx.sleep(3_000);
+    await drown(guest.client, ctx);
     const before = await poseOf(guest.client);
-    assert.ok(Math.hypot(before.x - at.x, before.y - at.y) > 500, 'the guest did not step away from the spawn point');
+    assert.ok(Math.hypot(before.x - at.x, before.y - at.y) > 500, 'the guest did not move away from the spawn point');
     const guestId = String(await guest.client.eval('window.omw.state.playerId'));
     const puppetDead = `((JSON.parse(window.omw.state.puppets||"{}")[${JSON.stringify(guestId)}]||{}).dead === true)`;
-    await guest.client.cmd('sethp:0');
     // THE HOST SEES IT: the puppet falls (the relayed bars hit zero) and gets up again with
     // the revive. Nobody asserted this before; a death that only the dying player saw is
     // half a death.
-    await host.client.waitFor(puppetDead, STEP, 'the host sees the guest fall');
+    await host.client.waitFor(puppetDead, 300_000, 'the host sees the guest drown (20 s of breath, then 3 hp/s on the peer)');
     // Respawn: moved, alive again, and STILL in the host's world with the host watching.
     let pose = before;
     const by = Date.now() + 90_000;

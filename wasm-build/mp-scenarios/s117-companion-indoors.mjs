@@ -9,6 +9,10 @@
 // do -- in one scenario.
 import assert from 'node:assert/strict';
 
+// THE SERVER'S OWN PEER: only the production lifecycle anchors an INTERIOR (s118). With a
+// hand-started peer the tradehouse had no holder and door:enter teleported by hook
+// (backlog 243) -- nothing here proved the room was simulated.
+export const managedPeer = true;
 const STEP = 30_000;
 const BOOT = { retail: true, joinTimeoutMs: 420_000 };
 const probeOf = async (c) => JSON.parse(await c.eval('window.omw.state.actorProbe||"{}"'));
@@ -41,6 +45,11 @@ export default async function run(ctx) {
   await a.waitFor(`String(window.omw.state.cell||"") !== ${JSON.stringify(outside)}`, STEP, 'A changed cell through the door');
   const inside = await cellOf(a);
   ctx.log(`A went ${outside} -> ${inside} via ${await a.eval('window.omw.state.doorEnter')}`);
+  // The room is SIMULATED: the peer holds it and A does not (s118's idiom). Without this a
+  // companion "inside" is A's own unsimulated copy.
+  await a.waitFor('String(window.omw.state.authorityHolder||"none") !== "none"', 120_000, 'the interior has a holder');
+  await a.waitFor('window.omw.state.isHolder === "false"', STEP, 'A does not hold it (the peer does)');
+  ctx.log(`the interior is held by ${await a.eval('window.omw.state.authorityHolder')}`);
   await a.waitFor(`Object.prototype.hasOwnProperty.call(JSON.parse(window.omw.state.actorProbe||"{}"), ${JSON.stringify(rec)})`, 60_000,
     `A's companion "${rec}" is in the interior with A`);
 

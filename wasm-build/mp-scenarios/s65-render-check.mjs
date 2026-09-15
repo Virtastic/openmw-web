@@ -18,6 +18,7 @@ const ROOT = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 export const bootTimeoutMs = 420_000;
 const BOOT = { retail: true, joinTimeoutMs: 420_000 };
 
+export const diagnostic = true; // asserts nothing: reported as DIAG, not counted as a PASS
 export default async function run(ctx) {
   if (!existsSync(join(ROOT, 'play', 'mwdata', 'Morrowind.esm'))) {
     ctx.log('SKIP: play/mwdata/Morrowind.esm absent (retail data required)');

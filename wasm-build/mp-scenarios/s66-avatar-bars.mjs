@@ -76,18 +76,22 @@ export default async function run(ctx) {
     STEP_TIMEOUT, 'attacker is puppeting the victim (hitp needs a puppet to intercept)');
   ctx.log(`victim id=${victimId}; attacker puppets it and pvp is on; hitting`);
 
-  // Repeat until the peer-reported bars drop: one hit can race the input-tier warmup.
+  // Repeat until the peer-reported bars drop BELOW WHERE THEY STOOD: one hit can race the
+  // input-tier warmup, and a character already under full (a landing scratch) must not
+  // count as hit.
+  const parse = (s) => { const m = /^(\d+)\/(\d+)$/.exec(String(s ?? '')); return m ? Number(m[1]) : null; };
+  await victim.waitFor('String(window.omw.state.selfStats||"").indexOf("/") > 0', STEP_TIMEOUT, 'the peer reports the victim\'s bars');
+  const before = parse(await victim.eval('window.omw.state.selfStats'));
   const hitUntil = Date.now() + 45_000;
   let dropped = false;
   while (Date.now() < hitUntil && !dropped) {
     await attacker.cmd(`hitp:${victimId}:15`);
     await ctx.sleep(1500);
-    const s = String(await victim.eval('window.omw.state.selfStats') ?? '');
-    const m = /^(\d+)\/(\d+)$/.exec(s);
-    if (m && Number(m[1]) < Number(m[2])) dropped = true;
+    const cur = parse(await victim.eval('window.omw.state.selfStats'));
+    if (cur !== null && cur <= before - 1) dropped = true;
   }
   const marker = await victim.eval('window.omw.state.selfStats');
-  ctx.log(`selfStats=${marker}`);
+  ctx.log(`selfStats before=${before} after=${marker}`);
   assert.ok(dropped,
     'the peer-reported bars never dropped: either the PvP hit was not routed to the peer '
     + '(4B) or the avatar bar report never reached the owner (4A). selfStats=' + String(marker));

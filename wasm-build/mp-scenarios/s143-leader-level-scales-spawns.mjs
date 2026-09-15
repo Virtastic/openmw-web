@@ -70,15 +70,15 @@ export default async function run(ctx) {
       `the peer never learned the leader's level (saw: ${party.join(' || ') || 'nothing'})`);
     assert.ok(!party.some((l) => /party level -> 1 /.test(l) && party.indexOf(l) === party.length - 1),
       'the party level fell back to 1 -- the leader stopped being tracked');
-    // A levelled roll observed after the level was set must use it, never a lower tier. Rolls
-    // fire on cell load, whose timing races the join, so seeing one is best-effort; using the
-    // wrong level when we do see one is not.
+    // A levelled roll observed after the level was set must use it, never a lower tier. The
+    // guest waited for a named creature beside them, so at least one roll happened in this
+    // world after the level was set; the roll assert used to sit inside an `if` and pass on
+    // an empty list (backlog 240).
     const leaderRolls = rolls.filter((l) => /party leader/.test(l));
-    if (leaderRolls.length > 0) {
-      ctx.log(`observed ${leaderRolls.length} roll(s) at the leader's level`);
-      assert.ok(leaderRolls.every((l) => new RegExp(`rolled at level ${HOST_LEVEL} `).test(l)),
-        `a roll used a level other than the host's ${HOST_LEVEL}: ${leaderRolls.join(' || ')}`);
-    }
+    assert.ok(leaderRolls.length > 0, `no levelled roll at the party leader's level was logged (rolls: ${rolls.join(' || ') || 'none'})`);
+    ctx.log(`observed ${leaderRolls.length} roll(s) at the leader's level`);
+    assert.ok(leaderRolls.every((l) => new RegExp(`rolled at level ${HOST_LEVEL} `).test(l)),
+      `a roll used a level other than the host's ${HOST_LEVEL}: ${leaderRolls.join(' || ')}`);
     ctx.log(`PASS: the world scales to the host's level ${HOST_LEVEL} (the peer applied it), not the level-1 helper's`);
   } finally {
     host.stop();

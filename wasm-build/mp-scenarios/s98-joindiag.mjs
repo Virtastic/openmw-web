@@ -4,6 +4,7 @@
 // handshake, which a boot-only check cannot distinguish.
 export const bootTimeoutMs = 420_000;
 
+export const diagnostic = true; // asserts nothing: reported as DIAG, not counted as a PASS
 export default async function run(ctx) {
   // Wait only for the engine to be up (it has reported a session state), NOT for Joined — the whole point
   // is to observe how far the session actually gets.

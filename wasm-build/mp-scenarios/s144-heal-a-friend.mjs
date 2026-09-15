@@ -8,6 +8,7 @@
 // diverted like damage, cross the PvP veto (help, not harm), and land on the wounded player's
 // avatar on the peer. PvP OFF here on purpose: healing must work in the ordinary friendly game.
 import assert from 'node:assert/strict';
+import { prepareCast, castAt, HEAL_COMPANION } from './_spell.mjs';
 
 const STEP = 30_000;
 const BOOT = { retail: true, joinTimeoutMs: 420_000 };
@@ -36,19 +37,26 @@ export default async function run(ctx) {
   await hurt.waitFor(`Number(String(window.omw.state.selfStats||"0/0").split("/")[1]) >= ${targetMax - 2}`, STEP, 'the max rose so there is room to heal');
   const before = parseBars(await hurt.eval('window.omw.state.selfStats'));
   assert.ok(before.c < before.b - 20, `the wound never opened a gap (${before.c}/${before.b})`);
-  ctx.log(`hurt id=${hurtId}, bars ${before.c}/${before.b}; the helper casts Restore Health`);
+  // A REAL CAST (backlog 242): Heal Companion on touch from beside the friend's puppet. The
+  // healp: hook parked a Restore Health on the puppet and never went through the engine's
+  // own cast, so it stayed green with that path broken.
+  const puppetOf = `(JSON.parse(window.omw.state.puppets||"{}")[${JSON.stringify(String(hurtId))}]||{})`;
+  const at = JSON.parse(await helper.eval(`JSON.stringify(${puppetOf})`));
+  await helper.cmd(`snapto:${Math.round(at.x + 60)},${Math.round(at.y)},${Math.round(at.z + 8)}`);
+  await ctx.sleep(3_000);
+  await prepareCast(helper, ctx, HEAL_COMPANION, 'restoration');
+  ctx.log(`hurt id=${hurtId}, bars ${before.c}/${before.b}; the helper casts ${HEAL_COMPANION} at the puppet`);
 
   // The helper heals them, repeatedly (a heal spell is small; several top the pool up).
   const deadline = Date.now() + 90_000;
-  let bars = before, healed = false;
+  let bars = before, healed = false, casts = 0;
   while (Date.now() < deadline && !healed) {
-    await helper.cmd(`healp:${hurtId}`);
-    await ctx.sleep(2_000);
+    const p = JSON.parse(await helper.eval(`JSON.stringify(${puppetOf})`));
+    await castAt(helper, ctx, p); casts++;
     bars = parseBars(await hurt.eval('window.omw.state.selfStats')) || bars;
     healed = bars.c > before.c + 1; // rose beyond noise
   }
-  ctx.log(`hurt bars after: ${bars.c}/${bars.b}; helper castAt=${await helper.eval('window.omw.state.castAt')} spellFwd=${await helper.eval('window.omw.state.spellFwd')}`);
-  assert.ok(String(await helper.eval('window.omw.state.castAt')).startsWith('cast:'), 'the helper never cast the heal (no Restore Health spell resolved?)');
+  ctx.log(`hurt bars after ${casts} cast(s): ${bars.c}/${bars.b}; helper spellFwd=${await helper.eval('window.omw.state.spellFwd')} stance=${await helper.eval('window.omw.state.stance')}`);
   assert.ok(healed, `the hurt player's health never rose from the heal (${before.c} -> ${bars.c}): the beneficial spell did not reach their avatar, or was vetoed by PvP-off`);
   assert.ok(bars.c <= bars.b, 'a heal must not push health past the maximum');
   ctx.log(`PASS: a helper healed a friend with PvP off (${before.c} -> ${bars.c} / ${bars.b})`);

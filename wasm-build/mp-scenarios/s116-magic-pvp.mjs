@@ -7,6 +7,7 @@
 // the peer because the victim is driving, and the peer applies it to the victim's avatar --
 // whose bars come back to the victim as SelfStats. PvP on.
 import assert from 'node:assert/strict';
+import { prepareCast, castAt, FIRE_BITE } from './_spell.mjs';
 
 export const serverRules = `
 [content]
@@ -27,18 +28,26 @@ export default async function run(ctx) {
   const victimId = Number(await victim.eval('window.omw.state.playerId'));
   await attacker.waitFor('window.omw.state.pvp === "true"', STEP, 'attacker sees pvp enabled');
   await attacker.waitFor(`Object.keys(JSON.parse(window.omw.state.puppets||"{}")).includes(String(${victimId}))`, STEP, 'attacker puppets the victim');
+  // A REAL CAST (backlog 242): Fire Bite on touch, from beside the victim's puppet. The
+  // castp: hook parked the effect straight onto the puppet and stayed green with the
+  // engine's own cast path dead.
+  const puppetOf = `(JSON.parse(window.omw.state.puppets||"{}")[${JSON.stringify(String(victimId))}]||{})`;
+  const at = JSON.parse(await attacker.eval(`JSON.stringify(${puppetOf})`));
+  await attacker.cmd(`snapto:${Math.round(at.x + 60)},${Math.round(at.y)},${Math.round(at.z + 8)}`);
+  await ctx.sleep(3_000);
+  await prepareCast(attacker, ctx, FIRE_BITE, 'destruction');
   const before = parseBars(await victim.eval('window.omw.state.selfStats'));
-  ctx.log(`victim id=${victimId}, bars ${before.c}/${before.b}; casting`);
+  ctx.log(`victim id=${victimId}, bars ${before.c}/${before.b}; the attacker casts ${FIRE_BITE} at the puppet`);
 
-  const deadline = Date.now() + 60_000;
-  let bars = null, dropped = false;
+  const deadline = Date.now() + 90_000;
+  let bars = null, dropped = false, casts = 0;
   while (Date.now() < deadline && !dropped) {
-    await attacker.cmd(`castp:${victimId}:15`);
-    await ctx.sleep(1_500);
+    const p = JSON.parse(await attacker.eval(`JSON.stringify(${puppetOf})`));
+    await castAt(attacker, ctx, p); casts++;
     bars = parseBars(await victim.eval('window.omw.state.selfStats'));
-    dropped = !!bars && bars.c < before.c;
+    dropped = !!bars && bars.c <= before.c - 1;
   }
-  ctx.log(`victim bars after: ${bars ? bars.c + '/' + bars.b : 'none'}; attacker castAt=${await attacker.eval('window.omw.state.castAt')} magicFwd=${await attacker.eval('window.omw.state.magicFwd')} spellFwd=${await attacker.eval('window.omw.state.spellFwd')}`);
-  assert.ok(dropped, 'the victim\'s peer-reported bars never dropped from a spell: the magic path to another player is broken somewhere between the parked effect and the avatar');
+  ctx.log(`victim bars after ${casts} cast(s): ${bars ? bars.c + '/' + bars.b : 'none'}; attacker magicFwd=${await attacker.eval('window.omw.state.magicFwd')} spellFwd=${await attacker.eval('window.omw.state.spellFwd')} stance=${await attacker.eval('window.omw.state.stance')}`);
+  assert.ok(dropped, 'the victim\'s peer-reported bars never dropped from a real cast: the cast fizzled, missed the puppet, or the magic path to another player is broken between the puppet seam and the avatar');
   ctx.log(`ok: a spell at another player landed on their avatar (${before.c} -> ${bars.c})`);
 }

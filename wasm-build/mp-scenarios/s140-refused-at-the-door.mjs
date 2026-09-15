@@ -37,6 +37,9 @@ export default async function run(ctx) {
     const acct = JSON.parse(await guest.client.eval("window.omw.state.friends||'[]'"))[0].acct;
     await guest.client.cmd(`joinfriend:${acct}`);
     await guest.client.waitFor('String(window.omw.state.switchTo||"") !== "" || String(window.omw.state.state||"") !== "Joined"', STEP, 'the guest is on their way (the switch began)');
+    // Clear the party-mode result first: the wait below matched the STALE SetWorldMode from
+    // the party flip and never proved the private flip was answered (backlog 240).
+    await host.client.eval("if (window.omw.state) window.omw.state.socialResult = ''; 'cleared';");
     await host.client.cmd('worldmode:private');
     await host.client.waitFor(`JSON.parse(window.omw.state.socialResult||'{}').op === 'SetWorldMode'`, STEP, 'solo');
     ctx.log('the host went solo while the guest was rebooting into their world');

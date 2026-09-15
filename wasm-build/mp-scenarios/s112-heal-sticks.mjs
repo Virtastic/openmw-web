@@ -32,15 +32,18 @@ export default async function run(ctx) {
   await a.cmd(`snapto:${Math.round(p.x + 60)},${Math.round(p.y)},${Math.round(p.z + 8)}`);
   await ctx.sleep(3_000);
 
-  // Get hurt (s110's chain), then walk away so the bite stops.
+  // Get hurt (s110's chain), then walk away so the bite stops. Measured against the bars
+  // BEFORE the poke, not the base: a landing scratch must not read as the bite.
+  await a.waitFor('String(window.omw.state.selfStats||"").indexOf("/") > 0', 30_000, 'the peer reports the bars');
+  const start = await bars(a);
   let hurt = null, pokes = 0;
   const deadline = Date.now() + 120_000;
-  while (Date.now() < deadline && !(hurt && hurt.c < hurt.b)) {
+  while (Date.now() < deadline && !(hurt && hurt.c <= start.c - 1)) {
     if (pokes < 3) { await a.cmd(`hitn:${victim}:1`); pokes++; }
     await ctx.sleep(2_000);
     hurt = await bars(a);
   }
-  assert.ok(hurt && hurt.c < hurt.b, `never got hurt (selfStats=${JSON.stringify(hurt)}); s110 covers this`);
+  assert.ok(hurt && hurt.c <= start.c - 1, `never got hurt (selfStats ${start.c}/${start.b} -> ${JSON.stringify(hurt)}); s110 covers this`);
   await a.cmd(`snapto:${Math.round(p.x + 2500)},${Math.round(p.y)},${Math.round(p.z + 8)}`);
   await ctx.sleep(4_000);
   const before = await bars(a);

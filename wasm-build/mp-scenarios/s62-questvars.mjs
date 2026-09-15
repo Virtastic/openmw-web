@@ -84,7 +84,9 @@ export default async function run(ctx) {
   const [sa, sb] = await Promise.all([jsonOf(a, 'cellScripted'), jsonOf(b, 'cellScripted')]);
   const rec = Object.keys(sa).sort().find((r) => sb[r] && sb[r] === sa[r]);
   if (!rec) {
-    ctx.log(`SKIP MemberVarUpdate: no scripted object shared by both cells (A=${Object.keys(sa).length}, B=${Object.keys(sb).length})`);
+    // note:, not SKIP: the rest of this scenario ran and asserted; a mid-run SKIP line made
+    // the harness report the whole thing as not run (backlog 244).
+    ctx.log(`note: MemberVarUpdate branch not exercised -- no scripted object shared by both cells (A=${Object.keys(sa).length}, B=${Object.keys(sb).length})`);
   } else {
     const varName = sa[rec];
     ctx.log(`member var: "${rec}".${varName}`);

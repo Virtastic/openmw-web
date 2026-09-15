@@ -74,6 +74,9 @@ export default async function run(ctx) {
   }
   assert.ok(cur.c < start.c - 1, `${HOLD_S} s under water cost nothing (${start.c} -> ${cur.c}): drowning never reached the ruling body`);
   assert.ok(cur.c > 0, 'the bot must not die here');
+  // ONLY DROWNING COUNTS: fHoldBreathTime is 20 s, so a loss inside the first 15 s is a
+  // slaughterfish, a fall on the snap, anything but the water (the s999 control's check).
+  assert.ok(firstHurtAt >= 15_000, `hurt at t+${Math.round(firstHurtAt / 1000)}s, before the breath ran out -- that was not drowning`);
   const lost = start.c - cur.c;
   assert.ok(Math.abs(local - cur.c) <= Math.max(3, lost * 0.5),
     `client ${local} vs peer ${cur.c} (lost ${lost}): one side drowned twice`);

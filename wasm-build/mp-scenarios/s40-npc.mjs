@@ -150,20 +150,8 @@ export default async function run(ctx) {
     ctx.log(`diag(non-holder): puppetedActors=${pk} actorBatchesIn=${bi} actorCount=${ac} authorityHolder=${ah} isHolder=${ih}`);
   }
   assert.ok(shared.length >= 3, `expected >=3 shared NPCs, got ${shared.length}`);
-  // Convergence is a TIMING measurement: both clients must render and interpolate in real
-  // time for puppets to track. On a contended host they cannot, and failing here reports a
-  // product defect for what is a busy box — the same way s42 was manufacturing failures
-  // before it got this gate. Observed directly: the same build measured 552 units at host
-  // load ~122 and 167 at a quieter moment, with no Lua errors and the actor stream flowing
-  // in both.
-  //
-  // SKIPPED, not softened. CONVERGE_EPS is unchanged, and a miss on an idle box still fails
-  // loudly, because there it really is a defect.
-  if (worst >= CONVERGE_EPS && hostLoad > 12) {
-    ctx.log(`SKIP: convergence ${worst.toFixed(1)} units at host load ${hostLoad.toFixed(1)} `
-      + '— the box cannot support this measurement. Re-run when idle.');
-    return;
-  }
+  // A DIVERGENCE FAILS, WHATEVER THE LOAD (backlog 244: the load-12 SKIP hid real
+  // divergences on a busy builder). The load average stays in the message as context.
   assert.ok(worst < CONVERGE_EPS,
     `puppet NPCs did not converge: ${worst.toFixed(1)} units at host load ${hostLoad.toFixed(1)}`);
 

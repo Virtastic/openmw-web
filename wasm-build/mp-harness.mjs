@@ -830,14 +830,23 @@ for (const file of files) {
   // Hoisted out of the try: the scenario module is imported inside it, but the result is
   // recorded after the finally, where that binding is out of scope.
   let isCritical = false;
+  // `export const diagnostic = true`: the scenario asserts nothing (a screenshot, a boot
+  // trace). Reported on its own line, never counted as a PASS -- four of them were.
+  let isDiagnostic = false;
+  // `export const allowLuaErrors = true`: a scenario that knowingly tolerates a throwing
+  // handler says so. Otherwise a Lua error on either engine FAILS the scenario (it used to be
+  // printed and forgotten; the last sweep carried one, s125's mpPuppetDetached).
+  let luaErrorsAllowed = false;
   const childLogs = []; // scenario-spawned processes (gateways), dumped on failure
   const peerBufs = []; // every sim peer's full stdout (ctx.peerLogTail)
   let ceilingTimer; // the per-scenario ceiling, cleared in the finally
   console.log(`\n=== scenario ${file} ===`);
   try {
     // Import first: a scenario may declare server rules it needs (e.g. pvp = true).
-    const { default: run, serverRules, serverEnv, critical, managedPeer } = await import(pathToFileURL(join(SCENARIO_DIR, file)));
+    const { default: run, serverRules, serverEnv, critical, managedPeer, diagnostic, allowLuaErrors } = await import(pathToFileURL(join(SCENARIO_DIR, file)));
     isCritical = !!critical;
+    isDiagnostic = !!diagnostic;
+    luaErrorsAllowed = !!allowLuaErrors;
     const envForRun = typeof serverEnv === 'function' ? serverEnv(RUN_ID) : (serverEnv ?? {});
     server = await startGameServer(serverRules, envForRun, { managedPeer: !!managedPeer });
     // A CEILING PER SCENARIO. run() was awaited bare: a scenario looping on a cheap eval with
@@ -899,6 +908,8 @@ for (const file of files) {
       childLogTail: (label, n = 6000) => childLogs.filter((c) => c.label === label && c.full).map((c) => c.full(n)).join(NL),
       serverDataDir: server.dataDir,
       serverStatus: server.status,
+      // The server's own stdout: the one place a death is undeniable (respawn.sent).
+      serverLogTail: (n = 400) => server.logTail(n),
       serverKill: server.kill,
       sleep,
       log: (...a) => {
@@ -984,12 +995,19 @@ for (const file of files) {
         + ' a throwing handler disables its whole subsystem even when the run passes:');
       for (const l of luaErrs.slice(0, 5)) console.error('  ' + l.trim());
     }
+    // A LUA ERROR IS A FAILURE (client or peer) unless the scenario exports allowLuaErrors.
+    // Printed-and-green normalised a dead subsystem for weeks (s125 in #91).
+    if (!err && !luaErrorsAllowed && (luaErrs.length || peerLuaErrs.length)) {
+      err = new Error(`${luaErrs.length} client + ${peerLuaErrs.length} peer Lua error(s) during the scenario`
+        + ` (export allowLuaErrors = true to tolerate them knowingly):\n`
+        + [...luaErrs, ...peerLuaErrs].slice(0, 5).map((l) => '  ' + l.trim()).join('\n'));
+    }
     await Promise.all(clients.map((c) => c.close()));
     server?.stop();
   }
   const secs = ((Date.now() - t0) / 1000).toFixed(1);
   // A scenario that FAILED is a failure even if it logged a skip on the way out.
-  results.push({ file, ok: !err, secs, skip: err ? null : skipReason, critical: isCritical });
+  results.push({ file, ok: !err, secs, skip: err ? null : skipReason, critical: isCritical, diagnostic: isDiagnostic });
   if (err) {
     console.error(`FAIL ${file} (${secs}s):\n${err.stack || err}`);
     const srv = server?.logTail?.();
@@ -1000,20 +1018,23 @@ for (const file of files) {
     }
   }
   else if (skipReason !== null) console.log(`SKIP ${file} (${secs}s): ${skipReason}`);
+  else if (isDiagnostic) console.log(`DIAG ${file} (${secs}s): ran, asserts nothing`);
   else console.log(`PASS ${file} (${secs}s)`);
 }
 play.stop();
 
 console.log('\n=== mp-harness summary ===');
+const verdictOf = (r) => !r.ok ? 'FAIL' : (r.skip !== null ? 'SKIP' : (r.diagnostic ? 'DIAG' : 'PASS'));
 for (const r of results) {
-  const verdict = !r.ok ? 'FAIL' : (r.skip !== null ? 'SKIP' : 'PASS');
-  console.log(`${verdict}  ${r.file}  (${r.secs}s)` + (r.skip !== null ? `  -- ${r.skip}` : ''));
+  console.log(`${verdictOf(r)}  ${r.file}  (${r.secs}s)` + (r.skip !== null ? `  -- ${r.skip}` : ''));
 }
-const passed = results.filter((r) => r.ok && r.skip === null).length;
+const passed = results.filter((r) => verdictOf(r) === 'PASS').length;
 const skipped = results.filter((r) => r.ok && r.skip !== null);
+const diagnostics = results.filter((r) => verdictOf(r) === 'DIAG');
 const failed = results.filter((r) => !r.ok).length;
 console.log(``);
-console.log(`${passed} passed, ${failed} failed, ${skipped.length} SKIPPED (did not run)`);
+console.log(`${passed} passed, ${failed} failed, ${skipped.length} SKIPPED (did not run), ${diagnostics.length} diagnostic (ran, assert nothing)`);
+if (diagnostics.length) console.log(`diagnostic: ${diagnostics.map((r) => r.file).join(' ')}`);
 if (skipped.length) {
   // Repeated at the very bottom, because a per-line SKIP scrolls past and a bare count reads
   // as a footnote. What did NOT run is exactly what a reader is most likely to mistake for
@@ -1034,5 +1055,13 @@ if (criticalFails.length) {
   for (const r of criticalFails) console.log(`  ${r.file}`);
   console.log(`  A critical scenario proves something no other scenario covers. Fix this first;`);
   console.log(`  passes elsewhere do not mean the build is playable.`);
+}
+// A SKIP IS NOT OK. The exit code read ok = !err, so a sweep where half the suite never ran
+// came back green (#114). OMW_ALLOW_SKIP=1 is for a deliberately partial box (no peer binary,
+// no retail data) and says so in the log.
+if (skipped.length && process.env.OMW_ALLOW_SKIP !== '1') {
+  console.log(``);
+  console.log(`exit 1: ${skipped.length} scenario(s) skipped (set OMW_ALLOW_SKIP=1 to accept a partial run)`);
+  process.exit(1);
 }
 process.exit(results.every((r) => r.ok) ? 0 : 1);

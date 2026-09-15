@@ -202,8 +202,6 @@ export default async function run(ctx) {
           await ctx.sleep(2000);
         }
         if (last < want) {
-          // SKIPPED, NOT SOFTENED -- the same rule s40 and s42 use, and for the same reason.
-          //
           // The bots are `npx tsx` processes competing with a browser client that is ALREADY
           // rendering this crowd at 1 fps under software rasterisation, and a bot starved past
           // the server's 45 s hello deadline dies with "socket closed while waiting for json
@@ -217,15 +215,11 @@ export default async function run(ctx) {
           //
           // On a box that is keeping up, a short roster is still a REAL delivery gap and still
           // fails loudly here.
+          // (backlog 244: the saturated-client SKIP is gone; a short roster fails, and the
+          // last row's fps/load travel in the message as context.)
           const prev = rows[rows.length - 1];
-          if (prev && prev.fps <= 2) {
-            ctx.log(`SKIP: roster reached ${best}/${want} while the client was already saturated `
-              + `at ${prev.fps} fps (${prev.frameMs}ms frames, host load ${prev.load}) with `
-              + `${prev.n} avatars — the box cannot populate this step. The ramp up to ${prev.n} `
-              + 'was clean. Re-run on a GPU box for the full table.');
-            return;
-          }
-          throw new Error(`roster reached ${best}/${want} OTHER players and stopped there.`
+          throw new Error(`roster reached ${best}/${want} OTHER players and stopped there`
+            + (prev ? ` (last step: ${prev.n} avatars at ${prev.fps} fps, host load ${prev.load}).` : '.')
             + ` Self is excluded from this count, so this is a real delivery gap -- compare`
             + ` against the server log, which names every player it accepted.`);
         }

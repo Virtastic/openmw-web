@@ -26,6 +26,7 @@ import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { prepareCast, castAt, FIRE_BITE } from './_spell.mjs';
 
 const ROOT = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 export const bootTimeoutMs = 420_000;
@@ -78,52 +79,58 @@ export default async function run(ctx) {
   }
 
   const [pa, pb] = await Promise.all([probeOf(a), probeOf(b)]);
-  // CAST AT EVERY shared NPC, not one picked in advance. Only actors the caster is PUPPETING
-  // exercise the path under test — the engine skips its local application for those and parks
-  // the effect — and which of a cell's actors are puppeted is not something the probe reports.
-  // Betting on a single record picked an unpuppeted mudcrab once and proved nothing.
-  const victims = Object.keys(pa).filter((r) => r !== 'player' && pb[r]
+  // ONE living, unguarded NPC both clients see; the caster stands beside it. With the peer
+  // holding the cell every actor here is a puppet on the caster, so a touch cast lands on
+  // the seam under test.
+  const victims = Object.keys(pa).filter((r) => r !== 'player' && pb[r] && !pa[r].guard
     && pa[r].dead !== true && pb[r].dead !== true);
   assert.ok(victims.length > 0, 'need at least one living NPC visible to both clients');
-  ctx.log(`casting at ${victims.length} shared NPCs: ${victims.slice(0, 4).join(', ')}...`);
+  const victim = victims[0];
+  const target = async () => (await probeOf(a))[victim] || pa[victim];
+  const p0 = await target();
+  await a.cmd(`snapto:${Math.round(p0.x + 60)},${Math.round(p0.y)},${Math.round(p0.z + 8)}`);
+  await ctx.sleep(3_000);
+  // A REAL CAST (backlog 242): Fire Bite on touch, the spell stance and the use key on the
+  // caster's own engine. The castat: hook parked the effect on the puppet directly and
+  // stayed green with spelleffects.cpp's own path dead.
+  await prepareCast(a, ctx, FIRE_BITE, 'destruction');
+  ctx.log(`casting ${FIRE_BITE} at "${victim}" from beside it (of ${victims.length} shared NPCs)`);
 
-  // CAST, repeatedly. Every one of these goes through spelleffects.cpp on the caster's client,
-  // where the target is a puppet — so nothing is applied locally and the effect is forwarded to
-  // the peer that owns it. If that chain is broken the NPC simply never dies, which is exactly
-  // what "casting does nothing" looked like in play.
-  const anyDead = async (c) => {
-    const p = JSON.parse(await c.eval('window.omw.state.actorProbe||"{}"'));
-    return victims.find((r) => p[r] && p[r].dead === true) ?? null;
-  };
-  const castDeadline = Date.now() + 120_000;
-  let died = null;
+  // CAST, repeatedly, re-aimed at where the mark stands now. Every cast goes through
+  // spelleffects.cpp on the caster's client, where the target is a puppet — so nothing is
+  // applied locally and the effect is forwarded to the peer that owns it. If that chain is
+  // broken the NPC simply never dies, which is exactly what "casting does nothing" looked like.
+  const deadExpr = `((JSON.parse(window.omw.state.actorProbe||"{}")[${JSON.stringify(victim)}]||{}).dead === true)`;
+  const castDeadline = Date.now() + 150_000;
+  let died = false, casts = 0;
   while (Date.now() < castDeadline && !died) {
-    for (const v of victims) {
-      await a.eval(`window.omw.send(${JSON.stringify('castat:' + v + ':40')})`);
-      await ctx.sleep(350);
+    const p = await target();
+    const me = JSON.parse(await a.eval('window.omw.state.pose||"{}"'));
+    if (Math.hypot(p.x - me.x, p.y - me.y) > 120) { // it walked off: step back beside it
+      await a.cmd(`snapto:${Math.round(p.x + 60)},${Math.round(p.y)},${Math.round(p.z + 8)}`);
+      await ctx.sleep(2_000);
     }
-    died = (await anyDead(a)) ?? (await anyDead(b));
+    await castAt(a, ctx, p); casts++;
+    died = (await a.eval(deadExpr)) === true || (await b.eval(deadExpr)) === true;
   }
-  const victim = died;
   if (!died) {
     // Where did the chain stop? Each stage mirrors its own outcome, so one run says which.
     for (const c of [a, b]) {
-      const [castAt, mark, fwd, sf] = await Promise.all([
-        c.eval('window.omw.state.castAt'),
+      const [mark, fwd, sf, st] = await Promise.all([
         c.eval('window.omw.state.puppetMark'),
         c.eval('window.omw.state.magicFwd'),
         c.eval('window.omw.state.spellFwd'),
+        c.eval('window.omw.state.stance'),
       ]);
-      ctx.log(`  ${c.name}: castAt=${castAt} puppetMark=${mark} magicFwd=${fwd} spellFwd=${sf}`);
+      ctx.log(`  ${c.name}: puppetMark=${mark} magicFwd=${fwd} spellFwd=${sf} stance=${st} probe=${JSON.stringify((await probeOf(c))[victim])}`);
     }
   }
   assert.ok(died,
-    'the NPC never died from spell damage: casting is not reaching the cell owner, which is the '
+    `"${victim}" never died from ${casts} real cast(s): the cast fizzled, missed, or is not reaching the cell owner -- the `
     + '"my spells do nothing" failure this scenario exists for');
   ctx.log(`ok: "${victim}" died from spell damage routed through the cell owner`);
 
   // Authored by the peer, so it must reach BOTH players — not just the caster.
-  const deadExpr = `((JSON.parse(window.omw.state.actorProbe||"{}")[${JSON.stringify(victim)}]||{}).dead === true)`;
   await a.waitFor(deadExpr, STEP_TIMEOUT, 'NPC dead on the caster');
   await b.waitFor(deadExpr, STEP_TIMEOUT, 'NPC dead on the watcher');
   ctx.log('ok: both players saw the spell kill');

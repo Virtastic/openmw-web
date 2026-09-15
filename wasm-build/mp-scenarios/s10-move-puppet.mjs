@@ -62,19 +62,9 @@ export default async function run(ctx) {
   const hostLoad = os.loadavg()[0];
   ctx.log(`puppet-of-A on B: final error ${err.toFixed(1)} units (best ${best.toFixed(1)}) `
     + `at host load ${hostLoad.toFixed(1)}`);
-  // SKIPPED, NOT SOFTENED -- the same gate s40 and s42 carry, and this is the same measurement
-  // they make. Convergence is a race between a 2 Hz mirror and a box that may be busy: this
-  // scenario passes solo and failed in-suite while its two siblings self-skipped on the SAME
-  // run (s40 at 2178 units), which is the box talking, not the product. It was the only member
-  // of the family without the gate.
-  //
-  // CONVERGE_EPS is untouched: a miss on an idle box still fails loudly, because there it
-  // really is a defect.
-  if (err >= CONVERGE_EPS && hostLoad > 12) {
-    ctx.log(`SKIP: convergence ${err.toFixed(1)} units (best ${best.toFixed(1)}) at host load `
-      + `${hostLoad.toFixed(1)} — the box cannot support this measurement. Re-run when idle.`);
-    return;
-  }
+  // A DIVERGENCE FAILS, WHATEVER THE LOAD. This used to SKIP above load 12, and a loaded
+  // builder turned every real divergence into "did not run" (backlog 244). The load average
+  // is printed as context for the reader, not consulted for the verdict.
   assert.ok(err < CONVERGE_EPS,
     `puppet did not converge: ${err.toFixed(1)} units (eps ${CONVERGE_EPS}) at host load `
     + hostLoad.toFixed(1));

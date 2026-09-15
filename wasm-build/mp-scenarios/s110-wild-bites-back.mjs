@@ -51,15 +51,18 @@ export default async function run(ctx) {
 
   // Provoke it once (a scrib will not start a fight on its own) and wait for the bars the
   // PEER reports to drop below full. selfStats only ever moves on the peer path.
+  // Against BEFORE, not the base: a character standing below full for any earlier reason
+  // (the snap's landing) read as "bitten" when compared to the maximum.
+  await a.waitFor('String(window.omw.state.selfStats||"").indexOf("/") > 0', 30_000, 'the peer reports the bars');
   const before = parseBars(await a.eval('window.omw.state.selfStats'));
-  ctx.log(`selfStats before=${before ? before.c + '/' + before.b : 'none'}`);
+  ctx.log(`selfStats before=${before.c}/${before.b}`);
   const deadline = Date.now() + 120_000;
   let bars = null, dropped = false, pokes = 0;
   while (Date.now() < deadline && !dropped) {
     if (pokes < 3) { await a.cmd(`hitn:${victim}:1`); pokes++; }
     await ctx.sleep(2_000);
     bars = parseBars(await a.eval('window.omw.state.selfStats'));
-    dropped = !!bars && bars.c < bars.b;
+    dropped = !!bars && bars.c <= before.c - 1;
   }
   ctx.log(`selfStats after=${bars ? bars.c + '/' + bars.b : 'none'} hitFwd=${await a.eval('window.omw.state.hitFwd')} probe=${JSON.stringify((await probeOf(a))[victim])}`);
   assert.ok(dropped, `the player's peer-reported health never dropped while standing in reach of a provoked "${victim}": `

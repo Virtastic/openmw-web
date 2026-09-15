@@ -6,9 +6,10 @@
 // summons the scamp beside the avatar, names it (s107), and every client builds it. If any
 // hop is broken a conjurer's whole playstyle is a spell that does nothing.
 import assert from 'node:assert/strict';
+import { prepareCast, SUMMON_SCAMP } from './_spell.mjs';
 
 const BOOT = { retail: true, joinTimeoutMs: 420_000 };
-const SPELL = 'summon scamp';
+const SPELL = SUMMON_SCAMP;
 const netObjs = async (c) => JSON.parse(await c.eval('window.omw.state.netObjects||"{}"'));
 const summoned = (objs) => Object.entries(objs).find(([, rec]) => /scamp/i.test(String(rec)));
 
@@ -21,9 +22,22 @@ export default async function run(ctx) {
   const before = summoned(await netObjs(a));
   assert.ok(!before, `a scamp is already named before the cast: ${JSON.stringify(before)}`);
 
-  await a.cmd(`selfcast:${SPELL}`);
-  await a.waitFor('String(window.omw.state.selfCast||"").indexOf("cast:") === 0', 15_000, 'the spell is active on A');
-  ctx.log(`A selfCast=${await a.eval('window.omw.state.selfCast')}`);
+  // A REAL CAST (backlog 242): the spell learned and selected, the spell stance, the use
+  // key on A's own engine. The selfcast: hook added the active spell directly and stayed
+  // green with the cast path dead. Pressed until the engine lists it active (a fizzle is
+  // the spell system working, not the thing under test).
+  await prepareCast(a, ctx, SPELL, 'conjuration');
+  let actives = '';
+  for (let attempt = 0; attempt < 4 && !actives.split(',').includes(SPELL); attempt++) {
+    await a.cmd('press:500');
+    await ctx.sleep(1_800);
+    await a.eval("if (window.omw.state) window.omw.state.actives = null; 'cleared';");
+    await a.cmd('actives');
+    await a.waitFor("typeof window.omw.state.actives === 'string'", 10_000, 'actives answered');
+    actives = String(await a.eval('window.omw.state.actives'));
+  }
+  ctx.log(`A cast ${SPELL}: active spells [${actives}]`);
+  assert.ok(actives.split(',').includes(SPELL), `the cast of ${SPELL} never took on A (actives: ${actives})`);
 
   const deadline = Date.now() + 60_000;
   let onA = null, onB = null;

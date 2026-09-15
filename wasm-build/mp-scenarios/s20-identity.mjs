@@ -33,9 +33,13 @@ export default async function run(ctx) {
     EQUIP_TIMEOUT, 'puppet of A has the helmet slot equipped on B');
   ctx.log(`ok: equipment propagated to the puppet in ${Date.now() - t0}ms`);
 
-  // Dynamic stats: A drops to 40 hp; nothing to read back on B beyond no-crash (stats land
-  // on the puppet's health bar), but A's own mirror must reflect it (0.25s diff).
-  await a.eval(`window.omw.send('sethp:40')`);
-  await a.waitFor('window.omw.state.hp === "40"', 5000, 'A hp mirror = 40');
-  ctx.log('ok: dynamic stats mirror updates');
+  // Dynamic stats ON THE WIRE: B's puppet of A must fall when A's health hits zero. The old
+  // step read A's own hp mirror back on A, which proved nothing about B (backlog 246); the
+  // puppets mirror carries `dead`, so death is the one dynamic-stat edge B can be asked about
+  // without a Lua change. (A respawns; s22 owns the respawn itself.)
+  await a.eval(`window.omw.send('sethp:0')`);
+  await b.waitFor(`(${puppetOnB}||{}).dead === true`, EQUIP_TIMEOUT, "B's puppet of A is dead (PlayerStatsDynamic reached B)");
+  ctx.log('ok: dynamic stats reached B\'s puppet (it fell)');
+  await b.waitFor(`(${puppetOnB}||{}).dead === false`, 30_000, "B's puppet of A is up again after the respawn");
+  ctx.log('ok: the revive reached B too');
 }

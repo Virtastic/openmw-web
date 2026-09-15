@@ -217,22 +217,11 @@ export default async function run(ctx) {
     + `worst ${before.worst?.toFixed(1)} units (${before.rec}); host load ${load1.toFixed(1)}`);
   assert.ok(before.shared >= 3, `expected >=3 shared NPCs, got ${before.shared}`);
 
-  // The baseline is this scenario's own PRECONDITION: two clients, nobody crowding, and it
-  // is the same convergence s10/s40 already assert. If it cannot be met, the machine is too
-  // contended to measure anything downstream, and failing here reports a product defect for
-  // what is actually a busy host — which is how three earlier "failures" were manufactured.
-  //
-  // Skipped, not softened: the crowd budget itself stays as strict as it was, and a baseline
-  // miss on an IDLE box still fails loudly, because then it really is a defect.
-  if (before.worst >= CONVERGE_EPS) {
-    if (load1 > 12) {
-      ctx.log(`SKIP: baseline convergence ${before.worst?.toFixed(1)} units at host load `
-        + `${load1.toFixed(1)} — the box cannot support this measurement. Re-run when idle.`);
-      return;
-    }
-    assert.fail(`clients diverged before any crowd load: ${before.worst?.toFixed(1)} units `
-      + `at host load ${load1.toFixed(1)} — the box is idle, so this is real`);
-  }
+  // The baseline is this scenario's own PRECONDITION: two clients, nobody crowding, the same
+  // convergence s10/s40 assert. A miss FAILS whatever the load (backlog 244); the load average
+  // is context in the message, not a verdict.
+  assert.ok(before.worst < CONVERGE_EPS, `clients diverged before any crowd load: ${before.worst?.toFixed(1)} units `
+    + `at host load ${load1.toFixed(1)}`);
 
   // 3. Crowd the cell with protocol bots on the SAME server and cell, then re-measure.
   //    --attach: the bots do not spawn their own server and do not claim authority (the
@@ -358,15 +347,8 @@ export default async function run(ctx) {
     // CPU going quiet is the machine, not the code.
     const ownerNow = await clients[0].eval('window.omw.state.authorityHolder');
     if (!ownerNow || ownerNow === 'none') {
-      const loadNow = os.loadavg()[0];
-      if (loadNow > 12) {
-        ctx.log(`SKIP: ${cellKey} lost its owner at host load ${loadNow.toFixed(1)} — a peer `
-          + 'starved of CPU cannot hold a cell, and the measurement above is unattributable '
-          + 'once it drops. Re-run when idle.');
-        return;
-      }
       assert.fail(`${cellKey} lost its simulating owner during the crowd load at host load `
-        + `${loadNow.toFixed(1)} — the box is idle, so this is not CPU starvation`);
+        + `${os.loadavg()[0].toFixed(1)}`);
     }
     ctx.log(`ok: ${clients.length} browser clients agreed on shared actor state with ${BOTS} bots in ${cellKey}`);
     botFailure = await reapBots();

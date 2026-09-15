@@ -18,9 +18,13 @@ import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { drown } from './_death.mjs';
 
 const ROOT = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 export const bootTimeoutMs = 420_000;
+// The server's own peer, anchored on the player: the sea bed is out of a hand-started
+// peer's processing range (s147/s149), and a body it never processes never drowns.
+export const managedPeer = true;
 export const serverRules = `
 [content]
 enforce = "off"
@@ -57,10 +61,21 @@ export default async function run(ctx) {
   const before = await hp(a);
   ctx.log(`cell owner=${owner}; bars ${before?.cur}/${before?.base}`);
 
-  // Kill the player. sethp drives the CLIENT's own health to 0, which is the ordinary death
-  // edge: the client reports it and the respawn plugin answers.
-  await a.eval("window.omw.send('sethp:0')");
-  ctx.log('killed; waiting for the respawn to bring the bars back');
+  // Kill the player BY DAMAGE: drown the peer-ruled body (backlog 241; sethp:0 was a client
+  // claim and never exercised the avatar dying on the peer). The server's respawn.sent line
+  // is the proof a death went through -- "living bars after" is trivially true otherwise.
+  await drown(a, ctx);
+  const died = Date.now() + 300_000;
+  let lastSaid = 0;
+  while (Date.now() < died && !/respawn\.sent/.test(ctx.serverLogTail(2000))) {
+    if (Date.now() - lastSaid > 20_000) {
+      lastSaid = Date.now();
+      ctx.log(`waiting to drown: peer ${await a.eval('window.omw.state.selfStats')} client hp ${await a.eval('window.omw.state.hp')}`);
+    }
+    await ctx.sleep(1_000);
+  }
+  assert.ok(/respawn\.sent/.test(ctx.serverLogTail(2000)), 'never drowned: the server logged no respawn.sent (the peer did not kill the avatar, or the death never reached the server)');
+  ctx.log('drowned; waiting for the respawn to bring the bars back');
 
   // THE ASSERTION. After the respawn the peer's report must show a LIVING avatar. Before the
   // fix this stayed at 0 forever (the corpse kept reporting 0) or oscillated as the death

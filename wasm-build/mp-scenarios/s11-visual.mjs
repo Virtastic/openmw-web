@@ -4,6 +4,7 @@
 // shared spawn point so B's puppet (standing at spawn) ends up in front of A's third-person
 // camera. No convergence asserts (that's s10) — this is the human-checkable artifact:
 // /tmp/omw-mp-two-avatars.png
+export const diagnostic = true; // asserts nothing: reported as DIAG, not counted as a PASS
 export default async function run(ctx) {
   const [a, b] = await Promise.all([
     ctx.launchClient('cam-a'),
