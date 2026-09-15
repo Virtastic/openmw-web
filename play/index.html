@@ -34,7 +34,7 @@ window.omw = (function(){
   return { state: state, queue: queue, send: send, emit: emit, on: on, pending: pending };
 })();
 </script>
-<script>/* Lock the tab title: the engine calls SDL_SetWindowTitle (document.title=...) on boot; shadow the property so those writes are ignored and the tab always reads OpenMW-Web. */(function(){var LOCK="OpenMW-Web";try{Object.defineProperty(document,"title",{configurable:true,get:function(){return LOCK},set:function(){}});}catch(e){}try{var t=document.getElementsByTagName("title")[0];if(t)t.textContent=LOCK;}catch(e){}})();</script>
+<script>/* Lock the tab title: the engine calls SDL_SetWindowTitle (document.title=...) on boot; shadow the property so those writes are ignored and the tab always reads OpenMW-Web. The only writer is window.__omwBadge(n): an unread count prefix "(n) " for the alt-tabbed player (backlog 350); 0 clears it. */(function(){var LOCK="OpenMW-Web",badge=0;function paint(){var t=document.getElementsByTagName("title")[0];if(t)t.textContent=(badge>0?"("+badge+") ":"")+LOCK;}try{Object.defineProperty(document,"title",{configurable:true,get:function(){return LOCK},set:function(){}});}catch(e){}try{paint();}catch(e){}window.__omwBadge=function(n){badge=n>0?n:0;try{paint();}catch(e){}};})();</script>
 <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
 <!-- SEO. This page IS the game (see deploy/Caddyfile: "/index.html means the GAME"), so it is
      a real destination for a player - but never a distinct search result. A crawler cannot run
@@ -1616,9 +1616,13 @@ window.omw = (function(){
          // miss blocks the main thread, so this buys frame time, not just bandwidth.
          var TIER = {
            low:  { vd: '8192',  minSize: '0.02',  shadowRes: '2048', shadowDist: '512',  rtt: '512',  actors: '3072', lru: 48 },
-           mid:  { vd: '12288', minSize: '0.01',  shadowRes: '4096', shadowDist: '768',  rtt: '1024', actors: '4096', lru: 96 },
-           high: { vd: '16384', minSize: '0.005', shadowRes: '8192', shadowDist: '1024', rtt: '1024', actors: '4096', lru: 192 }
+           mid:  { vd: '12288', minSize: '0.01',  shadowRes: '4096', shadowDist: '768',  rtt: '1024', actors: '7168', lru: 96 },
+           high: { vd: '16384', minSize: '0.005', shadowRes: '8192', shadowDist: '1024', rtt: '1024', actors: '7168', lru: 192 }
          }[__tier];
+         // actors: the engine's "actors processing range" also decides which actors are DRAWN
+         // (348). Player puppets are exempt in actors.cpp, but peer-moved NPCs are not, so
+         // mid/high reach toward the server's lodMidRadius (server/config.default.toml) — an
+         // NPC the server streams at mid LOD should still be on screen. low stays tight.
          // streamfs.js is parsed before this runs, so it resolves LRU_MAX lazily from this global.
          try { window.__omwLruDefault = TIER.lru; } catch(e){}
          try { window.__omwTier = { tier: __tier, deviceMemory: __devMem || null }; } catch(e){}
@@ -1750,6 +1754,10 @@ window.omw = (function(){
               'preload exterior grid = false\n')) +
            '[Game]\n' +
            'actors processing range = ' + TIER.actors + '\n' +   // AI-process fewer distant NPCs/creatures (towns)
+           // 347: waitdialog.cpp:193 autosaves on every Rest/Wait and statemanagerimp refuses
+           // in MP with a "Saving is disabled in multiplayer" message box. Off at the baseline
+           // so the box never pops; singleplayer keeps the engine default.
+           (ENV.OPENMW_MP_URL ? '[Saves]\nautosave = false\n' : '') +
            '[Shaders]\n' +
            // max lights: dynamic point lights evaluated per object. Higher = richer lit scenes but
            // more per-object shading cost. ?maxlights=N overrides (QA); default measured for 60fps.
@@ -5246,12 +5254,29 @@ window.omw = (function(){
       var now = {};
       (pj(m.friendRequests)||[]).forEach(function(q){ now['r:'+q.acct] = q.name + ' sent you a friend request.'; });
       (pj(m.invites)||[]).forEach(function(iv){ now['i:'+iv.acct] = iv.name + ' invited you to join them.'; });
-      if (ready) for (var k in now) if (!(k in seenPendingKeys)) setStatus(now[k]);
+      if (ready) for (var k in now) if (!(k in seenPendingKeys)) { setStatus(now[k]); if (document.hidden) attentionCue(); }
       seenPendingKeys = now;
     }
     if (socialOpen) renderSocial();
   }, 150);
   var seenPending = '', seenPendingKeys = {};
+  // 350: an alt-tabbed player gets a tab badge and a short beep for a request/invite. The
+  // beep rides the engine's AudioContext (already gesture-resumed by the tracker at the top
+  // of the page; a fresh one goes through the same wrapper), so it plays where game audio does.
+  var unseenCues = 0;
+  function attentionCue(){
+    try { window.__omwBadge(++unseenCues); } catch(e){}
+    try {
+      var ctx = (window.__omwAudioCtxs || [])[0] || new AudioContext();
+      var o = ctx.createOscillator(), g = ctx.createGain();
+      o.frequency.value = 880; g.gain.value = 0.05;
+      o.connect(g); g.connect(ctx.destination);
+      o.start(); o.stop(ctx.currentTime + 0.12);
+    } catch(e){}
+  }
+  document.addEventListener('visibilitychange', function(){
+    if (!document.hidden && unseenCues){ unseenCues = 0; try { window.__omwBadge(0); } catch(e){} }
+  });
   // A cell load blocks the emscripten main loop, so nothing repaints while it runs — not even
   // OpenMW's own loading screen. The overlay therefore has to be UP before the block starts.
   // The engine signals on door activation (one frame early); rAF is the only watcher fast
@@ -5382,6 +5407,13 @@ window.omw = (function(){
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     if (!ready) return;               // no multiplayer UI until the character exists
     if (netHold) return;              // behind "Reconnecting…": an invisible chat would eat the keys
+    // 349: an engine window (dialogue, Rest, message box, a name field) owns Enter/t/o. The
+    // mode is mirrored on change by player.lua uiModeMirrorTick; our own overlays push a mode
+    // too (uimode:on), so an open chat/social panel still gets its close key.
+    if (!chatOpen && !socialOpen){
+      var um = String((mpState() || {}).uiMode || '');
+      if (um && um !== 'none') return;
+    }
     var k = (e.key || '').toLowerCase();
     if (k === 'enter' && !chatOpen) k = 't'; // Enter-to-chat, the habit every other game taught
     if (k !== 't' && k !== 'o') return;

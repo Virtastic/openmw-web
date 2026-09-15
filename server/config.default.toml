@@ -249,6 +249,9 @@ interestMinPeers = 12
 # whole number of 66 ms ticks (15/5/1 Hz -> every 1st/3rd/15th).
 lodNearRadius = 4096              # <= this: near tier
 lodMidRadius = 8192               # <= this: mid tier; beyond it, far tier (until interestRadius)
+# The browser client draws actors only inside its [Game] actors processing range (play/index.html
+# TIER.actors): 7168 on mid/high, 3072 on low. Player puppets are exempt (actors.cpp); NPCs
+# streamed beyond that radius are received but not shown.
 lodNearHz = 15
 lodMidHz = 5
 lodFarHz = 1

@@ -1787,7 +1787,14 @@ namespace MWMechanics
                 // setActorActive(false), continue. AI that plans and a character controller
                 // that never moves anyone is exactly the "frozen NPCs under a healthy holder"
                 // the one-peer-per-cell fan-out was deployed to paper over.
-                const bool inRange = isPlayer || alwaysActive || inSimProcessingRange(actor.getPtr());
+                // Backlog 348: another player's body is never out of range. The gate below
+                // also hides the actor (setNodeMask(0)), so a friend walked out of the
+                // actors processing range while the server still streamed them at mid/far
+                // LOD. A player puppet (runtime refnum, #143 predicate) runs no AI here, so
+                // keeping its controller live costs an animation tick, not a brain.
+                const ESM::RefNum selfRef = actor.getPtr().getCellRef().getRefNum();
+                const bool playerPuppet = MWMP::isPuppet(selfRef) && !selfRef.hasContentFile();
+                const bool inRange = isPlayer || alwaysActive || playerPuppet || inSimProcessingRange(actor.getPtr());
                 const int activeFlag = isPlayer ? 2 : 1; // Can be changed back to '2' to keep updating bounding boxes
                                                          // off screen (more accurate, but slower)
                 const int active = inRange ? activeFlag : 0;
