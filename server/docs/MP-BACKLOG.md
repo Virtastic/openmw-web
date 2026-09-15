@@ -339,6 +339,14 @@ Branch: `test/posture-seen`. Sweeps: Jenkins `openmw-web-dev` #89 (9/17), #90 (1
 | 387 | LOW: dummy parked at a human's arrival pose fires GetDistance-Player ambush scripts on the peer AND the client → double ambush packs (more TR triggers) | note |
 | 388 | LOW: explored-map cap 1024 is FIFO — a Vvardenfell+mainland campaign loses Seyda Neen first | m7.ts:28 8192 |
 | 389 | INFO: first TR boot streams ~1 GB over ~500 serial main-thread range requests (3+ min black screen at 50 Mbps; cached after); worker could prefetch chunk N+1 after a sequential miss | streamfs.js:135 |
+| 390 | HARNESS COLLISION (#362): human CombatHit refused under a holder kills every hitn:/hitp: scenario (s51 s66 s109 s110 s111 s112 s118 s119 s120 s128 s137 s138 s157 + s164's poke) | testhost.ts limits.harness seam consumed at combat.ts:360 |
+| 391 | HARNESS COLLISION (#360): mpMintSpell mints cost=1; the cost floor refuses levitate 100×60 → s147 s148 s156 never register | global.lua:3353 cost = max(1, floor(mag×dur/100)) (bake) |
+| 392 | HARNESS COLLISION (#363): follow:/escort: hooks send ActorAI with no dialogue lock → s114 s117 s123 | wrap in dlg:/dlg:release as s124 does |
+| 393 | HARNESS COLLISION (#369): setskill +7 (s132), setlevel steps of 4 (s143), setskill 100 (s164 — the avatar keeps a fresh Long Blade, misses) refused; real gap: handleNumberMap skips the check for a key omitted from the previous declaration (re-add at 100) | harness seam for budgets; s132 +5, s143 step 1 per 10 s; close the omitted-key gap |
+| 394 | HARNESS COLLISION (#361): same-cell snapto > 1024 u refused (s112:47, s154:52, s114:52) and — REAL-PLAY BUG — neither InviteAccepted path stamps an "explained" timestamp: a friend accepting an invite from ≥1024 u away in the same exterior cell is refused and rubber-banded | connection.ts:1131 seam; stamp lastDoorAt on both InviteAccepted sends |
+| 395 | #280 vs s154: guestSpawn returns null whenever positions[worldId] exists (any guest who ever flushed here) → a returning guest is never placed beside the host | server.ts:978 skip the spawn only when positions[worldId].at is younger than 60 s (a reboot) |
+| 396 | #366 vs #343: the arrest window sends no DialogueLock, so with crime shared paying the fine never lowers the bounty (guards re-arrest forever) | connection.ts:802 stamp target.lastDialogueAt on the PlayerArrest relay |
+| 397 | Peer image skew: a hand-run harness on a peer image baked before proto 3 = BAD_PROTO everywhere; the Jenkins job rebuilds both | note |
 
 ## Open (found, not fixed)
 
