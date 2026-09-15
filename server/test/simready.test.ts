@@ -28,7 +28,7 @@ async function boot(t: { after(fn: () => unknown): void }) {
   return server;
 }
 
-test('a player joining an unsimulated world is told it is not ready yet', async (t) => {
+test('a player joining a server with NO peer configured is not held for one', async (t) => {
   const server = await boot(t);
 
   const a = await TestClient.connect(server.port);
@@ -36,8 +36,10 @@ test('a player joining an unsimulated world is told it is not ready yet', async 
   await a.joinAsNew('Solo', 'hunter22');
 
   const msg = await a.waitEvent('SimReady');
-  // No peer has said hello, so the honest answer is false and the client holds its screen.
-  assert.equal((msg.value as { ready?: boolean }).ready, false);
+  // [simPeer] is off here (no binary), so nothing will ever simulate: the answer is true and
+  // the client plays at once. Pre-fix this said false and a peerless server held every join
+  // behind the client's 300 s settle ceiling (#97 lost every no-peer scenario to it).
+  assert.equal((msg.value as { ready?: boolean }).ready, true);
 });
 
 test('when the peer comes up, everyone already waiting is told', async (t) => {
@@ -46,7 +48,7 @@ test('when the peer comes up, everyone already waiting is told', async (t) => {
   const a = await TestClient.connect(server.port);
   t.after(() => a.close());
   await a.joinAsNew('Waiting', 'hunter22');
-  assert.equal(((await a.waitEvent('SimReady')).value as { ready?: boolean }).ready, false);
+  await a.waitEvent('SimReady'); // the join-time answer (true here: no peer configured)
 
   // The peer arrives. The player is sitting behind a loading screen precisely for this
   // moment — without the push they would sit out the client's timeout instead, which is the

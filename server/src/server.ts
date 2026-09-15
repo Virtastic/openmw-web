@@ -1518,7 +1518,17 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // right at every moment. It also stays correct for an operator running their own peer
   // instead of one this supervisor spawned — bookkeeping about who we spawned would call
   // that world unsimulated forever and hold every join behind a loading screen.
-  ctx.simReady = () => roster.inWorld().some((p) => p.system === true);
+  // NO PEER CONFIGURED AND NONE EVER SEEN = NOTHING IS COMING: say ready, or every join on a
+  // peerless server (a test host, single-player) sits behind the client's settle hold for the
+  // full ceiling (300 s since backlog 274 — #97 lost every no-peer scenario to it). Once an
+  // operator's own peer has been here the roster is the answer again, so its outage is still
+  // announced (325) and the client drops its peer-rules.
+  let peerSeen = false;
+  ctx.simReady = () => {
+    const now = roster.inWorld().some((p) => p.system === true);
+    if (now) peerSeen = true;
+    return now || (!config.simPeer.enabled && !peerSeen);
+  };
   const simPeerPass = (): void => {
     if (!config.simPeer.enabled) return;
     // humansInWorld, NOT inWorld: the peer itself is in-world, so counting it would keep the
