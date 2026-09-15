@@ -1057,6 +1057,7 @@ do
   check('a lockpick entry is tagged own with its condition and n',
     pick ~= nil and pick.own == true and pick.condition == 10 and pick.n == 1,
     pick and (tostring(pick.own) .. '/' .. tostring(pick.condition) .. '/' .. tostring(pick.n)) or 'nil')
+  check('...and names its kind (t) so the server can check it (340)', pick ~= nil and pick.t == 'Lockpick', tostring(pick and pick.t))
   local gems = st.misc_soulgem_common or {}
   check('a filled gem and a stateless stack of two are two entries, in order',
     #gems == 2 and gems[1].n == 1 and gems[1].soul == 'scamp' and gems[2].n == 2 and gems[2].soul == nil,
@@ -1330,6 +1331,51 @@ do
     and g:find('return world.getCellByName(cellKey)', 1, true) ~= nil)
   check('the player is told where they were moved',
     g:find("notice('Your last location no longer exists (a mod was removed); you were moved to '", 1, true) ~= nil)
+end
+
+-- Backlog 333-346 (adversarial review of the parallel commits): the client halves.
+print('client -- review fixes 335/336/340/341/342/343/346 (source checks)')
+do
+  local q = io.open('./openmw/files/data/scripts/mp/quests.lua'):read('*a')
+  local idn = io.open('./openmw/files/data/scripts/mp/identity.lua'):read('*a')
+  local w = io.open('./openmw/files/data/scripts/mp/world.lua'):read('*a')
+  local g = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  local av = io.open('./openmw/files/data/scripts/mp/avatar.lua'):read('*a')
+  local p = io.open('./openmw/files/data/scripts/mp/player.lua'):read('*a')
+  local pp = io.open('./openmw/files/data/scripts/mp/puppet.lua'):read('*a')
+  -- 335: the echo guard is a per-quest SET of applied stages, not one slot.
+  check('quests.lua keeps a per-quest set of applied stages and drops their echoes (335)',
+    q:find('applied[questId][index] = true', 1, true) ~= nil
+    and q:find('if applied[questId] and applied[questId][stage] then return end', 1, true) ~= nil
+    and q:find('\n    applied = {}\n', 1, true) ~= nil)
+  -- 336: a refused declaration is forgotten at most 3 times per kind while it stands still.
+  check('identity.lua caps forgetDeclared at 3 per kind until the fingerprint changes (336)',
+    idn:find('local MAX_FORGETS = 3', 1, true) ~= nil and idn:find('if f.n > MAX_FORGETS then return end', 1, true) ~= nil
+    and idn:find('\n    forgets = {}\n', 1, true) ~= nil)
+  check('world.lua waits on a dependency only when it is in flight, and refuses an unsharable kind once (336)',
+    w:find('if inFlight(enchant) then', 1, true) ~= nil and w:find('unsharable[localId] = true', 1, true) ~= nil
+    and w:find('if unsharable[localId] or inFlight(localId) then return nil end', 1, true) ~= nil)
+  -- 340: the item-state entry names its kind for the server.
+  check('identity.lua sends the own-wear kind as t (340)', idn:find('st.t = OWN_WEAR_TYPES[t]', 1, true) ~= nil)
+  -- 341: the ground read is an LObject call in avatar.lua; global.lua only prints.
+  check('avatar.lua reads isOnGround on self and reports the landing (341)',
+    av:find('pcall(types.Actor.isOnGround, self)', 1, true) ~= nil
+    and av:find("core.sendGlobalEvent('mpAvatarLanded', { obj = self.object, top = fallTop, z = z })", 1, true) ~= nil
+    and av:find('\n            fallProbe()\n', 1, true) ~= nil)
+  check('global.lua no longer calls isOnGround on a GObject and prints from mpAvatarLanded (341)',
+    not g:find('pcall(types.Actor.isOnGround, p.obj)', 1, true) and g:find('mpAvatarLanded = avatarLanded', 1, true) ~= nil
+    and g:find("'[mp] avatar #%d landed from z=%d at z=%d (fell %d) hp=%s'", 1, true) ~= nil)
+  -- 342: a player puppet is marked as such in the registry.
+  check('puppet.lua marks a remote-player puppet with mp.setPlayerPuppet (342)',
+    pp:find('if ok and on and playerId ~= nil and mp.setPlayerPuppet then', 1, true) ~= nil
+    and pp:find('local playerId = nil', 1, true) < pp:find('local function markPuppet(on)', 1, true))
+  -- 343: an arrest dialogue never asks for the conversation lock.
+  check('player.lua skips mpDialogueForced for the Dialogue mode MP_PlayerArrest opened (343)',
+    p:find('arrestDialoguePending = true', 1, true) ~= nil
+    and p:find("if okNpc and isNpc and not arrest then core.sendGlobalEvent('mpDialogueForced'", 1, true) ~= nil)
+  -- 346: `local net` no longer shadows the module in the out-mappers.
+  check('global.lua has no `local net` shadowing the net module (346)',
+    select(2, g:gsub('\n%s+local net = ', '')) == 0)
 end
 
 print(string.format('\n%d passed, %d failed', pass, fail))

@@ -56,6 +56,11 @@ local TIME_GLOBALS = {
 local applying = false -- same-frame guard around a network apply
 
 local journal = {} -- questId -> index (diff cache AND echo guard)
+-- questId -> { [index] = true } for every stage a network apply pushed into the engine. The
+-- engine queues one onQuestUpdate per addEntry/setIndex a frame later, so a JournalSync
+-- replaying a 3-stage log arrives as three echoes that `journal` (a single slot, already at
+-- the last stage) would read as local regressions and send back (backlog 335).
+local applied = {}
 local journalSent = 0 -- JournalEntry broadcasts WE originated (echo-guard evidence)
 local journalSynced = false -- MP_JournalSync consumed?
 local pendingJournal = {} -- questId -> index observed locally before the sync landed
@@ -124,6 +129,8 @@ local function applyJournalEntry(questId, index, stamp)
     -- JournalSync can land before world.players[1] exists, and an unseeded cache would make
     -- the first local quest signal look like a fresh local change.
     journal[questId] = index
+    applied[questId] = applied[questId] or {}
+    applied[questId][index] = true
     local player = playerObj()
     if not player then
         pendingApply[#pendingApply + 1] = { q = questId, i = index, stamp = stamp } -- retried from tick()
@@ -177,6 +184,7 @@ function quests.onQuestUpdate(questId, stage)
     stage = asInt(stage)
     if applying or type(questId) ~= 'string' or stage == nil then return end
     if journal[questId] == stage then return end -- echo of an applied entry
+    if applied[questId] and applied[questId][stage] then return end -- echo of a replayed log stage
     journal[questId] = stage
     if not journalSynced then
         -- Broadcasting before the join-time sync would race the server's stored state.
@@ -999,6 +1007,7 @@ end
 function quests.reset()
     knownTopics = nil -- re-baseline on the next world; never replay a set across a switch
     journal = {}
+    applied = {}
     journalSent = 0
     journalSynced = false
     pendingJournal = {}

@@ -96,6 +96,7 @@ export interface Player {
   // dead-avatar bar reports (hp 0) are ignored so the respawned player is not re-killed
   // while the avatar body is being replaced on the peer.
   resurrectedAt?: number;
+  avatarDead?: boolean; // the peer's last bar report had hp 0 (346: the sync flush is the transition's only)
   // Wall-clock of the last sendCellStateAround: nine fat cell docs land in one burst and the
   // outbound hard ceiling is not what a healthy client crossing a city gate should die of.
   cellStateBurstAt?: number;
@@ -169,6 +170,11 @@ export interface Player {
    *  a real scenario — which is why unowned drops were only ever COUNTED. Credit arrives per
    *  event instead, and is cleared by the next snapshot (which now includes it). */
   pendingAcquired?: Map<string, number>;
+  // Backlog 337: interior cells this session has been sent a WorldCellState for, and the
+  // distinct far cells its ObjectEnabled messages have named. A far enable may name only a
+  // well-formed exterior or an interior it has seen, and at most MAX_FAR_ENABLE_CELLS of them.
+  knownCells?: Set<string>;
+  farEnableCells?: Set<string>;
 }
 
 export class Roster {

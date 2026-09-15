@@ -1654,7 +1654,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     if (p.system || p.bot) return;
     if (worldOwner !== '' && p.accountKey === worldOwner) ownerCharLatch = p.charId;
     markPlayed();
-    try { socialStore.setPresence(p.accountKey, presenceWorld, p.name, p.cellKey, false, Date.now(), worldMode); }
+    try { socialStore.setPresence(p.accountKey, presenceWorld, p.name, p.cellKey, false, Date.now(), worldMode, p.charId); }
     catch (err) { log('warn', 'presence.join_write_failed', { error: String(err) }); }
   };
   simPeerTick.unref();
@@ -1764,12 +1764,15 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     for (const p of roster.inWorld()) {
       if (p.system) continue; // the sim peer is infrastructure, not a player
       const row = p.bot ? undefined : socialStore.presenceOf(p.accountKey);
-      if (row && !row.offline && row.world !== presenceWorld && row.updatedAt > (p.joinedWorldAt ?? 0)) {
+      // Same CHARACTER only (backlog 334): char A in world X and char B (same account) in Y
+      // are two players, not a duplicate. A pre-334 row without char_id still supersedes.
+      if (row && !row.offline && row.world !== presenceWorld && row.updatedAt > (p.joinedWorldAt ?? 0)
+        && (row.charId === undefined || row.charId === p.charId)) {
         log('info', 'presence.superseded_elsewhere', { account: p.accountKey, name: p.name, by: row.world });
         p.peer.disconnect('SUPERSEDED', 'this character was opened in another world');
         continue;
       }
-      socialStore.setPresence(p.accountKey, presenceWorld, p.name, p.cellKey, p.bot === true, now, worldMode);
+      socialStore.setPresence(p.accountKey, presenceWorld, p.name, p.cellKey, p.bot === true, now, worldMode, p.charId);
     }
   };
   // THE PLAYERS LIST IS THE SERVER'S, NOT THIS WORLD'S. Roster.joinWorld sends a PlayerList

@@ -343,7 +343,10 @@ export class Connection implements Peer {
     metrics.disconnects.inc({ code });
     this.sendText(disconnectMsg(code, detail));
     this.cleanup();
-    this.ws.close(1000, code);
+    // Behind the disconnect frame on the harness FIFO (backlog 339): a synchronous close
+    // overtook the delayed frame and the client only ever saw the close code.
+    const close = () => this.ws.close(1000, code);
+    if (this.outQ) this.outQ.push(close); else close();
   }
 
   // Idempotent teardown shared by disconnect() and abrupt socket close. Synchronous so a
@@ -1527,8 +1530,10 @@ export class Connection implements Peer {
       // redial arrived with the token of a session the server still thought alive, found
       // nothing parked, and the client fell all the way back to a fresh ticket and a page
       // reboot. The token names that live session exactly; take over from it in place.
+      // By CHARACTER, not account (backlog 333): #124 allows two characters per account, and
+      // activeForAccount is the account's latest session — A's wifi blip must not kick B.
       const live = this.ctx.sessions.get(msg.token);
-      const sitting = live ? this.ctx.roster.activeForAccount(live.accountKey) : undefined;
+      const sitting = live?.charId !== undefined ? this.ctx.roster.activeForChar(live.charId) : undefined;
       if (live && sitting && sitting.inWorld) {
         ticket = {
           accountKey: sitting.accountKey, accountName: live.accountName, charId: sitting.charId, expiresAt: Date.now() + 1_000,
@@ -1797,7 +1802,7 @@ export class Connection implements Peer {
     this.sessionToken = sessionToken;
     // Phase B: /auth/link/:provider authenticates with this token, so it must be
     // resolvable for exactly as long as the socket lives (cleanup() drops it).
-    this.ctx.sessions.add(sessionToken, accountKey, account.name);
+    this.ctx.sessions.add(sessionToken, accountKey, account.name, this.player.charId);
     // playerRecord: only a doc with an appearance skips chargen — a position-only doc
     // (player quit mid-chargen after a cell change) must not.
     // THE BOUNTY THIS WORLD HOLDS THEM TO, not the doc's. A guest's own doc carries their home

@@ -39,6 +39,39 @@ test('opening the character in a second world drops the session in the first', a
   await inB.waitEvent('ChatMessage', (v) => (v as { text?: string }).text === 'still here');
 });
 
+// Backlog 334: the presence row carries the CHARACTER. Two characters of one account in two
+// worlds are two players; neither world's heartbeat kicks the other's session.
+test('two characters of one account in two worlds are not a duplicate', async (t) => {
+  const sharedDir = mkdtempSync(join(tmpdir(), 'omw-shared-'));
+  const opts = { requireGameData: false, port: 0, host: '127.0.0.1', sharedDir, presenceMs: 300,
+    configOverride: { login: { allowHarnessAuth: true } } as never };
+  const a = await startServer({ ...opts, dataDir: tmpDataDir(), worldId: 'world-a' });
+  t.after(() => a.close());
+  const b = await startServer({ ...opts, dataDir: tmpDataDir(), worldId: 'world-b' });
+  t.after(() => b.close());
+
+  const inA = await TestClient.connect(a.port);
+  t.after(() => inA.close());
+  await inA.joinAsNew('Pair', 'hunter22');
+  await inA.waitEvent('PlayerList');
+  inA.sendJson({ t: 'CharacterCreate', name: 'Second' });
+  const r = await inA.waitJson('CharacterResult');
+  const second = (r['characters'] as { id: string; name: string }[]).find((x) => x.name === 'Second')!;
+  await new Promise((res) => setTimeout(res, 400)); // a heartbeat: A's row is written
+
+  const inB = await TestClient.connect(b.port);
+  t.after(() => inB.close());
+  inB.hello();
+  await inB.waitJson('SessionHelloOk');
+  inB.login('Pair', 'hunter22', { characterId: second.id });
+  await inB.waitJson('SessionWelcome');
+  inB.sendJson({ t: 'SessionReady' });
+  await inB.waitEvent('PlayerList');
+  await new Promise((res) => setTimeout(res, 1000)); // several beats in both worlds
+  assert.ok(!inA.isClosed, 'char A in world A survives char B in world B');
+  assert.ok(!inB.isClosed, 'and vice versa');
+});
+
 // A BAN REACHES EVERY WORLD. /ban in world A wrote the shared list and kicked A's roster; a
 // guest sitting in world B played on until they next disconnected. Every world checks its
 // roster against the shared list on its heartbeat.

@@ -23,10 +23,15 @@ const MAX_RECORD_ID = 64;
 const MAX_COUNT = 10000;
 const MAX_CELL_KEY = 128;
 const MAX_CONTAINER_ENTRIES = 512;
-// A human's FIRST open of a container (the roll that becomes canonical): the largest vanilla
-// chest holds a couple of dozen stacks; the richest purse (Creeper, Mudcrab) is 5,000-10,000.
-const MAX_FIRST_OPEN_STACKS = 64;
+// A human's FIRST open of a container (the roll that becomes canonical): the richest purse
+// (Creeper, Mudcrab) is 5,000-10,000. Stacks are bounded by MAX_CONTAINER_ENTRIES only
+// (backlog 344): a 64-stack cap silently refused every bigger merchant or corpse forever.
 const MAX_FIRST_OPEN_GOLD = 50_000;
+// Backlog 337: a far ObjectEnabled may name an exterior this many cells from the origin
+// (MAX_ABS_COORD / 8192), or an interior the session has been sent, up to this many distinct.
+const MAX_FAR_CELL_COORD = Math.floor(MAX_ABS_COORD / 8192);
+const MAX_FAR_ENABLE_CELLS = 64;
+const MAX_HUMAN_ACTOR_SPAWN_COUNT = 10; // backlog 338
 // A CELL'S STATE IS ONE FRAME, AND THE WIRE HAS A CEILING. WorldCellState and CellSnapshotReplace
 // carry every placed object and every tombstone in a cell in a single LSER value, and LSER
 // refuses anything past 65,536 nodes. A placed object is ~19 nodes, so around 3,400 dropped
@@ -146,6 +151,11 @@ export function cellStateBody(cellKey: string, doc: CellDoc, deaths: string[], w
   let nodes = lserNodeCount(body);
   if (nodes <= CELL_STATE_NODE_BUDGET) return body;
   const dropped: Record<string, number> = {};
+  // placed is trimmed from its TAIL (newest first), which is where the net ACTORS the holder
+  // still streams sit (backlog 345). Move them to the front so loose litter goes first.
+  const placed = body['placed'] as Record<string, JsLike>[];
+  const actorAt = (p: Record<string, JsLike>): number => (p['actor'] === true ? 1 : 0);
+  placed.sort((a, b) => actorAt(b) - actorAt(a));
   for (const field of ['moved', 'containers', 'memberVars', 'placed']) {
     const map = body[field] as Record<string, JsLike> | JsLike[] | undefined;
     if (!map) continue;
@@ -928,6 +938,14 @@ export class WorldState {
       // naming sweep then registers it as a net actor everyone sees) through the same
       // QuestSpawn replay the Staada rule used. Rate-capped per player: a modified client
       // could otherwise fill a cell with dremora one event at a time.
+      // Where the asker could see (backlog 338): a script places an actor beside the player,
+      // never across the map. And no more than a handful at once -- a levelled-list roll is
+      // one body; a "count" of 10,000 dremora lords is not a script.
+      if (!cellsVisible(player.cellKey, cellKey) || count > MAX_HUMAN_ACTOR_SPAWN_COUNT) {
+        log('warn', 'object.actor_spawn_refused', { from: player.name, recordId, cellKey, at: player.cellKey ?? null, count });
+        player.peer.sendEvent('ObjectSpawnRefused', { tempId, ok: false, reason: 'reach' });
+        return;
+      }
       const now = Date.now();
       const recent = (this.actorSpawnsBy.get(player.id) ?? []).filter((t) => now - t < 60_000);
       if (recent.length >= WorldState.MAX_ACTOR_SPAWNS_PER_MIN) {
@@ -1063,7 +1081,11 @@ export class WorldState {
     // enables Dagoth Gares in a cave the player has never seen -- and the client reports the
     // OBJECT's cell, not its own. Abuse buys little: an unlock or a delete is loot, a disable
     // is a hidden statue, and the peer's window still wins over a contrary human write.
-    const farOk = name === 'ObjectEnabled';
+    // ...but not ANY key (backlog 337): cells.get creates and persists a doc for whatever it
+    // is handed, so a far enable may name only a well-formed exterior inside the world's
+    // bounds or an interior this session has already been sent a cell state for, and no more
+    // than MAX_FAR_ENABLE_CELLS distinct far cells per session.
+    const farOk = name === 'ObjectEnabled' && (player.system === true || this.farEnableAllowed(player, cellKey));
     if (!player.system && !fare && !farOk && !cellsVisible(player.cellKey, cellKey)) {
       log('warn', 'object.out_of_reach', { from: player.name, name, at: player.cellKey ?? null, cellKey });
       return undefined;
@@ -1074,6 +1096,19 @@ export class WorldState {
     if (name !== 'ObjectDelete' && name !== 'ObjectTakeRequest' && doc.deleted.includes(ref.key))
       return undefined; // dead object
     return { doc, ref, cellKey };
+  }
+
+  private farEnableAllowed(player: Player, cellKey: string): boolean {
+    if (cellsVisible(player.cellKey, cellKey)) return true;
+    const ext = parseExterior(cellKey);
+    const wellFormed = ext
+      ? Math.abs(ext.x) <= MAX_FAR_CELL_COORD && Math.abs(ext.y) <= MAX_FAR_CELL_COORD
+      : player.knownCells?.has(cellKey) === true;
+    if (!wellFormed) return false;
+    const far = (player.farEnableCells ??= new Set());
+    if (!far.has(cellKey) && far.size >= MAX_FAR_ENABLE_CELLS) return false;
+    far.add(cellKey);
+    return true;
   }
 
   private async delete(player: Player, body: LTable): Promise<void> {
@@ -1257,26 +1292,27 @@ export class WorldState {
         this.invalid(player, 'ContainerOpen');
         return;
       }
-      // A FIRST OPEN IS TRUSTED, so its shape is bounded like a hoard: a client that walked
+      // A FIRST OPEN IS TRUSTED, so its GOLD is bounded like a hoard: a client that walked
       // through a town declaring every chest full of 10,000 gold made that canonical for the
-      // world. No leveled roll produces more than a few dozen stacks or a merchant purse's
-      // worth of gold in a chest; over that is not a container, it is a declaration.
+      // world. No merchant purse holds more; over that is not a container, it is a
+      // declaration. The container still becomes canonical and the opener still gets a
+      // state (backlog 344) -- minus the gold, which is the only part in question.
+      let gold = finite(body.get('gold'));
+      let items = contents;
       if (player.system !== true) {
         const goldIn = contents.filter((i) => i.id === 'gold_001').reduce((n, i) => n + i.n, 0);
-        const declaredGold = finite(body.get('gold')) ?? 0;
-        if (contents.length > MAX_FIRST_OPEN_STACKS || goldIn > MAX_FIRST_OPEN_GOLD || declaredGold > MAX_FIRST_OPEN_GOLD) {
-          log('warn', 'world.container_first_open_implausible', { player: player.name, cellKey, key: ref.key, stacks: contents.length, gold: goldIn, purse: declaredGold });
+        if (goldIn > MAX_FIRST_OPEN_GOLD || (gold ?? 0) > MAX_FIRST_OPEN_GOLD) {
+          log('warn', 'world.container_first_open_implausible', { player: player.name, cellKey, key: ref.key, stacks: contents.length, gold: goldIn, purse: gold ?? 0 });
           this.moderationNote?.(player.accountKey, 'container_first_open');
-          this.invalid(player, 'ContainerOpen');
-          return;
+          items = contents.filter((i) => i.id !== 'gold_001');
+          gold = undefined;
         }
       }
       // origin: a copy, not an alias — `items` is mutated in place by every take/put.
-      cont = { items: contents, stateSeq: 1, origin: contents.map((i) => ({ ...i })) };
+      cont = { items, stateSeq: 1, origin: items.map((i) => ({ ...i })) };
       // A merchant's purse becomes canonical on the same first-opener rule as the stock, and
       // goldOrigin is captured for the same reason `origin` is: a restock has to have
       // something to restore to, and only the first opener ever sees the untouched figure.
-      const gold = finite(body.get('gold'));
       if (gold !== undefined && gold >= 0) {
         cont.gold = Math.floor(gold);
         cont.goldOrigin = cont.gold;
@@ -1469,6 +1505,7 @@ export class WorldState {
   }
 
   sendCellState(player: Player, cellKey: string): void {
+    if (!parseExterior(cellKey)) (player.knownCells ??= new Set()).add(cellKey); // backlog 337
     this.enqueue(async () => {
       const doc = this.cells.getCached(cellKey) ?? (await this.cells.get(cellKey)) ?? emptyCellDoc();
       const deaths = this.liveDeaths(doc, cellKey); // before placed is read: an expired corpse takes its spawn entry with it
@@ -1540,7 +1577,7 @@ export class WorldState {
     // stale locks standing. Built once; every viewer gets the same frame.
     const body = cellStateBody(cellKey, doc, deaths, false);
     for (const p of this.roster.inWorld()) {
-      if (!cellsVisible(p.cellKey, cellKey)) continue;
+      if (!this.hears(p, cellKey)) continue; // hears, not cellsVisible: the far holder keeps stale litter otherwise (346)
       p.peer.sendEvent('CellSnapshotReplace', body);
     }
     log('info', 'world.cell_snapshot_replace', { cellKey, containers: Object.keys(doc.containers).length });

@@ -135,6 +135,21 @@ end
 -- _onSkillUse; armour through the I.MPAvatar interface local.lua calls when it finds no
 -- SkillProgression on the body.
 local SKILL_USE_FORWARDED = { block = true, lightarmor = true, mediumarmor = true, heavyarmor = true, unarmored = true }
+-- Fall probe (backlog 341, s147 diagnostic): isOnGround takes an LObject, so the read has to
+-- happen here. The airborne top is tracked; the landing goes to global.lua, which prints.
+local fallTop = nil
+local function fallProbe()
+    local okg, onGround = pcall(types.Actor.isOnGround, self)
+    if not okg then return end
+    local z = self.position.z
+    if not onGround then
+        if fallTop == nil or z > fallTop then fallTop = z end
+    elseif fallTop ~= nil then
+        core.sendGlobalEvent('mpAvatarLanded', { obj = self.object, top = fallTop, z = z })
+        fallTop = nil
+    end
+end
+
 local function forwardSkillUse(skillid, useType)
     if not SKILL_USE_FORWARDED[skillid] then return end
     core.sendGlobalEvent('mpAvatarSkillUse', { obj = self.object, skill = skillid, useType = useType or 0 })
@@ -157,6 +172,7 @@ return {
         end,
         onUpdate = function()
             equipTick(core.getRealTime())
+            fallProbe()
             -- I.Combat comes from the builtin combat script on this body; if it was not up
             -- at onActive, register on a later tick rather than losing the veto (puppet.lua
             -- learned the same lesson).

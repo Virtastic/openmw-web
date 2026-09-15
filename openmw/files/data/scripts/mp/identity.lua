@@ -329,9 +329,9 @@ end
 -- `own` (#233): a lockpick, probe, repair tool or light wears only HERE -- the avatar never
 -- picks a lock or burns a torch -- so the server copies its condition wholesale instead of
 -- raise-only, and the peer's untouched copy must not refill it.
-local OWN_WEAR_TYPES = {}
+local OWN_WEAR_TYPES = {} -- type -> its name, sent as `t` so the server can check the kind (340)
 for _, name in ipairs({ 'Lockpick', 'Probe', 'Repair', 'Light' }) do
-    if types[name] then OWN_WEAR_TYPES[#OWN_WEAR_TYPES + 1] = types[name] end
+    if types[name] then OWN_WEAR_TYPES[types[name]] = name end
 end
 local function itemState(item)
     local st = { n = item.count or 1 }
@@ -344,10 +344,9 @@ local function itemState(item)
     local oks, sl = pcall(function() return d.soul end)
     if oks and type(sl) == 'string' and sl ~= '' then st.soul = sl end
     local okt, t = pcall(function() return item.type end)
-    if okt and t ~= nil then
-        for _, own in ipairs(OWN_WEAR_TYPES) do
-            if t == own then st.own = true; break end
-        end
+    if okt and t ~= nil and OWN_WEAR_TYPES[t] then
+        st.own = true
+        st.t = OWN_WEAR_TYPES[t]
     end
     return st
 end
@@ -620,9 +619,25 @@ end
 local KIND_OF_EVENT = { PlayerAppearance = 'appearance', PlayerEquipment = 'equipment', PlayerInventory = 'inventory',
     PlayerSpellbook = 'spells', PlayerAttributes = 'progression', PlayerSkills = 'skills', PlayerLevel = 'level',
     PlayerStatsDynamic = 'dynamic' }
+-- Capped (backlog 336): a declaration the server will NEVER accept (a level jump, a record
+-- kind it cannot register) re-sent every tick is an anomaly + warn per tick, forever. Three
+-- retries per kind while the declared value stands still; a changed fingerprint resets it.
+local MAX_FORGETS = 3
+local forgets = {} -- kind -> { fp = fingerprint last forgotten, n = forgets of that fingerprint }
 function identity.forgetDeclared(eventName)
     local kind = KIND_OF_EVENT[eventName]
-    if kind then last[kind] = nil end
+    if not kind then return end
+    local cur = last[kind]
+    local fp = type(cur) == 'table' and fingerprint(cur) or cur
+    local f = forgets[kind]
+    if f and f.fp == fp then
+        f.n = f.n + 1
+    else
+        f = { fp = fp, n = 1 }
+        forgets[kind] = f
+    end
+    if f.n > MAX_FORGETS then return end
+    last[kind] = nil
 end
 
 -- Spells whose add went out under a local id (global.lua mpSpellbookOut): diffed again next
@@ -634,6 +649,7 @@ end
 
 function identity.reset()
     last = {}
+    forgets = {}
     for _, t in pairs(tracked) do t.peer = nil; t.prev = nil; t.delta = 0; t.baseSaid = nil end
     peerBarsAt = nil
     -- nil, NOT {}: the next pass must re-seed the baseline rather than treat the whole restored

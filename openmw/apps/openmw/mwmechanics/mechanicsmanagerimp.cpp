@@ -1226,9 +1226,10 @@ namespace MWMechanics
             return false;
 
         // Backlog 143: another player's body is not a witness (same predicate as
-        // canCommitCrimeAgainst: avatars, and puppets without a content file).
+        // canCommitCrimeAgainst: avatars, and player puppets -- 342: the registry says which
+        // puppets are players; a runtime-spawned NPC puppet has no content file either).
         const ESM::RefNum actorRef = actor.getCellRef().getRefNum();
-        if (MWMP::isAvatar(actorRef) || (MWMP::isPuppet(actorRef) && !actorRef.hasContentFile()))
+        if (MWMP::isAvatar(actorRef) || MWMP::isPlayerPuppet(actorRef))
             return false;
 
         if (actor.getClass().getCreatureStats(actor).getAiSequence().isInCombat(victim))
@@ -1611,15 +1612,12 @@ namespace MWMechanics
         // MULTIPLAYER: another player's body is an NPC record, so a PvP swing read as assault
         // and a PvP kill as murder -- witnesses put a bounty on a duel. A player is not a
         // crime victim; PvP is its own rule (the server's pvp switch and the party veto).
-        if (MWMP::isAvatar(target.getCellRef().getRefNum()) || MWMP::isPuppet(target.getCellRef().getRefNum()))
-        {
-            // Puppets of NPCs are crime victims still (a theft in front of a puppet is seen by
-            // the client's copy); only player bodies are exempt. The player registry is the
-            // avatar set on the peer and the puppet set on a client, where a player puppet is
-            // told apart from an NPC puppet by having no content file.
-            if (MWMP::isAvatar(target.getCellRef().getRefNum()) || !target.getCellRef().getRefNum().hasContentFile())
-                return false;
-        }
+        // Puppets of NPCs are crime victims still (a theft in front of a puppet is seen by the
+        // client's copy); only player bodies are exempt: the avatar set on the peer, the
+        // PLAYER puppet set on a client (backlog 342 -- "no content file" also described every
+        // runtime-spawned NPC puppet, which was then no crime to assault).
+        if (MWMP::isAvatar(target.getCellRef().getRefNum()) || MWMP::isPlayerPuppet(target.getCellRef().getRefNum()))
+            return false;
         return cls.isNpc() && !attacker.isEmpty() && !isAggressive(target, attacker) && !seq.isEngagedWithActor()
             && !stats.getAiSequence().isInPursuit() && !cls.getNpcStats(target).isWerewolf()
             && stats.getMagicEffects().getOrDefault(ESM::MagicEffect::Vampirism).getMagnitude() <= 0;

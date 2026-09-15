@@ -444,15 +444,22 @@ local function recordData(rec)
 end
 
 -- Announce a locally minted record so every client can resolve it by the SERVER's id.
+local unsharable = {} -- local record ids registerRecord refused: said once, not per retry (336)
+local function inFlight(localId)
+    for _, pendingId in pairs(pendingRecords) do
+        if pendingId == localId then return true end
+    end
+    return false
+end
+
 function worldmp.registerRecord(localId)
     if not isDynamicId(localId) or localToNet[localId] then return localToNet[localId] end
+    if unsharable[localId] or inFlight(localId) then return nil end
     local kind, rec = kindOfLocalRecord(localId)
     if not kind then
+        unsharable[localId] = true
         print('[mp] record ' .. tostring(localId) .. ' is not an item kind we can share')
         return nil
-    end
-    for tempId, pendingId in pairs(pendingRecords) do
-        if pendingId == localId then return nil end -- already in flight
     end
     -- An enchanted item REFERENCES another custom record. Its server id only exists once
     -- the server has acked it, so the item's own RecordCreate has to wait for that ack —
@@ -463,7 +470,12 @@ function worldmp.registerRecord(localId)
     if okEnchant and type(enchant) == 'string' and enchant ~= '' and isDynamicId(enchant) then
         worldmp.registerRecord(enchant)
         if not localToNet[enchant] then
-            pendingDeps[localId] = { dep = enchant, until_ = core.getRealTime() + DEP_WAIT_SECONDS }
+            -- Wait only for a dependency that is actually IN FLIGHT (backlog 336): one the
+            -- server cannot register would park this record for DEP_WAIT_SECONDS and then be
+            -- re-asked on every toNet, warning each time.
+            if inFlight(enchant) then
+                pendingDeps[localId] = { dep = enchant, until_ = core.getRealTime() + DEP_WAIT_SECONDS }
+            end
             return nil
         end
     end

@@ -67,18 +67,23 @@ local SNAP_COOLDOWN = 1.0 -- let a requested teleport land before asking again
 -- mp.setPuppet marks this actor in a registry the damage site queries synchronously
 -- (mwmp/puppets.hpp). Marked, the engine skips its local application and records the effect for
 -- global.lua to forward to whoever owns the actor.
+local playerId = nil -- set for remote-player puppets (declared here: markPuppet reads it)
 local function markPuppet(on)
     if not mp.setPuppet then
         if mp.set then mp.set('puppetMark', 'no-binding') end
         return
     end
     local ok, err = pcall(function() mp.setPuppet(self.object, on) end)
+    -- A PLAYER's body, not an NPC's (backlog 342): the crime/witness/sneak exemptions ask the
+    -- registry rather than guessing from "no content file". setPuppet(false) unmarks both.
+    if ok and on and playerId ~= nil and mp.setPlayerPuppet then
+        pcall(function() mp.setPlayerPuppet(self.object, true) end)
+    end
     if mp.set then
         mp.set('puppetMark', ok and (on and 'marked' or 'unmarked') or ('failed:' .. tostring(err)))
     end
 end
 
-local playerId = nil -- set for remote-player puppets
 local actorKey = nil -- set for M4 NPC puppets (refKey the holder addresses)
 -- DEGRADED (backlog 328): the peer is gone, this actor's own AI is back on, and the script
 -- stays attached with the hit intercept armed, so a swing during the outage cancels exactly

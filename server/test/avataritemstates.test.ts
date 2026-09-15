@@ -189,7 +189,7 @@ test("an `own` record (lockpick, torch) keeps the client's condition under a fre
   peer.inbox.events.length = 0;
   a.sendEvent('PlayerInventory', {
     items: [{ id: 'pick_apprentice', n: 1 }],
-    itemStates: { pick_apprentice: [{ n: 1, condition: 10, own: true }] },
+    itemStates: { pick_apprentice: [{ n: 1, condition: 10, own: true, t: 'Lockpick' }] },
   });
   const st = await peer.waitEvent('AvatarState', (v) => (v as { id?: number })?.id === a.playerId);
   const body = st.value as { itemStates?: Record<string, { condition?: number; own?: boolean }[]> };
@@ -223,4 +223,24 @@ test('item-state entries are per stack with n: a bare {n} keeps the positions an
   const got = await a.waitEvent('SelfItemStates', (v) => Boolean((v as { itemStates?: Record<string, unknown> })?.itemStates?.misc_soulgem_common));
   assert.deepEqual((got.value as { itemStates: Record<string, unknown> }).itemStates.misc_soulgem_common,
     [{ n: 1, soul: 'scamp' }, { n: 2 }]);
+});
+
+// Backlog 340: `own` was a client-declared flag that made ANY gear wear-proof. It is honoured
+// only with a Lockpick/Probe/Repair/Light type tag; a katana tagged own still wears.
+test("an `own` tag on a weapon is ignored: the peer's wear still lands (backlog 340)", async (t) => {
+  const { peer, a } = await world(t);
+  drive(t, a);
+  a.sendEvent('PlayerInventory', {
+    items: [{ id: 'daedric_dai_katana', n: 1 }],
+    itemStates: { daedric_dai_katana: [{ n: 1, condition: 1000, own: true, t: 'Weapon' }] },
+  });
+  const st = await peer.waitEvent('AvatarState', (v) => (v as { id?: number })?.id === a.playerId);
+  const body = st.value as { itemStates?: Record<string, { own?: boolean }[]> };
+  assert.equal(body.itemStates?.daedric_dai_katana?.[0]?.own, undefined, 'own is not honoured for a weapon');
+  peer.sendEvent('AvatarItemStatesBatch', {
+    entries: [{ id: a.playerId, itemStates: { daedric_dai_katana: [{ n: 1, condition: 900 }] } }],
+  });
+  const worn = await a.waitEvent('SelfItemStates', (v) => Boolean((v as { itemStates?: Record<string, unknown> })?.itemStates?.daedric_dai_katana));
+  assert.equal((worn.value as { itemStates: Record<string, { condition?: number }[]> }).itemStates.daedric_dai_katana?.[0]?.condition, 900,
+    'the katana is not wear-proof');
 });

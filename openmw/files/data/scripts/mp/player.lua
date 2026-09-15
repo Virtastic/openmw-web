@@ -87,6 +87,7 @@ local lastPoseMirror = 0
 -- enchanting and merchantrepair. Barter alone was covered for a while, which left the other
 -- six paying into a per-client purse that never empties.
 local liveContainerOpen = false -- a pickpocket window is up (Container mode on a live actor)
+local arrestDialoguePending = false -- the next Dialogue mode is MP_PlayerArrest's: no lock request (343)
 local GOLD_SERVICE_MODES = {
     Barter = true, Training = true, Travel = true, SpellBuying = true,
     SpellCreation = true, Enchanting = true, MerchantRepair = true,
@@ -1284,6 +1285,10 @@ return {
             local target = data and data.target
             local okv, valid = pcall(function() return target and target:isValid() end)
             if not (okv and valid) then return end
+            -- An arrest is not a conversation to arbitrate (backlog 343): the lock request
+            -- the UiModeChanged below would send could be DENIED (two players on one guard)
+            -- and close the arrest window. Consumed by the mode change it opens.
+            arrestDialoguePending = true
             pcall(function() I.UI.addMode('Dialogue', { target = target }) end)
         end,
         MP_ResyncActive = function() identity.resyncActive() end,
@@ -1371,8 +1376,10 @@ return {
             -- of this conversation are dropped as nobody's (backlog 226). A normal click
             -- already holds it; quests.lua tells the two apart.
             if data.newMode == 'Dialogue' and not talking(data.oldMode) and data.arg then
+                local arrest = arrestDialoguePending
+                arrestDialoguePending = false
                 local okNpc, isNpc = pcall(function() return types.NPC.objectIsInstance(data.arg) end)
-                if okNpc and isNpc then core.sendGlobalEvent('mpDialogueForced', { target = data.arg }) end
+                if okNpc and isNpc and not arrest then core.sendGlobalEvent('mpDialogueForced', { target = data.arg }) end
             end
             -- PAID SERVICES. `arg` is the actor the window belongs to (pushGuiMode passes it
             -- through uiModeChanged for every mode), which is the NPC the server has to

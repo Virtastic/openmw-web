@@ -331,8 +331,11 @@ test('stat values are bounded, a level steps once per window, a first open is pl
   c.sendEvent('PlayerLevel', { level: 4 });
   c.sendEvent('ContainerOpen', { ref: { __refnum: { index: 77, contentFile: 0 } }, cellKey: '0,0', contents: [{ id: 'gold_001', n: 9000 }, { id: 'gold_001', n: 9000 }, { id: 'gold_001', n: 9000 }, { id: 'gold_001', n: 9000 }, { id: 'gold_001', n: 9000 }, { id: 'gold_001', n: 9000 }] });
   c.sendEvent('ContainerOpen', { ref: { __refnum: { index: 78, contentFile: 0 } }, cellKey: '0,0', contents: [{ id: 'gold_001', n: 40 }] });
-  const st = (await c.waitEvent('ContainerState')).value as { items: { id: string; n: number }[] };
-  assert.deepEqual(st.items, [{ id: 'gold_001', n: 40 }], 'the plausible chest is canonical; the implausible one was refused (no state for it)');
+  const idx = (v: unknown): number => (v as { ref: { __refnum: { index: number } } }).ref.__refnum.index;
+  const hoard = (await c.waitEvent('ContainerState', (v) => idx(v) === 77)).value as { items: { id: string; n: number }[] };
+  assert.deepEqual(hoard.items, [], 'the implausible gold was refused; the chest is still answered (backlog 344)');
+  const st = (await c.waitEvent('ContainerState', (v) => idx(v) === 78)).value as { items: { id: string; n: number }[] };
+  assert.deepEqual(st.items, [{ id: 'gold_001', n: 40 }], 'the plausible chest is canonical');
   await new Promise((r) => setTimeout(r, 200));
   await server.flush();
   const doc = readPlayerDoc(dataDir, charId) as { stats?: { attributes?: Record<string, number>; level?: number } };

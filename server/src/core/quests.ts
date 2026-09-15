@@ -314,6 +314,14 @@ export class Quests {
       log('debug', 'quest.journal_regress_blocked', { questId, have: current, got: idx, from: player.name });
       return;
     }
+    // Backlog 335: an owner's relog replays JournalSync's log through the engine, and every
+    // stage the client did not recognise as an echo comes back as a regress. A regress to a
+    // stage the log already holds is a replay, not the campaign moving: no write, no relay.
+    if (regressing && ownerChar !== undefined
+      && (this.ctx.players.getCached(ownerChar)?.journalLog ?? []).some((e) => e.q === questId && e.i === idx)) {
+      log('debug', 'quest.journal_regress_replay', { questId, have: current, got: idx, from: player.name });
+      return;
+    }
     if (!advances && !regressing) return; // identical index: nothing to do
     shared.journal[questId] = idx;
     this.ctx.cells.saveShared();

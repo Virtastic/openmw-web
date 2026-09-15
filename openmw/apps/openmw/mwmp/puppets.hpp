@@ -38,6 +38,15 @@ namespace MWMP
     /** True when this actor's damage belongs to somebody else. Safe to call every effect tick. */
     bool isPuppet(ESM::RefNum ref);
 
+    /** WHICH puppets are PLAYERS (backlog 342). A client's puppet of another player's body and
+     *  its puppet of an NPC the holder simulates sit in the same registry; the crime, witness
+     *  and sneak exemptions used to tell them apart by "no content file", which is also true
+     *  of every runtime-spawned NPC puppet (levelled, PlaceAtPC) -- no crime to assault, never
+     *  a witness. puppet.lua marks the player ones (it knows its playerId); setPuppet(ref,
+     *  false) unmarks both. */
+    void setPlayerPuppet(ESM::RefNum ref, bool on);
+    bool isPlayerPuppet(ESM::RefNum ref);
+
     /** Forget every puppet — session loss, world switch. */
     void clearPuppets();
 

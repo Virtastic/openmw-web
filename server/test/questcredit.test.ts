@@ -109,6 +109,26 @@ test('an unowned instance (the shared world) persists to no character at all', a
   await w.close();
 });
 
+// Backlog 335: an owner's relog replays the whole journalLog through the engine, and every
+// stage the client misread as a local change came back as an "authoritative regress". A
+// regress to a stage the log already holds is a replay: no doc write, no relay.
+test('an owner replaying a 3-stage log after a relog writes nothing and relays nothing', async () => {
+  const w = harness({ owner: 'alice' });
+  const alice = w.add('alice');
+  w.add('bob');
+  for (const i of [10, 20, 30]) w.quests.handleEvent(alice, 'JournalEntry', entry('MQ', i));
+  assert.equal(w.journalOf('alice').MQ, 30);
+  const before = JSON.stringify(w.players.getCached('alice'));
+  const relayed = w.events('bob', 'JournalEntry').length;
+  // The relog: JournalSync replayed 10, 20, 30 into the engine; the echoes 10 and 20 arrive.
+  for (const i of [10, 20]) w.quests.handleEvent(alice, 'JournalEntry', entry('MQ', i));
+  assert.equal(JSON.stringify(w.players.getCached('alice')), before, 'zero JournalEntry writes');
+  assert.equal(w.journalOf('alice').MQ, 30, 'the campaign did not rewind');
+  assert.equal(w.sharedJournal().MQ, 30);
+  assert.equal(w.events('bob', 'JournalEntry').length, relayed, 'guests do not see the index bounce');
+  await w.close();
+});
+
 test('a guest is SHOWN the owner\'s log on join, without adopting it into their save', async () => {
   const w = harness({ owner: 'alice' });
   const alice = w.add('alice');

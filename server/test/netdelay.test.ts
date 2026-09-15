@@ -6,6 +6,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { NetDelay, netDelayFromEnv } from '../src/net/netdelay';
+import { Connection } from '../src/net/connection';
+import { startServer } from '../src/server';
+import { TestClient, tmpDataDir } from './helpers';
 
 test('netdelay: unset env means no FIFO at all', () => {
   assert.equal(netDelayFromEnv({}), undefined);
@@ -40,4 +43,23 @@ test('netdelay: N ms actually delays, in order', async () => {
   await done;
   assert.deepEqual(order, [1, 2]);
   assert.ok(Date.now() - t0 >= 25, `held for ${Date.now() - t0} ms, wanted ~30`);
+});
+
+// Backlog 339: the close used to run synchronously after the DELAYED disconnect frame, so
+// under a delay the client only ever saw the close code (KICKED/SUPERSEDED detail lost).
+test('netdelay: a disconnect frame reaches the client before the close', async (t) => {
+  Connection.netDelay = () => new NetDelay(30);
+  t.after(() => { Connection.netDelay = undefined; });
+  const server = await startServer({ requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1' });
+  t.after(() => server.close());
+  const c = await TestClient.connect(server.port);
+  c.hello();
+  await c.waitJson('SessionHelloOk');
+  c.login('Nobody', 'wrong password');
+  let closedFirst = false;
+  void c.closed.then(() => { closedFirst = true; });
+  const frame = await c.waitDisconnect('AUTH_FAILED');
+  assert.equal(frame['code'], 'AUTH_FAILED');
+  assert.equal(closedFirst, false, 'the close overtook the disconnect frame');
+  await c.closed;
 });

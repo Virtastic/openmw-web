@@ -111,6 +111,40 @@ test('session flow end to end', async (t) => {
       assert.ok(!a3.isClosed);
       for (const c of [a3, a5]) { c.close(); await c.closed; }
     });
+
+    // Backlog 333: a resume-over-live is resolved by the token's CHARACTER. Char A's wifi
+    // blip must resume A and leave char B (same account, still sitting) untouched.
+    await tt.test("resume-over-live picks the token's character, not the account's latest", async () => {
+      const chars = await TestClient.connect(server.port);
+      const wl = await chars.joinExisting('Alice', 'correct horse');
+      const chars2 = wl['characters'] as { id: string; name: string }[];
+      const drelasId = chars2.find((x) => x.name === 'Drelas')!.id;
+      const aliceId = chars2.find((x) => x.name !== 'Drelas')!.id;
+      assert.notEqual(drelasId, aliceId);
+      chars.close(); await chars.closed;
+
+      const a6 = await TestClient.connect(server.port);
+      a6.hello(); await a6.waitJson('SessionHelloOk');
+      a6.login('Alice', 'correct horse', { characterId: aliceId });
+      const w6 = await a6.waitJson('SessionWelcome');
+      a6.sendJson({ t: 'SessionReady' });
+      await a6.waitEvent('PlayerList');
+      const b = await TestClient.connect(server.port);
+      b.hello(); await b.waitJson('SessionHelloOk');
+      b.login('Alice', 'correct horse', { characterId: drelasId });
+      await b.waitJson('SessionWelcome');
+      b.sendJson({ t: 'SessionReady' });
+      await b.waitEvent('PlayerList');
+
+      const back = await TestClient.connect(server.port);
+      back.hello(); await back.waitJson('SessionHelloOk');
+      back.sendJson({ t: 'SessionResume', token: w6['sessionToken'] });
+      const wr = await back.waitJson('SessionWelcome');
+      assert.equal(wr['characterId'], aliceId, 'A resumed as A');
+      assert.equal((await a6.waitDisconnect('SUPERSEDED'))['code'], 'SUPERSEDED');
+      assert.ok(!b.isClosed, 'B (same account, other character) untouched');
+      for (const c of [b, back]) { c.close(); await c.closed; }
+    });
   });
 
   await t.test('bad subprotocol is rejected', async () => {

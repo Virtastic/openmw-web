@@ -2114,7 +2114,7 @@ namespace MWMechanics
                 // mechanicsmanagerimp.cpp canReportCrime). A friend's puppet beside you hid
                 // the eye and Sneak never trained.
                 const ESM::RefNum observerRef = observer.getCellRef().getRefNum();
-                if (MWMP::isAvatar(observerRef) || (MWMP::isPuppet(observerRef) && !observerRef.hasContentFile()))
+                if (MWMP::isAvatar(observerRef) || MWMP::isPlayerPuppet(observerRef))
                     continue;
 
                 if (world->getLOS(player, observer))

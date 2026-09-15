@@ -330,6 +330,12 @@ test("a human's far-cell disable persists and replays; a later enable persists a
   host.sendCellChange('0,0', 0, 0, 0);
   await host.waitEvent('PlayerCellChange');
   const gares = { __refnum: { index: 4242, contentFile: 0 } };
+  // Backlog 337: a far INTERIOR must be one this session has been sent a cell state for
+  // (an exterior only has to be well-formed). The host has been through the cave.
+  host.sendCellChange('ilunibi, soul\'s rattle', 0, 0, 0);
+  await host.waitEvent('WorldCellState', (v) => (v as { cellKey: string }).cellKey === 'ilunibi, soul\'s rattle');
+  host.sendCellChange('0,0', 0, 0, 0);
+  await host.waitEvent('PlayerCellChange');
   host.sendEvent('ObjectEnabled', { ref: gares, cellKey: 'ilunibi, soul\'s rattle', enabled: false }); // Startup, far away
   await new Promise((r) => setTimeout(r, 200));
 
@@ -351,6 +357,88 @@ test("a human's far-cell disable persists and replays; a later enable persists a
   const second = (await late.waitEvent('WorldCellState', (v) => (v as { cellKey: string }).cellKey === 'ilunibi, soul\'s rattle')).value as { disabled: string[]; enabled: string[] };
   assert.deepEqual(second.disabled, [], 'the enable did not undo the persisted disable');
   assert.deepEqual(second.enabled, ['c:4242:0'], 'the enable did not persist as a reveal');
+});
+
+// Backlog 337: a far enable creates a cell doc for whatever key it names, so the key has to be
+// a real exterior inside the world, or an interior this session has been sent.
+test('a far enable persists for a real exterior and is refused for a made-up key', async (t) => {
+  const dataDir = tmpDataDir();
+  const server = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1' });
+  t.after(() => server.close());
+  const host = await TestClient.connect(server.port);
+  t.after(() => host.close());
+  await host.joinAsNew('Host');
+  host.sendCellChange('0,0', 0, 0, 0);
+  await host.waitEvent('PlayerCellChange');
+  const ref = { __refnum: { index: 4242, contentFile: 0 } };
+  host.sendEvent('ObjectEnabled', { ref, cellKey: '17,-9', enabled: false });
+  host.sendEvent('ObjectEnabled', { ref, cellKey: 'zzz random key 7b3f', enabled: false });
+  host.sendEvent('ObjectEnabled', { ref, cellKey: '9999,0', enabled: false }); // outside the world
+  await new Promise((r) => setTimeout(r, 200));
+  await server.flush();
+  const store = new CellStore(dataDir);
+  t.after(() => store.close());
+  const stored = store.cellsWithDeltas();
+  assert.deepEqual((await store.get('17,-9')).enabled, { 'c:4242:0': false }, 'a legitimate far exterior persists');
+  assert.ok(!stored.includes('zzz random key 7b3f'), 'a random far key must not create a doc');
+  assert.ok(!stored.includes('9999,0'), 'an exterior past the world bound must not either');
+});
+
+// Backlog 338: a human's actor spawn is placed beside the asker, a few at a time.
+test("a human's actor spawn is refused from afar and past ten bodies", async (t) => {
+  const server = await startServer({ requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1' });
+  t.after(() => server.close());
+  const bob = await TestClient.connect(server.port);
+  t.after(() => bob.close());
+  await bob.joinAsNew('Bob');
+  bob.sendCellChange('0,0', 0, 0, 0);
+  await bob.waitEvent('PlayerCellChange');
+  const req = { tempId: 0, actor: true, recordId: 'dremora_lord', x: 100, y: 200, z: 0, rotZ: 0 };
+  bob.sendEvent('ObjectSpawnRequest', { ...req, cellKey: '20,20', count: 1 });
+  assert.equal(((await bob.waitEvent('ObjectSpawnRefused')).value as { reason: string }).reason, 'reach');
+  bob.sendEvent('ObjectSpawnRequest', { ...req, cellKey: '0,0', count: 11 });
+  assert.equal(((await bob.waitEvent('ObjectSpawnRefused')).value as { reason: string }).reason, 'reach');
+  bob.sendEvent('ObjectSpawnRequest', { ...req, cellKey: '1,1', count: 10 }); // a neighbour cell, ten bodies: fine
+  const spawn = (await bob.waitEvent('QuestSpawn')).value as { count: number };
+  assert.equal(spawn.count, 10);
+});
+
+// Backlog 344: a 70-stack corpse (a merchant, a rich chest) is a container, not a hoard.
+test('a first open of 70 stacks becomes canonical', async (t) => {
+  const server = await startServer({ requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1' });
+  t.after(() => server.close());
+  const a = await TestClient.connect(server.port);
+  t.after(() => a.close());
+  await a.joinAsNew('Looter');
+  a.sendCellChange('0,0', 0, 0, 0);
+  await a.waitEvent('PlayerCellChange');
+  const contents = Array.from({ length: 70 }, (_, i) => ({ id: `misc_item_${i}`, n: 1 }));
+  a.sendEvent('ContainerOpen', { ref: CONT_REF, cellKey: '0,0', contents });
+  const st = (await a.waitEvent('ContainerState')).value as { items: unknown[] };
+  assert.equal(st.items.length, 70, 'the 70-stack container is canonical');
+});
+
+// Backlog 345: the trim drops loose litter before the net actors the holder still streams.
+test('a trimmed cell state keeps its actors and sheds loose placed objects first', () => {
+  const doc = emptyCellDoc();
+  for (let i = 0; i < MAX_KEYS_PER_CELL; i++) {
+    doc.placed[`n:${i}`] = { netId: i, recordId: 'misc_com_bottle_01', cellKey: '0,0', x: i, y: 0, z: 0, rotZ: 0, count: 1, byId: 1, state: { condition: 3 } };
+    doc.deleted.push(`c:${i}:0`);
+    doc.moved[`c:${i}:1`] = { x: i, y: 1, z: 2, rotZ: 3 };
+    doc.locks[`c:${i}:2`] = i % 2 ? 50 : null;
+    doc.doors[`c:${i}:3`] = true;
+    doc.containers[`c:${i}:4`] = { stateSeq: 1, items: Array.from({ length: 32 }, (_, j) => ({ id: `item_${j}`, n: 1 })) };
+    (doc.memberVars ??= {})[`c:${i}:5`] = { state: 1 };
+  }
+  // The newest placed entries are the actors.
+  for (let i = 0; i < 20; i++) {
+    doc.placed[`n:${9000 + i}`] = { netId: 9000 + i, recordId: 'cliff racer', cellKey: '0,0', x: i, y: 0, z: 0, rotZ: 0, count: 1, byId: 2, actor: true };
+  }
+  const body = cellStateBody('0,0', doc, [], true);
+  assert.ok(lserNodeCount(body) <= CELL_STATE_NODE_BUDGET);
+  const placed = body['placed'] as { netId: number; actor?: boolean }[];
+  assert.ok(placed.length < MAX_KEYS_PER_CELL + 20, 'something was trimmed');
+  assert.equal(placed.filter((p) => p.actor === true).length, 20, 'every actor survived the trim');
 });
 
 // Backlog 214: a client's PlaceAtPC actor is the HOLDER's to spawn (the client's engine

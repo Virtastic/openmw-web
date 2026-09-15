@@ -30,6 +30,11 @@ const MAX_COUNT = 10000;
 const MAX_GOLD = 100_000_000;
 const GOLD = 'gold_001';
 const MAX_SPELLS = 1024;
+// Backlog 340: `own` (#233) makes a record's condition the client's wholesale, so it is honoured
+// only for the four kinds that genuinely wear on the client alone. The server has no record
+// store (esm.ts reads headers only), so the kind is the client's `t` tag -- a lie there costs a
+// wear-proof lockpick, not a wear-proof daedric katana.
+const OWN_WEAR_TYPES = new Set(['Lockpick', 'Probe', 'Repair', 'Light']);
 const MAX_STAT_ENTRIES = 64;
 const MAX_STAT_KEY = 32;
 const MAX_STAT_VALUE = 200; // attributes and skills: 100 is the game's ceiling; damage keys ("<id>_damage") share the map
@@ -492,7 +497,10 @@ function handleInventory(ctx: StateCtx, player: Player, body: LTable): boolean {
         const have = merged[recId] ?? [];
         merged[recId] = bucket.map((mine, i) => {
           const theirs = have[i] ?? {};
-          const out: ItemStateDoc = { ...theirs, ...(mine.n !== undefined ? { n: mine.n } : {}), ...(mine.own ? { own: true } : {}) };
+          // `own` is the CLIENT's current claim, never inherited from the doc (340: not sticky).
+          const out: ItemStateDoc = { ...theirs, ...(mine.n !== undefined ? { n: mine.n } : {}) };
+          delete out.own;
+          if (mine.own) out.own = true;
           if (mine.charge !== undefined) out.charge = mine.charge;
           if (mine.condition !== undefined && (mine.own || theirs.condition === undefined || mine.condition > theirs.condition)) {
             out.condition = mine.condition;
@@ -590,10 +598,14 @@ export function handleAvatarStatsBatch(ctx: StateCtx, sender: Player, value: LVa
     }
     p.statsDropLogged = false;
     p.peerStatsAt = now;
+    // 'now' on the dead TRANSITION only (backlog 346): a dead idle avatar reports hp 0 at
+    // 1 Hz, and every report flushed sync SQLite.
     const died = hp.c <= 0;
+    const transition = died && p.avatarDead !== true;
+    p.avatarDead = died;
     ctx.store.update(p.charId, (doc) => {
       doc.stats = { ...doc.stats, dynamic: { hp, mp, ft } };
-    }, died ? 'now' : 'sweep');
+    }, transition ? 'now' : 'sweep');
     const msg = { id: p.id, hp, mp, ft, speed: baseSpeed(ctx, p) };
     for (const other of ctx.roster.inWorld()) {
       if (other.id !== p.id && cellsVisible(other.cellKey, p.cellKey)) {
@@ -663,7 +675,8 @@ function parseItemStatesL(raw: LTable | undefined): Record<string, ItemStateDoc[
       if (cond !== undefined && cond >= 0) one.condition = cond;
       if (charge !== undefined && charge >= 0) one.charge = charge;
       if (soul) one.soul = soul;
-      if (t.get('own') === true) one.own = true;
+      const kind = t.get('t');
+      if (t.get('own') === true && typeof kind === 'string' && OWN_WEAR_TYPES.has(kind)) one.own = true;
       bucket.push(one);
       if (bucket.length >= MAX_COUNT) break;
     }

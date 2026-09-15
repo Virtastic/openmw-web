@@ -37,6 +37,12 @@ namespace
         return sPuppets;
     }
 
+    std::unordered_set<ESM::RefNum, RefNumHash, RefNumEq>& playerPuppets()
+    {
+        static std::unordered_set<ESM::RefNum, RefNumHash, RefNumEq> sPlayerPuppets;
+        return sPlayerPuppets;
+    }
+
     // refnum -> bounty. Presence in the map IS the "this is an avatar" flag, so a body with no
     // bounty yet is still known to be a player's, which is what the pursuit check needs.
     std::unordered_map<ESM::RefNum, int, RefNumHash, RefNumEq>& avatars()
@@ -64,7 +70,10 @@ namespace MWMP
         if (on)
             puppets().insert(ref);
         else
+        {
             puppets().erase(ref);
+            playerPuppets().erase(ref);
+        }
     }
 
     bool isPuppet(ESM::RefNum ref)
@@ -72,9 +81,26 @@ namespace MWMP
         return !puppets().empty() && puppets().find(ref) != puppets().end();
     }
 
+    void setPlayerPuppet(ESM::RefNum ref, bool on)
+    {
+        if (on)
+        {
+            puppets().insert(ref);
+            playerPuppets().insert(ref);
+        }
+        else
+            playerPuppets().erase(ref);
+    }
+
+    bool isPlayerPuppet(ESM::RefNum ref)
+    {
+        return !playerPuppets().empty() && playerPuppets().find(ref) != playerPuppets().end();
+    }
+
     void clearPuppets()
     {
         puppets().clear();
+        playerPuppets().clear();
         pending().clear();
     }
 

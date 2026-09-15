@@ -724,24 +724,16 @@ end
 -- HARNESS DIAGNOSTIC (peer): the fall the avatar took, and what it cost. Three sweeps of
 -- s147 showed the peer's bar unmoved after a 1300-unit fall and reading could not say
 -- whether the avatar ever left the ground on the peer, or landed and was not charged.
-local fallTrack = {} -- id -> { top = z at the highest airborne point, air = true }
-local function avatarFallProbe()
+-- The ground read lives in avatar.lua (backlog 341: types.Actor.isOnGround takes an LObject;
+-- this script's GObject was rejected, so the probe never fired); it reports mpAvatarLanded.
+local function avatarLanded(data)
+    if not (data and data.obj) then return end
     for id, p in pairs(puppets) do
-        if p.obj and p.obj:isValid() then
-            local okg, onGround = pcall(types.Actor.isOnGround, p.obj)
-            if okg then
-                local t = fallTrack[id]
-                local z = p.obj.position.z
-                if not onGround then
-                    if not t then t = { top = z }; fallTrack[id] = t end
-                    if z > t.top then t.top = z end
-                elseif t then
-                    local okh, hp = pcall(function() return types.Actor.stats.dynamic.health(p.obj).current end)
-                    print(string.format('[mp] avatar #%d landed from z=%d at z=%d (fell %d) hp=%s', id,
-                        math.floor(t.top), math.floor(z), math.floor(t.top - z), tostring(okh and hp or '?')))
-                    fallTrack[id] = nil
-                end
-            end
+        if p.obj and p.obj:isValid() and p.obj.id == data.obj.id then
+            local okh, hp = pcall(function() return types.Actor.stats.dynamic.health(p.obj).current end)
+            print(string.format('[mp] avatar #%d landed from z=%d at z=%d (fell %d) hp=%s', id,
+                math.floor(data.top), math.floor(data.z), math.floor(data.top - data.z), tostring(okh and hp or '?')))
+            return
         end
     end
 end
@@ -749,7 +741,6 @@ end
 local function avatarStreamTick(now)
     if not (mp.isSystem and mp.isSystem()) then return end
     avatarDrownProbe(now)
-    avatarFallProbe()
     if now - avatarStreamAt < AVATAR_STREAM_EVERY then return end
     avatarStreamAt = now
     local entries = {}
@@ -3233,6 +3224,7 @@ local eventHandlers = {
             data.obj:removeScript('scripts/mp/avatar.lua')
         end
     end,
+    mpAvatarLanded = avatarLanded,
 
     -- Backlog 307 (peer): an armour/block skill use on an avatar, to its owner's progression.
     mpAvatarSkillUse = function(data)
@@ -3276,9 +3268,9 @@ local eventHandlers = {
         local pending = false
         local items = {}
         for i, e in ipairs(data.items or {}) do
-            local net = worldmp.toNet(e.id)
-            if net == e.id and worldmp.isDynamicId and worldmp.isDynamicId(e.id) then pending = true end
-            items[i] = { id = net, n = e.n }
+            local netId = worldmp.toNet(e.id)
+            if netId == e.id and worldmp.isDynamicId and worldmp.isDynamicId(e.id) then pending = true end
+            items[i] = { id = netId, n = e.n }
         end
         local states = {}
         for id, bucket in pairs(data.itemStates or {}) do states[worldmp.toNet(id)] = bucket end
@@ -3290,9 +3282,9 @@ local eventHandlers = {
     mpEquipmentOut = function(data)
         local slots, pending = {}, false
         for slot, recordId in pairs(data.slots or {}) do
-            local net = worldmp.toNet(recordId)
-            if net == recordId and worldmp.isDynamicId and worldmp.isDynamicId(recordId) then pending = true end
-            slots[slot] = net
+            local netId = worldmp.toNet(recordId)
+            if netId == recordId and worldmp.isDynamicId and worldmp.isDynamicId(recordId) then pending = true end
+            slots[slot] = netId
         end
         mp.sendEvent('PlayerEquipment', { slots = slots })
         if pending then toPlayer('MP_ForgetDeclared', { kind = 'PlayerEquipment' }) end
@@ -3319,9 +3311,9 @@ local eventHandlers = {
         local function mapped(list)
             local out = {}
             for i, id in ipairs(list or {}) do
-                local net = worldmp.toNet(id)
-                if net == id and worldmp.isDynamicId and worldmp.isDynamicId(id) then pending[#pending + 1] = id end
-                out[i] = net
+                local netId = worldmp.toNet(id)
+                if netId == id and worldmp.isDynamicId and worldmp.isDynamicId(id) then pending[#pending + 1] = id end
+                out[i] = netId
             end
             return out
         end

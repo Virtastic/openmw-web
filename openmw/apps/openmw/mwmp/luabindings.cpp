@@ -217,6 +217,12 @@ namespace MWMP
                 return;
             setPuppet(obj.as<MWLua::Object>().id(), on);
         };
+        // Which of them are PLAYERS (backlog 342): puppet.lua knows its playerId.
+        api["setPlayerPuppet"] = [](const sol::object& obj, bool on) {
+            if (!obj.is<MWLua::Object>())
+                return;
+            setPlayerPuppet(obj.as<MWLua::Object>().id(), on);
+        };
         api["clearPuppets"] = []() { clearPuppets(); };
         // AVATAR REGISTRY (see puppets.hpp). The mirror image of the puppet one: on the SIM
         // PEER these are the bodies real players drive, and engine code that reacts to "the

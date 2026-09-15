@@ -538,10 +538,12 @@ function sessionId(token: string): string {
 }
 
 export class SessionIndex {
-  private readonly byToken = new Map<string, { accountKey: string; accountName: string }>();
+  private readonly byToken = new Map<string, { accountKey: string; accountName: string; charId?: string }>();
 
-  add(token: string, accountKey: string, accountName: string): void {
-    if (token !== '') this.byToken.set(token, { accountKey, accountName });
+  // charId: which character the socket plays (backlog 333) — resume-over-live must find THAT
+  // session, not whichever of the account's characters the roster lists last.
+  add(token: string, accountKey: string, accountName: string, charId?: string): void {
+    if (token !== '') this.byToken.set(token, { accountKey, accountName, ...(charId !== undefined ? { charId } : {}) });
   }
 
   remove(token: string): void {
@@ -550,7 +552,7 @@ export class SessionIndex {
 
   // Constant-time over the candidate set is overkill for a Map lookup, but the token is a
   // bearer credential, so at least do not leak its prefix through an early-exit compare.
-  get(token: string): { accountKey: string; accountName: string } | undefined {
+  get(token: string): { accountKey: string; accountName: string; charId?: string } | undefined {
     if (token === '') return undefined;
     const want = Buffer.from(token);
     for (const [known, value] of this.byToken) {

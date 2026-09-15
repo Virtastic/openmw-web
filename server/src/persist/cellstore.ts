@@ -45,6 +45,7 @@ export interface PlacedObject {
   byId: number; // transient playerId of the spawner; informational in restored state
   // The dropped item's own state (wear, charge, soul), so a pickup is not a pristine copy.
   state?: { condition?: number; charge?: number; soul?: string };
+  actor?: boolean; // a runtime-spawned net actor the holder streams (kept last by the cell-state trim)
 }
 
 export type ContainerItems = { id: string; n: number }[];

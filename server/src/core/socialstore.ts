@@ -217,6 +217,9 @@ export class SocialStore {
     for (const [table, column, decl] of [
       ['presence', 'offline_since', 'INTEGER'],
       ['presence', 'mode', 'TEXT'],
+      // Backlog 334: WHICH character of the account the row is about. The PK stays the account
+      // (the friend list is per account); the one-character-one-world check compares char ids.
+      ['presence', 'char_id', 'TEXT'],
     ] as const) {
       const has = (this.db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[])
         .some((c) => c.name === column);
@@ -299,15 +302,15 @@ export class SocialStore {
 
   /** Refresh this account's presence. Called on join and on the heartbeat. */
   setPresence(account: AccountKey, world: string, name: string,
-    cellKey: string | undefined, isBot: boolean, now: number, mode?: string): void {
+    cellKey: string | undefined, isBot: boolean, now: number, mode?: string, charId?: string): void {
     this.write(
-      `INSERT INTO presence (account, world, name, cell_key, is_bot, updated_at, offline_since, mode)
-       VALUES (?, ?, ?, ?, ?, ?, NULL, ?)
+      `INSERT INTO presence (account, world, name, cell_key, is_bot, updated_at, offline_since, mode, char_id)
+       VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)
        ON CONFLICT(account) DO UPDATE SET
          world = excluded.world, name = excluded.name, cell_key = excluded.cell_key,
          is_bot = excluded.is_bot, updated_at = excluded.updated_at, offline_since = NULL,
-         mode = excluded.mode`,
-    ).run(account, world, name, cellKey ?? null, isBot ? 1 : 0, now, mode ?? null);
+         mode = excluded.mode, char_id = excluded.char_id`,
+    ).run(account, world, name, cellKey ?? null, isBot ? 1 : 0, now, mode ?? null, charId ?? null);
   }
 
   /** Drop presence on leave. Deleting only OUR row matters: a player who moved to another
@@ -354,10 +357,10 @@ export class SocialStore {
   }
 
   /** Where one account's presence row says it is. */
-  presenceOf(account: AccountKey): { world: string; updatedAt: number; offline: boolean } | undefined {
-    const r = this.db.prepare('SELECT world, updated_at AS updatedAt, offline_since AS offlineSince FROM presence WHERE account = ?')
-      .get(account) as { world: string; updatedAt: number; offlineSince: number | null } | undefined;
-    return r ? { world: r.world, updatedAt: r.updatedAt, offline: r.offlineSince !== null } : undefined;
+  presenceOf(account: AccountKey): { world: string; updatedAt: number; offline: boolean; charId?: string } | undefined {
+    const r = this.db.prepare('SELECT world, updated_at AS updatedAt, offline_since AS offlineSince, char_id AS charId FROM presence WHERE account = ?')
+      .get(account) as { world: string; updatedAt: number; offlineSince: number | null; charId: string | null } | undefined;
+    return r ? { world: r.world, updatedAt: r.updatedAt, offline: r.offlineSince !== null, ...(r.charId !== null ? { charId: r.charId } : {}) } : undefined;
   }
 
   /** Everyone online across every world, fresher than `ttlMs`. */
