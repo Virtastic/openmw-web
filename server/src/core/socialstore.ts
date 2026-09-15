@@ -64,6 +64,8 @@ export interface PresenceRow {
   name: string;
   cellKey?: string;
   isBot: boolean;
+  /** The world's solo/party mode, as its own process last wrote it: 'private' | 'party'. */
+  mode?: string;
 }
 
 export interface FriendRow {
@@ -214,6 +216,7 @@ export class SocialStore {
     // only place that breaks. Add it explicitly; SQLite throws if it is already there.
     for (const [table, column, decl] of [
       ['presence', 'offline_since', 'INTEGER'],
+      ['presence', 'mode', 'TEXT'],
     ] as const) {
       const has = (this.db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[])
         .some((c) => c.name === column);
@@ -296,14 +299,15 @@ export class SocialStore {
 
   /** Refresh this account's presence. Called on join and on the heartbeat. */
   setPresence(account: AccountKey, world: string, name: string,
-    cellKey: string | undefined, isBot: boolean, now: number): void {
+    cellKey: string | undefined, isBot: boolean, now: number, mode?: string): void {
     this.write(
-      `INSERT INTO presence (account, world, name, cell_key, is_bot, updated_at, offline_since)
-       VALUES (?, ?, ?, ?, ?, ?, NULL)
+      `INSERT INTO presence (account, world, name, cell_key, is_bot, updated_at, offline_since, mode)
+       VALUES (?, ?, ?, ?, ?, ?, NULL, ?)
        ON CONFLICT(account) DO UPDATE SET
          world = excluded.world, name = excluded.name, cell_key = excluded.cell_key,
-         is_bot = excluded.is_bot, updated_at = excluded.updated_at, offline_since = NULL`,
-    ).run(account, world, name, cellKey ?? null, isBot ? 1 : 0, now);
+         is_bot = excluded.is_bot, updated_at = excluded.updated_at, offline_since = NULL,
+         mode = excluded.mode`,
+    ).run(account, world, name, cellKey ?? null, isBot ? 1 : 0, now, mode ?? null);
   }
 
   /** Drop presence on leave. Deleting only OUR row matters: a player who moved to another
@@ -359,12 +363,12 @@ export class SocialStore {
   /** Everyone online across every world, fresher than `ttlMs`. */
   presentEverywhere(now: number, ttlMs: number): PresenceRow[] {
     const rows = this.db.prepare(
-      'SELECT account, world, name, cell_key AS cellKey, is_bot AS isBot FROM presence'
+      'SELECT account, world, name, cell_key AS cellKey, is_bot AS isBot, mode FROM presence'
       + ' WHERE offline_since IS NULL AND updated_at >= ?',
-    ).all(now - ttlMs) as { account: string; world: string; name: string; cellKey: string | null; isBot: number }[];
+    ).all(now - ttlMs) as { account: string; world: string; name: string; cellKey: string | null; isBot: number; mode: string | null }[];
     return rows.map((r) => ({
       account: r.account, world: r.world, name: r.name,
-      cellKey: r.cellKey ?? undefined, isBot: r.isBot === 1,
+      cellKey: r.cellKey ?? undefined, isBot: r.isBot === 1, mode: r.mode ?? undefined,
     }));
   }
 

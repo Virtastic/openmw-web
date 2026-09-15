@@ -266,3 +266,30 @@ test("accepting a same-world invite returns the inviter's live position", () => 
   assert.equal(w.store.hasInvite('ada', 'bob', w.clock), false, 'the invite must be consumed');
   w.close();
 });
+
+// Backlog 103: the page offered "join" to every online friend, including one standing next to
+// you and one in a solo world. The friend row now says whether a join could succeed: online, in
+// a world other than this one, and that world open to friends (party) — the mode the world's
+// own process writes into its presence row on the heartbeat.
+test('a friend row is joinable only from another world that is open to friends', () => {
+  const w = world();
+  const bob = w.add('bob', 'Bob');
+  const ada = w.register('ada', 'Ada');
+  const cy = w.add('cy', 'Cy');
+  w.befriend(bob, cy);
+  w.store.addFriend('bob', ada, w.clock);
+  // The presence scan is cached per tick; the heartbeat drops it, so each read is fresh.
+  const row = (acct: string) => { w.social.refreshPresenceViews(); return w.social.friendList('bob').find((f) => f.acct === acct); };
+
+  // Cy is in THIS world: online, with a local id, and nothing to join.
+  assert.equal(row('cy')?.online, true);
+  assert.equal(row('cy')?.joinable, undefined, 'a friend in your own world is not a join target');
+
+  w.store.setPresence(ada, 'adas-world', 'Ada', '10,10', false, w.clock, 'private');
+  assert.equal(row('ada')?.online, true);
+  assert.equal(row('ada')?.joinable, undefined, 'a solo world is not open');
+
+  w.store.setPresence(ada, 'adas-world', 'Ada', '10,10', false, w.clock, 'party');
+  assert.equal(row('ada')?.joinable, true, 'a party world elsewhere is');
+  w.close();
+});

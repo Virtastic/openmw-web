@@ -670,6 +670,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     store: socialStore,
     roster,
     worldId: worldId ?? 'default',
+    worldMode: () => worldMode,
     // The USERNAME is the public handle (accounts.ts: "shown everywhere in-game — nametags,
     // chat, friends, admin views"). account.name is the LOGIN IDENTIFIER, and for an SSO
     // account it is the provider's name claim, i.e. the person's real name. Every social
@@ -1571,7 +1572,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // session in evicts that session on ITS next beat, and the write is what it keys on.
   ctx.onPlayerJoined = (p) => {
     if (p.system || p.bot) return;
-    try { socialStore.setPresence(p.accountKey, presenceWorld, p.name, p.cellKey, false, Date.now()); }
+    try { socialStore.setPresence(p.accountKey, presenceWorld, p.name, p.cellKey, false, Date.now(), worldMode); }
     catch (err) { log('warn', 'presence.join_write_failed', { error: String(err) }); }
   };
   simPeerTick.unref();
@@ -1676,7 +1677,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
         p.peer.disconnect('SUPERSEDED', 'this character was opened in another world');
         continue;
       }
-      socialStore.setPresence(p.accountKey, presenceWorld, p.name, p.cellKey, p.bot === true, now);
+      socialStore.setPresence(p.accountKey, presenceWorld, p.name, p.cellKey, p.bot === true, now, worldMode);
     }
   };
   // THE PLAYERS LIST IS THE SERVER'S, NOT THIS WORLD'S. Roster.joinWorld sends a PlayerList

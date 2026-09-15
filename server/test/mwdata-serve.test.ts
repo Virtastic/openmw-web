@@ -139,6 +139,25 @@ test('game data and mods serve identically with S3 configured', async () => {
   } finally { await s.stop(); }
 });
 
+// Backlog 128: Tribunal switched off in the dashboard left the peer on Morrowind-only content
+// while the page loaded every master it found, so every browser client was refused
+// BAD_CONTENT. The sidecar now carries the disabled base entries, mods installed or not.
+test('mwdata-mods.json names the disabled official masters, even with no mods installed', async () => {
+  const dir = fixture();
+  const doc = { version: 2 as const, entries: [{ file: 'Morrowind.esm', enabled: true }, { file: 'Tribunal.esm', enabled: false }], mods: [] };
+  const s = await serve(dir, 'serve', () => doc);
+  try {
+    const r = await fetch(`${s.base}/mwdata-mods.json`);
+    assert.equal(r.status, 200, 'a disabled master is an answer, not "no mods"');
+    const body = await r.json() as { mods: unknown[]; disabled: string[] };
+    assert.deepEqual(body.disabled, ['Tribunal.esm']);
+    assert.deepEqual(body.mods, []);
+  } finally { await s.stop(); }
+  // Nothing off and nothing installed: still the 404 older pages expect.
+  const s2 = await serve(dir, 'serve', () => ({ version: 2 as const, entries: [{ file: 'Morrowind.esm', enabled: true }], mods: [] }));
+  try { assert.equal((await fetch(`${s2.base}/mwdata-mods.json`)).status, 404); } finally { await s2.stop(); }
+});
+
 // Backlog 178: re-installing a mod keeps the slug URL and changes the bytes. Under "immutable"
 // the browser served the old .esm out of its cache until somebody cleared it by hand.
 test('a mod file revalidates by ETag; retail stays immutable; ranges survive', async () => {

@@ -42,17 +42,45 @@ export function tes3Hash(name: Buffer): { lo: number; hi: number } {
 /** Data offsets are u32: an archive whose data block would exceed this cannot be written. */
 export const BSA_MAX_DATA = 0xffffffff;
 
+type Entry = { raw: Buffer; path: string; size: number; lo: number; hi: number; nameOff: number; dataOff: number };
+
 /**
  * Write `out` from `files` (archive name -> path on disk). Names are normalised here (lowercase,
  * backslashes), so callers pass them as they appear on disk.
+ *
+ * Data offsets are u32, so a mod whose assets pass 4 GiB (Tamriel_Data HD) cannot be one
+ * archive. The sorted list is split greedily into `<out>-1.bsa`, `<out>-2.bsa`, ... each under
+ * `maxData`; a single archive keeps the plain name. Returns every path written, in order.
+ * `maxData` is a parameter so a test can force the split without 4 GB of fixtures.
  */
-export async function writeBsa(out: string, files: { name: string; path: string; size: number }[]): Promise<void> {
-  const entries = files.map((f) => {
+export async function writeBsa(
+  out: string, files: { name: string; path: string; size: number }[], maxData = BSA_MAX_DATA,
+): Promise<string[]> {
+  const entries: Entry[] = files.map((f) => {
     const raw = Buffer.from(f.name.replace(/\//g, '\\').toLowerCase(), 'latin1');
     return { raw, path: f.path, size: f.size, ...tes3Hash(raw), nameOff: 0, dataOff: 0 };
   });
   entries.sort((a, b) => (a.lo - b.lo) || (a.hi - b.hi));
 
+  const parts: Entry[][] = [[]];
+  let partLen = 0;
+  for (const e of entries) {
+    if (e.size > maxData) throw new Error(`bsa-pack: ${e.path} (${e.size} bytes) exceeds the u32 offset limit on its own`);
+    if (partLen + e.size > maxData) { parts.push([]); partLen = 0; }
+    parts[parts.length - 1]!.push(e);
+    partLen += e.size;
+  }
+  if (parts.length === 1) { await writeOne(out, entries); return [out]; }
+  const written: string[] = [];
+  for (let i = 0; i < parts.length; i++) {
+    const path = out.replace(/(\.bsa)?$/i, `-${i + 1}$1`);
+    await writeOne(path, parts[i]!);
+    written.push(path);
+  }
+  return written;
+}
+
+async function writeOne(out: string, entries: Entry[]): Promise<void> {
   const names: Buffer[] = [];
   let nameLen = 0;
   let dataLen = 0;

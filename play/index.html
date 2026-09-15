@@ -1543,7 +1543,7 @@ window.omw = (function(){
                  + 'letter-spacing:.12em;text-transform:uppercase;background:linear-gradient(180deg,#d3a84e,#8a6838);color:#1a1207';
                // ON PURPOSE: tell the world before going, so a Party world closes to its
                // guests now rather than after the crash grace (see net.lua switchTo).
-               btn.onclick = function(){ window.__omwAllowLeave = true; try { sessionStorage.removeItem('omwmp:bootfrag'); } catch(e){} try { window.omw.send('leaving', 300); } catch(e){} try { if (window.Module) Module.__omwRunning = false; } catch(e){} setTimeout(function(){ location.href = 'launcher.html'; }, 150); };
+               btn.onclick = function(){ window.__omwAllowLeave = true; try { sessionStorage.removeItem('omwmp:bootfrag'); sessionStorage.removeItem('omwmp:chatlog'); } catch(e){} try { window.omw.send('leaving', 300); } catch(e){} try { if (window.Module) Module.__omwRunning = false; } catch(e){} setTimeout(function(){ location.href = 'launcher.html'; }, 150); };
                box.appendChild(btn); wrap.appendChild(box); document.body.appendChild(wrap);
              }
              (function(){
@@ -2169,7 +2169,12 @@ window.omw = (function(){
          var masters=['morrowind.esm','tribunal.esm','bloodmoon.esm'];
          var archives=['morrowind.bsa','tribunal.bsa','bloodmoon.bsa'];
          var content=[], fbarch=[];
-         masters.forEach(function(m){ if(rootFiles.has(m)) content.push(rootFiles.get(m)); });
+         // An expansion the dashboard switched OFF (mwdata-mods.json `disabled`, from the server's
+         // own load order) is present on disk and must still not load: the peer runs without it,
+         // and a client whose content list differs is refused BAD_CONTENT. Its .bsa stays
+         // registered, as on the peer (gamedata.ts keeps every archive) — harmless without the esm.
+         var off = {}; (window.__mwDisabled || []).forEach(function(f){ off[String(f).toLowerCase()] = 1; });
+         masters.forEach(function(m){ if(rootFiles.has(m) && !off[m]) content.push(rootFiles.get(m)); });
          archives.forEach(function(a){ if(rootFiles.has(a)) fbarch.push(rootFiles.get(a)); });
 
          var official=new Set(masters.concat(archives)), modEsm=[], modEsp=[], modBsa=[];
@@ -2229,7 +2234,11 @@ window.omw = (function(){
            if (!r.ok) return out;                       // 404 = no mods installed
            doc = await r.json();
          } catch (e) { return out; }
-         if (!doc || doc.v !== 2 || !Array.isArray(doc.mods) || !doc.mods.length) return out;
+         if (!doc || doc.v !== 2) return out;
+         // Read before the no-mods return: a switched-off expansion is an answer on its own.
+         window.__mwDisabled = Array.isArray(doc.disabled) ? doc.disabled : [];
+         if (window.__mwDisabled.length) append('[data] disabled by the server: ' + window.__mwDisabled.join(', '));
+         if (!Array.isArray(doc.mods) || !doc.mods.length) return out;
 
          try { StreamFS.init(); } catch (e) { append('[mods] streamfs unavailable: '+e,'err'); return out; }
 
@@ -3711,7 +3720,9 @@ window.omw = (function(){
   justify-content:flex-end; scrollbar-width:none; transition:background .18s ease, height .18s ease; }
 #omw-chat .feed::-webkit-scrollbar{ width:0; }
 #omw-chat .ln{ margin:1.5px 0; text-shadow:0 1px 2px rgba(0,0,0,.95), 0 0 6px rgba(0,0,0,.7);
-  word-wrap:break-word; opacity:.78; animation:omwln .25s ease; }
+  word-wrap:break-word; opacity:.78; animation:omwln .25s ease; transition:opacity 1.2s ease; }
+/* idle: nothing said for a while, the corner clears itself; opening the panel (T) brings it all back */
+#omw-chat .feed.idle .ln{ opacity:0; }
 @keyframes omwln{ from{ opacity:0; transform:translateY(3px);} to{ transform:none; } }
 #omw-chat .ln .tag{ font-weight:700; letter-spacing:.02em; }
 #omw-chat .ln .who{ font-weight:600; color:var(--ink); }
@@ -4127,7 +4138,7 @@ window.omw = (function(){
   // world -- the same call the error modal's button makes. Then the launcher.
   window.__omwExitToLauncher = function(){
     window.__omwAllowLeave = true;
-    try { sessionStorage.removeItem('omwmp:bootfrag'); } catch (e) {}
+    try { sessionStorage.removeItem('omwmp:bootfrag'); sessionStorage.removeItem('omwmp:chatlog'); } catch (e) {}
     try { window.omw.send('leaving', 300); } catch (e) {}
     try { if (window.Module) Module.__omwRunning = false; } catch (e) {}
     setTimeout(function(){ location.href = 'launcher.html#characters'; }, 150);
@@ -4348,8 +4359,22 @@ window.omw = (function(){
   var feed = document.getElementById('omw-feed'), chatEl = document.getElementById('omw-chat');
   var chansEl = document.getElementById('omw-chans'), tx = document.getElementById('omw-tx');
   var wto = document.getElementById('omw-wto'), clab = document.getElementById('omw-clab');
-  var IDLE_LINES = 8;
+  var IDLE_LINES = 8, IDLE_FADE_MS = 20000, CHAT_KEEP = 200;
   chatEl.style.display = 'none'; // hidden until chargen completes (the poll below reveals it)
+  // Backlog 102: a world switch reboots the page, and the engine's rolling log (player.lua,
+  // 50 lines) starts empty in the destination — so every switch wiped the conversation that
+  // led to it. The lines seen so far ride in sessionStorage like omwmp:bootfrag does (this tab
+  // only, gone with it), and the feed is those plus whatever the engine has mirrored since.
+  var chatPrior = [];
+  try { chatPrior = JSON.parse(sessionStorage.getItem('omwmp:chatlog') || '[]') || []; } catch(e){ chatPrior = []; }
+  var lastChatAt = Date.now();
+  function chatLines(){ return chatPrior.concat(pj(mpState().chatLog) || []); }
+  function persistChat(){
+    try { sessionStorage.setItem('omwmp:chatlog', JSON.stringify(chatLines().slice(-CHAT_KEEP))); } catch(e){}
+  }
+  setInterval(function(){
+    feed.classList.toggle('idle', !chatOpen && Date.now() - lastChatAt > IDLE_FADE_MS);
+  }, 1000);
   function lineHtml(m){
     var ch = m.channel || 'say';
     if (ch === 'server') return '<div class="ln c-server">'+esc(m.text)+'</div>';
@@ -4361,7 +4386,7 @@ window.omw = (function(){
       + '<span class="who">'+who+':</span> '+esc(m.text)+'</div>';
   }
   function renderFeed(){
-    var log = pj(mpState().chatLog) || [];
+    var log = chatLines();
     var slice = chatOpen ? log : log.slice(-IDLE_LINES);
     feed.innerHTML = slice.map(lineHtml).join('');
     feed.scrollTop = feed.scrollHeight;
@@ -4373,9 +4398,11 @@ window.omw = (function(){
     clab.style.color = 'var(--c-'+chChan+')';
     wto.style.display = (chChan === 'whisper') ? '' : 'none';
     if (chChan === 'whisper'){
-      var fr = (pj(mpState().friends)||[]).filter(function(f){return f.online;});
+      // Friends in THIS world only: playerId is the local connection id, present only for a
+      // friend this process holds. A whisper to another world has nobody to land on.
+      var fr = (pj(mpState().friends)||[]).filter(function(f){return f.online && f.playerId != null;});
       wto.innerHTML = fr.length ? fr.map(function(f){ return '<option value="'+esc(f.acct)+'">'+esc(f.name)+'</option>'; }).join('')
-        : '<option value="">(nobody online)</option>';
+        : '<option value="">(no friends here)</option>';
       if (fr.length){ if (!chWhisper || !fr.some(function(f){return f.acct===chWhisper;})) chWhisper = fr[0].acct;
         wto.value = chWhisper; }
     }
@@ -4448,25 +4475,40 @@ window.omw = (function(){
   function setStatus(t){ sStatusText = t || ''; sStatus.textContent = sStatusText; }
   // The server answers refusals with a CODE. Showing it raw ("Couldn't PartyInvite:
   // party_full.") tells a player nothing about what to do next, and reads like a crash.
-  // Every code in core/social.ts SocialFailure plus the two travel/world ones.
+  // THE SAME SENTENCES AS social.lua (SOCIAL_FAIL + MP_JoinFriend): the engine toasts one and
+  // this footer showed another for the same refusal (backlog 104). One table, Lua's wording;
+  // the fallback is Lua's too ("op: code").
   var FAILURE = {
-    no_such_player: 'No player by that name. Check the spelling of their username.',
-    blocked: "You can't do that with this player.",
-    already_friends: "You're already friends.",
-    self: "That's you.",
-    too_many_requests: 'Too many pending requests. Wait for some to be answered first.',
-    no_request: 'That request has expired or was already answered.',
-    not_online: "They're not online right now.",
-    private: "Their world is set to Solo, so it isn't accepting anyone.",
-    not_friends: "You're not friends with them.",
-    not_owner: "This isn't your world to change.",
-    no_gateway: 'World switching is unavailable on this server.',
+    no_such_player: 'No player by that name.',
+    blocked: 'You cannot do that with this player.',
+    already_friends: 'You are already friends.',
+    self: 'That is you.',
+    too_many_requests: 'Too many requests pending — try again shortly.',
+    no_request: 'That invitation has expired.',
+    not_online: 'They are offline.',
+    private: 'They are not accepting invitations.',
+    not_friends: 'You are not friends with them.',
+    in_chargen: 'Finish creating your character first.',
+    not_open: 'Their world is not open to friends yet. Ask them to switch to Party.',
+    no_gateway: 'This server runs a single world, so there is nowhere else to join.',
   };
+  var SUCCESS = { InviteSend: 'Invitation sent.' };
   function failureText(code, op){
-    return FAILURE[code] || ("Couldn't " + op + (code ? ': ' + code : '') + '.');
+    return FAILURE[code] || (op + ': ' + (code || '?'));
   }
   // Optimistic only, and always overwritten by the next whereNow mirror. Nothing persists.
   function setWhere(v){ lastWhere = v; }
+  // "Joining X…" until the server answers (joinFriendResult mirror) or 30 s pass. Success
+  // reboots the page into the friend's world, so only a refusal ever has to clear it here.
+  // ponytail: the mirror is a value, not a sequence, so the same refusal twice in a row is
+  // only cleared by the timer; the engine's own toast still names the reason both times.
+  var joinSeen = '', joinTimer = 0;
+  function watchJoin(name){
+    setStatus('Joining ' + name + '…');
+    joinSeen = String(mpState().joinFriendResult || '');
+    clearTimeout(joinTimer);
+    joinTimer = setTimeout(function(){ if (sStatusText.indexOf('Joining ') === 0){ setStatus(''); renderSocial(); } }, 30000);
+  }
   function openSocial(){ if (socialOpen) return; socialOpen = true; sEl.classList.add('show'); uiHold(true); renderSocial(true); }
   function closeSocial(){ if (!socialOpen) return; socialOpen = false; sEl.classList.remove('show'); uiHold(false); }
   document.getElementById('omw-social-close').addEventListener('click', closeSocial);
@@ -4597,8 +4639,15 @@ window.omw = (function(){
       if (!friends.length) sec.appendChild(el('div','empty','No friends yet. Add someone below, or from Players.'));
       friends.forEach(function(f){
         var acts = [];
-        if (f.online){ acts.push(['join', function(){ cmd('joinfriend:'+f.acct); setStatus('Joining '+f.name+'…'); }, true]);
-          acts.push(['whisper', function(){ closeSocial(); chChan='whisper'; chWhisper=f.acct; openChat(); renderChans(); }]); }
+        if (f.online){
+          // "join" only where a join can succeed: the server marks a friend joinable when they
+          // are in ANOTHER world that is open to friends (backlog 103). A friend here, or one
+          // playing solo, gets no button rather than a refusal.
+          if (f.joinable) acts.push(['join', function(){ cmd('joinfriend:'+f.acct); watchJoin(f.name); }, true]);
+          // "come to me": the same InviteSend the O-key hub sends (backlog 105).
+          acts.push(['invite', function(){ cmd('social:InviteSend:'+f.acct); setStatus('Inviting '+f.name+'…'); }]);
+          if (f.playerId != null) acts.push(['whisper', function(){ closeSocial(); chChan='whisper'; chWhisper=f.acct; openChat(); renderChans(); }]);
+        }
         acts.push(['remove', function(){ cmd('social:FriendRemove:'+f.acct); }]);
         sec.appendChild(personRow(f.name, f.online ? (f.cellKey || 'Online') : 'Offline', f.online, acts));
       });
@@ -5051,6 +5100,8 @@ window.omw = (function(){
       // "chargen finished", or unlocking multiplayer would silently turn chat back on.
       chatReady = ready;
       applyChatVisibility();
+      // The lines carried across a world switch are on screen before anyone speaks.
+      if (ready && chatPrior.length) renderFeed();
       // The moment multiplayer unlocks, walk a first-timer through what just appeared.
       if (ready && !tourSeen('unlocked')) openTour('unlocked');
     }
@@ -5082,7 +5133,7 @@ window.omw = (function(){
       if (oc > seenOpenChat){ seenOpenChat = oc; chatOpen ? closeChat() : openChat(); }
       if (os > seenOpenSocial){ seenOpenSocial = os; socialOpen ? closeSocial() : openSocial(); }
     }
-    if (cs > seenChatSeq){ seenChatSeq = cs; renderFeed(); }
+    if (cs > seenChatSeq){ seenChatSeq = cs; lastChatAt = Date.now(); feed.classList.remove('idle'); renderFeed(); persistChat(); }
     // The engine mirrors the server's ack for every social action. Surface it: an action that
     // silently does nothing is indistinguishable from a broken server, and a REFUSAL that says
     // nothing is worse — the privacy control was refused on every click and looked fine.
@@ -5095,10 +5146,19 @@ window.omw = (function(){
           if (res.op === 'PresenceMode') setStatus('Now visible to: ' + res.detail + '.');
           else if (res.op === 'SetWorldMode') setStatus(String(res.detail) === 'party'
             ? 'Your world is open to your friends.' : 'Your world is solo again.');
+          else if (SUCCESS[res.op]) setStatus(SUCCESS[res.op]);
         } else {
           setStatus(failureText(String(res.detail || ''), String(res.op)));
         }
       }
+    }
+    // The join answer (global.lua mirrors the server's JoinFriend). A refusal replaces
+    // "Joining X…"; success never reaches here because the page reboots into their world.
+    var jr = String(m.joinFriendResult || '');
+    if (joinTimer && jr !== joinSeen) {
+      joinSeen = jr;
+      var jres = pj(jr);
+      if (jres && jres.ok !== true) { clearTimeout(joinTimer); joinTimer = 0; setStatus(failureText(String(jres.error || ''), 'JoinFriend')); }
     }
     // ---- connection state: reconnect must PAUSE the game -------------------------------
     // Moving while disconnected and re-syncing on return is a cheat vector, and a frozen-

@@ -122,13 +122,18 @@ export function mwDataRoutes(deps: MwDataDeps): HttpRoute {
     // headless engine cannot end up running different load orders.
     if (isMods) {
       const doc = deps.modDoc?.();
-      if (!doc || doc.mods.length === 0) { res.writeHead(404); res.end('not found'); return true; }
+      // Backlog 128: an official master the dashboard switched OFF (Tribunal) must not be loaded
+      // by the page either -- the peer's content list omits it and every client was refused
+      // BAD_CONTENT. The base-game order rides here because it is the one file the page
+      // already asks for; it is served even with no mods installed when something is off.
+      const disabled = (doc?.entries ?? []).filter((e) => !e.enabled).map((e) => e.file);
+      if (!doc || (doc.mods.length === 0 && disabled.length === 0)) { res.writeHead(404); res.end('not found'); return true; }
 
       // Keyed on the mods directory's mtime AND the enabled set, because switching a mod off
       // changes the answer without moving a single file on disk.
       let modsAt = '';
       try { modsAt = String((await stat(join(deps.gameDataDir, MODS_SUBDIR))).mtimeMs); } catch { /* none */ }
-      const key = `${modsAt}|${doc.mods.map((m) => `${m.slug}:${m.enabled ? 1 : 0}`
+      const key = `${modsAt}|${disabled.join(',')}|${doc.mods.map((m) => `${m.slug}:${m.enabled ? 1 : 0}`
         + `:${m.plugins.filter((p) => p.enabled).map((p) => p.file).join(',')}`).join('|')}`;
       if (modCache && modCache.at === key) {
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-cache' });
@@ -158,7 +163,7 @@ export function mwDataRoutes(deps: MwDataDeps): HttpRoute {
           files,
         });
       }
-      const body = JSON.stringify({ v: 2, mods, content: stack.content, archives: stack.archives });
+      const body = JSON.stringify({ v: 2, mods, content: stack.content, archives: stack.archives, disabled });
       modCache = { at: key, body };
       res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-cache' });
       res.end(req.method === 'HEAD' ? undefined : body);

@@ -16,7 +16,7 @@ import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, st
 import { copyFile, rename, rm } from 'node:fs/promises';
 import { createHash, randomBytes } from 'node:crypto';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve, sep } from 'node:path';
+import { basename, dirname, join, resolve, sep } from 'node:path';
 import type { IncomingMessage } from 'node:http';
 
 import { log } from '../../log';
@@ -463,16 +463,18 @@ async function commitInstallLocked(
       const loose = jobs.filter((j) => PACKABLE.test(j.rel));
       if (loose.length > PACK_LOOSE_ABOVE) {
         installProgress.set(token, { pct: 99, note: 'packing assets into an archive' });
-        const bsa = `${slug}.bsa`;
-        await writeBsa(join(root, bsa), loose.map((j) => ({ name: j.rel, path: j.dest, size: j.entry.size })));
+        // One archive, or `<slug>-N.bsa` when the assets pass the u32 data limit (Tamriel_Data HD).
+        const written = await writeBsa(join(root, `${slug}.bsa`),
+          loose.map((j) => ({ name: j.rel, path: j.dest, size: j.entry.size })));
+        const bsas = written.map((p) => basename(p));
         // Whole folders, not 54,000 unlinks across the bind mount: PACKABLE matches everything
         // under each top-level asset folder, so removing the folder removes exactly the packed set.
         for (const d of new Set(loose.map((j) => j.rel.slice(0, j.rel.indexOf('/'))))) {
           await rm(join(root, d), { recursive: true, force: true });
         }
-        files.push(bsa);
-        archives.push(bsa);
-        log('info', 'mods.packed', { slug, bsa, files: loose.length });
+        files.push(...bsas);
+        archives.push(...bsas);
+        log('info', 'mods.packed', { slug, bsa: bsas.join(', '), files: loose.length });
       }
     } catch (e) {
       // Half a mod is worse than none: it would contribute a data= line and a content= naming
@@ -490,8 +492,12 @@ async function commitInstallLocked(
       if (scratch) await rm(scratch, { recursive: true, force: true });
       installProgress.delete(token);
       log('warn', 'mods.install_failed', { slug, error: String(e) });
+      // "Folder may be full" only when the disk said so; anything else (a BSA that could not
+      // be written, a copy that failed) names its real cause, or the operator debugs a lie.
+      const code = (e as { code?: string } | null)?.code;
       return fail(400, e instanceof ZipError ? e.message
-        : `Could not install ${choice.name || slug}. The game data folder may be full.`);
+        : code === 'ENOSPC' ? `Could not install ${choice.name || slug}. The game data folder is full.`
+        : `Could not install ${choice.name || slug}: ${e instanceof Error ? e.message : String(e)}`);
     }
 
     // Only plugins directly in the mod's root are load-order entries. One inside Meshes/ is

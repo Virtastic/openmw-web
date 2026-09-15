@@ -37,6 +37,9 @@ export interface FriendView {
   online: boolean;
   playerId?: number;
   cellKey?: string;
+  /** Online in a world you could dial into: not this one, and its owner has opened it (party).
+   *  The page offers "join" on this alone; the join itself is still authorised by joinFriend. */
+  joinable?: boolean;
 }
 
 // Who may see where you are, and who may invite you.
@@ -70,6 +73,8 @@ export interface SocialDeps {
   roster: Roster;
   /** This world's id, so shared presence can name where a player actually is. */
   worldId?: string;
+  /** This world's live solo/party mode, written into its occupants' presence rows. */
+  worldMode?: () => string;
   // Display name for an account that may be offline. Returns undefined for an unknown one.
   displayName(acct: AccountKey): string | undefined;
   // Resolve a typed-in display name to an account key (case-insensitive).
@@ -134,11 +139,11 @@ export class Social {
    *  friend in MY world?" — a friend in their own solo world read as offline, and a party
    *  member elsewhere had no location. Local first (it is authoritative and current), then the
    *  shared presence table for everyone else. */
-  private presenceOf(acct: AccountKey): { online: boolean; cellKey?: string; world?: string } {
+  private presenceOf(acct: AccountKey): { online: boolean; cellKey?: string; world?: string; mode?: string } {
     const local = this.onlinePlayer(acct);
-    if (local) return { online: true, cellKey: local.cellKey, world: this.d.worldId };
+    if (local) return { online: true, cellKey: local.cellKey, world: this.d.worldId, mode: this.d.worldMode?.() };
     const row = this.presentRows().find((r) => r.account === acct);
-    return row ? { online: true, cellKey: row.cellKey, world: row.world } : { online: false };
+    return row ? { online: true, cellKey: row.cellKey, world: row.world, mode: row.mode } : { online: false };
   }
 
   /** Cached for one tick of calls: a friend list of N asks N times, and this is a table scan. */
@@ -235,6 +240,9 @@ export class Social {
         // presence, so it is correct wherever they are.
         ...(available && p ? { playerId: p.id } : {}),
         ...(showWhere ? { cellKey: where.cellKey } : {}),
+        // ponytail: presence says which world they are IN, not which they own; a friend visiting
+        // a third party world reads joinable, and joinFriend then routes to their own world.
+        ...(available && where.world !== this.d.worldId && where.mode === 'party' ? { joinable: true } : {}),
       });
     }
     return out;
