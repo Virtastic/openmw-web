@@ -332,6 +332,77 @@ test('the multiplayer server serves the dashboard: people first, games by proxy'
   assert.equal(worlds.get('alpha'), undefined, 'stopped');
 });
 
+// Backlog 188 / commit 0833ff36: gateway/admin.ts deleteAccount relays a kick to every running
+// game and retires the character's solo world BEFORE accounts.flush() + erase. Pre-fix it went
+// straight to flush + erase, so a world's next flush wrote the character back.
+test('platform delete-account kicks and discards before it erases', async (t) => {
+  const order: string[] = [];
+  const srv: Server = createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      if (req.url === '/status') {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ name: 'alpha', playerCount: 1, connectedCount: 1, peerCount: 0, maxPlayers: 8, players: [] }));
+      }
+      if (req.url === '/admin/api/action') order.push(`kick:${(JSON.parse(body) as { target: string }).target}`);
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end('{"ok":true}');
+    });
+  });
+  await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r));
+  t.after(() => new Promise<void>((r) => srv.close(() => r())));
+
+  const sharedDir = mkdtempSync(join(tmpdir(), 'omw-mpd-shared-'));
+  const worldsDir = join(sharedDir, 'worlds');
+  mkdirSync(worldsDir);
+  const config = loadConfig(sharedDir, undefined, sharedDir);
+  const worlds = new WorldSupervisor({
+    settings: {
+      worldsDir, gatewayPort: 8080, serverEntry: '/fake/s.mjs', nodeBin: '/fake/node',
+      basePort: 45000, maxWorlds: 4, idleReapMs: 60_000, startTimeoutMs: 1000, restartBackoffMs: 1000, sharedDir,
+    },
+    spawner: () => new FakeChild() as unknown as ChildProcess,
+  });
+  worlds.ensure('alpha', 'party', 'owner-a');
+  (worlds as unknown as { worlds: Map<string, { port: number }> }).worlds.get('alpha')!.port = (srv.address() as { port: number }).port;
+  await worlds.poll();
+  assert.equal(worlds.list()[0]?.up, true);
+  const realDiscard = worlds.discardForCharacter.bind(worlds);
+  worlds.discardForCharacter = async (owner, charId) => { order.push(`discard:${charId}`); return realDiscard(owner, charId); };
+
+  const accounts = new AccountStore(sharedDir);
+  const victim = await accounts.register('Victim', 'a-long-enough-passphrase');
+  assert.ok(typeof victim === 'object');
+  const char = accounts.createCharacter(victim, 'Drelas');
+  assert.ok(typeof char === 'object');
+  const realFlush = accounts.flush.bind(accounts);
+  accounts.flush = async () => { order.push('flush'); return realFlush(); };
+
+  const maintenance = platformMaintenance({ worlds, sharedDir, worldsDir, token: () => config.gateway.serverToken });
+  const admin = gatewayAdminRoutes({
+    worlds, sharedDir, config: () => config, accounts, sessions: new AdminSessionStore(),
+    version: 'test', publicBase: () => 'http://test',
+    restart: () => {}, rollingRestart: () => Promise.resolve({ restarted: [], failed: [] }), maintenance,
+  });
+  const dir = await startDirectory({ worlds, host: '127.0.0.1', port: 0, maxPerOwner: 4, worldsDir, admin, maintenance: () => maintenance.get() });
+  t.after(async () => { await dir.close(); worlds.stopAll(); await accounts.close(); });
+  const base = `http://127.0.0.1:${dir.port}/admin/api`;
+  const owner = await fetch(`${base}/setup/owner`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(OWNER) });
+  const token = (await owner.json() as { token: string }).token;
+  order.length = 0; // the owner setup flushed too
+
+  const del = await fetch(`${base}/accounts/delete`, {
+    method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify({ name: 'victim', confirm: 'victim' }),
+  });
+  assert.equal(del.status, 200, await del.text());
+  assert.deepEqual(order, ['kick:victim', `discard:${char.id}`, 'flush'], 'kick, then discard, then the flush that precedes the erase');
+  const disk = new AccountStore(sharedDir);
+  assert.equal(await disk.get('victim'), undefined, 'and the row is gone from accounts.db');
+  await disk.close();
+});
+
 // --- settings live where they are read ---------------------------------------------------------
 
 test('only [worlds] is hidden in a game: the rest of the platform group does something there', () => {

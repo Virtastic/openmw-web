@@ -5,7 +5,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync, readdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { PlayerStore } from '../src/persist/playerstore';
 import { startServer } from '../src/server';
@@ -43,6 +43,21 @@ test('playerstore round-trip and atomicity', async () => {
     { cellKey: '3,-2', x: 1, y: 2, z: 3 });
   assert.deepEqual(readPlayerDoc(dataDir, 'drelas')?.['spells'], ['fire_bite'], 'the row is readable outside the store');
   await store2.close();
+});
+
+// Backlog 186 / commit 0833ff36: playerstore.ts flushAll() ends in sqlite.ts checkpoint()
+// (PRAGMA wal_checkpoint(TRUNCATE)), so a backup tarred right after a flush copies one
+// consistent players.db rather than a db/-wal/-shm trio. Pins the checkpoint call.
+test('playerstore flushAll truncates the WAL', async () => {
+  const dataDir = tmpDataDir();
+  const store = new PlayerStore(dataDir);
+  const wal = join(dataDir, 'players.db-wal');
+  store.update('drelas', (doc) => { doc.spells = ['fire_bite']; }, 'now');
+  await new Promise((r) => setTimeout(r, 50));
+  assert.ok(statSync(wal).size > 0, 'the write landed in the WAL first');
+  await store.flushAll();
+  assert.equal(statSync(wal).size, 0, 'flushAll checkpointed and truncated the WAL');
+  await store.close();
 });
 
 test('m2 state sync end to end', async (t) => {

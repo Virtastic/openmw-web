@@ -169,11 +169,17 @@ test('movement relay over real clients', async (t) => {
   });
 
   await t.test('out-of-bounds and non-finite moves are ignored', async () => {
+    // Backlog 179 / commit 8ecf3066: movement.ts MAX_ABS_COORD = 4_000_000. Tamriel Rebuilt's
+    // mainland sits past the old 512000 bound (-600k ~ cell -73); that pose must relay, 5M not.
+    a.sendMove({ x: -600_000, y: 0, z: 0 });
+    const tr = await b.waitBatch((x) => x.entries.some((e) => e.id === aId));
+    assert.equal(tr.entries.find((e) => e.id === aId)!.pose.x, -600_000);
     a.sendMove({ x: 5_000_000, y: 0, z: 0 });
     a.sendMove({ x: Number.NaN, y: 0, z: 0 });
     a.sendMove({ x: 11, y: 0, z: 0 });
     const batch = await b.waitBatch((x) => x.entries.some((e) => e.id === aId));
     assert.equal(batch.entries.find((e) => e.id === aId)!.pose.x, 11);
+    assert.ok(!b.inbox.batches.some((x) => x.entries.some((e) => e.id === aId && e.pose.x === 5_000_000)));
   });
 
   a.close();

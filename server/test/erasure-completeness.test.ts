@@ -13,7 +13,7 @@ import { join } from 'node:path';
 import { AccountStore } from '../src/core/accounts';
 import { PlayerStore } from '../src/persist/playerstore';
 import { BanStore } from '../src/persist/banstore';
-import { IdentityStore } from '../src/auth/identities';
+import { IdentityStore, LockerSessionStore, LoginTicketStore } from '../src/auth/identities';
 import { ChatLog, ReportStore } from '../src/core/moderation';
 import { deleteAccount } from '../src/persist/erase';
 import { Locker } from '../src/data/locker';
@@ -81,7 +81,18 @@ test('deleting an account leaves no trace in any database', async (t) => {
     { ts: nowMs, channel: 'say', scope: 'w', acct: 'victim', name: 'Victim', text: 'private' }, 50);
   social.close();
 
+  // THE CREDENTIALS (backlog 122 / commit b3564422): erase.ts deletes this account's rows from
+  // locker-sessions.db and tickets.db. Both were empty here before, so the sweep below passed
+  // whether or not the eraser touched them; a real 24 h Bearer and an unspent login ticket
+  // outlived the account, and a re-registered same name inherited them.
+  const sessionToken = new LockerSessionStore(undefined, dir).mint('victim');
+  const ticket = new LoginTicketStore(undefined, dir).mint('victim', 'Victim');
+  assert.equal(new LockerSessionStore(undefined, dir).resolve(sessionToken), 'victim', 'fixture session was not persisted');
+  assert.equal(new LoginTicketStore(undefined, dir).peek(ticket)?.accountKey, 'victim', 'fixture ticket was not persisted');
+
   const report = await deleteAccount(dir, 'Victim');
+  assert.equal(new LockerSessionStore(undefined, dir).resolve(sessionToken), undefined, 'the locker session outlived the account');
+  assert.equal(new LoginTicketStore(undefined, dir).peek(ticket), undefined, 'the login ticket outlived the account');
   assert.deepEqual(report, {
     account: true, player: true, bans: true, identities: 1,
     // BOTH copies of the person's chat: the moderation log and the social history.

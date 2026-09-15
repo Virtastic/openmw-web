@@ -10,7 +10,7 @@ import { createServer, type Server } from 'node:http';
 import { AccountStore, MAX_CHARACTERS } from '../src/core/accounts';
 import { LockerSessionStore } from '../src/auth/identities';
 import { PlayerStore } from '../src/persist/playerstore';
-import { characterRoutes } from '../src/gateway/frontdoor';
+import { characterRoutes, buildFrontDoor } from '../src/gateway/frontdoor';
 import { tmpDataDir } from './helpers';
 
 // The HTTP API no longer writes a slot: it hands back a provisional id and the character is
@@ -104,6 +104,40 @@ test('delete removes the slot; an unknown id is refused', async (t) => {
     { method: 'DELETE', headers: { authorization: auth } })).json() as Json;
   assert.equal(bad.ok, false);
   assert.equal((await j(call(base, auth))).characters.length, 1);
+});
+
+// Backlog 284 / commit cfb2a83f: frontdoor.ts buildFrontDoor passes characterRoutes an
+// isPlayed() derived from worldsNow (a live priv-...-<id8> world with players), and the DELETE
+// refuses while it is true. Pre-fix the delete went through and stopped the world under the
+// other device's feet.
+test('DELETE refuses a character whose own world is up with players, through the real front door', async (t) => {
+  const dir = tmpDataDir();
+  let playerCount = 1;
+  const worlds: { id: string; mode: string; up: boolean; playerCount: number }[] = [];
+  const fd = await buildFrontDoor(dir, undefined, 8080, undefined, () => worlds);
+  t.after(() => fd.close());
+  const server: Server = createServer((req, res) => {
+    const url = new URL(req.url ?? '/', 'http://x');
+    void Promise.resolve(fd.route(req, res, url)).then((claimed: boolean) => { if (!claimed) { res.writeHead(404); res.end(); } });
+  });
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  t.after(() => server.close());
+  const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+  await fd.accounts.createSso('Alice');
+  const c = await adopt(fd.accounts, 'Busy');
+  const auth = `Bearer ${fd.mintSession('alice')}`;
+  worlds.push({ id: `priv-alice-${c.id.slice(-8)}`, mode: 'private', up: true, get playerCount() { return playerCount; } });
+
+  const del = () => fetch(`${base}/auth/characters?id=${encodeURIComponent(c.id)}`,
+    { method: 'DELETE', headers: { authorization: auth } }).then((r) => r.json() as Promise<Json>);
+  const busy = await del();
+  assert.equal(busy.ok, false);
+  assert.match(String(busy.error), /being played/);
+  assert.equal((await j(call(base, auth))).characters.length, 1, 'still there');
+
+  playerCount = 0; // the other device signed out
+  assert.equal((await del()).ok, true);
+  assert.equal((await j(call(base, auth))).characters.length, 0);
 });
 
 test('cannot exceed MAX_CHARACTERS', async (t) => {

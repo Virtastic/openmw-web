@@ -18,6 +18,7 @@ import {
 import { buildPeerCfg, detectGameData, gameDataDir } from '../src/core/gamedata';
 import { orderedContent, saveMods } from '../src/net/admin/api-mods';
 import { DASHBOARD_FILE, loadConfig } from '../src/config';
+import { startServer } from '../src/server';
 
 const tmp = (): string => mkdtempSync(join(tmpdir(), 'mods-'));
 
@@ -297,6 +298,31 @@ test('a gateway world sees the shared modlist and the shared dashboard layer', (
   // world with no shared dir sees only its own files.
   assert.equal(loadConfig(shared, undefined, shared).sharing.journal, false);
   assert.equal(loadConfig(world).sharing.journal, true);
+});
+
+// The same, THROUGH startServer: the helpers above answer for whatever dir they are handed, so
+// the assertions pass whichever dir server.ts chose to hand them. Pins commit 8ecf3066:
+// server.ts readModDoc(sharedDir)/orderedContent(..., sharedDir) (the mwdata sidecar, the
+// content hashes and the peer cfg all read the shared modlist) and config.ts loadConfig
+// merging dashboardLayers(sharedDir) when sharedDir !== dataDir.
+test('a gateway world serves the shared mod stack and boots on the shared dashboard layer', async (t) => {
+  const shared = tmp();
+  const world = tmp();
+  const gd = gameDataDir(shared);
+  mkdirSync(join(gd, 'mods', 'tr'), { recursive: true });
+  writeFileSync(join(gd, 'mods', 'tr', 'TR_Mainland.esm'), 'x');
+  writeModDoc(shared, { ...emptyDoc(), entries: [{ file: 'Morrowind.esm', enabled: true }], mods: [
+    mod({ slug: 'tr', plugins: [{ file: 'TR_Mainland.esm', enabled: true }] }),
+  ] });
+  writeFileSync(join(shared, DASHBOARD_FILE), '[sharing]\njournal = false\n');
+
+  const server = await startServer({ requireGameData: false, dataDir: world, sharedDir: shared, port: 0, host: '127.0.0.1',
+    configOverride: { setup: { deliveryModel: 'serve' } } });
+  t.after(() => server.close());
+  const r = await fetch(`http://127.0.0.1:${server.port}/mwdata-mods.json`);
+  assert.equal(r.status, 200, 'the world found the shared modlist');
+  assert.deepEqual((await r.json() as { content: string[] }).content, ['TR_Mainland.esm']);
+  assert.equal(server.config.sharing.journal, false, 'the shared dashboard layer reached the world');
 });
 
 // Backlog 302: the browser cascades a plugin whose master is not loaded out of the list; the
