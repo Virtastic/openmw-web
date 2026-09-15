@@ -3052,7 +3052,7 @@ local eventHandlers = {
         mp.sendEvent(op, {
             name = data.name, acct = data.acct, mode = data.mode, id = data.id,
             target = data.target, kind = data.kind, payload = data.payload,
-            reason = data.reason, voice = data.voice, value = data.value,
+            reason = data.reason, value = data.value,
             state = data.state,
         })
     end,

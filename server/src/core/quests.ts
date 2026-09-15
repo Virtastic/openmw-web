@@ -25,7 +25,7 @@ const MAX_ID = 64;
 // ~60k of the 65,536-node ceiling with room for a ~2000-quest map beside it (pinned by a
 // test: 5000 entries + 700 quests = 61.4k). Past that the sync must be chunked like
 // RecordsSync; it is not, yet.
-const MAX_JOURNAL_LOG = 5000;
+export const MAX_JOURNAL_LOG = 5000;
 const MAX_CELL_KEY = 128;
 const MAX_INDEX = 0x7fffffff;
 

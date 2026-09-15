@@ -777,7 +777,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       ts: new Date().toISOString(),
       reporter: doc.reporter,
       target: doc.target,
-      reason: doc.voice ? `[voice] ${doc.reason}` : doc.reason,
+      reason: doc.reason,
       // The lines immediately before the report: without them a moderator reading the
       // queue has an accusation and nothing to weigh it against.
       context: moderation.chat.context(),

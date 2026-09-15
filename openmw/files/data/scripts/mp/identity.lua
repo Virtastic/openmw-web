@@ -48,7 +48,7 @@ local nextAt = { appearance = 0, equipment = 0, dynamic = 0, progression = 0, in
 -- recordId -> count, as of the last acquisition pass. Separate from `last.inventory` because
 -- that one only advances on the slow cadence, and comparing against it would re-report the same
 -- gain every 0.25 s until the snapshot caught up.
-local acqCounts = nil
+-- Acquisition baseline (count per record id) lives in `last.acquired` so a StateRefused can forget it (#400).
 local wasDead = false
 local restoring = false -- suppress broadcasts while the rejoin record is being applied
 -- BASELINE GATE. Until this is true we do not know what this character IS yet, so the
@@ -585,15 +585,15 @@ function identity.tick(now)
         -- The FIRST pass only seeds the baseline. Reporting everything a character already owns
         -- as freshly acquired would credit their whole inventory twice over — once here and
         -- again in the snapshot — and on a rejoin-restore that is the entire restored doc.
-        if acqCounts ~= nil then
+        if last.acquired ~= nil then
             for id, n in pairs(counts) do
-                local before = acqCounts[id] or 0
+                local before = last.acquired[id] or 0
                 if n > before then
                     mp.sendEvent('PlayerItemAcquired', { id = id, n = n - before })
                 end
             end
         end
-        acqCounts = counts
+        last.acquired = counts
     end
 end
 
@@ -618,7 +618,7 @@ end
 -- next tick re-sends (it may pass then -- the doc it was judged against has moved on).
 local KIND_OF_EVENT = { PlayerAppearance = 'appearance', PlayerEquipment = 'equipment', PlayerInventory = 'inventory',
     PlayerSpellbook = 'spells', PlayerAttributes = 'progression', PlayerSkills = 'skills', PlayerLevel = 'level',
-    PlayerStatsDynamic = 'dynamic' }
+    PlayerStatsDynamic = 'dynamic', PlayerMark = 'mark', PlayerActiveSpells = 'active', PlayerItemAcquired = 'acquired' }
 -- Capped (backlog 336): a declaration the server will NEVER accept (a level jump, a record
 -- kind it cannot register) re-sent every tick is an anomaly + warn per tick, forever. Three
 -- retries per kind while the declared value stands still; a changed fingerprint resets it.
@@ -654,7 +654,7 @@ function identity.reset()
     peerBarsAt = nil
     -- nil, NOT {}: the next pass must re-seed the baseline rather than treat the whole restored
     -- inventory as newly acquired.
-    acqCounts = nil
+    last.acquired = nil
     nextAt = { appearance = 0, equipment = 0, dynamic = 0, progression = 0, inventory = 0, acquire = 0, active = 0 }
     wasDead = false
     restoring = false

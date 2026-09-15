@@ -549,3 +549,21 @@ test('a full journal log and a large quest map fit one JournalSync frame', async
   const nodes = lserNodeCount({ quests, borrowed: false, journalLog });
   assert.ok(nodes < LSER_MAX_NODES, `${nodes} nodes: a full JournalSync would not decode`);
 });
+
+// Backlog 321, the cap itself: the log keeps the NEWEST MAX_JOURNAL_LOG entries, so the first
+// line of a campaign survives until the cap is actually crossed, and only then goes.
+test('the journal log drops its oldest entry only past MAX_JOURNAL_LOG', async () => {
+  const { Quests, MAX_JOURNAL_LOG } = await import('../src/core/quests');
+  const time = { gameHour: 9, day: 16, month: 7, year: 427, timeScale: 30 };
+  const q = new Quests({ cells: { worldM7: () => ({ time }) } } as unknown as ConstructorParameters<typeof Quests>[0]);
+  const logEntry = (q as unknown as { logEntry(doc: { journalLog?: { q: string; i: number }[] }, q: string, i: number): void }).logEntry.bind(q);
+  const doc: { journalLog?: { q: string; i: number }[] } = {};
+  logEntry(doc, 'first', 1);
+  for (let i = 1; i < MAX_JOURNAL_LOG; i++) logEntry(doc, `q${i}`, 1);
+  assert.equal(doc.journalLog!.length, MAX_JOURNAL_LOG);
+  assert.equal(doc.journalLog![0]!.q, 'first', `entry 1 survives ${MAX_JOURNAL_LOG - 1} later entries`);
+  logEntry(doc, 'over', 1);
+  assert.equal(doc.journalLog!.length, MAX_JOURNAL_LOG, 'the cap holds');
+  assert.equal(doc.journalLog![0]!.q, 'q1', `entry 1 is gone at ${MAX_JOURNAL_LOG + 1}`);
+  assert.equal(doc.journalLog![MAX_JOURNAL_LOG - 1]!.q, 'over', 'the newest entry is kept');
+});

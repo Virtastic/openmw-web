@@ -251,6 +251,20 @@ scenario is a code trace only.
 | Companion share (follower inventory) | the Companion window is watched like Barter: canonical on open, one diff on close, applied into the live actor's inventory on every engine (the peer's copy fights with it) | FIXED 09-11 (was: local to the giver's screen) |
 | StartScript/StopScript | runs per engine; globals reconcile | OK |
 
+**Lua mods: unsupported patterns** (backlog 203/304/305 — documented, not fixed). The MP scripts
+own three seams a third-party Lua mod can sit in front of, and none of them is guarded: (1) a
+mod that MOVES objects by script (an elevator, `SetPos`/`Move` on an activator) moves them on its
+own engine only — no client emits `ObjectMove`, so scripted movers are per-engine and unsynced
+until a holder-authoritative relay exists (#203); (2) a mod that registers a per-object
+activation handler (`addHandlerForObject`, or a lazily registered one) runs BEFORE the type
+handlers, so it pre-empts the dialogue lock and the pickup veto — its activation happens
+locally without a `DialogueLock` or an `ObjectTakeRequest` (#304); (3) a mod that CREATES
+objects on a client (`world.createObject` + `moveInto`/`teleport`) is booked as a player drop
+(`onItemActive` → `requestSpawn fromInventory`), so N clients make N spawn requests, each
+debited against a ledger that never held the item and refused as `unowned` (#305). Run such
+mods on the sim peer only, or not at all; the client-side MP scripts make no attempt to
+detect them.
+
 ## 8. World
 
 | Mechanism | MP path | Status |

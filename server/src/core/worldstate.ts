@@ -864,7 +864,10 @@ export class WorldState {
       return;
     }
     // Stats/Equip/AI: relay verbatim cell-scoped (excluding the holder).
-    this.relayCellExcept(cellKey, player.id, name, { ...lToJs(body) as Record<string, JsLike> });
+    const out = { ...lToJs(body) as Record<string, JsLike> };
+    // #401: the holder's ActorDisposition.ai is bounded like the dialogue path's (0..100 per key).
+    if (name === 'ActorDisposition' && out['ai'] !== null && typeof out['ai'] === 'object') out['ai'] = Object.fromEntries(Object.entries(out['ai'] as Record<string, JsLike>).map(([k, v]) => [k, Math.max(0, Math.min(100, typeof v === 'number' && Number.isFinite(v) ? v : 0))]));
+    this.relayCellExcept(cellKey, player.id, name, out);
   }
 
   private async actorDeath(player: Player, cellKey: string, ref: ObjRef, body: LTable): Promise<void> {

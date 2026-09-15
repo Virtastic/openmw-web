@@ -88,7 +88,6 @@ export interface SocialDeps {
     reporter: { id: number; account: string; name: string };
     target: { id: number | null; account: string | null; name: string; cellKey: string | null };
     reason: string;
-    voice: boolean;
   }): Promise<unknown>;
   /** The friendship that admitted a guest to this world is over (unfriend or block, from
    *  either side): send that guest home now. The friends list is the only door in
@@ -752,9 +751,6 @@ export class Social {
             cellKey: target?.cellKey ?? null,
           },
           reason,
-          // Voice abuse is worth flagging separately: it leaves no chat-log trace, so a
-          // moderator reading the queue would otherwise have nothing to look at.
-          voice: str('voice') === 'true',
         });
         log('info', 'social.reported', { by: player.accountKey, target: targetAcct });
         this.reply(player, 'ReportPlayer', true, 'ok');

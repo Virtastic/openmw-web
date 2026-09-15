@@ -729,6 +729,10 @@ handlers.MP_ObjectSpawnRefused = function(data)
             unowned = 'That drop was refused: the world does not think you are carrying it.',
             contained = 'Your account cannot place items in a shared world right now.',
             cell_full = 'This place is too cluttered to drop anything more here.',
+            -- #399: a human ObjectSpawnRequest{actor} (a PlaceAtPC the engine declined) has tempId 0
+            -- and no drop behind it; reach/rate are its refusals, not a drop's.
+            reach = 'That summons was refused: too far away, or too many at once.',
+            rate = 'That summons was refused: too many creatures this minute.',
         }
         deps.noticeFn(why[tostring(data and data.reason or '')] or 'That drop was refused.')
     end

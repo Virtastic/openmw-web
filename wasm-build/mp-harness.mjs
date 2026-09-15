@@ -437,6 +437,9 @@ async function launchClient(name, mpPort, extraParams = '', opts = {}) {
     // google-chrome 152 needed the same thing.
     ...(process.env.CHROME_BIN ? ['--no-sandbox', '--disable-dev-shm-usage'] : []),
     '--disable-gpu-sandbox', '--no-first-run', '--no-default-browser-check',
+    // #100/#183: a client whose tab Chrome deems hidden gets its timers throttled to 1 Hz and
+    // stops driving the input tier (avatar_stats_gated after ~5 s of silence). Never for a harness client.
+    '--disable-renderer-backgrounding', '--disable-background-timer-throttling',
     '--user-data-dir=' + profile, '--remote-debugging-port=0',
     '--window-size=1280,720', 'about:blank',
   ], { stdio: ['ignore', 'ignore', 'pipe'] });

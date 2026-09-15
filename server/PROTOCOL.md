@@ -3,7 +3,40 @@
 Authoritative contract between the browser client (C++ `mwmp/` transport + `scripts/mp/` Lua)
 and the `openmw-mp` server. This file is the source of truth; both sides cite it in code
 comments. Scope grows per milestone — sections are tagged with the milestone that introduces
-them. Current: **M8** (M0-M7 shipped).
+them. Current: **M8** (M0-M7 shipped). Wire version: `SessionHello.proto = 3`.
+
+## Changelog
+
+### proto 3 (2026-09-15) — the doc re-read against the code (backlog 398)
+
+Corrections, each checked against the validator or handler named:
+
+- Peer-pose freshness is **2 s** (`PEER_POSE_FRESH_MS`, players.ts), not 300 ms; the "driving
+  the input tier" predicate behind bars, item states, PvP routing and peer-owned writes is
+  **5 s** (`INPUT_DRIVING_MS`), not 1 s.
+- `ActorAI` has no `pkg=` shape. The holder relays `{cellKey, epoch, ref|net, combat}` /
+  `{…, travel}`; a NON-holder may send exactly four claims (follow/escort, travel, combat,
+  position), each with its own gate (§M4).
+- `JournalSync` carries `{quests, borrowed, journalLog}`; `CrimeUpdate` is raise-only under
+  shared crime, echoed back on a refused drop, and relayed with `byId`/`shared`.
+- `CombatHit`/`CombatSpellHit` reach the owner with `attackerId`; `CombatCast` with `fromId`.
+- `ContainerOpen` first-open caps and the `op="gold"` purse op; `ContainerState.gold`.
+- `DialogueLock` gates (reach, contention, one lock per player) and the 5 s "recently held"
+  grace the M4 claims use.
+- `SelfStats.kd/blk`, `PlayerStatsDynamic.speed`.
+- `CombatProjectile` is **dead**: validated and relayed by the server, sent by no client, and
+  the client handler is an explicit no-op. `ObjectMove` C→S is dead the same way (#203).
+- Session tier: `CharacterCreate`/`CharacterResult`, `ProfileSetup`/`ProfileResult`,
+  `SessionHello.system`, `characterId` on every auth message, `SessionWelcome.characters`
+  / `characterId` / `profile`, `flags.simulated` / `flags.respawn`, disconnect codes
+  `BACKLOG` and `IP_CAP`.
+- Event tier, previously undocumented (now in their milestone sections): `PlayerMark`,
+  `PlayerActiveSpells`, `AvatarActiveSpells`, `SelfActiveSpells`, `SelfSpells`,
+  `SelfSkillUse`, `AvatarEffectsBatch`, `AvatarSkillUse`, `StateRefused`, `ChargenComplete`,
+  `PlayerLeaving`, `ObjectEnabled`, `ObjectTakeRequest`, `ActorDisposition`, `ActorEffects`,
+  `ActorCellChange`, `ActorRevive`, `ActorStripLoot`, `TopicsLearned`, `GlobalVarSync`,
+  `PlayerCrime`, `PlayerArrest`, `WorldList`/`WorldCreate` (C→S), `JoinFriend`,
+  `SetAvailability`, `SetWorldMode`, `WorldKick`, `ReportPlayer` without `voice` (#402).
 
 ## Transport (M0)
 
@@ -37,12 +70,14 @@ The server (via the sim peer) is authoritative over the player's own movement. T
 types sit BESIDE the M1 movement tier, which remains the DEGRADED MODE: with no peer
 holding the world, `0x0102` frames are dropped (counted) and the client-authored `0x0100`
 path is authoritative again — a peer crash never freezes every player, and no switchover
-signal exists or is needed (the peer-pose freshness window, 300 ms, is the whole switch).
+signal exists or is needed (the peer-pose freshness window, **2 s** — `PEER_POSE_FRESH_MS`
+— is the whole switch; 300 ms let a peer GC hitch alternate writers).
 
 - **`0x0102` PlayerInput (C→S, ~30 Hz).** 12-byte payload: `0` u32 seq (client-monotonic,
   echoed back as `lastInputSeq`) · `4` i8 move axis (−127..127 ≡ −1..1) · `5` i8 side axis ·
   `6` u16 yaw · `8` u8 pitch (same quantization as PlayerMove) · `9` u8 flags (bit0 run,
-  bit1 sneak, bit2 jump-edge, bit3 use/attack) · `10` u16 reserved 0. Authenticated by
+  bit1 sneak, bit2 jump-edge, bit3 use/attack, bit4 weapon stance, bit5 spell stance — the
+  avatar only swings from a drawn stance) · `10` u16 reserved 0. Authenticated by
   CONNECTION IDENTITY — this connection owns exactly one avatar — which is deliberately a
   different check from ActorMoveBatch's holder/epoch ("may you author this cell's
   actors"); do not conflate them. Forwarded to the world peer as the same 12 bytes
@@ -53,8 +88,11 @@ signal exists or is needed (the peer-pose freshness window, 300 ms, is the whole
   (`omwmp_avatar_batch_rejected_total{reason="not_peer"}`), the negative control mirroring
   `actor_batch_rejected{not_holder}`. Accepted poses become each player's canonical pose
   and feed the ordinary `0x0101` fan-out, so every other client renders the authoritative
-  result with no second channel; while the stream is fresh a client's own `0x0100` claim
-  is consumed but not applied.
+  result with no second channel; while the stream is fresh (2 s) a client's own `0x0100`
+  claim is consumed but not applied. An entry is only applied for a player who sent
+  `PlayerInput` within the last 2 s (an input-less client keeps its own authority), and
+  after a `PlayerCellChange` entries are ignored until the avatar's pose arrives within
+  512 units of the declared spot (positional teleport grace, warned after 30 s).
 - **`0x0103` PlayerStateBatch (S→C).** Same entry layout as `0x0105`. Each player receives
   their OWN entry on the broadcast tick — pose + `lastInputSeq` — which is the anchor for
   client-side reconciliation (predict + smooth blend via capped physics offsets; hard snap
@@ -87,7 +125,7 @@ event `MP_MoveBatch` whose body is an LSER array of
 
 | name | dir | body |
 |---|---|---|
-| `PlayerCellChange` | C→S, relayed S→C with `id` added | `{cellKey=string, x=number, y=number, z=number}` — `cellKey` = `"x,y"` for exteriors (comma, integers) or the lowercased interior cell name. Updates server occupancy; receivers despawn/teleport that player's puppet. |
+| `PlayerCellChange` | C→S, relayed S→C with `id` added | `{cellKey=string, x=number, y=number, z=number}` — `cellKey` = `"x,y"` for exteriors (comma, integers) or the lowercased interior cell name (≤128 chars; ≤4096 distinct cells per session). Updates server occupancy; receivers despawn/teleport that player's puppet. A SAME-cell change of more than 1024 units is refused (counted `cell_jump`) unless explained within 5 s by a cast, a door, a dialogue, or within 15 s by a resurrect/join (#361). The sim peer's changes are not relayed to others. |
 | `PlayerLeaveView` | S→C only | `{id=number}` — that player is no longer in YOUR view. See below. |
 
 ### Interest management & LOD (M9, `0x0101` and `0x0200`)
@@ -191,7 +229,10 @@ Every world has an owner.
 None of this applies to a standalone single-world server, which defaults to `public` but is
 that operator's real game.
 
-`SessionHello` carries an optional **`simulatesActors: true`**. A client that omits it is
+`SessionHello` carries an optional **`simulatesActors: true`** and an optional **`system: true`**
+(a headless sim peer, Phase H: exempt from the player list, `playerCount`/`maxPlayers`,
+idle/AFK and the engine-hash check; only THE world peer's avatar reports are accepted). A
+client that omits `simulatesActors` is
 never granted cell actor authority — neither by election nor by claiming a dormant cell.
 Authority is otherwise chosen on network fitness, and a protocol-only client (a load bot, a
 headless tool) is a near-perfect RTT candidate that simulates nothing: it wins the cell and
@@ -201,7 +242,8 @@ which is the same amount of simulation without the server believing the job is c
 Client → server:
 
 - `{"t":"SessionHello", "proto":3, "engineHash":"<12-hex or empty>", "lserVersion":0,
-   "manifest":[{"name":"Morrowind.esm","size":123,"idx":0}, …], "resumeToken":"<opt>"}`
+   "manifest":[{"name":"Morrowind.esm","size":123,"idx":0}, …], "resumeToken":"<opt>",
+   "simulatesActors":<opt bool>, "system":<opt bool>}` — `proto ≠ 3` → `BAD_PROTO`.
   **`engineHash` may only be empty under `[engine] enforce = "warn"` or `"off"`.** Under
   `"refuse"` a client that sends none is refused with `BAD_ENGINE` — an absent hash used to be
   an unconditional pass, which let anything opt out of the check by declining to identify
@@ -216,22 +258,46 @@ Client → server:
   content-file NAMES only (`core.contentFiles.list`, lowercased) — sizes are unreachable,
   so clients always send `size:0` and `names` mode effectively compares name+order.
 - `{"t":"SessionRegister", "account":"name", "password":"…", "serverPassword":"<opt>",
-   "inviteCode":"<opt>"}`
-- `{"t":"SessionLoginRequest", "account":"name", "password":"…", "serverPassword":"<opt>"}`
+   "inviteCode":"<opt>", "characterId":"<opt>"}` — `inviteCode` is required when
+   `[login] inviteCode` is set.
+- `{"t":"SessionLoginRequest", "account":"name", "password":"…", "serverPassword":"<opt>",
+   "characterId":"<opt>"}`
 - `{"t":"SessionResume", "token":"<hex>"}` — M8 rejoin-in-place; valid in `HELLO_OK`
   instead of a Register/Login (see §Ops).
-- `{"t":"SessionLoginTicket", "ticket":"<base64url>", "serverPassword":"<opt>"}` — Phase B
-  SSO; valid in `HELLO_OK` instead of a Register/Login (see §Single sign-on).
+- `{"t":"SessionLoginTicket", "ticket":"<base64url>", "serverPassword":"<opt>",
+   "characterId":"<opt>"}` — Phase B SSO; valid in `HELLO_OK` instead of a Register/Login
+   (see §Single sign-on).
+
+  **Character slots.** `characterId` (1–64 chars) on any of the three auth messages selects
+  which of the account's characters this session plays; absent = last played. There is no
+  separate select op: switching slots is a reconnect.
+- `{"t":"CharacterCreate", "name":"<≤64, account-name rules>"}` — valid in `AUTHED` (the
+  select screen) and `IN_WORLD` (the hub). Answered by
+  `{"t":"CharacterResult", "ok":bool, "characters":[…], "error":"badname"|"full"?}` with the
+  refreshed slot list, so the select screen re-renders without a reconnect. The slot is
+  PROVISIONAL until the client's `ChargenComplete` event; an abandoned creation is reaped.
+- `{"t":"ProfileSetup", "email":"<≤254>", "username":"<≤64>", "marketingOptIn":<opt bool>}` —
+  onboarding, valid in `AUTHED` and `IN_WORLD`. Answered by
+  `{"t":"ProfileResult", "ok":bool, "error":"badformat-email"|"badformat-username"|
+  "reserved-word"|"taken"|"cooldown"|"profile-required"|"internal"?}`. Under
+  `[login] requireProfile` a `SessionReady` before email+username are set is refused with
+  `ProfileResult{error:"profile-required"}` and the session stays alive. The public username
+  becomes the display name (live in the roster).
 - `{"t":"SessionReady"}` — after the client has applied `SessionWelcome` and is in-game.
-- `{"t":"SessionPing", "clientTime":<ms>}`
+- `{"t":"SessionPing", "clientTime":<ms>}` — allowed in any state.
 
 Server → client:
 
 - `{"t":"SessionHelloOk", "serverName":"…", "contentPolicy":"names|strict|off"}`
 - `{"t":"SessionWelcome", "playerId":<u16>, "sessionToken":"<hex>", "motd":"…",
-   "flags":{…}, "playerRecord":null, "serverSeq":<u32>}`
-  (`playerRecord:null` → fresh character; non-null restore lands in M2. `serverSeq` = binary
-  seq already consumed on this connection: 0 at welcome, first server Event frame is seq 1.)
+   "flags":{…}, "playerRecord":null, "serverSeq":<u32>,
+   "characters":[{"id","name","lastPlayedAt"}, …], "characterId":"<id or empty>",
+   "profile":{"required":bool, "username"?, "email"?}}`
+  (`playerRecord:null` → fresh character; non-null restore is M2. `serverSeq` = binary
+  seq already consumed on this connection: 0 at welcome, first server Event frame is seq 1.
+  `characters` is the account's slot list (empty for system peers) and `characterId` the one
+  this session plays; `profile` is the owner's OWN profile — the one place the email appears
+  on the wire — and `required:true` means `ProfileSetup` must precede `SessionReady`.)
 
   `flags` are session rules the client applies locally:
 
@@ -242,6 +308,8 @@ Server → client:
   | `renderLod` | `"tiered"` degrades distant avatars; `"full"` simulates every avatar |
   | `lodNearRadius` / `lodMidRadius` | render tier boundaries, in world units |
   | `lodNearMaxAvatars` | hard ceiling on fully-simulated avatars; `0` = radius only |
+  | `simulated` | optional, `true` when a sim peer simulates this world: the client must not roll its own levelled-list creatures or script-spawned actors (they arrive as named net objects from the holder). Known at join, before the first cell's authority info |
+  | `respawn` | optional `{cellKey, x, y, z}` (backlog 317): where the client puts a character whose stored cell no longer exists in this load order; the world's `[rules].respawn*` point |
 
   The render-LOD fields are sent rather than baked into the client because the client's
   scripts live inside `openmw.data` and changing a constant there costs a full relink.
@@ -252,7 +320,9 @@ Server → client:
 - `{"t":"SessionPong", "clientTime":<ms>, "serverTime":<ms>}`
 - `{"t":"SessionDisconnect", "code":"<CODE>", "detail":"human-readable"}` then close.
   Codes: `BAD_PROTO BAD_ENGINE BAD_CONTENT AUTH_FAILED BANNED SUPERSEDED KICKED RATE
-  SERVER_FULL SHUTDOWN`.
+  BACKLOG IP_CAP SERVER_FULL SHUTDOWN`. `BACKLOG` = outbound buffer overflow past
+  `maxBufferedBytesHard` (the client stopped reading — a background tab; transient, reconnect).
+  `IP_CAP` = too many connections from one address, sent at socket accept (close 1008).
 
 Rules: one active session per account (later login supersedes, old socket gets
 `SUPERSEDED`); Hello timeout 10 s (disconnect code `BAD_PROTO`); auth attempts limited
@@ -267,25 +337,30 @@ Event-body conventions: arrays = 1-based integer-keyed tables; nil fields = omit
 
 | name | dir | body |
 |---|---|---|
-| `ChatSend` | C→S | `{text=string}` — `/`-prefixed text is a command |
-| `ChatMessage` | S→C | `{channel="say"\|"server"\|"whisper", from=string\|nil, fromId=u16\|nil, text=string}` |
+| `ChatSend` | C→S | `{text=string, channel="say"\|"party"\|"global"\|"whisper"?, to=string?}` — without `channel`, a leading `!` is `global` and a leading `@` is `party` (world chat); `to` names a whisper target. A `/`-prefixed line is chat like any other (there is no command path, §Ops). Own `chat` rate bucket; over it the sender is whispered once and the line dropped |
+| `ChatMessage` | S→C | `{channel="say"\|"party"\|"global"\|"server"\|"whisper", from=string?, fromId=u16?, to=string?, text=string}` — `say` is proximity when `[chat] sayProximity`; `server` is never muted; a whisper is echoed to the sender with `to` |
 | `PlayerJoinWorld` | S→C | `{id=u16, name=string}` |
 | `PlayerLeaveWorld` | S→C | `{id=u16}` |
-| `PlayerList` | S→C | `{players={{id=u16, name=string}, …}}` |
+| `PlayerList` | S→C | `{players={{id=u16, name=string}, …}}` — humans only (system peers are omitted) |
+| `PlayerLeaving` | C→S | `{}` — the client is about to dial elsewhere (JoinFriend / home). From the OWNER of a party world it closes the world at once (`WorldMode{mode="private"}` to all, guests sent home) instead of after the disconnect grace |
+| `ChargenComplete` | C→S | `{}` — the engine reports `CharGenState == -1`; the provisional character slot is adopted and named from the chargen `PlayerAppearance.name`, and saves are enabled. Idempotent; re-sent on every login |
+| `StateRefused` | S→C | `{kind=string}` — an M2 `Player*` declaration the server would not store (shape, cap, rate). The client forgets its diff cache for that kind and re-sends on its next tick, at most 3 times per unchanged value (backlog 336) |
 
 ## Event-tier additions (M2)
 
 | name | dir | body |
 |---|---|---|
-| `PlayerAppearance` | C→S on join/chargen-done/change; relayed S→C to ALL in-world with `id` | `{race=string, head=string, hair=string, isMale=bool, class=string, name=string}` (record-id strings from the player's own NPC record) |
-| `PlayerEquipment` | C→S on change (client diffs); relayed to ALL with `id` | `{slots={[slotNumber]=recordId, …}}` — full snapshot, slot numbers per `types.Actor.EQUIPMENT_SLOT` |
-| `PlayerStatsDynamic` | C→S on change (0.25 s poll, instant on death); relayed to VISIBLE with `id` | `{hp={c=number,b=number}, mp={c=,b=}, ft={c=,b=}}` (current/base) |
-| `PlayerAttributes` / `PlayerSkills` | C→S on change (1 s diff) | the body IS the flat `{name=number}` map (≤64 entries, keys ≤32 chars) — no wrapper key, unlike the other bodies | 
-| `PlayerLevel` | C→S on change | `{level=int 1..255, reputation=int 0..255?}`; stored for persistence; not relayed in M2. Reputation is NpcStats-only in the engine, so it rides here (backlog 223) |
-| `PlayerSpellbook` | C→S `{add={id,…}, remove={id,…}}` | stored; not relayed in M2 |
-| `PlayerInventory` | C→S full snapshot `{items={{id=recordId, n=count}, …}}` on change (2 s diff, cap 512 entries) | stored for rejoin restore; not relayed |
+| `PlayerAppearance` | C→S on join/chargen-done/change; relayed S→C to ALL in-world with `id` | `{race=string, head=string, hair=string, isMale=bool, class=string, name=string}` (record-id strings from the player's own NPC record; ids ≤64 chars, name ≤64) |
+| `PlayerEquipment` | C→S on change (client diffs); relayed to ALL with `id` | `{slots={[slotNumber]=recordId, …}}` — full snapshot, slot numbers 0..20 per `types.Actor.EQUIPMENT_SLOT` |
+| `PlayerStatsDynamic` | C→S on change (0.25 s poll, instant on death); relayed to VISIBLE with `id` | `{hp={c=number,b=number}, mp={c=,b=}, ft={c=,b=}}` (current/base; any subset). Relayed as `{id, hp, mp, ft, speed=number?}` — `speed` is the owner's base Speed attribute from the doc, so puppets run at the right pace (backlog 134). While a peer bar report is fresh (5 s) a claim may only RAISE a bar (a potion, a rest) up to base; lower values are ignored; base changes ≤60 per 10 s, ≤2000; restores are budgeted at 4× max health per 10 s (#359) |
+| `PlayerAttributes` / `PlayerSkills` | C→S on change (1 s diff) | the body IS the flat `{name=number}` map (≤64 entries, keys ≤32 chars, values 0..100) — no wrapper key, unlike the other bodies. A key may rise by at most 5 per 10 s window (#369); over it the whole map is refused (`StateRefused`) |
+| `PlayerLevel` | C→S on change | `{level=int 1..255, reputation=int 0..255?}`; stored for persistence; not relayed. One level step per 10 s, a jump of ≥2 refused. Reputation is NpcStats-only in the engine, so it rides here (backlog 223) |
+| `PlayerMark` | C→S on change (1 s diff, set marks only) | `{cell=string, x=,y=,z=}` — the Mark spell's location, stored on the doc for relog |
+| `PlayerSpellbook` | C→S `{add={id,…}, remove={id,…}}` | stored (≤1024 spells); not relayed. A custom record minted by ANOTHER account is refused (#362) |
+| `PlayerActiveSpells` | C→S (0.5 s diff) | `{add={{key=string(≤32), id=recordId, effects={index,…}(1..8)}, …}, remove={{key, id}, …}}` — the player's own active magic by instance key. Budgeted (32 ops / 5 s, magnitude per 10 s window; over budget = consumed, not forwarded). Relayed to every OTHER client as `AvatarActiveSpells {id, add, remove}` (the peer applies the whole effect to the avatar; clients keep what is visible on a puppet); a joiner gets each player's current set |
+| `PlayerInventory` | C→S full snapshot `{items={{id=recordId, n=count, condition?, charge?, soul?}, …}}` on change (2 s diff, cap 4096 entries; count ≤10000, gold ≤1e8) | stored for rejoin restore; not relayed. While a peer item-state report is fresh (5 s) the per-item STATES are ignored, counts still land (Phase 4D) |
 | `PlayerItemAcquired` | C→S `{id=recordId, n=count}` on every count INCREASE (0.25 s scan) | credits the item against drop conservation; SPENT by a drop that uses it, and cleared wholesale by the next `PlayerInventory`. Not stored, not relayed |
-| `PlayerDeath` | C→S `{}` | server runs respawn/death-penalty plugins |
+| `PlayerDeath` | C→S `{}` | server runs respawn/death-penalty plugins. While the peer rules this player's bars and the doc says hp > 0, the death is refused as unconfirmed (a respawn is a free heal + teleport) |
 | `PlayerResurrect` | S→C `{cellKey=string, x=,y=,z=, restoreHp=bool}` | client teleports self, restores dynamic stats, clears death |
 
 Rejoin restore (M2): `SessionWelcome.playerRecord` is non-null once the server has stored a
@@ -301,23 +376,29 @@ an appearance arrives for an already-spawned puppet.
 | name | dir | body |
 |---|---|---|
 | `AvatarStatsBatch` | PEER→S (0.25 s, diffed per avatar) | `{entries={{id=int, hp={c=,b=}, mp={c=,b=}, ft={c=,b=}}, …}}` — dropped and ignored from any non-system sender |
-| `MP_SelfStats` | S→C (owner only, per accepted entry) | `{hp={c=,b=}, mp={c=,b=}, ft={c=,b=}}` — the owner applies CURRENT values to self |
+| `SelfStats` | S→C (owner only, per accepted entry) | `{hp={c=,b=}, mp={c=,b=}, ft={c=,b=}, kd=bool, blk=string?}` — the owner applies CURRENT values to self. `kd` = knocked down on the peer (the owner holds still, backlog 73); `blk` = `"Light|Medium|Heavy Armor Hit"`, the shield sound of a block made on the peer (backlog 312). Wire names are BARE: the engine prefixes `MP_` on arrival |
+| `AvatarSkillUse` | PEER→S | `{id=int, skill="block"\|"lightarmor"\|"mediumarmor"\|"heavyarmor"\|"unarmored", useType=0..3}` — an armour/block skill use on the avatar (backlog 307); ≤10/s per owner. Forwarded to the owner as `SelfSkillUse {skill, useType}` for its own `I.SkillProgression` |
+| `AvatarEffectsBatch` | PEER→S | `{entries={{id=int, spellsAdd={{id, effects}, …}?, effectsAdd={{key, id, effects}, …}?, effectsRemove={{key, id}, …}?}, …}}` — what the world did to the avatar (a disease from a bite, a hostile Paralyze). Spells are persisted to the doc and sent to the owner as `SelfSpells {add}`; effects as `SelfActiveSpells {add, remove}`. ≤32 entries/ops |
 
 One-writer rule, same shape as the movement gate: while an accepted peer report for a
-player is fresh (≤1 s), that player's own `PlayerStatsDynamic` is consumed and ignored.
-A peer entry is only accepted for a player actively driving the input tier (fresh
-`PlayerInput` ≤1 s) — an input-less client (old build, protocol bot, mid-outage browser)
-keeps asserting its own bars, per-player degraded mode with no switchover signal. Observer
-relay rides the ordinary `PlayerStatsDynamic` fan-out, so other clients need no new type.
-Death in a peer report flushes the doc immediately, exactly like the client edge.
+player is fresh (≤5 s, `INPUT_DRIVING_MS`), that player's own `PlayerStatsDynamic` may only
+RAISE a bar (see the M2 row). A peer entry is only accepted for a player actively driving
+the input tier (fresh `PlayerInput` ≤5 s) — an input-less client (old build, protocol bot,
+mid-outage browser) keeps asserting its own bars, per-player degraded mode with no
+switchover signal — EXCEPT a death (hp ≤ 0), which is always taken: the avatar is the body
+in the world. For 6 s after a resurrect, dead-avatar reports are ignored (the new body's
+bars have not arrived yet). Observer relay rides the ordinary `PlayerStatsDynamic` fan-out
+(with `speed`), so other clients need no new type. Death in a peer report flushes the doc
+immediately, exactly like the client edge. Every `Avatar*Batch` is accepted from THE world
+peer only; any other sender is dropped.
 
 ### Phase 4D — inventory keeps the avatar current, both ways
 
 | name | dir | body |
 |---|---|---|
-| `AvatarState` (refresh) | S→PEER after every accepted `PlayerInventory` | the same full-doc body the join sends; the peer's `applyAvatarDoc` reconciles shortfall, **surplus** and item states without duplicating what the body already holds |
+| `AvatarState` | S→PEER at join and after every accepted `PlayerInventory` / `PlayerAttributes` / `PlayerSkills` / `PlayerLevel` / `PlayerSpellbook` | `{id=int, stats={dynamic, attributes, skills, level}?, spells={…}?, inventory={…}?, itemStates={…}?, factions={…}?, bounty=number?}` — the character doc the peer builds the avatar from (a dead doc is sent at 10 % health so the body stands). The peer's `applyAvatarDoc` reconciles shortfall, **surplus** and item states without duplicating what the body already holds; progression has to reach the peer or it fights with a character who never improved |
 | `AvatarItemStatesBatch` | PEER→S (2 s, diffed, 10 s refresh) | `{entries={{id=int, itemStates={[recordId]={{condition=,charge=,soul=}, …}, …}}, …}}` — the doc's own positional shape; dropped from any non-system sender |
-| `MP_SelfItemStates` | S→C (owner only, per accepted entry) | `{itemStates={…}}` — applied positionally per record id to the owner's own items |
+| `SelfItemStates` | S→C (owner only, per accepted entry) | `{itemStates={…}}` — applied positionally per record id to the owner's own items |
 
 Why: the peer swings the weapon now (4C), so the peer is where wear, charge spend and soul
 capture happen — and the avatar must be *holding* what the owner holds (a weapon picked up
@@ -338,20 +419,30 @@ generated RefNums NEVER travel.
 
 | name | dir | body |
 |---|---|---|
-| `ObjectSpawnRequest` | C→S | `{tempId=number, recordId=string, cellKey=string, x=,y=,z=, rotZ=number, count=number}` — count ≥1 (engine objects not yet placed report count 0; clients clamp) |
+| `ObjectSpawnRequest` | C→S | `{tempId=number, recordId=string, cellKey=string, x=,y=,z=, rotZ=number, count=number, fromInventory=bool?, state={condition?, charge?, soul?}?, actor=bool?}` — count ≥1 (engine objects not yet placed report count 0; clients clamp). `actor=true` from the SIM PEER names a runtime-spawned NPC/creature (placed with `actor=true`, addressed by `net` in the actor stream); `actor=true` from a HUMAN is a PlaceAtPC its engine declined (backlog 214): not placed, but forwarded to the cell's holder as `QuestSpawn{…, forId}` — refused `reach` when the cell is not visible to the asker or count > 10, `rate` past 10/min per player. `tempId` is 0 for those |
 | `ObjectSpawnAck` | S→C (requester) | `{tempId=number, netId=number}` |
-| `ObjectPlace` | S→C broadcast (cell-scoped visible) | `{netId=number, recordId=string, cellKey=, x=,y=,z=, rotZ=, count=, byId=u16}` |
-| `ObjectDelete` | C→S; relayed cell-scoped | `{ref|net, cellKey=string}` — tombstoned in the cell doc |
-| `ObjectMove` | C→S; relayed cell-scoped | `{ref|net, cellKey=, x=,y=,z=, rotZ=}` |
-| `ObjectLock` | C→S; relayed cell-scoped | `{ref|net, cellKey=, lockLevel=number|nil}` (nil = unlocked) |
-| `DoorState` | C→S; relayed cell-scoped | `{ref, cellKey=, open=bool}` |
-| `ContainerOpen` | C→S | `{ref|net, cellKey=, contents={{id=,n=},…}|nil}` — first-opener's contents become canonical (leveled-loot roll); thereafter server state is truth |
-| `ContainerState` | S→C | `{ref|net, items={{id=,n=},…}, stateSeq=number}` |
-| `ContainerOpRequest` | C→S | `{ref|net, cellKey=, opId=number, op="take"\|"put", itemId=string, n=number}` |
-| `ContainerOpResult` | S→C (requester) | `{opId=, ok=bool, reason=string?, stateSeq=}` |
+| `ObjectSpawnRefused` | S→C (requester) | `{tempId=number, ok=false, reason="unowned"\|"contained"\|"cell_full"\|"reach"\|"rate"}` — always sent, so an optimistic drop can be put back |
+| `ObjectPlace` | S→C broadcast (cell-scoped visible) | `{netId=number, recordId=string, cellKey=, x=,y=,z=, rotZ=, count=, byId=u16, actor=true?, state={…}?}` |
+| `ObjectDelete` | C→S; relayed cell-scoped with `byId` | `{ref|net, cellKey=string}` — tombstoned in the cell doc (2000 tombstones per cell) |
+| `ObjectTakeRequest` | C→S | `{ref|net, cellKey=, opId=number}` — picking up a loose item is a REQUEST: the client holds its native take until `ObjectTakeResult {opId, ok, reason="unreachable"\|"gone"\|"cell_full"?}`; on ok the relayed `ObjectDelete` (with `byId`) removes it from every other view. Two players activating the same item: one `ok`, one `gone` |
+| `ObjectLock` | C→S; relayed cell-scoped with `byId` | `{ref|net, cellKey=, lockLevel=number|nil}` (nil = unlocked) |
+| `ObjectEnabled` | C→S; relayed cell-scoped with `byId` | `{ref|net, cellKey=, enabled=bool}` — a script's Enable/Disable. The ONE object op with no reach gate (scripts toggle far cells: backlog 213/218): a far exterior must be inside the world's bounds, a session may name ≤64 distinct far cells, interiors need no prior visit (#384). A human write within 5 s of the peer's write to the same object is dropped (peer-owned) |
+| `DoorState` | C→S; relayed cell-scoped with `byId` | `{ref, cellKey=, open=bool}` — content refs only; a door used also explains the next same-cell teleport (#361) |
+| `ContainerOpen` | C→S | `{ref|net, cellKey=, contents={{id=,n=},…}|nil, gold=number?}` — first-opener's contents become canonical (leveled-loot roll) and `gold` seeds a merchant purse (restocked with the origin stock every 24 game hours); thereafter server state is truth. A HUMAN first-open is capped: >50 000 gold (in contents or purse) or any non-gold stack >100 is implausible — gold dropped, stacks clamped to 100, noted for moderation |
+| `ContainerState` | S→C (opener) | `{ref|net, items={{id=,n=},…}, stateSeq=number, gold=number?}` |
+| `ContainerOpRequest` | C→S | `{ref|net, cellKey=, opId=number, op="take"\|"put", itemId=string, n=number}` or `{…, op="gold", goldDelta=int (|Δ| ≤ 1e6)}` — the merchant purse op (a barter's gold side; the purse never goes below 0). `op="gold"` alone may name the cell the player JUST left (a strider fare is paid one frame after the cell change) |
+| `ContainerOpResult` | S→C (requester) | `{opId=, ok=bool, reason="nostate"\|"gone"\|…?, stateSeq=}` — `nostate` = the container was never opened here |
 | `ContainerUpdate` | S→C broadcast (cell-scoped) | `{ref|net, delta={itemId=, dn=number}, stateSeq=}` |
-| `WorldCellState` | S→C (on PlayerCellChange + ResyncRequest) | `{cellKey=, placed={…ObjectPlace-shaped…}, deleted={refKeys}, moved={…}, locks={…}, doors={…}, containers={refKey={items,stateSeq}}}` |
-| `ResyncRequest` | C→S | `{cellKey=string}` |
+| `WorldCellState` | S→C (on PlayerCellChange for the cell and its 8 exterior neighbours, + ResyncRequest) | `{cellKey=, placed={…ObjectPlace-shaped…}, deleted={refKeys}, moved={…}, locks={…}, doors={…}, containers={refKey={items,stateSeq}}, disabled={refKeys}, enabled={refKeys}, deaths={refKeys}, memberVars={refKey={name=value}}}` — `deaths` are the actors still dead (corpses expire); trimmed to the LSER node budget, actors' placed entries kept first |
+| `ResyncRequest` | C→S | `{cellKey=string}` — reach-gated like an edit (#370) |
+
+`ObjectMove` (`{ref|net, cellKey=, x=,y=,z=, rotZ=}`, relayed with `byId`) is still accepted
+and relayed by the server, but **no client sends it** (#203: scripted movers are per-engine);
+it is not part of the contract until a holder-authoritative sender exists. Every object op
+except `ObjectEnabled` is REACH-gated: the sender's cell must be visible to `cellKey` (the sim
+peer is exempt), a spawned/moved object must be within reach of the sender's last pose, and
+an actor the holder streams is not an object (#364: a take/delete/move of one is refused and
+noted).
 
 **Drop conservation (`ObjectSpawnRequest`).** `fromInventory=true` marks a request as a DROP
 rather than a placement — scripts and tools legitimately place objects nobody carries, so
@@ -388,7 +479,7 @@ content-file objects, addressed by RefNum userdata (`ref`), exactly like M3 cont
 
 | name | dir | body |
 |---|---|---|
-| `ActorAuthorityGrant` | S→C | `{cellKey=string, epoch=u32, snapshot={actors={ {ref, x,y,z,rotZ, hp={c,b},mp,ft, dead=bool, ai=…}, … }}}` — apply the snapshot, THEN begin simulating |
+| `ActorAuthorityGrant` | S→C | `{cellKey=string, epoch=u32, snapshot={actors={ {ref|net, x,y,z,rotZ, hp={c,b},mp,ft, dead=bool, disp=number?}, … }}}` — apply the snapshot (the holder's last `ActorSnapshot`; `disp` = persuaded base disposition), THEN begin simulating |
 | `ActorAuthorityRevoke` | S→C | `{cellKey=string, epoch=u32}` — stop simulating; re-attach puppets to those actors |
 | `ActorAuthorityInfo` | S→C | `{cellKey=string, holderId=u16, epoch=u32}` — sent to a non-holder entering a claimed cell, and re-sent to every remaining non-holder whenever the epoch changes (handoff), so all occupants always know the live epoch |
 
@@ -399,18 +490,37 @@ content-file objects, addressed by RefNum userdata (`ref`), exactly like M3 cont
   `lastSnapshot` (epoch++); empty cell → snapshot folds into the cell doc `actorOverrides`
   and is handed to the next claimant.
 
-**Actor state** — every `Actor*` message carries `(cellKey, epoch)`; the server drops any
-whose epoch ≠ the current cell epoch (kills the handoff race). Only the holder may send.
+**Actor state** — every `Actor*` message carries `(cellKey, epoch)` and addresses the actor as
+`{ref=RefNum}` or `{net=netId}` (a runtime actor the holder named through
+`ObjectSpawnRequest{actor=true}`); the server drops any whose epoch ≠ the current cell epoch
+(kills the handoff race). Only the holder may send — with the four non-holder CLAIMS below.
 
 | name | dir | body / layout |
 |---|---|---|
 | `ActorMoveBatch` | holder→S→C (binary `0x0200`) | `[u32 epoch][u8 count]` + count × (`8-byte ref` + 20-byte pose, same pose layout as PlayerMove); server infers cell from the holder, validates epoch, relays cell-scoped |
 | `ActorStatsDynamic` | holder→S→C | `{cellKey, epoch, ref, hp={c,b}, mp={c,b}, ft={c,b}}` |
 | `ActorEquip` | holder→S→C | `{cellKey, epoch, ref, slots={[n]=recordId,…}}` |
-| `ActorAI` | holder→S→C | `{cellKey, epoch, ref, pkg="idle"\|"wander"\|"travel"\|"follow"\|"combat", targetRef=…?}` (hint for puppet anim/facing; non-holders don't run AI) |
-| `ActorDeath` | holder→S→C | `{cellKey, epoch, ref, killerPlayerId=u16?, deathNo=number}` — server dedups by (ref, deathNo), persists to `actorOverrides`, may bump kill counts |
-| `ActorSnapshot` | holder→S (5 s + on death/combat-start) | `{cellKey, epoch, actors={…}}` — server stores as `lastSnapshot` for handoff/dormancy |
-| `WorldKillCount` | S→C broadcast | `{refId=string, count=number}` — shared kill tally (quest-critical `GetDeadCount`); server-accumulated from `ActorDeath.killerPlayerId` attribution |
+| `ActorAI` | holder→S→C | `{cellKey, epoch, ref|net, combat=u16|false}` — who the actor now fights (a player id) or that it stopped; puppets mirror the state so vanilla's own checks (no rest with an enemy on you) read true. `{…, travel={x,y,z}}` — the holder's own scripted travel. There is no `pkg=` package hint |
+| `ActorEffects` | holder→S→C | `{cellKey, epoch, ref|net, add={{id, effects}, …}, remove={{id}, …}}` — the magic that SHOWS on an NPC (invisibility, chameleon, paralyze, levitate…), diffed by instance (#296); puppets add/remove the same active effects |
+| `ActorDisposition` | holder→S→C, and dialogue-holder→S→C | `{cellKey, epoch, ref|net, disposition=0..100, ai={fight=,flee=,alarm=}?}` — base disposition is SHARED state (one value on the NPC), so a bribe or a threat reaches every screen. `ai` (#229) is the Fight/Flee/Alarm a result script wrote; every value is clamped 0..100 on both paths (#401) |
+| `ActorCellChange` | holder→S→C (BOTH cells) | `{cellKey, epoch, ref|net, toCellKey=string, x,y,z}` — the actor walked through a door; relayed to the cell it left and the cell it entered, and a follow claim moves with it |
+| `ActorDeath` | holder→S→C | `{cellKey, epoch, ref|net, killerPlayerId=u16?, deathNo=number, killedRecordId=string?}` — server dedups by (ref, deathNo), persists the death (corpses expire in game time), bumps the kill tally for EVERY death naming a record (vanilla `GetDeadCount` counts all causes); a corpse follows nobody. Under `[economy] noDrop` a unique NPC's corpse is stripped for everyone: `ActorStripLoot {ref|net, cellKey, reason="unique"}` S→C cell-wide |
+| `ActorRevive` | holder→S→C | `{cellKey, epoch, ref|net}` — `ActorDeath`'s inverse (#293): the doc forgets the death, then it relays |
+| `ActorSnapshot` | holder→S (5 s + on death/combat-start) | `{cellKey, epoch, actors={{ref|net, x,y,z,rotZ, hp,mp,ft, dead, disp?}, …}}` — server stores as `lastSnapshot` for handoff/dormancy |
+| `WorldKillCount` | S→C broadcast | `{refId=string, count=number}` — shared kill tally (quest-critical `GetDeadCount`); replayed in full at join |
+
+**The four non-holder claims** (all `ActorAI`, all from a HUMAN standing in or beside the cell,
+each `epoch` present but unchecked). Dialogue runs on the talking player's client — never the
+holder on a peer-simulated world — so the facts a conversation produces are admitted from the
+player the server let talk to that NPC: the live `DialogueLock` holder, or whoever held it in
+the last 5 s.
+
+| claim | body | gate | delivery |
+|---|---|---|---|
+| follow / escort | `{cellKey, epoch, ref|net, follow=<own id>|nil, escort={x,y,z,duration}?}` | `follow` must be the sender's own id (nil = dismissed, only by the followed player); a NEW claim needs the conversation; ≤8 followers per player | stored on the cell doc (`follows`, survives peer and world restarts, rebinds to the character's next session), relayed cell-wide; replayed to whoever next holds the cell as `ActorAI{…, epoch=0, follow, escort?}` |
+| travel | `{…, travel={x,y,z}}` (AITravel dialogue result) | the conversation | relayed cell-wide |
+| combat | `{…, combat=<own id>}` (a taunt, resisting arrest) | the conversation; about the sender only | relayed cell-wide; the holder starts the real fight |
+| position | `{…, position={cell=string?, x,y,z}}` (PositionCell from a player-gated script, backlog 216) | NOT dialogue-gated; ≤5/min per player, coordinates in-world | sent to the HOLDER only, who teleports the real actor; with no holder the client's own move stands |
 
 Client contract: non-holders attach `puppet.lua` to the real cell actors (`addScript` +
 `enableAI(false)`) and drive them from `ActorMoveBatch`/stats/death — the SAME puppet path
@@ -437,22 +547,34 @@ a peer simulates the target's cell, a client's REAL swing is cancel-only (puppet
 returns false to stop local ghost damage; combat.lua no longer forwards it), so a blow lands
 exactly once. The `CombatHit` relay survives for exactly two callers: **degraded mode** (no
 holder for the cell: forward as before — victim-applies for players, held/dropped for actors)
-and the **test hooks** (`hitn`/`hitp` mark the synthetic Hit `mpTest`, which always forwards,
-keeping s51/s58 as regression guards on the relay itself). Magic still forwards
-(`CombatSpellHit`) — the avatar does not cast. The authoritative pose stream's flags bit 3
-reports "avatar attacking" back to the owner and to observers.
+and the **test hooks** (`hitn`/`hitp` mark the synthetic Hit `mpTest`, which is the only
+swing combat.lua forwards). **Relay reality (#362):** a HUMAN `CombatHit` arriving while a
+simulator holds the target's cell is refused server-side (`combat_hit_refused`, silent to the
+attacker) — that covers `mpTest` too, until the `[limits] harness` seam of #390 lands. In
+degraded mode (no holder) there is no melee relay either: the client never forwards a real
+swing, an actor-target hit is parked up to 6 s for a grant and then `CombatRefused`, and only
+a player-target hit reaches its victim. Magic still forwards (`CombatSpellHit`) — the avatar
+does not cast. The authoritative pose stream's flags bit 3 reports "avatar attacking" back to
+the owner and to observers.
 
 | name | dir | body |
 |---|---|---|
-| `CombatHit` | attacker→S→victim-owner | `{target={playerId=u16} \| {ref=RefNum, cellKey=, epoch=?}, damage={health=n, fatigue=n?, magicka=n?}, strength=n, sourceType=string, weaponId=string?, ammoId=string?, hitPos={x,y,z}?, successful=bool}` |
-| `CombatCast` | caster→S→cell-scoped | `{spellId=string, target={playerId}\|{ref}\|nil, casterId=u16, kind="spell"\|"enchant"\|"potion"}` — visual/animation mirroring only |
-| `CombatSpellHit` | caster→S→victim-owner | `{target={playerId}\|{ref,cellKey,epoch}, spellId=string (net id: a spell, an enchantment, or the ITEM a scroll/cast-when-used source names), effects={{id=string, magnitude=n, duration=n, beneficial?=bool, index?=n}, …}, casterId=u16, beneficial?=bool, indexes?={n,…} (which of the record's effects hit, 0-based, < 64; absent = all), ignoreReflect?=bool (the hit is itself a reflection)}`. Routed only when the caster's doc knows the source (spellbook or inventory; the sim peer is exempt). |
-| `CombatProjectile` | attacker→S→cell-scoped | `{kind="arrow"\|"bolt"\|"thrown"\|"magic", recordId=string?, spellId=string?, from={x,y,z}, dir={x,y,z}, speed=n, casterId=u16}` — cosmetic mirror; the attacker owns the real projectile |
+| `CombatHit` | attacker→S→victim-owner | `{target={playerId=u16} \| {ref|net, cellKey=, epoch=?}, damage={health=n, fatigue=n?, magicka=n?} (≥1 channel, each ≤ `[limits] maxHitDamage`), strength=n, sourceType=string, weaponId=string?, ammoId=string?, hitPos={x,y,z}?, successful=bool}` — delivered with **`attackerId=u16`** added. 8/s per attacker, burst 20 |
+| `CombatCast` | caster→S→cell-scoped | `{spellId=string, target={playerId}\|{ref|net,cellKey}\|nil, casterId=u16, kind="spell"\|"enchant"\|"potion"}` — visual/animation mirroring only; relayed with **`fromId=u16`** added. A cast also explains the caster's next same-cell teleport (Recall, Intervention: #361) |
+| `CombatSpellHit` | caster→S→victim-owner | `{target={playerId}\|{ref|net,cellKey,epoch?}, spellId=string (net id: a spell, an enchantment, or the ITEM a scroll/cast-when-used source names), effects={{id=string, magnitude=n, duration=n, beneficial?=bool, index?=n}, …} (≤64), casterId=u16, beneficial?=bool, indexes?={n,…} (which of the record's effects hit, 0-based, < 64; absent = all), ignoreReflect?=bool (the hit is itself a reflection)}` — delivered with **`attackerId`** and the resolved `beneficial` added. Routed only when the caster's doc knows the source (spellbook or inventory; the sim peer is exempt). |
+
+`CombatProjectile` is **dead**: the server still validates and relays it cell-scoped with
+`fromId`, no client sends it, and `MP_CombatProjectile` is a deliberate no-op on the client
+(the attacker owns the real projectile; there is nothing to mirror). Do not build on it.
 
 Rules:
 - The server validates shape + plausibility only (finite, `damage.health` within a config
-  cap, target exists) and routes: player targets → that player's session; actor targets →
-  the cell's current authority holder. It never computes damage — it has no game data.
+  cap, target exists, attacker's cell visible to the target's) and routes: player targets →
+  that player's session — or the WORLD PEER when the victim is driving the input tier (fresh
+  `PlayerInput` ≤5 s), since the avatar is where the body is; actor targets → the cell's
+  current authority holder. It never computes damage — it has no game data. Refusals the
+  attacker is told about (`CombatRefused {reason}`): `cell has no authority holder`,
+  `authority holder gone`, `stale epoch`; shape/rate/PvP refusals are logged and dropped.
 - Actor targets: `epoch` is **optional** here, unlike the holder-authored `Actor*` family.
   The attacker is usually a NON-holder, so presence is proven by proximity (the attacker's
   own cell must be visible to `target.cellKey`) and the hit is routed to whoever holds the
@@ -477,14 +599,18 @@ factions, crime. Sharing is operator-configurable per family (`[sharing]`).
 
 | name | dir | body |
 |---|---|---|
-| `JournalEntry` | C→S; relayed to all when `[sharing] journal` | `{questId=string, index=number, actorRefId=string?}` — server arbitrates **monotonic max per questId** (a lagging client can never regress a shared quest); non-monotonic updates are stored but not relayed unless `questId` is in the operator's `regressAllowlist` |
-| `JournalSync` | S→C at join | `{quests={[questId]=index, …}}` — full shared journal state (shared mode) or the player's own stored journal (individual mode) |
-| `GlobalVarUpdate` | C→S; relayed to all when `[sharing] questVars` | `{name=string, value=number, seq=number?}` — MWScript globals; **last-write-wins with a per-variable sequence**; the time globals (`GameHour/Day/Month/Year/DaysPassed`) are EXCLUDED here and owned by M7 |
-| `MemberVarUpdate` | C→S; relayed cell-scoped (the cell's HOLDER hears it wherever it stands) | `{ref=RefNum, name=string, value=number}` — per-object MWScript locals, piggybacked on object interaction and on the dialogue lock (watched for the whole conversation, last diff on release) |
-| `FactionUpdate` | C→S; relayed when `[sharing] factions` | `{factionId=string, rank=number, reputation=number?, expelled=bool?}` |
-| `CrimeUpdate` | C→S; relayed when `[sharing] crime` | `{bounty=number, kind=string?}` — shared vs personal bounty is a server policy flag |
-| `DialogueLock` | C→S | `{ref=RefNum, cellKey=, want=bool}` → `DialogueLockResult {ref, granted=bool, holderId=u16?}` — one player may converse with an NPC at a time; released on close, cell change, or disconnect |
-| `GlobalScriptsUpdate` | C→S | `{started=[scriptId…]?, stopped=[scriptId…]?}` — the running GLOBAL scripts (Sleepers, VampireCheck, MoveMehra…) diffed every few seconds; stored as `scripts` on the campaign doc (`journalTarget`) so a relog keeps them running. `GlobalScriptsSync {running=[…]}` S→C at join: the client starts any it lacks |
+| `JournalEntry` | C→S; relayed to all when `[sharing] journal` | `{questId=string, index=number, actorRefId=string?}` — server arbitrates **monotonic max per questId** (a lagging client can never regress a shared quest); a regression is dropped unless the writer is the world owner or the sim peer, or `questId` is in the operator's `regressAllowlist`; a stage the dated log already holds is a replay (no write, no relay). Written to the CAMPAIGN doc (`journalTarget`: the world owner's character; a guest keeps nothing from a visit) |
+| `JournalSync` | S→C at join | `{quests={[questId]=index, …}, borrowed=bool, journalLog={{q=questId, i=index, d=daysPassed, m=month, dm=day}, …}}` — the shared journal (shared mode, seeded as max(shared, owner's own) at boot) or the player's own (individual mode). `borrowed=true` tells a GUEST this is a campaign that is not their character's: set your own journal aside for the visit and put it back on the way home (sent on every join, so a missed transition self-repairs). `journalLog` is the dated list in the order earned, newest `MAX_JOURNAL_LOG` = 5000 entries (#321) |
+| `GlobalVarUpdate` | C→S; relayed to all when `[sharing] questVars` | `{name=string, value=number, seq=number?}` — MWScript globals; **last-write-wins with a per-variable sequence**; the time globals (`GameHour/Day/Month/Year/DaysPassed`) are EXCLUDED here and owned by M7. Character globals (player-state flags, werewolf…) are stored on the writer's own doc and relayed live without a seq (backlog 224); a human write within 5 s of the peer's write to the same name is dropped (Phase 4E) |
+| `GlobalVarSync` | S→C at join | `{globals={[name]=number, …}}` — the campaign's stored world globals plus this character's own character globals; the client applies them before its scripts run |
+| `MemberVarUpdate` | C→S; relayed cell-scoped (the cell's HOLDER hears it wherever it stands) | `{ref|net, name=string, value=number}` — per-object MWScript locals, piggybacked on object interaction and on the dialogue lock (watched for the whole conversation, last diff on release); stored on the cell doc (2000 per cell) and replayed in `WorldCellState.memberVars`. Same 5 s peer-owned rule as globals |
+| `FactionUpdate` | C→S; relayed when `[sharing] factions` | `{factionId=string, rank=-1..20, reputation=number?, expelled=bool?}` — never from the peer |
+| `TopicsLearned` | C→S; relayed when `[sharing] journal` | `{topics={string,…}}` (1..64 ids) — dialogue topics follow the journal's sharing rule; relayed as `{topics, byId}` |
+| `CrimeUpdate` | C→S; relayed when `[sharing] crime`; S→C | `{bounty=number ≥0, kind=string?}`. Shared: the bounty is the PARTY's one record — a claim LOWER than it is refused unless the sender talked to an NPC (paid a fine, was arrested) within 10 s, and the server echoes `CrimeUpdate {bounty=<party's>, shared=true}` back to that sender; accepted values are relayed to everyone as `{bounty, kind?, byId=u16, shared=true}`. Individual: stored on the sender's doc and sent to the WORLD PEER only as `{bounty, byId, kind?}` (the avatar's guards need to know) |
+| `PlayerCrime` | PEER→S→owner | `{id=u16, bounty=number (|n| ≤ 100 000), kind=string?, faction=string?}` — the avatar committed a crime on the peer (assault, murder); the owner's client receives `{bounty, kind?, faction?}`, applies the increment and its own `CrimeUpdate` then carries the total; `faction` = the victim's faction to expel itself from (backlog 144). World peer only |
+| `PlayerArrest` | PEER→S→owner | `{id=u16, guard=<RefNum>}` — a guard reached the wanted avatar on the peer; the owner's client receives `{guard}` and opens the arrest dialogue with its copy of that guard. World peer only |
+| `DialogueLock` | C→S | `{ref|net, cellKey=, want=bool}` → `DialogueLockResult {ref, granted=bool, holderId=u16?}` — one player may converse with an NPC at a time. Gates: `want=true` is refused with `holderId` while another IN-WORLD player holds it, refused (`lock from afar`) when `cellKey` is not visible to the sender, and taking a lock releases the sender's others (one conversation at a time); `want=false` always answers `granted=false`. Released on close, cell change, or disconnect. Either edge stamps the sender as "talked" for 5 s (#361/#366), and a released lock keeps its holder for 5 s for the M4 claims |
+| `GlobalScriptsUpdate` | C→S | `{started=[scriptId…]?, stopped=[scriptId…]?}` (≤256 each, lowercased) — the running GLOBAL scripts (Sleepers, VampireCheck, MoveMehra…) diffed every few seconds; stored as `scripts` on the campaign doc (`journalTarget`) so a relog keeps them running. `GlobalScriptsSync {running=[…]}` S→C at join: the client starts any it lacks |
 
 Kill counts ride M4's `WorldKillCount`. Applying a received journal/faction/var update MUST
 NOT re-broadcast it (echo guard) — clients seed their diff caches from applied state.
@@ -510,14 +636,14 @@ persist nothing for the peer, as they did for guests — live relay still happen
 | name | dir | body |
 |---|---|---|
 | `WorldTime` | S→C (60 s + on change + at join) | `{gameHour=number, day=number, month=number, year=number, timeScale=number}` — the server owns the clock; clients slew rather than snap |
-| `WorldTimeRequest` | C→S | `{advanceHours=number, reason="rest"\|"wait"\|"script"}` — the server applies and rebroadcasts, so resting advances time for everyone |
+| `WorldTimeRequest` | C→S | `{advanceHours=number (0 < h ≤ 720), reason="rest"\|"wait"\|"script"}` — the server applies and rebroadcasts, so resting advances time for everyone; refused per `[rules] timeSkip` with `WorldTimeRefused {reason}` |
 | `WorldRegionChange` | C→S | `{region=string}` — the client declares which region it is in (cell→region mapping lives in the content files, so the server cannot derive it); drives region occupancy and weather-authority handoff |
-| `WorldWeather` | C→S from the region authority; S→C broadcast | `{region=string, current=number, next=number?, transition=number?}` — non-holders are dropped; also replayed per known region at join |
+| `WorldWeather` | C→S from the region authority; S→C broadcast | `{region=string, current=number, next=number?, transition=0..1?}` — non-holders are dropped; also replayed per known region at join |
 | `WorldWeatherAuthority` | S→C | `{region=string, holderId=u16}` — same holder pattern as cells, keyed by region; `holderId` equal to your own id means YOU simulate the weather there, `holderId=0` means the region has no authority (you just lost it). Handoff goes to the longest-present occupant; an emptied region folds its last weather and resumes it for the next claimant |
-| `RecordCreate` | C→S | `{tempId=number, kind="spell"\|"potion"\|"enchantment"\|"armor"\|"weapon"\|"clothing"\|"book"\|"misc", data=table}` → `RecordCreateAck {tempId, recordNetId=string}` |
+| `RecordCreate` | C→S | `{tempId=number, kind="spell"\|"potion"\|"enchantment"\|"armor"\|"weapon"\|"clothing"\|"book"\|"misc", data=table (≤128 fields)}` → `RecordCreateAck {tempId, recordNetId=string}`. `data` is held to caps (≤8 effects, magnitude ≤100, duration ≤1440, a spell's `cost` ≥ its computed floor, weapon/armor/charge/speed/reach ceilings); a record beyond them is dropped and counted. 50 000 custom records per world |
 | `RecordsSync` | S→C at join, and to peers on every `RecordCreate` | `{records={{recordNetId, kind, data}, …}}` — replay all custom records so cross-client ids resolve (fixes the M3 dynamic-record placeholder problem for player-made items). At join it is the COMPLETE set; after a creation it carries just the one new record, so peers can resolve the id before the item is used, not only at their next join |
 | `WorldCellReset` | S→C (all players) | `{cellKey=string}` — cell doc wiped on the operator's schedule (`[cellReset]`, persisted across restarts); clients drop local deltas and reload |
-| `WorldMapExplored` | C→S; relayed when `[sharing] map` | `{cellKeys={string,…}}` — relayed as `{cellKeys, byId}`, sender excluded |
+| `WorldMapExplored` | C→S; relayed when `[sharing] map` | `{cellKeys={string,…}}` (≤8192) — exterior keys are stored on the sender's doc (and the owner's when shared; newest 8192, #388) and relayed as `{cellKeys, byId}`, sender excluded |
 
 ## Ops (M8)
 
@@ -622,11 +748,26 @@ returned by a previous `FriendList`:
   world therefore answers with `JoinFriend` (the world switch) instead of `InviteAccepted`,
   since no coordinate in this world would mean anything.
 - `PresenceMode{mode}` — one of `public` `friends` `private`
+- `SetAvailability{state}` — `online` | `offline`: the where-am-I switcher's "appear
+  offline"; friends get a `PresenceUpdate`.
 - `MuteAdd{name}` · `MuteRemove{acct}`
-- `ReportPlayer{name, reason, voice?}` — files a moderation report with the target's current
-  cell and the last `[moderation] contextLines` chat lines. An OFFLINE name is accepted and
-  recorded as typed (the griefer who logs off the moment they are done is the ordinary case).
-  This is the only way to report; there is no typed command.
+- `ReportPlayer{name, reason}` — files a moderation report with the target's current cell and
+  the last `[moderation] contextLines` chat lines (`reason` ≤500 chars; one report per
+  reporter→target pair per cooldown). An OFFLINE name is accepted and recorded as typed (the
+  griefer who logs off the moment they are done is the ordinary case). This is the only way
+  to report; there is no typed command. (A `voice` flag used to ride here; nothing ever set
+  it — dropped, #402.)
+- `WorldList{}` → S→C `WorldList` · `WorldCreate{id, mode}` → S→C `WorldCreate` — the
+  gateway's world browser (bodies in §Server-to-client replies).
+- `JoinFriend{acct}` — dial into a friend's party world: refused with
+  `JoinFriend{ok=false, error="self"|"in_chargen"|"not_friends"|"blocked"|"not_online"|"no_gateway"|"not_open"}`,
+  else `JoinFriend{ok=true, worldId, mode, host, port, wsPath?, friendName}` and the client
+  reconnects there (sending `PlayerLeaving` first).
+- `SetWorldMode{mode}` — the OWNER flips this world `private` (solo) / `party`; answered by
+  `SocialResult{op="SetWorldMode", ok, detail=mode|"not_owner"|"bad_mode"|"not_flippable"}`.
+  Flipping to solo sends every guest `WorldClosed` and home.
+- `WorldKick{name}` — the owner sends one guest home; `SocialResult{op="WorldKick", ok,
+  detail="ok"|"not_owner"|"no_such_player"|"self"}`.
 
 Server → client:
 
@@ -694,12 +835,16 @@ silently skipped every one of them.
 | `QuestSpawn` | S→C on cell entry, or on a client's actor spawn request | `{recordId=string, questId=string?, cellKey=string, forId=u16?, x=, y=, z=, count=?}` — the operator's quest-repair rules replacing an object the character still needs; or (backlog 214) a client's `ObjectSpawnRequest{actor=true, …}` (a `PlaceAtPC` its engine declined to build) forwarded to the cell's holder with its spot, 10/min per player, refused with `ObjectSpawnRefused{reason='rate'}` past that |
 | `WorldList` | S→C, answering the C→S `WorldList` | `{error=string, myPort=number, worlds={{id, mode, name, host, port, wsPath?, playerCount, maxPlayers, up}, …}}` — mapped field by field: the gateway's record carries `ownerAccount` and it must never reach a client |
 | `WorldCreate` | S→C, answering the C→S `WorldCreate` | `{ok=bool, error=string, world={id, mode, name, host, port, wsPath?}?}` |
-| `WorldMode` | S→C at join and on change | `{mode=string}` — this world's mode, for the where-am-I switcher |
+| `WorldMode` | S→C at join and on change | `{mode=string, owner=string, isOwner=bool, ownerId=u16}` — this world's mode, for the where-am-I switcher; `ownerId` (0 when absent) is what the sim peer rolls levelled lists against |
 | `WorldClosed` | S→C | `{reason=string, by=string}` — the owner took the world solo; guests are told before they are disconnected |
 | `SimReady` | S→C | `{ready=bool}` — whether a world peer is simulating yet |
-| `SimAnchors` | S→PEER | `{anchors={…}, interiors={…}, place?}` — the cells the peer is to simulate |
+| `SimAnchors` | S→PEER | `{anchors={{x,y,z}, …}, interiors={cellKey, …}, place={cellKey, x,y,z}?}` — the cells the peer is to simulate (exterior anchor points + interior names) and where its dummy stands |
 | `AvatarRestore` | S→PEER | `{id=int, hp?, mp?, ft?}` — restore an avatar's bars from the stored doc |
 | `AvatarResurrect` | S→PEER | `{id=int, …}` — the peer-side half of a respawn |
+| `AvatarActiveSpells` / `SelfActiveSpells` / `SelfSpells` / `SelfSkillUse` / `SelfItemStates` / `SelfStats` | S→C | see §M2 and §Phase 4A/4D — the owner-only (`Self*`) and observer (`Avatar*`) halves of the peer's reports |
+| `ActorStripLoot` | S→C cell-wide | `{ref|net, cellKey, reason="unique"}` — see §M4 `ActorDeath` |
+| `PlayerCrime` / `PlayerArrest` | S→C (owner) | see §M6 — the peer's crime and arrest reports, forwarded to the wanted player |
+| `StateRefused` | S→C | `{kind=string}` — see §M0 |
 
 ## Client-side integration contract (M0)
 
