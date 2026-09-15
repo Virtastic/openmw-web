@@ -594,11 +594,27 @@ async function launchClient(name, mpPort, extraParams = '', opts = {}) {
     // A COMMAND THAT ACTUALLY RAN. window.omw.send queues it (nothing can clobber it) and
     // resolves when Lua has dispatched it and acked -- so this returns the ack {id, ok,
     // detail}, and a handler that threw is reported here rather than swallowed.
-    handle.cmd = async (text, timeoutMs = 20_000) => {
+    //
+    // SIXTY SECONDS, NOT TWENTY. A streamed client (?stream) reads its assets over synchronous
+    // XHR on the main thread, so ONE frame can last as long as the fetches it triggers: the
+    // frame that builds a friend's puppet and the peer's fresh creature spawns in a cell just
+    // entered ran past 20 s twice in s149 (#89 and #91, identically 12.5 s after B arrived,
+    // then the deadline) and under it once (#90). No frame runs the command loop until that
+    // frame ends, so the deadline fired while the client was merely busy. The deadline is a
+    // hang guard, not a measurement, and the per-scenario ceiling now bounds a truly dead
+    // client, so it can afford to be longer than the longest honest frame.
+    // A TIMEOUT SAYS WHAT THE CLIENT WAS DOING. It used to read as one word; waitFor's
+    // failure carries the console tail and the Lua errors, and this one now does the same.
+    handle.cmd = async (text, timeoutMs = 60_000) => {
       const ack = await handle.evalAsync(
         `window.omw.send(${JSON.stringify(text)}, ${timeoutMs}).then(function(r){ return JSON.stringify(r); })`);
       const r = JSON.parse(ack);
-      if (!r.ok) throw new Error(`[${name}] command ${JSON.stringify(text)} failed: ${r.detail}`);
+      if (!r.ok) {
+        const lua = handle.luaErrors();
+        throw new Error(`[${name}] command ${JSON.stringify(text)} failed: ${r.detail}`
+          + (lua.length ? `\n--- LUA ERRORS (${lua.length}) ---\n` + [...new Set(lua)].slice(0, 5).join('\n') : '')
+          + `\n--- last logs ---\n${handle.logTail()}`);
+      }
       return r;
     };
 
