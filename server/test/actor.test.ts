@@ -610,3 +610,51 @@ test('a death is forgotten after fCorpseRespawnDelay, and the levelled corpse wi
   peer.close();
   await peer.closed;
 });
+
+// Backlog 209 -- pins worldstate.ts handleActorMoveBatch being SYNCHRONOUS (commit 56e147e1:
+// no `this.enqueue(...)` around it). With the world mutation chain parked behind a cold cell
+// read that never returns, the holder's NPC stream must still reach an observer at once.
+test('backlog 209: the actor relay is not queued behind a stalled world mutation chain', async (t) => {
+  const server = await startServer({ requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
+    configOverride: { limits: { maxConnsPerIp: 8 }, server: { password: PEER_PASS } } });
+  // The stub below must be released before close(): close awaits world.drain().
+  const parked: (() => void)[] = [];
+  let unstub = (): void => {};
+  t.after(async () => { unstub(); for (const r of parked) r(); await server.close(); });
+
+  const holder = await TestClient.simPeer(server.port, PEER_PASS, 'Holder');
+  t.after(() => holder.close());
+  holder.sendCellChange('5,5', 0, 0, 0);
+  const epoch = ((await holder.waitEvent('ActorAuthorityGrant')).value as { epoch: number }).epoch;
+  const watcher = await TestClient.connect(server.port);
+  t.after(() => watcher.close());
+  await watcher.joinAsNew('Watcher209');
+  await watcher.waitEvent('PlayerList');
+  watcher.sendCellChange('5,5', 0, 0, 0);
+  await watcher.waitEvent('ActorAuthorityInfo');
+
+  // No handle on RunningServer reaches the WorldState; the connection's ServerCtx does.
+  const { cells } = (server.roster.inWorld()[0]!.peer as unknown as { ctx: { world: { cells: { get(k: string): Promise<unknown> } } } }).ctx.world;
+  const original = cells.get;
+  let stalled = false;
+  cells.get = async function (k: string) {
+    stalled = true;
+    await new Promise<void>((r) => parked.push(r));
+    return original.call(this, k);
+  };
+  unstub = () => { cells.get = original; };
+  // A cold cell read (a third client entering a never-loaded cell) parks the chain forever.
+  const wanderer = await TestClient.connect(server.port);
+  t.after(() => wanderer.close());
+  await wanderer.joinAsNew('Wanderer209');
+  await wanderer.waitEvent('PlayerList');
+  wanderer.sendCellChange('40,40', 0, 0, 0);
+  await wanderer.waitUntil(() => stalled, 'the chain is parked on the stubbed cell read');
+
+  watcher.inbox.actorBatches.length = 0;
+  holder.sendActorMoveBatch(epoch, [REF_ENTRY]);
+  const got = await watcher.waitActorBatch(() => true, 500);
+  assert.deepEqual(got.batch.entries, [REF_ENTRY], 'the 20 Hz NPC stream must not wait on the DB-awaiting chain');
+  assert.equal(wanderer.inbox.events.some((e) => e.name === 'WorldCellState' && (e.value as { cellKey?: string }).cellKey === '40,40'),
+    false, 'the chain really was parked');
+});

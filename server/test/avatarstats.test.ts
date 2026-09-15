@@ -414,3 +414,71 @@ test('a base raise behind a refused rest lands the base without the heal', async
   assert.equal(restore.hp?.b, 110, 'the level-up base was dropped with the refused rest');
   assert.equal(restore.hp?.c, 35, 'the refused rest\'s heal reached the avatar');
 });
+
+// Backlog 92 -- pins playerstate.ts handleAvatarStatsBatch's `&& hp.c > 0` on the not-driving
+// gate (commit 2cb3dc66): a peer DEATH report lands for an input-less (alt-tabbed) player;
+// a living report for the same player is still gated.
+test('backlog 92: a peer hp-0 report lands for a non-driving player, hp 1 stays gated', async (t) => {
+  const { server, peer, a } = await world(t);
+  const b = await TestClient.connect(server.port);
+  t.after(() => b.close());
+  await b.joinAsNew('Watcher92');
+  await b.waitEvent('PlayerList');
+  b.sendCellChange('0,0', 0, 0, 0);
+  // NO input from a, ever: lastInputAt is undefined, so the peer's answer does not rule.
+  peer.sendEvent('AvatarStatsBatch', { entries: [{ id: a.playerId, ...bars(1) }] });
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(a.inbox.events.filter((e) => e.name === 'SelfStats').length, 0, 'a living report for a non-driver is gated');
+  assert.equal(b.inbox.events.filter((e) => e.name === 'PlayerStatsDynamic' && (e.value as { id?: number }).id === a.playerId).length, 0);
+
+  peer.sendEvent('AvatarStatsBatch', { entries: [{ id: a.playerId, ...bars(0) }] });
+  const self = await a.waitEvent('SelfStats', (v) => (v as { hp?: { c?: number } })?.hp?.c === 0);
+  assert.ok(self, 'the avatar died in the world: the death reaches its owner even while not driving');
+  await b.waitEvent('PlayerStatsDynamic',
+    (v) => (v as { id?: number; hp?: { c?: number } })?.id === a.playerId && (v as { hp?: { c?: number } }).hp?.c === 0);
+});
+
+// Backlog 134 -- pins playerstate.ts `speed: baseSpeed(ctx, p)` on the peer relay (commit
+// 5c0c177f): the owner's base Speed from the doc rides PlayerStatsDynamic to observers.
+test('backlog 134: PlayerStatsDynamic carries the owner\'s base Speed from the doc', async (t) => {
+  const { server, peer, a } = await world(t);
+  const b = await TestClient.connect(server.port);
+  t.after(() => b.close());
+  await b.joinAsNew('Watcher134');
+  await b.waitEvent('PlayerList');
+  b.sendCellChange('0,0', 0, 0, 0);
+  a.sendEvent('PlayerAttributes', { speed: 73 }); // first declaration: accepted as chargen's
+  await new Promise((r) => setTimeout(r, 200));
+
+  let seq = 0;
+  const timer = setInterval(() => a.sendInput({ move: 1 }, ++seq), 100);
+  t.after(() => clearInterval(timer));
+  const reporter = setInterval(() => peer.sendEvent('AvatarStatsBatch', { entries: [{ id: a.playerId, ...bars(42) }] }), 100);
+  t.after(() => clearInterval(reporter));
+  const seen = await b.waitEvent('PlayerStatsDynamic',
+    (v) => (v as { id?: number; hp?: { c?: number } })?.id === a.playerId && (v as { hp?: { c?: number } }).hp?.c === 42);
+  assert.equal((seen.value as { speed?: number }).speed, 73, 'the puppet must run at the owner\'s Speed, not the template\'s');
+});
+
+// Backlog 312 -- pins playerstate.ts's `/^(Light|Medium|Heavy) Armor Hit$/` whitelist on
+// SelfStats.blk (commit cfb2a83f): one shield sound name passes, anything else is dropped.
+test('backlog 312: SelfStats.blk relays a whitelisted armor hit sound and drops anything else', async (t) => {
+  const { peer, a } = await world(t);
+  let seq = 0;
+  const timer = setInterval(() => a.sendInput({ move: 1 }, ++seq), 100);
+  t.after(() => clearInterval(timer));
+  let blk = 'Medium Armor Hit';
+  const reporter = setInterval(() => peer.sendEvent('AvatarStatsBatch', { entries: [{ id: a.playerId, ...bars(42), blk }] }), 100);
+  t.after(() => clearInterval(reporter));
+  const ok = await a.waitEvent('SelfStats', (v) => (v as { blk?: unknown })?.blk !== undefined);
+  assert.equal((ok.value as { blk: string }).blk, 'Medium Armor Hit');
+
+  blk = 'Foo Hit'; // not a shield sound: the client would play whatever name it is handed
+  await new Promise((r) => setTimeout(r, 250));
+  a.inbox.events.length = 0;
+  const selfs = () => a.inbox.events.filter((e) => e.name === 'SelfStats');
+  await a.waitUntil(() => selfs().length >= 2, 'two SelfStats after the switch');
+  for (const e of selfs()) {
+    assert.equal((e.value as { blk?: unknown }).blk, undefined, 'a non-whitelisted blk must not reach the owner');
+  }
+});
