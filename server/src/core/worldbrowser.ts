@@ -52,6 +52,11 @@ export class WorldBrowser {
     return this.deps.ownPort?.() ?? 0;
   }
 
+  // The listing is per account and authenticated (#279): a world process asks as itself.
+  private asServer(): RequestInit {
+    return { headers: { authorization: `Bearer ${this.deps.serverToken ?? ''}` } };
+  }
+
   private async call(path: string, init?: RequestInit): Promise<unknown | null> {
     const f = this.deps.fetchImpl ?? fetch;
     try {
@@ -74,7 +79,7 @@ export class WorldBrowser {
 
   async list(player: Player): Promise<{ worlds: WorldEntry[]; error?: string }> {
     if (!this.enabled) return { worlds: [], error: 'no_gateway' };
-    const r = await this.call(`/worlds?account=${encodeURIComponent(player.accountKey)}`);
+    const r = await this.call(`/worlds?account=${encodeURIComponent(player.accountKey)}`, this.asServer());
     if (!r || typeof r !== 'object') return { worlds: [], error: 'unreachable' };
     if ('__httpError' in r) return { worlds: [], error: 'unreachable' };
     const worlds = (r as { worlds?: unknown }).worlds;
@@ -90,7 +95,7 @@ export class WorldBrowser {
   // must have already established a relationship (joinFriend checks areFriends first).
   async ownerWorld(accountKey: string): Promise<WorldEntry | undefined> {
     if (!this.enabled) return undefined;
-    const r = await this.call(`/worlds?account=${encodeURIComponent(accountKey)}`);
+    const r = await this.call(`/worlds?account=${encodeURIComponent(accountKey)}`, this.asServer());
     if (!r || typeof r !== 'object' || '__httpError' in r) return undefined;
     const worlds = (r as { worlds?: unknown }).worlds;
     if (!Array.isArray(worlds)) return undefined;

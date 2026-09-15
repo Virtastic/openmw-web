@@ -345,6 +345,31 @@ namespace MWMP
         return Misc::StringUtils::lowerCase(c->getNameId());
     }
 
+    namespace
+    {
+        std::unordered_map<ESM::RefNum, std::string, RefNumHash, RefNumEq>& blocks()
+        {
+            static std::unordered_map<ESM::RefNum, std::string, RefNumHash, RefNumEq> sBlocks;
+            return sBlocks;
+        }
+    }
+
+    void noteBlock(ESM::RefNum blocker, std::string sound)
+    {
+        if (isAvatar(blocker))
+            blocks()[blocker] = std::move(sound);
+    }
+
+    std::string takeBlockFor(ESM::RefNum blocker)
+    {
+        auto it = blocks().find(blocker);
+        if (it == blocks().end())
+            return {};
+        std::string out = std::move(it->second);
+        blocks().erase(it);
+        return out;
+    }
+
     std::vector<MagicHit> takeMagicHitsFor(ESM::RefNum target)
     {
         std::vector<MagicHit> out;

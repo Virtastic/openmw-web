@@ -550,6 +550,17 @@ function objects.onBarterOpen(merchant)
     containerOpenPending[merchant.id] = { obj = merchant, at = now + CONTAINER_OPEN_DELAY, live = true }
 end
 
+-- THE HOLDER'S CORPSE IS THE LOOT (#297). Corpse contents used to become canonical from
+-- whichever client opened it first, i.e. that client's local copy: the potions the peer's
+-- NPC drank and the arrows it fired were still in it, the levelled roll was that engine's,
+-- and the weapon it fought with was not the one looted. The holder reports the corpse the
+-- moment it dies, through the same first-opener path, so every later open is served the
+-- holder's copy. No delay: an NPC's inventory is populated at cell load, not on activation.
+function objects.onCorpse(obj)
+    if not (obj and obj:isValid()) or not isLootable(obj) then return end
+    containerOpenPending[obj.id] = { obj = obj, at = core.getRealTime() }
+end
+
 -- Closing the window is the moment to reconcile: the engine has finished moving items both
 -- ways, so one final diff reports the whole trade rather than a stream of intermediate states.
 function objects.onBarterClose()

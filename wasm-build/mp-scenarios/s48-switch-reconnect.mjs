@@ -168,7 +168,7 @@ export default async function run(ctx) {
     let lastSeen = 'the directory was never reached';
     while (Date.now() < upBy) {
       try {
-        const l = await (await fetch(listUrl)).json();
+        const l = await (await fetch(listUrl, { headers: { authorization: 'Bearer harness-server-credential-not-for-production' } })).json();
         const w = (l.worlds ?? []).find((x) => x.id === 'switchtest');
         lastSeen = w ? `listed, up=${w.up}, port=${w.port}` : `not listed (${(l.worlds ?? []).length} worlds)`;
         if (w?.up) { sessionUp = true; break; }

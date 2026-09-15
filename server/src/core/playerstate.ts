@@ -616,7 +616,10 @@ export function handleAvatarStatsBatch(ctx: StateCtx, sender: Player, value: LVa
     // 'MP_SelfStats' made the client look for a handler named MP_MP_SelfStats and the bars
     // never reached a real player. The unit tests read raw wire names, so they passed.
     // Backlog 73: knocked down on the peer -> the owner holds still (player.lua MP_SelfStats).
-    p.peer.sendEvent('SelfStats', { hp, mp, ft, kd: e.get('kd') === true });
+    // Backlog 312: the shield sound of a block made on the peer, played by the owner.
+    const blk = e.get('blk');
+    p.peer.sendEvent('SelfStats', { hp, mp, ft, kd: e.get('kd') === true,
+      ...(typeof blk === 'string' && /^(Light|Medium|Heavy) Armor Hit$/.test(blk) ? { blk } : {}) });
   }
 }
 

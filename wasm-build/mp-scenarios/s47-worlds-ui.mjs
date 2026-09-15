@@ -211,7 +211,7 @@ export default async function run(ctx) {
     // The account is the CLIENT's generated name (the harness suffixes it to keep runs
     // isolated), lowercased the way the server keys accounts.
     const acct = a.name.toLowerCase();
-    const listed = await (await fetch(`http://127.0.0.1:${gwPort}/worlds?account=${encodeURIComponent(acct)}`)).json();
+    const listed = await (await fetch(`http://127.0.0.1:${gwPort}/worlds?account=${encodeURIComponent(acct)}`, { headers: { authorization: 'Bearer harness-server-credential-not-for-production' } })).json();
     assert.ok(listed.worlds.some((w) => w.id === 'my-session'),
       'the session the player created must exist on the gateway, not just in the UI');
 
@@ -231,7 +231,7 @@ export default async function run(ctx) {
     const upBy = Date.now() + 60_000;
     let up = false;
     while (Date.now() < upBy) {
-      const l = await (await fetch(`http://127.0.0.1:${gwPort}/worlds?account=${encodeURIComponent(acct)}`)).json();
+      const l = await (await fetch(`http://127.0.0.1:${gwPort}/worlds?account=${encodeURIComponent(acct)}`, { headers: { authorization: 'Bearer harness-server-credential-not-for-production' } })).json();
       if (l.worlds.find((w) => w.id === 'my-session')?.up) { up = true; break; }
       await ctx.sleep(1000);
     }

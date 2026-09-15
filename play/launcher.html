@@ -401,8 +401,9 @@
        detection can be wrong, and being wrong should cost prominence, not access. -->
   <div class="unsupported" id="unsupported" hidden>
     <h2>This needs a desktop browser</h2>
-    <p class="lead">The engine runs on your own machine, and that needs desktop
-      <b>Chrome</b>, <b>Edge</b> or <b>Brave</b>. From a phone you can still:</p>
+    <p class="lead">The engine runs on your own machine, and that needs a desktop browser
+      with WebAssembly Memory64: <b>Chrome</b> or <b>Edge</b> 133+, <b>Brave</b>, or
+      <b>Firefox</b> 134+. From a phone you can still:</p>
     <div class="u-actions">
       <a class="btn btn-solid" href="https://www.youtube.com/watch?v=iqZ20MtdD4I"
          target="_blank" rel="noopener">Watch it running <span class="arw">▸</span></a>
@@ -559,7 +560,7 @@
     <div class="m-kicker">Multiplayer &middot; welcome</div>
     <h3 id="ob-title">Choose your username</h3>
     <p>This is your public name: how other players see you, and how friends add you. It is
-       letters and numbers only, and unique. Your real name is never shown.</p>
+       3&ndash;20 letters and numbers, no spaces, and unique. Your real name is never shown.</p>
     <label class="ob-field" id="ob-email-wrap">
       <span>Email (for your account, never shown to anyone)</span>
       <input id="ob-email" type="email" spellcheck="false" autocomplete="email" placeholder="you@example.com">
@@ -868,10 +869,12 @@
    let noMem64 = false;
    try { new WebAssembly.Memory({ initial: 1n, maximum: 262144n, shared: true, address: 'i64' }); }
    catch(e){ noMem64 = true; }
-   // Touch signal OR-ed from two sources because neither is universal, then AND-ed with a narrow
+   // Touch signal OR-ed from two sources because neither is universal, then AND-ed with a SMALL
    // viewport so touchscreen laptops (maxTouchPoints > 0, wide screen) are not caught by mistake.
+   // The long side is what tells them apart (#283): a 1366x768 touch laptop is under 820 on its
+   // short side just like a phone, but no phone is 1100 wide in either orientation.
    const touch = matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
-   const phone = touch && Math.min(innerWidth, innerHeight) < 820;
+   const phone = touch && Math.min(innerWidth, innerHeight) < 820 && Math.max(innerWidth, innerHeight) < 1100;
    return noSAB || noMem64 || phone;
  }
 
@@ -1372,6 +1375,9 @@
  // Distinguishes "the platform is full / you are at your limit" from every other failure, so
  // the catch below can say which it was instead of guessing "unreachable".
  class CapacityError extends Error {}
+ // A refusal that is a complete sentence on its own (#283): the "may be unreachable" guess must
+ // not be appended to "that character no longer exists".
+ class PlainError extends Error {}
 
  // Open the player's private world and boot the game with a login ticket + chosen character.
  // Shared by the fresh-SSO path and the #characters re-entry (Exit from the game).
@@ -1432,9 +1438,8 @@
        + 'Try again in a few minutes.');
      if (r.status === 429) throw new CapacityError((world && world.error)
        || 'You already have as many worlds open as this server allows. Exit one and try again.');
-     if (!r.ok || !world.wsPath) throw new Error(world.error === 'no_such_character'
-       ? 'that character no longer exists — go back and pick another'
-       : (world.error || 'the server could not open your world'));
+     if (world.error === 'no_such_character') throw new PlainError('That character no longer exists — go back and pick another.');
+     if (!r.ok || !world.wsPath) throw new Error(world.error || 'the server could not open your world');
      // The server may have derived a DIFFERENT id than we computed; its answer is the truth.
      if (world.id) privId = 'priv-' + String(world.id).replace(/^priv-/, '');
      }
@@ -1442,6 +1447,7 @@
      // A capacity refusal is a complete sentence on its own; do not append the "unreachable"
      // guess to it, which is what made a full server look like a broken one.
      if (e instanceof CapacityError) { launcherError('The server is busy', e.message); return; }
+     if (e instanceof PlainError) { launcherError('Could not open your world', e.message); return; }
      launcherError('Could not open your world', (e && e.message || e) + '. The multiplayer server may be unreachable, please try again in a moment.'); return;
    }
    // Every world is its own process on an internal port that NOTHING publishes, so the only

@@ -1324,7 +1324,7 @@ do
     and pp:find('degraded = data and data.degraded == true', 1, true) ~= nil
     and pp:find('if degraded then return end', 1, true) ~= nil
     and pp:find('actorKey = actorKey or degradedKey', 1, true) ~= nil
-    and ac:find('detachActorPuppetsInCell(data.cellKey, true)', 1, true) ~= nil
+    and ac:find('for key in pairs(held) do detachActorPuppetsInCell(key, true) end', 1, true) ~= nil
     and ac:find("sendEvent('MP_Detach', { degraded = degraded == true })", 1, true) ~= nil)
   -- #330: the peer's per-player tables shrink on leave.
   check('global.lua drops avatarDocs and remoteIdentity on MP_PlayerLeaveWorld (330)',
@@ -1389,6 +1389,62 @@ do
   -- 346: `local net` no longer shadows the module in the out-mappers.
   check('global.lua has no `local net` shadowing the net module (346)',
     select(2, g:gsub('\n%s+local net = ', '')) == 0)
+end
+
+print('leftovers -- holder loss detaches everything, the holder\'s corpse is the loot, followers ride the retry, revive/effects/AI settings travel, the bark and the block (227, 229, 293-297, 312)')
+do
+  local ac = io.open('./openmw/files/data/scripts/mp/actors.lua'):read('*a')
+  local g = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  local ob = io.open('./openmw/files/data/scripts/mp/objects.lua'):read('*a')
+  local q = io.open('./openmw/files/data/scripts/mp/quests.lua'):read('*a')
+  local p = io.open('./openmw/files/data/scripts/mp/player.lua'):read('*a')
+  local ws = io.open('./server/src/core/worldstate.ts'):read('*a')
+  local lb = io.open('./openmw/apps/openmw/mwmp/luabindings.cpp'):read('*a')
+  -- #295: a lost holder is the peer, gone everywhere: every puppet detaches, not one cell's.
+  check('a holder-lost Info resets every puppet and the whole mirror',
+    ac:find('for key in pairs(held) do detachActorPuppetsInCell(key, true) end', 1, true) ~= nil
+    and ac:find("sendEvent('MP_Detach', { degraded = true })", 1, true) ~= nil)
+  -- #297: the holder reports the corpse through the first-opener path the moment it dies.
+  check('the death edge hands the corpse to objects.onCorpse, which arms a ContainerOpen',
+    ac:find('if deps.corpseFn then pcall(deps.corpseFn, obj) end', 1, true) ~= nil
+    and g:find('corpseFn = objects.onCorpse', 1, true) ~= nil
+    and ob:find('function objects.onCorpse(obj)', 1, true) ~= nil
+    and ob:find('containerOpenPending[obj.id] = { obj = obj, at = core.getRealTime() }', 1, true) ~= nil)
+  -- #294: the retry carries the followers.
+  check('tryTeleport takes onLanded and the retry tick fires it',
+    g:find('local function tryTeleport(obj, cellArg, pos, onLanded)', 1, true) ~= nil
+    and g:find('if t.onLanded then pcall(t.onLanded) end', 1, true) ~= nil
+    and g:find('tryTeleport(p.obj, dest, util.vector3(data.x, data.y, data.z), carryFollowers)', 1, true) ~= nil)
+  -- #293: the revive edge and its applier.
+  check('the holder sends ActorRevive on the revive edge and clients apply it with mp.resurrect(obj)',
+    ac:find("mp.sendEvent('ActorRevive', withAddr({ cellKey = cellKey, epoch = epoch }, obj))", 1, true) ~= nil
+    and ac:find('actors.handlers.MP_ActorRevive = function(data)', 1, true) ~= nil
+    and ac:find('pcall(mp.resurrect, obj)', 1, true) ~= nil
+    and ws:find("'ActorDeath', 'ActorRevive'", 1, true) ~= nil
+    and ws:find("if (name === 'ActorRevive') {", 1, true) ~= nil
+    and lb:find('api["resurrect"] = [luaManager = context.mLuaManager](sol::optional<sol::object> who)', 1, true) ~= nil)
+  -- #296: visible NPC magic travels by instance.
+  check('the holder diffs visible actives into ActorEffects and puppets add/remove them',
+    ac:find("mp.sendEvent('ActorEffects', withAddr({ cellKey = cellKey, epoch = epoch, add = add, remove = remove }, obj))", 1, true) ~= nil
+    and ac:find('actors.handlers.MP_ActorEffects = function(data)', 1, true) ~= nil
+    and ac:find('paralyze = true', 1, true) ~= nil
+    and ws:find("'ActorCellChange', 'ActorEffects'", 1, true) ~= nil)
+  -- #229: Fight/Flee/Alarm ride ActorDisposition from the holder and the talking client.
+  check('AI settings ride ActorDisposition as `ai` and are applied to the base',
+    ac:find('disposition = disp, ai = ai }', 1, true) ~= nil
+    and ac:find('types.Actor.stats.ai[k](obj).base = math.floor(v)', 1, true) ~= nil
+    and q:find('lockAi = deps.aiSettingsFn and deps.aiSettingsFn(obj) or nil', 1, true) ~= nil
+    and q:find('deps.dispositionOutFn(obj, now, aiChanged and ai or nil)', 1, true) ~= nil
+    and ws:find("const ai = body.get('ai');", 1, true) ~= nil)
+  -- #227: the provoking shout on the puppet, through the new binding.
+  check('MP_ActorAI combat rolls iVoiceAttackOdds into mp.say(obj, attack)',
+    ac:find("mp.say(obj, 'attack')", 1, true) ~= nil and lb:find('api["say"]', 1, true) ~= nil)
+  -- #312: a block on the peer reaches the owner as a sound.
+  check('the stats report drains mp.takeBlock and the owner plays it',
+    g:find('mp.takeBlock and mp.takeBlock(p.obj)', 1, true) ~= nil
+    and g:find('if entry.blk or avatarStatsLast[id] ~= key', 1, true) ~= nil
+    and p:find("if type(data.blk) == 'string' then pcall(core.sound.playSound3d, data.blk, self) end", 1, true) ~= nil
+    and lb:find('return takeBlockFor(ptr.getCellRef().getRefNum());', 1, true) ~= nil)
 end
 
 print(string.format('\n%d passed, %d failed', pass, fail))

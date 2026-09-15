@@ -142,12 +142,20 @@ namespace MWMechanics
         {
             MWBase::SoundManager* sndMgr = MWBase::Environment::get().getSoundManager();
             const ESM::RefId skill = shield->getClass().getEquipmentSkill(*shield);
+            const char* blockSound = nullptr;
             if (skill == ESM::Skill::LightArmor)
-                sndMgr->playSound3D(blocker, ESM::RefId::stringRefId("Light Armor Hit"), 1.0f, 1.0f);
+                blockSound = "Light Armor Hit";
             else if (skill == ESM::Skill::MediumArmor)
-                sndMgr->playSound3D(blocker, ESM::RefId::stringRefId("Medium Armor Hit"), 1.0f, 1.0f);
+                blockSound = "Medium Armor Hit";
             else if (skill == ESM::Skill::HeavyArmor)
-                sndMgr->playSound3D(blocker, ESM::RefId::stringRefId("Heavy Armor Hit"), 1.0f, 1.0f);
+                blockSound = "Heavy Armor Hit";
+            if (blockSound)
+            {
+                sndMgr->playSound3D(blocker, ESM::RefId::stringRefId(blockSound), 1.0f, 1.0f);
+                // The owner's engine never rolled this block (backlog 312): hand the sound to
+                // the peer's stats report so they hear it too.
+                MWMP::noteBlock(blocker.getCellRef().getRefNum(), blockSound);
+            }
 
             // Reduce shield durability by incoming damage
             int shieldhealth = shield->getClass().getItemHealth(*shield);

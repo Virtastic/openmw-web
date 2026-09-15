@@ -1310,6 +1310,8 @@ return {
             identity.notePeerBars(data.hp.c, data.mp and data.mp.c, data.ft and data.ft.c)
             -- Backlog 73: reports come at 4 Hz; hold a little past the next one.
             if data.kd == true then knockedUntil = core.getRealTime() + 0.5 end
+            -- Backlog 312: the block happened on the peer; this is its sound.
+            if type(data.blk) == 'string' then pcall(core.sound.playSound3d, data.blk, self) end
             pcall(function()
                 local d = types.Actor.stats.dynamic
                 -- The blow landed on the peer, so this engine never ran its hit chain: the

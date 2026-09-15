@@ -1458,11 +1458,12 @@ window.omw = (function(){
                if (tk) {
                  ENV.OPENMW_MP_TICKET = decodeURIComponent(tk[1]);
                  // A fresh SSO ticket means a fresh session. Any resume token parked in
-                 // localStorage from a PREVIOUS session is stale, and the auth ladder tries a
-                 // parked resume token BEFORE the ticket — so a stale one makes the first join
-                 // fail ("resume token expired or unknown") and then dead-ends at the disabled
-                 // password path ("wrong server password"). Drop it so the ticket is used.
-                 try { localStorage.removeItem('omwmp:resume'); } catch(e){}
+                 // sessionStorage (per tab, #284) from a PREVIOUS session is stale, and the
+                 // auth ladder tries a parked resume token BEFORE the ticket — so a stale one
+                 // makes the first join fail ("resume token expired or unknown") and then
+                 // dead-ends at the disabled password path ("wrong server password"). Drop it
+                 // so the ticket is used. The old localStorage key is cleared for one release.
+                 try { sessionStorage.removeItem('omwmp:resume'); localStorage.removeItem('omwmp:resume'); } catch(e){}
                }
                var lok = /[#&]mplocker=([^&]+)/.exec(h);
                if (lok) window.__omwLockerToken = decodeURIComponent(lok[1]); // Bearer for /locker/*

@@ -491,6 +491,7 @@ local function requestLock(obj, forced)
 end
 
 local lockDisposition = nil -- the NPC's disposition when the conversation began
+local lockAi = nil -- and its Fight/Flee/Alarm (#229), read the same way
 
 function quests.releaseLock(why)
     local obj = lockHeld
@@ -506,11 +507,15 @@ function quests.releaseLock(why)
         local okd, now = pcall(function()
             return player and obj:isValid() and types.NPC.getBaseDisposition(obj, player) or nil
         end)
-        if okd and type(now) == 'number' and now ~= lockDisposition then
-            deps.dispositionOutFn(obj, now)
+        local ai = deps.aiSettingsFn and obj:isValid() and deps.aiSettingsFn(obj) or nil
+        local aiChanged = ai ~= nil and lockAi ~= nil
+            and (ai.fight ~= lockAi.fight or ai.flee ~= lockAi.flee or ai.alarm ~= lockAi.alarm)
+        if okd and type(now) == 'number' and (now ~= lockDisposition or aiChanged) then
+            deps.dispositionOutFn(obj, now, aiChanged and ai or nil)
         end
     end
     lockDisposition = nil
+    lockAi = nil
     -- Their script locals too: the last diff, then the watch runs out like any other.
     local watch = memberWatch[obj.id]
     if watch then
@@ -866,6 +871,7 @@ handlers.MP_DialogueLockResult = function(data)
         local player = playerObj()
         local okd, d = pcall(function() return player and types.NPC.getBaseDisposition(obj, player) or nil end)
         lockDisposition = (okd and type(d) == 'number') and d or nil
+        lockAi = deps.aiSettingsFn and deps.aiSettingsFn(obj) or nil
         armLockWatch(obj)
         mirrorLock({ ref = obj.recordId, granted = true })
         -- Re-run the activation we cancelled; this time the handler lets it through. A forced

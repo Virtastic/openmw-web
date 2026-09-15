@@ -182,17 +182,20 @@ end
 -- spot a frame apart -- left the avatar parked at the first and gated out of its owner's
 -- cell for the rest of the stay: no melee, NPCs fighting a ghost. Keep the latest target and
 -- retry it on the next ticks until it lands.
-local teleportRetry = {} -- obj -> { cellArg, pos, until_ }
-local function tryTeleport(obj, cellArg, pos)
+local teleportRetry = {} -- obj -> { cellArg, pos, until_, onLanded }
+-- `onLanded` (optional) runs once the move actually happens, now or from a later retry: the
+-- door path hangs the avatar's followers on it (#294), so a retried teleport carries them too.
+local function tryTeleport(obj, cellArg, pos, onLanded)
     if not obj or not obj:isValid() or not cellArg then return false end
     local ok = pcall(function() obj:teleport(cellArg, pos) end)
     if ok then
         teleportRetry[obj] = nil
+        if onLanded then onLanded() end
     else
         -- Long enough for a COLD interior load on the peer (a Tamriel Rebuilt town takes well
         -- over three seconds): an avatar that never followed left the friend with no puppet
         -- in the room and the server saying avatar_never_arrived.
-        teleportRetry[obj] = { cellArg = cellArg, pos = pos, until_ = core.getRealTime() + 30 }
+        teleportRetry[obj] = { cellArg = cellArg, pos = pos, until_ = core.getRealTime() + 30, onLanded = onLanded }
     end
     return ok
 end
@@ -202,6 +205,7 @@ local function teleportRetryTick(now)
             teleportRetry[obj] = nil
         elseif pcall(function() obj:teleport(t.cellArg, t.pos) end) then
             teleportRetry[obj] = nil
+            if t.onLanded then pcall(t.onLanded) end
         end
     end
 end
@@ -805,7 +809,9 @@ local function avatarStatsTick(now)
                     mp = { c = m.current, b = m.base },
                     ft = { c = ft.current, b = ft.base },
                     -- Backlog 73: knocked down here = the owner must stop walking (player.lua).
-                    kd = (mp.isKnockedDown and mp.isKnockedDown(p.obj)) == true or nil }
+                    kd = (mp.isKnockedDown and mp.isKnockedDown(p.obj)) == true or nil,
+                    -- Backlog 312: a block since the last report; the owner plays its sound.
+                    blk = (function() local s = mp.takeBlock and mp.takeBlock(p.obj); return s ~= '' and s or nil end)() }
             end)
             if ok and entry then
                 local key = string.format('%d:%.1f/%.1f %.1f/%.1f %.1f/%.1f %s', entry.id,
@@ -813,7 +819,8 @@ local function avatarStatsTick(now)
                 -- Diff for cadence, REFRESH for correctness: the server may drop a report
                 -- (the owner's input tier not warmed up yet, a teleport race), and a dropped
                 -- report the diff never retries is a player whose bars freeze forever.
-                if avatarStatsLast[id] ~= key
+                -- A block is an event, not a state: it always goes out.
+                if entry.blk or avatarStatsLast[id] ~= key
                     or now - (avatarStatsSentAt[id] or 0) >= AVATAR_STATS_REFRESH_S then
                     avatarStatsLast[id] = key
                     avatarStatsSentAt[id] = now
@@ -1625,6 +1632,9 @@ local function start()
         ownCellKeyFn = function() return ownCellKeyCache end,
         ownIdFn = function() return net.state == 'Joined' and net.playerId or nil end,
         actorDeathFn = function(obj) quests.onActorDeath(obj) end,
+        corpseFn = objects.onCorpse, -- #297: the holder's copy of a corpse becomes canonical
+        toNet = worldmp.toNet, -- #296: visible NPC magic travels in wire record ids
+        toLocal = worldmp.toLocal,
         isMpPuppetFn = function(obj)
             for _, p in pairs(puppets) do
                 if p.obj:isValid() and p.obj.id == obj.id then return true end
@@ -1681,7 +1691,8 @@ local function start()
     -- global-gated in 0.52 (setCrimeLevel, world.mwscript).
     quests.init({
         playerFn = playerScript,
-        dispositionOutFn = function(obj, d) actors.noteDisposition(obj, d) end,
+        dispositionOutFn = function(obj, d, ai) actors.noteDisposition(obj, d, ai) end,
+        aiSettingsFn = actors.aiSettings, -- #229: Fight/Flee/Alarm snapshot at lock grant
         netIdOf = objects.netIdOf, -- a script-placed quest NPC is a net actor; lock it like any other
         objOfNet = objects.objOfNet,
         ownCellKeyFn = function() return ownCellKeyCache end,
@@ -2511,24 +2522,27 @@ local eventHandlers = {
                 local walked = parseExteriorKey(prevCell) ~= nil and parseExteriorKey(data.cellKey) ~= nil
                     and (from - util.vector3(data.x, data.y, data.z)):length2() <= 256 * 256 -- player.lua SNAP_DIST
                 if walked then return end
-                local moved = tryTeleport(p.obj, dest, util.vector3(data.x, data.y, data.z))
-                if mp.isSystem and mp.isSystem() then
-                    print(string.format('[mp] avatar #%d follow-teleport to (%.0f,%.0f,%.0f) ok=%s',
-                        data.id, data.x, data.y, data.z, tostring(moved)))
-                    -- COMPANIONS COME THROUGH THE DOOR TOO. The engine only carries followers
-                    -- of a PLAYER across cells; this avatar is an NPC to it, so its follower
-                    -- would be left standing at the door for everyone. Same move, same spot.
-                    -- With the engine's own follower rules (actionteleport.cpp getFollowers,
-                    -- backlog #159): a follower in combat stays, one
-                    -- flagged `stayoutside` stays out of an interior, and one more than 800
-                    -- units from where the leader stood was not really following.
-                    if moved then
-                        for _, follower in pairs(actors.followersOf(data.id)) do
-                            if canFollowThroughDoor(follower.obj, from, dest) then
-                                tryTeleport(follower.obj, dest, util.vector3(data.x, data.y, data.z))
-                            end
+                -- COMPANIONS COME THROUGH THE DOOR TOO. The engine only carries followers
+                -- of a PLAYER across cells; this avatar is an NPC to it, so its follower
+                -- would be left standing at the door for everyone. Same move, same spot.
+                -- With the engine's own follower rules (actionteleport.cpp getFollowers,
+                -- backlog #159): a follower in combat stays, one
+                -- flagged `stayoutside` stays out of an interior, and one more than 800
+                -- units from where the leader stood was not really following.
+                -- Hung on the teleport as onLanded (#294): when the avatar's move is deferred
+                -- to a retry (cold interior load), the followers cross with it, not never.
+                local isSystem = mp.isSystem and mp.isSystem()
+                local carryFollowers = isSystem and function()
+                    for _, follower in pairs(actors.followersOf(data.id)) do
+                        if canFollowThroughDoor(follower.obj, from, dest) then
+                            tryTeleport(follower.obj, dest, util.vector3(data.x, data.y, data.z))
                         end
                     end
+                end or nil
+                local moved = tryTeleport(p.obj, dest, util.vector3(data.x, data.y, data.z), carryFollowers)
+                if isSystem then
+                    print(string.format('[mp] avatar #%d follow-teleport to (%.0f,%.0f,%.0f) ok=%s',
+                        data.id, data.x, data.y, data.z, tostring(moved)))
                 end
             else
                 spawnPuppet(data.id, data)

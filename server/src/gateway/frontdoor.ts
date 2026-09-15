@@ -124,6 +124,9 @@ export function characterRoutes(
   // Deleting a character must also retire its solo world: the world id is derived from the
   // character, so once the character is gone nothing can ever reach that world again.
   onCharacterDeleted?: (owner: { accountKey: string; username?: string }, charId: string) => void | Promise<void>,
+  // Is this character in play right now (#284)? Deleting it from a second device used to stop
+  // and remove the world the first device was standing in, which then reconnected forever.
+  isPlayed?: (charId: string) => boolean,
 ): HttpRoute {
   return async (req, res, url) => {
     if (url.pathname !== '/auth/characters') return false;
@@ -143,6 +146,7 @@ export function characterRoutes(
       // doc: a crash between the two leaves an orphan doc rather than a slot pointing at
       // nothing, which is the harmless direction to fail in.
       const id = url.searchParams.get('id') ?? '';
+      if (isPlayed?.(id)) { sendJson(res, 200, { ok: false, error: 'That character is being played right now. Sign out there first.' }); return true; }
       if (!accounts.deleteCharacter(account, id)) { sendJson(res, 200, { ok: false, error: 'No such character.' }); return true; }
       await accounts.flush();
       await players.erase(id);
@@ -429,7 +433,12 @@ export async function buildFrontDoor(
     maxBytesPerAccount: config.locker.maxSaveBytesPerAccount,
   });
   const profile = profileRoutes(accounts, lockerSessions, attio);
-  const chars = characterRoutes(accounts, lockerSessions, players, onCharacterDeleted);
+  // A character's solo world id ends in the last 8 chars of its id (worlds.ts
+  // discardForCharacter); a live one with players in it means the character is in play.
+  // ponytail: misses a character playing as a GUEST in someone else's world; add a charId
+  // to the world status when that matters.
+  const chars = characterRoutes(accounts, lockerSessions, players, onCharacterDeleted, (charId) =>
+    (worldsNow?.() ?? []).some((w) => w.id.startsWith('priv-') && w.id.endsWith('-' + charId.slice(-8)) && w.up && w.playerCount > 0));
   const reticket = ticketRoutes(accounts, lockerSessions, tickets);
   const social = new SocialStore(sharedDir);
   const playing = friendsPlayingRoutes(accounts, lockerSessions, social, worldsNow ?? (() => []));

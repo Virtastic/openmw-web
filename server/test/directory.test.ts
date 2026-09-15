@@ -58,7 +58,7 @@ test('directory: a stranger sees NO worlds — the friends list is the only door
     const r = await (await fetch(`${h.base}/worlds`)).json() as { worlds: { id: string }[] };
     assert.equal(r.worlds.length, 0, 'an anonymous caller must see an empty directory');
     // The owner sees their own, addressed by PATH on their own origin, never an address.
-    const own = await (await fetch(`${h.base}/worlds?account=alice`)).json() as
+    const own = await (await fetch(`${h.base}/worlds?account=alice`, { headers: { authorization: 'Bearer alice' } })).json() as
       { worlds: (Record<string, unknown> & { id: string; wsPath: string })[] };
     assert.equal(own.worlds.length, 1);
     assert.equal(own.worlds[0]!.wsPath, '/w/alices-game');
@@ -75,13 +75,19 @@ test('directory: a private world is NOT listed to another account', async () => 
     })).json() as { id: string };
     assert.equal(created.id, 'alices-game');
 
-    const asBob = await (await fetch(`${h.base}/worlds?account=bob`)).json() as { worlds: { id: string }[] };
+    const asBob = await (await fetch(`${h.base}/worlds?account=bob`, { headers: { authorization: 'Bearer bob' } })).json() as { worlds: { id: string }[] };
     assert.ok(!asBob.worlds.some((w) => w.id === 'alices-game'),
       "bob must not see alice's private session in the lobby");
     const anon = await (await fetch(`${h.base}/worlds`)).json() as { worlds: { id: string }[] };
     assert.ok(!anon.worlds.some((w) => w.id === 'alices-game'), 'nor may an anonymous caller');
+    // #279: naming an account without being it (or the platform) is refused, not answered.
+    const guessed = await fetch(`${h.base}/worlds?account=alice`, { headers: { authorization: 'Bearer bob' } });
+    assert.equal(guessed.status, 401, "bob may not list alice's worlds by naming her");
+    assert.equal((await fetch(`${h.base}/worlds?account=alice`)).status, 401, 'nor may an anonymous caller');
+    const asPlatform = await (await fetch(`${h.base}/worlds?account=alice`, { headers: { authorization: 'Bearer platform-secret' } })).json() as { worlds: { id: string }[] };
+    assert.ok(asPlatform.worlds.some((w) => w.id === 'alices-game'), 'a world process may list for its player');
 
-    const asAlice = await (await fetch(`${h.base}/worlds?account=alice`)).json() as { worlds: { id: string }[] };
+    const asAlice = await (await fetch(`${h.base}/worlds?account=alice`, { headers: { authorization: 'Bearer alice' } })).json() as { worlds: { id: string }[] };
     assert.ok(asAlice.worlds.some((w) => w.id === 'alices-game'), 'but alice must see her own');
   } finally { await h.cleanup(); }
 });
@@ -105,7 +111,7 @@ test('directory: a client cannot conjure a public world', async () => {
       method: 'POST', headers: { authorization: 'Bearer mallory' }, body: JSON.stringify({ id: 'fake-official', mode: 'public', account: 'mallory' }),
     });
     assert.equal(r.status, 400, 'the public mode is deleted; only private and party exist');
-    const list = await (await fetch(`${h.base}/worlds?account=mallory`)).json() as { worlds: { id: string }[] };
+    const list = await (await fetch(`${h.base}/worlds?account=mallory`, { headers: { authorization: 'Bearer mallory' } })).json() as { worlds: { id: string }[] };
     assert.ok(!list.worlds.some((w) => w.id === 'fake-official'),
       'and no such world may appear as a result');
   } finally { await h.cleanup(); }

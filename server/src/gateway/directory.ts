@@ -277,7 +277,15 @@ export async function startDirectory(deps: DirectoryDeps): Promise<RunningDirect
       // A private/party world is listed only to its owner. This is a VISIBILITY filter to
       // avoid advertising other people's sessions — the world's own auth is what actually
       // protects it.
+      // AND AN AUTHENTICATED ONE (#279): `account=` was taken on faith, so a guessed login
+      // name listed anyone's private world ids, mode and player count. The caller must be
+      // that account (its own locker session) or a world process (the server credential).
       const account = url.searchParams.get('account') ?? undefined;
+      const auth = req.headers.authorization ?? '';
+      if (account !== undefined && !deps.isTrustedServer?.(auth) && deps.resolveAccount?.(auth) !== account) {
+        json(res, 401, { error: 'sign_in_first' });
+        return;
+      }
       const list = deps.worlds.list().filter((w) =>
         account !== undefined && w.ownerAccount === account);
       json(res, 200, { worlds: list.map(pub) });

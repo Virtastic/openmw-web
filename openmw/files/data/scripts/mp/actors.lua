@@ -58,6 +58,42 @@ local function actorAddr(obj)
     return nil
 end
 
+-- MAGIC THAT SHOWS ON AN NPC (#296). Everything else in an active effect is the holder's
+-- business (the puppet's bars are a mirror); these change what an observer SEES or how the
+-- streamed pose has to be read: an invisible guard fades, a paralysed one freezes, a
+-- levitating one is not snapped to the floor. Keys are effect ids (core.magic.EFFECT_TYPE).
+local ACTOR_VISIBLE_EFFECT = { invisibility = true, chameleon = true, light = true, levitate = true,
+    slowfall = true, waterwalking = true, paralyze = true, sanctuary = true }
+local function visibleActives(obj)
+    local out = {} -- activeSpellId -> { id = record, effects = { zero-based indexes } }
+    pcall(function()
+        for _, sp in pairs(types.Actor.activeSpells(obj)) do
+            if sp.temporary and not sp.fromEquipment and sp.activeSpellId ~= nil then
+                local idx = {}
+                for _, e in ipairs(sp.effects or {}) do
+                    if e.index ~= nil and ACTOR_VISIBLE_EFFECT[e.id] then idx[#idx + 1] = e.index end
+                end
+                if #idx > 0 then out[sp.activeSpellId] = { id = sp.id, effects = idx } end
+            end
+        end
+    end)
+    return out
+end
+
+-- Fight/Flee/Alarm base values (#229): shared like disposition (a result script's ModFight
+-- or a taunt writes them on ONE engine), so they ride ActorDisposition as `ai`.
+local AI_SETTINGS = { 'fight', 'flee', 'alarm' }
+function actors.aiSettings(obj)
+    local out = {}
+    local ok = pcall(function()
+        for _, k in ipairs(AI_SETTINGS) do out[k] = types.Actor.stats.ai[k](obj).base end
+    end)
+    return ok and out or nil
+end
+local function aiFp(ai)
+    return ai and (tostring(ai.fight) .. '/' .. tostring(ai.flee) .. '/' .. tostring(ai.alarm)) or ''
+end
+
 local function withAddr(body, obj)
     local a = actorAddr(obj)
     if not a then return nil end
@@ -254,6 +290,23 @@ local function broadcastCell(cellKey, epoch, cell, now, live)
                 end
             end
         end
+        -- Visible magic, diffed by instance on the equipment beat (#296): an add per new
+        -- instance, a remove per expiry/dispel. Record ids travel in wire form.
+        if not tracked.nextFx or now >= tracked.nextFx then
+            tracked.nextFx = now + EQUIP_MIN_INTERVAL
+            local present = visibleActives(obj)
+            local add, remove = {}, {}
+            for aid, v in pairs(present) do
+                if not (tracked.fx and tracked.fx[aid]) then add[#add + 1] = { id = deps.toNet(v.id), effects = v.effects } end
+            end
+            for aid, v in pairs(tracked.fx or {}) do
+                if not present[aid] then remove[#remove + 1] = { id = deps.toNet(v.id) } end
+            end
+            tracked.fx = present
+            if #add > 0 or #remove > 0 then
+                mp.sendEvent('ActorEffects', withAddr({ cellKey = cellKey, epoch = epoch, add = add, remove = remove }, obj))
+            end
+        end
 
         -- DISPOSITION. Shared, not personal: getBaseDisposition(npc, player) ignores its player
         -- argument and reads one value off the NPC's stats, so persuading, bribing or
@@ -266,11 +319,13 @@ local function broadcastCell(cellKey, epoch, cell, now, live)
                 local okD, disp = pcall(function()
                     return types.NPC.getBaseDisposition(obj, ownPlayer)
                 end)
-                if okD and type(disp) == 'number' and disp ~= tracked.dispVal then
-                    tracked.dispVal = disp
+                local ai = actors.aiSettings(obj)
+                local dispFp = tostring(disp) .. '|' .. aiFp(ai)
+                if okD and type(disp) == 'number' and dispFp ~= tracked.dispVal then
+                    tracked.dispVal = dispFp
                     tracked.nextDisp = now + EQUIP_MIN_INTERVAL
                     mp.sendEvent('ActorDisposition',
-                        withAddr({ cellKey = cellKey, epoch = epoch, disposition = disp }, obj))
+                        withAddr({ cellKey = cellKey, epoch = epoch, disposition = disp, ai = ai }, obj))
                 end
             end
         end
@@ -288,7 +343,13 @@ local function broadcastCell(cellKey, epoch, cell, now, live)
                 deathNo = tracked.deathNo,
                 killedRecordId = obj.recordId,
             })
+            if deps.corpseFn then pcall(deps.corpseFn, obj) end -- #297: our copy is the loot
         elseif not dead then
+            -- Revive edge (#293): a scripted Resurrect on the holder stands the actor up
+            -- everywhere, and the server forgets the death so a cell entry stops re-killing it.
+            if tracked.dead then
+                mp.sendEvent('ActorRevive', withAddr({ cellKey = cellKey, epoch = epoch }, obj))
+            end
             tracked.dead = false
         end
     end
@@ -477,10 +538,22 @@ actors.handlers.MP_ActorAuthorityInfo = function(data)
         -- and DETACH this cell's actor puppets so their AI re-enables and the client
         -- simulates them locally (degraded mode). Detach is correct here -- this is loss,
         -- not a handoff to another holder -- and local AI is the only fallback with no peer.
+        -- LOSING IT ANYWHERE IS LOSING IT EVERYWHERE (#295). The peer is the only holder, so
+        -- a lost holder means the peer is gone, and the puppets it drove in the neighbouring
+        -- cells (attached off ActorMoveBatch, never Info'd, so absent from the mirror) are
+        -- frozen too. Clear the whole mirror and detach every puppet; a live holder
+        -- re-attaches them on its next pose, which is the path a late attach already takes.
         if data.holderId == nil then
-            holderOfCell[data.cellKey] = nil
-            infoEpoch[data.cellKey] = nil
-            detachActorPuppetsInCell(data.cellKey, true)
+            -- Every cell, degraded (#328): the puppets keep their script armed so an outage
+            -- swing still cancels; the whole mirror clears (#295).
+            for key in pairs(held) do detachActorPuppetsInCell(key, true) end
+            for key, p in pairs(puppetActors) do
+                if p.obj:isValid() then pcall(function() p.obj:sendEvent('MP_Detach', { degraded = true }) end) end
+                puppetActors[key] = nil
+            end
+            held = {}
+            holderOfCell = {}
+            infoEpoch = {}
             return
         end
         holderOfCell[data.cellKey] = data.holderId
@@ -551,6 +624,38 @@ actors.handlers.MP_ActorStatsDynamic = function(data)
     end
 end
 
+-- The holder says what magic SHOWS on this actor (#296). Applied in place: activeSpells:add is
+-- a global-context call for a foreign actor, and the puppet's own engine expires a timed
+-- effect on the same clock; a remove after that is a no-op. Same shape as the avatar path
+-- (global.lua MP_AvatarActiveSpells): stackable per instance, resistances already rolled.
+actors.handlers.MP_ActorEffects = function(data)
+    local obj = actorOf(data)
+    if not obj or not puppetActors[refKeyOf(obj)] then return end
+    local spells = types.Actor.activeSpells(obj)
+    for _, sp in ipairs(data.add or {}) do
+        local localId = sp.id and deps.toLocal(sp.id)
+        if localId and type(sp.effects) == 'table' and #sp.effects > 0 then
+            pcall(function()
+                spells:add({ id = localId, effects = sp.effects, caster = obj, stackable = true,
+                    ignoreResistances = true, ignoreSpellAbsorption = true, ignoreReflect = true, quiet = true })
+            end)
+        end
+    end
+    for _, sp in ipairs(data.remove or {}) do
+        local localId = sp.id and deps.toLocal(sp.id)
+        if localId then
+            pcall(function()
+                for _, active in pairs(spells) do
+                    if active.temporary and active.id == localId and active.activeSpellId then
+                        spells:remove(active.activeSpellId)
+                        break
+                    end
+                end
+            end)
+        end
+    end
+end
+
 -- The holder says what this actor is wearing. Handed to the puppet script, which already knows
 -- how to turn record ids into equipped objects and retry until the items exist (puppet.lua
 -- MP_Equip / pendingEquip) -- the same path a remote PLAYER's equipment takes.
@@ -563,6 +668,12 @@ actors.handlers.MP_ActorDisposition = function(data)
     local ownPlayer = world.players[1]
     if not (ownPlayer and ownPlayer:isValid()) then return end
     pcall(function() types.NPC.setBaseDisposition(obj, ownPlayer, data.disposition) end)
+    if type(data.ai) == 'table' then
+        for _, k in ipairs(AI_SETTINGS) do
+            local v = tonumber(data.ai[k])
+            if v then pcall(function() types.Actor.stats.ai[k](obj).base = math.floor(v) end) end
+        end
+    end
 end
 
 -- COMPANIONS, the sending half. Called from global.lua when an actor's OWN script reports a
@@ -611,13 +722,14 @@ end
 -- PERSUASION, the sending half. Called by quests.lua when a conversation ends and the NPC's
 -- disposition is not what it was when it began. The server admits it from the player who
 -- held that NPC's dialogue lock (worldstate.ts), so this is sent BEFORE the lock is released.
-function actors.noteDisposition(obj, disposition)
+function actors.noteDisposition(obj, disposition, ai)
     if not (obj and obj:isValid()) or type(disposition) ~= 'number' then return end
     local cellKey = actors.cellKeyOfObj(obj)
     if not cellKey then return end
     local body = withAddr({
         cellKey = cellKey, epoch = actors.epochOf(cellKey) or 0,
         disposition = math.max(0, math.min(100, math.floor(disposition + 0.5))),
+        ai = ai, -- #229: Fight/Flee/Alarm the conversation changed (nil = unchanged)
     }, obj)
     if body then mp.sendEvent('ActorDisposition', body) end
 end
@@ -760,6 +872,13 @@ actors.handlers.MP_ActorAI = function(data)
         local foe = data.combat and deps.playerObjOf and deps.playerObjOf(data.combat) or nil
         if foe then
             pcall(function() obj:sendEvent('StartAIPackage', { type = 'Combat', target = foe }) end)
+            -- The provoking shout (#227): AiCombat rolls iVoiceAttackOdds per swing on the
+            -- holder, whose engine is headless; rolled once here, at the fight's start.
+            if puppetActors[refKeyOf(obj)] and mp.say then
+                pcall(function()
+                    if math.random(0, 99) < (tonumber(core.getGMST('iVoiceAttackOdds')) or 0) then mp.say(obj, 'attack') end
+                end)
+            end
         else
             pcall(function() obj:sendEvent('RemoveAIPackages', 'Combat') end)
         end
@@ -814,6 +933,15 @@ actors.handlers.MP_ActorDeath = function(data)
     end
     -- The one we were talking to (quests.lua closes the window, backlog 228).
     if obj and deps.actorDeathFn then pcall(deps.actorDeathFn, obj) end
+end
+
+-- The inverse of ActorDeath (#293): the holder's copy came back to life (scripted
+-- Resurrect). mp.resurrect(obj) is the engine's own revive; the puppet drops its dead latch.
+actors.handlers.MP_ActorRevive = function(data)
+    local obj = actorOf(data)
+    if not obj then return end
+    pcall(mp.resurrect, obj)
+    if puppetActors[refKeyOf(obj)] then pcall(function() obj:sendEvent('MP_Revive', {}) end) end
 end
 
 -- Server-authoritative kill tallies, re-asserted every mirror tick.

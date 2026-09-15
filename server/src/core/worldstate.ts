@@ -100,10 +100,13 @@ const WORLD_EVENTS = new Set([
 // per-player opinion: getBaseDisposition(npc, player) ignores its player argument entirely and
 // reads getNpcStats(npc).getBaseDisposition(). One value on the NPC, so a bribe or a threat by
 // one player has to reach the others or the world stops agreeing about who likes whom.
+// ActorEffects (#296): the magic that SHOWS on an NPC (invisibility, chameleon, paralyze,
+// levitate...), diffed by the holder; puppets add/remove the same active effects.
 const ACTOR_RELAY_EVENTS = new Set([
-  'ActorStatsDynamic', 'ActorEquip', 'ActorAI', 'ActorDisposition', 'ActorCellChange',
+  'ActorStatsDynamic', 'ActorEquip', 'ActorAI', 'ActorDisposition', 'ActorCellChange', 'ActorEffects',
 ]);
-const ACTOR_EVENTS = new Set([...ACTOR_RELAY_EVENTS, 'ActorSnapshot', 'ActorDeath']);
+// ActorRevive (#293) is ActorDeath's inverse: the doc forgets the death, then it relays.
+const ACTOR_EVENTS = new Set([...ACTOR_RELAY_EVENTS, 'ActorSnapshot', 'ActorDeath', 'ActorRevive']);
 
 function str(v: LValue | undefined, max: number): string | undefined {
   return typeof v === 'string' && v.length > 0 && v.length <= max ? v : undefined;
@@ -764,7 +767,13 @@ export class WorldState {
       const cellKey = str(body.get('cellKey'), MAX_CELL_KEY);
       const ref = parseObjRef(body);
       const disposition = finite(body.get('disposition'));
-      if (!cellKey || !ref || disposition === undefined || disposition < 0 || disposition > 100) {
+      // `ai` (#229): the Fight/Flee/Alarm a result script or a taunt wrote, same trust, same bound.
+      const ai = body.get('ai');
+      const aiOk = ai === undefined || (ai instanceof Map && [...ai.values()].every((v) => {
+        const n = finite(v);
+        return n !== undefined && n >= 0 && n <= 100;
+      }));
+      if (!cellKey || !ref || disposition === undefined || disposition < 0 || disposition > 100 || !aiOk) {
         this.invalid(player, name);
         return;
       }
@@ -780,6 +789,15 @@ export class WorldState {
     const { cellKey, ref } = checked;
     if (name === 'ActorDeath') {
       await this.actorDeath(player, cellKey, ref, body);
+      return;
+    }
+    if (name === 'ActorRevive') {
+      const doc = await this.cells.get(cellKey);
+      if (doc.actorDeaths?.[ref.key] !== undefined) {
+        delete doc.actorDeaths[ref.key];
+        this.cells.markDirty(cellKey);
+      }
+      this.relayCellExcept(cellKey, player.id, name, lToJs(body) as Record<string, JsLike>);
       return;
     }
     if (name === 'ActorCellChange') {

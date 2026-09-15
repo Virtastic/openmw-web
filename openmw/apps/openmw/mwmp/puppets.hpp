@@ -121,6 +121,11 @@ namespace MWMP
     /** Drain everything recorded for ONE actor since the last call. */
     std::vector<MagicHit> takeMagicHitsFor(ESM::RefNum target);
 
+    /** An avatar BLOCKED on the peer (backlog 312): the shield's hit sound, kept until the
+     *  stats report drains it so the owner hears the block their engine never rolled. */
+    void noteBlock(ESM::RefNum blocker, std::string sound);
+    std::string takeBlockFor(ESM::RefNum blocker);
+
     /** A guard REACHED a wanted avatar (AiPursue). On the local player this opens the arrest
      *  dialogue; an avatar's owner is on another machine, so it is recorded here for the
      *  peer's scripts to forward. Rate-limited per avatar: the pursuit package re-stacks

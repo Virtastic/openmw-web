@@ -24,6 +24,7 @@
 #include <components/lua/luastate.hpp>
 #include <components/lua/serialization.hpp>
 
+#include "../mwbase/dialoguemanager.hpp"
 #include "../mwbase/environment.hpp"
 #include "../mwbase/inputmanager.hpp"
 #include "../mwbase/journal.hpp"
@@ -274,6 +275,29 @@ namespace MWMP
             pos.pos[1] = y;
             pos.pos[2] = z;
             stats.setMarkedPosition(ESM::RefId::deserializeText(cell), pos);
+        };
+        // Backlog 312: the shield sound of a block the avatar made on the peer since the last
+        // call ('' = none). Drained with the avatar's stats report (global.lua avatarStatsTick).
+        api["takeBlock"] = [](const sol::object& obj) -> std::string {
+            if (!obj.is<MWLua::Object>())
+                return {};
+            const MWWorld::Ptr& ptr = obj.as<MWLua::Object>().ptrOrEmpty();
+            if (ptr.isEmpty())
+                return {};
+            return takeBlockFor(ptr.getCellRef().getRefNum());
+        };
+        // NPC voice lines (#227): DialogueManager::say(actor, topic) -- the "attack"/"flee"/
+        // "hit" barks the engine plays from AiCombat and the death path, which a puppet with
+        // its AI off never reaches. Queued like every other state-changing MP call.
+        api["say"] = [luaManager = context.mLuaManager](const sol::object& obj, std::string_view topic) {
+            if (!obj.is<MWLua::Object>())
+                return;
+            MWWorld::Ptr ptr = obj.as<MWLua::Object>().ptrOrEmpty();
+            if (ptr.isEmpty() || !ptr.getClass().isActor())
+                return;
+            ESM::RefId id = ESM::RefId::stringRefId(topic);
+            luaManager->addAction(
+                [ptr, id] { MWBase::Environment::get().getDialogueManager()->say(ptr, id); }, "MPSay");
         };
         // Backlog 73: knockdown is not in the Lua stats API; the peer reports it with the avatar
         // bars so the owner stops driving a body that is lying on the floor.
@@ -596,9 +620,23 @@ namespace MWMP
         };
         // M2 respawn: same path as the console `resurrect` (statsextensions.cpp OpResurrect) —
         // there is no vanilla Lua API to revive the player.
-        api["resurrect"] = [luaManager = context.mLuaManager]() {
+        // With an object (#293): revive THAT actor instead -- the peer's scripted Resurrect
+        // reaches every other engine as ActorRevive, and there is no Lua API to stand an NPC up.
+        api["resurrect"] = [luaManager = context.mLuaManager](sol::optional<sol::object> who) {
+            MWWorld::Ptr target;
+            if (who && who->is<MWLua::Object>())
+            {
+                target = who->as<MWLua::Object>().ptrOrEmpty();
+                if (target.isEmpty() || !target.getClass().isActor())
+                    return;
+            }
             luaManager->addAction(
-                [] {
+                [target] {
+                    if (!target.isEmpty())
+                    {
+                        MWBase::Environment::get().getMechanicsManager()->resurrect(target);
+                        return;
+                    }
                     MWWorld::Ptr player = MWBase::Environment::get().getWorld()->getPlayerPtr();
                     MWBase::Environment::get().getMechanicsManager()->resurrect(player);
                     if (MWBase::Environment::get().getStateManager()->getState() == MWBase::StateManager::State_Ended)
@@ -839,8 +877,10 @@ namespace MWMP
                 nameStr.c_str(), payloadStr.c_str());
         };
         // M8 session resume: the ticket has to outlive the PAGE, not just the socket —
-        // a browser reload is the canonical "rejoin in place" case. localStorage is the
-        // only store that survives it, and the token is a short-lived, single-use,
+        // a browser reload is the canonical "rejoin in place" case. sessionStorage survives
+        // a reload of THIS tab and nothing else (#284): localStorage was shared across tabs,
+        // so a second tab (or character) on the same browser picked up the first tab's token
+        // and the two sessions fought over one resume. The token is a short-lived, single-use,
         // server-revocable credential scoped to this origin.
         api["setResumeToken"] = [](std::string_view token) {
             std::string tokenStr(token);
@@ -850,9 +890,9 @@ namespace MWMP
                     {
                         var t = UTF8ToString($0);
                         if (t)
-                            localStorage.setItem('omwmp:resume', t);
+                            sessionStorage.setItem('omwmp:resume', t);
                         else
-                            localStorage.removeItem('omwmp:resume');
+                            sessionStorage.removeItem('omwmp:resume');
                     }
                     catch (e)
                     {
@@ -864,7 +904,7 @@ namespace MWMP
             char* token = static_cast<char*>(EM_ASM_PTR({
                 try
                 {
-                    var t = localStorage.getItem('omwmp:resume');
+                    var t = sessionStorage.getItem('omwmp:resume');
                     return t ? stringToNewUTF8(t) : 0;
                 }
                 catch (e)
