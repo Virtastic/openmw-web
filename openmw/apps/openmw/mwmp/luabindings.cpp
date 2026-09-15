@@ -281,8 +281,9 @@ namespace MWMP
         // puppet script can forward them to whoever owns it. Per-object on purpose: the puppet
         // local script already has the object and already forwards melee the same way
         // (core.sendGlobalEvent 'mpCombatHit'), so this needs no RefNum-to-object lookup in Lua.
-        // Returns an array of {effectId=string, magnitude=number, stat=0|1|2}
-        // (0 health, 1 magicka, 2 fatigue).
+        // Returns an array of {effectId=string, spellId=string, magnitude=number, stat=0|1|2,
+        // beneficial=bool, index=int (the record's effect index, -1 unknown), reflected=bool}
+        // (stat: 0 health, 1 magicka, 2 fatigue).
         api["takeMagicHits"] = [](sol::this_state state, const sol::object& obj) {
             sol::table out(state, sol::create);
             if (!obj.is<MWLua::Object>())
@@ -296,6 +297,8 @@ namespace MWMP
                 e["magnitude"] = h.mMagnitude;
                 e["stat"] = h.mStat;
                 e["beneficial"] = h.mBeneficial;
+                e["index"] = h.mEffectIndex;
+                e["reflected"] = h.mReflected;
                 out[i++] = e;
             }
             return out;

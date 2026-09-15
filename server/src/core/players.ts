@@ -115,6 +115,7 @@ export interface Player {
   // health every tick and never dies. See playerstate.ts handleStatsDynamic.
   restoreWindowAt?: number;
   restoreInWindow?: number;
+  restoreMpInWindow?: number; // magicka raises, same window (a spend is accepted like a restore)
   // When this player's time skip (a rest) was refused: the rest still healed their LOCAL body
   // for hours that never passed, and the raise claim that follows must not land (playerstate).
   restRefusedAt?: number;

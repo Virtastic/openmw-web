@@ -559,6 +559,10 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     epochOf: (cellKey) => world.epochOf(cellKey),
     allowPlayerHit: (attacker, victimId, name) =>
       hooks.playerHit({ id: attacker.id, name: attacker.name, rank: attacker.rank }, victimId, name),
+    knowsSource: (caster, id) => {
+      const doc = playerStore.getCached(caster.charId);
+      return doc?.spells?.includes(id) === true || doc?.inventory?.some((i) => i.id === id) === true;
+    },
   });
 
   // Deliver swings that were parked while a cell had no simulator (combat.ts `hold`). Wired

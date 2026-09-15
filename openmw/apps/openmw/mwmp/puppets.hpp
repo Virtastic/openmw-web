@@ -96,6 +96,14 @@ namespace MWMP
         // exists to stop players HARMING each other), and the owner applies the restore as a
         // gain rather than damage. Damage hits leave this false.
         bool mBeneficial = false;
+        // WHICH effect of the record hit (ESM::ActiveEffect::mEffectIndex, 0-based). The owner
+        // applies only these: a Self+Touch record cast at a puppet used to give the victim the
+        // caster's Fortify as well (backlog 250). -1 = unknown, apply the whole record.
+        int mEffectIndex = -1;
+        // The hit is itself a REFLECTION (activespells.cpp stamps Flag_Ignore_Reflect on the
+        // copy it bounces back). The owner must not reflect it again, or two Reflect-wearers
+        // volley one spell forever (backlog 254).
+        bool mReflected = false;
     };
 
     /** Record an effect the damage site declined to apply. Bounded; excess is dropped. */

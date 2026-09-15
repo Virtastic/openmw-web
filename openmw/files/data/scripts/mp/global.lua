@@ -913,18 +913,40 @@ local ownerActive = {} -- id -> { localRecordId -> count } effects the OWNER app
 -- second (backlog 132). Keys are core.magic.EFFECT_TYPE values (lowercase effect ids).
 local VISIBLE_EFFECT = { invisibility = true, chameleon = true, light = true,
     levitate = true, slowfall = true, waterwalking = true }
-local function visibleEffectIndexes(localId, indexes)
+local function magicRecordOf(localId)
     local rec
     pcall(function()
         rec = core.magic.spells.records[localId]
             or core.magic.enchantments.records[localId]
             or (types.Potion.record and types.Potion.record(localId))
     end)
-    if not (rec and rec.effects) then return {} end
+    return rec and rec.effects and rec or nil
+end
+local function visibleEffectIndexes(localId, indexes)
+    local rec = magicRecordOf(localId)
+    if not rec then return {} end
     local out = {}
     for _, i in ipairs(indexes) do
         local e = rec.effects[i + 1]
         if e and e.id and VISIBLE_EFFECT[e.id] then out[#out + 1] = i end
+    end
+    return out
+end
+-- The effects whose RESULT already travels on the bar channel: the engine that cast them
+-- applied them to its body once, and the bars carry the outcome (a raise claim to the avatar,
+-- the peer's bar report to the owner; magicka in both directions -- playerstate.ts spend).
+-- Mirroring the effect as well lands it a second time on the other body: a Cheap Potion of
+-- Healing healed ~40, a helper's durational heal 2x (backlog 248). Damage Health stays: the
+-- server takes no LOWER health claim from the client, so the mirror is its only road.
+-- Fatigue stays: nothing on the bar channel restores it.
+local BAR_CARRIED_EFFECT = { restorehealth = true, restoremagicka = true, damagemagicka = true }
+local function withoutBarCarried(localId, indexes)
+    local rec = magicRecordOf(localId)
+    if not rec then return indexes end
+    local out = {}
+    for _, i in ipairs(indexes) do
+        local e = rec.effects[i + 1]
+        if not (e and e.id and BAR_CARRIED_EFFECT[e.id]) then out[#out + 1] = i end
     end
     return out
 end
@@ -1935,10 +1957,11 @@ local eventHandlers = {
         local spells = types.Actor.activeSpells(player)
         for _, sp in ipairs(data.add or {}) do
             local localId = sp.id and worldmp.toLocal(sp.id)
-            if localId and #(sp.effects or {}) > 0 then
+            local effects = localId and withoutBarCarried(localId, sp.effects or {}) or {}
+            if localId and #effects > 0 then
                 toPlayer('MP_PeerEffect', { id = localId, on = true })
                 local ok, err = pcall(function()
-                    spells:add({ id = localId, effects = sp.effects, caster = player, stackable = true,
+                    spells:add({ id = localId, effects = effects, caster = player, stackable = true,
                         ignoreResistances = true, ignoreSpellAbsorption = true, ignoreReflect = true })
                 end)
                 if not ok then print('[mp] peer effect apply failed: ' .. tostring(err)) end
@@ -2020,6 +2043,8 @@ local eventHandlers = {
             local localId = sp.id and worldmp.toLocal(sp.id)
             local effects = sp.effects or {}
             if observer and localId then effects = visibleEffectIndexes(localId, effects) end
+            -- The peer's copy: the bars already carry what a restore did (backlog 248).
+            if localId then effects = withoutBarCarried(localId, effects) end
             if localId and #effects > 0 then ownerActive[data.id][localId] = (ownerActive[data.id][localId] or 0) + 1 end
             if localId and #effects > 0 then
                 local ok, err = pcall(function()
@@ -2805,6 +2830,12 @@ local eventHandlers = {
             end
             if data.beneficial then testHealSpellId = spellId else testCastSpellId = spellId end
         end
+        -- A SPELL THE CASTER KNOWS. The server routes a CombatSpellHit only for a spell in the
+        -- caster's doc (combat.ts spellHit, backlog 252). The hook's cast is the player's, so
+        -- the player learns it -- declared here, ahead of the hit on the same socket; the 1 s
+        -- spellbook diff would lose that race.
+        pcall(function() types.Actor.spells(playerScript()):add(spellId) end)
+        mp.sendEvent('PlayerSpellbook', { add = { spellId }, remove = {} })
         local okAdd, err = pcall(function()
             types.Actor.activeSpells(victim):add({
                 id = spellId, effects = { 0 },

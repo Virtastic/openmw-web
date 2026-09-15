@@ -34,6 +34,7 @@ function harness(attackerCell: string, victimCell: string) {
     roster, maxHitDamage: 1000, worldPeer: () => undefined,
     holderOf: () => 2, epochOf: () => 1,
     allowPlayerHit: () => true,
+    knowsSource: () => true,
   });
   return { combat, attacker, victim };
 }

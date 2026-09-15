@@ -197,14 +197,35 @@ test('combat routing with pvp enabled', async (t) => {
   });
 
   await t.test('CombatSpellHit routes like CombatHit and caps effect magnitudes', async () => {
-    const spell = (target: JsLike, magnitude = 15) => ({
-      target, spellId: 'fire_bite', casterId: atkId,
+    const spell = (target: JsLike, magnitude = 15, spellId = 'fire_bite') => ({
+      target, spellId, casterId: atkId,
       effects: [{ id: 'fire_damage', magnitude, duration: 3 }],
     });
+    // THE CASTER MUST KNOW THE SPELL (backlog 252): before the spellbook says so, the same
+    // hit is refused -- a modified client used to land any retail spell on anyone nearby.
     atk.sendEvent('CombatSpellHit', spell({ playerId: vicId }));
+    await fence(atk, vic);
+    assert.equal(vic.inbox.events.filter((e) => e.name === 'CombatSpellHit').length, 0,
+      'a spell the caster does not know was routed');
+    atk.sendEvent('PlayerSpellbook', { add: ['fire_bite'], remove: [] });
+    atk.sendEvent('CombatSpellHit', { ...spell({ playerId: vicId }), indexes: [1, 0], ignoreReflect: true });
     const got = await vic.waitEvent('CombatSpellHit');
     assert.equal((got.value as { spellId: string }).spellId, 'fire_bite');
+    // Which effects hit travels with the cast (backlog 250), and so does the reflect word (254).
+    assert.deepEqual((got.value as { indexes: number[] }).indexes, [1, 0]);
+    assert.equal((got.value as { ignoreReflect: boolean }).ignoreReflect, true);
+    // An ITEM source (a scroll, a cast-when-used ring) counts when the inventory holds it.
+    vic.inbox.events.length = 0;
+    atk.sendEvent('CombatSpellHit', spell({ playerId: vicId }, 15, 'sc_fireball'));
+    await fence(atk, vic);
+    assert.equal(vic.inbox.events.filter((e) => e.name === 'CombatSpellHit').length, 0, 'a scroll the caster does not carry was routed');
+    atk.sendEvent('PlayerInventory', { items: [{ id: 'sc_fireball', n: 1 }] });
+    atk.sendEvent('CombatSpellHit', spell({ playerId: vicId }, 15, 'sc_fireball'));
+    assert.equal(((await vic.waitEvent('CombatSpellHit')).value as { spellId: string }).spellId, 'sc_fireball');
+    vic.inbox.events.length = 0;
     atk.sendEvent('CombatSpellHit', spell({ playerId: vicId }, 99999)); // over cap
+    atk.sendEvent('CombatSpellHit', { ...spell({ playerId: vicId }), indexes: [0, 'x'] }); // malformed indexes
+    atk.sendEvent('CombatSpellHit', { ...spell({ playerId: vicId }), indexes: [64] }); // out of range
     await fence(atk, vic);
     assert.equal(vic.inbox.events.filter((e) => e.name === 'CombatSpellHit').length, 0);
   });
@@ -300,13 +321,27 @@ test('pvp gate blocks player targets but not actor targets', async (t) => {
   const { peer, atk, vic, epoch, vicId, welcome } = await scenario(t, false);
 
   await t.test('player-targeted hit is vetoed by the pvp plugin', async () => {
+    atk.sendEvent('PlayerSpellbook', { add: ['fire_bite', 'hearth_heal'], remove: [] });
     atk.sendEvent('CombatHit', hitBody({ playerId: vicId }));
     atk.sendEvent('CombatSpellHit', {
       target: { playerId: vicId }, spellId: 'fire_bite', casterId: 1,
       effects: [{ id: 'fire_damage', magnitude: 10, duration: 1 }],
     });
+    // A cast that calls itself beneficial while ONE of its hits is harmful is an attack
+    // (backlog 249): the whole-cast word is every hit's, not the best one's.
+    atk.sendEvent('CombatSpellHit', {
+      target: { playerId: vicId }, spellId: 'fire_bite', casterId: 1, beneficial: true,
+      effects: [{ id: 'restorehealth', magnitude: 10, duration: 1, beneficial: true },
+        { id: 'firedamage', magnitude: 10, duration: 1, beneficial: false }],
+    });
     await fence(atk, vic);
     assert.equal(vic.inbox.events.filter((e) => e.name === 'CombatHit' || e.name === 'CombatSpellHit').length, 0);
+    // A heal on a friend still crosses.
+    atk.sendEvent('CombatSpellHit', {
+      target: { playerId: vicId }, spellId: 'hearth_heal', casterId: 1, beneficial: true,
+      effects: [{ id: 'restorehealth', magnitude: 10, duration: 1, beneficial: true }],
+    });
+    assert.equal(((await vic.waitEvent('CombatSpellHit')).value as { beneficial: boolean }).beneficial, true);
   });
 
   await t.test('actor-targeted hit still routes to the holder', async () => {

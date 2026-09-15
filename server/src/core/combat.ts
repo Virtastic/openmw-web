@@ -43,6 +43,10 @@ export interface CombatCtx {
   epochOf(cellKey: string): number | undefined;
   // Plugin gate: false vetoes a player-targeted hit (the pvp builtin owns this).
   allowPlayerHit(attacker: Player, victimId: number, name: string): boolean;
+  // Does this player's doc know the cast's source: a spell in their spellbook, or an item
+  // (a scroll, a cast-when-used ring) in their inventory? A modified client used to land any
+  // retail spell on anyone in a neighbouring cell with no magicka at all (backlog 252).
+  knowsSource(caster: Player, id: string): boolean;
 }
 
 function finite(v: LValue | undefined): number | undefined {
@@ -368,6 +372,12 @@ export class Combat {
       return;
     }
     const cap = this.ctx.maxHitDamage;
+    // A beneficial spell (a helper's heal) is not an attack: it crosses the PvP veto, which
+    // exists to stop players harming each other, not helping. Everything else about the route
+    // (proximity, the input-driving avatar redirect) is unchanged. The word is EVERY hit's:
+    // one Restore riding a Fire Damage does not make the cast a heal (backlog 249), so an
+    // entry that calls itself harmful vetoes the whole-cast claim.
+    let beneficial = body.get('beneficial') === true;
     for (const [, entry] of effects) {
       const e = tbl(entry);
       const id = e ? str(e.get('id')) : undefined;
@@ -377,14 +387,29 @@ export class Combat {
         this.drop(player, 'CombatSpellHit', 'invalid effect entry or over cap');
         return;
       }
+      if (e!.get('beneficial') === false) beneficial = false;
     }
-    // A beneficial spell (a helper's heal) is not an attack: it crosses the PvP veto, which
-    // exists to stop players harming each other, not helping. Everything else about the route
-    // (proximity, the input-driving avatar redirect) is unchanged.
-    const beneficial = body.get('beneficial') === true;
+    // WHICH effects of the record hit (backlog 250): optional, small non-negative ints.
+    const indexes = body.get('indexes');
+    if (indexes !== undefined) {
+      const t = tbl(indexes);
+      const ok = t !== undefined && t.size <= MAX_EFFECTS
+        && [...t.values()].every((i) => Number.isInteger(i) && (i as number) >= 0 && (i as number) < MAX_EFFECTS);
+      if (!ok) {
+        this.drop(player, 'CombatSpellHit', 'invalid indexes');
+        return;
+      }
+    }
+    // The caster must be able to cast it: the spell is in their doc, or the item (a scroll, a
+    // cast-when-used ring) is in their inventory. The sim peer forwards the WORLD's casts at
+    // avatars (an NPC's spell on a puppet) and has no doc to check against.
+    if (player.system !== true && !this.ctx.knowsSource(player, spellId)) {
+      this.drop(player, 'CombatSpellHit', 'spell not known to the caster');
+      return;
+    }
     const owner = this.resolveOwner(player, target, 'CombatSpellHit', beneficial);
     if (!owner) return;
-    owner.peer.sendEvent('CombatSpellHit', { ...(lToJs(body) as Record<string, JsLike>), attackerId: player.id });
+    owner.peer.sendEvent('CombatSpellHit', { ...(lToJs(body) as Record<string, JsLike>), attackerId: player.id, beneficial });
   }
 
   // Cosmetic mirrors: relayed to the sender's cell, excluding the sender (who already

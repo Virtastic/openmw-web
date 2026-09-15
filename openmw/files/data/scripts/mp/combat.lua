@@ -16,6 +16,7 @@ local types = require('openmw.types')
 local util = require('openmw.util')
 local mp = require('openmw.mp')
 local threat = require('scripts.mp.threat')
+local worldmp = require('scripts.mp.world')
 
 local combat = {}
 
@@ -110,11 +111,19 @@ function combat.onPuppetSpellHit(data)
     local function note(why) pcall(function() mp.set('spellFwd', why) end) end
     local effects = data.effects or {}
     if #effects == 0 then note('no-effects') return end
+    local beneficial = data.beneficial == true
     local target
     if data.playerId then
         -- PvP off stops players HARMING each other; a heal on a friend is help, and must go
-        -- through. Beneficial hits (spelleffects.cpp marks restores) skip the veto.
-        if not deps.isPvpEnabled() and not data.beneficial then note('pvp-off') return end
+        -- through. The veto is per EFFECT (spelleffects.cpp words each hit): a record that
+        -- heals and burns loses the burn and keeps the heal. The server routes on the
+        -- whole-cast word (combat.ts spellHit), so what goes out is all-beneficial or nothing.
+        if not deps.isPvpEnabled() and not beneficial then
+            local kept = {}
+            for _, e in ipairs(effects) do if e.beneficial == true then kept[#kept + 1] = e end end
+            if #kept == 0 then note('pvp-off') return end
+            effects, beneficial = kept, true
+        end
         target = { playerId = data.playerId }
     elseif data.victim and data.victim:isValid() then
         local cellKey = deps.cellKeyOfObj(data.victim)
@@ -127,15 +136,29 @@ function combat.onPuppetSpellHit(data)
         note('no-victim')
         return
     end
+    -- WHICH effects of the record hit, when the engine named every one (an older engine names
+    -- none, and the owner then applies the whole record as before). Without this a Self+Touch
+    -- record cast at a friend gave them the caster's Fortify too (backlog 250).
+    local indexes = {}
+    for _, e in ipairs(effects) do
+        if type(e.index) ~= 'number' then indexes = nil break end
+        indexes[#indexes + 1] = e.index
+    end
     note('sending')
     mp.sendEvent('CombatSpellHit', {
         target = target,
         effects = effects,
         -- The OWNER applies the spell record by id, so this must be the spell, not the effect.
-        -- Without it MP_CombatSpellHit looks up nil and silently applies nothing.
-        spellId = data.spellId or effects[1].id,
+        -- Without it MP_CombatSpellHit looks up nil and silently applies nothing. NET id: a
+        -- spellmaker spell is a dynamic record with a different local id on every engine
+        -- (backlog 251), like the drop path's item ids.
+        spellId = worldmp.toNet(data.spellId or effects[1].id),
         casterId = deps.ownIdFn() or 0,
-        beneficial = data.beneficial == true,
+        beneficial = beneficial,
+        indexes = indexes,
+        -- A reflection landing on the caster's puppet must not be reflected AGAIN by the
+        -- owner, or two Reflect-wearers volley one spell forever (backlog 254).
+        ignoreReflect = data.ignoreReflect == true,
     })
 end
 
@@ -230,16 +253,38 @@ combat.handlers.MP_CombatHit = function(data)
     mp.set('lastHitTaken', string.format('%.0f', lastHitTaken.health))
 end
 
+-- The effect list a cast's SOURCE record applies: a spell, an enchantment, or an ITEM whose
+-- enchantment it is. A scroll or a cast-when-used ring names the item as its source
+-- (spellParams.getSourceSpellId), and activeSpells:add resolves REC_BOOK/ARMO/CLOT/WEAP
+-- through the item's enchantment the same way (mwlua/magicbindings.cpp getNameAndMagicEffects)
+-- -- so the id can be handed to add as-is; only the COUNT has to come from the enchantment.
+-- Gating on spells.records alone made every scroll and every enchanted item land nothing on
+-- a puppet or an NPC (backlog 251).
+local function sourceEffects(id)
+    local rec = core.magic.spells.records[id] or core.magic.enchantments.records[id]
+    if rec then return rec.effects end
+    for _, T in ipairs({ types.Book, types.Weapon, types.Armor, types.Clothing }) do
+        local ok, item = pcall(function() return T and T.record(id) end)
+        if ok and item and type(item.enchant) == 'string' and item.enchant ~= '' then
+            local ench = core.magic.enchantments.records[item.enchant]
+            if ench then return ench.effects end
+        end
+    end
+    return nil
+end
+
 combat.handlers.MP_CombatSpellHit = function(data)
     local victim = resolveVictim(data)
     if not victim then return end
     -- activeSpells:add wants INDEXES into the spell record's own effect list, while the wire
-    -- carries rolled {id, magnitude, duration} triples. We therefore apply the spell record
-    -- with all of its effects and let the victim roll magnitudes locally — same spell, same
-    -- duration semantics, magnitudes re-rolled within the record's range.
+    -- carries rolled {id, magnitude, duration} triples. We therefore apply the record by the
+    -- indexes the caster's engine says hit (all of them when it named none) and let the
+    -- victim roll magnitudes locally — same spell, same duration semantics, magnitudes
+    -- re-rolled within the record's range.
     local ok, err = pcall(function()
-        local spell = core.magic.spells.records[data.spellId]
-        if not spell then return end
+        local spellId = worldmp.toLocal(data.spellId)
+        local effects = sourceEffects(spellId)
+        if not effects then return end
         -- ZERO-BASED. activeSpells:add indexes the spell record's own effect list from 0
         -- (`Actor.activeSpells(self):add({id = 'chameleon', effects = { 0 }})` in the API docs),
         -- while Lua's own list is 1-based. Building 1..n threw
@@ -247,12 +292,21 @@ combat.handlers.MP_CombatSpellHit = function(data)
         -- single application — so even a forwarded spell hit applied nothing. Never caught
         -- because no client had ever sent a CombatSpellHit for this to receive.
         local indexes = {}
-        for i = 1, #spell.effects do indexes[i] = i - 1 end
+        if type(data.indexes) == 'table' and #data.indexes > 0 then
+            for _, i in ipairs(data.indexes) do
+                if type(i) == 'number' and i >= 0 and i < #effects then indexes[#indexes + 1] = i end
+            end
+        else
+            for i = 1, #effects do indexes[i] = i - 1 end
+        end
+        if #indexes == 0 then return end
         types.Actor.activeSpells(victim):add({
-            id = data.spellId,
+            id = spellId,
             effects = indexes,
             caster = deps.puppetObjOf(data.attackerId),
             ignoreResistances = false,
+            -- Already a reflection: the caster's copy bounced it once (backlog 254).
+            ignoreReflect = data.ignoreReflect == true,
         })
     end)
     if not ok then print('[mp] combat: spell apply failed: ' .. tostring(err)) end

@@ -273,13 +273,23 @@ local function forwardMagicHits()
     end
     if not hits or #hits == 0 then return end
     if mp.set then mp.set('magicFwd', 'drained:' .. tostring(#hits)) end
-    local effects, spellId, beneficial = {}, nil, false
+    -- Per hit: the record's effect INDEX (the owner applies only the effects that hit, not
+    -- the whole record -- backlog 250) and its own beneficial word. The cast as a whole is
+    -- beneficial only when EVERY hit is: an OR let one Restore ride a Fire Damage past the
+    -- PvP veto (backlog 249). combat.lua drops the harmful indexes under PvP off.
+    local effects, spellId, beneficial, ignoreReflect = {}, nil, true, false
     for _, h in ipairs(hits) do
-        effects[#effects + 1] = { id = tostring(h.effectId), magnitude = h.magnitude or 0, duration = 0 }
+        local one = { id = tostring(h.effectId), magnitude = h.magnitude or 0, duration = 0,
+            beneficial = h.beneficial == true }
+        if type(h.index) == 'number' and h.index >= 0 then one.index = h.index end
+        effects[#effects + 1] = one
         spellId = spellId or (h.spellId ~= '' and h.spellId or nil)
         -- A helper's heal on a friend: forwarded like damage, but it must cross the PvP veto
         -- (which stops harm, not help) and apply as a restore on the owner's avatar.
-        if h.beneficial == true then beneficial = true end
+        if h.beneficial ~= true then beneficial = false end
+        -- A reflection landing on the caster's puppet: the owner applies it without rolling
+        -- Reflect again, or two Reflect-wearers volley one spell forever (backlog 254).
+        if h.reflected == true then ignoreReflect = true end
     end
     core.sendGlobalEvent('mpCombatSpellHit', {
         victim = self.object,
@@ -287,6 +297,7 @@ local function forwardMagicHits()
         effects = effects,
         spellId = spellId,
         beneficial = beneficial,
+        ignoreReflect = ignoreReflect,
     })
 end
 

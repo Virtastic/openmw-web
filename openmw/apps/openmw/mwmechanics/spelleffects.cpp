@@ -1348,6 +1348,11 @@ namespace MWMechanics
                     roll(effect), 0 };
                 // The engine's own word on it: a heal, a fortify, a cure crosses the PvP veto.
                 hit.mBeneficial = !(magicEffect->mData.mFlags & ESM::MagicEffect::Harmful);
+                // Which effect of the record this is (the owner applies only the ones that
+                // hit), and whether it is already a reflection (activespells.cpp stamps the
+                // bounced copy Ignore_Reflect; the owner must not bounce it back).
+                hit.mEffectIndex = effect.mEffectIndex;
+                hit.mReflected = (effect.mFlags & ESM::ActiveEffect::Flag_Ignore_Reflect) != 0;
                 MWMP::recordMagicHit(hit);
                 effect.mFlags |= ESM::ActiveEffect::Flag_Applied;
             }

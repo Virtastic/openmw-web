@@ -233,22 +233,29 @@ function handleStatsDynamic(ctx: StateCtx, player: Player, body: LTable): boolea
     };
     const r = { hp: hp && raise('hp', hp), mp: mp && spend(mp), ft: ft && raise('ft', ft) };
     if (!r.hp && !r.mp && !r.ft) return true; // nothing restored: consumed, not applied
-    // Budget the HEALTH restoration (the one that decides whether you die).
-    const gained = r.hp ? r.hp.c - (cur?.hp?.c ?? r.hp.c) : 0;
-    if (gained > 0) {
+    // Budget the HEALTH restoration (the one that decides whether you die) and the MAGICKA
+    // one (the one that decides whether casting costs anything): a spend is accepted like a
+    // restore, so without this a modified client refilled magicka at will (backlog 253).
+    for (const k of ['hp', 'mp'] as const) {
+      const gained = r[k] ? r[k].c - (cur?.[k]?.c ?? r[k].c) : 0;
+      if (gained <= 0) continue;
       const nowMs = Date.now();
       if (player.restoreWindowAt === undefined || nowMs - player.restoreWindowAt > RESTORE_WINDOW_MS) {
         player.restoreWindowAt = nowMs;
         player.restoreInWindow = 0;
+        player.restoreMpInWindow = 0;
       }
-      const budget = (cur?.hp?.b ?? 100) * RESTORE_BUDGET_MULT;
-      if ((player.restoreInWindow ?? 0) + gained > budget) {
-        noteGain(ctx, player, 'restore_budget', {
-          gained: Math.round(gained), inWindow: Math.round(player.restoreInWindow ?? 0), budget });
-        return true; // consumed, not applied: the peer's bars stand
+      const field = k === 'hp' ? 'restoreInWindow' : 'restoreMpInWindow';
+      const budget = (cur?.[k]?.b ?? 100) * RESTORE_BUDGET_MULT;
+      if ((player[field] ?? 0) + gained > budget) {
+        noteGain(ctx, player, k === 'hp' ? 'restore_budget' : 'restore_budget_mp', {
+          gained: Math.round(gained), inWindow: Math.round(player[field] ?? 0), budget });
+        r[k] = undefined; // that bar is not applied: the peer's stands
+        continue;
       }
-      player.restoreInWindow = (player.restoreInWindow ?? 0) + gained;
+      player[field] = (player[field] ?? 0) + gained;
     }
+    if (!r.hp && !r.mp && !r.ft) return true; // consumed, not applied
     ctx.store.update(player.charId, (doc) => {
       const d = doc.stats?.dynamic; if (!d) return;
       if (r.hp) d.hp = r.hp; if (r.mp) d.mp = r.mp; if (r.ft) d.ft = r.ft;

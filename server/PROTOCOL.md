@@ -446,7 +446,7 @@ reports "avatar attacking" back to the owner and to observers.
 |---|---|---|
 | `CombatHit` | attacker→S→victim-owner | `{target={playerId=u16} \| {ref=RefNum, cellKey=, epoch=?}, damage={health=n, fatigue=n?, magicka=n?}, strength=n, sourceType=string, weaponId=string?, ammoId=string?, hitPos={x,y,z}?, successful=bool}` |
 | `CombatCast` | caster→S→cell-scoped | `{spellId=string, target={playerId}\|{ref}\|nil, casterId=u16, kind="spell"\|"enchant"\|"potion"}` — visual/animation mirroring only |
-| `CombatSpellHit` | caster→S→victim-owner | `{target={playerId}\|{ref,cellKey,epoch}, spellId=string, effects={{id=string, magnitude=n, duration=n}, …}, casterId=u16}` |
+| `CombatSpellHit` | caster→S→victim-owner | `{target={playerId}\|{ref,cellKey,epoch}, spellId=string (net id: a spell, an enchantment, or the ITEM a scroll/cast-when-used source names), effects={{id=string, magnitude=n, duration=n, beneficial?=bool, index?=n}, …}, casterId=u16, beneficial?=bool, indexes?={n,…} (which of the record's effects hit, 0-based, < 64; absent = all), ignoreReflect?=bool (the hit is itself a reflection)}`. Routed only when the caster's doc knows the source (spellbook or inventory; the sim peer is exempt). |
 | `CombatProjectile` | attacker→S→cell-scoped | `{kind="arrow"\|"bolt"\|"thrown"\|"magic", recordId=string?, spellId=string?, from={x,y,z}, dir={x,y,z}, speed=n, casterId=u16}` — cosmetic mirror; the attacker owns the real projectile |
 
 Rules:
@@ -461,7 +461,9 @@ Rules:
   `ActorAuthorityInfo`/`ActorAuthorityGrant`, or omit it entirely.
 - **PvP gate**: when `[rules] pvp = false`, `CombatHit`/`CombatSpellHit` whose target is a
   *player* are dropped server-side (the `pvp` plugin owns this decision so operators can
-  replace it). Actor targets are unaffected.
+  replace it). Actor targets are unaffected. A `CombatSpellHit` crosses the gate only when
+  `beneficial` is true AND no effect entry says `beneficial=false` (a heal on a friend is help;
+  a record that heals and burns is an attack — the client keeps the heal and drops the burn).
 - Clients MUST cancel local damage application for remote-authoritative victims (register an
   `I.Combat` handler that forwards then `return false`) and re-emit the stock `Hit` event
   locally when they receive `CombatHit` for themselves, so the victim's own armor/difficulty

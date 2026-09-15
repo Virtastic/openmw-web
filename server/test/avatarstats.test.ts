@@ -208,6 +208,20 @@ test('a client heal reaches the peer, and sustained fake healing is refused', as
   assert.ok(restores < 8,
     `sustained fake healing was accepted ${restores} times -- a modified client would be `
     + 'immortal while the peer owns its bars');
+
+  // MAGICKA HAS THE SAME BUDGET (backlog 253). A spend is accepted like a restore, so the
+  // raise direction was unbounded: a modified client refilled its pool at will. The peer
+  // reports 50/50 here; claim 5 then 50 over and over -- each pair is a 45-point "restore".
+  peer.inbox.events.length = 0;
+  for (let i = 0; i < 40; i++) {
+    a.sendEvent('PlayerStatsDynamic', { ...bars(20), mp: { c: 5, b: 50 } });
+    a.sendEvent('PlayerStatsDynamic', { ...bars(20), mp: { c: 50, b: 50 } });
+  }
+  await new Promise((r) => setTimeout(r, 600));
+  const refills = peer.inbox.events.filter((e) => e.name === 'AvatarRestore'
+    && (e.value as { mp?: { c?: number } })?.mp?.c === 50).length;
+  assert.ok(refills < 8,
+    `sustained fake magicka refills were accepted ${refills} times -- casting would be free`);
 });
 
 // ACTIVE EFFECTS reach the avatar. Levitate, Water Walking, a potion: cast or drunk on the

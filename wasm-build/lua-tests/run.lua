@@ -281,6 +281,126 @@ do
   check('a victim with no cell is still not sent', #env.calls.events == n)
 end
 
+-- ===================================================== combat.lua: magic hits, per effect
+-- Backlog 249/250/251/254: the veto and the application are per EFFECT of the record, the
+-- spell id crosses as a net id, a scroll's item id resolves through its enchantment, and a
+-- reflection is not reflected again.
+print('combat.lua -- a spell hit names which effects, and the owner applies only those')
+do
+  local env = stubs.install({})
+  local core = require('openmw.core')
+  local types = require('openmw.types')
+  core.magic.spells.records['fire_bite'] = { id = 'fire_bite', effects = { { id = 'firedamage' }, { id = 'restorehealth' } } }
+  core.magic.enchantments.records['sc_ench'] = { id = 'sc_ench', effects = { { id = 'firedamage' } } }
+  types.Book = { record = function(id) return id == 'sc_fireball' and { enchant = 'sc_ench' } or nil end }
+  local added = nil
+  types.Actor.activeSpells = function() return { add = function(_, o) added = o end } end
+  package.loaded['scripts.mp.world'] = nil
+  local combat = dofile('./openmw/files/data/scripts/mp/combat.lua')
+  local pvp = true
+  combat.init({
+    playerFn = function() return { id = 'me' } end,
+    ownIdFn = function() return 1 end,
+    puppetObjOf = function() return nil end,
+    epochOf = function() return nil end,
+    isHolderOf = function() return true end,
+    cellKeyOfObj = function() return '0,0' end,
+    isPvpEnabled = function() return pvp end,
+  })
+  local function lastSpell()
+    for i = #env.calls.events, 1, -1 do
+      if env.calls.events[i].name == 'CombatSpellHit' then return env.calls.events[i].body end
+    end
+    return nil
+  end
+  local mixed = { { id = 'firedamage', magnitude = 5, duration = 0, index = 0, beneficial = false },
+                  { id = 'restorehealth', magnitude = 5, duration = 0, index = 1, beneficial = true } }
+  combat.onPuppetSpellHit({ playerId = 2, effects = mixed, spellId = 'fire_bite', beneficial = false, ignoreReflect = true })
+  local sent = lastSpell()
+  check('the indexes that hit travel with the cast (250)',
+    sent ~= nil and #sent.indexes == 2 and sent.indexes[1] == 0 and sent.indexes[2] == 1)
+  check('and so does the reflect word (254)', sent ~= nil and sent.ignoreReflect == true)
+  check('a mixed cast is not beneficial (249)', sent ~= nil and sent.beneficial == false)
+
+  pvp = false
+  local n0 = #env.calls.events
+  combat.onPuppetSpellHit({ playerId = 2, effects = mixed, spellId = 'fire_bite', beneficial = false })
+  sent = lastSpell()
+  check('PvP off keeps the heal and drops the burn, not the whole cast (249)',
+    #env.calls.events > n0 and sent.beneficial == true and #sent.indexes == 1 and sent.indexes[1] == 1
+    and #sent.effects == 1 and sent.effects[1].id == 'restorehealth', tostring(sent and #sent.effects))
+  n0 = #env.calls.events
+  combat.onPuppetSpellHit({ playerId = 2, effects = { mixed[1] }, spellId = 'fire_bite', beneficial = false })
+  check('an all-harmful cast at a player is vetoed under PvP off', #env.calls.events == n0)
+  pvp = true
+
+  -- Receive: only the named indexes, the record found through the item's enchantment.
+  local me = { isValid = function() return true end }
+  combat.init({
+    playerFn = function() return me end, ownIdFn = function() return 1 end,
+    puppetObjOf = function() return nil end, epochOf = function() return nil end,
+    isHolderOf = function() return true end, cellKeyOfObj = function() return '0,0' end,
+    isPvpEnabled = function() return true end,
+  })
+  added = nil
+  combat.handlers.MP_CombatSpellHit({ target = { playerId = 1 }, spellId = 'fire_bite', indexes = { 1 }, ignoreReflect = true })
+  check('the owner applies only the indexes that hit (250)',
+    added ~= nil and #added.effects == 1 and added.effects[1] == 1 and added.id == 'fire_bite')
+  check('and does not reflect a reflection (254)', added ~= nil and added.ignoreReflect == true)
+  added = nil
+  combat.handlers.MP_CombatSpellHit({ target = { playerId = 1 }, spellId = 'fire_bite' })
+  check('no indexes = the whole record, as before', added ~= nil and #added.effects == 2 and added.ignoreReflect == false)
+  added = nil
+  combat.handlers.MP_CombatSpellHit({ target = { playerId = 1 }, spellId = 'fire_bite', indexes = { 7 } })
+  check('an index past the record applies nothing', added == nil)
+  added = nil
+  combat.handlers.MP_CombatSpellHit({ target = { playerId = 1 }, spellId = 'sc_fireball' })
+  check('a scroll resolves through its enchantment, by the item id (251)',
+    added ~= nil and added.id == 'sc_fireball' and #added.effects == 1, tostring(added and added.id))
+  local cb = io.open('./openmw/files/data/scripts/mp/combat.lua'):read('*a')
+  check('the spell id crosses as a net id both ways (251)',
+    cb:find('spellId = worldmp.toNet(data.spellId or effects[1].id)', 1, true) ~= nil
+    and cb:find('local spellId = worldmp.toLocal(data.spellId)', 1, true) ~= nil)
+  local pp = io.open('./openmw/files/data/scripts/mp/puppet.lua'):read('*a')
+  check('puppet.lua words the cast beneficial only when EVERY hit is (249)',
+    pp:find('if h.beneficial ~= true then beneficial = false end', 1, true) ~= nil)
+  types.Book = nil
+end
+
+-- ====================================== global.lua: a restore lands once on a ruled body
+-- Backlog 248: the bar channel already carries what a Restore Health / Magicka or a Damage
+-- Magicka did; mirroring the effect as well landed it twice.
+print('global.lua -- restore/damage H/M effects are not mirrored (the bars carry them)')
+do
+  local g = io.open('./openmw/files/data/scripts/mp/global.lua'):read('*a')
+  local bc = g:match('local BAR_CARRIED_EFFECT = (%b{})')
+  check('global.lua BAR_CARRIED_EFFECT drops restorehealth, restoremagicka and damagemagicka only',
+    bc ~= nil and bc:find('restorehealth = true', 1, true) ~= nil and bc:find('restoremagicka = true', 1, true) ~= nil
+    and bc:find('damagemagicka = true', 1, true) ~= nil and bc:find('fatigue', 1, true) == nil
+    and bc:find('damagehealth', 1, true) == nil, tostring(bc))
+  check('applied on both mirrors: MP_AvatarActiveSpells (peer) and MP_SelfActiveSpells (owner)',
+    g:find('if localId then effects = withoutBarCarried(localId, effects) end', 1, true) ~= nil
+    and g:find('local effects = localId and withoutBarCarried(localId, sp.effects or {}) or {}', 1, true) ~= nil)
+  -- The helper itself, run: the record's restore index goes, the rest stay.
+  local src = g:match('(local function magicRecordOf.-\nend)') .. '\n'
+    .. g:match('(local BAR_CARRIED_EFFECT = .-local function withoutBarCarried.-\nend)')
+    .. '\nreturn withoutBarCarried'
+  stubs.install({})
+  local core = require('openmw.core')
+  core.magic.spells.records['heal_and_light'] = { effects = { { id = 'restorehealth' }, { id = 'light' }, { id = 'restorefatigue' } } }
+  local f, lerr = loadstring(src)
+  check('the helper loads on its own', f ~= nil, tostring(lerr))
+  if f then
+    local env = setmetatable({ core = core, ipairs = ipairs, pcall = pcall, types = require('openmw.types') }, { __index = _G })
+    setfenv(f, env)
+    local without = f()
+    local kept = without('heal_and_light', { 0, 1, 2 })
+    check('the restore index is dropped, light and fatigue stay', #kept == 2 and kept[1] == 1 and kept[2] == 2)
+    local unknown = without('no_such_record', { 0, 1 })
+    check('an unknown record is left alone', #unknown == 2)
+  end
+end
+
 -- ============================================ every server->client event reaches a handler
 -- A server->client event with no `MP_<name>` handler is not an error anywhere: it arrives,
 -- matches nothing, and is dropped in silence. The server half looks complete and tested while
