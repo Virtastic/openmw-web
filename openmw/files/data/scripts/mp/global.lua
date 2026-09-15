@@ -693,9 +693,35 @@ local function avatarDrownProbe(now)
     end
 end
 
+-- HARNESS DIAGNOSTIC (peer): the fall the avatar took, and what it cost. Three sweeps of
+-- s147 showed the peer's bar unmoved after a 1300-unit fall and reading could not say
+-- whether the avatar ever left the ground on the peer, or landed and was not charged.
+local fallTrack = {} -- id -> { top = z at the highest airborne point, air = true }
+local function avatarFallProbe()
+    for id, p in pairs(puppets) do
+        if p.obj and p.obj:isValid() then
+            local okg, onGround = pcall(types.Actor.isOnGround, p.obj)
+            if okg then
+                local t = fallTrack[id]
+                local z = p.obj.position.z
+                if not onGround then
+                    if not t then t = { top = z }; fallTrack[id] = t end
+                    if z > t.top then t.top = z end
+                elseif t then
+                    local okh, hp = pcall(function() return types.Actor.stats.dynamic.health(p.obj).current end)
+                    print(string.format('[mp] avatar #%d landed from z=%d at z=%d (fell %d) hp=%s', id,
+                        math.floor(t.top), math.floor(z), math.floor(t.top - z), tostring(okh and hp or '?')))
+                    fallTrack[id] = nil
+                end
+            end
+        end
+    end
+end
+
 local function avatarStreamTick(now)
     if not (mp.isSystem and mp.isSystem()) then return end
     avatarDrownProbe(now)
+    avatarFallProbe()
     if now - avatarStreamAt < AVATAR_STREAM_EVERY then return end
     avatarStreamAt = now
     local entries = {}
