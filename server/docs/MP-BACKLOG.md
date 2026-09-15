@@ -49,6 +49,18 @@ Branch: `test/posture-seen`. Sweeps: Jenkins `openmw-web-dev` #89 (2026-09-15, 9
 | 41 | Sweep #89: a heal in the frame a peer report lands was erased before measurement | identity.lua | baking | s150 |
 | 42 | Sweep #89: second world change on a cloud-locker page died with "no locker session" | index.html | baking | s141 |
 | 43 | Sweep #89: scripted-lock poll covered the player's own cell only | objects.lua | baking | s158 |
+| 61 | Half of all real jumps never reached the avatar (one-frame trigger vs every-other-frame sender) | player.lua | fixed | scenario: tap-jump 10x, avatar rises 10/10 |
+| 62 | Avatar follow-teleport gave up after 3 s (cold interior load): no puppet in the room | global.lua | fixed | — |
+| 63 | Actor batches for far anchored cells refused as stale epoch: frozen NPCs everywhere the peer's avatar was not | authority.ts, worldstate.ts | done (unit) | holderhears.test.ts |
+| 64 | The peer drew from a player's byte/msg budgets; three busy cells got it disconnected with RATE | connection.ts | fixed | — |
+| 65 | A dead companion's follow claim replayed to a restarted peer | worldstate.ts | fixed | — |
+| 66 | Every terminal modal read "could not be reached (CODE detail)" | index.html | fixed | s91 DOM assert wanted |
+| 67 | Joining a friend mid-chargen rebooted into a refusing door; unfinished character lost | social.ts, social.lua | fixed | scenario s161 sketch |
+| 68 | In-game Exit did not say it was leaving: guests waited out the 90 s grace | mainmenu.cpp, index.html | fixed | — |
+| 69 | Refused rest (timeSkip=owner) still healed the guest's local body: free full heal | m7.ts, playerstate.ts | done (unit) | avatarstats.test.ts |
+| 70 | Bound items declared in the doc: relog inside the spell granted a permanent one | identity.lua | fixed | — |
+| 71 | dayspassed never written: day-based timers a day late or backwards | world.lua | fixed | — |
+| 72 | Weather holder spoke only on change; a guest's rolled-back rest left the wrong sky | world.lua | fixed | — |
 
 ## Open (found, not fixed)
 
@@ -79,6 +91,23 @@ Branch: `test/posture-seen`. Sweeps: Jenkins `openmw-web-dev` #89 (2026-09-15, 9
 | 58 | Bound items recorded in the inventory doc; a relog inside the window grants a permanent one | identity.lua snapInventory (skip sMagicBound*ID) |
 | 59 | Summon: holder loss mid-effect leaves no local creature until recast | global.lua |
 | 60 | Alchemy: identical potions brewed by two players are two records (doc bloat) | m7.ts (dedupe by content) |
+| 73 | Knockdown/hit-recoil on the avatar not relayed: owner rubber-bands instead of "cannot move" | global.lua stats entry + player.lua controls override |
+| 74 | Long fall: self-snap → PlayerCellChange → avatar teleported mid-air → fall height reset → free fall | player.lua jump detector vs falling |
+| 75 | Peer restart mid-swim spawns the avatar at the last cell-change point; owner snapped there | connection.ts teleportPose gate |
+| 76 | threat.lua is dead code (relayed CombatHit shape never matches); NPCs strobe between two attackers | combat.lua, threat.lua |
+| 77 | Dialogue holder's NPC keeps wandering on the peer while talking; the other player watches it walk off | actors.lua (Wander distance 0 on lock) |
+| 78 | Greeting/idle on the peer targets the parked dummy: NPCs near the park spot face nothing | actors.cpp (skip when peerRulesBody) |
+| 79 | Escort claim needs no dialogue lock: any client can send any NPC walking | worldstate.ts |
+| 80 | "npc"->AddItem in a dialogue result lands on the local puppet only | no relay for non-holder NPC inventory |
+| 81 | Level +1 per message at 60/s reaches 255 in 4 s; attributes/skills unbounded | playerstate.ts clamp + one step per 10 s |
+| 82 | Gold placement with fromInventory=false is counted, never refused (party worlds) | worldstate.ts |
+| 83 | Fabricated first ContainerOpen becomes canonical (poison every container in a town) | worldstate.ts plausibility cap |
+| 84 | ActorAI travel destination bounded only by MAX_ABS_COORD | worldstate.ts (±2 cells) |
+| 85 | Guest can set the host's quest globals (by design of the shared journal) | quests.ts — wontfix? |
+| 86 | Memory governor prices a world at 640 MB regardless of anchors/party size | worlds.ts /status anchors |
+| 87 | No harness run beyond 4 browsers; soak bots never touch containers or a peer | bots/soak.ts |
+| 88 | BAD_CONTENT terminal: nothing tells the player that a reload after the mod mounts is the remedy | index.html mpErrorModal |
+| 89 | Launcher "friends playing now" lists party+occupied only; an online-but-solo friend is invisible | launcher.html |
 
 ## Wontfix / by design
 
