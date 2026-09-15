@@ -212,6 +212,14 @@ export class Roster {
     return this.byAccount.get(accountKey);
   }
 
+  // One session per CHARACTER (not account): byAccount holds only the latest session of an
+  // account, so a phone on char A and a laptop on char B need a charId lookup. Auth-time
+  // only; a roster scan is nothing next to argon2.
+  activeForChar(charId: string): Player | undefined {
+    for (const p of this.byId.values()) if (p.charId === charId) return p;
+    return undefined;
+  }
+
   private allocId(): number {
     // u16, skip 0 and in-use ids; wraps long before 65535 concurrent players matters.
     for (let i = 0; i < 0x10000; i++) {

@@ -13,7 +13,7 @@ test('session flow end to end', async (t) => {
     dataDir,
     port: 0,
     host: '127.0.0.1',
-    configOverride: { limits: { helloTimeoutMs: 500 } },
+    configOverride: { limits: { helloTimeoutMs: 500, loginPerMinPerIp: 60 } },
   });
   t.after(() => server.close());
 
@@ -79,6 +79,37 @@ test('session flow end to end', async (t) => {
       await a.closed;
       a2.close();
       await a2.closed;
+    });
+
+    await tt.test('same account on a different character is a second player, not a takeover', async () => {
+      const a3 = await TestClient.connect(server.port);
+      const w3 = await a3.joinExisting('Alice', 'correct horse');
+      a3.sendJson({ t: 'CharacterCreate', name: 'Drelas' });
+      const r = await a3.waitJson('CharacterResult');
+      const drelas = (r['characters'] as { id: string; name: string }[]).find((x) => x.name === 'Drelas')!;
+      assert.notEqual(drelas.id, w3['characterId']);
+
+      const a4 = await TestClient.connect(server.port);
+      a4.hello();
+      await a4.waitJson('SessionHelloOk');
+      a4.login('Alice', 'correct horse', { characterId: drelas.id });
+      await a4.waitJson('SessionWelcome');
+      a4.sendJson({ t: 'SessionReady' });
+      // a3 sees Drelas arrive instead of being dropped: both characters share the world.
+      const seen = await a3.waitEvent('PlayerJoinWorld', (v) => (v as { name: string }).name === 'Alice');
+      assert.ok(seen);
+      assert.ok(!a3.isClosed);
+
+      // The SAME character a second time is still a takeover.
+      const a5 = await TestClient.connect(server.port);
+      a5.hello();
+      await a5.waitJson('SessionHelloOk');
+      a5.login('Alice', 'correct horse', { characterId: drelas.id });
+      await a5.waitJson('SessionWelcome');
+      assert.equal((await a4.waitDisconnect('SUPERSEDED'))['code'], 'SUPERSEDED');
+      await a4.closed;
+      assert.ok(!a3.isClosed);
+      for (const c of [a3, a5]) { c.close(); await c.closed; }
     });
   });
 

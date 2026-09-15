@@ -1688,8 +1688,11 @@ export class Connection implements Peer {
     }
     metrics.auth.inc({ op, result: 'success' });
     // One session per character: the newcomer wins and the sitting session is dropped with
-    // SUPERSEDED, which the client turns into "this character was opened elsewhere".
-    const existing = this.ctx.roster.activeForAccount(accountKey);
+    // SUPERSEDED, which the client turns into "this character was opened elsewhere". Per
+    // CHARACTER, not account: the same account on a DIFFERENT character (phone on A, laptop
+    // on B) is two players, not a takeover. System peers have no character and key on the
+    // accountKey default, so they still supersede each other.
+    const existing = this.ctx.roster.activeForChar(char?.id ?? accountKey);
     if (existing) {
       metrics.authSuperseded.inc();
       existing.peer.disconnect('SUPERSEDED', 'this character was opened in another session');

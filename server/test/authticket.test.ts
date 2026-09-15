@@ -7,6 +7,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { AccountStore } from '../src/core/accounts';
 import { LockerSessionStore, LoginTicketStore } from '../src/auth/identities';
 import { ticketRoutes } from '../src/gateway/frontdoor';
@@ -34,4 +36,18 @@ test('locker token mints a claimable single-use ticket; no token = 401', async (
   const claimed = tickets.claim(r.ticket);
   assert.equal(claimed?.accountKey, 'alice', 'ticket claims to the right account');
   assert.equal(tickets.claim(r.ticket), undefined, 'single-use: a second claim fails');
+});
+
+// A ticket lives 15 minutes from the SSO callback, so a player who idled on the character
+// tiles booted with a dead one (AUTH_FAILED, then the rescue reload). Every game-boot path in
+// the launcher (tile click, "Join as X", continue-creation, Exit re-entry) ends in bootGame,
+// which must mint a FRESH ticket right before it navigates — after the world is opened, so
+// nothing slow sits between the mint and the boot.
+test('launcher mints the boot ticket inside bootGame, right before navigating', () => {
+  const html = readFileSync(join(import.meta.dirname, '..', '..', 'play', 'launcher.html'), 'utf8');
+  const boot = html.slice(html.indexOf('async function bootGame('), html.indexOf("location.href = 'index.html' + frag;"));
+  const mint = boot.indexOf("'/auth/ticket'");
+  assert.ok(mint > 0, 'bootGame POSTs /auth/ticket');
+  assert.ok(mint > boot.indexOf("'/worlds'"), 'minted after the world is opened, right before the boot');
+  assert.equal(html.split("'/auth/ticket'").length - 1, 1, 'one mint site: bootGame, which every boot path uses');
 });

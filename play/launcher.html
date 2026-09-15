@@ -1457,6 +1457,21 @@
    // question. Failure is treated as "not hosted", which is the behaviour that existed before.
    let hosted = false;
    try { hosted = (await fetch('/mwdata-manifest.json', { method: 'HEAD' })).ok; } catch(e){}
+   // MINT THE BOOT TICKET LAST. A ticket lives 15 minutes from the SSO callback, and a player
+   // who idled on the character tiles that long booted the game with a dead one: AUTH_FAILED,
+   // then the expensive rescue reload. Every boot path ends here, so this is the one place a
+   // fresh ticket is minted right before navigating. The ticket we were handed is only the
+   // fallback for a mint that fails (server down, older server); a 401 means the session died.
+   try {
+     const r = await fetch(sess.gwHttp + '/auth/ticket', { method: 'POST',
+       headers: { authorization: 'Bearer ' + sess.lockerToken } });
+     if (r.status === 401) ticket = '';
+     else ticket = (r.ok && (await r.json()).ticket) || ticket;
+   } catch(e){}
+   if (!ticket){
+     try { sessionStorage.removeItem('omw-mp-session'); } catch(_){}
+     launcherError('Session expired', 'Please sign in again to keep playing.'); return;
+   }
    const frag = (hosted ? '#mwdata=1&mphome=' : '#mphome=') + encodeURIComponent(worldWs)
      + '&mp=' + encodeURIComponent(dialWs)
      + '&locker=' + encodeURIComponent(sess.gwHttp)
@@ -1484,8 +1499,8 @@
  }
 
  // Exit from the game lands on launcher.html#characters: show the character screen straight
- // away from the stored session (no re-SSO), and mint a fresh single-use login ticket for the
- // next boot (the original was spent). A dead/restarted gateway session = sign in again.
+ // away from the stored session (no re-SSO); bootGame mints the fresh single-use login ticket
+ // for the next boot (the original was spent). A dead/restarted gateway session = sign in again.
  (async function charactersReentry(){
    if (location.hash !== '#characters') return;
    history.replaceState(null, '', location.pathname);
@@ -1493,17 +1508,7 @@
    if (!sess || !sess.lockerToken) return; // no session, the normal launcher shows
    const ch = await runCharacterSelect(sess.gwHttp, sess.lockerToken).catch(() => null);
    if (!ch) return; // backed out to the launcher
-   try {
-     const r = await fetch(sess.gwHttp + '/auth/ticket', { method: 'POST',
-       headers: { authorization: 'Bearer ' + sess.lockerToken } });
-     if (r.status === 401) throw new Error('expired');
-     const { ticket } = await r.json();
-     if (!ticket) throw new Error('no ticket');
-     await bootGame(sess, ticket, ch);
-   } catch(e){
-     try { sessionStorage.removeItem('omw-mp-session'); } catch(_){}
-     launcherError('Session expired', 'Please sign in again to keep playing.');
-   }
+   await bootGame(sess, '', ch); // no spare ticket: bootGame mints the boot ticket itself
  })();
 
  // We are back from SSO if the fragment carries a ticket (or an error). Turn it into the
