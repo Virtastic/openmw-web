@@ -852,6 +852,11 @@ handlers.MP_DoorState = function(data)
     doorPending[obj.id] = nil -- network wins over a pending local read
     if type(data.open) == 'boolean' and types.Door.isOpen(obj) ~= data.open then
         pcall(function() types.Door.activateDoor(obj, data.open) end)
+        -- activateDoor swings it silently (the sound lives in Door::activate): backlog 135.
+        pcall(function()
+            local snd = types.Door.record(obj)[data.open and 'openSound' or 'closeSound']
+            if snd and snd ~= '' then core.sound.playSound3d(snd, obj) end
+        end)
     end
 end
 

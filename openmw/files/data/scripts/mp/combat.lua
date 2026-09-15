@@ -139,6 +139,14 @@ function combat.onPuppetSpellHit(data)
     })
 end
 
+-- Cosmetic: the player pressed use in the spell stance (player.lua). Field names are what
+-- server/src/core/combat.ts cast() validates: spellId, casterId, kind.
+function combat.onCast(data)
+    local id = deps.ownIdFn()
+    if not id or not data.spellId then return end
+    mp.sendEvent('CombatCast', { spellId = data.spellId, casterId = id, kind = 'spell' })
+end
+
 -- --------------------------------------------------------------- inbound
 
 -- Rebuild the engine's AttackInfo from the wire body. `weapon` is deliberately absent: the

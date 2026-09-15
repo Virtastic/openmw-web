@@ -80,6 +80,14 @@ Branch: `test/posture-seen`. Sweeps: Jenkins `openmw-web-dev` #89 (9/17), #90 (1
 | 122 | Account delete left locker sessions/tickets behind (erased account could still play out the ticket) | persist/erase.ts, playerstore.ts erased tombstone | done (unit) | staledoc.test.ts |
 | 123 | Ticket TTL (15 min) started at the SSO callback: idling on the tile screen booted with a dead ticket | launcher.html bootGame mints /auth/ticket right before navigating | done (unit) | authticket.test.ts |
 | 124 | One session per ACCOUNT, not character: phone on char A and laptop on char B kicked each other | players.ts activeForChar, connection.ts | done (unit) | session.test.ts (resume-over-live still resolves by account: SessionIndex has no charId) |
+| 129 | Puppet swing is always a chop, played on use RELEASE at 1.2x: the wind-up starts after the blow landed; swings shown in spell stance | puppet.lua showSwing: wind-up on press (start→min attack, held), blow + Weapon Swish on release (max attack→follow stop); spellcast self start→stop in the spell stance | fixed | lua-tests (edge check); needs a bake |
+| 130 | Co-op melee is silent: the cancelled hit chain played the Health Damage / miss sound and the blood; the owner being hit gets no sound | puppet.lua onHitIntercept replays sound + I.Combat.spawnBloodEffect before `return false` (never Actor._onHit); player.lua MP_SelfStats plays Health Damage on an hp drop | fixed | red overlay left (C++ binding) |
+| 131 | A friend casting shows nothing: CombatCast never sent, MP_CastFx dead | player.lua use edge in spell stance → mpCombatCast → combat.onCast → CombatCast{spellId,casterId,kind}; MP_CastFx plays the school's castSound + the effect's castStatic vfx | fixed | lua-tests (wire shape) |
+| 132 | Levitate/slowfall/waterwalking not in VISIBLE_EFFECT: the observer's puppet pogos under a flying friend | global.lua VISIBLE_EFFECT | fixed | lua-tests |
+| 133 | Puppet never looks up/down: peer streamed pitch=0, puppet ignored pitchChange | global.lua avatarStreamTick pitch; puppet.lua controls.pitchChange | fixed | needs a bake |
+| 134 | Puppet runs at the template's Speed: a fast player's puppet lags 128 units then teleports | playerstate.ts stamps `speed` (doc attributes) on PlayerStatsDynamic; global.lua → MP_Stats.speed; puppet.lua sets attributes.speed.base | fixed | avatarstats.test.ts green; needs a bake |
+| 135 | A friend's doors swing silently (World::activateDoor has no sound) | objects.lua MP_DoorState plays the record's openSound/closeSound | fixed | needs a bake |
+| 136 | Degraded mode: poseFlags bit 3 = inAir on the sender, read as `use` by the puppet: every landing played a phantom chop | player.lua poseFlags bit 3 = use (inAir dropped: nothing read it); a flags change alone now triggers a pose send | fixed | lua-tests |
 
 ## Open (found, not fixed)
 
@@ -147,14 +155,6 @@ Branch: `test/posture-seen`. Sweeps: Jenkins `openmw-web-dev` #89 (9/17), #90 (1
 | 126 | ActorBatch is one uncapped message per cell per frame: a TR metropolis exterior is ~100 KB/s per client | actors.lua |
 | 127 | No TR scenario in the harness; builder gamedata has no mods | harness |
 | 128 | Dashboard-disabled expansion (Tribunal) refuses every browser client (page load order includes all masters present) | index.html buildLoadOrder vs gamedata.ts |
-| 129 | Puppet swing is always a chop, played on use RELEASE at 1.2x: the wind-up starts after the blow landed; swings shown in spell stance with the weapon hidden | puppet.lua:126-131, 409-411 |
-| 130 | Co-op melee is silent: puppet.lua:210 `return false` cancels the hit chain, so no Health Damage / miss sound, no blood, no hit reaction on any NPC in a peer-held cell; the owner being hit gets no sound and no red overlay (MP_SelfStats only writes hp) | puppet.lua:210, player.lua:1253 |
-| 131 | A friend casting shows nothing: CombatCast is never sent by any client (MP_CastFx dead), no cast sound, no hands VFX | player.lua (send on use edge in spell stance), combat.ts:401 relays already |
-| 132 | Levitate/slowfall/waterwalking not in VISIBLE_EFFECT: the observer's puppet falls under a flying friend and snaps up every second (pogo) | global.lua:823 |
-| 133 | Puppet never looks up/down: peer streams pitch=0, puppet ignores pitchChange | global.lua:678, puppet.lua:367 |
-| 134 | Puppet runs at the template's Speed (observers never get attributes): a fast player's puppet lags 128 units then teleports | MP_Stats add speed; puppet.lua |
-| 135 | A friend's doors swing silently (World::activateDoor has no sound; the sound is in Door::activate) | objects.lua:854 MP_DoorState → playSound3d(openSound/closeSound) |
-| 136 | Degraded mode (no peer): poseFlags bit 3 = inAir on the sender, read as `use` by the puppet: every landing plays a phantom chop | player.lua:119 vs puppet.lua:409 |
 | 137 | Puppet bow: `shoot attach` runs, `shoot release` gated on mReadyToHit: the arrow may stay glued to the hand after a shot | character.cpp:1141-1145 |
 | 138 | Revive is despawn+spawn: no get-up animation on the puppet | global.lua:2383 |
 | 139 | Feature gaps: no chat bubbles, emotes, party marker on map/compass, friend highlight beyond the crosshair name | — |

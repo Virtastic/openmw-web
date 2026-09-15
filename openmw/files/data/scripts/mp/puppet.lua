@@ -111,9 +111,20 @@ local SWING_GROUP_OF_TYPE = {
     BluntTwoWide = 'weapontwowide', SpearTwoWide = 'weapontwowide',
     MarksmanBow = 'bowandarrow', MarksmanCrossbow = 'crossbow', MarksmanThrown = 'throwweapon',
 }
-local function showSwing()
+-- Two halves, on the two edges of the owner's use bit: the wind-up on the PRESS (held at
+-- 'min attack' until released), the blow on the RELEASE. Played as one clip on release the
+-- wind-up began after the enemy had already taken the damage. In the spell stance the hands
+-- glow instead of a weapon swinging (MP_CastFx adds the sound and the casting vfx).
+local function showSwing(release)
     pcall(function()
         local anim = require('openmw.animation')
+        if types.Actor.getStance(self) == types.Actor.STANCE.Spell then
+            if not release then
+                anim.playBlendedAnimation(self, 'spellcast', {
+                    priority = anim.PRIORITY.Weapon, startKey = 'self start', stopKey = 'self stop' })
+            end
+            return
+        end
         local group = 'handtohand'
         local weapon = types.Actor.getEquipment(self, types.Actor.EQUIPMENT_SLOT.CarriedRight)
         if weapon and types.Weapon.objectIsInstance(weapon) then
@@ -123,12 +134,22 @@ local function showSwing()
             end
         end
         local ranged = group == 'bowandarrow' or group == 'crossbow' or group == 'throwweapon'
-        anim.playBlendedAnimation(self, group, {
-            priority = anim.PRIORITY.Weapon,
-            startKey = ranged and 'shoot start' or 'chop start',
-            stopKey = ranged and 'shoot release' or 'chop follow stop',
-            speed = 1.2,
-        })
+        local kind = ranged and 'shoot' or 'chop'
+        if release then
+            anim.playBlendedAnimation(self, group, {
+                priority = anim.PRIORITY.Weapon,
+                startKey = kind .. ' max attack',
+                stopKey = ranged and 'shoot release' or 'chop follow stop',
+            })
+            core.sound.playSound3d('Weapon Swish', self)
+        else
+            anim.playBlendedAnimation(self, group, {
+                priority = anim.PRIORITY.Weapon,
+                startKey = kind .. ' start',
+                stopKey = kind .. ' min attack',
+                autoDisable = false, -- hold the wind-up until the release plays the blow
+            })
+        end
     end)
 end
 local tier = TIER_NEAR -- last tier stamped on a pose; near until told otherwise
@@ -207,6 +228,17 @@ local function onHitIntercept(attack)
         hitPos = attack.hitPos and { x = attack.hitPos.x, y = attack.hitPos.y, z = attack.hitPos.z } or nil,
         mpTest = attack.mpTest == true, -- Phase 4C: test-hook hits always ride the relay
     })
+    -- THE FEEL OF THE BLOW stays local: the cancelled chain is what played the hit sound and
+    -- the blood (omw/combat/local.lua onHit), so co-op melee was silent. Only the cosmetics
+    -- are replayed here -- never Actor._onHit, which is the crime/actorAttacked path.
+    pcall(function()
+        if attack.successful and ((attack.damage or {}).health or 0) > 0 then
+            core.sound.playSound3d('Health Damage', self)
+            if attack.hitPos and I.Combat.spawnBloodEffect then I.Combat.spawnBloodEffect(attack.hitPos) end
+        else
+            core.sound.playSound3d('miss', self)
+        end
+    end)
     return false -- cancel local damage; the owner applies it
 end
 
@@ -376,6 +408,8 @@ local function onUpdate(dt)
         self.controls.movement = 0
         self.controls.yawChange = shortestArc((target.yaw or curYaw) - curYaw)
     end
+    -- Look up and down too (avatar.lua applies the input's pitch the same way).
+    self.controls.pitchChange = (target.pitch or 0) - self.rotation:getPitch()
     self.controls.sideMovement = 0
     -- Mirror the remote player's run flag, but never while closing the last few units: running
     -- is what turns a small correction into an overshoot.
@@ -405,9 +439,9 @@ local function onUpdate(dt)
     local jumpEdge = bit(target.flags, 2)
     self.controls.jump = jumpEdge and not prevJump
     prevJump = jumpEdge
-    -- Hold is the wind-up, release is the blow: show the swing on the FALLING edge.
+    -- Press is the wind-up, release is the blow: one edge each.
     local using = bit(target.flags, 3)
-    if prevUse and not using then showSwing() end
+    if using ~= prevUse then showSwing(not using) end
     prevUse = using
 end
 
@@ -468,6 +502,14 @@ return {
             apply(d.health(self), data.hp)
             apply(d.magicka(self), data.mp)
             apply(d.fatigue(self), data.ft)
+            -- Speed is the one attribute the body needs: on the template's Speed a fast
+            -- friend's puppet fell 128 units behind and teleported (backlog 134).
+            if data.speed then
+                pcall(function()
+                    local sp = types.Actor.stats.attributes.speed(self)
+                    if sp.base ~= data.speed then sp.base = data.speed end
+                end)
+            end
         end,
         -- M4: authoritative death from the holder. Zero health so the engine plays the
         -- death animation locally; puppet steering stops.
@@ -481,10 +523,24 @@ return {
         end,
         -- M5 cosmetic: mirror a remote caster's spell animation (best effort — a missing
         -- animation group must never break the puppet).
-        MP_CastFx = function()
+        MP_CastFx = function(data)
+            local anim = require('openmw.animation')
             pcall(function()
-                local anim = require('openmw.animation')
                 anim.playBlendedAnimation(self, 'spellcast', { priority = anim.PRIORITY.Weapon })
+            end)
+            -- The school's cast sound and the effect's casting glow, as the caster's own
+            -- engine played them. Best effort: a spell this client has no record for is silent.
+            pcall(function()
+                local spell = core.magic.spells.records[data and data.spellId]
+                local eff = spell and spell.effects[1] and spell.effects[1].effect
+                if not eff then return end
+                local skill = core.stats.Skill.records[eff.school]
+                local snd = skill and skill.school and skill.school.castSound
+                core.sound.playSound3d((snd and snd ~= '' and snd) or (eff.school .. ' cast'), self)
+                local static = types.Static.record(eff.castStatic ~= '' and eff.castStatic or 'VFX_DefaultCast')
+                if static and static.model then
+                    anim.addVfx(self, static.model, { vfxId = eff.id, particleTextureOverride = eff.particle })
+                end
             end)
         end,
         -- M4 handoff: this client became the cell's authority holder. Re-enable AI (the

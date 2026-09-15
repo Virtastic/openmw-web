@@ -72,9 +72,12 @@ local POSE_MIRROR_INTERVAL = 0.5 -- 2 Hz test-surface mirror
 local lastSend = 0
 local lastSentPos = nil
 local lastSentYaw = nil
+local lastSentFlags = nil
 local wasMoving = false
+local forceUseUntil = 0 -- harness: attack:<ms> holds the use bit without a real keypress
 local jumpQueued = false
 local prevJumpCtl = false
+local prevUseCtl = false
 local lastCellKey = nil
 local knockedUntil = 0 -- backlog 73: the peer's avatar is on the floor; hold our body still
 local lastPoseMirror = 0
@@ -116,7 +119,10 @@ local function poseFlags()
     if self.controls.run then flags = flags + 1 end -- bit0
     if self.controls.sneak then flags = flags + 2 end -- bit1
     if jumpQueued then flags = flags + 4 end -- bit2 jump-edge
-    if not types.Actor.isOnGround(self) then flags = flags + 8 end -- bit3 inAir
+    -- bit3 is USE, as the puppet reads it (puppet.lua showSwing) and as the peer's avatar
+    -- stream sets it. It carried inAir here, which nothing read: in degraded mode every
+    -- landing played a phantom chop on every other screen (backlog 136).
+    if (self.controls.use and self.controls.use ~= 0) or core.getRealTime() < forceUseUntil then flags = flags + 8 end
     local stance = types.Actor.getStance(self)
     if stance == types.Actor.STANCE.Weapon then flags = flags + 16 end -- bit4
     if stance == types.Actor.STANCE.Spell then flags = flags + 32 end -- bit5
@@ -134,19 +140,21 @@ local function sendPose(now)
     local yaw = self.rotation:getYaw()
     local walkSpeed = types.Actor.getWalkSpeed(self)
     local animVel = walkSpeed > 0 and (types.Actor.getCurrentSpeed(self) / walkSpeed) or 0
+    local flags = poseFlags()
     mp.sendMove({
         x = pos.x,
         y = pos.y,
         z = pos.z,
         yaw = yaw,
         pitch = self.rotation:getPitch(),
-        flags = poseFlags(),
+        flags = flags,
         animVel = animVel,
     })
     jumpQueued = false
     lastSend = now
     lastSentPos = pos
     lastSentYaw = yaw
+    lastSentFlags = flags
 end
 
 -- Phase 3: the input tier. ~30 Hz of raw intent (self.controls + facing) to the server,
@@ -157,8 +165,6 @@ local inputSeq = 0
 local lastInputSend = 0
 local jumpLatched = false -- a jump edge seen between two input frames (inputTick)
 local INPUT_EVERY = 1 / 30
-
-local forceUseUntil = 0 -- harness: attack:<ms> holds the use bit without a real keypress
 
 local tookControlsSaid = false -- once per session: the rejoin position hold lets go
 local function inputTick(now)
@@ -402,12 +408,22 @@ local function movementTick()
         local moving = lastSentPos == nil
             or (pos - lastSentPos):length2() > 0.25
             or math.abs(yaw - (lastSentYaw or yaw)) > 0.005
+            or poseFlags() ~= lastSentFlags -- a swing or a drawn weapon while standing still
         if moving or wasMoving then -- 'wasMoving and not moving' = the stop-edge send
             sendPose(now)
         end
         wasMoving = moving
     end
     prevJumpCtl = jumpCtl
+
+    -- A CAST YOU CAN SEE (backlog 131): the use press in the spell stance is the cast. The
+    -- server relays CombatCast to the cell and every observer's puppet plays MP_CastFx.
+    local useCtl = (self.controls.use or 0) ~= 0
+    if useCtl and not prevUseCtl and types.Actor.getStance(self) == types.Actor.STANCE.Spell then
+        local spell = types.Actor.getSelectedSpell(self)
+        if spell then core.sendGlobalEvent('mpCombatCast', { spellId = spell.id }) end
+    end
+    prevUseCtl = useCtl
 
     if now - lastPoseMirror >= POSE_MIRROR_INTERVAL then
         lastPoseMirror = now
@@ -1261,6 +1277,9 @@ return {
             if data.kd == true then knockedUntil = core.getRealTime() + 0.5 end
             pcall(function()
                 local d = types.Actor.stats.dynamic
+                -- The blow landed on the peer, so this engine never ran its hit chain: the
+                -- drop in the bar is the only sign, and it was silent (backlog 130).
+                if data.hp.c < d.health(self).current then core.sound.playSound3d('Health Damage', self) end
                 d.health(self).current = data.hp.c
                 d.magicka(self).current = data.mp.c
                 d.fatigue(self).current = data.ft.c

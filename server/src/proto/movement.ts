@@ -14,7 +14,7 @@ export interface PlayerPose {
   z: number;
   yaw: number; // u16, 0..65535 = 0..2pi (wraps)
   pitch: number; // u8, 0..255 = -pi/2..+pi/2
-  flags: number; // u8: bit0 run, bit1 sneak, bit2 jump-edge, bit3 inAir, bit4 weaponDrawn, bit5 spellReady
+  flags: number; // u8: bit0 run, bit1 sneak, bit2 jump-edge, bit3 use (attacking), bit4 weaponDrawn, bit5 spellReady
   animVel: number; // u8, 0..255 = 0..2x base walk speed
   counter: number; // u8, reserved 0 in M1
 }

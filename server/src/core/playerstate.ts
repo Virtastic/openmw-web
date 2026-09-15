@@ -267,11 +267,18 @@ function handleStatsDynamic(ctx: StateCtx, player: Player, body: LTable): boolea
   ctx.store.update(player.charId, (doc) => {
     doc.stats = { ...doc.stats, dynamic: { hp, mp, ft } };
   }, died ? 'now' : 'sweep');
-  const msg = { id: player.id, hp, mp, ft };
+  const msg = { id: player.id, hp, mp, ft, speed: baseSpeed(ctx, player) };
   for (const p of ctx.roster.inWorld()) {
     if (cellsVisible(p.cellKey, player.cellKey)) p.peer.sendEvent('PlayerStatsDynamic', msg);
   }
   return true;
+}
+
+// The owner's base Speed rides the bars to observers (backlog 134): attributes otherwise go
+// to the store only, and a puppet running at its template's Speed lags a fast player and
+// teleports. Read from the doc the client's PlayerAttributes already validated into.
+function baseSpeed(ctx: StateCtx, player: Player): number | undefined {
+  return ctx.store.getCached(player.charId)?.stats?.attributes?.speed;
 }
 
 // Flat string->finite-number map (attributes, skills).
@@ -582,7 +589,7 @@ export function handleAvatarStatsBatch(ctx: StateCtx, sender: Player, value: LVa
     ctx.store.update(p.charId, (doc) => {
       doc.stats = { ...doc.stats, dynamic: { hp, mp, ft } };
     }, died ? 'now' : 'sweep');
-    const msg = { id: p.id, hp, mp, ft };
+    const msg = { id: p.id, hp, mp, ft, speed: baseSpeed(ctx, p) };
     for (const other of ctx.roster.inWorld()) {
       if (other.id !== p.id && cellsVisible(other.cellKey, p.cellKey)) {
         other.peer.sendEvent('PlayerStatsDynamic', msg);

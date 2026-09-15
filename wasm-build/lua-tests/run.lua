@@ -361,6 +361,29 @@ do
     'a notice can evaporate with nobody told why')
   check('social.lua tells the player about it',
     s:find('MP_SocialNotice = function', 1, true) ~= nil)
+  -- Backlog 136: pose bit 3 is USE on both ends. player.lua sent inAir there and puppet.lua
+  -- read it as a swing, so every landing in degraded mode played a phantom chop.
+  local pp = io.open('./openmw/files/data/scripts/mp/puppet.lua'):read('*a')
+  check('player.lua puts the use control in pose bit 3, not inAir',
+    pl:find('self.controls.use ~= 0) or core.getRealTime() < forceUseUntil then flags = flags + 8', 1, true) ~= nil
+    and not pl:find('isOnGround(self) then flags = flags + 8', 1, true))
+  check('puppet.lua reads pose bit 3 as the swing, on both edges',
+    pp:find('local using = bit(target.flags, 3)', 1, true) ~= nil
+    and pp:find('if using ~= prevUse then showSwing(not using) end', 1, true) ~= nil)
+  -- Backlog 132: the movement-shaping effects reach the observer's puppet, or it pogos
+  -- under a levitating friend.
+  local vis = g:match('local VISIBLE_EFFECT = (%b{})')
+  check('global.lua VISIBLE_EFFECT carries levitate, slowfall and waterwalking',
+    vis ~= nil and vis:find('levitate = true', 1, true) ~= nil and vis:find('slowfall = true', 1, true) ~= nil
+    and vis:find('waterwalking = true', 1, true) ~= nil, tostring(vis))
+  -- Backlog 131: the cast the friend sees. The client sends it, and the field names are the
+  -- ones server/src/core/combat.ts cast() validates.
+  local cb = io.open('./openmw/files/data/scripts/mp/combat.lua'):read('*a')
+  check('player.lua raises mpCombatCast on the use edge in the spell stance',
+    pl:find("core.sendGlobalEvent('mpCombatCast', { spellId = spell.id })", 1, true) ~= nil)
+  check('combat.lua sends CombatCast with spellId, casterId and kind',
+    cb:find("mp.sendEvent('CombatCast', { spellId = data.spellId, casterId = id, kind = 'spell' })", 1, true) ~= nil
+    and g:find('eventHandlers.mpCombatCast = combat.onCast', 1, true) ~= nil)
 end
 
 -- ============================== every server->client event, generically, the same way

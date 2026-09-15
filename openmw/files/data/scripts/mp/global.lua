@@ -675,7 +675,7 @@ local function avatarStreamTick(now)
                     lastInputSeq = lastInputSeq[id] or 0,
                     x = pos.x, y = pos.y, z = pos.z,
                     yaw = p.obj.rotation:getYaw(),
-                    pitch = 0,
+                    pitch = p.obj.rotation:getPitch(),
                     -- bit 3: the avatar is attacking (its owner's use bit reached it). Rides
                     -- the pose flags so the owner's state batch -- and every observer's move
                     -- batch -- carries it; player.lua mirrors it as selfFlags for s67.
@@ -820,7 +820,11 @@ local ownerActive = {} -- id -> { localRecordId -> count } effects the OWNER app
 -- The effects of a record that SHOW on another player's body: an invisible friend fades, a
 -- chameleoned one shimmers, a lit one lights the corridor. Everything else in the record is
 -- dropped on an observer's puppet (its bars are a mirror; a local Damage Health would fight it).
-local VISIBLE_EFFECT = { invisibility = true, chameleon = true, light = true }
+-- Levitate, slowfall and water walking shape the MOVEMENT the puppet is steered through: without
+-- them the observer's copy of a flying friend fell under the streamed pose and snapped up every
+-- second (backlog 132). Keys are core.magic.EFFECT_TYPE values (lowercase effect ids).
+local VISIBLE_EFFECT = { invisibility = true, chameleon = true, light = true,
+    levitate = true, slowfall = true, waterwalking = true }
 local function visibleEffectIndexes(localId, indexes)
     local rec
     pcall(function()
@@ -2370,7 +2374,9 @@ local eventHandlers = {
         if not data.id or data.id == net.playerId then return end
         remoteIdentity[data.id] = remoteIdentity[data.id] or {}
         local was = remoteIdentity[data.id].dynamic
-        remoteIdentity[data.id].dynamic = { hp = data.hp, mp = data.mp, ft = data.ft }
+        -- speed: the owner's base Speed, stamped on by the server (backlog 134) -- the puppet
+        -- runs at it instead of the template's.
+        remoteIdentity[data.id].dynamic = { hp = data.hp, mp = data.mp, ft = data.ft, speed = data.speed }
         -- DEATH IS ONE-WAY FOR A BODY. hp 0 killed this puppet (MP_Stats zeroes health and
         -- the engine plays the death), and a later hp > 0 written onto a dead actor is the
         -- corpse-with-healthy-bars MP_AvatarResurrect describes: the friend respawned, but on
@@ -3210,6 +3216,7 @@ end
 eventHandlers.mpCombatHit = combat.onPuppetHit
 
 eventHandlers.mpCombatSpellHit = combat.onPuppetSpellHit
+eventHandlers.mpCombatCast = combat.onCast
 -- Wrap the op-result applier to expose the outcome to the harness (s31 race assert).
 local baseOpResult = eventHandlers.MP_ContainerOpResult
 eventHandlers.MP_ContainerOpResult = function(data)
