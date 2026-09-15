@@ -8,7 +8,7 @@ States: **open** (found, not started) · **fixed** (committed on the branch, no 
 · **baking** (in a Jenkins sweep) · **done** (green in a sweep, or unit-tested where the harness
 cannot reach) · **wontfix** (design decision, reason given).
 
-Branch: `test/posture-seen`. Sweeps: Jenkins `openmw-web-dev` #89 (9/17), #90 (13/14; s147 open as #100), #91 running (31 scenarios).
+Branch: `test/posture-seen`. Sweeps: Jenkins `openmw-web-dev` #89 (9/17), #90 (13/14; s147 open as #100), #91 (27/31: s114 #183, s147 #100, s149 harness cmd timeout #185, s160 booted the example suite — fixed).
 
 ## Found by the 2026-09-14/15 audits
 
@@ -71,7 +71,7 @@ Branch: `test/posture-seen`. Sweeps: Jenkins `openmw-web-dev` #89 (9/17), #90 (1
 | 97 | Harness: the peer's Lua errors were never scanned | mp-harness.mjs | fixed | — |
 | 98 | Harness: worlds spawned on GW_PORT+200, onto other scenarios' gateway ports | _gateway.mjs, s47, s48 | fixed | — |
 | 99 | Stat values unbounded, level +1 sixty times a second, a container's first open canonical however absurd | playerstate.ts, worldstate.ts | done (unit) | adversarial.test.ts |
-| 116 | Arrows landed twice (owner's phantom + the peer's); knockdown not relayed (owner rubber-banded) | objects.lua, global.lua, player.lua, luabindings.cpp, playerstate.ts | fixed | avatarstats.test.ts (kd) |
+| 116 | Arrows landed twice (owner's phantom + the peer's); knockdown not relayed (owner rubber-banded) | objects.lua, global.lua, player.lua, luabindings.cpp, playerstate.ts | done | avatarstats.test.ts (kd); s109 s110 green #91 |
 | 117 | Companions lost on a world restart; memberVars persisted but never replayed | worldstate.ts, cellstore.ts, objects.lua | done (unit) | actor.test.ts, quests.test.ts |
 | 118 | TR landmass installed before Tamriel Data loaded in that order: a quietly corrupt world on every engine | mods.ts | done (unit) | mods.test.ts |
 | 119 | PROD: the inner Caddy stripped CF-Connecting-IP -- every player was the edge's IP (one login budget, one household, /ipban bans everyone) | deploy/Caddyfile | fixed | needs [limits] trustCloudflareIp = true in the prod config.toml + a deploy |
@@ -101,6 +101,7 @@ Branch: `test/posture-seen`. Sweeps: Jenkins `openmw-web-dev` #89 (9/17), #90 (1
 | 158 | No "contracted disease" message when the avatar caught it | global.lua MP_SelfSpells: a Disease/Blight record added to the player goes through notice() (sMagicContractDisease with the record name); global context has no openmw.ui | fixed | needs a bake |
 | 159 | Peer follow-teleport ignored vanilla follower rules (in combat, stayoutside, >800 units): a stay-outside guar rode the strider indoors | global.lua canFollowThroughDoor (actionteleport.cpp getFollowers rules); actors.inCombat tracks the follower's own mpActorCombat report since global context cannot read an AI stack; stayoutside read from the mirrored local (#107) | fixed | needs a bake |
 | 182 | The native peer never carried companion.lua (missing from files/data/CMakeLists.txt; the browser bake copies the dir whole, the peer image is the CMake tree): as holder the peer never reported follow/combat/travel, handoff bars never applied. Hidden locally by the harness overwriting the image; under Jenkins the sync fails (EACCES) and the baked copy runs | CMakeLists.txt | fixed | lua-tests: every mp.omwscripts path is listed (#91 peer log: Resource scripts/mp/companion.lua not found) |
+| 185 | Harness cmd timeout (20 s) fired under a streamed-load frame (s149 red in #89 and #91, green #90) and printed nothing of the client | mp-harness.mjs handle.cmd | fixed | 60 s deadline + console tail on timeout |
 | 160 | A service window open longer than 15 s stopped syncing (live/barter watches shared the chest's 15 s expiry): stock dupes, the gold delta never sent, training paid into a per-client purse | objects.lua openContainerNow: `until_ = live and math.huge or (now + CONTAINER_WATCH_SECONDS)`; onBarterClose and the tick's invalid-object branch still end a live watch | fixed | lua-tests (source checks); s161 needs a bake |
 | 161 | Player-made records (potions, enchanted items) never mapped toNet/toLocal on the container/barter wire: a friend saw your potion as their own `Generated:` record, restock re-added the bogus id forever | objects.lua: countsToItems and sendContainerOp go out through worldmp.toNet (pendingOps keep the net id so the Update echo still consumes); setContainerContents, applyContainerDelta and the refused-take undo come back through worldmp.toLocal -- the drop path's own rule | fixed | lua-tests (source checks); needs a bake |
 | 162 | The dialogue lock was released the moment a service window opened (Dialogue→Barter fired mpDialogueClosed): bribe/admire after the trade never travelled; two players traded at once | player.lua UiModeChanged: `talking(m)` = Dialogue or GOLD_SERVICE_MODES[m]; mpDialogueClosed only on `talking(old) and not talking(new)` | fixed | lua-tests; s161 (B's dlg: refused while A trades) needs a bake |
