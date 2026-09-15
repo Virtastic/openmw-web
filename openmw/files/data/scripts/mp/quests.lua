@@ -79,6 +79,7 @@ local globalQueued = {} -- name -> true while it is in globalQueue
 local factions = {} -- factionId -> fingerprint string
 local factionsSeeded = false
 local bounty = nil -- last seen crime level
+local peerLevel = {} -- peer only: last level per avatar id (or 'shared'), backlog 140
 
 local memberWatch = {} -- obj.id -> {obj=, script=, last={name->value}, nextPoll=, until_=}
 local memberApplied = {} -- "<recordId>.<var>" -> value (inbound MemberVarUpdate mirror)
@@ -667,6 +668,14 @@ handlers.MP_CrimeUpdate = function(data)
     -- engine's own bounty field is player-only -- hence the MP registry (mwmp/puppets.hpp),
     -- which is what the generalised crime pursuit reads.
     if mp.isSystem and mp.isSystem() then
+        -- Backlog 140: a drop is a paid fine. Record it so witnesses/guards already pursuing
+        -- calm down (actors.cpp compares their crime id with the player's paid id); zeroing
+        -- the registry alone left them hunting. Keyed per source so a joiner restoring
+        -- bounty 0 does not forgive everyone else's crimes.
+        local key = data.shared and 'shared' or data.byId or 'none'
+        local prev = peerLevel[key]
+        peerLevel[key] = level
+        if prev ~= nil and level < prev and mp.recordCrimePaid then mp.recordCrimePaid() end
         -- SHARED CRIME IS ONE RECORD FOR THE PARTY: every client applies it to its own
         -- player, so every avatar here has to carry it too, or the peer's guards hunt only
         -- the one who did it while the clients believe everyone is wanted.

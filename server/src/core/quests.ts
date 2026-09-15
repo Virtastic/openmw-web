@@ -14,7 +14,7 @@ import { parseObjRef, type ObjRef } from '../proto/ref';
 import type { Player, Roster } from './players';
 import { INPUT_DRIVING_MS } from './players';
 import { cellsVisible } from './movement';
-import type { CellStore } from '../persist/cellstore';
+import type { CellStore, FactionState } from '../persist/cellstore';
 import type { PlayerStore } from '../persist/playerstore';
 import { log } from '../log';
 
@@ -246,14 +246,26 @@ export class Quests {
   // Full journal state for a joining client: the shared map, or their own in individual
   // mode. Always sent (an empty map is a valid, meaningful answer).
   // The bounty this world holds the player to, at join (players.ts `bounty` says why it is
-  // not the doc's): the party's one record when crime is shared, else the campaign's.
+  // not the doc's): the party's one record when crime is shared, else the player's own
+  // (backlog 147: personal crime seeded a guest with the HOST's bounty; crime() below
+  // only ever writes a personal bounty to the player's own doc, so read it from there).
   seedBounty(player: Player): void {
     if (this.ctx.isShared('crime')) {
       player.bounty = this.ctx.cells.sharedQuest().bounty ?? 0;
       return;
     }
-    const target = this.ctx.journalTarget(player) ?? player.charId;
-    player.bounty = this.ctx.players.getCached(target)?.bounty ?? 0;
+    player.bounty = this.ctx.players.getCached(player.charId)?.bounty ?? 0;
+  }
+
+  // Backlog 141: the faction ranks a GUEST arrives with. With factions shared, a guest's
+  // join/promotion is written to the host's doc and shared.factions (faction() below), but
+  // the welcome record came from the guest's own doc: they arrived with their HOME ranks and
+  // a relog lost the rank earned here. Host doc first (the persisted campaign), shared map
+  // over it (what changed here). undefined = keep the player's own doc.
+  guestFactions(player: Player): Record<string, FactionState> | undefined {
+    const owner = this.ctx.ownerCharId();
+    if (!this.ctx.isShared('factions') || owner === undefined || owner === player.charId) return undefined;
+    return { ...(this.ctx.players.getCached(owner)?.factions ?? {}), ...this.ctx.cells.sharedQuest().factions };
   }
 
   sendJournalSync(player: Player): void {

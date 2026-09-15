@@ -2296,6 +2296,7 @@ local eventHandlers = {
     MP_PlayerCellChange = function(data)
         if not data.id or data.id == net.playerId then return end
         remoteCell[data.id] = data.cellKey
+        actors.catchUpCell(data.cellKey) -- backlog 142: newcomer hears the room's dispositions
         -- A CELL CHANGE WITHOUT A POSITION IS NOT A TELEPORT ORDER. On the peer the branch
         -- below MOVES that player's avatar to these coordinates, so a relay carrying no pose
         -- (or a fabricated one) would drop the body at the world origin and stream

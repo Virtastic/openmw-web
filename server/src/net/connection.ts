@@ -1758,7 +1758,11 @@ export class Connection implements Peer {
     // offered pay-or-jail by every guard here while the peer's guards ignored them -- and a
     // guest who was clean at home walked past guards the peer had hunting them.
     this.ctx.quests.seedBounty(this.player);
-    const record = doc && (doc.appearance || forceRecord) ? { ...doc, bounty: this.player.bounty ?? 0 } : null;
+    // Same for faction ranks when they are shared (backlog 141): a guest gets the campaign's.
+    const factions = this.ctx.quests.guestFactions(this.player);
+    const record = doc && (doc.appearance || forceRecord)
+      ? { ...doc, bounty: this.player.bounty ?? 0, ...(factions ? { factions } : {}) }
+      : null;
     // serverSeq = binary seq already consumed for this connection (0: none yet).
     this.sendText(
       welcome(this.player.id, sessionToken, this.ctx.motd(), this.outSeq, record, {

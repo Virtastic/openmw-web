@@ -98,3 +98,80 @@ test("a guest's welcome carries the host world's bounty; their crime is the part
   await world.flush();
   assert.equal(readPlayerDoc(dataDir, hostChar)?.['bounty'], 300, "shared crime is the campaign's record");
 });
+
+const chargen = (c: TestClient, name: string) => {
+  c.sendEvent('PlayerAppearance', { race: 'dark elf', head: 'h', hair: 'x', isMale: true, class: 'nightblade', name });
+  c.sendEvent('ChargenComplete', {});
+};
+
+// Backlog 141: with factions SHARED the guest's rank is the campaign's -- the host's doc
+// seeds it and a rank the guest earns here is written to that doc and shared.factions --
+// but the welcome record came from the guest's own doc, so they arrived with home ranks and
+// a relog lost what they earned here.
+test("a guest's welcome carries the host campaign's faction ranks, including one the guest earned", async (t) => {
+  const { SocialStore } = await import('../src/core/socialstore');
+  const dataDir = tmpDataDir();
+  new SocialStore(dataDir).addFriend('host', 'guest', Date.now());
+  const home = await startServer({ requireGameData: false, dataDir: tmpDataDir(), sharedDir: dataDir, port: 0, host: '127.0.0.1', worldMode: 'private', worldOwner: 'guest', worldId: 'priv-guest', configOverride: { login: { allowHarnessAuth: true } } as never });
+  const g0 = await TestClient.connect(home.port);
+  await g0.joinAsNew('Guest', 'hunter22');
+  await g0.waitEvent('PlayerList');
+  chargen(g0, 'Guest');
+  g0.sendEvent('FactionUpdate', { factionId: 'thievesguild', rank: 5 }); // home rank: must not travel
+  g0.close(); await g0.closed; await home.flush(); await home.close();
+
+  const world = await startServer({ requireGameData: false, dataDir: tmpDataDir(), sharedDir: dataDir, port: 0, host: '127.0.0.1', worldMode: 'party', worldOwner: 'host', worldId: 'priv-host', configOverride: { login: { allowHarnessAuth: true } } as never });
+  t.after(() => world.close());
+  const host = await TestClient.connect(world.port);
+  t.after(() => host.close());
+  await host.joinAsNew('Host', 'hunter22');
+  await host.waitEvent('PlayerList');
+  chargen(host, 'Host');
+  host.sendEvent('FactionUpdate', { factionId: 'fightersguild', rank: 3, reputation: 12 });
+  await world.flush();
+
+  const guest = await TestClient.connect(world.port);
+  const gw = await guest.joinExisting('Guest', 'hunter22');
+  const factions = (gw['playerRecord'] as Record<string, unknown>)['factions'] as Record<string, unknown>;
+  assert.deepEqual(factions['fightersguild'], { rank: 3, reputation: 12 }, "the host's rank did not reach the guest's welcome");
+  assert.equal(factions['thievesguild'], undefined, 'a home rank travelled into the visit');
+  await guest.waitEvent('PlayerList');
+  guest.sendEvent('FactionUpdate', { factionId: 'magesguild', rank: 1 });
+  await host.waitEvent('FactionUpdate');
+  guest.close(); await guest.closed;
+
+  const again = await TestClient.connect(world.port);
+  t.after(() => again.close());
+  const gw2 = await again.joinExisting('Guest', 'hunter22');
+  const f2 = (gw2['playerRecord'] as Record<string, unknown>)['factions'] as Record<string, unknown>;
+  assert.deepEqual(f2['magesguild'], { rank: 1 }, 'the rank the guest earned here was lost on relog');
+});
+
+// Backlog 147: with crime PERSONAL the guest is held to their own number, not the host's.
+test("personal crime: a guest's welcome carries their own bounty, not the host's", async (t) => {
+  const { SocialStore } = await import('../src/core/socialstore');
+  const dataDir = tmpDataDir();
+  new SocialStore(dataDir).addFriend('host', 'guest', Date.now());
+  const personal = { login: { allowHarnessAuth: true }, sharing: { crime: false } } as never;
+  const home = await startServer({ requireGameData: false, dataDir: tmpDataDir(), sharedDir: dataDir, port: 0, host: '127.0.0.1', worldMode: 'private', worldOwner: 'guest', worldId: 'priv-guest', configOverride: personal });
+  const g0 = await TestClient.connect(home.port);
+  await g0.joinAsNew('Guest', 'hunter22');
+  await g0.waitEvent('PlayerList');
+  chargen(g0, 'Guest');
+  g0.sendEvent('CrimeUpdate', { bounty: 500 });
+  g0.close(); await g0.closed; await home.flush(); await home.close();
+
+  const world = await startServer({ requireGameData: false, dataDir: tmpDataDir(), sharedDir: dataDir, port: 0, host: '127.0.0.1', worldMode: 'party', worldOwner: 'host', worldId: 'priv-host', configOverride: personal });
+  t.after(() => world.close());
+  const host = await TestClient.connect(world.port);
+  t.after(() => host.close());
+  await host.joinAsNew('Host', 'hunter22');
+  await host.waitEvent('PlayerList');
+  chargen(host, 'Host');
+  host.sendEvent('CrimeUpdate', { bounty: 400 });
+  await world.flush();
+  const guest = await TestClient.connect(world.port);
+  t.after(() => guest.close());
+  const gw = await guest.joinExisting('Guest', 'hunter22');
+  assert.equal((gw['playerRecord'] as Record<string, unknown>)['bounty'], 500, "personal crime seeded the guest with the host's 400");
+});

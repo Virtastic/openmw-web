@@ -859,6 +859,18 @@ function actors.isHolderOf(cellKey)
     return cellKey ~= nil and held[cellKey] ~= nil
 end
 
+-- Backlog 142: disposition and equipment go out on change only, so a player entering a
+-- cell we hold never heard the persuasion that happened before they arrived (and their
+-- next persuasion overwrote it). Forget the last-sent values for that cell; the next tick
+-- re-sends every actor's current state to the room.
+function actors.catchUpCell(cellKey)
+    local cell = cellKey and held[cellKey]
+    if not cell then return end
+    for _, tracked in pairs(cell.actors) do
+        tracked.dispVal, tracked.equipFp = nil, nil
+    end
+end
+
 -- Phase 4C: does ANYONE simulate this cell right now (the peer, in the one-peer model)?
 -- Distinct from isHolderOf ("do I"). combat.lua asks this to decide whether a real melee
 -- hit is forwarded (nobody simulating: degraded relay) or left to the avatar's own swing.

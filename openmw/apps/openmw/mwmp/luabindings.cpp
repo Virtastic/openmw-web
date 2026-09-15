@@ -46,6 +46,7 @@
 
 #include "../mwworld/class.hpp"
 #include "../mwworld/esmstore.hpp"
+#include "../mwworld/player.hpp"
 
 #include "netmanager.hpp"
 
@@ -230,6 +231,12 @@ namespace MWMP
             setAvatarBounty(obj.as<MWLua::Object>().id(), bounty);
         };
         api["clearAvatars"] = []() { clearAvatars(); };
+        // Backlog 140: paying a fine only calmed the owner's witnesses. The engine records the
+        // paid crime id from Player.setCrimeLevel(0), which the peer never calls (avatar
+        // bounties live in the registry above), so its guards kept pursuing. Same call the
+        // owner's client makes; the peer's player is the reference the witness check in
+        // actors.cpp compares against anyway.
+        api["recordCrimePaid"] = []() { MWBase::Environment::get().getWorld()->getPlayer().recordCrimeId(); };
         // Backlog 73: knockdown is not in the Lua stats API; the peer reports it with the avatar
         // bars so the owner stops driving a body that is lying on the floor.
         api["isKnockedDown"] = [](const sol::object& obj) -> bool {

@@ -1225,6 +1225,12 @@ namespace MWMechanics
         if (actor == getPlayer() || !actor.getClass().isNpc() || actor.getClass().getCreatureStats(actor).isDead())
             return false;
 
+        // Backlog 143: another player's body is not a witness (same predicate as
+        // canCommitCrimeAgainst: avatars, and puppets without a content file).
+        const ESM::RefNum actorRef = actor.getCellRef().getRefNum();
+        if (MWMP::isAvatar(actorRef) || (MWMP::isPuppet(actorRef) && !actorRef.hasContentFile()))
+            return false;
+
         if (actor.getClass().getCreatureStats(actor).getAiSequence().isInCombat(victim))
             return false;
 
