@@ -37,9 +37,9 @@ Branch: `test/posture-seen`. Sweeps: Jenkins `openmw-web-dev` #89 (2026-09-15, 9
 | 21 | Travel fare dropped by the reach gate (sent from the destination cell) | worldstate.ts | done (unit) | economy.test.ts |
 | 22 | Disposition lost on peer restart / handoff | actors.lua | fixed | (scenario: persuade, restart peer) |
 | 23 | Local fall/drown damage killed the client before the peer's verdict | character.cpp, actors.cpp | baking | s147 |
-| 24 | Peer avatar never drowned: OUT OF PROCESSING RANGE of a hand-started peer (harness) | harness | baking | s149 on the managed peer |
+| 24 | Peer avatar never drowned: OUT OF PROCESSING RANGE of a hand-started peer (harness) | harness | done | s149 PASS #90 (drowning cost 82 hp, both sides agree) |
 | 25 | A heal in the frame a peer report lands was erased before measurement | identity.lua | baking | s150, s146 |
-| 26 | Cloud-locker page could not change world a second time (mplocker dropped) | index.html | baking | s141 (green locally) |
+| 26 | Cloud-locker page could not change world a second time (mplocker dropped) | index.html | done | s141 PASS #90 |
 | 27 | Guest death seen by the host (puppet falls, gets up) | s131 | done | s131 PASS #89 |
 | 36 | Magic at a puppet: only Damage/Restore H/M/F forwarded; Calm/Soultrap/Paralyze/Levitate-on-NPC applied to the local copy only | spelleffects.cpp | fixed | needs a target-spell mint hook + scenario |
 | 37 | PvP swing/kill read as assault/murder by witnesses | mechanicsmanagerimp.cpp | fixed | (scenario: pvp on, hit B before a guard, bounty stays 0) |
@@ -61,6 +61,16 @@ Branch: `test/posture-seen`. Sweeps: Jenkins `openmw-web-dev` #89 (2026-09-15, 9
 | 70 | Bound items declared in the doc: relog inside the spell granted a permanent one | identity.lua | fixed | — |
 | 71 | dayspassed never written: day-based timers a day late or backwards | world.lua | fixed | — |
 | 72 | Weather holder spoke only on change; a guest's rolled-back rest left the wrong sky | world.lua | fixed | — |
+| 90 | Sneak-attack critical / weapon skill use / OnPCHitMe gated on attacker == getPlayer(): never the avatar | combat.cpp, npc.cpp, creature.cpp, actorutil | fixed | scenario: sneak behind an NPC, hit ≥ 4x |
+| 91 | On-strike enchantment cast by the owner's dead swing AND the avatar: twice, charge drained twice | spelleffects.cpp | fixed | — |
+| 92 | Peer hp-0 report gated for a non-driving (alt-tabbed) player: death never recorded, free resurrect | playerstate.ts | fixed | — |
+| 93 | Container take in the last 2 s before a disconnect: debited from the container, never credited | connection.ts | fixed | — |
+| 94 | Cell reset resync omitted locks and deaths | worldstate.ts | fixed | — |
+| 95 | Guest never told whose world it is on a fresh page; Enter opens chat; chat key behind the reconnect banner; accept buttons twice; modal ignores Lua's sentence; toasts said (F) | global.lua, index.html, social.lua | fixed | — |
+| 96 | Harness: no per-scenario ceiling (a hung scenario killed the sweep with no summary) | mp-harness.mjs | fixed | — |
+| 97 | Harness: the peer's Lua errors were never scanned | mp-harness.mjs | fixed | — |
+| 98 | Harness: worlds spawned on GW_PORT+200, onto other scenarios' gateway ports | _gateway.mjs, s47, s48 | fixed | — |
+| 99 | Stat values unbounded, level +1 sixty times a second, a container's first open canonical however absurd | playerstate.ts, worldstate.ts | done (unit) | adversarial.test.ts |
 
 ## Open (found, not fixed)
 
@@ -108,6 +118,22 @@ Branch: `test/posture-seen`. Sweeps: Jenkins `openmw-web-dev` #89 (2026-09-15, 9
 | 87 | No harness run beyond 4 browsers; soak bots never touch containers or a peer | bots/soak.ts |
 | 88 | BAD_CONTENT terminal: nothing tells the player that a reload after the mod mounts is the remedy | index.html mpErrorModal |
 | 89 | Launcher "friends playing now" lists party+occupied only; an online-but-solo friend is invisible | launcher.html |
+| 100 | s147 on the managed peer: avatar follow-teleported to z=1453 on release and no fall damage reported; server logged avatar_stats_gated (client sent no input for 6 s mid-ritual) -- why does a standing client stop driving? | player.lua inputTick / harness |
+| 101 | Nametags: none rendered over puppets (only the crosshair tooltip); stale name after a rename | needs an OSG text node |
+| 102 | Chat history lost on every world switch (page reboot); idle feed lines never fade; whisper dropdown lists friends in other worlds | index.html |
+| 103 | "join" offered for every online friend incl. one in your world / solo; "Joining X..." status never clears | FriendView needs world/mode |
+| 104 | Lua and JS narrate social failures with two different sentences | social.lua:438 vs index.html |
+| 105 | No "invite" button in the page's social panel | index.html |
+| 106 | Companions not persisted across a world restart (follow claims are memory only) | worldstate.ts followedBy → cell doc |
+| 107 | memberVars (per-object MWScript locals) persisted but never replayed to joiners/peer | quests.ts, WorldCellState |
+| 108 | Player and cell docs sweep on independent 45 s timers: a crash can dupe or lose a container take | playerstore/cellstore |
+| 109 | Arrows land twice (owner's local miss + the peer's); missed arrows stored in the puppet copy | objects.lua onItemActive / launchProjectile gate |
+| 110 | Essential-NPC message shown on the peer, never the owner | actors.cpp |
+| 111 | hitn: bypasses the real swing path (combat.lua ignores non-test Hits); most kill scenarios prove the relay, not the swing | scenarios → attack:/press: |
+| 112 | sethp:/rest: hooks are direct writes; no scenario exercises death-from-damage, the wait dialog, training, level-up dialog | hooks |
+| 113 | Mirrors that are never cleared (hitFwd, spellFwd, castAt, doorEnter, takeOwned, chestOp) let a second wait pass instantly | scenarios: clear before waiting |
+| 114 | SKIP detection by log text; a sweep of skips exits 0 | mp-harness.mjs |
+| 115 | Peer clock is load-dependent (fixed dt 1/20 per tick): duration-based asserts compare two clocks | engine.cpp headless |
 
 ## Wontfix / by design
 
