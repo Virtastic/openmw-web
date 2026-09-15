@@ -55,7 +55,7 @@ export default async function run(ctx) {
     cur = (await bars(a)) || cur;
     local = Number(await a.eval('window.omw.state.hp'));
     if (!firstHurtAt && cur.c < start.c - 1) firstHurtAt = Date.now() - t0;
-    if (Math.round((Date.now() - t0) / 1000) % 6 < 2) {
+    if (true) {
       const z = (await pose(a)).z, az = Number(JSON.parse(await b.eval(`JSON.stringify(${rowOf})`)).z);
       await a.eval("if (window.omw.state) window.omw.state.body = null; 'cleared';"); await a.cmd('body');
       await a.waitFor("typeof window.omw.state.body === 'string'", 5_000, 'body answered');

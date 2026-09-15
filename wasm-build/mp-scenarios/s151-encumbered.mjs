@@ -83,13 +83,17 @@ export default async function run(ctx) {
   await ctx.sleep(4_000);
   const left = await countOf(a, HEAVY);
   ctx.log(`dropped the cuirasses (${left} left in the pack)`);
-  const p4 = await pose(a);
-  await a.cmd(`walk:${dir},3000`);
-  await ctx.sleep(4_000);
-  const p5 = await pose(a);
-  const again = dist2(p4, p5);
-  ctx.log(`after dropping the load a walk covered ${again.toFixed(0)} units`);
+  // The avatar sheds the load when the inventory diff (2 s cadence) reaches the peer and
+  // the doc is pushed; try a few walks over ~20 s rather than one guess at the latency.
+  let again = 0;
+  for (let i = 0; i < 5 && again < 100; i++) {
+    const p4 = await pose(a);
+    await a.cmd(`walk:${dir},3000`);
+    await ctx.sleep(3_500);
+    again = dist2(p4, await pose(a));
+    ctx.log(`after dropping the load, walk ${i + 1} covered ${again.toFixed(0)} units (divergence ${await a.eval('window.omw.state.selfDivergence')})`);
+  }
   assert.ok(left === 0, `the drops did not empty the pack (${left} left)`);
-  assert.ok(again > 100, `still cannot move after dropping the load (${again.toFixed(0)} units)`);
+  assert.ok(again > 100, `still cannot move after dropping the load (${again.toFixed(0)} units): the avatar kept the weight`);
   ctx.log('PASS: over-encumbered on every screen, mobile again once the load is dropped');
 }

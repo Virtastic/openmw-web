@@ -327,6 +327,11 @@ local function movementTick()
         return
     end
     local now = core.getRealTime()
+    -- OUR OWN TELEPORT FIRST. The frame after a teleport lands, the sample in hand still
+    -- describes the old place; reconciling to it before the jump detector below has run
+    -- snapped the player straight back (and the detector then announced the old spot). Seen
+    -- with every same-cell teleport: the client stayed put while its avatar went.
+    if lastOwnPos ~= nil and (self.position - lastOwnPos):length2() > SNAP_DIST * SNAP_DIST then latestSelf = nil end
     selfReconcileTick() -- Phase 3: one correction per frame toward the newest peer pose
     inputTick(now) -- Phase 3: raw intent to the peer, beside the pose stream
     identity.tick(now) -- M2: appearance/equipment/stats/inventory diff broadcasts
@@ -457,7 +462,6 @@ local function walkTick()
     self.controls.sideMovement = walkCmd.dx
     self.controls.run = walkCmd.run
     self.controls.sneak = walkCmd.sneak
-    self.controls.jump = walkCmd.up
 end
 
 -- HARNESS ONLY. Mirrors the merchant's purse so a scenario can assert on it. Polled rather
@@ -1035,14 +1039,13 @@ local function dispatch(cmd)
         end
         -- walk:<dx>,<dy>,<ms>[:run|:sneak] -- the optional mode is what a friend's puppet is
         -- expected to show (s145); jump queues one jump edge on the next frame.
-        local dx, dy, ms, mode = cmd:match('^walk:(-?[%d.]+),(-?[%d.]+),(%d+):?(%a*)$') -- mode: run | sneak | up
+        local dx, dy, ms, mode = cmd:match('^walk:(-?[%d.]+),(-?[%d.]+),(%d+):?(%a*)$') -- mode: run | sneak (a levitating body climbs by LOOKING up and walking: face: then walk:)
         if dx then
             walkCmd = {
                 dx = tonumber(dx),
                 dy = tonumber(dy),
                 run = mode == 'run',
                 sneak = mode == 'sneak',
-                up = mode == 'up', -- jump held: how a levitating player climbs (s148)
                 stopAt = core.getRealTime() + tonumber(ms) / 1000,
             }
             I.Controls.overrideMovementControls(true)

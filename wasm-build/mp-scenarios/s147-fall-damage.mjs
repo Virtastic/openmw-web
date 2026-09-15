@@ -18,6 +18,14 @@ const DROP = 600; // units above the ground: past fFallDamageDistanceMin (400), 
 const parseBars = (s) => { const m = /^(\d+)\/(\d+)$/.exec(String(s ?? '')); return m ? { c: Number(m[1]), b: Number(m[2]) } : null; };
 const bars = async (c) => parseBars(await c.eval('window.omw.state.selfStats'));
 const pose = async (c) => JSON.parse(await c.eval('window.omw.state.pose||"null"'));
+// Climb on levitation: look steeply up (the face hook sets yaw and pitch toward a point),
+// then walk forward for `ms`; a flying body moves along its view direction.
+async function climbUp(c, ctx, ms) {
+  const p = await pose(c);
+  await c.cmd(`face:${p.x},${p.y + 60},${p.z + 100 + 2000}`);
+  await ctx.sleep(600);
+  await c.cmd(`walk:0,1,${ms}:run`);
+}
 // The player's own cast path with a minted spell: one effect, cheap, always lands. Learned
 // and selected by the engine, then the spell stance and the use key on THIS engine -- a real
 // cast is what the effect mirror forwards to the avatar. Returns the spell id.
@@ -74,10 +82,12 @@ export default async function run(ctx) {
   // Levitate, then dispel it mid-air: the body is in the air with no ground reference below
   // the point it was released, exactly as a fall from a ledge.
   const lev = await castSelf(a, ctx, 'levitate', 100, 60); // 100 pts: ~300 units/s of climb
-  await a.cmd('walk:0,0,8000:up');
+  // A levitating body moves where it LOOKS (movementsolver: velocity = pitch x yaw x
+  // movement); jump is zeroed while flying. Look steeply up, walk forward.
+  await climbUp(a, ctx, 8000);
   await a.waitFor(`JSON.parse(window.omw.state.pose||"{}").z > ${ground + DROP}`, STEP, `climbed ${DROP} units`);
   const top = (await pose(a)).z;
-  await a.cmd('walk:0,0,1:up'); // end the climb now
+  await a.cmd('walk:0,1,1'); // end the climb now
   await a.cmd(`dispel:${lev}`);
   ctx.log(`released at z=${top.toFixed(0)} (+${(top - ground).toFixed(0)})`);
   await a.waitFor(`Math.abs(JSON.parse(window.omw.state.pose||"{}").z - ${ground}) < 60`, STEP, 'landed');
