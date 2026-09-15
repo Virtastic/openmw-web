@@ -264,6 +264,15 @@ Branch: `test/posture-seen`. Sweeps: Jenkins `openmw-web-dev` #89 (9/17), #90 (1
 | 312 | Blocked hits are silent and invisible for the owner; armor-type hit sounds play on the peer only; block state consumed per frame (needs a per-avatar counter drained with the stats report) | character.cpp:399 |
 | 313 | Dead-swing side effects on local NPC copies (arrow-in-inventory roll, shield charge/fatigue drain, unequip) become canonical loot via #297 | combat.cpp:299, npc.cpp:696 |
 | 314 | Werewolf kill count lands on the avatar's NpcStats, never in the doc | npc.cpp:826; identity.lua |
+| 315 | HIGH: custom-record ids are per WORLD (mp_<kind>_<n> from 1 in each world's RecordStore) while the player doc crosses worlds: a friend's potion/enchanted item taken home is transmuted into another world's record or silently dropped from the doc | server.ts:225 open RecordStore on sharedDir (one registry per deployment) |
+| 316 | During the host's 90 s crash grace the world thinks it has no owner (journalTarget from the roster): peer-driven journal/globals land in every GUEST's home doc; a guest's quest writes persist nowhere | server.ts:587 latch ownerCharId at the owner's first auth |
+| 317 | A character parked in a removed mod's interior (or a disabled expansion's cell) cannot launch (engine aborts at --start); the F5 path drops them at exterior 0,0 = open sea, then persists the drowning | global.lua:1370 validate the cell, fall back to rules.respawn*; index.html reboot once without mpstart on "cell is not found" |
+| 318 | Tombstones fill with useless n: keys (summons, levelled spawns); at 2000 every take in the cell replies ok but never persists — the cell's loot dupes on every reload | worldstate.ts:1118/1509 net refs need no tombstone; content refs reply cell_full instead of a non-persistent ok |
+| 319 | [sharing] factions=false in an owned world: a guest's rank writes still target the HOST's doc (the isShared check comes after the write) — the host logs in demoted | quests.ts:606 target = shared ? journalTarget : player.charId |
+| 320 | Journal sharing flips: individual mode is a hybrid (host's journalLog + own map, writes to the host); shared→individual→shared replays a stale shared map and regresses the owner's stages every login | quests.ts:359-394 merge shared.journal = max always; route log/borrowed by charId in individual mode |
+| 321 | journalLog cap 2000 drops the BEGINNING of the campaign (TR passes it) | quests.ts:324 raise to ~5000 or chunk JournalSync |
+| 322 | never_joined discard never fires: world/world.db exists the moment a world boots (sqlite constructor) — abandoned sign-ins leak directories permanently | worlds.ts:529 test a .played marker written on the first human join |
+| 323 | Custom records never cleaned up; at 10,000 the creator's brew silently fails and the item does not survive a relog | m7.ts MAX_CUSTOM_RECORDS; dedupe (#60) |
 
 ## Open (found, not fixed)
 
