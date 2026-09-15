@@ -1455,7 +1455,26 @@ export class Connection implements Peer {
       this.authFail('resume', 'RATE', 'too many auth attempts');
       return;
     }
-    const ticket = this.ctx.resume.claim(msg.token); // single use
+    let ticket: ResumeTicket | undefined = this.ctx.resume.claim(msg.token); // single use
+    if (!ticket) {
+      // THE OLD SOCKET IS STILL OPEN. A ticket is parked when a session CLOSES, and on wifi the
+      // browser notices the drop long before the server's 50 s pong deadline does -- so the
+      // redial arrived with the token of a session the server still thought alive, found
+      // nothing parked, and the client fell all the way back to a fresh ticket and a page
+      // reboot. The token names that live session exactly; take over from it in place.
+      const live = this.ctx.sessions.get(msg.token);
+      const sitting = live ? this.ctx.roster.activeForAccount(live.accountKey) : undefined;
+      if (live && sitting && sitting.inWorld) {
+        ticket = {
+          accountKey: sitting.accountKey, accountName: live.accountName, charId: sitting.charId, expiresAt: Date.now() + 1_000,
+          ...(sitting.cellKey ? { cellKey: sitting.cellKey } : {}),
+          ...(sitting.pose ? { pose: sitting.pose } : {}),
+        };
+        log('info', 'conn.resume_over_live', { account: sitting.accountKey, name: sitting.name });
+        metrics.authSuperseded.inc();
+        sitting.peer.disconnect('SUPERSEDED', 'this character reconnected');
+      }
+    }
     if (!ticket) {
       this.authFail('resume', 'AUTH_FAILED', 'resume token expired or unknown');
       return;

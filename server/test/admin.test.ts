@@ -264,6 +264,32 @@ test('session resume', async (t) => {
     await back.closed; await peer.closed;
   });
 
+  // THE OLD SOCKET IS STILL OPEN. A ticket is parked when a session closes; on wifi the
+  // browser notices the drop long before the server's pong deadline, so the redial carried
+  // the token of a session the server still thought alive and found nothing parked -- the
+  // client then rebooted the page for a fresh ticket. The live session's token is taken over
+  // in place: the old socket is SUPERSEDED, the new one resumes where it stood.
+  await t.test('a resume with the token of a still-open session takes it over in place', async () => {
+    const first = await TestClient.connect(server.port);
+    const w = await first.joinAsNew('Blipped');
+    await first.waitEvent('PlayerList');
+    const token = w.welcome['sessionToken'] as string;
+    first.sendCellChange('8,8', 10, 20, 30);
+    await first.waitEvent('WorldCellState');
+    // first is NOT closed: the server has not noticed the drop.
+    const back = await TestClient.connect(server.port);
+    back.hello();
+    await back.waitJson('SessionHelloOk');
+    back.sendJson({ t: 'SessionResume', token });
+    const welcome = await back.waitJson('SessionWelcome');
+    assert.ok(typeof welcome['sessionToken'] === 'string');
+    back.sendJson({ t: 'SessionReady' });
+    const cellState = (await back.waitEvent('WorldCellState')).value as { cellKey: string };
+    assert.equal(cellState.cellKey, '8,8', 'resumed where the live session stood');
+    await first.waitDisconnect('SUPERSEDED');
+    back.close(); await back.closed;
+  });
+
   await t.test('a resume cannot bypass content policy', async () => {
     // Content policy is adopt-first-canonical and is released when the server empties, so
     // an anchor client stays connected while the resuming one reconnects.
