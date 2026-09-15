@@ -1753,7 +1753,8 @@ window.omw = (function(){
              ('preload doors = false\n' +
               'preload exterior grid = false\n')) +
            '[Game]\n' +
-           'actors processing range = ' + TIER.actors + '\n' +   // AI-process fewer distant NPCs/creatures (towns)
+           // MP: 7168 so a friend stays drawn across a cell (backlog 348); solo keeps 4096 on mid/high.
+           'actors processing range = ' + (ENV.OPENMW_MP_URL ? TIER.actors : (TIER.actors === '7168' ? '4096' : TIER.actors)) + '\n' +
            // 347: waitdialog.cpp:193 autosaves on every Rest/Wait and statemanagerimp refuses
            // in MP with a "Saving is disabled in multiplayer" message box. Off at the baseline
            // so the box never pops; singleplayer keeps the engine default.
@@ -2202,8 +2203,10 @@ window.omw = (function(){
            rootFiles.forEach(function(orig, lower){
              if (official.has(lower)) return;
              if (/\.esm$/.test(lower)) modEsm.push(orig);
-             else if (/\.(esp|omwaddon|omwgame|omwscripts)$/.test(lower)) modEsp.push(orig);
-             else if (/\.(bsa|ba2)$/.test(lower)) modBsa.push(orig);
+             // The wider set is the peer's (backlog 300); a solo locker keeps ignoring Lua mods,
+             // .omwaddon and .ba2 as it always did.
+             else if ((window.__omwMPEnabled ? /\.(esp|omwaddon|omwgame|omwscripts)$/ : /\.esp$/).test(lower)) modEsp.push(orig);
+             else if ((window.__omwMPEnabled ? /\.(bsa|ba2)$/ : /\.bsa$/).test(lower)) modBsa.push(orig);
            });
          var byName=function(a,b){ return a.toLowerCase()<b.toLowerCase()?-1:1; };
          modEsm.sort(byName); modEsp.sort(byName); modBsa.sort(byName);
