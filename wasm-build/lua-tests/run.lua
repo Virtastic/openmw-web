@@ -321,10 +321,10 @@ do
   -- A dial refused by a world that is not ours must go HOME, not dead-end at "sign in again".
   local n = io.open('./openmw/files/data/scripts/mp/net.lua'):read('*a')
   check('net.lua hands an admission refusal to the go-home hook before the fresh-ticket ask',
-    n:find("net.lastErrorDetail == 'this world is private' and net.onRefusedAway", 1, true) ~= nil
+    n:find("net.lastErrorDetail == 'this world is private' or net.lastErrorDetail == 'you were sent home') and net.onRefusedAway", 1, true) ~= nil
     and n:find('net.onRefusedAway', 1, true) < n:find("askPageForFreshTicket('credential refused", 1, true))
   check('global.lua wires net.onRefusedAway to the WorldClosed notice + switch home',
-    g:find('net.onRefusedAway = function', 1, true) ~= nil and g:find("goHome({ reason = 'not_open' })", 1, true) ~= nil)
+    g:find('net.onRefusedAway = function', 1, true) ~= nil and g:find("goHome({ reason = detail == 'you were sent home' and 'kicked' or 'not_open' })", 1, true) ~= nil)
   -- Self reconciliation must run ONCE PER FRAME against the newest sample, never per sample:
   -- a slow client receives the same pose many times between physics steps, and correcting on
   -- each one multiplied the gain into a runaway oscillation (300 units after one sword swing).

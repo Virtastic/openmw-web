@@ -46,11 +46,12 @@ export default async function run(ctx) {
     };
     await joinFriend(guest.client, 'the first time');
     await guest.client.waitFor('String(window.omw.state.baselineReady||"") === "1"', 60_000, 'the guest is settled');
-    // The guest wanders far from the host, so their stored position is nowhere near them.
-    await guest.client.cmd('walk:0,1,6000:run');
-    await ctx.sleep(8_000);
-    const far = await pose(guest.client);
+    // The guest goes far from the host (a teleport: the cell centre is walled by terrain),
+    // so their stored position is nowhere near them.
     const hostAt = await pose(host.client);
+    await guest.client.cmd(`snapto:${Math.round(hostAt.x + 2000)},${Math.round(hostAt.y)},${Math.round(hostAt.z + 200)}`);
+    await ctx.sleep(6_000); // the doc's position follows the pose stream
+    const far = await pose(guest.client);
     ctx.log(`the guest walked to ${far.x.toFixed(0)},${far.y.toFixed(0)}; the host is at ${hostAt.x.toFixed(0)},${hostAt.y.toFixed(0)} (${dist2(far, hostAt).toFixed(0)} apart)`);
     assert.ok(dist2(far, hostAt) > 400, 'the guest must be well away from the host before leaving (walk hook / terrain)');
     guest.client.close(); // logout flushes the doc with that far spot

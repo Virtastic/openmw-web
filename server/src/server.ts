@@ -676,6 +676,8 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       if (a === worldOwner) closeToGuest(b, 'unfriended');
       else if (b === worldOwner) closeToGuest(a, 'unfriended');
     },
+    // "Send home" holds until the host changes their mind, and an invite IS that.
+    invited: (from, to) => { if (from === worldOwner) kickedUntil.delete(to); },
     // A4/3.8: the context-menu report writes to the same queue as /report.
     report: (doc) => moderation.reports.write({
       ts: new Date().toISOString(),
@@ -730,6 +732,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     // (private) admits nobody, Party admits the owner's FRIENDS up to the whole-world cap.
     // Admins always (moderation must be able to enter anywhere). A standalone stack has no
     // owner and admits its own accounts; an unowned GATEWAY world fails closed.
+    isSentHome: (accountKey: string): boolean => (kickedUntil.get(accountKey) ?? 0) > Date.now(),
     mayJoinWorld: (accountKey: string, rank: number): boolean => {
       if (rank >= 1) return true;
       if (worldOwner === '') return !process.env.OMW_WORLD_ID;

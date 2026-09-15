@@ -1,6 +1,6 @@
 // Copyright (C) 2025-2026 Virtastic - https://virtastic.app
 // SPDX-License-Identifier: GPL-3.0-or-later | part of openmw-web
-// s155: A NEW CHARACTER CAN WALK OUT OF THE PRISON SHIP. The character-creation cells are a
+// s155: A NEW CHARACTER CAN WALK THROUGH THE CENSUS OFFICE. The character-creation cells are a
 // sanctuary the server never hands to the peer (no NPC authority there), but nothing kept the
 // AVATAR out: the peer spawned one in a cell it does not simulate, frozen, and streamed its
 // fixed pose, which the server took as canonical -- so reconciliation pinned a brand-new
@@ -9,7 +9,9 @@
 import assert from 'node:assert/strict';
 
 const STEP = 30_000;
-const BOOT = { retail: true, joinTimeoutMs: 420_000, startCell: 'Imperial Prison Ship' };
+// The Census office, not the ship: the ship's own CharGen script holds the controls until
+// the intro has played, so a walk there proves nothing. Both are sanctuary cells.
+const BOOT = { retail: true, joinTimeoutMs: 420_000, startCell: 'Seyda Neen, Census and Excise Office' };
 const pose = async (c) => JSON.parse(await c.eval('window.omw.state.pose||"null"'));
 const dist2 = (p, q) => Math.hypot(p.x - q.x, p.y - q.y);
 
@@ -21,7 +23,7 @@ export default async function run(ctx) {
   await a.waitFor('String(window.omw.state.baselineReady||"") === "1"', STEP, 'settled');
   const cell = String(await a.eval('window.omw.state.cell||""'));
   ctx.log(`A is in "${cell}"`);
-  assert.match(cell.toLowerCase(), /prison ship/, 'A must start in the prison ship');
+  assert.match(cell.toLowerCase(), /census/, 'A must start in the Census office');
   await ctx.sleep(4_000); // long enough for a spawned avatar to start streaming, if one were
 
   // Walk. Try both directions along the ship; the bunk room is narrow.

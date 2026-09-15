@@ -90,6 +90,8 @@ export interface SocialDeps {
    *  (server.ts mayJoinWorld); without this it only barred the NEXT join, and someone the
    *  host had just blocked stayed in their world until the host went solo. */
   friendshipEnded?(a: AccountKey, b: AccountKey): void;
+  /** The host invited someone: a standing "send home" cooldown for them is lifted. */
+  invited?(from: AccountKey, to: AccountKey): void;
 }
 
 export class Social {
@@ -462,6 +464,7 @@ export class Social {
     // could only reach someone already standing next to you. One row per sender, so
     // re-inviting refreshes rather than stacking.
     this.d.store.addInvite(from, targetAcct, 'world', now, this.tuning.inviteTtlMs);
+    this.d.invited?.(from, targetAcct);
     this.deliverInvite(targetAcct, from, player.name);
     return 'ok';
   }

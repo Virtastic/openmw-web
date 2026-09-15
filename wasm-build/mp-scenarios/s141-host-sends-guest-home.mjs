@@ -61,12 +61,25 @@ export default async function run(ctx) {
     assert.equal(await pal.client.eval('window.omw.state.state'), 'Joined');
     assert.equal(await pal.client.eval(`${rowOf(H)}.id !== undefined`), true, 'the other guest still sees the host');
     assert.equal(await host.client.eval(`${rowOf(PAL)}.id !== undefined`), true, 'the host still sees the other guest');
-    // ...and it was a kick, not a block: still friends, door still open -- they can come back.
+    // ...and it was a kick, not a block: still friends. But "send home" STICKS: walking
+    // straight back in on their own is refused -- and told as a kick, not as "private".
     await grantLockerSession(pest.client, GW_PORT, pest.account);
     // The friends list lands a moment after the join on the rebooted page.
     await pest.client.waitFor(`JSON.parse(window.omw.state.friends||'[]').length === 1`, STEP, 'a kick must not touch the friendship');
     const friends = JSON.parse(await pest.client.eval("window.omw.state.friends||'[]'"));
     await pest.client.cmd(`joinfriend:${friends[0].acct}`);
+    // The guest's world says ok (it cannot see the host world's cooldown); the host world
+    // refuses at the door and the page goes home saying so.
+    await pest.client.waitFor(`String(window.omw.state.state||"") !== "Joined" || String(window.omw.state.worldClosed||"") !== ""`, 180_000, 'the kicked guest set off');
+    await pest.client.waitFor('String(window.omw.state.state||"") === "Joined" && String(window.omw.state.dialTarget||"").indexOf("priv-kick-pest") >= 0', 300_000, 'the kicked guest is back home after being refused at the door');
+    assert.equal(await host.client.eval(`${rowOf(PEST)}.id !== undefined`), false, 'a kicked guest must not be able to walk straight back in');
+    ctx.log('ok: the door stayed shut to the kicked guest');
+    // The host changes their mind: an INVITE reopens the door.
+    await grantLockerSession(pest.client, GW_PORT, pest.account);
+    await host.client.cmd(`social:InviteSend:${pest.account}`);
+    await pest.client.waitFor(`JSON.parse(window.omw.state.invites||'[]').length > 0`, STEP, 'the invite reaches the kicked guest');
+    const invites = JSON.parse(await pest.client.eval("window.omw.state.invites||'[]'"));
+    await pest.client.cmd(`social:InviteAccept:${invites[0].acct}`);
     await host.client.waitFor(`${rowOf(PEST)}.id !== undefined`, 300_000, 'the kicked guest is back in the host world after being invited again');
     ctx.log('PASS: the host sent a guest home; they were told, landed home, the other guest stayed, and they could come back');
   } finally {

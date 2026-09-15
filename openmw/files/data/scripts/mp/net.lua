@@ -413,7 +413,7 @@ function net.onClose()
         -- while we were on our way over: the credential is fine, so a fresh ticket cannot
         -- help and the "sign in again" modal is a lie that strands the player. Go home
         -- instead, once, and say why (global.lua wires the hook: notice + switch to own).
-        if net.lastErrorDetail == 'this world is private' and net.onRefusedAway and net.onRefusedAway() then
+        if (net.lastErrorDetail == 'this world is private' or net.lastErrorDetail == 'you were sent home') and net.onRefusedAway and net.onRefusedAway(net.lastErrorDetail) then
             net.lastError = nil
             return
         end

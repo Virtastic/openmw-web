@@ -1647,7 +1647,7 @@ end
 -- A refused dial into somebody else's world (net.lua: AUTH_FAILED "this world is private"
 -- on a target that is not our own): the host went solo or blocked us while we were on the
 -- way. Not a credential problem; go home and say so instead of the sign-in-again modal.
-net.onRefusedAway = function()
+net.onRefusedAway = function(detail)
     -- We never JOINED this page (the refusal came at the door), so worldUrls.own has not been
     -- learned from a welcome yet: read the boot fragment's mphome directly.
     if not worldUrls.own then
@@ -1655,8 +1655,8 @@ net.onRefusedAway = function()
         if type(home) == 'string' and home ~= '' then worldUrls.own = home end
     end
     if not worldUrls.own or net.currentTarget() == worldUrls.own then return false end
-    print('[mp] refused at the door of ' .. tostring(net.currentTarget()) .. ' -- going home')
-    return goHome({ reason = 'not_open' })
+    print('[mp] refused at the door of ' .. tostring(net.currentTarget()) .. ' -- going home (' .. tostring(detail) .. ')')
+    return goHome({ reason = detail == 'you were sent home' and 'kicked' or 'not_open' })
 end
 
 local eventHandlers = {

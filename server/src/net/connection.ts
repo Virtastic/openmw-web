@@ -130,6 +130,8 @@ export interface ServerCtx {
   // only, party = owner + friends of the owner + admins. Checked at auth, after the account
   // is resolved.
   mayJoinWorld(accountKey: string, rank: number): boolean;
+  /** Is this account inside a "send home" cooldown here (server.ts kickGuest)? */
+  isSentHome?(accountKey: string): boolean;
   // Owner-only in-place flip of THIS world between 'private' (solo) and 'party' (joinable
   // by the owner's friends). Used by the where-am-I switcher.
   setWorldMode(accountKey: string, rank: number, mode: string): 'ok' | 'not_owner' | 'bad_mode' | 'not_flippable';
@@ -1615,8 +1617,11 @@ export class Connection implements Peer {
     // A private world admits its owner (and admins); a party world admits the party.
     // System peers are operator infrastructure and exempt.
     if (!this.isSystem && !this.ctx.mayJoinWorld(accountKey, account.rank)) {
-      log('info', 'conn.world_refused', { ip: this.ip, account: account.name });
-      this.authFail(op, 'AUTH_FAILED', 'this world is private');
+      // SAY WHICH. A guest the host sent home is told so, not "private" -- the client turns
+      // the detail into the notice on the way home, and "the host has gone solo" is a lie.
+      const detail = this.ctx.isSentHome?.(accountKey) ? 'you were sent home' : 'this world is private';
+      log('info', 'conn.world_refused', { ip: this.ip, account: account.name, detail });
+      this.authFail(op, 'AUTH_FAILED', detail);
       return;
     }
     // THE WRONG CHARACTER IN THE RIGHT ACCOUNT IS STILL THE WRONG WORLD. mayJoinWorld is
