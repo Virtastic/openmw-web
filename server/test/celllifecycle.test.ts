@@ -119,6 +119,44 @@ test('a reset hands standing players the restored truth instead of kicking them'
   a.close();
 });
 
+// Backlog 94: the reset resync omitted locks and deaths. A reset builds a fresh doc, so a chest
+// locked and a smuggler killed before it are unlocked and standing again -- but the old
+// CellSnapshotReplace never SAID so, and the standing client kept both. Pins worldstate.ts
+// sendCellSnapshot building its frame with cellStateBody (locks + deaths on the wire).
+test('CellSnapshotReplace carries locks and deaths', async (t) => {
+  const dataDir = tmpDataDir();
+  const seed = new CellStore(dataDir);
+  const doc = await seed.get('0,0');
+  doc.locks['c:5:0'] = 50;
+  doc.actorDeaths = { 'c:42:0': { deathNo: 1, atH: 1e9 } }; // dated far ahead: never expires
+  seed.markDirty('0,0');
+  await seed.close();
+  const server = await startServer({
+    requireGameData: false, dataDir, port: 0, host: '127.0.0.1', worldMode: 'private',
+    configOverride: { cellReset: { cells: ['0,0'], intervalSec: 0 } },
+  });
+  t.after(() => server.close());
+
+  const a = await TestClient.connect(server.port);
+  t.after(() => a.close());
+  await a.joinAsNew('Alice');
+  await a.waitEvent('PlayerList');
+  a.sendCellChange('0,0', 0, 0, 0);
+  const before = (await a.waitEvent('WorldCellState', (v) => (v as { cellKey: string }).cellKey === '0,0')).value as
+    { locks: Record<string, unknown>; deaths: string[] };
+  assert.deepEqual(before.locks, { 'c:5:0': { lockLevel: 50 } });
+  assert.deepEqual(before.deaths, ['c:42:0']);
+
+  a.inbox.events.length = 0;
+  await server.api.world.resetCell('0,0');
+  const snap = (await a.waitEvent('CellSnapshotReplace')).value as { locks?: Record<string, unknown>; deaths?: string[] };
+  // An empty table decodes as [] on this side; the point is that the field is THERE and empty.
+  assert.ok(snap.locks !== undefined, 'the resync must say the lock is gone, not stay silent about locks');
+  assert.equal(Object.keys(snap.locks).length, 0);
+  assert.ok(snap.deaths !== undefined, 'the resync must say nobody is dead here, not stay silent about deaths');
+  assert.equal(snap.deaths.length, 0);
+});
+
 test('a journal advance is durable immediately, not on the 45s sweep', async (t) => {
   const dataDir = tmpDataDir();
   const server = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1' });

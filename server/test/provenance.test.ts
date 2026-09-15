@@ -203,3 +203,37 @@ test('a drop out of the declared pack takes its item-state entry with it', async
   assert.deepEqual(doc?.['itemStates'], { iron_dagger: [{ n: 1, condition: 300 }] },
     `the dropped dagger's state must go with it: ${JSON.stringify(doc?.['itemStates'])}`);
 });
+
+// THE DOC FOLLOWS THE TAKE TOO (backlog 93). A container take is a server transaction -- the
+// chest lost the item -- but the character's side is the 2 s PlayerInventory diff, and a
+// socket that closes inside that window never sends it. The per-event credit knows what was
+// picked up; the logout flush folds it into the doc. Pins connection.ts cleanup(): the
+// `credit` (player.pendingAcquired) loop inside players.update.
+test('a container take followed by a disconnect before the inventory diff lands in the doc', async (t) => {
+  const { readPlayerDoc } = await import('./helpers');
+  const dataDir = tmpDataDir();
+  const server = await startServer({ requireGameData: false, dataDir, port: 0, host: '127.0.0.1' });
+  t.after(() => server.close());
+  const c = await TestClient.connect(server.port);
+  const { welcome } = await c.joinAsNew('Taker');
+  const charId = welcome['characterId'] as string;
+  await c.waitEvent('PlayerList');
+  c.sendCellChange(CELL, 0, 0, 0);
+  await c.waitEvent('PlayerCellChange');
+  c.sendEvent('PlayerInventory', { items: [{ id: 'gold_001', n: 30 }] }); // the declared pack before the take
+  await new Promise((r) => setTimeout(r, 100));
+  const REF = { __refnum: { index: 42, contentFile: 0 } };
+  c.sendEvent('ContainerOpen', { ref: REF, cellKey: CELL, contents: [{ id: 'ebony_shield', n: 1 }] });
+  await c.waitEvent('ContainerState');
+  c.sendEvent('ContainerOpRequest', { ref: REF, cellKey: CELL, opId: 1, op: 'take', itemId: 'ebony_shield', n: 1 });
+  assert.equal(((await c.waitEvent('ContainerOpResult')).value as { ok: boolean }).ok, true);
+  c.sendEvent('PlayerItemAcquired', { id: 'ebony_shield', n: 1 }); // the 0.25 s acquisition report
+  await new Promise((r) => setTimeout(r, 50));
+  // The connection dies before any inventory diff could report the pickup.
+  c.ws.close();
+  await new Promise((r) => setTimeout(r, 300));
+  await server.flush();
+  const inv = readPlayerDoc(dataDir, charId)?.['inventory'] as { id: string; n: number }[];
+  assert.deepEqual(inv, [{ id: 'gold_001', n: 30 }, { id: 'ebony_shield', n: 1 }],
+    `the chest lost the shield and the doc never got it: ${JSON.stringify(inv)}`);
+});

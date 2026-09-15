@@ -510,6 +510,97 @@ test('ActorAI kind position from a non-holder reaches the holder', async (t) => 
   assert.equal(peer.inbox.events.filter((e) => e.name === 'ActorAI').length, 0, 'a far position claim reached the holder');
 });
 
+// A human in 0,0 plus the sim peer holding it (as the ActorAI test above).
+async function heldCell(t: { after(fn: () => unknown): void }) {
+  const PEER_PASS = 'peer-secret-1';
+  const server = await startServer({
+    requireGameData: false, dataDir: tmpDataDir(), port: 0, host: '127.0.0.1',
+    configOverride: { server: { password: PEER_PASS }, limits: { maxConnsPerIp: 16 } },
+  });
+  t.after(() => server.close());
+  const human = async (name: string) => {
+    const c = await TestClient.connect(server.port);
+    t.after(() => c.close());
+    const { playerId } = await c.joinAsNew(name);
+    await c.waitEvent('PlayerList');
+    c.sendCellChange('0,0', 0, 0, 0);
+    await c.waitEvent('PlayerCellChange');
+    return { c, playerId };
+  };
+  const { c: bob } = await human('Bob');
+  const peer = await TestClient.simPeer(server.port, PEER_PASS);
+  t.after(() => peer.close());
+  peer.sendCellChange('0,0', 0, 0, 0);
+  const epoch = ((await peer.waitEvent('ActorAuthorityGrant', (v) => (v as { cellKey: string }).cellKey === '0,0')).value as { epoch: number }).epoch;
+  return { server, bob, peer, epoch, human };
+}
+const NPC = { __refnum: { index: 300, contentFile: 0 } };
+
+// #229: Fight/Flee/Alarm ride ActorDisposition as `ai`. From the talking client (the
+// dialogue-lock holder) each value is bounded to [0,100] -- out of bounds is refused whole
+// (worldstate.ts `aiOk` beside the disposition bound); from the cell holder it relays verbatim.
+test('ActorDisposition ai: bounded from the dialogue holder, relayed from the cell holder', async (t) => {
+  const { bob, peer, epoch, human } = await heldCell(t);
+  const { c: alice } = await human('Alice');
+  alice.sendEvent('DialogueLock', { ref: NPC, cellKey: '0,0', want: true });
+  assert.equal(((await alice.waitEvent('DialogueLockResult')).value as { granted: boolean }).granted, true);
+
+  bob.inbox.events.length = 0;
+  alice.sendEvent('ActorDisposition', { ref: NPC, cellKey: '0,0', epoch: 0, disposition: 60, ai: { fight: 30, flee: 0, alarm: 100 } });
+  const got = (await bob.waitEvent('ActorDisposition')).value as { disposition: number; ai: Record<string, number> };
+  assert.equal(got.disposition, 60);
+  assert.deepEqual(got.ai, { fight: 30, flee: 0, alarm: 100 }, 'the taunt reaches the other screen');
+
+  bob.inbox.events.length = 0;
+  alice.sendEvent('ActorDisposition', { ref: NPC, cellKey: '0,0', epoch: 0, disposition: 60, ai: { fight: 101 } });
+  alice.sendEvent('ActorDisposition', { ref: NPC, cellKey: '0,0', epoch: 0, disposition: 60, ai: { flee: -1 } });
+  alice.sendEvent('ChatSend', { text: 'aifence' });
+  await bob.waitEvent('ChatMessage', (v) => (v as { text?: string }).text === 'aifence');
+  assert.equal(bob.inbox.events.filter((e) => e.name === 'ActorDisposition').length, 0, 'an out-of-range AI setting was relayed');
+
+  bob.inbox.events.length = 0;
+  peer.sendEvent('ActorDisposition', { ref: NPC, cellKey: '0,0', epoch, disposition: 40, ai: { fight: 90 } });
+  const fromHolder = (await bob.waitEvent('ActorDisposition')).value as { ai: Record<string, number> };
+  assert.deepEqual(fromHolder.ai, { fight: 90 }, "the holder's beat carries the AI settings too");
+});
+
+// #293: ActorRevive is ActorDeath's inverse. The doc forgets the death (worldstate.ts
+// `delete doc.actorDeaths[ref.key]`) and the room hears it; a later entrant is not told
+// the resurrected NPC is dead.
+test('a holder ActorRevive forgets the death: observers hear it, a later entrant sees no corpse', async (t) => {
+  const { bob, peer, epoch, human } = await heldCell(t);
+  peer.sendEvent('ActorDeath', { cellKey: '0,0', epoch, ref: NPC, deathNo: 1, killedRecordId: 'smuggler' });
+  await bob.waitEvent('ActorDeath');
+  peer.sendEvent('ActorRevive', { cellKey: '0,0', epoch, ref: NPC });
+  const revive = (await bob.waitEvent('ActorRevive')).value as { ref: unknown };
+  assert.deepEqual(revive.ref, NPC);
+
+  const { c: walker } = await human('Walker');
+  walker.inbox.events.length = 0;
+  walker.sendCellChange('5,5', 0, 0, 0);
+  await walker.waitEvent('PlayerCellChange');
+  walker.sendCellChange('0,0', 0, 0, 0);
+  const state = (await walker.waitEvent('WorldCellState', (v) => (v as { cellKey: string }).cellKey === '0,0')).value as { deaths: string[] };
+  assert.deepEqual(state.deaths, [], 'the resurrected NPC is still listed dead for a newcomer');
+});
+
+// #296: the magic that SHOWS on an NPC. ActorEffects {add, remove} from the cell holder
+// relays to the room; from anyone else it is dropped (worldstate.ts ACTOR_RELAY_EVENTS +
+// authCheck).
+test('ActorEffects relays from the holder and is refused from a non-holder', async (t) => {
+  const { bob, peer, epoch } = await heldCell(t);
+  const body = { ref: NPC, cellKey: '0,0', epoch, add: [{ id: 'chameleon', effect: 58, magnitude: 30 }], remove: ['invisibility'] };
+  peer.sendEvent('ActorEffects', body);
+  const got = (await bob.waitEvent('ActorEffects')).value as { add: unknown; remove: unknown };
+  assert.deepEqual(got.add, body.add);
+  assert.deepEqual(got.remove, body.remove);
+
+  peer.inbox.events.length = 0;
+  bob.sendEvent('ActorEffects', body);
+  await new Promise((r) => setTimeout(r, 200));
+  assert.equal(peer.inbox.events.filter((e) => e.name === 'ActorEffects').length, 0, "a bystander's effect claim was relayed");
+});
+
 // #269: the per-map caps add up to more than the LSER ceiling, so the frame is budgeted at
 // send time. A doc with EVERY map at its cap must still decode on the client.
 test('a cell doc at every cap is trimmed to a frame the decoder accepts', () => {
